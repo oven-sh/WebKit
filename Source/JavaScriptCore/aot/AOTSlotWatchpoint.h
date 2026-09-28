@@ -30,14 +30,14 @@ class SlotWatchpoint final : public Watchpoint {
 public:
     SlotWatchpoint();
 
-    void initialize(CodeBlock*, const ObjectPropertyCondition&, unsigned slotIndex);
+    void initialize(Data*, const ObjectPropertyCondition&, unsigned slotIndex);
     void install(VM&);
     void fireInternal(VM&, const FireDetail&);
 
     const ObjectPropertyCondition& key() const LIFETIME_BOUND { return m_key; }
 
 private:
-    PackedCellPtr<CodeBlock> m_owner;
+    Data* m_owner;
     unsigned m_slotIndex { 0 };
     ObjectPropertyCondition m_key;
 };
@@ -47,8 +47,8 @@ using SlotWatchpointMap = UncheckedKeyHashMap<unsigned, FixedVector<SlotWatchpoi
 
 // Has the conditions watched on behalf of the slot, in place of whatever was. False, and nothing is watched, if that cannot be
 // done, in which case the slot must not be filled.
-bool watchConditions(VM&, CodeBlock*, Slot*, const ObjectPropertyConditionSet&);
-void stopWatching(CodeBlock*, Slot*);
+bool watchConditions(VM&, Data*, Slot*, const ObjectPropertyConditionSet&);
+void stopWatching(Data*, Slot*);
 
 } } // namespace JSC::AOT
 

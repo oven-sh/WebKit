@@ -31,20 +31,22 @@ ALWAYS_INLINE void noteSlowPath(ASCIILiteral operation, JSValue base = { }, Uniq
         noteSlowPathSlow(operation, base, name, detail);
 }
 
-ALWAYS_INLINE CodeBlock* callerCodeBlock(CallFrame* callFrame) { return callFrame->codeBlock(); }
+ALWAYS_INLINE Data* callerData(CallFrame* callFrame) { return dataOf(callFrame); }
+ALWAYS_INLINE UnlinkedCodeBlock* callerCode(CallFrame* callFrame) { return dataOf(callFrame)->unlinkedCodeBlock; }
 
-// What a slot refers to it does not keep alive: Data::finalizeUnconditionally() empties it when that dies. But that is only called
-// for the CodeBlocks a collection has visited, and a collection of the young does not visit an old one that has not said that it
-// has something new. An identifier of a structure that has died is sooner or later that of another.
-ALWAYS_INLINE void didFillSlot(VM& vm, CodeBlock* codeBlock)
+// What a slot refers to it does not keep alive: Data::finalizeUnconditionally() empties it when that dies. A collection of the young
+// only looks at the ones that have said that they have something new. An identifier of a structure that has died is sooner or later
+// that of another.
+ALWAYS_INLINE void didFillSlot(VM&, Data* data)
 {
-    vm.writeBarrier(codeBlock);
-    codeBlock->aotData()->slotEpoch++;
+    data->slotEpoch++;
+    if (!data->hasBeenFilledSinceLastCollection)
+        data->noteFilled();
 }
-ALWAYS_INLINE const Identifier& identifierAt(CallFrame* callFrame, unsigned index) { return callerCodeBlock(callFrame)->identifier(index); }
-ALWAYS_INLINE FunctionExecutable* functionDeclAt(CallFrame* callFrame, unsigned index) { return callerCodeBlock(callFrame)->functionDecl(index); }
-ALWAYS_INLINE FunctionExecutable* functionExprAt(CallFrame* callFrame, unsigned index) { return callerCodeBlock(callFrame)->functionExpr(index); }
-ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(CallFrame* callFrame) { return callerCodeBlock(callFrame)->putByIdContext(); }
+ALWAYS_INLINE const Identifier& identifierAt(CallFrame* callFrame, unsigned index) { return callerCode(callFrame)->identifier(index); }
+ALWAYS_INLINE FunctionExecutable* functionDeclAt(CallFrame* callFrame, unsigned index) { return callerData(callFrame)->codeBlock->functionDecl(index); }
+ALWAYS_INLINE FunctionExecutable* functionExprAt(CallFrame* callFrame, unsigned index) { return callerData(callFrame)->codeBlock->functionExpr(index); }
+ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(CallFrame* callFrame) { return callerCode(callFrame)->codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
 } } // namespace JSC::AOT
 

@@ -184,6 +184,7 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 #if ENABLE(FTL_JIT)
 namespace AOT {
 class RuntimeTable;
+struct Instance;
 }
 namespace FTL {
 class Thunks;
@@ -497,6 +498,7 @@ public:
 #if ENABLE(JIT)
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
+    Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }

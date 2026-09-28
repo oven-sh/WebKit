@@ -111,14 +111,15 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
 
 // With the callee's frame where a call would have it: gives the registers this function saved back to its caller, moves the
 // frame up over this function's own, and goes.
-static void emitTailCallSequence(CCallHelpers& jit, const StackmapGenerationParams& params)
+static void emitTailCallSequence(CCallHelpers& jit, const StackmapGenerationParams& params, unsigned numParameters)
 {
     jit.emitRestore(params.proc().calleeSaveRegisterAtOffsetList());
+    jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
     jit.prepareForTailCallSlow(RegisterSet {
         BaselineJITRegisters::Call::calleeGPR,
         BaselineJITRegisters::Call::callLinkInfoGPR,
         BaselineJITRegisters::Call::callTargetGPR,
-    });
+    }, GPRInfo::regT9);
     jit.farJump(BaselineJITRegisters::Call::callTargetGPR, JSEntryPtrTag);
 }
 
@@ -135,9 +136,9 @@ void Lowering::emitTailCall(Node*, LValue callee, const Arguments& arguments)
     appendCalleeFrame(m_proc, patchpoint, callee, argumentCount, arguments);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->effects.terminal = true;
-    patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([numParameters = m_graph.codeBlock()->numParameters()](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        emitTailCallSequence(jit, params);
+        emitTailCallSequence(jit, params, numParameters);
     });
 }
 
@@ -270,6 +271,7 @@ LValue Lowering::emitCallVarargs(Node* node, LValue callee, LValue thisValue, LV
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
 
     uint32_t callSiteBits = CallSiteIndex(node->bytecodeIndex).bits();
+    unsigned numParameters = m_graph.codeBlock()->numParameters();
     patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         constexpr GPRReg frameGPR = GPRInfo::regT3;
@@ -305,7 +307,7 @@ LValue Lowering::emitCallVarargs(Node* node, LValue callee, LValue thisValue, LV
         jit.addPtr(CCallHelpers::TrustedImm32(sizeof(CallerFrameAndPC)), frameGPR, CCallHelpers::stackPointerRegister);
 
         if (isTail) {
-            emitTailCallSequence(jit, params);
+            emitTailCallSequence(jit, params, numParameters);
             return;
         }
         jit.call(BaselineJITRegisters::Call::callTargetGPR, JSEntryPtrTag);

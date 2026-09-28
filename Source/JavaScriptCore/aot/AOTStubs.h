@@ -121,8 +121,8 @@ namespace AOT {
     /* As for Call, but nothing is called yet. Leaves in T12 where to jump to make the call as a tail call, having seen to it that */ \
     /* the callee has code, or zero if it has to be an ordinary call (it is not a function). T0 is left as it was. */ \
     v(TailCallPrepare) \
-    /* Jumped to, with the function's callee saves restored. T0 = callee, T12 = what TailCallPrepare said. Moves the frame that */ \
-    /* was made over the function's own, and goes. */ \
+    /* Jumped to, with the function's callee saves restored. T0 = callee, T12 = what TailCallPrepare said, T9 = the function's */ \
+    /* numParameters. Moves the frame that was made over the function's own, and goes. */ \
     v(TailCallFinish) \
     /* As GetById, for a site whose identifier is a WellKnownIdentifier. */ \
     v(GetByIdWellKnown) \

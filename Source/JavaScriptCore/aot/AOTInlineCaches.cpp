@@ -36,7 +36,7 @@ std::optional<uint32_t> locationOfProperty(PropertyOffset offset)
 static const EncodedJSValue holderOfUndefined[JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + 1] = { 0, 0, JSValue::ValueUndefined };
 static_assert(JSObject::offsetOfInlineStorage() == 2 * sizeof(EncodedJSValue));
 
-static void fill(VM& vm, CodeBlock* codeBlock, Slot* cache, Structure* structure, uint32_t offsetAndFlags, void* pointer)
+static void fill(VM& vm, Data* data, Slot* cache, Structure* structure, uint32_t offsetAndFlags, void* pointer)
 {
     // The code reads the first word and then the second. In between it does nothing that lets this run, so all that matters is
     // that the collector, which reads them at any time, never sees a structure with a second word that is not its own.
@@ -49,7 +49,7 @@ static void fill(VM& vm, CodeBlock* codeBlock, Slot* cache, Structure* structure
     cache->pointer = pointer;
     WTF::storeStoreFence();
     cache->structureID = structure->id();
-    didFillSlot(vm, codeBlock);
+    didFillSlot(vm, data);
     if (Options::aotVerbose()) [[unlikely]]
         dataLogLn("AOT: slot ", RawPointer(cache), " filled: structure ", RawPointer(structure), " id ", structure->id().bits(), " offset and flags ", RawHex(cache->offset), " pointer ", RawPointer(pointer));
 }
@@ -73,17 +73,17 @@ static void countFailure(Slot* cache)
         cache->offset += 1u << Slot::attemptsShift;
 }
 
-static ASCIILiteral tryCacheGetById(JSGlobalObject*, CodeBlock*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache);
+static ASCIILiteral tryCacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache);
 
-ASCIILiteral cacheGetById(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
+ASCIILiteral cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
 {
-    ASCIILiteral whyNot = tryCacheGetById(globalObject, codeBlock, base, structureBefore, ident, slot, cache);
+    ASCIILiteral whyNot = tryCacheGetById(globalObject, data, base, structureBefore, ident, slot, cache);
     if (!whyNot.isEmpty())
         countFailure(cache);
     return whyNot;
 }
 
-static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
+static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
 {
     if (Options::aotDisableFastPaths() & 1) [[unlikely]]
         return "disabled"_s;
@@ -126,8 +126,8 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, CodeBlock* cod
         if (!mayReplace(cache, structure))
             return "sees too many structures"_s;
         if (cache->hasPointer())
-            stopWatching(codeBlock, cache);
-        fill(vm, codeBlock, cache, structure, *location | getterFlag, nullptr);
+            stopWatching(data, cache);
+        fill(vm, data, cache, structure, *location | getterFlag, nullptr);
         return ""_s;
     }
 
@@ -156,22 +156,22 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, CodeBlock* cod
         return "the chain cannot be prepared"_s;
 
     if (slot.isUnset()) {
-        if (!watchConditions(vm, codeBlock, cache, generateConditionsForPropertyMiss(vm, codeBlock, globalObject, structure, ident.impl())))
+        if (!watchConditions(vm, data, cache, generateConditionsForPropertyMiss(vm, globalObject, globalObject, structure, ident.impl())))
             return "cannot watch for a miss"_s;
-        fill(vm, codeBlock, cache, structure, *locationOfProperty(0) | Slot::pointerIsNotCell, const_cast<EncodedJSValue*>(holderOfUndefined));
+        fill(vm, data, cache, structure, *locationOfProperty(0) | Slot::pointerIsNotCell, const_cast<EncodedJSValue*>(holderOfUndefined));
         return ""_s;
     }
 
     auto location = locationOfProperty(slot.cachedOffset());
     if (!location)
         return "inherited, too far"_s;
-    if (!watchConditions(vm, codeBlock, cache, generateConditionsForPrototypePropertyHit(vm, codeBlock, globalObject, structure, slot.slotBase(), ident.impl())))
+    if (!watchConditions(vm, data, cache, generateConditionsForPrototypePropertyHit(vm, globalObject, globalObject, structure, slot.slotBase(), ident.impl())))
         return "cannot watch for a hit"_s;
-    fill(vm, codeBlock, cache, structure, *location | Slot::pointerIsCell | getterFlag, slot.slotBase());
+    fill(vm, data, cache, structure, *location | Slot::pointerIsCell | getterFlag, slot.slotBase());
     return ""_s;
 }
 
-void cachePrivateName(VM& vm, CodeBlock* codeBlock, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset> offset)
+void cachePrivateName(VM& vm, Data* data, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset> offset)
 {
     if ((Options::aotDisableFastPaths() & 1) || !name.isCell())
         return;
@@ -181,18 +181,18 @@ void cachePrivateName(VM& vm, CodeBlock* codeBlock, Slot* cache, JSObject* base,
     auto location = locationOfProperty(offset.value_or(0));
     if (!location || !mayReplace(cache, structure))
         return;
-    fill(vm, codeBlock, cache, structure, *location | Slot::pointerIsCell, name.asCell());
+    fill(vm, data, cache, structure, *location | Slot::pointerIsCell, name.asCell());
 }
 
-static bool tryCachePutById(JSGlobalObject*, CodeBlock*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
+static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
 
-void cachePutById(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
+void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
-    if (!tryCachePutById(globalObject, codeBlock, base, oldStructure, ident, slot, isDirect, cache))
+    if (!tryCachePutById(globalObject, data, base, oldStructure, ident, slot, isDirect, cache))
         countFailure(cache);
 }
 
-static bool tryCachePutById(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
+static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
     if (!base.isCell() || !slot.isCacheablePut() || slot.base() != base.asCell())
         return false;
@@ -220,7 +220,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
         WTF::storeStoreFence();
         cache->structureID = oldStructure->id();
         // For a transition CodeBlock::propagateTransitions() has to see it too, even if the collector has been by already.
-        didFillSlot(vm, codeBlock);
+        didFillSlot(vm, data);
     };
 
     if (slot.type() == PutPropertySlot::ExistingProperty) {
@@ -228,7 +228,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
             return false;
         // Code that has folded the property to a constant has to hear about writes that go around the runtime.
         oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
-        stopWatching(codeBlock, cache);
+        stopWatching(data, cache);
         fillPut(nullptr);
         return true;
     }
@@ -239,7 +239,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
         return false;
 
     if (isDirect)
-        stopWatching(codeBlock, cache);
+        stopWatching(data, cache);
     else {
         // Nothing on the prototype chain has a say now (a setter, a read-only property), and that has to stay so.
         if (Options::aotDisableFastPaths() & 512) [[unlikely]]
@@ -247,7 +247,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, CodeBlock* codeBlock, 
         auto status = prepareChainForCaching(globalObject, cell, ident.impl(), nullptr);
         if (!status || status->flattenedDictionary || status->usesPolyProto)
             return false;
-        if (!watchConditions(vm, codeBlock, cache, generateConditionsForPropertySetterMiss(vm, codeBlock, globalObject, newStructure, ident.impl())))
+        if (!watchConditions(vm, data, cache, generateConditionsForPropertySetterMiss(vm, globalObject, globalObject, newStructure, ident.impl())))
             return false;
     }
     fillPut(newStructure);
@@ -344,33 +344,33 @@ void countAttemptToLinkCall(Slot* cache)
     countFailure(cache);
 }
 
-void fillCallCache(VM& vm, CodeBlock* codeBlock, Slot* cache, JSFunction* callee, CodeBlock* codeBlockOfCallee)
+void fillCallCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, CodeBlock* codeBlockOfCallee)
 {
     // The code goes by the second only if the first is what it wants.
     cache[0].clear();
-    fill(vm, codeBlock, &cache[1], codeBlockOfCallee->structure(), Slot::pointerIsCell, codeBlockOfCallee);
-    fill(vm, codeBlock, &cache[0], callee->structure(), Slot::pointerIsCell, callee);
+    fill(vm, data, &cache[1], codeBlockOfCallee->structure(), Slot::pointerIsCell, codeBlockOfCallee);
+    fill(vm, data, &cache[0], callee->structure(), Slot::pointerIsCell, callee);
 }
 
 // ---- Allocation
 
-void fillConstructionCache(VM& vm, CodeBlock* codeBlock, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator allocator)
+void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator allocator)
 {
     if (!allocator || (Options::aotDisableFastPaths() & 2048))
         return;
     cache[0].clear();
-    fill(vm, codeBlock, &cache[2], first, 0, nullptr);
-    fillAllocationCache(vm, codeBlock, cache, last, allocator, last->inlineCapacity(), callee);
+    fill(vm, data, &cache[2], first, 0, nullptr);
+    fillAllocationCache(vm, data, cache, last, allocator, last->inlineCapacity(), callee);
 }
 
-void fillAllocationCache(VM& vm, CodeBlock* codeBlock, Slot* cache, Structure* structure, Allocator allocator, uint32_t payload, JSCell* extra)
+void fillAllocationCache(VM& vm, Data* data, Slot* cache, Structure* structure, Allocator allocator, uint32_t payload, JSCell* extra)
 {
     if (!allocator || (Options::aotDisableFastPaths() & 2048))
         return;
     ASSERT(payload <= Slot::offsetMask);
     cache[1].offset = structure->typeInfoBlob();
     cache[1].pointer = allocator.localAllocator();
-    fill(vm, codeBlock, &cache[0], structure, payload | (extra ? Slot::pointerIsCell : 0), extra);
+    fill(vm, data, &cache[0], structure, payload | (extra ? Slot::pointerIsCell : 0), extra);
 }
 
 } } // namespace JSC::AOT

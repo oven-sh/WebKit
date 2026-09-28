@@ -22,7 +22,7 @@ SlotWatchpoint::SlotWatchpoint()
 {
 }
 
-void SlotWatchpoint::initialize(CodeBlock* owner, const ObjectPropertyCondition& key, unsigned slotIndex)
+void SlotWatchpoint::initialize(Data* owner, const ObjectPropertyCondition& key, unsigned slotIndex)
 {
     RELEASE_ASSERT(key.watchingRequiresStructureTransitionWatchpoint());
     RELEASE_ASSERT(!key.watchingRequiresReplacementWatchpoint());
@@ -39,9 +39,6 @@ void SlotWatchpoint::install(VM&)
 
 void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
 {
-    if (m_owner->isPendingDestruction())
-        return;
-
     // The object has a new structure, which need not make a difference to the property.
     if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
         install(vm);
@@ -49,10 +46,9 @@ void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
     }
 
     // The others stay until the slot is filled again or a collection comes by: this one is being walked over by its set.
-    if (Data* data = m_owner->aotData()) {
-        data->slots[m_slotIndex].clear();
-        data->slotEpoch++;
-    }
+    Data* data = m_owner;
+    data->slots[m_slotIndex].clear();
+    data->slotEpoch++;
 }
 
 static unsigned indexOf(Data* data, Slot* slot)
@@ -61,7 +57,7 @@ static unsigned indexOf(Data* data, Slot* slot)
     return slot - data->slots;
 }
 
-bool watchConditions(VM& vm, CodeBlock* codeBlock, Slot* slot, const ObjectPropertyConditionSet& conditions)
+bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditionSet& conditions)
 {
     if (!conditions.isValid())
         return false;
@@ -70,10 +66,9 @@ bool watchConditions(VM& vm, CodeBlock* codeBlock, Slot* slot, const ObjectPrope
             return false;
     }
 
-    Data* data = codeBlock->aotData();
     unsigned index = indexOf(data, slot);
     if (!conditions.size()) {
-        stopWatching(codeBlock, slot);
+        stopWatching(data, slot);
         return true;
     }
 
@@ -83,16 +78,15 @@ bool watchConditions(VM& vm, CodeBlock* codeBlock, Slot* slot, const ObjectPrope
     unsigned i = 0;
     for (const ObjectPropertyCondition& condition : conditions) {
         auto& watchpoint = watchpoints[i++];
-        watchpoint.initialize(codeBlock, condition, index);
+        watchpoint.initialize(data, condition, index);
         watchpoint.install(vm);
     }
     data->watchpoints->set(index, WTF::move(watchpoints));
     return true;
 }
 
-void stopWatching(CodeBlock* codeBlock, Slot* slot)
+void stopWatching(Data* data, Slot* slot)
 {
-    Data* data = codeBlock->aotData();
     if (data->watchpoints)
         data->watchpoints->remove(indexOf(data, slot));
 }

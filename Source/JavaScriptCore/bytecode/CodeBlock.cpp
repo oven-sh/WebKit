@@ -1087,9 +1087,9 @@ void CodeBlock::installAOTCode(Ref<AOT::JITCode>&& jitCode)
     // CodeBlock in the same realm (it is inside one that has code both for a call and for `new`, say): that shares the Data of the
     // first, which is what the frames of either are taken to be running, and which stays for that reason.
     AOT::Instance& instance = AOT::Instance::ensure(globalObject());
-    AOT::Data*& data = instance.data[jitCode->header().index];
+    AOT::Data* data = instance.data[jitCode->header().index];
     if (!data) {
-        data = AOT::Data::create(vm(), this, jitCode->numSlots(), jitCode->sites());
+        data = AOT::Data::create(instance, this, jitCode.get());
         vm().heap.protect(this);
     }
     setJITCode(WTF::move(jitCode));
@@ -1104,7 +1104,6 @@ void CodeBlock::releaseAOTData()
     if (vm().heap.collectionScope())
         return;
     if (auto* data = aotData(); data && data->codeBlock == this) {
-        globalObject()->aotInstance()->data[static_cast<AOT::JITCode*>(m_jitCode.get())->header().index] = nullptr;
         m_jitData = nullptr;
         AOT::Data::destroy(data);
         vm().heap.unprotect(this);
@@ -1203,12 +1202,9 @@ CodeBlock::~CodeBlock()
     // destructors.
 
 #if ENABLE(FTL_JIT)
-    if (auto* data = aotData()) {
+    // (The Data is the Instance's.)
+    if (aotData())
         m_jitData = nullptr;
-        // (The one whose it is only goes when everything does.)
-        if (data->codeBlock == this)
-            AOT::Data::destroy(data);
-    }
 #endif
 #if ENABLE(JIT)
     if (cc.isEnabled && m_jitData) {
@@ -1810,21 +1806,6 @@ void CodeBlock::propagateTransitions(const ConcurrentJSLocker&, Visitor& visitor
         }
     }
 
-#if ENABLE(FTL_JIT)
-    if (auto* data = aotData()) {
-        // Code that has cached a transition can put an object that has already been visited in the new structure.
-        for (unsigned i = 0; i < data->numSlots; ++i) {
-            AOT::Slot& slot = data->slots[i];
-            StructureID oldStructureID = slot.structureID;
-            StructureID newStructureID = slot.newStructureID;
-            if (!oldStructureID || !newStructureID || slot.unused || slot.hasPointer())
-                continue;
-            if (visitor.isMarked(oldStructureID.decode()))
-                visitor.appendUnbarriered(newStructureID.decode());
-        }
-    }
-#endif
-
 #if ENABLE(JIT)
     forEachPropertyInlineCache([&](PropertyInlineCache& propertyCache) {
         propertyCache.propagateTransitions(visitor);
@@ -2225,8 +2206,6 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
         updateAllPredictions(Options::useLazyValueProfilePredictions() ? ValueProfileSamples::KeepIfLive : ValueProfileSamples::Record);
 
 #if ENABLE(FTL_JIT)
-    if (auto* data = aotData())
-        data->finalizeUnconditionally(vm);
     // TEMPORARY-SLOT-STATS
     if (auto* data = aotData(); data && Options::aotReportStats()) {
         static uint64_t version, blocks, total[numOpcodeIDs], filled[numOpcodeIDs], instructionBytes, constants, identifiers;

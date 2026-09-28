@@ -53,9 +53,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject* glob
 
     // The same structure the other tiers would use, found the way they find it when a function is linked.
     ObjectAllocationProfile profile;
-    profile.initializeProfile(vm, globalObject, callerCodeBlock(callFrame), globalObject->objectPrototype(), inlineCapacity);
+    profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), inlineCapacity);
     Structure* structure = profile.structure();
-    fillAllocationCache(vm, callerCodeBlock(callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator), structure->inlineCapacity());
+    fillAllocationCache(vm, callerData(callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator), structure->inlineCapacity());
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 
@@ -71,7 +71,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
         OPERATION_RETURN(scope, object);
     }
 
-    CodeBlock* codeBlock = callerCodeBlock(callFrame);
+    UnlinkedCodeBlock* codeBlock = callerCode(callFrame);
     const JSInstruction* instruction = codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr();
     ObjectAllocationProfile profile;
     profile.initializeProfile(vm, globalObject, codeBlock, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
@@ -86,7 +86,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     });
     Structure* structure = object->structure();
     if (inOrder && !structure->isDictionary() && count <= structure->inlineCapacity() && !object->butterfly())
-        fillAllocationCache(vm, codeBlock, cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator), structure->inlineCapacity());
+        fillAllocationCache(vm, callerData(callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator), structure->inlineCapacity());
     OPERATION_RETURN(scope, object);
 }
 
@@ -94,7 +94,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlobalObject* globalObject, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    CodeBlock* codeBlock = callerCodeBlock(callFrame);
+    UnlinkedCodeBlock* codeBlock = callerCode(callFrame);
     unsigned offset = callFrame->bytecodeIndex().offset();
     NewObjectPlan plan = NewObjectPlan::forCreateThis(codeBlock->instructions(), offset);
     RELEASE_ASSERT(plan.properties.size() == count);
@@ -128,7 +128,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     Structure* first = object->structure();
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& ident = codeBlock->identifier(plan.properties[i].identifier);
-        PutPropertySlot slot(object, plan.properties[i].isStrict, codeBlock->putByIdContext());
+        PutPropertySlot slot(object, plan.properties[i].isStrict, putByIdContextOf(callFrame));
         if (plan.properties[i].isDefined)
             CommonSlowPaths::putDirectWithReify(vm, globalObject, object, ident, JSValue::decode(values[i]), slot);
         else
@@ -150,14 +150,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
         auto status = prepareChainForCaching(globalObject, object, uid, nullptr);
         if (!status || status->flattenedDictionary || status->usesPolyProto)
             OPERATION_RETURN(scope, object);
-        ObjectPropertyConditionSet forThis = generateConditionsForPropertySetterMiss(vm, codeBlock, globalObject, last, uid);
+        ObjectPropertyConditionSet forThis = generateConditionsForPropertySetterMiss(vm, globalObject, globalObject, last, uid);
         if (!forThis.isValid())
             OPERATION_RETURN(scope, object);
         conditions = conditions.mergedWith(forThis);
     }
-    if (!watchConditions(vm, codeBlock, cache, conditions))
+    if (!watchConditions(vm, callerData(callFrame), cache, conditions))
         OPERATION_RETURN(scope, object);
-    fillConstructionCache(vm, codeBlock, cache, constructor, first, last, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(last->inlineCapacity()), AllocatorForMode::EnsureAllocator));
+    fillConstructionCache(vm, callerData(callFrame), cache, constructor, first, last, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(last->inlineCapacity()), AllocatorForMode::EnsureAllocator));
     OPERATION_RETURN(scope, object);
 }
 
@@ -325,7 +325,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* gl
     }
     // Optimized code may take the only closure of a function for a constant. Once there have been two, nobody has to be told.
     if (executable->singleton().hasBeenInvalidated())
-        fillAllocationCache(vm, callerCodeBlock(callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), 0, executable);
+        fillAllocationCache(vm, callerData(callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), 0, executable);
     OPERATION_RETURN(scope, result);
 }
 
@@ -385,7 +385,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (JSGlo
     JSLexicalEnvironment* result = JSLexicalEnvironment::create(vm, globalObject, currentScope, symbolTable, JSValue::decode(initialValue));
     // As for functions.
     if (symbolTable->singleton().hasBeenInvalidated())
-        fillAllocationCache(vm, callerCodeBlock(callFrame), cache, result->structure(), subspaceFor<JSLexicalEnvironment>(vm)->allocatorFor(JSLexicalEnvironment::allocationSize(symbolTable), AllocatorForMode::EnsureAllocator), symbolTable->scopeSize());
+        fillAllocationCache(vm, callerData(callFrame), cache, result->structure(), subspaceFor<JSLexicalEnvironment>(vm)->allocatorFor(JSLexicalEnvironment::allocationSize(symbolTable), AllocatorForMode::EnsureAllocator), symbolTable->scopeSize());
     OPERATION_RETURN(scope, result);
 }
 
@@ -583,7 +583,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdWellKnown, EncodedJSValue, (JSGlobal
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
     JSValue result = base.get(globalObject, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    cacheGetById(globalObject, callerCodeBlock(callFrame), base, structureBefore, ident, slot, cache);
+    cacheGetById(globalObject, callerData(callFrame), base, structureBefore, ident, slot, cache);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
@@ -639,7 +639,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByIdDirect, EncodedJSValue, (JSGlobalObj
             cache->offset = *location;
             WTF::storeStoreFence();
             cache->structureID = structure->id();
-            didFillSlot(vm, callerCodeBlock(callFrame));
+            didFillSlot(vm, callerData(callFrame));
         }
     }
     OPERATION_RETURN(scope, JSValue::encode(result));
@@ -787,7 +787,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetPrivateName, EncodedJSValue, (JSGlobalOb
     object->getPrivateField(globalObject, key, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (JSValue::decode(base) == object && slot.isCacheableValue() && slot.slotBase() == object)
-        cachePrivateName(vm, callerCodeBlock(callFrame), cache, object, JSValue::decode(property), slot.cachedOffset());
+        cachePrivateName(vm, callerData(callFrame), cache, object, JSValue::decode(property), slot.cachedOffset());
     OPERATION_RETURN(scope, JSValue::encode(slot.getValue(globalObject, key)));
 }
 
@@ -809,7 +809,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutPrivateName, void, (JSGlobalObject* glob
         if (JSValue::decode(base) == object && slot.isCacheablePut() && slot.type() == PutPropertySlot::ExistingProperty && slot.base() == object && object->structure() == structureBefore) {
             // Code that has folded the field to a constant has to hear about writes that go around the runtime.
             structureBefore->didCachePropertyReplacement(vm, slot.cachedOffset());
-            cachePrivateName(vm, callerCodeBlock(callFrame), cache, object, JSValue::decode(property), slot.cachedOffset());
+            cachePrivateName(vm, callerData(callFrame), cache, object, JSValue::decode(property), slot.cachedOffset());
         }
     }
     OPERATION_RETURN(scope);
@@ -848,7 +848,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckPrivateBrand, void, (JSGlobalObject* g
     OPERATION_RETURN_IF_EXCEPTION(scope);
     // What brands an object has is a matter of its structure.
     if (JSValue::decode(base) == object)
-        cachePrivateName(vm, callerCodeBlock(callFrame), cache, object, JSValue::decode(brand), std::nullopt);
+        cachePrivateName(vm, callerData(callFrame), cache, object, JSValue::decode(brand), std::nullopt);
     OPERATION_RETURN(scope);
 }
 

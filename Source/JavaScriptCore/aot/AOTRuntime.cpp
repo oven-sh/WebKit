@@ -146,6 +146,12 @@ RuntimeTable& runtimeTable(VM& vm)
     return *vm.m_aotRuntimeTable;
 }
 
+struct Instance::Collections {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Collections);
+    Vector<Data*> all;
+    Vector<Data*> filledSinceLastCollection;
+};
+
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
 
 Instance& Instance::ensure(JSGlobalObject* globalObject)
@@ -161,12 +167,18 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->runtimeTable = AOT::runtimeTable(vm).entries();
     instance->globalObject = globalObject;
     instance->vm = &vm;
+    instance->collections = new Collections;
     globalObject->setAOTInstance(instance);
+    vm.m_aotInstances.append(instance);
     return *instance;
 }
 
 void Instance::destroy(Instance* instance)
 {
+    instance->vm->m_aotInstances.removeFirst(instance);
+    while (!instance->collections->all.isEmpty())
+        Data::destroy(instance->collections->all.last());
+    delete instance->collections;
     OSAllocator::decommitAndRelease(instance, roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*)));
 }
 
@@ -210,24 +222,81 @@ JSObject* calleeOf(const CallFrame* callFrame)
     return callFrame->registers()[CodeHeader::fromCallee(callFrame->rawCallee())->calleeSlot].object();
 }
 
-Data* Data::create(VM& vm, CodeBlock* codeBlock, unsigned numSlots, const Site* sites)
+Data* Data::create(Instance& instance, CodeBlock* codeBlock, JITCode& code)
 {
-    size_t size = sizeof(Data) + numSlots * sizeof(Slot);
-    UNUSED_PARAM(vm);
-    Data* data = static_cast<Data*>(fastZeroedMalloc(size));
+    unsigned numSlots = code.numSlots();
+    Data* data = static_cast<Data*>(fastZeroedMalloc(sizeof(Data) + numSlots * sizeof(Slot)));
     data->codeBlock = codeBlock;
+    data->instance = &instance;
+    data->unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+    code.ref();
+    data->code = &code;
     data->constants = codeBlock->constantRegisters().span().data();
-    data->identifiers = codeBlock->unlinkedCodeBlock()->identifiers().span().data();
-    data->sites = sites;
+    data->identifiers = data->unlinkedCodeBlock->identifiers().span().data();
+    data->sites = code.sites();
     data->numSlots = numSlots;
     data->slotEpoch = 1;
+
+    Data*& place = instance.data[code.header().index];
+    RELEASE_ASSERT(!place);
+    place = data;
+    instance.collections->all.append(data);
     return data;
 }
 
 void Data::destroy(Data* data)
 {
+    Instance& instance = *data->instance;
+    Data*& place = instance.data[data->code->header().index];
+    RELEASE_ASSERT(place == data);
+    place = nullptr;
+    instance.collections->all.removeFirst(data);
+    if (data->hasBeenFilledSinceLastCollection)
+        instance.collections->filledSinceLastCollection.removeFirst(data);
     delete data->watchpoints;
+    data->code->deref();
     fastFree(data);
+}
+
+void Data::noteFilled()
+{
+    hasBeenFilledSinceLastCollection = true;
+    instance->collections->filledSinceLastCollection.append(this);
+}
+
+template<typename Visitor>
+void Data::visit(Visitor& visitor)
+{
+    visitor.appendUnbarriered(unlinkedCodeBlock);
+    // Code that has cached a transition can put an object that has already been visited in the new structure.
+    for (unsigned i = 0; i < numSlots; ++i) {
+        Slot& slot = slots[i];
+        StructureID oldStructureID = slot.structureID;
+        StructureID newStructureID = slot.newStructureID;
+        if (!oldStructureID || !newStructureID || slot.unused || slot.hasPointer())
+            continue;
+        if (visitor.isMarked(oldStructureID.decode()))
+            visitor.appendUnbarriered(newStructureID.decode());
+    }
+}
+
+// What was there at the last collection and has not been filled since refers to nothing that is young.
+template<typename Visitor>
+void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
+{
+    for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
+        data->visit(visitor);
+}
+template void Instance::visit(AbstractSlotVisitor&, bool);
+template void Instance::visit(SlotVisitor&, bool);
+
+void Instance::finalizeUnconditionally(bool onlyWhatIsNew)
+{
+    for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
+        data->finalizeUnconditionally(*vm);
+    for (Data* data : collections->filledSinceLastCollection)
+        data->hasBeenFilledSinceLastCollection = false;
+    collections->filledSinceLastCollection.shrink(0);
 }
 
 void Data::finalizeUnconditionally(VM& vm)

@@ -233,6 +233,10 @@ struct Instance {
     static Instance& ensure(JSGlobalObject*);
     static void destroy(Instance*);
 
+    // For the collector. Nothing is kept alive because a slot refers to it.
+    template<typename Visitor> void visit(Visitor&, bool onlyWhatIsNew);
+    void finalizeUnconditionally(bool onlyWhatIsNew);
+
     static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
@@ -244,7 +248,8 @@ struct Instance {
     void** runtimeTable;
     JSGlobalObject* globalObject;
     VM* vm; // Where a JSWebAssemblyInstance has its own: code that finds the VM from any frame need not tell the two apart.
-    void* unused;
+    struct Collections;
+    Collections* collections; // Of what there is in data.
     Data* data[0]; // By CodeHeader::index. Null: the function has not been linked in this realm.
 };
 
@@ -262,8 +267,11 @@ JS_EXPORT_PRIVATE JSObject* calleeOf(const CallFrame*);
 struct Data {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Data);
 
-    static Data* create(VM&, CodeBlock*, unsigned numSlots, const Site*);
+    // Puts it in its place in the Instance, and takes it out.
+    static Data* create(Instance&, CodeBlock*, JITCode&);
     static void destroy(Data*);
+    void noteFilled();
+    template<typename Visitor> void visit(Visitor&);
 
     // Structures do not keep their IDs to themselves when they die.
     void finalizeUnconditionally(VM&);
@@ -275,11 +283,15 @@ struct Data {
     static constexpr ptrdiff_t offsetOfSlotEpoch() { return OBJECT_OFFSETOF(Data, slotEpoch); }
 
     CodeBlock* codeBlock; // For the time being: what the rest of the engine takes the function's frames to be running.
+    Instance* instance;
+    UnlinkedCodeBlock* unlinkedCodeBlock;
+    JITCode* code; // Has a reference.
     const void* constants; // const WriteBarrier<Unknown>*
     const void* identifiers; // const Identifier*
     const Site* sites; // One for each slot. The code's, not this CodeBlock's.
     SlotWatchpointMap* watchpoints; // For the slots whose caches rest on more than the code checks. Null until there is one.
     unsigned numSlots;
+    bool hasBeenFilledSinceLastCollection;
     // Another number whenever the cache of a property access has become one for something else, or for nothing. What code has found
     // out about such caches, and nothing but them, it need not find out again while this is the same (GuardKind::BeginSlotChecks).
     uint64_t slotEpoch;

@@ -173,9 +173,10 @@ bool Lowering::run()
         patchpoint->append(ConstrainedValue(target, ValueRep::reg(GPRInfo::regT12)));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->effects.terminal = true;
-        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, numParameters = m_graph.codeBlock()->numParameters()](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             jit.emitRestore(params.proc().calleeSaveRegisterAtOffsetList());
+            jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
             stubCalls->tailCall(jit, Stub::TailCallFinish);
         });
     }

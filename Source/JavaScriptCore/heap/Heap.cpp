@@ -22,6 +22,8 @@
 #include "config.h"
 #include "Heap.h"
 
+#include "AOTRuntime.h"
+
 #include "JSCJSValueInlines.h"
 
 #include "BaselineJITCode.h"
@@ -804,6 +806,11 @@ void Heap::reconcileWeakReferencesInMarkedCells(CellSet& cellSet, CollectionScop
 void Heap::reconcileWeakReferencesAtGCEnd()
 {
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
+
+#if ENABLE(FTL_JIT)
+    for (AOT::Instance* instance : vm().m_aotInstances)
+        instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
+#endif
 
     {
         // Executables go before CodeBlock, since CodeBlock::reconcileWeakReferencesAtGCEnd looks at the owner executable's installed CodeBlock.
@@ -3824,6 +3831,18 @@ void Heap::addCoreConstraints()
                 visitor.visitAsConstraint(cell);
         })),
         ConstraintVolatility::GreyedByExecution);
+
+#if ENABLE(FTL_JIT)
+    m_constraintSet->add(
+        "Ao", "Instances of Statically Compiled Code",
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+            bool onlyWhatIsNew = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
+            for (AOT::Instance* instance : vm().m_aotInstances)
+                instance->visit(visitor, onlyWhatIsNew);
+        })),
+        ConstraintVolatility::GreyedByMarking);
+#endif
 
     m_constraintSet->add(
         "D", "Debugger",

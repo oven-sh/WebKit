@@ -1397,7 +1397,7 @@ static void generateTailCallPrepare(CCallHelpers& jit)
 
 static void generateTailCallFinish(CCallHelpers& jit)
 {
-    jit.prepareForTailCallSlow(RegisterSet { BaselineJITRegisters::Call::calleeGPR, T12 });
+    jit.prepareForTailCallSlow(RegisterSet { BaselineJITRegisters::Call::calleeGPR, T12 }, T9);
     jit.farJump(T12, JSEntryPtrTag);
 }
 

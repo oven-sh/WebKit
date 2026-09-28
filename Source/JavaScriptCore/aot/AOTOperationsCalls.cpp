@@ -242,8 +242,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     countAttemptToLinkCall(cache);
 
-    CodeBlock* caller = callerCodeBlock(callFrame);
-    auto* code = static_cast<JITCode*>(caller->jitCode().get());
+    Data* caller = callerData(callFrame);
+    JITCode* code = caller->code;
     JSValue callee = JSValue::decode(encodedCallee);
     JSFunction* function = callee.isCell() ? dynamicDowncast<JSFunction>(callee.asCell()) : nullptr;
     if (!code->isFromImage() || !function || function->isHostFunction())
@@ -271,7 +271,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (CallFrame*
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     calleeFrame->setCodeBlock(nullptr);
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, callerCodeBlock(callFrame), BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
+    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, callerData(callFrame)->codeBlock, BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
 }
 
 } } // namespace JSC::AOT

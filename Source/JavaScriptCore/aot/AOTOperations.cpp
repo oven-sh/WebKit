@@ -175,7 +175,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
     JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    ASCIILiteral whyNotCached = cacheGetById(globalObject, callerCodeBlock(callFrame), base, structureBefore, ident, slot, cache);
+    ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(callFrame), base, structureBefore, ident, slot, cache);
     noteSlowPath("get_by_id"_s, base, ident.impl(), whyNotCached.isEmpty() ? "cached"_s : whyNotCached);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
@@ -198,7 +198,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (!isDirect)
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
-    cachePutById(globalObject, callerCodeBlock(callFrame), base, oldStructure, ident, slot, isDirect, cache);
+    cachePutById(globalObject, callerData(callFrame), base, oldStructure, ident, slot, isDirect, cache);
     OPERATION_RETURN(scope);
 }
 
@@ -329,7 +329,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
 }
 
 // For op_get_from_scope and op_put_to_scope: the variable is at `offset` in any environment that has this one's symbol table.
-static void cacheVariableOfEnvironment(VM& vm, CodeBlock* codeBlock, Slot* cache, JSLexicalEnvironment* environment, ScopeOffset offset)
+static void cacheVariableOfEnvironment(VM& vm, Data* codeBlock, Slot* cache, JSLexicalEnvironment* environment, ScopeOffset offset)
 {
     if (offset.offset() > Slot::offsetMask)
         return;
@@ -365,7 +365,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
         cache->pointer = address;
         WTF::storeStoreFence();
         cache->structureID = scopeObject->structureID();
-        didFillSlot(vm, callerCodeBlock(callFrame));
+        didFillSlot(vm, callerData(callFrame));
     };
 
     if (scopeObject->type() == ModuleEnvironmentType) {
@@ -407,7 +407,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
         auto* environment = uncheckedDowncast<JSLexicalEnvironment>(scopeObject);
         auto entry = environment->symbolTable()->get(uid);
         if (!entry.isNull()) {
-            cacheVariableOfEnvironment(vm, callerCodeBlock(callFrame), cache, environment, entry.scopeOffset());
+            cacheVariableOfEnvironment(vm, callerData(callFrame), cache, environment, entry.scopeOffset());
             OPERATION_RETURN(scope, JSValue::encode(environment->variableAt(entry.scopeOffset()).get()));
         }
     }
@@ -445,7 +445,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
                 cache->pointer = nullptr;
                 WTF::storeStoreFence();
                 cache->structureID = scopeObject->structureID();
-                didFillSlot(vm, callerCodeBlock(callFrame));
+                didFillSlot(vm, callerData(callFrame));
             }
         }
         return slot.getValue(globalObject, ident);
@@ -498,7 +498,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
             // From now on it is written to without a word to anybody.
             if (set)
                 set->invalidate(vm, StringFireDetail("Executed op_put_to_scope in code from the static compiler"));
-            cacheVariableOfEnvironment(vm, callerCodeBlock(callFrame), cache, environment, offset);
+            cacheVariableOfEnvironment(vm, callerData(callFrame), cache, environment, offset);
             OPERATION_RETURN(scope);
         }
     }
@@ -584,7 +584,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalOb
     auto string = asString(value)->value(globalObject);
     if (scope.exception()) [[unlikely]]
         return INT32_MIN; // Out of memory resolving a rope: the caller checks.
-    const UnlinkedStringJumpTable& table = callerCodeBlock(callFrame)->unlinkedStringSwitchJumpTable(tableIndex);
+    const UnlinkedStringJumpTable& table = callerCode(callFrame)->unlinkedStringSwitchJumpTable(tableIndex);
     return table.offsetForValue(string.data.impl());
 }
 
