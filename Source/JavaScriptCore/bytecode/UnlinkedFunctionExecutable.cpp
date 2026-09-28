@@ -315,7 +315,9 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         break;
     }
     // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
-    vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
+    // (The set is of those whose code may be thrown away. One of StaticHeap keeps what it gets.)
+    if (!StaticHeap::contains(this)) [[likely]]
+        vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.add(this);
     return result;
 }
 

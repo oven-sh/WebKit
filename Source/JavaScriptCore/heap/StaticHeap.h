@@ -10,6 +10,10 @@
 #include <wtf/Forward.h>
 #include <wtf/Vector.h>
 
+namespace WTF {
+class SymbolRegistry;
+}
+
 namespace JSC {
 
 class CachedBytecode;
@@ -41,6 +45,7 @@ public:
     JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules);
     static bool isBuilding() { return s_isBuilding; }
     static JSString* emptyStringWhileBuilding(VM&); // Not the VM's own.
+    static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Likewise.
     // The executable is being decoded from that record, which has some.
     static void noteParentScopeTDZVariables(const UnlinkedFunctionExecutable&, const void* record);
 
@@ -52,6 +57,9 @@ public:
     // From now on the static cells are this VM's: the first of the process, on the thread that called map().
     JS_EXPORT_PRIVATE static void install(VM&);
     static VM* vm() { return s_vm; }
+    // Of a lock that is for keeping the compiler's threads from what the mutator is changing: taking it would be writing to it, and
+    // there are no such threads.
+    static ALWAYS_INLINE bool needsNoLocking(const void* lock) { return contains(lock) && s_hasNoCompilerThreads; }
     // The table for those strings, all of them made already, if they are the ones build() was given and the VM is the one.
     JS_EXPORT_PRIVATE static std::unique_ptr<DecoderStringTable> tryCreateStringTable(VM&, std::span<const uint8_t> strings);
     // What decoding that would give, if it is a module of the payload that build() was given, and is the code for that key.
@@ -92,6 +100,7 @@ private:
 
     JS_EXPORT_PRIVATE static bool s_isBuilding;
     JS_EXPORT_PRIVATE static VM* s_vm;
+    JS_EXPORT_PRIVATE static bool s_hasNoCompilerThreads;
     static const Header* s_header; // Of what is mapped.
 };
 

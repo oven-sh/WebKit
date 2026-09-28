@@ -47,7 +47,14 @@ public:
 
     void remove(RegisteredSymbolImpl&);
 
+    // Symbols that were there before this was, are there for good, and are not this one's until they are asked for: another
+    // registry's, all static (becomeStatic()). It is only looked in. To be set before this has a symbol.
+    void setStaticRegistry(const SymbolRegistry* registry) { m_staticRegistry = registry; }
+    WTF_EXPORT_PRIVATE void becomeStatic(); // In memory that is never freed. From now on nothing of it changes.
+    unsigned size() const { return m_table.size(); }
+
 private:
+    const SymbolRegistry* m_staticRegistry { nullptr };
     UncheckedKeyHashSet<RefPtr<StringImpl>> m_table;
     Type m_symbolType;
 };

@@ -386,9 +386,8 @@ private:
 };
 
 // For StaticHeap. The code of the module whose entry the Decoder's CachedBytecode is for, and of every function in it; null if it
-// is not to be had.
-UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&);
-bool isKeyOfCodeInStaticHeap(Decoder&, const SourceCodeKey&);
+// is not to be had. And the key it is for.
+UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&, SourceCodeKey&);
 RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder&, const void* recordOfExecutable);
 
 JS_EXPORT_PRIVATE RefPtr<CachedBytecode> encodeCodeBlock(VM&, const SourceCodeKey&, const UnlinkedCodeBlock*, EncoderStringTable* = nullptr, BytecodeCacheUpdatable = BytecodeCacheUpdatable::Yes);

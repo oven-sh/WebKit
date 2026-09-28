@@ -16,6 +16,7 @@
 #include "UnlinkedFunctionExecutable.h"
 #include <wtf/BitVector.h>
 #include <wtf/text/AtomStringTable.h>
+#include <wtf/text/SymbolRegistry.h>
 
 #if OS(DARWIN)
 #include <dlfcn.h>
@@ -29,13 +30,17 @@ using Region = bmalloc::StaticRegion;
 
 bool StaticHeap::s_isBuilding = false;
 VM* StaticHeap::s_vm = nullptr;
+bool StaticHeap::s_hasNoCompilerThreads = false;
 const StaticHeap::Header* StaticHeap::s_header = nullptr;
 
 static constexpr size_t pageSizeOfImage = 16 * KB;
 
 struct StaticHeapModule {
     uint32_t entryOffset; // What they are sorted by.
-    uint32_t unused;
+    // Of the key that the code is for, all that is not the same for every module, or the text itself.
+    uint32_t keyHash;
+    uint32_t keyLength;
+    uint32_t keyFlags;
     uint64_t codeBlock;
 };
 
@@ -46,11 +51,12 @@ struct StaticHeapTDZ {
 };
 static Vector<StaticHeapTDZ>* s_tdzBeingBuilt;
 static JSString* s_emptyStringBeingBuilt;
+static SymbolRegistry* s_symbolRegistriesBeingBuilt[2];
 static size_t s_moduleBeingBuilt;
 
 // The file: this, then each arena, on a page boundary.
 struct StaticHeap::Header {
-    static constexpr uint64_t expectedMagic = 0x3230504145485442ULL; // "BTHEAP02"
+    static constexpr uint64_t expectedMagic = 0x3330504145485442ULL; // "BTHEAP03"
     static constexpr unsigned maxStructures = 32;
 
     uint64_t magic;
@@ -64,6 +70,7 @@ struct StaticHeap::Header {
     uint64_t stringsSize;
     uint64_t stringSlots;
     uint64_t atomStringTable;
+    uint64_t symbolRegistries[2]; // SymbolRegistry*: public, private.
     uint64_t payload;
     uint64_t payloadSize;
     uint64_t modules; // StaticHeapModule[]
@@ -115,6 +122,11 @@ JSString* StaticHeap::emptyStringWhileBuilding(VM& vm)
     return s_emptyStringBeingBuilt;
 }
 
+SymbolRegistry& StaticHeap::symbolRegistryWhileBuilding(bool isPrivate)
+{
+    return *s_symbolRegistriesBeingBuilt[isPrivate];
+}
+
 void StaticHeap::noteParentScopeTDZVariables(const UnlinkedFunctionExecutable& executable, const void* record)
 {
     Region::AllocationScope notInRegion(false);
@@ -138,9 +150,10 @@ public:
     {
         if (!pointer || StaticHeap::contains(pointer))
             return;
-        if (numberOfEscapes++ < 20) {
+        numberOfEscapes++;
+        if (m_reported.add(pointer).isNewEntry && m_reported.size() <= 40) {
             auto* cell = static_cast<const JSCell*>(pointer);
-            dataLogLn("StaticHeap: a ", current->classInfo()->className, " refers to ", what, " outside: ", RawPointer(pointer), !strcmp(what, "a cell") ? cell->classInfo()->className : ""_s);
+            dataLogLn("StaticHeap: a ", current->classInfo()->className, " refers to ", what, " outside: ", RawPointer(pointer), " ", !strcmp(what, "a cell") ? cell->classInfo()->className : ""_s);
         }
     }
 
@@ -167,6 +180,7 @@ public:
     void addParallelConstraintTask(RefPtr<SharedTask<void(SlotVisitor&)>>) final { }
 
 private:
+    UncheckedKeyHashSet<const void*> m_reported;
     ConcurrentPtrHashSet m_opaqueRootStorage;
 };
 
@@ -274,6 +288,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         // is that one.
         auto* atoms = new (NotNull, Region::allocate(Region::Arena::Data, sizeof(AtomStringTable), 16)) AtomStringTable;
         header.atomStringTable = std::bit_cast<uint64_t>(atoms);
+        for (bool isPrivate : { false, true }) {
+            s_symbolRegistriesBeingBuilt[isPrivate] = new (NotNull, Region::allocate(Region::Arena::Data, sizeof(SymbolRegistry), 16)) SymbolRegistry(isPrivate ? SymbolRegistry::Type::PrivateSymbol : SymbolRegistry::Type::PublicSymbol);
+            header.symbolRegistries[isPrivate] = std::bit_cast<uint64_t>(s_symbolRegistriesBeingBuilt[isPrivate]);
+        }
         AtomStringTable* usualAtoms = Thread::currentSingleton().setCurrentAtomStringTable(atoms);
         {
             Region::AllocationScope allocationScope;
@@ -309,10 +327,15 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     void* address = addressOfDecoder(i);
                     Decoder& decoder = Decoder::createForStaticHeap(address, vm, *cachedBytecode, nullptr);
                     decoder.setExternalStrings(table);
-                    UnlinkedCodeBlock* codeBlock = decodeAllForStaticHeap(decoder);
-                    if (!codeBlock)
-                        numberOfCodeBlocksFailed++;
-                    modules[i] = { sortedOffsets[i], 0, std::bit_cast<uint64_t>(codeBlock) };
+                    {
+                        SourceCodeKey key;
+                        UnlinkedCodeBlock* codeBlock = decodeAllForStaticHeap(decoder, key);
+                        if (codeBlock && (!key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1))
+                            codeBlock = nullptr;
+                        if (!codeBlock)
+                            numberOfCodeBlocksFailed++;
+                        modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock) };
+                    }
                     // (Not destroyed: it is referred to. It has one reference to what is let go of right after.)
                     decoder.forgetWhatWasDecoded();
                     cachedBytecode->deref();
@@ -334,6 +357,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         Thread::currentSingleton().setCurrentAtomStringTable(usualAtoms);
         for (auto& atom : atoms->table())
             atom->becomeStatic();
+        for (auto* registry : s_symbolRegistriesBeingBuilt)
+            registry->becomeStatic();
+        if (Options::aotReportStats()) [[unlikely]]
+            dataLogLn("StaticHeap: ", s_symbolRegistriesBeingBuilt[0]->size(), " registered symbols, ", s_symbolRegistriesBeingBuilt[1]->size(), " private ones");
     }
 
     // What the collector never looks at must not be all that keeps something alive.
@@ -454,6 +481,9 @@ void StaticHeap::install(VM& vm)
         if (expected.indexInVM >= structures.size() || !structures[expected.indexInVM] || structures[expected.indexInVM]->id().bits() != expected.id)
             return;
     }
+    s_hasNoCompilerThreads = !Options::useJIT();
+    vm.symbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[0]));
+    vm.privateSymbolRegistry().setStaticRegistry(std::bit_cast<const SymbolRegistry*>(s_header->symbolRegistries[1]));
     makeContainer(vm);
 }
 
@@ -501,6 +531,8 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
     if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock)
         return nullptr;
     auto* module = &modules[index];
+    if (key.hash() != module->keyHash || key.length() != module->keyLength || key.flagsBits() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
+        return nullptr;
 
     static NeverDestroyed<BitVector> s_hasDecoder;
     auto* decoder = static_cast<Decoder*>(addressOfDecoder(index));
@@ -511,8 +543,6 @@ UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const C
         Decoder::createForStaticHeap(decoder, vm, WTF::move(ownBytecode), &key.source().provider());
         s_hasDecoder->set(index);
     }
-    if (!isKeyOfCodeInStaticHeap(*decoder, key))
-        return nullptr;
     return std::bit_cast<UnlinkedCodeBlock*>(module->codeBlock);
 }
 

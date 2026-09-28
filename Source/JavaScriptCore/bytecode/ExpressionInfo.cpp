@@ -26,6 +26,8 @@
 #include "config.h"
 #include "ExpressionInfo.h"
 
+#include "StaticHeap.h"
+
 #include "VM.h"
 #include <numeric>
 #include <wtf/DataLog.h>
@@ -934,6 +936,10 @@ size_t ExpressionInfo::byteSizeForGCPacing() const
 
 auto ExpressionInfo::lineColumnForInstPC(InstPC instPC) -> LineColumn
 {
+    // Remembering would be writing to it.
+    if (StaticHeap::contains(this)) [[unlikely]]
+        return entryForInstPC(instPC).lineColumn;
+
     auto iter = m_cachedLineColumns.find(instPC);
     if (iter != m_cachedLineColumns.end())
         return iter->value;

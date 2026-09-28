@@ -45,6 +45,7 @@
 #include "JSModuleEnvironment.h"
 #include "PrelinkedModuleGraph.h"
 #include "StaticHeap.h"
+#include <set>
 #include "ScopedArgumentsTable.h"
 #include "SourceCodeKey.h"
 #include "StrongInlines.h"
@@ -2395,7 +2396,9 @@ public:
             VM& vm = decoder.vm();
             if (m_isRegistered) {
                 String str(buffer);
-                if (m_isPrivate)
+                if (decoder.isForStaticHeap()) [[unlikely]]
+                    symbol = static_cast<SymbolImpl*>(&StaticHeap::symbolRegistryWhileBuilding(m_isPrivate).symbolForKey(str).leakRef());
+                else if (m_isPrivate)
                     symbol = static_cast<SymbolImpl*>(&protect(vm.privateSymbolRegistry())->symbolForKey(str).leakRef());
                 else
                     symbol = static_cast<SymbolImpl*>(&protect(vm.symbolRegistry())->symbolForKey(str).leakRef());
@@ -3046,7 +3049,7 @@ public:
         // Whether it only ever has one scope is not to be found out by writing to it.
         if (decoder.isForStaticHeap()) [[unlikely]]
             symbolTable->singleton().invalidate(decoder.vm(), StringFireDetail("It is in the static heap"));
-        if (decoder.canDeferIntoPayload() && m_map.entryCount())
+        if (decoder.canDeferIntoPayload() && m_map.entryCount() && !decoder.isForStaticHeap())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
         else
 #endif
@@ -3216,7 +3219,7 @@ public:
 
     JSBigInt* decode(Decoder& decoder) const
     {
-        if (!m_length)
+        if (!m_length && !decoder.isForStaticHeap()) // (Which is to have nothing of this VM's.)
             return decoder.vm().heapBigIntConstantZero.get();
 
         JSBigInt* bigInt = JSBigInt::tryCreateWithLength(decoder.vm(), m_length);
@@ -5883,6 +5886,8 @@ struct BytecodeLinkEncoder::Impl {
                 return true;
             });
         }
+        // (What is inside a function that has code both for a call and for `new` is there twice, and is the same both times.)
+        std::set<std::tuple<uint32_t, uint32_t, uint32_t>> keys;
         for (auto& function : functionsToCompile) {
             for (bool isConstruct : { false, true }) {
                 UnlinkedFunctionCodeBlock* codeBlock = isConstruct ? function.forConstruct : function.forCall;
@@ -5892,6 +5897,8 @@ struct BytecodeLinkEncoder::Impl {
                 key.module = modules[function.module].entryOffset + 1;
                 key.start = function.key.start;
                 key.kind = static_cast<uint32_t>(function.key.kind) << 1 | isConstruct;
+                if (!keys.insert({ key.module, key.start, key.kind }).second)
+                    continue;
                 // In the order the modules are loaded in, and in a module in the order of the text.
                 jobs.append({ key, static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2 | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module });
             }
@@ -6168,13 +6175,14 @@ std::optional<SourceCodeKey> decodeSourceCodeKey(VM& vm, Ref<CachedBytecode> cac
         return std::nullopt;
     return key;
 }
-UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder)
+UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder, SourceCodeKey& key)
 {
     VM& vm = decoder.vm();
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
     if (!cachedEntry->decode(decoder, entry) || !entry.second)
         return nullptr;
+    key = entry.first;
     Vector<UnlinkedCodeBlock*> worklist { entry.second };
     while (!worklist.isEmpty()) {
         UnlinkedCodeBlock& codeBlock = *worklist.takeLast();
@@ -6196,13 +6204,6 @@ UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder& decoder)
 RefPtr<TDZEnvironmentLink> decodeParentScopeTDZVariablesForStaticHeap(Decoder& decoder, const void* record)
 {
     return static_cast<const CachedFunctionExecutable*>(record)->slotsView().tdz->decode(decoder);
-}
-
-bool isKeyOfCodeInStaticHeap(Decoder& decoder, const SourceCodeKey& key)
-{
-    auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
-    SourceCodeKey decodedKey;
-    return cachedEntry->decode(decoder, decodedKey) && decodedKey == key;
 }
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode)

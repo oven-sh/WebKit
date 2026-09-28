@@ -163,7 +163,12 @@ public:
     unsigned parameterCount() const { return m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
     SourceParseMode parseMode() const { return m_unlinkedExecutable->parseMode(); }
     JSParserScriptMode scriptMode() const { return m_unlinkedExecutable->scriptMode(); }
-    SourceCode classSource() const { return m_unlinkedExecutable->classSource(*source().provider()); }
+    SourceCode classSource() const
+    {
+        // (The source of a constructor that nobody wrote is one of the engine's own; the class is in the module's.)
+        bool isInTopLevelSource = m_unlinkedExecutable->isBuiltinDefaultClassConstructor() && m_topLevelExecutable;
+        return m_unlinkedExecutable->classSource(*(isInTopLevelSource ? m_topLevelExecutable->source() : source()).provider());
+    }
 
     DECLARE_VISIT_CHILDREN;
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
