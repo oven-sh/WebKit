@@ -292,7 +292,6 @@ class Heap;
     v(pyDictSpace, cellHeapCellType, PyDict) \
     v(pyGetSetDescriptorSpace, cellHeapCellType, PyGetSetDescriptor) \
     v(pyIteratorSpace, cellHeapCellType, PyIterator) \
-    v(pyMemoryViewSpace, cellHeapCellType, PyMemoryView) \
     v(pyNativeFunctionSpace, cellHeapCellType, PyNativeFunction) \
     v(pyNativeObjectSpace, cellHeapCellType, PyNativeObject) \
     v(pyRangeSpace, cellHeapCellType, PyRange) \

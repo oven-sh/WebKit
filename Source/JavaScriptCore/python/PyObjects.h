@@ -132,54 +132,86 @@ private:
 // is a view of can be resized or detached under it and the worst that comes of it is an error.
 class PyMemoryView final : public JSNonFinalObject {
 public:
-    PYTHON_CELL_BOILERPLATE(PyMemoryView, pyMemoryViewSpace)
+    using Base = JSNonFinalObject;
+
+    // How many there are along a dimension, and how far it is in bytes from one to the next, which can be backwards.
+    struct Dimension {
+        int64_t length;
+        int64_t stride;
+    };
+    static constexpr unsigned maxDimensionCount = 64; // PyBUF_MAX_NDIM
+
+    // All that there is to say of a view but what it is of and its dimensions.
+    struct Layout {
+        char format { 'B' }; // What an item is: one of the struct module's characters.
+        bool formatHasAtSign { false }; // It means the same with one as without, but is given back as it was given.
+        bool isReadOnly { false };
+        unsigned itemSize { 1 }; // It goes with the format, but for a view that was asked for without its format.
+        int64_t offset { 0 }; // In bytes, of the first item.
+    };
+
+    // The dimensions come after it, as the items of a tuple come after the tuple.
+    static size_t allocationSize(Checked<size_t> dimensionCount)
+    {
+        return sizeof(PyMemoryView) + dimensionCount * sizeof(Dimension);
+    }
+
+    template<typename CellType, SubspaceAccess>
+    static CompleteSubspace* subspaceFor(VM& vm)
+    {
+        return &vm.cellSpace();
+    }
+
+    PYTHON_OVERLOADS_OPERATORS
+    DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     // `exporter` is for what a class of a program's gave with __buffer__(). See Python::newBufferWrapper().
-    static PyMemoryView* create(JSGlobalObject*, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly, JSValue exporter = JSValue());
+    static PyMemoryView* create(JSGlobalObject*, JSValue object, const Layout&, std::span<const Dimension>, JSValue exporter = { });
     // Another of the same bytes, or of some of them.
-    PyMemoryView* derive(JSGlobalObject*, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly) const;
+    PyMemoryView* derive(JSGlobalObject*, const Layout&, std::span<const Dimension>) const;
 
     JSValue object() const { return m_object.get(); }
-    char format() const { return m_format; }
-    unsigned itemSize() const { return m_itemSize; }
-    int64_t offset() const { return m_offset; } // In bytes, of the first item.
-    int64_t length() const { return m_length; } // In items.
-    int64_t stride() const { return m_stride; } // In bytes, from one item to the next. It can be negative.
-    bool isReadOnly() const { return m_isReadOnly; }
+    const Layout& layout() const { return m_layout; }
+    char format() const { return m_layout.format; }
+    unsigned itemSize() const { return m_layout.itemSize; }
+    bool isReadOnly() const { return m_layout.isReadOnly; }
+    // None at all is one item, which is not in a row of anything.
+    std::span<const Dimension> dimensions() const { return { std::bit_cast<const Dimension*>(this + 1), m_dimensionCount }; }
+    int64_t byteLength() const { return m_byteLength; } // Of all the items, and not of what is between them.
     JSValue exporter() const { return m_exporter.get(); }
     bool isReleased() const { return !m_object; }
     // It can run __release_buffer__().
     void release(JSGlobalObject*);
-    bool isContiguous() const { return m_stride == static_cast<int64_t>(m_itemSize) || m_length <= 1; }
 
-    // All of it, if its items are one after another and are still there.
-    std::optional<std::span<const uint8_t>> contiguousSpan() const;
-    // The bytes of one item. Empty if it is no longer there.
-    std::span<uint8_t> item(int64_t index) const;
+    // Whether the items are one after another with nothing between: with the last dimension going round fastest, as C has arrays, or with the first, as Fortran has them.
+    bool isCContiguous() const { return m_isCContiguous; }
+    bool isFortranContiguous() const { return m_isFortranContiguous; }
+
+    // All of it as it lies, for a view that is contiguous one way or the other. Empty if it is no longer all there, and nothing if it has been released.
+    std::optional<std::span<const uint8_t>> span() const;
+    // The bytes of the item that is that many bytes on from the first. Empty if it is no longer there.
+    std::span<uint8_t> itemAt(int64_t distance) const;
+
+    // Once worked out it is kept, and is still to be had when the view has been released.
+    std::optional<int64_t> hash() const { return m_hash; }
+    void setHash(int64_t hash) { m_hash = hash; }
 
 private:
-    PyMemoryView(VM& vm, Structure* structure, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly, JSValue exporter)
-        : Base(vm, structure)
-        , m_object(object, WriteBarrierEarlyInit)
-        , m_exporter(exporter, WriteBarrierEarlyInit)
-        , m_offset(offset)
-        , m_length(length)
-        , m_stride(stride)
-        , m_itemSize(itemSize)
-        , m_format(format)
-        , m_isReadOnly(isReadOnly)
-    {
-    }
+    PyMemoryView(VM&, Structure*, JSValue object, const Layout&, std::span<const Dimension>, JSValue exporter);
 
     WriteBarrier<Unknown> m_object;
     WriteBarrier<Unknown> m_exporter;
-    int64_t m_offset;
-    int64_t m_length;
-    int64_t m_stride;
-    unsigned m_itemSize;
-    char m_format;
-    bool m_isReadOnly;
+    Layout m_layout;
+    int64_t m_byteLength;
+    std::optional<int64_t> m_hash;
+    unsigned m_dimensionCount;
+    bool m_isCContiguous;
+    bool m_isFortranContiguous;
 };
+
+static_assert(!(sizeof(PyMemoryView) % alignof(PyMemoryView::Dimension)), "the dimensions come straight after it");
 
 class PySlice final : public JSNonFinalObject {
 public:

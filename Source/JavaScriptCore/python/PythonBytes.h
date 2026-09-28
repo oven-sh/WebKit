@@ -55,7 +55,12 @@ std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue);
 enum BufferFlags : int {
     SimpleBuffer = 0,
     WritableBuffer = 1,
+    FormatBuffer = 4,
+    ShapedBuffer = 8,
     StridedBuffer = 0x18, // It need not be one after another.
+    CContiguousBuffer = 0x38,
+    FortranContiguousBuffer = 0x58,
+    AnyContiguousBuffer = 0x98,
     FullReadOnlyBuffer = 0x11C,
 };
 

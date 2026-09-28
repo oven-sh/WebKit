@@ -104,7 +104,7 @@ std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue value)
     if (auto* buffer = dynamicDowncast<JSArrayBuffer>(cell))
         return std::span<const uint8_t>(buffer->impl()->span());
     if (auto* memory = dynamicDowncast<PyMemoryView>(cell))
-        return memory->contiguousSpan();
+        return memory->isCContiguous() ? memory->span() : std::nullopt;
     return std::nullopt;
 }
 
@@ -126,6 +126,7 @@ bool hasBuffer(JSGlobalObject* globalObject, JSValue value)
 }
 
 static PyMemoryView* memoryViewOf(JSGlobalObject*, JSValue, int flags);
+static ByteVector bytesOfMemory(PyMemoryView*, char order = 'C');
 
 Buffer tryBufferOf(JSGlobalObject* globalObject, JSValue value, int flags)
 {
@@ -150,7 +151,7 @@ Buffer tryBufferOf(JSGlobalObject* globalObject, JSValue value, int flags)
             raise(globalObject, scope, BuiltinType::BufferError, "memoryview: underlying buffer is not writable"_s);
             return { };
         }
-        if (!memory->isContiguous() && (flags & StridedBuffer) != StridedBuffer) {
+        if (!memory->isCContiguous() && (flags & StridedBuffer) != StridedBuffer) {
             raise(globalObject, scope, BuiltinType::BufferError, "memoryview: underlying buffer is not C-contiguous"_s);
             return { };
         }
@@ -209,12 +210,11 @@ JSValue Buffer::object() const
 void Buffer::appendTo(ByteVector& result) const
 {
     auto* memory = dynamicDowncast<PyMemoryView>(m_object);
-    if (!memory || memory->isContiguous()) {
+    if (!memory || memory->isCContiguous()) {
         result.append(span());
         return;
     }
-    for (int64_t i = 0; i < memory->length(); ++i)
-        result.append(memory->item(i));
+    result.appendVector(bytesOfMemory(memory));
 }
 
 Buffer bufferOf(JSGlobalObject* globalObject, JSValue value)
@@ -1844,10 +1844,40 @@ namespace BufferWrapperField {
 enum Field : unsigned { View, Object, Count };
 }
 
-PyMemoryView* PyMemoryView::create(JSGlobalObject* globalObject, JSValue object, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly, JSValue exporter)
+// init_flags() of CPython's Objects/memoryobject.c, with _IsCContiguous() and _IsFortranContiguous() of its Objects/abstract.c
+PyMemoryView::PyMemoryView(VM& vm, Structure* structure, JSValue object, const Layout& layout, std::span<const Dimension> dimensions, JSValue exporter)
+    : Base(vm, structure)
+    , m_object(object, WriteBarrierEarlyInit)
+    , m_exporter(exporter, WriteBarrierEarlyInit)
+    , m_layout(layout)
+    , m_byteLength(layout.itemSize)
+    , m_dimensionCount(dimensions.size())
+{
+    std::ranges::copy(dimensions, std::bit_cast<Dimension*>(this + 1));
+    for (auto& dimension : dimensions)
+        m_byteLength *= dimension.length;
+
+    if (dimensions.size() == 1) {
+        m_isCContiguous = m_isFortranContiguous = dimensions[0].length == 1 || dimensions[0].stride == static_cast<int64_t>(layout.itemSize);
+        return;
+    }
+    auto isContiguous = [&] (auto&& inOrder) {
+        int64_t expected = layout.itemSize;
+        for (auto& dimension : inOrder) {
+            if (dimension.length > 1 && dimension.stride != expected)
+                return false;
+            expected *= dimension.length;
+        }
+        return true;
+    };
+    m_isCContiguous = !m_byteLength || isContiguous(dimensions | std::views::reverse);
+    m_isFortranContiguous = !m_byteLength || isContiguous(dimensions);
+}
+
+PyMemoryView* PyMemoryView::create(JSGlobalObject* globalObject, JSValue object, const Layout& layout, std::span<const Dimension> dimensions, JSValue exporter)
 {
     VM& vm = globalObject->vm();
-    auto* view = new (NotNull, allocateCell<PyMemoryView>(vm)) PyMemoryView(vm, globalObject->pyRealm()->structureFor(BuiltinType::MemoryView), object, format, itemSize, offset, length, stride, isReadOnly, exporter);
+    auto* view = new (NotNull, allocateCell<PyMemoryView>(vm, allocationSize(dimensions.size()))) PyMemoryView(vm, globalObject->pyRealm()->structureFor(BuiltinType::MemoryView), object, layout, dimensions, exporter);
     view->finishCreation(vm);
     if (exporter) {
         auto* wrapper = uncheckedDowncast<PyNativeObject>(exporter.asCell());
@@ -1856,9 +1886,9 @@ PyMemoryView* PyMemoryView::create(JSGlobalObject* globalObject, JSValue object,
     return view;
 }
 
-PyMemoryView* PyMemoryView::derive(JSGlobalObject* globalObject, char format, unsigned itemSize, int64_t offset, int64_t length, int64_t stride, bool isReadOnly) const
+PyMemoryView* PyMemoryView::derive(JSGlobalObject* globalObject, const Layout& layout, std::span<const Dimension> dimensions) const
 {
-    return create(globalObject, m_object.get(), format, itemSize, offset, length, stride, isReadOnly, m_exporter.get());
+    return create(globalObject, m_object.get(), layout, dimensions, m_exporter.get());
 }
 
 void PyMemoryView::release(JSGlobalObject* globalObject)
@@ -1878,27 +1908,28 @@ void PyMemoryView::release(JSGlobalObject* globalObject)
         Python::releaseBufferOfProgram(globalObject, wrapper->field(BufferWrapperField::Object), wrapper->field(BufferWrapperField::View));
 }
 
-std::optional<std::span<const uint8_t>> PyMemoryView::contiguousSpan() const
+std::optional<std::span<const uint8_t>> PyMemoryView::span() const
 {
-    if (isReleased() || !isContiguous())
+    ASSERT(m_isCContiguous || m_isFortranContiguous);
+    if (isReleased())
         return std::nullopt;
     auto whole = Python::builtinBufferOf(m_object.get());
-    size_t size = static_cast<size_t>(m_length) * m_itemSize;
-    if (!whole || static_cast<size_t>(m_offset) + size > whole->size())
+    size_t size = m_byteLength;
+    if (!whole || static_cast<size_t>(m_layout.offset) + size > whole->size())
         return std::span<const uint8_t>();
-    return whole->subspan(m_offset, size);
+    return whole->subspan(m_layout.offset, size);
 }
 
-std::span<uint8_t> PyMemoryView::item(int64_t index) const
+std::span<uint8_t> PyMemoryView::itemAt(int64_t distance) const
 {
     if (isReleased())
         return { };
     auto whole = Python::builtinBufferOf(m_object.get());
-    int64_t at = m_offset + index * m_stride;
-    if (!whole || at < 0 || static_cast<size_t>(at) + m_itemSize > whole->size())
+    int64_t at = m_layout.offset + distance;
+    if (!whole || at < 0 || static_cast<size_t>(at) + m_layout.itemSize > whole->size())
         return { };
     // Whether it may be written to is for whoever asks to have checked.
-    return { const_cast<uint8_t*>(whole->data()) + at, m_itemSize };
+    return { const_cast<uint8_t*>(whole->data()) + at, m_layout.itemSize };
 }
 
 namespace Python {
@@ -2093,17 +2124,70 @@ static bool packItem(JSGlobalObject* globalObject, char format, std::span<uint8_
     }
 }
 
-// All that it is a view of, in order, whether or not it skips any.
-static ByteVector bytesOfMemory(PyMemoryView* memory)
+using Dimension = PyMemoryView::Dimension;
+using Dimensions = Vector<Dimension, 4>;
+
+// Every item, by how many bytes on it is from the first: with the last dimension going round fastest, or with the first. `others` are the dimensions of another view of the same shape, which is gone
+// through alongside. It stops when the function returns false.
+template<typename Function>
+static void forEachItem(std::span<const Dimension> dimensions, std::span<const Dimension> others, bool isFortranOrder, const Function& function)
+{
+    for (auto& dimension : dimensions) {
+        if (!dimension.length)
+            return;
+    }
+    size_t count = dimensions.size();
+    Vector<int64_t, 4> indices(FillWith { }, count, 0);
+    int64_t distance = 0;
+    int64_t otherDistance = 0;
+    while (function(distance, otherDistance)) {
+        size_t wentRound = 0;
+        for (; wentRound < count; ++wentRound) {
+            size_t which = isFortranOrder ? wentRound : count - 1 - wentRound;
+            if (++indices[which] < dimensions[which].length) {
+                distance += dimensions[which].stride;
+                otherDistance += others[which].stride;
+                break;
+            }
+            indices[which] = 0;
+            distance -= dimensions[which].stride * (dimensions[which].length - 1);
+            otherDistance -= others[which].stride * (dimensions[which].length - 1);
+        }
+        if (wentRound == count)
+            return;
+    }
+}
+
+// PyBuffer_ToContiguous(): all the items, one after another. The order is 'C', 'F', or 'A' for as they lie if they lie one after another either way.
+static ByteVector bytesOfMemory(PyMemoryView* memory, char order)
 {
     ByteVector result;
-    if (auto span = memory->contiguousSpan()) {
-        result.append(*span);
+    if (order == 'C' ? memory->isCContiguous() : order == 'F' ? memory->isFortranContiguous() : memory->isCContiguous() || memory->isFortranContiguous()) {
+        if (auto span = memory->span())
+            result.append(*span);
         return result;
     }
-    for (int64_t i = 0; i < memory->length(); ++i)
-        result.append(memory->item(i));
+    forEachItem(memory->dimensions(), memory->dimensions(), order == 'F', [&] (int64_t distance, int64_t) {
+        result.append(memory->itemAt(distance));
+        return true;
+    });
     return result;
+}
+
+// One row of that many items, one after another.
+static Dimensions oneDimension(int64_t length, unsigned itemSize)
+{
+    return { Dimension { length, static_cast<int64_t>(itemSize) } };
+}
+
+// init_strides_from_shape(): how far apart the items are if they are one after another, as C has arrays.
+static void setStridesFromLengths(Dimensions& dimensions, unsigned itemSize)
+{
+    int64_t stride = itemSize;
+    for (auto& dimension : dimensions | std::views::reverse) {
+        dimension.stride = stride;
+        stride *= dimension.length;
+    }
 }
 
 // memoryview(object): PyMemoryView_FromObjectAndFlags() of CPython's Objects/memoryobject.c. Null if it raised.
@@ -2128,14 +2212,14 @@ static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, 
             return nullptr;
         }
         JSValue wrapper = PyNativeObject::create(globalObject, BuiltinType::BufferWrapper, inner, object, jsNumber(0));
-        return PyMemoryView::create(globalObject, inner->object(), inner->format(), inner->itemSize(), inner->offset(), inner->length(), inner->stride(), inner->isReadOnly(), wrapper);
+        return PyMemoryView::create(globalObject, inner->object(), inner->layout(), inner->dimensions(), wrapper);
     }
     if (auto* other = dynamicDowncast<PyMemoryView>(object)) {
         if (other->isReleased()) {
             raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
             return nullptr;
         }
-        return other->derive(globalObject, other->format(), other->itemSize(), other->offset(), other->length(), other->stride(), other->isReadOnly());
+        return other->derive(globalObject, other->layout(), other->dimensions());
     }
     auto buffer = builtinBufferOf(object);
     if (!buffer) {
@@ -2146,11 +2230,12 @@ static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, 
         raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s);
         return nullptr;
     }
-    char format = 'B';
+    PyMemoryView::Layout layout;
     if (auto* view = dynamicDowncast<JSArrayBufferView>(object))
-        format = formatOf(typedArrayType(view->type()));
-    unsigned itemSize = itemSizeOf(format);
-    return PyMemoryView::create(globalObject, object, format, itemSize, 0, buffer->size() / itemSize, itemSize, isBytes(object));
+        layout.format = formatOf(typedArrayType(view->type()));
+    layout.itemSize = itemSizeOf(layout.format);
+    layout.isReadOnly = isBytes(object);
+    return PyMemoryView::create(globalObject, object, layout, oneDimension(buffer->size() / layout.itemSize, layout.itemSize));
 }
 
 PYTHON_NATIVE(memoryNew)
@@ -2163,12 +2248,8 @@ static std::optional<int> bufferFlagsFrom(JSGlobalObject* globalObject, JSValue 
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto flags = toIndex(globalObject, value);
-    if (scope.exception()) {
-        if (catchException(globalObject, BuiltinType::IndexError))
-            raise(globalObject, scope, BuiltinType::OverflowError, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
-        return std::nullopt;
-    }
+    auto flags = toIndexOrOverflow(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (*flags > std::numeric_limits<int>::max() || *flags < std::numeric_limits<int>::min()) {
         raise(globalObject, scope, BuiltinType::OverflowError, "buffer flags out of range"_s);
         return std::nullopt;
@@ -2185,15 +2266,38 @@ PYTHON_NATIVE(builtinGetBuffer)
     // Not what a class derived from it may have put in the way.
     JSValue self = args[0];
     if (auto* memory = dynamicDowncast<PyMemoryView>(self)) {
+        // memory_getbuf(): what is asked for says how much whoever asks is ready to be told, and what cannot be told in that much cannot be had.
         if (memory->isReleased())
             return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
-        if ((*flags & WritableBuffer) && memory->isReadOnly())
-            return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, "memoryview: underlying buffer is not writable"_s));
-        return JSValue::encode(memory->derive(globalObject, memory->format(), memory->itemSize(), memory->offset(), memory->length(), memory->stride(), memory->isReadOnly()));
+        auto wants = [&] (int wanted) { return (*flags & wanted) == wanted; };
+        auto refuse = [&] (ASCIILiteral why) { return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, why)); };
+        if (wants(WritableBuffer) && memory->isReadOnly())
+            return refuse("memoryview: underlying buffer is not writable"_s);
+        if (wants(CContiguousBuffer) && !memory->isCContiguous())
+            return refuse("memoryview: underlying buffer is not C-contiguous"_s);
+        if (wants(FortranContiguousBuffer) && !memory->isFortranContiguous())
+            return refuse("memoryview: underlying buffer is not Fortran contiguous"_s);
+        if (wants(AnyContiguousBuffer) && !memory->isCContiguous() && !memory->isFortranContiguous())
+            return refuse("memoryview: underlying buffer is not contiguous"_s);
+        if (!wants(StridedBuffer) && !memory->isCContiguous())
+            return refuse("memoryview: underlying buffer is not C-contiguous"_s);
+        auto layout = memory->layout();
+        // Without its format it is taken for bytes, though they are as far apart as they were.
+        if (!wants(FormatBuffer)) {
+            layout.format = 'B';
+            layout.formatHasAtSign = false;
+        }
+        if (wants(ShapedBuffer))
+            return JSValue::encode(memory->derive(globalObject, layout, memory->dimensions()));
+        if (wants(FormatBuffer))
+            return refuse("memoryview: cannot cast to unsigned bytes if the format flag is present"_s);
+        return JSValue::encode(memory->derive(globalObject, layout, oneDimension(memory->byteLength() / layout.itemSize, layout.itemSize)));
     }
     if ((*flags & WritableBuffer) && isBytes(self))
         return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s));
-    return JSValue::encode(PyMemoryView::create(globalObject, self, 'B', 1, 0, builtinBufferOf(self)->size(), 1, isBytes(self)));
+    PyMemoryView::Layout layout;
+    layout.isReadOnly = isBytes(self);
+    return JSValue::encode(PyMemoryView::create(globalObject, self, layout, oneDimension(builtinBufferOf(self)->size(), 1)));
 }
 
 // bytearray.__release_buffer__(view), and the same of a memoryview
@@ -2252,9 +2356,7 @@ PYTHON_NATIVE(memoryIndex)
     int64_t bounds[2] = { 0, std::numeric_limits<int64_t>::max() };
     for (unsigned i = 0; i < 2; ++i) {
         if (JSValue given = args.at(i + 2)) {
-            if (!typeOf(globalObject, given)->lookup(vm, names.dunder_index))
-                return JSValue::encode(raiseTypeError(globalObject, scope, "slice indices must be integers or have an __index__ method"_s));
-            auto index = toIndex(globalObject, given, true);
+            auto index = toSliceIndex(globalObject, given, false);
             RETURN_IF_EXCEPTION(scope, { });
             bounds[i] = *index;
         }
@@ -2262,7 +2364,11 @@ PYTHON_NATIVE(memoryIndex)
     PyMemoryView* self = asMemory(args[0]);
     if (self->isReleased())
         return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
-    int64_t size = self->length();
+    if (self->dimensions().empty())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "invalid lookup on 0-dim memory"_s));
+    if (self->dimensions().size() > 1)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "multi-dimensional lookup is not implemented"_s));
+    int64_t size = self->dimensions()[0].length;
     auto [start, stop] = bounds;
     if (start < 0)
         start = std::max<int64_t>(start + size, 0);
@@ -2284,29 +2390,154 @@ PYTHON_NATIVE(memoryIndex)
 PYTHON_NATIVE(memoryLen)
 {
     MEMORY_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, self->length())));
+    if (self->dimensions().empty())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "0-dim memory has no length"_s));
+    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, self->dimensions()[0].length)));
 }
 
+// _PyIndex_Check()
+static bool isIndex(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    return classify(value).isInt() || typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_index);
+}
+
+// is_multiindex() and is_multislice(): a tuple of nothing but the one or the other. A tuple of nothing at all is of indices.
+static bool isTupleOfIndices(JSGlobalObject* globalObject, JSValue key)
+{
+    if (!isTuple(key))
+        return false;
+    for (auto& item : asTuple(key)->span()) {
+        if (!isIndex(globalObject, item.get()))
+            return false;
+    }
+    return true;
+}
+
+static bool isTupleOfSlices(JSValue key)
+{
+    if (!isTuple(key) || !asTuple(key)->length())
+        return false;
+    for (auto& item : asTuple(key)->span()) {
+        if (!trySlice(item.get()))
+            return false;
+    }
+    return true;
+}
+
+// lookup_dimension(): how many bytes on along one dimension. Nothing if it raised.
+static std::optional<int64_t> distanceAlong(JSGlobalObject* globalObject, PyMemoryView* self, unsigned which, int64_t index)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& dimension = self->dimensions()[which];
+    if (index < 0)
+        index += dimension.length;
+    if (index < 0 || index >= dimension.length) {
+        raise(globalObject, scope, BuiltinType::IndexError, makeString("index out of bounds on dimension "_s, which + 1));
+        return std::nullopt;
+    }
+    return dimension.stride * index;
+}
+
+// ptr_from_tuple(): how many bytes on the item is that has an index for each dimension. Nothing if it raised.
+static std::optional<int64_t> distanceOf(JSGlobalObject* globalObject, PyMemoryView* self, PyTuple* indices)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (indices->length() > self->dimensions().size()) {
+        raiseTypeError(globalObject, scope, makeString("cannot index "_s, self->dimensions().size(), "-dimension view with "_s, indices->length(), "-element tuple"_s));
+        return std::nullopt;
+    }
+    int64_t distance = 0;
+    for (unsigned which = 0; which < indices->length(); ++which) {
+        auto index = toIndex(globalObject, indices->at(which));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        auto along = distanceAlong(globalObject, self, which, *index);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        distance += *along;
+    }
+    return distance;
+}
+
+// unpack_single()
+static JSValue unpackAt(JSGlobalObject* globalObject, PyMemoryView* self, int64_t distance)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // Working out where it is can run anything.
+    if (self->isReleased())
+        return raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
+    auto bytes = self->itemAt(distance);
+    if (bytes.empty())
+        return raise(globalObject, scope, BuiltinType::IndexError, "index out of bounds on dimension 1"_s);
+    RELEASE_AND_RETURN(scope, unpackItem(globalObject, self->format(), bytes));
+}
+
+// pack_single()
+static void packAt(JSGlobalObject* globalObject, PyMemoryView* self, int64_t distance, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // What is to be written is worked out first, since working it out can run anything, and where it goes is looked up after that.
+    std::array<uint8_t, 8> packed;
+    packItem(globalObject, self->format(), std::span(packed).first(itemSizeOf(self->format())), value);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (self->isReleased()) {
+        raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
+        return;
+    }
+    auto bytes = self->itemAt(distance);
+    if (bytes.empty()) {
+        raise(globalObject, scope, BuiltinType::IndexError, "index out of bounds on dimension 1"_s);
+        return;
+    }
+    memcpy(bytes.data(), packed.data(), itemSizeOf(self->format()));
+}
+
+// memory_subscript()
 PYTHON_NATIVE(memoryGetItem)
 {
     MEMORY_PROLOGUE();
     JSValue key = args.at(1);
-    if (auto* slice = trySlice(key)) {
-        auto indices = slice->indices(globalObject, [&] { return self->length(); });
-        RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(self->derive(globalObject, self->format(), self->itemSize(), self->offset() + indices->start * self->stride(), indices->length, self->stride() * indices->step, self->isReadOnly()));
+    auto dimensions = self->dimensions();
+    if (dimensions.empty()) {
+        if (isTuple(key) && !asTuple(key)->length())
+            RELEASE_AND_RETURN(scope, JSValue::encode(unpackAt(globalObject, self, 0)));
+        if (key == realm->ellipsis())
+            return JSValue::encode(self);
+        return JSValue::encode(raiseTypeError(globalObject, scope, "invalid indexing of 0-dim memory"_s));
     }
-    if (!classify(key).isInt() && !typeOf(globalObject, key)->lookup(vm, names.dunder_index))
-        return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: invalid slice key"_s));
-    auto index = toIndex(globalObject, key);
-    RETURN_IF_EXCEPTION(scope, { });
-    int64_t at = *index < 0 ? *index + self->length() : *index;
-    auto bytes = at < 0 || at >= self->length() ? std::span<uint8_t>() : self->item(at);
-    if (bytes.empty())
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "index out of bounds on dimension 1"_s));
-    RELEASE_AND_RETURN(scope, JSValue::encode(unpackItem(globalObject, self->format(), bytes)));
+    if (isIndex(globalObject, key)) {
+        auto index = toIndex(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (self->isReleased())
+            return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
+        if (dimensions.size() > 1)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "multi-dimensional sub-views are not implemented"_s));
+        auto distance = distanceAlong(globalObject, self, 0, *index);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, JSValue::encode(unpackAt(globalObject, self, *distance)));
+    }
+    if (auto* slice = trySlice(key)) {
+        // Of the first dimension, however many there are.
+        auto indices = slice->indices(globalObject, [&] { return dimensions[0].length; });
+        RETURN_IF_EXCEPTION(scope, { });
+        Dimensions sliced { dimensions };
+        auto layout = self->layout();
+        layout.offset += indices->start * sliced[0].stride;
+        sliced[0] = { indices->length, sliced[0].stride * indices->step };
+        return JSValue::encode(self->derive(globalObject, layout, sliced));
+    }
+    if (isTupleOfIndices(globalObject, key)) {
+        if (asTuple(key)->length() < dimensions.size())
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "sub-views are not implemented"_s));
+        auto distance = distanceOf(globalObject, self, asTuple(key));
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, JSValue::encode(unpackAt(globalObject, self, *distance)));
+    }
+    if (isTupleOfSlices(key))
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "multi-dimensional slicing is not implemented"_s));
+    return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: invalid slice key"_s));
 }
 
+// memory_ass_sub()
 PYTHON_NATIVE(memorySetItem)
 {
     MEMORY_PROLOGUE();
@@ -2316,68 +2547,122 @@ PYTHON_NATIVE(memorySetItem)
     JSValue value = args.at(2);
     if (!value)
         return JSValue::encode(raiseTypeError(globalObject, scope, "cannot delete memory"_s));
-    if (auto* slice = trySlice(key)) {
-        auto indices = slice->indices(globalObject, [&] { return self->length(); });
+    auto dimensions = self->dimensions();
+    if (dimensions.empty()) {
+        if (key != realm->ellipsis() && !(isTuple(key) && !asTuple(key)->length()))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "invalid indexing of 0-dim memory"_s));
+        packAt(globalObject, self, 0, value);
         RETURN_IF_EXCEPTION(scope, { });
+        RETURN_NONE();
+    }
+    if (isIndex(globalObject, key)) {
+        if (dimensions.size() > 1)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "sub-views are not implemented"_s));
+        auto index = toIndex(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, { });
+        auto distance = distanceAlong(globalObject, self, 0, *index);
+        RETURN_IF_EXCEPTION(scope, { });
+        packAt(globalObject, self, *distance, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_NONE();
+    }
+    auto* slice = trySlice(key);
+    if (slice && dimensions.size() == 1) {
+        // What is put there has to have bytes to show, and they are got at before the slice is asked what it says.
         ByteVector source;
-        unsigned sourceItemSize = 1;
-        char sourceFormat = 'B';
+        PyMemoryView::Layout sourceLayout;
+        std::optional<int64_t> sourceLength;
         if (auto* other = dynamicDowncast<PyMemoryView>(value)) {
+            if (other->isReleased())
+                return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
             source = bytesOfMemory(other);
-            sourceItemSize = other->itemSize();
-            sourceFormat = other->format();
+            sourceLayout = other->layout();
+            if (other->dimensions().size() == 1)
+                sourceLength = other->dimensions()[0].length;
         } else {
             auto buffer = bufferOf(globalObject, value);
             RETURN_IF_EXCEPTION(scope, { });
             source.append(*buffer);
+            sourceLength = source.size();
         }
-        if (sourceFormat != self->format() || sourceItemSize != self->itemSize() || static_cast<int64_t>(source.size() / sourceItemSize) != indices->length)
+        auto indices = slice->indices(globalObject, [&] { return dimensions[0].length; });
+        RETURN_IF_EXCEPTION(scope, { });
+        // equiv_structure()
+        if (sourceLayout.format != self->format() || sourceLayout.itemSize != self->itemSize() || sourceLength != indices->length)
             return JSValue::encode(raiseValueError(globalObject, scope, "memoryview assignment: lvalue and rvalue have different structures"_s));
         for (int64_t i = 0; i < indices->length; ++i) {
-            auto target = self->item(indices->start + i * indices->step);
+            auto target = self->itemAt((indices->start + i * indices->step) * dimensions[0].stride);
             if (!target.empty())
-                memcpy(target.data(), source.span().data() + i * sourceItemSize, sourceItemSize);
+                memcpy(target.data(), source.span().data() + i * self->itemSize(), self->itemSize());
         }
         RETURN_NONE();
     }
-    if (!classify(key).isInt() && !typeOf(globalObject, key)->lookup(vm, names.dunder_index))
-        return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: invalid slice key"_s));
-    auto index = toIndex(globalObject, key);
-    RETURN_IF_EXCEPTION(scope, { });
-    int64_t at = *index < 0 ? *index + self->length() : *index;
-    if (at < 0 || at >= self->length())
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "index out of bounds on dimension 1"_s));
-    // What is to be written is worked out first, since working it out can run anything, and where it goes is looked up after that.
-    std::array<uint8_t, 8> packed;
-    packItem(globalObject, self->format(), std::span(packed).first(self->itemSize()), value);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (self->isReleased())
-        return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
-    auto bytes = self->item(at);
-    if (bytes.empty())
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "index out of bounds on dimension 1"_s));
-    memcpy(bytes.data(), packed.data(), bytes.size());
-    RETURN_NONE();
+    if (isTupleOfIndices(globalObject, key)) {
+        if (asTuple(key)->length() < dimensions.size())
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "sub-views are not implemented"_s));
+        auto distance = distanceOf(globalObject, self, asTuple(key));
+        RETURN_IF_EXCEPTION(scope, { });
+        packAt(globalObject, self, *distance, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_NONE();
+    }
+    if (slice || isTupleOfSlices(key))
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "memoryview slice assignments are currently restricted to ndim = 1"_s));
+    return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: invalid slice key"_s));
 }
 
+// tobytes(order='C')
 PYTHON_NATIVE(memoryToBytes)
 {
-    MEMORY_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, bytesOfMemory(self).span())));
+    NATIVE_PROLOGUE();
+    // What was given is looked at before it is asked whether the view has been released.
+    char order = 'C';
+    String orderText;
+    if (JSValue given = args.at(1); given && !isNone(given)) {
+        JSString* string = stringIn(given);
+        if (!string)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("tobytes() argument 'order' must be str or None, not "_s, typeName(globalObject, given))));
+        orderText = string->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (orderText.contains('\0'))
+            return JSValue::encode(raiseValueError(globalObject, scope, "embedded null character"_s));
+    }
+    PyMemoryView* self = asMemory(args.at(0));
+    if (self->isReleased())
+        return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
+    if (!orderText.isNull()) {
+        if (orderText != "C"_s && orderText != "F"_s && orderText != "A"_s)
+            return JSValue::encode(raiseValueError(globalObject, scope, "order must be 'C', 'F' or 'A'"_s));
+        order = static_cast<char>(orderText[0]);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, bytesOfMemory(self, order).span())));
+}
+
+// tolist_rec(): a list for each dimension, one within another
+static JSValue listOfMemory(JSGlobalObject* globalObject, PyMemoryView* self, std::span<const Dimension> dimensions, int64_t distance)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    MarkedArgumentBuffer items;
+    for (int64_t i = 0; i < dimensions[0].length; ++i, distance += dimensions[0].stride) {
+        if (dimensions.size() > 1)
+            items.append(listOfMemory(globalObject, self, dimensions.subspan(1), distance));
+        else {
+            auto bytes = self->itemAt(distance);
+            if (bytes.empty())
+                break;
+            items.append(unpackItem(globalObject, self->format(), bytes));
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, newList(globalObject, items));
 }
 
 PYTHON_NATIVE(memoryToList)
 {
     MEMORY_PROLOGUE();
-    MarkedArgumentBuffer items;
-    for (int64_t i = 0; i < self->length(); ++i) {
-        auto bytes = self->item(i);
-        if (bytes.empty())
-            break;
-        items.append(unpackItem(globalObject, self->format(), bytes));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, items)));
+    if (self->dimensions().empty())
+        RELEASE_AND_RETURN(scope, JSValue::encode(unpackAt(globalObject, self, 0)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(listOfMemory(globalObject, self, self->dimensions(), 0)));
 }
 
 PYTHON_NATIVE(memoryHex)
@@ -2405,32 +2690,77 @@ PYTHON_NATIVE(memoryEnter)
 PYTHON_NATIVE(memoryToReadOnly)
 {
     MEMORY_PROLOGUE();
-    return JSValue::encode(self->derive(globalObject, self->format(), self->itemSize(), self->offset(), self->length(), self->stride(), true));
+    auto layout = self->layout();
+    layout.isReadOnly = true;
+    return JSValue::encode(self->derive(globalObject, layout, self->dimensions()));
 }
 
-// cast(format): the same bytes, taken as items of another kind. One of the two kinds has to be bytes.
+// cast(format, shape=<none>): the same bytes, taken as items of another kind, or laid out in another shape. One of the two kinds has to be bytes, and one of the two shapes a single row.
 PYTHON_NATIVE(memoryCast)
 {
-    MEMORY_PROLOGUE();
+    NATIVE_PROLOGUE();
     JSValue formatValue = args.at(1);
-    if (!formatValue || !formatValue.isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, "cast() argument 'format' must be str"_s));
-    String text = asString(formatValue)->value(globalObject);
-    if (text.startsWith('@'))
-        text = text.substring(1);
-    unsigned itemSize = text.length() == 1 ? itemSizeOf(static_cast<char>(text[0])) : 0;
-    if (!itemSize)
-        return JSValue::encode(raiseValueError(globalObject, scope, "memoryview: destination format must be a native single character format prefixed with an optional '@'"_s));
-    char format = static_cast<char>(text[0]);
-    auto isByteFormat = [] (char c) { return c == 'b' || c == 'B' || c == 'c'; };
-    if (!isByteFormat(format) && !isByteFormat(self->format()))
-        return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: cannot cast between two non-byte formats"_s));
-    if (!self->isContiguous())
+    JSValue shape = args.at(2);
+    if (!formatValue || !stringIn(formatValue))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cast() argument 'format' must be str, not "_s, typeNameOfArgument(globalObject, formatValue))));
+    PyMemoryView* self = asMemory(args.at(0));
+    if (self->isReleased())
+        return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
+    if (!self->isCContiguous())
         return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: casts are restricted to C-contiguous views"_s));
-    int64_t size = self->length() * self->itemSize();
-    if (size % itemSize)
+    if ((shape || self->dimensions().size() != 1) && !self->byteLength())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: cannot cast view with zeros in shape or strides"_s));
+    MarkedArgumentBuffer lengths;
+    if (shape) {
+        if (!isList(shape) && !isTuple(shape))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "shape must be a list or a tuple"_s));
+        collect(globalObject, shape, lengths);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (lengths.size() > PyMemoryView::maxDimensionCount)
+            return JSValue::encode(raiseValueError(globalObject, scope, makeString("memoryview: number of dimensions must not exceed "_s, PyMemoryView::maxDimensionCount)));
+        if (self->dimensions().size() != 1 && lengths.size() != 1)
+            return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: cast must be 1D -> ND or ND -> 1D"_s));
+    }
+
+    // cast_to_1D()
+    auto ascii = encodeString(globalObject, stringIn(formatValue), "ascii"_s, String());
+    RETURN_IF_EXCEPTION(scope, { });
+    auto text = ascii->span();
+    auto layout = self->layout();
+    layout.formatHasAtSign = !text.empty() && text[0] == '@';
+    if (layout.formatHasAtSign)
+        text = text.subspan(1);
+    layout.itemSize = text.size() == 1 ? itemSizeOf(static_cast<char>(text[0])) : 0;
+    if (!layout.itemSize)
+        return JSValue::encode(raiseValueError(globalObject, scope, "memoryview: destination format must be a native single character format prefixed with an optional '@'"_s));
+    layout.format = static_cast<char>(text[0]);
+    auto isByteFormat = [] (char c) { return c == 'b' || c == 'B' || c == 'c'; };
+    if (!isByteFormat(layout.format) && !isByteFormat(self->format()))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: cannot cast between two non-byte formats"_s));
+    if (self->byteLength() % layout.itemSize)
         return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: length is not a multiple of itemsize"_s));
-    return JSValue::encode(self->derive(globalObject, format, itemSize, self->offset(), size / itemSize, itemSize, self->isReadOnly()));
+    if (!shape)
+        return JSValue::encode(self->derive(globalObject, layout, oneDimension(self->byteLength() / layout.itemSize, layout.itemSize)));
+
+    // cast_to_ND(), with copy_shape()
+    Dimensions dimensions;
+    int64_t byteLength = layout.itemSize;
+    for (size_t i = 0; i < lengths.size(); ++i) {
+        if (!classify(lengths.at(i)).isInt())
+            return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview.cast(): elements of shape must be integers"_s));
+        auto length = toSsize(globalObject, lengths.at(i));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (*length <= 0)
+            return JSValue::encode(raiseValueError(globalObject, scope, "memoryview.cast(): elements of shape must be integers > 0"_s));
+        if (*length > std::numeric_limits<int64_t>::max() / byteLength)
+            return JSValue::encode(raiseValueError(globalObject, scope, "memoryview.cast(): product(shape) > SSIZE_MAX"_s));
+        byteLength *= *length;
+        dimensions.append({ *length, 0 });
+    }
+    if (byteLength != self->byteLength())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "memoryview: product(shape) * itemsize != buffer size"_s));
+    setStridesFromLengths(dimensions, layout.itemSize);
+    return JSValue::encode(self->derive(globalObject, layout, dimensions));
 }
 
 PYTHON_NATIVE(memoryEq)
@@ -2467,15 +2797,25 @@ PYTHON_NATIVE(memoryEq)
         releaser.view = otherMemory;
     } else if (otherMemory->isReleased())
         return JSValue::encode(jsBoolean(!wantsEqual));
-    bool same = self->length() == otherMemory->length();
-    for (int64_t i = 0; same && i < self->length(); ++i) {
-        auto a = self->item(i);
-        auto b = otherMemory->item(i);
-        if (a.empty() || b.empty()) {
+    // equiv_shape(): the same as far as a dimension that there is nothing along, after which it makes no difference.
+    auto dimensions = self->dimensions();
+    auto otherDimensions = otherMemory->dimensions();
+    bool same = dimensions.size() == otherDimensions.size();
+    for (size_t i = 0; same && i < dimensions.size() && (!i || dimensions[i - 1].length); ++i)
+        same = dimensions[i].length == otherDimensions[i].length;
+    if (same) {
+        forEachItem(dimensions, otherDimensions, false, [&] (int64_t distance, int64_t otherDistance) {
+            auto a = self->itemAt(distance);
+            auto b = otherMemory->itemAt(otherDistance);
             same = false;
-            break;
-        }
-        same = isEqual(globalObject, unpackItem(globalObject, self->format(), a), unpackItem(globalObject, otherMemory->format(), b));
+            if (a.empty() || b.empty())
+                return false;
+            // unpack_cmp(): by ==, and not by whether they are one and the same, so that a NaN is not equal to itself.
+            JSValue result = compare(globalObject, ComparisonOperator::Eq, unpackItem(globalObject, self->format(), a), unpackItem(globalObject, otherMemory->format(), b));
+            RETURN_IF_EXCEPTION(scope, false);
+            same = isTrue(globalObject, result);
+            return same && !scope.exception();
+        });
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(jsBoolean(same == wantsEqual));
@@ -2483,16 +2823,34 @@ PYTHON_NATIVE(memoryEq)
 
 PYTHON_NATIVE(memoryHash)
 {
-    MEMORY_PROLOGUE();
+    NATIVE_PROLOGUE();
+    PyMemoryView* self = asMemory(args.at(0));
+    if (auto known = self->hash())
+        RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, *known)));
+    if (self->isReleased())
+        return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
     if (!self->isReadOnly())
         return JSValue::encode(raiseValueError(globalObject, scope, "cannot hash writable memoryview object"_s));
-    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, hashOfBytes(bytesOfMemory(self).span()))));
+    if (self->format() != 'B' && self->format() != 'b' && self->format() != 'c')
+        return JSValue::encode(raiseValueError(globalObject, scope, "memoryview: hashing is restricted to formats 'B', 'b' or 'c'"_s));
+    // That the view cannot be written through does not mean that what it is of cannot be changed. What a class of a program's gave is not asked.
+    if (!self->exporter()) {
+        hash(globalObject, self->object());
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    int64_t result = hashOfBytes(bytesOfMemory(self).span());
+    self->setHash(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, result)));
 }
 
 PYTHON_NATIVE(memoryIter)
 {
     MEMORY_PROLOGUE();
-    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Memory, self, JSValue(), 0, self->length()));
+    if (self->dimensions().empty())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "invalid indexing of 0-dim memory"_s));
+    if (self->dimensions().size() > 1)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "multi-dimensional sub-views are not implemented"_s));
+    return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Memory, self, JSValue(), 0, self->dimensions()[0].length));
 }
 
 // An attribute, which a view that has been released does not have.
@@ -2504,6 +2862,15 @@ static JSValue memoryAttribute(JSGlobalObject* globalObject, JSValue self)
     if (asMemory(self)->isReleased())
         return raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s);
     RELEASE_AND_RETURN(scope, get(globalObject, asMemory(self)));
+}
+
+template<int64_t Dimension::* member>
+static JSValue tupleOfDimensions(JSGlobalObject* globalObject, PyMemoryView* self)
+{
+    MarkedArgumentBuffer values;
+    for (auto& dimension : self->dimensions())
+        values.append(intFromInt64(globalObject, dimension.*member));
+    return PyTuple::createFromArguments(globalObject, values);
 }
 
 // ---- Setting them up
@@ -2650,16 +3017,22 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         addMethods(globalObject, type, { { "__buffer__"_s, builtinGetBuffer } });
     for (PyType* type : { byteArray, memory, realm->typeBufferWrapper() })
         addMethods(globalObject, type, { { "__release_buffer__"_s, builtinReleaseBuffer } });
-    addGetSet(globalObject, memory, "nbytes"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) { return intFromInt64(globalObject, self->length() * self->itemSize()); }>);
+    addGetSet(globalObject, memory, "nbytes"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) { return intFromInt64(globalObject, self->byteLength()); }>);
     addGetSet(globalObject, memory, "readonly"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsBoolean(self->isReadOnly()); }>);
     addGetSet(globalObject, memory, "itemsize"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsNumber(self->itemSize()); }>);
-    addGetSet(globalObject, memory, "format"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return jsSingleCharacterString(globalObject->vm(), static_cast<Latin1Character>(self->format())); }>);
-    addGetSet(globalObject, memory, "ndim"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView*) -> JSValue { return jsNumber(1); }>);
-    addGetSet(globalObject, memory, "shape"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return PyTuple::create(globalObject, { intFromInt64(globalObject, self->length()) }); }>);
-    addGetSet(globalObject, memory, "strides"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return PyTuple::create(globalObject, { intFromInt64(globalObject, self->stride()) }); }>);
+    addGetSet(globalObject, memory, "format"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue {
+        VM& vm = globalObject->vm();
+        if (self->layout().formatHasAtSign)
+            return jsString(vm, makeString('@', self->format()));
+        return jsSingleCharacterString(vm, static_cast<Latin1Character>(self->format()));
+    }>);
+    addGetSet(globalObject, memory, "ndim"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsNumber(static_cast<unsigned>(self->dimensions().size())); }>);
+    addGetSet(globalObject, memory, "shape"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return tupleOfDimensions<&Dimension::length>(globalObject, self); }>);
+    addGetSet(globalObject, memory, "strides"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return tupleOfDimensions<&Dimension::stride>(globalObject, self); }>);
     addGetSet(globalObject, memory, "suboffsets"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView*) -> JSValue { return globalObject->pyRealm()->emptyTuple(); }>);
-    for (ASCIILiteral name : { "contiguous"_s, "c_contiguous"_s, "f_contiguous"_s })
-        addGetSet(globalObject, memory, name, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsBoolean(self->isContiguous()); }>);
+    addGetSet(globalObject, memory, "c_contiguous"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsBoolean(self->isCContiguous()); }>);
+    addGetSet(globalObject, memory, "f_contiguous"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsBoolean(self->isFortranContiguous()); }>);
+    addGetSet(globalObject, memory, "contiguous"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsBoolean(self->isCContiguous() || self->isFortranContiguous()); }>);
 }
 
 } } // namespace JSC::Python

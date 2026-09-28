@@ -10,6 +10,7 @@
 #   language-features.py what the language reference describes, a piece at a time
 #   syntax-errors.py     what is said to be wrong with some ten thousand pieces of source that will not compile, and where
 #   operations.py        what comes of every operator between every two of some hundred values, and of the built-in functions of one and of two of them
+#   methods.py           what comes of every method of the built-in classes, of several instances of each, given what it is meant for and what it is not quite
 #   syntax-trees.py      what comes of compiling, and of running, syntax trees that a program has made wrongly, in something over a million ways. It must never crash.
 #
 # Beside each is what CPython prints, in a .reference file, which is made by running it with CPython.
@@ -17,7 +18,7 @@
 jsc=$1
 show=${2:-0}
 cd "$(dirname "$0")" || exit 2
-for audit in own-attributes wrong-arguments language-features syntax-errors syntax-trees operations; do
+for audit in own-attributes wrong-arguments language-features syntax-errors syntax-trees operations methods; do
     "$jsc" $audit.py > /tmp/python-audit-$audit.txt 2> /tmp/python-audit-$audit.err || echo "$audit: stopped early: $(tail -1 /tmp/python-audit-$audit.err)"
     python3 compare.py $audit $audit.reference /tmp/python-audit-$audit.txt "$show"
 done

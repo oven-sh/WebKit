@@ -604,6 +604,9 @@ There is nothing that is per process, nothing that is set after something is mad
 - **An int can be no larger than a `BigInt`.** `1 << (1 << 40)` is an `OverflowError`, where CPython makes it if there is room.
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
   line before the first, or at a column before the first, is on line 0 or at column 0, where to CPython it is nowhere.
+- **The last bits of a complex quotient or power can differ.** The steps are CPython's, but a compiler may do a multiplication and an addition in one, without rounding between them. JavaScriptCore is built
+  with `-ffp-contract=off`, so that it does not, and clang otherwise does where the machine can. `(-1.5-0.5j) / (-1.5-0.5j)` is `(1-0j)` here and `(1+1.67e-17j)` in a CPython built for arm64 in the usual way, and
+  those are what `_Py_c_quot()` gives by itself when it is compiled the one way and the other.
 
 ## Tests
 
@@ -613,6 +616,12 @@ There is nothing that is per process, nothing that is set after something is mad
 | `JSTests/python/run-interop.sh <jsc>` | the two languages together. There is nothing to compare these with: what is expected was read and found right |
 | `JSTests/python/audits/run-audits.sh <jsc> [n]` | not tests but measures of how far there is to go, over everything that is built in |
 | `JSTests/python/parser.js`, `symbol-table.js` | the first stages by themselves |
+
+Two of the audits are of what the built-in classes do, and not of what they have. `operations.py` tries every operator, in place and not, between every two of some hundred values, and the built-in functions
+of one and of two of them. `methods.py` calls every method of several instances of each class with no argument, with each of some eighty, with each two of some forty, with each three of a few, and by keyword.
+That is eight million things tried. What is compared with CPython is what comes back and its class, or the exception and what it says, and what has become of what it was done to. Among the values are instances
+of classes derived from `int`, `str`, `float`, `list` and `tuple`, and it is those that found the most. Each prints a line for each operator or method of each value, with a number that stands for all that came
+of it, so that what is kept to compare with is small, and given `everything` prints it all, which is how to find what is behind a line that differs.
 
 ## What is not decided
 
