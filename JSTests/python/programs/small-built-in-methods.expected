@@ -1,0 +1,114 @@
+bool operators => [(True, True, False), (False, True, True), (1, 1, 0), (0, 1, 1), (0, 3, 3), (False, True, True), (False, False, False), (0, 1, 1), (0, 0, 0), (0, 2, 2)]
+bool reflected => [(1, 1, 0), (0, 1, 1), (0, 3, 3), (0, 1, 1), (0, 0, 0), (0, 2, 2)]
+bool methods => (False, 1, NotImplemented, False, 1, True, True, 3, False)
+bool own => ['__and__', '__invert__', '__new__', '__or__', '__rand__', '__repr__', '__ror__', '__rxor__', '__xor__']
+bool in place => [False]
+bool with a derived int => (1, 'int', 1)
+bytes rmod => (b'x!', NotImplemented, NotImplemented, NotImplemented, bytearray(b'x!'), NotImplemented, 0)
+bytes rmod tuple => b'a b'
+bytes str => ('b"a\'\\x00"', "b'a'", "bytearray(b'a')", True, True)
+alloc => (0, 2, 4, 11)
+alloc wrong !! TypeError bytearray.__alloc__() takes no arguments (1 given)
+memoryview repr => ('<memory at 0x>', '<memory at 0x>')
+memoryview released repr => <released memory at 0x>
+count => (2, 0, 0, 2, 0, 0)
+count wrong !! TypeError memoryview.count() takes exactly one argument (0 given)
+count released !! ValueError operation forbidden on released memoryview object
+index => (0, 1, 3, 3, 2, 0, 3)
+index(100,) !! ValueError memoryview.index(x): x not found
+index(97, 4) !! ValueError memoryview.index(x): x not found
+index(97, 1, 3) !! ValueError memoryview.index(x): x not found
+index(97, 3, 1) !! ValueError memoryview.index(x): x not found
+index(97, -1) !! ValueError memoryview.index(x): x not found
+index(97, 100) !! ValueError memoryview.index(x): x not found
+index('a',) !! ValueError memoryview.index(x): x not found
+index(97, 0, 0) !! ValueError memoryview.index(x): x not found
+index(97, -100, -100) !! ValueError memoryview.index(x): x not found
+index wrong !! TypeError index expected at least 1 argument, got 0
+index wrong start !! TypeError slice indices must be integers or have an __index__ method
+index None start !! TypeError slice indices must be integers or have an __index__ method
+index big => 0
+index keywords !! TypeError memoryview.index() takes no keyword arguments
+index released !! ValueError operation forbidden on released memoryview object
+index released with a bad start !! TypeError slice indices must be integers or have an __index__ method
+index of other formats => (0, 2, 1)
+from flags => (b'ab', True, False, b'abcabc')
+from flags writable !! BufferError Object is not writable.
+from flags wrong !! TypeError memoryview: a bytes-like object is required, not 'int'
+from flags wrong flags !! TypeError 'str' object cannot be interpreted as an integer
+from flags too few !! TypeError _from_flags() missing required argument 'flags' (pos 2)
+from_number => [(1+0j), (1.5+0j), 1j, (1+0j), (3+4j), (2.5+0j), (7+0j), (1+2j), (1.152921504606847e+18+0j)]
+from_number same => (True, True, 'complex')
+from_number derived => ('CC', 1j, 'CC')
+from_number '1' !! TypeError must be real number, not str
+from_number None !! TypeError must be real number, not NoneType
+from_number [] !! TypeError must be real number, not list
+from_number b'1' !! TypeError must be real number, not bytes
+from_number '1j' !! TypeError must be real number, not str
+from_number too big !! OverflowError int too large to convert to float
+from_number nothing !! TypeError complex.from_number() takes exactly one argument (0 given)
+from_number kind => ('classmethod_descriptor', True)
+super repr => ("<super: <class 'B'>, <B object>>", "<super: <class 'B'>, <B object>>", "<super: <class 'B'>, NULL>", "<super: <class 'B'>, <B object>>", "<super: <class 'B'>, <B object>>", "<super: <class 'A'>, <B object>>", "<super: <class 'B'>, NULL>")
+super without init => <super: <class 'NULL'>, NULL>
+super fields => [(<class '__main__.B'>, True, <class '__main__.B'>), (<class '__main__.B'>, None, None), (<class '__main__.B'>, <class '__main__.B'>, <class '__main__.B'>)]
+super of None => ("<super: <class 'B'>, NULL>", None)
+super(<class '__main__.B'>, 1) !! TypeError super(type, obj): obj (instance of int) is not an instance or subtype of type (B).
+super(<class '__main__.B'>, <__main__.A object at 0x>) !! TypeError super(type, obj): obj (instance of A) is not an instance or subtype of type (B).
+super(<class '__main__.B'>, <class '__main__.A'>) !! TypeError super(type, obj): obj (type A) is not an instance or subtype of type (B).
+super(<class '__main__.B'>, <class 'int'>) !! TypeError super(type, obj): obj (type int) is not an instance or subtype of type (B).
+super(<class 'int'>, 's') !! TypeError super(type, obj): obj (instance of str) is not an instance or subtype of type (int).
+super(<class '__main__.B'>, <object object at 0x>) !! TypeError super(type, obj): obj (instance of object) is not an instance or subtype of type (B).
+super wrong !! TypeError super() argument 1 must be a type, not int
+super wrong 2 !! TypeError super() argument 1 must be a type, not int
+super three !! TypeError super() expected at most 2 arguments, got 3
+super keywords !! TypeError super() takes no keyword arguments
+super outside !! RuntimeError super(): no arguments
+super of a stand-in => ("<super: <class 'B'>, <B object>>", <class '__main__.B'>)
+unbound super as an attribute => ("<super: <class 'B'>, <UB object>>", 'A.f', "<super: <class 'B'>, NULL>")
+unbound super of another class !! TypeError super(type, obj): obj (instance of U) is not an instance or subtype of type (B).
+super get => ("<super: <class 'B'>, <B object>>", "<super: <class 'B'>, <B object>>", True, "<super: <class 'B'>, <B object>>", True)
+super get nothing !! TypeError __get__(None, None) is invalid
+super get none !! TypeError __get__ expected at least 1 argument, got 0
+derived super get => ('MySuper', ['B', 'B'])
+super own => ['__get__', '__getattribute__', '__init__', '__new__', '__repr__', '__self__', '__self_class__', '__thisclass__']
+wrappers repr => ('<staticmethod(<function fn at 0x>)>', '<classmethod(<function fn at 0x>)>', '<staticmethod(1)>', "<classmethod('s')>", '<staticmethod(<built-in function len>)>')
+derived wrappers repr => ('<staticmethod(<function fn at 0x>)>', '<classmethod(<function fn at 0x>)>')
+wrappers without init => ('<staticmethod(None)>', '<classmethod(None)>')
+method get => (True, True, True, 'B.f then A.f', True)
+method get nothing !! TypeError __get__(None, None) is invalid
+method get none !! TypeError __get__ expected at least 1 argument, got 0
+a method as an attribute => ('B.f then A.f', 'B.f then A.f', True)
+module => ('m', 'd', ['__doc__', '__loader__', '__name__', '__package__', '__spec__'], "<module 'm'>")
+module without init => ({}, "AttributeError: module has no attribute '__name__'", "<module '?'>", [])
+module new takes anything => {}
+module init again => (None, None, None, [('__doc__', None), ('__loader__', None), ('__name__', 'n'), ('__package__', None), ('__spec__', None), ('y', 1)])
+module init wrong !! TypeError module() missing required argument 'name' (pos 1)
+module init wrong 2 !! TypeError module() argument 'name' must be str, not int
+module init None !! TypeError module() argument 'name' must be str, not None
+module init keywords => ('n', 'd')
+module named by a derived str => St
+derived module => ('m!', 1, "<module 'm!'>", 'MM')
+module getattribute => (True, True, True)
+module getattribute missing !! AttributeError module 'm' has no attribute 'nope'
+module getattr => ('got nope', 'got nope', "AttributeError: 'module' object has no attribute 'nope'")
+module getattribute of another !! TypeError descriptor '__getattribute__' requires a 'module' object but received a 'int'
+traceback new => (None, True, 5, 42)
+traceback chained => (True, 7)
+traceback keywords => 2
+traceback() !! TypeError traceback() missing required argument 'tb_next' (pos 1)
+traceback(None,) !! TypeError traceback() missing required argument 'tb_frame' (pos 2)
+traceback(None, 1, 2, 3) !! TypeError traceback() argument 'tb_frame' must be frame, not int
+traceback(1, 'frame', 2, 3) !! TypeError expected traceback object or None, got 'int'
+traceback(None, 'frame', 'a', 3) !! TypeError 'str' object cannot be interpreted as an integer
+traceback(None, 'frame', 2, 'a') !! TypeError 'str' object cannot be interpreted as an integer
+traceback(None, 'frame', 2, 1.5) !! TypeError 'float' object cannot be interpreted as an integer
+traceback(None, 'frame', 1099511627776, 3) !! OverflowError Python int too large to convert to C int
+traceback(None, 'frame', 2, -1099511627776) !! OverflowError Python int too large to convert to C int
+traceback(None, 'frame', 1180591620717411303424, 3) !! OverflowError Python int too large to convert to C int
+traceback(None, None, 1, 2) !! TypeError traceback() argument 'tb_frame' must be frame, not None
+traceback(1, 1, 1, 1) !! TypeError traceback() argument 'tb_frame' must be frame, not int
+traceback(None, 'frame', 1, 2, 3) !! TypeError traceback() takes at most 4 arguments (5 given)
+traceback dir => (['tb_frame', 'tb_lasti', 'tb_lineno', 'tb_next'], ['tb_frame', 'tb_next', 'tb_lasti', 'tb_lineno'])
+traceback negative line => -5
+traceback own => ['__dir__', '__new__', 'tb_frame', 'tb_lasti', 'tb_lineno', 'tb_next']
+traceback in use => [3]

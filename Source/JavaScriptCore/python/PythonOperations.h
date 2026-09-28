@@ -99,6 +99,7 @@ JSValue exceptionValue(JSGlobalObject*, JSValue thrown);
 JS_EXPORT_PRIVATE JSValue getAttribute(JSGlobalObject*, JSValue, PropertyName);
 // Empty, and nothing raised, if there is no such attribute.
 JSValue getAttributeIfPresent(JSGlobalObject*, JSValue, PropertyName);
+JSValue getModuleAttribute(JSGlobalObject*, JSValue module, PropertyName); // module.__getattribute__()
 void setAttribute(JSGlobalObject*, JSValue, PropertyName, JSValue);
 void deleteAttribute(JSGlobalObject*, JSValue, PropertyName);
 // What object and type do, whatever the class says: object.__getattribute__, which gives an empty value if there is none, and
@@ -235,6 +236,9 @@ JSValue newType(JSGlobalObject*, PyType* metatype, JSString* name, PyTuple* base
 // isinstance() and issubclass(), which a class can have its own idea of.
 bool isInstanceOf(JSGlobalObject*, JSValue, JSValue classInfo);
 
+// function(self) or function(self, argument), for a function that is called on behalf of an instance. One of JavaScript's gets the instance as `this`.
+JSValue callForInstance(JSGlobalObject*, JSValue function, JSValue self, JSValue argument = JSValue());
+
 // property
 JSValue getProperty(JSGlobalObject*, PyNativeObject*, JSValue instance);
 void setProperty(JSGlobalObject*, PyNativeObject*, JSValue instance, JSValue); // An empty value deletes.
@@ -266,6 +270,7 @@ JSValue newInterpolation(JSGlobalObject*, JSValue value, JSValue expression, JSV
 JSValue newTemplate(JSGlobalObject*, JSValue strings, JSValue interpolations);
 bool isSubclassOf(JSGlobalObject*, JSValue, JSValue classInfo);
 PyTuple* defaultOrder(JSGlobalObject*, PyType*); // What type.mro() gives.
+PyType* superCheck(JSGlobalObject*, PyType*, JSValue object); // The class whose order super(type, object) searches. Null, having raised, if it makes no sense.
 void setBases(JSGlobalObject*, PyType*, JSValue); // C.__bases__ = ...
 bool areLaidOutAlike(JSGlobalObject*, PyType* oldType, PyType* newType); // Whether an instance of the one could be made an instance of the other.
 // An attribute got through super().
@@ -350,6 +355,7 @@ JSValue newTuple(JSGlobalObject*, Register* first, unsigned count);
 
 String repr(JSGlobalObject*, JSValue);
 String str(JSGlobalObject*, JSValue);
+String addressOf(const void*); // 0x..., as in <object object at 0x...>
 JSValue format(JSGlobalObject*, JSValue, const String& specification);
 // Never -1, unless it raised.
 int64_t hash(JSGlobalObject*, JSValue);

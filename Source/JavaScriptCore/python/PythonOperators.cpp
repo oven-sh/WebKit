@@ -617,6 +617,17 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
     }
     if (isSet(left) && isSet(right))
         RELEASE_AND_RETURN(scope, setCompare(globalObject, op, uncheckedDowncast<PySet>(left.asCell()), uncheckedDowncast<PySet>(right.asCell())));
+    if (auto* a = trySlice(left)) {
+        auto* b = trySlice(right);
+        if (!b)
+            return { };
+        // As (start, stop, step) and (start, stop, step) would.
+        if (a == b)
+            return jsBoolean(op == ComparisonOperator::Eq || op == ComparisonOperator::LtE || op == ComparisonOperator::GtE);
+        JSValue ofA[] = { a->start(), a->stop(), a->step() };
+        JSValue ofB[] = { b->start(), b->stop(), b->step() };
+        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, 3, 3, [&] (unsigned i) { return std::pair { ofA[i], ofB[i] }; }));
+    }
     if (auto* a = tryRange(left)) {
         auto* b = tryRange(right);
         if (!b || !isEquality)
@@ -886,8 +897,9 @@ int64_t hashOfPointer(const void* pointer)
     return result == -1 ? -2 : result;
 }
 
-// tuplehash() of CPython's Objects/tupleobject.c, which is a simplified xxHash.
-static int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
+// tuplehash() of CPython's Objects/tupleobject.c, which is a simplified xxHash. slicehash() of Objects/sliceobject.c is the same but for the length.
+template<typename At>
+static int64_t hashOfValues(JSGlobalObject* globalObject, unsigned count, bool mixesInLength, const At& at)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -895,17 +907,29 @@ static int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
     constexpr uint64_t prime2 = 14029467366897019727ULL;
     constexpr uint64_t prime5 = 2870177450012600261ULL;
     uint64_t accumulator = prime5;
-    for (unsigned i = 0; i < tuple->length(); ++i) {
-        uint64_t lane = static_cast<uint64_t>(hash(globalObject, tuple->at(i)));
+    for (unsigned i = 0; i < count; ++i) {
+        uint64_t lane = static_cast<uint64_t>(hash(globalObject, at(i)));
         RETURN_IF_EXCEPTION(scope, -1);
         accumulator += lane * prime2;
         accumulator = (accumulator << 31) | (accumulator >> 33);
         accumulator *= prime1;
     }
-    accumulator += tuple->length() ^ (prime5 ^ 3527539ULL);
+    if (mixesInLength)
+        accumulator += count ^ (prime5 ^ 3527539ULL);
     if (accumulator == static_cast<uint64_t>(-1))
         return 1546275796;
     return static_cast<int64_t>(accumulator);
+}
+
+static int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
+{
+    return hashOfValues(globalObject, tuple->length(), true, [&] (unsigned i) { return tuple->at(i); });
+}
+
+static int64_t hashOfSlice(JSGlobalObject* globalObject, PySlice* slice)
+{
+    JSValue parts[] = { slice->start(), slice->stop(), slice->step() };
+    return hashOfValues(globalObject, 3, false, [&] (unsigned i) { return parts[i]; });
 }
 
 // frozenset_hash() of CPython's Objects/setobject.c. It does not depend on the order.
@@ -992,6 +1016,8 @@ int64_t builtinHash(JSGlobalObject* globalObject, JSValue value)
         return hashOfTuple(globalObject, uncheckedDowncast<PyTuple>(value.asCell()));
     if (isSet(value))
         return hashOfFrozenSet(globalObject, uncheckedDowncast<PySet>(value.asCell()));
+    if (auto* slice = trySlice(value))
+        return hashOfSlice(globalObject, slice);
     if (auto* boxed = tryBoxedValue(value))
         return hash(globalObject, boxed->value());
     if (auto* range = tryRange(value)) {

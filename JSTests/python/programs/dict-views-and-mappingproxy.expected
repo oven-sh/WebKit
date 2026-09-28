@@ -1,0 +1,168 @@
+types => ('dict_keys', 'dict_values', 'dict_items', 3, 3, 3)
+repr => ('dict_keys([1, 2, 3])', "dict_values(['a', 'b', 'c'])", "dict_items([(1, 'a'), (2, 'b'), (3, 'c')])", 'dict_keys([1, 2, 3])')
+reversed => ([3, 2, 1], ['c', 'b', 'a'], [(3, 'c'), (2, 'b'), (1, 'a')], 'dict_reversevalueiterator', 'dict_reverseitemiterator')
+contains => (True, False, True, False, False, False, False, False, True, False)
+contains unhashable !! TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+contains unhashable in items !! TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+mapping => ('mappingproxy', True, 'a', False, False)
+mapping read only !! AttributeError attribute 'mapping' of 'dict_keys' objects is not writable
+live => (None, [1, 2], 2)
+keys & keys => ([2, 3], 'set')
+items & items => [(2, 'b')]
+keys & set => [2]
+set & keys => ([2], 'set')
+frozenset & keys => ([2], 'set')
+keys & list => [2]
+list & keys => [2]
+keys & str => ['a']
+keys & generator => [2]
+keys & dict => [2, 3]
+keys & items => []
+keys & int !! TypeError 'int' object is not iterable
+int & keys !! TypeError 'int' object is not iterable
+keys & unhashable !! TypeError cannot use 'list' as a dict key (unhashable type: 'list')
+values & values !! TypeError unsupported operand type(s) for &: 'dict_values' and 'dict_values'
+keys & empty => []
+empty & keys => []
+keys | keys => ([1, 2, 3, 4], 'set')
+items | items => [(1, 'a'), (2, 'b'), (3, 'c'), (3, 'x'), (4, 'd')]
+keys | set => [1, 2, 3, 9]
+set | keys => ([1, 2, 3, 9], 'set')
+frozenset | keys => ([1, 2, 3, 9], 'set')
+keys | list => [1, 2, 3, 9]
+list | keys => [1, 2, 3, 9]
+keys | str => ['a', 'b']
+keys | generator => [1, 2, 3, 9]
+keys | dict => [1, 2, 3, 4]
+keys | items => [(1, 'a'), (2, 'b'), (3, 'c'), 1, 2, 3]
+keys | int !! TypeError 'int' object is not iterable
+int | keys !! TypeError 'int' object is not iterable
+keys | unhashable !! TypeError cannot use 'list' as a set element (unhashable type: 'list')
+values | values !! TypeError unsupported operand type(s) for |: 'dict_values' and 'dict_values'
+keys | empty => [1, 2, 3]
+empty | keys => [1, 2, 3]
+keys - keys => ([1], 'set')
+items - items => [(1, 'a'), (3, 'c')]
+keys - set => [1, 3]
+set - keys => ([9], 'set')
+frozenset - keys => ([9], 'set')
+keys - list => [1, 3]
+list - keys => [9]
+keys - str => []
+keys - generator => [1, 3]
+keys - dict => [1]
+keys - items => [1, 2, 3]
+keys - int !! TypeError 'int' object is not iterable
+int - keys !! TypeError 'int' object is not iterable
+keys - unhashable !! TypeError cannot use 'list' as a set element (unhashable type: 'list')
+values - values !! TypeError unsupported operand type(s) for -: 'dict_values' and 'dict_values'
+keys - empty => [1, 2, 3]
+empty - keys => []
+keys ^ keys => ([1, 4], 'set')
+items ^ items => [(1, 'a'), (3, 'c'), (3, 'x'), (4, 'd')]
+keys ^ set => [1, 3, 9]
+set ^ keys => ([1, 3, 9], 'set')
+frozenset ^ keys => ([1, 3, 9], 'set')
+keys ^ list => [1, 3, 9]
+list ^ keys => [1, 3, 9]
+keys ^ str => ['b']
+keys ^ generator => [1, 3, 9]
+keys ^ dict => [1, 4]
+keys ^ items => [(1, 'a'), (2, 'b'), (3, 'c'), 1, 2, 3]
+keys ^ int !! TypeError 'int' object is not iterable
+int ^ keys !! TypeError 'int' object is not iterable
+keys ^ unhashable !! TypeError cannot use 'list' as a set element (unhashable type: 'list')
+values ^ values !! TypeError unsupported operand type(s) for ^: 'dict_values' and 'dict_values'
+keys ^ empty => [1, 2, 3]
+empty ^ keys => [1, 2, 3]
+items with unhashable values !! TypeError cannot use 'tuple' as a set element (unhashable type: 'list')
+items with unhashable values or !! TypeError cannot use 'tuple' as a set element (unhashable type: 'list')
+items xor with unhashable values => set()
+items xor with unhashable values that differ !! TypeError cannot use 'tuple' as a set element (unhashable type: 'list')
+methods => ([2], [2], [1, 3], [9], [1, 2, 3, 9], [1, 2, 3, 9], [1, 3, 9], [1, 3, 9])
+in place !! NameError name 'inplace' is not defined
+in place => [1, 2, 3, 9]
+compare == => [True, True, False, False, True, False, False, False]
+compare reflected == => [True, False, False, True]
+compare items == => [True, True, False, False]
+compare with a list == => False
+compare values == => False
+compare != => [False, False, True, True, False, True, True, True]
+compare reflected != => [False, True, True, False]
+compare items != => [False, False, True, True]
+compare with a list != => True
+compare values != => True
+compare < => [False, False, False, True, False, False, False, False]
+compare reflected < => [False, True, False, False]
+compare items < => [False, False, False, False]
+compare with a list < !! TypeError '<' not supported between instances of 'dict_keys' and 'list'
+compare values < !! TypeError '<' not supported between instances of 'dict_values' and 'dict_values'
+compare <= => [True, True, False, True, True, False, False, False]
+compare reflected <= => [True, True, False, True]
+compare items <= => [True, True, False, False]
+compare with a list <= !! TypeError '<=' not supported between instances of 'dict_keys' and 'list'
+compare values <= !! TypeError '<=' not supported between instances of 'dict_values' and 'dict_values'
+compare > => [False, False, True, False, False, False, False, False]
+compare reflected > => [False, False, True, False]
+compare items > => [False, False, True, False]
+compare with a list > !! TypeError '>' not supported between instances of 'dict_keys' and 'list'
+compare values > !! TypeError '>' not supported between instances of 'dict_values' and 'dict_values'
+compare >= => [True, True, True, False, True, False, False, False]
+compare reflected >= => [True, False, True, True]
+compare items >= => [True, True, True, False]
+compare with a list >= !! TypeError '>=' not supported between instances of 'dict_keys' and 'list'
+compare values >= !! TypeError '>=' not supported between instances of 'dict_values' and 'dict_values'
+compare methods => (True, NotImplemented, True, NotImplemented, True, NotImplemented)
+isdisjoint => [True, False, True, False, True, True, False, False, True, True, True]
+isdisjoint items => [False, True, False, False, False]
+isdisjoint of empty with itself => True
+isdisjoint wrong !! TypeError 'int' object is not iterable
+isdisjoint nothing !! TypeError dict_keys.isdisjoint() takes exactly one argument (0 given)
+values has none !! AttributeError 'dict_values' object has no attribute 'isdisjoint'
+hash !! NameError name 'attempt' is not defined
+hash => ["TypeError: unhashable type: 'dict_keys'", "TypeError: unhashable type: 'dict_items'", 'int']
+cannot be made => ["TypeError: cannot create 'dict_keys' instances", "TypeError: cannot create 'dict_values' instances", "TypeError: cannot create 'dict_items' instances"]
+cannot be derived from => ["TypeError: type 'dict_keys' is not an acceptable base type", "TypeError: type 'dict_values' is not an acceptable base type", "TypeError: type 'dict_items' is not an acceptable base type"]
+of a derived class => (['a'], True, ['a', 1], ['a'])
+proxy => ("mappingproxy({1: 'a', 2: 'b', 3: 'c'})", "{1: 'a', 2: 'b', 3: 'c'}", 3, 'a', True, False, [1, 2, 3], 'a', None, 'z', [1, 2, 3], ['a', 'b', 'c'], [(1, 'a'), (2, 'b'), (3, 'c')], {1: 'a', 2: 'b', 3: 'c'}, 'dict')
+proxy reversed => [3, 2, 1]
+proxy missing !! KeyError 9
+proxy set !! AttributeError 'mappingproxy' object has no attribute '__setitem__'
+proxy assign !! TypeError 'mappingproxy' object does not support item assignment
+proxy delete !! TypeError 'mappingproxy' object doesn't support item deletion
+proxy or => ({1: 'a', 2: 'b', 3: 'c', 9: 9}, {9: 9, 1: 'a', 2: 'b', 3: 'c'}, {1: 'a', 2: 'b', 3: 'c'}, {1: 'a', 2: 'b', 3: 'c', 8: 8}, 'dict')
+proxy or wrong !! TypeError unsupported operand type(s) for |: 'dict' and 'int'
+proxy or wrong reflected !! TypeError unsupported operand type(s) for |: 'int' and 'dict'
+proxy or list !! TypeError unsupported operand type(s) for |: 'dict' and 'list'
+proxy ior !! TypeError '|=' is not supported by mappingproxy; use '|' instead
+proxy ior method !! TypeError '|=' is not supported by mappingproxy; use '|' instead
+proxy or methods !! TypeError unsupported operand type(s) for |: 'dict' and 'int'
+proxy compare == => [True, True, True, True, False, False]
+proxy compare reflected == => [True, False, False]
+proxy compare != => [False, False, False, False, True, True]
+proxy compare reflected != => [False, True, True]
+proxy compare < !! TypeError '<' not supported between instances of 'dict' and 'dict'
+proxy compare reflected < !! TypeError '>' not supported between instances of 'dict' and 'dict'
+proxy compare >= !! TypeError '>=' not supported between instances of 'dict' and 'dict'
+proxy compare reflected >= !! TypeError '<=' not supported between instances of 'dict' and 'dict'
+proxy compare methods !! TypeError '<' not supported between instances of 'dict' and 'dict'
+proxy hash !! TypeError unhashable type: 'dict'
+proxy of anything => (42, 7, 'x', 'mappingproxy(<HM>)', 'HM as str', ('got', 1, None), ('got', 1, 2))
+proxy of anything lacks !! AttributeError 'HM' object has no attribute 'keys'
+proxy of anything reversed !! AttributeError 'HM' object has no attribute '__reversed__'
+proxy of anything iter => 0
+proxy of anything contains => True
+proxy of [] !! TypeError mappingproxy() argument must be a mapping, not list
+proxy of () !! TypeError mappingproxy() argument must be a mapping, not tuple
+proxy of 1 !! TypeError mappingproxy() argument must be a mapping, not int
+proxy of 's' => s
+proxy of None !! TypeError mappingproxy() argument must be a mapping, not NoneType
+proxy of {1} !! TypeError mappingproxy() argument must be a mapping, not set
+proxy of nothing !! TypeError mappingproxy() missing required argument 'mapping' (pos 1)
+proxy get wrong !! TypeError get expected at least 1 argument, got 0
+proxy get wrong 2 !! TypeError get expected at most 2 arguments, got 3
+proxy live => (None, {1: 1, 2: 2})
+proxy of a class => ('mappingproxy', True, 'mappingproxy', ['__dict__', '__doc__', '__eq__'], True, True)
+proxy generic => mappingproxy[int, str]
+proxy cannot be derived from !! TypeError type 'mappingproxy' is not an acceptable base type
+proxy attributes !! AttributeError 'mappingproxy' object has no attribute 'x' and no __dict__ for setting new attributes

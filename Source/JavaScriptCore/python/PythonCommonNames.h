@@ -57,14 +57,14 @@ namespace Python {
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
     v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
-    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc)
+    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc) v(line)
 
 // The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.
 #define FOR_EACH_PYTHON_EXCEPTION_FIELD(v) \
     v(value, "value") v(code, "code") v(message, "msg") v(filename, "filename") v(line, "lineno") v(offset, "offset") v(text, "text") \
     v(endLine, "end_lineno") v(endOffset, "end_offset") v(printFileAndLine, "print_file_and_line") v(name, "name") v(path, "path") \
     v(nameFrom, "name_from") v(object, "obj") v(errorNumber, "errno") v(errorText, "strerror") v(filename2, "filename2") \
-    v(encoding, "encoding") v(subject, "object") v(start, "start") v(end, "end") v(reason, "reason")
+    v(encoding, "encoding") v(subject, "object") v(start, "start") v(end, "end") v(reason, "reason") v(written, "characters_written") v(metadata, "_metadata")
 
 struct CommonNames {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(CommonNames);

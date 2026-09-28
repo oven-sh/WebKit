@@ -1,0 +1,65 @@
+basic => xdxd
+empty table => abc
+empty string => 
+to longer => a<b>c
+to empty => ac
+to wide => é€😀
+from wide => eE:)z
+string keys mean nothing => abc
+a list => ac
+a str => xyz
+bool => bc
+out of range !! ValueError character mapping must be in range(0x110000)
+negative !! ValueError character mapping must be in range(0x110000)
+huge !! ValueError character mapping must be in range(0x110000)
+wrong type !! TypeError character mapping must return integer, None or str
+wrong type bytes !! TypeError character mapping must return integer, None or str
+no getitem !! TypeError 'int' object is not subscriptable
+None !! TypeError 'NoneType' object is not subscriptable
+nothing !! TypeError str.translate() takes exactly one argument (0 given)
+too many !! TypeError str.translate() takes exactly one argument (2 given)
+asked once each => ('xxxxcc', [97, 98, 99])
+asked once each, until => ('xxbblonglongxxbb', [97, 98, 99, 99, 99, 97, 97, 98, 98])
+asked once each, until wide => ('xxbbééxxbb', [97, 98, 99, 99, 99, 97, 97, 98, 98])
+asked every time => ('xxéxx', [97, 97, 233, 97, 97])
+IndexError => ('xb', [97, 98])
+LookupError => ('xb', [97, 98])
+ValueError !! ValueError 98
+derived => ('xdc', 'str', 'xbc')
+the same object => False
+with maketrans => e001w1r0d
+two => {97: 120, 98: 121, 99: 122}
+three => {97: 120, 98: 121, 99: None, 100: None}
+delete wins => {97: None, 98: 121}
+repeated => {97: 121}
+wide => {233: 101, 128512: 8364}
+empty => ({}, {}, {})
+dict => {97: 'x', 98: None, 99: 100, 100: 5, True: 1}
+dict wide => {128512: 1}
+dict long key !! ValueError string keys in translatetable must be of length 1
+dict empty key !! ValueError string keys in translatetable must be of length 1
+dict bad key !! TypeError keys in translate table mustbe strings or integers
+dict None key !! TypeError keys in translate table mustbe strings or integers
+dict any values => {97: [1], 98: 1.5}
+unequal !! ValueError the first two maketrans arguments must have equal length
+one string !! TypeError if you give only one argument to maketrans it must be a dict
+one list !! TypeError if you give only one argument to maketrans it must be a dict
+derived dict !! TypeError if you give only one argument to maketrans it must be a dict
+first not str !! TypeError first maketrans argument must be a string if there is a second argument
+first a dict !! TypeError first maketrans argument must be a string if there is a second argument
+second not str !! TypeError maketrans() argument 2 must be str, not int
+second None !! TypeError maketrans() argument 2 must be str, not None
+third not str !! TypeError maketrans() argument 3 must be str, not int
+third None !! TypeError maketrans() argument 3 must be str, not None
+none !! TypeError maketrans expected at least 1 argument, got 0
+four !! TypeError maketrans expected at most 3 arguments, got 4
+keywords !! TypeError str.maketrans() takes no keyword arguments
+from an instance => ({97: 98}, {97: 98}, {97: 98})
+kind => ('staticmethod', 'builtin_function_or_method', 'maketrans', 'str.maketrans', True, '(x, y=<unrepresentable>, z=<unrepresentable>, /)')
+derived strings => {97: 120, 98: 121, 99: None}
+rmod !! TypeError not all arguments converted during string formatting
+rmod too few !! TypeError not enough arguments for format string
+rmod wrong !! TypeError expected 1 argument, got 0
+str % something with rmod => skipped
+derived comes first => ('SR.__rmod__', '%s')
+own => [True, True, True, True, True, False, True, True]

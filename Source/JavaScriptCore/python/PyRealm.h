@@ -179,6 +179,7 @@ namespace JSC {
     v(StopIteration, "StopIteration", Exception, Exception, PYTHON_EXCEPTION_FLAGS) \
     v(SyntaxError, "SyntaxError", Exception, Exception, PYTHON_EXCEPTION_FLAGS) \
     v(IndentationError, "IndentationError", SyntaxError, Exception, PYTHON_EXCEPTION_FLAGS) \
+    v(IncompleteInputError, "_IncompleteInputError", SyntaxError, Exception, PYTHON_EXCEPTION_FLAGS) \
     v(TabError, "TabError", IndentationError, Exception, PYTHON_EXCEPTION_FLAGS) \
     v(SystemError, "SystemError", Exception, Exception, PYTHON_EXCEPTION_FLAGS) \
     v(TypeError, "TypeError", Exception, Exception, PYTHON_EXCEPTION_FLAGS) \
@@ -257,6 +258,7 @@ public:
         ObjectGetState,
         TypeCall,
         TypeGetAttribute,
+        ModuleGetAttribute,
         TypeSetAttr,
         TypeDelAttr,
         Count,

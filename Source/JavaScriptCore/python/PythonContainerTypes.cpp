@@ -522,146 +522,6 @@ PYTHON_NATIVE(dictReversed)
 
 // ---- The views of a dict
 
-static PyDict* dictOfView(JSValue view) { return uncheckedDowncast<PyDict>(uncheckedDowncast<PyNativeObject>(view.asCell())->field(0).asCell()); }
-
-PYTHON_NATIVE(viewIter)
-{
-    auto kind = unpack<PyIterator::Kind>(callFrame, 0);
-    return JSValue::encode(PyIterator::create(globalObject, kind, dictOfView(callFrame->argument(0))));
-}
-
-PYTHON_NATIVE(viewLen)
-{
-    UNUSED_PARAM(globalObject);
-    return JSValue::encode(jsNumber(dictOfView(callFrame->argument(0))->size()));
-}
-
-PYTHON_NATIVE(viewRepr)
-{
-    NATIVE_PROLOGUE();
-    JSArray* items = listFromIterable(globalObject, args.at(0));
-    RETURN_IF_EXCEPTION(scope, { });
-    String text = repr(globalObject, items);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString(typeName(globalObject, args[0]), '(', text, ')')));
-}
-
-PYTHON_NATIVE(keysContains)
-{
-    NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(dictOfView(args.at(0))->contains(globalObject, args.at(1)))));
-}
-
-PYTHON_NATIVE(itemsContains)
-{
-    NATIVE_PROLOGUE();
-    JSValue pair = args.at(1);
-    if (!isTuple(pair) || uncheckedDowncast<PyTuple>(pair.asCell())->length() != 2)
-        return JSValue::encode(jsBoolean(false));
-    auto* tuple = uncheckedDowncast<PyTuple>(pair.asCell());
-    JSValue value = dictOfView(args[0])->get(globalObject, tuple->at(0));
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!value)
-        return JSValue::encode(jsBoolean(false));
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isEqual(globalObject, value, tuple->at(1)))));
-}
-
-// keys() and items() are like sets.
-PYTHON_NATIVE(viewSetOperation)
-{
-    auto op = unpack<BinaryOperator>(callFrame, 0);
-    NATIVE_PROLOGUE();
-    Structure* structure = realm->structureFor(BuiltinType::Set);
-    PySet* left = setFromIterable(globalObject, structure, args.at(0));
-    RETURN_IF_EXCEPTION(scope, { });
-    PySet* right = setFromIterable(globalObject, structure, args.at(1));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(setOperation(globalObject, op, false, left, right)));
-}
-
-PYTHON_NATIVE(viewEq)
-{
-    NATIVE_PROLOGUE();
-    JSValue other = args.at(1);
-    if (!isSet(other) && !(tryNativeObject(other) && (typeOf(globalObject, other) == realm->typeDictKeys() || typeOf(globalObject, other) == realm->typeDictItems())))
-        RETURN_NOT_IMPLEMENTED();
-    Structure* structure = realm->structureFor(BuiltinType::Set);
-    PySet* left = setFromIterable(globalObject, structure, args[0]);
-    RETURN_IF_EXCEPTION(scope, { });
-    PySet* right = setFromIterable(globalObject, structure, other);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(setCompare(globalObject, ComparisonOperator::Eq, left, right)));
-}
-
-// ---- mappingproxy
-
-static JSValue mappingOfProxy(JSValue proxy) { return uncheckedDowncast<PyNativeObject>(proxy.asCell())->field(0); }
-
-PYTHON_NATIVE(proxyNew)
-{
-    NATIVE_PROLOGUE();
-    if (!typeOf(globalObject, args[1])->lookup(vm, names.dunder_getitem) || isList(args[1]) || isTuple(args[1]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, args[1]))));
-    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::MappingProxy, args[1]));
-}
-
-PYTHON_NATIVE(proxyGetItem)
-{
-    NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(getItem(globalObject, mappingOfProxy(args.at(0)), args.at(1))));
-}
-
-PYTHON_NATIVE(proxyContains)
-{
-    NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(contains(globalObject, mappingOfProxy(args.at(0)), args.at(1)))));
-}
-
-PYTHON_NATIVE(proxyLen)
-{
-    NATIVE_PROLOGUE();
-    int64_t size = length(globalObject, mappingOfProxy(args.at(0)));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, size)));
-}
-
-PYTHON_NATIVE(proxyIter)
-{
-    NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(getIterator(globalObject, mappingOfProxy(args.at(0)))));
-}
-
-PYTHON_NATIVE(proxyRepr)
-{
-    NATIVE_PROLOGUE();
-    String text = repr(globalObject, mappingOfProxy(args.at(0)));
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString("mappingproxy("_s, text, ')')));
-}
-
-PYTHON_NATIVE(proxyEq)
-{
-    NATIVE_PROLOGUE();
-    JSValue other = args.at(1);
-    if (tryNativeObject(other) && typeOf(globalObject, other) == realm->typeMappingProxy())
-        other = mappingOfProxy(other);
-    RELEASE_AND_RETURN(scope, JSValue::encode(compare(globalObject, ComparisonOperator::Eq, mappingOfProxy(args.at(0)), other)));
-}
-
-// get, keys, values, items and copy: whatever the mapping does.
-PYTHON_NATIVE(proxyForward)
-{
-    static constexpr ASCIILiteral methods[] = { "get"_s, "keys"_s, "values"_s, "items"_s, "copy"_s };
-    ASCIILiteral method = methods[unpack<unsigned>(callFrame, 0)];
-    NATIVE_PROLOGUE();
-    JSValue function = getAttribute(globalObject, mappingOfProxy(args.at(0)), Identifier::fromString(vm, method));
-    RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 1; i < args.size(); ++i)
-        arguments.append(args[i]);
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, function, arguments)));
-}
-
 // ---- set and frozenset
 
 static PySet* selfSet(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args, ASCIILiteral method)
@@ -994,52 +854,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
     addBinaryOperators(globalObject, dict, { BinaryOperator::BitOr }, true, true);
     makeUnhashable(dict);
 
-    addMethods(globalObject, realm->typeDictKeys(), {
-        { "__iter__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictKeys) },
-        { "__reversed__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictReverseKeys) },
-        { "__contains__"_s, keysContains },
-    });
-    addMethods(globalObject, realm->typeDictValues(), {
-        { "__iter__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictValues) },
-        { "__reversed__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictReverseValues) },
-    });
-    addMethods(globalObject, realm->typeDictItems(), {
-        { "__iter__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictItems) },
-        { "__reversed__"_s, viewIter, PyNativeFunction::Kind::Method, pack(PyIterator::Kind::DictReverseItems) },
-        { "__contains__"_s, itemsContains },
-    });
-    for (PyType* view : { realm->typeDictKeys(), realm->typeDictValues(), realm->typeDictItems() }) {
-        addMethods(globalObject, view, {
-            { "__len__"_s, viewLen },
-            { "__repr__"_s, viewRepr },
-        });
-    }
-    for (PyType* view : { realm->typeDictKeys(), realm->typeDictItems() }) {
-        addMethods(globalObject, view, {
-            { "__eq__"_s, viewEq },
-            { "__and__"_s, viewSetOperation, PyNativeFunction::Kind::Method, pack(BinaryOperator::BitAnd) },
-            { "__or__"_s, viewSetOperation, PyNativeFunction::Kind::Method, pack(BinaryOperator::BitOr) },
-            { "__sub__"_s, viewSetOperation, PyNativeFunction::Kind::Method, pack(BinaryOperator::Sub) },
-            { "__xor__"_s, viewSetOperation, PyNativeFunction::Kind::Method, pack(BinaryOperator::BitXor) },
-        });
-        makeUnhashable(view);
-    }
-
-    addMethods(globalObject, realm->typeMappingProxy(), {
-        { "__new__"_s, proxyNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
-        { "__getitem__"_s, proxyGetItem },
-        { "__contains__"_s, proxyContains },
-        { "__len__"_s, proxyLen },
-        { "__iter__"_s, proxyIter },
-        { "__repr__"_s, proxyRepr },
-        { "__eq__"_s, proxyEq },
-        { "get"_s, proxyForward, Kind::Method, 0 },
-        { "keys"_s, proxyForward, Kind::Method, 1 },
-        { "values"_s, proxyForward, Kind::Method, 2 },
-        { "items"_s, proxyForward, Kind::Method, 3 },
-        { "copy"_s, proxyForward, Kind::Method, 4 },
-    });
-    makeUnhashable(realm->typeMappingProxy());
+    initializeDictViews(globalObject);
 
     for (PyType* set : { realm->typeSet(), realm->typeFrozenSet() }) {
         addMethods(globalObject, set, {
@@ -1084,7 +899,9 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "__new__"_s, sliceNew, Kind::New },
         { "__repr__"_s, nativeRepr },
         { "indices"_s, sliceIndices },
+        { "__hash__"_s, nativeHash },
     });
+    addComparisons(globalObject, slice);
     addMember(globalObject, slice, "start"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->start(); });
     addMember(globalObject, slice, "stop"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->stop(); });
     addMember(globalObject, slice, "step"_s, [] (JSGlobalObject*, JSValue self) { return uncheckedDowncast<PySlice>(self.asCell())->step(); });

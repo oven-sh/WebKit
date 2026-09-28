@@ -76,6 +76,7 @@ void initializeTypeParameters(JSGlobalObject*);
 void initializeTemplateStrings(JSGlobalObject*);
 void initializeProperty(JSGlobalObject*);
 void initializeReduce(JSGlobalObject*);
+void initializeDictViews(JSGlobalObject*);
 void addIteratorProtocol(JSGlobalObject*, PyType*); // __length_hint__(), __reduce__() and __setstate__(), those of them that it has in CPython
 JSValue getBuiltin(JSGlobalObject*, ASCIILiteral name); // builtins.iter, or whatever a program has put there
 bool sortValues(JSGlobalObject*, MarkedArgumentBuffer& values, JSValue keyFunction, bool reverse, MarkedArgumentBuffer& sorted);
@@ -183,7 +184,10 @@ JSC_DECLARE_HOST_FUNCTION(nativeContains);
 JSC_DECLARE_HOST_FUNCTION(nativeIter);
 JSC_DECLARE_HOST_FUNCTION(nativeNext);
 JSC_DECLARE_HOST_FUNCTION(nativeSelf);
+inline bool isEquality(ComparisonOperator op) { return op == ComparisonOperator::Eq || op == ComparisonOperator::NotEq; }
 void addComparisons(JSGlobalObject*, PyType*);
+// The same, with a function of the class's own, which finds which comparison it is with unpack<ComparisonOperator>(callFrame, 0).
+void addComparisons(JSGlobalObject*, PyType*, NativeFunction);
 // __add__ and __radd__ and so on for these operators, by builtinBinaryOperation().
 void addBinaryOperators(JSGlobalObject*, PyType*, std::initializer_list<BinaryOperator>, bool reflected, bool inPlace);
 

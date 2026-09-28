@@ -38,6 +38,7 @@
 #include "ObjectPrototypeInlines.h"
 #include "PyDict.h"
 #include "PythonGenerators.h"
+#include "TopExceptionScope.h"
 
 // What each language sees of what is the other's. "The two languages" in README.md says why it is as it is.
 

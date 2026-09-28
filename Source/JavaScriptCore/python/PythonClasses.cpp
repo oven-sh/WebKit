@@ -668,6 +668,26 @@ void setBases(JSGlobalObject* globalObject, PyType* type, JSValue value)
 
 // ---- super
 
+// Whether super(type, object) makes sense, and the class whose order is to be searched: supercheck() of CPython's Objects/typeobject.c.
+PyType* superCheck(JSGlobalObject* globalObject, PyType* type, JSValue object)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A class derived from it, for a class method
+    if (isClass(object) && asType(object)->isSubtypeOf(type))
+        return asType(object);
+    PyType* typeOfObject = typeOf(globalObject, object);
+    if (typeOfObject->isSubtypeOf(type))
+        return typeOfObject;
+    // What stands in for an instance says so with __class__.
+    JSValue claimed = getAttributeIfPresent(globalObject, object, vm.pythonNames().dunder_class);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (claimed && isClass(claimed) && asType(claimed) != typeOfObject && asType(claimed)->isSubtypeOf(type))
+        return asType(claimed);
+    raiseTypeError(globalObject, scope, makeString("super(type, obj): obj ("_s, isClass(object) ? "type "_s : "instance of "_s, (isClass(object) ? asType(object) : typeOfObject)->nameString(globalObject), ") is not an instance or subtype of type ("_s, type->nameString(globalObject), ")."_s));
+    return nullptr;
+}
+
 JSValue getSuperAttribute(JSGlobalObject* globalObject, JSValue superObject, PropertyName name)
 {
     VM& vm = globalObject->vm();

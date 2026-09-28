@@ -71,7 +71,7 @@ private:
     bool m_isRecursive;
 };
 
-static String addressOf(JSCell* cell)
+String addressOf(const void* cell)
 {
     return makeString("0x"_s, hex(std::bit_cast<uintptr_t>(cell), Lowercase));
 }

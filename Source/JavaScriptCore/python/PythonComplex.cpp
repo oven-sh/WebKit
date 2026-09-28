@@ -333,8 +333,11 @@ PYTHON_NATIVE(complexBinary)
 
 PYTHON_NATIVE(complexEquality)
 {
-    bool wantsEqual = unpack<bool>(callFrame, 0);
+    auto op = unpack<ComparisonOperator>(callFrame, 0);
+    bool wantsEqual = op == ComparisonOperator::Eq;
     NATIVE_PROLOGUE();
+    if (!Python::isEquality(op))
+        RETURN_NOT_IMPLEMENTED();
     Complex self = valueOf(tryComplex(args.at(0)));
     JSValue other = args.at(1);
     bool isEqual;
@@ -743,6 +746,34 @@ PYTHON_NATIVE(complexNew)
     return make({ real.real, imaginary.real });
 }
 
+// complex.from_number(number)
+PYTHON_NATIVE(complexFromNumber)
+{
+    NATIVE_PROLOGUE();
+    PyType* type = asType(args[0]);
+    JSValue number = args[1];
+    if (type == realm->typeComplex() && typeOf(globalObject, number) == type)
+        return JSValue::encode(number);
+    Complex value;
+    if (auto* complex = tryComplex(number))
+        value = valueOf(complex);
+    else {
+        PyComplex* converted = callComplexMethod(globalObject, number);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (converted)
+            value = valueOf(converted);
+        else {
+            auto real = toDouble(globalObject, number);
+            RETURN_IF_EXCEPTION(scope, { });
+            value.real = *real;
+        }
+    }
+    JSValue result = PyComplex::create(globalObject, value.real, value.imag);
+    if (type == realm->typeComplex())
+        return JSValue::encode(result);
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, type->object(), result)));
+}
+
 void initializeComplexType(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -757,8 +788,6 @@ void initializeComplexType(JSGlobalObject* globalObject)
     }
     addMethods(globalObject, type, {
         { "__new__"_s, complexNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
-        { "__eq__"_s, complexEquality, Kind::Method, pack(true) },
-        { "__ne__"_s, complexEquality, Kind::Method, pack(false) },
         { "__neg__"_s, complexNegative },
         { "__pos__"_s, complexPositive },
         { "__complex__"_s, complexPositive },
@@ -768,7 +797,9 @@ void initializeComplexType(JSGlobalObject* globalObject)
         { "__repr__"_s, complexRepr },
         { "__format__"_s, complexFormat },
         { "conjugate"_s, complexConjugate },
+        { "from_number"_s, complexFromNumber, Kind::ClassMethod },
     });
+    addComparisons(globalObject, type, complexEquality);
     addMember(globalObject, type, "real"_s, [] (JSGlobalObject*, JSValue self) { return floatFromDouble(tryComplex(self)->real()); });
     addMember(globalObject, type, "imag"_s, [] (JSGlobalObject*, JSValue self) { return floatFromDouble(tryComplex(self)->imaginary()); });
 }

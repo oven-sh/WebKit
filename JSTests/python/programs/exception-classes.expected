@@ -1,0 +1,275 @@
+encode => (('utf-8', 'abc', 1, 2, 'why', ('utf-8', 'abc', 1, 2, 'why')), "'utf-8' codec can't encode character '\\x62' in position 1: why", "UnicodeEncodeError('utf-8', 'abc', 1, 2, 'why')")
+decode => (('utf-8', b'abc', 1, 2, 'why', ('utf-8', b'abc', 1, 2, 'why')), "'utf-8' codec can't decode byte 0x62 in position 1: why")
+translate => ((None, 'abc', 1, 2, 'why', ('abc', 1, 2, 'why')), "can't translate character '\\x62' in position 1: why", "UnicodeTranslateError('abc', 1, 2, 'why')")
+character latin => ("'x' codec can't encode character '\\xe9' in position 1: r", "can't translate character '\\xe9' in position 1: r")
+character bmp => ("'x' codec can't encode character '\\u20ac' in position 1: r", "can't translate character '\\u20ac' in position 1: r")
+character astral => ("'x' codec can't encode character '\\U0001f600' in position 1: r", "can't translate character '\\U0001f600' in position 1: r")
+range 0 1 => ("'x' codec can't encode character '\\x61' in position 0: r", "'x' codec can't decode byte 0x61 in position 0: r", "can't translate character '\\x61' in position 0: r")
+range 0 2 => ("'x' codec can't encode characters in position 0-1: r", "'x' codec can't decode bytes in position 0-1: r", "can't translate characters in position 0-1: r")
+range 0 3 => ("'x' codec can't encode characters in position 0-2: r", "'x' codec can't decode bytes in position 0-2: r", "can't translate characters in position 0-2: r")
+range 2 3 => ("'x' codec can't encode character '\\x63' in position 2: r", "'x' codec can't decode byte 0x63 in position 2: r", "can't translate character '\\x63' in position 2: r")
+range 3 4 => ("'x' codec can't encode characters in position 3-3: r", "'x' codec can't decode bytes in position 3-3: r", "can't translate characters in position 3-3: r")
+range 1 1 => ("'x' codec can't encode characters in position 1-0: r", "'x' codec can't decode bytes in position 1-0: r", "can't translate characters in position 1-0: r")
+range 2 1 => ("'x' codec can't encode characters in position 2-0: r", "'x' codec can't decode bytes in position 2-0: r", "can't translate characters in position 2-0: r")
+range -1 0 => ("'x' codec can't encode characters in position -1--1: r", "'x' codec can't decode bytes in position -1--1: r", "can't translate characters in position -1--1: r")
+range 0 0 => ("'x' codec can't encode characters in position 0--1: r", "'x' codec can't decode bytes in position 0--1: r", "can't translate characters in position 0--1: r")
+range 5 6 => ("'x' codec can't encode characters in position 5-5: r", "'x' codec can't decode bytes in position 5-5: r", "can't translate characters in position 5-5: r")
+range 0 100 => ("'x' codec can't encode characters in position 0-99: r", "'x' codec can't decode bytes in position 0-99: r", "can't translate characters in position 0-99: r")
+range -5 -4 => ("'x' codec can't encode characters in position -5--5: r", "'x' codec can't decode bytes in position -5--5: r", "can't translate characters in position -5--5: r")
+empty object => ("'x' codec can't encode characters in position 0-0: r", "'x' codec can't decode bytes in position 0-0: r", "can't translate characters in position 0-0: r")
+UnicodeEncodeError none !! TypeError function takes exactly 5 arguments (0 given)
+UnicodeEncodeError too few !! TypeError function takes exactly 5 arguments (4 given)
+UnicodeEncodeError too many !! TypeError function takes exactly 5 arguments (6 given)
+UnicodeEncodeError keywords !! TypeError UnicodeEncodeError() takes no keyword arguments
+UnicodeEncodeError argument 1 is None !! TypeError argument 1 must be str, not None
+UnicodeEncodeError argument 1 is 1.5 !! TypeError argument 1 must be str, not float
+UnicodeEncodeError argument 1 is [] !! TypeError argument 1 must be str, not list
+UnicodeEncodeError argument 1 is b'b' !! TypeError argument 1 must be str, not bytes
+UnicodeEncodeError argument 2 is None !! TypeError argument 2 must be str, not None
+UnicodeEncodeError argument 2 is 1.5 !! TypeError argument 2 must be str, not float
+UnicodeEncodeError argument 2 is [] !! TypeError argument 2 must be str, not list
+UnicodeEncodeError argument 2 is b'b' !! TypeError argument 2 must be str, not bytes
+UnicodeEncodeError argument 3 is None !! TypeError 'NoneType' object cannot be interpreted as an integer
+UnicodeEncodeError argument 3 is 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+UnicodeEncodeError argument 3 is [] !! TypeError 'list' object cannot be interpreted as an integer
+UnicodeEncodeError argument 3 is 's' !! TypeError 'str' object cannot be interpreted as an integer
+UnicodeEncodeError argument 4 is None !! TypeError 'NoneType' object cannot be interpreted as an integer
+UnicodeEncodeError argument 4 is 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+UnicodeEncodeError argument 4 is [] !! TypeError 'list' object cannot be interpreted as an integer
+UnicodeEncodeError argument 4 is 's' !! TypeError 'str' object cannot be interpreted as an integer
+UnicodeEncodeError argument 5 is None !! TypeError argument 5 must be str, not None
+UnicodeEncodeError argument 5 is 1.5 !! TypeError argument 5 must be str, not float
+UnicodeEncodeError argument 5 is [] !! TypeError argument 5 must be str, not list
+UnicodeEncodeError argument 5 is b'b' !! TypeError argument 5 must be str, not bytes
+UnicodeEncodeError big !! OverflowError Python int too large to convert to C ssize_t
+UnicodeEncodeError index => (1, 1)
+UnicodeEncodeError without init => ((None, None, 0, 0, None, ()), '')
+UnicodeEncodeError without init, with arguments => ((None, None, 0, 0, None, (1, 2)), '')
+UnicodeEncodeError args are set even so !! NameError name 'after_failure' is not defined
+UnicodeEncodeError own => ['__init__', '__new__', '__str__', 'encoding', 'end', 'object', 'reason', 'start']
+UnicodeEncodeError kinds => ['member_descriptor', 'member_descriptor', 'member_descriptor', 'member_descriptor', 'member_descriptor']
+UnicodeEncodeError set encoding to None => (None, "'None' codec can't encode character '\\x62' in position 1: r")
+UnicodeEncodeError set encoding to 5 => (5, "'5' codec can't encode character '\\x62' in position 1: r")
+UnicodeEncodeError set encoding to 'new' => ('new', "'new' codec can't encode character '\\x62' in position 1: r")
+UnicodeEncodeError set encoding to b'new' => (b'new', "'b'new'' codec can't encode character '\\x62' in position 1: r")
+UnicodeEncodeError delete encoding => (None, None, "'<NULL>' codec can't encode character '\\x62' in position 1: r")
+UnicodeEncodeError set object to None => (None, "TypeError: UnicodeError 'object' attribute must be a string")
+UnicodeEncodeError set object to 5 => (5, "TypeError: UnicodeError 'object' attribute must be a string")
+UnicodeEncodeError set object to 'new' => ('new', "'x' codec can't encode character '\\x65' in position 1: r")
+UnicodeEncodeError set object to b'new' => (b'new', "TypeError: UnicodeError 'object' attribute must be a string")
+UnicodeEncodeError delete object => (None, None, '')
+UnicodeEncodeError set reason to None => (None, "'x' codec can't encode character '\\x62' in position 1: None")
+UnicodeEncodeError set reason to 5 => (5, "'x' codec can't encode character '\\x62' in position 1: 5")
+UnicodeEncodeError set reason to 'new' => ('new', "'x' codec can't encode character '\\x62' in position 1: new")
+UnicodeEncodeError set reason to b'new' => (b'new', "'x' codec can't encode character '\\x62' in position 1: b'new'")
+UnicodeEncodeError delete reason => (None, None, "'x' codec can't encode character '\\x62' in position 1: <NULL>")
+UnicodeEncodeError set start to 0 => (0, "'x' codec can't encode characters in position 0-1: r")
+UnicodeEncodeError set start to 2 => (2, "'x' codec can't encode characters in position 2-1: r")
+UnicodeEncodeError set start to -1 => (-1, "'x' codec can't encode characters in position -1-1: r")
+UnicodeEncodeError set start to True => (1, "'x' codec can't encode character '\\x62' in position 1: r")
+UnicodeEncodeError set start to 1.5 !! TypeError an integer is required
+UnicodeEncodeError set start to '1' !! TypeError an integer is required
+UnicodeEncodeError set start to None !! TypeError an integer is required
+UnicodeEncodeError set start to 1180591620717411303424 !! OverflowError Python int too large to convert to C ssize_t
+UnicodeEncodeError delete start !! TypeError can't delete numeric/char attribute
+UnicodeEncodeError set end to 0 => (0, "'x' codec can't encode characters in position 1--1: r")
+UnicodeEncodeError set end to 2 => (2, "'x' codec can't encode character '\\x62' in position 1: r")
+UnicodeEncodeError set end to -1 => (-1, "'x' codec can't encode characters in position 1--2: r")
+UnicodeEncodeError set end to True => (1, "'x' codec can't encode characters in position 1-0: r")
+UnicodeEncodeError set end to 1.5 !! TypeError an integer is required
+UnicodeEncodeError set end to '1' !! TypeError an integer is required
+UnicodeEncodeError set end to None !! TypeError an integer is required
+UnicodeEncodeError set end to 1180591620717411303424 !! OverflowError Python int too large to convert to C ssize_t
+UnicodeEncodeError delete end !! TypeError can't delete numeric/char attribute
+UnicodeDecodeError none !! TypeError function takes exactly 5 arguments (0 given)
+UnicodeDecodeError too few !! TypeError function takes exactly 5 arguments (4 given)
+UnicodeDecodeError too many !! TypeError function takes exactly 5 arguments (6 given)
+UnicodeDecodeError keywords !! TypeError UnicodeDecodeError() takes no keyword arguments
+UnicodeDecodeError argument 1 is None !! TypeError argument 1 must be str, not None
+UnicodeDecodeError argument 1 is 1.5 !! TypeError argument 1 must be str, not float
+UnicodeDecodeError argument 1 is [] !! TypeError argument 1 must be str, not list
+UnicodeDecodeError argument 1 is b'b' !! TypeError argument 1 must be str, not bytes
+UnicodeDecodeError argument 2 is None !! TypeError a bytes-like object is required, not 'NoneType'
+UnicodeDecodeError argument 2 is 1.5 !! TypeError a bytes-like object is required, not 'float'
+UnicodeDecodeError argument 2 is [] !! TypeError a bytes-like object is required, not 'list'
+UnicodeDecodeError argument 2 is 's' !! TypeError a bytes-like object is required, not 'str'
+UnicodeDecodeError argument 3 is None !! TypeError 'NoneType' object cannot be interpreted as an integer
+UnicodeDecodeError argument 3 is 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+UnicodeDecodeError argument 3 is [] !! TypeError 'list' object cannot be interpreted as an integer
+UnicodeDecodeError argument 3 is 's' !! TypeError 'str' object cannot be interpreted as an integer
+UnicodeDecodeError argument 4 is None !! TypeError 'NoneType' object cannot be interpreted as an integer
+UnicodeDecodeError argument 4 is 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+UnicodeDecodeError argument 4 is [] !! TypeError 'list' object cannot be interpreted as an integer
+UnicodeDecodeError argument 4 is 's' !! TypeError 'str' object cannot be interpreted as an integer
+UnicodeDecodeError argument 5 is None !! TypeError argument 5 must be str, not None
+UnicodeDecodeError argument 5 is 1.5 !! TypeError argument 5 must be str, not float
+UnicodeDecodeError argument 5 is [] !! TypeError argument 5 must be str, not list
+UnicodeDecodeError argument 5 is b'b' !! TypeError argument 5 must be str, not bytes
+UnicodeDecodeError big !! OverflowError Python int too large to convert to C ssize_t
+UnicodeDecodeError index => (1, 1)
+UnicodeDecodeError without init => ((None, None, 0, 0, None, ()), '')
+UnicodeDecodeError without init, with arguments => ((None, None, 0, 0, None, (1, 2)), '')
+UnicodeDecodeError args are set even so !! NameError name 'after_failure' is not defined
+UnicodeDecodeError own => ['__init__', '__new__', '__str__', 'encoding', 'end', 'object', 'reason', 'start']
+UnicodeDecodeError kinds => ['member_descriptor', 'member_descriptor', 'member_descriptor', 'member_descriptor', 'member_descriptor']
+UnicodeDecodeError set encoding to None => (None, "'None' codec can't decode byte 0x62 in position 1: r")
+UnicodeDecodeError set encoding to 5 => (5, "'5' codec can't decode byte 0x62 in position 1: r")
+UnicodeDecodeError set encoding to 'new' => ('new', "'new' codec can't decode byte 0x62 in position 1: r")
+UnicodeDecodeError set encoding to b'new' => (b'new', "'b'new'' codec can't decode byte 0x62 in position 1: r")
+UnicodeDecodeError delete encoding => (None, None, "'<NULL>' codec can't decode byte 0x62 in position 1: r")
+UnicodeDecodeError set object to None => (None, "TypeError: UnicodeError 'object' attribute must be a bytes")
+UnicodeDecodeError set object to 5 => (5, "TypeError: UnicodeError 'object' attribute must be a bytes")
+UnicodeDecodeError set object to 'new' => ('new', "TypeError: UnicodeError 'object' attribute must be a bytes")
+UnicodeDecodeError set object to b'new' => (b'new', "'x' codec can't decode byte 0x65 in position 1: r")
+UnicodeDecodeError delete object => (None, None, '')
+UnicodeDecodeError set reason to None => (None, "'x' codec can't decode byte 0x62 in position 1: None")
+UnicodeDecodeError set reason to 5 => (5, "'x' codec can't decode byte 0x62 in position 1: 5")
+UnicodeDecodeError set reason to 'new' => ('new', "'x' codec can't decode byte 0x62 in position 1: new")
+UnicodeDecodeError set reason to b'new' => (b'new', "'x' codec can't decode byte 0x62 in position 1: b'new'")
+UnicodeDecodeError delete reason => (None, None, "'x' codec can't decode byte 0x62 in position 1: <NULL>")
+UnicodeDecodeError set start to 0 => (0, "'x' codec can't decode bytes in position 0-1: r")
+UnicodeDecodeError set start to 2 => (2, "'x' codec can't decode bytes in position 2-1: r")
+UnicodeDecodeError set start to -1 => (-1, "'x' codec can't decode bytes in position -1-1: r")
+UnicodeDecodeError set start to True => (1, "'x' codec can't decode byte 0x62 in position 1: r")
+UnicodeDecodeError set start to 1.5 !! TypeError an integer is required
+UnicodeDecodeError set start to '1' !! TypeError an integer is required
+UnicodeDecodeError set start to None !! TypeError an integer is required
+UnicodeDecodeError set start to 1180591620717411303424 !! OverflowError Python int too large to convert to C ssize_t
+UnicodeDecodeError delete start !! TypeError can't delete numeric/char attribute
+UnicodeDecodeError set end to 0 => (0, "'x' codec can't decode bytes in position 1--1: r")
+UnicodeDecodeError set end to 2 => (2, "'x' codec can't decode byte 0x62 in position 1: r")
+UnicodeDecodeError set end to -1 => (-1, "'x' codec can't decode bytes in position 1--2: r")
+UnicodeDecodeError set end to True => (1, "'x' codec can't decode bytes in position 1-0: r")
+UnicodeDecodeError set end to 1.5 !! TypeError an integer is required
+UnicodeDecodeError set end to '1' !! TypeError an integer is required
+UnicodeDecodeError set end to None !! TypeError an integer is required
+UnicodeDecodeError set end to 1180591620717411303424 !! OverflowError Python int too large to convert to C ssize_t
+UnicodeDecodeError delete end !! TypeError can't delete numeric/char attribute
+UnicodeTranslateError none !! TypeError function takes exactly 4 arguments (0 given)
+UnicodeTranslateError too few !! TypeError function takes exactly 4 arguments (3 given)
+UnicodeTranslateError too many !! TypeError function takes exactly 4 arguments (5 given)
+UnicodeTranslateError keywords !! TypeError UnicodeTranslateError() takes no keyword arguments
+UnicodeTranslateError argument 1 is None !! TypeError argument 1 must be str, not None
+UnicodeTranslateError argument 1 is 1.5 !! TypeError argument 1 must be str, not float
+UnicodeTranslateError argument 1 is [] !! TypeError argument 1 must be str, not list
+UnicodeTranslateError argument 1 is b'b' !! TypeError argument 1 must be str, not bytes
+UnicodeTranslateError argument 2 is None !! TypeError 'NoneType' object cannot be interpreted as an integer
+UnicodeTranslateError argument 2 is 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+UnicodeTranslateError argument 2 is [] !! TypeError 'list' object cannot be interpreted as an integer
+UnicodeTranslateError argument 2 is 's' !! TypeError 'str' object cannot be interpreted as an integer
+UnicodeTranslateError argument 3 is None !! TypeError 'NoneType' object cannot be interpreted as an integer
+UnicodeTranslateError argument 3 is 1.5 !! TypeError 'float' object cannot be interpreted as an integer
+UnicodeTranslateError argument 3 is [] !! TypeError 'list' object cannot be interpreted as an integer
+UnicodeTranslateError argument 3 is 's' !! TypeError 'str' object cannot be interpreted as an integer
+UnicodeTranslateError argument 4 is None !! TypeError argument 4 must be str, not None
+UnicodeTranslateError argument 4 is 1.5 !! TypeError argument 4 must be str, not float
+UnicodeTranslateError argument 4 is [] !! TypeError argument 4 must be str, not list
+UnicodeTranslateError argument 4 is b'b' !! TypeError argument 4 must be str, not bytes
+UnicodeTranslateError big !! OverflowError Python int too large to convert to C ssize_t
+UnicodeTranslateError index => (1, 1)
+UnicodeTranslateError without init => ((None, None, 0, 0, None, ()), '')
+UnicodeTranslateError without init, with arguments => ((None, None, 0, 0, None, (1, 2)), '')
+UnicodeTranslateError args are set even so !! NameError name 'after_failure' is not defined
+UnicodeTranslateError own => ['__init__', '__new__', '__str__', 'encoding', 'end', 'object', 'reason', 'start']
+UnicodeTranslateError kinds => ['member_descriptor', 'member_descriptor', 'member_descriptor', 'member_descriptor', 'member_descriptor']
+UnicodeTranslateError set encoding to None => (None, "can't translate character '\\x62' in position 1: r")
+UnicodeTranslateError set encoding to 5 => (5, "can't translate character '\\x62' in position 1: r")
+UnicodeTranslateError set encoding to 'new' => ('new', "can't translate character '\\x62' in position 1: r")
+UnicodeTranslateError set encoding to b'new' => (b'new', "can't translate character '\\x62' in position 1: r")
+UnicodeTranslateError delete encoding => (None, None, "can't translate character '\\x62' in position 1: r")
+UnicodeTranslateError set object to None => (None, "TypeError: UnicodeError 'object' attribute must be a string")
+UnicodeTranslateError set object to 5 => (5, "TypeError: UnicodeError 'object' attribute must be a string")
+UnicodeTranslateError set object to 'new' => ('new', "can't translate character '\\x65' in position 1: r")
+UnicodeTranslateError set object to b'new' => (b'new', "TypeError: UnicodeError 'object' attribute must be a string")
+UnicodeTranslateError delete object => (None, None, '')
+UnicodeTranslateError set reason to None => (None, "can't translate character '\\x62' in position 1: None")
+UnicodeTranslateError set reason to 5 => (5, "can't translate character '\\x62' in position 1: 5")
+UnicodeTranslateError set reason to 'new' => ('new', "can't translate character '\\x62' in position 1: new")
+UnicodeTranslateError set reason to b'new' => (b'new', "can't translate character '\\x62' in position 1: b'new'")
+UnicodeTranslateError delete reason => (None, None, "can't translate character '\\x62' in position 1: <NULL>")
+UnicodeTranslateError set start to 0 => (0, "can't translate characters in position 0-1: r")
+UnicodeTranslateError set start to 2 => (2, "can't translate characters in position 2-1: r")
+UnicodeTranslateError set start to -1 => (-1, "can't translate characters in position -1-1: r")
+UnicodeTranslateError set start to True => (1, "can't translate character '\\x62' in position 1: r")
+UnicodeTranslateError set start to 1.5 !! TypeError an integer is required
+UnicodeTranslateError set start to '1' !! TypeError an integer is required
+UnicodeTranslateError set start to None !! TypeError an integer is required
+UnicodeTranslateError set start to 1180591620717411303424 !! OverflowError Python int too large to convert to C ssize_t
+UnicodeTranslateError delete start !! TypeError can't delete numeric/char attribute
+UnicodeTranslateError set end to 0 => (0, "can't translate characters in position 1--1: r")
+UnicodeTranslateError set end to 2 => (2, "can't translate character '\\x62' in position 1: r")
+UnicodeTranslateError set end to -1 => (-1, "can't translate characters in position 1--2: r")
+UnicodeTranslateError set end to True => (1, "can't translate characters in position 1-0: r")
+UnicodeTranslateError set end to 1.5 !! TypeError an integer is required
+UnicodeTranslateError set end to '1' !! TypeError an integer is required
+UnicodeTranslateError set end to None !! TypeError an integer is required
+UnicodeTranslateError set end to 1180591620717411303424 !! OverflowError Python int too large to convert to C ssize_t
+UnicodeTranslateError delete end !! TypeError can't delete numeric/char attribute
+derived strings => (('x', 'abc', 1, 2, 'r'), 'S', "'x' codec can't encode character '\\x62' in position 1: r")
+decode of other buffers => [('bytes', b'ab', "'x' codec can't decode byte 0x61 in position 0: r"), ('bytes', b'ab', "'x' codec can't decode byte 0x61 in position 0: r"), ('B', b'ab', "'x' codec can't decode byte 0x61 in position 0: r")]
+decode keeps bytes => True
+decode copies a bytearray => (None, b'ab')
+real ones => ["UnicodeEncodeError: 'ascii' codec can't encode character '\\xe9' in position 0: ordinal not in range(128)", "UnicodeDecodeError: 'ascii' codec can't decode byte 0xe9 in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"]
+real ones, fields => [('ascii', 'aééb', 1, 3, 'ordinal not in range(128)'), ('ascii', b'a\xe9b', 1, 2, 'ordinal not in range(128)')]
+hierarchy => ['UnicodeError', 'UnicodeError', 'UnicodeError', 'ValueError']
+OSError() => ('OSError', (None, None, None, None, (), 'AttributeError: characters_written'), '', 'OSError()')
+OSError(1,) => ('OSError', (None, None, None, None, (1,), 'AttributeError: characters_written'), '1', 'OSError(1)')
+OSError(1, 's') => ('PermissionError', (1, 's', None, None, (1, 's'), 'AttributeError: characters_written'), '[Errno 1] s', "PermissionError(1, 's')")
+OSError(1, 's', 'f') => ('PermissionError', (1, 's', 'f', None, (1, 's'), 'AttributeError: characters_written'), "[Errno 1] s: 'f'", "PermissionError(1, 's')")
+OSError(1, 's', 'f', 0) => ('PermissionError', (1, 's', 'f', None, (1, 's'), 'AttributeError: characters_written'), "[Errno 1] s: 'f'", "PermissionError(1, 's')")
+OSError(1, 's', 'f', 0, 'g') => ('PermissionError', (1, 's', 'f', 'g', (1, 's'), 'AttributeError: characters_written'), "[Errno 1] s: 'f' -> 'g'", "PermissionError(1, 's')")
+OSError(1, 's', 'f', 0, 'g', 6) => ('OSError', (None, None, None, None, (1, 's', 'f', 0, 'g', 6), 'AttributeError: characters_written'), "(1, 's', 'f', 0, 'g', 6)", "OSError(1, 's', 'f', 0, 'g', 6)")
+OSError(1, 's', None) => ('PermissionError', (1, 's', None, None, (1, 's', None), 'AttributeError: characters_written'), '[Errno 1] s', "PermissionError(1, 's', None)")
+OSError(1, 's', None, None, 'g') => ('PermissionError', (1, 's', None, None, (1, 's', None, None, 'g'), 'AttributeError: characters_written'), '[Errno 1] s', "PermissionError(1, 's', None, None, 'g')")
+OSError(1, 's', 'f', None, None) => ('PermissionError', (1, 's', 'f', None, (1, 's'), 'AttributeError: characters_written'), "[Errno 1] s: 'f'", "PermissionError(1, 's')")
+OSError('x', 'y') => ('OSError', ('x', 'y', None, None, ('x', 'y'), 'AttributeError: characters_written'), '[Errno x] y', "OSError('x', 'y')")
+OSError(2, 's') => ('FileNotFoundError', (2, 's', None, None, (2, 's'), 'AttributeError: characters_written'), '[Errno 2] s', "FileNotFoundError(2, 's')")
+OSError(2, 's', 'f') => ('FileNotFoundError', (2, 's', 'f', None, (2, 's'), 'AttributeError: characters_written'), "[Errno 2] s: 'f'", "FileNotFoundError(2, 's')")
+OSError(None, None) => ('OSError', (None, None, None, None, (None, None), 'AttributeError: characters_written'), '[Errno None] None', 'OSError(None, None)')
+OSError(1180591620717411303424, 's') => ('OSError', (1180591620717411303424, 's', None, None, (1180591620717411303424, 's'), 'AttributeError: characters_written'), '[Errno 1180591620717411303424] s', "OSError(1180591620717411303424, 's')")
+OSError keywords !! TypeError OSError() takes no keyword arguments
+by number => ['PermissionError', 'FileNotFoundError', 'ProcessLookupError', 'InterruptedError', 'ChildProcessError', 'OSError', 'PermissionError', 'FileExistsError', 'NotADirectoryError', 'IsADirectoryError', 'BrokenPipeError', 'BlockingIOError', 'BlockingIOError', 'ConnectionResetError', 'TimeoutError', 'ConnectionRefusedError', 'OSError', 'OSError', 'PermissionError']
+not for derived classes => X
+not for one that is specific => PermissionError
+BlockingIOError(1, 's', 5) => ((1, 's', None, None, (1, 's', 5), 5), '[Errno 1] s')
+BlockingIOError(1, 's', 5.5) !! TypeError 'float' object cannot be interpreted as an integer
+BlockingIOError(1, 's', 'f') => ((1, 's', 'f', None, (1, 's'), 'AttributeError: characters_written'), "[Errno 1] s: 'f'")
+BlockingIOError(1, 's', True) => ((1, 's', None, None, (1, 's', True), 1), '[Errno 1] s')
+BlockingIOError(1, 's', 1180591620717411303424) !! ValueError cannot fit 'int' into an index-sized integer
+BlockingIOError(1, 's', 5, 0, 'g') => ((1, 's', None, None, (1, 's', 5, 0, 'g'), 5), '[Errno 1] s')
+BlockingIOError(1, 's', None) => ((1, 's', None, None, (1, 's', None), 'AttributeError: characters_written'), '[Errno 1] s')
+BlockingIOError(1, 's') => ((1, 's', None, None, (1, 's'), 'AttributeError: characters_written'), '[Errno 1] s')
+only BlockingIOError itself => ((1, 's', 5, None, (1, 's'), 'AttributeError: characters_written'), (35, 's', None, None, (35, 's', 5), 5), 'BlockingIOError')
+characters_written => [0, 5, 'AttributeError: characters_written', -2, 1, "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "ValueError: cannot fit 'int' into an index-sized integer"]
+characters_written delete => (None, None, 'AttributeError: characters_written')
+characters_written delete twice !! AttributeError characters_written
+own init => ((None, None, None, None, ()), (1, 2), '')
+own init that calls => ((1, 2, 'file', None, (1, 2)), "[Errno 1] 2: 'file'")
+own new => ((1, 'from new', None, None, (1, 'from new')), '[Errno 1] from new')
+own both => ((7, 'from new', None, None, (7, 'from new')), '[Errno 7] from new')
+own init keywords => (1, 2)
+init again does nothing => (None, (1, 's', None, None, (1, 's')))
+aliases => (True, True)
+set fields => (None, None, "[Errno 9] s: 'z'", (1, 's'))
+SyntaxError() => ((None, None, None, None, None, None, None, None, None, ()), 'None')
+SyntaxError('m',) => (('m', None, None, None, None, None, None, None, None, ('m',)), 'm')
+SyntaxError('m', ('f', 1, 2, 't')) => (('m', 'f', 1, 2, 't', None, None, None, None, ('m', ('f', 1, 2, 't'))), 'm (f, line 1)')
+SyntaxError('m', ('f', 1, 2, 't', 3, 4)) => (('m', 'f', 1, 2, 't', 3, 4, None, None, ('m', ('f', 1, 2, 't', 3, 4))), 'm (f, line 1)')
+SyntaxError('m', ('f', 1, 2, 't', 3, 4, 'meta')) => (('m', 'f', 1, 2, 't', 3, 4, 'meta', None, ('m', ('f', 1, 2, 't', 3, 4, 'meta'))), 'm (f, line 1)')
+SyntaxError('m', ['f', 1, 2, 't']) => (('m', 'f', 1, 2, 't', None, None, None, None, ('m', ['f', 1, 2, 't'])), 'm (f, line 1)')
+SyntaxError('m', ('f', 1, 2)) !! TypeError function takes at least 4 arguments (3 given)
+SyntaxError('m', ('f', 1, 2, 't', 3)) !! TypeError end_offset must be provided when end_lineno is provided
+SyntaxError('m', ('f', 1, 2, 't', 3, 4, 5, 6)) !! TypeError function takes at most 7 arguments (8 given)
+SyntaxError('m', 1) !! TypeError 'int' object is not iterable
+SyntaxError('m', 'abcd') => (('m', 'a', 'b', 'c', 'd', None, None, None, None, ('m', 'abcd')), 'm (a)')
+SyntaxError('m', ('f', 1, 2, 't'), 3) => (('m', None, None, None, None, None, None, None, None, ('m', ('f', 1, 2, 't'), 3)), 'm')
+metadata => (None, 5, None, None)
+incomplete input => ('SyntaxError', '_IncompleteInputError', 'builtins', 'incomplete input.', 'm (f, line 1)', True)
+which have a __new__ of their own => ['ArithmeticError', 'AssertionError', 'BaseException', 'BaseExceptionGroup', 'BufferError', 'BytesWarning', 'DeprecationWarning', 'EOFError', 'EncodingWarning', 'EnvironmentError', 'Exception', 'FloatingPointError', 'FutureWarning', 'GeneratorExit', 'IOError', 'ImportWarning', 'IndexError', 'KeyboardInterrupt', 'LookupError', 'MemoryError', 'NotImplementedError', 'OSError', 'OverflowError', 'PendingDeprecationWarning', 'PythonFinalizationError', 'RecursionError', 'ReferenceError', 'ResourceWarning', 'RuntimeError', 'RuntimeWarning', 'StopAsyncIteration', 'SyntaxWarning', 'SystemError', 'TypeError', 'UnicodeDecodeError', 'UnicodeEncodeError', 'UnicodeError', 'UnicodeTranslateError', 'UnicodeWarning', 'UserWarning', 'ValueError', 'Warning', 'ZeroDivisionError']
+which have an __init__ of their own => ['AttributeError', 'BaseException', 'BaseExceptionGroup', 'EnvironmentError', 'IOError', 'ImportError', 'NameError', 'OSError', 'StopIteration', 'SyntaxError', 'SystemExit', 'UnicodeDecodeError', 'UnicodeEncodeError', 'UnicodeTranslateError']
+new of another !! TypeError ValueError.__new__(TypeError): TypeError is not a subtype of ValueError
+new of what is not one !! TypeError ValueError.__new__(int): int is not a subtype of ValueError
+new of nothing !! TypeError ValueError.__new__(): not enough arguments
+new of a value !! TypeError ValueError.__new__(X): X is not a type object (int)
+new is not safe !! TypeError object.__new__(ValueError) is not safe, use ValueError.__new__()
+new with keywords => ()

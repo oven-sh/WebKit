@@ -1054,6 +1054,154 @@ PYTHON_NATIVE(strFormatMap)
     return JSValue::encode(toJS(vm, result));
 }
 
+// ---- translate() and maketrans(): _PyUnicode_TranslateCharmap() and unicode_maketrans_impl() of CPython's Objects/unicodeobject.c
+
+// What the table has for a character.
+struct Translation {
+    enum class Kind : uint8_t { Same, Deleted, Character, Text } kind { Kind::Same };
+    char32_t character { 0 };
+    JSString* text { nullptr };
+};
+
+static Translation lookUpTranslation(JSGlobalObject* globalObject, JSValue table, char32_t character)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue found = getItem(globalObject, table, jsNumber(static_cast<int32_t>(character)));
+    if (scope.exception()) {
+        // What is not in the table stays as it is.
+        catchException(globalObject, BuiltinType::LookupError);
+        return { };
+    }
+    if (isNone(found))
+        return { Translation::Kind::Deleted };
+    if (isInstance(globalObject, found, globalObject->pyRealm()->typeInt())) {
+        auto value = toIndex(globalObject, found, true);
+        if (*value < 0 || *value > 0x10FFFF) {
+            raiseValueError(globalObject, scope, "character mapping must be in range(0x110000)"_s);
+            return { };
+        }
+        return { Translation::Kind::Character, static_cast<char32_t>(*value) };
+    }
+    if (JSString* text = stringIn(found))
+        return { Translation::Kind::Text, 0, text };
+    raiseTypeError(globalObject, scope, "character mapping must return integer, None or str"_s);
+    return { };
+}
+
+PYTHON_NATIVE(strTranslate)
+{
+    STR_PROLOGUE("translate");
+    JSValue table = args[1];
+    StringBuilder result;
+    StringView view { self };
+    unsigned start = 0;
+
+    // While it is ASCII to ASCII the table is asked about each character once, as in CPython, where it can be told how often it is asked.
+    if (view.containsOnlyASCII()) {
+        constexpr uint8_t unknown = 0xFF;
+        constexpr uint8_t deleted = 0xFE;
+        std::array<uint8_t, 128> known;
+        known.fill(unknown);
+        for (; start < view.length(); ++start) {
+            uint8_t character = view[start];
+            if (known[character] == unknown) {
+                Translation translation = lookUpTranslation(globalObject, table, character);
+                RETURN_IF_EXCEPTION(scope, { });
+                char32_t replacement = character;
+                if (translation.kind == Translation::Kind::Character)
+                    replacement = translation.character;
+                else if (translation.kind == Translation::Kind::Text) {
+                    if (translation.text->length() != 1)
+                        break;
+                    replacement = translation.text->view(globalObject)[0];
+                }
+                if (replacement > 127)
+                    break;
+                known[character] = translation.kind == Translation::Kind::Deleted ? deleted : static_cast<uint8_t>(replacement);
+            }
+            if (known[character] != deleted)
+                result.append(static_cast<Latin1Character>(known[character]));
+        }
+    }
+
+    for (char32_t character : view.substring(start).codePoints()) {
+        Translation translation = lookUpTranslation(globalObject, table, character);
+        RETURN_IF_EXCEPTION(scope, { });
+        switch (translation.kind) {
+        case Translation::Kind::Same:
+            result.append(character);
+            break;
+        case Translation::Kind::Deleted:
+            break;
+        case Translation::Kind::Character:
+            result.append(translation.character);
+            break;
+        case Translation::Kind::Text:
+            result.append(translation.text->view(globalObject).data);
+            break;
+        }
+    }
+    return JSValue::encode(toJS(vm, result.toString()));
+}
+
+// str.maketrans(x[, y[, z]])
+PYTHON_NATIVE(strMakeTrans)
+{
+    NATIVE_PROLOGUE();
+    JSValue x = args[0];
+    JSValue y = args.at(1);
+    JSValue z = args.at(2);
+    for (unsigned i = 1; i < args.size(); ++i) {
+        if (!stringIn(args[i]))
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("maketrans() argument "_s, i + 1, " must be str, not "_s, isNone(args[i]) ? "None"_s : typeName(globalObject, args[i]))));
+    }
+    PyDict* table = PyDict::create(globalObject);
+    auto number = [] (char32_t character) { return jsNumber(static_cast<int32_t>(character)); };
+    if (y) {
+        if (!stringIn(x))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "first maketrans argument must be a string if there is a second argument"_s));
+        Vector<char32_t> from;
+        for (char32_t character : stringIn(x)->view(globalObject)->codePoints())
+            from.append(character);
+        Vector<char32_t> to;
+        for (char32_t character : stringIn(y)->view(globalObject)->codePoints())
+            to.append(character);
+        if (from.size() != to.size())
+            return JSValue::encode(raiseValueError(globalObject, scope, "the first two maketrans arguments must have equal length"_s));
+        for (size_t i = 0; i < from.size(); ++i)
+            table->set(globalObject, number(from[i]), number(to[i]));
+        if (z) {
+            for (char32_t character : stringIn(z)->view(globalObject)->codePoints())
+                table->set(globalObject, number(character), jsUndefined());
+        }
+        return JSValue::encode(table);
+    }
+
+    if (!isExactly(globalObject, x, realm->typeDict()))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "if you give only one argument to maketrans it must be a dict"_s));
+    MarkedArgumentBuffer pairs;
+    asDict(x)->forEach(globalObject, [&] (JSValue key, JSValue value) {
+        pairs.append(key);
+        pairs.append(value);
+        return true;
+    });
+    for (size_t i = 0; i < pairs.size(); i += 2) {
+        JSValue key = pairs.at(i);
+        if (JSString* text = stringIn(key)) {
+            auto codePoints = text->view(globalObject)->codePoints();
+            auto first = codePoints.begin();
+            if (first == codePoints.end() || ++codePoints.begin() != codePoints.end())
+                return JSValue::encode(raiseValueError(globalObject, scope, "string keys in translatetable must be of length 1"_s)); // As CPython has it.
+            key = number(*first);
+        } else if (!isInstance(globalObject, key, realm->typeInt()))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "keys in translate table mustbe strings or integers"_s)); // The same.
+        table->set(globalObject, key, pairs.at(i + 1));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(table);
+}
+
 void initializeStrType(JSGlobalObject* globalObject)
 {
     PyRealm* realm = globalObject->pyRealm();
@@ -1113,10 +1261,12 @@ void initializeStrType(JSGlobalObject* globalObject)
         { "replace"_s, strReplace },
         { "format"_s, strFormat },
         { "format_map"_s, strFormatMap },
+        { "translate"_s, strTranslate },
+        { "maketrans"_s, strMakeTrans, Kind::Function },
     });
     addComparisons(globalObject, type);
-    addBinaryOperators(globalObject, type, { BinaryOperator::Add, BinaryOperator::Mod }, false, false);
-    addBinaryOperators(globalObject, type, { BinaryOperator::Mult }, true, false);
+    addBinaryOperators(globalObject, type, { BinaryOperator::Add }, false, false);
+    addBinaryOperators(globalObject, type, { BinaryOperator::Mult, BinaryOperator::Mod }, true, false);
 }
 
 } } // namespace JSC::Python

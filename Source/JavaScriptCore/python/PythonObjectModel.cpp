@@ -398,17 +398,6 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
     return { DescriptorKind::General, isData, getter };
 }
 
-// function(self, ...), for a function that is called on behalf of an instance. One of JavaScript's gets the instance as `this`.
-template<typename... Arguments>
-static JSValue callForInstance(JSGlobalObject* globalObject, JSValue function, JSValue self, Arguments... arguments)
-{
-    if (classifyDescriptor(globalObject, function).kind != DescriptorKind::JavaScriptFunction) [[likely]]
-        return call(globalObject, function, self, arguments...);
-    MarkedArgumentBuffer buffer;
-    (buffer.append(arguments), ...);
-    return JSC::call(globalObject, function, JSC::getCallData(function), self, buffer);
-}
-
 JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue value, JSValue instance, PyType* type)
 {
     VM& vm = globalObject->vm();
@@ -482,6 +471,16 @@ enum class InheritedFunctions : uint8_t { Bind, LeaveAsFound };
 static JSValue getJavaScriptProperty(JSGlobalObject*, JSObject*, PropertyName, InheritedFunctions);
 
 } // namespace
+
+JSValue callForInstance(JSGlobalObject* globalObject, JSValue function, JSValue self, JSValue argument)
+{
+    if (classifyDescriptor(globalObject, function).kind != DescriptorKind::JavaScriptFunction) [[likely]]
+        return argument ? call(globalObject, function, self, argument) : call(globalObject, function, self);
+    MarkedArgumentBuffer buffer;
+    if (argument)
+        buffer.append(argument);
+    return JSC::call(globalObject, function, JSC::getCallData(function), self, buffer);
+}
 
 JSValue getTypeAttribute(JSGlobalObject* globalObject, PyType* type, PropertyName name, ClassIsFunctionToo classIsFunctionToo, PyType* from)
 {
@@ -583,9 +582,11 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     if (isClass(value))
         message = makeString("type object '"_s, asType(value)->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
     else if (JSObject* module = tryModule(globalObject, value)) {
-        JSValue moduleName = module->getDirect(vm, vm.pythonNames().dunder_name);
-        if (moduleName && moduleName.isString())
-            message = makeString("module '"_s, asString(moduleName)->value(globalObject).data, "' has no attribute '"_s, attribute, '\'');
+        JSValue moduleName = getStoredAttribute(vm, module, vm.pythonNames().dunder_name);
+        if (JSString* text = moduleName ? stringIn(moduleName) : nullptr)
+            message = makeString("module '"_s, text->value(globalObject).data, "' has no attribute '"_s, attribute, '\'');
+        else
+            message = makeString("module has no attribute '"_s, attribute, '\'');
     }
     if (message.isNull())
         message = makeString('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\'');
@@ -657,8 +658,11 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
     }
     if (result)
         return result;
-    result = askModuleForAttribute(globalObject, value, name, IfModuleSaysNo::GoOn);
-    RETURN_IF_EXCEPTION(scope, { });
+    // A __getattribute__() of the class's own has asked, if it meant it to be.
+    if (!(hooks & PyType::HasCustomGetAttribute)) {
+        result = askModuleForAttribute(globalObject, value, name, IfModuleSaysNo::GoOn);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (result || !(hooks & PyType::HasGetAttr))
         return result;
 
@@ -668,6 +672,23 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
         return { };
     }
     return result;
+}
+
+// module.__getattribute__()
+JSValue getModuleAttribute(JSGlobalObject* globalObject, JSValue module, PropertyName name)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue result = genericGetAttribute(globalObject, module, name);
+    if (scope.exception() && !catchException(globalObject, BuiltinType::AttributeError))
+        return { };
+    if (result)
+        return result;
+    result = askModuleForAttribute(globalObject, module, name, IfModuleSaysNo::Raise);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return result;
+    return raiseNoAttribute(globalObject, scope, module, name);
 }
 
 JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name)
@@ -691,10 +712,12 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
     }
     if (result) [[likely]]
         return result;
-    result = askModuleForAttribute(globalObject, value, name, hooks & PyType::HasGetAttr ? IfModuleSaysNo::GoOn : IfModuleSaysNo::Raise);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (result)
-        return result;
+    if (!(hooks & PyType::HasCustomGetAttribute)) {
+        result = askModuleForAttribute(globalObject, value, name, hooks & PyType::HasGetAttr ? IfModuleSaysNo::GoOn : IfModuleSaysNo::Raise);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result)
+            return result;
+    }
     if (hooks & PyType::HasGetAttr)
         RELEASE_AND_RETURN(scope, call(globalObject, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name)));
     return raiseNoAttribute(globalObject, scope, value, name);
@@ -779,8 +802,9 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
             return true;
         }
         if (!asObject(value)->getDirect(vm, storage)) {
-            // Deleting an empty slot says only which.
-            raise(globalObject, scope, BuiltinType::AttributeError, attribute.toString());
+            // Deleting an empty slot says only which. One that is never without a value goes back to the one it began with, and is there already.
+            if (!uncheckedDowncast<PyGetSetDescriptor>(found.asCell())->initialValue())
+                raise(globalObject, scope, BuiltinType::AttributeError, attribute.toString());
             return true;
         }
         scope.release();

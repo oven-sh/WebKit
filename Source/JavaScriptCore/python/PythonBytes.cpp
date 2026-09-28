@@ -564,6 +564,9 @@ PYTHON_NATIVE(bytesCompare)
 {
     auto op = unpack<ComparisonOperator>(callFrame, 0);
     BYTES_PROLOGUE("__eq__");
+    // A bytearray is compared with anything that has bytes to show, and bytes with bytes alone.
+    if (typeOf(globalObject, selfValue)->hasFlag(PyType::IsBytes) && !typeOf(globalObject, args[1])->hasFlag(PyType::IsBytes))
+        RETURN_NOT_IMPLEMENTED();
     auto other = tryBufferOf(args.at(1));
     if (!other)
         RETURN_NOT_IMPLEMENTED();
@@ -1216,6 +1219,26 @@ PYTHON_NATIVE(strEncode)
     auto encoded = encodeString(globalObject, self, encoding, errors);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, encoded->span())));
+}
+
+// other % self. It is the class of what is on the left that says what % means, and it is for that class to be this one.
+PYTHON_NATIVE(bytesReflectedModulo)
+{
+    NATIVE_PROLOGUE();
+    bool isBytes = typeOf(globalObject, args[0])->hasFlag(PyType::IsBytes);
+    auto* other = dynamicDowncast<JSUint8Array>(args[1]);
+    if (!other || typeOf(globalObject, other)->hasFlag(PyType::IsBytes) != isBytes)
+        RETURN_NOT_IMPLEMENTED();
+    String text = bytesPercentFormat(globalObject, other->typedSpan(), args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, other, text.is8Bit() ? byteCast<uint8_t>(text.span8()) : std::span<const uint8_t>())));
+}
+
+// How many bytes CPython would have set aside: room for what is in it and for a zero after that.
+PYTHON_NATIVE(byteArrayAlloc)
+{
+    BYTES_PROLOGUE("__alloc__");
+    return JSValue::encode(intFromInt64(globalObject, content.size() ? content.size() + 1 : 0));
 }
 
 PYTHON_NATIVE(bytesModulo)
@@ -1901,6 +1924,75 @@ PYTHON_NATIVE(memoryNew)
     return JSValue::encode(PyMemoryView::create(globalObject, object, format, itemSize, 0, buffer->size() / itemSize, itemSize, isBytes(object)));
 }
 
+// memoryview._from_flags(object, flags). What the flags ask for is what there is here in any case, but for whether it can be written to.
+PYTHON_NATIVE(memoryFromFlags)
+{
+    NATIVE_PROLOGUE();
+    auto flags = toIndex(globalObject, args[2]);
+    RETURN_IF_EXCEPTION(scope, { });
+    constexpr int64_t writable = 1;
+    if ((*flags & writable) && isBytes(args[1]))
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s));
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, realm->typeMemoryView(), args[1])));
+}
+
+PYTHON_NATIVE(memoryRepr)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    return JSValue::encode(jsString(vm, makeString(asMemory(args[0])->isReleased() ? "<released memory at "_s : "<memory at "_s, addressOf(args[0].asCell()), '>')));
+}
+
+PYTHON_NATIVE(memoryCount)
+{
+    MEMORY_PROLOGUE();
+    int64_t count = 0;
+    forEach(globalObject, self, [&] (JSValue item) {
+        bool isSame = isIdentical(item, args[1]) || isEqual(globalObject, item, args[1]);
+        count += isSame && !scope.exception();
+        return !scope.exception();
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(intFromInt64(globalObject, count));
+}
+
+// memoryview.index(value, start=0, stop=sys.maxsize)
+PYTHON_NATIVE(memoryIndex)
+{
+    NATIVE_PROLOGUE();
+    // The bounds are looked at first.
+    int64_t bounds[2] = { 0, std::numeric_limits<int64_t>::max() };
+    for (unsigned i = 0; i < 2; ++i) {
+        if (JSValue given = args.at(i + 2)) {
+            if (!typeOf(globalObject, given)->lookup(vm, names.dunder_index))
+                return JSValue::encode(raiseTypeError(globalObject, scope, "slice indices must be integers or have an __index__ method"_s));
+            auto index = toIndex(globalObject, given, true);
+            RETURN_IF_EXCEPTION(scope, { });
+            bounds[i] = *index;
+        }
+    }
+    PyMemoryView* self = asMemory(args[0]);
+    if (self->isReleased())
+        return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
+    int64_t size = self->length();
+    auto [start, stop] = bounds;
+    if (start < 0)
+        start = std::max<int64_t>(start + size, 0);
+    if (stop < 0)
+        stop = std::max<int64_t>(stop + size, 0);
+    stop = std::min(stop, size);
+    start = std::min(start, stop);
+    for (int64_t index = start; index < stop; ++index) {
+        JSValue item = getItem(globalObject, self, intFromInt64(globalObject, index));
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isSame = isIdentical(item, args[1]) || isEqual(globalObject, item, args[1]);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isSame)
+            return JSValue::encode(intFromInt64(globalObject, index));
+    }
+    return JSValue::encode(raiseValueError(globalObject, scope, "memoryview.index(x): x not found"_s));
+}
+
 PYTHON_NATIVE(memoryLen)
 {
     MEMORY_PROLOGUE();
@@ -2047,8 +2139,11 @@ PYTHON_NATIVE(memoryCast)
 
 PYTHON_NATIVE(memoryEq)
 {
-    bool wantsEqual = unpack<bool>(callFrame, 0);
+    auto op = unpack<ComparisonOperator>(callFrame, 0);
+    bool wantsEqual = op == ComparisonOperator::Eq;
     NATIVE_PROLOGUE();
+    if (!isEquality(op))
+        RETURN_NOT_IMPLEMENTED();
     PyMemoryView* self = asMemory(args.at(0));
     JSValue other = args.at(1);
     if (self->isReleased())
@@ -2138,6 +2233,8 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
             { "__mul__"_s, bytesMultiply },
             { "__rmul__"_s, bytesMultiply },
             { "__mod__"_s, bytesModulo },
+            { "__rmod__"_s, bytesReflectedModulo },
+            { "__str__"_s, bytesRepr },
             { "fromhex"_s, bytesFromHex, Kind::ClassMethod },
             { "maketrans"_s, bytesMakeTranslation, Kind::Function },
             { "find"_s, bytesFind, Kind::Method, pack(false, false) },
@@ -2188,6 +2285,7 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         { "__bytes__"_s, bytesBytes },
     });
     addMethods(globalObject, byteArray, {
+        { "__alloc__"_s, byteArrayAlloc },
         { "__new__"_s, byteArrayNew, Kind::New },
         { "__init__"_s, byteArrayInit, Kind::Method, 0, "(source=b'', encoding='utf-8', errors='strict')"_s, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__setitem__"_s, byteArraySetItem },
@@ -2214,6 +2312,7 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
 
     PyType* memory = realm->typeMemoryView();
     memory->setInstanceStructure(vm, PyMemoryView::createStructure(vm, globalObject, memory));
+    addComparisons(globalObject, memory, memoryEq);
     addMethods(globalObject, memory, {
         { "__new__"_s, memoryNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__len__"_s, memoryLen },
@@ -2221,9 +2320,11 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         { "__setitem__"_s, memorySetItem },
         { "__delitem__"_s, memorySetItem },
         { "__iter__"_s, memoryIter },
-        { "__eq__"_s, memoryEq, Kind::Method, pack(true) },
-        { "__ne__"_s, memoryEq, Kind::Method, pack(false) },
         { "__hash__"_s, memoryHash },
+        { "__repr__"_s, memoryRepr },
+        { "count"_s, memoryCount },
+        { "index"_s, memoryIndex },
+        { "_from_flags"_s, memoryFromFlags, Kind::ClassMethod },
         { "__enter__"_s, memoryEnter },
         { "__exit__"_s, memoryRelease },
         { "release"_s, memoryRelease },

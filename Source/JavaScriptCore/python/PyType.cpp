@@ -498,7 +498,9 @@ unsigned PyType::hooks(JSGlobalObject* globalObject)
         return value && value.isCell() && (value.asCell() == realm->function(a) || value.asCell() == realm->function(b));
     };
     unsigned flags = 0;
-    if (!isOneOf(lookup(vm, names.dunder_getattribute), Function::ObjectGetAttribute, Function::TypeGetAttribute))
+    // What module's does besides is done for a module in any case. See getAttribute().
+    JSValue getAttribute = lookup(vm, names.dunder_getattribute);
+    if (!isOneOf(getAttribute, Function::ObjectGetAttribute, Function::TypeGetAttribute) && !isOneOf(getAttribute, Function::ModuleGetAttribute, Function::ModuleGetAttribute))
         flags |= HasCustomGetAttribute;
     if (lookup(vm, names.dunder_getattr))
         flags |= HasGetAttr;

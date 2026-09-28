@@ -745,6 +745,14 @@ static void addArithmetic(JSGlobalObject* globalObject, PyType* target, NumberTy
     addGetSet(globalObject, target, "imag"_s, [] (JSGlobalObject*, JSValue self) { return classify(self).kind == Number::Kind::Float ? floatFromDouble(0) : jsNumber(0); });
 }
 
+PYTHON_NATIVE(boolInvert)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    // FIXME: It is deprecated, and when there are warnings this is to give one.
+    return JSValue::encode(jsNumber(args[0].isTrue() ? -2 : -1));
+}
+
 void initializeNumberTypes(JSGlobalObject* globalObject)
 {
     PyRealm* realm = globalObject->pyRealm();
@@ -786,7 +794,11 @@ void initializeNumberTypes(JSGlobalObject* globalObject)
     addMethods(globalObject, realm->typeBool(), {
         { "__new__"_s, boolNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, nativeRepr },
+        { "__invert__"_s, boolInvert },
     });
+    // Two of them give another, and anything else what int gives. numberBinaryOperation() sees to that.
+    for (BinaryOperator op : { BinaryOperator::BitAnd, BinaryOperator::BitOr, BinaryOperator::BitXor })
+        addOperator(globalObject, realm->typeBool(), NumberType::Int, op);
 }
 
 } } // namespace JSC::Python

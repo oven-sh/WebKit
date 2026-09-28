@@ -246,17 +246,22 @@ PYTHON_NATIVE(nativeCompare)
     return JSValue::encode(result);
 }
 
-void addComparisons(JSGlobalObject* globalObject, PyType* type)
+void addComparisons(JSGlobalObject* globalObject, PyType* type, NativeFunction function)
 {
     // A class that compares in any way has them all, as in CPython, where they are one function. Those that mean nothing to it say NotImplemented.
     addMethods(globalObject, type, {
-        { "__eq__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Eq) },
-        { "__ne__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::NotEq) },
-        { "__lt__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Lt) },
-        { "__le__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::LtE) },
-        { "__gt__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Gt) },
-        { "__ge__"_s, nativeCompare, PyNativeFunction::Kind::Method, pack(ComparisonOperator::GtE) },
+        { "__eq__"_s, function, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Eq) },
+        { "__ne__"_s, function, PyNativeFunction::Kind::Method, pack(ComparisonOperator::NotEq) },
+        { "__lt__"_s, function, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Lt) },
+        { "__le__"_s, function, PyNativeFunction::Kind::Method, pack(ComparisonOperator::LtE) },
+        { "__gt__"_s, function, PyNativeFunction::Kind::Method, pack(ComparisonOperator::Gt) },
+        { "__ge__"_s, function, PyNativeFunction::Kind::Method, pack(ComparisonOperator::GtE) },
     });
+}
+
+void addComparisons(JSGlobalObject* globalObject, PyType* type)
+{
+    addComparisons(globalObject, type, nativeCompare);
 }
 
 enum class Form : uint8_t { Plain, Reflected, InPlace };
@@ -1056,15 +1061,17 @@ static void setNativeModule(JSGlobalObject* globalObject, JSValue self, JSValue 
         function->putDirect(vm, vm.pythonNames().private_module, value ? value : jsUndefined());
 }
 
-PYTHON_NATIVE(nativeCallableEq)
+PYTHON_NATIVE(nativeCallableCompare)
 {
+    auto op = unpack<ComparisonOperator>(callFrame, 0);
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    if (typeOf(globalObject, args[1]) != typeOf(globalObject, args[0]))
+    if (!isEquality(op) || typeOf(globalObject, args[1]) != typeOf(globalObject, args[0]))
         RETURN_NOT_IMPLEMENTED();
     auto a = nativeCallableOf(args[0]);
     auto b = nativeCallableOf(args[1]);
-    return JSValue::encode(jsBoolean(a.function == b.function && (a.self ? b.self && isIdentical(a.self, b.self) : !b.self)));
+    bool areEqual = a.function == b.function && (a.self ? b.self && isIdentical(a.self, b.self) : !b.self);
+    return JSValue::encode(jsBoolean(areEqual == (op == ComparisonOperator::Eq)));
 }
 
 PYTHON_NATIVE(nativeCallableHash)
@@ -1112,14 +1119,18 @@ PYTHON_NATIVE(methodNew)
     return JSValue::encode(PyBoundMethod::create(globalObject, args[1], args[2]));
 }
 
-PYTHON_NATIVE(methodEq)
+PYTHON_NATIVE(methodCompare)
 {
+    auto op = unpack<ComparisonOperator>(callFrame, 0);
     NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    auto* other = tryBoundMethod(args.at(1));
-    if (!other)
+    if (!isEquality(op) || typeOf(globalObject, args[1]) != realm->typeMethod())
         RETURN_NOT_IMPLEMENTED();
-    return JSValue::encode(jsBoolean(isIdentical(asMethod(args[0])->function(), other->function()) && isIdentical(asMethod(args[0])->self(), other->self())));
+    auto* other = asMethod(args[1]);
+    // The functions are equal, and they are bound to the same object.
+    bool areEqual = isEqual(globalObject, asMethod(args[0])->function(), other->function());
+    RETURN_IF_EXCEPTION(scope, { });
+    areEqual = areEqual && isIdentical(asMethod(args[0])->self(), other->self());
+    return JSValue::encode(jsBoolean(areEqual == (op == ComparisonOperator::Eq)));
 }
 
 PYTHON_NATIVE(methodHash)
@@ -1268,16 +1279,57 @@ PYTHON_NATIVE(superInit)
     if (args.size() == 2)
         RETURN_NONE();
     JSValue instance = args[2];
-    PyType* start;
-    if (isClass(instance) && asType(instance)->isSubtypeOf(type))
-        start = asType(instance);
-    else if (isInstance(globalObject, instance, type))
-        start = typeOf(globalObject, instance);
-    else
-        return JSValue::encode(raiseTypeError(globalObject, scope, "super(type, obj): obj must be an instance or subtype of type"_s));
+    if (isNone(instance))
+        RETURN_NONE();
+    PyType* start = superCheck(globalObject, type, instance);
+    RETURN_IF_EXCEPTION(scope, { });
     object->setField(vm, 1, instance);
     object->setField(vm, 2, start);
     RETURN_NONE();
+}
+
+PYTHON_NATIVE(superRepr)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    auto* object = asNativeObject(args[0]);
+    String type = object->field(0) ? asType(object->field(0))->nameString(globalObject) : "NULL"_str;
+    if (JSValue start = object->field(2))
+        return JSValue::encode(jsString(vm, makeString("<super: <class '"_s, type, "'>, <"_s, asType(start)->nameString(globalObject), " object>>"_s)));
+    return JSValue::encode(jsString(vm, makeString("<super: <class '"_s, type, "'>, NULL>"_s)));
+}
+
+// super(C) as an attribute of a class: got from an instance, it is super(C, instance).
+PYTHON_NATIVE(superGet)
+{
+    NATIVE_PROLOGUE();
+    if (!checkDescriptorGet(globalObject, scope, args))
+        return { };
+    auto* object = asNativeObject(args[0]);
+    JSValue instance = args[1];
+    if (isNone(instance) || object->field(1))
+        return JSValue::encode(object);
+    JSValue type = object->field(0) ? JSValue(asType(object->field(0))->object()) : jsUndefined();
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, typeOf(globalObject, object)->object(), type, instance)));
+}
+
+// <staticmethod(<function f at 0x...>)>
+PYTHON_NATIVE(wrapperRepr)
+{
+    NATIVE_PROLOGUE();
+    JSValue wrapped = asNativeObject(args[0])->field(0);
+    String text = repr(globalObject, wrapped ? wrapped : jsUndefined());
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, makeString('<', isInstance(globalObject, args[0], realm->typeStaticMethod()) ? "staticmethod"_s : "classmethod"_s, '(', text, ")>"_s)));
+}
+
+// It is bound already.
+PYTHON_NATIVE(methodGet)
+{
+    NATIVE_PROLOGUE();
+    if (!checkDescriptorGet(globalObject, scope, args))
+        return { };
+    return JSValue::encode(args[0]);
 }
 
 PYTHON_NATIVE(superGetAttribute)
@@ -1298,25 +1350,99 @@ PYTHON_NATIVE(superGetAttribute)
 
 // ---- Modules
 
+// It has nothing in it until __init__() has named it.
 PYTHON_NATIVE(moduleNew)
 {
     NATIVE_PROLOGUE();
-    JSValue name = args.at(1);
-    if (!name.isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("module() argument 'name' must be str, not "_s, typeName(globalObject, name))));
-    JSObject* module = newModule(globalObject, asString(name)->value(globalObject), asType(args[0]));
-    if (JSValue doc = args.at(2))
-        module->putDirect(vm, names.dunder_doc, doc);
-    return JSValue::encode(module);
+    UNUSED_PARAM(scope);
+    return JSValue::encode(PyInstance::create(vm, asType(args[0])->instanceStructure()));
 }
 
+// module(name, doc=None)
+PYTHON_NATIVE(moduleInit)
+{
+    NATIVE_PROLOGUE();
+    JSValue name = args.at(1);
+    if (!stringIn(name))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("module() argument 'name' must be str, not "_s, isNone(name) ? "None"_s : typeName(globalObject, name))));
+    JSObject* module = asObject(args[0]);
+    JSValue doc = args.at(2);
+    putStoredAttribute(vm, module, names.dunder_name, name);
+    putStoredAttribute(vm, module, names.dunder_doc, doc ? doc : jsUndefined());
+    putStoredAttribute(vm, module, names.dunder_package, jsUndefined());
+    putStoredAttribute(vm, module, names.dunder_loader, jsUndefined());
+    putStoredAttribute(vm, module, names.dunder_spec, jsUndefined());
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(moduleGetAttribute)
+{
+    NATIVE_PROLOGUE();
+    auto name = attributeName(globalObject, scope, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(getModuleAttribute(globalObject, args[0], *name)));
+}
+
+// _module_repr() and _module_repr_from_spec() of CPython's Lib/importlib/_bootstrap.py, which is what module.__repr__() calls.
 PYTHON_NATIVE(moduleRepr)
 {
     NATIVE_PROLOGUE();
-    JSValue name = asObject(args[0])->getDirect(vm, names.dunder_name);
-    String text = repr(globalObject, name ? name : jsUndefined());
+    JSValue module = args[0];
+    auto get = [&] (JSValue object, ASCIILiteral attribute) { return getAttributeIfPresent(globalObject, object, Identifier::fromString(vm, attribute)); };
+    auto result = [&] (auto... parts) { return JSValue::encode(jsString(vm, makeString("<module "_s, parts..., '>'))); };
+    auto reprOf = [&] (JSValue value) { return value ? repr(globalObject, value) : "'?'"_str; };
+
+    JSValue loader = get(module, "__loader__"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, makeString("<module "_s, text, '>')));
+    JSValue spec = get(module, "__spec__"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool hasSpec = spec && isTrue(globalObject, spec);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (hasSpec) {
+        JSValue name = getAttribute(globalObject, spec, Identifier::fromString(vm, "name"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        String nameText = reprOf(isNone(name) ? JSValue() : name);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue origin = getAttribute(globalObject, spec, Identifier::fromString(vm, "origin"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isNone(origin)) {
+            loader = getAttribute(globalObject, spec, Identifier::fromString(vm, "loader"_s));
+            RETURN_IF_EXCEPTION(scope, { });
+            if (isNone(loader))
+                return result(nameText);
+            String loaderText = repr(globalObject, loader);
+            RETURN_IF_EXCEPTION(scope, { });
+            return result(nameText, " ("_s, loaderText, ')');
+        }
+        JSValue hasLocation = getAttribute(globalObject, spec, Identifier::fromString(vm, "has_location"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isFromThere = isTrue(globalObject, hasLocation);
+        RETURN_IF_EXCEPTION(scope, { });
+        String originText = isFromThere ? repr(globalObject, origin) : str(globalObject, origin);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (isFromThere)
+            return result(nameText, " from "_s, originText);
+        nameText = repr(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        return result(nameText, " ("_s, originText, ')');
+    }
+
+    JSValue name = get(module, "__name__"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    String nameText = reprOf(name);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue file = get(module, "__file__"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (file) {
+        String fileText = repr(globalObject, file);
+        RETURN_IF_EXCEPTION(scope, { });
+        return result(nameText, " from "_s, fileText);
+    }
+    if (!loader || isNone(loader))
+        return result(nameText);
+    String loaderText = repr(globalObject, loader);
+    RETURN_IF_EXCEPTION(scope, { });
+    return result(nameText, " ("_s, loaderText, ')');
 }
 
 // ---- Generators
@@ -1509,6 +1635,12 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     });
 
     addMethods(globalObject, realm->typeNoneType(), {
+        { "__eq__"_s, objectEq },
+        { "__ne__"_s, objectNe },
+        { "__lt__"_s, returnNotImplemented },
+        { "__le__"_s, returnNotImplemented },
+        { "__gt__"_s, returnNotImplemented },
+        { "__ge__"_s, returnNotImplemented },
         { "__repr__"_s, nativeRepr },
         { "__bool__"_s, returnFalse },
         { "__hash__"_s, nativeHash },
@@ -1555,9 +1687,9 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(nativeCallableOf(self).function->owner())->object(); });
     for (PyType* type : { realm->typeBuiltinFunction(), realm->typeMethodWrapper() }) {
         addMethods(globalObject, type, {
-            { "__eq__"_s, nativeCallableEq },
             { "__hash__"_s, nativeCallableHash },
         });
+        addComparisons(globalObject, type, nativeCallableCompare);
         addGetSet(globalObject, type, "__self__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue {
             // A static method is kept with its class and does not let on.
             auto [function, bound] = nativeCallableOf(self);
@@ -1605,10 +1737,11 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         { "__new__"_s, methodNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
         { "__repr__"_s, nativeRepr },
         { "__call__"_s, callableCall },
-        { "__eq__"_s, methodEq },
         { "__hash__"_s, methodHash },
+        { "__get__"_s, methodGet },
         { "__getattribute__"_s, methodGetAttribute },
     });
+    addComparisons(globalObject, method, methodCompare);
     addGetSet(globalObject, method, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getAttribute(globalObject, asMethod(self)->function(), globalObject->vm().pythonNames().dunder_doc); });
     addMember(globalObject, method, "__func__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->function(); });
     addMember(globalObject, method, "__self__"_s, [] (JSGlobalObject*, JSValue self) { return asMethod(self)->self(); });
@@ -1627,12 +1760,15 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         addMember(globalObject, type, "__func__"_s, getField<0>);
         addMember(globalObject, type, "__wrapped__"_s, getField<0>);
     }
-    addMethods(globalObject, realm->typeStaticMethod(), { { "__call__"_s, staticMethodCall } });
+    addMethods(globalObject, realm->typeStaticMethod(), { { "__call__"_s, staticMethodCall }, { "__repr__"_s, wrapperRepr } });
+    addMethods(globalObject, realm->typeClassMethod(), { { "__repr__"_s, wrapperRepr } });
 
     addMethods(globalObject, realm->typeSuper(), {
         { "__new__"_s, nativeObjectNew, Kind::New },
         { "__init__"_s, superInit },
         { "__getattribute__"_s, superGetAttribute },
+        { "__repr__"_s, superRepr },
+        { "__get__"_s, superGet },
     });
     addMember(globalObject, realm->typeSuper(), "__thisclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { JSValue type = asNativeObject(self)->field(0); return type ? JSValue(asType(type)->object()) : jsUndefined(); });
     addMember(globalObject, realm->typeSuper(), "__self__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { JSValue instance = asNativeObject(self)->field(1); return instance ? instance : jsUndefined(); });
@@ -1640,10 +1776,13 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
 
     PyType* module = realm->typeModule();
     addMethods(globalObject, module, {
-        { "__new__"_s, moduleNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
+        { "__new__"_s, moduleNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreNotChecked },
+        { "__init__"_s, moduleInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
+        { "__getattribute__"_s, moduleGetAttribute },
         { "__repr__"_s, moduleRepr },
         { "__dir__"_s, moduleDir },
     });
+    realm->setFunction(vm, PyRealm::WellKnownFunction::ModuleGetAttribute, asObject(module->lookupOwn(vm, vm.pythonNames().dunder_getattribute)));
 
     addMethods(globalObject, realm->typeGenerator(), {
         { "__iter__"_s, nativeSelf },

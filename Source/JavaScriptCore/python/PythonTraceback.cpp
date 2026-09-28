@@ -77,9 +77,12 @@ void leaveFrame(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)
     frame->leave(vm, callFrame, bytecodeIndex);
 }
 
-static unsigned lineOf(JSValue traceback)
+static int lineOf(JSValue traceback)
 {
     PyNativeObject* entry = asNative(traceback);
+    // One that a program made is where the program said.
+    if (JSValue line = entry->getDirect(entry->vm(), entry->vm().pythonNames().private_line))
+        return line.asInt32();
     return asFrame(entry->field(TracebackField::Frame))->executable()->source().provider()->documentLineColumnForOffset(entry->field(TracebackField::SourceOffset).asInt32()).line;
 }
 
@@ -88,6 +91,44 @@ static JSValue getField(JSGlobalObject*, JSValue self)
 {
     JSValue value = asNative(self)->field(field);
     return value ? value : jsUndefined();
+}
+
+// traceback(tb_next, tb_frame, tb_lasti, tb_lineno)
+PYTHON_NATIVE(tracebackNew)
+{
+    NATIVE_PROLOGUE();
+    JSValue next = args.at(1);
+    JSValue frame = args.at(2);
+    if (!dynamicDowncast<PyFrame>(frame))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("traceback() argument 'tb_frame' must be frame, not "_s, isNone(frame) ? "None"_s : typeName(globalObject, frame))));
+    int numbers[2];
+    for (unsigned i = 0; i < 2; ++i) {
+        auto number = toIndex(globalObject, args.at(3 + i));
+        if (scope.exception()) {
+            if (catchException(globalObject, BuiltinType::IndexError))
+                raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s);
+            return { };
+        }
+        if (*number > std::numeric_limits<int>::max() || *number < std::numeric_limits<int>::min())
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s));
+        numbers[i] = static_cast<int>(*number);
+    }
+    if (!isNone(next) && !isTraceback(globalObject, next))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("expected traceback object or None, got '"_s, typeName(globalObject, next), '\'')));
+    auto* entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, next, frame, jsNumber(numbers[0]));
+    // -1 is for it to be worked out, which here is where the frame is.
+    entry->putDirect(vm, names.private_line, jsNumber(numbers[1] == -1 ? static_cast<int>(asFrame(frame)->line(vm)) : numbers[1]));
+    return JSValue::encode(entry);
+}
+
+PYTHON_NATIVE(tracebackDir)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    MarkedArgumentBuffer attributes;
+    for (ASCIILiteral name : { "tb_frame"_s, "tb_next"_s, "tb_lasti"_s, "tb_lineno"_s })
+        attributes.append(jsString(vm, String(name)));
+    return JSValue::encode(newList(globalObject, attributes));
 }
 
 static void setTracebackNext(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -530,6 +571,10 @@ void initializeTracebackTypes(JSGlobalObject* globalObject)
     PyRealm* realm = globalObject->pyRealm();
     PyType* traceback = realm->typeTraceback();
     traceback->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, traceback));
+    addMethods(globalObject, traceback, {
+        { "__new__"_s, tracebackNew, PyNativeFunction::Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
+        { "__dir__"_s, tracebackDir },
+    });
     addGetSet(globalObject, traceback, "tb_next"_s, getField<TracebackField::Next>, setTracebackNext);
     addMember(globalObject, traceback, "tb_frame"_s, getField<TracebackField::Frame>);
     addGetSet(globalObject, traceback, "tb_lineno"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(lineOf(self)); });

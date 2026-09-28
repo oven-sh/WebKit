@@ -13,7 +13,7 @@ slice.indices(fake) !! TypeError: descriptor 'indices' for 'slice' objects doesn
 complex.conjugate(fake) !! TypeError: descriptor 'conjugate' for 'complex' objects doesn't apply to a 'Object' object
 property.getter(fake) !! TypeError: descriptor 'getter' for 'property' objects doesn't apply to a 'Object' object
 list_iterator.__next__(fake) !! TypeError: descriptor '__next__' requires a 'list_iterator' object but received a 'Object'
-dict_keys.isdisjoint(fake) !! TypeError: m[type][method] is not a function. (In 'm[type][method](Object.create(m[type]), ...rest)', 'm[type][
+dict_keys.isdisjoint(fake) !! TypeError: descriptor 'isdisjoint' for 'dict_keys' objects doesn't apply to a 'Object' object
 memoryview.tobytes(fake) !! TypeError: descriptor 'tobytes' for 'memoryview' objects doesn't apply to a 'Object' object
 ValueError.with_traceback(fake) !! TypeError: descriptor 'with_traceback' for 'BaseException' objects doesn't apply to a 'Object' object
 list.append(fake) !! TypeError: descriptor 'append' for 'list' objects doesn't apply to a 'Object' object

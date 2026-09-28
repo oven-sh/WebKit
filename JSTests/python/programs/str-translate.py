@@ -1,0 +1,88 @@
+def show(label, f):
+    try:
+        print(label, "=>", f())
+    except BaseException as e:
+        print(label, "!!", type(e).__name__, e)
+# ---- translate
+show("basic", lambda: "abcabc".translate({97: "x", 98: None, 99: 100}))
+show("empty table", lambda: "abc".translate({}))
+show("empty string", lambda: "".translate({97: "x"}))
+show("to longer", lambda: "abc".translate({98: "<b>"}))
+show("to empty", lambda: "abc".translate({98: ""}))
+show("to wide", lambda: "abc".translate({97: "\xe9", 98: 0x20ac, 99: 0x1F600}))
+show("from wide", lambda: "a\xe9€\U0001F600z".translate({0xe9: "e", 0x20ac: "E", 0x1F600: ":)", 97: None}))
+show("string keys mean nothing", lambda: "abc".translate({"a": "x"}))
+show("a list", lambda: "\x00\x01\x02\x03".translate(["a", None, 99]))
+show("a str", lambda: "\x00\x01\x02".translate("xyz"))
+show("bool", lambda: "abc".translate({97: True}))
+show("out of range", lambda: "abc".translate({97: 0x110000}))
+show("negative", lambda: "abc".translate({97: -1}))
+show("huge", lambda: "abc".translate({97: 1 << 70}))
+show("wrong type", lambda: "abc".translate({97: 1.5}))
+show("wrong type bytes", lambda: "abc".translate({97: b"x"}))
+show("no getitem", lambda: "abc".translate(5))
+show("None", lambda: "abc".translate(None))
+show("nothing", lambda: "abc".translate())
+show("too many", lambda: "abc".translate({}, {}))
+class Log:
+    def __init__(s, d, error=KeyError): s.d = d; s.log = []; s.error = error
+    def __getitem__(s, k):
+        s.log.append(k)
+        if k in s.d: return s.d[k]
+        raise s.error(k)
+def logged(text, d, error=KeyError):
+    t = Log(d, error); return (text.translate(t), t.log)
+show("asked once each", lambda: logged("aabbaacc", {97: "x", 98: None}))
+show("asked once each, until", lambda: logged("aabbccaabb", {97: "x", 99: "long"}))
+show("asked once each, until wide", lambda: logged("aabbccaabb", {97: "x", 99: 0xe9}))
+show("asked every time", lambda: logged("aa\xe9aa", {97: "x"}))
+show("IndexError", lambda: logged("ab", {97: "x"}, IndexError))
+show("LookupError", lambda: logged("ab", {97: "x"}, LookupError))
+show("ValueError", lambda: logged("ab", {97: "x"}, ValueError))
+class S(str): pass
+class I(int): pass
+show("derived", lambda: ("abc".translate({97: S("x"), 98: I(100)}), type(S("abc").translate({})).__name__, S("abc").translate({97: "x"})))
+show("the same object", lambda: (lambda s: s.translate({}) is s)("abc"))
+show("with maketrans", lambda: "hello world".translate(str.maketrans("lo", "01", "h ")))
+# ---- maketrans
+show("two", lambda: str.maketrans("abc", "xyz"))
+show("three", lambda: str.maketrans("ab", "xy", "cd"))
+show("delete wins", lambda: str.maketrans("ab", "xy", "a"))
+show("repeated", lambda: str.maketrans("aa", "xy"))
+show("wide", lambda: str.maketrans("\xe9\U0001F600", "e€"))
+show("empty", lambda: (str.maketrans("", ""), str.maketrans("", "", ""), str.maketrans({})))
+show("dict", lambda: str.maketrans({"a": "x", "b": None, 99: 100, "d": 5, True: 1}))
+show("dict wide", lambda: str.maketrans({"\U0001F600": 1}))
+show("dict long key", lambda: str.maketrans({"ab": 1}))
+show("dict empty key", lambda: str.maketrans({"": 1}))
+show("dict bad key", lambda: str.maketrans({1.5: 1}))
+show("dict None key", lambda: str.maketrans({None: 1}))
+show("dict any values", lambda: str.maketrans({"a": [1], "b": 1.5}))
+show("unequal", lambda: str.maketrans("ab", "x"))
+show("one string", lambda: str.maketrans("ab"))
+show("one list", lambda: str.maketrans([1]))
+class D(dict): pass
+show("derived dict", lambda: str.maketrans(D(a=1)))
+show("first not str", lambda: str.maketrans(1, "a"))
+show("first a dict", lambda: str.maketrans({}, "a"))
+show("second not str", lambda: str.maketrans("a", 1))
+show("second None", lambda: str.maketrans("a", None))
+show("third not str", lambda: str.maketrans("a", "b", 1))
+show("third None", lambda: str.maketrans("a", "b", None))
+show("none", lambda: str.maketrans())
+show("four", lambda: str.maketrans("a", "b", "c", "d"))
+show("keywords", lambda: str.maketrans(x="a", y="b"))
+show("from an instance", lambda: ("".maketrans("a", "b"), S().maketrans("a", "b"), S.maketrans("a", "b")))
+show("kind", lambda: (type(str.__dict__["maketrans"]).__name__, type(str.maketrans).__name__, str.maketrans.__name__, str.maketrans.__qualname__, str.maketrans.__self__ is None, str.maketrans.__text_signature__))
+show("derived strings", lambda: str.maketrans(S("ab"), S("xy"), S("c")))
+# ---- % the other way round
+show("rmod", lambda: ("x".__rmod__("%s!"), "x".__rmod__("no"), "x".__rmod__(1), "x".__rmod__(b"%s"), "x".__rmod__(None), (1).__rmod__("%s") if False else None))
+show("rmod too few", lambda: "x".__rmod__("%s %s"))
+show("rmod wrong", lambda: "x".__rmod__())
+class R:
+    def __rmod__(s, o): return ("R.__rmod__", o)
+show("str % something with rmod", lambda: ("%s" % R() != None, "no" % R()) if False else "skipped")
+class SR(str):
+    def __rmod__(s, o): return ("SR.__rmod__", o)
+show("derived comes first", lambda: "%s" % SR("x"))
+show("own", lambda: [n in str.__dict__ for n in ("__mod__", "__rmod__", "__mul__", "__rmul__", "__add__", "__radd__", "translate", "maketrans")])

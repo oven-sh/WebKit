@@ -160,10 +160,11 @@ PYTHON_NATIVE(codeRepr)
 
 PYTHON_NATIVE(codeEq)
 {
-    bool wantsEqual = unpack<bool>(callFrame, 0);
+    auto op = unpack<ComparisonOperator>(callFrame, 0);
+    bool wantsEqual = op == ComparisonOperator::Eq;
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    if (!isCode(globalObject, args.at(1)))
+    if (!isEquality(op) || !isCode(globalObject, args.at(1)))
         RETURN_NOT_IMPLEMENTED();
     return JSValue::encode(jsBoolean((executableOf(args[0])->unlinkedExecutable() == executableOf(args[1])->unlinkedExecutable()) == wantsEqual));
 }
@@ -228,8 +229,10 @@ PYTHON_NATIVE(cellRepr)
     return JSValue::encode(jsString(vm, makeString("<cell at "_s, address, ": "_s, typeName(globalObject, value), " object at 0x"_s, hex(static_cast<uint64_t>(JSValue::encode(value)), Lowercase), '>')));
 }
 
-PYTHON_NATIVE(cellEq)
+// By what is in them. One with nothing in it comes before one with something.
+PYTHON_NATIVE(cellCompare)
 {
+    auto op = unpack<ComparisonOperator>(callFrame, 0);
     NATIVE_PROLOGUE();
     JSValue other = args.at(1);
     if (!tryNativeObject(other) || typeOf(globalObject, other) != realm->typeCell())
@@ -237,8 +240,8 @@ PYTHON_NATIVE(cellEq)
     JSValue a = variableOfCell(args[0]).get();
     JSValue b = variableOfCell(other).get();
     if (!a || !b)
-        return JSValue::encode(jsBoolean(!a && !b));
-    RELEASE_AND_RETURN(scope, JSValue::encode(compare(globalObject, ComparisonOperator::Eq, a, b)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(compare(globalObject, op, jsNumber(!!a), jsNumber(!!b))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(compare(globalObject, op, a, b)));
 }
 
 // ---- Functions
@@ -606,10 +609,9 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     PyType* code = realm->typeCode();
     addMethods(globalObject, code, {
         { "__repr__"_s, codeRepr },
-        { "__eq__"_s, codeEq, Kind::Method, pack(true) },
-        { "__ne__"_s, codeEq, Kind::Method, pack(false) },
         { "__hash__"_s, codeHash },
     });
+    addComparisons(globalObject, code, codeEq);
     addMember(globalObject, code, "co_name"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).name.string()); });
     addMember(globalObject, code, "co_qualname"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).qualifiedName); });
     addMember(globalObject, code, "co_filename"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), executableOf(self)->source().provider()->sourceURL()); });
@@ -630,8 +632,8 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     PyType* cell = realm->typeCell();
     addMethods(globalObject, cell, {
         { "__repr__"_s, cellRepr },
-        { "__eq__"_s, cellEq },
     });
+    addComparisons(globalObject, cell, cellCompare);
     cell->putDirect(vm, vm.pythonNames().dunder_hash, jsUndefined());
     addGetSet(globalObject, cell, "cell_contents"_s, getCellContents, setCellContents);
 

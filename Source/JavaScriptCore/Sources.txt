@@ -756,6 +756,8 @@ python/PythonCommonNames.cpp
 python/PythonCompiler.cpp
 python/PythonComplex.cpp
 python/PythonContainerTypes.cpp
+python/PythonDictViews.cpp
+python/PythonExceptionTypes.cpp
 python/PythonGenerators.cpp
 python/PythonGenericAlias.cpp
 python/PythonIterators.cpp
