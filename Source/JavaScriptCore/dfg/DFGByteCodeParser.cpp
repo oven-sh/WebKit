@@ -2677,6 +2677,9 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleInlining(
                 if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(executable)) {
                     if (callOp == Construct && functionExecutable->constructAbility() == ConstructAbility::CannotConstruct)
                         return inliningResult;
+                    // What a function of Python's runs can be changed. See JSFunction::replaceExecutable().
+                    if (functionExecutable->isPython())
+                        return inliningResult;
 
                     // We need to update m_parameterSlots before we get to the backend, but we don't
                     // want to do too much of this.

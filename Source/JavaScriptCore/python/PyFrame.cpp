@@ -219,8 +219,13 @@ WriteBarrierBase<Unknown>* PyFrame::heapSlot(VM& vm, unsigned index, JSCell*& ow
     if (!variable.location.isValid()) {
         ScopeOffset offset;
         JSLexicalEnvironment* environment = findVariable(scope(vm), variable.name.impl(), offset);
+        if (!environment)
+            return nullptr;
+        // What is there may be a cell that has the variable.
+        if (functionInfo().variablesGivenAsCells.contains(variable.name)) [[unlikely]]
+            return Python::variableOfCell(environment->variableAt(offset).get(), owner);
         owner = environment;
-        return environment ? &environment->variableAt(offset) : nullptr;
+        return &environment->variableAt(offset);
     }
     switch (state()) {
     case State::Running:

@@ -435,14 +435,35 @@ private:
         Reg scope = g.emitResolveScope(nullptr, variable);
         Reg result = destination(dst);
         g.emitGetFromScope(result.get(), scope.get(), variable, ThrowIfNotFound);
+        if (m_info.variablesGivenAsCells.contains(name)) [[unlikely]] {
+            // What is there is a cell. A marker stands for there being nothing in it.
+            emitRuntimeCall(result.get(), "cellGet"_s, { result.get() }, node);
+            Ref<Label> hasValue = g.newLabel();
+            OpJneqPtr::emit(&g, result.get(), marker(), hasValue->bind(&g));
+            g.moveEmptyValue(result.get());
+            g.emitLabel(hasValue.get());
+        }
         emitCheckBound(result.get(), name, node);
         return result.get();
     }
 
-    void emitStoreClosure(const Identifier& name, RegisterID* value)
+    // With no value, it is left with nothing in it.
+    void emitStoreClosure(const Identifier& name, RegisterID* value, const Node& node)
     {
         Variable variable = g.variable(name);
         Reg scope = g.emitResolveScope(nullptr, variable);
+        if (m_info.variablesGivenAsCells.contains(name)) [[unlikely]] {
+            Reg cell = g.newTemporary();
+            g.emitGetFromScope(cell.get(), scope.get(), variable, ThrowIfNotFound);
+            emitRuntimeCall(nullptr, "cellSet"_s, { cell.get(), value ? value : marker() }, node);
+            return;
+        }
+        Reg empty;
+        if (!value) {
+            empty = g.newTemporary();
+            g.moveEmptyValue(empty.get());
+            value = empty.get();
+        }
         g.emitPutToScope(scope.get(), variable, value, ThrowIfNotFound, InitializationMode::NotInitialization);
     }
 
@@ -492,7 +513,7 @@ private:
                 g.move(location.local, value);
             return;
         case Where::Closure:
-            emitStoreClosure(name, value);
+            emitStoreClosure(name, value, node);
             return;
         case Where::Global:
             g.emitDirectPutById(m_globals.get(), name, value);
@@ -516,9 +537,7 @@ private:
             return;
         case Where::Closure: {
             emitLoadClosure(nullptr, name, node);
-            Reg empty = g.newTemporary();
-            g.moveEmptyValue(empty.get());
-            emitStoreClosure(name, empty.get());
+            emitStoreClosure(name, nullptr, node);
             return;
         }
         case Where::Global:
@@ -1156,8 +1175,12 @@ private:
         else if (m_private)
             info->privateName = *m_private;
         for (Symbol& symbol : block.symbols) {
-            if (symbol.scope == NameScope::Free)
-                info->freeVariables.append(*symbol.name);
+            if (symbol.scope != NameScope::Free)
+                continue;
+            info->freeVariables.append(*symbol.name);
+            // What this has as a cell, what is in it finds as a cell.
+            if (m_info.variablesGivenAsCells.contains(*symbol.name))
+                info->variablesGivenAsCells.append(*symbol.name);
         }
         if (arguments) {
             auto add = [&] (Argument* argument) { info->parameterNames.append(mangle(*argument->name)); };
@@ -1522,7 +1545,7 @@ private:
                 cells.append(&name);
             emitPushCells(cells);
             for (unsigned i = 0; i < m_info.parameterNames.size(); ++i)
-                emitStoreClosure(m_info.parameterNames[i], parameterRegister(i));
+                emitStoreClosure(m_info.parameterNames[i], parameterRegister(i), node);
 
             auto info = m_info.copy();
             info->isGeneratorBody = true;
@@ -1552,7 +1575,7 @@ private:
         for (unsigned i = 0; i < m_info.parameterNames.size(); ++i) {
             const Identifier& name = m_info.parameterNames[i];
             if (m_block.scopeOf(name) == NameScope::Cell)
-                emitStoreClosure(name, parameterRegister(i));
+                emitStoreClosure(name, parameterRegister(i), node);
         }
         emitBody();
         g.emitReturn(none());
@@ -2994,11 +3017,11 @@ private:
             cells.append(&m_names.dunder_conditional_annotations);
         emitPushCells(cells);
         if (m_block.needsClassDict)
-            emitStoreClosure(m_names.dunder_classdict, m_namespace.get());
+            emitStoreClosure(m_names.dunder_classdict, m_namespace.get(), node);
         if (m_block.hasConditionalAnnotations) {
             Reg set = g.newTemporary();
             emitRuntimeCall(set.get(), "newSet"_s, { }, node);
-            emitStoreClosure(m_names.dunder_conditional_annotations, set.get());
+            emitStoreClosure(m_names.dunder_conditional_annotations, set.get(), node);
         }
         Reg environment = g.newTemporary();
         if (m_block.needsClassClosure || m_block.needsClassDict)

@@ -596,6 +596,21 @@ PYTHON_RUNTIME_FUNCTION(takeReturnValue)
     return JSValue::encode(value ? value : jsUndefined());
 }
 
+// ---- Free variables that a function has as cells. See FunctionInfo::variablesGivenAsCells. The marker is for there being nothing in one.
+
+PYTHON_RUNTIME_FUNCTION(runtimeCellGet)
+{
+    JSValue value = contentsOfCell(callFrame->uncheckedArgument(0));
+    return JSValue::encode(value ? value : JSValue(globalObject->pyRealm()->boundArgumentsMarker()));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeCellSet)
+{
+    JSValue value = callFrame->uncheckedArgument(1);
+    setContentsOfCell(globalObject->vm(), callFrame->uncheckedArgument(0), value == JSValue(globalObject->pyRealm()->boundArgumentsMarker()) ? JSValue() : value);
+    return JSValue::encode(jsUndefined());
+}
+
 // ---- async
 
 PYTHON_RUNTIME_FUNCTION(runtimeNewCoroutine)
@@ -1124,6 +1139,8 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("yieldFromStep"_s, yieldFromStep);
     add("takeReturnValue"_s, takeReturnValue);
     add("newCoroutine"_s, runtimeNewCoroutine);
+    add("cellGet"_s, runtimeCellGet);
+    add("cellSet"_s, runtimeCellSet);
     add("wrapAsyncYield"_s, runtimeWrapAsyncYield);
     add("getAwaitable"_s, runtimeGetAwaitable);
     add("getAsyncIterator"_s, runtimeGetAsyncIterator);

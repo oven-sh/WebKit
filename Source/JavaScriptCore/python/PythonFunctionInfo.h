@@ -119,6 +119,10 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
 
     // Its names, and those of what is in it, that are variables of functions it is in. All other names that it does not bind are global.
     Vector<Identifier> freeVariables;
+    // Those of them that it is given as cells, which it looks into, and not as variables of the environments that it is in. So it is for a function that a program
+    // made out of a code object and a closure, function(code, globals, closure=...), and for what is defined in one. An environment cannot have a variable that is
+    // another's, and a cell can be anyone's.
+    Vector<Identifier> variablesGivenAsCells;
 
     // First those that can be given by position, then those that can only be given by keyword, then *args, then **kwargs. That is
     // the order of the parameters of the JavaScript function.
@@ -156,6 +160,7 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->docstring = docstring;
         result->privateName = privateName;
         result->freeVariables = freeVariables;
+        result->variablesGivenAsCells = variablesGivenAsCells;
         result->parameterNames = parameterNames;
         result->positionalOnlyCount = positionalOnlyCount;
         result->positionalCount = positionalCount;

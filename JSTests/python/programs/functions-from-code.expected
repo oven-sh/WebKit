@@ -1,0 +1,63 @@
+cell => (1, 'a', None, 'ValueError: Cell is empty', 'cell')
+cell set => (None, 5, None, 'ValueError: Cell is empty', None, 6)
+cell compare => (True, True, True, True, True)
+cell repr => (' empty>', ' int object')
+cell two !! TypeError cell expected at most 1 argument, got 2
+cell keyword !! TypeError cell() takes no keyword arguments
+cell derived !! TypeError type 'cell' is not an acceptable base type
+other globals => ((1, 5, 'another n'), "TypeError: plain() missing 1 required positional argument: 'b'", (1, 2, "the module's n"), 'plain', 'plain', None, None, 'another n', True, True, 'function')
+all arguments => ((7, 8, "the module's n"), (1, 8, "the module's n"), 'renamed', 'plain', (7, 8), None)
+kwdefaults => (9, 3)
+module name => ('somewhere', None)
+doc => ('the doc', None)
+builtins => (2, "NameError: name 'len' is not defined", 'mine')
+globals are shared => 1
+globals are written => (None, ['made'])
+free variables => (('x', 'y'), [1, 2])
+with cells => ('X', 'Y')
+with its own cells => (1, 2)
+cells are kept => (True, True, True)
+a cell in two functions, under two names => [(1, 0), (0, 1), (5, 0), (0, 5)]
+nonlocal => (11, 12, 12, 1, 2)
+the same variable as another function's => (1, 2, 3, 4, 4)
+empty cell !! NameError cannot access free variable 'x' where it is not associated with a value in enclosing scope
+del => ('ValueError: Cell is empty', "NameError: cannot access free variable 'v' where it is not associated with a value in enclosing scope", 1)
+passed on to what is defined in it => ('given', None, 'changed', True)
+a class in it => ('in class', 'in class')
+a generator => (1, 2)
+comprehensions => ([10, 11], {'a': 10}, [10])
+a lambda => l
+__class__ => (('__class__',), 'Derived then Base', <class 'int'>)
+locals => ('seen', [('x', 'seen')], [('x', 'seen')])
+no arguments !! TypeError function() missing required argument 'code' (pos 1)
+no globals !! TypeError function() missing required argument 'globals' (pos 2)
+not code !! TypeError function() argument 'code' must be code, not int
+None code !! TypeError function() argument 'code' must be code, not None
+not a dict !! TypeError function() argument 'globals' must be dict, not int
+None globals !! TypeError function() argument 'globals' must be dict, not None
+bad name !! TypeError arg 3 (name) must be None or string
+bad defaults !! TypeError arg 4 (defaults) must be None or tuple
+bad closure !! TypeError arg 5 (closure) must be None or tuple
+closure wanted !! TypeError arg 5 (closure) must be tuple
+closure too short !! ValueError inner requires closure of length 2, not 1
+closure not wanted !! ValueError plain requires closure of length 0, not 1
+empty closure => function
+not cells !! TypeError arg 5 (closure) expected cell, found int
+bad kwdefaults !! TypeError arg 6 (kwdefaults) must be None or dict
+too many !! TypeError function() takes at most 6 arguments (7 given)
+keywords => (1, 2, 0)
+derived !! TypeError type 'function' is not an acceptable base type
+derived dict !! TypeError plain() missing 1 required positional argument: 'b'
+code set => (['f', 'one', 'two'], 'f', 'swapping.<locals>.f', True, 'two')
+code set while it is being called => (3000, 6000)
+what it keeps !! TypeError keeps.<locals>.f() missing 1 required positional argument: 'y'
+code set with a closure => (4, 8, 8, ('m',))
+code set wrong closure !! ValueError bump() requires a code object with 1 free vars, not 0
+code set wrong closure 2 !! ValueError <lambda>() requires a code object with 0 free vars, not 1
+code set wrong !! TypeError __code__ must be set to a code object
+code delete !! TypeError __code__ must be set to a code object
+code set keeps the globals => ('kept', 'kept')
+code set of a method => ['m', 'swapped', 'swapped', 'swapped']
+f_locals writes through => ('written', 'written')
+code set from within !! ValueError f() requires a code object with 1 free vars, not 0
+audited => ('one', None, [('function.__new__', 1), ('object.__setattr__', 3)])

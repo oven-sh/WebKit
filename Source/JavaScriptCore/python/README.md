@@ -87,6 +87,23 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 | a class | a `PyType` |
 | unbound, deleted | the empty value, as for JavaScript's `let` before it is initialized |
 
+### A function that is made from a code object
+
+A variable that an inner function uses is a variable of a `JSLexicalEnvironment`, and a cell is a view of one: the environment, and where in it. That is what
+`f.__closure__` is made of. `cell()` makes one that is a variable of nothing, and holds what is in it.
+
+`function(code, globals, closure=cells)` is given cells that can be anyone's, and an environment cannot have a variable that is another's. So the function gets **another
+executable for the same source** (`cloneExecutable()`), of which it is known that its free variables are given as cells (`FunctionInfo::variablesGivenAsCells`). Its
+environment has the cells themselves for variables, and what is compiled looks into them, as `LOAD_DEREF` does. What is defined inside it finds the same names as cells too. An
+ordinary closure pays nothing for this. `f.__closure__` gives back the very cells.
+
+It is another executable even when there is no closure. What has been compiled has in it how far out each variable is, on the understanding that every function made
+from the executable is in environments of the same shape.
+
+`f.__code__ = code` does the same, with the cells that the function has already, and then `JSFunction::replaceExecutable()`. A call that has been linked goes by which function is
+called and jumps to what it was compiled to, so all that were linked to the old code are unlinked. The DFG makes no `DirectCall` to a function of Python's, that being
+linked to an executable for good.
+
 ### Where the bytes are is not kept
 
 What is in a `bytearray` moves when it is resized, and JavaScript can give an `ArrayBuffer` away. Either can be done by anything that runs a program's code, and looking at

@@ -176,11 +176,57 @@ PYTHON_NATIVE(codeHash)
 
 // ---- Cells
 
-// A cell is a variable of an environment: a PyNativeObject with the environment and where in it the variable is.
+// A cell is a variable: a PyNativeObject with an environment and where in it the variable is. That is what f.__closure__ is made of. One that a program makes, cell(),
+// is a variable of nothing, and what is in it is in the cell.
+namespace CellField {
+enum Field : unsigned { Environment, Offset, Contents };
+}
+
+static bool isCell(JSGlobalObject* globalObject, JSValue value)
+{
+    return tryNativeObject(value) && typeOf(globalObject, value) == globalObject->pyRealm()->typeCell();
+}
+
 static WriteBarrierBase<Unknown>& variableOfCell(JSValue cell)
 {
     auto* object = uncheckedDowncast<PyNativeObject>(cell.asCell());
-    return uncheckedDowncast<JSLexicalEnvironment>(object->field(0).asCell())->variableAt(ScopeOffset(object->field(1).asInt32()));
+    JSValue environment = object->field(CellField::Environment);
+    if (!environment)
+        return object->internalField(CellField::Contents);
+    return uncheckedDowncast<JSLexicalEnvironment>(environment.asCell())->variableAt(ScopeOffset(object->field(CellField::Offset).asInt32()));
+}
+
+WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner)
+{
+    JSValue environment = uncheckedDowncast<PyNativeObject>(cell.asCell())->field(CellField::Environment);
+    owner = environment ? environment.asCell() : cell.asCell();
+    return &variableOfCell(cell);
+}
+
+JSValue contentsOfCell(JSValue cell)
+{
+    return variableOfCell(cell).get();
+}
+
+void setContentsOfCell(VM& vm, JSValue cell, JSValue value)
+{
+    auto* object = uncheckedDowncast<PyNativeObject>(cell.asCell());
+    JSValue environment = object->field(CellField::Environment);
+    if (value)
+        variableOfCell(cell).set(vm, environment ? environment.asCell() : object, value);
+    else
+        variableOfCell(cell).clear();
+}
+
+// cell([contents])
+PYTHON_NATIVE(cellNew)
+{
+    NATIVE_PROLOGUE();
+    if (!args.checkNoKeywords(globalObject, scope, "cell"_s))
+        return { };
+    if (args.size() > 2)
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("cell expected at most 1 argument, got "_s, args.size() - 1)));
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::Cell, JSValue(), JSValue(), args.size() == 2 ? args[1] : JSValue()));
 }
 
 // The environment that has a variable of the name, going outward from `scope`, and where in it. Null if there is none.
@@ -211,11 +257,7 @@ static JSValue getCellContents(JSGlobalObject* globalObject, JSValue self)
 
 static void setCellContents(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
-    auto* object = uncheckedDowncast<PyNativeObject>(self.asCell());
-    if (value)
-        variableOfCell(self).set(globalObject->vm(), object->field(0).asCell(), value);
-    else
-        variableOfCell(self).clear();
+    setContentsOfCell(globalObject->vm(), self, value);
 }
 
 PYTHON_NATIVE(cellRepr)
@@ -235,7 +277,7 @@ PYTHON_NATIVE(cellCompare)
     auto op = unpack<ComparisonOperator>(callFrame, 0);
     NATIVE_PROLOGUE();
     JSValue other = args.at(1);
-    if (!tryNativeObject(other) || typeOf(globalObject, other) != realm->typeCell())
+    if (!isCell(globalObject, other))
         RETURN_NOT_IMPLEMENTED();
     JSValue a = variableOfCell(args[0]).get();
     JSValue b = variableOfCell(other).get();
@@ -261,7 +303,8 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = globalObject->vm();
     JSFunction* function = asFunction(self);
-    auto names = sortedFreeVariables(infoOf(function->jsExecutable()));
+    const FunctionInfo& info = infoOf(function->jsExecutable());
+    auto names = sortedFreeVariables(info);
     if (names.isEmpty())
         return jsUndefined();
     PyTuple* cells = PyTuple::create(globalObject, names.size());
@@ -269,9 +312,131 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
         ScopeOffset offset;
         JSLexicalEnvironment* environment = findVariable(function->scope(), names[i].impl(), offset);
         RELEASE_ASSERT(environment);
-        cells->initializeAt(vm, i, PyNativeObject::create(globalObject, BuiltinType::Cell, environment, jsNumber(offset.offset())));
+        // One that it was given is the one that it has.
+        if (info.variablesGivenAsCells.contains(names[i]))
+            cells->initializeAt(vm, i, environment->variableAt(offset).get());
+        else
+            cells->initializeAt(vm, i, PyNativeObject::create(globalObject, BuiltinType::Cell, environment, jsNumber(offset.offset())));
     }
     return cells;
+}
+
+// An executable for the code of a code object, for a function that has its free variables as cells.
+static FunctionExecutable* executableTakingCells(JSGlobalObject* globalObject, JSValue code)
+{
+    FunctionExecutable* original = executableOf(code);
+    auto info = infoOf(original).copy();
+    info->variablesGivenAsCells = info->freeVariables;
+    return cloneExecutable(globalObject, original, WTF::move(info));
+}
+
+JSObject* namespaceOf(JSGlobalObject*, PyDict* globals);
+
+// function(code, globals, name=None, argdefs=None, closure=None, kwdefaults=None)
+PYTHON_NATIVE(functionNew)
+{
+    NATIVE_PROLOGUE();
+    JSValue code = args.at(1);
+    JSValue globals = args.at(2);
+    auto orNone = [] (JSValue value) { return value ? value : jsUndefined(); };
+    JSValue name = orNone(args.at(3));
+    JSValue defaults = orNone(args.at(4));
+    JSValue closure = orNone(args.at(5));
+    JSValue keywordDefaults = orNone(args.at(6));
+    auto describe = [&] (JSValue value) { return isNone(value) ? "None"_str : typeName(globalObject, value); };
+    if (!isCode(globalObject, code))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function() argument 'code' must be code, not "_s, describe(code))));
+    if (!isDict(globals))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function() argument 'globals' must be dict, not "_s, describe(globals))));
+    if (!isNone(name) && !stringIn(name))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "arg 3 (name) must be None or string"_s));
+    if (!isNone(defaults) && !isTuple(defaults))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "arg 4 (defaults) must be None or tuple"_s));
+    const FunctionInfo& info = infoOf(executableOf(code));
+    auto freeVariables = sortedFreeVariables(info);
+    if (!isTuple(closure)) {
+        if (freeVariables.size() && isNone(closure))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "arg 5 (closure) must be tuple"_s));
+        if (!isNone(closure))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "arg 5 (closure) must be None or tuple"_s));
+    }
+    if (!isNone(keywordDefaults) && !isDict(keywordDefaults))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "arg 6 (kwdefaults) must be None or dict"_s));
+    unsigned given = isNone(closure) ? 0 : asTuple(closure)->length();
+    if (given != freeVariables.size())
+        return JSValue::encode(raiseValueError(globalObject, scope, makeString(info.name.string(), " requires closure of length "_s, freeVariables.size(), ", not "_s, given)));
+    for (unsigned i = 0; i < given; ++i) {
+        if (!isCell(globalObject, asTuple(closure)->at(i)))
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("arg 5 (closure) expected cell, found "_s, typeName(globalObject, asTuple(closure)->at(i)))));
+    }
+    if (realm->auditHooks()) {
+        MarkedArgumentBuffer audited;
+        audited.append(code);
+        auditSlow(globalObject, "function.__new__"_s, audited);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
+    JSScope* environment = environmentForGlobals(globalObject, namespaceOf(globalObject, asDict(globals)));
+    if (given)
+        environment = environmentForCells(globalObject, environment, freeVariables, asTuple(closure));
+    JSFunction* function = JSFunction::create(vm, globalObject, executableTakingCells(globalObject, code), environment);
+    // The code that it says it has is the one that it was made from.
+    function->putDirect(vm, vm.pythonNames().private_code, code);
+    if (!isNone(name)) {
+        setAttribute(globalObject, function, vm.pythonNames().dunder_name, name);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!isNone(defaults))
+        function->putDirect(vm, vm.pythonNames().private_defaults, defaults);
+    if (!isNone(keywordDefaults))
+        function->putDirect(vm, vm.pythonNames().private_kwdefaults, keywordDefaults);
+    return JSValue::encode(function);
+}
+
+// f.__code__ = code. It goes on with the variables that it has, as the free variables of the new code, in order.
+static void setFunctionCode(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    JSFunction* function = asFunction(self);
+    if (!value || !isCode(globalObject, value)) {
+        raiseTypeError(globalObject, scope, "__code__ must be set to a code object"_s);
+        return;
+    }
+    if (globalObject->pyRealm()->auditHooks()) {
+        MarkedArgumentBuffer audited;
+        audited.append(function);
+        audited.append(jsNontrivialString(vm, "__code__"_s));
+        audited.append(value);
+        auditSlow(globalObject, "object.__setattr__"_s, audited);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    JSValue closure = getFunctionClosure(globalObject, function);
+    unsigned has = isNone(closure) ? 0 : asTuple(closure)->length();
+    auto freeVariables = sortedFreeVariables(infoOf(executableOf(value)));
+    if (has != freeVariables.size()) {
+        raiseValueError(globalObject, scope, makeString(nameOfFunction(globalObject, function, false), "() requires a code object with "_s, has, " free vars, not "_s, freeVariables.size()));
+        return;
+    }
+
+    // What it is called, and what it says of itself, are its own, and until now were what the code says.
+    JSValue doc = getAttribute(globalObject, function, names.dunder_doc);
+    RETURN_IF_EXCEPTION(scope, void());
+    function->putDirect(vm, names.private_doc, doc);
+    function->putDirect(vm, names.private_qualname, jsString(vm, nameOfFunction(globalObject, function, true)));
+    setAttribute(globalObject, function, names.dunder_name, jsString(vm, nameOfFunction(globalObject, function, false)));
+    RETURN_IF_EXCEPTION(scope, void());
+
+    ScopeOffset offset;
+    JSScope* environment = findVariable(function->scope(), names.globals.impl(), offset);
+    if (has)
+        environment = environmentForCells(globalObject, environment, freeVariables, asTuple(closure));
+    function->replaceExecutable(vm, executableTakingCells(globalObject, value));
+    function->setScope(vm, environment);
+    function->putDirect(vm, names.private_code, value);
+    // How the defaults line up with the parameters is worked out again.
+    JSCell::deleteProperty(function, globalObject, names.private_alignedDefaults);
 }
 
 JSObject* globalsOfScope(VM& vm, JSScope* scope)
@@ -464,7 +629,7 @@ PYTHON_NATIVE(builtinCompile)
 }
 
 // The object whose properties are the items of a dict that is to be the globals of some code.
-static JSObject* namespaceOf(JSGlobalObject* globalObject, PyDict* globals)
+JSObject* namespaceOf(JSGlobalObject* globalObject, PyDict* globals)
 {
     JSObject* object = globals->ensureBacking(globalObject);
     if (!globals->getString(globalObject, "__builtins__"_s))
@@ -632,6 +797,7 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
 
     PyType* cell = realm->typeCell();
     addMethods(globalObject, cell, {
+        { "__new__"_s, cellNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreNotChecked },
         { "__repr__"_s, cellRepr },
     });
     addComparisons(globalObject, cell, cellCompare);
@@ -639,7 +805,8 @@ void initializeCodeTypes(JSGlobalObject* globalObject, JSObject* builtins)
     addGetSet(globalObject, cell, "cell_contents"_s, getCellContents, setCellContents);
 
     PyType* function = realm->typeFunction();
-    addGetSet(globalObject, function, "__code__"_s, getFunctionCode);
+    addMethods(globalObject, function, { { "__new__"_s, functionNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass } });
+    addGetSet(globalObject, function, "__code__"_s, getFunctionCode, setFunctionCode);
     addMember(globalObject, function, "__closure__"_s, getFunctionClosure);
     addMember(globalObject, function, "__globals__"_s, getFunctionGlobals);
     addMember(globalObject, function, "__builtins__"_s, getFunctionBuiltins);

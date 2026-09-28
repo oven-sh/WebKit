@@ -504,7 +504,42 @@ static JSObject* builtinsFor(JSGlobalObject* globalObject, JSObject* globals)
     return globalObject->pyRealm()->builtinsModule();
 }
 
-JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* executable, JSObject* globals)
+FunctionExecutable* cloneExecutable(JSGlobalObject* globalObject, FunctionExecutable* original, Ref<FunctionInfo>&& info, const String& sourceURL)
+{
+    VM& vm = globalObject->vm();
+    const SourceCode& source = original->source();
+    RefPtr<SourceProvider> provider = source.provider();
+    // The name of the file goes with the source. The text is the same text and not a copy.
+    if (!sourceURL.isNull() && sourceURL != provider->sourceURL())
+        provider = makeSource(provider->source().toString(), provider->sourceOrigin(), sourceURL).provider();
+    SourceCode whole(*provider);
+    unsigned start = source.startOffset();
+    FunctionMetadataNode metadata(JSTokenLocation(), JSTokenLocation(), start, start, start, info->visibility, StrictModeLexicallyScopedFeature, ConstructorKind::None, SuperBinding::NotNeeded, info->parameterCount(), original->unlinkedExecutable()->parseMode(), false);
+    metadata.finishParsing(SourceCode(*provider, start, source.endOffset()), info->name, FunctionMode::FunctionExpression);
+    auto* unlinked = UnlinkedFunctionExecutable::create(vm, whole, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
+    unlinked->setPythonInfo(WTF::move(info));
+    return unlinked->link(vm, nullptr, whole);
+}
+
+JSScope* environmentForCells(JSGlobalObject* globalObject, JSScope* next, const Vector<Identifier>& names, PyTuple* cells)
+{
+    VM& vm = globalObject->vm();
+    if (names.isEmpty())
+        return next;
+    JSC::SymbolTable* symbolTable = JSC::SymbolTable::create(vm);
+    symbolTable->setScopeType(JSC::SymbolTable::ScopeType::LexicalScope);
+    Vector<ScopeOffset, 8> offsets;
+    for (auto& name : names) {
+        offsets.append(symbolTable->takeNextScopeOffset(NoLockingNecessary));
+        symbolTable->set(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(offsets.last())));
+    }
+    JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject->activationStructure(), next, symbolTable, jsUndefined());
+    for (unsigned i = 0; i < names.size(); ++i)
+        environment->variableAt(offsets[i]).set(vm, environment, cells->at(i));
+    return environment;
+}
+
+JSScope* environmentForGlobals(JSGlobalObject* globalObject, JSObject* globals)
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
@@ -518,7 +553,12 @@ JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* exec
     JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject->activationStructure(), globalObject->globalScope(), symbolTable, jsUndefined());
     environment->variableAt(globalsOffset).set(vm, environment, globals);
     environment->variableAt(builtinsOffset).set(vm, environment, builtinsFor(globalObject, globals));
-    return JSFunction::create(vm, globalObject, executable, environment);
+    return environment;
+}
+
+JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* executable, JSObject* globals)
+{
+    return JSFunction::create(globalObject->vm(), globalObject, executable, environmentForGlobals(globalObject, globals));
 }
 
 JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source, JSObject* namespaceObject, ImplementationVisibility visibility)

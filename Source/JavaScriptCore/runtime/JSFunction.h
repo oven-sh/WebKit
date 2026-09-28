@@ -98,6 +98,9 @@ public:
 
     JSString* asStringConcurrently() const;
 
+    // For Python, where a function can be given other code to run: f.__code__ = ...
+    JS_EXPORT_PRIVATE void replaceExecutable(VM&, FunctionExecutable*);
+
     ExecutableBase* executable() const
     {
         uintptr_t executableOrRareData = m_executableOrRareData;

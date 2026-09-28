@@ -313,6 +313,10 @@ JSValue localsOfFrame(JSGlobalObject*, CallFrame*);
 JSValue localsOfFrame(JSGlobalObject*, PyFrame*);
 // The frame of the Python code that called a function written in C++.
 CallFrame* callerOf(CallFrame*);
+// What is in a cell, which is empty if nothing is.
+JSValue contentsOfCell(JSValue cell);
+void setContentsOfCell(VM&, JSValue cell, JSValue);
+WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner); // Where that is, and the cell that a write to it is a write to.
 
 // Notes that an exception has come to a frame of Python code, by being raised in it or by coming out of what it called. The unwinder calls it.
 void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex);

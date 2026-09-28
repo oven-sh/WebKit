@@ -30,6 +30,7 @@
 #include "BuiltinNames.h"
 #include "CallFrame.h"
 #include "CommonIdentifiers.h"
+#include "FunctionCodeBlock.h"
 #include "FunctionExecutableInlines.h"
 #include "GeneratorPrototype.h"
 #include "JSBoundFunction.h"
@@ -118,6 +119,28 @@ JSFunction::JSFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* glo
 {
     assertTypeInfoFlagInvariants();
     ASSERT(structure->realm() == globalObject);
+}
+
+void JSFunction::replaceExecutable(VM& vm, FunctionExecutable* executable)
+{
+    // A call that has been linked goes by which function is being called, and jumps to what that was compiled to. All that have been linked to what this was
+    // compiled to are set to find out again. The DFG links no call to a function of Python's for good: see where it makes a DirectCall.
+    FunctionExecutable* previous = jsExecutable();
+    ASSERT(previous->isPython() && executable->isPython());
+    for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+        if (CodeBlock* codeBlock = previous->codeBlockFor(kind))
+            codeBlock->unlinkOrUpgradeIncomingCalls(vm, nullptr);
+    }
+
+    uintptr_t executableOrRareData = m_executableOrRareData;
+    if (executableOrRareData & rareDataTag) {
+        std::bit_cast<FunctionRareData*>(executableOrRareData & ~rareDataTag)->setExecutable(vm, executable);
+        return;
+    }
+    // A compilation thread may be reading it.
+    WTF::storeStoreFence();
+    m_executableOrRareData = std::bit_cast<uintptr_t>(executable);
+    vm.writeBarrier(this, executable);
 }
 
 FunctionRareData* JSFunction::allocateRareData(VM& vm)

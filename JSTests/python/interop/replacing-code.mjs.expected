@@ -1,0 +1,10 @@
+before => 400000,400000,400000,400000,400000
+after => 20200000,20200000,20200000,20200000,20200000
+and again => 2000200000,2000200000,2000200000,2000200000,2000200000
+a method before => 400000
+a method after => 200200000
+in the middle => 1515000000
+made from code => 400000,2200000,20200000
+polymorphic => 11100000
+from JavaScript => 1,1
+wrong from JavaScript !! TypeError: __code__ must be set to a code object

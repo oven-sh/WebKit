@@ -2066,6 +2066,9 @@ private:
             if (FunctionExecutable* functionExecutable = dynamicDowncast<FunctionExecutable>(executable)) {
                 if (m_node->op() == Construct && functionExecutable->constructAbility() == ConstructAbility::CannotConstruct)
                     break;
+                // What a function of Python's runs can be changed. See JSFunction::replaceExecutable().
+                if (functionExecutable->isPython())
+                    break;
 
                 // We need to update m_parameterSlots before we get to the backend, but we don't
                 // want to do too much of this.

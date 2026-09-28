@@ -37,7 +37,9 @@ class FunctionExecutable;
 class JSFunction;
 class JSGlobalObject;
 class JSObject;
+class JSScope;
 class ParserError;
+class PyTuple;
 class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
 class VM;
@@ -65,6 +67,13 @@ JS_EXPORT_PRIVATE JSFunction* compileModule(JSGlobalObject*, const SourceCode&, 
 // one argument: a mapping in which its names are looked up before the globals, and stored.
 FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public);
 JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
+// The outermost environment of everything in a module, which is what that gives the function.
+JSScope* environmentForGlobals(JSGlobalObject*, JSObject* namespaceObject);
+// One within `next` that has the cells for variables, under the names. See FunctionInfo::variablesGivenAsCells. It is `next` if there are none.
+JSScope* environmentForCells(JSGlobalObject*, JSScope* next, const Vector<Identifier>& names, PyTuple* cells);
+// Another executable for the same source, of which something else is known, or that says it is from another file. It is compiled by itself, when it is first
+// called. What has been compiled takes it that every function made from it is in environments of the same shape.
+FunctionExecutable* cloneExecutable(JSGlobalObject*, FunctionExecutable*, Ref<FunctionInfo>&&, const String& sourceURL = { });
 
 // Runs a file as `python file.py` would, as the module __main__. If an exception gets away it is reported on stderr as Python
 // reports it. Returns what the process should exit with.

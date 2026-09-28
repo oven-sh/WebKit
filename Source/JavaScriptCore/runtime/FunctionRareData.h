@@ -115,6 +115,7 @@ public:
     void setBoundFunctionStructure(VM& vm, Structure* structure) { m_boundFunctionStructureID.set(vm, this, structure); }
 
     ExecutableBase* executable() const LIFETIME_BOUND { return m_executable.get(); }
+    void setExecutable(VM& vm, ExecutableBase* executable) { m_executable.set(vm, this, executable); }
 
     bool hasReifiedLength() const { return m_hasReifiedLength; }
     void setHasReifiedLength() { m_hasReifiedLength = true; }
