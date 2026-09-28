@@ -78,7 +78,11 @@ PYTHON_NATIVE(numberUnary)
 {
     auto op = unpack<UnaryOperator>(callFrame, 0);
     NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(numberUnaryOperation(globalObject, op, args.at(0))));
+    // int.__invert__(True) is what an int does, which has nothing to say about a bool.
+    JSValue value = args.at(0);
+    if (value.isBoolean())
+        value = jsNumber(value.asBoolean());
+    RELEASE_AND_RETURN(scope, JSValue::encode(numberUnaryOperation(globalObject, op, value)));
 }
 
 PYTHON_NATIVE(numberDivmod)
@@ -341,9 +345,11 @@ PYTHON_NATIVE(intNew)
     } else {
         JSValue self;
         JSValue method;
+        const Identifier* methodName = nullptr;
         for (const Identifier* name : { &names.dunder_int, &names.dunder_index, &names.dunder_trunc }) {
             method = lookupSpecial(globalObject, value, *name, self);
             RETURN_IF_EXCEPTION(scope, { });
+            methodName = name;
             if (method)
                 break;
         }
@@ -366,6 +372,8 @@ PYTHON_NATIVE(intNew)
         Number converted = classify(result);
         if (!converted.isInt())
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__int__ returned non-int (type "_s, typeName(globalObject, result), ')')));
+        if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, makeString(methodName->string(), " returned non-int"_s), "int"_s))
+            return { };
         result = toInt(globalObject, scope, converted);
     }
     return JSValue::encode(boxIfDerived(globalObject, type, realm->typeInt(), result));
@@ -790,9 +798,7 @@ static void addArithmetic(JSGlobalObject* globalObject, PyType* target, NumberTy
 PYTHON_NATIVE(boolInvert)
 {
     NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    // FIXME: It is deprecated, and when there are warnings this is to give one.
-    return JSValue::encode(jsNumber(args[0].isTrue() ? -2 : -1));
+    RELEASE_AND_RETURN(scope, JSValue::encode(numberUnaryOperation(globalObject, UnaryOperator::Invert, args[0])));
 }
 
 void initializeNumberTypes(JSGlobalObject* globalObject)

@@ -39,6 +39,7 @@
 #include "PythonOperations.h"
 #include "PythonParser.h"
 #include "PythonSymbolTable.h"
+#include "PythonSyntaxWarnings.h"
 #include "TopExceptionScope.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -299,7 +300,10 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     JSValue lineText = jsUndefined();
     if (error.line && !source.isNull() && (lineStart < text.length() || foundIn == FoundIn::Parsing)) {
         // What is taken apart always ends with the end of a line, which is added if it is not there.
-        lineText = jsString(vm, makeString(text.substring(lineStart, lineEnd - lineStart), !endsLine && foundIn == FoundIn::Parsing ? "\n"_s : ""_s));
+        if (error.isFromTokenizer)
+            lineText = jsString(vm, text.substring(lineStart, lineEnd - lineStart - endsLine).toString());
+        else
+            lineText = jsString(vm, makeString(text.substring(lineStart, lineEnd - lineStart), !endsLine && foundIn == FoundIn::Parsing ? "\n"_s : ""_s));
     }
 
     PyTuple* details = PyTuple::create(globalObject, { jsString(vm, givenSource.provider()->sourceURL()), jsNumber(error.line), jsNumber(error.column + 1), lineText, jsNumber(error.endLine), jsNumber(error.endColumn + 1) });
@@ -307,6 +311,30 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     RETURN_IF_EXCEPTION(scope, { });
     throwException(globalObject, scope, exception);
     return { };
+}
+
+// _PyErr_EmitSyntaxWarning(), for each. False if something has been raised, as it is if the program has asked for such warnings to be errors: SyntaxError then, which says more about where.
+static bool issueWarnings(JSGlobalObject* globalObject, Vector<SyntaxWarning>& warnings, const SourceCode& source)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    for (SyntaxWarning& warning : std::exchange(warnings, { })) {
+        bool succeeded = warnExplicit(globalObject, BuiltinType::SyntaxWarning, warning.message, source.provider()->sourceURL(), warning.line);
+        if (succeeded)
+            continue;
+        if (catchException(globalObject, BuiltinType::SyntaxWarning)) {
+            SyntaxError error;
+            error.message = warning.errorMessage.isNull() ? warning.message : warning.errorMessage;
+            error.line = warning.line;
+            error.column = warning.column;
+            error.endLine = warning.endLine;
+            error.endColumn = warning.endColumn;
+            error.isFromTokenizer = warning.isFromTokenizer;
+            raiseSyntaxError(globalObject, scope, error, source, warning.isFoundInParsing ? FoundIn::Parsing : FoundIn::WhatWasParsed);
+        }
+        return false;
+    }
+    return true;
 }
 
 // ---- From bytes to source
@@ -529,6 +557,8 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     unsigned futureFeatures = inheritedFutureFeatures;
     bool hasDocstring = false;
     bool isCoroutine = false;
+    // What CPython warns of as it generates code.
+    Vector<SyntaxWarning> codeWarnings;
     {
         Arena arena;
         arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
@@ -537,13 +567,21 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         SyntaxError error;
         Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
         Module* module = parse(vm, arena, source.provider()->source(), moduleKind, warnings, error);
+        // What was warned of on the way to something that is wrong was warned of first.
+        if (!issueWarnings(globalObject, warnings, source))
+            return nullptr;
         std::unique_ptr<SymbolTable> table;
-        if (module)
+        if (module) {
+            collectControlFlowWarnings(*module, warnings);
+            if (!issueWarnings(globalObject, warnings, source))
+                return nullptr;
             table = SymbolTable::build(vm, arena, *module, inheritedFutureFeatures, error);
+        }
         if (!table) {
             raiseSyntaxError(globalObject, scope, error, source, module ? FoundIn::WhatWasParsed : FoundIn::Parsing);
             return nullptr;
         }
+        collectCodeWarnings(*module, table->futureFeatures(), optimizationLevel, codeWarnings);
         futureFeatures = table->futureFeatures();
         hasDocstring = table->blockFor(module)->hasDocstring;
         isCoroutine = table->blockFor(module)->isCoroutine;
@@ -571,7 +609,17 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     unlinked->setPythonInfo(WTF::move(info));
 
     ParserError error;
-    if (!generateAll(vm, unlinked, source, error)) {
+    bool wasGenerated = generateAll(vm, unlinked, source, error);
+    // It stops at what is wrong, and so has warned of what comes before that and no more.
+    if (!wasGenerated && error.pythonError()) {
+        std::pair place { error.pythonError()->line, error.pythonError()->column };
+        codeWarnings.removeAllMatching([&] (const SyntaxWarning& warning) {
+            return std::pair { warning.line, warning.column } >= place;
+        });
+    }
+    if (!issueWarnings(globalObject, codeWarnings, source))
+        return nullptr;
+    if (!wasGenerated) {
         // Anything else that can go wrong with generating code is the engine's to say.
         if (error.pythonError())
             raiseSyntaxError(globalObject, scope, *error.pythonError(), source, FoundIn::WhatWasParsed);

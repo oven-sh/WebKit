@@ -23,28 +23,16 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #pragma once
 
-#include <wtf/text/WTFString.h>
+#include "PythonAST.h"
+#include "PythonToken.h"
 
 namespace JSC { namespace Python {
 
-// What is wrong with a piece of source, as far as it takes to make the exception.
-struct SyntaxError {
-    enum class Kind : uint8_t { SyntaxError, IndentationError, TabError };
-
-    explicit operator bool() const { return !message.isNull(); }
-
-    Kind kind { Kind::SyntaxError };
-    bool isUnclosedBracket { false }; // The source ended before a bracket was closed. `line` is where it was opened.
-    String message;
-    unsigned line { 0 };
-    unsigned column { 0 };
-    unsigned endLine { 0 };
-    unsigned endColumn { 0 };
-    // CPython's tokenizer says it, and not its parser. The line that it gives is without the end of the line.
-    bool isFromTokenizer { false };
-};
+// 'return', 'break' and 'continue' in a 'finally'. It comes before the names in the source are looked into.
+void collectControlFlowWarnings(const Module&, Vector<SyntaxWarning>&);
+// What CPython warns of as it generates code, which comes after.
+void collectCodeWarnings(const Module&, unsigned futureFeatures, unsigned optimizationLevel, Vector<SyntaxWarning>&);
 
 } } // namespace JSC::Python

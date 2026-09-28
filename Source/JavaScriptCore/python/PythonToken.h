@@ -191,7 +191,15 @@ ASCIILiteral NODELETE tokenKindName(TokenKind);
 // SyntaxWarning, which is for whoever asked for the compilation to issue.
 struct SyntaxWarning {
     String message;
+    // What to say if the program has asked for such warnings to be errors, in which case it is a SyntaxError. Null if it is the same.
+    String errorMessage;
+    // Where that would be, as in SyntaxError.
     unsigned line { 0 };
+    unsigned column { 0 };
+    unsigned endLine { 0 };
+    unsigned endColumn { 0 };
+    bool isFoundInParsing { false };
+    bool isFromTokenizer { false };
 };
 
 } } // namespace JSC::Python

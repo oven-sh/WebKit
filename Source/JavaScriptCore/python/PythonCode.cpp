@@ -944,7 +944,11 @@ void initializeCodeType(JSGlobalObject* globalObject)
     auto noBytes = [] (JSGlobalObject* globalObject, JSValue) -> JSValue { return newBytes(globalObject, { }); };
     addMember(globalObject, code, "co_linetable"_s, noBytes);
     addMember(globalObject, code, "co_exceptiontable"_s, noBytes);
-    addGetSet(globalObject, code, "co_lnotab"_s, noBytes);
+    addGetSet(globalObject, code, "co_lnotab"_s, [] (JSGlobalObject* globalObject, JSValue) -> JSValue {
+        if (!warn(globalObject, BuiltinType::DeprecationWarning, "co_lnotab is deprecated, use co_lines instead."_s))
+            return { };
+        return newBytes(globalObject, { });
+    });
 }
 
 } } // namespace JSC::Python

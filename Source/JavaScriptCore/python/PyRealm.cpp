@@ -54,6 +54,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_emptyTuple);
     visitor.append(thisObject->m_notImplemented);
     thisObject->m_monitoring.visit(visitor);
+    thisObject->m_warnings.visit(visitor);
     visitor.append(thisObject->m_ellipsis);
     visitor.append(thisObject->m_noDefault);
     visitor.append(thisObject->m_boundArgumentsMarker);
@@ -185,6 +186,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeExceptionGroups(globalObject, builtins);
     m_asyncContextFrameStructure.set(vm, this, Python::createAsyncContextFrameStructure(vm, globalObject));
     Python::initializeContextVarTypes(globalObject);
+    Python::initializeWarnings(globalObject);
     Python::initializeProperty(globalObject);
     Python::initializeReduce(globalObject);
     Python::initializeStructSequences(globalObject);

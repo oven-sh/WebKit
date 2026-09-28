@@ -619,6 +619,20 @@ PYTHON_NATIVE(variableNew)
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::ContextVar, name, defaultValue, jsNumber(static_cast<int32_t>(globalObject->weakRandomInteger()))));
 }
 
+// PyContextVar_New(), with no default
+JSObject* newContextVariable(JSGlobalObject* globalObject, JSString* name)
+{
+    return PyNativeObject::create(globalObject, BuiltinType::ContextVar, name, JSValue(), jsNumber(static_cast<int32_t>(globalObject->weakRandomInteger())));
+}
+
+// PyContextVar_Get(), with no default. Empty if it has nothing.
+JSValue contextVariableValue(JSGlobalObject* globalObject, JSObject* variable)
+{
+    if (JSValue value = find(currentMap(globalObject), variable))
+        return value;
+    return asNativeObject(variable)->field(VariableDefault);
+}
+
 PYTHON_NATIVE(variableHash)
 {
     NATIVE_PROLOGUE();

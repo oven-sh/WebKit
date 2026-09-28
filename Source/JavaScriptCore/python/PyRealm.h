@@ -28,6 +28,7 @@
 #include "JSObject.h"
 #include "PyType.h"
 #include "PythonMonitoring.h"
+#include "PythonWarnings.h"
 #include "WeakGCMap.h"
 
 namespace JSC {
@@ -333,6 +334,7 @@ public:
     // What is in the middle of being written out. See Python::ReprGuard. Each is on the stack besides, and so is not visited.
     Vector<JSCell*, 16>& objectsBeingWrittenOut() { return m_objectsBeingWrittenOut; }
     Python::MonitoringState& monitoring() { return m_monitoring; }
+    Python::WarningsState& warnings() { return m_warnings; }
 
     // sys.modules
     JSObject* modules() const { return m_modules.get(); }
@@ -378,6 +380,7 @@ private:
     WriteBarrier<JSObject> m_builtinsModule;
     Vector<JSCell*, 16> m_objectsBeingWrittenOut;
     Python::MonitoringState m_monitoring;
+    Python::WarningsState m_warnings;
     // By the string in the table of atoms, which the str keeps there.
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;
     WriteBarrier<JSArray> m_auditHooks;

@@ -370,6 +370,12 @@ Exception* tellOfException(VM&, CallFrame*, BytecodeIndex, JSValue thrown, Excep
 // What Python prints when an exception gets away: the traceback, and those of what led to it.
 String formatException(JSGlobalObject*, JSValue exception);
 bool isSequence(JSGlobalObject*, JSValue); // PySequence_Check()
+bool isSequenceSlot(JSGlobalObject*, JSValue method); // Whether it is what a built-in sequence has for + or *, which has its turn after what numbers have. See binaryOperation().
+// Warnings from what is written in C++: PyErr_WarnEx() and PyErr_WarnExplicitObject(). False if something has been raised, as it is if the program has asked for such warnings to be errors.
+bool warn(JSGlobalObject*, BuiltinType category, const String& message, int64_t stackLevel = 1, JSValue source = { });
+bool warnExplicit(JSGlobalObject*, BuiltinType category, const String& message, const String& filename, int64_t line);
+// For what __int__() and the like return, which is to be of the class itself. What is of a class derived from it is let by, with a warning: `before`, the name of its class, and the rest.
+bool warnIfOfStrictSubclass(JSGlobalObject*, JSValue result, BuiltinType, const String& before, ASCIILiteral className);
 // For `except*`.
 JSValue matchExceptionGroup(JSGlobalObject*, CallFrame*, JSValue exception, JSValue pattern);
 JSValue prepareReraiseStar(JSGlobalObject*, JSValue original, JSArray* exceptions);
@@ -463,6 +469,7 @@ int compareInts(JSValue, JSValue); // Negative, zero or positive. Both are ints,
 std::optional<int64_t> toIndex(JSGlobalObject*, JSValue, bool clamp = false);
 // The same, for what in CPython is an int of C's, and raises OverflowError if it does not fit in one.
 std::optional<int> toCInt(JSGlobalObject*, JSValue);
+std::optional<int64_t> toIndexOrOverflow(JSGlobalObject*, JSValue); // PyNumber_AsSsize_t(value, PyExc_OverflowError)
 // The value of an int, a bool or a float, or of what has __float__ or __index__.
 std::optional<double> toDouble(JSGlobalObject*, JSValue);
 String reprOfDouble(double);

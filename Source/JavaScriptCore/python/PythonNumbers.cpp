@@ -521,6 +521,12 @@ JSValue numberUnaryOperation(JSGlobalObject* globalObject, UnaryOperator op, JSV
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Number number = classify(value);
+    if (op == UnaryOperator::Invert && value.isBoolean()) [[unlikely]] {
+        bool succeeded = warn(globalObject, BuiltinType::DeprecationWarning, "Bitwise inversion '~' on bool is deprecated and will be removed in Python 3.16. This returns the bitwise inversion of the underlying int object and is "
+            "usually not what you expect from negating a bool. Use the 'not' operator for boolean negation or ~int(x) if you really want the bitwise inversion of the underlying int."_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        ASSERT_UNUSED(succeeded, succeeded);
+    }
     switch (number.kind) {
     case Number::Kind::None:
         return { };

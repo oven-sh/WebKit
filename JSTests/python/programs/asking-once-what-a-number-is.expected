@@ -1,0 +1,52 @@
+hex 1
+bin 1
+oct 1
+range1 1
+range3 3
+str* 1
+list* 1
+*list 1
+bytes* 1
+index 1
+slice 2
+str index 1
+tuple index 1
+bytes index 1
+setitem 1
+int() 1
+int(RI) 1
+float() 1
+float(RF) 1
+complex(R) 1
+complex(RF) 1
+chr 1
+round n 1
+pow 0
+bytes(R) 1
+bytearray(R) 1
+list.insert 1
+list.pop 1
+str.center 1
+str.zfill 1
+format d 1
+format x 1
+format c 1
+format f 1
+int.from_bytes 1
+math.sqrt 1
+math.floor 1
+math.factorial 1
+math.gcd 2
+enumerate 1
+slice.indices 2
+operator << 0
+divmod 0
+sum 0
+str.split 1
+str.expandtabs 1
+str.find 1
+memoryview 1
+range index 1
+isinstance 0
+int base 1
+float+ 0

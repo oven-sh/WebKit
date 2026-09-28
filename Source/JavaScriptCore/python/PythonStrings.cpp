@@ -1137,14 +1137,18 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                 JSValue self;
                 JSValue method = isDecimal ? lookupSpecial(globalObject, argument, vm.pythonNames().dunder_int, self) : JSValue();
                 RETURN_IF_EXCEPTION(scope, { });
+                ASCIILiteral methodName = "__int__"_s;
                 if (!method) {
                     method = lookupSpecial(globalObject, argument, vm.pythonNames().dunder_index, self);
                     RETURN_IF_EXCEPTION(scope, { });
+                    methodName = "__index__"_s;
                 }
                 if (method) {
                     argument = callMethod(globalObject, method, self);
                     RETURN_IF_EXCEPTION(scope, { });
                     number = classify(argument);
+                    if (number.isInt() && !warnIfOfStrictSubclass(globalObject, argument, BuiltinType::Int, makeString(methodName, " returned non-int"_s), "int"_s))
+                        return { };
                 }
             }
             if (!number.isInt()) {

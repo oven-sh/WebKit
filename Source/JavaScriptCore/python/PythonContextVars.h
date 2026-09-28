@@ -35,6 +35,10 @@ PyNativeObject* copyCurrentContext(JSGlobalObject*);
 bool enterContext(JSGlobalObject*, PyNativeObject*);
 void exitContext(JSGlobalObject*, PyNativeObject*);
 
+// For what is written in C++ and has a variable of its own.
+JSObject* newContextVariable(JSGlobalObject*, JSString* name);
+JSValue contextVariableValue(JSGlobalObject*, JSObject* variable); // Empty if it has nothing.
+
 Structure* createAsyncContextFrameStructure(VM&, JSGlobalObject*);
 
 } } // namespace JSC::Python

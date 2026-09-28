@@ -739,10 +739,19 @@ PYTHON_NATIVE(bytesAdd)
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, joined.span())));
 }
 
-static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, const Buffer& content, JSValue countValue, ByteVector& result)
+static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, JSValue self, const Buffer& content, JSValue countValue, ByteVector& result)
 {
-    auto count = toIndex(globalObject, countValue);
+    auto count = toIndexOrOverflow(globalObject, countValue);
     RETURN_IF_EXCEPTION(scope, false);
+    if (*count > 0 && content.span().size() > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) / *count) {
+        if (isBytes(self))
+            raise(globalObject, scope, BuiltinType::OverflowError, "repeated bytes are too long"_s);
+        else
+            raise(globalObject, scope, BuiltinType::MemoryError, JSValue());
+        return false;
+    }
+    if (content.empty())
+        return true;
     for (int64_t i = 0; i < *count; ++i)
         result.append(content.span());
     return true;
@@ -752,10 +761,8 @@ static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, const Buff
 PYTHON_NATIVE(bytesMultiply)
 {
     BYTES_PROLOGUE("__mul__");
-    if (!classify(args.at(1)).isInt() && !typeOf(globalObject, args.at(1))->lookup(vm, names.dunder_index))
-        RETURN_NOT_IMPLEMENTED();
     ByteVector result;
-    repeated(globalObject, scope, content, args[1], result);
+    repeated(globalObject, scope, selfValue, content, args[1], result);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
 }
@@ -1559,7 +1566,7 @@ PYTHON_NATIVE(byteArrayInPlaceAdd)
     if (scope.exception())
         catchException(globalObject, BuiltinType::BaseException);
     if (!other)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can't concat "_s, typeName(globalObject, args.at(1)), " to bytearray"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can't concat "_s, typeName(globalObject, args.at(1)), " to "_s, typeName(globalObject, selfValue))));
     replaceRange(globalObject, self, self->length(), 0, *other);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(selfValue);
@@ -1568,10 +1575,8 @@ PYTHON_NATIVE(byteArrayInPlaceAdd)
 PYTHON_NATIVE(byteArrayInPlaceMultiply)
 {
     BYTES_PROLOGUE("__imul__");
-    if (!classify(args.at(1)).isInt() && !typeOf(globalObject, args.at(1))->lookup(vm, names.dunder_index))
-        RETURN_NOT_IMPLEMENTED();
     ByteVector result;
-    repeated(globalObject, scope, content, args[1], result);
+    repeated(globalObject, scope, selfValue, content, args[1], result);
     RETURN_IF_EXCEPTION(scope, { });
     replaceRange(globalObject, self, 0, self->length(), result.span());
     RETURN_IF_EXCEPTION(scope, { });

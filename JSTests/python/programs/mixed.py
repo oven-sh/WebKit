@@ -55,6 +55,6 @@ def pick(n):
     return out
 print(pick(5000))
 m = [[0] * 2 for _ in range(2)]; m[0][0] = 1.0; m[1][1] = 1; print(m, [sum(r) for r in m], [[c * 2 for c in r] for r in m])
-print(round(2.0), round(2.5), round(2, 1), round(2.0, 1), int(2.0), float(2), 2 == 2.0, 2 is 2.0 if False else "skip", divmod(5, 2), divmod(5.0, 2), max(1, 1.0), max(1.0, 1), min(2, 2.0), sum([1, 1.0]), sum([1.0, 1]), sum([]), sum([], 0.0))
+print(round(2.0), round(2.5), round(2, 1), round(2.0, 1), int(2.0), float(2), 2 == 2.0, "skip", divmod(5, 2), divmod(5.0, 2), max(1, 1.0), max(1.0, 1), min(2, 2.0), sum([1, 1.0]), sum([1.0, 1]), sum([]), sum([], 0.0))
 print(str(1), str(1.0), repr(1.0), f"{1} {1.0} {1:.1f} {1.0:g} {2 / 1} {2 // 1} {2.0 // 1}", "%s %s" % (1, 1.0), "{} {}".format(1, 1.0), [str(x) for x in (1, 1.0)], hash(1) == hash(1.0), bool(0.0), bool(0))
 print(2 ** 31, 2 ** 31 - 1, -2 ** 31, -2 ** 31 - 1, 2147483647 + 1, -2147483648 - 1, 65536 * 65536, 2 ** 31 * 1.0, float(2 ** 31), int(2.0 ** 31), 2 ** 31 // 2, (2 ** 31) - (2 ** 31), 2 ** 31 == 2.0 ** 31, {2 ** 40: "i"}[2.0 ** 40], type(2 ** 31 - 2 ** 31), [2 ** 31, 1, 0.5])

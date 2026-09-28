@@ -342,21 +342,25 @@ PYTHON_NATIVE(sysBreakpointHook)
     if (named == "0"_s)
         RETURN_NONE();
     size_t lastDot = named.reverseFind('.');
-    // FIXME: What cannot be imported is to be warned of: RuntimeWarning, Ignoring unimportable $PYTHONBREAKPOINT: "..."
+    // What cannot be imported is warned of and passed over.
+    auto ignore = [&] {
+        warn(globalObject, BuiltinType::RuntimeWarning, makeString("Ignoring unimportable $PYTHONBREAKPOINT: \""_s, named, '"'), 0);
+        return JSValue::encode(jsUndefined());
+    };
     if (!lastDot)
-        RETURN_NONE();
+        return ignore();
     String moduleName = lastDot == notFound ? "builtins"_str : named.left(lastDot);
     String attribute = lastDot == notFound ? named : named.substring(lastDot + 1);
     JSValue module = importModule(globalObject, nullptr, moduleName, jsUndefined(), 0, true);
     if (scope.exception()) {
         if (catchException(globalObject, BuiltinType::ImportError))
-            RETURN_NONE();
+            return ignore();
         return { };
     }
     JSValue hook = getAttribute(globalObject, module, Identifier::fromString(vm, attribute));
     if (scope.exception()) {
         if (catchException(globalObject, BuiltinType::AttributeError))
-            RETURN_NONE();
+            return ignore();
         return { };
     }
     MarkedArgumentBuffer arguments;
@@ -606,6 +610,12 @@ PYTHON_NATIVE(sysReturnText)
 // ---- Frames
 
 // sys.call_tracing(func, args)
+PYTHON_NATIVE(sysClearTypeCache)
+{
+    warn(globalObject, BuiltinType::DeprecationWarning, "sys._clear_type_cache() is deprecated and scheduled for removal in a future version. Use sys._clear_internal_caches() instead."_s);
+    RETURN_NONE();
+}
+
 PYTHON_NATIVE(sysCallTracing)
 {
     NATIVE_PROLOGUE();
@@ -908,7 +918,7 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     add("is_remote_debug_enabled"_s, returnFalse);
     add("_is_gil_enabled"_s, returnTrue);
     add("_get_cpu_count_config"_s, sysGetCpuCountConfig);
-    add("_clear_type_cache"_s, returnNone);
+    add("_clear_type_cache"_s, sysClearTypeCache);
     add("_clear_internal_caches"_s, returnNone);
     add("_debugmallocstats"_s, returnNone);
 

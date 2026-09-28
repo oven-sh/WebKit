@@ -72,18 +72,15 @@ static bool isExact(JSGlobalObject* globalObject, JSValue value)
 
 // ---- Binary operators
 
+std::optional<int64_t> toIndexOrOverflow(JSGlobalObject*, JSValue);
+
 static std::optional<int64_t> repeatCount(JSGlobalObject* globalObject, JSValue value)
 {
     Number number = classify(value);
     if (number.kind == Number::Kind::Small)
         return number.small;
-    if (number.kind == Number::Kind::Big) {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-        if (number.big->sign())
-            return 0;
-        raise(globalObject, scope, BuiltinType::OverflowError, "cannot fit 'int' into an index-sized integer"_s);
-    }
+    if (number.kind == Number::Kind::Big)
+        return toIndexOrOverflow(globalObject, value);
     return std::nullopt;
 }
 
@@ -207,18 +204,54 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
     }
 }
 
+// Whether it is what a built-in sequence has for + or *. In CPython those are not among what a type can do as a number (nb_add, nb_multiply) but among what it can do as a sequence (sq_concat,
+// sq_repeat), and __add__ and __mul__ are how a program comes by them.
+bool isSequenceSlot(JSGlobalObject* globalObject, JSValue method)
+{
+    auto* native = dynamicDowncast<PyNativeFunction>(method);
+    if (!native || !native->owner())
+        return false;
+    PyRealm* realm = globalObject->pyRealm();
+    JSObject* owner = native->owner();
+    return owner == realm->typeStr() || owner == realm->typeList() || owner == realm->typeTuple() || owner == realm->typeBytes() || owner == realm->typeByteArray() || owner == realm->typeTemplate();
+}
+
+// A class that is derived from a built-in sequence still has what that has, whatever it has by the same name for itself.
+static JSValue sequenceSlot(JSGlobalObject* globalObject, PyType* type, const Identifier& name)
+{
+    VM& vm = globalObject->vm();
+    for (auto& entry : type->mro()->span()) {
+        PyType* base = asType(entry.get());
+        if (base->hasFlag(PyType::IsHeapType))
+            continue;
+        if (JSValue method = base->getDirect(vm, name))
+            return isSequenceSlot(globalObject, method) ? method : JSValue();
+    }
+    return { };
+}
+
+// sequence_repeat()
+static JSValue sequenceRepeat(JSGlobalObject* globalObject, JSValue slot, JSValue sequence, JSValue count)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!classify(count).isInt() && !typeOf(globalObject, count)->lookup(vm, vm.pythonNames().dunder_index))
+        return raiseTypeError(globalObject, scope, makeString("can't multiply sequence by non-int of type '"_s, typeName(globalObject, count), '\''));
+    RELEASE_AND_RETURN(scope, call(globalObject, slot, sequence, count));
+}
+
+// PyNumber_AsSsize_t(value, PyExc_OverflowError)
+std::optional<int64_t> toIndexOrOverflow(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto result = toIndex(globalObject, value);
+    if (scope.exception() && catchException(globalObject, BuiltinType::IndexError))
+        raise(globalObject, scope, BuiltinType::OverflowError, makeString("cannot fit '"_s, typeName(globalObject, value), "' into an index-sized integer"_s));
+    return result;
+}
+
 static JSValue raiseUnsupportedOperands(JSGlobalObject* globalObject, ThrowScope& scope, BinaryOperator op, bool inPlace, JSValue left, JSValue right)
 {
-    // A sequence has more to say about what it can be added to and multiplied by.
-    if (op == BinaryOperator::Add && (left.isString() || isList(left) || isTuple(left))) {
-        String type = typeName(globalObject, left);
-        return raiseTypeError(globalObject, scope, makeString("can only concatenate "_s, type, " (not \""_s, typeName(globalObject, right), "\") to "_s, type));
-    }
-    if (op == BinaryOperator::Mult) {
-        auto isSequence = [] (JSValue value) { return value.isString() || isList(value) || isTuple(value); };
-        if (isSequence(left) || isSequence(right))
-            return raiseTypeError(globalObject, scope, makeString("can't multiply sequence by non-int of type '"_s, typeName(globalObject, isSequence(left) ? right : left), '\''));
-    }
     return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for "_s, inPlace ? inPlaceSymbolOf(op) : symbolOf(op), ": '"_s, typeName(globalObject, left), "' and '"_s, typeName(globalObject, right), '\''));
 }
 
@@ -244,8 +277,19 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
     PyType* leftType = typeOf(globalObject, left);
     PyType* rightType = typeOf(globalObject, right);
 
+    // First as numbers: binary_op1() and binary_iop1() of CPython's Objects/abstract.c. What a built-in sequence has for + and * is not for this. It has its turn when this has come to nothing,
+    // so that what it is added to or multiplied by is asked first.
+    bool mayBeForSequences = op == BinaryOperator::Add || op == BinaryOperator::Mult;
+    auto lookupForNumbers = [&] (PyType* type, const Identifier& name) -> JSValue {
+        JSValue method = type->lookup(vm, name);
+        return method && mayBeForSequences && isSequenceSlot(globalObject, method) ? JSValue() : method;
+    };
+
     if (inPlace) {
-        if (JSValue method = leftType->lookup(vm, names.inPlaceMethod(op))) {
+        // A class that a program derives from list or bytearray has their += as a number has it, too. When CPython fills in what such a class can do, it takes what it finds as __iadd__ for
+        // nb_inplace_add if that is wrapped as one of those would be, and it is. Nothing else of a sequence's is.
+        bool isOfDerivedClass = op == BinaryOperator::Add && leftType->hasFlag(PyType::IsHeapType);
+        if (JSValue method = isOfDerivedClass ? leftType->lookup(vm, names.inPlaceMethod(op)) : lookupForNumbers(leftType, names.inPlaceMethod(op))) {
             JSValue result = call(globalObject, method, left, right);
             RETURN_IF_EXCEPTION(scope, { });
             if (!isNotImplemented(globalObject, result))
@@ -253,8 +297,8 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
         }
     }
 
-    JSValue leftMethod = leftType->lookup(vm, names.method(op));
-    JSValue rightMethod = rightType != leftType ? rightType->lookup(vm, names.reflectedMethod(op)) : JSValue();
+    JSValue leftMethod = lookupForNumbers(leftType, names.method(op));
+    JSValue rightMethod = rightType != leftType ? lookupForNumbers(rightType, names.reflectedMethod(op)) : JSValue();
     // A class derived from the left operand's, that has its own idea of the operation, goes first.
     if (rightMethod && rightType->isSubtypeOf(leftType) && rightMethod != leftType->lookup(vm, names.reflectedMethod(op))) {
         JSValue result = call(globalObject, rightMethod, right, left);
@@ -274,6 +318,26 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
         RETURN_IF_EXCEPTION(scope, { });
         if (!isNotImplemented(globalObject, result))
             return result;
+    }
+
+    // Then as sequences: the rest of PyNumber_Add(), PyNumber_Multiply() and their like.
+    if (mayBeForSequences) {
+        auto slotOf = [&] (PyType* type, bool wantsInPlace) -> JSValue {
+            JSValue slot = wantsInPlace ? sequenceSlot(globalObject, type, names.inPlaceMethod(op)) : JSValue();
+            return slot ? slot : sequenceSlot(globalObject, type, names.method(op));
+        };
+        if (JSValue slot = slotOf(leftType, inPlace)) {
+            if (op == BinaryOperator::Add)
+                RELEASE_AND_RETURN(scope, call(globalObject, slot, left, right));
+            RELEASE_AND_RETURN(scope, sequenceRepeat(globalObject, slot, left, right));
+        }
+        // What is on the right is not to be changed. And with *= it is not come to at all if what is on the left can do anything that a sequence can, though it cannot do this: that is how
+        // PyNumber_InPlaceMultiply() is written. Whatever is of a class that a program made can.
+        auto isSomethingOfASequence = [&] {
+            return leftType->hasFlag(PyType::IsHeapType) || leftType->lookup(vm, names.dunder_len) || leftType->lookup(vm, names.dunder_contains) || leftType->lookup(vm, names.dunder_getitem);
+        };
+        if (JSValue slot = op == BinaryOperator::Mult && !(inPlace && isSomethingOfASequence()) ? slotOf(rightType, false) : JSValue())
+            RELEASE_AND_RETURN(scope, sequenceRepeat(globalObject, slot, right, left));
     }
     return raiseUnsupportedOperands(globalObject, scope, op, inPlace, left, right);
 }
@@ -1050,6 +1114,8 @@ JSValue toInt(JSGlobalObject* globalObject, JSValue value)
         number = classify(result);
         if (!number.isInt())
             return raiseTypeError(globalObject, scope, makeString("__index__ returned non-int (type "_s, typeName(globalObject, result), ')'));
+        if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, "__index__ returned non-int"_s, "int"_s))
+            return { };
     }
     return number.kind == Number::Kind::Small ? jsNumber(number.small) : JSValue(number.big);
 }
@@ -1111,6 +1177,8 @@ std::optional<double> toDouble(JSGlobalObject* globalObject, JSValue value)
             raiseTypeError(globalObject, scope, makeString(typeName(globalObject, value), ".__float__ returned non-float (type "_s, typeName(globalObject, result), ')'));
             return std::nullopt;
         }
+        if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Float, makeString(typeName(globalObject, value), ".__float__ returned non-float"_s), "float"_s))
+            return std::nullopt;
         return number.real;
     }
     method = lookupSpecial(globalObject, value, names.dunder_index, self);
@@ -1120,6 +1188,8 @@ std::optional<double> toDouble(JSGlobalObject* globalObject, JSValue value)
         RETURN_IF_EXCEPTION(scope, std::nullopt);
         Number number = classify(result);
         if (number.isInt()) {
+            if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, "__index__ returned non-int"_s, "int"_s))
+                return std::nullopt;
             double converted = toDouble(globalObject, scope, number);
             RETURN_IF_EXCEPTION(scope, std::nullopt);
             return converted;

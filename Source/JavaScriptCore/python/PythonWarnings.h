@@ -23,28 +23,38 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #pragma once
 
-#include <wtf/text/WTFString.h>
+#include "WriteBarrier.h"
 
-namespace JSC { namespace Python {
+namespace JSC {
 
-// What is wrong with a piece of source, as far as it takes to make the exception.
-struct SyntaxError {
-    enum class Kind : uint8_t { SyntaxError, IndentationError, TabError };
+class JSArray;
+class JSObject;
+class JSString;
+class PyDict;
 
-    explicit operator bool() const { return !message.isNull(); }
+namespace Python {
 
-    Kind kind { Kind::SyntaxError };
-    bool isUnclosedBracket { false }; // The source ended before a bracket was closed. `line` is where it was opened.
-    String message;
-    unsigned line { 0 };
-    unsigned column { 0 };
-    unsigned endLine { 0 };
-    unsigned endColumn { 0 };
-    // CPython's tokenizer says it, and not its parser. The line that it gives is without the end of the line.
-    bool isFromTokenizer { false };
+// What _warnings has for each realm: WarningsState of CPython's pycore_warnings.h.
+struct WarningsState {
+    WriteBarrier<JSArray> filters;
+    WriteBarrier<PyDict> onceRegistry;
+    WriteBarrier<JSString> defaultAction;
+    WriteBarrier<JSObject> context; // A ContextVar.
+    // What has been warned of is forgotten when the filters change.
+    long filtersVersion { 0 };
+    // There is one thread, so all that there is to the lock is how many times it has been taken.
+    unsigned lockDepth { 0 };
+
+    template<typename Visitor>
+    void visit(Visitor& visitor)
+    {
+        visitor.append(filters);
+        visitor.append(onceRegistry);
+        visitor.append(defaultAction);
+        visitor.append(context);
+    }
 };
 
 } } // namespace JSC::Python

@@ -650,19 +650,24 @@ PYTHON_NATIVE(strFind)
     ASCIILiteral method = raises ? (fromRight ? "rindex"_s : "index"_s) : (fromRight ? "rfind"_s : "find"_s);
     String needle = stringArgument(globalObject, scope, args[1], method, 1);
     RETURN_IF_EXCEPTION(scope, { });
+    // What is given for the start is asked what it is once.
+    JSValue startValue = args.at(2);
+    bool startsBeyondEnd = false;
+    if (startValue && !isNone(startValue)) {
+        auto given = toIndex(globalObject, startValue, true);
+        RETURN_IF_EXCEPTION(scope, { });
+        startsBeyondEnd = *given > characterCount(self);
+        startValue = intFromInt64(globalObject, *given);
+    }
     unsigned start;
     unsigned end;
-    sliceArguments(globalObject, scope, self, args.at(2), args.at(3), start, end);
+    sliceArguments(globalObject, scope, self, startValue, args.at(3), start, end);
     RETURN_IF_EXCEPTION(scope, { });
     StringView view = StringView(self).substring(start, end - start);
     size_t found = fromRight ? view.reverseFind(needle) : view.find(needle);
     // A start beyond the end finds nothing, not even nothing.
-    if (args.at(2) && !isNone(args[2])) {
-        auto given = toIndex(globalObject, args[2], true);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (*given > characterCount(self))
-            found = notFound;
-    }
+    if (startsBeyondEnd)
+        found = notFound;
     if (found == notFound) {
         if (raises)
             return JSValue::encode(raiseValueError(globalObject, scope, "substring not found"_s));

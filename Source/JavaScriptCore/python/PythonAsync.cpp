@@ -75,6 +75,14 @@ static int32_t stateOf(JSGenerator* generator)
     return generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).get().asInt32();
 }
 
+// throw(type, value, traceback) is how it was done once.
+bool warnOfThrowSignature(JSGlobalObject* globalObject, const NativeArguments& args, ASCIILiteral method)
+{
+    if (args.size() <= 2) [[likely]]
+        return true;
+    return warn(globalObject, BuiltinType::DeprecationWarning, makeString("the (type, exc, tb) signature of "_s, method, "() is deprecated, use the single-arg signature instead."_s));
+}
+
 JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -454,6 +462,8 @@ PYTHON_NATIVE(coroutineSend)
 PYTHON_NATIVE(coroutineThrow)
 {
     NATIVE_PROLOGUE();
+    if (!warnOfThrowSignature(globalObject, args, "throw"_s))
+        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(generatorThrow(globalObject, generatorOfSelf(globalObject, args[0]), exception)));
@@ -590,6 +600,8 @@ static JSValue asendThrowImpl(JSGlobalObject* globalObject, PyNativeObject* self
 PYTHON_NATIVE(asendThrow)
 {
     NATIVE_PROLOGUE();
+    if (!warnOfThrowSignature(globalObject, args, "throw"_s))
+        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(asendThrowImpl(globalObject, asNative(args[0]), exception)));
@@ -729,6 +741,8 @@ static JSValue athrowThrowImpl(JSGlobalObject* globalObject, PyNativeObject* sel
 PYTHON_NATIVE(athrowThrow)
 {
     NATIVE_PROLOGUE();
+    if (!warnOfThrowSignature(globalObject, args, "throw"_s))
+        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(athrowThrowImpl(globalObject, asNative(args[0]), exception)));
@@ -784,6 +798,8 @@ PYTHON_NATIVE(asyncGeneratorASend)
 PYTHON_NATIVE(asyncGeneratorAThrow)
 {
     NATIVE_PROLOGUE();
+    if (!warnOfThrowSignature(globalObject, args, "athrow"_s))
+        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     initializeHooks(globalObject, args[0]);

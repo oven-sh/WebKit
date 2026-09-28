@@ -292,6 +292,11 @@ static void setFunctionCode(JSGlobalObject* globalObject, JSValue self, JSValue 
         raiseValueError(globalObject, scope, makeString(nameOfFunction(globalObject, function, false), "() requires a code object with "_s, has, " free vars, not "_s, freeVariables.size()));
         return;
     }
+    auto kindOf = [] (const FunctionInfo& info) { return std::tuple { info.isGenerator, info.isCoroutine }; };
+    if (kindOf(infoOfExecutable(function->jsExecutable())) != kindOf(infoOfExecutable(executableOfCode(value)))) {
+        if (!warn(globalObject, BuiltinType::DeprecationWarning, "Assigning a code object of non-matching type is deprecated (e.g., from a generator to a plain function)"_s))
+            return;
+    }
 
     // What it is called, and what it says of itself, are its own, and until now were what the code says.
     JSValue doc = getAttribute(globalObject, function, names.dunder_doc);
@@ -357,7 +362,15 @@ bool isFrameToPython(CallFrame* frame, BytecodeIndex bytecodeIndex)
 CallFrame* callerOf(CallFrame* callFrame)
 {
     VM& vm = callFrame->deprecatedVM();
+    // Each time that the engine is come into from C++ there is a frame that says where the frames from before are, and to get past it is to know which it is. So it is come to from the top, which
+    // is where the frame nearly always is.
     EntryFrame* entryFrame = vm.topEntryFrame;
+    for (CallFrame* frame = vm.topCallFrame; frame && frame != callFrame;) {
+        frame = frame->callerFrame(entryFrame);
+        // It is above what the VM has as the top, as when something is on its way out.
+        if (!frame)
+            entryFrame = vm.topEntryFrame;
+    }
     // Past whatever is written in C++, or in JavaScript, or comes with the engine, or is still giving its arguments to its parameters.
     for (CallFrame* frame = callFrame->callerFrame(entryFrame); frame; frame = frame->callerFrame(entryFrame)) {
         if (isFrameToPython(frame, frame->bytecodeIndex()))

@@ -14,6 +14,6 @@ e = "a😀b"
 print(len(e), e[1], e[2], e[::-1], list(e), e[1:], ord(e[1]), e.upper(), len("😀" * 3), "😀" in e, e.index("b") if False else "skip", "\U0001F600" == "😀", "z" < "😀", "￿" < "😀")
 name, n, x = "world", 42, 3.14159
 print(f"hi {name}! {n + 1} {x:.2f} {name!r} {name:>8} {n:04d} {{literal}} {'nested'} {[i for i in range(3)]} {n=}")
-for bad in (lambda: "abc"[5], lambda: "abc".index("z"), lambda: "a" + 1, lambda: "a" * "b", lambda: ",".join([1]), lambda: "abc"["x"], lambda: 1 in "abc"):
+for bad in (lambda: "abc"[5], lambda: "abc".index("z"), lambda: "a" + 1, lambda: "a" * "b", lambda: ",".join([1]), lambda: str("abc")["x"], lambda: 1 in "abc"):
     try: bad()
     except Exception as ex: print(type(ex).__name__, ex)

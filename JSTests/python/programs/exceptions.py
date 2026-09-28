@@ -24,9 +24,11 @@ def order():
     finally:
         print("cleanup")
 print(order())
-def override():
-    try: return 1
-    finally: return 2
+# It is warned of, when it is compiled.
+import _warnings
+_warnings.filters.insert(0, ("ignore", None, SyntaxWarning, None, 0))
+exec("def override():\n    try: return 1\n    finally: return 2")
+del _warnings.filters[0]
 print(override())
 def nested():
     try:

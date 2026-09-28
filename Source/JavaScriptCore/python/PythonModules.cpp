@@ -175,10 +175,16 @@ PYTHON_NATIVE(mathFloorOrCeil)
     auto isFloor = unpack<bool>(callFrame, 0);
     NATIVE_PROLOGUE();
     JSValue self;
-    JSValue method = lookupSpecial(globalObject, args[0], isFloor ? names.dunder_floor : names.dunder_ceil, self);
+    const Identifier& name = isFloor ? names.dunder_floor : names.dunder_ceil;
+    JSValue method = lookupSpecial(globalObject, args[0], name, self);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("must be real number, not "_s, typeName(globalObject, args[0]))));
+    if (!method) {
+        // Whatever can be made a float of is one, for this.
+        auto value = toDouble(globalObject, args[0]);
+        RETURN_IF_EXCEPTION(scope, { });
+        method = lookupSpecial(globalObject, floatFromDouble(*value), name, self);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
 }
 
@@ -215,10 +221,9 @@ PYTHON_NATIVE(mathGcd)
     NATIVE_PROLOGUE();
     JSValue result = jsNumber(0);
     for (unsigned i = 0; i < args.size(); ++i) {
-        if (!classify(args[i]).isInt())
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[i]), "' object cannot be interpreted as an integer"_s)));
         JSValue a = result;
-        JSValue b = args[i].isBoolean() ? jsNumber(args[i].asBoolean()) : args[i];
+        JSValue b = toInt(globalObject, args[i]);
+        RETURN_IF_EXCEPTION(scope, { });
         while (true) {
             bool isZero = !isTrue(globalObject, b);
             RETURN_IF_EXCEPTION(scope, { });
@@ -381,6 +386,8 @@ static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& 
         return createTypingModule(globalObject);
     if (name == "_contextvars"_s)
         return createContextVarsModule(globalObject);
+    if (name == "_warnings"_s)
+        return createWarningsModule(globalObject);
     if (auto create = globalObject->globalObjectMethodTable()->createPythonBuiltinModule)
         return create(globalObject, name);
     return nullptr;

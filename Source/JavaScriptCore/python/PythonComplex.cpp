@@ -650,8 +650,12 @@ static PyComplex* callComplexMethod(JSGlobalObject* globalObject, JSValue value)
     JSValue result = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, nullptr);
     auto* complex = tryComplex(result);
-    if (!complex)
+    if (!complex) {
         raiseTypeError(globalObject, scope, makeString("__complex__ returned non-complex (type "_s, typeName(globalObject, result), ')'));
+        return nullptr;
+    }
+    if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Complex, "__complex__ returned non-complex"_s, "complex"_s))
+        return nullptr;
     return complex;
 }
 
@@ -709,9 +713,14 @@ PYTHON_NATIVE(complexNew)
         realValue = jsNumber(0);
 
     // Either part may itself be complex. That is deprecated, and adds up as real + imag * 1j does.
+    JSValue givenRealValue = realValue;
     if (PyComplex* converted = callComplexMethod(globalObject, realValue))
         realValue = converted;
     RETURN_IF_EXCEPTION(scope, { });
+    if (tryComplex(realValue) && !isRealNumber(globalObject, givenRealValue)) {
+        if (!warn(globalObject, BuiltinType::DeprecationWarning, makeString("complex() argument 'real' must be a real number, not "_s, typeName(globalObject, givenRealValue))))
+            return { };
+    }
     if (!tryComplex(realValue) && !isRealNumber(globalObject, realValue))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("complex() argument 'real' must be a real number, not "_s, typeName(globalObject, realValue))));
     if (imaginaryValue && !tryComplex(imaginaryValue) && !isRealNumber(globalObject, imaginaryValue))
@@ -732,6 +741,8 @@ PYTHON_NATIVE(complexNew)
     if (!imaginaryValue)
         imaginary.real = real.imag;
     else if (auto* complex = tryComplex(imaginaryValue)) {
+        if (!warn(globalObject, BuiltinType::DeprecationWarning, makeString("complex() argument 'imag' must be a real number, not "_s, typeName(globalObject, imaginaryValue))))
+            return { };
         imaginary = valueOf(complex);
         imaginaryIsComplex = true;
     } else {

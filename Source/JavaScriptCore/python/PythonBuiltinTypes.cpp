@@ -283,12 +283,46 @@ PYTHON_NATIVE(nativeBinary)
     return JSValue::encode(result);
 }
 
+// A str that is of a class derived from str is kept in something else.
+static JSValue withoutBox(JSValue value)
+{
+    if (auto* boxed = tryBoxedValue(value); boxed && boxed->value().isString())
+        return boxed->value();
+    return value;
+}
+
+// s + t and s += t, of a str, a list or a tuple: sq_concat and sq_inplace_concat. There is no asking anything else, so what will not do is an error.
+PYTHON_NATIVE(nativeConcatenate)
+{
+    auto form = unpack<Form>(callFrame, 1);
+    NATIVE_PROLOGUE();
+    JSValue result = builtinBinaryOperation(globalObject, BinaryOperator::Add, form == Form::InPlace, withoutBox(args[0]), withoutBox(args[1]));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return JSValue::encode(result);
+    ASCIILiteral type = isList(args[0]) ? "list"_s : isTuple(args[0]) ? "tuple"_s : "str"_s;
+    return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can only concatenate "_s, type, " (not \""_s, typeName(globalObject, args[1]), "\") to "_s, type)));
+}
+
+// s * n, n * s and s *= n: sq_repeat and sq_inplace_repeat
+PYTHON_NATIVE(nativeRepeat)
+{
+    auto form = unpack<Form>(callFrame, 1);
+    NATIVE_PROLOGUE();
+    auto count = toIndexOrOverflow(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(builtinBinaryOperation(globalObject, BinaryOperator::Mult, form == Form::InPlace, withoutBox(args[0]), intFromInt64(globalObject, *count))));
+}
+
 void addBinaryOperators(JSGlobalObject* globalObject, PyType* type, std::initializer_list<BinaryOperator> operators, bool reflected, bool inPlace)
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
+    PyRealm* realm = globalObject->pyRealm();
+    bool isSequence = type == realm->typeStr() || type == realm->typeList() || type == realm->typeTuple();
     auto add = [&] (const Identifier& name, BinaryOperator op, Form form) {
-        type->putDirect(vm, name, PyNativeFunction::create(vm, globalObject, 1, name.string(), nativeBinary, PyNativeFunction::Kind::Method, type, pack(op, form)));
+        NativeFunction function = isSequence && op == BinaryOperator::Add ? nativeConcatenate : isSequence && op == BinaryOperator::Mult ? nativeRepeat : nativeBinary;
+        type->putDirect(vm, name, PyNativeFunction::create(vm, globalObject, 1, name.string(), function, PyNativeFunction::Kind::Method, type, pack(op, form)));
     };
     for (BinaryOperator op : operators) {
         add(names.method(op), op, Form::Plain);
@@ -1471,6 +1505,8 @@ PYTHON_NATIVE(generatorNextMethod)
 PYTHON_NATIVE(generatorThrowMethod)
 {
     NATIVE_PROLOGUE();
+    if (!warnOfThrowSignature(globalObject, args, "throw"_s))
+        return { };
     JSValue exception = args[1];
     if (isClass(exception) && asType(exception)->isExceptionType()) {
         JSValue value = args.at(2);

@@ -495,18 +495,9 @@ PYTHON_NATIVE(builtinInRadix)
 {
     auto radix = unpack<unsigned>(callFrame, 0);
     NATIVE_PROLOGUE();
-    Number number = classify(args[0]);
-    if (!number.isInt()) {
-        JSValue self;
-        JSValue method = number ? JSValue() : lookupSpecial(globalObject, args[0], names.dunder_index, self);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!method)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, args[0]), "' object cannot be interpreted as an integer"_s)));
-        JSValue index = callMethod(globalObject, method, self);
-        RETURN_IF_EXCEPTION(scope, { });
-        number = classify(index);
-    }
-    String digits = reprOfInt(globalObject, number, radix);
+    JSValue index = toInt(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    String digits = reprOfInt(globalObject, classify(index), radix);
     RETURN_IF_EXCEPTION(scope, { });
     ASCIILiteral prefix = radix == 2 ? "0b"_s : radix == 8 ? "0o"_s : "0x"_s;
     if (digits.startsWith('-'))

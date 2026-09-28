@@ -179,6 +179,8 @@ void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeExceptionGroups(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeContextVarTypes(JSGlobalObject*);
 JSObject* createContextVarsModule(JSGlobalObject*);
+void initializeWarnings(JSGlobalObject*);
+JSObject* createWarningsModule(JSGlobalObject*);
 void initializeTracebackTypes(JSGlobalObject*);
 JSObject* createFrameModule(JSGlobalObject*);
 

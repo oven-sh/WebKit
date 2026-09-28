@@ -46,7 +46,7 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings"]
 
 
 def generator():

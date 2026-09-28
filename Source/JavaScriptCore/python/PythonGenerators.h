@@ -63,6 +63,7 @@ JSValue getAsyncNext(JSGlobalObject*, JSValue iterator);
 JSValue wrapAsyncYield(JSGlobalObject*, JSValue);
 // An exception, from what may be the class of one, with a value to make it from. Empty if it raised.
 JSValue exceptionToThrow(JSGlobalObject*, JSValue typeOrValue, JSValue value);
+bool warnOfThrowSignature(JSGlobalObject*, const NativeArguments&, ASCIILiteral method); // False if it raised.
 
 // ---- The two languages waiting for each other. See "Waiting" in README.md.
 

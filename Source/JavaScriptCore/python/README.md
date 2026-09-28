@@ -276,6 +276,27 @@ what part of a line to point at, and with what; lines that are the same over and
 **`BaseExceptionGroup`, and what `except*` is compiled into calls of** (`PythonExceptionGroups.cpp`), are `Objects/exceptions.c` and `_PyEval_ExceptionGroupMatch()`, function for function.
 `ExceptionGroup` has two bases, and is made when a realm is as a class statement would make it, as in CPython.
 
+### Warnings
+
+`_warnings` (`PythonWarnings.cpp`) is `Python/_warnings.c`, function for function: it decides whether a warning is shown, raised or passed over. If `warnings.py` has been imported it has the filters, and shows what is
+to be shown. What is written in C++ warns with `warn()` and `warnExplicit()`, which are `PyErr_WarnEx()` and `PyErr_WarnExplicitObject()`, and give false if the program has asked for such warnings to be errors.
+
+**What is warned of when source is compiled is looked for by itself** (`PythonSyntaxWarnings.cpp`). CPython comes on most of it as it generates code. Here the code of a function is not generated until it is called, which
+would be the wrong time, and could be more than once. So the whole of what was parsed is gone through when it is compiled, in the order that `Python/codegen.c` comes to things in, and in CPython's three stages: what the
+lexer finds, then `return`, `break` and `continue` in a `finally`, then the rest.
+
+- CPython generates the code of a `finally` again for each `return`, `break` and `continue` that goes by way of it, and warns of what is in it each time. Here it is warned of once.
+- Where CPython says that a bad escape is goes by where the string *ends*, if it is an f-string, and leaves out what comes before the quotes. Here it is where it is.
+
+### `+` and `*`, of numbers and of sequences
+
+`binaryOperation()` is in two parts, as `PyNumber_Add()` and `PyNumber_Multiply()` are. **First as numbers**: `__add__` and `__radd__`, and so on. **Then as sequences.** What `str`, `list`, `tuple`, `bytes` and `bytearray` have
+for `+` and `*` is not for the first part: in CPython it is `sq_concat` and `sq_repeat`, and `__add__` and `__mul__` are only how a program comes by those. So what a sequence is added to or multiplied by is
+asked first, `"ab" * x` takes whatever has `__index__`, and `[1].__add__(2)` raises where `(1).__add__([])` gives `NotImplemented`.
+
+- A class that a program derives from `list` or `bytearray` has their `+=` in the first part too. That is what comes of how CPython fills in what such a class can do, and it decides what is run.
+- With `*=`, what is on the right is not come to if what is on the left can do anything that a sequence can, though it cannot do this.
+
 ### `__dict__` is the object
 
 The attributes of an instance and the globals of a module are properties, which is what lets them be cached inline. `obj.__dict__`,

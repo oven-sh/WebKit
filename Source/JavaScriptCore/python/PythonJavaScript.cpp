@@ -847,6 +847,10 @@ JSValue operateFromJavaScript(JSGlobalObject* globalObject, OverloadableOperator
                 JSValue method = name ? type->lookup(vm, *name) : JSValue();
                 if (!method)
                     continue;
+                // What a built-in sequence has can only put it together with another of its kind, and has nothing to say about a string. As in binaryOperation(). A Template has: it will
+                // not be added to one, so that nobody takes the one for the other (PEP 750).
+                if (isSequenceSlot(globalObject, method) && !(name == &names.inPlaceMethod(BinaryOperator::Add) && type->hasFlag(PyType::IsHeapType)) && !type->isSubtypeOf(globalObject->pyRealm()->typeTemplate()))
+                    continue;
                 JSValue result = call(globalObject, method, object, string);
                 RETURN_IF_EXCEPTION(scope, { });
                 if (result != globalObject->pyRealm()->notImplemented())

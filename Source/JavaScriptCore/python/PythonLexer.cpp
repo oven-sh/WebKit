@@ -257,9 +257,19 @@ private:
         return fail(WTF::move(message), m_line, column, m_line, column, kind);
     }
 
-    void warn(String&& message, unsigned line)
+    // `start` and `end` are where in the source it would be if it were an error, and are on the line.
+    void warn(String&& message, String&& errorMessage, unsigned line, unsigned start, unsigned end, bool isFromTokenizer = false)
     {
-        m_warnings.append({ WTF::move(message), line });
+        unsigned lineStart = start;
+        while (lineStart && m_source[lineStart - 1] != '\n')
+            --lineStart;
+        unsigned column = 0;
+        for (unsigned i = lineStart; i < start; ++i)
+            column += lengthInUTF8(m_source[i]);
+        unsigned endColumn = column;
+        for (unsigned i = start; i < end; ++i)
+            endColumn += lengthInUTF8(m_source[i]);
+        m_warnings.append({ WTF::move(message), WTF::move(errorMessage), line, column, line, endColumn, true, isFromTokenizer });
     }
 
     // A token that began at `start`, on this line, and ends here.
@@ -697,7 +707,7 @@ private:
             break;
         }
         if (isKeyword) {
-            warn(makeString("invalid "_s, kind, " literal"_s), m_line);
+            warn(makeString("invalid "_s, kind, " literal"_s), { }, m_line, m_position - 1, m_position - 1, true);
             return true;
         }
         if (isIdentifierPart(c)) {
@@ -906,6 +916,8 @@ private:
         };
 
         unsigned currentLine = line;
+        // Only the first in each is warned of.
+        bool hasWarned = false;
         for (unsigned i = start; i < end;) {
             unsigned c = m_source[i++];
             if (c == '\r') {
@@ -975,7 +987,10 @@ private:
                     value = value * 8 + (m_source[i++] - '0');
                 if (value > 0377) {
                     StringView digits { m_source.subspan(digitsStart, i - digitsStart) };
-                    warn(makeString("\"\\"_s, digits, "\" is an invalid octal escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, digits, "\"? A raw string is also an option."_s), currentLine);
+                    if (!std::exchange(hasWarned, true)) {
+                        warn(makeString("\"\\"_s, digits, "\" is an invalid octal escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, digits, "\"? A raw string is also an option."_s),
+                            makeString("\"\\"_s, digits, "\" is an invalid octal escape sequence. Did you mean \"\\\\"_s, digits, "\"? A raw string is also an option."_s), currentLine, digitsStart - 1, digitsStart + 1);
+                    }
                 }
                 append(isBytes ? value & 0xFF : value);
                 break;
@@ -984,7 +999,8 @@ private:
             case 'u':
             case 'U': {
                 if (isBytes && c != 'x') {
-                    warnAboutEscape(c, currentLine);
+                    if (!std::exchange(hasWarned, true))
+                        warnAboutEscape(c, currentLine, i - 2);
                     append('\\');
                     append(c);
                     break;
@@ -1007,7 +1023,8 @@ private:
             }
             case 'N': {
                 if (isBytes) {
-                    warnAboutEscape(c, currentLine);
+                    if (!std::exchange(hasWarned, true))
+                        warnAboutEscape(c, currentLine, i - 2);
                     append('\\');
                     append(c);
                     break;
@@ -1042,7 +1059,8 @@ private:
             }
             default:
                 // Not an escape, so both stay.
-                warnAboutEscape(c, currentLine);
+                if (!std::exchange(hasWarned, true))
+                        warnAboutEscape(c, currentLine, i - 2);
                 append('\\');
                 append(c);
                 break;
@@ -1051,11 +1069,13 @@ private:
         return makeText(buffer, allCharacters);
     }
 
-    void warnAboutEscape(unsigned c, unsigned line)
+    // `position` is where the backslash is.
+    void warnAboutEscape(unsigned c, unsigned line, unsigned position)
     {
         char16_t character = c;
         StringView view { std::span<const char16_t> { &character, 1 } };
-        warn(makeString("\"\\"_s, view, "\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, view, "\"? A raw string is also an option."_s), line);
+        warn(makeString("\"\\"_s, view, "\" is an invalid escape sequence. Such sequences will not work in the future. Did you mean \"\\\\"_s, view, "\"? A raw string is also an option."_s),
+            makeString("\"\\"_s, view, "\" is an invalid escape sequence. Did you mean \"\\\\"_s, view, "\"? A raw string is also an option."_s), line, position, position + 2);
     }
 
     // At the opening quote. `start` is where the prefix began.
@@ -1220,7 +1240,7 @@ private:
                 // Before a brace it is only a backslash, and the brace is still a brace.
                 if (next == '{' || next == '}') {
                     if (!state.isRaw)
-                        warnAboutEscape(next, m_line);
+                        warnAboutEscape(next, m_line, m_position - 1);
                     continue;
                 }
                 if (isAtEnd())

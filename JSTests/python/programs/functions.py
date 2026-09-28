@@ -52,7 +52,7 @@ def local_x():
     x = 5
     return x
 print(reads_global(), local_x(), x)
-for bad in (lambda: defaults(), lambda: defaults(1, 2, 3, 4), lambda: defaults(1, a=2), lambda: defaults(1, z=2), lambda: kwonly(1), lambda: kwonly(1, 2), lambda: noreturn(1), lambda: (1)(), lambda: undefined_name, lambda: None.x, lambda: rec("a")):
+for bad in (lambda: defaults(), lambda: defaults(1, 2, 3, 4), lambda: defaults(1, a=2), lambda: defaults(1, z=2), lambda: kwonly(1), lambda: kwonly(1, 2), lambda: noreturn(1), lambda: int(1)(), lambda: undefined_name, lambda: None.x, lambda: rec("a")):
     try: bad()
     except Exception as e: print(type(e).__name__, e)
 def deep(n): return deep(n + 1)

@@ -789,7 +789,9 @@ python/PythonSysModule.cpp
 python/PythonTemplateStrings.cpp
 python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp
+python/PythonSyntaxWarnings.cpp
 python/PythonUnparse.cpp
+python/PythonWarnings.cpp
 
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp

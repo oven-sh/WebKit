@@ -21,7 +21,7 @@ class K:
     def __hash__(self): return hash(self.v)
     def __eq__(self, o): return isinstance(o, K) and self.v == o.v
 print({K(1): "a", K(1): "b"}[K(1)], len({K(1), K(1), K(2)}), K(1) in [K(1)], K(1) in {K(1)}, [K(1)].index(K(1)), K(1) == K(1), K(1) != K(2))
-for bad in (lambda: [][0], lambda: {}["k"], lambda: [].pop(), lambda: [1].remove(2), lambda: (1,)[3], lambda: {[]: 1}, lambda: {1}.remove(2), lambda: [1, 2][1.0], lambda: len(1), lambda: iter(1), lambda: (lambda a, b: 0)(*[1]), lambda: [1].index(5), lambda: 1[0], lambda: {}.popitem()):
+for bad in (lambda: [][0], lambda: {}["k"], lambda: [].pop(), lambda: [1].remove(2), lambda: (1,)[3], lambda: {[]: 1}, lambda: {1}.remove(2), lambda: list((1, 2))[1.0], lambda: len(1), lambda: iter(1), lambda: (lambda a, b: 0)(*[1]), lambda: [1].index(5), lambda: int(1)[0], lambda: {}.popitem()):
     try: bad()
     except Exception as e: print(type(e).__name__, e)
 try:

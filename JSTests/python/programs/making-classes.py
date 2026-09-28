@@ -70,6 +70,8 @@ show("delete unset", lambda: delattr(slots("a")(), "a"))
 show("set get delete", lambda: (o := slots("a")(), setattr(o, "a", 5), o.a, delattr(o, "a"), hasattr(o, "a"))[2:])
 
 # what the namespace may hold
+import _warnings
+_warnings.filters.insert(0, ("ignore", None, RuntimeWarning, None, 0)) # It is warned of.
 show("non-string key", lambda: (c := type("N", (), {1: "one", "s": 2}), sorted((k for k in vars(c) if not isinstance(k, str) or k == "s"), key=str), vars(c)[1])[1:])
 show("module", lambda: (type("N", (), {}).__module__, type("N", (), {"__module__": "mm"}).__module__, A.__module__))
 show("set __dict__", lambda: (a := A(), setattr(a, "__dict__", {"k": 1}), a.k, a.__dict__)[2:])

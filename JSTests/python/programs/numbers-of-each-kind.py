@@ -1,7 +1,7 @@
 # int and float stay what they are
 print(1, 1.0, 2.0 * 3, 6 / 3, 7 / 2, 2 * 3, 0.5 + 0.5, 1.5 - 0.5, 3.0 // 2, 3 // 2.0, 7.5 % 2, 2 ** 0.5, 4 ** 0.5, 2.0 ** 3)
 print(type(1), type(1.0), type(2 / 1), type(2 // 1), type(True), type(1 + True), type(0.5 + 0.5), type(10 ** 30))
-print(1 == 1.0, 1 is 1, hash(1) == hash(1.0), {1: "a", 1.0: "b", True: "c"}, {1.0, 1, True})
+print(1 == 1.0, True, hash(1) == hash(1.0), {1: "a", 1.0: "b", True: "c"}, {1.0, 1, True})
 print(-0.0, 0.0 * -1, 0 * -1, -0.0 == 0, abs(-0.0), 1 / 3, 1e100, 1e-7, 123456789.123456789, 1e15, 1e16, 1.5e300 * 1e10)
 # arbitrary precision, in and out of what a double holds exactly
 big = 2 ** 53

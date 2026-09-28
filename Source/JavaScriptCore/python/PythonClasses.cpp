@@ -422,6 +422,14 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         RETURN_IF_EXCEPTION(scope, { });
         type->setOrder(vm, ownOrder);
     }
+    bool hasOnlyStringKeys = true;
+    namespaceDict->forEach(globalObject, [&] (JSValue key, JSValue) {
+        hasOnlyStringKeys = isInstance(globalObject, key, realm->typeStr());
+        return hasOnlyStringKeys;
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!hasOnlyStringKeys && !warn(globalObject, BuiltinType::RuntimeWarning, makeString("non-string key in the __dict__ of class "_s, type->nameString(globalObject))))
+        return { };
     callSetNames(globalObject, type, namespaceDict);
     RETURN_IF_EXCEPTION(scope, { });
 
