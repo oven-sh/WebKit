@@ -151,9 +151,9 @@ void Lowering::guardReentry(BasicBlock* block)
 unsigned Lowering::slotOfPropertyGuard(Node* guard)
 {
     if (guard->opcode == op_get_by_id)
-        return sharedSite(guard, guard->as<OpGetById>().m_property);
+        return sharedSite(guard, numberOf(guard->as<OpGetById>().m_property));
     auto bytecode = guard->as<OpPutById>();
-    return sharedSite(guard, bytecode.m_property, (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0));
+    return sharedSite(guard, numberOf(bytecode.m_property), (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0));
 }
 
 // There is always something there to load.
@@ -339,7 +339,7 @@ void Lowering::guardGetById(Node* guard)
 {
     auto bytecode = guard->as<OpGetById>();
     Node* baseNode = guard->use(bytecode.m_base);
-    if (!Site::fits(bytecode.m_property, 0)) {
+    if (!Site::fits(numberOf(bytecode.m_property), 0)) {
         exitUnless(m_out.booleanFalse);
         guard->lowered = m_out.int64Zero;
         return;
@@ -382,7 +382,7 @@ void Lowering::guardPutById(Node* guard)
     Node* baseNode = guard->use(bytecode.m_base);
     Node* valueNode = guard->use(bytecode.m_value);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
-    if (!Site::fits(bytecode.m_property, flags)) {
+    if (!Site::fits(numberOf(bytecode.m_property), flags)) {
         exitUnless(m_out.booleanFalse);
         return;
     }
@@ -936,12 +936,12 @@ bool Lowering::guardResolveScope(Node* guard)
         return true;
     }
     unsigned extra = m_graph.extraOfResolveScope(bytecode);
-    if (variable.kind != StaticVariable::Unresolved || !Site::fits(bytecode.m_var, extra))
+    if (variable.kind != StaticVariable::Unresolved || !Site::fits(numberOf(bytecode.m_var), extra))
         return false;
 
     // See operationAOTResolveScope().
     LValue scope = lowCell(guard->use(bytecode.m_scope));
-    unsigned slot = sharedSite(guard, bytecode.m_var, extra);
+    unsigned slot = sharedSite(guard, numberOf(bytecode.m_var), extra);
     LValue tag = m_out.castToInt32(m_out.lShr(m_out.load64(slotWord(slot, 0)), m_out.constInt32(32)));
     LValue epoch = m_out.load32(m_globalObject, m_heaps.JSGlobalObject_globalLexicalBindingEpoch);
 
@@ -999,11 +999,11 @@ bool Lowering::guardGetFromScope(Node* guard)
     if (variable.kind == StaticVariable::Import)
         return loadLazily(variable.offset.offset());
     unsigned throwIfNotFound = m_graph.extraOfGetFromScope(bytecode);
-    if (!variable.isCachedInSlot() || !Site::fits(bytecode.m_var, throwIfNotFound))
+    if (!variable.isCachedInSlot() || !Site::fits(numberOf(bytecode.m_var), throwIfNotFound))
         return false;
 
     // See operationAOTGetFromScope().
-    unsigned slot = sharedSite(guard, bytecode.m_var, throwIfNotFound);
+    unsigned slot = sharedSite(guard, numberOf(bytecode.m_var), throwIfNotFound);
     LValue word = m_out.load64(slotWord(slot, 0));
     exitUnless(m_out.equal(m_out.load32(scope, m_heaps.JSCell_structureID), lowHalf(m_out, word)));
     LValue pointer = m_out.loadPtr(slotWord(slot, 1));

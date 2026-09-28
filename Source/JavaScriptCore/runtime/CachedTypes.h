@@ -471,6 +471,8 @@ struct ReportableSitesOfFunction {
     };
     Vector<uint32_t> offsets; // In the bytecode. In order.
     Vector<Construction> constructions; // Those of them that construct something, if it is known where the `new` is.
+    // What the code says for each of the function's identifiers, if that is not simply which of them it is (AOT::NumbersOfIdentifiers).
+    Vector<uint32_t> numbersOfIdentifiers;
 };
 
 // `bun build --compile --bytecode` with a payload order file: every module of the link is encoded into ONE payload, laid

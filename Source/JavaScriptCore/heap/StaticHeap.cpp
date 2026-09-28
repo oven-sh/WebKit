@@ -97,6 +97,7 @@ struct StaticHeap::Header {
     uint64_t namesOfSources; // uint32_t[numberOfSources + 1]: where each starts in what follows them, which is UTF-8.
     uint64_t numberOfSources;
     uint64_t hasPositionsOfCallSites;
+    uint64_t hasIdentifiersOfProgram; // See AOT::NumbersOfIdentifiers.
 
     // What the cells say they are: which of the VM's own structures, and where that has to be.
     uint32_t numberOfStructures;
@@ -473,8 +474,9 @@ static void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
 
 // How many there are. Then for each, in the order of the bytecode: twice how much further on it is than the one before, and one more
 // if something is constructed there; a position; and if something is constructed there another, of where that expression starts.
-// A position is twice how many lines further down it is than the one before (as a number that has its sign at the bottom), and one
-// more if it is in another source, which then follows (zero: none, it is a place in the text of the module); and the column.
+// A position that is on the same line of the same source as the one before is one more than twice how many columns further on it is
+// (as a number that has its sign at the bottom). Any other is four times how many lines further down it is (likewise), and two more if
+// it is in another source, which then follows (zero: none, it is a place in the text of the module); and then the column.
 static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock, unsigned firstLine, unsigned startColumn, uint32_t entryOffsetOfModule)
 {
     Vector<uint8_t> stream;
@@ -495,7 +497,11 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
         appendVarint(stream, offsets.size());
         uint32_t previousOffset = 0;
         int64_t previousLine = 0;
+        int64_t previousColumn = 0;
         uint32_t previousSource = 0;
+        auto signAtTheBottom = [](int64_t value) {
+            return static_cast<uint64_t>(value << 1) ^ static_cast<uint64_t>(value >> 63);
+        };
         auto appendPosition = [&](LineColumn inModule) {
             CString name;
             LineColumn position = inModule;
@@ -507,12 +513,16 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
                 }).iterator->value;
             } else
                 position = inModule;
-            int64_t down = static_cast<int64_t>(position.line) - previousLine;
-            appendVarint(stream, (static_cast<uint64_t>(down << 1) ^ static_cast<uint64_t>(down >> 63)) << 1 | (source != previousSource));
-            if (source != previousSource)
-                appendVarint(stream, source);
-            appendVarint(stream, position.column);
+            if (position.line == previousLine && source == previousSource)
+                appendVarint(stream, signAtTheBottom(static_cast<int64_t>(position.column) - previousColumn) << 1 | 1);
+            else {
+                appendVarint(stream, signAtTheBottom(static_cast<int64_t>(position.line) - previousLine) << 2 | (source != previousSource) << 1);
+                if (source != previousSource)
+                    appendVarint(stream, source);
+                appendVarint(stream, position.column);
+            }
             previousLine = position.line;
+            previousColumn = position.column;
             previousSource = source;
             ++s_numberOfPositions;
         };
@@ -643,6 +653,41 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecut
     s_factsBeingBuilt[index] = in(Region::Arena::Data, facts);
 }
 
+namespace {
+class ArraysInCommon {
+public:
+    const uint8_t* copyOf(std::span<const uint8_t> content)
+    {
+        if (content.empty())
+            return nullptr;
+        uint64_t hash = 1469598103934665603ull;
+        for (uint8_t byte : content)
+            hash = (hash ^ byte) * 1099511628211ull;
+        Region::AllocationScope notInRegion(false);
+        auto& withHash = m_copies.add(hash | 1, Vector<std::span<const uint8_t>, 1> { }).iterator->value;
+        for (auto& copy : withHash) {
+            if (equalSpans(copy, content))
+                return copy.data();
+        }
+        auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, content.size(), sizeof(void*)));
+        memcpySpan(std::span { copy, content.size() }, content);
+        withHash.append(std::span<const uint8_t> { copy, content.size() });
+        return copy;
+    }
+    void clear()
+    {
+        Region::AllocationScope notInRegion(false);
+        m_copies.clear();
+    }
+
+private:
+    UncheckedKeyHashMap<uint64_t, Vector<std::span<const uint8_t>, 1>> m_copies;
+};
+ArraysInCommon* s_arraysBeingBuilt;
+std::span<const ReportableSitesOfFunction> s_whatTheCompilerSaysOfFunctions;
+std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdentifiers.
+}
+
 // TEMPORARY-ARRAY-STATS
 namespace {
 struct ArrayStats {
@@ -681,6 +726,26 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     RELEASE_ASSERT(constantsWillDo || !function.startsCold);
     info.constants = codeBlock->constantRegisters().span().data();
     info.identifiers = codeBlock->identifiers().span().data();
+    // Of code that is not going to be here, nothing is left that has these as anything but so many words in a row. One copy will do
+    // for all that have the same, with nothing before it or after it.
+    if (s_arraysBeingBuilt && codeBlock->codeType() == FunctionCode) {
+        info.constants = std::bit_cast<decltype(info.constants)>(s_arraysBeingBuilt->copyOf(asBytes(codeBlock->constantRegisters().span())));
+        // (With one table for the whole program, the function has none of its own.)
+        if (s_identifiersOfProgram.empty())
+            info.identifiers = std::bit_cast<decltype(info.identifiers)>(s_arraysBeingBuilt->copyOf(asBytes(codeBlock->identifiers().span())));
+    }
+    if (!s_identifiersOfProgram.empty()) {
+        static_assert(sizeof(Identifier) == sizeof(UniquedStringImpl*));
+        auto& numbers = s_whatTheCompilerSaysOfFunctions[function.index].numbersOfIdentifiers;
+        RELEASE_ASSERT(numbers.size() == codeBlock->numberOfIdentifiers());
+        for (unsigned i = 0; i < numbers.size(); ++i) {
+            UniquedStringImpl*& inTable = s_identifiersOfProgram[numbers[i]];
+            UniquedStringImpl* name = codeBlock->identifier(i).impl();
+            RELEASE_ASSERT(!inTable || inTable == name);
+            inTable = name;
+        }
+        info.identifiers = s_identifiersOfProgram.data();
+    }
     if (s_statsOfIdentifiers) [[unlikely]] {
         Region::AllocationScope notInRegion(false);
         s_statsOfIdentifiers->add(asBytes(codeBlock->identifiers().span()));
@@ -986,8 +1051,10 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     return nullptr;
 }
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep)
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions)
 {
+    s_whatTheCompilerSaysOfFunctions = whatTheCompilerSaysOfFunctions;
+    s_identifiersOfProgram = { };
     if (positionsToKeep)
         whatIsKeptOfPayloadStartsAt = payload.size();
     UncheckedKeyHashMap<CString, uint32_t> sources;
@@ -999,6 +1066,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_numberOfPositions = 0;
     UncheckedKeyHashSet<SymbolTable*> tablesSeenTo;
     s_tablesSeenTo = &tablesSeenTo;
+    ArraysInCommon arraysInCommon;
+    s_arraysBeingBuilt = nullptr;
     ArrayStats statsOfIdentifiers;
     ArrayStats statsOfConstants;
     if (Options::aotReportStats()) [[unlikely]] {
@@ -1077,6 +1146,13 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     memset(static_cast<void*>(infosOfFunctions.data()), 0, size);
                     header.infosOfFunctions = std::bit_cast<uint64_t>(infosOfFunctions.data());
                     if (!Options::staticHeapKeepsFunctionCode()) {
+                        s_arraysBeingBuilt = &arraysInCommon;
+                        if (uint32_t count = imageView->numberOfIdentifiersOfProgram()) {
+                            RELEASE_ASSERT(whatTheCompilerSaysOfFunctions.size() == imageView->numberOfFunctions());
+                            header.hasIdentifiersOfProgram = true;
+                            s_identifiersOfProgram = { static_cast<UniquedStringImpl**>(Region::allocate(Region::Arena::Data, count * sizeof(UniquedStringImpl*), sizeof(UniquedStringImpl*))), count };
+                            zeroSpan(s_identifiersOfProgram);
+                        }
                         s_factsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
                         zeroSpan(s_factsBeingBuilt);
                         header.factsOfFunctions = std::bit_cast<uint64_t>(s_factsBeingBuilt.data());
@@ -1168,7 +1244,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             for (auto& [function, offsets] : functions) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                                     if (auto* code = function->codeBlockIfThereIsOne(kind))
-                                        code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets());
+                                        code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets(), !!s_arraysBeingBuilt);
                                 }
                                 function->leaveCodeInPayload(decoder, offsets);
                             }
@@ -1209,6 +1285,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     sources.clear();
                     namesOfSources.clear();
                     tablesSeenTo.clear();
+                    arraysInCommon.clear();
+                    s_arraysBeingBuilt = nullptr;
                     if (s_statsOfIdentifiers) [[unlikely]] {
                         for (auto [name, stats] : { std::pair { "identifiers", &statsOfIdentifiers }, std::pair { "constants", &statsOfConstants } }) {
                             dataLogLn("StaticHeap: arrays of ", name, ": ", stats->arrays, " (and ", stats->empty, " empty) with ", stats->bytes, " bytes in them; distinct: ", stats->distinctArrays, " with ", stats->distinctBytes);
@@ -1315,8 +1393,27 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         }
     }
 
-    if (Options::aotReportStats()) [[unlikely]]
+    if (Options::aotReportStats()) [[unlikely]] {
         dataLogLn("StaticHeap: ", Region::bytesThatAreFree(), " bytes of what was allocated were freed and not used again");
+        // TEMPORARY-SHARING-STATS
+        Region::AllocationScope notInRegion(false);
+        UncheckedKeyHashSet<String> distinct;
+        uint64_t all = 0, withMore = 0;
+        forEachCell(Region::Arena::Cells, Region::used(Region::Arena::Cells), [&](void* pointer, size_t) {
+            auto* executable = dynamicDowncast<UnlinkedFunctionExecutable>(static_cast<JSCell*>(pointer));
+            if (!executable)
+                return;
+            ++all;
+            auto [bytes, hasMore] = executable->whatIsNotAPosition();
+            if (hasMore) {
+                ++withMore;
+                return;
+            }
+            distinct.add(String { std::span { reinterpret_cast<const Latin1Character*>(bytes.data()), bytes.size() } });
+        });
+        dataLogLn("StaticHeap: of ", all, " UnlinkedFunctionExecutables ", withMore, " have rare data or the like; the rest are ", distinct.size(), " different ones, but for where they are in the source");
+        distinct.clear();
+    }
     Region::forgetWhatIsFree();
     Vector<uint8_t> image;
     if (ok) {
@@ -1499,6 +1596,11 @@ RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedF
     // module, and that is all it is asked.
     auto& placed = *static_cast<Decoder*>(addressOfDecoder(found->moduleIndex));
     return decodeParentScopeTDZVariablesForStaticHeap(decoderOfWhatWasLeftInPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
+}
+
+bool StaticHeap::hasIdentifiersOfProgram()
+{
+    return s_header && s_header->hasIdentifiersOfProgram;
 }
 
 bool StaticHeap::hasPositionsOfCallSites()

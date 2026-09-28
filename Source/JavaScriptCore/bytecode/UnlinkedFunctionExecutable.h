@@ -413,6 +413,31 @@ public:
         ensureRareData().m_classElementDefinitions = FixedVector<ClassElementDefinition>(WTF::move(classElementDefinitions));
     }
 
+    // TEMPORARY-SHARING-STATS: everything about it but where it is in the source and which FunctionExecutable is made of it.
+    // The second: whether it has anything that is its own besides (rare data, code).
+    std::pair<std::array<uint8_t, 128>, bool> whatIsNotAPosition() const
+    {
+        static_assert(sizeof(UnlinkedFunctionExecutable) <= 128);
+        std::array<uint8_t, 128> bytes { };
+        memcpy(bytes.data(), this, sizeof(UnlinkedFunctionExecutable));
+        auto* copy = reinterpret_cast<UnlinkedFunctionExecutable*>(bytes.data());
+        copy->m_firstLineOffset = 0;
+        copy->m_lineCount = 0;
+        copy->m_unlinkedFunctionStart = 0;
+        copy->m_unlinkedBodyStartColumn = 0;
+        copy->m_unlinkedBodyEndColumn = 0;
+        copy->m_startOffset = 0;
+        copy->m_sourceLength = 0;
+        copy->m_parametersStartOffset = 0;
+        copy->m_unlinkedFunctionEnd = 0;
+        memset(static_cast<void*>(&copy->m_staticExecutable), 0, sizeof(m_staticExecutable));
+        // (Where its code is in a payload that may not be there.)
+        memset(static_cast<void*>(&copy->m_unlinkedCodeBlockForCall), 0, sizeof(m_unlinkedCodeBlockForCall));
+        memset(static_cast<void*>(&copy->m_unlinkedCodeBlockForConstruct), 0, sizeof(m_unlinkedCodeBlockForConstruct));
+        bool hasMore = m_membersAreDeferred || !!m_members.live().rareData || !!m_members.live().parentScopeTDZVariables;
+        return { bytes, hasMore };
+    }
+
 private:
     UnlinkedFunctionExecutable(VM&, Structure*, const SourceCode&, FunctionMetadataNode*, UnlinkedFunctionKind, ConstructAbility, InlineAttribute, JSParserScriptMode, RefPtr<TDZEnvironmentLink>, Vector<Identifier>&&, std::optional<PrivateNameEnvironment>, JSC::DerivedContextType, EvalContextType, JSC::NeedsClassFieldInitializer, PrivateBrandRequirement, bool isBuiltinDefaultClassConstructor);
     UnlinkedFunctionExecutable(Decoder&, const CachedFunctionExecutable&);

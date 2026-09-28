@@ -159,6 +159,13 @@ void noteDeclaredNames(UnlinkedCodeBlock*, RefPtr<DeclaredNamesLink>&&);
 const DeclaredNamesLink* declaredNamesFor(UnlinkedCodeBlock*); // Any thread. Good until forgetDeclaredNames().
 void forgetDeclaredNames();
 
+// The code of a function says which name it means by a number. That is where the name is among the function's own identifiers, unless
+// the whole program's identifiers have been numbered: then there is one table of them for all of its functions. That takes something
+// that makes the table (StaticHeap), which is the only way there is then of getting the code to run.
+using NumbersOfIdentifiers = UncheckedKeyHashMap<UniquedStringImpl*, uint32_t>;
+JS_EXPORT_PRIVATE void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers*); // Not while anything is being compiled.
+const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram();
+
 // Options::aotUseLiveCalleeHints(): from what the global variables hold when the caller is compiled. For testing what the hints
 // are used for on programs that are not modules.
 class LiveHints final : public CalleeHints {

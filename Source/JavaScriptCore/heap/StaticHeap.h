@@ -67,7 +67,7 @@ public:
     };
     // What comes before `whatIsKeptOfPayloadStartsAt` in the payload is left out, if that is not zero: it had better be where
     // BytecodeLinkRegions::ExpressionInfo starts. Then nothing of the program can be interpreted, or decoded again.
-    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t whatIsKeptOfPayloadStartsAt = 0, const PositionsToKeep* = nullptr);
+    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t whatIsKeptOfPayloadStartsAt = 0, const PositionsToKeep* = nullptr, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions = { });
     static bool isBuilding() { return s_isBuilding; }
     static JSString* emptyStringWhileBuilding(VM&); // Not the VM's own.
     static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Likewise.
@@ -121,6 +121,7 @@ public:
     JS_EXPORT_PRIVATE static bool payloadIsLeftOut();
     // See PositionsToKeep, and AOT::FunctionRef::reportedPositionFor().
     static bool hasPositionsOfCallSites();
+    static bool hasIdentifiersOfProgram();
     JS_EXPORT_PRIVATE static String nameOfSource(uint32_t); // From one.
     // Of what is said to be a payload: it is that one, or the static heap it would be in has not been mapped at all.
     static bool isNoPayloadToRead(std::span<const uint8_t> bytes) { return contains(bytes.data()) && (!isMapped() || payloadIsLeftOut()); }

@@ -5391,9 +5391,11 @@ CodeBlockType* CachedCodeBlock<CodeBlockType>::makeFromParts(VM& vm, const Parts
     codeBlock.m_hasTailCalls = s.hasTailCalls;
     codeBlock.m_hasCheckpoints = s.hasCheckpoints;
     codeBlock.m_instructions = std::unique_ptr<JSInstructionStream>(new JSInstructionStream(parts.instructions, JSInstructionStream::Borrow));
-    codeBlock.m_identifiers = FixedVector<Identifier>(numberOfIdentifiers);
-    for (unsigned i = 0; i < numberOfIdentifiers; ++i)
-        codeBlock.m_identifiers[i] = parts.identifiers[i];
+    if (parts.identifiers) {
+        codeBlock.m_identifiers = FixedVector<Identifier>(numberOfIdentifiers);
+        for (unsigned i = 0; i < numberOfIdentifiers; ++i)
+            codeBlock.m_identifiers[i] = parts.identifiers[i];
+    }
     codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(numberOfConstants);
     codeBlock.m_constantsSourceCodeRepresentation = FixedVector<SourceCodeRepresentation>(numberOfConstants);
     for (unsigned i = 0; i < numberOfConstants; ++i) {
@@ -6263,6 +6265,10 @@ struct BytecodeLinkEncoder::Impl {
                     bool isOfProgram = !!dynamicDowncast<UnlinkedCodeBlock>(modules[jobs[index].module].root.get());
                     if (Options::aotKeepsQuotes() && isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
                         AOT::collectQuotes(code.info, jobs[index].codeBlock, modules[jobs[index].module].source.provider()->source(), isTopLevel ? 0 : jobs[index].key.start);
+                    if (auto* numbers = AOT::numbersOfIdentifiersOfProgram()) {
+                        for (auto& identifier : jobs[index].codeBlock->identifiers())
+                            code.info.numbersOfIdentifiers.append(numbers->get(identifier.impl()));
+                    }
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
                 }
                 else {
@@ -6271,6 +6277,47 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
         };
+        // See AOT::NumbersOfIdentifiers. The ones that most functions have come first, so that theirs are the small numbers.
+        AOT::NumbersOfIdentifiers numbersOfIdentifiers;
+        if (Options::staticHeapLeavesOutPayload() && Options::aotNumbersIdentifiersOfProgram()) {
+            uint64_t inAll = 0;
+            for (auto& job : jobs) {
+                for (auto& identifier : job.codeBlock->identifiers()) {
+                    numbersOfIdentifiers.add(identifier.impl(), 0).iterator->value++;
+                    ++inAll;
+                }
+            }
+            Vector<std::pair<UniquedStringImpl*, uint32_t>> inOrder;
+            for (auto& entry : numbersOfIdentifiers)
+                inOrder.append({ entry.key, entry.value });
+            std::ranges::sort(inOrder, [](auto& a, auto& b) {
+                if (a.second != b.second)
+                    return a.second > b.second;
+                if (auto order = codePointCompare(StringView { *a.first }, StringView { *b.first }); order != std::weak_ordering::equivalent)
+                    return order == std::weak_ordering::less;
+                return a.first->isSymbol() < b.first->isSymbol();
+            });
+            if (Options::aotReportStats()) [[unlikely]] {
+                uint64_t covered = 0, at[4] = { };
+                for (size_t i = 0; i < inOrder.size(); ++i) {
+                    covered += inOrder[i].second;
+                    if (i == 99)
+                        at[0] = covered;
+                    if (i == 999)
+                        at[1] = covered;
+                    if (i == 9999)
+                        at[2] = covered;
+                    if (i == 65535)
+                        at[3] = covered;
+                }
+                dataLogLn("AOT: the functions have ", inAll, " identifiers between them, which are ", inOrder.size(), " different ones; the 100 that most have account for ", at[0], ", the 1000 for ", at[1], ", the 10000 for ", at[2], ", the 65536 for ", at[3]);
+            }
+            for (uint32_t number = 0; number < inOrder.size(); ++number)
+                numbersOfIdentifiers.set(inOrder[number].first, number);
+            AOT::setNumbersOfIdentifiersOfProgram(&numbersOfIdentifiers);
+            builder.setNumberOfIdentifiersOfProgram(inOrder.size());
+        }
+
         // A call that passes no function object has nowhere to go but the function's code. If there turns out to be none, it is all
         // done again with that known.
         for (bool again = true; again;) {
@@ -6298,6 +6345,7 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
         AOT::forgetDeclaredNames();
+        AOT::setNumbersOfIdentifiersOfProgram(nullptr);
         if (Options::aotCompileRegExps()) {
             for (auto& job : jobs) {
                 for (auto& constant : job.codeBlock->constantRegisters()) {

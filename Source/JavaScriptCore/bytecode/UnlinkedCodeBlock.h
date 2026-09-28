@@ -188,7 +188,7 @@ public:
     // StaticHeap keeps some of what a function's code has, and not the code: the record that the expression info is decoded from,
     // and what this then no longer has (the identifiers, the constants, the functions and, if asked, the rare data).
     const void* cachedExpressionInfo() const { return m_cachedExpressionInfo; }
-    void leaveToStaticHeap(bool rareDataToo);
+    void leaveToStaticHeap(bool rareDataToo, bool identifiersAndConstantsAreCopied);
 
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }

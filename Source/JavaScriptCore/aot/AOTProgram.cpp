@@ -48,6 +48,18 @@ const DeclaredNamesLink* declaredNamesFor(UnlinkedCodeBlock* codeBlock)
     return it == declaredNames().end() ? nullptr : it->value.get();
 }
 
+static const NumbersOfIdentifiers* s_numbersOfIdentifiersOfProgram;
+
+void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers* numbers)
+{
+    s_numbersOfIdentifiersOfProgram = numbers;
+}
+
+const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram()
+{
+    return s_numbersOfIdentifiersOfProgram;
+}
+
 void forgetDeclaredNames()
 {
     Locker locker { s_declaredNamesLock };

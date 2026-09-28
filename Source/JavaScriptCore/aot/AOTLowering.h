@@ -169,6 +169,12 @@ private:
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     bool isFusedWithGetFromScope(Node*);
     // A slot that a stub can be told about.
+    // What the code says for one of the function's identifiers. See AOT::NumbersOfIdentifiers.
+    unsigned numberOf(unsigned identifier)
+    {
+        auto* numbers = numbersOfIdentifiersOfProgram();
+        return numbers ? numbers->get(m_graph.codeBlock()->identifier(identifier).impl()) : identifier;
+    }
     unsigned allocateSite(Node*, unsigned identifier, unsigned extra = 0);
     // The one site of an instruction that is in both copies of a loop: what the generic copy finds out, the fast one goes by.
     unsigned sharedSite(Node*, unsigned identifier, unsigned extra = 0);

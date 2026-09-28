@@ -519,6 +519,7 @@ struct CompiledFunctionInfo {
     Vector<uint32_t> constructSites; // Where in the bytecode something is constructed, in order (collectConstructSites()).
     // Every bytecode offset that a frame of the function can say it is at. In order.
     Vector<uint32_t> callSites;
+    Vector<uint32_t> numbersOfIdentifiers; // ReportableSitesOfFunction::numbersOfIdentifiers
     // For each of constructSites, where the expression starts (the `new`): see ReportableSitesOfFunction::Construction.
     Vector<std::pair<uint32_t, uint32_t>> startsOfConstructions;
     Vector<Quote> quotes; // And what it says at each that it says anything at, for a program that goes without its text (collectQuotes()).

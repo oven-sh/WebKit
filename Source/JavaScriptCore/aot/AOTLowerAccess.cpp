@@ -63,8 +63,9 @@ void Lowering::lowerGetById(Node* node)
 }
 
 // operation: takes the global object, the base, identifier (whatever that means to it) and the cache, which it fills.
-LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry operation, unsigned identifier)
+LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry operation, unsigned identifierOfFunction)
 {
+    unsigned identifier = operation == Entry::operationAOTGetByIdWellKnown ? identifierOfFunction : numberOf(identifierOfFunction);
     std::optional<Stub> stub;
     if (usesStubs && Site::fits(identifier, 0)) {
         if (operation == Entry::operationAOTGetById)
@@ -74,7 +75,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     }
     unsigned slot = stub ? sharedSite(node, identifier) : allocateSlot();
     if (stub == Stub::GetById)
-        m_graph.noteSelectorOfSite(slot, m_graph.codeBlock()->identifier(identifier).impl());
+        m_graph.noteSelectorOfSite(slot, m_graph.codeBlock()->identifier(identifierOfFunction).impl());
     auto throughStub = [&]() -> LValue {
         return callStub(*stub, Int64, { { base, GPRInfo::argumentGPR0 }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { });
     };
@@ -122,8 +123,8 @@ void Lowering::lowerPutById(Node* node)
     LValue base = lowJSValue(baseNode);
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
-    if (isCompact() && Site::fits(bytecode.m_property, flags)) {
-        unsigned slot = sharedSite(node, bytecode.m_property, flags);
+    if (isCompact() && Site::fits(numberOf(bytecode.m_property), flags)) {
+        unsigned slot = sharedSite(node, numberOf(bytecode.m_property), flags);
         m_graph.noteSelectorOfSite(slot, m_graph.codeBlock()->identifier(bytecode.m_property).impl());
         callStub(Stub::PutById, Void, { { base, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
         return;
@@ -161,7 +162,7 @@ void Lowering::lowerPutById(Node* node)
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
-    vmCall(node, Void, Entry::operationAOTPutById, m_globalObject, base, value, m_out.constInt32(bytecode.m_property), slotAddress(slot), m_out.constInt32(flags));
+    vmCall(node, Void, Entry::operationAOTPutById, m_globalObject, base, value, m_out.constInt32(numberOf(bytecode.m_property)), slotAddress(slot), m_out.constInt32(flags));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -373,8 +374,8 @@ void Lowering::lowerResolveScope(Node* node)
     unsigned extra = m_graph.extraOfResolveScope(bytecode);
     if (isFusedWithGetFromScope(node))
         return;
-    if (usesStubs && variable.kind == StaticVariable::Unresolved && Site::fits(bytecode.m_var, extra)) {
-        setJSValue(node, callStub(Stub::ResolveScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, bytecode.m_var, extra)), GPRInfo::argumentGPR1 } }, { }));
+    if (usesStubs && variable.kind == StaticVariable::Unresolved && Site::fits(numberOf(bytecode.m_var), extra)) {
+        setJSValue(node, callStub(Stub::ResolveScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), extra)), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
 
@@ -392,7 +393,7 @@ void Lowering::lowerResolveScope(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTResolveScope, m_globalObject, scope, m_out.constInt32(bytecode.m_var), slotAddress(slot), m_out.constInt32(variable.isInGlobalScopes ? Site::resolvesInGlobalScopes : 0))));
+    results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTResolveScope, m_globalObject, scope, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(slot), m_out.constInt32(variable.isInGlobalScopes ? Site::resolvesInGlobalScopes : 0))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -404,7 +405,7 @@ bool Lowering::isFusedWithGetFromScope(Node* node)
     if (!usesStubs || !node->isBytecode(op_resolve_scope) || node->block != m_block || node->useCount != 1)
         return false;
     auto resolve = node->as<OpResolveScope>();
-    if (isStaticClosureVarResolveType(resolve.m_resolveType) || !Site::fits(resolve.m_var, m_graph.extraOfResolveScope(resolve)))
+    if (isStaticClosureVarResolveType(resolve.m_resolveType) || !Site::fits(numberOf(resolve.m_var), m_graph.extraOfResolveScope(resolve)))
         return false;
     if (resolveStatically(resolve.m_var, resolve.m_localScopeDepth, resolve.m_resolveType).kind != StaticVariable::Unresolved)
         return false;
@@ -429,8 +430,8 @@ void Lowering::lowerGetFromScope(Node* node)
     if (Node* resolveNode = node->use(bytecode.m_scope); isFusedWithGetFromScope(resolveNode)) {
         auto resolve = resolveNode->as<OpResolveScope>();
         LValue scope = lowCell(resolveNode->use(resolve.m_scope));
-        unsigned site = allocateSite(resolveNode, resolve.m_var, m_graph.extraOfResolveScope(resolve));
-        unsigned siteOfGet = allocateSite(node, bytecode.m_var, m_graph.extraOfGetFromScope(bytecode));
+        unsigned site = allocateSite(resolveNode, numberOf(resolve.m_var), m_graph.extraOfResolveScope(resolve));
+        unsigned siteOfGet = allocateSite(node, numberOf(bytecode.m_var), m_graph.extraOfGetFromScope(bytecode));
         RELEASE_ASSERT(siteOfGet == site + 1);
         setJSValue(node, callStub(Stub::GetGlobal, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(site), GPRInfo::argumentGPR1 } }, { }));
         return;
@@ -477,8 +478,8 @@ void Lowering::lowerGetFromScope(Node* node)
     }
 
     unsigned throwIfNotFound = m_graph.extraOfGetFromScope(bytecode);
-    if (usesStubs && variable.isCachedInSlot() && Site::fits(bytecode.m_var, throwIfNotFound)) {
-        setJSValue(node, callStub(Stub::GetFromScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, bytecode.m_var, throwIfNotFound)), GPRInfo::argumentGPR1 } }, { }));
+    if (usesStubs && variable.isCachedInSlot() && Site::fits(numberOf(bytecode.m_var), throwIfNotFound)) {
+        setJSValue(node, callStub(Stub::GetFromScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), throwIfNotFound)), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
 
@@ -511,7 +512,7 @@ void Lowering::lowerGetFromScope(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetFromScope, m_globalObject, scope, m_out.constInt32(bytecode.m_var), slotAddress(slot), m_out.constInt32(throwIfNotFound))));
+    results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetFromScope, m_globalObject, scope, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(slot), m_out.constInt32(throwIfNotFound))));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -551,11 +552,11 @@ void Lowering::lowerPutToScope(Node* node)
     unsigned how = static_cast<unsigned>(info.resolveMode()) | static_cast<unsigned>(info.initializationMode()) << 1 | info.ecmaMode().isStrict() << 3;
     RELEASE_ASSERT(static_cast<unsigned>(info.initializationMode()) <= 3);
 
-    if (usesStubs && Site::fits(bytecode.m_var, how)) {
-        callStub(Stub::PutToScope, Void, { { scope, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, bytecode.m_var, how)), GPRInfo::argumentGPR2 } }, { });
+    if (usesStubs && Site::fits(numberOf(bytecode.m_var), how)) {
+        callStub(Stub::PutToScope, Void, { { scope, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, numberOf(bytecode.m_var), how)), GPRInfo::argumentGPR2 } }, { });
         return;
     }
-    vmCall(node, Void, Entry::operationAOTPutToScope, m_globalObject, scope, value, m_out.constInt32(bytecode.m_var), slotAddress(allocateSlot()), m_out.constInt32(how));
+    vmCall(node, Void, Entry::operationAOTPutToScope, m_globalObject, scope, value, m_out.constInt32(numberOf(bytecode.m_var)), slotAddress(allocateSlot()), m_out.constInt32(how));
 }
 
 bool Lowering::tryLowerAccess(Node* node)

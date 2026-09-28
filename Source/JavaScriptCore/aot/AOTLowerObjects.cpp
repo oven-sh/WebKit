@@ -117,7 +117,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 RELEASE_ASSERT(stores.size() >= count);
                 Vector<uint32_t, 16> words { AllocationPlan::encode(node->as<OpNewObject>().m_inlineCapacity, count) };
                 for (unsigned i = 0; i < count; ++i)
-                    words.append(AllocationPlan::encode(instructions.at(stores[i])->as<OpPutById>().m_property, true, true));
+                    words.append(AllocationPlan::encode(numberOf(instructions.at(stores[i])->as<OpPutById>().m_property), true, true));
                 m_graph.notePlanOfSite(slot, WTF::move(words));
             }
             LBasicBlock slowCase = m_out.newBlock();
@@ -158,7 +158,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                     m_graph.noteShapeOfSite(slot, WTF::move(shape));
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
                 for (auto& property : plan.properties)
-                    words.append(AllocationPlan::encode(property.identifier, property.isDefined, property.isStrict));
+                    words.append(AllocationPlan::encode(numberOf(property.identifier), property.isDefined, property.isStrict));
                 m_graph.notePlanOfSite(slot, WTF::move(words));
             }
             LBasicBlock slowCase = m_out.newBlock();
@@ -268,7 +268,7 @@ bool Lowering::tryLowerAllocation(Node* node)
     }
     case op_resolve_scope_for_hoisting_func_decl_in_eval: {
         auto bytecode = node->as<OpResolveScopeForHoistingFuncDeclInEval>();
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTResolveScopeForHoistingFuncDeclInEval, m_globalObject, lowCell(node->use(bytecode.m_scope)), m_out.constInt32(bytecode.m_property)));
+        setJSValue(node, vmCall(node, Int64, Entry::operationAOTResolveScopeForHoistingFuncDeclInEval, m_globalObject, lowCell(node->use(bytecode.m_scope)), m_out.constInt32(numberOf(bytecode.m_property))));
         return true;
     }
     case op_create_direct_arguments:
@@ -396,7 +396,7 @@ bool Lowering::tryLowerConversion(Node* node)
         return identityOr(valueNode, TAnyObject, [&](LValue value) {
             return isCellAnd(valueNode, value, [&](LValue cell) { return isObjectCell(cell); });
         }, [&](LValue value) {
-            return vmCall(node, pointerType(), Entry::operationAOTToObject, m_globalObject, value, m_out.constInt32(bytecode.m_message));
+            return vmCall(node, pointerType(), Entry::operationAOTToObject, m_globalObject, value, m_out.constInt32(numberOf(bytecode.m_message)));
         });
     }
     case op_to_primitive: {
@@ -561,7 +561,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_get_by_id_with_this: {
         auto bytecode = node->as<OpGetByIdWithThis>();
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetByIdWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), m_out.constInt32(bytecode.m_property)));
+        setJSValue(node, vmCall(node, Int64, Entry::operationAOTGetByIdWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), m_out.constInt32(numberOf(bytecode.m_property))));
         return true;
     }
     case op_get_by_val_with_this: {
@@ -571,7 +571,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_put_by_id_with_this: {
         auto bytecode = node->as<OpPutByIdWithThis>();
-        vmCall(node, Void, Entry::operationAOTPutByIdWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_value), m_out.constInt32(bytecode.m_property), strictness(bytecode.m_ecmaMode));
+        vmCall(node, Void, Entry::operationAOTPutByIdWithThis, m_globalObject, low(bytecode.m_base), low(bytecode.m_thisValue), low(bytecode.m_value), m_out.constInt32(numberOf(bytecode.m_property)), strictness(bytecode.m_ecmaMode));
         return true;
     }
     case op_put_by_val_with_this: {
@@ -586,7 +586,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_in_by_id: {
         auto bytecode = node->as<OpInById>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInById, m_globalObject, low(bytecode.m_base), m_out.constInt32(bytecode.m_property)));
+        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property))));
     }
     case op_in_by_val: {
         auto bytecode = node->as<OpInByVal>();
@@ -594,7 +594,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_del_by_id: {
         auto bytecode = node->as<OpDelById>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTDelById, m_globalObject, low(bytecode.m_base), m_out.constInt32(bytecode.m_property), strictness(bytecode.m_ecmaMode)));
+        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTDelById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), strictness(bytecode.m_ecmaMode)));
     }
     case op_del_by_val: {
         auto bytecode = node->as<OpDelByVal>();
@@ -640,17 +640,17 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_put_getter_by_id: {
         auto bytecode = node->as<OpPutGetterById>();
-        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_globalObject, low(bytecode.m_base), m_out.constInt32(bytecode.m_property), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(false));
+        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(false));
         return true;
     }
     case op_put_setter_by_id: {
         auto bytecode = node->as<OpPutSetterById>();
-        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_globalObject, low(bytecode.m_base), m_out.constInt32(bytecode.m_property), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(true));
+        vmCall(node, Void, Entry::operationAOTPutAccessorById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_accessor), m_out.constInt32(true));
         return true;
     }
     case op_put_getter_setter_by_id: {
         auto bytecode = node->as<OpPutGetterSetterById>();
-        vmCall(node, Void, Entry::operationAOTPutGetterSetterById, m_globalObject, low(bytecode.m_base), m_out.constInt32(bytecode.m_property), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_getter), low(bytecode.m_setter));
+        vmCall(node, Void, Entry::operationAOTPutGetterSetterById, m_globalObject, low(bytecode.m_base), m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(bytecode.m_attributes), low(bytecode.m_getter), low(bytecode.m_setter));
         return true;
     }
     case op_put_getter_by_val: {

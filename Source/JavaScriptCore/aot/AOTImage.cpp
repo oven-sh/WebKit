@@ -247,6 +247,7 @@ Vector<ReportableSitesOfFunction> ImageBuilder::reportableSites()
         auto& info = function.code.info;
         ReportableSitesOfFunction result;
         result.offsets = WTF::move(info.callSites);
+        result.numbersOfIdentifiers = WTF::move(info.numbersOfIdentifiers);
         for (unsigned i = 0; i < info.constructSites.size(); ++i) {
             if (info.startsOfConstructions[i].first || info.startsOfConstructions[i].second)
                 result.constructions.append({ info.constructSites[i], info.startsOfConstructions[i].first, info.startsOfConstructions[i].second });
@@ -747,6 +748,7 @@ Vector<uint8_t> ImageBuilder::finish()
     }
     header.quotesOffset = place(quotes.size());
     header.textOfQuotesOffset = place(textOfQuotes.size());
+    header.numberOfIdentifiersOfProgram = m_numberOfIdentifiersOfProgram;
     header.regExpsOffset = place(imageRegExps.sizeInBytes());
     header.numberOfRegExps = imageRegExps.size();
     header.textOfRegExpsOffset = place(textOfRegExps.size());
@@ -1336,6 +1338,13 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         if (instance->data[index] && FunctionRef { instance, index }.executable() != executable)
             return { };
         if (const FunctionInfo& info = instance->infos[index]; info.executableAndKind && info.executable() != executable)
+            return { };
+    }
+
+    // The code goes by a table that only StaticHeap makes, for the realm that the program is run in.
+    if (image->header().numberOfIdentifiersOfProgram) {
+        uint32_t index = reinterpret_cast<const CodeHeader*>(image->codeFor(*function))->index;
+        if (!Instance::ensure(scope->realm()).infos[index].sites)
             return { };
     }
 

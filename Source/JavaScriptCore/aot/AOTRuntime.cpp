@@ -660,7 +660,9 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromFacts() const
     PartsOfFunctionCode parts { };
     parts.scalars = StaticHeap::inData<uint8_t>(*scalars);
     parts.instructions = zerosForInstructions(facts->instructionsSize());
-    parts.identifiers = static_cast<const Identifier*>(info().identifiers);
+    // (Where the program has one table of them, the code goes by where a name is in that: which of the function's own identifiers is
+    // which is known to nobody. As with the instructions, whoever asks for one of these does not ask.)
+    parts.identifiers = StaticHeap::hasIdentifiersOfProgram() ? nullptr : static_cast<const Identifier*>(info().identifiers);
     parts.constants = static_cast<const WriteBarrier<Unknown>*>(info().constants);
     if (const uint32_t* word = facts->find(FunctionFacts::RealmConstants)) {
         const uint32_t* list = StaticHeap::inData<uint32_t>(*word);
@@ -741,15 +743,22 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
     ReportedPosition result;
     uint64_t offset = 0;
     int64_t line = 0;
+    int64_t column = 0;
     uint32_t source = 0;
+    auto withSignAtTheBottom = [](uint64_t value) {
+        return static_cast<int64_t>(value >> 1) ^ -static_cast<int64_t>(value & 1);
+    };
     auto readPosition = [&]() -> ReportedPosition {
         uint64_t word = readVarint(at);
-        uint64_t down = word >> 1;
-        line += static_cast<int64_t>(down >> 1) ^ -static_cast<int64_t>(down & 1);
         if (word & 1)
-            source = static_cast<uint32_t>(readVarint(at));
-        unsigned column = static_cast<unsigned>(readVarint(at));
-        return { { static_cast<unsigned>(line), column }, source };
+            column += withSignAtTheBottom(word >> 1);
+        else {
+            line += withSignAtTheBottom(word >> 2);
+            if (word & 2)
+                source = static_cast<uint32_t>(readVarint(at));
+            column = static_cast<int64_t>(readVarint(at));
+        }
+        return { { static_cast<unsigned>(line), static_cast<unsigned>(column) }, source };
     };
     // The last that is not past it: every place that a frame can say it is at is there, so that is the very one.
     for (uint64_t count = readVarint(at); count--;) {
