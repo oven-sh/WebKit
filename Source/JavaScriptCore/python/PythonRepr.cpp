@@ -323,31 +323,46 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
     return makeString('<', qualifiedNameOfType(globalObject, type), " object at "_s, addressOf(cell), '>');
 }
 
-String repr(JSGlobalObject* globalObject, JSValue value)
+// What the class has for __repr__(), called, and whatever comes of it: tp_repr.
+static JSValue callRepr(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!vm.isSafeToRecurse()) [[unlikely]] {
-        raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded while getting the repr of an object"_s);
-        return { };
+    if (!value.isObject()) {
+        String text = builtinRepr(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsString(vm, text);
     }
-    if (!value.isObject())
-        RELEASE_AND_RETURN(scope, builtinRepr(globalObject, value));
-
     JSValue self;
     JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_repr, self);
     RETURN_IF_EXCEPTION(scope, { });
-    if (auto* native = dynamicDowncast<PyNativeFunction>(method); native && native->nativeFunction() == nativeRepr)
-        RELEASE_AND_RETURN(scope, builtinRepr(globalObject, value));
-    JSValue result = callMethod(globalObject, method, self);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (auto* boxed = tryBoxedValue(result))
-        result = boxed->value();
-    if (!result.isString()) {
-        raiseTypeError(globalObject, scope, makeString("__repr__ returned non-string (type "_s, typeName(globalObject, result), ')'));
-        return { };
+    if (auto* native = dynamicDowncast<PyNativeFunction>(method); native && native->nativeFunction() == nativeRepr) {
+        String text = builtinRepr(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        return jsString(vm, text);
     }
-    RELEASE_AND_RETURN(scope, asString(result)->value(globalObject));
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self));
+}
+
+JSValue reprObject(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!vm.isSafeToRecurse()) [[unlikely]]
+        return raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded while getting the repr of an object"_s);
+    JSValue result = callRepr(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!stringIn(result))
+        return raiseTypeError(globalObject, scope, makeString("__repr__ returned non-string (type "_s, typeName(globalObject, result), ')'));
+    return result;
+}
+
+String repr(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue result = reprObject(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, stringIn(result)->value(globalObject));
 }
 
 // BaseException.__str__
@@ -363,28 +378,32 @@ String strOfException(JSGlobalObject* globalObject, JSValue value)
     RELEASE_AND_RETURN(scope, repr(globalObject, arguments));
 }
 
-String str(JSGlobalObject* globalObject, JSValue value)
+JSValue strObject(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (value.isString())
-        RELEASE_AND_RETURN(scope, asString(value)->value(globalObject));
+        return value;
     if (!value.isObject())
-        RELEASE_AND_RETURN(scope, builtinRepr(globalObject, value));
+        RELEASE_AND_RETURN(scope, callRepr(globalObject, value));
 
     PyType* type = typeOf(globalObject, value);
     JSValue method = type->lookup(vm, vm.pythonNames().dunder_str);
-    if (!method || method.asCell() == globalObject->pyRealm()->function(PyRealm::WellKnownFunction::ObjectStr))
-        RELEASE_AND_RETURN(scope, repr(globalObject, value));
-    JSValue result = call(globalObject, method, value);
+    // object.__str__() is what the class has for __repr__(), and it is here that what comes of it is looked at.
+    bool isThatOfObject = !method || method.asCell() == globalObject->pyRealm()->function(PyRealm::WellKnownFunction::ObjectStr);
+    JSValue result = isThatOfObject ? callRepr(globalObject, value) : callSpecial(globalObject, type, method, value);
     RETURN_IF_EXCEPTION(scope, { });
-    if (auto* boxed = tryBoxedValue(result))
-        result = boxed->value();
-    if (!result.isString()) {
-        raiseTypeError(globalObject, scope, makeString("__str__ returned non-string (type "_s, typeName(globalObject, result), ')'));
-        return { };
-    }
-    RELEASE_AND_RETURN(scope, asString(result)->value(globalObject));
+    if (!stringIn(result))
+        return raiseTypeError(globalObject, scope, makeString("__str__ returned non-string (type "_s, typeName(globalObject, result), ')'));
+    return result;
+}
+
+String str(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue result = strObject(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, stringIn(result)->value(globalObject));
 }
 
 // What int, float, str and bool do with a format specification. Empty if it is none of them.

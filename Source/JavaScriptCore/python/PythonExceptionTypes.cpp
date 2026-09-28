@@ -497,21 +497,23 @@ std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue gi
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue path = given;
-    if (!path.isString() && bytesKindOf(path) != BytesKind::Bytes) {
+    if (!stringIn(path) && bytesKindOf(path) != BytesKind::Bytes) {
         JSValue self;
         JSValue method = lookupSpecial(globalObject, path, Identifier::fromString(vm, "__fspath__"_s), self);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!method) {
+        if (!method || isNone(method)) {
             raiseTypeError(globalObject, scope, makeString("expected str, bytes or os.PathLike object, not "_s, typeName(globalObject, path)));
             return std::nullopt;
         }
         path = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        if (!path.isString() && bytesKindOf(path) != BytesKind::Bytes) {
+        if (!stringIn(path) && bytesKindOf(path) != BytesKind::Bytes) {
             raiseTypeError(globalObject, scope, makeString("expected "_s, typeName(globalObject, given), ".__fspath__() to return str or bytes, not "_s, typeName(globalObject, path)));
             return std::nullopt;
         }
     }
+    if (JSString* string = stringIn(path))
+        path = string;
     std::optional<ByteVector> encoded;
     std::span<const uint8_t> bytes;
     if (path.isString()) {

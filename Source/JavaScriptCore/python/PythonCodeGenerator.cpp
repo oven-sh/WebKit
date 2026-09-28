@@ -30,6 +30,7 @@
 #include "BytecodeGeneratorBaseInlines.h"
 #include "BytecodeStructs.h"
 #include "JSBigInt.h"
+#include "PythonASTOptimizer.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
 #include "PythonUnparse.h"
@@ -905,6 +906,10 @@ private:
             return emitLoadName(dst, *expression->as<Name>().id, *expression);
         case Expression::Kind::BinOp: {
             auto& node = expression->as<BinOp>();
+            if (node.op == BinaryOperator::Mod) {
+                if (Expression* joined = formatAsJoinedString(m_vm, m_arena, node))
+                    return emit(joined, dst);
+            }
             Reg left = emit(node.left);
             Reg right = emit(node.right);
             Reg result = destination(dst);

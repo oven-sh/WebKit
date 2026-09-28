@@ -605,6 +605,11 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
 
 } // anonymous namespace
 
+bool hasGet(JSGlobalObject* globalObject, JSValue value)
+{
+    return classifyDescriptor(globalObject, value).kind != DescriptorKind::Plain;
+}
+
 JSValue bindDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue instance, PyType* type)
 {
     return bind(globalObject, classifyDescriptor(globalObject, descriptor), descriptor, instance, type);
@@ -651,7 +656,7 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
 
     JSValue result;
     if (hooks & PyType::HasCustomGetAttribute) [[unlikely]]
-        result = call(globalObject, type->lookup(vm, names.dunder_getattribute), value, nameAsString(vm, name));
+        result = callSpecial(globalObject, type, type->lookup(vm, names.dunder_getattribute), value, nameAsString(vm, name));
     else
         result = genericGetAttribute(globalObject, value, name);
     // AttributeError is how it is said that there is no such attribute, whoever says it: the getter of a property may. __getattr__ gets its
@@ -671,7 +676,7 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
     if (result || !(hooks & PyType::HasGetAttr))
         return result;
 
-    result = call(globalObject, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name));
+    result = callSpecial(globalObject, type, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name));
     if (scope.exception()) [[unlikely]] {
         catchException(globalObject, BuiltinType::AttributeError);
         return { };
@@ -706,7 +711,7 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
 
     JSValue result;
     if (hooks & PyType::HasCustomGetAttribute) [[unlikely]]
-        result = call(globalObject, type->lookup(vm, names.dunder_getattribute), value, nameAsString(vm, name));
+        result = callSpecial(globalObject, type, type->lookup(vm, names.dunder_getattribute), value, nameAsString(vm, name));
     else
         result = genericGetAttribute(globalObject, value, name);
 
@@ -724,7 +729,7 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
             return result;
     }
     if (hooks & PyType::HasGetAttr)
-        RELEASE_AND_RETURN(scope, call(globalObject, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name)));
+        RELEASE_AND_RETURN(scope, callSpecial(globalObject, type, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name)));
     return raiseNoAttribute(globalObject, scope, value, name);
 }
 
@@ -825,9 +830,9 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
             }
             scope.release();
             if (newValue)
-                call(globalObject, function, found, value, newValue);
+                callSpecial(globalObject, typeOf(globalObject, found), function, found, value, newValue);
             else
-                call(globalObject, function, found, value);
+                callSpecial(globalObject, typeOf(globalObject, found), function, found, value);
             return true;
         }
         break;
@@ -937,7 +942,7 @@ void setAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name
     VM& vm = globalObject->vm();
     PyType* type = typeOf(globalObject, value);
     if (type->hooks(globalObject) & PyType::HasCustomSetAttr) [[unlikely]] {
-        call(globalObject, type->lookup(vm, vm.pythonNames().dunder_setattr), value, nameAsString(vm, name), newValue);
+        callSpecial(globalObject, type, type->lookup(vm, vm.pythonNames().dunder_setattr), value, nameAsString(vm, name), newValue);
         return;
     }
     genericSetAttribute(globalObject, value, name, newValue);
@@ -948,7 +953,7 @@ void deleteAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
     VM& vm = globalObject->vm();
     PyType* type = typeOf(globalObject, value);
     if (type->hooks(globalObject) & PyType::HasCustomSetAttr) [[unlikely]] {
-        call(globalObject, type->lookup(vm, vm.pythonNames().dunder_delattr), value, nameAsString(vm, name));
+        callSpecial(globalObject, type, type->lookup(vm, vm.pythonNames().dunder_delattr), value, nameAsString(vm, name));
         return;
     }
     genericSetAttribute(globalObject, value, name, JSValue());
@@ -1000,14 +1005,9 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
     return attribute;
 }
 
-JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue value, PropertyName name, JSValue& self)
+JSValue bindSpecial(JSGlobalObject* globalObject, PyType* type, JSValue attribute, JSValue value, JSValue& self)
 {
-    VM& vm = globalObject->vm();
     self = { };
-    PyType* type = typeOf(globalObject, value);
-    JSValue attribute = type->lookup(vm, name);
-    if (!attribute)
-        return { };
     Descriptor descriptor = classifyDescriptor(globalObject, attribute);
     if (descriptor.kind == DescriptorKind::Function) {
         self = value;
@@ -1015,6 +1015,30 @@ JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue value, PropertyName 
     }
     return bind(globalObject, descriptor, attribute, value, type);
 }
+
+JSValue lookupSpecial(JSGlobalObject* globalObject, JSValue value, PropertyName name, JSValue& self)
+{
+    self = { };
+    PyType* type = typeOf(globalObject, value);
+    JSValue attribute = type->lookup(globalObject->vm(), name);
+    if (!attribute)
+        return { };
+    return bindSpecial(globalObject, type, attribute, value, self);
+}
+
+template<typename... Arguments>
+static ALWAYS_INLINE JSValue callSpecialWith(JSGlobalObject* globalObject, PyType* type, JSValue attribute, JSValue value, Arguments... arguments)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue self;
+    JSValue function = bindSpecial(globalObject, type, attribute, value, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, function, self, arguments...));
+}
+
+JSValue callSpecial(JSGlobalObject* globalObject, PyType* type, JSValue attribute, JSValue value) { return callSpecialWith(globalObject, type, attribute, value); }
+JSValue callSpecial(JSGlobalObject* globalObject, PyType* type, JSValue attribute, JSValue value, JSValue a) { return callSpecialWith(globalObject, type, attribute, value, a); }
+JSValue callSpecial(JSGlobalObject* globalObject, PyType* type, JSValue attribute, JSValue value, JSValue a, JSValue b) { return callSpecialWith(globalObject, type, attribute, value, a, b); }
 
 // ---- Calls
 
@@ -1325,9 +1349,9 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
         return raiseTypeError(globalObject, scope, makeString("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
     JSValue constructor = type->lookupFrom(vm, from, names.dunder_new);
     ASSERT(constructor);
-    // It is a static method, whether or not it says so.
-    if (auto* wrapper = tryNativeObject(constructor); wrapper && typeOf(globalObject, constructor) == realm->typeStaticMethod())
-        constructor = wrapper->field(0);
+    // slot_tp_new(): it is what the class has by that name, as `type.__new__` would find it. A function is a static method whether or not it says so, and whatever else has a __get__() is asked.
+    constructor = bindDescriptor(globalObject, constructor, JSValue(), type);
+    RETURN_IF_EXCEPTION(scope, { });
 
     auto prepend = [&] (MarkedArgumentBuffer& buffer, JSValue first) {
         buffer.append(first);
@@ -1352,9 +1376,17 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
     JSValue initializer = isContinuing ? instanceType->lookupFrom(vm, from, names.dunder_init) : instanceType->lookup(vm, names.dunder_init);
     if (!initializer || (isContinuing && initializer.asCell() == realm->function(PyRealm::WellKnownFunction::ObjectInit)))
         return instance;
-    MarkedArgumentBuffer withInstance;
-    prepend(withInstance, instance);
-    JSValue result = callWithKeywords(globalObject, initializer, withInstance, keywordNames);
+    // slot_tp_init()
+    JSValue self;
+    initializer = bindSpecial(globalObject, instanceType, initializer, instance, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue result;
+    if (self) {
+        MarkedArgumentBuffer withInstance;
+        prepend(withInstance, instance);
+        result = callWithKeywords(globalObject, initializer, withInstance, keywordNames);
+    } else
+        result = callWithKeywords(globalObject, initializer, arguments, keywordNames);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isNone(result))
         return raiseTypeError(globalObject, scope, makeString("__init__() should return None, not '"_s, typeName(globalObject, result), '\''));

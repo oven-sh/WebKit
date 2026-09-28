@@ -391,7 +391,7 @@ PYTHON_NATIVE(singletonNew)
     NATIVE_PROLOGUE();
     PyType* type = asType(args[0]);
     if (hasExcessArguments(args))
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type->nameString(globalObject), " takes no arguments"_s)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(type == realm->typeEllipsis() ? "EllipsisType"_str : type->nameString(globalObject), " takes no arguments"_s)));
     if (type == realm->typeNotImplementedType())
         return JSValue::encode(realm->notImplemented());
     return JSValue::encode(type == realm->typeEllipsis() ? JSValue(realm->ellipsis()) : jsUndefined());
@@ -431,8 +431,8 @@ PYTHON_NATIVE(objectEq)
 PYTHON_NATIVE(objectNe)
 {
     NATIVE_PROLOGUE();
-    JSValue method = typeOf(globalObject, args.at(0))->lookup(vm, names.dunder_eq);
-    JSValue result = call(globalObject, method, args.at(0), args.at(1));
+    PyType* type = typeOf(globalObject, args.at(0));
+    JSValue result = callSpecial(globalObject, type, type->lookup(vm, names.dunder_eq), args.at(0), args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
     if (result.isCell() && result.asCell() == realm->notImplemented())
         return JSValue::encode(result);
@@ -506,9 +506,7 @@ PYTHON_NATIVE(objectFormat)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     if (specification->length())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("unsupported format string passed to "_s, typeName(globalObject, args[0]), ".__format__"_s)));
-    String text = str(globalObject, args[0]);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, text));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strObject(globalObject, args[0])));
 }
 
 PYTHON_NATIVE(objectInitSubclass)
@@ -530,21 +528,45 @@ static bool mergeClassDict(JSGlobalObject* globalObject, PyDict* names, JSValue 
     JSValue classDict = getAttributeIfPresent(globalObject, aClass, vm.pythonNames().dunder_dict);
     RETURN_IF_EXCEPTION(scope, false);
     if (classDict) {
-        forEach(globalObject, classDict, [&] (JSValue key) {
-            names->set(globalObject, key, jsUndefined());
-            return !scope.exception();
-        });
+        // PyDict_Update(). What a class has for its __dict__ is known, and only its keys are wanted. Anything else is asked for its keys(), and then for what it has for each.
+        bool isKnown = isGoneThroughAsDict(globalObject, classDict) || typeOf(globalObject, classDict) == globalObject->pyRealm()->typeMappingProxy();
+        JSValue keys = classDict;
+        if (!isKnown) {
+            JSValue method = getAttribute(globalObject, classDict, Identifier::fromString(vm, "keys"_s));
+            RETURN_IF_EXCEPTION(scope, false);
+            JSValue given = call(globalObject, method);
+            RETURN_IF_EXCEPTION(scope, false);
+            // method_output_as_list()
+            keys = getIterator(globalObject, given);
+            if (scope.exception()) {
+                if (catchException(globalObject, BuiltinType::TypeError))
+                    raiseTypeError(globalObject, scope, makeString(typeName(globalObject, classDict), ".keys() returned a non-iterable (type "_s, typeName(globalObject, given), ')'));
+                return false;
+            }
+        }
+        MarkedArgumentBuffer each;
+        collectAsList(globalObject, keys, each);
         RETURN_IF_EXCEPTION(scope, false);
+        for (unsigned i = 0; i < each.size(); ++i) {
+            if (!isKnown) {
+                getItem(globalObject, classDict, each.at(i));
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            names->set(globalObject, each.at(i), jsUndefined());
+            RETURN_IF_EXCEPTION(scope, false);
+        }
     }
     JSValue bases = getAttributeIfPresent(globalObject, aClass, vm.pythonNames().dunder_bases);
     RETURN_IF_EXCEPTION(scope, false);
     if (!bases)
         return true;
-    MarkedArgumentBuffer each;
-    collect(globalObject, bases, each);
+    // There is no saying that it is a tuple. It is asked how long it is, and then for each.
+    int64_t count = length(globalObject, bases);
     RETURN_IF_EXCEPTION(scope, false);
-    for (unsigned i = 0; i < each.size(); ++i) {
-        if (!mergeClassDict(globalObject, names, each.at(i)))
+    for (int64_t i = 0; i < count; ++i) {
+        JSValue base = getItem(globalObject, bases, intFromInt64(globalObject, i));
+        RETURN_IF_EXCEPTION(scope, false);
+        if (!mergeClassDict(globalObject, names, base))
             return false;
     }
     return true;
@@ -1676,7 +1698,9 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
             auto* description = findTypeDescription("type"_s);
             return JSValue(jsString(globalObject->vm(), String(description->doc)));
         }
-        return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_doc, jsUndefined());
+        // type_get_doc(): what the class itself has, and if that has a __get__() it is asked what it is for the class.
+        JSValue own = getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_doc, jsUndefined());
+        return bindDescriptor(globalObject, own, JSValue(), asType(self));
     });
 
     addMethods(globalObject, realm->typeNoneType(), {

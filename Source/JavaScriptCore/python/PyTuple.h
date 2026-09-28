@@ -53,6 +53,8 @@ public:
     // Filled with None. Whoever makes it fills it in before anything else sees it.
     static PyTuple* create(VM&, Structure*, unsigned length);
     static PyTuple* create(JSGlobalObject*, unsigned length);
+    // For one whose length is up to the program. Null, with MemoryError raised, if there is no room for it.
+    static PyTuple* tryCreate(JSGlobalObject*, unsigned length);
     static PyTuple* create(JSGlobalObject*, std::span<const JSValue>);
     static PyTuple* create(JSGlobalObject*, std::initializer_list<JSValue>);
     static PyTuple* createFromArguments(JSGlobalObject*, const ArgList&);

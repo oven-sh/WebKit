@@ -48,10 +48,13 @@ void PyHashStorage::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyHashStorage);
 
-PyHashStorage* PyHashStorage::create(VM& vm, Structure* structure, unsigned capacity, unsigned indexSize, unsigned stride)
+PyHashStorage* PyHashStorage::tryCreate(VM& vm, Structure* structure, unsigned capacity, unsigned indexSize, unsigned stride)
 {
     ASSERT(hasOneBitSet(indexSize));
-    auto* storage = new (NotNull, allocateCell<PyHashStorage>(vm, allocationSize(capacity, indexSize, stride))) PyHashStorage(vm, structure, capacity, indexSize, stride);
+    void* cell = tryAllocateCell<PyHashStorage>(vm, allocationSize(capacity, indexSize, stride));
+    if (!cell) [[unlikely]]
+        return nullptr;
+    auto* storage = new (NotNull, cell) PyHashStorage(vm, structure, capacity, indexSize, stride);
     for (size_t i = 0; i < static_cast<size_t>(capacity) * stride; ++i)
         storage->slots()[i].clear();
     for (unsigned i = 0; i < indexSize; ++i)
@@ -161,14 +164,21 @@ void PyHashTable::insertIndex(PyHashStorage& storage, uint32_t hash, unsigned en
     storage.index(slot) = entry;
 }
 
-// Makes room for another entry. What has been removed is dropped, so the entries move.
-void PyHashTable::grow(VM& vm, JSGlobalObject* globalObject)
+// Makes room for another entry. What has been removed is dropped, so the entries move. False, with MemoryError raised, if there is no room to be had.
+bool PyHashTable::grow(VM& vm, JSGlobalObject* globalObject)
 {
-    unsigned indexSize = 8;
-    while (static_cast<uint64_t>(indexSize) * 2 / 3 <= static_cast<uint64_t>(m_size) * 2)
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto capacityFor = [] (uint64_t indexSize) { return indexSize * 2 / 3; };
+    uint64_t indexSize = 8;
+    while (capacityFor(indexSize) <= static_cast<uint64_t>(m_size) * 2)
         indexSize <<= 1;
+    // Which entry it is is said in an int, by find().
+    PyHashStorage* storage = capacityFor(indexSize) <= static_cast<uint64_t>(std::numeric_limits<int>::max()) ? PyHashStorage::tryCreate(vm, globalObject->pyRealm()->hashStorageStructure(), capacityFor(indexSize), indexSize, m_stride) : nullptr;
+    if (!storage) [[unlikely]] {
+        Python::raiseMemoryError(globalObject, scope);
+        return false;
+    }
     PyHashStorage* old = m_storage.get();
-    PyHashStorage* storage = PyHashStorage::create(vm, globalObject->pyRealm()->hashStorageStructure(), indexSize * 2 / 3, indexSize, m_stride);
     unsigned used = 0;
     for (unsigned entry = 0; entry < m_used; ++entry) {
         JSValue key = old->key(entry).get();
@@ -183,6 +193,7 @@ void PyHashTable::grow(VM& vm, JSGlobalObject* globalObject)
     }
     m_storage.set(vm, this, storage);
     m_used = used;
+    return true;
 }
 
 bool PyHashTable::add(JSGlobalObject* globalObject, JSValue key, JSValue value, bool* wasAdded, bool replace)
@@ -203,8 +214,10 @@ bool PyHashTable::add(JSGlobalObject* globalObject, JSValue key, JSValue value, 
         return true;
     }
 
-    if (!m_storage || m_used == m_storage->capacity())
+    if (!m_storage || m_used == m_storage->capacity()) {
         grow(vm, globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
     PyHashStorage* storage = m_storage.get();
     storage->key(m_used).set(vm, storage, key);
     if (m_stride == 2)
@@ -266,7 +279,12 @@ void PyHashTable::copyFrom(VM& vm, JSGlobalObject* globalObject, PyHashTable& ot
     m_storage.set(vm, this, other.m_storage.get());
     m_used = other.m_used;
     m_size = other.m_size;
-    grow(vm, globalObject);
+    // If there is no room, it is not to be left with what is the other's.
+    if (!grow(vm, globalObject)) [[unlikely]] {
+        m_storage.clear();
+        m_used = 0;
+        m_size = 0;
+    }
     ++m_version;
 }
 

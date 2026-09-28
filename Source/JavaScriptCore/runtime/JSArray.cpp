@@ -2206,6 +2206,20 @@ JSArray* constructArray(JSGlobalObject* globalObject, Structure* arrayStructure,
     return array;
 }
 
+JSArray* tryConstructArray(JSGlobalObject* globalObject, Structure* arrayStructure, const ArgList& values)
+{
+    VM& vm = globalObject->vm();
+    unsigned length = values.size();
+    ObjectInitializationScope scope(vm);
+
+    JSArray* array = constructArray<AllocationFailureMode::ReturnNull>(scope, arrayStructure, length);
+    if (!array) [[unlikely]]
+        return nullptr;
+    for (unsigned i = 0; i < length; ++i)
+        array->initializeIndex(scope, i, values.at(i));
+    return array;
+}
+
 JSArray* constructArray(JSGlobalObject* globalObject, Structure* arrayStructure, const JSValue* values, unsigned length)
 {
     VM& vm = globalObject->vm();

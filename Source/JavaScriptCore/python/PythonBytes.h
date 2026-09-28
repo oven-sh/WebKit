@@ -166,6 +166,9 @@ void releaseBufferOfProgram(JSGlobalObject*, JSValue exporter, JSValue view);
 bool hasBuffer(JSGlobalObject*, JSValue);
 // Empty if it has none, in which case nothing has been raised, or if something has been.
 Buffer tryBufferOf(JSGlobalObject*, JSValue, int flags = SimpleBuffer);
+// The same, but that whatever is raised in getting at them is lost, whatever it is. It is for where CPython goes on to say in its own words that what it was given will not do, and so writes over what had
+// been raised: `if (PyObject_GetBuffer(...) == 0) { ... } PyErr_Format(...)`.
+Buffer bufferOrNothing(JSGlobalObject*, JSValue);
 // The same, raising TypeError if it has none: a bytes-like object is required, not 'str'.
 Buffer bufferOf(JSGlobalObject*, JSValue);
 

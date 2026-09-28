@@ -752,18 +752,14 @@ PYTHON_NATIVE(enumerateNew)
     return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Enumerate, iterator, bigStart, start));
 }
 
-static PyTuple* iteratorsOf(JSGlobalObject* globalObject, const NativeArguments& args, unsigned first, ASCIILiteral function)
+static PyTuple* iteratorsOf(JSGlobalObject* globalObject, const NativeArguments& args, unsigned first)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyTuple* iterators = PyTuple::create(globalObject, args.size() - first);
     for (unsigned i = first; i < args.size(); ++i) {
         JSValue iterator = getIterator(globalObject, args[i]);
-        if (scope.exception()) {
-            if (function == "zip"_s && catchException(globalObject, BuiltinType::TypeError))
-                raiseTypeError(globalObject, scope, makeString("'"_s, typeName(globalObject, args[i]), "' object is not iterable"_s));
-            return nullptr;
-        }
+        RETURN_IF_EXCEPTION(scope, nullptr);
         iterators->initializeAt(vm, i - first, iterator);
     }
     return iterators;
@@ -776,7 +772,7 @@ PYTHON_NATIVE(zipNew)
     JSValue strictValue = args.keyword(globalObject, "strict"_s);
     bool strict = strictValue && isTrue(globalObject, strictValue);
     RETURN_IF_EXCEPTION(scope, { });
-    PyTuple* iterators = iteratorsOf(globalObject, args, 1, "zip"_s);
+    PyTuple* iterators = iteratorsOf(globalObject, args, 1);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Zip, iterators, JSValue(), strict));
 }
@@ -789,7 +785,7 @@ PYTHON_NATIVE(mapNew)
     JSValue strictValue = args.keyword(globalObject, "strict"_s);
     bool strict = strictValue && isTrue(globalObject, strictValue);
     RETURN_IF_EXCEPTION(scope, { });
-    PyTuple* iterators = iteratorsOf(globalObject, args, 2, "map"_s);
+    PyTuple* iterators = iteratorsOf(globalObject, args, 2);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyIterator::create(globalObject, asType(args[0])->instanceStructure(), PyIterator::Kind::Map, args[1], iterators, strict));
 }
@@ -811,7 +807,8 @@ PYTHON_NATIVE(reversedNew)
     if (method && !isNone(method))
         RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
     PyType* type = typeOf(globalObject, args[1]);
-    if (method || !type->lookup(vm, names.dunder_getitem) || !type->lookup(vm, names.dunder_len))
+    // PySequence_Check(). That it has no __len__() is for len() to say.
+    if (method || !type->lookup(vm, names.dunder_getitem) || isDict(args[1]))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object is not reversible"_s)));
     int64_t size = length(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });

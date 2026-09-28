@@ -170,8 +170,7 @@ PYTHON_NATIVE(strNew)
         if (value) {
             if (stringIn(value))
                 return JSValue::encode(raiseTypeError(globalObject, scope, "decoding str is not supported"_s));
-            auto buffer = tryBufferOf(globalObject, value);
-            RETURN_IF_EXCEPTION(scope, { });
+            auto buffer = bufferOrNothing(globalObject, value);
             if (!buffer)
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString("decoding to str: need a bytes-like object, "_s, typeName(globalObject, value), " found"_s)));
             String text = decodeBytes(globalObject, value, *buffer, encodingValue ? String(stringIn(encodingValue)->value(globalObject)) : String(), errorsValue ? String(stringIn(errorsValue)->value(globalObject)) : String());
@@ -179,9 +178,11 @@ PYTHON_NATIVE(strNew)
             result = jsString(vm, text);
         }
     } else if (value) {
-        String text = str(globalObject, value);
+        result = strObject(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        result = value.isString() ? value : jsString(vm, text);
+        // str() gives what __str__() gave. A class derived from str makes one of its own of what is in it.
+        if (type != realm->typeStr())
+            result = stringIn(result);
     }
     return JSValue::encode(boxIfDerived(globalObject, type, realm->typeStr(), result));
 }
@@ -208,12 +209,8 @@ PYTHON_NATIVE(strJoin)
 {
     STR_PROLOGUE("join");
     MarkedArgumentBuffer items;
-    collect(globalObject, args[1], items);
-    if (scope.exception()) {
-        if (catchException(globalObject, BuiltinType::TypeError))
-            raiseTypeError(globalObject, scope, "can only join an iterable"_s);
-        return { };
-    }
+    collectFast(globalObject, args[1], items, "can only join an iterable"_s);
+    RETURN_IF_EXCEPTION(scope, { });
     StringBuilder builder;
     for (unsigned i = 0; i < items.size(); ++i) {
         JSValue item = unboxString(items.at(i));
@@ -428,15 +425,19 @@ PYTHON_NATIVE(strJustify)
     int64_t length = characterCount(self);
     if (*width <= length)
         return JSValue::encode(unboxString(args[0]));
+    if (*width > static_cast<int64_t>(String::MaxLength))
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
     int64_t padding = *width - length;
     // As CPython has it, so that an odd one out goes where it does there.
     int64_t before = align == '<' ? 0 : align == '>' ? padding : padding / 2 + (padding & *width & 1);
-    StringBuilder builder;
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
     for (int64_t i = 0; i < before; ++i)
         builder.append(fill);
     builder.append(self);
     for (int64_t i = before; i < padding; ++i)
         builder.append(fill);
+    if (builder.hasOverflowed())
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
     return JSValue::encode(toJS(vm, builder.toString()));
 }
 
@@ -448,13 +449,17 @@ PYTHON_NATIVE(strZfill)
     int64_t length = characterCount(self);
     if (*width <= length)
         return JSValue::encode(unboxString(args[0]));
-    StringBuilder builder;
+    if (*width > static_cast<int64_t>(String::MaxLength))
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
     unsigned start = 0;
     if (length && (self[0] == '+' || self[0] == '-'))
         builder.append(self[start++]);
     for (int64_t i = length; i < *width; ++i)
         builder.append('0');
     builder.append(StringView(self).substring(start));
+    if (builder.hasOverflowed())
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
     return JSValue::encode(toJS(vm, builder.toString()));
 }
 
@@ -468,13 +473,13 @@ PYTHON_NATIVE(strExpandTabs)
         RETURN_IF_EXCEPTION(scope, { });
         tabSize = *index;
     }
-    StringBuilder builder;
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
     int64_t column = 0;
     for (char32_t c : StringView(self).codePoints()) {
         if (c == '\t') {
             if (tabSize > 0) {
                 int64_t spaces = tabSize - column % tabSize;
-                for (int64_t i = 0; i < spaces; ++i)
+                for (int64_t i = 0; i < spaces && !builder.hasOverflowed(); ++i)
                     builder.append(' ');
                 column += spaces;
             }
@@ -483,6 +488,8 @@ PYTHON_NATIVE(strExpandTabs)
         builder.append(c);
         column = c == '\n' || c == '\r' ? 0 : column + 1;
     }
+    if (builder.hasOverflowed())
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
     return JSValue::encode(toJS(vm, builder.toString()));
 }
 
@@ -874,13 +881,21 @@ public:
     {
     }
 
-    // Null if it raised.
-    String format(const String& text)
+    // Empty if it raised.
+    JSValue format(JSValue given, const String& text)
     {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
         Characters characters;
         for (char32_t c : StringView(text).codePoints())
             characters.append(c);
-        return buildString(characters, 0, characters.size(), 2);
+        String result = buildString(characters, 0, characters.size(), outermost);
+        RETURN_IF_EXCEPTION(scope, { });
+        // As with `format % values`: if the first piece that has anything in it is the last, and is a str already, it is what is given. So it is with the format itself, if there is nothing to fill in.
+        if (m_only)
+            return m_only;
+        if (!text.contains('{') && !text.contains('}'))
+            return given;
+        return jsString(m_vm, result);
     }
 
 private:
@@ -951,8 +966,11 @@ private:
             char32_t conversion = 0;
             if (!parseField(s, position, end, fieldName, specification, specificationNeedsExpanding, conversion))
                 return { };
-            String piece = outputMarkup(s, fieldName, specification, specificationNeedsExpanding, conversion, recursionDepth);
+            JSValue field = outputMarkup(s, fieldName, specification, specificationNeedsExpanding, conversion, recursionDepth);
             RETURN_IF_EXCEPTION(scope, { });
+            String piece = stringIn(field)->value(m_globalObject);
+            if (recursionDepth == outermost && result.isEmpty() && position >= end && !piece.isEmpty())
+                m_only = field;
             result.append(piece);
         }
         String text = result.toString();
@@ -1116,21 +1134,21 @@ private:
         return object;
     }
 
-    String outputMarkup(const Characters& s, Range fieldName, Range specification, bool specificationNeedsExpanding, char32_t conversion, int recursionDepth)
+    JSValue outputMarkup(const Characters& s, Range fieldName, Range specification, bool specificationNeedsExpanding, char32_t conversion, int recursionDepth)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
         JSValue object = getFieldObject(s, fieldName);
         RETURN_IF_EXCEPTION(scope, { });
         if (conversion) {
-            String text;
             if (conversion == 'r')
-                text = repr(m_globalObject, object);
+                object = reprObject(m_globalObject, object);
             else if (conversion == 's')
-                text = str(m_globalObject, object);
+                object = strObject(m_globalObject, object);
             else if (conversion == 'a') {
-                text = repr(m_globalObject, object);
-                if (!text.isNull())
-                    text = escapeNonASCII(text);
+                object = reprObject(m_globalObject, object);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (String text = stringIn(object)->value(m_globalObject); !text.containsOnlyASCII())
+                    object = jsString(m_vm, escapeNonASCII(text));
             } else {
                 if (conversion > 32 && conversion < 127)
                     raiseValueError(m_globalObject, scope, makeString("Unknown conversion specifier "_s, static_cast<char>(conversion)));
@@ -1139,7 +1157,6 @@ private:
                 return { };
             }
             RETURN_IF_EXCEPTION(scope, { });
-            object = jsString(m_vm, text);
         }
         String specificationText;
         if (specificationNeedsExpanding) {
@@ -1147,10 +1164,10 @@ private:
             RETURN_IF_EXCEPTION(scope, { });
         } else
             specificationText = toString(s, specification);
-        JSValue result = Python::format(m_globalObject, object, specificationText);
-        RETURN_IF_EXCEPTION(scope, { });
-        return asString(result)->value(m_globalObject);
+        RELEASE_AND_RETURN(scope, Python::format(m_globalObject, object, specificationText));
     }
+
+    static constexpr int outermost = 2; // How deep one field can be within another.
 
     enum class Numbering : uint8_t { Undecided, Automatic, Manual };
 
@@ -1158,6 +1175,7 @@ private:
     VM& m_vm;
     const NativeArguments& m_args;
     JSValue m_mapping;
+    JSValue m_only;
     int64_t m_nextIndex { 0 };
     Numbering m_numbering { Numbering::Undecided };
 };
@@ -1165,22 +1183,13 @@ private:
 PYTHON_NATIVE(strFormat)
 {
     STR_PROLOGUE("format");
-    String result = Formatter(globalObject, args, JSValue()).format(self);
-    RETURN_IF_EXCEPTION(scope, { });
-    // As with `format % values`: where there is nothing to fill in, it is itself.
-    if (!self.contains('{') && !self.contains('}'))
-        return JSValue::encode(args[0]);
-    return JSValue::encode(toJS(vm, result));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Formatter(globalObject, args, JSValue()).format(args[0], self)));
 }
 
 PYTHON_NATIVE(strFormatMap)
 {
     STR_PROLOGUE("format_map");
-    String result = Formatter(globalObject, args, args[1]).format(self);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!self.contains('{') && !self.contains('}'))
-        return JSValue::encode(args[0]);
-    return JSValue::encode(toJS(vm, result));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Formatter(globalObject, args, args[1]).format(args[0], self)));
 }
 
 // ---- translate() and maketrans(): _PyUnicode_TranslateCharmap() and unicode_maketrans_impl() of CPython's Objects/unicodeobject.c

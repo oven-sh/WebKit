@@ -50,9 +50,9 @@ struct FormatSpecification {
     bool noNegativeZero { false };
     bool alternate { false };
     bool hasWidth { false };
-    unsigned width { 0 };
+    int64_t width { 0 }; // As large as can be written. That there is no room for so much is found when it comes to making it.
     char grouping { 0 }; // ',' or '_'
-    int precision { -1 };
+    int64_t precision { -1 };
     char fractionGrouping { 0 }; // The same, of the digits after the point.
     char32_t type { 0 };
     String typeName; // Of what it is for, which is said if it will not do.

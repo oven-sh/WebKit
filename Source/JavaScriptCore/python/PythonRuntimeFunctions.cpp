@@ -272,9 +272,17 @@ static String describeCallable(JSGlobalObject*, JSValue);
 PYTHON_RUNTIME_FUNCTION(runtimeListExtend)
 {
     PROLOGUE();
-    listExtend(globalObject, asList(argument(0)), argument(1));
-    if (scope.exception() && !typeOf(globalObject, argument(1))->lookup(vm, vm.pythonNames().dunder_iter) && catchException(globalObject, BuiltinType::TypeError))
-    {
+    // f(*iterable), with nothing else given by position, does not go by way of a list in CPython. It is PySequence_Tuple() that gathers them, and that does not ask how many there will be.
+    if (argument(2) == realm->boundArgumentsMarker())
+        listExtend(globalObject, asList(argument(0)), argument(1));
+    else {
+        JSArray* list = asList(argument(0));
+        forEach(globalObject, argument(1), [&] (JSValue value) {
+            listAppend(globalObject, list, value);
+            return true;
+        });
+    }
+    if (scope.exception() && !hasWhatItTakesToBeIterated(globalObject, argument(1)) && catchException(globalObject, BuiltinType::TypeError)) {
         if (argument(2) == realm->boundArgumentsMarker())
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("Value after * must be an iterable, not "_s, typeName(globalObject, argument(1)))));
         String callee = describeCallable(globalObject, argument(2));
@@ -396,19 +404,20 @@ PYTHON_RUNTIME_FUNCTION(formatValue)
     PROLOGUE();
     JSValue value = argument(0);
     switch (argument(1).asInt32()) {
-    case 's': {
-        String text = str(globalObject, value);
+    // What str() or repr() gives is then formatted in its turn, and if it is of a class derived from str that has a __format__() of its own, that is called.
+    case 's':
+        value = strObject(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        value = jsString(vm, text);
         break;
-    }
     case 'r':
-    case 'a': {
-        String text = repr(globalObject, value);
+    case 'a':
+        value = reprObject(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        value = jsString(vm, argument(1).asInt32() == 'a' ? escapeNonASCII(text) : text);
+        if (argument(1).asInt32() == 'a') {
+            if (String text = stringIn(value)->value(globalObject); !text.containsOnlyASCII())
+                value = jsString(vm, escapeNonASCII(text));
+        }
         break;
-    }
     default:
         break;
     }
@@ -832,7 +841,12 @@ static JSValue loadContextMethod(JSGlobalObject* globalObject, JSValue manager, 
     if (!method) {
         auto& names = vm.pythonNames();
         PyType* type = typeOf(globalObject, manager);
-        bool hasOther = isAsync ? type->lookup(vm, names.dunder_enter) && type->lookup(vm, names.dunder_exit) : type->lookup(vm, names.dunder_aenter) && type->lookup(vm, names.dunder_aexit);
+        // type_has_special_method(): it has something by the name, and it is something that could be a method.
+        auto has = [&] (const Identifier& other) {
+            JSValue found = type->lookup(vm, other);
+            return found && hasGet(globalObject, found);
+        };
+        bool hasOther = isAsync ? has(names.dunder_enter) && has(names.dunder_exit) : has(names.dunder_aenter) && has(names.dunder_aexit);
         if (hasOther)
             return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), isAsync ? "' object does not support the asynchronous context manager protocol (missed "_s : "' object does not support the context manager protocol (missed "_s, spelled,
                 isAsync ? " method) but it supports the context manager protocol. Did you mean to use 'with'?"_s : " method) but it supports the asynchronous context manager protocol. Did you mean to use 'async with'?"_s));

@@ -1,0 +1,225 @@
+---- 4611686018427387904
+'a' * x => MemoryError: 
+'ab' * x => OverflowError: repeated string is too long
+'abcd' * x => OverflowError: repeated string is too long
+x * 'a' => MemoryError: 
+b'a' * x => MemoryError: 
+b'abcd' * x => OverflowError: repeated bytes are too long
+[0] * x => MemoryError: 
+[0, 1, 2, 3] * x => MemoryError: 
+(0,) * x => MemoryError: 
+(0, 1, 2, 3) * x => MemoryError: 
+l *= x => MemoryError: 
+b *= x => MemoryError: 
+bytes(x) => MemoryError: 
+bytearray(x) => MemoryError: 
+(5).to_bytes(x) => MemoryError: 
+'a'.center(x) => MemoryError: 
+'a'.ljust(x) => MemoryError: 
+'a'.rjust(x) => MemoryError: 
+'a'.zfill(x) => MemoryError: 
+b'a'.center(x) => MemoryError: 
+b'a'.ljust(x) => MemoryError: 
+b'a'.rjust(x) => MemoryError: 
+b'a'.zfill(x) => MemoryError: 
+bytearray().resize(x) => MemoryError: 
+list(range(x)) => MemoryError: 
+[*range(x)] => MemoryError: 
+sorted(range(x)) => MemoryError: 
+[].extend(range(x)) => MemoryError: 
+bytes(range(x)) => MemoryError: 
+list(what says there are x) => MemoryError: 
+''.join(range(x)) => MemoryError: 
+l[:] = range(x) => MemoryError: 
+a, *b = range(x) => MemoryError: 
+1 << x => MemoryError: 
+'%*d' % (x, 1) => MemoryError: 
+'%.*f' % (x, 1.0) => OverflowError: Python int too large to convert to C int
+'{:{}}'.format(1, x) => MemoryError: 
+format(1, str(x)) => MemoryError: 
+format('a', str(x)) => MemoryError: 
+format(1.5, '.' + str(x)) => ValueError: precision too big
+memoryview.cast => TypeError: memoryview: product(shape) * itemsize != buffer size
+range(x)[-1] => made, int
+len(range(x)) => made, int
+reversed(range(x)) => made, range_iterator
+enumerate([], x) => made, enumerate
+'a'.expandtabs(x) => OverflowError: Python int too large to convert to C int
+'a'.replace('a', 'b', x) => made, str
+'a'.split('a', x) => made, list
+[].insert(x, 0) => made, NoneType
+[0].pop(x) => IndexError: pop index out of range
+'abc'[x:] => made, str
+'abc'[:x] => made, str
+[0][x:x] = [1] => made, NoneType
+---- 9223372036854775807
+'a' * x => MemoryError: 
+'ab' * x => OverflowError: repeated string is too long
+'abcd' * x => OverflowError: repeated string is too long
+x * 'a' => MemoryError: 
+b'a' * x => MemoryError: 
+b'abcd' * x => OverflowError: repeated bytes are too long
+bytearray(b'a') * x => MemoryError: 
+[0] * x => MemoryError: 
+[0, 1, 2, 3] * x => MemoryError: 
+(0,) * x => MemoryError: 
+(0, 1, 2, 3) * x => MemoryError: 
+l *= x => MemoryError: 
+b *= x => MemoryError: 
+bytes(x) => OverflowError: byte string is too large
+bytearray(x) => MemoryError: 
+(5).to_bytes(x) => OverflowError: byte string is too large
+'a'.center(x) => MemoryError: 
+'a'.ljust(x) => MemoryError: 
+'a'.rjust(x) => MemoryError: 
+'a'.zfill(x) => MemoryError: 
+b'a'.center(x) => OverflowError: byte string is too large
+b'a'.ljust(x) => OverflowError: byte string is too large
+b'a'.rjust(x) => OverflowError: byte string is too large
+b'a'.zfill(x) => OverflowError: byte string is too large
+bytearray(b'a').center(x) => MemoryError: 
+bytearray(b'a').zfill(x) => MemoryError: 
+bytearray().resize(x) => MemoryError: 
+list(range(x)) => MemoryError: 
+[*range(x)] => MemoryError: 
+sorted(range(x)) => MemoryError: 
+[].extend(range(x)) => MemoryError: 
+bytes(range(x)) => OverflowError: byte string is too large
+list(what says there are x) => MemoryError: 
+''.join(range(x)) => MemoryError: 
+l[:] = range(x) => MemoryError: 
+a, *b = range(x) => MemoryError: 
+1 << x => OverflowError: too many digits in integer
+'%*d' % (x, 1) => MemoryError: 
+'%.*f' % (x, 1.0) => OverflowError: Python int too large to convert to C int
+'{:{}}'.format(1, x) => MemoryError: 
+format(1, str(x)) => MemoryError: 
+format('a', str(x)) => MemoryError: 
+format(1.5, '.' + str(x)) => ValueError: precision too big
+memoryview.cast => TypeError: memoryview: product(shape) * itemsize != buffer size
+range(x)[-1] => made, int
+len(range(x)) => made, int
+reversed(range(x)) => made, range_iterator
+enumerate([], x) => made, enumerate
+'a'.expandtabs(x) => OverflowError: Python int too large to convert to C int
+'a'.replace('a', 'b', x) => made, str
+'a'.split('a', x) => made, list
+[].insert(x, 0) => made, NoneType
+[0].pop(x) => IndexError: pop index out of range
+'abc'[x:] => made, str
+'abc'[:x] => made, str
+[0][x:x] = [1] => made, NoneType
+---- 9223372036854775808
+'a' * x => OverflowError: cannot fit 'int' into an index-sized integer
+'ab' * x => OverflowError: cannot fit 'int' into an index-sized integer
+'abcd' * x => OverflowError: cannot fit 'int' into an index-sized integer
+x * 'a' => OverflowError: cannot fit 'int' into an index-sized integer
+b'a' * x => OverflowError: cannot fit 'int' into an index-sized integer
+b'abcd' * x => OverflowError: cannot fit 'int' into an index-sized integer
+bytearray(b'a') * x => OverflowError: cannot fit 'int' into an index-sized integer
+[0] * x => OverflowError: cannot fit 'int' into an index-sized integer
+[0, 1, 2, 3] * x => OverflowError: cannot fit 'int' into an index-sized integer
+(0,) * x => OverflowError: cannot fit 'int' into an index-sized integer
+(0, 1, 2, 3) * x => OverflowError: cannot fit 'int' into an index-sized integer
+l *= x => OverflowError: cannot fit 'int' into an index-sized integer
+b *= x => OverflowError: cannot fit 'int' into an index-sized integer
+bytes(x) => OverflowError: cannot fit 'int' into an index-sized integer
+bytearray(x) => OverflowError: cannot fit 'int' into an index-sized integer
+(5).to_bytes(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.center(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.ljust(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.rjust(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.zfill(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.center(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.ljust(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.rjust(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.zfill(x) => OverflowError: Python int too large to convert to C ssize_t
+bytearray(b'a').center(x) => OverflowError: Python int too large to convert to C ssize_t
+bytearray(b'a').zfill(x) => OverflowError: Python int too large to convert to C ssize_t
+bytearray().resize(x) => OverflowError: Python int too large to convert to C ssize_t
+list(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+[*range(x)] => OverflowError: Python int too large to convert to C ssize_t
+sorted(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+[].extend(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+bytes(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+list(what says there are x) => OverflowError: Python int too large to convert to C ssize_t
+''.join(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+l[:] = range(x) => OverflowError: Python int too large to convert to C ssize_t
+a, *b = range(x) => MemoryError: 
+1 << x => OverflowError: too many digits in integer
+'%*d' % (x, 1) => OverflowError: Python int too large to convert to C ssize_t
+'%.*f' % (x, 1.0) => OverflowError: Python int too large to convert to C int
+'{:{}}'.format(1, x) => ValueError: Too many decimal digits in format string
+format(1, str(x)) => ValueError: Too many decimal digits in format string
+format('a', str(x)) => ValueError: Too many decimal digits in format string
+format(1.5, '.' + str(x)) => ValueError: Too many decimal digits in format string
+memoryview.cast => OverflowError: Python int too large to convert to C ssize_t
+range(x)[-1] => made, int
+len(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+reversed(range(x)) => made, longrange_iterator
+enumerate([], x) => made, enumerate
+'a'.expandtabs(x) => OverflowError: Python int too large to convert to C int
+'a'.replace('a', 'b', x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.split('a', x) => OverflowError: Python int too large to convert to C ssize_t
+[].insert(x, 0) => OverflowError: Python int too large to convert to C ssize_t
+[0].pop(x) => OverflowError: Python int too large to convert to C ssize_t
+'abc'[x:] => made, str
+'abc'[:x] => made, str
+[0][x:x] = [1] => made, NoneType
+---- 1180591620717411303424
+'a' * x => OverflowError: cannot fit 'int' into an index-sized integer
+'ab' * x => OverflowError: cannot fit 'int' into an index-sized integer
+'abcd' * x => OverflowError: cannot fit 'int' into an index-sized integer
+x * 'a' => OverflowError: cannot fit 'int' into an index-sized integer
+b'a' * x => OverflowError: cannot fit 'int' into an index-sized integer
+b'abcd' * x => OverflowError: cannot fit 'int' into an index-sized integer
+bytearray(b'a') * x => OverflowError: cannot fit 'int' into an index-sized integer
+[0] * x => OverflowError: cannot fit 'int' into an index-sized integer
+[0, 1, 2, 3] * x => OverflowError: cannot fit 'int' into an index-sized integer
+(0,) * x => OverflowError: cannot fit 'int' into an index-sized integer
+(0, 1, 2, 3) * x => OverflowError: cannot fit 'int' into an index-sized integer
+l *= x => OverflowError: cannot fit 'int' into an index-sized integer
+b *= x => OverflowError: cannot fit 'int' into an index-sized integer
+bytes(x) => OverflowError: cannot fit 'int' into an index-sized integer
+bytearray(x) => OverflowError: cannot fit 'int' into an index-sized integer
+(5).to_bytes(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.center(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.ljust(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.rjust(x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.zfill(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.center(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.ljust(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.rjust(x) => OverflowError: Python int too large to convert to C ssize_t
+b'a'.zfill(x) => OverflowError: Python int too large to convert to C ssize_t
+bytearray(b'a').center(x) => OverflowError: Python int too large to convert to C ssize_t
+bytearray(b'a').zfill(x) => OverflowError: Python int too large to convert to C ssize_t
+bytearray().resize(x) => OverflowError: Python int too large to convert to C ssize_t
+list(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+[*range(x)] => OverflowError: Python int too large to convert to C ssize_t
+sorted(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+[].extend(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+bytes(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+list(what says there are x) => OverflowError: Python int too large to convert to C ssize_t
+''.join(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+l[:] = range(x) => OverflowError: Python int too large to convert to C ssize_t
+a, *b = range(x) => OverflowError: Python int too large to convert to C ssize_t
+1 << x => OverflowError: too many digits in integer
+'%*d' % (x, 1) => OverflowError: Python int too large to convert to C ssize_t
+'%.*f' % (x, 1.0) => OverflowError: Python int too large to convert to C int
+'{:{}}'.format(1, x) => ValueError: Too many decimal digits in format string
+format(1, str(x)) => ValueError: Too many decimal digits in format string
+format('a', str(x)) => ValueError: Too many decimal digits in format string
+format(1.5, '.' + str(x)) => ValueError: Too many decimal digits in format string
+memoryview.cast => OverflowError: Python int too large to convert to C ssize_t
+range(x)[-1] => made, int
+len(range(x)) => OverflowError: Python int too large to convert to C ssize_t
+reversed(range(x)) => made, longrange_iterator
+enumerate([], x) => made, enumerate
+'a'.expandtabs(x) => OverflowError: Python int too large to convert to C int
+'a'.replace('a', 'b', x) => OverflowError: Python int too large to convert to C ssize_t
+'a'.split('a', x) => OverflowError: Python int too large to convert to C ssize_t
+[].insert(x, 0) => OverflowError: Python int too large to convert to C ssize_t
+[0].pop(x) => OverflowError: Python int too large to convert to C ssize_t
+'abc'[x:] => made, str
+'abc'[:x] => made, str
+[0][x:x] = [1] => made, NoneType

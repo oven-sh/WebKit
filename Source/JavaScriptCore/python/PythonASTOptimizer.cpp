@@ -50,6 +50,14 @@ public:
     {
     }
 
+    // What `'format' % (a, b)` is made into, or null if it is left as it is.
+    Expression* formatAsJoinedString(BinOp& node)
+    {
+        Expression* expression = &node;
+        foldFormat(expression);
+        return expression == &node ? nullptr : expression;
+    }
+
     bool run(Module& module)
     {
         switch (module.kind) {
@@ -628,6 +636,11 @@ private:
 bool optimize(VM& vm, Arena& arena, Module& module, unsigned optimizationLevel, unsigned futureFeatures, bool onlyLookedOver)
 {
     return Optimizer(vm, arena, optimizationLevel, futureFeatures, onlyLookedOver).run(module);
+}
+
+Expression* formatAsJoinedString(VM& vm, Arena& arena, BinOp& node)
+{
+    return Optimizer(vm, arena, 0, 0, false).formatAsJoinedString(node);
 }
 
 } } // namespace JSC::Python

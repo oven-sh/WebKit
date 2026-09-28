@@ -1,0 +1,53 @@
+---- a list: 2 ** 28
+[0] * n => MemoryError: 
+[0, 1] * (n // 2 + 1) => MemoryError: 
+l *= n => MemoryError: 
+list(range(n)) => MemoryError: 
+[*range(n)] => MemoryError: 
+sorted(range(n)) => MemoryError: 
+[].extend(range(n)) => MemoryError: 
+l[:] = range(n) => MemoryError: 
+''.join(range(n)) => MemoryError: 
+what says there will be n => MemoryError: 
+what says there will be one fewer => made, list
+added to a list of one => MemoryError: 
+---- a str: 2 ** 31 - 1
+'a' * n => MemoryError: 
+'ab' * (n // 2) => MemoryError: 
+'a'.center(n) => MemoryError: 
+'a'.ljust(n) => MemoryError: 
+'a'.rjust(n) => MemoryError: 
+'a'.zfill(n) => MemoryError: 
+format(1, str(n)) => MemoryError: 
+format('a', str(n)) => MemoryError: 
+format(1.5, str(n)) => MemoryError: 
+format(1, '0' + str(n) + ',') => MemoryError: 
+format(1j, str(n)) => MemoryError: 
+'%*d' % (n, 1) => MemoryError: 
+'%*s' % (n, 'a') => MemoryError: 
+'%-*s' % (n, 'a') => MemoryError: 
+'%' + str(n) + 'd' => MemoryError: 
+'{:{}}'.format(1, n) => MemoryError: 
+f'{1:{n}}' => MemoryError: 
+---- a bytes: 2 ** 32
+bytes(n) => MemoryError: 
+bytearray(n) => MemoryError: 
+b'a' * n => MemoryError: 
+bytearray(b'a') * n => MemoryError: 
+b'a'.center(n) => MemoryError: 
+b'a'.zfill(n) => MemoryError: 
+(5).to_bytes(n) => MemoryError: 
+bytearray().resize(n) => MemoryError: 
+bytes(what says there will be n) => MemoryError: 
+bytearray().extend(what says there will be n) => MemoryError: 
+---- a tuple: 2 ** 32 - 1
+(0,) * n => MemoryError: 
+(0, 1) * (n // 2) => MemoryError: 
+---- an int: 2 ** 30 bits
+1 << 2 ** 31 => MemoryError: 
+1 << 2 ** 40 => MemoryError: 
+-1 << 2 ** 40 => MemoryError: 
+0 << 2 ** 40 => made, int
+1 << 2 ** 63 => OverflowError: too many digits in integer
+1 << 2 ** 30 => MemoryError: 
+1 << 2 ** 20 => made, int

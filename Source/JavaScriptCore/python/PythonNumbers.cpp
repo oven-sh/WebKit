@@ -141,13 +141,13 @@ static JSValue raiseZeroDivision(JSGlobalObject* globalObject, ThrowScope& scope
     return raise(globalObject, scope, BuiltinType::ZeroDivisionError, "division by zero"_s);
 }
 
-// JavaScript's BigInts have a largest size, and say RangeError past it.
+// JavaScript's BigInts have a largest size, and say RangeError past it. That is where there is no more room for an int.
 static JSValue finishBigInt(JSGlobalObject* globalObject, ThrowScope& scope, JSValue result)
 {
     if (scope.exception()) [[unlikely]] {
         if (!scope.tryClearException())
             return { };
-        return raise(globalObject, scope, BuiltinType::OverflowError, "int too large"_s);
+        return raiseMemoryError(globalObject, scope);
     }
     return normalizeBigInt(result);
 }
@@ -401,8 +401,8 @@ static JSValue intBinaryOperation(JSGlobalObject* globalObject, ThrowScope& scop
         result = JSBigInt::bitwiseXor(globalObject, a, b);
         break;
     case BinaryOperator::LShift:
-        // By more than there could be room for anywhere.
-        if (!a->isZero() && b->length() > 1)
+        // By more than there could be room for anywhere: CPython keeps count of the bits of an int in an int64_t.
+        if (!a->isZero() && !b->sign() && (b->length() > 1 || b->digit(0) >= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - bitLengthOfInt(classify(JSValue(a)))))
             return raise(globalObject, scope, BuiltinType::OverflowError, "too many digits in integer"_s);
         result = JSBigInt::leftShift(globalObject, a, b);
         break;

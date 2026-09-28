@@ -316,12 +316,74 @@ JSValue parseInt(JSGlobalObject* globalObject, StringView text, unsigned base)
 }
 
 // int(x=0), int(x, base=10)
+// The int that is written in bytes, which are read as ASCII. Empty if it raised.
+static JSValue intFromBytes(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, int64_t base)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String text { byteCast<Latin1Character>(bytes) };
+    JSValue result = text.containsOnlyASCII() ? parseInt(globalObject, text, base) : JSValue();
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!result)
+        return raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfBytes(bytes.first(std::min<size_t>(bytes.size(), 200))).left(200)));
+    return result;
+}
+
+// And in a str, a bytes or a bytearray.
+static JSValue intFromText(JSGlobalObject* globalObject, JSValue value, int64_t base)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSString* string = stringIn(value)) {
+        auto view = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        JSValue result = parseInt(globalObject, view, base);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!result)
+            return raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfString(view)));
+        return result;
+    }
+    RELEASE_AND_RETURN(scope, intFromBytes(globalObject, *builtinBufferOf(value), base));
+}
+
+// PyNumber_Long()
+JSValue numberLong(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    // What the built-in numbers do is known. An instance of a class derived from one of them is an object.
+    if (!value.isObject()) {
+        if (Number number = classify(value))
+            RELEASE_AND_RETURN(scope, toInt(globalObject, scope, number));
+    }
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, value, names.dunder_int, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (method) {
+        JSValue result = callMethod(globalObject, method, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        Number converted = classify(result);
+        if (!converted.isInt())
+            return raiseTypeError(globalObject, scope, makeString("__int__ returned non-int (type "_s, typeName(globalObject, result), ')'));
+        if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, "__int__ returned non-int"_s, "int"_s))
+            return { };
+        RELEASE_AND_RETURN(scope, toInt(globalObject, scope, converted));
+    }
+    if (typeOf(globalObject, value)->lookup(vm, names.dunder_index))
+        RELEASE_AND_RETURN(scope, toInt(globalObject, value));
+    if (stringIn(value) || bytesKindOf(value) != BytesKind::None)
+        RELEASE_AND_RETURN(scope, intFromText(globalObject, value, 10));
+    if (auto buffer = bufferOrNothing(globalObject, value))
+        RELEASE_AND_RETURN(scope, intFromBytes(globalObject, *buffer, 10));
+    return raiseTypeError(globalObject, scope, makeString("int() argument must be a string, a bytes-like object or a real number, not '"_s, typeName(globalObject, value), '\''));
+}
+
 PYTHON_NATIVE(intNew)
 {
     NATIVE_PROLOGUE();
     auto* type = asType(args.at(0));
     // Without keywords it is called in a way of its own, which puts this differently.
-    if (args.size() > 3 && !args.keywordCount())
+    if (args.size() > 3 && !args.keywordCount() && type == realm->typeInt())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("int expected at most 2 arguments, got "_s, args.size() - 1)));
     if (!checkArgumentsSlow(globalObject, callFrame))
         return { };
@@ -333,68 +395,19 @@ PYTHON_NATIVE(intNew)
         if (baseValue)
             return JSValue::encode(raiseTypeError(globalObject, scope, "int() missing string argument"_s));
         result = jsNumber(0);
-    } else if (baseValue || unbox(value).isString()) {
+    } else if (baseValue) {
         // The base is looked at first.
-        int64_t base = 10;
-        if (baseValue) {
-            auto index = toIndex(globalObject, baseValue, true);
-            RETURN_IF_EXCEPTION(scope, { });
-            base = *index;
-            if (base && (base < 2 || base > 36))
-                return JSValue::encode(raiseValueError(globalObject, scope, "int() base must be >= 2 and <= 36, or 0"_s));
-        }
-        JSValue string = unbox(value);
-        // What is in a bytes or a bytearray is read as ASCII.
-        JSValue original = string;
-        if (bytesKindOf(string) != BytesKind::None)
-            string = jsString(vm, String(byteCast<Latin1Character>(*builtinBufferOf(string))));
-        if (!string.isString())
+        auto base = toIndex(globalObject, baseValue, true);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (*base && (*base < 2 || *base > 36))
+            return JSValue::encode(raiseValueError(globalObject, scope, "int() base must be >= 2 and <= 36, or 0"_s));
+        if (!stringIn(value) && bytesKindOf(value) == BytesKind::None)
             return JSValue::encode(raiseTypeError(globalObject, scope, "int() can't convert non-string with explicit base"_s));
-        auto view = asString(string)->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        result = parseInt(globalObject, view, base);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!result || (!original.isString() && !view->containsOnlyASCII())) {
-            if (!original.isString())
-                return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfBytes(builtinBufferOf(original)->first(std::min<size_t>(builtinBufferOf(original)->size(), 200))).left(200))));
-            return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid literal for int() with base "_s, base, ": "_s, reprOfString(view))));
-        }
-    } else if (Number number = classify(value)) {
-        result = toInt(globalObject, scope, number);
+        result = intFromText(globalObject, value, *base);
         RETURN_IF_EXCEPTION(scope, { });
     } else {
-        JSValue self;
-        JSValue method;
-        const Identifier* methodName = nullptr;
-        for (const Identifier* name : { &names.dunder_int, &names.dunder_index, &names.dunder_trunc }) {
-            method = lookupSpecial(globalObject, value, *name, self);
-            RETURN_IF_EXCEPTION(scope, { });
-            methodName = name;
-            if (method)
-                break;
-        }
-        if (!method) {
-            // Anything that has bytes to show has them read as ASCII.
-            if (auto buffer = tryBufferOf(globalObject, value)) {
-                String text { byteCast<Latin1Character>(*buffer) };
-                result = text.containsOnlyASCII() ? parseInt(globalObject, text, 10) : JSValue();
-                RETURN_IF_EXCEPTION(scope, { });
-                if (!result)
-                    return JSValue::encode(raiseValueError(globalObject, scope, makeString("invalid literal for int() with base 10: "_s, reprOfBytes(buffer->first(std::min<size_t>(buffer->size(), 200))).left(200))));
-                RELEASE_AND_RETURN(scope, JSValue::encode(boxIfDerived(globalObject, type, realm->typeInt(), result)));
-            }
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-        if (!method)
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("int() argument must be a string, a bytes-like object or a real number, not '"_s, typeName(globalObject, value), '\'')));
-        result = callMethod(globalObject, method, self);
+        result = numberLong(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        Number converted = classify(result);
-        if (!converted.isInt())
-            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__int__ returned non-int (type "_s, typeName(globalObject, result), ')')));
-        if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, makeString(methodName->string(), " returned non-int"_s), "int"_s))
-            return { };
-        result = toInt(globalObject, scope, converted);
     }
     return JSValue::encode(boxIfDerived(globalObject, type, realm->typeInt(), result));
 }
@@ -500,8 +513,8 @@ PYTHON_NATIVE(floatNew)
         } else {
             bool isNumber = classify(value) || typeOf(globalObject, value)->lookup(vm, names.dunder_float) || typeOf(globalObject, value)->lookup(vm, names.dunder_index);
             if (!isNumber) {
-                // Anything that has bytes to show has them read as ASCII.
-                if (auto buffer = tryBufferOf(globalObject, value)) {
+                // Anything that has bytes to show has them read as ASCII. Whatever else comes of asking it for them is lost.
+                if (auto buffer = bufferOrNothing(globalObject, value)) {
                     String text { byteCast<Latin1Character>(*buffer) };
                     auto parsed = text.containsOnlyASCII() ? parseFloat(text) : std::nullopt;
                     if (!parsed) {

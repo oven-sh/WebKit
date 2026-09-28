@@ -37,6 +37,10 @@ JSArray* newList(JSGlobalObject* globalObject, unsigned length)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (length > maxListLength) [[unlikely]] {
+        raiseMemoryError(globalObject, scope);
+        return nullptr;
+    }
     JSArray* list = constructEmptyArray(globalObject, nullptr, length);
     RETURN_IF_EXCEPTION(scope, nullptr);
     // What that leaves are holes, which Python has no notion of.
@@ -47,7 +51,14 @@ JSArray* newList(JSGlobalObject* globalObject, unsigned length)
 
 JSArray* newList(JSGlobalObject* globalObject, const ArgList& values)
 {
-    return constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), values);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Structure* structure = globalObject->arrayStructureForProfileDuringAllocation(globalObject, nullptr, JSValue());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    JSArray* list = values.size() <= maxListLength ? tryConstructArray(globalObject, structure, values) : nullptr;
+    if (!list) [[unlikely]]
+        raiseMemoryError(globalObject, scope);
+    return list;
 }
 
 JSValue listGetSlow(JSGlobalObject* globalObject, JSArray* list, unsigned index)
@@ -91,10 +102,30 @@ bool listExtend(JSGlobalObject* globalObject, JSArray* list, JSValue iterable)
         }
         return true;
     }
-    return forEach(globalObject, iterable, [&] (JSValue value) {
+    // What is gone through can do anything to the list meanwhile, and each goes on the end of what is then there.
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue source = iterable;
+    if (!isPutInListWithoutAsking(globalObject, iterable)) {
+        // list_extend_iter_lock_held(): it is asked how many there will be, and CPython makes room for them now.
+        source = getIterator(globalObject, iterable);
+        RETURN_IF_EXCEPTION(scope, false);
+        auto hint = lengthHint(globalObject, iterable, 8);
+        RETURN_IF_EXCEPTION(scope, false);
+        int64_t length = list->length();
+        if (length <= std::numeric_limits<int64_t>::max() - *hint && length + *hint > static_cast<int64_t>(maxListLength)) {
+            raiseMemoryError(globalObject, scope);
+            return false;
+        }
+    }
+    RELEASE_AND_RETURN(scope, forEach(globalObject, source, [&] (JSValue value) {
+        if (list->length() >= maxListLength) [[unlikely]] {
+            raiseMemoryError(globalObject, scope);
+            return false;
+        }
         list->push(globalObject, value);
         return true;
-    });
+    }));
 }
 
 JSArray* listFromIterable(JSGlobalObject* globalObject, JSValue iterable)
@@ -102,7 +133,7 @@ JSArray* listFromIterable(JSGlobalObject* globalObject, JSValue iterable)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MarkedArgumentBuffer values;
-    collect(globalObject, iterable, values);
+    collectAsList(globalObject, iterable, values);
     RETURN_IF_EXCEPTION(scope, nullptr);
     RELEASE_AND_RETURN(scope, newList(globalObject, values));
 }
@@ -116,7 +147,11 @@ PyTuple* tupleFromIterable(JSGlobalObject* globalObject, JSValue iterable)
     MarkedArgumentBuffer values;
     collect(globalObject, iterable, values);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    return PyTuple::createFromArguments(globalObject, values);
+    PyTuple* tuple = PyTuple::tryCreate(globalObject, values.size());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (unsigned i = 0; i < values.size(); ++i)
+        tuple->initializeAt(vm, i, values.at(i));
+    return tuple;
 }
 
 void listReplaceRange(JSGlobalObject* globalObject, JSArray* list, unsigned start, unsigned count, const ArgList& values)
@@ -177,11 +212,12 @@ JSArray* listRepeat(JSGlobalObject* globalObject, JSArray* list, int64_t count)
     auto scope = DECLARE_THROW_SCOPE(vm);
     count = std::max<int64_t>(count, 0);
     unsigned length = list->length();
-    uint64_t total = static_cast<uint64_t>(length) * count;
-    if (total > std::numeric_limits<int32_t>::max()) {
-        raise(globalObject, scope, BuiltinType::MemoryError, JSValue());
+    // By dividing, since the product may be more than can be counted.
+    if (length && count > static_cast<int64_t>(maxListLength / length)) {
+        raiseMemoryError(globalObject, scope);
         return nullptr;
     }
+    uint64_t total = static_cast<uint64_t>(length) * count;
     JSArray* result = newList(globalObject, total);
     RETURN_IF_EXCEPTION(scope, nullptr);
     for (unsigned i = 0; i < total; ++i) {

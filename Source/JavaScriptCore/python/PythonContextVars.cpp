@@ -523,14 +523,15 @@ PYTHON_NATIVE(contextView)
         items.append(kind == PyIterator::Kind::ContextKeys ? key : kind == PyIterator::Kind::ContextValues ? value : JSValue(PyTuple::create(globalObject, { key, value })));
         return true;
     });
-    return JSValue::encode(PyIterator::create(globalObject, kind, PyTuple::createFromArguments(globalObject, items)));
+    // How many there are is kept apart, since it is still to be had when they have all been given, and what they were in has been let go of.
+    return JSValue::encode(PyIterator::create(globalObject, kind, PyTuple::createFromArguments(globalObject, items), JSValue(), 0, items.size()));
 }
 
 PYTHON_NATIVE(contextViewLength)
 {
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    return JSValue::encode(jsNumber(asTuple(uncheckedDowncast<PyIterator>(args[0].asCell())->a())->length()));
+    return JSValue::encode(intFromInt64(globalObject, uncheckedDowncast<PyIterator>(args[0].asCell())->stop()));
 }
 
 PYTHON_NATIVE(contextCopy)

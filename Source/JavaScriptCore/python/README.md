@@ -351,6 +351,16 @@ lexer finds, then `return`, `break` and `continue` in a `finally`, then the rest
 - CPython generates the code of a `finally` again for each `return`, `break` and `continue` that goes by way of it, and warns of what is in it each time. Here it is warned of once.
 - Where CPython says that a bad escape is goes by where the string *ends*, if it is an f-string, and leaves out what comes before the quotes. Here it is where it is.
 
+### What a class has by a special name need not be a function
+
+`__hash__ = classmethod(...)` is allowed, and so is anything that has a `__get__()`. So what is found in a class by a special name is never simply called with the instance to begin with. It goes through
+`callSpecial()`, or `lookupSpecial()` and `callMethod()`, which are `lookup_maybe_method()` of CPython's `Objects/typeobject.c`: a function is given the instance, without a bound method being made, and anything
+else is asked by `__get__()` what it is for the instance. `__new__` is found as `type.__new__` would find it, with no instance.
+
+What such a method returns is not to be taken for what it should be either. `stringIn()` says whether something is a `str` or an instance of a class derived from `str`, and gives the string that is in it, and
+`asString()` is only for what `isString()` has been asked of: an instance of a class derived from `str` is another kind of cell. And where `str()`, `repr()`, `format()` and `bytes()` give what the method
+returned, they give that very object, of whatever class it is: `strObject()` and `reprObject()`.
+
 ### `+` and `*`, of numbers and of sequences
 
 `binaryOperation()` is in two parts, as `PyNumber_Add()` and `PyNumber_Multiply()` are. **First as numbers**: `__add__` and `__radd__`, and so on. **Then as sequences.** What `str`, `list`, `tuple`, `bytes` and `bytearray` have
@@ -601,7 +611,9 @@ There is nothing that is per process, nothing that is set after something is mad
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
 - **In a `__dict__`, keys that are strings come before those that are not**, and before those that JavaScript would take for an index.
-- **An int can be no larger than a `BigInt`.** `1 << (1 << 40)` is an `OverflowError`, where CPython makes it if there is room.
+- **There is less room.** An int can be no larger than a `BigInt`, which is 2\*\*30 bits, a `str` no longer than a JavaScript string, which is 2\*\*31 - 1 code units, a `bytes` no longer than a typed array,
+  which is 2\*\*32, and a list no longer than what a JavaScript array keeps side by side, which is 2\*\*28 elements. Past that it is a `MemoryError`, where CPython makes it if there is room. And what says that it
+  will come to more, as `range(2 ** 40)` does when `list()` asks it, is taken at its word, where CPython goes by whether it can have that much memory set aside, which depends on the machine.
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
   line before the first, or at a column before the first, is on line 0 or at column 0, where to CPython it is nowhere.
 - **The last bits of a complex quotient or power can differ.** The steps are CPython's, but a compiler may do a multiplication and an addition in one, without rounding between them. JavaScriptCore is built
@@ -622,6 +634,10 @@ of one and of two of them. `methods.py` calls every method of several instances 
 That is ten million things tried. What is compared with CPython is what comes back and its class, or the exception and what it says, and what has become of what it was done to. Among the values are instances
 of classes derived from `int`, `str`, `float`, `list` and `tuple`, and it is those that found the most. Each prints a line for each operator or method of each value, with a number that stands for all that came
 of it, so that what is kept to compare with is small, and given `everything` prints it all, which is how to find what is behind a line that differs.
+
+`special-methods.py` is the other way about: it is of what the language does with what a program's classes do. Each special method is given each of some eighty things to do, which are to return something, mostly
+not what is wanted of it, to raise something, to take the wrong number of arguments, and not to be a function at all. Then everything that would call it is tried: the operators, the statements, the built-in
+functions, and the methods of the built-in classes that take such a thing. That is ninety thousand things tried.
 
 ## What is not decided
 

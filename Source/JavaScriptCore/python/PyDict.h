@@ -54,17 +54,18 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     // `stride` is 2 for keys and values, and 1 for keys alone. `indexSize` is a power of two.
-    static PyHashStorage* create(VM&, Structure*, unsigned capacity, unsigned indexSize, unsigned stride);
+    // Null if there is no room for it.
+    static PyHashStorage* tryCreate(VM&, Structure*, unsigned capacity, unsigned indexSize, unsigned stride);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
     unsigned capacity() const { return m_capacity; }
     unsigned indexMask() const { return m_indexSize - 1; }
     unsigned indexSize() const { return m_indexSize; }
 
-    WriteBarrier<Unknown>& key(unsigned entry) { return slots()[entry * m_stride]; }
-    WriteBarrier<Unknown>& value(unsigned entry) { return slots()[entry * m_stride + 1]; }
+    WriteBarrier<Unknown>& key(unsigned entry) { return slots()[static_cast<size_t>(entry) * m_stride]; }
+    WriteBarrier<Unknown>& value(unsigned entry) { return slots()[static_cast<size_t>(entry) * m_stride + 1]; }
     uint32_t& hash(unsigned entry) { return hashes()[entry]; }
-    uint32_t& index(unsigned slot) { return hashes()[m_capacity + slot]; }
+    uint32_t& index(unsigned slot) { return hashes()[static_cast<size_t>(m_capacity) + slot]; }
 
 private:
     PyHashStorage(VM& vm, Structure* structure, unsigned capacity, unsigned indexSize, unsigned stride)
@@ -133,7 +134,7 @@ protected:
     }
 
 private:
-    void grow(VM&, JSGlobalObject*);
+    bool grow(VM&, JSGlobalObject*);
     void insertIndex(PyHashStorage&, uint32_t hash, unsigned entry);
 
     WriteBarrier<PyHashStorage> m_storage;

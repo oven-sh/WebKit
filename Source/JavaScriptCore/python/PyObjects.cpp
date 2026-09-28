@@ -360,6 +360,25 @@ PyTuple* PyTuple::create(JSGlobalObject* globalObject, unsigned length)
     return create(globalObject->vm(), realm->tupleStructure(), length);
 }
 
+PyTuple* PyTuple::tryCreate(JSGlobalObject* globalObject, unsigned length)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    if (!length && realm->emptyTuple())
+        return realm->emptyTuple();
+    void* cell = tryAllocateCell<PyTuple>(vm, allocationSize(length));
+    if (!cell) [[unlikely]] {
+        Python::raiseMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    auto* tuple = new (NotNull, cell) PyTuple(vm, realm->tupleStructure(), length);
+    for (unsigned i = 0; i < length; ++i)
+        tuple->values()[i].setStartingValue(jsUndefined());
+    tuple->finishCreation(vm);
+    return tuple;
+}
+
 PyTuple* PyTuple::create(JSGlobalObject* globalObject, std::span<const JSValue> values)
 {
     VM& vm = globalObject->vm();

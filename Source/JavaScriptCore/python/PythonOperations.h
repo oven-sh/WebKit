@@ -89,6 +89,7 @@ JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, const String& message);
 JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, JSValue argument);
 inline JSValue raiseTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::TypeError, message); }
 inline JSValue raiseValueError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::ValueError, message); }
+inline JSValue raiseMemoryError(JSGlobalObject* globalObject, ThrowScope& scope) { return raise(globalObject, scope, BuiltinType::MemoryError, JSValue()); }
 void throwUnboundVariable(JSGlobalObject*, CodeBlock*, JSString* name);
 // Whether what has been thrown is an instance of the type. If so it is caught, and no longer thrown.
 bool catchException(JSGlobalObject*, BuiltinType);
@@ -114,8 +115,16 @@ void genericSetAttribute(JSGlobalObject*, JSValue, PropertyName, JSValue);
 JSValue loadMethod(JSGlobalObject*, JSValue base, PropertyName, JSValue& self);
 // A special method, which is looked for in the type and not in the instance. Empty if the type has none. `self` as for loadMethod.
 JSValue lookupSpecial(JSGlobalObject*, JSValue, PropertyName, JSValue& self);
+// The second half of that, for whoever has already found what the class of `value` has by the name: lookup_maybe_method() of CPython's Objects/typeobject.c. A function is what is to be called, with the
+// value to begin with, and `self` is the value. Anything else is asked by __get__() what it is for the value, and `self` is empty.
+JSValue bindSpecial(JSGlobalObject*, PyType*, JSValue attribute, JSValue value, JSValue& self);
+// And that, called. It is how anything that a class has by a special name is to be called, since it need not be a function: it can be a static method, or whatever has a __get__().
+JSValue callSpecial(JSGlobalObject*, PyType*, JSValue attribute, JSValue value);
+JSValue callSpecial(JSGlobalObject*, PyType*, JSValue attribute, JSValue value, JSValue);
+JSValue callSpecial(JSGlobalObject*, PyType*, JSValue attribute, JSValue value, JSValue, JSValue);
 // What `descriptor`, found in a class, gives when got from `instance` (empty for the class itself) of `type`.
 JSValue bindDescriptor(JSGlobalObject*, JSValue descriptor, JSValue instance, PyType*);
+bool hasGet(JSGlobalObject*, JSValue); // Whether its class has a __get__(), so that it is not simply what it is when it is found in a class.
 // descriptor.__set__(instance, newValue), or __delete__ if `newValue` is empty. `attribute` is what to call it if it cannot be done.
 void setDescriptor(JSGlobalObject*, JSValue descriptor, JSValue instance, StringView attribute, JSValue newValue);
 
@@ -421,12 +430,28 @@ void updateDictFrom(JSGlobalObject*, PyDict*, JSValue mappingOrPairs);
 
 // ---- Iteration
 
+// A list is a JavaScript array, and this is as many elements as one of those keeps side by side. With more it keeps them in a table, one by one, which is no way to keep a list.
+static constexpr size_t maxListLength = MAX_STORAGE_VECTOR_LENGTH;
+
 JSValue getIterator(JSGlobalObject*, JSValue);
+// Whether its class has what it takes to be gone through, whatever comes of trying: __iter__(), or __getitem__() if it is not a dict. Where CPython puts a TypeError from iter() in words of its own, it is
+// only for what has neither, so that what a program's own __iter__() raises is not lost.
+bool hasWhatItTakesToBeIterated(JSGlobalObject*, JSValue);
 // Empty when there is no more, with nothing raised. If that is because a generator has returned, what it returned is given too.
 JSValue iteratorNext(JSGlobalObject*, JSValue iterator, JSValue* returnedByGenerator = nullptr);
+// The same, but that if it is by raising StopIteration that it said there is no more, that is still raised: tp_iternext.
+JSValue iteratorNextKeepingStopIteration(JSGlobalObject*, JSValue iterator, JSValue* returnedByGenerator = nullptr);
 // Calls the function with each. It returns false to stop. Returns false if something was raised.
 bool forEach(JSGlobalObject*, JSValue iterable, const ScopedLambda<bool(JSValue)>&);
 bool collect(JSGlobalObject*, JSValue iterable, MarkedArgumentBuffer&);
+// PyObject_LengthHint(): how many it says there are in it, by __len__() or __length_hint__(), or the default if it does not say. Nothing if it raised.
+std::optional<int64_t> lengthHint(JSGlobalObject*, JSValue, int64_t defaultValue);
+// What CPython has ways of its own to put in a list, without asking anything of it: _list_extend() of its Objects/listobject.c.
+bool isPutInListWithoutAsking(JSGlobalObject*, JSValue iterable);
+// PySequence_List(): as list(iterable) gathers them, which is to ask first how many there will be. It raises MemoryError if that is more than a list that already has `alreadyThere` has room for.
+bool collectAsList(JSGlobalObject*, JSValue iterable, MarkedArgumentBuffer&, size_t alreadyThere = 0);
+// PySequence_Fast(): the same, but that it is the iterator that is asked how many, and that what cannot be gone through at all is complained of in the words given.
+bool collectFast(JSGlobalObject*, JSValue iterable, MarkedArgumentBuffer&, ASCIILiteral complaint);
 void unpackSequence(JSGlobalObject*, JSValue iterable, unsigned count, int starIndex, Register* first);
 JSValue newTuple(JSGlobalObject*, Register* first, unsigned count);
 
@@ -434,6 +459,9 @@ JSValue newTuple(JSGlobalObject*, Register* first, unsigned count);
 
 String repr(JSGlobalObject*, JSValue);
 String str(JSGlobalObject*, JSValue);
+// PyObject_Repr() and PyObject_Str(): what __repr__() or __str__() returned, which is a str or an instance of a class derived from str, and is what repr() and str() give.
+JSValue reprObject(JSGlobalObject*, JSValue);
+JSValue strObject(JSGlobalObject*, JSValue);
 String addressOf(const void*); // 0x..., as in <object object at 0x...>
 String fullyQualifiedTypeName(JSGlobalObject*, JSValue); // What CPython's %T writes: the class of something, with where it is from unless that is builtins or __main__.
 JSValue format(JSGlobalObject*, JSValue, const String& specification);
@@ -467,6 +495,8 @@ JSValue nextOfLongRange(JSGlobalObject*, PyRange*, JSValue index);
 
 // operator.index(value): an int and nothing else, from an int, a bool, an instance of a class derived from int, or what has __index__.
 JSValue toInt(JSGlobalObject*, JSValue);
+// int(value): PyNumber_Long(). By __int__(), by __index__(), or from what is written in a str or in bytes.
+JSValue numberLong(JSGlobalObject*, JSValue);
 // The value of an int, if it fits.
 std::optional<int64_t> tryInt64(JSValue);
 int compareInts(JSValue, JSValue); // Negative, zero or positive. Both are ints, of any size.

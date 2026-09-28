@@ -140,8 +140,12 @@ JSValue stringRepeat(JSGlobalObject* globalObject, JSString* string, int64_t cou
         return jsEmptyString(vm);
     if (count == 1)
         return string;
-    if (static_cast<uint64_t>(string->length()) * count > String::MaxLength)
+    // Too long to be counted, and too long for there to be room for it, are not the same to CPython.
+    int64_t characters = stringLength(globalObject, string);
+    if (count > std::numeric_limits<int64_t>::max() / characters)
         return raise(globalObject, scope, BuiltinType::OverflowError, "repeated string is too long"_s);
+    if (count > static_cast<int64_t>(String::MaxLength / string->length()))
+        return raiseMemoryError(globalObject, scope);
     auto view = string->view(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     StringBuilder builder;
@@ -388,6 +392,16 @@ double roundToDigits(double value, int digits)
 
 // ---- The format specification
 
+// One more digit on the end of a number that is being read. False if it would then be more than `limit`.
+static bool appendDigit(int64_t& number, char32_t digit, int64_t limit = std::numeric_limits<int64_t>::max())
+{
+    int64_t value = digit - '0';
+    if (number > (limit - value) / 10)
+        return false;
+    number = number * 10 + value;
+    return true;
+}
+
 std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* globalObject, StringView text, const String& typeName, bool isForString)
 {
     VM& vm = globalObject->vm();
@@ -435,11 +449,10 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     }
     while (i < end && isASCIIDigit(characters[i])) {
         result.hasWidth = true;
-        if (result.width > 100000000) {
+        if (!appendDigit(result.width, characters[i++])) {
             raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
             return std::nullopt;
         }
-        result.width = result.width * 10 + (characters[i++] - '0');
     }
     if (i < end && (characters[i] == ',' || characters[i] == '_')) {
         result.grouping = characters[i++];
@@ -456,11 +469,10 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
             result.precision = 0;
         }
         while (i < end && isASCIIDigit(characters[i])) {
-            if (result.precision > 100000000) {
+            if (!appendDigit(result.precision, characters[i++])) {
                 raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
                 return std::nullopt;
             }
-            result.precision = result.precision * 10 + (characters[i++] - '0');
         }
         if (i < end && (characters[i] == ',' || characters[i] == '_')) {
             hasSomething = true;
@@ -539,14 +551,20 @@ static unsigned lengthInCharacters(const String& string)
 }
 
 // `prefixLength` is how much at the front is a sign and 0x and the like, which '=' puts the padding after.
-static String pad(const String& text, unsigned prefixLength, const FormatSpecification& specification, char defaultAlign)
+// Null, with MemoryError raised, if there is no room for it.
+static String pad(JSGlobalObject* globalObject, const String& text, unsigned prefixLength, const FormatSpecification& specification, char defaultAlign)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     unsigned length = lengthInCharacters(text);
     if (length >= specification.width)
         return text;
+    if (specification.width > static_cast<int64_t>(String::MaxLength)) {
+        raiseMemoryError(globalObject, scope);
+        return { };
+    }
     unsigned padding = specification.width - length;
     char align = specification.align ? specification.align : defaultAlign;
-    StringBuilder builder;
+    StringBuilder builder(OverflowPolicy::RecordOverflow);
     auto fill = [&] (unsigned count) {
         for (unsigned i = 0; i < count; ++i)
             builder.append(specification.fill);
@@ -570,6 +588,10 @@ static String pad(const String& text, unsigned prefixLength, const FormatSpecifi
         fill(padding);
         builder.append(StringView(text).substring(prefixLength));
         break;
+    }
+    if (builder.hasOverflowed()) {
+        raiseMemoryError(globalObject, scope);
+        return { };
     }
     return builder.toString();
 }
@@ -627,9 +649,9 @@ String formatString(JSGlobalObject* globalObject, const String& value, const For
         return { };
     }
     String text = value;
-    if (specification.precision >= 0 && static_cast<unsigned>(specification.precision) < lengthInCharacters(text))
+    if (specification.precision >= 0 && specification.precision < static_cast<int64_t>(lengthInCharacters(text)))
         text = StringView(text).left(stringHasSurrogatePairs(text) ? stringOffsetOfCharacter(text, specification.precision) : specification.precision).toString();
-    return pad(text, 0, specification, '<');
+    RELEASE_AND_RETURN(scope, pad(globalObject, text, 0, specification, '<'));
 }
 
 static void appendSign(StringBuilder& builder, bool isNegative, char sign)
@@ -696,7 +718,7 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
         }
         StringBuilder builder;
         builder.append(static_cast<char32_t>(number.small));
-        return pad(builder.toString(), 0, specification, '>');
+        RELEASE_AND_RETURN(scope, pad(globalObject, builder.toString(), 0, specification, '>'));
     }
     case 'e':
     case 'E':
@@ -744,11 +766,15 @@ String formatInt(JSGlobalObject* globalObject, JSValue value, const FormatSpecif
     unsigned prefixLength = builder.length();
     if (specification.grouping) {
         bool padsWithZeros = specification.fill == '0' && specification.align == '=';
+        if (padsWithZeros && specification.width > static_cast<int64_t>(String::MaxLength)) {
+            raiseMemoryError(globalObject, scope);
+            return { };
+        }
         unsigned minimum = padsWithZeros && specification.width > prefixLength ? specification.width - prefixLength : 0;
         digits = groupDigits(digits, specification.grouping, radix == 10 ? 3 : 4, minimum);
     }
     builder.append(digits);
-    return pad(builder.toString(), prefixLength, specification, '>');
+    RELEASE_AND_RETURN(scope, pad(globalObject, builder.toString(), prefixLength, specification, '>'));
 }
 
 String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpecification& specification)
@@ -756,6 +782,10 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     char32_t type = specification.type;
+    if (specification.precision > std::numeric_limits<int>::max()) {
+        raiseValueError(globalObject, scope, "precision too big"_s);
+        return { };
+    }
     int precision = specification.precision;
 
     switch (type) {
@@ -870,13 +900,17 @@ String formatFloat(JSGlobalObject* globalObject, double value, const FormatSpeci
             ++whole;
         unsigned restLength = text.length() - whole + isPercent;
         bool padsWithZeros = specification.fill == '0' && specification.align == '=';
+        if (padsWithZeros && specification.width > static_cast<int64_t>(String::MaxLength)) {
+            raiseMemoryError(globalObject, scope);
+            return { };
+        }
         unsigned minimum = padsWithZeros && specification.width > prefixLength + restLength ? specification.width - prefixLength - restLength : 0;
         builder.append(groupDigits(StringView(text).left(whole), specification.grouping, 3, minimum), StringView(text).substring(whole));
     } else
         builder.append(text);
     if (isPercent)
         builder.append('%');
-    return pad(builder.toString(), prefixLength, specification, '>');
+    RELEASE_AND_RETURN(scope, pad(globalObject, builder.toString(), prefixLength, specification, '>'));
 }
 
 // ---- format % values
@@ -900,7 +934,10 @@ String escapeNonASCII(const String& text)
 }
 
 // For bytes, the format and the result have a character for each byte.
-static String percentFormat(JSGlobalObject* globalObject, const String& format, JSValue values, bool isForBytes)
+//
+// CPython writes what it makes piece by piece, and if the first piece that has anything in it is also the last, and is a str that it had already, it gives that str and not another like it. It shows if the
+// str is of a class derived from str. `only` is given that str.
+static String percentFormat(JSGlobalObject* globalObject, const String& format, JSValue values, bool isForBytes, JSValue* only = nullptr)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -973,37 +1010,50 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             else
                 break;
         }
-        auto readNumber = [&] (int& target) -> bool {
+        // How wide is a Py_ssize_t in CPython, and how much of it an int.
+        auto readNumber = [&] (int64_t& target, bool isWidth) -> bool {
             if (i < length && format[i] == '*') {
                 ++i;
                 JSValue star = takeArgument();
                 RETURN_IF_EXCEPTION(scope, false);
-                Number number = classify(star);
-                if (number.kind != Number::Kind::Small) {
+                if (!classify(star).isInt()) {
                     raiseTypeError(globalObject, scope, "* wants int"_s);
                     return false;
                 }
-                target = number.small;
+                if (isWidth) {
+                    auto given = toSsize(globalObject, star);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    target = *given;
+                } else {
+                    auto given = toCInt(globalObject, star);
+                    RETURN_IF_EXCEPTION(scope, false);
+                    target = std::max(*given, 0);
+                }
                 return true;
             }
             if (i < length && isASCIIDigit(format[i])) {
                 target = 0;
-                while (i < length && isASCIIDigit(format[i]))
-                    target = target * 10 + (format[i++] - '0');
+                while (i < length && isASCIIDigit(format[i])) {
+                    if (!appendDigit(target, format[i++], isWidth ? std::numeric_limits<int64_t>::max() : std::numeric_limits<int>::max())) {
+                        raiseValueError(globalObject, scope, isWidth ? "width too big"_s : "precision too big"_s);
+                        return false;
+                    }
+                }
             }
             return true;
         };
-        int width = -1;
-        readNumber(width);
+        int64_t width = -1;
+        readNumber(width, true);
         RETURN_IF_EXCEPTION(scope, { });
         if (width < -1) {
             leftAlign = true;
-            width = -width;
+            // The least of all has nothing to be the opposite of. There is no room for either.
+            width = width == std::numeric_limits<int64_t>::min() ? std::numeric_limits<int64_t>::max() : -width;
         }
         if (i < length && format[i] == '.') {
             ++i;
             specification.precision = 0;
-            readNumber(specification.precision);
+            readNumber(specification.precision, false);
             RETURN_IF_EXCEPTION(scope, { });
         }
         if (i < length && (format[i] == 'l' || format[i] == 'h' || format[i] == 'L'))
@@ -1035,27 +1085,39 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         case 'r':
         case 'a': {
             String text;
+            JSValue object;
             if (conversion == 'r' || conversion == 'a') {
-                text = repr(globalObject, argument);
+                object = reprObject(globalObject, argument);
                 RETURN_IF_EXCEPTION(scope, { });
-                if (conversion == 'a' || isForBytes)
+                text = stringIn(object)->value(globalObject);
+                // PyObject_ASCII(): what is ASCII already is left as it is.
+                if ((conversion == 'a' || isForBytes) && !text.containsOnlyASCII()) {
                     text = escapeNonASCII(text);
-            } else if (!isForBytes)
-                text = str(globalObject, argument);
-            else {
-                auto buffer = tryBufferOf(globalObject, argument, FullReadOnlyBuffer);
+                    object = { };
+                }
+            } else if (!isForBytes) {
+                object = strObject(globalObject, argument);
                 RETURN_IF_EXCEPTION(scope, { });
-                if (!buffer && argument.isObject()) {
+                text = stringIn(object)->value(globalObject);
+            } else {
+                // format_obj(): a bytes or a bytearray, then what has __bytes__(), and then whatever else has bytes to show.
+                Buffer buffer;
+                if (bytesKindOf(argument) != BytesKind::None)
+                    buffer = tryBufferOf(globalObject, argument, FullReadOnlyBuffer);
+                else {
                     JSValue self;
                     JSValue method = lookupSpecial(globalObject, argument, vm.pythonNames().dunder_bytes, self);
                     RETURN_IF_EXCEPTION(scope, { });
                     if (method) {
-                        argument = callMethod(globalObject, method, self);
+                        JSValue converted = callMethod(globalObject, method, self);
                         RETURN_IF_EXCEPTION(scope, { });
-                        buffer = tryBufferOf(globalObject, argument);
-                        RETURN_IF_EXCEPTION(scope, { });
-                    }
+                        if (bytesKindOf(converted) != BytesKind::Bytes)
+                            return raiseTypeError(globalObject, scope, makeString("__bytes__ returned non-bytes (type "_s, typeName(globalObject, converted), ')'));
+                        buffer = tryBufferOf(globalObject, converted);
+                    } else
+                        buffer = tryBufferOf(globalObject, argument, FullReadOnlyBuffer);
                 }
+                RETURN_IF_EXCEPTION(scope, { });
                 if (!buffer)
                     return raiseTypeError(globalObject, scope, makeString("%b requires a bytes-like object, or an object that implements __bytes__, not '"_s, typeName(globalObject, argument), '\''));
                 ByteVector all;
@@ -1063,9 +1125,13 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                 text = String(byteCast<Latin1Character>(all.span()));
             }
             RETURN_IF_EXCEPTION(scope, { });
+            // With a '+' or a ' ', which mean nothing here, CPython does not go the quick way.
+            bool hadSignFlag = specification.sign == '+' || specification.sign == ' ';
             specification.sign = '-';
             specification.alternate = false;
             piece = formatString(globalObject, text, specification);
+            if (only && object && result.isEmpty() && i == length && piece == text && !text.isEmpty() && !hadSignFlag)
+                *only = object;
             break;
         }
         case 'c': {
@@ -1098,14 +1164,20 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                     return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not a string of length "_s, lengthInCharacters(text)));
             } else {
                 Number number = classify(argument);
+                JSValue given = argument;
                 if (!number && typeOf(globalObject, argument)->lookup(vm, vm.pythonNames().dunder_index)) {
+                    // formatchar(): a TypeError from __index__() is put as one from here.
                     auto index = toIndex(globalObject, argument, true);
-                    RETURN_IF_EXCEPTION(scope, { });
-                    argument = intFromInt64(globalObject, *index);
-                    number = classify(argument);
+                    if (scope.exception()) {
+                        if (!catchException(globalObject, BuiltinType::TypeError))
+                            return { };
+                    } else {
+                        argument = intFromInt64(globalObject, *index);
+                        number = classify(argument);
+                    }
                 }
                 if (!number.isInt())
-                    return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not "_s, typeName(globalObject, argument)));
+                    return raiseTypeError(globalObject, scope, makeString("%c requires an int or a unicode character, not "_s, typeName(globalObject, given)));
                 if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF) {
                     raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
                     return { };
@@ -1136,34 +1208,31 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                 argument = intFromDouble(globalObject, number.real);
                 number = classify(argument);
             }
+            JSValue given = argument;
             if (!number && argument.isObject()) {
-                // By __int__ for a decimal, and only by __index__ otherwise.
-                bool isDecimal = conversion == 'd' || conversion == 'i' || conversion == 'u';
-                JSValue self;
-                JSValue method = isDecimal ? lookupSpecial(globalObject, argument, vm.pythonNames().dunder_int, self) : JSValue();
-                RETURN_IF_EXCEPTION(scope, { });
-                ASCIILiteral methodName = "__int__"_s;
-                if (!method) {
-                    method = lookupSpecial(globalObject, argument, vm.pythonNames().dunder_index, self);
-                    RETURN_IF_EXCEPTION(scope, { });
-                    methodName = "__index__"_s;
-                }
-                if (method) {
-                    argument = callMethod(globalObject, method, self);
-                    RETURN_IF_EXCEPTION(scope, { });
+                // mainformatlong(): as int() would for a decimal, and only by __index__() otherwise. If that raises TypeError, what is said is that it is of the wrong type.
+                PyType* type = typeOf(globalObject, argument);
+                auto& names = vm.pythonNames();
+                // PyNumber_Check()
+                if (type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || type->isSubtypeOf(globalObject->pyRealm()->typeComplex())) {
+                    bool isDecimal = conversion == 'd' || conversion == 'i' || conversion == 'u';
+                    argument = isDecimal ? numberLong(globalObject, argument) : toInt(globalObject, argument);
+                    if (scope.exception()) {
+                        if (!catchException(globalObject, BuiltinType::TypeError))
+                            return { };
+                        argument = given;
+                    }
                     number = classify(argument);
-                    if (number.isInt() && !warnIfOfStrictSubclass(globalObject, argument, BuiltinType::Int, makeString(methodName, " returned non-int"_s), "int"_s))
-                        return { };
                 }
             }
             if (!number.isInt()) {
                 if (conversion == 'd' || conversion == 'i' || conversion == 'u')
-                    return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: a real number is required, not "_s, typeName(globalObject, argument)));
-                return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: an integer is required, not "_s, typeName(globalObject, argument)));
+                    return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: a real number is required, not "_s, typeName(globalObject, given)));
+                return raiseTypeError(globalObject, scope, makeString('%', conversion, " format: an integer is required, not "_s, typeName(globalObject, given)));
             }
             specification.type = conversion == 'i' || conversion == 'u' ? 'd' : conversion;
             // The precision is the least number of digits.
-            int minimumDigits = std::exchange(specification.precision, -1);
+            int64_t minimumDigits = std::exchange(specification.precision, -1);
             FormatSpecification bare = specification;
             bare.width = 0;
             bare.hasWidth = false;
@@ -1175,18 +1244,22 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             if (specification.alternate && conversion != 'd' && conversion != 'i' && conversion != 'u')
                 prefixLength += 2;
             if (minimumDigits > 0 && text.length() - prefixLength < static_cast<unsigned>(minimumDigits)) {
-                StringBuilder builder;
+                StringBuilder builder(OverflowPolicy::RecordOverflow);
                 builder.append(StringView(text).left(prefixLength));
                 for (unsigned k = text.length() - prefixLength; k < static_cast<unsigned>(minimumDigits); ++k)
                     builder.append('0');
                 builder.append(StringView(text).substring(prefixLength));
+                if (builder.hasOverflowed()) {
+                    raiseMemoryError(globalObject, scope);
+                    return { };
+                }
                 text = builder.toString();
             }
             if (zeroPad && !leftAlign) {
                 specification.fill = '0';
                 specification.align = '=';
             }
-            piece = pad(text, prefixLength, specification, '>');
+            piece = pad(globalObject, text, prefixLength, specification, '>');
             break;
         }
         case 'e':
@@ -1226,9 +1299,12 @@ JSValue stringPercentFormat(JSGlobalObject* globalObject, JSValue format, JSValu
     auto scope = DECLARE_THROW_SCOPE(vm);
     String text = stringIn(format)->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    String result = percentFormat(globalObject, text, values, false);
+    JSValue only;
+    String result = percentFormat(globalObject, text, values, false, &only);
     RETURN_IF_EXCEPTION(scope, { });
-    // Where all that is written is one string, CPython gives that string back, and not another like it. It shows if it is of a class derived from str.
+    if (only)
+        return only;
+    // And so it is with the format itself, if there is nothing in it to fill in.
     if (!text.contains('%'))
         return format;
     return jsString(vm, result);

@@ -70,7 +70,7 @@ PYTHON_NATIVE(builtinPrint)
         if (name == "sep"_s || name == "end"_s) {
             if (isNone(value))
                 continue;
-            if (!value.isString())
+            if (!stringIn(value))
                 return JSValue::encode(raiseTypeError(globalObject, scope, makeString(name, " must be None or a string, not "_s, typeName(globalObject, value))));
             (name == "sep"_s ? separator : end) = value;
         } else if (name == "file"_s)
@@ -117,16 +117,18 @@ PYTHON_NATIVE(builtinPrint)
 PYTHON_NATIVE(builtinRepr_)
 {
     NATIVE_PROLOGUE();
-    String text = repr(globalObject, args[0]);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, text));
+    RELEASE_AND_RETURN(scope, JSValue::encode(reprObject(globalObject, args[0])));
 }
 
 PYTHON_NATIVE(builtinAscii)
 {
     NATIVE_PROLOGUE();
-    String text = repr(globalObject, args[0]);
+    JSValue object = reprObject(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
+    String text = stringIn(object)->value(globalObject);
+    // PyObject_ASCII(): what is ASCII already is what is given.
+    if (text.containsOnlyASCII())
+        return JSValue::encode(object);
     StringBuilder builder;
     for (char32_t c : StringView(text).codePoints()) {
         if (c < 0x80)
@@ -311,7 +313,8 @@ PYTHON_NATIVE(builtinNext)
     // What a generator returns is carried by the StopIteration.
     if (args[0].isCell() && args[0].asCell()->type() == JSGeneratorType && args.size() == 1 && generatorKindOf(globalObject, asGenerator(args[0])) == GeneratorKind::Generator)
         RELEASE_AND_RETURN(scope, JSValue::encode(generatorSend(globalObject, uncheckedDowncast<JSGenerator>(args[0].asCell()), jsUndefined())));
-    JSValue value = iteratorNext(globalObject, args[0]);
+    // With nothing to give instead, a StopIteration that was raised is the one that goes on being raised, with whatever it has to say.
+    JSValue value = args.size() > 1 ? iteratorNext(globalObject, args[0]) : iteratorNextKeepingStopIteration(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (value)
         return JSValue::encode(value);
@@ -513,10 +516,7 @@ PYTHON_NATIVE(builtinSorted)
     NATIVE_PROLOGUE();
     if (args.size() != 1)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sorted expected 1 argument, got "_s, args.size())));
-    MarkedArgumentBuffer values;
-    collect(globalObject, args[0], values);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSArray* list = newList(globalObject, values);
+    JSArray* list = listFromIterable(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer arguments;
     arguments.append(list);

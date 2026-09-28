@@ -48,4 +48,8 @@ class Arena;
 // False if it is too deep.
 bool optimize(VM&, Arena&, Module&, unsigned optimizationLevel, unsigned futureFeatures, bool onlyLookedOver);
 
+// The second of those by itself, for what generates code: the f-string that `'%s and %r' % (a, b)` is compiled as, or null if it is not one that is. It is not only quicker. It is str(a) and then format() that
+// are called, and not what % does, and a program can tell.
+Expression* formatAsJoinedString(VM&, Arena&, BinOp&);
+
 } } // namespace JSC::Python

@@ -87,7 +87,13 @@ static std::optional<int64_t> repeatCount(JSGlobalObject* globalObject, JSValue 
 static PyTuple* tupleConcatenate(JSGlobalObject* globalObject, PyTuple* left, PyTuple* right)
 {
     VM& vm = globalObject->vm();
-    PyTuple* result = PyTuple::create(globalObject, left->length() + right->length());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (right->length() > std::numeric_limits<unsigned>::max() - left->length()) {
+        raiseMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    PyTuple* result = PyTuple::tryCreate(globalObject, left->length() + right->length());
+    RETURN_IF_EXCEPTION(scope, nullptr);
     for (unsigned i = 0; i < left->length(); ++i)
         result->initializeAt(vm, i, left->at(i));
     for (unsigned i = 0; i < right->length(); ++i)
@@ -100,10 +106,14 @@ static JSValue tupleRepeat(JSGlobalObject* globalObject, PyTuple* tuple, int64_t
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     count = std::max<int64_t>(count, 0);
-    uint64_t length = static_cast<uint64_t>(tuple->length()) * count;
-    if (length > std::numeric_limits<int32_t>::max())
-        return raise(globalObject, scope, BuiltinType::MemoryError, JSValue());
-    PyTuple* result = PyTuple::create(globalObject, length);
+    if (!tuple->length() || !count)
+        return PyTuple::create(globalObject, 0);
+    // By dividing, since the product may be more than can be counted.
+    if (count > static_cast<int64_t>(std::numeric_limits<unsigned>::max() / tuple->length()))
+        return raiseMemoryError(globalObject, scope);
+    unsigned length = tuple->length() * static_cast<unsigned>(count);
+    PyTuple* result = PyTuple::tryCreate(globalObject, length);
+    RETURN_IF_EXCEPTION(scope, { });
     for (unsigned i = 0; i < length; ++i)
         result->initializeAt(vm, i, tuple->at(i % tuple->length()));
     return result;
@@ -260,6 +270,41 @@ static JSValue raiseUnsupportedOperands(JSGlobalObject* globalObject, ThrowScope
     return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for "_s, inPlace ? inPlaceSymbolOf(op) : symbolOf(op), ": '"_s, typeName(globalObject, left), "' and '"_s, typeName(globalObject, right), '\''));
 }
 
+// What the two operands' classes have to say, by a method and by the same reflected: binary_op1() of CPython's Objects/abstract.c, with SLOT1BINFULL of its Objects/typeobject.c. Empty if neither has
+// anything to say, or it raised.
+template<typename Lookup>
+static JSValue binaryByMethods(JSGlobalObject* globalObject, JSValue left, JSValue right, const Identifier& name, const Identifier& reflectedName, const Lookup& lookup)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* leftType = typeOf(globalObject, left);
+    PyType* rightType = typeOf(globalObject, right);
+    JSValue leftMethod = lookup(leftType, name);
+    // Two of a kind have one thing to say between them.
+    JSValue rightMethod = rightType != leftType ? lookup(rightType, reflectedName) : JSValue();
+    // A class derived from the left operand's, that has its own idea of the operation, goes first.
+    if (rightMethod && rightType->isSubtypeOf(leftType) && rightMethod != leftType->lookup(vm, reflectedName)) {
+        JSValue result = callSpecial(globalObject, rightType, rightMethod, right, left);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isNotImplemented(globalObject, result))
+            return result;
+        rightMethod = { };
+    }
+    if (leftMethod) {
+        JSValue result = callSpecial(globalObject, leftType, leftMethod, left, right);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isNotImplemented(globalObject, result))
+            return result;
+    }
+    if (rightMethod) {
+        JSValue result = callSpecial(globalObject, rightType, rightMethod, right, left);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isNotImplemented(globalObject, result))
+            return result;
+    }
+    return { };
+}
+
 JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool inPlace, JSValue left, JSValue right)
 {
     VM& vm = globalObject->vm();
@@ -295,35 +340,17 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
         // nb_inplace_add if that is wrapped as one of those would be, and it is. Nothing else of a sequence's is.
         bool isOfDerivedClass = op == BinaryOperator::Add && leftType->hasFlag(PyType::IsHeapType);
         if (JSValue method = isOfDerivedClass ? leftType->lookup(vm, names.inPlaceMethod(op)) : lookupForNumbers(leftType, names.inPlaceMethod(op))) {
-            JSValue result = call(globalObject, method, left, right);
+            JSValue result = callSpecial(globalObject, leftType, method, left, right);
             RETURN_IF_EXCEPTION(scope, { });
             if (!isNotImplemented(globalObject, result))
                 return result;
         }
     }
 
-    JSValue leftMethod = lookupForNumbers(leftType, names.method(op));
-    JSValue rightMethod = rightType != leftType ? lookupForNumbers(rightType, names.reflectedMethod(op)) : JSValue();
-    // A class derived from the left operand's, that has its own idea of the operation, goes first.
-    if (rightMethod && rightType->isSubtypeOf(leftType) && rightMethod != leftType->lookup(vm, names.reflectedMethod(op))) {
-        JSValue result = call(globalObject, rightMethod, right, left);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!isNotImplemented(globalObject, result))
-            return result;
-        rightMethod = { };
-    }
-    if (leftMethod) {
-        JSValue result = call(globalObject, leftMethod, left, right);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!isNotImplemented(globalObject, result))
-            return result;
-    }
-    if (rightMethod) {
-        JSValue result = call(globalObject, rightMethod, right, left);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!isNotImplemented(globalObject, result))
-            return result;
-    }
+    JSValue result = binaryByMethods(globalObject, left, right, names.method(op), names.reflectedMethod(op), lookupForNumbers);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return result;
 
     // Then as sequences: the rest of PyNumber_Add(), PyNumber_Multiply() and their like.
     if (mayBeForSequences) {
@@ -391,7 +418,7 @@ static PowerSlot powerSlotOf(JSGlobalObject* globalObject, PyType* type)
     if (!method && !reflected)
         return PowerSlot::None;
     auto ownerOf = [] (JSValue function) -> JSObject* {
-        auto* native = dynamicDowncast<PyNativeFunction>(function);
+        auto* native = function ? dynamicDowncast<PyNativeFunction>(function) : nullptr;
         return native ? native->owner() : nullptr;
     };
     JSObject* owner = ownerOf(method);
@@ -422,14 +449,14 @@ static JSValue powerByMethods(JSGlobalObject* globalObject, JSValue self, JSValu
         JSValue method = type->lookup(vm, name);
         if (!method)
             return notImplemented;
-        return call(globalObject, method, receiver, argument, modulus);
+        return callSpecial(globalObject, type, method, receiver, argument, modulus);
     };
     bool triesOther = selfType != otherType && powerSlotOf(globalObject, otherType) == PowerSlot::Methods;
     if (powerSlotOf(globalObject, selfType) == PowerSlot::Methods) {
         if (triesOther && otherType->isSubtypeOf(selfType)) {
             JSValue reflected = otherType->lookup(vm, reflectedName);
             if (reflected && reflected != selfType->lookup(vm, reflectedName)) {
-                JSValue result = call(globalObject, reflected, other, self, modulus);
+                JSValue result = callSpecial(globalObject, otherType, reflected, other, self, modulus);
                 RETURN_IF_EXCEPTION(scope, { });
                 if (result != notImplemented)
                     return result;
@@ -580,18 +607,10 @@ JSValue divmod(JSGlobalObject* globalObject, JSValue left, JSValue right)
         return PyTuple::create(globalObject, { quotient, remainder });
     }
     auto& names = vm.pythonNames();
-    if (JSValue method = typeOf(globalObject, left)->lookup(vm, names.dunder_divmod)) {
-        JSValue result = call(globalObject, method, left, right);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!isNotImplemented(globalObject, result))
-            return result;
-    }
-    if (JSValue method = typeOf(globalObject, right)->lookup(vm, names.dunder_rdivmod)) {
-        JSValue result = call(globalObject, method, right, left);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!isNotImplemented(globalObject, result))
-            return result;
-    }
+    JSValue result = binaryByMethods(globalObject, left, right, names.dunder_divmod, names.dunder_rdivmod, [&] (PyType* type, const Identifier& name) { return type->lookup(vm, name); });
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return result;
     return raiseTypeError(globalObject, scope, makeString("unsupported operand type(s) for divmod(): '"_s, typeName(globalObject, left), "' and '"_s, typeName(globalObject, right), '\''));
 }
 
@@ -672,6 +691,10 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
     JSValue self;
     JSValue method = lookupSpecial(globalObject, value, names.dunder_bool, self);
     RETURN_IF_EXCEPTION(scope, false);
+    if (method && isNone(method)) {
+        raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, value), "' cannot be interpreted as a boolean"_s));
+        return false;
+    }
     if (method) {
         JSValue result = callMethod(globalObject, method, self);
         RETURN_IF_EXCEPTION(scope, false);
@@ -942,7 +965,7 @@ JSValue compare(JSGlobalObject* globalObject, ComparisonOperator op, JSValue lef
         JSValue method = rightType->lookup(vm, methodFor(names, swapped(op)));
         if (!method)
             return { };
-        JSValue result = call(globalObject, method, right, left);
+        JSValue result = callSpecial(globalObject, rightType, method, right, left);
         RETURN_IF_EXCEPTION(scope, { });
         return isNotImplemented(globalObject, result) ? JSValue() : result;
     };
@@ -954,7 +977,7 @@ JSValue compare(JSGlobalObject* globalObject, ComparisonOperator op, JSValue lef
             return result;
     }
     if (JSValue method = leftType->lookup(vm, methodFor(names, op))) {
-        JSValue result = call(globalObject, method, left, right);
+        JSValue result = callSpecial(globalObject, leftType, method, left, right);
         RETURN_IF_EXCEPTION(scope, { });
         if (!isNotImplemented(globalObject, result))
             return result;
@@ -1063,7 +1086,11 @@ bool contains(JSGlobalObject* globalObject, JSValue container, JSValue value)
     JSValue self;
     JSValue method = lookupSpecial(globalObject, container, vm.pythonNames().dunder_contains, self);
     RETURN_IF_EXCEPTION(scope, false);
-    if (method && !isNone(method)) {
+    if (method && isNone(method)) {
+        raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, container), "' object is not a container"_s));
+        return false;
+    }
+    if (method) {
         JSValue result = callMethod(globalObject, method, self, value);
         RETURN_IF_EXCEPTION(scope, false);
         RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
@@ -1204,7 +1231,7 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
     }
     if (method.asCell() == realm->function(PyRealm::WellKnownFunction::ObjectHash))
         return hashOfPointer(cell);
-    JSValue result = call(globalObject, method, value);
+    JSValue result = callSpecial(globalObject, type, method, value);
     RETURN_IF_EXCEPTION(scope, -1);
     Number number = classify(result);
     if (!number.isInt()) {
@@ -1387,19 +1414,10 @@ std::optional<double> toDouble(JSGlobalObject* globalObject, JSValue value)
             return std::nullopt;
         return number.real;
     }
-    method = lookupSpecial(globalObject, value, names.dunder_index, self);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (method) {
-        JSValue result = callMethod(globalObject, method, self);
+    if (typeOf(globalObject, value)->lookup(vm, names.dunder_index)) {
+        JSValue result = toInt(globalObject, value);
         RETURN_IF_EXCEPTION(scope, std::nullopt);
-        Number number = classify(result);
-        if (number.isInt()) {
-            if (!warnIfOfStrictSubclass(globalObject, result, BuiltinType::Int, "__index__ returned non-int"_s, "int"_s))
-                return std::nullopt;
-            double converted = toDouble(globalObject, scope, number);
-            RETURN_IF_EXCEPTION(scope, std::nullopt);
-            return converted;
-        }
+        RELEASE_AND_RETURN(scope, toDouble(globalObject, scope, classify(result)));
     }
     raiseTypeError(globalObject, scope, makeString("must be real number, not "_s, typeName(globalObject, value)));
     return std::nullopt;
@@ -1449,12 +1467,16 @@ int64_t length(JSGlobalObject* globalObject, JSValue value)
     }
     JSValue result = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, -1);
-    auto size = toIndex(globalObject, result);
+    // slot_sq_length(): whether it is less than nothing is looked at before whether it is too large.
+    result = toInt(globalObject, result);
     RETURN_IF_EXCEPTION(scope, -1);
-    if (*size < 0) {
+    Number number = classify(result);
+    if (number.kind == Number::Kind::Small ? number.small < 0 : number.big->sign()) {
         raiseValueError(globalObject, scope, "__len__() should return >= 0"_s);
         return -1;
     }
+    auto size = toIndexOrOverflow(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, -1);
     return *size;
 }
 
@@ -1584,7 +1606,7 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         // list[int]
         JSValue classGetItem = getAttributeIfPresent(globalObject, base, names.dunder_class_getitem);
         RETURN_IF_EXCEPTION(scope, { });
-        if (classGetItem)
+        if (classGetItem && !isNone(classGetItem))
             RELEASE_AND_RETURN(scope, call(globalObject, classGetItem, key));
         return raiseTypeError(globalObject, scope, makeString("type '"_s, asType(base)->nameString(globalObject), "' is not subscriptable"_s));
     }
@@ -1618,17 +1640,15 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
 
     auto* list = uncheckedDowncast<JSArray>(cell);
     if (auto* slice = trySlice(key)) {
+        // list_ass_subscript(): what the slice says is asked first, then what is to be put there is gone through, and only then is it asked how long the list is, since either can change that.
+        auto bounds = slice->unpack(globalObject);
+        RETURN_IF_EXCEPTION(scope, true);
         MarkedArgumentBuffer values;
         if (value) {
-            collect(globalObject, value, values);
-            if (scope.exception()) {
-                if (catchException(globalObject, BuiltinType::TypeError))
-                    raiseTypeError(globalObject, scope, "must assign iterable to extended slice"_s);
-                return true;
-            }
+            collectFast(globalObject, value, values, "must assign iterable to extended slice"_s);
+            RETURN_IF_EXCEPTION(scope, true);
         }
-        auto indices = slice->indices(globalObject, [&] { return list->length(); });
-        RETURN_IF_EXCEPTION(scope, true);
+        std::optional<PySlice::Indices> indices = PySlice::adjust(*bounds, list->length());
         if (indices->step == 1) {
             scope.release();
             listReplaceRange(globalObject, list, indices->start, std::max<int64_t>(indices->stop - indices->start, 0), values);
@@ -1780,13 +1800,41 @@ JSValue getIterator(JSGlobalObject* globalObject, JSValue value)
     return raiseTypeError(globalObject, scope, makeString('\'', type->nameString(globalObject), "' object is not iterable"_s));
 }
 
+bool hasWhatItTakesToBeIterated(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    PyType* type = typeOf(globalObject, value);
+    return type->lookup(vm, names.dunder_iter) || (type->lookup(vm, names.dunder_getitem) && !isDict(value));
+}
+
 JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator, JSValue* returnedByGenerator)
 {
-    if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass())
-        return native->next(globalObject);
-
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = iteratorNextKeepingStopIteration(globalObject, iterator, returnedByGenerator);
+    if (value) [[likely]]
+        return value;
+    // PyIter_Next(): whoever raised it, and it can have come from something that one of the built-in iterators called, StopIteration is how it is said that there is no more.
+    if (scope.exception()) [[unlikely]] {
+        JSValue raised = scope.exception()->value();
+        if (catchException(globalObject, BuiltinType::StopIteration) && vm.isPythonWatched())
+            noteCaughtStopIteration(globalObject, raised);
+    }
+    return { };
+}
+
+JSValue iteratorNextKeepingStopIteration(JSGlobalObject* globalObject, JSValue iterator, JSValue* returnedByGenerator)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass()) {
+        JSValue value = native->next(globalObject);
+        // What it gives when something that it called threw is not to be relied on to be empty.
+        RETURN_IF_EXCEPTION(scope, { });
+        return value;
+    }
+
     if (iterator.isCell() && iterator.asCell()->type() == JSGeneratorType && generatorKindOf(globalObject, uncheckedDowncast<JSGenerator>(iterator.asCell())) == GeneratorKind::Generator) {
         JSValue returned;
         JSValue yielded = resumeGenerator(globalObject, uncheckedDowncast<JSGenerator>(iterator.asCell()), jsUndefined(), JSGenerator::ResumeMode::NormalMode, returned);
@@ -1802,12 +1850,8 @@ JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator, JSValue* re
     if (!method)
         return raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, iterator), "' object is not an iterator"_s));
     JSValue value = callMethod(globalObject, method, self);
-    if (scope.exception()) [[unlikely]] {
-        JSValue raised = scope.exception()->value();
-        if (catchException(globalObject, BuiltinType::StopIteration) && vm.isPythonWatched())
-            noteCaughtStopIteration(globalObject, raised);
-        return { };
-    }
+    // What a call that threw returns is not to be relied on to be empty.
+    RETURN_IF_EXCEPTION(scope, { });
     return value;
 }
 
@@ -1856,10 +1900,95 @@ bool forEach(JSGlobalObject* globalObject, JSValue iterable, const ScopedLambda<
 
 bool collect(JSGlobalObject* globalObject, JSValue iterable, MarkedArgumentBuffer& values)
 {
-    return forEach(globalObject, iterable, [&] (JSValue value) {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, forEach(globalObject, iterable, [&] (JSValue value) {
         values.append(value);
+        // When there is no room for more it says so, and takes no more.
+        if (values.hasOverflowed()) [[unlikely]] {
+            raiseMemoryError(globalObject, scope);
+            return false;
+        }
         return true;
-    });
+    }));
+}
+
+std::optional<int64_t> lengthHint(JSGlobalObject* globalObject, JSValue value, int64_t defaultValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    if (typeOf(globalObject, value)->lookup(vm, names.dunder_len)) {
+        int64_t result = length(globalObject, value);
+        if (!scope.exception()) [[likely]]
+            return result;
+        if (!catchException(globalObject, BuiltinType::TypeError))
+            return std::nullopt;
+    }
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, value, names.dunder_length_hint, self);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (!method)
+        return defaultValue;
+    JSValue result = callMethod(globalObject, method, self);
+    if (scope.exception()) [[unlikely]] {
+        if (catchException(globalObject, BuiltinType::TypeError))
+            return defaultValue;
+        return std::nullopt;
+    }
+    if (isNotImplemented(globalObject, result))
+        return defaultValue;
+    if (!classify(result).isInt()) {
+        raiseTypeError(globalObject, scope, makeString("__length_hint__ must be an integer, not "_s, typeName(globalObject, result)));
+        return std::nullopt;
+    }
+    auto hint = toSsize(globalObject, result);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (*hint < 0) {
+        raiseValueError(globalObject, scope, "__length_hint__() should return >= 0"_s);
+        return std::nullopt;
+    }
+    return hint;
+}
+
+bool isPutInListWithoutAsking(JSGlobalObject* globalObject, JSValue iterable)
+{
+    if (isExact(globalObject, iterable) && (isList(iterable) || isTuple(iterable) || isSet(iterable) || isDict(iterable)))
+        return true;
+    PyRealm* realm = globalObject->pyRealm();
+    PyType* type = typeOf(globalObject, iterable);
+    return type == realm->typeDictKeys() || type == realm->typeDictValues() || type == realm->typeDictItems();
+}
+
+// list_extend_iter_lock_held()
+bool collectAsList(JSGlobalObject* globalObject, JSValue iterable, MarkedArgumentBuffer& values, size_t alreadyThere)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (isPutInListWithoutAsking(globalObject, iterable))
+        RELEASE_AND_RETURN(scope, collect(globalObject, iterable, values));
+    JSValue iterator = getIterator(globalObject, iterable);
+    RETURN_IF_EXCEPTION(scope, false);
+    auto hint = lengthHint(globalObject, iterable, 8);
+    RETURN_IF_EXCEPTION(scope, false);
+    // CPython makes room for that many now. If the sum is too large to be a number at all it takes it for a lie, and goes on.
+    if (static_cast<int64_t>(alreadyThere) <= std::numeric_limits<int64_t>::max() - *hint && alreadyThere + *hint > maxListLength) {
+        raiseMemoryError(globalObject, scope);
+        return false;
+    }
+    RELEASE_AND_RETURN(scope, collect(globalObject, iterator, values));
+}
+
+bool collectFast(JSGlobalObject* globalObject, JSValue iterable, MarkedArgumentBuffer& values, ASCIILiteral complaint)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (isExact(globalObject, iterable) && (isList(iterable) || isTuple(iterable)))
+        RELEASE_AND_RETURN(scope, collect(globalObject, iterable, values));
+    JSValue iterator = getIterator(globalObject, iterable);
+    if (scope.exception()) [[unlikely]] {
+        if (catchException(globalObject, BuiltinType::TypeError))
+            raiseTypeError(globalObject, scope, complaint);
+        return false;
+    }
+    RELEASE_AND_RETURN(scope, collectAsList(globalObject, iterator, values));
 }
 
 void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned count, int starIndex, Register* first)
@@ -1889,7 +2018,7 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
 
     JSValue iterator = getIterator(globalObject, iterable);
     if (scope.exception()) {
-        if (catchException(globalObject, BuiltinType::TypeError))
+        if (!hasWhatItTakesToBeIterated(globalObject, iterable) && catchException(globalObject, BuiltinType::TypeError))
             raiseTypeError(globalObject, scope, makeString("cannot unpack non-iterable "_s, typeName(globalObject, iterable), " object"_s));
         return;
     }
@@ -1929,13 +2058,8 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
     }
 
     MarkedArgumentBuffer rest;
-    while (true) {
-        JSValue value = iteratorNext(globalObject, iterator);
-        RETURN_IF_EXCEPTION(scope, void());
-        if (!value)
-            break;
-        rest.append(value);
-    }
+    collectAsList(globalObject, iterator, rest);
+    RETURN_IF_EXCEPTION(scope, void());
     unsigned after = count - before - 1;
     if (rest.size() < after) {
         raiseValueError(globalObject, scope, makeString("not enough values to unpack (expected at least "_s, count - 1, ", got "_s, before + rest.size(), ')'));

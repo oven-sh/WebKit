@@ -108,6 +108,9 @@ std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue value)
     return std::nullopt;
 }
 
+static JSC_DECLARE_HOST_FUNCTION(builtinGetBuffer);
+static JSC_DECLARE_HOST_FUNCTION(builtinReleaseBuffer);
+
 // The __buffer__() or __release_buffer__() that a program has given a class. Empty if it has none, or has only what a built-in class gives it.
 static JSValue bufferMethodOfProgram(JSGlobalObject* globalObject, JSValue value, const Identifier& name)
 {
@@ -117,7 +120,10 @@ static JSValue bufferMethodOfProgram(JSGlobalObject* globalObject, JSValue value
     if (!type->hasFlag(PyType::IsHeapType))
         return { };
     JSValue method = type->lookup(globalObject->vm(), name);
-    return method && !dynamicDowncast<PyNativeFunction>(method) ? method : JSValue();
+    if (!method)
+        return { };
+    auto* native = dynamicDowncast<PyNativeFunction>(method);
+    return native && (native->nativeFunction() == builtinGetBuffer || native->nativeFunction() == builtinReleaseBuffer) ? JSValue() : method;
 }
 
 bool hasBuffer(JSGlobalObject* globalObject, JSValue value)
@@ -180,7 +186,7 @@ void releaseBufferOfProgram(JSGlobalObject* globalObject, JSValue exporter, JSVa
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         raised = scope.exception();
         scope.clearException();
-        call(globalObject, method, exporter, view);
+        callSpecial(globalObject, typeOf(globalObject, exporter), method, exporter, view);
         if (scope.exception())
             reportUnraisable(globalObject, makeString("Exception ignored in __release_buffer__ of "_s, typeName(globalObject, exporter)));
     }
@@ -215,6 +221,17 @@ void Buffer::appendTo(ByteVector& result) const
         return;
     }
     result.appendVector(bytesOfMemory(memory));
+}
+
+Buffer bufferOrNothing(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Buffer buffer = tryBufferOf(globalObject, value, SimpleBuffer);
+    if (scope.exception()) [[unlikely]] {
+        catchException(globalObject, BuiltinType::BaseException);
+        return { };
+    }
+    return buffer;
 }
 
 Buffer bufferOf(JSGlobalObject* globalObject, JSValue value)
@@ -294,7 +311,7 @@ static bool resize(JSGlobalObject* globalObject, JSUint8Array* view, size_t newL
     if (newLength > capacity && newLength <= capacity + capacity / 8)
         newCapacity = newLength + (newLength >> 3) + (newLength < 9 ? 3 : 6);
     if (!view->reallocateOwnedStorage(vm, newLength, newLength, newCapacity)) {
-        raise(globalObject, scope, BuiltinType::MemoryError, JSValue());
+        raiseMemoryError(globalObject, scope);
         return false;
     }
     view->putDirect(vm, capacityName, jsNumber(static_cast<double>(newCapacity)));
@@ -433,9 +450,25 @@ static size_t reverseFindIn(std::span<const uint8_t> haystack, std::span<const u
 
 // ---- Making them
 
+// Makes room for what is to be made, which is a bytes or a bytearray. False if it raised. In CPython a bytes is kept with what else there is to an object, and the two together can be too much to count,
+// which is not the same to it as there being no room.
+static bool reserve(JSGlobalObject* globalObject, ThrowScope& scope, ByteVector& result, int64_t size, bool isForBytes)
+{
+    if (isForBytes && size > std::numeric_limits<int64_t>::max() - static_cast<int64_t>(globalObject->pyRealm()->typeBytes()->basicSize())) {
+        raise(globalObject, scope, BuiltinType::OverflowError, "byte string is too large"_s);
+        return false;
+    }
+    if (!result.tryReserveCapacity(size)) {
+        raiseMemoryError(globalObject, scope);
+        return false;
+    }
+    return true;
+}
+
 // What bytes(source, encoding, errors) and bytearray(...) hold. False if it raised.
 // `toEmpty` is the bytearray that __init__() was called on, which is emptied as soon as the arguments have been taken, whatever comes of them.
-static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& args, bool isByteArray, ByteVector& content, JSUint8Array* toEmpty = nullptr)
+// `whatBytesMethodGave` is given what __bytes__() returned, if that is where they came from.
+static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& args, bool isByteArray, ByteVector& content, JSUint8Array* toEmpty = nullptr, JSValue* whatBytesMethodGave = nullptr)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -490,9 +523,10 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
         raiseTypeError(globalObject, scope, encodingValue ? "encoding without a string argument"_s : "errors without a string argument"_s);
         return false;
     }
+    auto& names = vm.pythonNames();
     if (!isByteArray && source.isObject()) {
         JSValue self;
-        JSValue method = lookupSpecial(globalObject, source, vm.pythonNames().dunder_bytes, self);
+        JSValue method = lookupSpecial(globalObject, source, names.dunder_bytes, self);
         RETURN_IF_EXCEPTION(scope, false);
         if (method) {
             JSValue result = callMethod(globalObject, method, self);
@@ -501,36 +535,66 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
                 raiseTypeError(globalObject, scope, makeString("__bytes__ returned non-bytes (type "_s, typeName(globalObject, result), ')'));
                 return false;
             }
+            if (whatBytesMethodGave)
+                *whatBytesMethodGave = result;
             content.append(spanOf(asView(result)));
             return true;
         }
+    }
+    // So many zeros. If what it has for __index__() raises TypeError it is not taken for a number after all, and the rest is tried.
+    if (classify(source).isInt() || typeOf(globalObject, source)->lookup(vm, names.dunder_index)) {
+        auto count = toIndexOrOverflow(globalObject, source);
+        if (!scope.exception()) [[likely]] {
+            if (*count < 0) {
+                raiseValueError(globalObject, scope, "negative count"_s);
+                return false;
+            }
+            if (!reserve(globalObject, scope, content, *count, !isByteArray))
+                return false;
+            content.grow(*count);
+            memset(content.mutableSpan().data(), 0, *count);
+            return true;
+        }
+        if (!catchException(globalObject, BuiltinType::TypeError))
+            return false;
     }
     if (auto buffer = tryBufferOf(globalObject, source, FullReadOnlyBuffer)) {
         buffer.appendTo(content);
         return true;
     }
     RETURN_IF_EXCEPTION(scope, false);
-    // So many zeros.
-    if (classify(source).isInt() || typeOf(globalObject, source)->lookup(vm, vm.pythonNames().dunder_index)) {
-        auto count = toIndexOrOverflow(globalObject, source);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (*count < 0) {
-            raiseValueError(globalObject, scope, "negative count"_s);
+
+    // PyBytes_FromObject(), and the end of bytearray___init___impl()
+    JSValue toGoThrough = source;
+    if (!isExactly(globalObject, source, BuiltinType::List) && !isExactly(globalObject, source, BuiltinType::Tuple)) {
+        toGoThrough = getIterator(globalObject, source);
+        if (scope.exception()) [[unlikely]] {
+            if (catchException(globalObject, BuiltinType::TypeError))
+                raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, source), "' object to "_s, typeText));
             return false;
         }
-        content.grow(*count);
-        memset(content.mutableSpan().data(), 0, *count);
-        return true;
+        // A bytes asks how many there will be, and makes room for them.
+        if (!isByteArray) {
+            auto hint = lengthHint(globalObject, source, 64);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (*hint > std::numeric_limits<int64_t>::max() - static_cast<int64_t>(globalObject->pyRealm()->typeBytes()->basicSize())) {
+                raise(globalObject, scope, BuiltinType::OverflowError, "byte string is too large"_s);
+                return false;
+            }
+            if (static_cast<uint64_t>(*hint) > MAX_ARRAY_BUFFER_SIZE) {
+                raiseMemoryError(globalObject, scope);
+                return false;
+            }
+        }
     }
-    if (!typeOf(globalObject, source)->lookup(vm, vm.pythonNames().dunder_iter) && !typeOf(globalObject, source)->lookup(vm, vm.pythonNames().dunder_getitem)) {
-        raiseTypeError(globalObject, scope, makeString("cannot convert '"_s, typeName(globalObject, source), "' object to "_s, typeText));
-        return false;
-    }
-    forEach(globalObject, source, [&] (JSValue item) {
+    forEach(globalObject, toGoThrough, [&] (JSValue item) {
         auto byte = byteFrom(globalObject, item, isByteArray ? "byte must be in range(0, 256)"_s : "bytes must be in range(0, 256)"_s);
         if (!byte)
             return false;
-        content.append(*byte);
+        if (!content.tryAppend(*byte)) [[unlikely]] {
+            raiseMemoryError(globalObject, scope);
+            return false;
+        }
         return true;
     });
     return !scope.exception();
@@ -544,8 +608,12 @@ PYTHON_NATIVE(bytesNew)
     if (type == realm->typeBytes() && args.size() == 2 && !args.keywordCount() && typeOf(globalObject, args[1]) == type)
         return JSValue::encode(args[1]);
     ByteVector content;
-    contentFrom(globalObject, args, false, content);
+    JSValue whatBytesMethodGave;
+    contentFrom(globalObject, args, false, content, nullptr, &whatBytesMethodGave);
     RETURN_IF_EXCEPTION(scope, { });
+    // bytes() gives what __bytes__() gave, which can be of a class derived from bytes. A class derived from bytes makes one of its own of what is in it.
+    if (whatBytesMethodGave && type == realm->typeBytes())
+        return JSValue::encode(whatBytesMethodGave);
     RELEASE_AND_RETURN(scope, JSValue::encode(newView(globalObject, type->instanceStructure(), content.span())));
 }
 
@@ -762,15 +830,21 @@ static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, JSValue se
 {
     auto count = toIndexOrOverflow(globalObject, countValue);
     RETURN_IF_EXCEPTION(scope, false);
-    if (*count > 0 && content.span().size() > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) / *count) {
+    if (*count <= 0 || content.empty())
+        return true;
+    // Too long to be counted, and too long for there to be room for it, are not the same to a bytes.
+    int64_t size = content.span().size();
+    if (size > std::numeric_limits<int64_t>::max() / *count) {
         if (isBytes(self))
             raise(globalObject, scope, BuiltinType::OverflowError, "repeated bytes are too long"_s);
         else
-            raise(globalObject, scope, BuiltinType::MemoryError, JSValue());
+            raiseMemoryError(globalObject, scope);
         return false;
     }
-    if (content.empty())
-        return true;
+    if (!result.tryReserveCapacity(size * *count)) {
+        raiseMemoryError(globalObject, scope);
+        return false;
+    }
     for (int64_t i = 0; i < *count; ++i)
         result.append(content.span());
     return true;
@@ -858,7 +932,9 @@ PYTHON_NATIVE(bytesStartsOrEndsWith)
         return JSValue::encode(jsBoolean(false));
     }
     auto affix = tryBufferOf(globalObject, args[1]);
-    RETURN_IF_EXCEPTION(scope, { });
+    // A TypeError from getting at its bytes is put as one from here.
+    if (scope.exception() && !catchException(globalObject, BuiltinType::TypeError))
+        return { };
     if (!affix)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString(method, " first arg must be bytes or a tuple of bytes, not "_s, typeName(globalObject, args[1]))));
     return JSValue::encode(jsBoolean(matches(*affix)));
@@ -916,12 +992,8 @@ PYTHON_NATIVE(bytesJoin)
 {
     BYTES_PROLOGUE("join");
     MarkedArgumentBuffer items;
-    collect(globalObject, args[1], items);
-    if (scope.exception()) {
-        if (catchException(globalObject, BuiltinType::TypeError))
-            raiseTypeError(globalObject, scope, "can only join an iterable"_s);
-        return { };
-    }
+    collectFast(globalObject, args[1], items, "can only join an iterable"_s);
+    RETURN_IF_EXCEPTION(scope, { });
     Buffers buffers(globalObject);
     for (unsigned i = 0; i < items.size(); ++i) {
         auto item = tryBufferOf(globalObject, items.at(i));
@@ -1131,6 +1203,8 @@ PYTHON_NATIVE(bytesJustify)
     int64_t padding = std::max<int64_t>(*width - length, 0);
     int64_t before = align == '<' ? 0 : align == '>' ? padding : padding / 2 + (padding & *width & 1);
     ByteVector result;
+    if (!reserve(globalObject, scope, result, length + padding, isBytes(selfValue)))
+        return { };
     result.appendUsingFunctor(before, [&] (size_t) { return fill; });
     result.append(content.span());
     result.appendUsingFunctor(padding - before, [&] (size_t) { return fill; });
@@ -1143,6 +1217,8 @@ PYTHON_NATIVE(bytesZfill)
     auto width = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     ByteVector result;
+    if (!reserve(globalObject, scope, result, std::max<int64_t>(*width, content.size()), isBytes(selfValue)))
+        return { };
     size_t start = 0;
     if (!content.empty() && (content[0] == '+' || content[0] == '-'))
         result.append(content[start++]);
@@ -1162,19 +1238,35 @@ PYTHON_NATIVE(bytesExpandTabs)
         RETURN_IF_EXCEPTION(scope, { });
         tabSize = *index;
     }
+    // It is gone through twice: once to find how long what comes of it is, and once to make it.
     ByteVector result;
-    int64_t column = 0;
-    for (uint8_t byte : content) {
-        if (byte == '\t') {
-            if (tabSize > 0) {
-                int64_t spaces = tabSize - column % tabSize;
-                result.appendUsingFunctor(spaces, [] (size_t) -> uint8_t { return ' '; });
-                column += spaces;
+    CheckedInt64 total = 0;
+    for (bool isMaking : { false, true }) {
+        int64_t column = 0;
+        for (uint8_t byte : content) {
+            if (byte == '\t') {
+                if (tabSize > 0) {
+                    int64_t spaces = tabSize - column % tabSize;
+                    if (isMaking)
+                        result.appendUsingFunctor(spaces, [] (size_t) -> uint8_t { return ' '; });
+                    else
+                        total += spaces;
+                    column += spaces;
+                }
+                continue;
             }
-            continue;
+            if (isMaking)
+                result.append(byte);
+            else
+                total += 1;
+            column = byte == '\n' || byte == '\r' ? 0 : column + 1;
         }
-        result.append(byte);
-        column = byte == '\n' || byte == '\r' ? 0 : column + 1;
+        if (isMaking)
+            break;
+        if (total.hasOverflowed())
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "result too long"_s));
+        if (!result.tryReserveCapacity(total.value()))
+            return JSValue::encode(raiseMemoryError(globalObject, scope));
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result.span())));
 }
@@ -1473,10 +1565,20 @@ PYTHON_NATIVE(bytesMakeTranslation)
 // ---- What only a bytearray does
 
 // The bytes of an argument to extend(), += or a slice assignment: anything with bytes in it, or an iterable of ints. False if it raised.
-static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVector& result, ASCIILiteral complaint, int flags = FullReadOnlyBuffer)
+static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVector& result, ASCIILiteral complaint, int flags = FullReadOnlyBuffer, bool isForExtend = false)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isForExtend && hasBuffer(globalObject, value)) {
+        // bytearray_setslice(): whatever comes of asking it for its bytes, if it is not bytes, is lost.
+        auto buffer = bufferOrNothing(globalObject, value);
+        if (!buffer) {
+            raiseTypeError(globalObject, scope, makeString("can't set bytearray slice from "_s, typeName(globalObject, value)));
+            return false;
+        }
+        buffer.appendTo(result);
+        return true;
+    }
     if (auto buffer = tryBufferOf(globalObject, value, flags)) {
         buffer.appendTo(result);
         return true;
@@ -1486,10 +1588,22 @@ static bool bytesToInsert(JSGlobalObject* globalObject, JSValue value, ByteVecto
         raiseTypeError(globalObject, scope, makeString(complaint, typeName(globalObject, value)));
         return false;
     }
-    forEach(globalObject, value, [&] (JSValue item) {
+    JSValue toGoThrough = value;
+    if (isForExtend) {
+        // bytearray_extend_impl(): it is asked how many there will be, and room is made for them.
+        toGoThrough = getIterator(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, false);
+        auto hint = lengthHint(globalObject, value, 32);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (static_cast<uint64_t>(*hint) > MAX_ARRAY_BUFFER_SIZE) {
+            raiseMemoryError(globalObject, scope);
+            return false;
+        }
+    }
+    forEach(globalObject, toGoThrough, [&] (JSValue item) {
         auto byte = byteFrom(globalObject, item, "byte must be in range(0, 256)"_s);
         if (!byte) {
-            // bytearray_extend_impl(): a str is what is most likely to have been given by mistake.
+            // A str is what is most likely to have been given by mistake.
             if (stringIn(value) && catchException(globalObject, BuiltinType::TypeError))
                 raiseTypeError(globalObject, scope, "expected iterable of integers; got: 'str'"_s);
             return false;
@@ -1588,7 +1702,7 @@ PYTHON_NATIVE(byteArrayExtend)
 {
     BYTES_PROLOGUE("extend");
     ByteVector added;
-    bytesToInsert(globalObject, args[1], added, "can't extend bytearray with "_s, SimpleBuffer);
+    bytesToInsert(globalObject, args[1], added, "can't extend bytearray with "_s, SimpleBuffer, true);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
     replaceRange(globalObject, self, self->length(), 0, added.span());
@@ -1776,6 +1890,8 @@ PYTHON_NATIVE(intToBytes)
         return tooBig();
 
     ByteVector result;
+    if (!reserve(globalObject, scope, result, length, true))
+        return { };
     result.append(magnitude.span());
     result.appendUsingFunctor(length - magnitude.size(), [] (size_t) -> uint8_t { return 0; });
     if (isNegative) {
@@ -2226,7 +2342,7 @@ static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (JSValue method = bufferMethodOfProgram(globalObject, object, vm.pythonNames().dunder_buffer)) {
-        JSValue given = call(globalObject, method, object, jsNumber(flags));
+        JSValue given = callSpecial(globalObject, typeOf(globalObject, object), method, object, jsNumber(flags));
         RETURN_IF_EXCEPTION(scope, nullptr);
         auto* inner = dynamicDowncast<PyMemoryView>(given);
         if (!inner) {

@@ -234,9 +234,10 @@ void addInstanceDescriptors(JSGlobalObject* globalObject, PyType* type, bool add
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
-    if (addsDict)
+    // add_getset(): what the class was given by the same name is left as it is.
+    if (addsDict && !type->getDirect(vm, names.dunder_dict))
         type->putDirect(vm, names.dunder_dict, PyGetSetDescriptor::create(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict, false, "dictionary for instance variables"_s));
-    if (addsWeakReferences)
+    if (addsWeakReferences && !type->getDirect(vm, names.dunder_weakref))
         type->putDirect(vm, names.dunder_weakref, PyGetSetDescriptor::create(globalObject, type, "__weakref__"_s, getWeakReferences, nullptr, false, "list of weak references to the object"_s));
 }
 
@@ -792,8 +793,17 @@ static bool checkClassInfo(JSGlobalObject* globalObject, JSValue value, JSValue 
             return true;
         // Nearly every class leaves it to type.
         if (type->metatype() == realm->typeType()) {
-            if (isInstanceCheck)
-                return isInstance(globalObject, value, type);
+            if (isInstanceCheck) {
+                if (isInstance(globalObject, value, type))
+                    return true;
+                // object_isinstance(): what it is not, it may say that it is, by __class__. Only an instance of a class that a program made can say other than what is so.
+                PyType* actual = typeOf(globalObject, value);
+                if (!actual->hasFlag(PyType::IsHeapType))
+                    return false;
+                JSValue claimed = getAttributeIfPresent(globalObject, value, names.dunder_class);
+                RETURN_IF_EXCEPTION(scope, false);
+                return claimed && isClass(claimed) && asType(claimed) != actual && asType(claimed)->isSubtypeOf(type);
+            }
             if (isClass(value))
                 return asType(value)->isSubtypeOf(type);
             knowsWhatItsClassDoes = true;

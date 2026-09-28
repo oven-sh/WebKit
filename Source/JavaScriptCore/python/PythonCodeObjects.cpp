@@ -447,8 +447,8 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
     // eval() does not mind what it is given being indented.
     bool skipsBlanks = function == "eval"_s;
     auto isBlank = [] (auto c) { return c == ' ' || c == '\t'; };
-    if (source.isString()) {
-        String text = asString(source)->value(globalObject);
+    if (JSString* string = stringIn(source)) {
+        String text = string->value(globalObject);
         if (text.contains(static_cast<char16_t>(0))) {
             raise(globalObject, scope, BuiltinType::SyntaxError, "source code string cannot contain null bytes"_s);
             return { };
@@ -464,7 +464,7 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
         }
         return makeSource(text.substring(start), SourceOrigin(), filename);
     }
-    if (auto buffer = tryBufferOf(globalObject, source)) {
+    if (auto buffer = bufferOrNothing(globalObject, source)) {
         size_t start = 0;
         while (skipsBlanks && start < buffer->size() && isBlank((*buffer)[start]))
             ++start;
@@ -474,7 +474,6 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
             return { };
         RELEASE_AND_RETURN(scope, makeSource(globalObject, bytes.span(), SourceOrigin(), filename));
     }
-    RETURN_IF_EXCEPTION(scope, { });
     raiseTypeError(globalObject, scope, makeString(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
     return { };
 }
@@ -497,7 +496,7 @@ PYTHON_NATIVE(builtinCompile)
     JSValue modeValue = args.at(2);
     if (!stringIn(modeValue))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("compile() argument 'mode' must be str, not "_s, typeNameOfArgument(globalObject, modeValue))));
-    String mode = asString(modeValue)->value(globalObject);
+    String mode = stringIn(modeValue)->value(globalObject);
     auto number = [&] (unsigned index, int otherwise) -> int {
         JSValue value = args.at(index);
         if (!value)
