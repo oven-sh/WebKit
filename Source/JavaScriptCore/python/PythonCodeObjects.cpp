@@ -378,32 +378,31 @@ PYTHON_NATIVE(builtinGlobals)
 
 // ---- compile(), exec() and eval()
 
-// The text of what may be a str or bytes. Null if it raised.
-static String sourceTextOf(JSGlobalObject* globalObject, ThrowScope& scope, JSValue source, ASCIILiteral function)
+// The source that compile(), exec() and eval() are given, which may be a str or bytes. Null if it raised.
+static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSValue source, const String& filename, ASCIILiteral function)
 {
-    String text;
-    if (source.isString())
-        text = asString(source)->value(globalObject);
-    else if (auto buffer = tryBufferOf(source)) {
-        // FIXME: A coding declaration.
-        text = decodeBytes(globalObject, source, *buffer, String(), String());
-        RETURN_IF_EXCEPTION(scope, { });
-    } else {
-        raiseTypeError(globalObject, scope, makeString(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
-        return { };
+    // eval() does not mind what it is given being indented.
+    bool skipsBlanks = function == "eval"_s;
+    auto isBlank = [] (auto c) { return c == ' ' || c == '\t'; };
+    if (source.isString()) {
+        String text = asString(source)->value(globalObject);
+        if (text.contains(static_cast<char16_t>(0))) {
+            raise(globalObject, scope, BuiltinType::SyntaxError, "source code string cannot contain null bytes"_s);
+            return { };
+        }
+        unsigned start = 0;
+        while (skipsBlanks && start < text.length() && isBlank(text[start]))
+            ++start;
+        return makeSource(text.substring(start), SourceOrigin(), filename);
     }
-    if (text.contains(static_cast<char16_t>(0))) {
-        raise(globalObject, scope, BuiltinType::SyntaxError, "source code string cannot contain null bytes"_s);
-        return { };
+    if (auto buffer = tryBufferOf(source)) {
+        size_t start = 0;
+        while (skipsBlanks && start < buffer->size() && isBlank((*buffer)[start]))
+            ++start;
+        RELEASE_AND_RETURN(scope, makeSource(globalObject, buffer->subspan(start), SourceOrigin(), filename));
     }
-    return text;
-}
-
-static FunctionExecutable* compileText(JSGlobalObject* globalObject, const String& text, const String& filename, CodeKind kind, unsigned futureFeatures)
-{
-    auto provider = StringSourceProvider::create(text, SourceOrigin(), String(filename), SourceTaintedOrigin::Untainted);
-    provider->setLanguage(SourceLanguage::Python);
-    return compileSource(globalObject, SourceCode(WTF::move(provider)), kind, true, futureFeatures);
+    raiseTypeError(globalObject, scope, makeString(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
+    return { };
 }
 
 static unsigned futureFeaturesOfCaller(CallFrame* callFrame)
@@ -441,12 +440,12 @@ PYTHON_NATIVE(builtinCompile)
         kind = CodeKind::Interactive;
     else
         return JSValue::encode(raiseValueError(globalObject, scope, "compile() mode must be 'exec', 'eval' or 'single'"_s));
-    String text = sourceTextOf(globalObject, scope, values[0], "compile"_s);
+    SourceCode source = sourceOf(globalObject, scope, values[0], filename, "compile"_s);
     RETURN_IF_EXCEPTION(scope, { });
     bool inherits = !values[4] || !isTrue(globalObject, values[4]);
     RETURN_IF_EXCEPTION(scope, { });
     unsigned futureFeatures = inherits ? futureFeaturesOfCaller(callFrame) : 0;
-    FunctionExecutable* executable = compileText(globalObject, text, filename, kind, futureFeatures);
+    FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(codeObjectFor(globalObject, executable));
 }
@@ -525,15 +524,9 @@ PYTHON_NATIVE(builtinExecOrEval)
         if (!infoOf(executable).usesNamespace || infoOf(executable).kind == CodeKind::Class)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("code object passed to "_s, function, "() may not contain free variables"_s)));
     } else {
-        String text = sourceTextOf(globalObject, scope, args[0], function);
+        SourceCode source = sourceOf(globalObject, scope, args[0], "<string>"_s, function);
         RETURN_IF_EXCEPTION(scope, { });
-        if (isEval) {
-            unsigned start = 0;
-            while (start < text.length() && (text[start] == ' ' || text[start] == '\t'))
-                ++start;
-            text = text.substring(start);
-        }
-        executable = compileText(globalObject, text, "<string>"_s, isEval ? CodeKind::Expression : CodeKind::Module, futureFeaturesOfCaller(callFrame));
+        executable = compileSource(globalObject, source, isEval ? CodeKind::Expression : CodeKind::Module, true, futureFeaturesOfCaller(callFrame));
         RETURN_IF_EXCEPTION(scope, { });
     }
     JSValue result = call(globalObject, bindToGlobals(globalObject, executable, globals), localsValue);

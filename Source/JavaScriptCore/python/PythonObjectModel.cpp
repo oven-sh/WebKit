@@ -152,11 +152,18 @@ void setMember(JSGlobalObject* globalObject, JSObject* object, const String& nam
 JSObject* createException(JSGlobalObject* globalObject, PyType* type, JSValue argument)
 {
     VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
     PyInstance* exception = PyInstance::create(vm, type->instanceStructure());
     exception->putDirect(vm, vm.pythonNames().private_args, argument ? PyTuple::create(globalObject, { argument }) : PyTuple::create(globalObject, 0));
-    // What its __init__ would have done.
-    if (argument && type == globalObject->pyRealm()->typeStopIteration())
+    // What its __init__ would have done with the one argument, for those that do more than keep it.
+    if (!argument)
+        return exception;
+    if (type == realm->typeStopIteration())
         setMember(globalObject, exception, "value"_s, argument);
+    else if (type == realm->typeSystemExit())
+        setMember(globalObject, exception, "code"_s, argument);
+    else if (type->isSubtypeOf(realm->typeSyntaxError()) || type->isSubtypeOf(realm->typeImportError()))
+        setMember(globalObject, exception, "msg"_s, argument);
     return exception;
 }
 

@@ -2180,7 +2180,7 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         slowPathLog("Call callee is not a function: ", callee, "\n");
 
         ASSERT(callData.type == CallData::Type::None);
-        if (callerCodeBlock->source().provider()->language() == SourceLanguage::Python)
+        if (callerCodeBlock->source().provider()->isPython())
             LLINT_CALL_THROW(globalObject, Python::createNotCallableError(globalObject, callee));
         LLINT_CALL_THROW(globalObject, createNotAFunctionError(globalObject, callee));
     }

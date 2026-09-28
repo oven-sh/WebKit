@@ -317,7 +317,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
 {
     BEGIN();
     auto bytecode = pc->as<OpCheckTdz>();
-    if (codeBlock->source().provider()->language() == SourceLanguage::Python) {
+    if (codeBlock->source().provider()->isPython()) {
         Python::throwUnboundVariable(globalObject, codeBlock, asString(GET_C(bytecode.m_identifier).jsValue()));
         CHECK_EXCEPTION();
     }

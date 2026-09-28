@@ -1,0 +1,46 @@
+def t(label, data, mode="exec"):
+    try:
+        ns = {}
+        exec(compile(data, "<t>", mode), ns)
+        print(label, "=>", ascii(ns.get("s")))
+    except BaseException as e:
+        print(label, "!!", type(e).__name__, e, getattr(e, "lineno", None), getattr(e, "offset", None))
+t("plain utf8", "s = 'é'".encode("utf-8"))
+t("bom", b"\xef\xbb\xbfs = '\xc3\xa9'")
+t("latin1 cookie", b"# coding: latin-1\ns = '\xe9'")
+t("latin1 second line", b"#!/usr/bin/python\n# -*- coding: iso-8859-1 -*-\ns = '\xe9'")
+t("cookie third line", b"#\n#\n# coding: latin-1\ns = '\xe9'")
+t("cookie after code", b"x = 1\n# coding: latin-1\ns = '\xe9'")
+t("cookie after blank", b"\n# coding: latin-1\ns = '\xe9'")
+t("vim style", b"# vim: set fileencoding=latin-1 :\ns = '\xe9'")
+t("equals", b"# coding=latin_1\ns = '\xe9'")
+t("upper", b"# coding: LATIN-1\ns = '\xe9'")
+t("utf8 alias", b"# coding: UTF_8\ns = '\xc3\xa9'")
+t("utf-8-sig cookie", b"# coding: utf-8-sig\ns = '\xc3\xa9'")
+t("ascii cookie ok", b"# coding: ascii\ns = 'e'")
+t("ascii cookie bad", b"# coding: ascii\ns = '\xe9'")
+t("unknown", b"# coding: nope\ns = 1")
+t("bom with other", b"\xef\xbb\xbf# coding: latin-1\ns = 1")
+t("bom with utf8", b"\xef\xbb\xbf# coding: utf-8\ns = '\xc3\xa9'")
+t("bad utf8", b"s = '\xe9'")
+t("bad utf8 line 3", b"a = 1\nb = 2\ns = '\xe9abc'")
+t("null", b"s = 1\x00")
+t("crlf", b"s = 1\r\nt = 2\r\n")
+t("cr", b"s = 1\rt = 2\r")
+t("not a comment", b"coding: latin-1\n")
+t("indented cookie", b"  \t# coding: latin-1\ns = '\xe9'")
+t("cookie in str is ignored", "# coding: latin-1\ns = 'é'")
+t("utf16 cookie", b"# coding: utf-16\ns = 1")
+t("bytearray", bytearray(b"s = 5"))
+t("memoryview", memoryview(b"s = 6"))
+t("eval bytes", b"1 + 1", "eval")
+t("empty cookie", b"# coding:\ns = 1")
+t("form feed", b"\x0c# coding: latin-1\ns = '\xe9'")
+for data in (b"# coding: nope\ns = 1", b"# coding: ascii\ns = '\xe9'", b"\xef\xbb\xbf# coding: latin-1\ns = 1", b"\xef\xbb\xbf\n# coding: latin-1\ns = 1", b"a = 1\ns = '\xe9abc'", b"s = 1\x00"):
+    try:
+        compile(data, "<t>", "exec")
+    except SyntaxError as e:
+        print(e.args, e.msg, e.filename, e.lineno, e.offset, repr(e.text), e.end_lineno, e.end_offset)
+ns = {}
+exec(compile(b"s = '''a\r\nb\rc'''\r\nt = 'x'", "<t>", "exec"), ns); print(ascii(ns["s"]))
+exec(compile("s = '''a\r\nb\rc'''\r\nt = 'x'", "<t>", "exec"), ns); print(ascii(ns["s"]))

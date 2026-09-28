@@ -44,9 +44,9 @@ public:
     SourceCodeFlags(
         SourceCodeType codeType, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode,
         DerivedContextType derivedContextType, EvalContextType evalContextType, bool isArrowFunctionContext,
-        OptionSet<CodeGenerationMode> codeGenerationMode, SourceLanguage language)
+        OptionSet<CodeGenerationMode> codeGenerationMode, bool isPython)
         : m_flags(
-            (static_cast<unsigned>(language) << 9) |
+            (static_cast<unsigned>(isPython) << 9) |
             (static_cast<unsigned>(codeGenerationMode.toRaw()) << 6) |
             (static_cast<unsigned>(scriptMode) << 5) |
             (static_cast<unsigned>(isArrowFunctionContext) << 4) |
@@ -81,7 +81,7 @@ public:
         OptionSet<CodeGenerationMode> codeGenerationMode, std::optional<int> functionConstructorParametersEndPosition)
             : m_sourceCode(sourceCode)
             , m_name(name)
-            , m_flags(codeType, lexicallyScopedFeatures, scriptMode, derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode, sourceCode.provider().language())
+            , m_flags(codeType, lexicallyScopedFeatures, scriptMode, derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode, sourceCode.provider().isPython())
             , m_functionConstructorParametersEndPosition(functionConstructorParametersEndPosition.value_or(-1))
             , m_hash(sourceCode.hash() ^ m_flags.bits())
     {

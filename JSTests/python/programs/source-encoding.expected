@@ -1,0 +1,39 @@
+plain utf8 => '\xe9'
+bom => '\xe9'
+latin1 cookie => '\xe9'
+latin1 second line => '\xe9'
+cookie third line !! SyntaxError Non-UTF-8 code starting with '\xe9' on line 4, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<t>, line 4) 4 6
+cookie after code !! SyntaxError Non-UTF-8 code starting with '\xe9' on line 3, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<t>, line 3) 3 6
+cookie after blank => '\xe9'
+vim style => '\xe9'
+equals => '\xe9'
+upper => '\xe9'
+utf8 alias => '\xe9'
+utf-8-sig cookie => '\xe9'
+ascii cookie ok => 'e'
+ascii cookie bad !! SyntaxError 'ascii' codec can't decode byte 0xe9 in position 21: ordinal not in range(128) (<t>, line 0) 0 -1
+unknown !! SyntaxError unknown encoding: nope (<t>, line 0) 0 -1
+bom with other !! SyntaxError encoding problem: iso-8859-1 with BOM (<t>, line 1) 1 0
+bom with utf8 => '\xe9'
+bad utf8 !! SyntaxError Non-UTF-8 code starting with '\xe9' on line 1, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<t>, line 1) 1 6
+bad utf8 line 3 !! SyntaxError Non-UTF-8 code starting with '\xe9' on line 3, but no encoding declared; see https://peps.python.org/pep-0263/ for details (<t>, line 3) 3 6
+null !! SyntaxError source code string cannot contain null bytes None None
+crlf => 1
+cr => 1
+not a comment => None
+indented cookie => '\xe9'
+cookie in str is ignored => '\xe9'
+utf16 cookie !! SyntaxError 'utf-16-le' codec can't decode byte 0x0a in position 22: truncated data (<t>, line 0) 0 -1
+bytearray => 5
+memoryview => 6
+eval bytes => None
+empty cookie => 1
+form feed => '\xe9'
+('unknown encoding: nope', ('<t>', 0, -1, None)) unknown encoding: nope <t> 0 -1 None None None
+("'ascii' codec can't decode byte 0xe9 in position 21: ordinal not in range(128)", ('<t>', 0, -1, None)) 'ascii' codec can't decode byte 0xe9 in position 21: ordinal not in range(128) <t> 0 -1 None None None
+('encoding problem: iso-8859-1 with BOM', (None, 1, 0, '# coding: latin-1', 1, 17)) encoding problem: iso-8859-1 with BOM <t> 1 0 '# coding: latin-1' 1 17
+('encoding problem: iso-8859-1 with BOM', (None, 2, 0, '# coding: latin-1', 2, 18)) encoding problem: iso-8859-1 with BOM <t> 2 0 '# coding: latin-1' 2 18
+("Non-UTF-8 code starting with '\\xe9' on line 2, but no encoding declared; see https://peps.python.org/pep-0263/ for details", (None, 2, 6, "s = '�abc'", 2, 6)) Non-UTF-8 code starting with '\xe9' on line 2, but no encoding declared; see https://peps.python.org/pep-0263/ for details <t> 2 6 "s = '�abc'" 2 6
+('source code string cannot contain null bytes',) source code string cannot contain null bytes None None None None None None
+'a\nb\nc'
+'a\nb\nc'

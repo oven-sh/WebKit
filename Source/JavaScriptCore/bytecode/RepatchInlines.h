@@ -48,7 +48,7 @@ inline void* throwNotAFunctionErrorFromCallIC(JSGlobalObject* globalObject, JSCe
     // But we would like to have error information for them from the thrown frame.
     // This frame information can be reconstructed easily since we have CodeOrigin and owner CodeBlock for CallLinkInfo.
     auto [codeBlock, bytecodeIndex] = callLinkInfo->retrieveCaller(owner);
-    if (codeBlock && codeBlock->source().provider()->language() == SourceLanguage::Python) {
+    if (codeBlock && codeBlock->source().provider()->isPython()) {
         throwException(globalObject, scope, Python::createNotCallableError(globalObject, callee));
         return nullptr;
     }

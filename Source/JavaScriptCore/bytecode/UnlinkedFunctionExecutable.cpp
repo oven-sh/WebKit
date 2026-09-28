@@ -57,7 +57,7 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
     CodeSpecializationKind kind, OptionSet<CodeGenerationMode> codeGenerationMode,
     UnlinkedFunctionKind functionKind, ParserError& error, SourceParseMode parseMode, OptimizeBytecode optimize)
 {
-    if (source.provider()->language() == SourceLanguage::Python)
+    if (source.provider()->isPython())
         return Python::generateFunctionCodeBlock(vm, executable, source, kind, codeGenerationMode, error, parseMode);
 
     JSParserBuiltinMode builtinMode = executable->isBuiltinFunction() ? JSParserBuiltinMode::Builtin : JSParserBuiltinMode::NotBuiltin;
@@ -224,7 +224,7 @@ FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* t
 
     FunctionExecutable* result = FunctionExecutable::create(vm, topLevelExecutable, source, this, intrinsic, isInsideOrdinaryFunction);
     // FIXME: The DFG does not know Python's opcodes yet.
-    if (source.provider()->language() == SourceLanguage::Python) {
+    if (source.provider()->isPython()) {
         result->setNeverOptimize(true);
         result->setNeverInline(true);
     }

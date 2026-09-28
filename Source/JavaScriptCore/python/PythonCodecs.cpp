@@ -429,6 +429,11 @@ String decodeBytes(JSGlobalObject* globalObject, JSValue object, std::span<const
                 position = unitSize;
             }
         }
+        // From here on it is one or the other, and that is what it is called if something is wrong.
+        if (unitSize == 2)
+            name = isBigEndian ? "utf-16-be"_s : "utf-16-le"_s;
+        else
+            name = isBigEndian ? "utf-32-be"_s : "utf-32-le"_s;
         break;
     case Codec::UTF16LE:
     case Codec::UTF16BE:

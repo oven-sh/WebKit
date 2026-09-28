@@ -67,6 +67,7 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
     Text,
     Synthetic,
     ImportMap,
+    Python,
 #if USE(BUN_JSC_ADDITIONS)
     BunTranspiledModule,
 #endif
@@ -127,11 +128,6 @@ private:
     LineStarts m_lineStarts WTF_GUARDED_BY_LOCK(m_lock);
 };
 
-enum class SourceLanguage : uint8_t {
-    JavaScript,
-    Python,
-};
-
 class JS_EXPORT_PRIVATE SourceProvider : public ThreadSafeRefCounted<SourceProvider> {
 public:
     static const intptr_t nullID = 1;
@@ -167,9 +163,8 @@ public:
     JS_EXPORT_PRIVATE TextPosition startPosition() const { return m_startPosition; }
     JS_EXPORT_PRIVATE SourceProviderSourceType sourceType() const { return m_sourceType; }
 
-    // Which front end compiles it. To be set before anything has been made of the source.
-    SourceLanguage language() const { return m_language; }
-    void setLanguage(SourceLanguage language) { m_language = language; }
+    // It is for the other front end: see python/README.md.
+    bool isPython() const { return m_sourceType == SourceProviderSourceType::Python; }
     bool isModuleType() const
     {
         switch (m_sourceType) {
@@ -280,7 +275,6 @@ private:
 
     std::atomic<unsigned> m_lockingCount { 0 };
     SourceProviderSourceType m_sourceType;
-    SourceLanguage m_language { SourceLanguage::JavaScript };
     SourceOrigin m_sourceOrigin;
     String m_sourceURL;
     String m_sourceURLStripped;

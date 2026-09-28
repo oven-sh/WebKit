@@ -4502,9 +4502,7 @@ static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
     uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "path"_s)).asCell())->push(globalObject, directory);
     uncheckedDowncast<JSArray>(Python::getAttribute(globalObject, sys, Identifier::fromString(vm, "argv"_s)).asCell())->push(globalObject, jsString(vm, fileName));
 
-    auto provider = StringSourceProvider::create(text, SourceOrigin { absoluteFileURL(fileName) }, String(fileName), SourceTaintedOrigin::Untainted);
-    provider->setLanguage(SourceLanguage::Python);
-    return !Python::runMain(globalObject, SourceCode(WTF::move(provider)));
+    return !Python::runMain(globalObject, Python::makeSource(text, SourceOrigin { absoluteFileURL(fileName) }, fileName));
 }
 
 static void runWithOptions(GlobalObject* globalObject, CommandLine& options, bool& success)

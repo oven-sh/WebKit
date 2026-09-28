@@ -864,7 +864,7 @@ public:
         if (m_codeBlock) {
             if (!m_isTermination) {
                 // An exception in Python remembers each frame that it comes to. It has been in the one that throws it again.
-                if (m_codeBlock->source().provider()->language() == SourceLanguage::Python && !m_isInFrameThatRethrew) [[unlikely]]
+                if (m_codeBlock->source().provider()->isPython() && !m_isInFrameThatRethrew) [[unlikely]]
                     Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
                 m_isInFrameThatRethrew = false;
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
@@ -909,7 +909,7 @@ public:
             m_seenRemoteFunction = uncheckedDowncast<JSRemoteFunction>(m_callFrame->jsCallee());
         }
 
-        if (m_codeBlock && m_codeBlock->source().provider()->language() == SourceLanguage::Python) [[unlikely]]
+        if (m_codeBlock && m_codeBlock->source().provider()->isPython()) [[unlikely]]
             Python::leaveFrame(m_vm, m_callFrame, visitor->bytecodeIndex());
 
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);

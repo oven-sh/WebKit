@@ -515,8 +515,7 @@ static JSValue loadSourceModule(JSGlobalObject* globalObject, const String& full
     // It is there to be found while it runs, in case what it imports imports it.
     registerModule(globalObject, fullName, module);
 
-    auto provider = StringSourceProvider::create(source, SourceOrigin(), String(path), SourceTaintedOrigin::Untainted);
-    provider->setLanguage(SourceLanguage::Python);
+    auto provider = StringSourceProvider::create(source, SourceOrigin(), String(path), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Python);
     JSFunction* function = compileModule(globalObject, SourceCode(WTF::move(provider)), ns, visibility);
     if (function)
         call(globalObject, function);

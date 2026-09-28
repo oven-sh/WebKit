@@ -45,6 +45,14 @@ enum class CodeGenerationMode : uint8_t;
 
 namespace Python {
 
+// The source of a file, from the bytes of it. How they are to be read is up to the file (PEP 263): it can begin with a byte order mark, or say
+// in a comment on one of its first two lines which encoding it is in. Otherwise it is UTF-8. This is a function and not what a SourceProvider
+// does when it is made, because an encoding can be written in Python, and because it can fail. Then SyntaxError has been raised, and what is
+// returned is null.
+JS_EXPORT_PRIVATE SourceCode makeSource(JSGlobalObject*, std::span<const uint8_t>, const SourceOrigin&, const String& sourceURL);
+// The same, from text.
+JS_EXPORT_PRIVATE SourceCode makeSource(const String&, const SourceOrigin&, const String& sourceURL);
+
 // The code of a function whose source is Python, made when it is first called. What generateUnlinkedFunctionCodeBlock() does for
 // JavaScript.
 UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM&, UnlinkedFunctionExecutable*, const SourceCode&, CodeSpecializationKind, OptionSet<CodeGenerationMode>, ParserError&, SourceParseMode);

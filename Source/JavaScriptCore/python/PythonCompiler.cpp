@@ -32,7 +32,9 @@
 #include "JSLexicalEnvironmentInlines.h"
 #include "ParserError.h"
 #include "PyObjects.h"
+#include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
+#include "PythonCodecs.h"
 #include "PythonOperations.h"
 #include "PythonParser.h"
 #include "PythonSymbolTable.h"
@@ -148,6 +150,202 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     return { };
 }
 
+// ---- From bytes to source
+//
+// This follows decode_str() in Parser/tokenizer/string_tokenizer.c of CPython, and what it calls in helpers.c.
+
+// \r\n and \r are ends of lines, and from here on an end of line is \n, in a string that goes over several lines too.
+template<typename Character>
+static void appendTranslatingNewlines(auto& output, std::span<const Character> input)
+{
+    for (size_t i = 0; i < input.size(); ++i) {
+        if (input[i] != '\r') {
+            output.append(input[i]);
+            continue;
+        }
+        output.append(static_cast<Character>('\n'));
+        if (i + 1 < input.size() && input[i + 1] == '\n')
+            ++i;
+    }
+}
+
+SourceCode makeSource(const String& given, const SourceOrigin& origin, const String& sourceURL)
+{
+    String text = given;
+    if (text.contains('\r')) {
+        StringBuilder builder;
+        if (text.is8Bit())
+            appendTranslatingNewlines(builder, text.span8());
+        else
+            appendTranslatingNewlines(builder, text.span16());
+        text = builder.toString();
+    }
+    return SourceCode(StringSourceProvider::create(text, origin, String(sourceURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Python));
+}
+
+// The two encodings that the tokenizer knows by all their names.
+static String normalizedEncodingName(const String& name)
+{
+    StringBuilder builder;
+    for (unsigned i = 0; i < std::min(name.length(), 12u); ++i)
+        builder.append(static_cast<char16_t>(name[i] == '_' ? '-' : toASCIILower(name[i])));
+    String start = builder.toString();
+    if (start == "utf-8"_s || start.startsWith("utf-8-"_s))
+        return "utf-8"_s;
+    for (ASCIILiteral latin1 : { "latin-1"_s, "iso-8859-1"_s, "iso-latin-1"_s }) {
+        if (start == latin1 || start.startsWith(makeString(latin1, '-')))
+            return "iso-8859-1"_s;
+    }
+    return name;
+}
+
+// The encoding that a line declares, or null. It has to be in a comment, with nothing else on the line. If there is nothing on the line but
+// a comment that declares none, or nothing at all, the next line may.
+static String declaredEncodingOf(std::span<const uint8_t> line, bool& nextLineMayDeclare)
+{
+    size_t i = 0;
+    while (i < line.size() && (line[i] == ' ' || line[i] == '\t' || line[i] == '\f'))
+        ++i;
+    nextLineMayDeclare = i == line.size() || line[i] == '#' || line[i] == '\r';
+    if (i == line.size() || line[i] != '#')
+        return { };
+    static constexpr std::array<uint8_t, 6> coding { 'c', 'o', 'd', 'i', 'n', 'g' };
+    for (; i + coding.size() < line.size(); ++i) {
+        if (!spanHasPrefix(line.subspan(i), std::span<const uint8_t>(coding)))
+            continue;
+        size_t t = i + coding.size();
+        if (line[t] != ':' && line[t] != '=')
+            continue;
+        do {
+            ++t;
+        } while (t < line.size() && (line[t] == ' ' || line[t] == '\t'));
+        size_t begin = t;
+        while (t < line.size() && (isASCIIAlphanumeric(line[t]) || line[t] == '-' || line[t] == '_' || line[t] == '.'))
+            ++t;
+        if (begin < t)
+            return normalizedEncodingName(String(byteCast<Latin1Character>(line.subspan(begin, t - begin))));
+    }
+    return { };
+}
+
+// SyntaxError(message, (None, line, offset, text, line, endOffset)), as the tokenizer raises it, which does not know the name of the file.
+static void raiseTokenizerError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message, const String& sourceURL, unsigned line, int offset, std::span<const uint8_t> text, int endOffset)
+{
+    VM& vm = globalObject->vm();
+    JSValue lineText = jsString(vm, String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(text)));
+    PyTuple* details = PyTuple::create(globalObject, { jsUndefined(), jsNumber(line), jsNumber(offset), lineText, jsNumber(line), jsNumber(endOffset) });
+    JSValue exception = call(globalObject, globalObject->pyRealm()->typeSyntaxError(), jsString(vm, message), details);
+    RETURN_IF_EXCEPTION(scope, void());
+    setAttribute(globalObject, exception, Identifier::fromString(vm, "filename"_s), jsString(vm, sourceURL));
+    RETURN_IF_EXCEPTION(scope, void());
+    throwException(globalObject, scope, exception);
+}
+
+SourceCode makeSource(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const SourceOrigin& origin, const String& sourceURL)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (WTF::find(bytes, static_cast<uint8_t>(0)) != notFound) {
+        raise(globalObject, scope, BuiltinType::SyntaxError, "source code string cannot contain null bytes"_s);
+        return { };
+    }
+
+    static constexpr std::array<uint8_t, 3> byteOrderMark { 0xEF, 0xBB, 0xBF };
+    bool hasByteOrderMark = spanHasPrefix(bytes, std::span<const uint8_t>(byteOrderMark));
+    if (hasByteOrderMark)
+        bytes = bytes.subspan(byteOrderMark.size());
+
+    // A line ends at \n, \r\n or \r.
+    auto endOfLine = [&] (size_t start) {
+        size_t end = start;
+        while (end < bytes.size() && bytes[end] != '\n' && bytes[end] != '\r')
+            ++end;
+        return end;
+    };
+    auto startOfNextLine = [&] (size_t end) {
+        if (end < bytes.size() && bytes[end] == '\r' && end + 1 < bytes.size() && bytes[end + 1] == '\n')
+            return end + 2;
+        return std::min(end + 1, bytes.size());
+    };
+
+    String encoding;
+    size_t lineStart = 0;
+    for (unsigned line = 1; line <= 2; ++line) {
+        size_t lineEnd = endOfLine(lineStart);
+        bool nextLineMayDeclare;
+        encoding = declaredEncodingOf(bytes.subspan(lineStart, lineEnd - lineStart), nextLineMayDeclare);
+        if (!encoding.isNull()) {
+            if (hasByteOrderMark && encoding != "utf-8"_s) {
+                // CPython counts the end of the line before as part of the second line.
+                raiseTokenizerError(globalObject, scope, makeString("encoding problem: "_s, encoding, " with BOM"_s), sourceURL, line, 0, bytes.subspan(lineStart, lineEnd - lineStart), lineEnd - lineStart + line - 1);
+                return { };
+            }
+            break;
+        }
+        if (!nextLineMayDeclare)
+            break;
+        lineStart = startOfNextLine(lineEnd);
+    }
+
+    if (encoding.isNull() || encoding == "utf-8"_s) {
+        String text = String::fromUTF8(byteCast<char8_t>(bytes));
+        if (!text.isNull())
+            return makeSource(text, origin, sourceURL);
+        if (bytes.empty())
+            return makeSource(emptyString(), origin, sourceURL);
+
+        // Which byte is at fault, and where that is.
+        unsigned line = 1;
+        unsigned column = 0;
+        size_t start = 0;
+        size_t i = 0;
+        while (i < bytes.size()) {
+            size_t next = i;
+            char32_t character;
+            U8_NEXT(bytes.data(), next, bytes.size(), character);
+            if (static_cast<int32_t>(character) < 0)
+                break;
+            ++column;
+            if (bytes[i] == '\n' || (bytes[i] == '\r' && !(next < bytes.size() && bytes[next] == '\n'))) {
+                ++line;
+                column = 0;
+                start = next;
+            }
+            i = next;
+        }
+        raiseTokenizerError(globalObject, scope, makeString("Non-UTF-8 code starting with '\\x"_s, hex(bytes[i], 2, Lowercase), "' on line "_s, line, ", but no encoding declared; see https://peps.python.org/pep-0263/ for details"_s), sourceURL, line, column + 1, bytes.subspan(start, endOfLine(start) - start), column + 1);
+        return { };
+    }
+
+    // The ends of lines are seen to first, as bytes, and there is one at the end. In an encoding that is not a superset of ASCII that makes
+    // nonsense of it, which is what CPython makes of it.
+    Vector<uint8_t> translated;
+    appendTranslatingNewlines(translated, bytes);
+    if (!translated.isEmpty() && translated.last() != '\n')
+        translated.append('\n');
+    JSValue object = newBytes(globalObject, translated.span());
+    RETURN_IF_EXCEPTION(scope, { });
+    String text = decodeBytes(globalObject, object, translated.span(), encoding, String());
+    if (Exception* exception = scope.exception()) [[unlikely]] {
+        // That there is no such encoding, or that this is not in it, is something wrong with the source.
+        JSValue error = exception->value();
+        PyType* type = typeOf(globalObject, error);
+        if (!type->isSubtypeOf(globalObject->pyRealm()->typeLookupError()) && !type->isSubtypeOf(globalObject->pyRealm()->typeUnicodeDecodeError()))
+            return { };
+        if (!scope.tryClearException())
+            return { };
+        String message = str(globalObject, error);
+        RETURN_IF_EXCEPTION(scope, { });
+        PyTuple* details = PyTuple::create(globalObject, { jsString(vm, sourceURL), jsNumber(0), jsNumber(-1), jsUndefined() });
+        JSValue syntaxError = call(globalObject, globalObject->pyRealm()->typeSyntaxError(), jsString(vm, message), details);
+        RETURN_IF_EXCEPTION(scope, { });
+        throwException(globalObject, scope, syntaxError);
+        return { };
+    }
+    return makeSource(text, origin, sourceURL);
+}
+
 // Compiles a function and all that is in it. Python says what is wrong anywhere in a file before it runs any of it, and some of what can be
 // wrong is only found by generating code. False if something is, and then it is in lastSyntaxError.
 static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource)
@@ -168,7 +366,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    ASSERT(source.provider()->language() == SourceLanguage::Python);
+    ASSERT(source.provider()->isPython());
 
     unsigned futureFeatures = inheritedFutureFeatures;
     bool hasDocstring = false;
