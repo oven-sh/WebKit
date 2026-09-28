@@ -28,6 +28,7 @@
 #include "ObjectAllocationProfile.h"
 
 #include "JSFunctionInlines.h"
+#include "StaticHeap.h"
 
 namespace JSC {
 
@@ -50,7 +51,12 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
         // https://bugs.webkit.org/show_bug.cgi?id=177792
 
         executable = constructor->jsExecutable();
-
+    }
+    // What follows keeps count in the executable of the prototypes that its functions make objects with. One that was made when the
+    // program was built is nobody's to write to.
+    if (executable && StaticHeap::contains(executable))
+        executable = nullptr;
+    if (executable) {
         if (Structure* structure = executable->cachedPolyProtoStructure()) {
             RELEASE_ASSERT(structure->typeInfo().type() == FinalObjectType);
             m_allocator = Allocator();

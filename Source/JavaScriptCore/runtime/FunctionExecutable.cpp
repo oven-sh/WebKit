@@ -35,6 +35,7 @@
 #include "IsoCellSetInlines.h"
 #include "JSArray.h"
 #include "JSCJSValueInlines.h"
+#include "StaticHeap.h"
 #include <wtf/Threading.h>
 
 namespace JSC {
@@ -48,6 +49,34 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 {
     RELEASE_ASSERT(!source.isNull());
     ASSERT(source.length());
+}
+
+void FunctionExecutable::becomeStatic(VM& vm)
+{
+    // Which realm's it is remains to be seen (topLevelExecutable()), and there is going to be more than one function made of it, or
+    // there may as well be.
+    m_topLevelExecutable.clear();
+    m_singleton.invalidate(vm, StringFireDetail("Made when the program was built"));
+}
+
+void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, void* entry, uint32_t index)
+{
+    m_aotEntry[static_cast<unsigned>(kind)] = entry;
+    m_aotIndex[static_cast<unsigned>(kind)] = index;
+    (isCall(kind) ? m_jitCodeForCallWithArityCheck : m_jitCodeForConstructWithArityCheck) = CodePtr<JSEntryPtrTag>::fromTaggedPtr(stub);
+}
+
+void FunctionExecutable::forgetAOTCode(CodeSpecializationKind kind)
+{
+    m_aotEntry[static_cast<unsigned>(kind)] = nullptr;
+    (isCall(kind) ? m_jitCodeForCallWithArityCheck : m_jitCodeForConstructWithArityCheck) = nullptr;
+}
+
+ScriptExecutable* FunctionExecutable::topLevelExecutableOfStaticExecutable() const
+{
+    SourceProvider* provider = source().provider();
+    RELEASE_ASSERT(StaticHeap::isPlaceOfSourceProvider(provider));
+    return StaticHeap::topLevelExecutableOfModuleWithProvider(provider);
 }
 
 void FunctionExecutable::destroy(JSCell* cell)
@@ -119,6 +148,13 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     if (codeBlockForConstruct)
         visitCodeBlockEdge(visitor, codeBlockForConstruct);
 
+    // (One that was made when the program was built is in no set of cells of the collector's. It is looked at every time.)
+    if (StaticHeap::contains(thisObject)) [[unlikely]] {
+        visitor.append(thisObject->m_codeBlockForCall);
+        visitor.append(thisObject->m_codeBlockForConstruct);
+        return;
+    }
+
     if (shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
         vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
 }
@@ -186,11 +222,13 @@ FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
-    ASSERT(m_rareData && !m_rareData->m_asString);
+    ASSERT(!m_rareData || !m_rareData->m_asString);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     const auto& cache = [&](JSString* asString) {
+        if (!m_rareData)
+            return asString;
         WTF::storeStoreFence();
         m_rareData->m_asString.set(vm, this, asString);
         return asString;

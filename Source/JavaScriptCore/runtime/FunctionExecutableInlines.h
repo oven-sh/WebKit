@@ -29,6 +29,7 @@
 #include "InferredValueInlines.h"
 #include "ScriptExecutableInlines.h"
 #include "StructureCreateInlines.h"
+#include "StaticHeap.h"
 
 namespace JSC {
 
@@ -67,6 +68,9 @@ inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeS
 
 inline JSString* FunctionExecutable::toString(JSGlobalObject* globalObject)
 {
+    // (One that was made when the program was built is nobody's to write to, for the sake of being asked twice.)
+    if (!m_rareData && StaticHeap::contains(this))
+        return toStringSlow(globalObject);
     RareData& rareData = ensureRareData();
     if (!rareData.m_asString)
         return toStringSlow(globalObject);

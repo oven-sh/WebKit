@@ -291,6 +291,16 @@ public:
     bool isArrowFunction() const { return isArrowFunctionParseMode(parseMode()); }
 
     bool singletonHasBeenInvalidated() const { return m_singletonHasBeenInvalidated; }
+
+    // The FunctionExecutable that StaticHeap made for it when the program was built, which link() gives to whoever it is good for.
+    FunctionExecutable* staticExecutable() const { return m_staticExecutable; }
+    UnlinkedFunctionCodeBlock* codeBlockIfThereIsOne(CodeSpecializationKind kind) const
+    {
+        if (m_isCached)
+            return nullptr;
+        return (kind == CodeSpecializationKind::CodeForCall ? m_unlinkedCodeBlockForCall : m_unlinkedCodeBlockForConstruct).get();
+    }
+    void setStaticExecutable(FunctionExecutable* executable) { m_staticExecutable = executable; }
     void setSingletonHasBeenInvalidated() { m_singletonHasBeenInvalidated = true; }
 
     JSC::DerivedContextType derivedContextType() const {return static_cast<JSC::DerivedContextType>(m_derivedContextType); }
@@ -468,6 +478,7 @@ private:
     };
 
     Identifier m_ecmaName;
+    FunctionExecutable* m_staticExecutable { nullptr };
 
     // parentScopeTDZVariables and rareData, or, while m_membersAreDeferred, the cache record they still live in.
     class DeferredMembers {
@@ -544,7 +555,7 @@ inline void UnlinkedFunctionExecutable::DeferredMembers::settle(Live&& live)
 }
 
 #if !ASSERT_ENABLED
-static_assert(sizeof(UnlinkedFunctionExecutable) <= 96, "UnlinkedFunctionExecutable needs to be small");
+static_assert(sizeof(UnlinkedFunctionExecutable) <= 104, "UnlinkedFunctionExecutable needs to be small");
 #endif
 
 } // namespace JSC

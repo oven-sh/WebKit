@@ -28,6 +28,7 @@
 #include "JSStringIteratorInlines.h"
 #include "LLIntSlowPaths.h"
 #include "ScriptExecutableInlines.h"
+#include "StaticHeap.h"
 
 namespace JSC { namespace AOT {
 
@@ -251,11 +252,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
         return;
     CodeSpecializationKind kind = isConstruct ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
     FunctionExecutable* executable = function->jsExecutable();
-    if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
-        return;
-    auto* codeOfCallee = static_cast<JITCode*>(executable->generatedJITCodeFor(kind).ptr());
-    if (codeOfCallee->instance() != caller->instance)
-        return;
+    JITCode* codeOfCallee;
+    if (executable->aotEntryFor(kind)) {
+        // The call is going to go straight to the code, which takes it that it has been run before.
+        DeferGCForAWhile deferGC(vm);
+        if (caller->instance != vm.m_aotInstanceOfProgram || !linkStaticFunction(vm, executable, kind, function->scope()))
+            return;
+        codeOfCallee = caller->instance->data[executable->aotIndexFor(kind)]->code;
+    } else {
+        if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
+            return;
+        codeOfCallee = static_cast<JITCode*>(executable->generatedJITCodeFor(kind).ptr());
+        if (codeOfCallee->instance() != caller->instance)
+            return;
+    }
     auto key = imageKeyFor(executable, kind);
     if (!key || !key->sameFunction(code->knownCallee(knownCallee)))
         return;
@@ -288,6 +298,11 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     auto scope = DECLARE_THROW_SCOPE(vm);
     DeferTraps deferTraps(vm); // Nothing gets to throw away the code that is about to run.
     calleeFrame->setCodeBlock(nullptr);
+    if (executable->aotEntryFor(kind)) {
+        DeferGCForAWhile deferGC(vm);
+        if (!linkStaticFunction(vm, executable, kind, function->scopeUnchecked())) [[unlikely]]
+            executable->forgetAOTCode(kind);
+    }
     executable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *calleeFrame->addressOfCodeBlock());
     if (scope.exception()) [[unlikely]]
         return encodeResult(nullptr, std::bit_cast<void*>(&vm));

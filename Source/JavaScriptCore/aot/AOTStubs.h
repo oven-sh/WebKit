@@ -48,6 +48,9 @@ namespace AOT {
     v(Enter) \
     v(EnterFunctionForCall) \
     v(EnterFunctionForConstruct) \
+    /* See generateEnterStaticFunction(). */ \
+    v(EnterStaticFunctionForCall) \
+    v(EnterStaticFunctionForConstruct) \
     /* On entry to a function that may have been passed too few arguments, before anything else. T9 = numParameters, */ \
     /* T10 = the link register as it was on entry. Comes back, with the link register as it was, once the frame has them all. */ \
     /* Clobbers only T0-T7, T11. */ \

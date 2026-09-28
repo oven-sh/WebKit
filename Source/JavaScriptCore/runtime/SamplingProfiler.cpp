@@ -43,6 +43,7 @@
 #include "NativeCallee.h"
 #include "NativeCalleeRegistry.h"
 #include "NativeExecutable.h"
+#include "StaticHeap.h"
 #include "TopExceptionScope.h"
 #include "VM.h"
 #include "VMTrapsInlines.h"
@@ -617,7 +618,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
                 return;
             }
 
-            RELEASE_ASSERT(HeapUtil::isPointerGCObjectJSCell(m_vm.heap, filter, executable));
+            RELEASE_ASSERT(StaticHeap::contains(executable) || HeapUtil::isPointerGCObjectJSCell(m_vm.heap, filter, executable));
             stackFrame.frameType = FrameType::Executable;
             stackFrame.executable = executable;
             m_liveCellPointers.add(executable);

@@ -21,6 +21,7 @@ class DecoderStringTable;
 class JSCell;
 class JSString;
 class PreciseAllocation;
+class ScriptExecutable;
 class SourceCodeKey;
 class TDZEnvironmentLink;
 class UnlinkedCodeBlock;
@@ -42,7 +43,7 @@ public:
 
     // Everything that can be made ahead of time, as a file. `strings` is what EncoderStringTable::serialize() returned; the payload
     // and the entries of its modules are BytecodeLinkEncoder::finish()'s. Empty if it cannot be done here.
-    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules);
+    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { });
     static bool isBuilding() { return s_isBuilding; }
     static JSString* emptyStringWhileBuilding(VM&); // Not the VM's own.
     static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Likewise.
@@ -96,6 +97,27 @@ public:
     // every collection look at it.
     JS_EXPORT_PRIVATE static void placeNextCell(VM&, void* address);
     JS_EXPORT_PRIVATE static void didPlaceCell(VM&, JSCell*);
+    // ---- The FunctionExecutables that are made when the program is built. They say what their source is by pointing at the
+    // module's SourceProvider, which is made when the program runs: so that has to be made where they point.
+
+    static constexpr size_t sizeOfPlaceForSourceProvider = 256;
+    // For the provider of the module whose bytecode is there in the payload. Null if there is none, or it has been taken, or the
+    // VM is not the one that the static heap is for. What is made there stays.
+    JS_EXPORT_PRIVATE static void* takePlaceForSourceProvider(VM&, size_t entryOffsetOfModule, size_t sizeOfProvider);
+    static bool isPlaceOfSourceProvider(const void* pointer)
+    {
+        uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);
+        uintptr_t address = std::bit_cast<uintptr_t>(pointer);
+        return address >= start + bmalloc::StaticRegion::offsetOfSourceProvidersInBss && address < start + bmalloc::StaticRegion::offsetOfTopLevelExecutablesInBss;
+    }
+    // The executable of the code of the module itself, in the realm that runs the program.
+    static ScriptExecutable*& topLevelExecutableOfModuleWithProvider(const void* provider)
+    {
+        uintptr_t start = bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss);
+        size_t index = (std::bit_cast<uintptr_t>(provider) - start - bmalloc::StaticRegion::offsetOfSourceProvidersInBss) / sizeOfPlaceForSourceProvider;
+        return reinterpret_cast<ScriptExecutable**>(start + bmalloc::StaticRegion::offsetOfTopLevelExecutablesInBss)[index];
+    }
+
     // Cells that are not in the collector's own memory all say that they are of one VM. Whether it is this one: the first to ask,
     // if there is no static heap to have settled it.
     JS_EXPORT_PRIVATE static bool canPlaceCellsOf(VM&);

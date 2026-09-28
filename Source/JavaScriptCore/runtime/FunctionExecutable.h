@@ -269,7 +269,22 @@ public:
 
     Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
 
-    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return m_topLevelExecutable.get(); }
+    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND
+    {
+        if (ScriptExecutable* result = m_topLevelExecutable.get()) [[likely]]
+            return result;
+        return topLevelExecutableOfStaticExecutable();
+    }
+
+    // Of one that was made when the program was built, and is nobody's to write to: where the code that was compiled for it then is,
+    // and which function that is (AOT::CodeHeader::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which go by these.
+    void* aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; }
+    uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
+    JS_EXPORT_PRIVATE void becomeStatic(VM&);
+    JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, void* stub, void* entry, uint32_t index);
+    void forgetAOTCode(CodeSpecializationKind); // It is not for the realm after all.
+    static constexpr ptrdiff_t offsetOfAOTEntryFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotEntry) + static_cast<unsigned>(kind) * sizeof(void*); }
+    static constexpr ptrdiff_t offsetOfAOTIndexFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotIndex) + static_cast<unsigned>(kind) * sizeof(uint32_t); }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
@@ -344,6 +359,10 @@ private:
     WriteBarrier<CodeBlock> m_codeBlockForConstruct;
     InferredValue<JSFunction> m_singleton;
     Box<InlineWatchpointSet> m_polyProtoWatchpoint;
+    void* m_aotEntry[2] { };
+    uint32_t m_aotIndex[2] { };
+
+    JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOfStaticExecutable() const;
 };
 
 } // namespace JSC

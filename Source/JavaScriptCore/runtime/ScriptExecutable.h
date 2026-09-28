@@ -87,6 +87,9 @@ public:
     bool isOkToOptimize() const { return !neverOptimize(); }
     bool canUseOSRExitFuzzing() const { return m_canUseOSRExitFuzzing; }
     bool isInsideOrdinaryFunction() const { return m_isInsideOrdinaryFunction; }
+    // The code of a module: the executables of its functions are the ones that were made when the program was built.
+    bool givesStaticExecutables() const { return m_givesStaticExecutables; }
+    void setGivesStaticExecutables() { m_givesStaticExecutables = true; }
     
     bool* addressOfDidTryToEnterInLoop() LIFETIME_BOUND { return &m_didTryToEnterInLoop; }
 
@@ -188,6 +191,7 @@ protected:
     bool m_canUseOSRExitFuzzing : 1;
     bool m_codeForGeneratorBodyWasGenerated : 1;
     bool m_isInsideOrdinaryFunction : 1;
+    bool m_givesStaticExecutables : 1 { false };
     unsigned m_derivedContextType : 2; // DerivedContextType
     unsigned m_evalContextType : 2; // EvalContextType
 };

@@ -1379,7 +1379,7 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSCall)
-                jitCode = functionExecutable->generatedJITCodeForCall();
+                jitCode = functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall);
             protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, context, argsCount, args.data());
         }
     }
@@ -1387,8 +1387,8 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     // Execute the code:
     scope.release();
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
-        return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
+        ASSERT(jitCode == functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall));
+        return JSValue::decode(vmEntryToJavaScript(functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
     }
 
 #if ENABLE(WEBASSEMBLY)
@@ -1475,7 +1475,7 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSConstruct)
-                jitCode = constructData.js.functionExecutable->generatedJITCodeForConstruct();
+                jitCode = constructData.js.functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForConstruct);
             protoCallFrame.init(newCodeBlock, globalObject, constructor, newTarget, nullptr, argsCount, args.data());
         }
     }
@@ -1483,8 +1483,8 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
     EncodedJSValue result;
     // Execute the code.
     if (isJSConstruct) {
-        ASSERT(jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
-        result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame);
+        ASSERT(jitCode == constructData.js.functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForConstruct));
+        result = vmEntryToJavaScript(constructData.js.functionExecutable->entrypointFor(CodeSpecializationKind::CodeForConstruct, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame);
     } else
         result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
 
@@ -1507,7 +1507,7 @@ CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction*
 
     if (!newCodeBlock) {
         // Code from the static compiler, which stays.
-        cachedCall.m_addressForCall = cachedCall.functionExecutable()->generatedJITCodeForCall()->addressForCall();
+        cachedCall.m_addressForCall = cachedCall.functionExecutable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
         return nullptr;
     }
     newCodeBlock->m_shouldAlwaysBeInlined = false;
@@ -1528,7 +1528,7 @@ CodeBlock* Interpreter::prepareForMicrotaskCall(MicrotaskCall& microtaskCall, JS
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, { });
 
     if (!newCodeBlock) {
-        microtaskCall.m_addressForCall = microtaskCall.functionExecutable()->generatedJITCodeForCall()->addressForCall();
+        microtaskCall.m_addressForCall = microtaskCall.functionExecutable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
         return nullptr;
     }
     newCodeBlock->m_shouldAlwaysBeInlined = false;

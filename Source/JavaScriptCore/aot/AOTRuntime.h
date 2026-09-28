@@ -318,6 +318,8 @@ struct Data {
     unsigned numSlots;
     bool hasBeenFilledSinceLastCollection;
     bool ownsConstants; // Some are of the realm: this is a copy of the unlinked code's with those filled in.
+    unsigned indexAmongAll; // Where it is in the Instance's lists.
+    unsigned indexAmongFilled; // If hasBeenFilledSinceLastCollection.
     // Another number whenever the cache of a property access has become one for something else, or for nothing. What code has found
     // out about such caches, and nothing but them, it need not find out again while this is the same (GuardKind::BeginSlotChecks).
     uint64_t slotEpoch;
@@ -438,6 +440,9 @@ private:
 
 // Makes the code the function's. It gets no CodeBlock. False: an exception was thrown.
 bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSGlobalObject*, Ref<JITCode>&&);
+// An executable that was made when the program was built (FunctionExecutable::aotEntryFor()) is about to be run for the first time:
+// gives its code what it has of the realm. False if the code is not for the realm the function is of.
+bool linkStaticFunction(VM&, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 
 unsigned hashOfBytecode(UnlinkedCodeBlock*);
 // Where code from the JIT that wants to call `code` with a call instruction, whose reach is limited, can call. Any thread.

@@ -499,6 +499,8 @@ public:
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
     Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
+    AOT::Instance* m_aotInstanceOfProgram { nullptr }; // The one that has the environments of the program's modules in their places.
+    static constexpr ptrdiff_t offsetOfAOTInstanceOfProgram() { return OBJECT_OFFSETOF(VM, m_aotInstanceOfProgram); }
 #endif
     
     ALWAYS_INLINE CompleteSubspace& primitiveGigacageAuxiliarySpace() { return heap.primitiveGigacageAuxiliarySpace; }

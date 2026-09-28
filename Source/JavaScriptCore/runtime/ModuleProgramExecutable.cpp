@@ -26,12 +26,14 @@
 #include "config.h"
 #include "ModuleProgramExecutable.h"
 
+#include "AOTImage.h"
 #include "CodeCache.h"
 #include "Debugger.h"
 #include "Error.h"
 #include "FunctionExecutable.h"
 #include "JSModuleRecord.h"
 #include "ModuleProgramCodeBlock.h"
+#include "StaticHeap.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakInlines.h"
@@ -97,6 +99,15 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     }
 
     m_unlinkedCodeBlock.set(vm, this, unlinkedModuleProgramCode);
+#if ENABLE(FTL_JIT)
+    if (SourceProvider* provider = source().provider(); StaticHeap::isPlaceOfSourceProvider(provider) && StaticHeap::contains(unlinkedModuleProgramCode) && !givesStaticExecutables()
+        && AOT::Image::environmentsSize() && StaticHeap::canPlaceCellsOf(vm)) {
+        if (auto*& slot = StaticHeap::topLevelExecutableOfModuleWithProvider(provider); !slot) {
+            slot = this;
+            setGivesStaticExecutables();
+        }
+    }
+#endif
     // The symbol table and the function declarations' executables are made once and stay for as long as the executable
     // does, whatever happens to its code (ScriptExecutable::clearCode, releaseUnlinkedCodeIfRecoverable). The
     // declarations' code is shared by every record of the executable and the optimizing tiers treat the scope of a symbol
@@ -234,6 +245,8 @@ void ModuleProgramExecutable::releaseUnlinkedCodeIfRecoverable(VM& vm)
 
 void ModuleProgramExecutable::destroy(JSCell* cell)
 {
+    if (auto* executable = static_cast<ModuleProgramExecutable*>(cell); executable->givesStaticExecutables())
+        StaticHeap::topLevelExecutableOfModuleWithProvider(executable->source().provider()) = nullptr;
     static_cast<ModuleProgramExecutable*>(cell)->ModuleProgramExecutable::~ModuleProgramExecutable();
 }
 

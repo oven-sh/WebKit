@@ -185,7 +185,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         calleeGlobalObject = functionScope->realm();
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = functionExecutable->generatedJITCodeForCall();
+            jitCode = functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall);
         }
     } else {
         ASSERT(callData.type == CallData::Type::Native);
@@ -202,8 +202,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     protoCallFrame.init(newCodeBlock, calleeGlobalObject, asObject(functionObject), thisValue, context, sizeof...(args) + 1, argArray.data());
 
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
-        return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
+        ASSERT(jitCode == functionExecutable->jitCodeIfAnyFor(CodeSpecializationKind::CodeForCall));
+        return JSValue::decode(vmEntryToJavaScript(functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
     }
 
 #if ENABLE(WEBASSEMBLY)

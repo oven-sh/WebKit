@@ -11,9 +11,11 @@
 #include "AbstractSlotVisitorInlines.h"
 #include "BuiltinNames.h"
 #include "CachedTypes.h"
+#include "FunctionExecutable.h"
 #include "JSCInlines.h"
 #include "PreciseAllocation.h"
 #include "SourceCodeKey.h"
+#include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
 #include <wtf/BitVector.h>
 #include <wtf/text/AtomStringTable.h>
@@ -322,7 +324,68 @@ static void reportWhatMayPointOut()
 }
 #endif
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules)
+static void* addressOfSourceProvider(size_t moduleIndex)
+{
+    return reinterpret_cast<void*>(Region::startOf(Region::Arena::Bss) + Region::offsetOfSourceProvidersInBss + moduleIndex * StaticHeap::sizeOfPlaceForSourceProvider);
+}
+
+// The functions of `codeBlock`, whose source is `source`, and theirs.
+static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleID, const AOT::ImageView& image, uint64_t& made)
+{
+    auto make = [&](UnlinkedFunctionExecutable* unlinked) {
+        // (The source of a constructor that nobody wrote is one of the engine's own.)
+        if (unlinked->staticExecutable() || unlinked->isBuiltinDefaultClassConstructor())
+            return;
+        auto functionKey = orderFunctionKey(*unlinked, unlinked->linkedSourceCode(source));
+        if (!functionKey)
+            return;
+        std::optional<AOT::ImageView::Function> code[2];
+        for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+            if (!unlinked->codeBlockIfThereIsOne(kind))
+                continue;
+            AOT::ImageKey key;
+            key.module = moduleID;
+            key.start = functionKey->start;
+            key.kind = static_cast<uint32_t>(functionKey->kind) << 1 | (kind == CodeSpecializationKind::CodeForConstruct);
+            code[static_cast<unsigned>(kind)] = image.find(key);
+        }
+        if (!code[0] && !code[1])
+            return;
+        FunctionExecutable* executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
+        executable->becomeStatic(vm);
+        for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+            if (auto& function = code[static_cast<unsigned>(kind)])
+                executable->setAOTCode(kind, image.addressOfStub(isCall(kind) ? AOT::Stub::EnterStaticFunctionForCall : AOT::Stub::EnterStaticFunctionForConstruct), function->entry, function->index);
+        }
+        unlinked->setStaticExecutable(executable);
+        made++;
+        for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+            if (auto* nested = unlinked->codeBlockIfThereIsOne(kind))
+                makeExecutables(vm, nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleID, image, made);
+        }
+    };
+    for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
+        make(codeBlock->functionDecl(i));
+    for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
+        make(codeBlock->functionExpr(i));
+}
+
+void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t sizeOfProvider)
+{
+    RELEASE_ASSERT(sizeOfProvider <= sizeOfPlaceForSourceProvider);
+    if (!s_header || s_vm != &vm)
+        return nullptr;
+    std::span<const StaticHeapModule> modules { std::bit_cast<const StaticHeapModule*>(s_header->modules), static_cast<size_t>(s_header->numberOfModules) };
+    size_t index = std::ranges::lower_bound(modules, entryOffset, { }, &StaticHeapModule::entryOffset) - modules.begin();
+    if (index == modules.size() || modules[index].entryOffset != entryOffset || !modules[index].codeBlock)
+        return nullptr;
+    void* place = addressOfSourceProvider(index);
+    if (*static_cast<uintptr_t*>(place)) // What is there starts with the address of a table of virtual functions.
+        return nullptr;
+    return place;
+}
+
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode)
 {
     if (!Region::beginBuilding())
         return { };
@@ -383,6 +446,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 auto* modules = static_cast<StaticHeapModule*>(Region::allocate(Region::Arena::Data, sortedOffsets.size() * sizeof(StaticHeapModule), 16));
                 header.modules = std::bit_cast<uint64_t>(modules);
                 header.numberOfModules = sortedOffsets.size();
+                auto imageView = AOT::ImageView::tryCreate(imageOfCode, reinterpret_cast<const void*>(Region::startOf(Region::Arena::Image)));
+                uint64_t numberOfExecutables = 0;
+                auto reportExecutables = makeScopeExit([&] {
+                    if (Options::aotReportStats()) [[unlikely]]
+                        dataLogLn("StaticHeap: ", numberOfExecutables, " executables of functions");
+                });
                 Vector<StaticHeapTDZ> tdz;
                 s_tdzBeingBuilt = &tdz;
                 s_emptyStringBeingBuilt = nullptr;
@@ -405,6 +474,13 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             codeBlock = nullptr;
                         if (!codeBlock)
                             numberOfCodeBlocksFailed++;
+                        else if (imageView) {
+                            // Nothing is asked of the provider here, which is not there. It is counted as referred to, in memory that is
+                            // not kept: once more than it is, or it would be destroyed if the module turns out to have no functions.
+                            static_cast<SourceProvider*>(addressOfSourceProvider(i))->ref();
+                            SourceCode source { RefPtr { static_cast<SourceProvider*>(addressOfSourceProvider(i)) }, 0, static_cast<int>(key.length()), 1, 1 };
+                            makeExecutables(vm, codeBlock, source, false, sortedOffsets[i] + 1, *imageView, numberOfExecutables);
+                        }
                         modules[i] = { sortedOffsets[i], key.hash(), static_cast<uint32_t>(key.length()), key.flagsBits(), std::bit_cast<uint64_t>(codeBlock) };
                     }
                     // (Not destroyed: it is referred to. It has one reference to what is let go of right after.)

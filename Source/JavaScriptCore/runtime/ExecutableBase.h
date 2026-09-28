@@ -118,6 +118,9 @@ public:
         return *m_jitCodeForConstruct;
     }
 
+    // To keep hold of while it runs. Code that was compiled when the program was built stays, and has none.
+    JSC::JITCode* jitCodeIfAnyFor(CodeSpecializationKind kind) const { return (kind == CodeSpecializationKind::CodeForCall ? m_jitCodeForCall : m_jitCodeForConstruct).get(); }
+
     void* generatedJITCodeAddressForCall() const
     {
         ASSERT(m_jitCodeForCall);

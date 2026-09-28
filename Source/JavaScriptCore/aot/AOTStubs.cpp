@@ -12,6 +12,7 @@
 #include "AOTThunks.h"
 #include "BaselineJITRegisters.h"
 #include "CodeBlock.h"
+#include "FunctionExecutable.h"
 #include "GetterSetter.h"
 #include "JSGlobalObject.h"
 #include "JSCInlines.h"
@@ -1249,6 +1250,8 @@ static void generateEnterFunctionForConstruct(CCallHelpers& jit) { generateEnter
 
 // ---- Calls
 
+static void findTargetAndCall(CCallHelpers&);
+
 // The frame is made, but for its CodeBlock. T0 = callee, T2 = the CallLinkInfo of a VirtualCallInfo, if it comes to that.
 template<typename LoadCallLinkInfo>
 static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const LoadCallLinkInfo& loadCallLinkInfo)
@@ -1277,6 +1280,11 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
     // caller is gone: everything there is to know comes with the CallLinkInfo.
     slow.link(&jit);
     loadCallLinkInfo();
+    findTargetAndCall(jit);
+}
+
+static void findTargetAndCall(CCallHelpers& jit)
+{
     constexpr GPRReg info = BaselineJITRegisters::Call::callLinkInfoGPR;
     jit.emitFunctionPrologue();
     // As emitCallSlowPath(): the operation's frame goes where the last callee at this depth had its own.
@@ -1303,6 +1311,42 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
     jit.loadPtr(Address(T11, VirtualCallInfo::offsetOfLookupExceptionHandler()), T11);
     unwind(jit, T10, T11);
 }
+
+// Where a FunctionExecutable that was made when the program was built says its code is, to whoever makes frames the way the
+// interpreter wants them. Nothing is written in such an executable: which function it is, and where the code for that is, it says;
+// the rest is found from the callee. The first time, the function has nothing of the realm yet, and findCallTarget() sees to that.
+static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKind kind, Entry callLinkInfo)
+{
+    jit.loadPtr(slotOfFrameBeingMade(CallFrameSlot::callee), T9);
+    jit.move(T9, T10);
+    Jump isPreciseAllocation = jit.branchTestPtr(CCallHelpers::NonZero, T10, TrustedImm32(PreciseAllocation::halfAlignment));
+    jit.andPtr(CCallHelpers::TrustedImmPtr(MarkedBlock::blockMask), T10);
+    jit.loadPtr(Address(T10, MarkedBlock::offsetOfHeader + MarkedBlock::Header::offsetOfVM()), T10);
+    Jump haveVM = jit.jump();
+    isPreciseAllocation.link(&jit);
+    jit.loadPtr(Address(T10, PreciseAllocation::offsetOfWeakSet() + WeakSet::offsetOfVM() - PreciseAllocation::headerSize()), T10);
+    haveVM.link(&jit);
+    jit.loadPtr(Address(T10, VM::offsetOfAOTInstanceOfProgram()), T10);
+
+    jit.loadPtr(Address(T9, JSFunction::offsetOfExecutableOrRareData()), T9);
+    Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T9, TrustedImm32(JSFunction::rareDataTag));
+    jit.loadPtr(Address(T9, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T9);
+    hasExecutable.link(&jit);
+    jit.load32(Address(T9, FunctionExecutable::offsetOfAOTIndexFor(kind)), T11);
+    jit.loadPtr(Address(T9, FunctionExecutable::offsetOfAOTEntryFor(kind)), T9);
+    jit.addPtr(TrustedImm32(Instance::offsetOfData()), T10, T12);
+    jit.loadPtr(CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesEight), T12);
+    Jump hasNothingYet = jit.branchTestPtr(CCallHelpers::Zero, T12);
+    jit.storePtr(T10, slotOfFrameBeingMade(CallFrameSlot::codeBlock));
+    jit.farJump(T9, JSEntryPtrTag);
+
+    hasNothingYet.link(&jit);
+    jit.loadPtr(Address(T10, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(callLinkInfo) * sizeof(void*)), BaselineJITRegisters::Call::callLinkInfoGPR);
+    findTargetAndCall(jit);
+}
+static void generateEnterStaticFunctionForCall(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForCall, Entry::CallLinkInfoForCall); }
+static void generateEnterStaticFunctionForConstruct(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForConstruct, Entry::CallLinkInfoForConstruct); }
 
 static void generateVirtualCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
 static void generateVirtualConstruct(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForConstruct, [] { }); }

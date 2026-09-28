@@ -190,12 +190,18 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->collections->sizeFromInstance = size;
     globalObject->setAOTInstance(instance);
     vm.m_aotInstances.append(instance);
+    if (environmentsSize) {
+        RELEASE_ASSERT(!vm.m_aotInstanceOfProgram);
+        vm.m_aotInstanceOfProgram = instance;
+    }
     return *instance;
 }
 
 void Instance::destroy(Instance* instance)
 {
     instance->vm->m_aotInstances.removeFirst(instance);
+    if (instance->vm->m_aotInstanceOfProgram == instance)
+        instance->vm->m_aotInstanceOfProgram = nullptr;
     while (!instance->collections->all.isEmpty())
         Data::destroy(instance->collections->all.last());
     size_t environmentsSize = instance->collections->environmentsSize;
@@ -324,6 +330,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     Data*& place = instance.data[code.header().index];
     RELEASE_ASSERT(!place);
     place = data;
+    data->indexAmongAll = instance.collections->all.size();
     instance.collections->all.append(data);
     data->noteFilled(); // It is new.
 
@@ -342,9 +349,17 @@ void Data::destroy(Data* data)
     Data*& place = instance.data[data->code->header().index];
     RELEASE_ASSERT(place == data);
     place = nullptr;
-    instance.collections->all.removeFirst(data);
+    auto removeFrom = [&](Vector<Data*>& list, unsigned Data::*index) {
+        RELEASE_ASSERT(list[data->*index] == data);
+        Data* last = list.takeLast();
+        if (last != data) {
+            list[data->*index] = last;
+            last->*index = data->*index;
+        }
+    };
+    removeFrom(instance.collections->all, &Data::indexAmongAll);
     if (data->hasBeenFilledSinceLastCollection)
-        instance.collections->filledSinceLastCollection.removeFirst(data);
+        removeFrom(instance.collections->filledSinceLastCollection, &Data::indexAmongFilled);
     delete data->watchpoints;
     if (data->ownsConstants)
         fastFree(const_cast<void*>(data->constants));
@@ -391,6 +406,8 @@ LineColumn Data::lineColumnFor(BytecodeIndex bytecodeIndex) const
 
 static FunctionExecutable* functionOf(Data& data, unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)
 {
+    if (FunctionExecutable* result = unlinkedExecutable->staticExecutable(); result && StaticHeap::contains(data.executable))
+        return result;
     UnlinkedCodeBlock* unlinkedCodeBlock = data.unlinkedCodeBlock;
     if (!data.functions)
         data.functions = static_cast<FunctionExecutable**>(fastZeroedMalloc((unlinkedCodeBlock->numberOfFunctionDecls() + unlinkedCodeBlock->numberOfFunctionExprs()) * sizeof(FunctionExecutable*)));
@@ -433,9 +450,28 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     return true;
 }
 
+bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, JSScope* scope)
+{
+    Instance* instance = vm.m_aotInstanceOfProgram;
+    if (!instance || scope->realm() != instance->globalObject)
+        return false;
+    if (instance->data[executable->aotIndexFor(kind)])
+        return true;
+    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(kind);
+    RELEASE_ASSERT(unlinkedCodeBlock);
+    ImageCode found = findInImage(executable, kind, unlinkedCodeBlock, scope);
+    if (!found)
+        return false;
+    Ref<JITCode> code = codeFromImage(found, unlinkedCodeBlock);
+    RELEASE_ASSERT(code->header().index == executable->aotIndexFor(kind));
+    code->setInstance(*instance);
+    return !!Data::create(*instance, executable, unlinkedCodeBlock, code.get());
+}
+
 void Data::noteFilled()
 {
     hasBeenFilledSinceLastCollection = true;
+    indexAmongFilled = instance->collections->filledSinceLastCollection.size();
     instance->collections->filledSinceLastCollection.append(this);
 }
 

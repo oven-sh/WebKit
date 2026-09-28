@@ -123,6 +123,29 @@ private:
     const void* m_code;
 };
 
+// An image that has just been made, for whoever needs to know where what is in it is going to be once it is mapped at `address`.
+class ImageView {
+public:
+    struct Function {
+        void* entry; // That checks the number of arguments.
+        uint32_t index; // CodeHeader::index
+    };
+    JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
+    JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
+    JS_EXPORT_PRIVATE void* addressOfStub(Stub) const;
+
+private:
+    ImageView(std::span<const uint8_t> data, const void* address)
+        : m_data(data)
+        , m_address(static_cast<const uint8_t*>(address))
+    {
+    }
+    const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_data.data()); }
+
+    std::span<const uint8_t> m_data;
+    const uint8_t* m_address;
+};
+
 // The number an image knows the provider's module by; zero if it is in no image.
 uint32_t moduleIDFor(SourceProvider&);
 std::optional<ImageKey> imageKeyFor(ScriptExecutable*, CodeSpecializationKind);

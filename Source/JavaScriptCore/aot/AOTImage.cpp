@@ -373,6 +373,36 @@ const ImageFunction* Image::lookup(const ImageKey& key) const
     return nullptr;
 }
 
+std::optional<ImageView> ImageView::tryCreate(std::span<const uint8_t> data, const void* address)
+{
+    if (data.size() < sizeof(ImageHeader))
+        return std::nullopt;
+    auto& header = *reinterpret_cast<const ImageHeader*>(data.data());
+    if (header.magic != imageMagic || header.stamp != imageStamp() || header.size > data.size() || !header.environmentsSize)
+        return std::nullopt;
+    return ImageView { data, address };
+}
+
+std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
+{
+    auto& header = this->header();
+    auto* table = reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset);
+    unsigned mask = header.tableCapacity - 1;
+    for (unsigned bucket = key.hash() & mask; table[bucket].record; bucket = (bucket + 1) & mask) {
+        if (!table[bucket].sameFunction(key))
+            continue;
+        auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + table[bucket].record - 1);
+        size_t start = header.codeOffset + function.codeOffset;
+        return Function { const_cast<uint8_t*>(m_address) + start + function.arityCheckOffset, reinterpret_cast<const CodeHeader*>(m_data.data() + start)->index };
+    }
+    return std::nullopt;
+}
+
+void* ImageView::addressOfStub(Stub stub) const
+{
+    return const_cast<uint8_t*>(m_address) + header().codeOffset + header().stubOffsets[static_cast<unsigned>(stub)];
+}
+
 std::pair<Image*, const ImageFunction*> Image::find(const ImageKey& key)
 {
     auto& all = registry();

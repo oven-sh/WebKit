@@ -223,6 +223,9 @@ SourceCode UnlinkedFunctionExecutable::linkedSourceCode(const SourceCode& passed
 
 FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* topLevelExecutable, const SourceCode& passedParentSource, std::optional<int> overrideLineNumber, Intrinsic intrinsic, bool isInsideOrdinaryFunction)
 {
+    if (m_staticExecutable && topLevelExecutable && topLevelExecutable->givesStaticExecutables() && !overrideLineNumber) [[likely]]
+        return m_staticExecutable;
+
     SourceCode source = linkedSourceCode(passedParentSource);
     FunctionOverrides::OverrideInfo overrideInfo;
     bool hasFunctionOverride = false;

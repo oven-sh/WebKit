@@ -44,6 +44,7 @@
 #include "ModuleProgramCodeBlock.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
+#include "StaticHeap.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -204,11 +205,14 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
         break;
     }
 
-    auto& clearableCodeSet = Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace());
-    if (hasClearableCode())
-        clearableCodeSet.add(this);
-    else
-        clearableCodeSet.remove(this);
+    // (An executable that was made when the program was built is in no set of cells of the collector's: its code stays.)
+    if (!StaticHeap::contains(this)) {
+        auto& clearableCodeSet = Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace());
+        if (hasClearableCode())
+            clearableCodeSet.add(this);
+        else
+            clearableCodeSet.remove(this);
+    }
 
     if (genericCodeBlock) {
         RELEASE_ASSERT(genericCodeBlock->ownerExecutable() == this);

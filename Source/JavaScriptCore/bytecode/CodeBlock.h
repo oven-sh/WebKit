@@ -1146,6 +1146,13 @@ static_assert(sizeof(CodeBlock) <= 224, "Keep it small for memory saving");
 template <typename ExecutableType>
 void ScriptExecutable::prepareForExecution(VM& vm, JSFunction* function, JSScope* scope, CodeSpecializationKind kind, CodeBlock*& resultCodeBlock)
 {
+    if constexpr (std::same_as<ExecutableType, FunctionExecutable>) {
+        // There is nothing to prepare, here: see AOT::generateEnterStaticFunction().
+        if (uncheckedDowncast<ExecutableType>(this)->aotEntryFor(kind)) {
+            resultCodeBlock = nullptr;
+            return;
+        }
+    }
     if (hasJITCodeFor(kind)) {
         if constexpr (std::same_as<ExecutableType, EvalExecutable>)
             resultCodeBlock = uncheckedDowncast<ExecutableType>(this)->codeBlock();
