@@ -523,7 +523,7 @@ JSValue getSuperAttribute(JSGlobalObject* globalObject, JSValue superObject, Pro
     if (!attribute)
         return { };
     // super(C, D) where D is a class: what is found is got from the class, and not from an instance.
-    bool isForClass = instance.isCell() && instance.asCell() == start;
+    bool isForClass = isClass(instance) && asType(instance) == start;
     return bindDescriptor(globalObject, attribute, isForClass ? JSValue() : instance, start);
 }
 

@@ -28,7 +28,8 @@ def make():
 show("derive from Map", make)
 show("use it", lambda: (c.bump("a").bump("a").bump("b").size, c.get("a"), c.bumps, list(c.keys()), vars(c)))
 show("JS sees it", lambda: (js.eval("(c => [c instanceof Map, c.size, c.get('a'), c.bumps, Object.prototype.toString.call(c), c.bump('z').get('z')].join(' '))")(c)))
-show("with arguments", lambda: (lambda k: (k.size, k.get(1)))(type("K", (js.Map,), {})([[1, 2]])))
+K = type("K", (js.Map,), {})
+show("with arguments", lambda: (lambda k: (k.size, k.get(1)))(K([[1, 2]])))
 
 class Mixin:
     def hello(self): return "hello from " + type(self).__name__

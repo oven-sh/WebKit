@@ -388,6 +388,17 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
     return { DescriptorKind::General, isData, getter };
 }
 
+// function(self, ...), for a function that is called on behalf of an instance. One of JavaScript's gets the instance as `this`.
+template<typename... Arguments>
+static JSValue callForInstance(JSGlobalObject* globalObject, JSValue function, JSValue self, Arguments... arguments)
+{
+    if (classifyDescriptor(globalObject, function).kind != DescriptorKind::JavaScriptFunction) [[likely]]
+        return call(globalObject, function, self, arguments...);
+    MarkedArgumentBuffer buffer;
+    (buffer.append(arguments), ...);
+    return JSC::call(globalObject, function, JSC::getCallData(function), self, buffer);
+}
+
 JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue value, JSValue instance, PyType* type)
 {
     VM& vm = globalObject->vm();
@@ -421,7 +432,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
         JSValue getter = uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
         if (isNone(getter) || !getter)
             return raise(globalObject, scope, BuiltinType::AttributeError, "property has no getter"_s);
-        RELEASE_AND_RETURN(scope, call(globalObject, getter, instance));
+        RELEASE_AND_RETURN(scope, callForInstance(globalObject, getter, instance));
     }
     case DescriptorKind::StaticMethod:
         return uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
@@ -443,7 +454,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
     case DescriptorKind::General:
         if (!descriptor.getter)
             return value;
-        RELEASE_AND_RETURN(scope, call(globalObject, descriptor.getter, value, instance ? instance : jsUndefined(), type));
+        RELEASE_AND_RETURN(scope, call(globalObject, descriptor.getter, value, instance ? instance : jsUndefined(), type->object()));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -750,9 +761,9 @@ static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JS
         }
         scope.release();
         if (newValue)
-            call(globalObject, function, value, newValue);
+            callForInstance(globalObject, function, value, newValue);
         else
-            call(globalObject, function, value);
+            callForInstance(globalObject, function, value);
         return true;
     }
     case DescriptorKind::JavaScriptAccessor:
@@ -922,7 +933,7 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
         auto* object = uncheckedDowncast<PyNativeObject>(base.asCell());
         JSValue start = object->field(2);
         JSValue instance = object->field(1);
-        if (start && instance != start) {
+        if (start && !(isClass(instance) && asType(instance) == asType(start))) {
             JSValue attribute = asType(start)->lookupAfter(vm, asType(object->field(0)), name);
             if (attribute && classifyDescriptor(globalObject, attribute).kind == DescriptorKind::Function) {
                 self = instance;

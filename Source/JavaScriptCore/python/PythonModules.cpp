@@ -381,7 +381,7 @@ PYTHON_NATIVE(sysExcInfo)
     if (!handled)
         return JSValue::encode(PyTuple::create(globalObject, { jsUndefined(), jsUndefined(), jsUndefined() }));
     JSValue traceback = handled.isObject() ? asObject(handled)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_traceback) : JSValue();
-    return JSValue::encode(PyTuple::create(globalObject, { typeOf(globalObject, handled), handled, traceback ? traceback : jsUndefined() }));
+    return JSValue::encode(PyTuple::create(globalObject, { typeOf(globalObject, handled)->object(), handled, traceback ? traceback : jsUndefined() }));
 }
 
 PYTHON_NATIVE(sysGetRecursionLimit)

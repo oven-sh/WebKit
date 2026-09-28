@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "FunctionExecutable.h"
+#include "GetterSetter.h"
 #include "JSGenerator.h"
 #include "PythonGenerators.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -540,6 +541,44 @@ static JSValue getClass(JSGlobalObject* globalObject, JSValue self)
     return typeOf(globalObject, self)->object();
 }
 
+// type.__dict__
+static JSValue getTypeDict(JSGlobalObject* globalObject, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyType* type = asType(self);
+    if (!type->javaScriptConstructor())
+        return PyNativeObject::create(globalObject, BuiltinType::MappingProxy, PyDict::backedBy(globalObject, type));
+    // What a class of JavaScript's defines is in two objects, and is not all values. So this is how it is now, and does not keep up.
+    PyDict* dict = PyDict::create(globalObject);
+    auto add = [&] (JSObject* object, bool isConstructor) {
+        PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+        object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Include);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (auto& property : properties) {
+            if (property == vm.propertyNames->constructor || (isConstructor && (property == vm.propertyNames->prototype || property == vm.propertyNames->name || property == vm.propertyNames->length)))
+                continue;
+            JSValue value = object->getDirect(vm, property);
+            if (!value)
+                continue;
+            // An accessor is what property() makes.
+            if (auto* accessor = dynamicDowncast<GetterSetter>(value))
+                value = PyNativeObject::create(globalObject, BuiltinType::Property, accessor->isGetterNull() ? jsUndefined() : JSValue(accessor->getter()), accessor->isSetterNull() ? jsUndefined() : JSValue(accessor->setter()), jsUndefined(), jsUndefined());
+            else if (!value.isObject() && value.isCell() && !value.isString() && !value.isHeapBigInt() && !value.isSymbol())
+                continue;
+            dict->set(globalObject, jsString(vm, property.string()), value);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    };
+    add(type, false);
+    RETURN_IF_EXCEPTION(scope, { });
+    add(type->javaScriptPrototype(), false);
+    RETURN_IF_EXCEPTION(scope, { });
+    add(type->javaScriptConstructor(), true);
+    RETURN_IF_EXCEPTION(scope, { });
+    return PyNativeObject::create(globalObject, BuiltinType::MappingProxy, dict);
+}
+
 // The order of resolution, as a program is to see it.
 static PyTuple* orderOfResolution(JSGlobalObject* globalObject, PyType* type)
 {
@@ -688,7 +727,7 @@ PYTHON_NATIVE(typeNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, "type.__new__(X): X is not a type object"_s));
     auto* metatype = asType(args[0]);
     if (args.size() == 2 && !args.keywordCount() && metatype == realm->typeType())
-        return JSValue::encode(typeOf(globalObject, args[1]));
+        return JSValue::encode(typeOf(globalObject, args[1])->object());
     if (args.size() != 4)
         return JSValue::encode(raiseTypeError(globalObject, scope, "type() takes 1 or 3 arguments"_s));
     if (!args[1].isString())
@@ -925,7 +964,8 @@ static NativeCallable nativeCallableOf(JSValue value)
         return { uncheckedDowncast<PyNativeFunction>(method->function().asCell()), method->self() };
     auto* function = uncheckedDowncast<PyNativeFunction>(value.asCell());
     bool isBound = function->kind() == PyNativeFunction::Kind::Function || function->kind() == PyNativeFunction::Kind::New || function->kind() == PyNativeFunction::Kind::StaticMethod;
-    return { function, isBound && function->owner() ? JSValue(function->owner()) : JSValue() };
+    JSObject* owner = function->owner();
+    return { function, isBound && owner ? JSValue(isType(owner) ? asType(owner)->object() : owner) : JSValue() };
 }
 
 static JSValue getNativeName(JSGlobalObject* globalObject, JSValue self)
@@ -1026,7 +1066,7 @@ PYTHON_NATIVE(classMethodDescriptorGet)
     auto* function = uncheckedDowncast<PyNativeFunction>(args[0].asCell());
     JSValue type = args.at(2);
     if (!type || isNone(type))
-        type = typeOf(globalObject, args[1]);
+        type = typeOf(globalObject, args[1])->object();
     if (!isClass(type))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("descriptor '"_s, function->name(vm), "' for type '"_s, asType(function->owner())->nameString(globalObject), "' needs a type, not a '"_s, typeName(globalObject, type), "' as arg 2"_s)));
     if (!asType(type)->isSubtypeOf(asType(function->owner())))
@@ -1432,7 +1472,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addGetSet(globalObject, type, "__bases__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->bases(); });
     addGetSet(globalObject, type, "__base__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->base() ? JSValue(asType(self)->base()->object()) : jsUndefined(); });
     addGetSet(globalObject, type, "__mro__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return orderOfResolution(globalObject, asType(self)); });
-    addGetSet(globalObject, type, "__dict__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return PyNativeObject::create(globalObject, BuiltinType::MappingProxy, PyDict::backedBy(globalObject, asType(self))); });
+    addGetSet(globalObject, type, "__dict__"_s, getTypeDict);
     addGetSet(globalObject, type, "__doc__"_s, [] (JSGlobalObject* globalObject, JSValue self) { return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_doc, jsUndefined()); });
 
     addMethods(globalObject, realm->typeNoneType(), {
@@ -1479,7 +1519,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         addGetSet(globalObject, type, "__text_signature__"_s, getNativeTextSignature);
     }
     for (PyType* type : { realm->typeMethodDescriptor(), realm->typeClassMethodDescriptor(), realm->typeWrapperDescriptor(), realm->typeMethodWrapper() })
-        addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return nativeCallableOf(self).function->owner(); });
+        addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(nativeCallableOf(self).function->owner())->object(); });
     for (PyType* type : { realm->typeBuiltinFunction(), realm->typeMethodWrapper() }) {
         addMethods(globalObject, type, {
             { "__eq__"_s, nativeCallableEq },
@@ -1507,7 +1547,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
             return !getSet->doc().isNull() ? JSValue(jsString(globalObject->vm(), String(getSet->doc()))) : jsUndefined();
         });
         addMember(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).second; });
-        addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).first; });
+        addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).first->object(); });
         addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
             auto [owner, name] = ownerAndNameOf(self);
             return jsString(globalObject->vm(), makeString(qualifiedNameWithoutModule(globalObject, owner), '.', name->value(globalObject).data));
@@ -1572,6 +1612,9 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         { "__init__"_s, superInit },
         { "__getattribute__"_s, superGetAttribute },
     });
+    addMember(globalObject, realm->typeSuper(), "__thisclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { JSValue type = asNativeObject(self)->field(0); return type ? JSValue(asType(type)->object()) : jsUndefined(); });
+    addMember(globalObject, realm->typeSuper(), "__self__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { JSValue instance = asNativeObject(self)->field(1); return instance ? instance : jsUndefined(); });
+    addMember(globalObject, realm->typeSuper(), "__self_class__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { JSValue type = asNativeObject(self)->field(2); return type ? JSValue(asType(type)->object()) : jsUndefined(); });
 
     PyType* module = realm->typeModule();
     addMethods(globalObject, module, {

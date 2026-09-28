@@ -291,7 +291,7 @@ JSValue PyType::lookup(VM& vm, PropertyName name) const
         if (JSValue value = asObject(entry.get())->getDirect(vm, name))
             return value;
         // What a class of JavaScript's defines for its instances are properties of their prototype.
-        if (JSObject* prototype = asType(entry.get())->javaScriptPrototype()) [[unlikely]] {
+        if (JSObject* prototype = asType(entry.get())->javaScriptPrototype(); prototype && name != vm.propertyNames->constructor) [[unlikely]] {
             if (JSValue value = prototype->getDirect(vm, name))
                 return value;
         }
@@ -328,7 +328,8 @@ JSValue PyType::lookupOwn(VM& vm, PropertyName name) const
         return Python::getIndexLikeAttribute(vm, const_cast<PyType*>(this), name);
     if (JSValue value = getDirect(vm, name))
         return value;
-    if (m_javaScriptPrototype) [[unlikely]]
+    // `constructor` says which class this is, and is nothing that it defines.
+    if (m_javaScriptPrototype && name != vm.propertyNames->constructor) [[unlikely]]
         return m_javaScriptPrototype->getDirect(vm, name);
     return { };
 }

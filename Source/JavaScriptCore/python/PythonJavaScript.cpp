@@ -439,6 +439,8 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     }
 
     // Names that Python has no use for, and that JavaScript expects. An exception is left to Error.prototype, which makes "name: message".
+    if (name == vm.propertyNames->constructor)
+        return type->object();
     if (name == vm.propertyNames->toString && !type->isExceptionType())
         return function("toString"_s);
     bool isMapping = type->hasFlag(PyType::IsMapping);
