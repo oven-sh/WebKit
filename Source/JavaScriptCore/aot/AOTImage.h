@@ -64,6 +64,7 @@ struct ImageHeader {
     uint32_t quotesOffset; // What ImageFunction::quotes is from. See Image::quoteAt().
     uint32_t textOfQuotesOffset; // UTF-8.
     uint32_t numberOfIdentifiersOfProgram; // Not zero: see NumbersOfIdentifiers.
+    uint32_t numberOfConstantsOfProgram; // See NumbersOfConstants.
     uint32_t regExpsOffset; // ImageRegExp, in the order of their hashes.
     uint32_t numberOfRegExps;
     uint32_t textOfRegExpsOffset;
@@ -133,6 +134,7 @@ public:
     void clear() { m_functions.clear(); } // Of functions.
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
     void setNumberOfIdentifiersOfProgram(uint32_t number) { m_numberOfIdentifiersOfProgram = number; }
+    void setNumberOfConstantsOfProgram(uint32_t number) { m_numberOfConstantsOfProgram = number; }
     // The thread that has the VM. False: there is not going to be code for it.
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
@@ -156,6 +158,7 @@ private:
         Yarr::YarrCodeForImage code[2]; // 8 bit, 16 bit.
     };
     uint32_t m_numberOfIdentifiersOfProgram { 0 };
+    uint32_t m_numberOfConstantsOfProgram { 0 };
     Vector<RegExpCode> m_regExps;
     UncheckedKeyHashMap<String, bool> m_regExpsAsked; // By the flags and the pattern.
 };
@@ -226,6 +229,7 @@ public:
     JS_EXPORT_PRIVATE void* addressOfStub(Stub) const;
     size_t numberOfFunctions() const { return header().numberOfFunctions; }
     uint32_t numberOfIdentifiersOfProgram() const { return header().numberOfIdentifiersOfProgram; }
+    uint32_t numberOfConstantsOfProgram() const { return header().numberOfConstantsOfProgram; }
 
 private:
     ImageView(std::span<const uint8_t> data, const void* address)

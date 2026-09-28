@@ -60,6 +60,21 @@ const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram()
     return s_numbersOfIdentifiersOfProgram;
 }
 
+static const NumbersOfConstants* s_numbersOfConstantsOfProgram;
+
+void setNumbersOfConstantsOfProgram(const NumbersOfConstants* numbers)
+{
+    s_numbersOfConstantsOfProgram = numbers;
+}
+
+const Vector<uint32_t>* numbersOfConstantsOfProgramFor(UnlinkedCodeBlock* codeBlock)
+{
+    if (!s_numbersOfConstantsOfProgram)
+        return nullptr;
+    auto it = s_numbersOfConstantsOfProgram->find(codeBlock);
+    return it == s_numbersOfConstantsOfProgram->end() ? nullptr : &it->value;
+}
+
 void forgetDeclaredNames()
 {
     Locker locker { s_declaredNamesLock };

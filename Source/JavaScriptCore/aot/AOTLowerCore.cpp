@@ -650,6 +650,11 @@ LValue Lowering::lowRaw(Node* node)
 
 LValue Lowering::lowConstantRegister(VirtualRegister reg)
 {
+    if (auto* numbers = numbersOfConstantsOfProgramFor(m_graph.codeBlock())) {
+        uint32_t number = numbers->at(reg.toConstantIndex());
+        RELEASE_ASSERT(number != notAConstantOfProgram);
+        return m_out.load64(m_out.address(m_out.loadPtr(m_instance, m_heaps.AOTInstance_constantsOfProgram), m_heaps.AOTConstants[number]));
+    }
     LValue constants = m_graph.startsCold ? m_out.loadPtr(m_info, m_heaps.AOTFunctionInfo_constants) : m_out.loadPtr(m_data, m_heaps.AOTData_constants);
     return m_out.load64(m_out.address(constants, m_heaps.AOTConstants[reg.toConstantIndex()]));
 }

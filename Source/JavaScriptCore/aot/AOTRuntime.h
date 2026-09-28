@@ -281,6 +281,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
     static constexpr ptrdiff_t offsetOfData() { return OBJECT_OFFSETOF(Instance, data); }
     static constexpr ptrdiff_t offsetOfInfos() { return OBJECT_OFFSETOF(Instance, infos); }
+    static constexpr ptrdiff_t offsetOfConstantsOfProgram() { return OBJECT_OFFSETOF(Instance, constantsOfProgram); }
     static constexpr ptrdiff_t offsetOfSharedData() { return OBJECT_OFFSETOF(Instance, sharedData); }
     static constexpr ptrdiff_t offsetOfMisses() { return OBJECT_OFFSETOF(Instance, misses); }
     // The function's own Data, which it gets now if it has been doing without (SharedData). It has been linked.
@@ -332,6 +333,7 @@ struct Instance {
     Data* sharedData; // SharedData::get()
     uint16_t* misses; // By CodeHeader::index: how often a slot has failed a function that has no Data of its own.
     const uint32_t* factsOfFunctions; // By CodeHeader::index: StaticHeap::factsAt(). Zero: none. Null: no function has any.
+    const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
     uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
     uint32_t missesToSpare;
     uintptr_t structureIDBase; // What a StructureID is added to.
@@ -520,6 +522,7 @@ struct CompiledFunctionInfo {
     // Every bytecode offset that a frame of the function can say it is at. In order.
     Vector<uint32_t> callSites;
     Vector<uint32_t> numbersOfIdentifiers; // ReportableSitesOfFunction::numbersOfIdentifiers
+    Vector<uint32_t> numbersOfConstants; // Likewise.
     // For each of constructSites, where the expression starts (the `new`): see ReportableSitesOfFunction::Construction.
     Vector<std::pair<uint32_t, uint32_t>> startsOfConstructions;
     Vector<Quote> quotes; // And what it says at each that it says anything at, for a program that goes without its text (collectQuotes()).

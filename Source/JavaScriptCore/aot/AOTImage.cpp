@@ -248,6 +248,7 @@ Vector<ReportableSitesOfFunction> ImageBuilder::reportableSites()
         ReportableSitesOfFunction result;
         result.offsets = WTF::move(info.callSites);
         result.numbersOfIdentifiers = WTF::move(info.numbersOfIdentifiers);
+        result.numbersOfConstants = WTF::move(info.numbersOfConstants);
         for (unsigned i = 0; i < info.constructSites.size(); ++i) {
             if (info.startsOfConstructions[i].first || info.startsOfConstructions[i].second)
                 result.constructions.append({ info.constructSites[i], info.startsOfConstructions[i].first, info.startsOfConstructions[i].second });
@@ -749,6 +750,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.quotesOffset = place(quotes.size());
     header.textOfQuotesOffset = place(textOfQuotes.size());
     header.numberOfIdentifiersOfProgram = m_numberOfIdentifiersOfProgram;
+    header.numberOfConstantsOfProgram = m_numberOfConstantsOfProgram;
     header.regExpsOffset = place(imageRegExps.sizeInBytes());
     header.numberOfRegExps = imageRegExps.size();
     header.textOfRegExpsOffset = place(textOfRegExps.size());

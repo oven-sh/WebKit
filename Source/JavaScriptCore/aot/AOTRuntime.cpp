@@ -234,6 +234,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->infos = static_cast<FunctionInfo*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfInfos, OSAllocator::FastMallocPages));
     }
     instance->factsOfFunctions = environmentsSize ? StaticHeap::factsOfFunctions(vm) : nullptr;
+    instance->constantsOfProgram = environmentsSize ? StaticHeap::constantsOfProgram(vm) : nullptr;
     instance->sharedData = SharedData::get();
     instance->missesForEightSlots = Options::aotMissesForEightSlots();
     instance->missesToSpare = Options::aotMissesToSpare();

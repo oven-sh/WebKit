@@ -166,6 +166,14 @@ using NumbersOfIdentifiers = UncheckedKeyHashMap<UniquedStringImpl*, uint32_t>;
 JS_EXPORT_PRIVATE void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers*); // Not while anything is being compiled.
 const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram();
 
+// Likewise the constants of functions whose constants are of no realm: one table of them for the program, in which what is the same
+// (a string that says the same, a number) is there once. For each such function, the number of each of its constants, or
+// notAConstantOfProgram for one that is empty.
+static constexpr uint32_t notAConstantOfProgram = std::numeric_limits<uint32_t>::max();
+using NumbersOfConstants = UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<uint32_t>>;
+JS_EXPORT_PRIVATE void setNumbersOfConstantsOfProgram(const NumbersOfConstants*); // Not while anything is being compiled.
+const Vector<uint32_t>* numbersOfConstantsOfProgramFor(UnlinkedCodeBlock*); // Null: the function has its own.
+
 // Options::aotUseLiveCalleeHints(): from what the global variables hold when the caller is compiled. For testing what the hints
 // are used for on programs that are not modules.
 class LiveHints final : public CalleeHints {

@@ -9,6 +9,7 @@
 #include "AOTImage.h"
 #include "AOTRuntime.h"
 #include "AbstractSlotVisitorInlines.h"
+#include "AOTProgram.h"
 #include "BuiltinNames.h"
 #include "BytecodeStructs.h"
 #include "CachedTypes.h"
@@ -98,6 +99,7 @@ struct StaticHeap::Header {
     uint64_t numberOfSources;
     uint64_t hasPositionsOfCallSites;
     uint64_t hasIdentifiersOfProgram; // See AOT::NumbersOfIdentifiers.
+    uint64_t constantsOfProgram; // EncodedJSValue[]. See AOT::NumbersOfConstants.
 
     // What the cells say they are: which of the VM's own structures, and where that has to be.
     uint32_t numberOfStructures;
@@ -686,6 +688,7 @@ private:
 ArraysInCommon* s_arraysBeingBuilt;
 std::span<const ReportableSitesOfFunction> s_whatTheCompilerSaysOfFunctions;
 std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdentifiers.
+std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 }
 
 // TEMPORARY-ARRAY-STATS
@@ -728,8 +731,31 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     info.identifiers = codeBlock->identifiers().span().data();
     // Of code that is not going to be here, nothing is left that has these as anything but so many words in a row. One copy will do
     // for all that have the same, with nothing before it or after it.
-    if (s_arraysBeingBuilt && codeBlock->codeType() == FunctionCode) {
+    const Vector<uint32_t>* numbersOfConstants = s_constantsOfProgram.empty() ? nullptr : &s_whatTheCompilerSaysOfFunctions[function.index].numbersOfConstants;
+    if (numbersOfConstants && !numbersOfConstants->isEmpty()) {
+        RELEASE_ASSERT(constantsWillDo && codeBlock->codeType() == FunctionCode && numbersOfConstants->size() == codeBlock->constantRegisters().size());
+        for (unsigned i = 0; i < numbersOfConstants->size(); ++i) {
+            JSValue value = codeBlock->constantRegisters()[i].get();
+            uint32_t number = numbersOfConstants->at(i);
+            RELEASE_ASSERT(!value == (number == AOT::notAConstantOfProgram));
+            if (!value)
+                continue;
+            EncodedJSValue& inTable = s_constantsOfProgram[number];
+            if (!inTable)
+                inTable = JSValue::encode(value);
+            else if (inTable != JSValue::encode(value)) {
+                // Two strings that say the same. Either will do for both.
+                JSValue other = JSValue::decode(inTable);
+                RELEASE_ASSERT(value.isString() && other.isString());
+                String said = asString(value)->tryGetValue();
+                String saidByOther = asString(other)->tryGetValue();
+                RELEASE_ASSERT(said == saidByOther);
+            }
+        }
+        info.constants = nullptr;
+    } else if (s_arraysBeingBuilt && codeBlock->codeType() == FunctionCode)
         info.constants = std::bit_cast<decltype(info.constants)>(s_arraysBeingBuilt->copyOf(asBytes(codeBlock->constantRegisters().span())));
+    if (s_arraysBeingBuilt && codeBlock->codeType() == FunctionCode) {
         // (With one table for the whole program, the function has none of its own.)
         if (s_identifiersOfProgram.empty())
             info.identifiers = std::bit_cast<decltype(info.identifiers)>(s_arraysBeingBuilt->copyOf(asBytes(codeBlock->identifiers().span())));
@@ -989,6 +1015,11 @@ void StaticHeap::setCodeOf(VM& vm, const UnlinkedFunctionExecutable& executable,
     codeKeptBy(vm).add(&executable, std::array<Strong<UnlinkedFunctionCodeBlock>, 2> { }).iterator->value[static_cast<unsigned>(kind)].set(vm, codeBlock);
 }
 
+const void* StaticHeap::constantsOfProgram(VM& vm)
+{
+    return hasExecutablesOfFunctions(vm) ? std::bit_cast<const void*>(s_header->constantsOfProgram) : nullptr;
+}
+
 AOT::FunctionInfo* StaticHeap::infosOfFunctions(VM& vm)
 {
     return hasExecutablesOfFunctions(vm) ? std::bit_cast<AOT::FunctionInfo*>(s_header->infosOfFunctions) : nullptr;
@@ -1055,6 +1086,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
 {
     s_whatTheCompilerSaysOfFunctions = whatTheCompilerSaysOfFunctions;
     s_identifiersOfProgram = { };
+    s_constantsOfProgram = { };
     if (positionsToKeep)
         whatIsKeptOfPayloadStartsAt = payload.size();
     UncheckedKeyHashMap<CString, uint32_t> sources;
@@ -1150,6 +1182,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         if (uint32_t count = imageView->numberOfIdentifiersOfProgram()) {
                             RELEASE_ASSERT(whatTheCompilerSaysOfFunctions.size() == imageView->numberOfFunctions());
                             header.hasIdentifiersOfProgram = true;
+                            if (uint32_t constants = imageView->numberOfConstantsOfProgram()) {
+                                s_constantsOfProgram = { static_cast<EncodedJSValue*>(Region::allocate(Region::Arena::Data, constants * sizeof(EncodedJSValue), sizeof(EncodedJSValue))), constants };
+                                zeroSpan(s_constantsOfProgram);
+                                header.constantsOfProgram = std::bit_cast<uint64_t>(s_constantsOfProgram.data());
+                            }
                             s_identifiersOfProgram = { static_cast<UniquedStringImpl**>(Region::allocate(Region::Arena::Data, count * sizeof(UniquedStringImpl*), sizeof(UniquedStringImpl*))), count };
                             zeroSpan(s_identifiersOfProgram);
                         }

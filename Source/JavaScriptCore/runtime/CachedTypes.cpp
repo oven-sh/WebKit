@@ -5396,6 +5396,9 @@ CodeBlockType* CachedCodeBlock<CodeBlockType>::makeFromParts(VM& vm, const Parts
         for (unsigned i = 0; i < numberOfIdentifiers; ++i)
             codeBlock.m_identifiers[i] = parts.identifiers[i];
     }
+    // (None: the program has one table of them. See AOT::NumbersOfConstants.)
+    if (!parts.constants)
+        numberOfConstants = 0;
     codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(numberOfConstants);
     codeBlock.m_constantsSourceCodeRepresentation = FixedVector<SourceCodeRepresentation>(numberOfConstants);
     for (unsigned i = 0; i < numberOfConstants; ++i) {
@@ -6269,6 +6272,8 @@ struct BytecodeLinkEncoder::Impl {
                         for (auto& identifier : jobs[index].codeBlock->identifiers())
                             code.info.numbersOfIdentifiers.append(numbers->get(identifier.impl()));
                     }
+                    if (auto* numbers = AOT::numbersOfConstantsOfProgramFor(jobs[index].codeBlock))
+                        code.info.numbersOfConstants = *numbers;
                     builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
                 }
                 else {
@@ -6318,6 +6323,87 @@ struct BytecodeLinkEncoder::Impl {
             builder.setNumberOfIdentifiersOfProgram(inOrder.size());
         }
 
+        // See AOT::NumbersOfConstants.
+        AOT::NumbersOfConstants numbersOfConstants;
+        if (AOT::numbersOfIdentifiersOfProgram() && Options::aotNumbersConstantsOfProgram()) {
+            UncheckedKeyHashMap<String, uint32_t> strings;
+            uint64_t cells = 0;
+            UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> others;
+            uint32_t next = 0;
+            uint64_t inAll = 0, functions = 0, withOwn = 0;
+            for (auto& job : jobs) {
+                if (job.codeBlock->codeType() != FunctionCode)
+                    continue;
+                if (!AOT::constantsAreOfNoRealm(job.codeBlock, AOT::SymbolTablesWillDo::Yes)) {
+                    ++withOwn;
+                    continue;
+                }
+                ++functions;
+                Vector<uint32_t> numbers;
+                for (auto& constant : job.codeBlock->constantRegisters()) {
+                    JSValue value = constant.get();
+                    uint32_t number = AOT::notAConstantOfProgram;
+                    auto take = [&] {
+                        return next++;
+                    };
+                    if (!value) {
+                    } else if (!value.isCell())
+                        number = others.ensure(static_cast<uint64_t>(JSValue::encode(value)), take).iterator->value;
+                    else {
+                        String said;
+                        if (value.isString())
+                            said = asString(value)->tryGetValue();
+                        // (Any other cell is the function's own, whoever else has it here: what StaticHeap makes of two functions
+                        // is two of everything.)
+                        if (!said.isNull())
+                            number = strings.ensure(said, take).iterator->value;
+                        else {
+                            number = take();
+                            ++cells;
+                        }
+                    }
+                    inAll += number != AOT::notAConstantOfProgram;
+                    numbers.append(number);
+                }
+                numbersOfConstants.add(job.codeBlock, WTF::move(numbers));
+            }
+            // The ones that most functions have get the small numbers: code gets at those with one instruction fewer.
+            {
+                Vector<uint32_t> uses;
+                uses.fill(0, next);
+                for (auto& entry : numbersOfConstants) {
+                    for (uint32_t number : entry.value) {
+                        if (number != AOT::notAConstantOfProgram)
+                            uses[number]++;
+                    }
+                }
+                Vector<uint32_t> inOrder;
+                for (uint32_t i = 0; i < next; ++i)
+                    inOrder.append(i);
+                std::stable_sort(inOrder.begin(), inOrder.end(), [&](uint32_t a, uint32_t b) { return uses[a] > uses[b]; });
+                Vector<uint32_t> rank;
+                rank.fill(0, next);
+                uint64_t within = 0;
+                for (uint32_t i = 0; i < next; ++i) {
+                    rank[inOrder[i]] = i;
+                    if (i < 4096)
+                        within += uses[inOrder[i]];
+                }
+                for (auto& entry : numbersOfConstants) {
+                    for (uint32_t& number : entry.value) {
+                        if (number != AOT::notAConstantOfProgram)
+                            number = rank[number];
+                    }
+                }
+                if (Options::aotReportStats()) [[unlikely]]
+                    dataLogLn("AOT: the 4096 constants that most functions have account for ", within);
+            }
+            if (Options::aotReportStats()) [[unlikely]]
+                dataLogLn("AOT: ", functions, " functions have ", inAll, " constants between them, which are ", next, " different ones: ", strings.size(), " strings, ", cells, " other cells, ", others.size(), " that are not cells; ", withOwn, " functions have constants that are of a realm, and keep their own");
+            AOT::setNumbersOfConstantsOfProgram(&numbersOfConstants);
+            builder.setNumberOfConstantsOfProgram(next);
+        }
+
         // A call that passes no function object has nowhere to go but the function's code. If there turns out to be none, it is all
         // done again with that known.
         for (bool again = true; again;) {
@@ -6346,6 +6432,7 @@ struct BytecodeLinkEncoder::Impl {
         }
         AOT::forgetDeclaredNames();
         AOT::setNumbersOfIdentifiersOfProgram(nullptr);
+        AOT::setNumbersOfConstantsOfProgram(nullptr);
         if (Options::aotCompileRegExps()) {
             for (auto& job : jobs) {
                 for (auto& constant : job.codeBlock->constantRegisters()) {
