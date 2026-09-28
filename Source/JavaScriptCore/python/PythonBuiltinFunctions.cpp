@@ -86,15 +86,19 @@ PYTHON_NATIVE(exceptionWithTraceback)
 PYTHON_NATIVE(exceptionAddNote)
 {
     NATIVE_PROLOGUE();
-    if (!args.at(1) || !args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("note must be a str, not '"_s, typeName(globalObject, args.at(1)), '\'')));
-    JSObject* self = asObject(args[0]);
-    JSValue notes = self->getDirect(vm, names.dunder_notes);
+    if (args.size() != 2 || args.keywordCount())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("BaseException.add_note() takes exactly one argument ("_s, args.size() - 1, " given)"_s)));
+    if (!args[1].isString())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("add_note() argument must be str, not "_s, isNone(args[1]) ? "None"_str : typeName(globalObject, args[1]))));
+    JSValue notes = getAttributeIfPresent(globalObject, args[0], names.dunder_notes);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!notes) {
         notes = newList(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        self->putDirect(vm, names.dunder_notes, notes);
-    }
+        setAttribute(globalObject, args[0], names.dunder_notes, notes);
+        RETURN_IF_EXCEPTION(scope, { });
+    } else if (!isList(notes))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "Cannot add note: __notes__ is not a list"_s));
     listAppend(globalObject, asList(notes), args[1]);
     RETURN_NONE();
 }
@@ -111,9 +115,51 @@ PYTHON_NATIVE(exceptionAddNote)
         asObject(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().privateName, value ? value : jsUndefined()); \
     }
 
-EXCEPTION_PROPERTY(getTraceback, setTraceback, private_traceback, jsUndefined())
-EXCEPTION_PROPERTY(getContext, setContext, private_context, jsUndefined())
-EXCEPTION_PROPERTY(getSuppressContext, setSuppressContext, private_suppressContext, jsBoolean(false))
+EXCEPTION_PROPERTY(getTraceback, setTracebackUnchecked, private_traceback, jsUndefined())
+EXCEPTION_PROPERTY(getContext, setContextUnchecked, private_context, jsUndefined())
+EXCEPTION_PROPERTY(getSuppressContext, setSuppressContextUnchecked, private_suppressContext, jsBoolean(false))
+
+static bool isExceptionOrNone(JSGlobalObject* globalObject, JSValue value)
+{
+    return value && (isNone(value) || typeOf(globalObject, value)->isExceptionType());
+}
+
+static void setTraceback(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value) {
+        raiseTypeError(globalObject, scope, "__traceback__ may not be deleted"_s);
+        return;
+    }
+    if (!isNone(value) && typeOf(globalObject, value) != globalObject->pyRealm()->typeTraceback()) {
+        raiseTypeError(globalObject, scope, "__traceback__ must be a traceback or None"_s);
+        return;
+    }
+    setTracebackUnchecked(globalObject, self, value);
+}
+
+static void setContextChecked(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isExceptionOrNone(globalObject, value)) {
+        raiseTypeError(globalObject, scope, value ? "exception context must be None or derive from BaseException"_s : "__context__ may not be deleted"_s);
+        return;
+    }
+    setContextUnchecked(globalObject, self, value);
+}
+
+static void setSuppressContext(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value || !value.isBoolean()) {
+        raiseTypeError(globalObject, scope, value ? "attribute value type must be bool"_s : "can't delete numeric/char attribute"_s);
+        return;
+    }
+    setSuppressContextUnchecked(globalObject, self, value);
+}
 
 static JSValue getCause(JSGlobalObject* globalObject, JSValue self)
 {
@@ -124,6 +170,11 @@ static JSValue getCause(JSGlobalObject* globalObject, JSValue self)
 static void setCause(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!isExceptionOrNone(globalObject, value)) {
+        raiseTypeError(globalObject, scope, value ? "exception cause must be None or derive from BaseException"_s : "__cause__ may not be deleted"_s);
+        return;
+    }
     asObject(self)->putDirect(vm, vm.pythonNames().private_cause, value ? value : jsUndefined());
     asObject(self)->putDirect(vm, vm.pythonNames().private_suppressContext, jsBoolean(true));
 }
@@ -147,26 +198,158 @@ static void setArgs(JSGlobalObject* globalObject, JSValue self, JSValue value)
     asObject(self)->putDirect(vm, vm.pythonNames().private_args, tuple);
 }
 
-// StopIteration.value and SystemExit.code: the first argument.
-static JSValue getFirstArgument(JSGlobalObject* globalObject, JSValue self)
+// StopIteration(value): .value is the first argument.
+PYTHON_NATIVE(stopIterationInit)
 {
-    auto* tuple = uncheckedDowncast<PyTuple>(getArgs(globalObject, self).asCell());
-    return tuple->length() ? tuple->at(0) : jsUndefined();
+    NATIVE_PROLOGUE();
+    if (args.keywordCount())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+    JSObject* self = asObject(args[0]);
+    self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
+    setMember(globalObject, self, "value"_s, args.size() > 1 ? args[1] : jsUndefined());
+    RETURN_NONE();
 }
 
-// OSError(errno, strerror, filename)
+// SystemExit(code): .code is the argument, or all of them if there are several.
+PYTHON_NATIVE(systemExitInit)
+{
+    NATIVE_PROLOGUE();
+    if (args.keywordCount())
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
+    JSObject* self = asObject(args[0]);
+    PyTuple* arguments = argumentsAfterFirst(globalObject, args);
+    self->putDirect(vm, names.private_args, arguments);
+    if (args.size() > 1)
+        setMember(globalObject, self, "code"_s, args.size() == 2 ? args[1] : JSValue(arguments));
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(keyErrorStr)
+{
+    NATIVE_PROLOGUE();
+    // A key that was not found is shown as it would be written, so that '' and ' ' can be told apart.
+    auto* arguments = uncheckedDowncast<PyTuple>(getArgs(globalObject, args.at(0)).asCell());
+    String text = arguments->length() == 1 ? repr(globalObject, arguments->at(0)) : strOfException(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, text));
+}
+
+enum class KeywordException : uint8_t { Import, Attribute, Name };
+
+// ImportError(msg, name=, path=, name_from=), AttributeError(msg, name=, obj=) and NameError(msg, name=)
+PYTHON_NATIVE(exceptionInitWithKeywords)
+{
+    auto which = unpack<KeywordException>(callFrame, 0);
+    NATIVE_PROLOGUE();
+    JSObject* self = asObject(args[0]);
+    self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
+    for (unsigned i = 0; i < args.keywordCount(); ++i) {
+        String name = args.keywordName(i)->value(globalObject);
+        bool isKnown = name == "name"_s || (which == KeywordException::Import && (name == "path"_s || name == "name_from"_s)) || (which == KeywordException::Attribute && name == "obj"_s);
+        if (!isKnown)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString(which == KeywordException::Import ? "ImportError"_s : which == KeywordException::Attribute ? "AttributeError"_s : "NameError"_s, "() got an unexpected keyword argument '"_s, name, '\'')));
+        setMember(globalObject, self, name, args.keywordValue(i));
+    }
+    if (which == KeywordException::Import && args.size() == 2)
+        setMember(globalObject, self, "msg"_s, args[1]);
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(importErrorStr)
+{
+    NATIVE_PROLOGUE();
+    JSValue message = getMember(globalObject, asObject(args.at(0)), "msg"_s);
+    String text = message && message.isString() ? String(asString(message)->value(globalObject)) : strOfException(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, text));
+}
+
+// The class for an error number, if there is one of its own.
+static std::optional<BuiltinType> osErrorTypeFor(int errorNumber)
+{
+    switch (errorNumber) {
+    case EAGAIN:
+    case EALREADY:
+    case EINPROGRESS:
+#if EWOULDBLOCK != EAGAIN
+    case EWOULDBLOCK:
+#endif
+        return BuiltinType::BlockingIOError;
+    case EPIPE:
+    case ESHUTDOWN:
+        return BuiltinType::BrokenPipeError;
+    case ECHILD:
+        return BuiltinType::ChildProcessError;
+    case ECONNABORTED:
+        return BuiltinType::ConnectionAbortedError;
+    case ECONNREFUSED:
+        return BuiltinType::ConnectionRefusedError;
+    case ECONNRESET:
+        return BuiltinType::ConnectionResetError;
+    case EEXIST:
+        return BuiltinType::FileExistsError;
+    case ENOENT:
+        return BuiltinType::FileNotFoundError;
+    case EISDIR:
+        return BuiltinType::IsADirectoryError;
+    case ENOTDIR:
+        return BuiltinType::NotADirectoryError;
+    case EINTR:
+        return BuiltinType::InterruptedError;
+    case EACCES:
+    case EPERM:
+        return BuiltinType::PermissionError;
+    case ESRCH:
+        return BuiltinType::ProcessLookupError;
+    case ETIMEDOUT:
+        return BuiltinType::TimeoutError;
+    default:
+        return std::nullopt;
+    }
+}
+
+// OSError(errno, strerror[, filename[, winerror[, filename2]]]). With two to five arguments they are those. Otherwise they are only args.
+static void fillOSError(JSGlobalObject* globalObject, JSObject* self, const NativeArguments& args)
+{
+    VM& vm = globalObject->vm();
+    unsigned count = args.size() - 1;
+    self->putDirect(vm, vm.pythonNames().private_args, argumentsAfterFirst(globalObject, args));
+    if (count < 2 || count > 5)
+        return;
+    setMember(globalObject, self, "errno"_s, args[1]);
+    setMember(globalObject, self, "strerror"_s, args[2]);
+    if (count >= 3) {
+        setMember(globalObject, self, "filename"_s, args[3]);
+        self->putDirect(vm, vm.pythonNames().private_args, PyTuple::create(globalObject, { args[1], args[2] }));
+    }
+    if (count == 5)
+        setMember(globalObject, self, "filename2"_s, args[5]);
+}
+
+PYTHON_NATIVE(osErrorNew)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    PyType* type = asType(args.at(0));
+    if (type == realm->typeOSError() && args.size() >= 3 && args.size() <= 6 && args[1].isInt32()) {
+        if (auto specific = osErrorTypeFor(args[1].asInt32()))
+            type = realm->type(*specific);
+    }
+    PyInstance* exception = PyInstance::create(vm, type->instanceStructure());
+    fillOSError(globalObject, exception, args);
+    return JSValue::encode(exception);
+}
+
 PYTHON_NATIVE(osErrorInit)
 {
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    JSObject* self = asObject(args[0]);
-    self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
-    bool hasParts = args.size() >= 3;
-    self->putDirect(vm, Identifier::fromString(vm, "errno"_s), hasParts ? args[1] : jsUndefined());
-    self->putDirect(vm, Identifier::fromString(vm, "strerror"_s), hasParts ? args[2] : jsUndefined());
-    self->putDirect(vm, Identifier::fromString(vm, "filename"_s), args.size() >= 4 ? args[3] : jsUndefined());
-    if (args.size() >= 4)
-        self->putDirect(vm, names.private_args, PyTuple::create(globalObject, { args[1], args[2] }));
+    // __new__ has done it, unless a class derived from this one has a __new__ of its own.
+    PyType* type = typeOf(globalObject, args[0]);
+    JSValue constructor = type->lookup(vm, names.dunder_new);
+    JSValue own = realm->typeOSError()->lookupOwn(vm, names.dunder_new);
+    if (constructor != own)
+        fillOSError(globalObject, asObject(args[0]), args);
     RETURN_NONE();
 }
 
@@ -174,36 +357,35 @@ PYTHON_NATIVE(osErrorStr)
 {
     NATIVE_PROLOGUE();
     JSObject* self = asObject(args.at(0));
-    JSValue errorNumber = self->getDirect(vm, Identifier::fromString(vm, "errno"_s));
-    JSValue message = self->getDirect(vm, Identifier::fromString(vm, "strerror"_s));
-    JSValue filename = self->getDirect(vm, Identifier::fromString(vm, "filename"_s));
-    if (!errorNumber || isNone(errorNumber) || !message) {
-        String text = strOfException(globalObject, self);
-        RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(jsString(vm, text));
-    }
-    String numberText = str(globalObject, errorNumber);
-    RETURN_IF_EXCEPTION(scope, { });
-    String messageText = str(globalObject, message);
-    RETURN_IF_EXCEPTION(scope, { });
+    JSValue errorNumber = getMember(globalObject, self, "errno"_s);
+    JSValue message = getMember(globalObject, self, "strerror"_s);
+    JSValue filename = getMember(globalObject, self, "filename"_s);
+    JSValue filename2 = getMember(globalObject, self, "filename2"_s);
+    auto text = [&] (JSValue value, bool asRepr) -> String { return asRepr ? repr(globalObject, value) : str(globalObject, value ? value : jsUndefined()); };
     if (filename && !isNone(filename)) {
-        String filenameText = repr(globalObject, filename);
+        String number = text(errorNumber, false);
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(jsString(vm, makeString("[Errno "_s, numberText, "] "_s, messageText, ": "_s, filenameText)));
+        String reason = text(message, false);
+        RETURN_IF_EXCEPTION(scope, { });
+        String first = text(filename, true);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (filename2 && !isNone(filename2)) {
+            String second = text(filename2, true);
+            RETURN_IF_EXCEPTION(scope, { });
+            return JSValue::encode(jsString(vm, makeString("[Errno "_s, number, "] "_s, reason, ": "_s, first, " -> "_s, second)));
+        }
+        return JSValue::encode(jsString(vm, makeString("[Errno "_s, number, "] "_s, reason, ": "_s, first)));
     }
-    return JSValue::encode(jsString(vm, makeString("[Errno "_s, numberText, "] "_s, messageText)));
-}
-
-// Exceptions that take some of their attributes as keywords: ImportError(msg, name=, path=), AttributeError(msg, name=, obj=).
-PYTHON_NATIVE(exceptionInitWithKeywords)
-{
-    NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    JSObject* self = asObject(args[0]);
-    self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
-    for (unsigned i = 0; i < args.keywordCount(); ++i)
-        self->putDirect(vm, args.keywordName(i)->toIdentifier(globalObject), args.keywordValue(i));
-    RETURN_NONE();
+    if (errorNumber && message && !isNone(errorNumber) && !isNone(message)) {
+        String number = text(errorNumber, false);
+        RETURN_IF_EXCEPTION(scope, { });
+        String reason = text(message, false);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(jsString(vm, makeString("[Errno "_s, number, "] "_s, reason)));
+    }
+    String plain = strOfException(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, plain));
 }
 
 // SyntaxError(msg, (filename, lineno, offset, text, end_lineno, end_offset))
@@ -215,7 +397,7 @@ PYTHON_NATIVE(syntaxErrorInit)
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     if (args.size() >= 2)
-        self->putDirect(vm, Identifier::fromString(vm, "msg"_s), args[1]);
+        setMember(globalObject, self, "msg"_s, args[1]);
     if (args.size() == 3) {
         MarkedArgumentBuffer details;
         collect(globalObject, args[2], details);
@@ -226,7 +408,7 @@ PYTHON_NATIVE(syntaxErrorInit)
             return JSValue::encode(raiseTypeError(globalObject, scope, "end_offset must be provided when end_lineno is provided"_s));
         static constexpr ASCIILiteral attributes[] = { "filename"_s, "lineno"_s, "offset"_s, "text"_s, "end_lineno"_s, "end_offset"_s };
         for (unsigned i = 0; i < std::min<unsigned>(details.size(), 6); ++i)
-            self->putDirect(vm, Identifier::fromString(vm, attributes[i]), details.at(i));
+            setMember(globalObject, self, attributes[i], details.at(i));
     }
     RETURN_NONE();
 }
@@ -278,7 +460,7 @@ PYTHON_NATIVE(unicodeErrorInit)
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     static constexpr ASCIILiteral attributes[] = { "encoding"_s, "object"_s, "start"_s, "end"_s, "reason"_s };
     for (unsigned i = 0; i < 5; ++i)
-        self->putDirect(vm, Identifier::fromString(vm, attributes[i]), args[i + 1]);
+        setMember(globalObject, self, attributes[i], args[i + 1]);
     RETURN_NONE();
 }
 
@@ -287,7 +469,7 @@ PYTHON_NATIVE(unicodeErrorStr)
     bool isDecode = unpack<bool>(callFrame, 0);
     NATIVE_PROLOGUE();
     JSObject* self = asObject(args.at(0));
-    auto get = [&] (ASCIILiteral name) { return self->getDirect(vm, Identifier::fromString(vm, name)); };
+    auto get = [&] (ASCIILiteral name) { return getMember(globalObject, self, name); };
     JSValue object = get("object"_s);
     if (!object)
         return JSValue::encode(jsEmptyString(vm));
@@ -334,21 +516,30 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
     addGetSet(globalObject, base, "args"_s, getArgs, setArgs);
     addGetSet(globalObject, base, "__traceback__"_s, getTraceback, setTraceback);
     addGetSet(globalObject, base, "__cause__"_s, getCause, setCause);
-    addGetSet(globalObject, base, "__context__"_s, getContext, setContext);
+    addGetSet(globalObject, base, "__context__"_s, getContext, setContextChecked);
     addGetSet(globalObject, base, "__suppress_context__"_s, getSuppressContext, setSuppressContext);
 
-    addGetSet(globalObject, realm->typeStopIteration(), "value"_s, getFirstArgument);
-    addGetSet(globalObject, realm->typeSystemExit(), "code"_s, getFirstArgument);
+    // What in CPython is a field of the exception's struct: it is None until it is set, and is not in __dict__.
+    auto addFields = [&] (PyType* type, std::initializer_list<ASCIILiteral> fields) {
+        for (ASCIILiteral field : fields)
+            type->putDirect(vm, Identifier::fromString(vm, field), PyNativeObject::create(globalObject, BuiltinType::MemberDescriptor, jsString(vm, String(field)), type, jsUndefined()));
+    };
+    addMethods(globalObject, realm->typeStopIteration(), { { "__init__"_s, stopIterationInit } });
+    addFields(realm->typeStopIteration(), { "value"_s });
+    addMethods(globalObject, realm->typeSystemExit(), { { "__init__"_s, systemExitInit } });
+    addFields(realm->typeSystemExit(), { "code"_s });
+    addMethods(globalObject, realm->typeKeyError(), { { "__str__"_s, keyErrorStr } });
     addMethods(globalObject, realm->typeOSError(), {
+        { "__new__"_s, osErrorNew, Kind::Function },
         { "__init__"_s, osErrorInit },
         { "__str__"_s, osErrorStr },
     });
+    addFields(realm->typeOSError(), { "errno"_s, "strerror"_s, "filename"_s, "filename2"_s });
     addMethods(globalObject, realm->typeSyntaxError(), {
         { "__init__"_s, syntaxErrorInit },
         { "__str__"_s, syntaxErrorStr },
     });
-    for (ASCIILiteral name : { "msg"_s, "filename"_s, "lineno"_s, "offset"_s, "text"_s, "end_lineno"_s, "end_offset"_s, "print_file_and_line"_s })
-        realm->typeSyntaxError()->putDirect(vm, Identifier::fromString(vm, name), jsUndefined());
+    addFields(realm->typeSyntaxError(), { "msg"_s, "filename"_s, "lineno"_s, "offset"_s, "text"_s, "end_lineno"_s, "end_offset"_s, "print_file_and_line"_s });
     addMethods(globalObject, realm->typeUnicodeEncodeError(), {
         { "__init__"_s, unicodeErrorInit, Kind::Method, pack(false) },
         { "__str__"_s, unicodeErrorStr, Kind::Method, pack(false) },
@@ -357,12 +548,17 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
         { "__init__"_s, unicodeErrorInit, Kind::Method, pack(true) },
         { "__str__"_s, unicodeErrorStr, Kind::Method, pack(true) },
     });
-    for (PyType* type : { realm->typeImportError(), realm->typeAttributeError(), realm->typeNameError() }) {
-        addMethods(globalObject, type, { { "__init__"_s, exceptionInitWithKeywords } });
-        type->putDirect(vm, Identifier::fromString(vm, "name"_s), jsUndefined());
-    }
-    realm->typeImportError()->putDirect(vm, Identifier::fromString(vm, "path"_s), jsUndefined());
-    realm->typeAttributeError()->putDirect(vm, Identifier::fromString(vm, "obj"_s), jsUndefined());
+    addMethods(globalObject, realm->typeImportError(), {
+        { "__init__"_s, exceptionInitWithKeywords, Kind::Method, pack(KeywordException::Import) },
+        { "__str__"_s, importErrorStr },
+    });
+    addFields(realm->typeImportError(), { "msg"_s, "name"_s, "path"_s, "name_from"_s });
+    addMethods(globalObject, realm->typeAttributeError(), { { "__init__"_s, exceptionInitWithKeywords, Kind::Method, pack(KeywordException::Attribute) } });
+    addFields(realm->typeAttributeError(), { "name"_s, "obj"_s });
+    addMethods(globalObject, realm->typeNameError(), { { "__init__"_s, exceptionInitWithKeywords, Kind::Method, pack(KeywordException::Name) } });
+    addFields(realm->typeNameError(), { "name"_s });
+    addFields(realm->typeUnicodeEncodeError(), { "encoding"_s, "object"_s, "start"_s, "end"_s, "reason"_s });
+    addFields(realm->typeUnicodeDecodeError(), { "encoding"_s, "object"_s, "start"_s, "end"_s, "reason"_s });
 }
 
 // ---- print()

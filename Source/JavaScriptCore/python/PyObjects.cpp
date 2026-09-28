@@ -466,7 +466,7 @@ bool PyNameErrorRaiser::getOwnPropertySlot(JSObject*, JSGlobalObject* globalObje
     // Only for what is after the value. `name in namespace` is a question, and the answer is no.
     if (slot.internalMethodType() != PropertySlot::InternalMethodType::Get || propertyName.isSymbol())
         return false;
-    Python::raise(globalObject, scope, BuiltinType::NameError, makeString("name '"_s, StringView(propertyName.uid()), "' is not defined"_s));
+    Python::raiseNameError(globalObject, scope, StringView(propertyName.uid()).toString());
     return false;
 }
 

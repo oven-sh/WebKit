@@ -68,6 +68,10 @@ String typeName(JSGlobalObject*, JSValue);
 
 JSObject* createException(JSGlobalObject*, PyType*, const String& message);
 JSObject* createNotCallableError(JSGlobalObject*, JSValue callee);
+// NameError: name 'x' is not defined
+JSValue raiseNameError(JSGlobalObject*, ThrowScope&, const String& name);
+// Makes what is being handled now the __context__ of an exception that is about to be raised.
+void setContext(JSGlobalObject*, JSObject* exception);
 String nameOfFunction(JSGlobalObject*, JSFunction*, bool qualified);
 JSObject* createException(JSGlobalObject*, PyType*, JSValue argument);
 // These throw, and return an empty value for the caller to return.
@@ -97,6 +101,11 @@ JSValue loadMethod(JSGlobalObject*, JSValue base, PropertyName, JSValue& self);
 JSValue lookupSpecial(JSGlobalObject*, JSValue, PropertyName, JSValue& self);
 // What `descriptor`, found in a class, gives when got from `instance` (empty for the class itself) of `type`.
 JSValue bindDescriptor(JSGlobalObject*, JSValue descriptor, JSValue instance, PyType*);
+
+// What is in a slot: one of __slots__, or what in CPython is a field of the C struct of a built-in type. It is a property of the instance under
+// a name that no attribute can have, and that __dict__ does not show. Empty if nothing is in it.
+JSValue getMember(JSGlobalObject*, JSObject*, const String& name);
+void setMember(JSGlobalObject*, JSObject*, const String& name, JSValue);
 
 // ---- Calls
 

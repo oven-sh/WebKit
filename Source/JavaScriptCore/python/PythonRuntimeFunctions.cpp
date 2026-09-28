@@ -92,7 +92,7 @@ PYTHON_RUNTIME_FUNCTION(loadFromNamespace)
 
 static JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, JSString* name)
 {
-    return raise(globalObject, scope, BuiltinType::NameError, makeString("name '"_s, name->value(globalObject).data, "' is not defined"_s));
+    return raiseNameError(globalObject, scope, name->value(globalObject));
 }
 
 PYTHON_RUNTIME_FUNCTION(deleteGlobal)
@@ -589,8 +589,18 @@ static JSValue normalizeException(JSGlobalObject* globalObject, JSValue value, A
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (isType(value) && uncheckedDowncast<PyType>(value.asCell())->isExceptionType())
-        RELEASE_AND_RETURN(scope, call(globalObject, value));
+    if (isType(value) && uncheckedDowncast<PyType>(value.asCell())->isExceptionType()) {
+        JSValue instance = call(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!typeOf(globalObject, instance)->isExceptionType()) {
+            String classText = repr(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, { });
+            String typeText = repr(globalObject, typeOf(globalObject, instance));
+            RETURN_IF_EXCEPTION(scope, { });
+            return raiseTypeError(globalObject, scope, makeString("calling "_s, classText, " should have returned an instance of BaseException, not "_s, typeText));
+        }
+        return instance;
+    }
     if (!typeOf(globalObject, value)->isExceptionType())
         return raiseTypeError(globalObject, scope, complaint);
     return value;
@@ -614,8 +624,7 @@ PYTHON_RUNTIME_FUNCTION(runtimeRaise)
         object->putDirect(vm, names.private_cause, cause);
         object->putDirect(vm, names.private_suppressContext, jsBoolean(true));
     }
-    if (JSValue handled = realm->handledException(); handled && handled != exception)
-        object->putDirect(vm, names.private_context, handled);
+    setContext(globalObject, object);
     throwException(globalObject, scope, exception);
     return { };
 }
@@ -626,6 +635,21 @@ PYTHON_RUNTIME_FUNCTION(pushHandledException)
     UNUSED_PARAM(scope);
     JSValue previous = realm->ownHandledException();
     realm->setOwnHandledException(vm, argument(0));
+    return JSValue::encode(previous ? previous : JSValue(realm->boundArgumentsMarker()));
+}
+
+// pushIfThrown(whether a try was left by an exception, what with): in a `finally` that an exception is passing through, that exception is being handled.
+PYTHON_RUNTIME_FUNCTION(pushIfThrown)
+{
+    PROLOGUE();
+    UNUSED_PARAM(scope);
+    JSValue previous = realm->ownHandledException();
+    if (argument(0).asBoolean()) {
+        JSValue thrown = argument(1);
+        if (auto* exception = dynamicDowncast<Exception>(thrown))
+            thrown = exception->value();
+        realm->setOwnHandledException(vm, thrown);
+    }
     return JSValue::encode(previous ? previous : JSValue(realm->boundArgumentsMarker()));
 }
 
@@ -979,6 +1003,7 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("reraise"_s, reraise);
     add("raise"_s, runtimeRaise);
     add("pushHandledException"_s, pushHandledException);
+    add("pushIfThrown"_s, pushIfThrown);
     add("popHandledException"_s, popHandledException);
     add("loadExit"_s, loadExit);
     add("callEnter"_s, callEnter);

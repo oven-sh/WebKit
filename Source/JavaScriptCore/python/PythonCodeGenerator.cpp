@@ -2471,7 +2471,10 @@ private:
         g.emitOutOfLineFinallyHandler(context.completionValueRegister(), context.completionTypeRegister(), tryData);
         g.emitLabel(finallyLabel.get());
         g.restoreScopeRegister();
-        finalizer();
+        if constexpr (std::is_invocable_v<Finalizer, RegisterID*, RegisterID*>)
+            finalizer(context.completionTypeRegister(), context.completionValueRegister());
+        else
+            finalizer();
         g.emitFinallyCompletion(context, finallyEndLabel.get());
         g.emitLabel(finallyEndLabel.get());
     }
@@ -2518,8 +2521,17 @@ private:
         if (!node.finalBody.empty()) {
             emitTryFinally([&] {
                 emitTryExcept(node);
-            }, [&] {
-                emit(node.finalBody);
+            }, [&] (RegisterID* completionType, RegisterID* completionValue) {
+                // If an exception is on its way through, it is what is being handled meanwhile.
+                Reg previous = g.newTemporary();
+                Reg wasThrown = g.newTemporary();
+                g.emitEqualityOp<OpStricteq>(wasThrown.get(), completionType, constant(jsNumber(static_cast<int>(CompletionType::Throw))));
+                emitRuntimeCall(previous.get(), "pushIfThrown"_s, { wasThrown.get(), completionValue }, node);
+                emitTryFinally([&] {
+                    emit(node.finalBody);
+                }, [&] {
+                    emitRuntimeCall(nullptr, "popHandledException"_s, { previous.get() }, node);
+                });
             });
             return;
         }

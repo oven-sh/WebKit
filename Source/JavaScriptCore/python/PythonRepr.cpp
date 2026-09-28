@@ -351,12 +351,8 @@ String strOfException(JSGlobalObject* globalObject, JSValue value)
     PyTuple* arguments = exceptionArguments(globalObject, value);
     if (!arguments || !arguments->length())
         return emptyString();
-    if (arguments->length() == 1) {
-        // A key that was not found is shown as it would be written, so that '' and ' ' can be told apart.
-        if (isInstance(globalObject, value, globalObject->pyRealm()->typeKeyError()))
-            RELEASE_AND_RETURN(scope, repr(globalObject, arguments->at(0)));
+    if (arguments->length() == 1)
         RELEASE_AND_RETURN(scope, str(globalObject, arguments->at(0)));
-    }
     RELEASE_AND_RETURN(scope, repr(globalObject, arguments));
 }
 

@@ -129,6 +129,18 @@ String typeName(JSGlobalObject* globalObject, JSValue value)
     return typeOf(globalObject, value)->nameString(globalObject);
 }
 
+JSValue getMember(JSGlobalObject* globalObject, JSObject* object, const String& name)
+{
+    VM& vm = globalObject->vm();
+    return object->getDirect(vm, Identifier::fromString(vm, makeString('.', name)));
+}
+
+void setMember(JSGlobalObject* globalObject, JSObject* object, const String& name, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    object->putDirect(vm, Identifier::fromString(vm, makeString('.', name)), value, static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
 // ---- Exceptions
 
 JSObject* createException(JSGlobalObject* globalObject, PyType* type, JSValue argument)
@@ -136,6 +148,9 @@ JSObject* createException(JSGlobalObject* globalObject, PyType* type, JSValue ar
     VM& vm = globalObject->vm();
     PyInstance* exception = PyInstance::create(vm, type->instanceStructure());
     exception->putDirect(vm, vm.pythonNames().private_args, argument ? PyTuple::create(globalObject, { argument }) : PyTuple::create(globalObject, 0));
+    // What its __init__ would have done.
+    if (argument && type == globalObject->pyRealm()->typeStopIteration())
+        setMember(globalObject, exception, "value"_s, argument);
     return exception;
 }
 
@@ -149,15 +164,45 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type,
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     JSObject* exception = createException(globalObject, realm->type(type), argument);
-    if (JSValue handled = realm->handledException())
-        exception->putDirect(vm, vm.pythonNames().private_context, handled);
+    UNUSED_PARAM(vm);
+    setContext(globalObject, exception);
     throwException(globalObject, scope, exception);
     return { };
+}
+
+void setContext(JSGlobalObject* globalObject, JSObject* exception)
+{
+    VM& vm = globalObject->vm();
+    auto& name = vm.pythonNames().private_context;
+    JSValue handled = globalObject->pyRealm()->handledException();
+    if (!handled || !handled.isObject() || handled == JSValue(exception))
+        return;
+    // If it is already somewhere in the chain of what is being handled, it is taken out, or the chain would go round.
+    for (JSObject* link = asObject(handled);;) {
+        JSValue next = link->getDirect(vm, name);
+        if (!next || !next.isObject())
+            break;
+        if (next == JSValue(exception)) {
+            link->putDirect(vm, name, jsUndefined());
+            break;
+        }
+        link = asObject(next);
+    }
+    exception->putDirect(vm, name, handled);
 }
 
 JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type, const String& message)
 {
     return raise(globalObject, scope, type, jsString(globalObject->vm(), message));
+}
+
+JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, const String& name)
+{
+    JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeNameError(), makeString("name '"_s, name, "' is not defined"_s));
+    setMember(globalObject, exception, "name"_s, jsString(globalObject->vm(), name));
+    setContext(globalObject, exception);
+    throwException(globalObject, scope, exception);
+    return { };
 }
 
 void throwUnboundVariable(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSString* name)
@@ -311,12 +356,14 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
     case DescriptorKind::Member: {
         if (!instance)
             return value;
-        // What is in the slot is a property of the instance, which nothing but this gets at.
-        auto name = asString(uncheckedDowncast<PyNativeObject>(value.asCell())->field(0))->toIdentifier(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (JSValue stored = asObject(instance)->getDirect(vm, name))
+        auto* member = uncheckedDowncast<PyNativeObject>(value.asCell());
+        String name = asString(member->field(0))->value(globalObject);
+        if (JSValue stored = getMember(globalObject, asObject(instance), name))
             return stored;
-        return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, name.string(), '\''));
+        // One of a built-in type has a value from the start.
+        if (JSValue initial = member->field(2))
+            return initial;
+        return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, name, '\''));
     }
     case DescriptorKind::General:
         if (!descriptor.getter)
@@ -412,15 +459,24 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
 
 JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, PropertyName name)
 {
+    VM& vm = globalObject->vm();
     StringView attribute { name.uid() };
+    String message;
     if (isType(value))
-        return raise(globalObject, scope, BuiltinType::AttributeError, makeString("type object '"_s, uncheckedDowncast<PyType>(value.asCell())->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
-    if (auto* module = tryModule(value)) {
-        JSValue moduleName = module->namespaceObject()->getDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_name);
+        message = makeString("type object '"_s, uncheckedDowncast<PyType>(value.asCell())->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
+    else if (auto* module = tryModule(value)) {
+        JSValue moduleName = module->namespaceObject()->getDirect(vm, vm.pythonNames().dunder_name);
         if (moduleName && moduleName.isString())
-            return raise(globalObject, scope, BuiltinType::AttributeError, makeString("module '"_s, asString(moduleName)->value(globalObject).data, "' has no attribute '"_s, attribute, '\''));
+            message = makeString("module '"_s, asString(moduleName)->value(globalObject).data, "' has no attribute '"_s, attribute, '\'');
     }
-    return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\''));
+    if (message.isNull())
+        message = makeString('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\'');
+    JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeAttributeError(), message);
+    setMember(globalObject, exception, "name"_s, jsString(vm, attribute.toString()));
+    setMember(globalObject, exception, "obj"_s, value);
+    setContext(globalObject, exception);
+    throwException(globalObject, scope, exception);
+    return { };
 }
 
 } // anonymous namespace
@@ -532,15 +588,16 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         }
         case DescriptorKind::Member:
             if (newValue) {
-                asObject(value)->putDirect(vm, name, newValue);
+                setMember(globalObject, asObject(value), attribute.toString(), newValue);
                 return;
             }
-            if (!asObject(value)->getDirect(vm, name)) {
-                raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''));
+            if (!getMember(globalObject, asObject(value), attribute.toString())) {
+                // Deleting an empty slot says only which.
+                raise(globalObject, scope, BuiltinType::AttributeError, attribute.toString());
                 return;
             }
             scope.release();
-            asObject(value)->deleteProperty(globalObject, name);
+            asObject(value)->deleteProperty(globalObject, Identifier::fromString(vm, makeString('.', attribute)));
             return;
         case DescriptorKind::General:
             if (descriptor.isData) {

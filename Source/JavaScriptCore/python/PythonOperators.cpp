@@ -624,20 +624,27 @@ static bool exceptionMatches(JSGlobalObject* globalObject, JSValue exception, JS
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    auto isExceptionClass = [] (JSValue value) { return isType(value) && asType(value)->isExceptionType(); };
+    auto complain = [&] {
+        raiseTypeError(globalObject, scope, "catching classes that do not inherit from BaseException is not allowed"_s);
+        return false;
+    };
     if (isTuple(pattern)) {
-        for (auto& entry : uncheckedDowncast<PyTuple>(pattern.asCell())->span()) {
-            bool matches = exceptionMatches(globalObject, exception, entry.get());
-            RETURN_IF_EXCEPTION(scope, false);
-            if (matches)
+        // All of them are looked at before any is tried, and a tuple in the tuple will not do.
+        auto entries = uncheckedDowncast<PyTuple>(pattern.asCell())->span();
+        for (auto& entry : entries) {
+            if (!isExceptionClass(entry.get()))
+                return complain();
+        }
+        for (auto& entry : entries) {
+            if (isInstance(globalObject, exception, asType(entry.get())))
                 return true;
         }
         return false;
     }
-    if (!isType(pattern) || !uncheckedDowncast<PyType>(pattern.asCell())->isExceptionType()) {
-        raiseTypeError(globalObject, scope, "catching classes that do not inherit from BaseException is not allowed"_s);
-        return false;
-    }
-    return isInstance(globalObject, exception, uncheckedDowncast<PyType>(pattern.asCell()));
+    if (!isExceptionClass(pattern))
+        return complain();
+    return isInstance(globalObject, exception, asType(pattern));
 }
 
 JSValue compare(JSGlobalObject* globalObject, ComparisonOperator op, JSValue left, JSValue right)
