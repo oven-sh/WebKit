@@ -279,7 +279,11 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
         if (UnlinkedFunctionCodeBlock* kept = StaticHeap::codeOf(vm, *this, specializationKind))
             return kept;
         UnlinkedFunctionCodeBlock* result = nullptr;
-        if (isCall(specializationKind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset)
+        if (StaticHeap::payloadIsLeftOut() && source.provider()->hasNoText()) {
+            error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
+            return nullptr;
+        }
+        if (!StaticHeap::payloadIsLeftOut() && (isCall(specializationKind) ? m_cachedCodeBlockForCallOffset : m_cachedCodeBlockForConstructOffset))
             result = decodeCodeLeftInPayload(vm, specializationKind, vm.structureStructure.get());
         else {
             result = generateUnlinkedFunctionCodeBlock(vm, this, source, specializationKind, codeGenerationMode, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, error, parseMode, optimize);

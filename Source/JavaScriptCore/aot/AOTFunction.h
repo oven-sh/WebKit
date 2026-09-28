@@ -8,6 +8,7 @@
 #include "BytecodeIndex.h"
 #include "CodeSpecializationKind.h"
 #include "CodeType.h"
+#include "Identifier.h"
 #include "LineColumn.h"
 #include "WriteBarrier.h"
 #include <span>
@@ -53,6 +54,7 @@ struct AllocationPlan {
 // for it (SharedData).
 struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef of(const CallFrame*);
+    JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*); // None, unless its code is the static compiler's.
     // What has run as this executable's code of this kind. None, if its realm is no more.
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind);
     explicit operator bool() const { return !!instance; }
@@ -70,6 +72,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
     JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset) const;
     const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
+    JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
     // Of the body of an async function that is waiting in that state: where it goes on from. Nowhere in particular: the beginning.
     JS_EXPORT_PRIVATE BytecodeIndex resumePointOf(int32_t state) const;
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const;
@@ -78,6 +81,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE LineColumn lineColumnFor(BytecodeIndex) const; // CodeBlock::lineColumnForBytecodeIndex()
     // Decoded now, if it is not there. For what nothing else will do for, which is little. As for ensureData().
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* ensureUnlinkedCodeBlock() const;
+    UnlinkedCodeBlock* makeUnlinkedCodeBlockFromFacts() const;
     JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock() const;
     // Its own, which it gets now if it has been doing without. Not while the collector is at work, and on no thread but the VM's.
     JS_EXPORT_PRIVATE Data* ensureData() const;
@@ -88,6 +92,8 @@ struct FunctionRef {
     uint32_t siteConstantOf(const Slot*) const;
     // What the source says there, and whether it is exactly that: of a program that goes without its text (Image::quoteAt()).
     JS_EXPORT_PRIVATE std::optional<std::pair<String, bool>> quoteAt(BytecodeIndex) const;
+    // Whether the instruction there is one of those that construct: for whoever would look at it, if it were there to look at.
+    JS_EXPORT_PRIVATE bool constructsAt(BytecodeIndex) const;
     AllocationPlan planOf(const Slot* firstOfSite) const; // None, if the code is not from an image: then there is bytecode.
 
     Instance* instance { nullptr };

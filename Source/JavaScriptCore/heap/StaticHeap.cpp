@@ -61,7 +61,7 @@ static size_t s_moduleBeingBuilt;
 
 // The file: this, then each arena, on a page boundary.
 struct StaticHeap::Header {
-    static constexpr uint64_t expectedMagic = 0x3430504145485442ULL; // "BTHEAP04"
+    static constexpr uint64_t expectedMagic = 0x3530504145485442ULL; // "BTHEAP05"
     static constexpr unsigned maxStructures = 32;
 
     uint64_t magic;
@@ -69,6 +69,10 @@ struct StaticHeap::Header {
     uint64_t size; // Of everything.
     uint64_t arenaOffset[Region::numberOfArenasInFile];
     uint64_t arenaSize[Region::numberOfArenasInFile];
+    // A part of Arena::Data that is not in the file, and that there is nothing at the addresses of: what nothing needs of the
+    // payload. Where it starts in the arena, and how long it is. What follows it in the arena follows what precedes it in the file.
+    uint64_t holeInData;
+    uint64_t sizeOfHoleInData;
 
     // Addresses.
     uint64_t strings;
@@ -330,6 +334,47 @@ private:
 
 #if OS(DARWIN)
 // Every word that may be the address of something that is not in the region. Some are not addresses.
+// Whatever it is had better not be followed.
+static void reportWhatPointsInto(uint64_t start, uint64_t end, std::span<const uint32_t> factsOfFunctions)
+{
+    UncheckedKeyHashMap<String, unsigned> found;
+    auto isInside = [&](uint64_t word) { return word - start < end - start; };
+    for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
+        StaticHeap::forEachCell(arena, Region::used(arena), [&](void* pointer, size_t size) {
+            auto* words = static_cast<uint64_t*>(pointer);
+            for (size_t i = 0; i < size / 8; ++i) {
+                if (isInside(words[i]))
+                    found.add(makeString("cell "_s, String::fromLatin1(static_cast<JSCell*>(pointer)->classInfo()->className.characters()), " +"_s, i * 8), 0).iterator->value++;
+            }
+        });
+    }
+    for (auto arena : { Region::Arena::Malloc, Region::Arena::MutableMalloc, Region::Arena::Data }) {
+        auto* words = reinterpret_cast<const uint64_t*>(Region::startOf(arena));
+        unsigned count = 0;
+        for (size_t i = 0; i < Region::used(arena) / 8; ++i) {
+            if (!isInside(std::bit_cast<uint64_t>(&words[i])) && isInside(words[i]))
+                ++count;
+        }
+        if (count)
+            found.add(makeString("words of arena "_s, static_cast<unsigned>(arena)), count);
+    }
+    unsigned facts = 0;
+    for (uint32_t at : factsOfFunctions) {
+        if (!at)
+            continue;
+        auto* all = StaticHeap::inData<AOT::FunctionFacts>(at);
+        for (auto fact : { AOT::FunctionFacts::ExpressionInfo, AOT::FunctionFacts::Handlers, AOT::FunctionFacts::RealmConstants, AOT::FunctionFacts::ResumePoints, AOT::FunctionFacts::Scalars }) {
+            if (const uint32_t* word = all->find(fact); word && isInside(Region::startOf(Region::Arena::Data) + *word))
+                ++facts;
+        }
+    }
+    if (facts)
+        found.add("facts of functions"_s, facts);
+    dataLogLn("StaticHeap: ", (end - start), " bytes of the payload are left out. What points there:");
+    for (auto& entry : found)
+        dataLogLn("StaticHeap:     ", entry.key, ": ", entry.value);
+}
+
 static void reportWhatMayPointOut()
 {
     UncheckedKeyHashMap<uint64_t, bool> isMappedPage;
@@ -463,6 +508,23 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock)
         memcpySpan(std::span { copy, list.size() }, list.span());
         words[0] |= Facts::ResumePoints;
         words.append(in(Region::Arena::Data, copy));
+    }
+    if (codeBlock->numberOfConstantIdentifierSets()) {
+        words[0] |= Facts::ConstantIdentifierSets;
+        words.append(in(Region::Arena::Malloc, &codeBlock->constantIdentifierSets()[0]));
+    }
+    {
+        Vector<uint8_t> scalars;
+        {
+            Region::AllocationScope notInRegion(false);
+            scalars = scalarsToMakeFunctionCodeFrom(*codeBlock);
+        }
+        auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, scalars.size(), 1));
+        memcpySpan(std::span { copy, scalars.size() }, scalars.span());
+        words[0] |= Facts::Scalars;
+        words.append(in(Region::Arena::Data, copy));
+        Region::AllocationScope notInRegion(false);
+        scalars = { };
     }
     auto* facts = static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, words.sizeInBytes(), alignof(uint32_t)));
     memcpySpan(std::span { facts, words.size() }, words.span());
@@ -684,7 +746,7 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     return nullptr;
 }
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode)
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt)
 {
     if (!Region::beginBuilding())
         return { };
@@ -828,7 +890,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             for (auto& [function, offsets] : functions) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                                     if (auto* code = function->codeBlockIfThereIsOne(kind))
-                                        code->leaveToStaticHeap(!!code->numberOfUnlinkedStringSwitchJumpTables());
+                                        code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets());
                                 }
                                 function->leaveCodeInPayload(decoder, offsets);
                             }
@@ -924,6 +986,17 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         });
     }
 
+    if (whatIsKeptOfPayloadStartsAt && header.payload && header.factsOfFunctions) {
+        uint64_t start = roundUpToMultipleOf<pageSizeOfImage>(header.payload);
+        uint64_t end = (header.payload + whatIsKeptOfPayloadStartsAt) & ~static_cast<uint64_t>(pageSizeOfImage - 1);
+        if (end > start) {
+            header.holeInData = start - Region::startOf(Region::Arena::Data);
+            header.sizeOfHoleInData = end - start;
+            if (Options::aotReportStats()) [[unlikely]]
+                reportWhatPointsInto(start, end, { std::bit_cast<const uint32_t*>(header.factsOfFunctions), static_cast<size_t>(header.numberOfFunctions) });
+        }
+    }
+
     Region::forgetWhatIsFree();
     Vector<uint8_t> image;
     if (ok) {
@@ -932,11 +1005,21 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             header.arenaOffset[i] = size;
             header.arenaSize[i] = roundUpToMultipleOf<pageSizeOfImage>(Region::used(static_cast<Region::Arena>(i)));
             size += header.arenaSize[i];
+            if (static_cast<Region::Arena>(i) == Region::Arena::Data)
+                size -= header.sizeOfHoleInData;
         }
         header.size = size;
         image.fill(0, size);
         memcpy(image.mutableSpan().data(), &header, sizeof(header));
-        for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i)
+        if (header.sizeOfHoleInData) {
+            constexpr unsigned data = static_cast<unsigned>(Region::Arena::Data);
+            auto* from = reinterpret_cast<const uint8_t*>(Region::startOf(Region::Arena::Data));
+            uint8_t* to = image.mutableSpan().data() + header.arenaOffset[data];
+            size_t afterHole = header.holeInData + header.sizeOfHoleInData;
+            memcpy(to, from, header.holeInData);
+            memcpy(to + header.holeInData, from + afterHole, Region::used(Region::Arena::Data) - afterHole);
+        }
+        for (unsigned i = header.sizeOfHoleInData ? 1 : 0; i < Region::numberOfArenasInFile; ++i)
             memcpy(image.mutableSpan().data() + header.arenaOffset[i], reinterpret_cast<void*>(Region::startOf(static_cast<Region::Arena>(i))), Region::used(static_cast<Region::Arena>(i)));
     }
     if (Options::aotReportStats()) [[unlikely]] {
@@ -964,13 +1047,17 @@ std::optional<StaticHeap::Copies> StaticHeap::copiesIn(std::span<const uint8_t> 
         uint64_t inArena = address - Region::startOf(Region::Arena::Data);
         if (!address || inArena > header.arenaSize[data] || size > header.arenaSize[data] - inArena)
             return std::nullopt;
-        return header.arenaOffset[data] + inArena;
+        if (inArena + size <= header.holeInData || !header.sizeOfHoleInData)
+            return header.arenaOffset[data] + inArena;
+        if (inArena >= header.holeInData + header.sizeOfHoleInData)
+            return header.arenaOffset[data] + inArena - header.sizeOfHoleInData;
+        return std::nullopt;
     };
     auto strings = offsetOf(header.strings, header.stringsSize);
     auto payload = offsetOf(header.payload, header.payloadSize);
-    if (!strings || !payload)
+    if (!strings || (!payload && !header.sizeOfHoleInData))
         return std::nullopt;
-    return Copies { *strings, static_cast<size_t>(header.stringsSize), *payload, static_cast<size_t>(header.payloadSize) };
+    return Copies { *strings, static_cast<size_t>(header.stringsSize), payload.value_or(0), static_cast<size_t>(header.payloadSize), !payload, static_cast<uintptr_t>(header.payload) };
 }
 
 bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t offsetInFile)
@@ -985,11 +1072,21 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
     if (!atoms->table().isEmpty())
         return false;
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
-        if (header.arenaOffset[i] % pageSizeOfImage || header.arenaOffset[i] > header.size || header.arenaSize[i] > header.size - header.arenaOffset[i])
+        uint64_t sizeInFile = header.arenaSize[i] - (static_cast<Region::Arena>(i) == Region::Arena::Data ? header.sizeOfHoleInData : 0);
+        if (header.arenaOffset[i] % pageSizeOfImage || header.arenaOffset[i] > header.size || sizeInFile > header.size - header.arenaOffset[i])
             return false;
     }
+    if (header.holeInData % pageSizeOfImage || header.sizeOfHoleInData % pageSizeOfImage || header.holeInData + header.sizeOfHoleInData > header.arenaSize[static_cast<unsigned>(Region::Arena::Data)])
+        return false;
     for (unsigned i = 0; i < Region::numberOfArenasInFile; ++i) {
         // (Some of it mapped and the rest not is nothing that anybody gets to see.)
+        if (static_cast<Region::Arena>(i) == Region::Arena::Data && header.sizeOfHoleInData) {
+            uint64_t afterHole = header.holeInData + header.sizeOfHoleInData;
+            if (!Region::map(Region::Arena::Data, fileDescriptor, offsetInFile + header.arenaOffset[i], header.holeInData)
+                || !Region::map(Region::Arena::Data, fileDescriptor, offsetInFile + header.arenaOffset[i] + header.holeInData, header.arenaSize[i] - afterHole, afterHole))
+                return false;
+            continue;
+        }
         if (!Region::map(static_cast<Region::Arena>(i), fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
             return false;
     }
@@ -1074,6 +1171,9 @@ RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedF
     auto found = std::ranges::lower_bound(all, std::bit_cast<uint64_t>(&executable), { }, &StaticHeapTDZ::executable);
     if (found == all.end() || found->executable != std::bit_cast<uint64_t>(&executable))
         return nullptr;
+    // (They are for whoever compiles what is inside the function. There is nothing to compile it from.)
+    if (payloadIsLeftOut())
+        return nullptr;
     // (Which is there: the executable came out of a code block that codeFor() returned.)
     // What comes of it is of a VM. The one that is there is of whichever VM got there first, which may be no more: it says which
     // module, and that is all it is asked.
@@ -1081,17 +1181,30 @@ RefPtr<TDZEnvironmentLink> StaticHeap::parentScopeTDZVariablesOf(const UnlinkedF
     return decodeParentScopeTDZVariablesForStaticHeap(decoderOfWhatWasLeftInPayload(executable.vm(), placed).get(), std::bit_cast<const void*>(found->record));
 }
 
+bool StaticHeap::payloadIsLeftOut()
+{
+    return s_header && s_header->sizeOfHoleInData;
+}
+
+std::span<const uint8_t> StaticHeap::payloadThatIsLeftOut()
+{
+    RELEASE_ASSERT(payloadIsLeftOut());
+    return { std::bit_cast<const uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) };
+}
+
 UnlinkedCodeBlock* StaticHeap::codeFor(VM& vm, const SourceCodeKey& key, const CachedBytecode& cachedBytecode)
 {
     ASSERT(isUsedBy(vm));
     if (!s_header->numberOfModules || !cachedBytecode.payloadIsPersistent() || cachedBytecode.size() < s_header->payloadSize)
+        return nullptr;
+    if (payloadIsLeftOut() && cachedBytecode.span().data() != payloadThatIsLeftOut().data())
         return nullptr;
     // A recording is of what is read out of the payload.
     if (BytecodeOrderRecorder::ofVM(vm)) [[unlikely]]
         return nullptr;
     std::span<uint8_t> payload { std::bit_cast<uint8_t*>(s_header->payload), static_cast<size_t>(s_header->payloadSize) };
     static const uint8_t* s_samePayload = nullptr;
-    if (cachedBytecode.span().data() != s_samePayload) {
+    if (cachedBytecode.span().data() != s_samePayload && cachedBytecode.span().data() != payload.data()) {
         size_t sample = std::min<size_t>(payload.size(), 4 * KB);
         if (memcmp(payload.data(), cachedBytecode.span().data(), sample))
             return nullptr;

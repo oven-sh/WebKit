@@ -441,9 +441,11 @@ struct FunctionFacts {
         // Of the body of an async function: where it goes on from in each of the states it can be waiting in, which is what the
         // last of its UnlinkedSimpleJumpTables says. Where there are: the least state, how many there are, and an offset for each.
         ResumePoints = 1 << 6,
+        ConstantIdentifierSets = 1 << 7, // IdentifierSet: where the first is.
+        Scalars = 1 << 8, // Where what scalarsToMakeFunctionCodeFrom() gave is.
     };
-    static constexpr uint32_t isBuiltinFunction = 1 << 7;
-    static constexpr unsigned shiftOfInstructionsSize = 8;
+    static constexpr uint32_t isBuiltinFunction = 1 << 9; // (After the last that there could be: there is no word for it.)
+    static constexpr unsigned shiftOfInstructionsSize = 10;
     static unsigned wordsFor(Fact fact) { return fact == Handlers || fact == FunctionDecls || fact == FunctionExprs ? 2 : 1; }
 
     const uint32_t* find(Fact fact) const
@@ -514,6 +516,7 @@ struct CompiledFunctionInfo {
     Vector<uint32_t> plans; // See AllocationPlan.
     // The bytecode offsets that a frame can be at when an error is made that says what the source says there. In order.
     Vector<uint32_t> quotableSites;
+    Vector<uint32_t> constructSites; // Where in the bytecode something is constructed, in order (collectConstructSites()).
     Vector<Quote> quotes; // And what it says at each that it says anything at, for a program that goes without its text (collectQuotes()).
     Vector<UniquedStringImpl*> selectors;
     Vector<KnownShape> shapes;
@@ -546,7 +549,7 @@ struct ImageFunction {
     uint32_t directEntryOffset;
     uint32_t startsCold; // See CompiledFunctionInfo::startsCold.
     uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none.
-    uint32_t unused;
+    uint32_t constructSites; // Likewise. See Image::constructsAt().
 
     const ImageCalleeSave* calleeSaves() const { return reinterpret_cast<const ImageCalleeSave*>(this + 1); }
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(calleeSaves() + numberOfCalleeSaves); }

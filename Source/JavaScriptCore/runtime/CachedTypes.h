@@ -392,6 +392,23 @@ private:
 // is not to be had. And the key it is for.
 // functions: each with UnlinkedFunctionExecutable::offsetsOfCachedCodeBlocks(), as it was.
 UnlinkedCodeBlock* decodeAllForStaticHeap(Decoder&, SourceCodeKey&, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);
+// An UnlinkedFunctionCodeBlock that says everything about a function's code that the real one did, but for what the instructions
+// were: for whoever wants to ask one about code that is not going to be interpreted. The scalars are what the first of these gave.
+struct UnlinkedHandlerInfo;
+struct PartsOfFunctionCode {
+    const uint8_t* scalars;
+    std::span<const uint8_t> instructions; // As many bytes as there were. Not looked at here.
+    const Identifier* identifiers;
+    const WriteBarrier<Unknown>* constants;
+    std::span<const uint32_t> linkTimeConstants; // Which of those are SourceCodeRepresentation::LinkTimeConstant.
+    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls;
+    std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs;
+    std::span<const UnlinkedHandlerInfo> handlers;
+    const void* expressionInfo; // See decodeBorrowedExpressionInfo(). May be null.
+};
+Vector<uint8_t> scalarsToMakeFunctionCodeFrom(const UnlinkedCodeBlock&);
+UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM&, const PartsOfFunctionCode&);
+
 // The same for an entry that encodeBuiltinFunction() or BytecodeLinkEncoder::addBuiltinFunction() wrote.
 bool entryIsOfBuiltinFunction(Decoder&);
 UnlinkedFunctionExecutable* decodeAllOfBuiltinForStaticHeap(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, Vector<std::pair<UnlinkedFunctionExecutable*, std::pair<int32_t, int32_t>>>& functions);

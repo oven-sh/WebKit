@@ -205,6 +205,37 @@ std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& funct
     return std::nullopt;
 }
 
+void collectConstructSites(CompiledFunctionInfo& info, UnlinkedCodeBlock* codeBlock)
+{
+    for (const auto& instruction : codeBlock->instructions()) {
+        switch (instruction->opcodeID()) {
+        case op_construct:
+        case op_construct_varargs:
+        case op_super_construct:
+        case op_super_construct_varargs:
+            info.constructSites.append(instruction.offset());
+            break;
+        default:
+            break;
+        }
+    }
+}
+
+// How many there are. Then for each, in order, how much further on in the bytecode it is than the one before.
+bool Image::constructsAt(const ImageFunction& function, unsigned bytecodeOffset) const
+{
+    if (!function.constructSites)
+        return false;
+    const uint8_t* at = this->at<uint8_t>(header().quotesOffset) + function.constructSites;
+    uint64_t offset = 0;
+    for (uint64_t count = readVarint(at); count--;) {
+        offset += readVarint(at);
+        if (offset >= bytecodeOffset)
+            return offset == bytecodeOffset;
+    }
+    return false;
+}
+
 void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
 {
     // Where they pointed depends on where the code was when it was compiled, which is nothing to do with the code.
@@ -580,6 +611,20 @@ Vector<uint8_t> ImageBuilder::finish()
     header.textOfSelectorsOffset = place(textOfSelectors.size());
     header.selectorsInOrderOffset = place(selectorsInOrder.sizeInBytes());
     header.dispatchOffset = place(dispatch.sizeInBytes());
+    Vector<uint32_t> constructSitesOfFunction;
+    constructSitesOfFunction.fill(0, m_functions.size());
+    for (unsigned index = 0; index < m_functions.size(); ++index) {
+        auto& all = m_functions[index].code.info.constructSites;
+        if (all.isEmpty())
+            continue;
+        constructSitesOfFunction[index] = safeCast<uint32_t>(quotes.size());
+        appendVarint(quotes, all.size());
+        uint32_t previous = 0;
+        for (uint32_t offset : all) {
+            appendVarint(quotes, offset - previous);
+            previous = offset;
+        }
+    }
     header.quotesOffset = place(quotes.size());
     header.textOfQuotesOffset = place(textOfQuotes.size());
     header.hashOfIntrinsics = Options::useImmutableIntrinsics() && ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
@@ -590,6 +635,27 @@ Vector<uint8_t> ImageBuilder::finish()
     header.numberOfFunctions = m_functions.size();
     for (unsigned i = 0; i < numberOfStubs; ++i)
         header.stubOffsets[i] = stubs.offsets[i];
+    if (Options::aotReportStats()) [[unlikely]] {
+        // TEMPORARY-IMAGE-STATS
+        size_t heads = 0, calleeSaves = 0, catchEntrypoints = 0, sites = 0, siteConstants = 0, knownCallees = 0, plans = 0, code = 0, sitesWithConstant = 0;
+        for (auto& function : m_functions) {
+            auto& info = function.code.info;
+            heads += sizeof(ImageFunction);
+            calleeSaves += info.calleeSaveRegisters.registerCount() * sizeof(ImageCalleeSave);
+            catchEntrypoints += info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint);
+            sites += info.sites.size() * sizeof(Site);
+            siteConstants += info.sites.size() * sizeof(uint32_t);
+            for (uint32_t constant : info.siteConstants)
+                sitesWithConstant += !!constant;
+            knownCallees += info.knownCallees.size() * sizeof(ImageKey);
+            plans += info.plans.sizeInBytes();
+            code += function.code.bytes.size();
+        }
+        dataLogLn("IMAGE: table of keys ", capacity * sizeof(ImageKey), " (", m_functions.size(), " of ", capacity, " used); records ", recordsSize, ": heads ", heads, ", callee saves ", calleeSaves, ", catch entrypoints ", catchEntrypoints,
+            ", sites ", sites, ", site constants ", siteConstants, " (", sitesWithConstant, " are not zero), known callees ", knownCallees, ", plans ", plans);
+        dataLogLn("IMAGE: shapes ", imageShapes.sizeInBytes(), ", names of shapes ", namesOfShapes.sizeInBytes(), ", selectors ", imageSelectors.sizeInBytes() + rowOfSelector.sizeInBytes() + selectorsInOrder.sizeInBytes(), ", their text ", textOfSelectors.size(),
+            ", dispatch ", dispatch.sizeInBytes(), ", quotes and construct sites ", quotes.size(), ", text of quotes ", textOfQuotes.size(), "; code ", codeSize, ", of which the functions' own ", code, " and ", stubsAt.size(), " copies of ", stubs.bytes.size(), " bytes of stubs");
+    }
 
     Vector<uint8_t> image;
     image.fill(0, header.size);
@@ -635,6 +701,7 @@ Vector<uint8_t> ImageBuilder::finish()
         record.usesStaticImports = info.usesStaticImports;
         record.startsCold = info.startsCold;
         record.quotes = quotesOfFunction[index];
+        record.constructSites = constructSitesOfFunction[index];
 
         ImageKey key = function.key;
         key.record = recordAt + 1;

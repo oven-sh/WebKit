@@ -575,6 +575,18 @@ std::optional<std::pair<String, bool>> FunctionRef::quoteAt(BytecodeIndex byteco
     return Image::of(*function).quoteAt(*function, bytecodeIndex.offset());
 }
 
+FunctionRef FunctionRef::of(CodeBlock* codeBlock)
+{
+    Data* data = codeBlock->aotData();
+    return data ? data->function() : FunctionRef { };
+}
+
+bool FunctionRef::constructsAt(BytecodeIndex bytecodeIndex) const
+{
+    const ImageFunction* function = info().function;
+    return function && Image::of(*function).constructsAt(*function, bytecodeIndex.offset());
+}
+
 AllocationPlan FunctionRef::planOf(const Slot* firstOfSite) const
 {
     uint32_t constant = siteConstantOf(firstOfSite + 1);
@@ -620,6 +632,46 @@ static void reportWhoAsks(ASCIILiteral what)
 #endif
 }
 
+// As many zeros as any function has bytes of instructions, in memory that is nobody's until somebody reads it.
+static std::span<const uint8_t> zerosForInstructions(size_t size)
+{
+    static constexpr size_t most = static_cast<size_t>(1) << (32 - FunctionFacts::shiftOfInstructionsSize);
+    static const uint8_t* zeros;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        void* result = mmap(nullptr, most, PROT_READ, MAP_PRIVATE | MAP_ANON, -1, 0);
+        RELEASE_ASSERT(result != MAP_FAILED);
+        zeros = static_cast<const uint8_t*>(result);
+    });
+    RELEASE_ASSERT(size <= most);
+    return { zeros, size };
+}
+
+// It is not going to be interpreted, and whoever asks for one does not ask what the instructions are.
+UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromFacts() const
+{
+    auto* facts = this->facts();
+    const uint32_t* scalars = facts ? facts->find(FunctionFacts::Scalars) : nullptr;
+    if (!scalars)
+        return nullptr;
+    PartsOfFunctionCode parts { };
+    parts.scalars = StaticHeap::inData<uint8_t>(*scalars);
+    parts.instructions = zerosForInstructions(facts->instructionsSize());
+    parts.identifiers = static_cast<const Identifier*>(info().identifiers);
+    parts.constants = static_cast<const WriteBarrier<Unknown>*>(info().constants);
+    if (const uint32_t* word = facts->find(FunctionFacts::RealmConstants)) {
+        const uint32_t* list = StaticHeap::inData<uint32_t>(*word);
+        parts.linkTimeConstants = { list + 2, list[1] };
+    }
+    parts.functionDecls = functionDecls();
+    parts.functionExprs = functionExprs();
+    if (const uint32_t* words = facts->find(FunctionFacts::Handlers))
+        parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
+    if (const uint32_t* word = facts->find(FunctionFacts::ExpressionInfo))
+        parts.expressionInfo = StaticHeap::inData<uint8_t>(*word);
+    return makeFunctionCodeFromParts(*instance->vm, parts);
+}
+
 UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
 {
     if (UnlinkedCodeBlock* existing = unlinkedCodeBlockIfThereIsOne())
@@ -632,7 +684,9 @@ UnlinkedCodeBlock* FunctionRef::ensureUnlinkedCodeBlock() const
     // It is the Data's. (The executable was there when the program was built, and to store to it is to have a page of one's own
     // for the sake of a word.)
     Data* data = ensureData();
-    UnlinkedCodeBlock* result = uncheckedDowncast<FunctionExecutable>(data->executable)->unlinkedExecutable()->decodeCodeLeftInPayload(vm, info().kind(), instance->globalObject);
+    UnlinkedCodeBlock* result = makeUnlinkedCodeBlockFromFacts();
+    if (!result)
+        result = uncheckedDowncast<FunctionExecutable>(data->executable)->unlinkedExecutable()->decodeCodeLeftInPayload(vm, info().kind(), instance->globalObject);
     RELEASE_ASSERT(result);
     data->unlinkedCodeBlock = result;
     if (!data->hasBeenFilledSinceLastCollection)
@@ -692,6 +746,14 @@ const UnlinkedStringJumpTable& FunctionRef::stringSwitchJumpTable(unsigned table
     if (!facts)
         return unlinkedCodeBlockIfThereIsOne()->unlinkedStringSwitchJumpTable(tableIndex);
     return StaticHeap::inMalloc<UnlinkedStringJumpTable>(*facts->find(FunctionFacts::StringSwitchJumpTables))[tableIndex];
+}
+
+const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
+{
+    auto* facts = this->facts();
+    if (!facts)
+        return ensureUnlinkedCodeBlock()->constantIdentifierSets()[index];
+    return StaticHeap::inMalloc<IdentifierSet>(*facts->find(FunctionFacts::ConstantIdentifierSets))[index];
 }
 
 BytecodeIndex FunctionRef::resumePointOf(int32_t state) const

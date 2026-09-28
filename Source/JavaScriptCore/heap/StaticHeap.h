@@ -54,7 +54,9 @@ public:
 
     // Everything that can be made ahead of time, as a file. `strings` is what EncoderStringTable::serialize() returned; the payload
     // and the entries of its modules are BytecodeLinkEncoder::finish()'s. Empty if it cannot be done here.
-    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { });
+    // What comes before `whatIsKeptOfPayloadStartsAt` in the payload is left out, if that is not zero: it had better be where
+    // BytecodeLinkRegions::ExpressionInfo starts. Then nothing of the program can be interpreted, or decoded again.
+    JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode = { }, size_t whatIsKeptOfPayloadStartsAt = 0);
     static bool isBuilding() { return s_isBuilding; }
     static JSString* emptyStringWhileBuilding(VM&); // Not the VM's own.
     static WTF::SymbolRegistry& symbolRegistryWhileBuilding(bool isPrivate); // Likewise.
@@ -73,6 +75,8 @@ public:
         size_t sizeOfStrings;
         size_t offsetOfPayload;
         size_t sizeOfPayload;
+        bool payloadIsLeftOut; // Not all of it is there, so it is nowhere.
+        uintptr_t addressOfPayload; // payloadThatIsLeftOut().data(), when the program runs.
     };
     JS_EXPORT_PRIVATE static std::optional<Copies> copiesIn(std::span<const uint8_t> image);
     // On a thread that is going to have a VM other than the first, before it has made an atom: as map() does for its own thread.
@@ -98,6 +102,12 @@ public:
     JS_EXPORT_PRIVATE static std::unique_ptr<DecoderStringTable> tryCreateStringTable(VM&, std::span<const uint8_t> strings);
     // What decoding that would give, if it is a module of the payload that build() was given, and is the code for that key.
     static UnlinkedCodeBlock* codeFor(VM&, const SourceCodeKey&, const CachedBytecode&);
+    // See build(). Then this is where the payload would be and how long it is, for whoever has to say which payload they mean:
+    // most of it is not there to be read.
+    JS_EXPORT_PRIVATE static bool payloadIsLeftOut();
+    // Of what is said to be a payload: it is that one, or the static heap it would be in has not been mapped at all.
+    static bool isNoPayloadToRead(std::span<const uint8_t> bytes) { return contains(bytes.data()) && (!isMapped() || payloadIsLeftOut()); }
+    JS_EXPORT_PRIVATE static std::span<const uint8_t> payloadThatIsLeftOut();
     // Likewise what linking the result of decodeBuiltinFunction() would give, for a builtin whose entry in the payload is there,
     // and whose source is that. Its source() is what makeSource() would have returned. Only in the realm that the program is run in.
     JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);

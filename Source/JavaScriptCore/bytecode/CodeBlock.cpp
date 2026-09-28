@@ -481,8 +481,9 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
                 const UnlinkedHandlerInfo& unlinkedHandler = unlinkedCodeBlock->exceptionHandler(i);
                 HandlerInfo& handler = m_rareData->m_exceptionHandlers[i];
 #if ENABLE(JIT)
-                auto& instruction = *instructions().at(unlinkedHandler.target).ptr();
-                handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(instruction.width()).code()));
+                // (Code from an image goes by its own idea of where its handlers are, and the instructions may not be there to look at.)
+                OpcodeSize width = linkMode == LinkMode::ForCodeFromImage ? OpcodeSize::Narrow : instructions().at(unlinkedHandler.target).ptr()->width();
+                handler.initialize(unlinkedHandler, CodeLocationLabel<ExceptionHandlerPtrTag>(LLInt::handleCatch(width).code()));
 #else
                 handler.initialize(unlinkedHandler);
 #endif

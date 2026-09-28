@@ -25,6 +25,7 @@
 #include "config.h"
 #include "JSGlobalObjectFunctions.h"
 
+#include "AOTFunction.h"
 #include "CallFrame.h"
 #include "GlobalObjectMethodTable.h"
 #include "ImportMap.h"
@@ -884,10 +885,17 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     std::optional<IdentifierSet> newlyCreatedSet;
     if (callFrame->argumentCount() > 1) {
         int32_t setIndex = callFrame->uncheckedArgument(1).asUInt32AsAnyInt();
-        CodeBlock* codeBlock = getCallerCodeBlock(callFrame);
-        ASSERT(codeBlock);
-        unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        excludedSet = &unlinkedCodeBlock->constantIdentifierSets()[setIndex];
+#if ENABLE(FTL_JIT)
+        // Code from the static compiler has no CodeBlock, and does not need one for this.
+        if (CallFrame* callerFrame = callFrame->callerFrame(); callerFrame->isAOTFrame())
+            excludedSet = &AOT::FunctionRef::of(callerFrame).constantIdentifierSet(setIndex);
+#endif
+        if (!excludedSet) {
+            CodeBlock* codeBlock = getCallerCodeBlock(callFrame);
+            ASSERT(codeBlock);
+            unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
+            excludedSet = &unlinkedCodeBlock->constantIdentifierSets()[setIndex];
+        }
         if (callFrame->argumentCount() > 2) {
             newlyCreatedSet.emplace(*excludedSet);
             for (unsigned index = 2; index < callFrame->argumentCount(); ++index) {

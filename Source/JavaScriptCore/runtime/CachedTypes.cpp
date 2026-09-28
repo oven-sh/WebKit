@@ -2753,7 +2753,7 @@ public:
         m_privateBrandRequirement = rareData.m_privateBrandRequirement;
     }
 
-    bool hasStringSwitchJumpTables() const { return !!m_unlinkedStringSwitchJumpTables.size(); }
+    bool hasWhatStaticHeapKeeps() const { return m_unlinkedStringSwitchJumpTables.size() || m_constantIdentifierSets.size(); }
 
     UnlinkedCodeBlock::RareData* decode(Decoder& decoder) const
     {
@@ -4313,6 +4313,8 @@ public:
         Decoder& m_decoder;
     };
     Scalars scalars(Decoder& decoder) const { Tail storage; return tail(decoder, storage).scalars; }
+    static Vector<uint8_t> scalarsToMakeOneFrom(const UnlinkedCodeBlock&);
+    static CodeBlockType* makeFromParts(VM&, const PartsOfFunctionCode&);
 
     const uint8_t* regionBegin(const Layout& layout) const { return std::bit_cast<const uint8_t*>(this) - layout.recordOffsetInRegion; }
     template<typename T> const T* at(const Layout& layout, const Array& array) const { return array.count ? reinterpret_cast<const T*>(regionBegin(layout) + array.at) : nullptr; }
@@ -4350,9 +4352,9 @@ public:
         auto* e = extras(tail(decoder, storage).layout);
         if (!e)
             return nullptr;
-        // (The tables of switches on strings stay where they are decoded to.)
+        // (The tables of switches on strings stay where they are decoded to, and the sets of names.)
         std::optional<KeptByStaticHeap> kept;
-        if (decoder.leavesFunctionCodeInPayload() && !e->rareData.isEmpty() && e->rareData->hasStringSwitchJumpTables()) [[unlikely]]
+        if (decoder.leavesFunctionCodeInPayload() && !e->rareData.isEmpty() && e->rareData->hasWhatStaticHeapKeeps()) [[unlikely]]
             kept.emplace(decoder);
         return e->rareData.decode(decoder);
     }
@@ -4364,6 +4366,7 @@ protected:
 
 private:
     static void packScalars(const UnlinkedCodeBlock&, VarintWriter&);
+    static void readScalars(VarintReader&, Scalars&);
     static void packLayout(const Layout&, VarintWriter&);
     const uint8_t* tailBytes() const { return std::bit_cast<const uint8_t*>(this) + sizeof(Record); }
     uint8_t* tailBytes() { return std::bit_cast<uint8_t*>(this) + sizeof(Record); }
@@ -5317,8 +5320,13 @@ auto CachedCodeBlock<CodeBlockType>::readTail() const -> Tail
     array(layout.functionExprs);
     if (layout.flags & LayoutHasExtras)
         layout.extrasAt = reader.i32();
+    readScalars(reader, tail.scalars);
+    return tail;
+}
 
-    Scalars& s = tail.scalars;
+template<typename CodeBlockType>
+void CachedCodeBlock<CodeBlockType>::readScalars(VarintReader& reader, Scalars& s)
+{
     uint32_t flags = reader.u32();
     auto bits = [&](unsigned shift, unsigned width = 1) -> unsigned { return (flags >> shift) & ((1u << width) - 1); };
     s.isConstructor = bits(CodeBlockIsConstructorShift);
@@ -5344,7 +5352,75 @@ auto CachedCodeBlock<CodeBlockType>::readTail() const -> Tail
     s.numArrayProfiles = reader.u32();
     s.numBinaryArithProfiles = reader.u32();
     s.numUnaryArithProfiles = reader.u32();
-    return tail;
+}
+
+template<typename CodeBlockType>
+Vector<uint8_t> CachedCodeBlock<CodeBlockType>::scalarsToMakeOneFrom(const UnlinkedCodeBlock& codeBlock)
+{
+    VarintWriter writer;
+    packScalars(codeBlock, writer);
+    writer.u8(static_cast<uint8_t>(codeBlock.needsClassFieldInitializer()) | static_cast<uint8_t>(codeBlock.privateBrandRequirement()) << 1);
+    writer.u32(codeBlock.m_identifiers.size());
+    writer.u32(codeBlock.m_constantRegisters.size());
+    Vector<uint8_t> result(writer.size());
+    writer.copyTo(result.mutableSpan().data());
+    return result;
+}
+
+template<typename CodeBlockType>
+CodeBlockType* CachedCodeBlock<CodeBlockType>::makeFromParts(VM& vm, const PartsOfFunctionCode& parts)
+{
+    ASSERT(vm.heap.isDeferred());
+    VarintReader reader(parts.scalars);
+    Scalars s;
+    readScalars(reader, s);
+    uint8_t bits = reader.u8();
+    unsigned numberOfIdentifiers = reader.u32();
+    unsigned numberOfConstants = reader.u32();
+    ExecutableInfo info(s.isConstructor, static_cast<PrivateBrandRequirement>(bits >> 1 & 1), s.isBuiltinFunction, static_cast<ConstructorKind>(s.constructorKind), static_cast<JSParserScriptMode>(s.scriptMode),
+        static_cast<SuperBinding>(s.superBinding), s.parseMode, static_cast<DerivedContextType>(s.derivedContextType), static_cast<NeedsClassFieldInitializer>(bits & 1), s.isArrowFunctionContext, s.isClassContext,
+        static_cast<EvalContextType>(s.evalContextType));
+    CodeBlockType* result = CodeBlockType::create(vm, static_cast<CodeType>(s.codeType), info, s.codeGenerationMode);
+    UnlinkedCodeBlock& codeBlock = *result;
+    codeBlock.m_thisRegister = s.thisRegister;
+    codeBlock.m_scopeRegister = s.scopeRegister;
+    codeBlock.m_numVars = s.numVars;
+    codeBlock.m_numCalleeLocals = s.numCalleeLocals;
+    codeBlock.m_numParameters = s.numParameters;
+    codeBlock.m_isBuiltinDefaultClassConstructor = s.isBuiltinDefaultClassConstructor;
+    codeBlock.m_hasTailCalls = s.hasTailCalls;
+    codeBlock.m_hasCheckpoints = s.hasCheckpoints;
+    codeBlock.m_instructions = std::unique_ptr<JSInstructionStream>(new JSInstructionStream(parts.instructions, JSInstructionStream::Borrow));
+    codeBlock.m_identifiers = FixedVector<Identifier>(numberOfIdentifiers);
+    for (unsigned i = 0; i < numberOfIdentifiers; ++i)
+        codeBlock.m_identifiers[i] = parts.identifiers[i];
+    codeBlock.m_constantRegisters = FixedVector<WriteBarrier<Unknown>>(numberOfConstants);
+    codeBlock.m_constantsSourceCodeRepresentation = FixedVector<SourceCodeRepresentation>(numberOfConstants);
+    for (unsigned i = 0; i < numberOfConstants; ++i) {
+        codeBlock.m_constantRegisters[i].setWithoutWriteBarrier(parts.constants[i].get());
+        codeBlock.m_constantsSourceCodeRepresentation[i] = SourceCodeRepresentation::Other;
+    }
+    for (uint32_t index : parts.linkTimeConstants)
+        codeBlock.m_constantsSourceCodeRepresentation[index] = SourceCodeRepresentation::LinkTimeConstant;
+    auto copyFunctions = [&](auto& to, std::span<const WriteBarrier<UnlinkedFunctionExecutable>> from) {
+        to = UnlinkedCodeBlock::FunctionExpressionVector(from.size());
+        for (unsigned i = 0; i < from.size(); ++i)
+            to[i].setWithoutWriteBarrier(from[i].get());
+    };
+    copyFunctions(codeBlock.m_functionDecls, parts.functionDecls);
+    copyFunctions(codeBlock.m_functionExprs, parts.functionExprs);
+    if (!parts.handlers.empty()) {
+        if (!codeBlock.m_rareData)
+            codeBlock.m_rareData = makeUnique<UnlinkedCodeBlock::RareData>();
+        codeBlock.m_rareData->m_exceptionHandlers = FixedVector<UnlinkedHandlerInfo>(parts.handlers.size());
+        for (unsigned i = 0; i < parts.handlers.size(); ++i)
+            codeBlock.m_rareData->m_exceptionHandlers[i] = parts.handlers[i];
+    }
+    codeBlock.m_cachedExpressionInfo = parts.expressionInfo;
+    if (!parts.expressionInfo)
+        codeBlock.m_expressionInfo = ExpressionInfo::Encoder { }.createExpressionInfo();
+    vm.writeBarrier(result);
+    return result;
 }
 
 // TEMPORARY-PAYLOAD-STATS: what a payload is made of.
@@ -5716,6 +5792,8 @@ static const GenericCacheEntry* cacheEntryOf(const CachedBytecode& cachedBytecod
 
 UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> cachedBytecode, SourceProvider& provider, unsigned embedderStamp, Decoder::RecoverableCode recoverableCode)
 {
+    if (StaticHeap::isNoPayloadToRead(cachedBytecode->span())) [[unlikely]]
+        return nullptr;
     auto* entry = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
     if (!entry)
         return nullptr;
@@ -6149,6 +6227,7 @@ struct BytecodeLinkEncoder::Impl {
                 AOT::CompiledCode code;
                 if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock))) {
                     // (A function's key says where its source starts, if it is a function that somebody wrote.)
+                    AOT::collectConstructSites(code.info, jobs[index].codeBlock);
                     auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                     bool isTopLevel = !(jobs[index].rank & 2);
                     // (An embedder's builtin has its text wherever the embedder has it.)
@@ -6514,6 +6593,8 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         if (UnlinkedCodeBlock* codeBlock = StaticHeap::codeFor(vm, key, cachedBytecode.get()))
             return codeBlock;
     }
+    if (StaticHeap::isNoPayloadToRead(cachedBytecode->span())) [[unlikely]]
+        return nullptr;
     MonotonicTime before;
     size_t cachedBytecodeSize = cachedBytecode->size();
     bool payloadIsShared = false;
@@ -6650,6 +6731,16 @@ void decodeSymbolTableEntries(Decoder& decoder, const CachedSymbolTable& cachedS
 {
     ASSERT(!isCompilationThread());
     cachedSymbolTable.decodeEntries(decoder, symbolTable, scopePartOnly);
+}
+
+Vector<uint8_t> scalarsToMakeFunctionCodeFrom(const UnlinkedCodeBlock& codeBlock)
+{
+    return CachedCodeBlock<UnlinkedFunctionCodeBlock>::scalarsToMakeOneFrom(codeBlock);
+}
+
+UnlinkedFunctionCodeBlock* makeFunctionCodeFromParts(VM& vm, const PartsOfFunctionCode& parts)
+{
+    return CachedCodeBlock<UnlinkedFunctionCodeBlock>::makeFromParts(vm, parts);
 }
 
 std::unique_ptr<ExpressionInfo> decodeBorrowedExpressionInfo(const void* cachedExpressionInfo)

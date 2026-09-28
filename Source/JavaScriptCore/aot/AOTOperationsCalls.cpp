@@ -294,8 +294,11 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     if (callee.inherits<InternalFunction>())
         return encodeResult(vm.getCTIInternalFunctionTrampolineFor(kind).taggedPtr(), nullptr);
     auto* function = dynamicDowncast<JSFunction>(callee.asCell());
-    if (!function || function->isHostFunction())
+    if (!function)
         return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
+    // (It has its code from the start, and reports its own errors.)
+    if (function->isHostFunction())
+        return encodeResult(function->executable()->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
     FunctionExecutable* executable = function->jsExecutable();
     if (!isCall(kind) && executable->constructAbility() == ConstructAbility::CannotConstruct)
         return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
