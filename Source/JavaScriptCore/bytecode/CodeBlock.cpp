@@ -31,6 +31,7 @@
 #include "CodeBlock.h"
 
 #include "AOTRuntime.h"
+#include "HeapIterationScope.h"
 #include "ModuleProgramExecutable.h"
 #include "Printer.h"
 #include "ProgramExecutable.h"
@@ -82,6 +83,7 @@
 #include "ProgramCodeBlock.h"
 #include "PropertyInlineCache.h"
 #include "ReduceWhitespace.h"
+#include "SamplingProfiler.h"
 #include "SlotVisitorInlines.h"
 #include "SourceProvider.h"
 #include "StackVisitor.h"
@@ -1104,8 +1106,21 @@ void CodeBlock::releaseAOTData()
     if (vm().heap.collectionScope())
         return;
     if (auto* data = aotData(); data && data->codeBlock == this) {
+#if ENABLE(SAMPLING_PROFILER)
+        // Samples that have not been looked at yet say which code a frame was of by pointing at this.
+        if (SamplingProfiler* profiler = vm().samplingProfiler()) [[unlikely]] {
+            DeferGCForAWhile deferGC(vm());
+            Locker locker { profiler->getLock() };
+            HeapIterationScope heapIterationScope(vm().heap);
+            profiler->processUnverifiedStackTraces();
+        }
+#endif
         m_jitData = nullptr;
         AOT::Data::destroy(data);
+        // Nothing runs this again, and it may be a long while before it is swept.
+        m_constantRegisters.clear();
+        m_functionDecls = { };
+        m_functionExprs = { };
     }
 }
 #endif

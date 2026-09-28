@@ -73,14 +73,31 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
 
     UnlinkedCodeBlock* codeBlock = callerCode(callFrame);
     const JSInstruction* instruction = codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr();
+    // The first so many of Graph::storesOfLiteral(). Which they are was settled when the code was compiled: they are the stores to
+    // the register, whatever else there is in between.
+    Vector<unsigned, 32> identifiers;
+    {
+        auto& instructions = codeBlock->instructions();
+        VirtualRegister object = instruction->as<OpNewObject>().m_dst;
+        for (unsigned offset = callFrame->bytecodeIndex().offset() + instruction->size(); identifiers.size() < count; offset += instructions.at(offset)->size()) {
+            auto next = instructions.at(offset);
+            if (next->opcodeID() != op_put_by_id)
+                continue;
+            auto bytecode = next->as<OpPutById>();
+            if (bytecode.m_base == object)
+                identifiers.append(bytecode.m_property);
+        }
+    }
+    auto identifierOf = [&](unsigned index) -> const Identifier& {
+        return codeBlock->identifier(identifiers[index]);
+    };
     ObjectAllocationProfile profile;
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
     if (count > 1 && !(Options::aotDisableFastPaths() & 4096)) {
         // All of it is known, so there is no call for a structure for every property on the way.
         Vector<UniquedStringImpl*, 32> names;
-        Graph::forEachLiteralProperty(instruction, count, [&](unsigned identifier, VirtualRegister) {
-            names.append(codeBlock->identifier(identifier).impl());
-        });
+        for (unsigned i = 0; i < count; ++i)
+            names.append(identifierOf(i).impl());
         if (Structure* structure = callerData(callFrame)->instance->structureOfLiteral(profile.structure(), names.span())) {
             DeferGC deferGC(vm);
             unsigned inlineCapacity = structure->inlineCapacity();
@@ -96,14 +113,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
         }
     }
     JSObject* object = constructEmptyObject(vm, profile.structure());
-    unsigned index = 0;
     bool inOrder = true;
-    Graph::forEachLiteralProperty(instruction, count, [&](unsigned identifier, VirtualRegister) {
+    for (unsigned index = 0; index < count; ++index) {
         PutPropertySlot slot(object, true, PutPropertySlot::PutById);
-        object->putDirect(vm, codeBlock->identifier(identifier), JSValue::decode(values[index]), slot);
+        object->putDirect(vm, identifierOf(index), JSValue::decode(values[index]), slot);
         inOrder &= slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty && slot.cachedOffset() == static_cast<PropertyOffset>(index);
-        ++index;
-    });
+    }
     Structure* structure = object->structure();
     if (inOrder && !structure->isDictionary() && count <= structure->inlineCapacity() && !object->butterfly())
         fillAllocationCache(vm, callerData(callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator), structure->inlineCapacity());

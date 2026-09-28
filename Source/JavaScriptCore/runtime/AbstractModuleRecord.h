@@ -202,7 +202,12 @@ public:
     const Identifier& moduleKey() const { return m_moduleKey; }
     JSModuleLoader* moduleLoader() const { return m_moduleLoader.get(); }
     ScriptFetchParameters::Type moduleType() const;
-    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND { return m_requestedModules; }
+    const Vector<ModuleRequest>& requestedModules() const LIFETIME_BOUND
+    {
+        if (m_didReleasePrelinkedRequests) [[unlikely]]
+            const_cast<AbstractModuleRecord*>(this)->fillPrelinkedRequestedModules();
+        return m_requestedModules;
+    }
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
@@ -342,6 +347,10 @@ protected:
     AbstractModuleRecord(VM&, Structure*, JSModuleLoader*, Identifier, SourceProviderSourceType);
     void finishCreation(JSGlobalObject*, VM&);
 #if USE(BUN_JSC_ADDITIONS)
+    // Once the module has been evaluated nothing walks its requests or resolves its imports any more, as a rule. Both can be had
+    // from the graph again.
+    void releaseWhatLinkingNeeded();
+    void fillPrelinkedRequestedModules();
     // Before the record is visible to anyone: adopts the graph and fills requestedModules() from it.
     void initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&&, uint32_t moduleIndex);
 #endif
@@ -384,6 +393,7 @@ private:
     // Save the occurrence order since the module loader loads and runs the modules in this order.
     // http://www.ecma-international.org/ecma-262/6.0/#sec-moduleevaluation
     Vector<ModuleRequest> m_requestedModules;
+    bool m_didReleasePrelinkedRequests { false }; // They are made again from the graph if anybody asks.
 
     WriteBarrier<JSModuleNamespaceObject> m_moduleNamespaceObject;
     WriteBarrier<JSModuleNamespaceObject> m_deferredNamespaceObject;

@@ -140,7 +140,7 @@ struct Node {
     bool calleeIsChecked { false };
     Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
     Node* otherSite { nullptr };
-    // op_new_object: how many of the op_put_by_id that follow it are part of it (Graph::forEachLiteralProperty()).
+    // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
     // op_create_this: how many properties the object is made with (NewObjectPlan). Their values are the uses at NewObjectPlan::registerOf().
     unsigned numberOfLiteralProperties { 0 };
     Node* storage { nullptr }; // A guard of an access to an element of a typed array: the GuardKind::TypedArrayStorage that goes for it.
@@ -310,7 +310,10 @@ public:
     };
     static CallOperands operandsOfCall(const JSInstruction*); // op_call or op_call_ignore_result
     // The properties that an object literal starts out with: functor(index of the identifier, register the value is in).
-    template<typename Functor> static void forEachLiteralProperty(const JSInstruction* newObject, unsigned count, const Functor&);
+    // An object literal: where the op_put_by_id are that make the object of an op_new_object what the literal says, as far as they
+    // are sure to be got to one after the other. Whatever is done in between to work out what to store knows nothing of the object,
+    // so that the object can be made, whole, where the last of them is.
+    static Vector<unsigned, 16> storesOfLiteral(const JSInstructionStream&, unsigned offsetOfNewObject);
     // Of an op_get_by_val or op_put_by_val or the guard of one: the type of typed array that the base is known to be, if it holds numbers.
     static std::optional<JSType> typedArrayAccessed(const Node*);
     // The array that the node puts an element in, and the element: op_put_by_val, or a call that is taken for one of Array.prototype.push.
@@ -417,16 +420,6 @@ private:
     ASCIILiteral m_failureReason;
     OpcodeID m_failureOpcode { op_nop };
 };
-
-template<typename Functor>
-void Graph::forEachLiteralProperty(const JSInstruction* instruction, unsigned count, const Functor& functor)
-{
-    for (unsigned i = 0; i < count; ++i) {
-        instruction = std::bit_cast<const JSInstruction*>(std::bit_cast<const uint8_t*>(instruction) + instruction->size());
-        auto bytecode = instruction->as<OpPutById>();
-        functor(bytecode.m_property, bytecode.m_value);
-    }
-}
 
 // Phases. Each returns false (and Graph::failed() says why) if the function is not for the static compiler.
 bool parseBytecode(Graph&);

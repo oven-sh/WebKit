@@ -202,6 +202,43 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
     return plan;
 }
 
+Vector<unsigned, 16> Graph::storesOfLiteral(const JSInstructionStream& instructions, unsigned offsetOfNewObject)
+{
+    Vector<unsigned, 16> stores;
+    auto newObject = instructions.at(offsetOfNewObject);
+    VirtualRegister object = newObject->as<OpNewObject>().m_dst;
+    constexpr unsigned maximumCount = 2048; // Their values are all kept until the last.
+    // Nothing gets in here from elsewhere: what a jump goes to is either after a jump or the top of a loop or a handler, and this
+    // stops at all of them.
+    for (unsigned offset = offsetOfNewObject + newObject->size(); offset < instructions.size() && stores.size() < maximumCount; offset += instructions.at(offset)->size()) {
+        auto instruction = instructions.at(offset);
+        OpcodeID opcode = instruction->opcodeID();
+        if (opcode == op_put_by_id) {
+            auto bytecode = instruction->as<OpPutById>();
+            if (bytecode.m_base == object) {
+                if (bytecode.m_value == object || !bytecode.m_flags.isDirect())
+                    break;
+                stores.append(offset);
+                continue;
+            }
+        }
+        if (isBranch(opcode) || isTerminal(opcode) || isThrow(opcode) || opcode == op_loop_hint || opcode == op_catch)
+            break;
+        bool knowsOfObject = false;
+        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
+            computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
+                knowsOfObject |= reg == object;
+            });
+            computeDefsForBytecodeIndexImpl(0, instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
+                knowsOfObject |= reg == object;
+            });
+        }
+        if (knowsOfObject)
+            break;
+    }
+    return stores;
+}
+
 CallIntrinsic callIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis)
 {
     static constexpr struct {
@@ -1042,26 +1079,6 @@ private:
 
     // { a: x, b: y }: an op_new_object and, right after it, an op_put_by_id for each property (Options::evaluateObjectLiteralValuesFirst()).
     // How many of those there are.
-    unsigned numberOfLiteralPropertiesAt(unsigned offset)
-    {
-        auto newObject = m_instructions.at(offset);
-        if (newObject->opcodeID() != op_new_object)
-            return 0;
-        VirtualRegister object = newObject->as<OpNewObject>().m_dst;
-        unsigned count = 0;
-        constexpr unsigned maximumCount = 64;
-        for (unsigned next = offset + newObject->size(); next < m_instructions.size() && count < maximumCount; next += m_instructions.at(next)->size()) {
-            auto instruction = m_instructions.at(next);
-            if (instruction->opcodeID() != op_put_by_id || m_leaders.get(next))
-                break;
-            auto bytecode = instruction->as<OpPutById>();
-            if (bytecode.m_base != object || bytecode.m_value == object || !bytecode.m_flags.isDirect())
-                break;
-            ++count;
-        }
-        return count;
-    }
-
     // With the blocks and the loops known: where the guards go. False if nowhere.
     bool chooseGuards()
     {
@@ -1081,15 +1098,16 @@ private:
                 m_loopHeaders.set(block->bytecodeBegin);
             m_recentProperties.shrink(0);
             m_recentFunctions.shrink(0);
-            unsigned partOfLiteral = 0;
+            BitVector partOfLiteral;
             for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
                 m_inLoop.set(offset);
                 const JSInstruction* instruction = m_instructions.at(offset).ptr();
-                if (partOfLiteral) {
-                    --partOfLiteral;
+                if (partOfLiteral.get(offset))
                     continue;
+                if (instruction->opcodeID() == op_new_object) {
+                    for (unsigned store : Graph::storesOfLiteral(m_instructions, offset))
+                        partOfLiteral.set(store);
                 }
-                partOfLiteral = numberOfLiteralPropertiesAt(offset);
                 if (instruction->opcodeID() == op_get_by_id) {
                     auto bytecode = instruction->as<OpGetById>();
                     m_recentProperties.removeAllMatching([&](auto& entry) { return entry.first == bytecode.m_dst; });
@@ -1526,12 +1544,19 @@ private:
             }
         }
 
-        unsigned partOfLiteral = 0;
+        RELEASE_ASSERT(m_literalsBeingMade.isEmpty());
         for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
             const JSInstruction* instruction = m_instructions.at(offset).ptr();
             OpcodeID opcode = instruction->opcodeID();
-            if (partOfLiteral) {
-                --partOfLiteral;
+            if (opcode == op_put_by_id && !m_literalsBeingMade.isEmpty() && m_literalsBeingMade.last().stores[m_literalsBeingMade.last().next] == offset) {
+                auto& literal = m_literalsBeingMade.last();
+                literal.node->uses.append({ NewObjectPlan::registerOf(literal.next), get(block, instruction->as<OpPutById>().m_value) });
+                if (++literal.next == literal.stores.size()) {
+                    Node* node = literal.node;
+                    m_literalsBeingMade.removeLast();
+                    append(block, node);
+                    set(block, node->reg, node);
+                }
                 continue;
             }
             if (m_objectBeingPlanned && opcode == op_put_by_id) {
@@ -1557,6 +1582,25 @@ private:
             }
 
             switch (opcode) {
+            case op_new_object: {
+                VirtualRegister reg = instruction->as<OpNewObject>().m_dst;
+                // A register that lives in memory is written where the instruction is.
+                if (!m_graph.isTracked(reg) || m_graph.isHomed(reg))
+                    break;
+                auto stores = Graph::storesOfLiteral(m_instructions, offset);
+                while (!stores.isEmpty() && stores.last() >= block->bytecodeEnd)
+                    stores.removeLast();
+                if (stores.isEmpty())
+                    break;
+                Node* node = m_graph.addNode(NodeKind::Bytecode);
+                node->opcode = opcode;
+                node->instruction = instruction;
+                node->bytecodeIndex = BytecodeIndex(offset);
+                node->numberOfLiteralProperties = stores.size();
+                node->reg = reg;
+                m_literalsBeingMade.append({ node, WTF::move(stores), 0 });
+                continue;
+            }
             case op_create_this: {
                 // A register that lives in memory is written where the instruction is.
                 if (m_graph.hasHomedRegisters() || block->isInLoop)
@@ -1651,17 +1695,6 @@ private:
                     if (use.reg == thisRegister && m_graph.isScopeThatStandsForNoThis(use.node))
                         use.node = m_graph.constant(jsUndefined());
                 }
-            }
-            if (opcode == op_new_object) {
-                node->numberOfLiteralProperties = numberOfLiteralPropertiesAt(offset);
-                Graph::forEachLiteralProperty(instruction, node->numberOfLiteralProperties, [&](unsigned, VirtualRegister reg) {
-                    for (auto& use : node->uses) {
-                        if (use.reg == reg)
-                            return;
-                    }
-                    node->uses.append({ reg, get(block, reg) });
-                });
-                partOfLiteral = node->numberOfLiteralProperties;
             }
             append(block, node);
             if (offset == block->bytecodeBegin && !block->isGeneric && block->predecessors.size() == 1 && block->predecessors[0]->endsWithGuard && !block->predecessors[0]->isPreHeader) {
@@ -1879,6 +1912,12 @@ private:
     BitVector m_inLoop;
     BitVector m_guards;
     BitVector m_loopHeaders;
+    struct LiteralBeingMade {
+        Node* node; // The op_new_object, which is going to be put where the last of its stores is.
+        Vector<unsigned, 16> stores;
+        unsigned next;
+    };
+    Vector<LiteralBeingMade, 2> m_literalsBeingMade; // One inside the other.
     Node* m_objectBeingPlanned { nullptr }; // An op_create_this that is going to be put where the last of its stores is.
     NewObjectPlan m_planOfObject;
     unsigned m_nextStoreOfPlan { 0 };

@@ -247,8 +247,8 @@ AbstractModuleRecord* AbstractModuleRecord::hostResolveImportedModule(JSGlobalOb
     // A prelinked record's graph requests are answered by the loader's index table, not [[LoadedModules]] (until
     // something materializes the by-name view); a record has tens of requests, so find the request by name.
     if (m_prelinked) {
-        for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
-            const ModuleRequest& request = m_requestedModules[i];
+        for (unsigned i = 0; i < requestedModules().size(); ++i) {
+            const ModuleRequest& request = requestedModules()[i];
             if (request.m_specifier.impl() == moduleName.impl() && request.type() == moduleRequestType)
                 return prelinkedRequestedModule(i);
         }
@@ -266,7 +266,22 @@ void AbstractModuleRecord::initializePrelinked(VM&, Ref<PrelinkedModuleGraph>&& 
     const auto& module = prelinkedModule();
     m_isTypeScript = module.flags & PrelinkedModuleGraph::Module::IsTypeScript;
     m_hasTLA = module.flags & PrelinkedModuleGraph::Module::HasTLA;
-    auto requests = m_prelinked->requests(module);
+    fillPrelinkedRequestedModules();
+}
+
+void AbstractModuleRecord::releaseWhatLinkingNeeded()
+{
+    if (!m_prelinked || m_prelinkedEntriesMaterialized)
+        return;
+    m_requestedModules.clear();
+    m_didReleasePrelinkedRequests = true;
+    m_prelinkedImportResolutions.clear();
+}
+
+void AbstractModuleRecord::fillPrelinkedRequestedModules()
+{
+    m_didReleasePrelinkedRequests = false;
+    auto requests = m_prelinked->requests(prelinkedModule());
     m_requestedModules = Vector<ModuleRequest>(requests.size(), [&](size_t i) {
         const auto& request = requests[i];
         return ModuleRequest { m_prelinked->identifier(request.specifierSid), m_prelinked->fetchParameters(request), request.isDeferred() ? ModulePhase::Defer : ModulePhase::Evaluation };
@@ -286,14 +301,17 @@ void AbstractModuleRecord::convertPrelinkedToEager()
 
 AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(unsigned requestIndex) const
 {
-    if (!m_prelinked || requestIndex >= m_requestedModules.size())
+    if (!m_prelinked)
         return nullptr;
-    const auto& request = m_prelinked->requests(prelinkedModule())[requestIndex];
+    auto requests = m_prelinked->requests(prelinkedModule());
+    if (requestIndex >= requests.size())
+        return nullptr;
+    const auto& request = requests[requestIndex];
     if (request.moduleIndex != PrelinkedModuleGraph::noModule) {
         if (AbstractModuleRecord* record = prelinkedRecordForResolution(globalObject(), request.moduleIndex)) [[likely]]
             return record;
     }
-    const ModuleRequest& moduleRequest = m_requestedModules[requestIndex];
+    const ModuleRequest& moduleRequest = requestedModules()[requestIndex];
     if (auto iter = m_loadedModules.find(ModuleMapKey { moduleRequest.m_specifier.impl(), moduleRequest.type() }); iter != m_loadedModules.end())
         return iter->value.m_module.get();
     return nullptr;
@@ -304,12 +322,12 @@ AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(const Modul
     if (!m_prelinked)
         return nullptr;
     // Graph walks hand us an element of requestedModules(): its position is the request index.
-    uintptr_t offset = std::bit_cast<uintptr_t>(&request) - std::bit_cast<uintptr_t>(m_requestedModules.span().data());
-    if (!(offset % sizeof(ModuleRequest)) && offset / sizeof(ModuleRequest) < m_requestedModules.size()) [[likely]]
+    uintptr_t offset = std::bit_cast<uintptr_t>(&request) - std::bit_cast<uintptr_t>(requestedModules().span().data());
+    if (!(offset % sizeof(ModuleRequest)) && offset / sizeof(ModuleRequest) < requestedModules().size()) [[likely]]
         return prelinkedRequestedModule(offset / sizeof(ModuleRequest));
     // A copy (a top-level load's own request, or a caller that copied an element): match it the way ModuleRequestsEqual does.
-    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
-        const ModuleRequest& candidate = m_requestedModules[i];
+    for (unsigned i = 0; i < requestedModules().size(); ++i) {
+        const ModuleRequest& candidate = requestedModules()[i];
         if (candidate.m_specifier.impl() == request.m_specifier.impl() && candidate.type() == request.type())
             return prelinkedRequestedModule(i);
     }
@@ -318,7 +336,7 @@ AbstractModuleRecord* AbstractModuleRecord::prelinkedRequestedModule(const Modul
 
 bool AbstractModuleRecord::hasAllPrelinkedRequestedModules() const
 {
-    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+    for (unsigned i = 0; i < requestedModules().size(); ++i) {
         if (!prelinkedRequestedModule(i))
             return false;
     }
@@ -335,12 +353,12 @@ void AbstractModuleRecord::materializePrelinkedEntries()
     PrelinkedModuleGraph& graph = *m_prelinked;
     const auto& module = prelinkedModule();
     auto requestType = [&](uint32_t requestIndex) {
-        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
-        return m_requestedModules[requestIndex].type();
+        RELEASE_ASSERT(requestIndex < requestedModules().size(), requestIndex, requestedModules().size());
+        return requestedModules()[requestIndex].type();
     };
     auto requestSpecifier = [&](uint32_t requestIndex) -> const Identifier& {
-        RELEASE_ASSERT(requestIndex < m_requestedModules.size(), requestIndex, m_requestedModules.size());
-        return m_requestedModules[requestIndex].m_specifier;
+        RELEASE_ASSERT(requestIndex < requestedModules().size(), requestIndex, requestedModules().size());
+        return requestedModules()[requestIndex].m_specifier;
     };
 
     auto imports = graph.imports(module);
@@ -388,11 +406,11 @@ void AbstractModuleRecord::materializePrelinkedEntries()
         addStarExportEntry(requestSpecifier(requestIndex), requestType(requestIndex));
 
     Locker locker { cellLock() };
-    for (unsigned i = 0; i < m_requestedModules.size(); ++i) {
+    for (unsigned i = 0; i < requestedModules().size(); ++i) {
         AbstractModuleRecord* loaded = prelinkedRequestedModule(i);
         if (!loaded)
             continue;
-        const ModuleRequest& request = m_requestedModules[i];
+        const ModuleRequest& request = requestedModules()[i];
         m_loadedModules.ensure(ModuleMapKey { request.m_specifier.impl(), request.type() }, [&] {
             return LoadedModuleRequest { vm, request, loaded, this };
         });
@@ -2119,8 +2137,8 @@ void AbstractModuleRecord::dump()
 {
     dataLog("\nAnalyzing ModuleRecord key(", printableName(m_moduleKey), ")\n");
 
-    dataLog("    Dependencies: ", m_requestedModules.size(), " modules\n");
-    for (const auto& request : m_requestedModules)
+    dataLog("    Dependencies: ", requestedModules().size(), " modules\n");
+    for (const auto& request : requestedModules())
         dataLogLn("      module(", printableName(request.m_specifier), "),attributes(", RawPointer(request.m_attributes.get()), ")");
 
     dataLog("    Import: ", m_importEntries.size(), " entries\n");

@@ -1242,6 +1242,38 @@ TypeCountSet Heap::objectTypeCounts()
         }
         for (unsigned i = 0; i < 5; ++i)
             dataLogLn("STRUCTSIZE bucket=", i, " used=", byProperties[i][0], " intermediate=", byProperties[i][1], " unusedLeaf=", byProperties[i][2]);
+        // The chains: from each structure that is in use, back over the steps that are not, each counted for the first to get there.
+        UncheckedKeyHashSet<Structure*> counted;
+        Vector<std::pair<unsigned, Structure*>> chains;
+        for (Structure* structure : all) {
+            if (!instances.get(structure))
+                continue;
+            unsigned steps = 0;
+            for (Structure* step = structure->previousID(); step && !instances.get(step) && counted.add(step).isNewEntry; step = step->previousID())
+                steps++;
+            if (steps)
+                chains.append({ steps, structure });
+        }
+        std::ranges::sort(chains, [](auto& a, auto& b) { return a.first > b.first; });
+        uint64_t stepsByKind[4] = { };
+        for (unsigned i = 0; i < chains.size(); ++i) {
+            Structure* structure = chains[i].second;
+            unsigned accessors = 0, functions = 0, total = 0;
+            StringPrintStream names;
+            structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+                if (entry.attributes() & PropertyAttribute::Accessor)
+                    accessors++;
+                if (total < 7)
+                    names.print(total ? "," : "", entry.key());
+                total++;
+                return true;
+            });
+            UNUSED_VARIABLE(functions);
+            stepsByKind[accessors * 2 > total ? 0 : structure->mayBePrototype() ? 1 : instances.get(structure) == 1 ? 2 : 3] += chains[i].first;
+            if (i < 60)
+                dataLogLn("CHAIN steps=", chains[i].first, " properties=", total, " accessors=", accessors, " instances=", instances.get(structure), " prototype=", structure->mayBePrototype(), " class=", structure->classInfoForCells()->className, " names=", names.toString());
+        }
+        dataLogLn("CHAINKINDS mostlyAccessors=", stepsByKind[0], " prototypes=", stepsByKind[1], " otherSingletons=", stepsByKind[2], " shared=", stepsByKind[3], " chains=", chains.size());
     }
     return result;
 }

@@ -106,14 +106,13 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_new_object:
         if (unsigned count = node->numberOfLiteralProperties) {
             Vector<LValue, 8> values;
-            Graph::forEachLiteralProperty(node->instruction, count, [&](unsigned, VirtualRegister reg) {
-                values.append(lowJSValue(node->use(reg)));
-            });
+            for (unsigned i = 0; i < count; ++i)
+                values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
             unsigned slot = allocateSlots(2);
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             Vector<ValueFromBlock, 2> results;
-            if (!isCompact()) {
+            if (!isCompact() && count <= JSFinalObject::maxInlineCapacity) {
                 results.append(m_out.anchor(allocateObjectWithProperties(slot, values, slowCase)));
                 m_out.jump(continuation);
             } else
