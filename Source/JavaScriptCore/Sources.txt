@@ -870,6 +870,7 @@ runtime/GetterSetter.cpp
 runtime/GlobalExecutable.cpp
 runtime/HasOwnPropertyCache.cpp
 runtime/Identifier.cpp
+runtime/ImmutableIntrinsics.cpp
 runtime/ImportMap.cpp
 runtime/IndexingType.cpp
 runtime/IndirectEvalExecutable.cpp

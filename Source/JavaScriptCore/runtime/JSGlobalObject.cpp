@@ -98,6 +98,7 @@
 #include "GetterSetter.h"
 #include "GlobalObjectMethodTable.h"
 #include "HeapIterationScope.h"
+#include "ImmutableIntrinsics.h"
 #include "ImportMap.h"
 #include "IntlCache.h"
 #include "IntlCollator.h"
@@ -3477,6 +3478,8 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     Structure* oldStructure = objectPrototype->structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
     objectPrototype->setStructure(vm, Structure::preventExtensionsTransition(vm, oldStructure, &deferred));
+
+    m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names);
 }
 
 void JSGlobalObject::installSaneChainWatchpoints()

@@ -540,6 +540,10 @@ LValue Lowering::lowRaw(Node* node)
         break;
     case NodeKind::ConstantCell:
         return lowConstantRegister(node->reg);
+    case NodeKind::Intrinsic:
+        if (node->intrinsic == ImmutableIntrinsics::globalObject)
+            return m_globalObject;
+        return m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[node->intrinsic]);
     default:
         break;
     }
@@ -739,6 +743,7 @@ void Lowering::lowerNode(Node* node)
     switch (node->kind) {
     case NodeKind::Constant:
     case NodeKind::ConstantCell:
+    case NodeKind::Intrinsic:
     case NodeKind::Phi:
         RELEASE_ASSERT_NOT_REACHED();
         return;

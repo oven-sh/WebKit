@@ -56,6 +56,7 @@ struct ImageHeader {
     uint32_t rowsOfSelectorsOffset; // uint32_t, by number: the entry of the dispatch table for a shape is at this plus the number of the shape.
     uint32_t textOfSelectorsOffset;
     uint32_t selectorsInOrderOffset; // uint32_t, numberOfSelectors - 1 of them: by length, and then by what they say. The 8 bit ones first.
+    uint32_t hashOfIntrinsics; // ImmutableIntrinsics::hash(), if the code goes by their numbers. Zero: it does not.
     uint32_t dispatchOffset; // uint32_t: ImageDispatchEntry.
     uint32_t dispatchSize; // In entries.
     uint32_t stubOffsets[numberOfStubs]; // From the start of the code, which starts with a copy of the stubs.

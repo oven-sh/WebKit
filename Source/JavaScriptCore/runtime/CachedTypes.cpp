@@ -38,6 +38,7 @@
 #include "BytecodeCacheError.h"
 #include "BytecodeLivenessAnalysis.h"
 #include "CodeCache.h"
+#include "ImmutableIntrinsics.h"
 #include "JSCBytecodeCacheVersion.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
@@ -5867,6 +5868,7 @@ struct BytecodeLinkEncoder::Impl {
     // Every function of the link, compiled: there is nothing to wait for, all the code there is going to be is here.
     Vector<uint8_t> compileImage()
     {
+        ImmutableIntrinsics::ensureShared(vm);
         struct Job {
             AOT::ImageKey key;
             uint64_t rank;

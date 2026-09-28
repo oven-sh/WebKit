@@ -15,9 +15,32 @@
 #include "PreciseJumpTargetsInlines.h"
 #include "UnlinkedCodeBlock.h"
 #include "UnlinkedFunctionCodeBlock.h"
+#include "ImmutableIntrinsics.h"
 #include <wtf/ScopedLambda.h>
 
 namespace JSC { namespace AOT {
+
+static Type typeOfCellOfType(JSType type)
+{
+    switch (type) {
+    case StringType:
+        return TString;
+    case SymbolType:
+        return TSymbol;
+    case HeapBigIntType:
+        return TBigInt;
+    case JSFunctionType:
+    case InternalFunctionType:
+        return TFunction;
+    case ArrayType:
+    case DerivedArrayType:
+        return TArray;
+    default:
+        if (isTypedArrayType(type))
+            return typeOfTypedArray(type);
+        return type >= ObjectType ? TObject : TCellOther;
+    }
+}
 
 Type typeOfValue(JSValue value)
 {
@@ -35,25 +58,7 @@ Type typeOfValue(JSValue value)
         return TNull;
     if (!value.isCell())
         return TTop;
-    JSCell* cell = value.asCell();
-    switch (cell->type()) {
-    case StringType:
-        return TString;
-    case SymbolType:
-        return TSymbol;
-    case HeapBigIntType:
-        return TBigInt;
-    case JSFunctionType:
-    case InternalFunctionType:
-        return TFunction;
-    case ArrayType:
-    case DerivedArrayType:
-        return TArray;
-    default:
-        if (isTypedArrayType(cell->type()))
-            return typeOfTypedArray(cell->type());
-        return cell->isObject() ? TObject : TCellOther;
-    }
+    return typeOfCellOfType(value.asCell()->type());
 }
 
 void dumpType(PrintStream& out, Type type)
@@ -239,6 +244,60 @@ Vector<unsigned, 16> Graph::storesOfLiteral(const JSInstructionStream& instructi
     return stores;
 }
 
+Node* Graph::intrinsic(unsigned number)
+{
+    const ImmutableIntrinsics::Entry& entry = ImmutableIntrinsics::shared()->at(number);
+    if (!entry.isCell)
+        return constant(JSValue::decode(entry.primitive));
+    return m_intrinsics.ensure(entry.canonical, [&] {
+        Node* node = addNode(NodeKind::Intrinsic);
+        node->intrinsic = entry.canonical;
+        node->type = typeOfCellOfType(entry.type);
+        node->range = IntegerRange::unknown();
+        return node;
+    }).iterator->value;
+}
+
+Node* Graph::intrinsicReadBy(const JSInstruction* instruction, Node* base)
+{
+    if (!Options::useImmutableIntrinsics())
+        return nullptr;
+    const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
+    if (!intrinsics)
+        return nullptr;
+    // No scope between here and the global object has the name, and none can be given it: a variable that cannot be reconfigured
+    // cannot be shadowed by a declaration of a later script either.
+    auto variable = [&](unsigned identifier, unsigned depth, ResolveType type) -> unsigned {
+        if (isStaticClosureVarResolveType(type) || type == ResolvedClosureVar || type == ResolvedLazyClosureVar || !resolveStatically(identifier, depth, type).isGlobal)
+            return 0;
+        return intrinsics->find(ImmutableIntrinsics::globalObject, *m_codeBlock->identifier(identifier).impl());
+    };
+    unsigned number = 0;
+    switch (instruction->opcodeID()) {
+    case op_resolve_scope: {
+        auto bytecode = instruction->as<OpResolveScope>();
+        if (!variable(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType))
+            return nullptr;
+        return intrinsic(ImmutableIntrinsics::globalObject);
+    }
+    case op_get_from_scope: {
+        auto bytecode = instruction->as<OpGetFromScope>();
+        number = variable(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_getPutInfo.resolveType());
+        break;
+    }
+    case op_get_by_id:
+        if (base && base->kind == NodeKind::Intrinsic && base->intrinsic != ImmutableIntrinsics::globalObject)
+            number = intrinsics->find(base->intrinsic, *m_codeBlock->identifier(instruction->as<OpGetById>().m_property).impl());
+        break;
+    default:
+        break;
+    }
+    if (!number)
+        return nullptr;
+    numberOfIntrinsicReads++;
+    return intrinsic(number);
+}
+
 CallIntrinsic callIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis)
 {
     static constexpr struct {
@@ -280,6 +339,16 @@ CallIntrinsic Graph::intrinsicOfCall(const Node* node) const
         return CallIntrinsic::None;
     CallOperands operands = operandsOfCall(node->instruction);
     Node* callee = node->use(operands.callee);
+    if (callee->kind == NodeKind::Intrinsic) {
+        // It is what it is, whatever it was found under.
+        const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
+        const ImmutableIntrinsics::Entry& entry = intrinsics->at(callee->intrinsic);
+        const ImmutableIntrinsics::Entry& holder = intrinsics->at(entry.holder);
+        if (holder.holder != ImmutableIntrinsics::globalObject || holder.name != "Math"_s)
+            return CallIntrinsic::None;
+        CallIntrinsic result = callIntrinsicFor(static_cast<UniquedStringImpl*>(entry.name.impl()), operands.argc);
+        return result == CallIntrinsic::StringCharCodeAt || result == CallIntrinsic::ArrayPush ? CallIntrinsic::None : result;
+    }
     if (!callee->isBytecode(op_get_by_id))
         return CallIntrinsic::None;
     return callIntrinsicFor(m_codeBlock->identifier(callee->as<OpGetById>().m_property).impl(), operands.argc);
@@ -379,6 +448,8 @@ bool Graph::isScopeThatStandsForNoThis(const Node* node)
 {
     if (node->isBytecode(op_get_scope))
         return true;
+    if (node->kind == NodeKind::Intrinsic)
+        return node->intrinsic == ImmutableIntrinsics::globalObject;
     if (!node->isBytecode(op_resolve_scope))
         return false;
     auto bytecode = node->as<OpResolveScope>();
@@ -657,6 +728,7 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
                 if (resolution.kind == DeclaredNamesLink::Resolution::Global) {
                     result.kind = StaticVariable::Unresolved;
                     result.isInGlobalScopes = true;
+                    result.isGlobal = true;
                     return result;
                 }
                 if (resolution.kind == DeclaredNamesLink::Resolution::Stable) {
@@ -673,11 +745,13 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
                     return result;
                 }
             }
-            [[fallthrough]];
+            result.kind = StaticVariable::Unresolved;
+            return result;
         case ScopeChainEntry::GlobalLexical:
         case ScopeChainEntry::Global:
             // The operations that fill the caches look at what the name turned out to be, and only cache what stays put.
             result.kind = StaticVariable::Unresolved;
+            result.isGlobal = true;
             return result;
         case ScopeChainEntry::Opaque:
             return result;
@@ -744,6 +818,9 @@ void Node::dump(PrintStream& out) const
         break;
     case NodeKind::ConstantCell:
         out.print("ConstantCell(", reg, ")");
+        break;
+    case NodeKind::Intrinsic:
+        out.print("Intrinsic(", intrinsic, " ", ImmutableIntrinsics::shared()->at(ImmutableIntrinsics::shared()->at(intrinsic).holder).name, ".", ImmutableIntrinsics::shared()->at(intrinsic).name, ")");
         break;
     case NodeKind::Argument:
         out.print("Argument(", reg, ")");
@@ -945,6 +1022,24 @@ private:
                 seen.append(reg);
                 functor(reg);
             });
+        }
+    }
+
+    std::pair<Node*, VirtualRegister> intrinsicReadBy(BasicBlock* block, const JSInstruction* instruction)
+    {
+        if (!Options::useImmutableIntrinsics())
+            return { };
+        switch (instruction->opcodeID()) {
+        case op_resolve_scope:
+            return { m_graph.intrinsicReadBy(instruction, nullptr), instruction->as<OpResolveScope>().m_dst };
+        case op_get_from_scope:
+            return { m_graph.intrinsicReadBy(instruction, nullptr), instruction->as<OpGetFromScope>().m_dst };
+        case op_get_by_id: {
+            auto bytecode = instruction->as<OpGetById>();
+            return { m_graph.intrinsicReadBy(instruction, get(block, bytecode.m_base)), bytecode.m_dst };
+        }
+        default:
+            return { };
         }
     }
 
@@ -1788,6 +1883,14 @@ private:
             case op_super_sampler_end:
             case op_identity_with_profile: // Leaves its operand as it is.
                 continue;
+            case op_resolve_scope:
+            case op_get_from_scope:
+            case op_get_by_id:
+                if (auto [known, dst] = intrinsicReadBy(block, instruction); known) {
+                    set(block, dst, known);
+                    continue;
+                }
+                break;
             default:
                 break;
             }
@@ -1885,6 +1988,12 @@ private:
             }
             if (Node* result = inlineCall(block, instruction, block->bytecodeEnd)) {
                 m_resultsOfInlinedCalls.set(block->bytecodeEnd, result);
+                guard->guardKind = GuardKind::Nothing;
+                guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
+                append(block, guard);
+                return;
+            }
+            if (intrinsicReadBy(block, instruction).first) {
                 guard->guardKind = GuardKind::Nothing;
                 guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
                 append(block, guard);

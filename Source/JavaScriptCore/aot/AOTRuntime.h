@@ -14,6 +14,7 @@
 #include "AOTStubs.h"
 #include "CallLinkInfo.h"
 #include "ExecutableAllocator.h"
+#include "ImmutableIntrinsics.h"
 #include "JITCode.h"
 #include "Opcode.h"
 #include "RegisterAtOffsetList.h"
@@ -268,6 +269,7 @@ struct Instance {
     // What an object of a known shape does not have itself, it does not have at all if it inherits from Object.prototype alone and
     // that does not have it either. This looks at what that has now, if it is not what it had when this last looked.
     void lookAtObjectPrototype();
+    static constexpr ptrdiff_t offsetOfIntrinsics() { return OBJECT_OFFSETOF(Instance, intrinsics); }
     static constexpr ptrdiff_t offsetOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, objectPrototype); }
     static constexpr ptrdiff_t offsetOfStructureIDOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, structureIDOfObjectPrototype); }
     static constexpr ptrdiff_t offsetOfSelectorsOnObjectPrototype() { return OBJECT_OFFSETOF(Instance, selectorsOnObjectPrototype); }
@@ -287,6 +289,8 @@ struct Instance {
     JSObject* objectPrototype; // The realm's, which keeps it.
     uint8_t* selectorsOnObjectPrototype; // A bit for each selector, as of when its Structure was the one below.
     uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
+    // The realm's (JSGlobalObject::immutableIntrinsics()), where code gets at them with one load.
+    EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
     Data* data[0]; // By CodeHeader::index. Null: the function has not been linked in this realm.
 };
 

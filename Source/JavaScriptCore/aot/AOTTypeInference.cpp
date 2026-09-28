@@ -130,6 +130,7 @@ private:
         switch (node->kind) {
         case NodeKind::Constant:
         case NodeKind::ConstantCell:
+        case NodeKind::Intrinsic:
         case NodeKind::Argument:
             return node->type;
         case NodeKind::Phi: {

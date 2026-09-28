@@ -1090,7 +1090,7 @@ bool Lowering::guardCall(Node* guard)
     if (intrinsic == CallIntrinsic::None)
         return false;
     auto operands = Graph::operandsOfCall(guard->instruction);
-    if (!guard->calleeIsChecked)
+    if (!guard->calleeIsChecked && guard->use(operands.callee)->kind != NodeKind::Intrinsic)
         checkCallee(guard);
 
     auto argument = [&](unsigned index) -> LValue {

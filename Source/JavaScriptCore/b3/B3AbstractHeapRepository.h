@@ -219,6 +219,7 @@ namespace JSC::B3 {
     macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
     macro(AOTInstance_data, AOT::Instance::offsetOfData(), sizeof(void*)) \
     macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
+    macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
     macro(AOTIdentifiers, 0, sizeof(void*)) \
     macro(AOTRuntimeTable, 0, sizeof(void*)) \
     macro(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>)) \

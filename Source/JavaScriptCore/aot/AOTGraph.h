@@ -55,6 +55,7 @@ enum class NodeKind : uint8_t {
     Bytecode, // An instruction. Defines at most one register, or several through Proj nodes.
     Constant, // A value known now: anything that is not a cell.
     ConstantCell, // A constant register that holds a cell or a link time constant: loaded from the CodeBlock.
+    Intrinsic, // One of the realm's ImmutableIntrinsics that is a cell: loaded from the Instance.
     Argument, // The value an argument register has on entry.
     Phi,
     Proj, // One of the registers defined by an instruction that defines several. uses[0] is the instruction.
@@ -135,6 +136,7 @@ struct Node {
     Node* target { nullptr }; // NodeKind::Narrow: the phi of the loop's header that the value is on its way to.
     unsigned expectedMask { 0 }; // op_get_by_val: the mask of the op_check_type that what it gets goes to next, if it does.
     GuardKind guardKind { GuardKind::Whole };
+    uint16_t intrinsic { 0 }; // NodeKind::Intrinsic: its number.
     bool structureIsChecked { false }; // A guard of a property access: another guard has seen to the base's structure.
     bool slotIsPlain { false }; // Likewise: another guard has seen to that.
     bool calleeIsChecked { false };
@@ -302,6 +304,11 @@ public:
     BasicBlock* addBlock();
 
     Node* constant(JSValue);
+    // With Options::useImmutableIntrinsics(). What the instruction reads, if it reads what cannot be anything else: a variable of the
+    // global object, or a property of `base`. (For an op_resolve_scope, the global object.) There is then no need for the instruction.
+    Node* intrinsicReadBy(const JSInstruction*, Node* base);
+    Node* intrinsic(unsigned number);
+    unsigned numberOfIntrinsicReads { 0 };
     CallIntrinsic intrinsicOfCall(const Node* callOrItsGuard) const;
     struct CallOperands {
         VirtualRegister callee;
@@ -393,6 +400,7 @@ public:
         bool inModule { false };
         bool isReadOnly { false };
         bool isInGlobalScopes { false }; // Unresolved: none of the scopes of the code around the function has it.
+        bool isGlobal { false }; // Likewise, however that is known.
         StaticImport import;
 
         // op_resolve_scope: the answer is that many scopes out. (For an import that is not linked, the module that imports it.)
@@ -437,6 +445,7 @@ private:
     SegmentedVector<Node, 32> m_nodes;
     Node* m_emptyConstant { nullptr };
     UncheckedKeyHashMap<EncodedJSValue, Node*, EncodedJSValueHash, EncodedJSValueHashTraits> m_constants;
+    UncheckedKeyHashMap<unsigned, Node*, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_intrinsics;
     ASCIILiteral m_failureReason;
     OpcodeID m_failureOpcode { op_nop };
 };

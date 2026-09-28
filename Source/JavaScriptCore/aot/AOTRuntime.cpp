@@ -190,9 +190,11 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
     instance->structureIDBase = JSC::structureIDBase();
+    memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
     if (Image* image = Image::withShapes()) {
         instance->dispatch = image->at<uint32_t>(image->header().dispatchOffset);
         instance->rowsOfSelectors = image->at<uint32_t>(image->header().rowsOfSelectorsOffset);
+        RELEASE_ASSERT(!image->header().hashOfIntrinsics || image->header().hashOfIntrinsics == ImmutableIntrinsics::shared()->hash());
         instance->objectPrototype = globalObject->objectPrototype();
         instance->selectorsOnObjectPrototype = static_cast<uint8_t*>(fastZeroedMalloc(image->header().numberOfSelectors / 8 + 1));
     }

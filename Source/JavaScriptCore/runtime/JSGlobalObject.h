@@ -708,6 +708,7 @@ public:
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
+    Vector<EncodedJSValue> m_immutableIntrinsics;
     WeakPtr<ConsoleClient> m_consoleClient;
     std::optional<unsigned> m_stackTraceLimit;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
@@ -1283,6 +1284,8 @@ public:
     // Math.floor or [].push for what they are. All but Object.prototype can be given more, so that what the language gets later can
     // be added; that nothing can turn up in Object.prototype is what says that a property no object on the way has is not there.
     JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
+    // What that fixed, by the numbers of ImmutableIntrinsics. (They stay where they are, so there is nothing to keep alive.)
+    std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 
     bool isRegExpRecompiled() const

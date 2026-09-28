@@ -52,6 +52,7 @@ uint64_t imageStamp()
     mix(VM::offsetOfHeapBarrierThreshold());
     mix(CodeBlock::offsetOfJITData());
     mix(JSGlobalObject::offsetOfGlobalLexicalBindingEpoch());
+    mix(Options::useImmutableIntrinsics()); // What code takes for granted.
 #if CPU(ARM64)
     mix(1 | MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics() << 8);
 #elif CPU(X86_64)
@@ -341,6 +342,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.textOfSelectorsOffset = place(textOfSelectors.size());
     header.selectorsInOrderOffset = place(selectorsInOrder.sizeInBytes());
     header.dispatchOffset = place(dispatch.sizeInBytes());
+    header.hashOfIntrinsics = Options::useImmutableIntrinsics() && ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
     header.dispatchSize = safeCast<uint32_t>(dispatch.size());
     header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
     header.codeSize = codeSize;
@@ -866,6 +868,11 @@ void addToImageBeingWritten(ScriptExecutable* executable, CodeSpecializationKind
 }
 
 } // namespace AOT
+
+bool isPCOfAOTImage(const void* pc)
+{
+    return AOT::Image::containsCode(pc);
+}
 
 bool registerAOTImage(std::span<const uint8_t> image, const void* code)
 {

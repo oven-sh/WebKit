@@ -495,6 +495,8 @@ private:
 // `image` is what BytecodeLinkEncoder::Result::aotImage was, readable for as long as the process lives, and `code` is where
 // the part of it from aotImageCodeOffset() on is mapped executable. False if it is not for this engine.
 JS_EXPORT_PRIVATE bool registerAOTImage(std::span<const uint8_t> image, const void* code);
+// Whether it is in the code of an image that has been registered. Takes no lock and allocates nothing.
+JS_EXPORT_PRIVATE bool isPCOfAOTImage(const void*);
 // Where the code starts in the image and how much there is, both in whole pages. Nothing if it is not an image.
 JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
 // How much of `image` is the image: a whole number of pages. Something else may follow.

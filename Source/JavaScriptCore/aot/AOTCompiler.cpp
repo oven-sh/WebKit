@@ -45,6 +45,7 @@ struct Statistics {
     uint64_t scopeReads[5] { }; // op_get_from_scope by name, by Graph::StaticVariable::Kind.
     uint64_t scopeReadsInGlobalScopes { 0 };
     uint64_t slots { 0 };
+    uint64_t intrinsicReads { 0 };
     UncheckedKeyHashMap<String, uint64_t> provability; // TEMPORARY-PROVABILITY-STATS
 };
 
@@ -159,6 +160,8 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
         case NodeKind::Constant:
         case NodeKind::ConstantCell:
             return "a constant"_s;
+        case NodeKind::Intrinsic:
+            return "an intrinsic"_s;
         case NodeKind::Argument:
             if (node->reg == virtualRegisterForArgumentIncludingThis(0))
                 return "this"_s;
@@ -328,6 +331,18 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
         for (Node* node : block->nodes) {
             if (node->kind != NodeKind::Bytecode)
                 continue;
+            if (node->isBytecode(op_get_from_scope)) {
+                auto bytecode = node->as<OpGetFromScope>();
+                ResolveType type = bytecode.m_getPutInfo.resolveType();
+                if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type).isGlobal)
+                    count(makeString("GLOBALREAD "_s, StringView(codeBlock->identifier(bytecode.m_var).impl())));
+            }
+            for (auto& use : node->uses) {
+                if (use.node->kind == NodeKind::Intrinsic && use.node->intrinsic) {
+                    auto& entry = ImmutableIntrinsics::shared()->at(use.node->intrinsic);
+                    count(makeString("INTRINSICUSE "_s, ImmutableIntrinsics::shared()->at(entry.holder).name, '.', entry.name));
+                }
+            }
             if (auto calleeRegister = calleeRegisterOf(node)) {
                 Node* callee = strip(node->use(*calleeRegister));
                 if (graph.knownCallee(node)) {
@@ -678,6 +693,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
             }
         }
         stats.slots += info.numSlots;
+        stats.intrinsicReads += graph.numberOfIntrinsicReads;
         stats.byOrigin[0].first++;
         countWhatIsKnown(graph, stats.provability);
     }
@@ -812,6 +828,7 @@ void reportStatistics()
     auto& stats = statistics();
     Locker locker { stats.lock };
     dataLogLn("AOT: compiled ", stats.compiled, " functions (", stats.codeBytes, " bytes of code for ", stats.bytecodeBytes, " of bytecode) in ", stats.time.milliseconds(), " ms; declined ", stats.declined);
+    dataLogLn("AOT: ", stats.intrinsicReads, " reads of immutable intrinsics; ", stats.slots, " slots");
     dataLogLn("AOT: reads of variables by name: ", stats.scopeReads[Graph::StaticVariable::Closure], " closure, ", stats.scopeReads[Graph::StaticVariable::Import], " linked imports, ", stats.scopeReads[Graph::StaticVariable::ModuleImport], " other imports, ", stats.scopeReadsInGlobalScopes, " globals, ", stats.scopeReads[Graph::StaticVariable::Unresolved] - stats.scopeReadsInGlobalScopes, " unresolved, ", stats.scopeReads[Graph::StaticVariable::Dynamic], " dynamic; ", stats.slots, " slots");
     Vector<std::pair<unsigned, String>> sorted;
     for (auto& entry : stats.reasons)
