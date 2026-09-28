@@ -349,6 +349,11 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
                 dataLogLn("AOT: not in an image: the module ", executable->source().provider()->sourceURL());
         }
 #endif
+        // Then it takes the instructions, which are not there to be had.
+        if (StaticHeap::contains(unlinkedCodeBlock) && StaticHeap::payloadIsLeftOut()) [[unlikely]] {
+            throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time, and the program was built without its bytecode. The compiled code cannot be used here, and there is nothing else to run it from."_s));
+            return nullptr;
+        }
         RELEASE_AND_RETURN(throwScope, ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
     }
 

@@ -23,6 +23,7 @@
 #include "config.h"
 #include "RegExp.h"
 
+#include "AOTImage.h"
 #include "Lexer.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
@@ -35,6 +36,43 @@
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
+
+// TEMPORARY-REGEXP-STATS
+bool g_regExpStats = !!getenv("BUN_REGEXP_STATS");
+uint64_t nowForRegExpStats() { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
+void noteTimeInRegExpInterpreter(RegExp& regExp, StringView string, uint64_t start)
+{
+    uint64_t elapsed = nowForRegExpStats() - start;
+    struct Entry {
+        uint64_t nanoseconds { 0 };
+        uint64_t matches { 0 };
+        uint64_t matches16 { 0 };
+        uint64_t characters { 0 };
+        bool isStatic { false };
+    };
+    static Lock lock;
+    static NeverDestroyed<UncheckedKeyHashMap<String, Entry>> entries;
+    static uint64_t calls;
+    Locker locker { lock };
+    auto& entry = entries->add(makeString('/', regExp.pattern(), '/', String::fromLatin1(Yarr::flagsString(regExp.flags()).data())).isolatedCopy(), Entry { }).iterator->value;
+    entry.nanoseconds += elapsed;
+    entry.matches++;
+    entry.matches16 += !string.is8Bit();
+    entry.characters += string.length();
+    entry.isStatic |= StaticHeap::contains(&regExp);
+    if (++calls % 1000)
+        return;
+    Vector<std::pair<String, Entry>> sorted;
+    for (auto& [pattern, value] : entries.get())
+        sorted.append({ pattern, value });
+    std::ranges::sort(sorted, [](auto& a, auto& b) { return a.second.nanoseconds > b.second.nanoseconds; });
+    FILE* file = fopen(getenv("BUN_REGEXP_STATS"), "w");
+    if (!file)
+        return;
+    for (auto& [pattern, value] : sorted)
+        fprintf(file, "%llu\t%llu\t%llu\t%llu\t%s\t%s\n", static_cast<unsigned long long>(value.nanoseconds), static_cast<unsigned long long>(value.matches), static_cast<unsigned long long>(value.matches16), static_cast<unsigned long long>(value.characters), value.isStatic ? "literal" : "dynamic", pattern.utf8().data());
+    fclose(file);
+}
 
 const ClassInfo RegExp::s_info = { "RegExp"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(RegExp) };
 
@@ -355,6 +393,16 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     }
 
 #if ENABLE(YARR_JIT)
+#if ENABLE(FTL_JIT)
+    if (Options::aotWriteImage()) [[unlikely]]
+        AOT::addToImageBeingWritten(*vm, m_patternString, m_flags);
+    if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags)) {
+        ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
+        m_state = JITCode;
+        m_minimumSize = pattern.m_body->m_minimumSize;
+        return;
+    }
+#endif
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences
@@ -443,6 +491,16 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     }
 
 #if ENABLE(YARR_JIT)
+#if ENABLE(FTL_JIT)
+    if (Options::aotWriteImage()) [[unlikely]]
+        AOT::addToImageBeingWritten(*vm, m_patternString, m_flags);
+    if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags)) {
+        ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
+        m_state = JITCode;
+        m_minimumSize = pattern.m_body->m_minimumSize;
+        return;
+    }
+#endif
     if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences

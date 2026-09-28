@@ -180,6 +180,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, staticHeapModuleToRefuseOtherVMs, 0, Normal, "For testing: VMs other than the first load this module of the static heap (counting from one) as if it were not there."_s) \
     v(Bool, staticHeapHasBuiltinFunctions, true, Normal, "When a program is built, the embedder's builtin functions that are linked with it are made ahead of time as its modules are."_s) \
     v(Bool, staticHeapLeavesOutPayload, false, Normal, "When a program is built, its static heap has none of the bytecode it was built from, only what says where in the source each instruction came from."_s) \
+    v(Bool, aotCompileRegExps, true, Normal, "An image has code for the regular expressions that the program's code has in it. When the program runs: they use it."_s) \
+    v(Bool, aotCompileStringsThatLookLikeRegExps, false, Normal, "And for the strings in it that look as if regular expressions are made of them."_s) \
     v(Bool, staticHeapForgetsNamesOfVariables, true, Normal, "When a program is built, the SymbolTables of its static heap keep only the names that its code may look up when it runs."_s) \
     v(Bool, staticHeapKeepsFunctionCode, false, Normal, "When a static heap is built: the unlinked code of functions that were compiled is decoded into it, rather than left in the payload for whoever asks."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "What Object.prototype, Array.prototype, Math and the like have when a realm is made stays as it is: see JSGlobalObject::makeIntrinsicsImmutable()."_s) \

@@ -9,6 +9,8 @@
 
 #include "AOTRuntime.h"
 #include "CodeSpecializationKind.h"
+#include "YarrFlags.h"
+#include "YarrJIT.h"
 #include <wtf/Lock.h>
 #include <wtf/Vector.h>
 
@@ -61,7 +63,26 @@ struct ImageHeader {
     uint32_t dispatchSize; // In entries.
     uint32_t quotesOffset; // What ImageFunction::quotes is from. See Image::quoteAt().
     uint32_t textOfQuotesOffset; // UTF-8.
+    uint32_t regExpsOffset; // ImageRegExp, in the order of their hashes.
+    uint32_t numberOfRegExps;
+    uint32_t textOfRegExpsOffset;
     uint32_t stubOffsets[numberOfStubs]; // From the start of the code, which starts with a copy of the stubs.
+};
+
+// The code for a regular expression, however the program comes by one that says that.
+struct ImageRegExp {
+    static uint32_t hashOf(const String& pattern, OptionSet<Yarr::Flags> flags) { return pattern.hash() * 31 + flagsThatMatter(flags).toRaw(); }
+    // The others make no difference to what the pattern matches at a given place, which is all that the code says.
+    static OptionSet<Yarr::Flags> flagsThatMatter(OptionSet<Yarr::Flags> flags) { return flags - OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::HasIndices }; }
+
+    uint32_t hash;
+    uint32_t text; // Where the pattern is, in bytes, in the text of them.
+    uint32_t length : 31; // In characters.
+    uint32_t is8Bit : 1;
+    uint32_t flags;
+    // From the start of the code. It records where the subpatterns are (Yarr::ExecutionMode::IncludeSubpatterns).
+    uint32_t codeFor8Bit;
+    uint32_t codeFor16Bit;
 };
 
 struct ImageShape {
@@ -110,6 +131,8 @@ public:
     size_t numberOfFunctions() const { return m_functions.size(); }
     void clear() { m_functions.clear(); } // Of functions.
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
+    // The thread that has the VM. False: there is not going to be code for it.
+    bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
     Vector<ReportableSitesOfFunction> takeReportableSites() { return std::exchange(m_reportableSites, { }); } // After that. By CodeHeader::index.
 
@@ -125,6 +148,13 @@ private:
     uint32_t m_environmentsSize { 0 };
     Vector<ReportableSitesOfFunction> reportableSites();
     Vector<ReportableSitesOfFunction> m_reportableSites;
+    struct RegExpCode {
+        String pattern;
+        OptionSet<Yarr::Flags> flags;
+        Yarr::YarrCodeForImage code[2]; // 8 bit, 16 bit.
+    };
+    Vector<RegExpCode> m_regExps;
+    UncheckedKeyHashMap<String, bool> m_regExpsAsked; // By the flags and the pattern.
 };
 
 // An image that is ready to be run. There is one list of them for the process, and they stay.
@@ -146,6 +176,12 @@ public:
     JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t moduleOfGraph);
     static const void* addressOfStub(Stub); // In any image. Null if there is none.
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);
+
+    struct CodeForRegExp {
+        const void* for8Bit;
+        const void* for16Bit;
+    };
+    JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>); // In any image.
 
     static Image* withShapes(); // The image, if it has any.
     static Image& of(const ImageFunction&); // The one it is in.
@@ -226,6 +262,7 @@ bool canDoWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // There are Function
 
 // Options::aotWriteImage(): everything the process compiles goes to Options::aotImagePath() when it exits.
 void addToImageBeingWritten(ScriptExecutable*, CodeSpecializationKind, const JITCode&);
+void addToImageBeingWritten(VM&, const String& pattern, OptionSet<Yarr::Flags>); // Every regular expression that is used, too.
 
 } } // namespace JSC::AOT
 

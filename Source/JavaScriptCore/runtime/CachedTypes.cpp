@@ -6298,6 +6298,53 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
         AOT::forgetDeclaredNames();
+        if (Options::aotCompileRegExps()) {
+            for (auto& job : jobs) {
+                for (auto& constant : job.codeBlock->constantRegisters()) {
+                    if (auto* regExp = constant.get().isCell() ? dynamicDowncast<RegExp>(constant.get().asCell()) : nullptr)
+                        builder.addRegExp(vm, regExp->pattern(), regExp->flags());
+                }
+            }
+            // A regular expression that the program makes out of a string finds its code by what it says. So it is worth having code
+            // for whatever string may be made one of, and it costs nothing but room to be wrong: a string in which something is
+            // escaped that only a regular expression has any call to escape.
+            if (Options::aotCompileStringsThatLookLikeRegExps()) {
+                uint64_t candidates = 0, compiled = 0;
+                UncheckedKeyHashSet<StringImpl*> seen;
+                for (auto& job : jobs) {
+                    for (auto& constant : job.codeBlock->constantRegisters()) {
+                        if (!constant.get().isString())
+                            continue;
+                        const StringImpl* impl = asString(constant.get())->tryGetValueImpl();
+                        if (!impl || impl->length() < 4 || impl->length() > 4096 || !seen.add(const_cast<StringImpl*>(impl)).isNewEntry)
+                            continue;
+                        StringView view { *impl };
+                        bool looksLikeOne = false;
+                        for (unsigned i = 0; i + 1 < view.length() && !looksLikeOne; ++i) {
+                            if (view[i] != '\\')
+                                continue;
+                            switch (view[++i]) {
+                            case 'b': case 'B': case 'd': case 'D': case 'w': case 'W': case 's': case 'S':
+                            case '.': case '(': case ')': case '[': case ']': case '{': case '}':
+                            case '+': case '*': case '?': case '^': case '$': case '|': case '/': case '-':
+                                looksLikeOne = true;
+                                break;
+                            default:
+                                break;
+                            }
+                        }
+                        if (!looksLikeOne)
+                            continue;
+                        ++candidates;
+                        String pattern { const_cast<StringImpl*>(impl) };
+                        compiled += builder.addRegExp(vm, pattern, { });
+                        compiled += builder.addRegExp(vm, pattern, { Yarr::Flags::IgnoreCase });
+                    }
+                }
+                if (Options::aotReportStats()) [[unlikely]]
+                    dataLogLn("AOT: ", candidates, " strings look like regular expressions; with and without regard to case, ", compiled, " have code");
+            }
+        }
         Vector<uint8_t> image = builder.finish();
         reportableSites = builder.takeReportableSites();
         return image;

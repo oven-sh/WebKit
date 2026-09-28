@@ -81,6 +81,27 @@ inline Structure* RegExp::createStructure(VM& vm, JSGlobalObject* globalObject, 
     return Structure::create(vm, globalObject, prototype, TypeInfo(CellType, StructureFlags), info());
 }
 
+// TEMPORARY-REGEXP-STATS. BUN_REGEXP_STATS=<file>: how long the interpreter spends on each pattern.
+JS_EXPORT_PRIVATE extern bool g_regExpStats;
+JS_EXPORT_PRIVATE void noteTimeInRegExpInterpreter(RegExp&, StringView, uint64_t start);
+JS_EXPORT_PRIVATE uint64_t nowForRegExpStats();
+struct RegExpStatsScope {
+    RegExpStatsScope(RegExp& regExp, StringView string)
+        : regExp(regExp)
+        , string(string)
+        , start(g_regExpStats ? nowForRegExpStats() : 0)
+    {
+    }
+    ~RegExpStatsScope()
+    {
+        if (start) [[unlikely]]
+            noteTimeInRegExpInterpreter(regExp, string, start);
+    }
+    RegExp& regExp;
+    StringView string;
+    uint64_t start;
+};
+
 ALWAYS_INLINE bool RegExp::hasCodeFor(Yarr::CharSize charSize)
 {
     if (hasCode()) {
@@ -221,6 +242,7 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
             }
             {
                 Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
+                RegExpStatsScope statsScope(*this, s); // TEMPORARY-REGEXP-STATS
                 result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
             }
         }
@@ -237,6 +259,7 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
 #endif
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
+        RegExpStatsScope statsScope(*this, s); // TEMPORARY-REGEXP-STATS
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
 
@@ -388,6 +411,7 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     offsetVector = nonReturnedOvector.mutableSpan().data();
     {
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
+        RegExpStatsScope statsScope(*this, s); // TEMPORARY-REGEXP-STATS
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
 #if REGEXP_FUNC_TEST_DATA_GEN

@@ -116,6 +116,8 @@ public:
     static UnlinkedCodeBlock* codeFor(VM&, const SourceCodeKey&, const CachedBytecode&);
     // See build(). Then this is where the payload would be and how long it is, for whoever has to say which payload they mean:
     // most of it is not there to be read.
+    // One that is where takePlaceForSourceProvider() said.
+    static bool isProviderOfModule(const SourceProvider& provider) { return bmalloc::StaticRegion::contains(&provider); }
     JS_EXPORT_PRIVATE static bool payloadIsLeftOut();
     // See PositionsToKeep, and AOT::FunctionRef::reportedPositionFor().
     static bool hasPositionsOfCallSites();

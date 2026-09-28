@@ -282,6 +282,33 @@ void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
     m_functions.append(Function { key, rank, WTF::move(code) });
 }
 
+bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flags> flags)
+{
+    Locker locker { m_lock };
+    flags = ImageRegExp::flagsThatMatter(flags);
+    auto asked = m_regExpsAsked.add(makeString(flags.toRaw(), '/', pattern), false);
+    if (!asked.isNewEntry)
+        return asked.iterator->value;
+    RegExpCode result { pattern, flags, { } };
+    for (auto charSize : { Yarr::CharSize::Char8, Yarr::CharSize::Char16 }) {
+        // As RegExp::compile() goes about it.
+        Yarr::ErrorCode error = Yarr::ErrorCode::NoError;
+        Yarr::YarrPattern yarrPattern(pattern, flags, error);
+        if (Yarr::hasError(error) || yarrPattern.containsUnsignedLengthPattern() || (yarrPattern.m_containsLookbehinds && !Options::useRegExpLookbehindJIT()))
+            return false;
+        // (Then it is looked for the way any string is, and no code is run.)
+        if (!yarrPattern.m_atom.isNull())
+            return false;
+        auto code = Yarr::jitCompileForImage(yarrPattern, pattern, charSize, &vm, Yarr::ExecutionMode::IncludeSubpatterns);
+        if (!code)
+            return false;
+        result.code[charSize == Yarr::CharSize::Char16] = WTF::move(*code);
+    }
+    m_regExps.append(WTF::move(result));
+    m_regExpsAsked.set(makeString(flags.toRaw(), '/', pattern), true);
+    return true;
+}
+
 Vector<uint8_t> ImageBuilder::finish()
 {
     Locker locker { m_lock };
@@ -568,6 +595,64 @@ Vector<uint8_t> ImageBuilder::finish()
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
         codeSize += sizeWithVeneers(indexOfFunction);
     }
+
+    // The code of regular expressions comes last, after one copy of each table that any number of them use.
+    std::ranges::sort(m_regExps, [](const RegExpCode& a, const RegExpCode& b) {
+        return ImageRegExp::hashOf(a.pattern, a.flags) < ImageRegExp::hashOf(b.pattern, b.flags);
+    });
+    UncheckedKeyHashMap<const uint8_t*, size_t> tablesOfRegExps;
+    Vector<std::array<size_t, 2>> placementOfRegExps;
+    Vector<ImageRegExp> imageRegExps;
+    Vector<uint8_t> textOfRegExps;
+    {
+        size_t before = codeSize;
+        for (auto& regExp : m_regExps) {
+            for (auto& code : regExp.code) {
+                for (auto& reference : code.tables) {
+                    tablesOfRegExps.ensure(reference.table.data(), [&] {
+                        codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
+                        size_t at = codeSize;
+                        codeSize += reference.table.size();
+                        return at;
+                    });
+                }
+            }
+        }
+        size_t sizeOfTables = codeSize - before;
+        for (auto& regExp : m_regExps) {
+            std::array<size_t, 2> at;
+            for (unsigned i = 0; i < 2; ++i) {
+                codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
+                at[i] = codeSize;
+                codeSize += regExp.code[i].bytes.size();
+            }
+            placementOfRegExps.append(at);
+            ImageRegExp record { };
+            record.hash = ImageRegExp::hashOf(regExp.pattern, regExp.flags);
+            record.text = safeCast<uint32_t>(textOfRegExps.size());
+            record.length = regExp.pattern.length();
+            record.is8Bit = regExp.pattern.is8Bit();
+            record.flags = regExp.flags.toRaw();
+            record.codeFor8Bit = safeCast<uint32_t>(at[0]);
+            record.codeFor16Bit = safeCast<uint32_t>(at[1]);
+            imageRegExps.append(record);
+            if (regExp.pattern.is8Bit())
+                textOfRegExps.append(asBytes(regExp.pattern.span8()));
+            else {
+                textOfRegExps.grow(WTF::roundUpToMultipleOf<2>(textOfRegExps.size()));
+                imageRegExps.last().text = safeCast<uint32_t>(textOfRegExps.size());
+                textOfRegExps.append(asBytes(regExp.pattern.span16()));
+            }
+        }
+        if (Options::aotReportStats()) [[unlikely]] {
+            size_t sizes[2] = { };
+            for (auto& regExp : m_regExps) {
+                for (unsigned i = 0; i < 2; ++i)
+                    sizes[i] += regExp.code[i].bytes.size();
+            }
+            dataLogLn("AOT: ", m_regExps.size(), " regular expressions of ", m_regExpsAsked.size(), " have code: ", sizes[0], " bytes for 8 bit strings, ", sizes[1], " for 16 bit ones, ", sizeOfTables, " of tables in common, ", textOfRegExps.size() + imageRegExps.sizeInBytes(), " to find them by");
+        }
+    }
     RELEASE_ASSERT(recordsSize < std::numeric_limits<uint32_t>::max());
 
     ImageHeader header { };
@@ -662,6 +747,9 @@ Vector<uint8_t> ImageBuilder::finish()
     }
     header.quotesOffset = place(quotes.size());
     header.textOfQuotesOffset = place(textOfQuotes.size());
+    header.regExpsOffset = place(imageRegExps.sizeInBytes());
+    header.numberOfRegExps = imageRegExps.size();
+    header.textOfRegExpsOffset = place(textOfRegExps.size());
     header.hashOfIntrinsics = Options::useImmutableIntrinsics() && ImmutableIntrinsics::shared() ? ImmutableIntrinsics::shared()->hash() : 0;
     header.dispatchSize = safeCast<uint32_t>(dispatch.size());
     header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
@@ -709,6 +797,41 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.dispatchOffset, dispatch.span().data(), dispatch.sizeInBytes());
     memcpy(base + header.quotesOffset, quotes.span().data(), quotes.size());
     memcpy(base + header.textOfQuotesOffset, textOfQuotes.span().data(), textOfQuotes.size());
+    memcpy(base + header.regExpsOffset, imageRegExps.span().data(), imageRegExps.sizeInBytes());
+    memcpy(base + header.textOfRegExpsOffset, textOfRegExps.span().data(), textOfRegExps.size());
+    for (auto& [table, at] : tablesOfRegExps) {
+        for (auto& regExp : m_regExps) {
+            bool copied = false;
+            for (auto& regExpCode : regExp.code) {
+                for (auto& reference : regExpCode.tables) {
+                    if (reference.table.data() == table && !copied) {
+                        memcpy(code + at, table, reference.table.size());
+                        copied = true;
+                    }
+                }
+            }
+            if (copied)
+                break;
+        }
+    }
+    for (size_t index = 0; index < m_regExps.size(); ++index) {
+        for (unsigned i = 0; i < 2; ++i) {
+            auto& regExpCode = m_regExps[index].code[i];
+            size_t codeAt = placementOfRegExps[index][i];
+            memcpy(code + codeAt, regExpCode.bytes.span().data(), regExpCode.bytes.size());
+            // The code starts on a page boundary wherever it is, so which page of it something is on is as good as an address.
+            for (auto& reference : regExpCode.tables) {
+                size_t instructionAt = codeAt + reference.offset;
+                size_t tableAt = tablesOfRegExps.get(reference.table.data());
+                int64_t pages = static_cast<int64_t>(tableAt >> 12) - static_cast<int64_t>(instructionAt >> 12);
+                RELEASE_ASSERT(pages >= -(1 << 20) && pages < (1 << 20));
+                uint32_t adrp = 0x90000000u | (static_cast<uint32_t>(pages) & 3u) << 29 | (static_cast<uint32_t>(pages >> 2) & 0x7ffffu) << 5 | reference.reg;
+                uint32_t add = 0x91000000u | static_cast<uint32_t>(tableAt & 0xfff) << 10 | static_cast<uint32_t>(reference.reg) << 5 | reference.reg;
+                memcpy(code + instructionAt, &adrp, sizeof(adrp));
+                memcpy(code + instructionAt + sizeof(adrp), &add, sizeof(add));
+            }
+        }
+    }
     for (size_t at : stubsAt)
         memcpy(code + at, stubs.bytes.span().data(), stubs.bytes.size());
 
@@ -987,10 +1110,11 @@ Image* Image::registerImageFromFile(const char* path)
         return nullptr;
     void* code = nullptr;
     if (header.codeSize) {
-        RefPtr<ExecutableMemoryHandle> handle = ExecutableAllocator::singleton().allocate(header.codeSize, JITCompilationCanFail);
+        // (On a page boundary, as it is when it is mapped: some of it goes by that.)
+        RefPtr<ExecutableMemoryHandle> handle = ExecutableAllocator::singleton().allocate(header.codeSize + imagePageSize, JITCompilationCanFail);
         if (!handle)
             return nullptr;
-        code = handle->start().untaggedPtr();
+        code = reinterpret_cast<void*>(WTF::roundUpToMultipleOf<imagePageSize>(reinterpret_cast<uintptr_t>(handle->start().untaggedPtr())));
         performJITMemcpy<jitMemcpyRepatch>(code, data->span().data() + header.codeOffset, header.codeSize);
         MacroAssembler::cacheFlush(code, header.codeSize);
         auto* forGood = handle.leakRef();
@@ -1015,6 +1139,35 @@ const void* Image::addressOfStub(Stub stub)
             return static_cast<const uint8_t*>(image->m_code) + image->header().stubOffsets[static_cast<unsigned>(stub)];
     }
     return nullptr;
+}
+
+static std::atomic<uint64_t> s_regExpsFromImage;
+static std::atomic<uint64_t> s_regExpsNotInImage;
+
+auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -> std::optional<CodeForRegExp>
+{
+    if (!hasAny() || !Options::aotCompileRegExps())
+        return std::nullopt;
+    uint32_t hash = ImageRegExp::hashOf(pattern, flags);
+    uint32_t rawFlags = ImageRegExp::flagsThatMatter(flags).toRaw();
+    auto& all = registry();
+    Locker locker { all.lock };
+    for (Image* image : all.images) {
+        auto& header = image->header();
+        std::span regExps { image->at<ImageRegExp>(header.regExpsOffset), header.numberOfRegExps };
+        auto* text = image->at<uint8_t>(header.textOfRegExpsOffset);
+        for (auto it = std::ranges::lower_bound(regExps, hash, { }, &ImageRegExp::hash); it != regExps.end() && it->hash == hash; ++it) {
+            if (it->flags != rawFlags || it->length != pattern.length())
+                continue;
+            StringView said = it->is8Bit ? StringView { std::span { reinterpret_cast<const Latin1Character*>(text + it->text), it->length } } : StringView { std::span { reinterpret_cast<const char16_t*>(text + it->text), it->length } };
+            if (said == pattern) {
+                s_regExpsFromImage++;
+                return CodeForRegExp { static_cast<const uint8_t*>(image->m_code) + it->codeFor8Bit, static_cast<const uint8_t*>(image->m_code) + it->codeFor16Bit };
+            }
+        }
+    }
+    s_regExpsNotInImage++;
+    return std::nullopt;
 }
 
 const ImageFunction* Image::lookup(const ImageKey& key) const
@@ -1156,6 +1309,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         if (Options::aotReportStats()) {
             atexit([] {
                 dataLogLn("AOT: ", s_installedFromImage.load(), " functions ran from an image");
+                dataLogLn("AOT: ", s_regExpsFromImage.load(), " regular expressions got their code from an image, ", s_regExpsNotInImage.load(), " did not");
             });
         }
     });
@@ -1225,10 +1379,9 @@ Ref<JITCode> codeOfFunctionFromImage(ImageCode code, CodeSpecializationKind kind
 
 // ---- Options::aotWriteImage()
 
-void addToImageBeingWritten(ScriptExecutable* executable, CodeSpecializationKind kind, const JITCode& jitCode)
+static ImageBuilder& imageBeingWritten()
 {
     static NeverDestroyed<ImageBuilder> builder;
-    static std::atomic<uint64_t> rank;
     static std::once_flag once;
     std::call_once(once, [] {
         atexit([] {
@@ -1237,6 +1390,17 @@ void addToImageBeingWritten(ScriptExecutable* executable, CodeSpecializationKind
                 dataLogLn("AOT: cannot write ", Options::aotImagePath());
         });
     });
+    return builder.get();
+}
+
+void addToImageBeingWritten(VM& vm, const String& pattern, OptionSet<Yarr::Flags> flags)
+{
+    imageBeingWritten().addRegExp(vm, pattern.isolatedCopy(), flags);
+}
+
+void addToImageBeingWritten(ScriptExecutable* executable, CodeSpecializationKind kind, const JITCode& jitCode)
+{
+    static std::atomic<uint64_t> rank;
 
     auto key = imageKeyFor(executable, kind);
     if (!key)
@@ -1244,7 +1408,7 @@ void addToImageBeingWritten(ScriptExecutable* executable, CodeSpecializationKind
     CompiledCode code;
     code.info = jitCode.info();
     code.bytes.append(std::span { static_cast<const uint8_t*>(const_cast<JITCode&>(jitCode).dataAddressAtOffset(0)), jitCode.info().codeSize });
-    builder.get().add(*key, rank++, WTF::move(code));
+    imageBeingWritten().add(*key, rank++, WTF::move(code));
 }
 
 } // namespace AOT

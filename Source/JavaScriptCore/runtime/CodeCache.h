@@ -102,6 +102,15 @@ public:
     {
         prune();
 
+#if USE(BUN_JSC_ADDITIONS)
+        // What a program's build made of a module is that module's and no other's: its functions have code that goes by where the
+        // module's own variables are. Here, two modules that say the same thing are one.
+        if (StaticHeap::isProviderOfModule(key.source().provider())) {
+            if (UnlinkedCodeBlockType* own = fetchFromDisk<UnlinkedCodeBlockType>(vm, key))
+                return own;
+        }
+#endif
+
         iterator findResult = m_map.find(key);
         if (findResult == m_map.end()) {
             // A block decoded from the provider's cached bytecode is as reusable as one we generated: remember it the
