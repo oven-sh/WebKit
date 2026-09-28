@@ -23,7 +23,7 @@ RUN echo "@edge https://dl-cdn.alpinelinux.org/alpine/edge/main" >> /etc/apk/rep
 RUN apk update
 RUN apk add --no-cache cmake make clang23@edge llvm23@edge lld23@edge musl-dev git libgcc gcc g++ libstdc++ build-base libc-dev xz zlib zlib-dev libxml2 libxml2-dev
 # What the ICU and WebKit stages need on top of that.
-RUN apk add --no-cache cpio curl tar nodejs patch file gnupg ninja ruby ruby-getoptlong unzip rsync perl python3 openssl-dev openssl linux-headers
+RUN apk add --no-cache cpio curl tar nodejs file gnupg ninja ruby ruby-getoptlong unzip rsync perl python3 openssl-dev openssl linux-headers
 
 ENV CXX=clang++-23
 ENV CC=clang-23
@@ -102,13 +102,14 @@ RUN set -eu; \
     rm /tmp/t.cpp /tmp/t /tmp/f.cpp
 
 # ICU: its sources (/icu.tgz, which the lanes build the libraries from), and what icu/host.sh makes of them, which is
-# the same for every lane: its data (/icudt.dat) and the tools that takes (/icu-host).
+# the same for every lane: its data (/icudt.dat) and what a cross build asks for (/icu-host).
 # Which ICU: icu/source.json, by way of lanes.mjs.
 ARG ICU_COMMIT
 ARG ICU_SHA256
+ARG ICU_DATA_SHA256
 ADD --checksum=sha256:${ICU_SHA256} https://github.com/oven-sh/icu/archive/${ICU_COMMIT}.tar.gz /icu.tgz
 COPY icu/host.sh /icu-bun/host.sh
-RUN CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="" /icu-bun/host.sh
+RUN CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="" ICU_DATA_SHA256=${ICU_DATA_SHA256} /icu-bun/host.sh
 
 # What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
 FROM base as lane-x86_64
@@ -154,7 +155,7 @@ RUN --mount=type=tmpfs,target=/icu \
     export CXXFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CXXFLAGS -Os -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     if [ "$LINUX_ARCH" = aarch64 ]; then \
-        ICU_CROSS="--host=aarch64-alpine-linux-musl --with-cross-build=/icu-host/icu4c/source"; \
+        ICU_CROSS="--host=aarch64-alpine-linux-musl --with-cross-build=/icu-host"; \
         ICU_TARGET="--target=aarch64-alpine-linux-musl"; \
     else \
         ICU_CROSS=""; \
@@ -167,7 +168,7 @@ RUN --mount=type=tmpfs,target=/icu \
     ./configure $ICU_CROSS --enable-static --disable-shared --disable-layoutex --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     mkdir -p lib && \
     make -j$(nproc) -C common && make -j$(nproc) -C i18n && \
-    cp lib/libicuuc.a lib/libicui18n.a /output/lib && cp -r i18n/unicode/* common/unicode/* /output/include/unicode && \
+    cp lib/libicuuc.a lib/libicui18n.a /output/lib && /icu-bun/headers.sh /output/include/unicode $ICU_CPPFLAGS && \
     /icu-bun/embed-data.sh elf ${ICU_VERSION%%.*} /output/lib/libicudata.a $CC $ICU_TARGET
 
 FROM lane as build_webkit

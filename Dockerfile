@@ -50,11 +50,11 @@ RUN ( apt-get update || \
     lsb-release \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Node (for ICU's data, bun/data/icu-data.ts there; needs >=23.6 for default type stripping)
+# Node, for ICU's data (bun/data/icu-data.ts there; >= 22.6 for type stripping).
 ARG NODE_VERSION=24.16.0
-RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
-    | tar -xJ -C /usr/local --strip-components=1 \
-    && node --version
+ARG NODE_SHA256=d804845d34eddc21dc1092b519d643ef40b1f58ec5dec5c22b1f4bd8fabde6c9
+ADD --checksum=sha256:${NODE_SHA256} https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz /tmp/node.tar.xz
+RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz && node --version
 
 # Install modern CMake for Ubuntu
 RUN wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null \
@@ -234,15 +234,16 @@ RUN set -eu; \
     rm /tmp/t.cpp /tmp/t
 
 # ICU: its sources (/icu.tgz, which the lanes build the libraries from), and what icu/host.sh makes of them, which is
-# the same for every lane: its data (/icudt.dat) and the tools that takes (/icu-host).
+# the same for every lane: its data (/icudt.dat) and what a cross build asks for (/icu-host).
 # LDFLAGS without this stage's -L/usr/lib/x86_64-linux-gnu, as in the lanes' own ICU step: that is where the
 # distribution's ICU is, and the tools would be linked against it instead of this one.
 # Which ICU: icu/source.json, by way of lanes.mjs.
 ARG ICU_COMMIT
 ARG ICU_SHA256
+ARG ICU_DATA_SHA256
 ADD --checksum=sha256:${ICU_SHA256} https://github.com/oven-sh/icu/archive/${ICU_COMMIT}.tar.gz /icu.tgz
 COPY icu/host.sh /icu-bun/host.sh
-RUN CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" /icu-bun/host.sh
+RUN CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" ICU_DATA_SHA256=${ICU_DATA_SHA256} /icu-bun/host.sh
 
 # What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
 FROM base as lane-x86_64
@@ -296,7 +297,7 @@ RUN --mount=type=tmpfs,target=/icu \
     export CXXFLAGS="$CXXFLAGS $G -Os -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     if [ "$LINUX_ARCH" = aarch64 ]; then \
-        ICU_CROSS="--host=aarch64-unknown-linux-gnu --with-cross-build=/icu-host/icu4c/source"; \
+        ICU_CROSS="--host=aarch64-unknown-linux-gnu --with-cross-build=/icu-host"; \
     else \
         ICU_CROSS=""; \
     fi && \
@@ -307,7 +308,7 @@ RUN --mount=type=tmpfs,target=/icu \
     ./configure $ICU_CROSS --enable-static --disable-shared --disable-layoutex --disable-samples --disable-debug --disable-tests --disable-extras --disable-icuio && \
     mkdir -p lib && \
     make -j$(nproc) -C common && make -j$(nproc) -C i18n && \
-    cp lib/libicuuc.a lib/libicui18n.a /output/lib && cp -r i18n/unicode/* common/unicode/* /output/include/unicode && \
+    cp lib/libicuuc.a lib/libicui18n.a /output/lib && /icu-bun/headers.sh /output/include/unicode $ICU_CPPFLAGS && \
     /icu-bun/embed-data.sh elf ${ICU_VERSION%%.*} /output/lib/libicudata.a $CC $MARCH_FLAG
 
 # Copy WebKit source and build.

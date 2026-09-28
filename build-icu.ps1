@@ -8,8 +8,9 @@
 #
 # The same as the ICU that ships: the version (icu/source.json), clang as the compiler on both architectures, the code
 # generation floor, /MT[d] and static libraries. Not the same, neither of which matters to what a build of Bun from
-# source does, only to how large and fast it is: this is unicode-org's release, where what ships is oven-sh/icu's branch
-# of it, and it is compiled without the UCONFIG_NO_* switches of what ships (ICU_CPPFLAGS in .github/scripts/lanes.mjs).
+# source does, only to how large and fast it is: this is unicode-org's release, code and data (less what stage 1b drops),
+# where what ships is oven-sh/icu's branch of it and the data that makes, and it is compiled without the UCONFIG_NO_*
+# switches of what ships (ICU_CPPFLAGS in .github/scripts/lanes.mjs).
 #
 # Usage:
 #   .\build-icu.ps1 [-Platform x64|ARM64] [-BuildType Release|Debug] [-OutputDir WebKitBuild/icu]

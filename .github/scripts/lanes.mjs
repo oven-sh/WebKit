@@ -14,8 +14,8 @@
 // `build` and `image` take --dry-run, which prints the docker command instead of running it.
 //
 // A lane is built by `docker buildx build` of its platform's Dockerfile. The Dockerfile's `base` stage is the
-// toolchain (compilers, SDKs, sysroots) and takes no lane setting; the stages on top build ICU and WebKit from the
-// build arguments below. Every lane is cross-compiled from the same kind of machine, linux x86_64. To add, drop, change
+// toolchain (compilers, SDKs, sysroots) and ICU's data, and takes no lane setting; the stages on top build ICU's
+// libraries and WebKit from the build arguments below. Every lane is cross-compiled from the same kind of machine, linux x86_64. To add, drop, change
 // or test a lane, change `platforms` and nothing else.
 
 import { spawnSync } from "node:child_process";
@@ -30,8 +30,8 @@ const REGISTRY = `ghcr.io/${(process.env.GITHUB_REPOSITORY_OWNER ?? "oven-sh").t
 
 // Every lane builds on this, in a linux/amd64 container: whatever it is for is a --target and a sysroot to clang.
 const BUILDER = "linux-x64-gh";
-// A toolchain image is built on a standard runner: it is mostly downloading and unpacking, and those are never
-// waited for.
+// A toolchain image is built on a standard runner: it is mostly downloading and unpacking, besides a few minutes of
+// compiling what makes ICU's data, and those are never waited for.
 const IMAGE_BUILDER = "ubuntu-latest";
 // The macOS and Windows lanes are not tested. The `test` job can run them (`tested: { arm64: { on: "macos-15", variants:
 // ["lto"], quick: true } }`, "windows-2025", "windows-11-arm": GitHub's standard runners, 3 or 4 cores, hence quick), and
@@ -51,15 +51,17 @@ const SANITIZERS = "address,undefined";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 // It is a commit of the branch bun-release-<version> of oven-sh/icu, by the tarball GitHub makes of it.
-// (release_sha256 there is of unicode-org's tarball of that version, for build-icu.ps1.)
+// data_sha256 is of the data that commit's bun/data/icu-data.ts makes, which is the same on every platform.
+// (release_sha256 is of unicode-org's tarball of that version, for build-icu.ps1.)
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
 const ICU = {
   ICU_VERSION: icu.version,
   ICU_COMMIT: icu.commit,
   ICU_SHA256: icu.sha256,
+  ICU_DATA_SHA256: icu.data_sha256,
   // For the libraries, not for ICU's tools: genrb builds collators from rules. These leave out what nothing that
-  // JavaScriptCore and Bun call can reach but virtual functions keep linked. They change no declaration of the C API,
-  // which is all that is used of ICU.
+  // JavaScriptCore and Bun call can reach but virtual functions keep linked. NO_SERVICE also leaves out a few functions
+  // of the C API. The headers that ship say the same (icu/headers.sh), so those are not declared.
   ICU_CPPFLAGS: ["LEGACY_CONVERSION", "SERVICE", "FILTERED_BREAK_ITERATION", "PARSING", "UNIT_CONVERSION"].map(what => `-DUCONFIG_NO_${what}=1`).join(" "),
 };
 // What a `base` stage that builds ICU's data copies in.

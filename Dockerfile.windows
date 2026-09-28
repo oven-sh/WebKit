@@ -195,18 +195,19 @@ RUN for pair in "x86_64 x64" "aarch64 arm64"; do \
 
 # Node, for ICU's data (bun/data/icu-data.ts there; >= 22.6 for type stripping).
 ARG NODE_VERSION=24.16.0
-RUN curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/').tar.xz" \
-      | tar -xJ -C /usr/local --strip-components=1 && \
-    node --version
+ARG NODE_SHA256=d804845d34eddc21dc1092b519d643ef40b1f58ec5dec5c22b1f4bd8fabde6c9
+ADD --checksum=sha256:${NODE_SHA256} https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz /tmp/node.tar.xz
+RUN tar -xJf /tmp/node.tar.xz -C /usr/local --strip-components=1 && rm /tmp/node.tar.xz && node --version
 
 # ICU: its sources (/icu.tgz, which the lanes build the libraries from), and what icu/host.sh makes of them, which is
-# the same for every lane: its data (/icudt.dat) and the tools that takes (/icu-host).
+# the same for every lane: its data (/icudt.dat) and what a cross build asks for (/icu-host).
 # Which ICU: icu/source.json, by way of lanes.mjs.
 ARG ICU_COMMIT
 ARG ICU_SHA256
+ARG ICU_DATA_SHA256
 ADD --checksum=sha256:${ICU_SHA256} https://github.com/oven-sh/icu/archive/${ICU_COMMIT}.tar.gz /icu.tgz
 COPY icu/host.sh /icu-bun/host.sh
-RUN CC=clang CXX=clang++ /icu-bun/host.sh
+RUN CC=clang CXX=clang++ ICU_DATA_SHA256=${ICU_DATA_SHA256} /icu-bun/host.sh
 
 # ───────────────────────────────────────────────────────────────────────────
 # ICU — cross-compiled, with clang's GNU driver producing COFF objects archived by llvm-ar. ICU's configure then wants
@@ -250,7 +251,7 @@ RUN mkdir -p /icu-build && cd /icu-build && \
     export CXXFLAGS="$CFLAGS" && \
     export LDFLAGS="--target=${WIN_TRIPLE_ARCH}-pc-windows-msvc -fuse-ld=lld" && \
     /icu-src/icu4c/source/configure --host=${WIN_TRIPLE_ARCH}-w64-mingw32 \
-      --with-cross-build=/icu-host/icu4c/source \
+      --with-cross-build=/icu-host \
       --enable-static --disable-shared --disable-samples --disable-tests \
       --disable-extras --disable-tools --disable-icuio --disable-layoutex \
       ac_cv_c_compiler_gnu=yes ac_cv_cxx_compiler_gnu=yes && \
@@ -262,8 +263,7 @@ RUN mkdir -p /icu-build && cd /icu-build && \
 
 # Stage the libs under the names CMake's FindICU and Bun's build expect, with the data, which `base` made, as the third.
 RUN mkdir -p /icu-out/lib /icu-out/include && \
-    cp -r /icu-src/icu4c/source/common/unicode /icu-out/include/ && \
-    cp /icu-src/icu4c/source/i18n/unicode/*.h /icu-out/include/unicode/ && \
+    (cd /icu-src/icu4c/source && /icu-bun/headers.sh /icu-out/include/unicode ${ICU_CPPFLAGS}) && \
     cp /icu-build/lib/libsicuuc.a /icu-out/lib/sicuuc.lib && \
     cp /icu-build/lib/libsicuin.a /icu-out/lib/sicuin.lib && \
     /icu-bun/embed-data.sh coff ${ICU_VERSION%%.*} /icu-out/lib/sicudt.lib clang --target=${WIN_TRIPLE_ARCH}-pc-windows-msvc && \
