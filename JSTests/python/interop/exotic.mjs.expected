@@ -11,15 +11,15 @@ prototype => true true true false
 property get over own => 20 ["get"]
 property set over own => ["set"] 77
 setter raises !! ValueError: too cold
-no setter !! undefined: property 'fahrenheit' of 'Temperature' object has no setter
+no setter !! AttributeError: property 'fahrenheit' of 'Temperature' object has no setter
 getter says gone =>  false
 own keys => celsius
-frozen set !! undefined: cannot assign to field 'x'
-frozen new !! undefined: cannot assign to field 'z'
-frozen delete !! undefined: cannot delete field 'x'
+frozen set !! AttributeError: cannot assign to field 'x'
+frozen new !! AttributeError: cannot assign to field 'z'
+frozen delete !! AttributeError: cannot delete field 'x'
 frozen still => 1
 slot => 5 0 true
-no dict !! undefined: 'Slotted' object has no attribute 'b' and no __dict__ for setting new attributes
+no dict !! AttributeError: 'Slotted' object has no attribute 'b' and no __dict__ for setting new attributes
 __getattr__ => hello  true
 __getattribute__ => 1 [["spy","real"]]
 __getattribute__ asked once =>  [["spy","hidden"]]

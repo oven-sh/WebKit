@@ -343,7 +343,7 @@ static bool asksClassFirst(JSCell* cell)
     case PyBoxedValueType:
         return true;
     default:
-        return cell->inherits<PyDerivedList>() || cell->inherits<PyDerivedBytes>();
+        return cell->inherits<PyDerivedList>() || cell->inherits<PyDerivedBytes>() || cell->inherits<PyException>();
     }
 }
 
@@ -388,17 +388,6 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     }
     if (name == vm.propertyNames->next && type->lookup(vm, names.dunder_next))
         return function("next"_s);
-    if (type->isExceptionType()) {
-        if (name == vm.propertyNames->message) {
-            String text = str(globalObject, receiver);
-            RETURN_IF_EXCEPTION(scope, { });
-            return jsString(vm, text);
-        }
-        if (name == vm.propertyNames->name)
-            return type->name();
-        if (name == vm.propertyNames->stack)
-            return jsString(vm, formatException(globalObject, receiver));
-    }
     return { };
 }
 

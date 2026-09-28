@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ErrorInstance.h"
 #include "JSArray.h"
 #include "JSObject.h"
 #include "JSTypedArrays.h"
@@ -376,6 +377,24 @@ public:
     DECLARE_EXPORT_INFO;
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     PYTHON_DECLARE_EXOTIC_METHODS
+};
+
+// An exception. It is an Error, as a list is an Array: JavaScript can tell by Error.isError(), it has a stack that was noted when it was made, with
+// the frames of both languages in it, and whatever knows what to do with an Error knows what to do with it.
+//
+// What an Error has that is JavaScript's own way of putting things is JavaScript's, as it is for any Error, and is kept from Python by not being
+// enumerable: name, message, cause, stack, line, column and sourceURL. Until they are set, the name is that of the class, the message is str(),
+// and the cause is __cause__. An attribute that Python calls by one of those names, as AttributeError.name, is another thing.
+class PyException final : public ErrorInstance {
+public:
+    using Base = ErrorInstance;
+    DECLARE_EXPORT_INFO;
+    static PyException* create(VM&, PyType*);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    PYTHON_DECLARE_EXOTIC_METHODS
+
+private:
+    using Base::Base;
 };
 
 // An instance of a class derived from int, float or str. Those types' own instances are not cells, so it holds one.

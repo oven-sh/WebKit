@@ -116,6 +116,18 @@ JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name,
 // The property that JavaScript sees on something of Python's, other than what it has of its own: getattr(), and a few names that mean to
 // JavaScript what others mean to Python, like toString and Symbol.iterator. Empty if there is none.
 JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName);
+// An attribute that something has of its own is a property of it that is enumerable. What is not enumerable is JavaScript's business: the name and
+// length of a function, the stack of an Error. Python does not see it. Empty if there is no such attribute.
+inline JSValue getStoredAttribute(VM& vm, JSObject* object, PropertyName name)
+{
+    unsigned attributes;
+    JSValue value = object->getDirect(vm, name, attributes);
+    return value && !(attributes & PropertyAttribute::DontEnum) ? value : JSValue();
+}
+inline void putStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSValue value)
+{
+    object->putDirect(vm, name, value, static_cast<unsigned>(PropertyAttribute::None));
+}
 // Takes away a property that holds an attribute. This is what delattr() comes down to in the end, so it is not to go by way of what JavaScript's
 // `delete` does to something of Python's, which is delattr().
 bool deleteStoredAttribute(JSGlobalObject*, JSObject*, PropertyName);
@@ -175,6 +187,8 @@ void registerModule(JSGlobalObject*, const String& name, JSValue module);
 JSValue importModuleFromSource(JSGlobalObject*, const SourceCode&);
 // The same, as what a module of JavaScript's can import: each of its global variables by name, and itself as the default.
 void exportModule(JSGlobalObject*, const SourceCode&, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues);
+// exception.args
+PyTuple* exceptionArguments(JSGlobalObject*, JSValue exception);
 // OSError(errno, strerror(errno)[, filename]), or the class derived from it that is for that error.
 JS_EXPORT_PRIVATE JSValue raiseOSError(JSGlobalObject*, ThrowScope&, int errorNumber, JSValue filename = JSValue());
 // What is given for the name of a file, as the system wants it: a str, bytes, or what has __fspath__. Nothing if it raised.

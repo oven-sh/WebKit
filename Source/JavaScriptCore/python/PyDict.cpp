@@ -402,7 +402,7 @@ JSValue PyDict::get(JSGlobalObject* globalObject, JSValue key)
 {
     Identifier name;
     if (isInBacking(globalObject, key, name)) [[unlikely]]
-        return m_backing->getDirect(globalObject->vm(), name);
+        return Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
     int entry = Base::find(globalObject, key);
     return entry < 0 ? JSValue() : Base::valueAt(entry);
 }
@@ -411,7 +411,7 @@ bool PyDict::contains(JSGlobalObject* globalObject, JSValue key)
 {
     Identifier name;
     if (isInBacking(globalObject, key, name)) [[unlikely]]
-        return !!m_backing->getDirect(globalObject->vm(), name);
+        return !!Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
     return Base::find(globalObject, key) >= 0;
 }
 
@@ -421,11 +421,11 @@ bool PyDict::add(JSGlobalObject* globalObject, JSValue key, JSValue value, bool*
     if (!isInBacking(globalObject, key, name)) [[likely]]
         return Base::add(globalObject, key, value, wasAdded, replace);
     VM& vm = globalObject->vm();
-    bool isPresent = !!m_backing->getDirect(vm, name);
+    bool isPresent = !!Python::getStoredAttribute(vm, m_backing.get(), name);
     if (wasAdded)
         *wasAdded = !isPresent;
     if (!isPresent || replace)
-        m_backing->putDirect(vm, name, value);
+        Python::putStoredAttribute(vm, m_backing.get(), name, value);
     return true;
 }
 
@@ -434,7 +434,7 @@ JSValue PyDict::remove(JSGlobalObject* globalObject, JSValue key)
     Identifier name;
     if (!isInBacking(globalObject, key, name)) [[likely]]
         return Base::remove(globalObject, key);
-    JSValue value = m_backing->getDirect(globalObject->vm(), name);
+    JSValue value = Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
     if (value)
         Python::deleteStoredAttribute(globalObject, m_backing.get(), name);
     return value;
@@ -485,7 +485,7 @@ void PyDict::copyFrom(JSGlobalObject* globalObject, PyDict& other)
 JSValue PyDict::getString(JSGlobalObject* globalObject, const String& key)
 {
     if (m_backing) [[unlikely]]
-        return m_backing->getDirect(globalObject->vm(), Identifier::fromString(globalObject->vm(), key));
+        return Python::getStoredAttribute(globalObject->vm(), m_backing.get(), Identifier::fromString(globalObject->vm(), key));
     return Base::getString(globalObject, key);
 }
 

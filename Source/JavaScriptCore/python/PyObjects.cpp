@@ -96,6 +96,106 @@ PYTHON_DEFINE_EXOTIC_METHODS(PySet, nothingIsOrdinary)
 PYTHON_DEFINE_EXOTIC_METHODS(PyDerivedList, indicesAndLengthAreOrdinary)
 PYTHON_DEFINE_EXOTIC_METHODS(PyDerivedBytes, indicesAreOrdinary)
 
+// ---- PyException
+
+const ClassInfo PyException::s_info = { "Error"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyException) };
+
+Structure* PyException::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+{
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ErrorInstanceType, StructureFlags), info());
+}
+
+PyException* PyException::create(VM& vm, PyType* type)
+{
+    auto* exception = new (NotNull, allocateCell<PyException>(vm)) PyException(vm, type->instanceStructure(), type->errorType());
+    exception->finishCreationForEmbedderError(vm);
+    return exception;
+}
+
+// What ErrorInstance sees to by itself.
+static bool isErrorInfo(VM& vm, PropertyName name)
+{
+    return name == vm.propertyNames->stack || name == vm.propertyNames->line || name == vm.propertyNames->column || name == vm.propertyNames->sourceURL;
+}
+
+// What is JavaScript's about an Error besides.
+static bool isErrorProperty(VM& vm, PropertyName name)
+{
+    return name == vm.propertyNames->name || name == vm.propertyNames->message || name == vm.propertyNames->cause;
+}
+
+bool PyException::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (name.isSymbol() || isErrorInfo(vm, name))
+        RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(object, globalObject, name, slot));
+    if (!isErrorProperty(vm, name))
+        RELEASE_AND_RETURN(scope, Python::getOwnPropertySlotFromJavaScript(object, globalObject, name, slot, Base::getOwnPropertySlot));
+
+    // What JavaScript has set it to, if it has.
+    unsigned attributes;
+    if (JSValue set = object->getDirect(vm, name, attributes); set && (attributes & PropertyAttribute::DontEnum)) {
+        slot.setValue(object, attributes, set);
+        return true;
+    }
+    JSValue prototype = object->getPrototypeDirect();
+    if (!isType(prototype))
+        return false;
+    JSValue value;
+    if (name == vm.propertyNames->name)
+        value = asType(prototype)->name();
+    else if (slot.isVMInquiry())
+        return false; // The rest may run something.
+    else if (name == vm.propertyNames->message) {
+        String text = Python::str(globalObject, object);
+        RETURN_IF_EXCEPTION(scope, false);
+        value = jsString(vm, text);
+    } else {
+        value = object->getDirect(vm, vm.pythonNames().private_cause);
+        if (!value || value.isUndefinedOrNull())
+            return false;
+    }
+    slot.setValue(object, static_cast<unsigned>(PropertyAttribute::DontEnum), value);
+    return true;
+}
+
+bool PyException::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    if (name.isSymbol() || isErrorInfo(vm, name) || slot.thisValue() != JSValue(cell))
+        return Base::put(cell, globalObject, name, value, slot);
+    if (isErrorProperty(vm, name)) {
+        slot.disableCaching();
+        asObject(cell)->putDirect(vm, name, value, static_cast<unsigned>(PropertyAttribute::DontEnum));
+        return true;
+    }
+    return Python::setPropertyFromJavaScript(globalObject, cell, name, value, slot);
+}
+
+bool PyException::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName name, DeletePropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    if (name.isSymbol() || isErrorInfo(vm, name) || isErrorProperty(vm, name))
+        return Base::deleteProperty(cell, globalObject, name, slot);
+    return Python::deletePropertyFromJavaScript(globalObject, cell, name);
+}
+
+bool PyException::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName name, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    if (name.isSymbol() || isErrorInfo(vm, name))
+        return Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
+    return Python::definePropertyFromJavaScript(globalObject, object, name, descriptor, shouldThrow);
+}
+
+bool PyException::preventExtensions(JSObject*, JSGlobalObject*)
+{
+    return false;
+}
+
+// ---- What is JavaScript's cell, and an instance of a class of Python's
+
 const ClassInfo PyDerivedList::s_info = { "list"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyDerivedList) };
 const ClassInfo PyDerivedBytes::s_info = { "bytes"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyDerivedBytes) };
 

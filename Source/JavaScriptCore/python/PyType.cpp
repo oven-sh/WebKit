@@ -75,6 +75,8 @@ Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject,
         return PySet::createStructure(vm, globalObject, prototype);
     case Layout::List:
         return PyDerivedList::createStructure(vm, globalObject, prototype);
+    case Layout::Exception:
+        return PyException::createStructure(vm, globalObject, prototype);
     case Layout::Boxed:
         return PyBoxedValue::createStructure(vm, globalObject, prototype);
     case Layout::Type:
@@ -125,6 +127,7 @@ PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, J
     type->m_base.set(vm, type, base);
     type->m_bases.set(vm, type, bases);
     type->m_layout = base->layout();
+    type->m_errorType = base->m_errorType;
     type->m_flags = IsHeapType | IsBaseType | (base->m_flags & (IsExceptionType | IsTypeSubclass | MatchesSelf | IsBytes));
     // Whether it is a sequence or a mapping is for the first of its ancestors that is one or the other to say.
     for (auto& ancestor : mro->span()) {

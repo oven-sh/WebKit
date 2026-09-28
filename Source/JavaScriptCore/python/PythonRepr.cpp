@@ -119,13 +119,24 @@ static bool appendItems(JSGlobalObject* globalObject, StringBuilder& builder, un
     return true;
 }
 
-static PyTuple* exceptionArguments(JSGlobalObject* globalObject, JSValue exception)
+PyTuple* exceptionArguments(JSGlobalObject* globalObject, JSValue exception)
 {
     VM& vm = globalObject->vm();
     if (!exception.isObject())
-        return nullptr;
+        return globalObject->pyRealm()->emptyTuple();
     JSValue arguments = asObject(exception)->getDirect(vm, vm.pythonNames().private_args);
-    return arguments && isTuple(arguments) ? uncheckedDowncast<PyTuple>(arguments.asCell()) : nullptr;
+    if (arguments && isTuple(arguments))
+        return uncheckedDowncast<PyTuple>(arguments.asCell());
+    // An Error that JavaScript made was made with a message, unless Python has given it something else since.
+    if (auto* error = dynamicDowncast<ErrorInstance>(exception); error && !error->inherits<PyException>()) {
+        // The one that the engine makes and Python has words of its own for.
+        if (error->isStackOverflowError())
+            return PyTuple::create(globalObject, { jsNontrivialString(vm, "maximum recursion depth exceeded"_s) });
+        JSValue message = error->getDirect(vm, vm.propertyNames->message);
+        if (message && message.isString())
+            return PyTuple::create(globalObject, { message });
+    }
+    return globalObject->pyRealm()->emptyTuple();
 }
 
 // What the built-in types' __repr__ are, by the kind of cell.
@@ -296,17 +307,10 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
 
     if (type->isExceptionType()) {
         // ValueError('message')
-        if (auto* error = dynamicDowncast<ErrorInstance>(cell)) {
-            String message = error->sanitizedMessageString(globalObject);
-            RETURN_IF_EXCEPTION(scope, { });
-            return makeString(type->nameString(globalObject), '(', reprOfString(message), ')');
-        }
         PyTuple* arguments = exceptionArguments(globalObject, value);
         builder.append(type->nameString(globalObject), '(');
-        if (arguments) {
-            appendItems(globalObject, builder, arguments->length(), [&] (unsigned i) { return arguments->at(i); });
-            RETURN_IF_EXCEPTION(scope, { });
-        }
+        appendItems(globalObject, builder, arguments->length(), [&] (unsigned i) { return arguments->at(i); });
+        RETURN_IF_EXCEPTION(scope, { });
         builder.append(')');
         return builder.toString();
     }
@@ -346,10 +350,8 @@ String strOfException(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (auto* error = dynamicDowncast<ErrorInstance>(value))
-        RELEASE_AND_RETURN(scope, error->sanitizedMessageString(globalObject));
     PyTuple* arguments = exceptionArguments(globalObject, value);
-    if (!arguments || !arguments->length())
+    if (!arguments->length())
         return emptyString();
     if (arguments->length() == 1)
         RELEASE_AND_RETURN(scope, str(globalObject, arguments->at(0)));

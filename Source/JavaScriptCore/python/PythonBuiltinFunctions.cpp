@@ -55,7 +55,7 @@ PYTHON_NATIVE(exceptionNew)
     NATIVE_PROLOGUE();
     if (!args.size() || !isType(args[0]))
         return JSValue::encode(raiseTypeError(globalObject, scope, "BaseException.__new__(X): X is not a type object"_s));
-    PyInstance* exception = PyInstance::create(vm, asType(args[0])->instanceStructure());
+    PyException* exception = PyException::create(vm, asType(args[0]));
     exception->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     return JSValue::encode(exception);
 }
@@ -183,8 +183,7 @@ static void setCause(JSGlobalObject* globalObject, JSValue self, JSValue value)
 
 static JSValue getArgs(JSGlobalObject* globalObject, JSValue self)
 {
-    JSValue value = self.isObject() ? asObject(self)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_args) : JSValue();
-    return value ? value : JSValue(globalObject->pyRealm()->emptyTuple());
+    return exceptionArguments(globalObject, self);
 }
 
 static void setArgs(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -346,7 +345,7 @@ PYTHON_NATIVE(osErrorNew)
         if (auto specific = osErrorTypeFor(args[1].asInt32()))
             type = realm->type(*specific);
     }
-    PyInstance* exception = PyInstance::create(vm, type->instanceStructure());
+    PyException* exception = PyException::create(vm, type);
     fillOSError(globalObject, exception, args);
     return JSValue::encode(exception);
 }
@@ -478,7 +477,7 @@ PYTHON_NATIVE(syntaxErrorInit)
 PYTHON_NATIVE(syntaxErrorStr)
 {
     NATIVE_PROLOGUE();
-    if (args[0].asCell()->type() == ErrorInstanceType) {
+    if (!args[0].asCell()->inherits<PyException>()) {
         // One of JavaScript's has only a message.
         String text = strOfException(globalObject, args[0]);
         RETURN_IF_EXCEPTION(scope, { });

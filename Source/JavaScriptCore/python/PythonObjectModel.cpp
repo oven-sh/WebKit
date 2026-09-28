@@ -56,7 +56,7 @@ static PyType* typeOfError(PyRealm* realm, ErrorInstance* error)
     case ErrorType::TypeError:
         return realm->typeTypeError();
     case ErrorType::RangeError:
-        return error->isStackOverflowError() ? realm->typeRecursionError() : realm->typeValueError();
+        return error->isStackOverflowError() ? realm->typeRecursionError() : error->isOutOfMemoryError() ? realm->typeMemoryError() : realm->typeValueError();
     case ErrorType::ReferenceError:
         return realm->typeNameError();
     case ErrorType::SyntaxError:
@@ -156,7 +156,7 @@ JSObject* createException(JSGlobalObject* globalObject, PyType* type, JSValue ar
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
-    PyInstance* exception = PyInstance::create(vm, type->instanceStructure());
+    PyException* exception = PyException::create(vm, type);
     exception->putDirect(vm, vm.pythonNames().private_args, argument ? PyTuple::create(globalObject, { argument }) : PyTuple::create(globalObject, 0));
     // What its __init__ would have done with the one argument, for those that do more than keep it.
     if (!argument)
@@ -404,9 +404,13 @@ JSObject* attributeStorage(JSGlobalObject* globalObject, JSValue value, PyType* 
     case PyModuleType:
         return uncheckedDowncast<PyModule>(object)->namespaceObject();
     case JSFunctionType:
-        return object->inherits<PyNativeFunction>() ? nullptr : object;
+        // One of JavaScript's is a JavaScript object, whose attributes are its properties as JavaScript finds them.
+        return !object->inherits<PyNativeFunction>() && isPythonFunction(uncheckedDowncast<JSFunction>(object)) ? object : nullptr;
     case PyTypeType:
         return nullptr;
+    case ErrorInstanceType:
+        // Whichever language made it.
+        return type->hasFlag(PyType::HasNoInstanceDict) ? nullptr : object;
     default:
         break;
     }
@@ -461,7 +465,7 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
             RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, value, type));
     }
     if (JSObject* storage = attributeStorage(globalObject, value, type)) {
-        if (JSValue own = storage->getDirect(vm, name))
+        if (JSValue own = getStoredAttribute(vm, storage, name))
             return own;
     } else if (isJavaScriptObject(globalObject, type) && value.isObject()) {
         // An attribute of a JavaScript object is a property of it, as JavaScript finds it.
@@ -701,10 +705,10 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
 
     if (JSObject* storage = attributeStorage(globalObject, value, type)) {
         if (newValue) {
-            storage->putDirect(vm, name, newValue);
+            putStoredAttribute(vm, storage, name, newValue);
             return;
         }
-        if (!storage->getDirect(vm, name)) {
+        if (!getStoredAttribute(vm, storage, name)) {
             raiseNoAttribute(globalObject, scope, value, name);
             return;
         }
@@ -781,7 +785,7 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
         return getAttribute(globalObject, base, name);
     // What the instance itself has by that name comes first.
     if (JSObject* storage = attributeStorage(globalObject, base, type)) {
-        if (JSValue own = storage->getDirect(vm, name))
+        if (JSValue own = getStoredAttribute(vm, storage, name))
             return own;
     }
     self = base;

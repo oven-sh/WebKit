@@ -144,8 +144,16 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     m_modules.set(vm, this, PyDict::create(globalObject));
     m_runtimeFunctions.set(vm, this, Python::createRuntimeFunctions(vm, globalObject));
     m_javaScriptFunctions.set(vm, this, Python::createJavaScriptFunctions(vm, globalObject));
-    // To JavaScript an exception is an Error.
+    // To JavaScript an exception is an Error, and one of a class that JavaScript has too is one of those. It is the other way about in typeOf().
+    // Beyond a class of Python's, what JavaScript finds is what it would find for one of its own.
     typeBaseException()->setPrototypeDirect(vm, globalObject->errorPrototype());
+    for (auto [type, errorType] : { std::pair { typeTypeError(), ErrorType::TypeError }, std::pair { typeSyntaxError(), ErrorType::SyntaxError }, std::pair { typeNameError(), ErrorType::ReferenceError }, std::pair { typeValueError(), ErrorType::RangeError }, std::pair { typeRecursionError(), ErrorType::RangeError }, std::pair { typeMemoryError(), ErrorType::RangeError } }) {
+        type->setPrototypeDirect(vm, globalObject->errorStructure(errorType)->storedPrototype());
+        for (unsigned i = 0; i < numberOfBuiltinTypes; ++i) {
+            if (m_types[i]->isSubtypeOf(type))
+                m_types[i]->setErrorType(errorType);
+        }
+    }
     Python::initializeLibrary(globalObject);
 }
 

@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "ErrorType.h"
 #include "JSObject.h"
 #include "PyTuple.h"
 #include "Watchpoint.h"
@@ -51,6 +52,7 @@ public:
         Dict,
         Set,
         List, // A JSArray.
+        Exception, // A PyException, which is an ErrorInstance.
         Boxed, // A PyBoxedValue: an instance of a class derived from int, float, str or bool's like, whose own instances are not cells.
         Native, // Some cell of its own. It cannot be derived from.
     };
@@ -105,6 +107,9 @@ public:
     void setFlag(Flag flag) { m_flags |= flag; }
     void clearFlag(Flag flag) { m_flags &= ~flag; }
     bool isExceptionType() const { return hasFlag(IsExceptionType); }
+    // For a class of exceptions: which of JavaScript's kinds of Error its instances are.
+    ErrorType errorType() const { return m_errorType; }
+    void setErrorType(ErrorType errorType) { m_errorType = errorType; }
 
     // What instances are made with. Null if there is no making one but by the type's own __new__.
     Structure* instanceStructure() const { return m_instanceStructure.get(); }
@@ -169,6 +174,7 @@ private:
     Vector<Weak<PyType>> m_subclasses;
     const Ref<WatchpointSet> m_instanceAccessIsAsFound;
     Layout m_layout { Layout::Object };
+    ErrorType m_errorType { ErrorType::Error };
     unsigned m_flags { 0 };
     unsigned m_hooksEpoch { 0 }; // CommonNames::typeEpoch when hookFlags were worked out.
 };
