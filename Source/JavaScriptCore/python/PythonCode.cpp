@@ -34,6 +34,7 @@
 #include "PythonCompiler.h"
 #include "PythonSignatures.h"
 #include "PythonSymbolTable.h"
+#include "PythonSyntaxTreeSource.h"
 #include "SourceProvider.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -130,11 +131,6 @@ Vector<Identifier> sortedFreeVariables(const FunctionInfo& info)
     return names;
 }
 
-static bool isFunctionKind(CodeKind kind)
-{
-    return kind == CodeKind::Function || kind == CodeKind::Lambda || kind == CodeKind::GeneratorExpression || kind == CodeKind::Annotations || kind == CodeKind::TypeParameters || kind == CodeKind::Evaluator;
-}
-
 static constexpr unsigned iterableCoroutineFlag = 0x100; // CO_ITERABLE_COROUTINE
 
 static unsigned flagsOf(const FunctionInfo& info)
@@ -220,6 +216,18 @@ static JSValue valueOfConstant(JSGlobalObject* globalObject, const CodeDetails::
         return newBytes(globalObject, constant.text.is8Bit() ? byteCast<uint8_t>(constant.text.span8()) : std::span<const uint8_t>());
     case Kind::Code:
         return codeObjectFor(globalObject, compiled.codeBlock->functionExpr(constant.bits)->link(vm, executable->topLevelExecutable(), compiled.source));
+    case Kind::Complex:
+        return PyComplex::create(globalObject, std::bit_cast<double>(constant.bits), std::bit_cast<double>(constant.imaginaryBits));
+    case Kind::Tuple:
+    case Kind::FrozenSet: {
+        MarkedArgumentBuffer elements;
+        for (auto& element : constant.elements)
+            elements.append(valueOfConstant(globalObject, element, executable, compiled));
+        PyTuple* tuple = PyTuple::createFromArguments(globalObject, elements);
+        if (constant.kind == Kind::Tuple)
+            return tuple;
+        return setFromIterable(globalObject, globalObject->pyRealm()->typeFrozenSet()->instanceStructure(), tuple);
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -329,11 +337,20 @@ PYTHON_NATIVE(codePositions)
             indices.append(distinct.size() - 1);
         if (!last || range != lastRange) {
             if (range) {
-                Place start = placeOf(provider, range->first, compiled.info->lineDelta);
-                Place end = placeOf(provider, range->second, compiled.info->lineDelta);
+                Place start;
+                Place end;
+                if (provider.isPythonSyntaxTree()) {
+                    PlaceInSource place = placeOfNodeInSyntaxTree(provider.source(), range->first);
+                    start = { place.line + compiled.info->lineDelta, place.column };
+                    end = { place.endLine + compiled.info->lineDelta, place.endColumn };
+                } else {
+                    start = placeOf(provider, range->first, compiled.info->lineDelta);
+                    end = placeOf(provider, range->second, compiled.info->lineDelta);
+                }
                 last = PyTuple::create(globalObject, { jsNumber(start.line), jsNumber(end.line), jsNumber(start.column), jsNumber(end.column) });
             } else
-                last = PyTuple::create(globalObject, { jsNumber(firstLineOf(*compiled.info)), jsNumber(firstLineOf(*compiled.info)), jsNumber(0), jsNumber(0) });
+                // Before a module has begun it is on the line before its first.
+                last = PyTuple::create(globalObject, { jsNumber(firstLineOf(*compiled.info) - isAllOfItsSource(*compiled.info)), jsNumber(firstLineOf(*compiled.info)), jsNumber(0), jsNumber(0) });
             lastRange = range;
             distinct.append(last);
         }
@@ -434,6 +451,7 @@ enum Bit : uint32_t {
     IsMethod = 1 << 6,
     HasDocstring = 1 << 7,
     CanSeeClassScope = 1 << 8,
+    IsSyntaxTree = 1 << 9, // The source is a tree, written out: PythonSyntaxTreeSource.h.
 };
 }
 
@@ -449,7 +467,8 @@ static ByteVector bytesOf(FunctionExecutable* executable)
     writer.byte(static_cast<uint8_t>(info.evaluates));
     writer.number((info.isGenerator ? CodeBit::IsGenerator : 0) | (info.isCoroutine ? CodeBit::IsCoroutine : 0) | (info.hasVariadic ? CodeBit::HasVariadic : 0)
         | (info.hasKeywordVariadic ? CodeBit::HasKeywordVariadic : 0) | (info.usesNamespace ? CodeBit::UsesNamespace : 0) | (info.isNested ? CodeBit::IsNested : 0)
-        | (info.isMethod ? CodeBit::IsMethod : 0) | (info.hasDocstring ? CodeBit::HasDocstring : 0) | (info.canSeeClassScope ? CodeBit::CanSeeClassScope : 0));
+        | (info.isMethod ? CodeBit::IsMethod : 0) | (info.hasDocstring ? CodeBit::HasDocstring : 0) | (info.canSeeClassScope ? CodeBit::CanSeeClassScope : 0)
+        | (executable->source().provider()->isPythonSyntaxTree() ? CodeBit::IsSyntaxTree : 0));
     writer.number(info.typeParameterIndex);
     writer.number(info.futureFeatures);
     writer.byte(info.optimizationLevel);
@@ -472,6 +491,9 @@ static ByteVector bytesOf(FunctionExecutable* executable)
     if (isAllOfItsSource(info)) {
         from = 0;
         end = text.length();
+    } else if (source.provider()->isPythonSyntaxTree()) {
+        // Each node says what line it is on, and this is what to take that from.
+        writer.number(info.firstLine);
     } else {
         while (from && text[from - 1] != '\n')
             --from;
@@ -594,6 +616,8 @@ static FunctionExecutable* executableFromBytes(JSGlobalObject* globalObject, std
     info->positionalOnlyCount = reader.number();
     info->positionalCount = reader.number();
     info->keywordOnlyCount = reader.number();
+    bool isTree = bits & CodeBit::IsSyntaxTree;
+    uint32_t firstLineInTree = isTree && !isAllOfItsSource(info.get()) ? reader.number() : 1;
     uint32_t start = reader.number();
     uint32_t linesOfDecorators = reader.number();
     String text = reader.string();
@@ -614,6 +638,14 @@ static FunctionExecutable* executableFromBytes(JSGlobalObject* globalObject, std
     info->firstLine = isWhole ? 1 : firstLine;
     info->line = info->firstLine + (isWhole ? 0 : linesOfDecorators);
     info->lineDelta = isWhole ? static_cast<int>(firstLine) - 1 : 0;
+    if (isTree) {
+        if (start || firstLineInTree > static_cast<uint32_t>(std::numeric_limits<int>::max()) - linesOfDecorators)
+            return nullptr;
+        info->firstLine = firstLineInTree;
+        info->line = firstLineInTree + linesOfDecorators;
+        info->lineDelta = static_cast<int>(firstLine) - static_cast<int>(firstLineInTree);
+        return executableFromProgram(globalObject, SourceCode(SyntaxTreeSourceProvider::create(text, SourceOrigin(), filename)), WTF::move(info));
+    }
     SourceCode source = makeSource(text, SourceOrigin(), filename, info->line);
     // What that does to the ends of lines has been done to this already, or it is not what was written out.
     if (source.provider()->source().length() != text.length())

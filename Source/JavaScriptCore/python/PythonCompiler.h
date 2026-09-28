@@ -65,6 +65,8 @@ JS_EXPORT_PRIVATE JSFunction* compileModule(JSGlobalObject*, const SourceCode&, 
 
 // The two halves of that. The first makes the code, of a module, or of what eval() or a prompt is given. With `usesNamespace`, it takes
 // one argument: a mapping in which its names are looked up before the globals, and stored.
+// compile(tree, ...): a code object, or the tree over again.
+JSValue compileTree(JSGlobalObject*, JSValue tree, const String& filename, CodeKind, unsigned futureFeatures, bool wantsTree, unsigned optimizationLevel);
 // compile(..., PyCF_ONLY_AST): the syntax tree, as objects of the module _ast.
 JSValue parseSource(JSGlobalObject*, const SourceCode&, CodeKind, unsigned futureFeatures);
 FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public, unsigned optimizationLevel = 0);

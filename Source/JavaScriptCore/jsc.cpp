@@ -4552,7 +4552,8 @@ PYTHON_NATIVE(posixWrite)
     // What print() writes in JavaScript goes by way of these, so this does too, or the two would come out in the wrong order.
     if (FILE* stream = *descriptor == STDOUT_FILENO ? stdout : *descriptor == STDERR_FILENO ? stderr : nullptr) {
         size_t written = fwrite(data->data(), 1, data->size(), stream);
-        if (written < data->size() && ferror(stream))
+        // It has been written when this returns, which is what write() is.
+        if ((written < data->size() && ferror(stream)) || fflush(stream))
             return JSValue::encode(raiseOSError(globalObject, scope, errno));
         return JSValue::encode(jsNumber(written));
     }

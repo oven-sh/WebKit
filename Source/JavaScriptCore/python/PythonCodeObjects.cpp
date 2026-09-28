@@ -539,11 +539,17 @@ PYTHON_NATIVE(builtinCompile)
     if (mode == "func_type"_s)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "compile() cannot parse the type of a function yet"_s));
 
-    SourceCode source = sourceOf(globalObject, scope, given, filename, "compile"_s);
-    RETURN_IF_EXCEPTION(scope, { });
     unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait | DoNotImplyDedent | AllowIncompleteInput);
     if (inherits)
         futureFeatures |= futureFeaturesOfCaller(callFrame) & FutureFeaturesMask;
+
+    bool isTree = isAST(globalObject, given);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (isTree)
+        RELEASE_AND_RETURN(scope, JSValue::encode(compileTree(globalObject, given, filename, kind, futureFeatures, flags & onlyAST, std::max(optimize, 0))));
+
+    SourceCode source = sourceOf(globalObject, scope, given, filename, "compile"_s);
+    RETURN_IF_EXCEPTION(scope, { });
     if (flags & onlyAST)
         RELEASE_AND_RETURN(scope, JSValue::encode(parseSource(globalObject, source, kind, futureFeatures)));
     // What the interpreter was started with is no optimization.

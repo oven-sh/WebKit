@@ -48,6 +48,7 @@ struct Node {
     unsigned end { 0 };
 };
 
+struct Constant;
 struct Expression;
 struct Statement;
 struct Pattern;
@@ -55,11 +56,20 @@ struct Pattern;
 enum class ExpressionContext : uint8_t { Load, Store, Del };
 enum class BooleanOperator : uint8_t { And, Or };
 
+// What the abstract grammar calls a string: what a comment says the type of something is, and the `u` of u"...". Nothing is made of it but to give it back. It is a str, unless a program made it.
+struct Text {
+    explicit operator bool() const { return text; }
+
+    const Identifier* text { nullptr };
+    bool isBytes { false }; // A character for each.
+};
+
 // ---- What is neither a statement nor an expression
 
 struct Argument : Node {
     const Identifier* name { nullptr };
     Expression* annotation { nullptr };
+    Text typeComment;
 };
 
 struct Arguments {
@@ -91,7 +101,7 @@ struct Comprehension {
     Expression* target { nullptr };
     Expression* iterable { nullptr };
     Sequence<Expression*> conditions;
-    bool isAsync { false };
+    int isAsync { 0 }; // Whether it is nought is all that counts, but a program that says 2 is told 2.
 };
 
 struct ExceptHandler : Node {
@@ -291,7 +301,7 @@ struct FormattedValue : Expression {
 struct Interpolation : Expression {
     PYTHON_EXPRESSION(Interpolation)
     Expression* value { nullptr };
-    const Identifier* source { nullptr };
+    Constant* source { nullptr }; // A str, unless a program made it.
     int conversion { -1 };
     Expression* formatSpecification { nullptr };
 };
@@ -319,15 +329,24 @@ struct Constant : Expression {
         Imaginary,
         String,
         Bytes, // A character of `text` for each.
+        // There is no writing these. They are in a tree that a program has made, or that CPython would have made of one by working out what it can.
+        Complex, // `real` and `imaginary`.
+        Tuple, // Of `elements`.
+        FrozenSet,
+        Invalid, // Something that cannot be a constant, of the class that `text` names. It is for PythonASTValidator.cpp to say so.
     };
     Type type { Type::None };
     uint8_t radix { 10 };
     bool hasUnicodePrefix { false };
+    Text kind; // What a program has said instead of that.
+    bool isNegative { false }; // Integer and BigInteger, which are how far from nought it is. That cannot be written either: -1 is 1, negated.
     const Identifier* text { nullptr };
     union {
         uint64_t integer { 0 };
-        double real;
+        double real; // Of Imaginary, the imaginary part.
     };
+    double imaginary { 0 };
+    Sequence<Constant*> elements;
 };
 
 struct Attribute : Expression {
@@ -335,6 +354,7 @@ struct Attribute : Expression {
     Expression* value { nullptr };
     const Identifier* attribute { nullptr };
     ExpressionContext context { ExpressionContext::Load };
+    unsigned attributeStart { 0 }; // Where in the source the name is.
 };
 
 struct Subscript : Expression {
@@ -532,6 +552,7 @@ struct FunctionDef : Statement {
     Sequence<Statement*> body;
     Sequence<Expression*> decorators;
     Expression* returns { nullptr };
+    Text typeComment;
     Sequence<TypeParameter*> typeParameters;
 };
 
@@ -559,6 +580,7 @@ struct Assign : Statement {
     PYTHON_STATEMENT(Assign)
     Sequence<Expression*> targets;
     Expression* value { nullptr };
+    Text typeComment;
 };
 
 struct TypeAlias : Statement {
@@ -580,7 +602,7 @@ struct AnnAssign : Statement {
     Expression* target { nullptr };
     Expression* annotation { nullptr };
     Expression* value { nullptr };
-    bool isSimple { false }; // The target is a name, and not in parentheses.
+    int isSimple { 0 }; // The target is a name, and not in parentheses. As with Comprehension::isAsync.
 };
 
 struct For : Statement {
@@ -590,6 +612,7 @@ struct For : Statement {
     Expression* iterable { nullptr };
     Sequence<Statement*> body;
     Sequence<Statement*> orElse;
+    Text typeComment;
 };
 
 struct While : Statement {
@@ -611,6 +634,7 @@ struct With : Statement {
     bool isAsync { false };
     Sequence<WithItem*> items;
     Sequence<Statement*> body;
+    Text typeComment;
 };
 
 struct Match : Statement {
@@ -683,6 +707,12 @@ struct Continue : Statement {
 
 // ---- What a whole source is
 
+// # type: ignore
+struct TypeIgnore {
+    int line { 0 };
+    Text tag;
+};
+
 struct Module {
     enum class Kind : uint8_t {
         Module, // A file.
@@ -692,6 +722,7 @@ struct Module {
     Kind kind { Kind::Module };
     Sequence<Statement*> body;
     Expression* expression { nullptr };
+    Sequence<TypeIgnore*> typeIgnores;
 };
 
 } } // namespace JSC::Python

@@ -29,6 +29,7 @@
 #include "PyFrame.h"
 #include "PythonParser.h"
 #include "PythonSignatures.h"
+#include "PythonSyntaxTreeSource.h"
 #include "TopExceptionScope.h"
 #include <unicode/uchar.h>
 #include <wtf/text/StringBuilder.h>
@@ -416,6 +417,42 @@ void appendSource(VM& vm, StringBuilder& builder, StringView source, unsigned st
     }
 }
 
+// What was compiled from a tree has no text. What is shown for it is what is in the file that it is said to be from, in the place that the tree says, whether or not that is what the tree was made from.
+void appendSourceOfNode(JSGlobalObject* globalObject, StringBuilder& builder, const String& filename, PlaceInSource place, int lineDelta)
+{
+    SourceCode file = readSourceIfPresent(globalObject, filename);
+    if (file.isNull())
+        return;
+    StringView text = file.provider()->source();
+    // Where in the text so many bytes into a line is. Nothing if there is no such line.
+    auto offsetOf = [&] (unsigned line, unsigned column) -> std::optional<unsigned> {
+        unsigned offset = 0;
+        for (unsigned current = 1; current < line; ++offset) {
+            if (offset >= text.length())
+                return std::nullopt;
+            if (text[offset] == '\n')
+                ++current;
+        }
+        if (!line || offset >= text.length())
+            return std::nullopt;
+        unsigned lineEnd = offset;
+        while (lineEnd < text.length() && text[lineEnd] != '\n')
+            ++lineEnd;
+        unsigned bytes = 0;
+        for (char32_t character : text.substring(offset, lineEnd - offset).codePoints()) {
+            if (bytes >= column)
+                break;
+            bytes += character < 0x80 ? 1 : character < 0x800 ? 2 : character < 0x10000 ? 3 : 4;
+            offset += U16_LENGTH(character);
+        }
+        return offset;
+    };
+    auto start = offsetOf(place.line + lineDelta, place.column);
+    auto end = offsetOf(place.endLine + lineDelta, place.endColumn);
+    if (start && end)
+        appendSource(globalObject->vm(), builder, text, *start, *end);
+}
+
 FrameSummary summarize(JSGlobalObject* globalObject, PyFrame* frame, unsigned bytecodeOffset, unsigned line)
 {
     VM& vm = globalObject->vm();
@@ -424,8 +461,12 @@ FrameSummary summarize(JSGlobalObject* globalObject, PyFrame* frame, unsigned by
     StringBuilder builder;
     builder.append("  File \""_s, summary.filename, "\", line "_s, line, ", in "_s, summary.name, '\n');
     if (!isNameOfNoFile(summary.filename)) {
-        if (auto range = frame->sourceRangeAt(vm, BytecodeIndex(bytecodeOffset)))
-            appendSource(vm, builder, provider->source(), range->first, range->second);
+        if (auto range = frame->sourceRangeAt(vm, BytecodeIndex(bytecodeOffset))) {
+            if (provider->isPythonSyntaxTree())
+                appendSourceOfNode(globalObject, builder, summary.filename, placeOfNodeInSyntaxTree(provider->source(), range->first), frame->functionInfo().lineDelta);
+            else
+                appendSource(vm, builder, provider->source(), range->first, range->second);
+        }
     }
     summary.text = builder.toString();
     return summary;

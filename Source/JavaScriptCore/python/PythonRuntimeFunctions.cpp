@@ -229,10 +229,34 @@ PYTHON_RUNTIME_FUNCTION(newBytes)
     RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, text.is8Bit() ? byteCast<uint8_t>(text.span8()) : std::span<const uint8_t>())));
 }
 
-// 2j
+// 2j: the imaginary part, and then the real part if there is one, which there is no writing
 PYTHON_RUNTIME_FUNCTION(newComplex)
 {
-    return JSValue::encode(PyComplex::create(globalObject, 0, callFrame->uncheckedArgument(0).asNumber()));
+    return JSValue::encode(PyComplex::create(globalObject, callFrame->argumentCount() > 1 ? callFrame->uncheckedArgument(1).asNumber() : 0, callFrame->uncheckedArgument(0).asNumber()));
+}
+
+// BUILD_STRING, of a tuple, where they may not all be strings: f"..." in a tree that a program made
+PYTHON_RUNTIME_FUNCTION(joinStrings)
+{
+    PROLOGUE();
+    PyTuple* pieces = asTuple(argument(0));
+    StringBuilder result;
+    for (unsigned i = 0; i < pieces->length(); ++i) {
+        JSValue piece = pieces->at(i);
+        JSString* string = stringIn(piece);
+        if (!string)
+            return JSValue::encode(raiseTypeError(globalObject, scope, makeString("sequence item "_s, i, ": expected str instance, "_s, typeName(globalObject, piece), " found"_s)));
+        auto view = string->view(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        result.append(view.data);
+    }
+    return JSValue::encode(jsString(vm, result.toString()));
+}
+
+// A constant that is a frozenset, of a tuple. There is no writing one.
+PYTHON_RUNTIME_FUNCTION(newFrozenSet)
+{
+    return JSValue::encode(setFromIterable(globalObject, globalObject->pyRealm()->typeFrozenSet()->instanceStructure(), callFrame->uncheckedArgument(0)));
 }
 
 PYTHON_RUNTIME_FUNCTION(newSlice)
@@ -279,10 +303,16 @@ PYTHON_RUNTIME_FUNCTION(listToTuple)
     return JSValue::encode(tuple);
 }
 
-PYTHON_RUNTIME_FUNCTION(listToSet)
+// {*iterable}
+PYTHON_RUNTIME_FUNCTION(setUpdate)
 {
     PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(setFromIterable(globalObject, realm->structureFor(BuiltinType::Set), argument(0))));
+    auto* set = uncheckedDowncast<PySet>(argument(0).asCell());
+    scope.release();
+    forEach(globalObject, argument(1), [&] (JSValue item) {
+        return set->add(globalObject, item);
+    });
+    return JSValue::encode(jsUndefined());
 }
 
 PYTHON_RUNTIME_FUNCTION(newSet)
@@ -382,9 +412,14 @@ PYTHON_RUNTIME_FUNCTION(formatValue)
     default:
         break;
     }
-    if (isNone(argument(2)) && value.isString())
+    bool hasSpecification = callFrame->argumentCount() > 2;
+    if (!hasSpecification && value.isString())
         return JSValue::encode(value);
-    String specification = isNone(argument(2)) ? emptyString() : asString(argument(2))->value(globalObject).data;
+    // It is one that was put together from what was written. In a tree that a program made it can be anything.
+    JSString* given = hasSpecification ? stringIn(argument(2)) : nullptr;
+    if (hasSpecification && !given)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, makeString("Format specifier must be a string, not "_s, typeName(globalObject, argument(2)))));
+    String specification = given ? String(given->value(globalObject).data) : emptyString();
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(format(globalObject, value, specification)));
 }
@@ -1215,11 +1250,13 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("deleteName"_s, deleteName);
     add("newBytes"_s, newBytes);
     add("newComplex"_s, newComplex);
+    add("newFrozenSet"_s, newFrozenSet);
+    add("joinStrings"_s, joinStrings);
     add("newSlice"_s, newSlice);
     add("listExtend"_s, runtimeListExtend);
     add("listAppend"_s, runtimeListAppend);
     add("listToTuple"_s, listToTuple);
-    add("listToSet"_s, listToSet);
+    add("setUpdate"_s, setUpdate);
     add("newSet"_s, newSet);
     add("setAdd"_s, setAdd);
     add("newDict"_s, newDict);

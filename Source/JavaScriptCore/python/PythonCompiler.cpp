@@ -40,12 +40,15 @@
 #include "PythonOperations.h"
 #include "PythonParser.h"
 #include "PythonSymbolTable.h"
+#include "PythonSyntaxTreeSource.h"
 #include "PythonSyntaxWarnings.h"
 #include "TopExceptionScope.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
 
 namespace JSC { namespace Python {
+
+static bool generateAll(VM&, UnlinkedFunctionExecutable*, const SourceCode& parentSource, ParserError&);
 
 UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& source, CodeSpecializationKind kind, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, SourceParseMode parseMode)
 {
@@ -54,6 +57,8 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     StringView text = source.provider()->source();
     unsigned start = source.startOffset();
     unsigned end = source.endOffset();
+    // Not what someone wrote, but what compile() was given as a tree.
+    bool isTree = source.provider()->isPythonSyntaxTree();
 
     Arena arena;
     arena.usesLessGreater = info->futureFeatures & FutureBarryAsFLUFL;
@@ -100,7 +105,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     case CodeKind::Interactive: {
         Vector<SyntaxWarning> warnings;
         Module::Kind moduleKind = sourceKind == CodeKind::Module ? Module::Kind::Module : sourceKind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
-        Module* module = parse(vm, arena, text, moduleKind, warnings, syntaxError);
+        Module* module = isTree ? readSyntaxTree(vm, arena, text, moduleKind) : parse(vm, arena, text, moduleKind, warnings, syntaxError);
         if (module)
             table = SymbolTable::build(vm, arena, *module, info->futureFeatures, syntaxError);
         root = module;
@@ -111,9 +116,10 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     case CodeKind::Class: {
         // The names in a class are mangled for it, but its own name and its bases are not.
         const Identifier* outerPrivateName = sourceKind == CodeKind::Class ? nullptr : privateName;
-        Statement* statement = parseDefinition(vm, arena, text, start, end, info->line);
+        Statement* statement = isTree ? readDefinition(vm, arena, text, start, end) : parseDefinition(vm, arena, text, start, end, info->line);
         if (statement)
-            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, info->owner != OwnerKind::None && info->canSeeClassScope, info->isNested);
+            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, info->owner != OwnerKind::None && info->canSeeClassScope, info->isNested,
+                info->kind == CodeKind::Annotations || info->kind == CodeKind::Evaluator ? FragmentIs::WhatHasWhatIsCompiled : FragmentIs::WhatIsCompiled);
         root = statement;
         blockKey = statement;
         break;
@@ -121,7 +127,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     case CodeKind::Lambda:
     case CodeKind::GeneratorExpression:
     case CodeKind::Comprehension: {
-        Expression* expression = parseExpression(vm, arena, text, start, end, info->line);
+        Expression* expression = isTree ? readExpression(vm, arena, text, start, end) : parseExpression(vm, arena, text, start, end, info->line);
         if (expression)
             table = SymbolTable::buildFragment(vm, arena, nullptr, expression, info->freeVariables, privateName, info->futureFeatures, false, info->isNested);
         root = expression;
@@ -265,8 +271,14 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     ParserArena parserArena;
     auto node = makeUnique<ScopeNode>(parserArena, source, arena, *table, *block, *info, root);
     error = BytecodeGenerator::generate(vm, node.get(), source, result, codeGenerationMode, nullptr, nullptr, nullptr);
-    if (node->error())
+    if (node->error()) {
+        // CPython generates the code of a function when it comes to it, in the midst of what it is in. So if there is something wrong with one that was come to first, it is that which is wrong.
+        for (unsigned i = 0; i < node->functionsBeforeError(); ++i) {
+            if (!isGeneratedLast(*result->functionExpr(i)->pythonInfo()) && !generateAll(vm, result->functionExpr(i), source, error))
+                return nullptr;
+        }
         error = ParserError(node->error());
+    }
     if (error.isValid())
         return nullptr;
     return result;
@@ -291,6 +303,12 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     case SyntaxError::Kind::IncompleteInputError:
         type = BuiltinType::IncompleteInputError;
         break;
+    case SyntaxError::Kind::SystemError:
+        return raise(globalObject, scope, BuiltinType::SystemError, error.message);
+    case SyntaxError::Kind::ValueError:
+        return raise(globalObject, scope, BuiltinType::ValueError, error.message);
+    case SyntaxError::Kind::TypeError:
+        return raise(globalObject, scope, BuiltinType::TypeError, error.message);
     }
     // The line that it is on. While the source is being taken apart it is at hand. Afterwards CPython has it no more, and looks in the file that it is
     // said to be from, if there is such a file. So there is no line for what compile() was given with a name that was made up.
@@ -578,11 +596,48 @@ static bool generateAll(VM& vm, UnlinkedFunctionExecutable* executable, const So
     UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode());
     if (!codeBlock)
         return false;
-    for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i) {
-        if (!generateAll(vm, codeBlock->functionExpr(i), source, error))
-            return false;
+    for (bool last : { false, true }) {
+        for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i) {
+            if (isGeneratedLast(*codeBlock->functionExpr(i)->pythonInfo()) == last && !generateAll(vm, codeBlock->functionExpr(i), source, error))
+                return false;
+        }
     }
     return true;
+}
+
+bool isGeneratedLast(const FunctionInfo& info)
+{
+    return info.kind == CodeKind::Annotations && (info.owner == OwnerKind::Module || info.owner == OwnerKind::Interactive);
+}
+
+JSValue compileTree(JSGlobalObject* globalObject, JSValue tree, const String& filename, CodeKind kind, unsigned futureFeatures, bool wantsTree, unsigned optimizationLevel)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Arena arena;
+    Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
+    Module* module = astFromObject(globalObject, arena, tree, moduleKind);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (wantsTree) {
+        SourceCode nowhere = makeSource(String(), SourceOrigin(), filename);
+        SyntaxError error;
+        if (!SymbolTable::checkFutureStatements(vm, arena, *module, error)) {
+            raiseSyntaxError(globalObject, scope, error, nowhere, FoundIn::WhatWasParsed);
+            return { };
+        }
+        Vector<SyntaxWarning> warnings;
+        collectControlFlowWarnings(*module, warnings);
+        if (!issueWarnings(globalObject, warnings, nowhere))
+            return { };
+        RELEASE_AND_RETURN(scope, objectFromAST(globalObject, *module));
+    }
+    String text = writeSyntaxTree(vm, *module);
+    if (text.isNull())
+        return raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded during compilation"_s);
+    SourceCode source(SyntaxTreeSourceProvider::create(text, SourceOrigin(), filename));
+    FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures, ImplementationVisibility::Public, optimizationLevel);
+    RETURN_IF_EXCEPTION(scope, { });
+    return codeObjectFor(globalObject, executable);
 }
 
 JSValue parseSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, unsigned futureFeatures)
@@ -637,7 +692,10 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         Vector<SyntaxWarning> warnings;
         SyntaxError error;
         Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
-        Module* module = parse(vm, arena, source.provider()->source(), moduleKind, warnings, error);
+        bool isTree = source.provider()->isPythonSyntaxTree();
+        Module* module = isTree ? readSyntaxTree(vm, arena, source.provider()->source(), moduleKind) : parse(vm, arena, source.provider()->source(), moduleKind, warnings, error);
+        // It was written out a moment ago.
+        RELEASE_ASSERT(module || !isTree);
         // What was warned of on the way to something that is wrong was warned of first.
         if (!issueWarnings(globalObject, warnings, source))
             return nullptr;
@@ -733,8 +791,12 @@ FunctionExecutable* cloneExecutable(JSGlobalObject* globalObject, FunctionExecut
     const SourceCode& source = original->source();
     RefPtr<SourceProvider> provider = source.provider();
     // The name of the file goes with the source. The text is the same text and not a copy.
-    if (!sourceURL.isNull() && sourceURL != provider->sourceURL())
-        provider = makeSource(provider->source().toString(), provider->sourceOrigin(), sourceURL).provider();
+    if (!sourceURL.isNull() && sourceURL != provider->sourceURL()) {
+        if (provider->isPythonSyntaxTree())
+            provider = SyntaxTreeSourceProvider::create(provider->source().toString(), provider->sourceOrigin(), sourceURL);
+        else
+            provider = makeSource(provider->source().toString(), provider->sourceOrigin(), sourceURL).provider();
+    }
     return executableFor(vm, SourceCode(*provider, source.startOffset(), source.endOffset()), WTF::move(info));
 }
 

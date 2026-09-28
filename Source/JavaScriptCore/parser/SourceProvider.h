@@ -68,6 +68,7 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
     Synthetic,
     ImportMap,
     Python,
+    PythonSyntaxTree, // What compile() was given as a tree, written out: PythonSyntaxTreeSource.h.
 #if USE(BUN_JSC_ADDITIONS)
     BunTranspiledModule,
 #endif
@@ -164,7 +165,8 @@ public:
     JS_EXPORT_PRIVATE SourceProviderSourceType sourceType() const { return m_sourceType; }
 
     // It is for the other front end: see python/README.md.
-    bool isPython() const { return m_sourceType == SourceProviderSourceType::Python; }
+    bool isPython() const { return m_sourceType == SourceProviderSourceType::Python || m_sourceType == SourceProviderSourceType::PythonSyntaxTree; }
+    bool isPythonSyntaxTree() const { return m_sourceType == SourceProviderSourceType::PythonSyntaxTree; }
     bool isModuleType() const
     {
         switch (m_sourceType) {

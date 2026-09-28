@@ -180,6 +180,10 @@ enum FutureFeature : unsigned {
     FutureFeaturesMask = 0x1FE0000,
 };
 
+// A definition can be taken out of its source for the sake of something that belongs to it and is compiled by itself: what evaluates its annotations, or the bound of a type parameter. The variables that are
+// known to be outside it are then the ones which that uses. What else the definition uses of what is outside it is not known, and was seen to be there when the whole was compiled.
+enum class FragmentIs : uint8_t { WhatIsCompiled, WhatHasWhatIsCompiled };
+
 class SymbolTable {
     WTF_MAKE_TZONE_ALLOCATED(SymbolTable);
     WTF_MAKE_NONCOPYABLE(SymbolTable);
@@ -191,7 +195,7 @@ public:
 
     // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is which of its names
     // are variables of functions among them, and the class that private names are mangled for, if any. One of the two is null.
-    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested);
+    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested, FragmentIs = FragmentIs::WhatIsCompiled);
 
     Block& top() { return *m_top; }
     unsigned futureFeatures() const { return m_futureFeatures; }

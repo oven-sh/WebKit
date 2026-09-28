@@ -1,8 +1,8 @@
 #!/bin/sh
 # run-programs.sh <path to jsc> [program...]
 #
-# Runs each of programs/*.py in several configurations of the engine. What it prints has to be, byte for byte, what is in the file
-# beside it, which is what CPython 3.14 prints:
+# Runs each of programs/*.py in several configurations of the engine, and once by way of its syntax tree. What it prints has to be, byte for byte, what is
+# in the file beside it, which is what CPython 3.14 prints:
 #
 #     python3.14 programs/x.py > programs/x.expected
 
@@ -23,6 +23,15 @@ for program in "$@"; do
             echo "FAIL: $program $options"
         fi
     done
+done
+# And by way of its syntax tree. What runs it that way is on the stack beneath it, which shows in what says how deep the stack is or what is on it.
+for program in "$@"; do
+    case $program in recursion-limit.py | recursion-limit-and-frames.py | uncaught-exceptions.py | warning-filters.py) continue ;; esac
+    runs=$((runs + 1))
+    if ! "$jsc" ../through-a-syntax-tree.py -- "$program" 2>&1 | cmp -s - "${program%.py}.expected"; then
+        failures=$((failures + 1))
+        echo "FAIL: $program through a syntax tree"
+    fi
 done
 echo "$((runs - failures)) of $runs pass"
 [ $failures -eq 0 ]

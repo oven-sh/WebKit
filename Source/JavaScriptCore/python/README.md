@@ -18,7 +18,7 @@ The language is Python 3.14. CPython is the specification: `Grammar/python.gram`
 | the rest | the object model and the built-in types | running programs, and the audits |
 
 The tree and the symbol table are CPython's own, node for node and flag for flag. The `ast` and `symtable` modules have to give
-them out, and it means each stage can be compared with CPython's by itself.
+them out (see *Syntax trees*), and it means each stage can be compared with CPython's by itself.
 
 ## Decisions
 
@@ -304,6 +304,39 @@ instead, which is why `if x: y` will not compile that way without one. `PyCF_DON
 `JSTests/python/audits/syntax-errors.py` measures all this: some fourteen thousand pieces of source that will not compile, out of CPython's tests and made by changing one token of the programs here. All that is
 said of each is compared: the class, `msg`, `lineno`, `offset`, `end_lineno`, `end_offset` and `text`.
 
+**Where more than one thing is wrong, what is said is what is come to first.** CPython generates the code of a function when it comes to the `def`, in the midst of what the function is in. Here a function is
+compiled by itself, after what it is in. So what generates code keeps how many functions it had come to when it found something wrong, and those are compiled before that is believed
+(`generateFunctionCodeBlock()`). What evaluates the annotations of a function comes before the function, and of a module after everything else in it (`isGeneratedLast()`).
+`JSTests/python/programs/which-error-is-found-first.py`.
+
+### Syntax trees
+
+The module `_ast` is the syntax tree as objects, which `ast.py` is made of. `compile(source, ..., PyCF_ONLY_AST)` gives the tree, and `compile(tree, ...)` takes one, which a program may have made or changed:
+that is how `pytest` rewrites `assert`.
+
+- **`PythonASDL.h` is CPython's `Parser/Python.asdl` as a table:** the 126 classes, their fields, and what each field is. The classes are made by going through it. Of `Python/Python-ast.c`, which is generated
+  from the same, all that is written out here is what is written by hand there: the class `AST`.
+- **What the parser makes is not quite the tree that a program sees.** It has one kind of node for `def` and `async def`, and so on. `PythonASTWalker.h` goes through the one as if it were the other, and
+  `PythonASTBuilder.h` makes the one out of the other. Neither knows what it is going to or from: what is derived from the walker makes objects, or JSON for the tests, or text, and the builder is given
+  something to ask, which asks objects or reads text.
+- **What a program has made is looked over before anything is made of it** (`PythonASTValidator.cpp`, which is `Python/ast.c`). What generates code takes it that a tree is such as the parser makes. Where
+  that is more than `ast.c` sees to, it says what CPython says on finding out, and where CPython does not find out and falls over (`None` among the handlers of a `try`, or the names of a `global`) it is a
+  `ValueError`.
+- **Code has to have source, and the source of what is compiled from a tree is the tree, written out** (`PythonSyntaxTreeSource.h`). Code is made from its source when it is wanted, can be thrown away and made
+  again, and gives its source as `co_code`, which is what is kept when `pytest` writes what it has rewritten to a `.pyc`. So the tree is written as text, that is the text of a `SourceProvider` of a kind of its
+  own (`SourceProviderSourceType::PythonSyntaxTree`), it is read back where the text of a program would be parsed, and a function in it is a part of that text as a function in a program is. All else is as it
+  is for a program. What reads it takes nothing on trust, since a program can say that anything is `co_code`.
+- **Where an instruction is from is a part of the source, and here that is where the node is written.** Each node is written with where it says that it is first, so that it can be got from where the node
+  begins. The provider answers the engine's own question, what line and column an offset is at, with that (`lineColumnInTextForOffset()`, as the provider of the builtins does), so a stack trace in JavaScript
+  is right too.
+- **A traceback quotes the file that the code says it is from, in the place that the tree says,** whether or not that is what the tree was made from. There is nothing else to quote.
+
+`JSTests/python/audits/syntax-trees.py` takes the trees of some pieces of source, gives each field of each node each of a hundred values that mostly do not belong there, compiles what comes of it, and runs
+that: 1,200,000 in all. It is the same as in CPython for every one, but for what is left out because CPython falls over. It found more wrong with what has nothing to do with trees than with them, which is in
+`programs/what-auditing-syntax-trees-found.py`. And every one of `programs/` is run by way of its tree as well as from its source.
+
+Not yet: `PyCF_OPTIMIZED_AST`, `PyCF_TYPE_COMMENTS` and the mode `'func_type'`.
+
 ### Warnings
 
 `_warnings` (`PythonWarnings.cpp`) is `Python/_warnings.c`, function for function: it decides whether a warning is shown, raised or passed over. If `warnings.py` has been imported it has the filters, and shows what is
@@ -566,12 +599,15 @@ There is nothing that is per process, nothing that is set after something is mad
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
 - **In a `__dict__`, keys that are strings come before those that are not**, and before those that JavaScript would take for an index.
+- **An int can be no larger than a `BigInt`.** `1 << (1 << 40)` is an `OverflowError`, where CPython makes it if there is room.
+- **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
+  line before the first, or at a column before the first, is on line 0 or at column 0, where to CPython it is nowhere.
 
 ## Tests
 
 | | |
 |---|---|
-| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in five configurations of the engine |
+| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in five configurations of the engine, and once by way of its syntax tree |
 | `JSTests/python/run-interop.sh <jsc>` | the two languages together. There is nothing to compare these with: what is expected was read and found right |
 | `JSTests/python/audits/run-audits.sh <jsc> [n]` | not tests but measures of how far there is to go, over everything that is built in |
 | `JSTests/python/parser.js`, `symbol-table.js` | the first stages by themselves |

@@ -27,12 +27,17 @@
 #pragma once
 
 #include "PythonAST.h"
+#include "PythonSyntaxError.h"
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace Python {
 
 // An expression, written out again. It is what an annotation is under `from __future__ import annotations`. This is _PyAST_ExprAsUnicode() of CPython's
 // Python/ast_unparse.c: it is not how the expression was written, but how that writes it.
-String unparse(Expression&);
+// The digits of an integer in some radix, in radix ten.
+String toDecimal(StringView digits, unsigned radix);
+
+// Null if there is something in it that could not have been written: f"{x!q}", which only a tree that a program made can have.
+String unparse(Expression&, SyntaxError& whyNot);
 
 } } // namespace JSC::Python

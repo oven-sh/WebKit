@@ -1,0 +1,170 @@
+(55, 'doc', (3, (1, 2), 5, {'z': 1}, 'C'), {'x': <class 'int'>}, (3, [0, 2, 4], 4), [1, 'a', 'b'], '   5|fib(3)=2', {'x': <class 'int'>, 'return': <class 'str'>})
+<module> [True, True, True, True, True, True, True, True, True] True True
+fib [True, True, True, True, True, True, True, True, True] True True
+C [True, True, True, True, True, True, True, True, True] True True
+C.m [True, True, True, True, True, True, True, True, True] True True
+C.__annotate__ [True, True, True, True, True, True, True, True, True] True True
+outer [True, True, True, True, True, True, True, True, True] True True
+outer.<locals>.__annotate__ [True, True, True, True, True, True, True, True, True] True True
+outer.<locals>.inner [True, True, True, True, True, True, True, True, True] True True
+outer.<locals>.inner.<locals>.<lambda> [True, True, True, True, True, True, True, True, True] True True
+gen [True, True, True, True, True, True, True, True, True] True True
+gen.<locals>.<genexpr> [True, True, True, True, True, True, True, True, True] True True
+boom [True, True, True, True, True, True, True, True, True] True True
+eval => 3
+3
+single => None
+exec of Module => code
+exec of Expression => TypeError: expected Module node, got Expression
+exec of Interactive => TypeError: expected Module node, got Interactive
+exec of Constant => TypeError: expected Module node, got Constant
+exec of AST => TypeError: expected Module node, got AST
+exec of FunctionType => TypeError: expected Module node, got FunctionType
+eval of Module => TypeError: expected Expression node, got Module
+eval of Expression => code
+eval of Interactive => TypeError: expected Expression node, got Interactive
+eval of Constant => TypeError: expected Expression node, got Constant
+eval of AST => TypeError: expected Expression node, got AST
+eval of FunctionType => TypeError: expected Expression node, got FunctionType
+single of Module => TypeError: expected Interactive node, got Module
+single of Expression => TypeError: expected Interactive node, got Expression
+single of Interactive => code
+single of Constant => TypeError: expected Interactive node, got Constant
+single of AST => TypeError: expected Interactive node, got AST
+single of FunctionType => TypeError: expected Interactive node, got FunctionType
+the tree over again => (False, False, True, Module(body=[Assign(targets=[Name(id='x', ctx=Store(...))], value=Constant(value=1, kind=None), type_comment=None)], type_ignores=[]))
+the name of the file => ('some name', 'bytes')
+of classes derived from them => 5
+constant -5 => ('int', True, True)
+constant -1267650600228229401496703205376 => ('int', True, True)
+constant 1267650600228229401496703205376 => ('int', True, True)
+constant (1+2j) => ('complex', True, True)
+constant -0.0 => ('float', True, True)
+constant (-0-0j) => ('complex', True, True)
+constant inf => ('float', True, True)
+constant -inf => ('float', True, True)
+constant () => ('tuple', True, True)
+constant (1, 'a', (None, Ellipsis, b'b')) => ('tuple', True, True)
+constant frozenset() => ('frozenset', True, True)
+constant frozenset({1}) => ('frozenset', True, True)
+constant (frozenset({(1, 2)}),) => ('tuple', True, True)
+constant True => ('bool', True, True)
+constant '\ud800' => ('str', True, True)
+constant '\x00' => ('str', True, True)
+constant b'\xff\x00' => ('bytes', True, True)
+constant 0 => ('int', True, True)
+constant 18446744073709551615 => ('int', True, True)
+constant 18446744073709551616 => ('int', True, True)
+constant -9223372036854775808 => ('int', True, True)
+nan => nan
+among the constants => [(-5,), ((1, 2),), ((1+2j),), (frozenset({3}),)]
+not a constant: list => TypeError: got an invalid type in Constant: list
+not a constant: dict => TypeError: got an invalid type in Constant: dict
+not a constant: set => TypeError: got an invalid type in Constant: set
+not a constant: MyInt => TypeError: got an invalid type in Constant: MyInt
+not a constant: object => TypeError: got an invalid type in Constant: object
+not a constant: tuple => TypeError: got an invalid type in Constant: list
+not a constant: frozenset => TypeError: got an invalid type in Constant: MyInt
+not a constant: bytearray => TypeError: got an invalid type in Constant: bytearray
+not a constant: range => TypeError: got an invalid type in Constant: range
+not a constant: type => TypeError: got an invalid type in Constant: type
+not a constant: Constant => TypeError: got an invalid type in Constant: Constant
+not a constant: function => TypeError: got an invalid type in Constant: function
+odd names => ['', '1', '@x', 'a b', 'if', 'é', '\ud800']
+an odd attribute => {'a b': 1}
+the name None => ValueError: identifier field can't represent 'None' constant
+loading None => ValueError: identifier field can't represent 'None' constant
+the name True => ValueError: identifier field can't represent 'True' constant
+loading True => ValueError: identifier field can't represent 'True' constant
+the name False => ValueError: identifier field can't represent 'False' constant
+loading False => ValueError: identifier field can't represent 'False' constant
+the name __debug__ => SyntaxError: cannot assign to __debug__ (<tree>, line 1)
+loading __debug__ => True
+changed => 20
+changed again => -2
+the same node twice => 8
+lines [('run', 27, 26), ('<module>', 5, 1), ('f', 102, 101), ('g', 4, 3)]
+no place to end => (3, 3, 4, 4)
+a place to end => (3, 5, 4, 6)
+None for a place to end => (3, 3, 4, 4)
+an attribute on a later line => [(0, 1, 0, 0), (1, 1, 1, 2), (2, 2, 3, 4), (3, 3, 3, 4)]
+at {'lineno': 2, 'col_offset': 0, 'end_lineno': 1, 'end_col_offset': 0} => ValueError: AST node line range (2, 1) is not valid
+at {'lineno': 1, 'col_offset': 5, 'end_lineno': 1, 'end_col_offset': 2} => ValueError: line 1, column 5-2 is not a valid range
+at {'lineno': -1, 'col_offset': 0, 'end_lineno': 1, 'end_col_offset': 0} => ValueError: AST node column range (0, 0) for line range (-1, 1) is not valid
+at {'lineno': 1, 'col_offset': -1, 'end_lineno': 1, 'end_col_offset': 0} => ValueError: AST node column range (-1, 0) for line range (1, 1) is not valid
+at {'lineno': 1099511627776, 'col_offset': 0} => OverflowError: Python int too large to convert to C int
+at {'lineno': '1', 'col_offset': 0} => ValueError: invalid integer value: '1'
+at {'lineno': 1.0, 'col_offset': 0} => ValueError: invalid integer value: 1.0
+at {'lineno': None, 'col_offset': 0} => ValueError: invalid integer value: None
+at {'lineno': True, 'col_offset': False} => code
+at {'col_offset': 0} => TypeError: required field "lineno" missing from expr
+at {'lineno': 1} => TypeError: required field "col_offset" missing from expr
+at {'lineno': 0, 'col_offset': 0} => code
+at {'lineno': 2147483647, 'col_offset': 2147483647} => code
+Traceback (most recent call last):
+  File "compiling-syntax-trees.py", line 3, in <module>
+    import _warnings
+    ^^^
+  File "compiling-syntax-trees.py", line 150, in f
+    HERE = 1000  # This line is quoted below, and the one after it.
+            ^^^^^^^^^^^
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+Traceback (most recent call last):
+  File "compiling-syntax-trees.py", line 3, in <module>
+    import _warnings
+    ^^^
+  File "compiling-syntax-trees.py", line 150, in f
+    HERE = 1000  # This line is quoted below, and the one after it.
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    THERE = HERE + None if HERE < 0 else 0
+    ^^^^^^^^^^^^^^^^^^^
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+Traceback (most recent call last):
+  File "<made up>", line 3, in <module>
+  File "<made up>", line 150, in f
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+Traceback (most recent call last):
+  File "there is no such file", line 3, in <module>
+  File "there is no such file", line 150, in f
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+Traceback (most recent call last):
+  File "", line 3, in <module>
+  File "", line 150, in f
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+Traceback (most recent call last):
+  File "compiling-syntax-trees.py", line 3, in <module>
+    import _warnings
+    ^^^
+  File "compiling-syntax-trees.py", line 100000, in f
+TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
+'return' => ('SyntaxError', "'return' outside function", '<tree>', 1, 1, 1, 7, None)
+'break' => ('SyntaxError', "'break' outside loop", '<tree>', 1, 1, 1, 6, None)
+'x = *a' => ('SyntaxError', "can't use starred expression here", '<tree>', 1, 5, 1, 7, None)
+'def f():\n  nonlocal x' => ('SyntaxError', "no binding for nonlocal 'x' found", '<tree>', 2, 3, 2, 13, None)
+'def f(a, a): pass' => ('SyntaxError', "duplicate argument 'a' in function definition", '<tree>', 1, 10, 1, 11, None)
+'f(a=1, a=2)' => ('SyntaxError', 'keyword argument repeated: a', '<tree>', 1, 8, 1, 11, None)
+'from __future__ import nope' => ('SyntaxError', 'future feature nope is not defined', '<source>', 1, 24, 1, 28, None)
+'x = 1\nfrom __future__ import annotations' => ('SyntaxError', 'from __future__ imports must occur at the beginning of the file', '<tree>', 2, 1, 2, 35, None)
+'await x' => ('SyntaxError', "'await' outside function", '<tree>', 1, 1, 1, 8, None)
+'yield' => ('SyntaxError', "'yield' outside function", '<tree>', 1, 1, 1, 6, None)
+'class C: return' => ('SyntaxError', "'return' outside function", '<tree>', 1, 10, 1, 16, None)
+'def f():\n  x = 1\n  global x' => ('SyntaxError', "name 'x' is assigned to before global declaration", '<tree>', 3, 3, 3, 11, None)
+'[(yield) for a in b]' => ('SyntaxError', "'yield' inside list comprehension", '<tree>', 1, 3, 1, 8, None)
+'*a, *b = c' => ('SyntaxError', 'multiple starred expressions in assignment', '<tree>', 1, 1, 1, 7, None)
+await at the top => 0x80
+annotations as strings => {'x': 'a + b'}
+annotations as strings, by a flag => {'x': 'a + b'}
+optimize => [(False, 'doc'), (False, None)]
+optimize 0 => AssertionError: said
+again from co_code => (True, True, True)
+a function again => (True, True)
+moved => (100, True)
+renamed => ('other', 'renamed')
+too deep => RecursionError
+too deep for the tree over again => RecursionError
+in itself => RecursionError
+    id is asked for
+attributes are got => 7
+and may raise => KeyError: 'no'
+a list that changes => RuntimeError: List field "elts" changed size during iteration
+audited [('Module', None)]

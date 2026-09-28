@@ -128,8 +128,9 @@ public:
         return analyzeBlock(*m_table.m_top, nullptr, free, global, typeParameters, nullptr);
     }
 
-    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, bool canSeeClassScope, bool isNested)
+    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, bool canSeeClassScope, bool isNested, FragmentIs fragmentIs)
     {
+        m_fragmentIs = fragmentIs;
         // As if it were in a function whose only variables are those.
         if (!enterBlock(m_top, BlockType::Function, &m_table, { }))
             return false;
@@ -374,13 +375,6 @@ private:
 
     bool visitTypeParameters(Sequence<TypeParameter*> parameters)
     {
-        bool hasSeenDefault = false;
-        for (TypeParameter* parameter : parameters) {
-            if (parameter->defaultValue)
-                hasSeenDefault = true;
-            else if (hasSeenDefault)
-                return fail(makeString("non-default type parameter '"_s, parameter->name->string(), "' follows default type parameter"_s), *parameter);
-        }
         return visit(parameters);
     }
 
@@ -549,6 +543,9 @@ private:
     bool checkFutureImport(ImportFrom& node)
     {
         if (!node.module || node.level || *node.module != "__future__"_s)
+            return true;
+        // Where the last of them is, at the top of the file, is not known to a part of it. This was seen to when the whole was compiled.
+        if (m_fragmentTop)
             return true;
         bool isAfter = !m_lastFutureStatement || node.line > m_lastFutureStatement->line
             || (node.line == m_lastFutureStatement->endLine && node.column > m_lastFutureStatement->endColumn);
@@ -1199,7 +1196,7 @@ private:
         if (flags & DefNonlocal) {
             if (!bound)
                 return failAtDirective(block, identifier, "nonlocal declaration not allowed at module level"_s);
-            if (!bound->contains(name))
+            if (!bound->contains(name) && m_fragmentIs != FragmentIs::WhatHasWhatIsCompiled)
                 return failAtDirective(block, identifier, makeString("no binding for nonlocal '"_s, identifier.string(), "' found"_s));
             if (typeParameters.contains(name))
                 return failAtDirective(block, identifier, makeString("nonlocal binding not allowed for type parameter '"_s, identifier.string(), '\''));
@@ -1436,6 +1433,7 @@ private:
     const Identifier& m_class;
     const Identifier& m_classdict;
     const Identifier& m_conditionalAnnotations;
+    FragmentIs m_fragmentIs { FragmentIs::WhatIsCompiled };
     const Identifier& m_typeParamsAttribute;
     const Identifier& m_debug;
     const Identifier& m_super;
@@ -1462,12 +1460,12 @@ bool SymbolTable::checkFutureStatements(VM& vm, Arena& arena, Module& module, Sy
     return SymbolTableBuilder(vm, arena, table, error).findFutureStatements(module);
 }
 
-std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested)
+std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested, FragmentIs fragmentIs)
 {
     std::unique_ptr<SymbolTable> table { new SymbolTable };
     table->m_futureFeatures = futureFeatures;
     SyntaxError error;
-    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName, canSeeClassScope, isNested))
+    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName, canSeeClassScope, isNested, fragmentIs))
         return nullptr;
     return table;
 }

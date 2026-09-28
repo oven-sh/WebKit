@@ -189,7 +189,8 @@ PYTHON_NATIVE(templateIterNext)
         item = nextOf(TemplateIterField::Strings);
         RETURN_IF_EXCEPTION(scope, { });
         self->setField(vm, TemplateIterField::IsFromStrings, jsBoolean(false));
-        if (item && !stringIn(item)->length()) {
+        // In a tree that a program made, what is between the interpolations can be anything.
+        if (JSString* string = item ? stringIn(item) : nullptr; string && !string->length()) {
             item = nextOf(TemplateIterField::Interpolations);
             RETURN_IF_EXCEPTION(scope, { });
             self->setField(vm, TemplateIterField::IsFromStrings, jsBoolean(true));
@@ -217,7 +218,14 @@ PYTHON_NATIVE(templateAdd)
     MarkedArgumentBuffer strings;
     for (unsigned i = 0; i + 1 < leftStrings->length(); ++i)
         strings.append(leftStrings->at(i));
-    JSString* joined = jsString(globalObject, stringIn(leftStrings->at(leftStrings->length() - 1)), stringIn(rightStrings->at(0)));
+    // PyUnicode_Concat()
+    JSValue last = leftStrings->at(leftStrings->length() - 1);
+    JSValue first = rightStrings->at(0);
+    if (!stringIn(last))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("must be str, not "_s, typeName(globalObject, last))));
+    if (!stringIn(first))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("can only concatenate str (not \""_s, typeName(globalObject, first), "\") to str"_s)));
+    JSString* joined = jsString(globalObject, stringIn(last), stringIn(first));
     RETURN_IF_EXCEPTION(scope, { });
     strings.append(joined);
     for (unsigned i = 1; i < rightStrings->length(); ++i)

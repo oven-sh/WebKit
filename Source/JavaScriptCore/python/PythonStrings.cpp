@@ -605,8 +605,12 @@ String formatString(JSGlobalObject* globalObject, const String& value, const For
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (specification.type && specification.type != 's')
         return raiseUnknownFormatCode(globalObject, scope, specification.type, "str"_s);
-    if (specification.sign != '-') {
+    if (specification.hasSign) {
         raiseValueError(globalObject, scope, specification.sign == ' ' ? "Space not allowed in string format specifier"_s : "Sign not allowed in string format specifier"_s);
+        return { };
+    }
+    if (specification.noNegativeZero) {
+        raiseValueError(globalObject, scope, "Negative zero coercion (z) not allowed in string format specifier"_s);
         return { };
     }
     if (specification.alternate) {

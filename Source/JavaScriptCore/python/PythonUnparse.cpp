@@ -35,29 +35,6 @@
 
 namespace JSC { namespace Python {
 
-namespace {
-
-enum Priority : int {
-    Tuple_,
-    Test, // if-else, lambda
-    Or,
-    And,
-    Not,
-    Comparison,
-    Expression_,
-    BitOr = Expression_,
-    BitXor,
-    BitAnd,
-    Shift,
-    Arithmetic,
-    Term,
-    Factor,
-    Power,
-    Await_,
-    Atom,
-};
-
-// The digits of an integer in some radix, in radix ten.
 String toDecimal(StringView digits, unsigned radix)
 {
     constexpr uint32_t limbBase = 1000000000;
@@ -85,12 +62,36 @@ String toDecimal(StringView digits, unsigned radix)
     return result.toString();
 }
 
+namespace {
+
+enum Priority : int {
+    Tuple_,
+    Test, // if-else, lambda
+    Or,
+    And,
+    Not,
+    Comparison,
+    Expression_,
+    BitOr = Expression_,
+    BitXor,
+    BitAnd,
+    Shift,
+    Arithmetic,
+    Term,
+    Factor,
+    Power,
+    Await_,
+    Atom,
+};
+
 class Unparser {
 public:
+    const SyntaxError& whyNot() const { return m_whyNot; }
+
     String run(Expression& expression, int level)
     {
         append(expression, level);
-        return m_out.toString();
+        return m_whyNot ? String() : m_out.toString();
     }
 
 private:
@@ -122,9 +123,9 @@ private:
         case Constant::Type::Ellipsis:
             return write("..."_s);
         case Constant::Type::Integer:
-            return write(node.integer);
+            return write(node.isNegative && node.integer ? "-"_s : ""_s, node.integer);
         case Constant::Type::BigInteger:
-            return write(toDecimal(node.text->string(), node.radix));
+            return write(node.isNegative ? "-"_s : ""_s, toDecimal(node.text->string(), node.radix));
         case Constant::Type::Float:
             return write(withoutInfinity(reprOfDouble(node.real)));
         case Constant::Type::Imaginary: {
@@ -143,6 +144,29 @@ private:
                 bytes.append(static_cast<uint8_t>(c));
             return write(reprOfBytes(bytes.span()));
         }
+        case Constant::Type::Complex:
+            return write(withoutInfinity(reprOfComplex(node.real, node.imaginary)));
+        case Constant::Type::Tuple:
+            write('(');
+            for (size_t i = 0; i < node.elements.size(); ++i) {
+                if (i)
+                    write(", "_s);
+                append(*node.elements[i]);
+            }
+            return write(node.elements.size() == 1 ? ",)"_s : ")"_s);
+        case Constant::Type::FrozenSet:
+            // As repr() has it.
+            if (node.elements.empty())
+                return write("frozenset()"_s);
+            write("frozenset({"_s);
+            for (size_t i = 0; i < node.elements.size(); ++i) {
+                if (i)
+                    write(", "_s);
+                append(*node.elements[i]);
+            }
+            return write("})"_s);
+        case Constant::Type::Invalid:
+            return;
         }
     }
 
@@ -221,11 +245,12 @@ private:
     // ---- f"..." and t"..."
 
     // All that is between the quotes is put together first, so as to be written with one pair of them.
-    static String bodyOf(Sequence<Expression*> values, bool isFormatSpecification)
+    String bodyOf(Sequence<Expression*> values, bool isFormatSpecification)
     {
         Unparser body;
         for (Expression* value : values)
             body.appendElement(*value, isFormatSpecification);
+        fail(body.m_whyNot);
         return body.m_out.toString();
     }
 
@@ -233,6 +258,8 @@ private:
     {
         switch (element.kind) {
         case Expression::Kind::Constant:
+            if (element.as<Constant>().type != Constant::Type::String)
+                return fail(SyntaxError::Kind::TypeError, makeString("must be str, not "_s, typeNameOf(element.as<Constant>())));
             return write(makeStringByReplacingAll(makeStringByReplacingAll(element.as<Constant>().text->string(), '{', "{{"_s), '}', "}}"_s));
         case Expression::Kind::JoinedStr:
             return appendJoined(element.as<JoinedStr>(), isFormatSpecification);
@@ -243,7 +270,7 @@ private:
         case Expression::Kind::Interpolation:
             return appendInterpolation(element.as<Interpolation>());
         default:
-            RELEASE_ASSERT_NOT_REACHED();
+            return fail(SyntaxError::Kind::SystemError, "unknown expression kind inside f-string or t-string"_s);
         }
     }
 
@@ -259,7 +286,9 @@ private:
     {
         // What begins with a brace is kept apart from the one that it is in.
         write(source.startsWith('{') ? "{ "_s : "{"_s, source);
-        if (conversion >= 0)
+        if (conversion >= 0 && conversion != 'a' && conversion != 'r' && conversion != 's')
+            fail(SyntaxError::Kind::SystemError, "unknown f-value conversion kind"_s);
+        else if (conversion >= 0)
             write('!', static_cast<char>(conversion));
         if (formatSpecification) {
             write(':');
@@ -271,12 +300,15 @@ private:
     void appendFormatted(FormattedValue& node)
     {
         // A lambda has a colon in it, and so has to be in parentheses.
-        appendReplacementField(Unparser().run(*node.value, Test + 1), node.conversion, node.formatSpecification);
+        Unparser value;
+        String source = value.run(*node.value, Test + 1);
+        fail(value.m_whyNot);
+        appendReplacementField(source, node.conversion, node.formatSpecification);
     }
 
     void appendInterpolation(Interpolation& node)
     {
-        appendReplacementField(node.source->string(), node.conversion, node.formatSpecification);
+        appendReplacementField(node.source->type == Constant::Type::String ? node.source->text->string() : emptyString(), node.conversion, node.formatSpecification);
     }
 
     // ---- Expressions
@@ -527,14 +559,66 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
+    // Only a tree that a program made can have what could not have been written.
+    void fail(SyntaxError::Kind kind, String&& message)
+    {
+        if (m_whyNot)
+            return;
+        m_whyNot.kind = kind;
+        m_whyNot.message = WTF::move(message);
+    }
+
+    // What went wrong with a part of it went wrong with it.
+    void fail(const SyntaxError& whyNot)
+    {
+        if (whyNot && !m_whyNot)
+            m_whyNot = whyNot;
+    }
+
+    static ASCIILiteral typeNameOf(const Constant& constant)
+    {
+        switch (constant.type) {
+        case Constant::Type::None:
+            return "NoneType"_s;
+        case Constant::Type::True:
+        case Constant::Type::False:
+            return "bool"_s;
+        case Constant::Type::Ellipsis:
+            return "ellipsis"_s;
+        case Constant::Type::Integer:
+        case Constant::Type::BigInteger:
+            return "int"_s;
+        case Constant::Type::Float:
+            return "float"_s;
+        case Constant::Type::Imaginary:
+        case Constant::Type::Complex:
+            return "complex"_s;
+        case Constant::Type::String:
+            return "str"_s;
+        case Constant::Type::Bytes:
+            return "bytes"_s;
+        case Constant::Type::Tuple:
+            return "tuple"_s;
+        case Constant::Type::FrozenSet:
+            return "frozenset"_s;
+        case Constant::Type::Invalid:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
     StringBuilder m_out;
+    SyntaxError m_whyNot;
 };
 
 } // namespace
 
-String unparse(Expression& expression)
+String unparse(Expression& expression, SyntaxError& whyNot)
 {
-    return Unparser().run(expression, Test);
+    Unparser unparser;
+    String result = unparser.run(expression, Test);
+    whyNot = unparser.whyNot();
+    return result;
 }
 
 } } // namespace JSC::Python

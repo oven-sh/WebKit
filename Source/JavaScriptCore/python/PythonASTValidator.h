@@ -25,38 +25,29 @@
 
 #pragma once
 
-#include "Nodes.h"
 #include "PythonAST.h"
-#include "PythonArena.h"
-#include "PythonFunctionInfo.h"
-#include "PythonSymbolTable.h"
+#include <wtf/text/WTFString.h>
 
-namespace JSC { namespace Python {
+namespace JSC {
 
-// What BytecodeGenerator is given to generate the code of. To it, this is the root of a syntax tree, and it asks it to emit itself.
-class ScopeNode final : public JSC::ScopeNode {
-public:
-    // `root` is a Module, a FunctionDef, a Lambda, a ClassDef or a GeneratorExp, by the kind that the info says.
-    ScopeNode(ParserArena&, const SourceCode&, Arena&, SymbolTable&, Block&, const FunctionInfo&, void* root);
+class VM;
 
-    // Of the JavaScript function, not counting `this`.
-    unsigned parameterCount() const;
+namespace Python {
 
-    void emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+// What is wrong with a tree that the parser did not make.
+struct ASTError {
+    enum class Kind : uint8_t { ValueError, TypeError, SystemError, RecursionError, RuntimeError };
 
-    // Set if the code could not be generated.
-    const SyntaxError& error() const { return m_error; }
-    // How many of the functions that the code makes had been come to when that was found.
-    unsigned functionsBeforeError() const { return m_functionsBeforeError; }
+    explicit operator bool() const { return !message.isNull(); }
 
-private:
-    Arena& m_arena;
-    SymbolTable& m_symbolTable;
-    Block& m_block;
-    const FunctionInfo& m_info;
-    void* m_root;
-    SyntaxError m_error;
-    unsigned m_functionsBeforeError { 0 };
+    Kind kind { Kind::ValueError };
+    String message;
 };
+
+// _PyAST_Validate(). What generates code takes it that a tree is such as the parser makes, and this is what sees to it that one that came from somewhere else is near enough: that what is assigned to says so,
+// that there is something in what may not be empty, and so on. Where a node is, is an int for this, though it be kept as unsigned: it may be less than nothing.
+ASTError validate(VM&, Module&);
+ASTError validate(VM&, Statement&);
+ASTError validate(VM&, Expression&);
 
 } } // namespace JSC::Python

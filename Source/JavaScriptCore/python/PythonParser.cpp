@@ -1433,10 +1433,11 @@ private:
                 next();
                 if (!at(TokenKind::Name))
                     return isAllThereIs();
-                const Identifier* name = next().text;
+                const Token& nameToken = next();
                 auto* attribute = make<Attribute>(start);
                 attribute->value = value;
-                attribute->attribute = name;
+                attribute->attribute = nameToken.text;
+                attribute->attributeStart = nameToken.start;
                 value = attribute;
                 continue;
             }
@@ -2679,7 +2680,10 @@ private:
             unsigned length = text.length();
             while (length && (text[length - 1] == '=' || isPythonWhitespace(text[length - 1])))
                 --length;
-            interpolation->source = makeIdentifier(text.left(length).toString());
+            auto* sourceText = m_arena.create<Constant>();
+            sourceText->type = Constant::Type::String;
+            sourceText->text = makeIdentifier(text.left(length).toString());
+            interpolation->source = sourceText;
             result = interpolation;
         } else {
             auto* formatted = make<FormattedValue>(start);
@@ -3102,10 +3106,11 @@ private:
         while (consume(TokenKind::Dot)) {
             if (!at(TokenKind::Name))
                 return nullptr;
-            const Identifier* name = next().text;
+            const Token& nameToken = next();
             auto* attribute = make<Attribute>(start);
             attribute->value = value;
-            attribute->attribute = name;
+            attribute->attribute = nameToken.text;
+            attribute->attributeStart = nameToken.start;
             value = attribute;
         }
         return value;

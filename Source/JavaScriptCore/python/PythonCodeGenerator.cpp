@@ -41,6 +41,7 @@
 #include "TaggedArithmetic.h"
 #include "UnlinkedFunctionExecutable.h"
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace JSC { namespace Python {
 
@@ -50,7 +51,7 @@ namespace JSC { namespace Python {
 // register it is in. A local variable's own register is only ever written by the last instruction of what is assigned to it.
 class CodeGenerator {
 public:
-    CodeGenerator(BytecodeGenerator& generator, Arena& arena, SymbolTable& table, Block& block, const FunctionInfo& info, SyntaxError& error)
+    CodeGenerator(BytecodeGenerator& generator, Arena& arena, SymbolTable& table, Block& block, const FunctionInfo& info, SyntaxError& error, unsigned& functionsBeforeError)
         : g(generator)
         , m_vm(generator.vm())
         , m_names(m_vm.pythonNames())
@@ -59,6 +60,7 @@ public:
         , m_block(block)
         , m_info(info)
         , m_error(error)
+        , m_functionsBeforeError(functionsBeforeError)
         , m_private(info.privateName.isNull() ? nullptr : &info.privateName)
     {
     }
@@ -187,8 +189,24 @@ private:
 
     void fail(String&& message, const Node& node)
     {
+        noteFirstError();
         if (!m_error)
             m_error = { SyntaxError::Kind::SyntaxError, false, WTF::move(message), node.line, static_cast<int>(node.column), node.endLine, static_cast<int>(node.endColumn) };
+    }
+
+    void fail(SyntaxError::Kind kind, String&& message)
+    {
+        noteFirstError();
+        if (!m_error) {
+            m_error.kind = kind;
+            m_error.message = WTF::move(message);
+        }
+    }
+
+    void noteFirstError()
+    {
+        if (!m_error)
+            m_functionsBeforeError = m_numberOfFunctions;
     }
 
     // Says where in the source what is emitted next comes from, for when it raises.
@@ -238,7 +256,7 @@ private:
             unsigned length = std::min<unsigned>(node.attribute->length(), node.endColumn);
             location.line = node.endLine;
             location.column = node.endColumn - length;
-            location.start = node.end - length;
+            location.start = node.attributeStart;
         }
         return location;
     }
@@ -288,6 +306,13 @@ private:
         case Constant::Type::String:
         case Constant::Type::Bytes:
             return !constant->text->isEmpty();
+        case Constant::Type::Complex:
+            return constant->real || constant->imaginary;
+        case Constant::Type::Tuple:
+        case Constant::Type::FrozenSet:
+            return !constant->elements.empty();
+        case Constant::Type::Invalid:
+            break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -749,37 +774,61 @@ private:
             noteConstant({ CodeDetails::Constant::Kind::String, 10, false, 0, m_info.docstring });
     }
 
-    void noteConstant(const Constant& node, bool isNegative = false)
+    static CodeDetails::Constant describeConstant(const Constant& node, bool isNegated = false)
     {
         using Kind = CodeDetails::Constant::Kind;
+        bool isNegative = node.isNegative != isNegated;
         switch (node.type) {
         case Constant::Type::None:
-            return noteConstant({ Kind::None });
+            return { Kind::None };
         case Constant::Type::True:
-            return noteConstant({ Kind::True });
+            return { Kind::True };
         case Constant::Type::False:
-            return noteConstant({ Kind::False });
+            return { Kind::False };
         case Constant::Type::Ellipsis:
-            return noteConstant({ Kind::Ellipsis });
+            return { Kind::Ellipsis };
         case Constant::Type::Integer:
-            return noteConstant({ Kind::Integer, 10, isNegative && node.integer, node.integer });
+            return { Kind::Integer, 10, isNegative && node.integer, node.integer };
         case Constant::Type::BigInteger:
-            return noteConstant({ Kind::BigInteger, node.radix, isNegative, 0, node.text->string() });
+            return { Kind::BigInteger, node.radix, isNegative, 0, node.text->string() };
         case Constant::Type::Float:
-            return noteConstant({ Kind::Float, 10, false, std::bit_cast<uint64_t>(isNegative ? -node.real : node.real) });
+            return { Kind::Float, 10, false, std::bit_cast<uint64_t>(isNegated ? -node.real : node.real) };
         case Constant::Type::Imaginary:
-            return noteConstant({ Kind::Imaginary, 10, false, std::bit_cast<uint64_t>(node.real) });
+            return { Kind::Imaginary, 10, false, std::bit_cast<uint64_t>(node.real) };
         case Constant::Type::String:
-            return noteConstant({ Kind::String, 10, false, 0, node.text->string() });
+            return { Kind::String, 10, false, 0, node.text->string() };
         case Constant::Type::Bytes:
-            return noteConstant({ Kind::Bytes, 10, false, 0, node.text->string() });
+            return { Kind::Bytes, 10, false, 0, node.text->string() };
+        case Constant::Type::Complex:
+            return { Kind::Complex, 10, false, std::bit_cast<uint64_t>(node.real), { }, std::bit_cast<uint64_t>(node.imaginary) };
+        case Constant::Type::Tuple:
+        case Constant::Type::FrozenSet: {
+            CodeDetails::Constant result { node.type == Constant::Type::Tuple ? Kind::Tuple : Kind::FrozenSet };
+            for (Constant* element : node.elements)
+                result.elements.append(describeConstant(*element));
+            return result;
         }
+        case Constant::Type::Invalid:
+            break;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    void noteConstant(const Constant& node, bool isNegated = false)
+    {
+        noteConstant(describeConstant(node, isNegated));
     }
 
     RegisterID* emitConstant(RegisterID* dst, Constant& node)
     {
         noteConstant(node);
         markIfOnAnotherLine(node);
+        return emitConstantValue(dst, node, node);
+    }
+
+    // `location` is the constant that it is, or is part of.
+    RegisterID* emitConstantValue(RegisterID* dst, Constant& node, Constant& location)
+    {
         switch (node.type) {
         case Constant::Type::None:
             return g.emitLoad(dst, jsUndefined());
@@ -793,20 +842,39 @@ private:
         }
         case Constant::Type::Integer:
             if (node.integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()))
-                return g.emitLoad(dst, jsNumber(static_cast<int32_t>(node.integer)));
+                return g.emitLoad(dst, jsNumber(node.isNegative ? -static_cast<int32_t>(node.integer) : static_cast<int32_t>(node.integer)));
             // The generator knows a constant that it has seen before by the address of its digits, so they have to outlive it.
-            return g.emitLoad(dst, g.addBigIntConstant(m_arena.identifiers().makeIdentifier(m_vm, String::number(node.integer).span8()), 10, false));
+            return g.emitLoad(dst, g.addBigIntConstant(m_arena.identifiers().makeIdentifier(m_vm, String::number(node.integer).span8()), 10, node.isNegative));
         case Constant::Type::BigInteger:
-            return g.emitLoad(dst, g.addBigIntConstant(*node.text, node.radix, false));
+            return g.emitLoad(dst, g.addBigIntConstant(*node.text, node.radix, node.isNegative));
         case Constant::Type::Float:
             return g.emitLoad(dst, jsTaggedFloat(node.real));
         case Constant::Type::Imaginary:
             // It is a cell of this realm's, so it cannot be a constant of code that any realm may run.
-            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(node.real)) }, node);
+            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(node.real)) }, location);
         case Constant::Type::String:
             return g.emitLoad(dst, *node.text);
         case Constant::Type::Bytes:
-            return emitRuntimeCall(dst, "newBytes"_s, { stringConstant(*node.text) }, node);
+            return emitRuntimeCall(dst, "newBytes"_s, { stringConstant(*node.text) }, location);
+        case Constant::Type::Complex:
+            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(node.imaginary)), constant(jsDoubleNumber(node.real)) }, location);
+        case Constant::Type::Tuple:
+        case Constant::Type::FrozenSet: {
+            if (!m_vm.isSafeToRecurse()) [[unlikely]] {
+                fail("maximum recursion depth exceeded during compilation"_s, location);
+                return g.emitLoad(dst, jsUndefined());
+            }
+            Vector<Reg, 8> elements;
+            for (Constant* element : node.elements)
+                elements.append(emitConstantValue(g.newTemporary(), *element, location));
+            Reg result = destination(dst);
+            emitNewTuple(result.get(), elements);
+            if (node.type == Constant::Type::FrozenSet)
+                emitRuntimeCall(result.get(), "newFrozenSet"_s, { result.get() }, location);
+            return result.get();
+        }
+        case Constant::Type::Invalid:
+            break;
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -847,7 +915,7 @@ private:
             auto& node = expression->as<UnaryOp>();
             // -1 is a constant.
             if (auto* operand = node.operand->tryAs<Constant>(); operand && node.op == UnaryOperator::USub) {
-                if (operand->type == Constant::Type::Integer && operand->integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + 1) {
+                if (operand->type == Constant::Type::Integer && !operand->isNegative && operand->integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + 1) {
                     noteConstant(*operand, true);
                     return g.emitLoad(dst, jsNumber(static_cast<int32_t>(-static_cast<int64_t>(operand->integer))));
                 }
@@ -897,7 +965,18 @@ private:
         case Expression::Kind::NamedExpr: {
             auto& node = expression->as<NamedExpr>();
             Reg value = emitToTemporary(node.value);
-            emitStoreName(*node.target->as<Name>().id, value.get(), node);
+            auto& target = node.target->as<Name>();
+            // Nothing sees to it that a tree which a program made says that the name is assigned to, and CPython does with it as it says.
+            switch (target.context) {
+            case ExpressionContext::Store:
+                emitStoreName(*target.id, value.get(), node);
+                break;
+            case ExpressionContext::Del:
+                emitDeleteName(*target.id, target);
+                break;
+            case ExpressionContext::Load:
+                return emitLoadName(dst, *target.id, target);
+            }
             return finish(dst, value.get());
         }
         case Expression::Kind::Attribute: {
@@ -1065,17 +1144,30 @@ private:
 
     RegisterID* emitSequenceDisplay(RegisterID* dst, Sequence<Expression*> elements, Display display, const Node& node)
     {
+        if (hasStarred(elements) && display == Display::Set) {
+            // Each goes in as it is come to, so what cannot be in a set is found before what comes after it is evaluated.
+            size_t plain = 0;
+            while (!elements[plain]->is<Starred>())
+                ++plain;
+            Reg set = g.newTemporary();
+            {
+                Vector<Reg, 8> registers;
+                emitElements(elements.first(plain), registers);
+                emitRuntimeCall(set.get(), "newSet"_s, registers, node);
+            }
+            for (size_t i = plain; i < elements.size(); ++i) {
+                auto* starred = elements[i]->tryAs<Starred>();
+                Reg value = emit(starred ? starred->value : elements[i]);
+                emitRuntimeCall(nullptr, starred ? "setUpdate"_s : "setAdd"_s, { set.get(), value.get() }, node);
+            }
+            return finish(dst, set.get());
+        }
         if (hasStarred(elements)) {
             Reg list = g.newTemporary();
             emitListWithStarred(list.get(), elements, node);
-            switch (display) {
-            case Display::List:
+            if (display == Display::List)
                 return finish(dst, list.get());
-            case Display::Tuple:
-                return emitRuntimeCall(dst, "listToTuple"_s, { list.get() }, node);
-            case Display::Set:
-                return emitRuntimeCall(dst, "listToSet"_s, { list.get() }, node);
-            }
+            return emitRuntimeCall(dst, "listToTuple"_s, { list.get() }, node);
         }
         Vector<Reg, 8> registers;
         {
@@ -1129,11 +1221,20 @@ private:
 
     // ---- f-strings
 
+    void checkConversion(int conversion)
+    {
+        if (conversion != -1 && conversion != 's' && conversion != 'r' && conversion != 'a')
+            fail(SyntaxError::Kind::SystemError, makeString("Unrecognized conversion character "_s, conversion));
+    }
+
     RegisterID* emitFormattedValue(RegisterID* dst, FormattedValue& node)
     {
         Reg value = emit(node.value);
+        checkConversion(node.conversion);
         Reg conversion = constant(jsNumber(node.conversion));
-        Reg specification = node.formatSpecification ? Reg(emit(node.formatSpecification)) : Reg(none());
+        if (!node.formatSpecification)
+            return emitRuntimeCall(dst, "formatValue"_s, { value.get(), conversion.get() }, node);
+        Reg specification = emit(node.formatSpecification);
         return emitRuntimeCall(dst, "formatValue"_s, { value.get(), conversion.get(), specification.get() }, node);
     }
 
@@ -1143,11 +1244,18 @@ private:
             return g.emitLoad(dst, m_vm.propertyNames->emptyIdentifier);
         if (node.values.size() == 1)
             return emit(node.values[0], dst);
-        // Every piece is a string by now, so this is JavaScript's concatenation.
         Vector<Reg, 8> pieces;
         emitElements(node.values, pieces);
         Reg result = destination(dst);
-        return g.emitStrcat(result.get(), pieces[0].get(), pieces.size());
+        bool areAllStrings = std::ranges::all_of(node.values, [] (Expression* value) {
+            auto* constant = value->tryAs<Constant>();
+            return value->is<FormattedValue>() || (constant && constant->type == Constant::Type::String);
+        });
+        // Then this is JavaScript's concatenation. There is no writing anything else, but a tree that a program made can have it.
+        if (areAllStrings)
+            return g.emitStrcat(result.get(), pieces[0].get(), pieces.size());
+        emitNewTuple(result.get(), pieces);
+        return emitRuntimeCall(result.get(), "joinStrings"_s, { result.get() }, node);
     }
 
     // {value!r:specification} in a t"..."
@@ -1155,12 +1263,14 @@ private:
     {
         Reg value = emitToTemporary(node.value);
         Reg formatSpecification = node.formatSpecification ? Reg(emitToTemporary(node.formatSpecification)) : Reg(g.emitLoad(g.newTemporary(), m_vm.propertyNames->emptyIdentifier));
+        checkConversion(node.conversion);
         RegisterID* conversion = none();
         if (node.conversion >= 0) {
             Latin1Character character = static_cast<Latin1Character>(node.conversion);
             conversion = stringConstant(m_arena.identifiers().makeIdentifier(m_vm, std::span<const Latin1Character> { &character, 1 }));
         }
-        return emitRuntimeCall(dst, "newInterpolation"_s, { value.get(), stringConstant(*node.source), conversion, formatSpecification.get() }, node);
+        Reg source = emitConstant(g.newTemporary(), *node.source);
+        return emitRuntimeCall(dst, "newInterpolation"_s, { value.get(), source.get(), conversion, formatSpecification.get() }, node);
     }
 
     // t"...". There is a string before, between and after the interpolations, if only an empty one.
@@ -1304,14 +1414,20 @@ private:
     }
 
     // With keywords, *iterables or **mappings. The runtime works out which parameter each is for.
-    RegisterID* emitGeneralCall(RegisterID* dst, Call& node)
+    // codegen_validate_keywords()
+    void checkKeywords(Sequence<Keyword*> keywords)
     {
-        for (size_t i = 0; i < node.keywords.size(); ++i) {
-            for (size_t j = 0; node.keywords[i]->name && j < i; ++j) {
-                if (node.keywords[j]->name && *node.keywords[j]->name == *node.keywords[i]->name)
-                    fail(makeString("keyword argument repeated: "_s, node.keywords[i]->name->string()), *node.keywords[i]);
+        for (size_t i = 0; i < keywords.size(); ++i) {
+            for (size_t j = 0; keywords[i]->name && j < i; ++j) {
+                if (keywords[j]->name && *keywords[j]->name == *keywords[i]->name)
+                    fail(makeString("keyword argument repeated: "_s, keywords[i]->name->string()), *keywords[i]);
             }
         }
+    }
+
+    RegisterID* emitGeneralCall(RegisterID* dst, Call& node)
+    {
+        checkKeywords(node.keywords);
 
         // base.function(...): the helpers are given base as their own `this`, to pass on.
         Reg base = g.newTemporary();
@@ -1573,7 +1689,11 @@ private:
         auto* executable = UnlinkedFunctionExecutable::create(m_vm, parentSource, &metadata, UnlinkedNormalFunction, ConstructAbility::CannotConstruct, InlineAttribute::None, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
         executable->setPythonInfo(WTF::move(info));
         unsigned index = g.m_codeBlock->addFunctionExpr(executable);
-        noteConstant({ CodeDetails::Constant::Kind::Code, 10, false, index });
+        m_numberOfFunctions = index + 1;
+        if (isGeneratedLast(*executable->pythonInfo()))
+            m_functionGeneratedLast = index;
+        else
+            noteConstant({ CodeDetails::Constant::Kind::Code, 10, false, index });
         OpNewFuncExp::emit(&g, dst, g.scopeRegister(), index);
         return dst;
     }
@@ -1621,16 +1741,21 @@ private:
     {
         Block* block = m_table.blockFor(blockKey);
         RELEASE_ASSERT(block);
+        // What evaluates the annotations comes before the function itself.
+        Reg annotate;
+        if (Block* annotations = kind == CodeKind::Function ? m_table.blockFor(arguments) : nullptr; annotations && annotations->usesAnnotations) {
+            annotate = g.newTemporary();
+            emitNewAnnotateFunction(annotate.get(), *annotations, OwnerKind::Function, node);
+            // Its code is beside the function's and is called so. It is itself said to be in the function, once it is the function's.
+            g.emitDirectPutById(annotate.get(), m_names.private_qualname, constant(jsString(m_vm, makeString(qualifiedNameFor(name), ".__annotate__"_s))));
+        }
         Reg function = temporaryDestination(dst);
         auto info = makeInfo(kind, name, arguments, *block, node);
         if (block->hasDocstring && kind == CodeKind::Function && keepsDocstrings())
             info->docstring = docstringOf(static_cast<const FunctionDef&>(node).body);
         emitNewFunction(function.get(), WTF::move(info), node);
-        if (Block* annotations = kind == CodeKind::Function ? m_table.blockFor(arguments) : nullptr; annotations && annotations->usesAnnotations) {
-            Reg annotate = g.newTemporary();
-            emitNewAnnotateFunction(annotate.get(), *annotations, OwnerKind::Function, node);
+        if (annotate)
             g.emitDirectPutById(function.get(), m_names.private_annotate, annotate.get());
-        }
         if (defaults)
             g.emitDirectPutById(function.get(), m_names.private_defaults, defaults);
         if (keywordDefaults)
@@ -1792,6 +1917,9 @@ private:
     bool usesGlobals()
     {
         if (!isFunctionLike() || m_block.hasImport || m_block.hasClassDefinition)
+            return true;
+        // What evaluates the annotations of a module looks among the globals for which of them have been come to, and that is not a name that is written in it.
+        if (m_info.kind == CodeKind::Annotations && (m_info.owner == OwnerKind::Module || m_info.owner == OwnerKind::Interactive))
             return true;
         for (Symbol& symbol : m_block.symbols) {
             if (symbol.scope == NameScope::GlobalImplicit || symbol.scope == NameScope::GlobalExplicit)
@@ -2369,6 +2497,10 @@ private:
             for (Expression* element : target->as<List>().elements)
                 emitDelete(element);
             return;
+        case Expression::Kind::Starred:
+            // del *x, which there is no writing.
+            fail("can't use starred expression here"_s, *target);
+            return;
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -2385,7 +2517,7 @@ private:
             Reg result = local ? Reg(local) : Reg(g.newTemporary());
             mark(node);
             emitBinaryOperation(result.get(), node.op, true, current.get(), value.get());
-            emitStoreName(name, result.get(), node);
+            emitStoreName(name, result.get(), *node.target);
             return;
         }
         case Expression::Kind::Attribute: {
@@ -2393,12 +2525,12 @@ private:
             const Identifier& name = mangle(*target.attribute);
             Reg base = emitToTemporary(target.value);
             Reg current = g.newTemporary();
-            mark(target);
+            mark(locationOf(target));
             emitGetAttribute(current.get(), base.get(), name);
             Reg value = emit(node.value);
             mark(node);
             emitBinaryOperation(current.get(), node.op, true, current.get(), value.get());
-            mark(target);
+            mark(locationOf(target));
             emitSetAttribute(base.get(), name, current.get());
             return;
         }
@@ -2417,7 +2549,9 @@ private:
             return;
         }
         default:
-            RELEASE_ASSERT_NOT_REACHED();
+            // [x] += y, which there is no writing. CPython numbers the kinds from 1.
+            fail(SyntaxError::Kind::SystemError, makeString("invalid node type ("_s, static_cast<unsigned>(node.target->kind) + 1, ") for augmented assignment"_s));
+            return;
         }
     }
 
@@ -2560,37 +2694,33 @@ private:
         }
         case Statement::Kind::While: {
             auto& node = statement.as<While>();
-            Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
-            SetForScope mayBreak(m_isInExceptStarOutsideLoop, false);
-            Ref<Label> otherwise = g.newLabel();
-            auto truth = constantTruth(node.test);
-            if (truth && !*truth) {
-                mark(*node.test);
-                {
+            Ref<Label> end = emitLoop([&] (LabelScope& scope) {
+                auto truth = constantTruth(node.test);
+                if (truth && !*truth) {
+                    mark(*node.test);
                     NestedBlock block(*this, node);
                     emitNeverComeTo(node.body);
+                    return;
                 }
-                emit(node.orElse);
-                emitLabel(scope->breakTarget());
-                return;
-            }
-            Ref<Label> head = g.newLabel();
-            emitLabel(head.get());
-            g.emitLoopHint();
-            if (truth)
-                mark(*node.test);
-            else
-                emitBranch(node.test, otherwise.get(), false);
-            {
-                NestedBlock block(*this, node);
-                emit(node.body);
-            }
-            emitLabel(*scope->continueTarget());
-            emitLineAfterBackwardJump(*node.test);
-            g.emitJump(head.get());
-            emitLabel(otherwise.get());
+                Ref<Label> otherwise = g.newLabel();
+                Ref<Label> head = g.newLabel();
+                emitLabel(head.get());
+                g.emitLoopHint();
+                if (truth)
+                    mark(*node.test);
+                else
+                    emitBranch(node.test, otherwise.get(), false);
+                {
+                    NestedBlock block(*this, node);
+                    emit(node.body);
+                }
+                emitLabel(*scope.continueTarget());
+                emitLineAfterBackwardJump(*node.test);
+                g.emitJump(head.get());
+                emitLabel(otherwise.get());
+            });
             emit(node.orElse);
-            emitLabel(scope->breakTarget());
+            emitLabel(end.get());
             return;
         }
         case Statement::Kind::For:
@@ -2716,7 +2846,7 @@ private:
         case Constant::Type::False:
             return 0;
         case Constant::Type::Integer:
-            return static_cast<double>(constant.integer);
+            return constant.isNegative ? -static_cast<double>(constant.integer) : static_cast<double>(constant.integer);
         case Constant::Type::Float:
             return constant.real;
         default:
@@ -2732,6 +2862,7 @@ private:
         bool isBool { false };
         bool isNegative { false };
         uint64_t magnitude { 0 };
+        String largeMagnitude; // In decimal, if it is too large for that.
         double real { 0 };
         double imaginary { 0 };
 
@@ -2741,21 +2872,45 @@ private:
             if (imaginary != other.imaginary)
                 return false;
             if (isInt && other.isInt)
-                return magnitude == other.magnitude && (isNegative == other.isNegative || !magnitude);
+                return magnitude == other.magnitude && largeMagnitude == other.largeMagnitude && (isNegative == other.isNegative || isZero());
             if (!isInt && !other.isInt)
                 return real == other.real;
             const PatternNumber& integer = isInt ? *this : other;
             double value = isInt ? other.real : real;
             // Only if the float is that very int.
-            if (std::trunc(value) != value || std::abs(value) >= 18446744073709551616.0)
+            if (std::trunc(value) != value || !std::isfinite(value) || (std::signbit(value) != integer.isNegative && !integer.isZero()))
                 return false;
-            return static_cast<uint64_t>(std::abs(value)) == integer.magnitude && (std::signbit(value) == integer.isNegative || !integer.magnitude);
+            bool isLarge = std::abs(value) >= 18446744073709551616.0;
+            if (isLarge != !integer.largeMagnitude.isNull())
+                return false;
+            if (!isLarge)
+                return static_cast<uint64_t>(std::abs(value)) == integer.magnitude;
+            // It is so many bits, and then nothing but noughts.
+            int exponent;
+            auto bits = static_cast<uint64_t>(std::ldexp(std::frexp(std::abs(value), &exponent), 53));
+            StringBuilder binary;
+            for (unsigned i = 53; i--;)
+                binary.append(bits >> i & 1 ? '1' : '0');
+            for (int i = 53; i < exponent; ++i)
+                binary.append('0');
+            return toDecimal(binary.toString(), 2) == integer.largeMagnitude;
+        }
+
+        bool isZero() const { return !magnitude && largeMagnitude.isNull(); }
+        double toDouble() const
+        {
+            if (!isInt)
+                return real;
+            double result = largeMagnitude.isNull() ? static_cast<double>(magnitude) : largeMagnitude.toDouble();
+            return isNegative ? -result : result;
         }
 
         String repr() const
         {
             if (isBool)
                 return magnitude ? "True"_s : "False"_s;
+            if (isInt && !largeMagnitude.isNull())
+                return makeString(isNegative ? "-"_s : ""_s, largeMagnitude);
             if (isInt)
                 return makeString(isNegative && magnitude ? "-"_s : ""_s, magnitude);
             if (!isComplex)
@@ -2778,6 +2933,17 @@ private:
             case Constant::Type::Integer:
                 number.isInt = true;
                 number.magnitude = constant->integer;
+                number.isNegative = constant->isNegative;
+                return number;
+            case Constant::Type::BigInteger:
+                number.isInt = true;
+                number.largeMagnitude = toDecimal(constant->text->string(), constant->radix);
+                number.isNegative = constant->isNegative;
+                // It may have been written at length.
+                if (auto small = parseInteger<uint64_t>(number.largeMagnitude)) {
+                    number.magnitude = *small;
+                    number.largeMagnitude = { };
+                }
                 return number;
             case Constant::Type::Float:
                 number.real = constant->real;
@@ -2785,6 +2951,11 @@ private:
             case Constant::Type::Imaginary:
                 number.isComplex = true;
                 number.imaginary = constant->real;
+                return number;
+            case Constant::Type::Complex:
+                number.isComplex = true;
+                number.real = constant->real;
+                number.imaginary = constant->imaginary;
                 return number;
             default:
                 return std::nullopt;
@@ -2810,7 +2981,7 @@ private:
                 return std::nullopt;
             PatternNumber number;
             number.isComplex = true;
-            number.real = left->isInt ? (left->isNegative ? -1.0 : 1.0) * static_cast<double>(left->magnitude) : left->real;
+            number.real = left->toDouble();
             number.real = binary->op == BinaryOperator::Add ? number.real + right->real : number.real - right->real;
             number.imaginary = binary->op == BinaryOperator::Add ? right->imaginary : -right->imaginary;
             return number;
@@ -2825,7 +2996,7 @@ private:
             return number == numberOf(b);
         if (a.type != b.type)
             return false;
-        return a.type == Constant::Type::None || (a.text && b.text && *a.text == *b.text);
+        return a.type == Constant::Type::None || (a.text && b.text && *a.text == *b.text && a.isNegative == b.isNegative);
     }
 
     static String reprOfConstant(Constant& constant)
@@ -3158,40 +3329,51 @@ private:
             else
                 OpPyGetIter::emit(&g, iterator.get(), iterable.get());
         }
+        Ref<Label> end = emitLoop([&] (LabelScope& scope) {
+            Ref<Label> exhausted = g.newLabel();
+            Ref<Label> head = g.newLabel();
+            emitLabel(head.get());
+            g.emitLoopHint();
+            {
+                RegisterID* local = registerForStore(node.target);
+                // Not straight into the variable: it keeps its last value when there is no more.
+                Reg value = g.newTemporary();
+                mark(*node.iterable);
+                if (node.isAsync)
+                    emitAsyncNext(value.get(), iterator.get(), exhausted.get(), *node.iterable);
+                else {
+                    OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
+                    Reg isEmpty = g.newTemporary();
+                    g.emitIsEmpty(isEmpty.get(), value.get());
+                    g.emitJumpIfTrue(isEmpty.get(), exhausted.get());
+                }
+                if (local)
+                    g.move(local, value.get());
+                else
+                    emitAssign(node.target, value.get());
+            }
+            {
+                NestedBlock block(*this, node);
+                emit(node.body);
+            }
+            emitLabel(*scope.continueTarget());
+            emitLineAfterBackwardJump(*node.iterable);
+            g.emitJump(head.get());
+            emitLabel(exhausted.get());
+        });
+        emit(node.orElse);
+        emitLabel(end.get());
+    }
+
+    // What `break` and `continue` are for. What comes after `else` is not part of it: the loop is over by then. Where `break` goes to is returned, for that to be put before.
+    template<typename EmitLoop>
+    Ref<Label> emitLoop(const EmitLoop& emit)
+    {
         Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
         SetForScope mayBreak(m_isInExceptStarOutsideLoop, false);
-        Ref<Label> exhausted = g.newLabel();
-        Ref<Label> head = g.newLabel();
-        emitLabel(head.get());
-        g.emitLoopHint();
-        {
-            RegisterID* local = registerForStore(node.target);
-            // Not straight into the variable: it keeps its last value when there is no more.
-            Reg value = g.newTemporary();
-            mark(*node.iterable);
-            if (node.isAsync)
-                emitAsyncNext(value.get(), iterator.get(), exhausted.get(), *node.iterable);
-            else {
-                OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
-                Reg isEmpty = g.newTemporary();
-                g.emitIsEmpty(isEmpty.get(), value.get());
-                g.emitJumpIfTrue(isEmpty.get(), exhausted.get());
-            }
-            if (local)
-                g.move(local, value.get());
-            else
-                emitAssign(node.target, value.get());
-        }
-        {
-            NestedBlock block(*this, node);
-            emit(node.body);
-        }
-        emitLabel(*scope->continueTarget());
-        emitLineAfterBackwardJump(*node.iterable);
-        g.emitJump(head.get());
-        emitLabel(exhausted.get());
-        emit(node.orElse);
-        emitLabel(scope->breakTarget());
+        Ref<Label> end = scope->breakTarget();
+        emit(scope.get());
+        return end;
     }
 
     // @a @b def f: ... is f = a(b(f)). The decorators are evaluated first, from the top.
@@ -3400,6 +3582,11 @@ private:
                 Reg rest = g.newTemporary();
                 g.move(rest.get(), original);
                 for (ExceptHandler* handler : node.handlers) {
+                    // There is no writing that. A tree that a program made can have it, and CPython makes code of it that does not add up, and finds that it does not.
+                    if (!handler->type) {
+                        fail(SyntaxError::Kind::ValueError, "Invalid CFG, stack underflow"_s);
+                        return;
+                    }
                     Ref<Label> next = g.newLabel();
                     Reg match = g.newTemporary();
                     {
@@ -3529,6 +3716,9 @@ private:
         Block* block = m_table.blockFor(&node);
         RELEASE_ASSERT(block);
         {
+            // It is whatever the builtins have by that name, and is called as anything is.
+            Reg function = g.newTemporary();
+            emitRuntimeCall(function.get(), "loadBuildClass"_s, { m_builtins.get() }, node);
             auto info = makeInfo(CodeKind::Class, *node.name, nullptr, *block, node);
             info->parameterNames.append(Identifier::fromString(m_vm, ".namespace"_s));
             info->positionalCount = 1;
@@ -3537,6 +3727,7 @@ private:
             emitNewFunction(body.get(), WTF::move(info), node);
             noteConstant({ CodeDetails::Constant::Kind::String, 10, false, 0, node.name->string() });
 
+            checkKeywords(node.keywords);
             Reg bases = g.newTemporary();
             emitListWithStarred(bases.get(), node.bases, node);
             if (genericBase)
@@ -3549,14 +3740,11 @@ private:
                 for (Keyword* keyword : node.keywords) {
                     Reg value = emit(keyword->value);
                     if (keyword->name)
-                        OpPySetItem::emit(&g, keywords.get(), stringConstant(*keyword->name), value.get());
+                        emitRuntimeCall(nullptr, "addKeyword"_s, { keywords.get(), stringConstant(*keyword->name), value.get(), function.get() }, *keyword);
                     else
-                        emitRuntimeCall(nullptr, "dictUpdate"_s, { keywords.get(), value.get() }, *keyword);
+                        emitRuntimeCall(nullptr, "addKeywords"_s, { keywords.get(), value.get(), function.get() }, *keyword);
                 }
             }
-            // It is whatever the builtins have by that name, and is called as anything is.
-            Reg function = g.newTemporary();
-            emitRuntimeCall(function.get(), "loadBuildClass"_s, { m_builtins.get() }, node);
             Reg positional = g.newTemporary();
             {
                 // One after the other, as the elements of a display are.
@@ -3727,9 +3915,6 @@ private:
     {
         auto info = makeInfo(CodeKind::Annotations, m_names.dunder_annotate, nullptr, block, node);
         info->owner = owner;
-        // That of a function goes by the function's name, though it is beside the function and not in it.
-        if (owner == OwnerKind::Function)
-            info->qualifiedName = makeString(qualifiedNameFor(*static_cast<const FunctionDef&>(node).name), ".__annotate__"_s);
         // To the symbol table it is `.format`, so that an annotation can name the built-in function. It is `format` to whoever asks.
         info->parameterNames.append(Identifier::fromString(m_vm, "format"_s));
         info->positionalOnlyCount = 1;
@@ -3761,12 +3946,19 @@ private:
             emitRuntimeCall(nullptr, "setUpAnnotations"_s, { m_info.usesNamespace ? m_namespace.get() : m_globals.get(), constant(jsBoolean(m_info.usesNamespace)) }, node);
     }
 
-    RegisterID* emitAnnotation(RegisterID* dst, Expression& annotation)
+    enum class AnnotationOf : uint8_t { Parameter, Variable };
+
+    RegisterID* emitAnnotation(RegisterID* dst, Expression& annotation, AnnotationOf what)
     {
-        if (hasFutureAnnotations())
-            return g.move(dst, constant(jsString(m_vm, unparse(annotation))));
+        if (hasFutureAnnotations()) {
+            SyntaxError whyNot;
+            String text = unparse(annotation, whyNot);
+            if (text.isNull())
+                fail(whyNot.kind, WTF::move(whyNot.message));
+            return g.move(dst, constant(jsString(m_vm, text)));
+        }
         // *args: *Ts, which is [value] = [*Ts].
-        if (auto* starred = annotation.tryAs<Starred>()) {
+        if (auto* starred = what == AnnotationOf::Parameter ? annotation.tryAs<Starred>() : nullptr) {
             Reg iterable = emitToTemporary(starred->value);
             mark(annotation);
             OpPyUnpackSequence::emit(&g, dst->virtualRegister(), 1, 1, iterable.get());
@@ -3797,7 +3989,7 @@ private:
             const Identifier& name = mangle(*node.target->as<Name>().id);
             if (hasFutureAnnotations()) {
                 Reg annotation = g.newTemporary();
-                emitAnnotation(annotation.get(), *node.annotation);
+                emitAnnotation(annotation.get(), *node.annotation, AnnotationOf::Variable);
                 Reg annotations = emitLoadName(nullptr, m_names.dunder_annotations, node);
                 mark(node);
                 OpPySetItem::emit(&g, annotations.get(), stringConstant(name), annotation.get());
@@ -3823,7 +4015,8 @@ private:
             }
             break;
         default:
-            RELEASE_ASSERT_NOT_REACHED();
+            fail(SyntaxError::Kind::SystemError, makeString("invalid node type ("_s, static_cast<unsigned>(node.target->kind) + 1, ") for annotated assignment"_s));
+            return;
         }
     }
 
@@ -3838,9 +4031,9 @@ private:
                 emitLoadClassNamespace(node);
             Reg annotations = g.newTemporary();
             emitRuntimeCall(annotations.get(), "newDict"_s, { }, node);
-            auto add = [&] (const Identifier& name, Expression& annotation) {
+            auto add = [&] (const Identifier& name, Expression& annotation, AnnotationOf what) {
                 Reg value = g.newTemporary();
-                emitAnnotation(value.get(), annotation);
+                emitAnnotation(value.get(), annotation, what);
                 OpPySetItem::emit(&g, annotations.get(), stringConstant(name), value.get());
             };
 
@@ -3849,7 +4042,7 @@ private:
                 Arguments& arguments = *function.arguments;
                 auto addArgument = [&] (Argument* argument) {
                     if (argument && argument->annotation)
-                        add(mangle(*argument->name), *argument->annotation);
+                        add(mangle(*argument->name), *argument->annotation, AnnotationOf::Parameter);
                 };
                 for (Argument* argument : arguments.positional)
                     addArgument(argument);
@@ -3860,7 +4053,7 @@ private:
                     addArgument(argument);
                 addArgument(arguments.keywordVariadic);
                 if (function.returns)
-                    add(Identifier::fromString(m_vm, "return"_s), *function.returns);
+                    add(Identifier::fromString(m_vm, "return"_s), *function.returns, AnnotationOf::Parameter);
             } else {
                 bool isClass = m_info.owner == OwnerKind::Class;
                 Sequence<Statement*> body = isClass ? static_cast<ClassDef*>(root)->body : static_cast<Module*>(root)->body;
@@ -3873,7 +4066,7 @@ private:
                         emitCompare(isIn.get(), ComparisonOperator::In, constant(jsNumber(deferred.conditionalIndex)), set.get());
                         emitJumpIfFalse(isIn.get(), notComeTo.get());
                     }
-                    add(mangle(*deferred.statement->target->as<Name>().id), *deferred.statement->annotation);
+                    add(mangle(*deferred.statement->target->as<Name>().id), *deferred.statement->annotation, AnnotationOf::Variable);
                     emitLabel(notComeTo.get());
                 }
             }
@@ -3951,6 +4144,7 @@ private:
     Reg emitTypeParameters(Sequence<TypeParameter*> parameters, const Node& ownerNode)
     {
         Vector<Reg, 8> values;
+        bool hasSeenDefault = false;
         for (unsigned i = 0; i < parameters.size(); ++i) {
             TypeParameter& parameter = *parameters[i];
             Reg value = g.newTemporary();
@@ -3974,10 +4168,12 @@ private:
                 break;
             }
             if (parameter.defaultValue) {
+                hasSeenDefault = true;
                 Reg evaluator = g.newTemporary();
                 emitEvaluator(evaluator.get(), defaultKey, *parameter.name, m_info.owner, Evaluates::Default, i, ownerNode);
                 emitRuntimeCall(nullptr, "setTypeParameterDefault"_s, { value.get(), evaluator.get() }, parameter);
-            }
+            } else if (hasSeenDefault)
+                fail(makeString("non-default type parameter '"_s, parameter.name->string(), "' follows default type parameter"_s), parameter);
             emitStoreName(*parameter.name, value.get(), parameter);
             values.append(value);
         }
@@ -4138,6 +4334,7 @@ private:
         }
         // All of the source, which is what the annotations of a module are compiled from.
         Node whole = m_block.location;
+        whole.line = 1;
         whole.start = 0;
         whole.end = g.m_scopeNode->source().provider()->source().length();
         if (m_block.hasConditionalAnnotations) {
@@ -4156,6 +4353,8 @@ private:
             emitStoreName(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(module.body))), *module.body[0]);
         }
         emit(module.body);
+        if (m_functionGeneratedLast)
+            noteConstant({ CodeDetails::Constant::Kind::Code, 10, false, *m_functionGeneratedLast });
         emitReturnAtEnd();
     }
 
@@ -4182,6 +4381,9 @@ private:
     Block& m_block;
     const FunctionInfo& m_info;
     SyntaxError& m_error;
+    unsigned& m_functionsBeforeError;
+    unsigned m_numberOfFunctions { 0 };
+    std::optional<unsigned> m_functionGeneratedLast;
     const Identifier* m_private;
     Vector<DeferredAnnotation> m_deferredAnnotations; // Those of the class or the module that this is the code of.
 
@@ -4217,7 +4419,7 @@ unsigned ScopeNode::parameterCount() const
 
 void ScopeNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
 {
-    CodeGenerator(generator, m_arena, m_symbolTable, m_block, m_info, m_error).generate(m_root);
+    CodeGenerator(generator, m_arena, m_symbolTable, m_block, m_info, m_error, m_functionsBeforeError).generate(m_root);
 }
 
 } } // namespace JSC::Python

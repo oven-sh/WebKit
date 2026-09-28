@@ -32,7 +32,16 @@ namespace JSC { namespace Python {
 
 // What is wrong with a piece of source, as far as it takes to make the exception.
 struct SyntaxError {
-    enum class Kind : uint8_t { SyntaxError, IndentationError, TabError, IncompleteInputError };
+    enum class Kind : uint8_t {
+        SyntaxError,
+        IndentationError,
+        TabError,
+        IncompleteInputError,
+        // Only of a tree that a program made. These have a message and no more.
+        SystemError,
+        ValueError,
+        TypeError,
+    };
 
     explicit operator bool() const { return !message.isNull(); }
 

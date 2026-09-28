@@ -205,11 +205,18 @@ private:
             case Constant::Type::Float:
                 return "float"_s;
             case Constant::Type::Imaginary:
+            case Constant::Type::Complex:
                 return "complex"_s;
             case Constant::Type::String:
                 return "str"_s;
             case Constant::Type::Bytes:
                 return "bytes"_s;
+            case Constant::Type::Tuple:
+                return "tuple"_s;
+            case Constant::Type::FrozenSet:
+                return "frozenset"_s;
+            case Constant::Type::Invalid:
+                break;
             }
             RELEASE_ASSERT_NOT_REACHED();
         default:
@@ -294,6 +301,7 @@ private:
             switch (value.as<Constant>().type) {
             case Constant::Type::String:
             case Constant::Type::Bytes:
+            case Constant::Type::Tuple:
                 return;
             default:
                 break;

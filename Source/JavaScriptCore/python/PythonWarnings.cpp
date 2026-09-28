@@ -32,6 +32,7 @@
 #include "PythonContextVars.h"
 #include "PythonSequences.h"
 #include "TopExceptionScope.h"
+#include <wtf/Scope.h>
 
 // _warnings: Python/_warnings.c of CPython, function for function. It is what decides whether a warning is shown, raised or passed over. warnings.py, if it has been imported, has the filters and shows
 // what is to be shown, and this goes by what that has.

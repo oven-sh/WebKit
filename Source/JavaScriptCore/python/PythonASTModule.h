@@ -26,6 +26,8 @@
 #pragma once
 
 #include "PythonASDL.h"
+#include "PythonAST.h"
+#include "PythonASTValidator.h"
 #include "WriteBarrier.h"
 #include <array>
 
@@ -37,7 +39,7 @@ class PyType;
 
 namespace Python {
 
-struct Module;
+class Arena;
 
 // What _ast has for each realm: struct ast_state of CPython's pycore_ast_state.h. It is made when it is first wanted.
 struct ASTState {
@@ -63,6 +65,9 @@ ASTState* astState(JSGlobalObject*);
 
 // PyAST_mod2obj()
 JSValue objectFromAST(JSGlobalObject*, Module&);
+// PyAST_obj2mod(), and _PyAST_Validate() of what comes of it. Null if it raised.
+Module* astFromObject(JSGlobalObject*, Arena&, JSValue, Module::Kind);
+void raiseASTError(JSGlobalObject*, const ASTError&);
 // PyAST_Check()
 bool isAST(JSGlobalObject*, JSValue);
 

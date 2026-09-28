@@ -744,6 +744,7 @@ python/PyRealm.cpp
 python/PyType.cpp
 python/PythonASTDumper.cpp
 python/PythonASTModule.cpp
+python/PythonASTValidator.cpp
 python/PythonAnnotations.cpp
 python/PythonAsync.cpp
 python/PythonBuiltinFunctions.cpp
@@ -790,6 +791,7 @@ python/PythonSysModule.cpp
 python/PythonTemplateStrings.cpp
 python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp
+python/PythonSyntaxTreeSource.cpp
 python/PythonSyntaxWarnings.cpp
 python/PythonUnparse.cpp
 python/PythonWarnings.cpp

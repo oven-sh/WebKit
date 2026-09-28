@@ -1483,7 +1483,15 @@ static void setOrDeleteItem(JSGlobalObject* globalObject, JSValue base, JSValue 
             callMethod(globalObject, method, self, key);
         return;
     }
-    raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, base), "' object "_s, value ? "does not support item assignment"_s : "doesn't support item deletion"_s));
+    // PyObject_SetItem() and PyObject_DelItem(): what could be a sequence is tried as one if it is a place in a sequence that is asked for, and what that comes to is put a little differently.
+    PyType* type = typeOf(globalObject, base);
+    bool couldBeSequence = type->hasFlag(PyType::IsHeapType) || type->lookup(vm, names.dunder_len) || type->lookup(vm, names.dunder_contains) || type->isSubtypeOf(globalObject->pyRealm()->typeTemplate());
+    bool isTriedAsSequence = couldBeSequence && (classify(key).isInt() || typeOf(globalObject, key)->lookup(vm, names.dunder_index));
+    if (isTriedAsSequence) {
+        toIndex(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    raiseTypeError(globalObject, scope, makeString('\'', typeName(globalObject, base), "' object "_s, value ? "does not support item assignment"_s : isTriedAsSequence ? "doesn't support item deletion"_s : "does not support item deletion"_s));
 }
 
 void setItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSValue value)

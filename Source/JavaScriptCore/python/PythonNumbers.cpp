@@ -401,6 +401,9 @@ static JSValue intBinaryOperation(JSGlobalObject* globalObject, ThrowScope& scop
         result = JSBigInt::bitwiseXor(globalObject, a, b);
         break;
     case BinaryOperator::LShift:
+        // By more than there could be room for anywhere.
+        if (!a->isZero() && b->length() > 1)
+            return raise(globalObject, scope, BuiltinType::OverflowError, "too many digits in integer"_s);
         result = JSBigInt::leftShift(globalObject, a, b);
         break;
     case BinaryOperator::RShift:

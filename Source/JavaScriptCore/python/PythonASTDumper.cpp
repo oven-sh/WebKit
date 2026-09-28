@@ -50,6 +50,8 @@ public:
         return m_out.toString();
     }
 
+    void open(ASTClass astClass, const Node&) { open(astClass); }
+
     void open(ASTClass astClass)
     {
         m_out.append("{\"_\":\""_s, descriptionOf(astClass).name, '"');
@@ -72,6 +74,8 @@ public:
 
     void null() { m_out.append("null"_s); }
     void identifier(const Identifier& identifier) { string(identifier.string()); }
+    void text(const Text& text) { string(text.text->string()); }
+    void unicodePrefix() { string("u"_s); }
     void integer(int number) { m_out.append(number); }
 
     void singleton(ASTClass astClass)

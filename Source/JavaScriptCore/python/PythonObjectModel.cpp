@@ -900,7 +900,8 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
             return;
         }
         if (!getStoredAttribute(vm, storage, name)) {
-            raiseNoAttribute(globalObject, scope, value, name);
+            // Whatever it is: a module says no more of itself than anything else does.
+            raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''));
             return;
         }
         scope.release();
@@ -922,11 +923,8 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object attribute '"_s, attribute, "' is read-only"_s));
         return;
     }
-    if (newValue) {
-        raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, "' and no __dict__ for setting new attributes"_s));
-        return;
-    }
-    raiseNoAttribute(globalObject, scope, value, name);
+    // Deleting is setting to nothing, and is spoken of as setting.
+    raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, "' and no __dict__ for setting new attributes"_s));
 }
 
 void setAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name, JSValue newValue)

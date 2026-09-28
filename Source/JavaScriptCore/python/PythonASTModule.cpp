@@ -33,9 +33,12 @@
 #include "PyRealm.h"
 #include "PyTuple.h"
 #include "PyType.h"
+#include "PythonASTBuilder.h"
+#include "PythonASTValidator.h"
 #include "PythonASTWalker.h"
 #include "PythonBuiltins.h"
 #include "PythonBytes.h"
+#include "PythonNumbers.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
 #include "PythonSymbolTable.h"
@@ -614,6 +617,8 @@ public:
         return m_hasFailed ? JSValue() : m_result;
     }
 
+    void open(ASTClass astClass, const Node&) { open(astClass); }
+
     void open(ASTClass astClass)
     {
         m_containers.append(PyInstance::create(m_vm, m_state.classFor(astClass)->instanceStructure()));
@@ -625,10 +630,11 @@ public:
     void close(const Node& node)
     {
         JSObject* object = asObject(m_containers.last());
-        object->putDirect(m_vm, Identifier::fromString(m_vm, "lineno"_s), jsNumber(node.line));
-        object->putDirect(m_vm, Identifier::fromString(m_vm, "col_offset"_s), jsNumber(node.column));
-        object->putDirect(m_vm, Identifier::fromString(m_vm, "end_lineno"_s), jsNumber(node.endLine));
-        object->putDirect(m_vm, Identifier::fromString(m_vm, "end_col_offset"_s), jsNumber(node.endColumn));
+        // A program may have said that it is less than nowhere.
+        object->putDirect(m_vm, Identifier::fromString(m_vm, "lineno"_s), jsNumber(static_cast<int>(node.line)));
+        object->putDirect(m_vm, Identifier::fromString(m_vm, "col_offset"_s), jsNumber(static_cast<int>(node.column)));
+        object->putDirect(m_vm, Identifier::fromString(m_vm, "end_lineno"_s), jsNumber(static_cast<int>(node.endLine)));
+        object->putDirect(m_vm, Identifier::fromString(m_vm, "end_col_offset"_s), jsNumber(static_cast<int>(node.endColumn)));
         close();
     }
 
@@ -642,7 +648,14 @@ public:
 
     void null() { emit(jsUndefined()); }
     void identifier(const Identifier& identifier) { emit(jsString(m_vm, identifier.string())); }
-    void string(ASCIILiteral string) { emit(jsString(m_vm, String(string))); }
+    void unicodePrefix() { emit(jsNontrivialString(m_vm, "u"_s)); }
+
+    void text(const Text& text)
+    {
+        if (!text.isBytes)
+            return emit(jsString(m_vm, text.text->string()));
+        emit(bytesOf(text.text->string()));
+    }
     void integer(int number) { emit(jsNumber(number)); }
     void singleton(ASTClass astClass) { emit(m_state.singletonFor(astClass)); }
 
@@ -662,33 +675,52 @@ public:
         }
     }
 
-    void constant(Constant& node)
+    void constant(Constant& node) { emit(valueOf(node)); }
+
+    JSValue valueOf(Constant& node)
     {
+        auto emit = [] (JSValue value) { return value; };
         switch (node.type) {
+        case Constant::Type::None:
+            return jsUndefined();
+        case Constant::Type::True:
+            return jsBoolean(true);
+        case Constant::Type::False:
+            return jsBoolean(false);
+        case Constant::Type::Ellipsis:
+            return m_globalObject->pyRealm()->ellipsis();
         case Constant::Type::Integer:
             if (node.integer <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
-                return emit(intFromInt64(m_globalObject, node.integer));
-            return emit(parseInt(m_globalObject, String::number(node.integer), 10));
+                return emit(intFromInt64(m_globalObject, node.isNegative ? -static_cast<int64_t>(node.integer) : static_cast<int64_t>(node.integer)));
+            return emit(parseInt(m_globalObject, makeString(node.isNegative ? "-"_s : ""_s, node.integer), 10));
         case Constant::Type::BigInteger:
-            return emit(parseInt(m_globalObject, node.text->string(), node.radix));
+            return emit(parseInt(m_globalObject, makeString(node.isNegative ? "-"_s : ""_s, node.text->string()), node.radix));
         case Constant::Type::Float:
             return emit(floatFromDouble(node.real));
         case Constant::Type::Imaginary:
             return emit(PyComplex::create(m_globalObject, 0, node.real));
         case Constant::Type::String:
             return emit(jsString(m_vm, node.text->string()));
-        case Constant::Type::Bytes: {
-            // A character for each.
-            StringView text = node.text->string();
-            Vector<uint8_t, 64> bytes;
-            bytes.reserveInitialCapacity(text.length());
-            for (unsigned i = 0; i < text.length(); ++i)
-                bytes.append(static_cast<uint8_t>(text[i]));
-            return emit(newBytes(m_globalObject, bytes.span()));
+        case Constant::Type::Bytes:
+            return bytesOf(node.text->string());
+        case Constant::Type::Complex:
+            return PyComplex::create(m_globalObject, node.real, node.imaginary);
+        case Constant::Type::Tuple:
+        case Constant::Type::FrozenSet: {
+            if (!canGoDeeper())
+                return { };
+            MarkedArgumentBuffer elements;
+            for (Constant* element : node.elements)
+                elements.append(valueOf(*element));
+            PyTuple* tuple = PyTuple::createFromArguments(m_globalObject, elements);
+            if (node.type == Constant::Type::Tuple)
+                return tuple;
+            return setFromIterable(m_globalObject, m_globalObject->pyRealm()->typeFrozenSet()->instanceStructure(), tuple);
         }
-        default:
-            return constant(node.type);
+        case Constant::Type::Invalid:
+            break;
         }
+        RELEASE_ASSERT_NOT_REACHED();
     }
 
     void openList(size_t size)
@@ -722,6 +754,16 @@ private:
         ASCIILiteral name; // Of a node: the field that comes next.
         unsigned index { 0 }; // Of a list: the element that comes next.
     };
+
+    // Of a character for each.
+    JSValue bytesOf(StringView text)
+    {
+        Vector<uint8_t, 64> bytes;
+        bytes.reserveInitialCapacity(text.length());
+        for (unsigned i = 0; i < text.length(); ++i)
+            bytes.append(static_cast<uint8_t>(text[i]));
+        return newBytes(m_globalObject, bytes.span());
+    }
 
     // It is the value of a field, or an element of a list, or the whole.
     void emit(JSValue value)
@@ -763,6 +805,321 @@ JSValue objectFromAST(JSGlobalObject* globalObject, Module& module)
     JSValue result = ObjectMaker(globalObject, *state).make(module);
     RETURN_IF_EXCEPTION(scope, { });
     return result;
+}
+
+// ---- To what the parser makes
+
+namespace {
+
+// What the obj2ast_ functions ask of an object, and what they say if it will not do.
+class ObjectSource {
+public:
+    using Value = JSValue;
+    static constexpr bool attributesComeFirst = false;
+
+    ObjectSource(JSGlobalObject* globalObject, ASTState& state, Arena& arena)
+        : m_globalObject(globalObject)
+        , m_vm(globalObject->vm())
+        , m_state(state)
+        , m_arena(arena)
+    {
+    }
+
+    bool hasFailed() const { return m_hasFailed; }
+
+    void fail(ASTError::Kind kind, String&& message)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        m_hasFailed = true;
+        raiseASTError(m_globalObject, { kind, WTF::move(message) });
+        scope.release();
+    }
+
+    bool isNone(JSValue value) { return Python::isNone(value); }
+    void leave(JSValue, Node&) { }
+
+    bool canGoDeeper(ASTClass owner)
+    {
+        if (m_vm.isSafeToRecurse()) [[likely]]
+            return true;
+        fail(ASTError::Kind::RecursionError, makeString("maximum recursion depth exceeded while traversing '"_s, descriptionOf(owner).name, "' node"_s));
+        return false;
+    }
+
+    ASTClass constructorOf(JSValue value, ASTClass sum)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        for (unsigned i = static_cast<unsigned>(sum) + 1; i < numberOfASTClasses && ASDL::classes[i].kind == ASDLClass::Kind::Constructor && ASDL::classes[i].base == sum; ++i) {
+            bool isOne = isInstanceOf(m_globalObject, value, m_state.classes[i].get());
+            if (scope.exception()) [[unlikely]] {
+                m_hasFailed = true;
+                return ASTClass::AST;
+            }
+            if (isOne)
+                return static_cast<ASTClass>(i);
+        }
+        String text = repr(m_globalObject, value);
+        if (scope.exception()) [[unlikely]] {
+            m_hasFailed = true;
+            return ASTClass::AST;
+        }
+        scope.release();
+        fail(ASTError::Kind::TypeError, makeString("expected some sort of "_s, descriptionOf(sum).name, ", but got "_s, text));
+        return ASTClass::AST;
+    }
+
+    std::optional<JSValue> field(JSValue node, ASTClass owner, const ASDLField& field)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        JSValue value = getAttributeIfPresent(m_globalObject, node, Identifier::fromString(m_vm, field.name));
+        if (scope.exception()) [[unlikely]] {
+            m_hasFailed = true;
+            return std::nullopt;
+        }
+        if (value)
+            return value;
+        scope.release();
+        if (field.quantifier == ASDLField::Quantifier::One)
+            fail(ASTError::Kind::TypeError, makeString("required field \""_s, field.name, "\" missing from "_s, descriptionOf(owner).name));
+        return std::nullopt;
+    }
+
+    template<typename Function>
+    bool forEachElement(JSValue value, ASTClass owner, const ASDLField& field, const Function& function)
+    {
+        if (!isList(value)) {
+            fail(ASTError::Kind::TypeError, makeString(descriptionOf(owner).name, " field \""_s, field.name, "\" must be a list, not a "_s, typeOf(m_globalObject, value)->nameWithoutModule(m_globalObject)));
+            return false;
+        }
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        JSArray* list = asList(value);
+        unsigned size = list->length();
+        for (unsigned i = 0; i < size; ++i) {
+            JSValue element = listGet(m_globalObject, list, i);
+            if (scope.exception()) [[unlikely]] {
+                m_hasFailed = true;
+                return false;
+            }
+            if (!function(element))
+                return false;
+            if (list->length() != size) {
+                scope.release();
+                fail(ASTError::Kind::RuntimeError, makeString(descriptionOf(owner).name, " field \""_s, field.name, "\" changed size during iteration"_s));
+                return false;
+            }
+        }
+        return true;
+    }
+
+    const Identifier* identifier(JSValue value)
+    {
+        if (Python::isNone(value))
+            return nullptr;
+        if (!value.isString()) {
+            fail(ASTError::Kind::TypeError, "AST identifier must be of type str"_s);
+            return nullptr;
+        }
+        return textOf(asString(value));
+    }
+
+    // bytes will do as well, whatever it says.
+    Text string(JSValue value)
+    {
+        if (value.isString())
+            return { textOf(asString(value)), false };
+        if (isExactly(m_globalObject, value, BuiltinType::Bytes)) {
+            Buffer buffer { value };
+            return { &m_arena.identifiers().makeIdentifier(m_vm, byteCast<Latin1Character>(buffer.span())), true };
+        }
+        fail(ASTError::Kind::TypeError, "AST string must be of type str"_s);
+        return { };
+    }
+
+    std::optional<int> integer(JSValue value)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (!classify(value).isInt()) {
+            String text = repr(m_globalObject, value);
+            if (scope.exception()) [[unlikely]] {
+                m_hasFailed = true;
+                return std::nullopt;
+            }
+            scope.release();
+            fail(ASTError::Kind::ValueError, makeString("invalid integer value: "_s, text));
+            return std::nullopt;
+        }
+        auto result = toCInt(m_globalObject, value);
+        if (scope.exception()) [[unlikely]]
+            m_hasFailed = true;
+        return result;
+    }
+
+    // Anything will do for now. Whether it can be a constant is looked into with the rest, by validate().
+    Constant* constant(JSValue value)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        PyRealm* realm = m_globalObject->pyRealm();
+        auto* result = m_arena.create<Constant>();
+        PyType* type = typeOf(m_globalObject, value);
+        if (Python::isNone(value))
+            return result;
+        if (value.isBoolean()) {
+            result->type = value.asBoolean() ? Constant::Type::True : Constant::Type::False;
+            return result;
+        }
+        if (value == realm->ellipsis()) {
+            result->type = Constant::Type::Ellipsis;
+            return result;
+        }
+        if (value.isString()) {
+            result->type = Constant::Type::String;
+            result->text = textOf(asString(value));
+            return result;
+        }
+        if (type == realm->typeInt()) {
+            Number number = classify(value);
+            if (number.kind == Number::Kind::Small) {
+                result->type = Constant::Type::Integer;
+                result->isNegative = number.small < 0;
+                result->integer = std::abs(static_cast<int64_t>(number.small));
+                return result;
+            }
+            result->type = Constant::Type::BigInteger;
+            result->isNegative = number.big->sign();
+            result->radix = 16;
+            String digits = number.big->toString(m_globalObject, 16);
+            if (scope.exception()) [[unlikely]] {
+                m_hasFailed = true;
+                return nullptr;
+            }
+            result->text = textOf(result->isNegative ? StringView(digits).substring(1) : StringView(digits));
+            return result;
+        }
+        if (type == realm->typeFloat()) {
+            result->type = Constant::Type::Float;
+            result->real = classify(value).real;
+            return result;
+        }
+        if (type == realm->typeComplex()) {
+            auto* complex = uncheckedDowncast<PyComplex>(value.asCell());
+            result->type = Constant::Type::Complex;
+            result->real = complex->real();
+            result->imaginary = complex->imaginary();
+            return result;
+        }
+        if (type == realm->typeBytes()) {
+            result->type = Constant::Type::Bytes;
+            Buffer buffer { value };
+            result->text = &m_arena.identifiers().makeIdentifier(m_vm, byteCast<Latin1Character>(buffer.span()));
+            return result;
+        }
+        if (type == realm->typeTuple() || type == realm->typeFrozenSet()) {
+            result->type = type == realm->typeTuple() ? Constant::Type::Tuple : Constant::Type::FrozenSet;
+            if (!m_vm.isSafeToRecurse()) [[unlikely]] {
+                scope.release();
+                fail(ASTError::Kind::RecursionError, "maximum recursion depth exceeded during compilation"_s);
+                return nullptr;
+            }
+            Vector<Constant*, 8> elements;
+            forEach(m_globalObject, value, [&] (JSValue element) {
+                Constant* converted = constant(element);
+                if (converted)
+                    elements.append(converted);
+                return !!converted;
+            });
+            if (scope.exception() || m_hasFailed) [[unlikely]] {
+                m_hasFailed = true;
+                return nullptr;
+            }
+            result->elements = m_arena.copy(elements);
+            return result;
+        }
+        result->type = Constant::Type::Invalid;
+        result->text = textOf(type->nameWithoutModule(m_globalObject));
+        return result;
+    }
+
+private:
+    const Identifier* textOf(JSString* string)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        auto view = string->view(m_globalObject);
+        if (scope.exception()) [[unlikely]] {
+            m_hasFailed = true;
+            return nullptr;
+        }
+        return textOf(view);
+    }
+
+    const Identifier* textOf(StringView view)
+    {
+        if (view.is8Bit())
+            return &m_arena.identifiers().makeIdentifier(m_vm, view.span8());
+        return &m_arena.identifiers().makeIdentifier(m_vm, view.span16());
+    }
+
+    JSGlobalObject* m_globalObject;
+    VM& m_vm;
+    ASTState& m_state;
+    Arena& m_arena;
+    bool m_hasFailed { false };
+};
+
+} // anonymous namespace
+
+void raiseASTError(JSGlobalObject* globalObject, const ASTError& error)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    BuiltinType type = BuiltinType::ValueError;
+    switch (error.kind) {
+    case ASTError::Kind::ValueError:
+        break;
+    case ASTError::Kind::TypeError:
+        type = BuiltinType::TypeError;
+        break;
+    case ASTError::Kind::SystemError:
+        type = BuiltinType::SystemError;
+        break;
+    case ASTError::Kind::RecursionError:
+        type = BuiltinType::RecursionError;
+        break;
+    case ASTError::Kind::RuntimeError:
+        type = BuiltinType::RuntimeError;
+        break;
+    }
+    raise(globalObject, scope, type, error.message);
+}
+
+// PyAST_obj2mod(), and then _PyAST_Validate()
+Module* astFromObject(JSGlobalObject* globalObject, Arena& arena, JSValue object, Module::Kind kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!audit(globalObject, "compile"_s, object, jsUndefined()))
+        return nullptr;
+    ASTState* state = astState(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    // PyAst_CheckMode()
+    ASTClass required = kind == Module::Kind::Module ? ASTClass::Module : kind == Module::Kind::Expression ? ASTClass::Expression : ASTClass::Interactive;
+    bool isRequired = isInstanceOf(globalObject, object, state->classFor(required));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!isRequired) {
+        raiseTypeError(globalObject, scope, makeString("expected "_s, descriptionOf(required).name, " node, got "_s, typeOf(globalObject, object)->nameWithoutModule(globalObject)));
+        return nullptr;
+    }
+
+    ObjectSource source(globalObject, *state, arena);
+    Module* module = ASTBuilder<ObjectSource>(arena, source).buildModule(object);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(module && !source.hasFailed());
+    if (ASTError error = validate(vm, *module)) {
+        scope.release();
+        raiseASTError(globalObject, error);
+        return nullptr;
+    }
+    return module;
 }
 
 // ---- The module

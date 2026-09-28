@@ -48,6 +48,17 @@ enum class CodeKind : uint8_t {
     Evaluator, // What evaluates, when it is asked for, the bound or the default of a type parameter, or what an alias is an alias of.
 };
 
+// Whether its variables are its own, and not the items of a namespace.
+inline bool isFunctionKind(CodeKind kind)
+{
+    return kind == CodeKind::Function || kind == CodeKind::Lambda || kind == CodeKind::GeneratorExpression || kind == CodeKind::Annotations || kind == CodeKind::TypeParameters || kind == CodeKind::Evaluator;
+}
+
+struct FunctionInfo;
+// What evaluates the annotations of a module is made before anything else in the module is done. But CPython generates its code when it has been through the module, and puts what makes it at the beginning
+// afterwards. So it is the last of the module's constants, and what is wrong with it is found after whatever else is wrong.
+bool isGeneratedLast(const FunctionInfo&);
+
 // The last three have no source of their own. They are compiled from the source of what they belong to, which is one of these.
 enum class OwnerKind : uint8_t {
     None,
@@ -74,12 +85,14 @@ struct CodeDetails {
 
     // co_consts: what is written out in the source, and the code of what is defined in it, as they are first come to.
     struct Constant {
-        enum class Kind : uint8_t { None, True, False, Ellipsis, Integer, BigInteger, Float, Imaginary, String, Bytes, Code };
+        enum class Kind : uint8_t { None, True, False, Ellipsis, Integer, BigInteger, Float, Imaginary, String, Bytes, Code, Complex, Tuple, FrozenSet };
         Kind kind { Kind::None };
         uint8_t radix { 10 };
         bool isNegative { false };
         uint64_t bits { 0 }; // The integer, the bits of the double, or which of the functions that the code makes.
         String text; // The digits, the string, or a character for each byte.
+        uint64_t imaginaryBits { 0 }; // Of Complex, whose real part is in `bits`.
+        Vector<Constant> elements;
         friend bool operator==(const Constant&, const Constant&) = default;
     };
     Vector<Constant> constants;

@@ -33,14 +33,16 @@ namespace JSC { namespace Python {
 // Goes through what the parser makes as if it were the tree that a program sees: the classes and the fields of PythonASDL.h, in their order. What is made of it is up to `Sink`, which is derived from
 // this and has
 //
-//     void open(ASTClass)                a node begins
+//     void open(ASTClass, const Node&)   a node begins, and this is where it is in the source
+//     void open(ASTClass)                a node begins that is of a class that does not say where
 //     void name(ASCIILiteral)            what comes next is this field of it
-//     void close(const Node&)            it ends, and this is where it is in the source
-//     void close()                       it ends, and is of a class that does not say where
+//     void close(const Node&)            the one ends
+//     void close()                       the other ends
 //     void null()                        None
 //     void identifier(const Identifier&)
-//     void string(ASCIILiteral)
+//     void text(const Text&)
 //     void integer(int)
+//     void unicodePrefix()               "u"
 //     void singleton(ASTClass)           Load(), Add() and the like, of which there is one each
 //     void constant(Constant&)           the value of a Constant
 //     void constant(Constant::Type)      None, True or False
@@ -57,9 +59,7 @@ public:
         case Module::Kind::Module:
             open(ASTClass::Module);
             field("body"_s, module.body);
-            name("type_ignores"_s);
-            sink().openList(0);
-            sink().closeList();
+            field("type_ignores"_s, module.typeIgnores);
             break;
         case Module::Kind::Interactive:
             open(ASTClass::Interactive);
@@ -80,6 +80,7 @@ private:
     Sink& sink() { return static_cast<Sink&>(*this); }
 
     void open(ASTClass astClass) { sink().open(astClass); }
+    void open(ASTClass astClass, const Node& node) { sink().open(astClass, node); }
     void name(ASCIILiteral name) { sink().name(name); }
     void close(const Node& node) { sink().close(node); }
     void close() { sink().close(); }
@@ -90,6 +91,26 @@ private:
             sink().identifier(*identifier);
         else
             sink().null();
+    }
+
+    void value(const Text& text)
+    {
+        if (text)
+            sink().text(text);
+        else
+            sink().null();
+    }
+
+    void value(TypeIgnore* node)
+    {
+        if (!node) {
+            sink().null();
+            return;
+        }
+        open(ASTClass::TypeIgnore);
+        field("lineno"_s, node->line);
+        field("tag"_s, node->tag);
+        close();
     }
 
     void value(int number) { sink().integer(number); }
@@ -114,12 +135,6 @@ private:
         value(fieldValue);
     }
 
-    void nullField(ASCIILiteral fieldName)
-    {
-        name(fieldName);
-        sink().null();
-    }
-
     // ---- Enumerations. They are in the order of PythonASDL.h.
 
     template<typename T>
@@ -139,10 +154,10 @@ private:
             sink().null();
             return;
         }
-        open(ASTClass::arg);
+        open(ASTClass::arg, *node);
         field("arg"_s, node->name);
         field("annotation"_s, node->annotation);
-        nullField("type_comment"_s);
+        field("type_comment"_s, node->typeComment);
         close(*node);
     }
 
@@ -161,7 +176,7 @@ private:
 
     void value(Keyword* node)
     {
-        open(ASTClass::keyword);
+        open(ASTClass::keyword, *node);
         field("arg"_s, node->name);
         field("value"_s, node->value);
         close(*node);
@@ -169,7 +184,7 @@ private:
 
     void value(Alias* node)
     {
-        open(ASTClass::alias);
+        open(ASTClass::alias, *node);
         field("name"_s, node->name);
         field("asname"_s, node->asName);
         close(*node);
@@ -195,7 +210,7 @@ private:
 
     void value(ExceptHandler* node)
     {
-        open(ASTClass::ExceptHandler);
+        open(ASTClass::ExceptHandler, *node);
         field("type"_s, node->type);
         field("name"_s, node->name);
         field("body"_s, node->body);
@@ -215,16 +230,16 @@ private:
     {
         switch (node->kind) {
         case TypeParameter::Kind::TypeVar:
-            open(ASTClass::TypeVar);
+            open(ASTClass::TypeVar, *node);
             field("name"_s, node->name);
             field("bound"_s, node->bound);
             break;
         case TypeParameter::Kind::ParamSpec:
-            open(ASTClass::ParamSpec);
+            open(ASTClass::ParamSpec, *node);
             field("name"_s, node->name);
             break;
         case TypeParameter::Kind::TypeVarTuple:
-            open(ASTClass::TypeVarTuple);
+            open(ASTClass::TypeVarTuple, *node);
             field("name"_s, node->name);
             break;
         }
@@ -245,21 +260,21 @@ private:
         switch (expression->kind) {
         case Expression::Kind::BoolOp: {
             auto& node = expression->as<BoolOp>();
-            open(ASTClass::BoolOp);
+            open(ASTClass::BoolOp, *expression);
             field("op"_s, node.op);
             field("values"_s, node.values);
             break;
         }
         case Expression::Kind::NamedExpr: {
             auto& node = expression->as<NamedExpr>();
-            open(ASTClass::NamedExpr);
+            open(ASTClass::NamedExpr, *expression);
             field("target"_s, node.target);
             field("value"_s, node.value);
             break;
         }
         case Expression::Kind::BinOp: {
             auto& node = expression->as<BinOp>();
-            open(ASTClass::BinOp);
+            open(ASTClass::BinOp, *expression);
             field("left"_s, node.left);
             field("op"_s, node.op);
             field("right"_s, node.right);
@@ -267,21 +282,21 @@ private:
         }
         case Expression::Kind::UnaryOp: {
             auto& node = expression->as<UnaryOp>();
-            open(ASTClass::UnaryOp);
+            open(ASTClass::UnaryOp, *expression);
             field("op"_s, node.op);
             field("operand"_s, node.operand);
             break;
         }
         case Expression::Kind::Lambda: {
             auto& node = expression->as<Lambda>();
-            open(ASTClass::Lambda);
+            open(ASTClass::Lambda, *expression);
             field("args"_s, node.arguments);
             field("body"_s, node.body);
             break;
         }
         case Expression::Kind::IfExp: {
             auto& node = expression->as<IfExp>();
-            open(ASTClass::IfExp);
+            open(ASTClass::IfExp, *expression);
             field("test"_s, node.test);
             field("body"_s, node.body);
             field("orelse"_s, node.orElse);
@@ -289,34 +304,34 @@ private:
         }
         case Expression::Kind::Dict: {
             auto& node = expression->as<Dict>();
-            open(ASTClass::Dict);
+            open(ASTClass::Dict, *expression);
             field("keys"_s, node.keys);
             field("values"_s, node.values);
             break;
         }
         case Expression::Kind::Set: {
             auto& node = expression->as<Set>();
-            open(ASTClass::Set);
+            open(ASTClass::Set, *expression);
             field("elts"_s, node.elements);
             break;
         }
         case Expression::Kind::ListComp: {
             auto& node = expression->as<ListComp>();
-            open(ASTClass::ListComp);
+            open(ASTClass::ListComp, *expression);
             field("elt"_s, node.element);
             field("generators"_s, node.generators);
             break;
         }
         case Expression::Kind::SetComp: {
             auto& node = expression->as<SetComp>();
-            open(ASTClass::SetComp);
+            open(ASTClass::SetComp, *expression);
             field("elt"_s, node.element);
             field("generators"_s, node.generators);
             break;
         }
         case Expression::Kind::DictComp: {
             auto& node = expression->as<DictComp>();
-            open(ASTClass::DictComp);
+            open(ASTClass::DictComp, *expression);
             field("key"_s, node.key);
             field("value"_s, node.value);
             field("generators"_s, node.generators);
@@ -324,26 +339,26 @@ private:
         }
         case Expression::Kind::GeneratorExp: {
             auto& node = expression->as<GeneratorExp>();
-            open(ASTClass::GeneratorExp);
+            open(ASTClass::GeneratorExp, *expression);
             field("elt"_s, node.element);
             field("generators"_s, node.generators);
             break;
         }
         case Expression::Kind::Await:
-            open(ASTClass::Await);
+            open(ASTClass::Await, *expression);
             field("value"_s, expression->as<Await>().value);
             break;
         case Expression::Kind::Yield:
-            open(ASTClass::Yield);
+            open(ASTClass::Yield, *expression);
             field("value"_s, expression->as<Yield>().value);
             break;
         case Expression::Kind::YieldFrom:
-            open(ASTClass::YieldFrom);
+            open(ASTClass::YieldFrom, *expression);
             field("value"_s, expression->as<YieldFrom>().value);
             break;
         case Expression::Kind::Compare: {
             auto& node = expression->as<Compare>();
-            open(ASTClass::Compare);
+            open(ASTClass::Compare, *expression);
             field("left"_s, node.left);
             field("ops"_s, node.ops);
             field("comparators"_s, node.comparators);
@@ -351,7 +366,7 @@ private:
         }
         case Expression::Kind::Call: {
             auto& node = expression->as<Call>();
-            open(ASTClass::Call);
+            open(ASTClass::Call, *expression);
             field("func"_s, node.function);
             field("args"_s, node.arguments);
             field("keywords"_s, node.keywords);
@@ -359,7 +374,7 @@ private:
         }
         case Expression::Kind::FormattedValue: {
             auto& node = expression->as<FormattedValue>();
-            open(ASTClass::FormattedValue);
+            open(ASTClass::FormattedValue, *expression);
             field("value"_s, node.value);
             field("conversion"_s, node.conversion);
             field("format_spec"_s, node.formatSpecification);
@@ -367,36 +382,39 @@ private:
         }
         case Expression::Kind::Interpolation: {
             auto& node = expression->as<Interpolation>();
-            open(ASTClass::Interpolation);
+            open(ASTClass::Interpolation, *expression);
             field("value"_s, node.value);
-            field("str"_s, node.source);
+            name("str"_s);
+            sink().constant(*node.source);
             field("conversion"_s, node.conversion);
             field("format_spec"_s, node.formatSpecification);
             break;
         }
         case Expression::Kind::JoinedStr:
-            open(ASTClass::JoinedStr);
+            open(ASTClass::JoinedStr, *expression);
             field("values"_s, expression->as<JoinedStr>().values);
             break;
         case Expression::Kind::TemplateStr:
-            open(ASTClass::TemplateStr);
+            open(ASTClass::TemplateStr, *expression);
             field("values"_s, expression->as<TemplateStr>().values);
             break;
         case Expression::Kind::Constant: {
             auto& node = expression->as<Constant>();
-            open(ASTClass::Constant);
+            open(ASTClass::Constant, *expression);
             name("value"_s);
             sink().constant(node);
             name("kind"_s);
-            if (node.hasUnicodePrefix)
-                sink().string("u"_s);
+            if (node.kind)
+                sink().text(node.kind);
+            else if (node.hasUnicodePrefix)
+                sink().unicodePrefix();
             else
                 sink().null();
             break;
         }
         case Expression::Kind::Attribute: {
             auto& node = expression->as<Attribute>();
-            open(ASTClass::Attribute);
+            open(ASTClass::Attribute, *expression);
             field("value"_s, node.value);
             field("attr"_s, node.attribute);
             field("ctx"_s, node.context);
@@ -404,7 +422,7 @@ private:
         }
         case Expression::Kind::Subscript: {
             auto& node = expression->as<Subscript>();
-            open(ASTClass::Subscript);
+            open(ASTClass::Subscript, *expression);
             field("value"_s, node.value);
             field("slice"_s, node.slice);
             field("ctx"_s, node.context);
@@ -412,35 +430,35 @@ private:
         }
         case Expression::Kind::Starred: {
             auto& node = expression->as<Starred>();
-            open(ASTClass::Starred);
+            open(ASTClass::Starred, *expression);
             field("value"_s, node.value);
             field("ctx"_s, node.context);
             break;
         }
         case Expression::Kind::Name: {
             auto& node = expression->as<Name>();
-            open(ASTClass::Name);
+            open(ASTClass::Name, *expression);
             field("id"_s, node.id);
             field("ctx"_s, node.context);
             break;
         }
         case Expression::Kind::List: {
             auto& node = expression->as<List>();
-            open(ASTClass::List);
+            open(ASTClass::List, *expression);
             field("elts"_s, node.elements);
             field("ctx"_s, node.context);
             break;
         }
         case Expression::Kind::Tuple: {
             auto& node = expression->as<Tuple>();
-            open(ASTClass::Tuple);
+            open(ASTClass::Tuple, *expression);
             field("elts"_s, node.elements);
             field("ctx"_s, node.context);
             break;
         }
         case Expression::Kind::Slice: {
             auto& node = expression->as<Slice>();
-            open(ASTClass::Slice);
+            open(ASTClass::Slice, *expression);
             field("lower"_s, node.lower);
             field("upper"_s, node.upper);
             field("step"_s, node.step);
@@ -462,21 +480,21 @@ private:
             return;
         switch (pattern->kind) {
         case Pattern::Kind::MatchValue:
-            open(ASTClass::MatchValue);
+            open(ASTClass::MatchValue, *pattern);
             field("value"_s, pattern->as<MatchValue>().value);
             break;
         case Pattern::Kind::MatchSingleton:
-            open(ASTClass::MatchSingleton);
+            open(ASTClass::MatchSingleton, *pattern);
             name("value"_s);
             sink().constant(pattern->as<MatchSingleton>().value);
             break;
         case Pattern::Kind::MatchSequence:
-            open(ASTClass::MatchSequence);
+            open(ASTClass::MatchSequence, *pattern);
             field("patterns"_s, pattern->as<MatchSequence>().patterns);
             break;
         case Pattern::Kind::MatchMapping: {
             auto& node = pattern->as<MatchMapping>();
-            open(ASTClass::MatchMapping);
+            open(ASTClass::MatchMapping, *pattern);
             field("keys"_s, node.keys);
             field("patterns"_s, node.patterns);
             field("rest"_s, node.rest);
@@ -484,7 +502,7 @@ private:
         }
         case Pattern::Kind::MatchClass: {
             auto& node = pattern->as<MatchClass>();
-            open(ASTClass::MatchClass);
+            open(ASTClass::MatchClass, *pattern);
             field("cls"_s, node.cls);
             field("patterns"_s, node.patterns);
             field("kwd_attrs"_s, node.keywordAttributes);
@@ -492,18 +510,18 @@ private:
             break;
         }
         case Pattern::Kind::MatchStar:
-            open(ASTClass::MatchStar);
+            open(ASTClass::MatchStar, *pattern);
             field("name"_s, pattern->as<MatchStar>().name);
             break;
         case Pattern::Kind::MatchAs: {
             auto& node = pattern->as<MatchAs>();
-            open(ASTClass::MatchAs);
+            open(ASTClass::MatchAs, *pattern);
             field("pattern"_s, node.pattern);
             field("name"_s, node.name);
             break;
         }
         case Pattern::Kind::MatchOr:
-            open(ASTClass::MatchOr);
+            open(ASTClass::MatchOr, *pattern);
             field("patterns"_s, pattern->as<MatchOr>().patterns);
             break;
         }
@@ -519,19 +537,19 @@ private:
         switch (statement->kind) {
         case Statement::Kind::FunctionDef: {
             auto& node = statement->as<FunctionDef>();
-            open(node.isAsync ? ASTClass::AsyncFunctionDef : ASTClass::FunctionDef);
+            open(node.isAsync ? ASTClass::AsyncFunctionDef : ASTClass::FunctionDef, *statement);
             field("name"_s, node.name);
             field("args"_s, node.arguments);
             field("body"_s, node.body);
             field("decorator_list"_s, node.decorators);
             field("returns"_s, node.returns);
-            nullField("type_comment"_s);
+            field("type_comment"_s, node.typeComment);
             field("type_params"_s, node.typeParameters);
             break;
         }
         case Statement::Kind::ClassDef: {
             auto& node = statement->as<ClassDef>();
-            open(ASTClass::ClassDef);
+            open(ASTClass::ClassDef, *statement);
             field("name"_s, node.name);
             field("bases"_s, node.bases);
             field("keywords"_s, node.keywords);
@@ -541,24 +559,24 @@ private:
             break;
         }
         case Statement::Kind::Return:
-            open(ASTClass::Return);
+            open(ASTClass::Return, *statement);
             field("value"_s, statement->as<Return>().value);
             break;
         case Statement::Kind::Delete:
-            open(ASTClass::Delete);
+            open(ASTClass::Delete, *statement);
             field("targets"_s, statement->as<Delete>().targets);
             break;
         case Statement::Kind::Assign: {
             auto& node = statement->as<Assign>();
-            open(ASTClass::Assign);
+            open(ASTClass::Assign, *statement);
             field("targets"_s, node.targets);
             field("value"_s, node.value);
-            nullField("type_comment"_s);
+            field("type_comment"_s, node.typeComment);
             break;
         }
         case Statement::Kind::TypeAlias: {
             auto& node = statement->as<TypeAlias>();
-            open(ASTClass::TypeAlias);
+            open(ASTClass::TypeAlias, *statement);
             field("name"_s, node.name);
             field("type_params"_s, node.typeParameters);
             field("value"_s, node.value);
@@ -566,7 +584,7 @@ private:
         }
         case Statement::Kind::AugAssign: {
             auto& node = statement->as<AugAssign>();
-            open(ASTClass::AugAssign);
+            open(ASTClass::AugAssign, *statement);
             field("target"_s, node.target);
             field("op"_s, node.op);
             field("value"_s, node.value);
@@ -574,7 +592,7 @@ private:
         }
         case Statement::Kind::AnnAssign: {
             auto& node = statement->as<AnnAssign>();
-            open(ASTClass::AnnAssign);
+            open(ASTClass::AnnAssign, *statement);
             field("target"_s, node.target);
             field("annotation"_s, node.annotation);
             field("value"_s, node.value);
@@ -583,17 +601,17 @@ private:
         }
         case Statement::Kind::For: {
             auto& node = statement->as<For>();
-            open(node.isAsync ? ASTClass::AsyncFor : ASTClass::For);
+            open(node.isAsync ? ASTClass::AsyncFor : ASTClass::For, *statement);
             field("target"_s, node.target);
             field("iter"_s, node.iterable);
             field("body"_s, node.body);
             field("orelse"_s, node.orElse);
-            nullField("type_comment"_s);
+            field("type_comment"_s, node.typeComment);
             break;
         }
         case Statement::Kind::While: {
             auto& node = statement->as<While>();
-            open(ASTClass::While);
+            open(ASTClass::While, *statement);
             field("test"_s, node.test);
             field("body"_s, node.body);
             field("orelse"_s, node.orElse);
@@ -601,7 +619,7 @@ private:
         }
         case Statement::Kind::If: {
             auto& node = statement->as<If>();
-            open(ASTClass::If);
+            open(ASTClass::If, *statement);
             field("test"_s, node.test);
             field("body"_s, node.body);
             field("orelse"_s, node.orElse);
@@ -609,29 +627,29 @@ private:
         }
         case Statement::Kind::With: {
             auto& node = statement->as<With>();
-            open(node.isAsync ? ASTClass::AsyncWith : ASTClass::With);
+            open(node.isAsync ? ASTClass::AsyncWith : ASTClass::With, *statement);
             field("items"_s, node.items);
             field("body"_s, node.body);
-            nullField("type_comment"_s);
+            field("type_comment"_s, node.typeComment);
             break;
         }
         case Statement::Kind::Match: {
             auto& node = statement->as<Match>();
-            open(ASTClass::Match);
+            open(ASTClass::Match, *statement);
             field("subject"_s, node.subject);
             field("cases"_s, node.cases);
             break;
         }
         case Statement::Kind::Raise: {
             auto& node = statement->as<Raise>();
-            open(ASTClass::Raise);
+            open(ASTClass::Raise, *statement);
             field("exc"_s, node.exception);
             field("cause"_s, node.cause);
             break;
         }
         case Statement::Kind::Try: {
             auto& node = statement->as<Try>();
-            open(node.isStar ? ASTClass::TryStar : ASTClass::Try);
+            open(node.isStar ? ASTClass::TryStar : ASTClass::Try, *statement);
             field("body"_s, node.body);
             field("handlers"_s, node.handlers);
             field("orelse"_s, node.orElse);
@@ -640,43 +658,43 @@ private:
         }
         case Statement::Kind::Assert: {
             auto& node = statement->as<Assert>();
-            open(ASTClass::Assert);
+            open(ASTClass::Assert, *statement);
             field("test"_s, node.test);
             field("msg"_s, node.message);
             break;
         }
         case Statement::Kind::Import:
-            open(ASTClass::Import);
+            open(ASTClass::Import, *statement);
             field("names"_s, statement->as<Import>().names);
             break;
         case Statement::Kind::ImportFrom: {
             auto& node = statement->as<ImportFrom>();
-            open(ASTClass::ImportFrom);
+            open(ASTClass::ImportFrom, *statement);
             field("module"_s, node.module);
             field("names"_s, node.names);
             field("level"_s, node.level);
             break;
         }
         case Statement::Kind::Global:
-            open(ASTClass::Global);
+            open(ASTClass::Global, *statement);
             field("names"_s, statement->as<Global>().names);
             break;
         case Statement::Kind::Nonlocal:
-            open(ASTClass::Nonlocal);
+            open(ASTClass::Nonlocal, *statement);
             field("names"_s, statement->as<Nonlocal>().names);
             break;
         case Statement::Kind::Expr:
-            open(ASTClass::Expr);
+            open(ASTClass::Expr, *statement);
             field("value"_s, statement->as<Expr>().value);
             break;
         case Statement::Kind::Pass:
-            open(ASTClass::Pass);
+            open(ASTClass::Pass, *statement);
             break;
         case Statement::Kind::Break:
-            open(ASTClass::Break);
+            open(ASTClass::Break, *statement);
             break;
         case Statement::Kind::Continue:
-            open(ASTClass::Continue);
+            open(ASTClass::Continue, *statement);
             break;
         }
         close(*statement);
