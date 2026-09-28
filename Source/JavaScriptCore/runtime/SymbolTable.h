@@ -700,6 +700,9 @@ public:
 
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
+    // Code is linked against clones for the sake of what the optimizing compilers infer about one realm's scopes. Where there are no
+    // such compilers, one of StaticHeap, which has what a clone has, and infers nothing, does as well, and costs nothing.
+    bool isItsOwnClone() const { return StaticHeap::needsNoLocking(this); }
 
     // For a clone, when the code it was made for has been generated or decoded again (CodeBlock::setConstantRegisters):
     // true if cloneScopePart() of `original` would describe the same scope, so environments made by the new code can go

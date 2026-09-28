@@ -3051,6 +3051,8 @@ public:
             symbolTable->singleton().invalidate(decoder.vm(), StringFireDetail("It is in the static heap"));
         if (decoder.canDeferIntoPayload() && m_map.entryCount() && !decoder.isForStaticHeap())
             symbolTable->setCachedEntries(decoder, this, false); // decodeEntries() on first read
+        else if (decoder.isForStaticHeap()) // As a clone has them: see SymbolTable::isItsOwnClone().
+            m_map.decodeIf(decoder, symbolTable->m_map, [](const CachedSymbolTableEntry& entry) { return entry.isScope(); });
         else
 #endif
             m_map.decode(decoder, symbolTable->m_map);

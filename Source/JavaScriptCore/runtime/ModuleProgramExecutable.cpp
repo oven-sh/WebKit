@@ -108,14 +108,14 @@ UnlinkedModuleProgramCodeBlock* ModuleProgramExecutable::getUnlinkedCodeBlock(JS
     if (SymbolTable* clone = m_moduleEnvironmentSymbolTable.get()) {
         // It is the clone of the constant of the code that was fetched again from now on (as for the other scopes of a
         // body that can be suspended, CodeBlock::setConstantRegisters). The environment is laid out by it either way.
-        if (clone->clonedFrom() != symbolTable) {
+        if (clone != symbolTable && clone->clonedFrom() != symbolTable) {
             if (clone->isCloneOfScopePartOf(*symbolTable))
                 clone->adoptOriginal(vm, *symbolTable);
             else
                 clone->invalidateInferencesOfAbandonedClone(vm);
         }
     } else {
-        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
+        m_moduleEnvironmentSymbolTable.set(vm, this, symbolTable->isItsOwnClone() ? symbolTable : symbolTable->cloneScopePart(vm, SymbolTable::PropagateCloneInvalidationToOriginal::Yes));
         m_codeGenerationMode = codeGenerationMode;
         Locker locker { cellLock() };
         m_functionDeclarations = FixedVector<WriteBarrier<FunctionExecutable>>(unlinkedModuleProgramCode->numberOfFunctionDecls());
