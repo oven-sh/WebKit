@@ -50,11 +50,20 @@ const LTO_WINDOWS = "/clang:-flto=thin /clang:-fno-split-lto-unit";
 const SANITIZERS = "address,undefined";
 
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
-// Linux builds `bun`, a commit of the branch bun-release-<version> of oven-sh/icu, by the tarball GitHub makes of it.
-// The others still build the release itself, by unicode-org's tarball.
+// It is a commit of the branch bun-release-<version> of oven-sh/icu, by the tarball GitHub makes of it.
+// (release_sha256 there is of unicode-org's tarball of that version, for build-icu.ps1.)
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
-const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
-const BUN_ICU = { ICU_VERSION: icu.version, ICU_COMMIT: icu.bun.commit, ICU_SHA256: icu.bun.sha256 };
+const ICU = {
+  ICU_VERSION: icu.version,
+  ICU_COMMIT: icu.commit,
+  ICU_SHA256: icu.sha256,
+  // For the libraries, not for ICU's tools: genrb builds collators from rules. These leave out what nothing that
+  // JavaScriptCore and Bun call can reach but virtual functions keep linked. They change no declaration of the C API,
+  // which is all that is used of ICU.
+  ICU_CPPFLAGS: ["LEGACY_CONVERSION", "SERVICE", "FILTERED_BREAK_ITERATION", "PARSING", "UNIT_CONVERSION"].map(what => `-DUCONFIG_NO_${what}=1`).join(" "),
+};
+// What a `base` stage that builds ICU's data copies in.
+const ICU_IMAGE_INPUTS = ["icu/host.sh"];
 
 // The code generation floor. There is one per architecture: WebKit used to ship a haswell x64 build next to a nehalem
 // "baseline" one, which meant every x64 consumer had to pick, and a consumer that picked wrong either raised its CPU
@@ -102,8 +111,9 @@ const platforms = [
       arm64: { on: "linux-arm64-gh", variants: ["lto"] },
     },
     image: () => "linux-glibc",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: (arch, v) => ({
-      ...BUN_ICU,
+      ...ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
@@ -123,8 +133,9 @@ const platforms = [
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     buildType: v => (v.buildType === "Release" ? "MinSizeRel" : v.buildType),
     image: () => "linux-musl",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: arch => ({
-      ...BUN_ICU,
+      ...ICU,
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       MARCH_FLAG: arch === "arm64" ? `${ARMV8} -mtune=ampere1` : NEHALEM,
     }),
@@ -165,6 +176,7 @@ const platforms = [
     },
     lto: LTO_WINDOWS,
     image: () => "windows",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: (arch, v) => ({
       ...ICU,
       WIN_ARCH: arch === "arm64" ? "arm64" : "x64",
@@ -182,6 +194,7 @@ const platforms = [
     packageOS: "freebsd",
     lanes: { amd64: NO_ASAN, arm64: NO_ASAN },
     image: arch => `freebsd-${arch}`,
+    imageInputs: ICU_IMAGE_INPUTS,
     args: arch => ({
       ...ICU,
       FREEBSD_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
@@ -196,6 +209,7 @@ const platforms = [
     packageOS: "android",
     lanes: { arm64: NO_ASAN, amd64: NO_ASAN },
     image: () => "android",
+    imageInputs: ICU_IMAGE_INPUTS,
     args: arch => ({
       ...ICU,
       ANDROID_ARCH: arch === "arm64" ? "aarch64" : "x86_64",

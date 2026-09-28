@@ -3,13 +3,12 @@
 # Builds ICU from source with static CRT (/MT) for use with JavaScriptCore, on a Windows machine.
 #
 # Nothing in this repository runs this. The ICU that ships is built on Linux by Dockerfile.windows, with ICU's
-# configure/make; this is the same ICU built with ICU's other build system, MSBuild, which is the one that runs on
-# Windows. Bun runs it when it builds WebKit from source on Windows (scripts/build/deps/webkit.ts in oven-sh/bun).
+# configure/make; this uses ICU's other build system, MSBuild, which is the one that runs on Windows.
+# Bun runs it when it builds WebKit from source on Windows (scripts/build/deps/webkit.ts in oven-sh/bun).
 #
 # The same as the ICU that ships: the version (icu/source.json), clang as the compiler on both architectures, the code
-# generation floor, /MT[d], static libraries, and the data filter (stage 1b). Not the same, neither of which matters to
-# a build of Bun from source: the data is not repacked with per-item zstd (icu/compress-data.ts), and udata.cpp does
-# not carry the decompression hook (icu/udata-decompress-hook.patch), so ICU reads its data raw.
+# generation floor, /MT[d] and static libraries. Not the same, which does not matter to what a build of Bun from source
+# does, only to how large and fast it is: this is unicode-org's release, where what ships is oven-sh/icu's branch of it.
 #
 # Usage:
 #   .\build-icu.ps1 [-Platform x64|ARM64] [-BuildType Release|Debug] [-OutputDir WebKitBuild/icu]
@@ -39,6 +38,7 @@ $ICU_LIB_DIR = Join-Path $OutputDir "lib"
 $ICU_INCLUDE_DIR = Join-Path $OutputDir "include"
 
 # Which ICU: icu/source.json, the same file the Dockerfiles get it from (by way of .github/scripts/lanes.mjs).
+# release_sha256 there is for this script alone.
 $icu = Get-Content (Join-Path $PSScriptRoot "icu/source.json") -Raw | ConvertFrom-Json
 $ICU_VERSION = $icu.version
 $ICU_MAJOR = $ICU_VERSION.Split(".")[0]
@@ -91,9 +91,9 @@ if (-not (Test-Path $ICU_SOURCE_DIR)) {
     }
     # Also of a tarball that was already there.
     $sha256 = (Get-FileHash $ICU_TARBALL -Algorithm SHA256).Hash.ToLower()
-    if ($sha256 -ne $icu.sha256) {
+    if ($sha256 -ne $icu.release_sha256) {
         Remove-Item $ICU_TARBALL
-        throw "ICU tarball has sha256 $sha256, expected $($icu.sha256)"
+        throw "ICU tarball has sha256 $sha256, expected $($icu.release_sha256)"
     }
 
     Write-Host ":: Extracting ICU"
@@ -243,8 +243,8 @@ Write-Host ":: Built makedata successfully"
 # ucnv_/utrans_/usprep_/uspoof_ consumers (TextCodecICU is removed in
 # src/bun.js/bindings/TextEncodingRegistry.cpp). Cuts sicudt.lib by ~6.8 MB.
 # Most of rbnf/ goes too, but root/ja/zh/zh_Hant stay: ICU reaches those on its own
-# through the algorithmic numbering systems in numberingSystems.res (see the note and
-# the staleness guard in ./Dockerfile).
+# through the algorithmic numbering systems in numberingSystems.res. What ships derives that list from the data
+# (checkRbnf in oven-sh/icu's bun/data/icu-data.ts): compare with it when the version changes.
 $binDirName = if ($Platform -eq "x64") { "bin64" } else { "bin$Platform" }
 $icupkg = Join-Path $ICU_SOURCE_DIR "..\$binDirName\icupkg.exe"
 $datFile = Get-ChildItem -Path (Join-Path $ICU_SOURCE_DIR "data\in") -Filter "icudt*l.dat" | Select-Object -First 1

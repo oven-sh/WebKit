@@ -233,23 +233,16 @@ RUN set -eu; \
     done; \
     rm /tmp/t.cpp /tmp/t
 
-# ICU: its sources (/icu.tgz, which the lanes build the libraries from) and what of it is the same for every lane.
-# That is its data (/icudt.dat), which ICU's own compilers make of its text sources, as bun/data/icu-data.ts there has
-# them do, and so those compilers, built for this container. Nothing else of ICU is built here. config/icucross.* is
-# what ICU's configure asks of a build for the machine it runs on before it configures one for aarch64.
+# ICU: its sources (/icu.tgz, which the lanes build the libraries from), and what icu/host.sh makes of them, which is
+# the same for every lane: its data (/icudt.dat) and the tools that takes (/icu-host).
 # LDFLAGS without this stage's -L/usr/lib/x86_64-linux-gnu, as in the lanes' own ICU step: that is where the
 # distribution's ICU is, and the tools would be linked against it instead of this one.
 # Which ICU: icu/source.json, by way of lanes.mjs.
 ARG ICU_COMMIT
 ARG ICU_SHA256
 ADD --checksum=sha256:${ICU_SHA256} https://github.com/oven-sh/icu/archive/${ICU_COMMIT}.tar.gz /icu.tgz
-RUN mkdir -p /icu-host && cd /icu-host && tar -xf /icu.tgz --strip-components=1 && cd icu4c/source && \
-    CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" ./configure --disable-shared --enable-static --disable-samples --disable-tests --disable-extras --disable-icuio --disable-layoutex && \
-    mkdir -p lib bin && \
-    for dir in stubdata common i18n tools/toolutil tools/gencnval tools/genbrk tools/gendict tools/genrb; do make -j$(nproc) -C $dir || exit 1; done && \
-    make config/icucross.mk config/icucross.inc && \
-    node /icu-host/bun/data/icu-data.ts --tools /icu-host/icu4c/source/bin --work /tmp/icu-data --out /icudt.dat && \
-    rm -rf /tmp/icu-data lib/*.a stubdata/*.a && find . \( -name '*.o' -o -name '*.ao' -o -name '*.d' \) -delete
+COPY icu/host.sh /icu-bun/host.sh
+RUN CFLAGS="-Os" CXXFLAGS="-Os" LDFLAGS="-fuse-ld=lld" /icu-bun/host.sh
 
 # What is different about building for one architecture or the other. The lane picks one by LINUX_ARCH.
 FROM base as lane-x86_64
@@ -287,6 +280,7 @@ ARG USE_MIMALLOC
 ARG USE_EXTERNAL_MIMALLOC
 ARG LINUX_ARCH
 ARG ICU_VERSION
+ARG ICU_CPPFLAGS
 
 ENV LTO_FLAG="${LTO_FLAG}"
 
@@ -294,13 +288,10 @@ ENV LTO_FLAG="${LTO_FLAG}"
 #
 # For aarch64 this is a cross build. ICU's configure then wants a build for this container to take its tools from,
 # though none of them is run to build these two libraries.
-#
-# The UCONFIG switches leave out what nothing that JavaScriptCore and Bun call can reach but virtual functions keep
-# linked. They change no declaration of the C API, which is all that is used of ICU.
 COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
-    export CPPFLAGS="-DUCONFIG_NO_LEGACY_CONVERSION=1 -DUCONFIG_NO_SERVICE=1 -DUCONFIG_NO_FILTERED_BREAK_ITERATION=1 -DUCONFIG_NO_PARSING=1 -DUCONFIG_NO_UNIT_CONVERSION=1" && \
+    export CPPFLAGS="$ICU_CPPFLAGS" && \
     export CFLAGS="$CFLAGS $G -Os -std=c17 $LTO_FLAG" && \
     export CXXFLAGS="$CXXFLAGS $G -Os -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
@@ -317,7 +308,7 @@ RUN --mount=type=tmpfs,target=/icu \
     mkdir -p lib && \
     make -j$(nproc) -C common && make -j$(nproc) -C i18n && \
     cp lib/libicuuc.a lib/libicui18n.a /output/lib && cp -r i18n/unicode/* common/unicode/* /output/include/unicode && \
-    /icu-bun/embed-data.sh ${ICU_VERSION%%.*} /icudt.dat /output/lib/libicudata.a $CC $MARCH_FLAG
+    /icu-bun/embed-data.sh elf ${ICU_VERSION%%.*} /output/lib/libicudata.a $CC $MARCH_FLAG
 
 # Copy WebKit source and build.
 #
