@@ -70,7 +70,7 @@ def examples():
     a_coroutine = coroutine()
     a_coroutine.close()
     an_async_generator = async_generator()
-    awaitables = [an_async_generator.__anext__(), an_async_generator.asend(None), an_async_generator.athrow(ValueError)]
+    awaitables = [an_async_generator.__anext__(), an_async_generator.asend(None), an_async_generator.athrow(ValueError), anext(an_async_generator, None)]
     try:
         raise ValueError
     except ValueError as error:

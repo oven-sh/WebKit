@@ -44,8 +44,6 @@ namespace JSC { namespace Python {
 PYTHON_NATIVE(objectGetItem)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__getitem__"_s, 2, 2))
-        return { };
     auto property = args[1].toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     PropertySlot slot(args[0], PropertySlot::InternalMethodType::Get);
@@ -59,8 +57,6 @@ PYTHON_NATIVE(objectGetItem)
 PYTHON_NATIVE(objectSetItem)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__setitem__"_s, 3, 3))
-        return { };
     auto property = args[1].toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     PutPropertySlot slot(args[0], true);
@@ -72,8 +68,6 @@ PYTHON_NATIVE(objectSetItem)
 PYTHON_NATIVE(objectDelItem)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__delitem__"_s, 2, 2))
-        return { };
     auto property = args[1].toPropertyKey(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     bool found = asObject(args[0])->hasProperty(globalObject, property);
@@ -110,8 +104,6 @@ PYTHON_NATIVE(objectBool)
 PYTHON_NATIVE(objectContains)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__contains__"_s, 2, 2))
-        return { };
     JSObject* object = asObject(args[0]);
     JSValue has = object->get(globalObject, vm.propertyNames->has);
     RETURN_IF_EXCEPTION(scope, { });
@@ -149,8 +141,6 @@ PYTHON_NATIVE(objectIter)
 PYTHON_NATIVE(objectInstanceCheck)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__instancecheck__"_s, 2, 2))
-        return { };
     if (!args[0].isCallable())
         return JSValue::encode(raiseTypeError(globalObject, scope, "isinstance() arg 2 must be a type, a tuple of types, or a union"_s));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(asObject(args[0])->hasInstance(globalObject, args[1]))));
@@ -286,19 +276,20 @@ static JSValue getFunctionFunc(JSGlobalObject* globalObject, JSValue self)
 void initializeJavaScriptTypes(JSGlobalObject* globalObject)
 {
     PyRealm* realm = globalObject->pyRealm();
+    using Kind = PyNativeFunction::Kind;
     addMethods(globalObject, realm->typeJSObject(), {
-        { "__getitem__"_s, objectGetItem },
-        { "__setitem__"_s, objectSetItem },
-        { "__delitem__"_s, objectDelItem },
-        { "__len__"_s, objectLen },
-        { "__bool__"_s, objectBool },
-        { "__contains__"_s, objectContains },
-        { "__iter__"_s, objectIter },
-        { "__instancecheck__"_s, objectInstanceCheck },
+        { "__getitem__"_s, objectGetItem, Kind::Wrapper, 0, "($self, key, /)"_s },
+        { "__setitem__"_s, objectSetItem, Kind::Wrapper, 0, "($self, key, value, /)"_s },
+        { "__delitem__"_s, objectDelItem, Kind::Wrapper, 0, "($self, key, /)"_s },
+        { "__len__"_s, objectLen, Kind::Wrapper, 0, "($self, /)"_s },
+        { "__bool__"_s, objectBool, Kind::Wrapper, 0, "($self, /)"_s },
+        { "__contains__"_s, objectContains, Kind::Wrapper, 0, "($self, key, /)"_s },
+        { "__iter__"_s, objectIter, Kind::Wrapper, 0, "($self, /)"_s },
+        { "__instancecheck__"_s, objectInstanceCheck, Kind::Method, 0, "($self, instance, /)"_s },
         { "__str__"_s, objectStr },
         { "__repr__"_s, objectRepr },
         { "__dir__"_s, objectDir },
-        { "new"_s, objectNew },
+        { "new"_s, objectNew, Kind::Method, 0, "($self, /, *args)"_s },
     });
     addMethods(globalObject, realm->typeJSFunction(), {
         { "__eq__"_s, functionEq },

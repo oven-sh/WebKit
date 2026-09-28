@@ -358,8 +358,6 @@ bool rangeContains(JSGlobalObject* globalObject, PyRange* range, JSValue value)
 PYTHON_NATIVE(rangeIndex)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "index"_s, 2, 2))
-        return { };
     PyRange* range = asRange(args[0]);
     JSValue value = args[1];
     if (isInt(value) || value.isBoolean()) {
@@ -388,8 +386,6 @@ PYTHON_NATIVE(rangeIndex)
 PYTHON_NATIVE(rangeCount)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "count"_s, 2, 2))
-        return { };
     PyRange* range = asRange(args[0]);
     JSValue value = args[1];
     if (isInt(value) || value.isBoolean())
@@ -416,8 +412,6 @@ PYTHON_NATIVE(rangeReduce)
 PYTHON_SHARED_NATIVE(sliceIndices)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "indices"_s, 2, 2))
-        return { };
     JSValue length = toInt(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (isNegative(length))

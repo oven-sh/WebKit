@@ -209,8 +209,6 @@ static void setFrameFlag(JSGlobalObject* globalObject, JSValue self, JSValue val
 PYTHON_NATIVE(frameClear)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "clear"_s, 1, 1))
-        return { };
     PyFrame* frame = asFrame(args[0]);
     switch (frame->state()) {
     case PyFrame::State::Running:
@@ -241,8 +239,6 @@ PYTHON_NATIVE(frameRepr)
 PYTHON_NATIVE(sysGetFrame)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "_getframe"_s, 0, 1))
-        return { };
     int64_t depth = 0;
     if (args.size()) {
         auto index = toIndex(globalObject, args[0]);
@@ -292,8 +288,6 @@ static std::optional<unsigned> variableIndexArgument(JSGlobalObject* globalObjec
 PYTHON_NATIVE(frameGetVariable)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "get_variable"_s, 3, 3))
-        return { };
     PyFrame* frame = frameArgument(globalObject, scope, args[0]);
     if (!frame)
         return { };
@@ -308,8 +302,6 @@ PYTHON_NATIVE(frameGetVariable)
 PYTHON_NATIVE(frameSetVariable)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "set_variable"_s, 3, 3))
-        return { };
     PyFrame* frame = frameArgument(globalObject, scope, args[0]);
     if (!frame)
         return { };
@@ -324,8 +316,6 @@ PYTHON_NATIVE(frameSetVariable)
 PYTHON_NATIVE(frameExtraLocals)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "extra_locals"_s, 2, 2))
-        return { };
     PyFrame* frame = frameArgument(globalObject, scope, args[0]);
     if (!frame)
         return { };
@@ -340,10 +330,10 @@ JSObject* createFrameModule(JSGlobalObject* globalObject)
     JSObject* module = newBuiltinModule(globalObject, "_frame"_s);
     JSObject* ns = module;
     ns->putDirect(vm, Identifier::fromString(vm, "frame"_s), globalObject->pyRealm()->typeFrame());
-    addFunction(globalObject, ns, "variable_names"_s, frameVariableNames);
-    addFunction(globalObject, ns, "get_variable"_s, frameGetVariable);
-    addFunction(globalObject, ns, "set_variable"_s, frameSetVariable);
-    addFunction(globalObject, ns, "extra_locals"_s, frameExtraLocals);
+    addFunction(globalObject, ns, "variable_names"_s, frameVariableNames, 0, "($module, frame, /)"_s);
+    addFunction(globalObject, ns, "get_variable"_s, frameGetVariable, 0, "($module, frame, index, default, /)"_s);
+    addFunction(globalObject, ns, "set_variable"_s, frameSetVariable, 0, "($module, frame, index, value, /)"_s);
+    addFunction(globalObject, ns, "extra_locals"_s, frameExtraLocals, 0, "($module, frame, create, /)"_s);
     return module;
 }
 

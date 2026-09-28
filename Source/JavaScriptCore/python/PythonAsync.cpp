@@ -184,8 +184,6 @@ PYTHON_NATIVE(coroutineSend)
 PYTHON_NATIVE(coroutineThrow)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "throw"_s, 2, 4))
-        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(generatorThrow(globalObject, generatorOfSelf(globalObject, args[0]), exception)));
@@ -322,8 +320,6 @@ static JSValue asendThrowImpl(JSGlobalObject* globalObject, PyNativeObject* self
 PYTHON_NATIVE(asendThrow)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "throw"_s, 2, 4))
-        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(asendThrowImpl(globalObject, asNative(args[0]), exception)));
@@ -463,8 +459,6 @@ static JSValue athrowThrowImpl(JSGlobalObject* globalObject, PyNativeObject* sel
 PYTHON_NATIVE(athrowThrow)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "throw"_s, 2, 4))
-        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(athrowThrowImpl(globalObject, asNative(args[0]), exception)));
@@ -488,16 +482,12 @@ PYTHON_NATIVE(asyncGeneratorANext)
 PYTHON_NATIVE(asyncGeneratorASend)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "asend"_s, 2, 2))
-        return { };
     return JSValue::encode(newASend(globalObject, args[0], args[1]));
 }
 
 PYTHON_NATIVE(asyncGeneratorAThrow)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "athrow"_s, 2, 4))
-        return { };
     JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, args[0], exception, jsNumber(AwaitableState::Init)));
@@ -513,8 +503,6 @@ PYTHON_NATIVE(asyncGeneratorAClose)
 PYTHON_NATIVE(builtinAIter)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "aiter"_s, 1, 1))
-        return { };
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_aiter, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -531,8 +519,6 @@ PYTHON_NATIVE(builtinAIter)
 PYTHON_NATIVE(builtinANext)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "anext"_s, 1, 2))
-        return { };
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_anext, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -595,7 +581,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
     addMethods(globalObject, realm->typeCoroutine(), {
         { "__await__"_s, coroutineAwait },
         { "send"_s, coroutineSend },
-        { "throw"_s, coroutineThrow },
+        { "throw"_s, coroutineThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, coroutineClose },
         { "__repr__"_s, nativeRepr },
     });
@@ -603,14 +589,14 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, coroutineSend },
         { "send"_s, coroutineSend },
-        { "throw"_s, coroutineThrow },
+        { "throw"_s, coroutineThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, coroutineClose },
     });
     addMethods(globalObject, realm->typeAsyncGenerator(), {
         { "__aiter__"_s, nativeSelf },
         { "__anext__"_s, asyncGeneratorANext },
         { "asend"_s, asyncGeneratorASend },
-        { "athrow"_s, asyncGeneratorAThrow },
+        { "athrow"_s, asyncGeneratorAThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "aclose"_s, asyncGeneratorAClose },
         { "__repr__"_s, nativeRepr },
     });
@@ -619,7 +605,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, asendSend },
         { "send"_s, asendSend },
-        { "throw"_s, asendThrow },
+        { "throw"_s, asendThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, asendClose },
     });
     addMethods(globalObject, realm->typeAsyncGeneratorAThrow(), {
@@ -627,7 +613,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, athrowSend },
         { "send"_s, athrowSend },
-        { "throw"_s, athrowThrow },
+        { "throw"_s, athrowThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, athrowClose },
     });
     addMethods(globalObject, realm->typeANextAwaitable(), {
@@ -635,7 +621,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, anextProxy, Kind::Method, 0 },
         { "send"_s, anextProxy, Kind::Method, 1 },
-        { "throw"_s, anextProxy, Kind::Method, 2 },
+        { "throw"_s, anextProxy, Kind::Method, 2, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, anextProxy, Kind::Method, 3 },
     });
     addFunction(globalObject, builtins, "aiter"_s, builtinAIter);

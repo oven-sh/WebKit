@@ -711,8 +711,6 @@ PYTHON_NATIVE(builtinPrint)
 PYTHON_NATIVE(builtinRepr_)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "repr"_s, 1, 1))
-        return { };
     String text = repr(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsString(vm, text));
@@ -721,8 +719,6 @@ PYTHON_NATIVE(builtinRepr_)
 PYTHON_NATIVE(builtinAscii)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "ascii"_s, 1, 1))
-        return { };
     String text = repr(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     StringBuilder builder;
@@ -742,8 +738,6 @@ PYTHON_NATIVE(builtinAscii)
 PYTHON_NATIVE(builtinLen)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "len"_s, 1, 1))
-        return { };
     int64_t size = length(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, size)));
@@ -752,8 +746,6 @@ PYTHON_NATIVE(builtinLen)
 PYTHON_NATIVE(builtinHash_)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "hash"_s, 1, 1))
-        return { };
     int64_t result = hash(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, result)));
@@ -762,8 +754,6 @@ PYTHON_NATIVE(builtinHash_)
 PYTHON_NATIVE(builtinId)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "id"_s, 1, 1))
-        return { };
     // What is not a cell has no address, so its bits will have to do.
     int64_t identity = args[0].isCell() ? static_cast<int64_t>(std::bit_cast<uintptr_t>(args[0].asCell())) : static_cast<int64_t>(JSValue::encode(args[0]) & 0x7FFFFFFFFFFFFFFFLL);
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, identity)));
@@ -772,16 +762,12 @@ PYTHON_NATIVE(builtinId)
 PYTHON_NATIVE(builtinCallable)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "callable"_s, 1, 1))
-        return { };
     return JSValue::encode(jsBoolean(isCallable(globalObject, args[0])));
 }
 
 PYTHON_NATIVE(builtinFormat_)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "format"_s, 1, 2))
-        return { };
     String specification = emptyString();
     if (args.size() > 1) {
         if (!args[1].isString())
@@ -805,8 +791,6 @@ static std::optional<Identifier> attributeNameArgument(JSGlobalObject* globalObj
 PYTHON_NATIVE(builtinGetAttr)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "getattr"_s, 2, 3))
-        return { };
     auto name = attributeNameArgument(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (args.size() == 2)
@@ -819,8 +803,6 @@ PYTHON_NATIVE(builtinGetAttr)
 PYTHON_NATIVE(builtinHasAttr)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "hasattr"_s, 2, 2))
-        return { };
     auto name = attributeNameArgument(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue value = getAttributeIfPresent(globalObject, args[0], *name);
@@ -831,8 +813,6 @@ PYTHON_NATIVE(builtinHasAttr)
 PYTHON_NATIVE(builtinSetAttr)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "setattr"_s, 3, 3))
-        return { };
     auto name = attributeNameArgument(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
@@ -843,8 +823,6 @@ PYTHON_NATIVE(builtinSetAttr)
 PYTHON_NATIVE(builtinDelAttr)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "delattr"_s, 2, 2))
-        return { };
     auto name = attributeNameArgument(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
@@ -855,24 +833,18 @@ PYTHON_NATIVE(builtinDelAttr)
 PYTHON_NATIVE(builtinIsInstance)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "isinstance"_s, 2, 2))
-        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isInstanceOf(globalObject, args[0], args[1]))));
 }
 
 PYTHON_NATIVE(builtinIsSubclass)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "issubclass"_s, 2, 2))
-        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isSubclassOf(globalObject, args[0], args[1]))));
 }
 
 PYTHON_NATIVE(builtinDir)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "dir"_s, 0, 1))
-        return { };
     if (!args.size()) {
         JSValue locals = localsOfFrame(globalObject, callerOf(callFrame));
         MarkedArgumentBuffer keys;
@@ -900,8 +872,6 @@ PYTHON_NATIVE(builtinDir)
 PYTHON_NATIVE(builtinVars)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "vars"_s, 0, 1))
-        return { };
     if (!args.size())
         return JSValue::encode(localsOfFrame(globalObject, callerOf(callFrame)));
     JSValue dict = getAttributeIfPresent(globalObject, args[0], names.dunder_dict);
@@ -916,8 +886,6 @@ PYTHON_NATIVE(builtinVars)
 PYTHON_NATIVE(builtinIter)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "iter"_s, 1, 2))
-        return { };
     if (args.size() == 1)
         RELEASE_AND_RETURN(scope, JSValue::encode(getIterator(globalObject, args[0])));
     if (!isCallable(globalObject, args[0]))
@@ -928,8 +896,6 @@ PYTHON_NATIVE(builtinIter)
 PYTHON_NATIVE(builtinNext)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "next"_s, 1, 2))
-        return { };
     // What a generator returns is carried by the StopIteration.
     if (args[0].isCell() && args[0].asCell()->type() == JSGeneratorType && args.size() == 1 && generatorKindOf(globalObject, asGenerator(args[0])) == GeneratorKind::Generator)
         RELEASE_AND_RETURN(scope, JSValue::encode(generatorSend(globalObject, uncheckedDowncast<JSGenerator>(args[0].asCell()), jsUndefined())));
@@ -946,8 +912,6 @@ PYTHON_NATIVE(builtinAnyOrAll)
 {
     auto isAny = unpack<bool>(callFrame, 0);
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, isAny ? "any"_s : "all"_s, 1, 1))
-        return { };
     bool result = !isAny;
     forEach(globalObject, args[0], [&] (JSValue value) {
         if (isTrue(globalObject, value) != isAny)
@@ -1054,8 +1018,6 @@ PYTHON_NATIVE(builtinSorted)
 PYTHON_NATIVE(builtinAbs)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "abs"_s, 1, 1))
-        return { };
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_abs, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1083,8 +1045,6 @@ PYTHON_NATIVE(builtinRound)
 PYTHON_NATIVE(builtinDivmod)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "divmod"_s, 2, 2))
-        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(divmod(globalObject, args[0], args[1])));
 }
 
@@ -1099,8 +1059,6 @@ PYTHON_NATIVE(builtinPow)
 PYTHON_NATIVE(builtinChr)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "chr"_s, 1, 1))
-        return { };
     auto code = toIndex(globalObject, args[0], true);
     RETURN_IF_EXCEPTION(scope, { });
     if (*code < 0 || *code > 0x10FFFF)
@@ -1113,8 +1071,6 @@ PYTHON_NATIVE(builtinChr)
 PYTHON_NATIVE(builtinOrd)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "ord"_s, 1, 1))
-        return { };
     if (!args[0].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("ord() expected string of length 1, but "_s, typeName(globalObject, args[0]), " found"_s)));
     unsigned count = stringLength(globalObject, asString(args[0]));
@@ -1129,8 +1085,6 @@ PYTHON_NATIVE(builtinInRadix)
 {
     auto radix = unpack<unsigned>(callFrame, 0);
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, radix == 2 ? "bin"_s : radix == 8 ? "oct"_s : "hex"_s, 1, 1))
-        return { };
     Number number = classify(args[0]);
     if (!number.isInt()) {
         JSValue self;
@@ -1196,16 +1150,16 @@ void initializeBuiltinFunctions(JSGlobalObject* globalObject, JSObject* namespac
     add("id"_s, builtinId);
     add("callable"_s, builtinCallable);
     add("format"_s, builtinFormat_);
-    add("getattr"_s, builtinGetAttr);
+    addFunction(globalObject, namespaceObject, "getattr"_s, builtinGetAttr, 0, "(object, name, default=None, /)"_s);
     add("hasattr"_s, builtinHasAttr);
     add("setattr"_s, builtinSetAttr);
     add("delattr"_s, builtinDelAttr);
     add("isinstance"_s, builtinIsInstance);
     add("issubclass"_s, builtinIsSubclass);
-    add("dir"_s, builtinDir);
-    add("vars"_s, builtinVars);
-    add("iter"_s, builtinIter);
-    add("next"_s, builtinNext);
+    addFunction(globalObject, namespaceObject, "dir"_s, builtinDir, 0, "(object=None, /)"_s);
+    addFunction(globalObject, namespaceObject, "vars"_s, builtinVars, 0, "(object=None, /)"_s);
+    addFunction(globalObject, namespaceObject, "iter"_s, builtinIter, 0, "(object, sentinel=None, /)"_s);
+    addFunction(globalObject, namespaceObject, "next"_s, builtinNext, 0, "(iterator, default=None, /)"_s);
     add("any"_s, builtinAnyOrAll, pack(true));
     add("all"_s, builtinAnyOrAll, pack(false));
     add("sum"_s, builtinSum);
@@ -1222,7 +1176,7 @@ void initializeBuiltinFunctions(JSGlobalObject* globalObject, JSObject* namespac
     add("bin"_s, builtinInRadix, pack(2));
     add("oct"_s, builtinInRadix, pack(8));
     add("hex"_s, builtinInRadix, pack(16));
-    add("__build_class__"_s, builtinBuildClass);
+    addFunction(globalObject, namespaceObject, "__build_class__"_s, builtinBuildClass, 0, "(*args, **kwargs)"_s);
     add("__import__"_s, builtinImport);
 }
 

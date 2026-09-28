@@ -175,8 +175,6 @@ PYTHON_NATIVE(strStr)
 PYTHON_NATIVE(strFormatMethod)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__format__"_s, 2, 2))
-        return { };
     if (!args[1].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], asString(args[1])->value(globalObject))));
@@ -187,8 +185,6 @@ PYTHON_NATIVE(strFormatMethod)
 PYTHON_NATIVE(strJoin)
 {
     STR_PROLOGUE("join");
-    if (!args.check(globalObject, scope, "join"_s, 2, 2))
-        return { };
     MarkedArgumentBuffer items;
     collect(globalObject, args[1], items);
     if (scope.exception()) {
@@ -332,8 +328,6 @@ PYTHON_NATIVE(strPartition)
 {
     auto fromRight = unpack<bool>(callFrame, 0);
     STR_PROLOGUE("partition");
-    if (!args.check(globalObject, scope, "partition"_s, 2, 2))
-        return { };
     String separator = stringArgument(globalObject, scope, args[1], "partition"_s, 1);
     RETURN_IF_EXCEPTION(scope, { });
     if (separator.isEmpty())
@@ -353,8 +347,6 @@ PYTHON_NATIVE(strStrip)
     auto left = unpack<bool>(callFrame, 0);
     auto right = unpack<bool>(callFrame, 1);
     STR_PROLOGUE("strip");
-    if (!args.check(globalObject, scope, "strip"_s, 1, 2))
-        return { };
     StringView view = self;
     String characters;
     bool hasCharacters = args.size() > 1 && !isNone(args[1]);
@@ -383,8 +375,6 @@ PYTHON_NATIVE(strJustify)
 {
     auto align = unpack<char>(callFrame, 0);
     STR_PROLOGUE("center");
-    if (!args.check(globalObject, scope, "center"_s, 2, 3))
-        return { };
     auto width = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     String fill = " "_s;
@@ -412,8 +402,6 @@ PYTHON_NATIVE(strJustify)
 PYTHON_NATIVE(strZfill)
 {
     STR_PROLOGUE("zfill");
-    if (!args.check(globalObject, scope, "zfill"_s, 2, 2))
-        return { };
     auto width = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t length = characterCount(self);
@@ -461,8 +449,6 @@ PYTHON_NATIVE(strRemoveAffix)
 {
     auto prefix = unpack<bool>(callFrame, 0);
     STR_PROLOGUE("removeprefix");
-    if (!args.check(globalObject, scope, prefix ? "removeprefix"_s : "removesuffix"_s, 2, 2))
-        return { };
     String affix = stringArgument(globalObject, scope, args[1], prefix ? "removeprefix"_s : "removesuffix"_s, 1);
     RETURN_IF_EXCEPTION(scope, { });
     if (!affix.isEmpty() && (prefix ? self.startsWith(affix) : self.endsWith(affix)))
@@ -623,8 +609,6 @@ PYTHON_NATIVE(strStartsOrEndsWith)
     auto atStart = unpack<bool>(callFrame, 0);
     STR_PROLOGUE("startswith");
     ASCIILiteral method = atStart ? "startswith"_s : "endswith"_s;
-    if (!args.check(globalObject, scope, method, 2, 4))
-        return { };
     unsigned start;
     unsigned end;
     sliceArguments(globalObject, scope, self, args.at(2), args.at(3), start, end);
@@ -658,8 +642,6 @@ PYTHON_NATIVE(strFind)
     auto raises = unpack<bool>(callFrame, 1);
     STR_PROLOGUE("find");
     ASCIILiteral method = raises ? (fromRight ? "rindex"_s : "index"_s) : (fromRight ? "rfind"_s : "find"_s);
-    if (!args.check(globalObject, scope, method, 2, 4))
-        return { };
     String needle = stringArgument(globalObject, scope, args[1], method, 1);
     RETURN_IF_EXCEPTION(scope, { });
     unsigned start;
@@ -686,8 +668,6 @@ PYTHON_NATIVE(strFind)
 PYTHON_NATIVE(strCount)
 {
     STR_PROLOGUE("count");
-    if (!args.check(globalObject, scope, "count"_s, 2, 4))
-        return { };
     String needle = stringArgument(globalObject, scope, args[1], "count"_s, 1);
     RETURN_IF_EXCEPTION(scope, { });
     unsigned start;
@@ -1064,8 +1044,6 @@ PYTHON_NATIVE(strFormat)
 PYTHON_NATIVE(strFormatMap)
 {
     STR_PROLOGUE("format_map");
-    if (!args.check(globalObject, scope, "str.format_map"_s, 2, 2))
-        return { };
     String result = Formatter(globalObject, args, args[1]).format(self);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(toJS(vm, result));

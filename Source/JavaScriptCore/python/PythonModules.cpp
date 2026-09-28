@@ -131,8 +131,6 @@ PYTHON_NATIVE(mathFunction)
     };
     auto function = functions[unpack<unsigned>(callFrame, 0)];
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "math function"_s, 1, 1))
-        return { };
     auto x = toDouble(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     double result = function(*x);
@@ -152,8 +150,6 @@ PYTHON_NATIVE(mathFunctionOfTwo)
     };
     auto function = functions[unpack<unsigned>(callFrame, 0)];
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "math function"_s, 2, 2))
-        return { };
     auto x = toDouble(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     auto y = toDouble(globalObject, args[1]);
@@ -167,8 +163,6 @@ PYTHON_NATIVE(mathFunctionOfTwo)
 PYTHON_NATIVE(mathSqrt)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "math.sqrt"_s, 1, 1))
-        return { };
     auto x = toDouble(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*x < 0)
@@ -180,8 +174,6 @@ PYTHON_NATIVE(mathFloorOrCeil)
 {
     auto isFloor = unpack<bool>(callFrame, 0);
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, isFloor ? "math.floor"_s : "math.ceil"_s, 1, 1))
-        return { };
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[0], isFloor ? names.dunder_floor : names.dunder_ceil, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -194,8 +186,6 @@ PYTHON_NATIVE(mathFloorOrCeil)
 PYTHON_NATIVE(mathLog)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "log"_s, 1, 2))
-        return { };
     auto x = toDouble(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*x <= 0)
@@ -215,8 +205,6 @@ PYTHON_NATIVE(mathClassify)
 {
     auto test = unpack<int>(callFrame, 0);
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "math function"_s, 1, 1))
-        return { };
     auto x = toDouble(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsBoolean(!test ? std::isnan(*x) : test == 1 ? std::isinf(*x) : std::isfinite(*x)));
@@ -252,8 +240,6 @@ PYTHON_NATIVE(mathGcd)
 PYTHON_NATIVE(mathFactorial)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "math.factorial"_s, 1, 1))
-        return { };
     auto n = toIndex(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*n < 0)
@@ -269,8 +255,6 @@ PYTHON_NATIVE(mathFactorial)
 PYTHON_NATIVE(mathTrunc)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "math.trunc"_s, 1, 1))
-        return { };
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[0], names.dunder_trunc, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -294,8 +278,6 @@ PYTHON_NATIVE(mathHypot)
 PYTHON_NATIVE(mathIsqrt)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "math.isqrt"_s, 1, 1))
-        return { };
     auto n = toIndex(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*n < 0)
@@ -324,7 +306,7 @@ static JSObject* createMathModule(JSGlobalObject* globalObject)
     add("floor"_s, mathFloorOrCeil, pack(true));
     add("ceil"_s, mathFloorOrCeil, pack(false));
     add("trunc"_s, mathTrunc);
-    add("log"_s, mathLog);
+    addFunction(globalObject, ns, "log"_s, mathLog, 0, "($module, x, base=None, /)"_s);
     unsigned index = 0;
 #define ADD(name, function) add(#name ""_s, mathFunction, index++);
     FOR_EACH_MATH_FUNCTION(ADD)
@@ -447,8 +429,8 @@ static JSObject* createStandardStream(JSGlobalObject* globalObject, int descript
 {
     PyRealm* realm = globalObject->pyRealm();
     JSObject* stream = PyInstance::create(globalObject->vm(), realm->typeObject()->instanceStructure());
-    addFunction(globalObject, stream, "write"_s, standardStreamWrite, pack(descriptor));
-    addFunction(globalObject, stream, "flush"_s, returnNone);
+    addFunction(globalObject, stream, "write"_s, standardStreamWrite, pack(descriptor), "(text, /)"_s);
+    addFunction(globalObject, stream, "flush"_s, returnNone, 0, "()"_s);
     return stream;
 }
 
@@ -456,8 +438,6 @@ static JSObject* createStandardStream(JSGlobalObject* globalObject, int descript
 PYTHON_NATIVE(sysDisplayHook)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "displayhook"_s, 1, 1))
-        return { };
     if (isNone(args[0]))
         RETURN_NONE();
     // It is unset meanwhile, so that showing it cannot come back here with it.

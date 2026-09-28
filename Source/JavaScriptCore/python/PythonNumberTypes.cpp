@@ -213,8 +213,6 @@ PYTHON_NATIVE(numberRound)
 PYTHON_NATIVE(numberFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__format__"_s, 2, 2))
-        return { };
     if (!args[1].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinFormat(globalObject, args[0], asString(args[1])->value(globalObject))));
@@ -432,8 +430,6 @@ static std::optional<double> parseFloat(StringView text)
 PYTHON_NATIVE(floatNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "float"_s, 1, 2))
-        return { };
     auto* type = uncheckedDowncast<PyType>(args[0].asCell());
     JSValue value = args.at(1);
     double result = 0;
@@ -501,8 +497,6 @@ PYTHON_NATIVE(floatHex)
 PYTHON_NATIVE(floatFromHex)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "fromhex"_s, 2, 2))
-        return { };
     JSValue argument = unbox(args[1]);
     if (!argument.isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, "bad argument type for built-in operation"_s));
@@ -649,8 +643,6 @@ PYTHON_NATIVE(floatFromHex)
 PYTHON_NATIVE(floatFromNumber)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "from_number"_s, 2, 2))
-        return { };
     auto converted = toDouble(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(floatOfClass(globalObject, args[0], *converted)));
@@ -660,8 +652,6 @@ PYTHON_NATIVE(floatFromNumber)
 PYTHON_NATIVE(floatGetFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__getformat__"_s, 2, 2))
-        return { };
     if (!args[1].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__getformat__() argument must be str, not "_s, typeName(globalObject, args[1]))));
     String kind = asString(args[1])->value(globalObject);
@@ -718,8 +708,6 @@ PYTHON_NATIVE(floatAsIntegerRatio)
 PYTHON_NATIVE(boolNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "bool"_s, 1, 2))
-        return { };
     if (args.size() == 1)
         return JSValue::encode(jsBoolean(false));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isTrue(globalObject, args[1]))));

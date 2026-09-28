@@ -364,8 +364,6 @@ JSValue localsOfFrame(JSGlobalObject* globalObject, CallFrame* frame)
 PYTHON_NATIVE(builtinLocals)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "locals"_s, 0, 0))
-        return { };
     JSValue locals = localsOfFrame(globalObject, callerOf(callFrame));
     if (!locals)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, "frame does not exist"_s));
@@ -375,8 +373,6 @@ PYTHON_NATIVE(builtinLocals)
 PYTHON_NATIVE(builtinGlobals)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "globals"_s, 0, 0))
-        return { };
     JSObject* globals = globalsOfFrame(globalObject, callerOf(callFrame));
     if (!globals)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, "frame does not exist"_s));

@@ -432,8 +432,6 @@ PYTHON_NATIVE(complexRepr)
 PYTHON_NATIVE(complexFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__format__"_s, 2, 2))
-        return { };
     if (!args[1].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
     Complex self = valueOf(tryComplex(args[0]));

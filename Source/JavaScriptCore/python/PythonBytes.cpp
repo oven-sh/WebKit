@@ -445,8 +445,6 @@ static int hexDigit(char16_t c)
 PYTHON_NATIVE(bytesFromHex)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "fromhex"_s, 2, 2))
-        return { };
     String text;
     if (args[1].isString())
         text = asString(args[1])->value(globalObject);
@@ -520,8 +518,6 @@ PYTHON_NATIVE(bytesIter)
 PYTHON_NATIVE(bytesGetItem)
 {
     BYTES_PROLOGUE("__getitem__");
-    if (!args.check(globalObject, scope, "__getitem__"_s, 2, 2))
-        return { };
     ASCIILiteral typeText = isBytes(selfValue) ? "byte"_s : "bytearray"_s;
     if (auto* slice = trySlice(args[1])) {
         auto indices = slice->indices(globalObject, content.size());
@@ -548,8 +544,6 @@ PYTHON_NATIVE(bytesGetItem)
 PYTHON_NATIVE(bytesContains)
 {
     BYTES_PROLOGUE("__contains__");
-    if (!args.check(globalObject, scope, "__contains__"_s, 2, 2))
-        return { };
     ByteVector needle;
     if (auto buffer = tryBufferOf(args[1]))
         needle.append(*buffer);
@@ -639,8 +633,6 @@ PYTHON_NATIVE(bytesFind)
     bool fromRight = unpack<bool>(callFrame, 0);
     bool raises = unpack<bool>(callFrame, 1);
     BYTES_PROLOGUE("find");
-    if (!args.check(globalObject, scope, raises ? (fromRight ? "rindex"_s : "index"_s) : (fromRight ? "rfind"_s : "find"_s), 2, 4))
-        return { };
     ByteVector needle;
     needleFrom(globalObject, args[1], needle);
     RETURN_IF_EXCEPTION(scope, { });
@@ -662,8 +654,6 @@ PYTHON_NATIVE(bytesFind)
 PYTHON_NATIVE(bytesCount)
 {
     BYTES_PROLOGUE("count");
-    if (!args.check(globalObject, scope, "count"_s, 2, 4))
-        return { };
     ByteVector needle;
     needleFrom(globalObject, args[1], needle);
     RETURN_IF_EXCEPTION(scope, { });
@@ -689,8 +679,6 @@ PYTHON_NATIVE(bytesStartsOrEndsWith)
     bool atStart = unpack<bool>(callFrame, 0);
     BYTES_PROLOGUE("startswith");
     ASCIILiteral method = atStart ? "startswith"_s : "endswith"_s;
-    if (!args.check(globalObject, scope, method, 2, 4))
-        return { };
     size_t start;
     size_t end;
     bool isBeyond;
@@ -768,8 +756,6 @@ static bool isByteSpace(uint8_t byte) { return byte == ' ' || (byte >= '\t' && b
 PYTHON_NATIVE(bytesJoin)
 {
     BYTES_PROLOGUE("join");
-    if (!args.check(globalObject, scope, "join"_s, 2, 2))
-        return { };
     MarkedArgumentBuffer items;
     collect(globalObject, args[1], items);
     if (scope.exception()) {
@@ -909,8 +895,6 @@ PYTHON_NATIVE(bytesPartition)
 {
     bool fromRight = unpack<bool>(callFrame, 0);
     BYTES_PROLOGUE("partition");
-    if (!args.check(globalObject, scope, fromRight ? "rpartition"_s : "partition"_s, 2, 2))
-        return { };
     auto separator = bufferOf(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (separator->empty())
@@ -931,8 +915,6 @@ PYTHON_NATIVE(bytesStrip)
     bool left = unpack<bool>(callFrame, 0);
     bool right = unpack<bool>(callFrame, 1);
     BYTES_PROLOGUE("strip");
-    if (!args.check(globalObject, scope, "strip"_s, 1, 2))
-        return { };
     std::optional<std::span<const uint8_t>> set;
     if (args.size() > 1 && !isNone(args[1])) {
         set = bufferOf(globalObject, args[1]);
@@ -958,8 +940,6 @@ PYTHON_NATIVE(bytesJustify)
     char align = unpack<char>(callFrame, 0);
     BYTES_PROLOGUE("center");
     ASCIILiteral method = align == '<' ? "ljust"_s : align == '>' ? "rjust"_s : "center"_s;
-    if (!args.check(globalObject, scope, method, 2, 3))
-        return { };
     auto width = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     uint8_t fill = ' ';
@@ -985,8 +965,6 @@ PYTHON_NATIVE(bytesJustify)
 PYTHON_NATIVE(bytesZfill)
 {
     BYTES_PROLOGUE("zfill");
-    if (!args.check(globalObject, scope, "zfill"_s, 2, 2))
-        return { };
     auto width = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     ByteVector result;
@@ -1030,8 +1008,6 @@ PYTHON_NATIVE(bytesRemoveAffix)
 {
     bool isPrefix = unpack<bool>(callFrame, 0);
     BYTES_PROLOGUE("removeprefix");
-    if (!args.check(globalObject, scope, isPrefix ? "removeprefix"_s : "removesuffix"_s, 2, 2))
-        return { };
     auto affix = bufferOf(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     auto result = content;
@@ -1280,8 +1256,6 @@ PYTHON_NATIVE(bytesTranslate)
 PYTHON_NATIVE(bytesMakeTranslation)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "maketrans"_s, 2, 2))
-        return { };
     auto from = bufferOf(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     auto to = bufferOf(globalObject, args[1]);
@@ -1388,8 +1362,6 @@ PYTHON_NATIVE(byteArraySetItem)
 PYTHON_NATIVE(byteArrayAppend)
 {
     BYTES_PROLOGUE("append");
-    if (!args.check(globalObject, scope, "append"_s, 2, 2))
-        return { };
     auto byte = byteFrom(globalObject, args[1], "byte must be in range(0, 256)"_s);
     RETURN_IF_EXCEPTION(scope, { });
     size_t length = self->length();
@@ -1402,8 +1374,6 @@ PYTHON_NATIVE(byteArrayAppend)
 PYTHON_NATIVE(byteArrayExtend)
 {
     BYTES_PROLOGUE("extend");
-    if (!args.check(globalObject, scope, "extend"_s, 2, 2))
-        return { };
     ByteVector added;
     bytesToInsert(globalObject, args[1], added, "can't extend bytearray with "_s);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1439,8 +1409,6 @@ PYTHON_NATIVE(byteArrayInPlaceMultiply)
 PYTHON_NATIVE(byteArrayInsert)
 {
     BYTES_PROLOGUE("insert");
-    if (!args.check(globalObject, scope, "insert"_s, 3, 3))
-        return { };
     auto index = toIndex(globalObject, args[1], true);
     RETURN_IF_EXCEPTION(scope, { });
     auto byte = byteFrom(globalObject, args[2], "byte must be in range(0, 256)"_s);
@@ -1455,8 +1423,6 @@ PYTHON_NATIVE(byteArrayInsert)
 PYTHON_NATIVE(byteArrayPop)
 {
     BYTES_PROLOGUE("pop");
-    if (!args.check(globalObject, scope, "pop"_s, 1, 2))
-        return { };
     int64_t length = self->length();
     if (!length)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop from empty bytearray"_s));
@@ -1477,8 +1443,6 @@ PYTHON_NATIVE(byteArrayPop)
 PYTHON_NATIVE(byteArrayRemove)
 {
     BYTES_PROLOGUE("remove");
-    if (!args.check(globalObject, scope, "remove"_s, 2, 2))
-        return { };
     auto byte = byteFrom(globalObject, args[1], "byte must be in range(0, 256)"_s);
     RETURN_IF_EXCEPTION(scope, { });
     size_t found = findIn(spanOf(self), std::span<const uint8_t>(&*byte, 1));
@@ -1514,8 +1478,6 @@ PYTHON_NATIVE(byteArrayCopy)
 PYTHON_NATIVE(byteArrayResize)
 {
     BYTES_PROLOGUE("resize");
-    if (!args.check(globalObject, scope, "resize"_s, 2, 2))
-        return { };
     auto size = toIndex(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (*size < 0)

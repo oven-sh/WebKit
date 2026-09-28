@@ -60,8 +60,6 @@ PYTHON_NATIVE(listNew)
 PYTHON_NATIVE(listInit)
 {
     LIST_PROLOGUE("__init__");
-    if (!args.check(globalObject, scope, "list"_s, 1, 2))
-        return { };
     self->setLength(globalObject, 0, true);
     RETURN_IF_EXCEPTION(scope, { });
     if (args.size() > 1) {
@@ -74,8 +72,6 @@ PYTHON_NATIVE(listInit)
 PYTHON_NATIVE(listAppendMethod)
 {
     LIST_PROLOGUE("append");
-    if (!args.check(globalObject, scope, "list.append"_s, 2, 2))
-        return { };
     scope.release();
     listAppend(globalObject, self, args[1]);
     RETURN_NONE();
@@ -84,8 +80,6 @@ PYTHON_NATIVE(listAppendMethod)
 PYTHON_NATIVE(listExtendMethod)
 {
     LIST_PROLOGUE("extend");
-    if (!args.check(globalObject, scope, "list.extend"_s, 2, 2))
-        return { };
     scope.release();
     listExtend(globalObject, self, args[1]);
     RETURN_NONE();
@@ -94,8 +88,6 @@ PYTHON_NATIVE(listExtendMethod)
 PYTHON_NATIVE(listInsertMethod)
 {
     LIST_PROLOGUE("insert");
-    if (!args.check(globalObject, scope, "insert"_s, 3, 3))
-        return { };
     auto index = toIndex(globalObject, args[1], true);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t length = self->length();
@@ -108,8 +100,6 @@ PYTHON_NATIVE(listInsertMethod)
 PYTHON_NATIVE(listPop)
 {
     LIST_PROLOGUE("pop");
-    if (!args.check(globalObject, scope, "pop"_s, 1, 2))
-        return { };
     int64_t length = self->length();
     if (!length)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::IndexError, "pop from empty list"_s));
@@ -130,8 +120,6 @@ PYTHON_NATIVE(listPop)
 PYTHON_NATIVE(listRemove)
 {
     LIST_PROLOGUE("remove");
-    if (!args.check(globalObject, scope, "list.remove"_s, 2, 2))
-        return { };
     for (unsigned i = 0; i < self->length(); ++i) {
         bool same = isEqual(globalObject, listGet(self, i), args[1]);
         RETURN_IF_EXCEPTION(scope, { });
@@ -178,8 +166,6 @@ static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeAr
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!args.check(globalObject, scope, "index"_s, 2, 4))
-        return { };
     auto resolve = [&] (JSValue value, int64_t whenAbsent) -> int64_t {
         if (!value)
             return whenAbsent;
@@ -205,8 +191,6 @@ static EncodedJSValue sequenceCount(JSGlobalObject* globalObject, const NativeAr
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!args.check(globalObject, scope, "count"_s, 2, 2))
-        return { };
     int32_t count = 0;
     for (unsigned i = 0; i < length; ++i) {
         bool same = isEqual(globalObject, get(i), args[1]);
@@ -305,8 +289,6 @@ PYTHON_NATIVE(listReversed)
 PYTHON_NATIVE(tupleNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "tuple"_s, 1, 2))
-        return { };
     PyType* type = asType(args[0]);
     if (type == realm->typeTuple()) {
         if (args.size() == 1)
@@ -441,8 +423,6 @@ PYTHON_NATIVE(dictUpdateMethod)
 PYTHON_NATIVE(dictGet)
 {
     DICT_PROLOGUE("get");
-    if (!args.check(globalObject, scope, "get"_s, 2, 3))
-        return { };
     JSValue value = self->get(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (value)
@@ -453,8 +433,6 @@ PYTHON_NATIVE(dictGet)
 PYTHON_NATIVE(dictSetDefault)
 {
     DICT_PROLOGUE("setdefault");
-    if (!args.check(globalObject, scope, "setdefault"_s, 2, 3))
-        return { };
     JSValue value = self->get(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (value)
@@ -468,8 +446,6 @@ PYTHON_NATIVE(dictSetDefault)
 PYTHON_NATIVE(dictPop)
 {
     DICT_PROLOGUE("pop");
-    if (!args.check(globalObject, scope, "pop"_s, 2, 3))
-        return { };
     JSValue value = self->remove(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (value)
@@ -508,8 +484,6 @@ PYTHON_NATIVE(dictCopy)
 PYTHON_NATIVE(dictFromKeys)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "fromkeys"_s, 2, 3))
-        return { };
     JSValue result = call(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue value = args.size() > 2 ? args[2] : jsUndefined();
@@ -614,8 +588,6 @@ static JSValue mappingOfProxy(JSValue proxy) { return uncheckedDowncast<PyNative
 PYTHON_NATIVE(proxyNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "mappingproxy"_s, 2, 2))
-        return { };
     if (!typeOf(globalObject, args[1])->lookup(vm, names.dunder_getitem) || isList(args[1]) || isTuple(args[1]))
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, args[1]))));
     return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::MappingProxy, args[1]));
@@ -705,8 +677,6 @@ PYTHON_NATIVE(setNew)
 PYTHON_NATIVE(setInit)
 {
     SET_PROLOGUE("__init__");
-    if (!args.check(globalObject, scope, "set"_s, 1, 2))
-        return { };
     self->clear(vm);
     if (args.size() > 1) {
         forEach(globalObject, args[1], [&] (JSValue value) {
@@ -719,16 +689,12 @@ PYTHON_NATIVE(setInit)
 PYTHON_NATIVE(frozenSetNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "frozenset"_s, 1, 2))
-        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(setFromIterable(globalObject, asType(args[0])->instanceStructure(), args.at(1))));
 }
 
 PYTHON_NATIVE(setAddMethod)
 {
     SET_PROLOGUE("add");
-    if (!args.check(globalObject, scope, "set.add"_s, 2, 2))
-        return { };
     scope.release();
     self->add(globalObject, args[1]);
     RETURN_NONE();
@@ -738,8 +704,6 @@ PYTHON_NATIVE(setRemove)
 {
     auto raises = unpack<bool>(callFrame, 0);
     SET_PROLOGUE("remove");
-    if (!args.check(globalObject, scope, raises ? "set.remove"_s : "set.discard"_s, 2, 2))
-        return { };
     JSValue removed = self->remove(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (!removed && raises)
@@ -800,8 +764,6 @@ PYTHON_NATIVE(setRelation)
 {
     auto op = unpack<ComparisonOperator>(callFrame, 0);
     SET_PROLOGUE("issubset");
-    if (!args.check(globalObject, scope, "issubset"_s, 2, 2))
-        return { };
     PySet* other = setFromIterable(globalObject, realm->structureFor(BuiltinType::Set), args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(setCompare(globalObject, op, self, other)));
@@ -810,8 +772,6 @@ PYTHON_NATIVE(setRelation)
 PYTHON_NATIVE(setIsDisjoint)
 {
     SET_PROLOGUE("isdisjoint");
-    if (!args.check(globalObject, scope, "isdisjoint"_s, 2, 2))
-        return { };
     bool isDisjoint = true;
     forEach(globalObject, args[1], [&] (JSValue value) {
         int entry = self->find(globalObject, value);
@@ -913,8 +873,6 @@ PYTHON_NATIVE(mapNew)
 PYTHON_NATIVE(filterNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "filter"_s, 3, 3))
-        return { };
     JSValue iterator = getIterator(globalObject, args[2]);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Filter, args[1], iterator));
@@ -923,8 +881,6 @@ PYTHON_NATIVE(filterNew)
 PYTHON_NATIVE(reversedNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "reversed"_s, 2, 2))
-        return { };
     JSValue self;
     JSValue method = lookupSpecial(globalObject, args[1], names.dunder_reversed, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1034,7 +990,7 @@ void initializeContainerTypes(JSGlobalObject* globalObject)
         { "setdefault"_s, dictSetDefault },
         { "pop"_s, dictPop },
         { "popitem"_s, dictPopItem },
-        { "update"_s, dictUpdateMethod },
+        { "update"_s, dictUpdateMethod, Kind::Method, 0, "($self, /, *args, **kwargs)"_s },
         { "clear"_s, dictClear },
         { "copy"_s, dictCopy },
         { "keys"_s, dictView, PyNativeFunction::Kind::Method, pack(BuiltinType::DictKeys) },

@@ -179,16 +179,12 @@ PYTHON_SHARED_NATIVE(nativeLen)
 PYTHON_SHARED_NATIVE(nativeGetItem)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__getitem__"_s, 2, 2))
-        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(builtinGetItem(globalObject, args[0], args[1])));
 }
 
 PYTHON_SHARED_NATIVE(nativeSetItem)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__setitem__"_s, 3, 3))
-        return { };
     scope.release();
     builtinSetItem(globalObject, args[0], args[1], args[2]);
     RETURN_NONE();
@@ -197,8 +193,6 @@ PYTHON_SHARED_NATIVE(nativeSetItem)
 PYTHON_SHARED_NATIVE(nativeDelItem)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__delitem__"_s, 2, 2))
-        return { };
     scope.release();
     builtinSetItem(globalObject, args[0], args[1], JSValue());
     RETURN_NONE();
@@ -207,8 +201,6 @@ PYTHON_SHARED_NATIVE(nativeDelItem)
 PYTHON_SHARED_NATIVE(nativeContains)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__contains__"_s, 2, 2))
-        return { };
     auto result = builtinContains(globalObject, args[0], args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsBoolean(result.value_or(false)));
@@ -404,8 +396,6 @@ static std::optional<Identifier> attributeName(JSGlobalObject* globalObject, Thr
 PYTHON_NATIVE(objectGetAttribute)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__getattribute__"_s, 2, 2))
-        return { };
     auto name = attributeName(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue value = genericGetAttribute(globalObject, args[0], *name);
@@ -420,8 +410,6 @@ PYTHON_NATIVE(objectGetAttribute)
 PYTHON_NATIVE(objectSetAttr)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__setattr__"_s, 3, 3))
-        return { };
     auto name = attributeName(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
@@ -432,8 +420,6 @@ PYTHON_NATIVE(objectSetAttr)
 PYTHON_NATIVE(objectDelAttr)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__delattr__"_s, 2, 2))
-        return { };
     auto name = attributeName(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
@@ -444,8 +430,6 @@ PYTHON_NATIVE(objectDelAttr)
 PYTHON_NATIVE(objectFormat)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "__format__"_s, 2, 2))
-        return { };
     if (!args[1].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString("__format__() argument must be str, not "_s, typeName(globalObject, args[1]))));
     if (asString(args[1])->length())
@@ -906,8 +890,6 @@ PYTHON_NATIVE(classMethodDescriptorGet)
 PYTHON_NATIVE(methodNew)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "method"_s, 3, 3))
-        return { };
     return JSValue::encode(PyBoundMethod::create(globalObject, args[1], args[2]));
 }
 
@@ -1027,8 +1009,6 @@ PYTHON_NATIVE(nativeDescriptorOperation)
     NATIVE_PROLOGUE();
     ASCIILiteral method = operation == DescriptorOperation::Get ? "__get__"_s : operation == DescriptorOperation::Set ? "__set__"_s : "__delete__"_s;
     unsigned count = operation == DescriptorOperation::Set ? 3 : 2;
-    if (!args.check(globalObject, scope, method, count, operation == DescriptorOperation::Get ? 3 : count))
-        return { };
     auto [owner, name] = ownerAndNameOf(args[0]);
     JSValue instance = args[1];
     if (operation == DescriptorOperation::Get && isNone(instance)) {
@@ -1081,8 +1061,6 @@ PYTHON_NATIVE(propertyDelete)
 PYTHON_NATIVE(wrapperInit)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "staticmethod"_s, 2, 2))
-        return { };
     asNativeObject(args[0])->setField(vm, 0, args[1]);
     RETURN_NONE();
 }
@@ -1171,8 +1149,6 @@ PYTHON_NATIVE(moduleRepr)
 PYTHON_NATIVE(generatorSendMethod)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "send"_s, 2, 2))
-        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(generatorSend(globalObject, asGenerator(args[0]), args[1])));
 }
 
@@ -1186,8 +1162,6 @@ PYTHON_NATIVE(generatorNextMethod)
 PYTHON_NATIVE(generatorThrowMethod)
 {
     NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "throw"_s, 2, 4))
-        return { };
     JSValue exception = args[1];
     if (isType(exception) && asType(exception)->isExceptionType()) {
         JSValue value = args.at(2);
@@ -1441,7 +1415,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, generatorNextMethod },
         { "send"_s, generatorSendMethod },
-        { "throw"_s, generatorThrowMethod },
+        { "throw"_s, generatorThrowMethod, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
         { "close"_s, generatorCloseMethod },
         { "__repr__"_s, nativeRepr },
     });

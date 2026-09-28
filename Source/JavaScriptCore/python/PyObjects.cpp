@@ -271,6 +271,8 @@ PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject,
     }
     if (signature.isNull() && description)
         signature = description->signature;
+    // Only what nothing but compiled code can call goes without.
+    RELEASE_ASSERT_WITH_MESSAGE(!signature.isNull() || visibility == ImplementationVisibility::Private, "A function of Python's that is written in C++ has a signature");
 
     NativeExecutable* executable = vm.getHostFunction(nativeFunction, visibility, NoIntrinsic, callHostFunctionAsConstructor, nullptr, length, name);
     auto* function = new (NotNull, allocateCell<PyNativeFunction>(vm)) PyNativeFunction(vm, executable, globalObject, globalObject->pyRealm()->nativeFunctionStructure(), kind, owner, data);
