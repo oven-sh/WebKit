@@ -127,12 +127,13 @@ public:
         return analyzeBlock(*m_table.m_top, nullptr, free, global, typeParameters, nullptr);
     }
 
-    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName)
+    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, bool canSeeClassScope)
     {
         // As if it were in a function whose only variables are those.
         if (!enterBlock(m_top, BlockType::Function, &m_table, { }))
             return false;
         Block& top = *m_current;
+        top.canSeeClassScope = canSeeClassScope;
         m_table.m_top = &top;
         m_private = privateName;
         m_fragmentTop = &top;
@@ -1427,12 +1428,12 @@ std::unique_ptr<SymbolTable> SymbolTable::build(VM& vm, Arena& arena, Module& mo
     return table;
 }
 
-std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures)
+std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope)
 {
     std::unique_ptr<SymbolTable> table { new SymbolTable };
     table->m_futureFeatures = futureFeatures;
     SyntaxError error;
-    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName))
+    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName, canSeeClassScope))
         return nullptr;
     return table;
 }

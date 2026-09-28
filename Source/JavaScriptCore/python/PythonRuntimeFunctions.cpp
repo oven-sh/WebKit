@@ -92,6 +92,41 @@ PYTHON_RUNTIME_FUNCTION(loadFromNamespace)
     return JSValue::encode(value ? value : JSValue(realm->boundArgumentsMarker()));
 }
 
+// ---- Annotations
+
+// What an __annotate__ begins with: if format > 2: raise NotImplementedError. There are ways of giving annotations that only the library knows.
+PYTHON_RUNTIME_FUNCTION(checkAnnotationFormat)
+{
+    PROLOGUE();
+    JSValue isBeyond = compare(globalObject, ComparisonOperator::Gt, argument(0), jsNumber(2));
+    RETURN_IF_EXCEPTION(scope, { });
+    bool result = isTrue(globalObject, isBeyond);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (result)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, JSValue()));
+    return JSValue::encode(jsUndefined());
+}
+
+// setUpAnnotations(where, whether that is a mapping and not a module): if '__annotations__' not in locals(): __annotations__ = {}
+PYTHON_RUNTIME_FUNCTION(setUpAnnotations)
+{
+    PROLOGUE();
+    auto& names = vm.pythonNames();
+    if (!argument(1).asBoolean()) {
+        if (!getStoredAttribute(vm, asObject(argument(0)), names.dunder_annotations))
+            putStoredAttribute(vm, asObject(argument(0)), names.dunder_annotations, PyDict::create(globalObject));
+        return JSValue::encode(jsUndefined());
+    }
+    JSString* name = jsString(vm, names.dunder_annotations.string());
+    JSValue present = lookUpInNamespace(globalObject, argument(0), name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!present) {
+        scope.release();
+        setItem(globalObject, argument(0), name, PyDict::create(globalObject));
+    }
+    return JSValue::encode(jsUndefined());
+}
+
 static JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, JSString* name)
 {
     return raiseNameError(globalObject, scope, name->value(globalObject));
@@ -959,6 +994,8 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
         object->putDirect(vm, Identifier::fromString(vm, name), PyNativeFunction::create(vm, globalObject, 0, String(name), function, PyNativeFunction::Kind::Function, nullptr, 0, ImplementationVisibility::Private));
     };
     add("loadName"_s, loadName);
+    add("checkAnnotationFormat"_s, checkAnnotationFormat);
+    add("setUpAnnotations"_s, setUpAnnotations);
     add("loadFromNamespace"_s, loadFromNamespace);
     add("deleteGlobal"_s, deleteGlobal);
     add("deleteName"_s, deleteName);

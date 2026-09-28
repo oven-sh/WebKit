@@ -182,7 +182,7 @@ public:
 
     // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is which of its names
     // are variables of functions among them, and the class that private names are mangled for, if any. One of the two is null.
-    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures);
+    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope = false);
 
     Block& top() { return *m_top; }
     unsigned futureFeatures() const { return m_futureFeatures; }

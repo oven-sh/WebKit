@@ -1247,6 +1247,15 @@ PYTHON_NATIVE(wrapperInit)
 {
     NATIVE_PROLOGUE();
     asNativeObject(args[0])->setField(vm, 0, args[1]);
+    // It goes by the name of what it wraps: functools_wraps() of CPython's Objects/funcobject.c.
+    for (const Identifier* name : { &names.dunder_module, &names.dunder_name, &names.dunder_qualname, &names.dunder_doc }) {
+        JSValue value = getAttributeIfPresent(globalObject, args[1], *name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!value)
+            continue;
+        setAttribute(globalObject, args[0], *name, value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     RETURN_NONE();
 }
 

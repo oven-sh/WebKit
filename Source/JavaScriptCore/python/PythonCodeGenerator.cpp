@@ -32,6 +32,7 @@
 #include "JSBigInt.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
+#include "PythonUnparse.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSGenerator.h"
@@ -126,14 +127,14 @@ public:
         case CodeKind::Function: {
             auto& node = *static_cast<FunctionDef*>(root);
             collectDeletedNames(node.body);
-            generateFunction(*node.arguments, [&] {
+            generateFunction([&] {
                 emit(node.body);
             });
             break;
         }
         case CodeKind::Lambda: {
             auto& node = *static_cast<Lambda*>(root);
-            generateFunction(*node.arguments, [&] {
+            generateFunction([&] {
                 Reg value = emit(node.body);
                 g.emitReturn(value.get());
             });
@@ -144,6 +145,12 @@ public:
             break;
         case CodeKind::GeneratorExpression:
             generateGeneratorExpression(*static_cast<GeneratorExp*>(root));
+            break;
+        case CodeKind::Comprehension:
+            generateComprehension(*static_cast<Expression*>(root));
+            break;
+        case CodeKind::Annotations:
+            generateAnnotations(root);
             break;
         }
     }
@@ -379,6 +386,8 @@ private:
             return { Where::Closure };
         }
         bool isClass = m_info.usesNamespace;
+        // What is in a class without being part of its body looks there for what is not its own.
+        bool looksInClass = isClass || m_info.canSeeClassScope;
         switch (m_block.scopeOf(name)) {
         case NameScope::Local:
             if (isClass)
@@ -392,12 +401,12 @@ private:
         case NameScope::Cell:
             return { Where::Closure };
         case NameScope::Free:
-            return { isClass ? Where::NamespaceOrClosure : Where::Closure };
+            return { looksInClass ? Where::NamespaceOrClosure : Where::Closure };
         case NameScope::GlobalExplicit:
             return { Where::Global };
         case NameScope::GlobalImplicit:
         case NameScope::Unknown:
-            return { isClass ? Where::Namespace : Where::Global };
+            return { looksInClass ? Where::Namespace : Where::Global };
         }
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -1209,6 +1218,11 @@ private:
         if (block->hasDocstring && kind == CodeKind::Function)
             info->docstring = docstringOf(static_cast<const FunctionDef&>(node).body);
         emitNewFunction(function.get(), WTF::move(info), node);
+        if (Block* annotations = kind == CodeKind::Function ? m_table.blockFor(arguments) : nullptr; annotations && annotations->usesAnnotations) {
+            Reg annotate = g.newTemporary();
+            emitNewAnnotateFunction(annotate.get(), *annotations, CodeKind::Function, node);
+            g.emitDirectPutById(function.get(), m_names.private_annotate, annotate.get());
+        }
         if (defaults)
             g.emitDirectPutById(function.get(), m_names.private_defaults, defaults.get());
         if (keywordDefaults)
@@ -1404,7 +1418,7 @@ private:
     }
 
     template<typename EmitBody>
-    void generateFunction(Arguments&, const EmitBody& emitBody)
+    void generateFunction(const EmitBody& emitBody)
     {
         Node& node = m_block.location;
 
@@ -1670,10 +1684,8 @@ private:
     {
         Block* block = m_table.blockFor(&node);
         RELEASE_ASSERT(block);
-        if (!block->isInlinedComprehension) {
-            fail("this comprehension is not supported yet"_s, node);
-            return g.emitLoad(dst, jsUndefined());
-        }
+        if (!block->isInlinedComprehension)
+            return emitComprehensionFunction(dst, node, type, generators, *block);
 
         // The outermost iterable is evaluated outside.
         Reg iterator = g.newTemporary();
@@ -1707,47 +1719,100 @@ private:
         m_comprehensionScopes.append(WTF::move(scope));
 
         Reg result = g.newTemporary();
+        emitFillComprehension(result.get(), node, type, generators, element, value, iterator.get());
+
+        m_comprehensionScopes.removeLast();
+        emitPopCells(cells);
+        return finish(dst, result.get());
+    }
+
+    // Makes what it is a comprehension of, and goes round putting things in it.
+    void emitFillComprehension(RegisterID* result, Expression& node, ComprehensionType type, Sequence<Comprehension*> generators, Expression* element, Expression* value, RegisterID* iterator)
+    {
         switch (type) {
         case ComprehensionType::List:
-            emitNewList(result.get(), { });
+            emitNewList(result, { });
             break;
         case ComprehensionType::Set:
-            emitRuntimeCall(result.get(), "newSet"_s, { }, node);
+            emitRuntimeCall(result, "newSet"_s, { }, node);
             break;
         case ComprehensionType::Dict:
-            emitRuntimeCall(result.get(), "newDict"_s, { }, node);
+            emitRuntimeCall(result, "newDict"_s, { }, node);
             break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
 
-        emitComprehensionLoops(generators, 0, iterator.get(), [&] {
+        emitComprehensionLoops(generators, 0, iterator, [&] {
             switch (type) {
             case ComprehensionType::List: {
                 Reg item = emit(element);
-                emitRuntimeCall(nullptr, "listAppend"_s, { result.get(), item.get() }, *element);
+                emitRuntimeCall(nullptr, "listAppend"_s, { result, item.get() }, *element);
                 break;
             }
             case ComprehensionType::Set: {
                 Reg item = emit(element);
-                emitRuntimeCall(nullptr, "setAdd"_s, { result.get(), item.get() }, *element);
+                emitRuntimeCall(nullptr, "setAdd"_s, { result, item.get() }, *element);
                 break;
             }
             case ComprehensionType::Dict: {
                 Reg key = emit(element);
                 Reg item = emit(value);
                 mark(*element);
-                OpPySetItem::emit(&g, result.get(), key.get(), item.get());
+                OpPySetItem::emit(&g, result, key.get(), item.get());
                 break;
             }
             default:
                 RELEASE_ASSERT_NOT_REACHED();
             }
         });
+    }
 
-        m_comprehensionScopes.removeLast();
-        emitPopCells(cells);
-        return finish(dst, result.get());
+    // Where the names of a class can be seen without its being the body of the class, as in an annotation, a comprehension is a function that is called at once
+    // with the outermost iterator, as a generator expression is everywhere. Its variables would otherwise be taken for the class's.
+    RegisterID* emitComprehensionFunction(RegisterID* dst, Expression& node, ComprehensionType type, Sequence<Comprehension*> generators, Block& block)
+    {
+        auto spelled = type == ComprehensionType::List ? "<listcomp>"_span8 : type == ComprehensionType::Set ? "<setcomp>"_span8 : "<dictcomp>"_span8;
+        auto info = makeInfo(CodeKind::Comprehension, m_arena.identifiers().makeIdentifier(m_vm, spelled), nullptr, block, node);
+        info->parameterNames.append(Identifier::fromString(m_vm, ".0"_s));
+        info->positionalCount = 1;
+        info->positionalOnlyCount = 1;
+
+        Reg function = g.newTemporary();
+        emitNewFunction(function.get(), WTF::move(info), node);
+        CallArguments call(g, nullptr, 1);
+        g.emitLoad(call.thisRegister(), jsUndefined());
+        {
+            Reg iterable = emit(generators[0]->iterable);
+            mark(*generators[0]->iterable);
+            if (generators[0]->isAsync)
+                emitRuntimeCall(call.argumentRegister(0), "getAsyncIterator"_s, { iterable.get() }, *generators[0]->iterable);
+            else
+                OpPyGetIter::emit(&g, call.argumentRegister(0), iterable.get());
+        }
+        Reg result = destination(dst);
+        emitRawCall(result.get(), function.get(), call, 1, node);
+        if (block.isCoroutine)
+            emitAwaitValue(result.get(), result.get(), node);
+        return result.get();
+    }
+
+    void generateComprehension(Expression& node)
+    {
+        generateFunction([&] {
+            // In a coroutine the parameters are variables of the function that made it.
+            Reg iterator = m_info.isGeneratorBody ? Reg(emitLoadClosure(nullptr, m_info.parameterNames[0], node)) : Reg(parameterRegister(0));
+            Reg result = g.newTemporary();
+            if (auto* list = node.tryAs<ListComp>())
+                emitFillComprehension(result.get(), node, ComprehensionType::List, list->generators, list->element, nullptr, iterator.get());
+            else if (auto* set = node.tryAs<SetComp>())
+                emitFillComprehension(result.get(), node, ComprehensionType::Set, set->generators, set->element, nullptr, iterator.get());
+            else {
+                auto& dict = node.as<DictComp>();
+                emitFillComprehension(result.get(), node, ComprehensionType::Dict, dict.generators, dict.key, dict.value, iterator.get());
+            }
+            g.emitReturn(result.get());
+        });
     }
 
     // (element for ...) is a generator function that is called at once, with the outermost iterator.
@@ -1778,8 +1843,7 @@ private:
 
     void generateGeneratorExpression(GeneratorExp& node)
     {
-        Arguments none;
-        generateFunction(none, [&] {
+        generateFunction([&] {
             Reg iterator = emitLoadClosure(nullptr, m_info.parameterNames[0], node);
             emitComprehensionLoops(node.generators, 0, iterator.get(), [&] {
                 Reg value = emitToTemporary(node.element);
@@ -1973,13 +2037,7 @@ private:
         case Statement::Kind::AugAssign:
             return emitAugmentedAssignment(statement.as<AugAssign>());
         case Statement::Kind::AnnAssign: {
-            // FIXME: The annotation, which is evaluated when it is asked for.
-            auto& node = statement.as<AnnAssign>();
-            if (!node.value)
-                return;
-            Reg value = emitToTemporary(node.value);
-            emitAssign(node.target, value.get());
-            return;
+            return emitAnnotatedAssignment(statement.as<AnnAssign>());
         }
         case Statement::Kind::Return: {
             auto& node = statement.as<Return>();
@@ -2823,7 +2881,18 @@ private:
         Vector<const Identifier*, 8> cells;
         if (m_block.needsClassClosure)
             cells.append(&m_names.dunder_class);
+        if (m_block.needsClassDict)
+            cells.append(&m_names.dunder_classdict);
+        if (m_block.hasConditionalAnnotations)
+            cells.append(&m_names.dunder_conditional_annotations);
         emitPushCells(cells);
+        if (m_block.needsClassDict)
+            emitStoreClosure(m_names.dunder_classdict, m_namespace.get());
+        if (m_block.hasConditionalAnnotations) {
+            Reg set = g.newTemporary();
+            emitRuntimeCall(set.get(), "newSet"_s, { }, node);
+            emitStoreClosure(m_names.dunder_conditional_annotations, set.get());
+        }
         Reg environment = g.newTemporary();
         if (m_block.needsClassClosure)
             g.move(environment.get(), g.scopeRegister());
@@ -2844,7 +2913,11 @@ private:
         if (m_block.hasDocstring)
             store(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(node.body))));
 
+        emitSetUpAnnotations(node);
+        collectDeferredAnnotations(node.body, CodeKind::Class);
         emit(node.body);
+        if (Reg annotate = emitAnnotateFunctionForBody(CodeKind::Class, node))
+            store(m_names.dunder_annotate_func, annotate.get());
         {
             Vector<String> attributes;
             for (const Identifier* name : m_block.staticAttributes)
@@ -2860,6 +2933,234 @@ private:
             store(m_names.dunder_static_attributes, tuple.get());
         }
         g.emitReturn(environment.get());
+    }
+
+    // ---- Annotations
+    //
+    // They are evaluated when they are asked for, by a function that is made for it: PEP 649. This is codegen_function_annotations(), codegen_annassign() and
+    // codegen_process_deferred_annotations() of CPython's Python/codegen.c, and what those call.
+
+    bool hasFutureAnnotations() const { return m_info.futureFeatures & FutureAnnotations; }
+
+    // An annotation of a variable of a class or a module, and if the statement is one that may not be come to, which of those it is.
+    struct DeferredAnnotation {
+        AnnAssign* statement;
+        int conditionalIndex; // -1 if it is always come to.
+    };
+
+    // Those of a body, in order. What has them and what evaluates them are compiled at different times, and both go by this.
+    void collectDeferredAnnotations(Sequence<Statement*> body, bool isConditional, Vector<DeferredAnnotation>& result, int& nextIndex)
+    {
+        for (Statement* statement : body) {
+            switch (statement->kind) {
+            case Statement::Kind::AnnAssign: {
+                auto& node = statement->as<AnnAssign>();
+                if (node.isSimple && node.target->is<Name>())
+                    result.append({ &node, isConditional ? nextIndex++ : -1 });
+                break;
+            }
+            case Statement::Kind::For:
+                collectDeferredAnnotations(statement->as<For>().body, true, result, nextIndex);
+                collectDeferredAnnotations(statement->as<For>().orElse, true, result, nextIndex);
+                break;
+            case Statement::Kind::While:
+                collectDeferredAnnotations(statement->as<While>().body, true, result, nextIndex);
+                collectDeferredAnnotations(statement->as<While>().orElse, true, result, nextIndex);
+                break;
+            case Statement::Kind::If:
+                collectDeferredAnnotations(statement->as<If>().body, true, result, nextIndex);
+                collectDeferredAnnotations(statement->as<If>().orElse, true, result, nextIndex);
+                break;
+            case Statement::Kind::With:
+                collectDeferredAnnotations(statement->as<With>().body, true, result, nextIndex);
+                break;
+            case Statement::Kind::Match:
+                for (MatchCase* matchCase : statement->as<Match>().cases)
+                    collectDeferredAnnotations(matchCase->body, true, result, nextIndex);
+                break;
+            case Statement::Kind::Try: {
+                auto& node = statement->as<Try>();
+                collectDeferredAnnotations(node.body, true, result, nextIndex);
+                for (ExceptHandler* handler : node.handlers)
+                    collectDeferredAnnotations(handler->body, true, result, nextIndex);
+                collectDeferredAnnotations(node.orElse, true, result, nextIndex);
+                collectDeferredAnnotations(node.finalBody, true, result, nextIndex);
+                break;
+            }
+            default:
+                break;
+            }
+        }
+    }
+
+    Vector<DeferredAnnotation> deferredAnnotationsOf(Sequence<Statement*> body, bool isModule)
+    {
+        Vector<DeferredAnnotation> result;
+        int nextIndex = 0;
+        // A module may have run only in part, so all of its count as ones that may not be come to.
+        collectDeferredAnnotations(body, isModule, result, nextIndex);
+        return result;
+    }
+
+    void emitNewAnnotateFunction(RegisterID* dst, Block& block, CodeKind owner, const Node& node)
+    {
+        auto info = makeInfo(CodeKind::Annotations, m_names.dunder_annotate, nullptr, block, node);
+        info->annotationsOf = owner;
+        info->canSeeClassScope = block.canSeeClassScope;
+        // That of a function goes by the function's name, though it is beside the function and not in it.
+        if (owner == CodeKind::Function)
+            info->qualifiedName = makeString(qualifiedNameFor(*static_cast<const FunctionDef&>(node).name), ".__annotate__"_s);
+        // To the symbol table it is `.format`, so that an annotation can name the built-in function. It is `format` to whoever asks.
+        info->parameterNames.append(Identifier::fromString(m_vm, "format"_s));
+        info->positionalOnlyCount = 1;
+        info->positionalCount = 1;
+        emitNewFunction(dst, WTF::move(info), node);
+    }
+
+    // To be done before the body of a class or a module is gone through.
+    void collectDeferredAnnotations(Sequence<Statement*> body, CodeKind owner)
+    {
+        if (!hasFutureAnnotations() && m_block.annotationBlock)
+            m_deferredAnnotations = deferredAnnotationsOf(body, owner != CodeKind::Class);
+    }
+
+    // The __annotate__ of a class or a module. Null if there is nothing for it to evaluate.
+    Reg emitAnnotateFunctionForBody(CodeKind owner, const Node& node)
+    {
+        if (m_deferredAnnotations.isEmpty())
+            return nullptr;
+        Reg annotate = g.newTemporary();
+        emitNewAnnotateFunction(annotate.get(), *m_block.annotationBlock, owner, node);
+        return annotate;
+    }
+
+    // With `from __future__ import annotations` they are strings, and are put in __annotations__ as they are come to.
+    void emitSetUpAnnotations(const Node& node)
+    {
+        if (hasFutureAnnotations() && m_block.usesAnnotations)
+            emitRuntimeCall(nullptr, "setUpAnnotations"_s, { m_info.usesNamespace ? m_namespace.get() : m_globals.get(), constant(jsBoolean(m_info.usesNamespace)) }, node);
+    }
+
+    RegisterID* emitAnnotation(RegisterID* dst, Expression& annotation)
+    {
+        if (hasFutureAnnotations())
+            return g.move(dst, constant(jsString(m_vm, unparse(annotation))));
+        // *args: *Ts, which is [value] = [*Ts].
+        if (auto* starred = annotation.tryAs<Starred>()) {
+            Reg iterable = emitToTemporary(starred->value);
+            mark(annotation);
+            OpPyUnpackSequence::emit(&g, dst->virtualRegister(), 1, 1, iterable.get());
+            return dst;
+        }
+        emitInto(dst, &annotation);
+        return dst;
+    }
+
+    void emitEvaluateAndDiscard(Expression* expression)
+    {
+        if (expression)
+            emitToTemporary(expression);
+    }
+
+    // x: T = value
+    void emitAnnotatedAssignment(AnnAssign& node)
+    {
+        bool isInClassOrModule = !isFunctionLike();
+        if (node.value) {
+            Reg value = emitToTemporary(node.value);
+            emitAssign(node.target, value.get());
+        }
+        switch (node.target->kind) {
+        case Expression::Kind::Name: {
+            if (!node.isSimple || !isInClassOrModule)
+                break;
+            const Identifier& name = mangle(*node.target->as<Name>().id);
+            if (hasFutureAnnotations()) {
+                Reg annotation = g.newTemporary();
+                emitAnnotation(annotation.get(), *node.annotation);
+                Reg annotations = emitLoadName(nullptr, m_names.dunder_annotations, node);
+                mark(node);
+                OpPySetItem::emit(&g, annotations.get(), stringConstant(name), annotation.get());
+                break;
+            }
+            // That it has been come to is noted, for what evaluates the annotations.
+            for (auto& deferred : m_deferredAnnotations) {
+                if (deferred.statement != &node || deferred.conditionalIndex < 0)
+                    continue;
+                Reg set = m_info.kind == CodeKind::Class ? Reg(emitLoadClosure(nullptr, m_names.dunder_conditional_annotations, node)) : Reg(emitLoadName(nullptr, m_names.dunder_conditional_annotations, node));
+                emitRuntimeCall(nullptr, "setAdd"_s, { set.get(), constant(jsNumber(deferred.conditionalIndex)) }, node);
+            }
+            break;
+        }
+        case Expression::Kind::Attribute:
+            if (!node.value)
+                emitEvaluateAndDiscard(node.target->as<Attribute>().value);
+            break;
+        case Expression::Kind::Subscript:
+            if (!node.value) {
+                emitEvaluateAndDiscard(node.target->as<Subscript>().value);
+                emitEvaluateAndDiscard(node.target->as<Subscript>().slice);
+            }
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    // def __annotate__(format, /)
+    void generateAnnotations(void* root)
+    {
+        generateFunction([&] {
+            const Node& node = m_block.location;
+            emitRuntimeCall(nullptr, "checkAnnotationFormat"_s, { parameterRegister(0) }, node);
+            // If they are strings there is nothing to look up, and the class has not kept its namespace for it.
+            if (m_info.canSeeClassScope && !hasFutureAnnotations()) {
+                m_namespace = g.newTemporary();
+                emitLoadClosure(m_namespace.get(), m_names.dunder_classdict, node);
+            }
+            Reg annotations = g.newTemporary();
+            emitRuntimeCall(annotations.get(), "newDict"_s, { }, node);
+            auto add = [&] (const Identifier& name, Expression& annotation) {
+                Reg value = g.newTemporary();
+                emitAnnotation(value.get(), annotation);
+                OpPySetItem::emit(&g, annotations.get(), stringConstant(name), value.get());
+            };
+
+            if (m_info.annotationsOf == CodeKind::Function) {
+                auto& function = *static_cast<FunctionDef*>(root);
+                Arguments& arguments = *function.arguments;
+                auto addArgument = [&] (Argument* argument) {
+                    if (argument && argument->annotation)
+                        add(mangle(*argument->name), *argument->annotation);
+                };
+                for (Argument* argument : arguments.positional)
+                    addArgument(argument);
+                for (Argument* argument : arguments.positionalOnly)
+                    addArgument(argument);
+                addArgument(arguments.variadic);
+                for (Argument* argument : arguments.keywordOnly)
+                    addArgument(argument);
+                addArgument(arguments.keywordVariadic);
+                if (function.returns)
+                    add(Identifier::fromString(m_vm, "return"_s), *function.returns);
+            } else {
+                bool isClass = m_info.annotationsOf == CodeKind::Class;
+                Sequence<Statement*> body = isClass ? static_cast<ClassDef*>(root)->body : static_cast<Module*>(root)->body;
+                for (auto& deferred : deferredAnnotationsOf(body, !isClass)) {
+                    Ref<Label> notComeTo = g.newLabel();
+                    if (deferred.conditionalIndex >= 0) {
+                        Reg set = isClass ? Reg(emitLoadClosure(nullptr, m_names.dunder_conditional_annotations, *deferred.statement)) : Reg(emitLoadName(nullptr, m_names.dunder_conditional_annotations, *deferred.statement));
+                        Reg isIn = g.newTemporary();
+                        mark(*deferred.statement);
+                        emitCompare(isIn.get(), ComparisonOperator::In, constant(jsNumber(deferred.conditionalIndex)), set.get());
+                        emitJumpIfFalse(isIn.get(), notComeTo.get());
+                    }
+                    add(mangle(*deferred.statement->target->as<Name>().id), *deferred.statement->annotation);
+                    g.emitLabel(notComeTo.get());
+                }
+            }
+            g.emitReturn(annotations.get());
+        });
     }
 
     // ---- Imports
@@ -2922,6 +3223,21 @@ private:
             g.emitReturn(value.get());
             return;
         }
+        // All of the source, which is what the annotations of a module are compiled from.
+        Node whole = m_block.location;
+        whole.start = 0;
+        whole.end = g.m_scopeNode->source().provider()->source().length();
+        if (m_block.hasConditionalAnnotations) {
+            Reg set = g.newTemporary();
+            emitRuntimeCall(set.get(), "newSet"_s, { }, whole);
+            emitStoreName(m_names.dunder_conditional_annotations, set.get(), whole);
+        }
+        emitSetUpAnnotations(whole);
+        // It is there from the start, and says of each annotation whether the statement that it is in has been come to.
+        CodeKind kind = module.kind == Module::Kind::Interactive ? CodeKind::Interactive : CodeKind::Module;
+        collectDeferredAnnotations(module.body, kind);
+        if (Reg annotate = emitAnnotateFunctionForBody(kind, whole))
+            emitStoreName(m_names.dunder_annotate, annotate.get(), whole);
         if (m_block.hasDocstring)
             emitStoreName(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(module.body))), *module.body[0]);
         emit(module.body);
@@ -2942,6 +3258,7 @@ private:
     const FunctionInfo& m_info;
     SyntaxError& m_error;
     const Identifier* m_private;
+    Vector<DeferredAnnotation> m_deferredAnnotations; // Those of the class or the module that this is the code of.
 
     HashMap<UniquedStringImpl*, RegisterID*> m_locals;
     HashSet<UniquedStringImpl*> m_alwaysBound;

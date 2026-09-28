@@ -31,6 +31,7 @@
 #include "JSCInlines.h"
 #include "JSLexicalEnvironmentInlines.h"
 #include "ParserError.h"
+#include "PyDict.h"
 #include "PyObjects.h"
 #include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
@@ -58,13 +59,18 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     void* root = nullptr;
     const void* blockKey = nullptr;
     const Identifier* privateName = info->privateName.isNull() ? nullptr : &info->privateName;
+    // What evaluates annotations is compiled from the source of what they are the annotations of.
+    bool isAnnotations = info->kind == CodeKind::Annotations;
+    CodeKind sourceKind = isAnnotations ? info->annotationsOf : info->kind;
 
-    switch (info->kind) {
+    switch (sourceKind) {
+    case CodeKind::Annotations:
+        RELEASE_ASSERT_NOT_REACHED();
     case CodeKind::Module:
     case CodeKind::Expression:
     case CodeKind::Interactive: {
         Vector<SyntaxWarning> warnings;
-        Module::Kind moduleKind = info->kind == CodeKind::Module ? Module::Kind::Module : info->kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
+        Module::Kind moduleKind = sourceKind == CodeKind::Module ? Module::Kind::Module : sourceKind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
         Module* module = parse(vm, arena, text, moduleKind, warnings, syntaxError);
         if (module)
             table = SymbolTable::build(vm, arena, *module, info->futureFeatures, syntaxError);
@@ -75,16 +81,20 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     case CodeKind::Function:
     case CodeKind::Class: {
         // The names in a class are mangled for it, but its own name and its bases are not.
-        const Identifier* outerPrivateName = info->kind == CodeKind::Class ? nullptr : privateName;
+        const Identifier* outerPrivateName = sourceKind == CodeKind::Class ? nullptr : privateName;
         Statement* statement = parseDefinition(vm, arena, text, start, end, info->line);
         if (statement)
-            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures);
+            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, isAnnotations && sourceKind == CodeKind::Function && info->canSeeClassScope);
         root = statement;
         blockKey = statement;
+        // The block for those of a function goes by its parameters.
+        if (statement && isAnnotations && sourceKind == CodeKind::Function)
+            blockKey = statement->as<FunctionDef>().arguments;
         break;
     }
     case CodeKind::Lambda:
-    case CodeKind::GeneratorExpression: {
+    case CodeKind::GeneratorExpression:
+    case CodeKind::Comprehension: {
         Expression* expression = parseExpression(vm, arena, text, start, end, info->line);
         if (expression)
             table = SymbolTable::buildFragment(vm, arena, nullptr, expression, info->freeVariables, privateName, info->futureFeatures);
@@ -103,6 +113,10 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     }
     Block* block = table->blockFor(blockKey);
     RELEASE_ASSERT(block);
+    if (isAnnotations && sourceKind != CodeKind::Function) {
+        block = block->annotationBlock;
+        RELEASE_ASSERT(block);
+    }
 
     executable->recordParse(NoFeatures, StrictModeLexicallyScopedFeature, false);
     UnlinkedFunctionCodeBlock* result = UnlinkedFunctionCodeBlock::create(vm, FunctionCode, ExecutableInfo(kind == CodeSpecializationKind::CodeForConstruct, executable->privateBrandRequirement(), false, executable->constructorKind(), executable->scriptMode(), executable->superBinding(), parseMode, executable->derivedContextType(), executable->needsClassFieldInitializer(), false, false, executable->evalContextType(), false), codeGenerationMode);

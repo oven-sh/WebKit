@@ -42,6 +42,8 @@ enum class CodeKind : uint8_t {
     Lambda,
     Class, // The body of a class statement. It is called once, with the namespace to fill in.
     GeneratorExpression,
+    Comprehension, // [x for ...] and its like, where it is not part of the code that it is in.
+    Annotations, // What evaluates the annotations of a function, a class or a module, when they are asked for: its __annotate__.
 };
 
 // What is only known about a piece of code once it has been compiled, and is only wanted by what looks into it: a code object, and locals().
@@ -79,6 +81,9 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     bool isNested { false }; // In a function.
     bool isMethod { false }; // Directly in a class.
     bool hasDocstring { false };
+    // It is in a class, though it is no part of the body of one, and what it does not find among its own names it looks for there first.
+    bool canSeeClassScope { false };
+    CodeKind annotationsOf { CodeKind::Function }; // For Annotations: what kind of thing they are the annotations of. Its source is the source of that.
     unsigned futureFeatures { 0 };
     // Private for what comes with the engine and stands for what in CPython is written in C: it is in no traceback and no stack trace.
     ImplementationVisibility visibility { ImplementationVisibility::Public };
@@ -115,6 +120,8 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->isNested = isNested;
         result->isMethod = isMethod;
         result->hasDocstring = hasDocstring;
+        result->canSeeClassScope = canSeeClassScope;
+        result->annotationsOf = annotationsOf;
         result->futureFeatures = futureFeatures;
         result->visibility = visibility;
         result->line = line;

@@ -40,9 +40,9 @@ namespace Python {
 
 // name is __name__.
 #define FOR_EACH_PYTHON_DUNDER_NAME(v) \
-    v(abs) v(add) v(aenter) v(aexit) v(aiter) v(all) v(and) v(anext) v(annotate) v(annotations) v(await) v(base) v(bases) v(bool) \
+    v(abs) v(add) v(aenter) v(aexit) v(aiter) v(all) v(and) v(anext) v(annotate) v(annotate_func) v(annotations) v(annotations_cache) v(await) v(base) v(bases) v(bool) \
     v(build_class) v(builtins) v(bytes) v(call) v(cause) v(ceil) v(class) v(class_getitem) v(classcell) v(classdict) v(closure) \
-    v(code) v(complex) v(contains) v(context) v(debug) v(defaults) v(del) v(delattr) v(delete) v(delitem) v(dict) v(dir) v(divmod) v(doc) \
+    v(code) v(complex) v(conditional_annotations) v(contains) v(context) v(debug) v(defaults) v(del) v(delattr) v(delete) v(delitem) v(dict) v(dir) v(divmod) v(doc) \
     v(enter) v(eq) v(exit) v(file) v(firstlineno) v(float) v(floor) v(floordiv) v(format) v(func) v(ge) v(get) v(getattr) v(getattribute) \
     v(getitem) v(globals) v(gt) v(hash) v(iadd) v(iand) v(ifloordiv) v(ilshift) v(imatmul) v(imod) v(import) v(imul) v(index) v(init) \
     v(init_subclass) v(instancecheck) v(int) v(invert) v(ior) v(ipow) v(irshift) v(isub) v(iter) v(itruediv) v(ixor) v(kwdefaults) \

@@ -1,0 +1,229 @@
+function => {'a': 'int', 'b': "'s'", 'c': '*Ts', 'd': 'List[int]', 'e': 'Undefined', 'return': 'None'}
+annotate => ({'a': 'int', 'b': "'s'", 'c': '*Ts', 'd': 'List[int]', 'e': 'Undefined', 'return': 'None'}, {'a': 'int', 'b': "'s'", 'c': '*Ts', 'd': 'List[int]', 'e': 'Undefined', 'return': 'None'})
+format 3 !! NotImplementedError 
+class => ({'a': 'int', 'b': 'Undefined', '_C__p': 'x.y', 'e': 'str'}, None, ['__annotate_func__', '__annotations__'])
+method => {'x': 'C', 'return': 'C'}
+module => ({'mx': 'int', 'my': 'Undefined'}, False, True)
+empty => ({}, ['__annotate_func__', '__annotations_cache__'])
+local => 1
+'a' -> 'a'
+'a.b.c' -> 'a.b.c'
+'a[b]' -> 'a[b]'
+'a[b, c]' -> 'a[b, c]'
+'a[b:c]' -> 'a[b:c]'
+'a[b:c:d]' -> 'a[b:c:d]'
+'a[:]' -> 'a[:]'
+'a[::2]' -> 'a[::2]'
+'a[b:c, d]' -> 'a[b:c, d]'
+'a[(b, c)]' -> 'a[b, c]'
+'a[*b]' -> 'a[*b,]'
+'a[*b, c]' -> 'a[*b, c]'
+'a[()]' -> 'a[()]'
+'a()' -> 'a()'
+'a(b)' -> 'a(b)'
+'a(b, c=d, *e, **f)' -> 'a(b, *e, c=d, **f)'
+'a(*b, c)' -> 'a(*b, c)'
+'a(b for b in c)' -> 'a(b for b in c)'
+'a(b for b in c if d if e)' -> 'a(b for b in c if d if e)'
+'a((b for b in c), d)' -> 'a((b for b in c), d)'
+'[a for a in b]' -> '[a for a in b]'
+'{a for a in b}' -> '{a for a in b}'
+'{a: b for a, b in c}' -> '{a: b for a, b in c}'
+'(a async for a in b)' -> '(a async for a in b)'
+'[a for a, in b]' -> '[a for a, in b]'
+'[a for (a, b) in c for d in e]' -> '[a for a, b in c for d in e]'
+'[a for a in (b, c)]' -> '[a for a in (b, c)]'
+'[a for a in b if (c, d)]' -> '[a for a in b if (c, d)]'
+'[a for a in lambda: b]' !! SyntaxError invalid syntax (<string>, line 2)
+'[a for a in (b if c else d)]' -> '[a for a in (b if c else d)]'
+'1' -> '1'
+'1.0' -> '1.0'
+'1.5e100' -> '1.5e+100'
+'1e999' -> '1e309'
+'-1e999' -> '-1e309'
+'1j' -> '1j'
+'1.5j' -> '1.5j'
+'1e999j' -> '1e309j'
+'0x10' -> '16'
+'0b101' -> '5'
+'0o17' -> '15'
+'1_000_000' -> '1000000'
+'123456789012345678901234567890' -> '123456789012345678901234567890'
+'0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' -> '340282366920938463463374607431768211455'
+'0b1111111111111111111111111111111111111111111111111111111111111111111111' -> '1180591620717411303423'
+"'a'" -> "'a'"
+'"a"' -> "'a'"
+'"a\'b"' -> '"a\'b"'
+'\'a"b\'' -> '\'a"b\''
+'"a\'b\\"c"' -> '\'a\\\'b"c\''
+"'\\n\\t\\\\'" -> "'\\n\\t\\\\'"
+"'é\\x00\\u1234\\U0001F600'" -> "'é\\x00ሴ😀'"
+"u'a'" -> "u'a'"
+"b'a'" -> "b'a'"
+'b"a\'\\x00\\xff"' -> 'b"a\'\\x00\\xff"'
+"'a' 'b'" -> "'ab'"
+'"""multi\nline"""' -> "'multi\\nline'"
+"r'\\d'" -> "'\\\\d'"
+'None' -> 'None'
+'True' -> 'True'
+'False' -> 'False'
+'...' -> '...'
+'()' -> '()'
+'(a,)' -> '(a,)'
+'(a, b)' -> '(a, b)'
+'a, b' !! SyntaxError invalid syntax (<string>, line 2)
+'[]' -> '[]'
+'[a]' -> '[a]'
+'[a, b]' -> '[a, b]'
+'[*a, b]' -> '[*a, b]'
+'{}' -> '{}'
+'{a}' -> '{a}'
+'{a, b}' -> '{a, b}'
+'{*a}' -> '{*a}'
+'{a: b}' -> '{a: b}'
+'{a: b, **c}' -> '{a: b, **c}'
+'{**a, **b}' -> '{**a, **b}'
+'a + b' -> 'a + b'
+'a - b * c' -> 'a - b * c'
+'(a - b) * c' -> '(a - b) * c'
+'a * (b - c)' -> 'a * (b - c)'
+'a - (b - c)' -> 'a - (b - c)'
+'(a - b) - c' -> 'a - b - c'
+'a ** b ** c' -> 'a ** b ** c'
+'(a ** b) ** c' -> '(a ** b) ** c'
+'a ** (b ** c)' -> 'a ** b ** c'
+'-a ** b' -> '-a ** b'
+'(-a) ** b' -> '(-a) ** b'
+'a ** -b' -> 'a ** (-b)'
+'- - a' -> '--a'
+'-(-a)' -> '--a'
+'+a' -> '+a'
+'~a' -> '~a'
+'not a' -> 'not a'
+'not not a' -> 'not not a'
+'not (a and b)' -> 'not (a and b)'
+'(not a) and b' -> 'not a and b'
+'a and b or c' -> 'a and b or c'
+'a and (b or c)' -> 'a and (b or c)'
+'(a and b) and c' -> '(a and b) and c'
+'a or b or c' -> 'a or b or c'
+'a or (b or c)' -> 'a or (b or c)'
+'a @ b' -> 'a @ b'
+'a // b % c' -> 'a // b % c'
+'a << b >> c' -> 'a << b >> c'
+'a & b | c ^ d' -> 'a & b | c ^ d'
+'(a | b) & c' -> '(a | b) & c'
+'a < b' -> 'a < b'
+'a < b < c' -> 'a < b < c'
+'(a < b) < c' -> '(a < b) < c'
+'a < (b < c)' -> 'a < (b < c)'
+'a == b != c' -> 'a == b != c'
+'a is b' -> 'a is b'
+'a is not b' -> 'a is not b'
+'a in b' -> 'a in b'
+'a not in b' -> 'a not in b'
+'not a in b' -> 'not a in b'
+'(not a) in b' -> '(not a) in b'
+'a if b else c' -> 'a if b else c'
+'a if b else c if d else e' -> 'a if b else c if d else e'
+'(a if b else c) if d else e' -> '(a if b else c) if d else e'
+'a if (b if c else d) else e' -> 'a if (b if c else d) else e'
+'(a if b else c) + d' -> '(a if b else c) + d'
+'lambda: a' -> 'lambda: a'
+'lambda a: a' -> 'lambda a: a'
+'lambda a, b=1: a' -> 'lambda a, b=1: a'
+'lambda a, /, b: a' -> 'lambda a, /, b: a'
+'lambda a=1, /, b=2: a' -> 'lambda a=1, /, b=2: a'
+'lambda *a: a' -> 'lambda*a: a'
+'lambda *, a: a' -> 'lambda*, a: a'
+'lambda *, a=1: a' -> 'lambda*, a=1: a'
+'lambda *a, b, c=1, **d: a' -> 'lambda*a, b, c=1, **d: a'
+'lambda **a: a' -> 'lambda**a: a'
+'lambda a, /: a' -> 'lambda a, /: a'
+'lambda a, *, b: a' -> 'lambda a, *, b: a'
+'(lambda: a)()' -> '(lambda: a)()'
+'(lambda: a) + b' -> '(lambda: a) + b'
+'lambda: (a, b)' -> 'lambda: (a, b)'
+'lambda: lambda: a' -> 'lambda: lambda: a'
+'lambda: (yield)' -> 'lambda: (yield)'
+'(yield)' !! SyntaxError yield expression cannot be used within an annotation (<string>, line 2)
+'(yield a)' !! SyntaxError yield expression cannot be used within an annotation (<string>, line 2)
+'(yield a, b)' !! SyntaxError yield expression cannot be used within an annotation (<string>, line 2)
+'(yield from a)' !! SyntaxError yield expression cannot be used within an annotation (<string>, line 2)
+'await a' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'await a.b' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'await a()' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'await (a + b)' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'(await a) + b' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'await (await a)' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'-await a' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'(await a) ** b' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'(a := b)' !! SyntaxError named expression cannot be used within an annotation (<string>, line 2)
+'[a := b]' !! SyntaxError named expression cannot be used within an annotation (<string>, line 2)
+'a[b := c]' !! SyntaxError named expression cannot be used within an annotation (<string>, line 2)
+'f(a := b)' !! SyntaxError named expression cannot be used within an annotation (<string>, line 2)
+'(a := b, c)' !! SyntaxError named expression cannot be used within an annotation (<string>, line 2)
+'*a' -> '*a'
+'*a, b' -> '*a'
+'*a | b' -> '*a | b'
+'*(a or b)' -> '*(a or b)'
+"f''" -> "f''"
+"f'a'" -> "f'a'"
+"f'{a}'" -> "f'{a}'"
+"f'{a}b{c}'" -> "f'{a}b{c}'"
+"f'{a!r}'" -> "f'{a!r}'"
+"f'{a!s}'" -> "f'{a!s}'"
+"f'{a!a}'" -> "f'{a!a}'"
+"f'{a:b}'" -> "f'{a:b}'"
+"f'{a:{b}}'" -> "f'{a:{b}}'"
+"f'{a:{b}.{c}}'" -> "f'{a:{b}.{c}}'"
+"f'{a!r:>{b}}'" -> "f'{a!r:>{b}}'"
+"f'{{a}}'" -> "f'{{a}}'"
+"f'{{{a}}}'" -> "f'{{{a}}}'"
+"f'{ {a} }'" -> "f'{ {a}}'"
+"f'{ {a: b} }'" -> "f'{ {a: b}}'"
+"f'{a, b}'" -> "f'{(a, b)}'"
+"f'{(lambda: a)}'" -> "f'{(lambda: a)}'"
+"f'{a if b else c}'" -> "f'{(a if b else c)}'"
+'f\'{a["b"]}\'' -> 'f"{a[\'b\']}"'
+'f"{a[\'b\']}"' -> 'f"{a[\'b\']}"'
+"f'{a=}'" -> "f'a={a!r}'"
+"f'{a = }'" -> "f'a = {a!r}'"
+"f'{a=!r}'" -> "f'a={a!r}'"
+"f'{a=:b}'" -> "f'a={a:b}'"
+"f'a' 'b' f'{c}'" -> "f'ab{c}'"
+'f\'{f"{a}"}\'' -> 'f"{f\'{a}\'}"'
+'f"{\'a\'}"' -> 'f"{\'a\'}"'
+'f\'{"\\n"}\'' -> 'f"{\'\\\\n\'}"'
+"f'{a}\\n'" -> "f'{a}\\n'"
+"f'{a:\\n}'" -> "f'{a:\\n}'"
+"t'a'" -> "t'a'"
+"t'{a}'" -> "t'{a}'"
+"t'{a!r:b}'" -> "t'{a!r:b}'"
+"t'{ a }'" -> "t'{ a}'"
+"t'{a}b{c:{d}}'" -> "t'{a}b{c:{d}}'"
+'1 .real' -> '1 .real'
+'1.0.real' -> '1.0.real'
+'1j.real' -> '1j.real'
+'(1).real' -> '1 .real'
+'(-1).real' -> '(-1).real'
+'a.b().c[d].e' -> 'a.b().c[d].e'
+'a[b][c]' -> 'a[b][c]'
+'a()()' -> 'a()()'
+'(a, b)[c]' -> '(a, b)[c]'
+'[a][b]' -> '[a][b]'
+'{a}[b]' -> '{a}[b]'
+'{a: b}[c]' -> '{a: b}[c]'
+"'a'[b]" -> "'a'[b]"
+"'a'.b" -> "'a'.b"
+'(a + b).c' -> '(a + b).c'
+'(a + b)[c]' -> '(a + b)[c]'
+'(a + b)()' -> '(a + b)()'
+'(-a).b' -> '(-a).b'
+'(not a).b' -> '(not a).b'
+'(a if b else c).d' -> '(a if b else c).d'
+'(lambda: a).b' -> '(lambda: a).b'
+'(await a).b' !! SyntaxError await expression cannot be used within an annotation (<string>, line 2)
+'(a := b).c' !! SyntaxError named expression cannot be used within an annotation (<string>, line 2)
+'(a for a in b).c' -> '(a for a in b).c'
+'[a for a in b].c' -> '[a for a in b].c'

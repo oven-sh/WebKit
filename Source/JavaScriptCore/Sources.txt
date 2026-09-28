@@ -743,6 +743,7 @@ python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp
 python/PythonASTDumper.cpp
+python/PythonAnnotations.cpp
 python/PythonAsync.cpp
 python/PythonBuiltinFunctions.cpp
 python/PythonBuiltinTypes.cpp
@@ -773,6 +774,7 @@ python/PythonStrType.cpp
 python/PythonStrings.cpp
 python/PythonSymbolTable.cpp
 python/PythonTraceback.cpp
+python/PythonUnparse.cpp
 
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp

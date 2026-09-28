@@ -1,0 +1,70 @@
+function => {'c': <class 'float'>, 'a': <class 'int'>, 'b': 's', 'd': <class 'bool'>, 'e': <class 'str'>, 'g': <class 'bytes'>, 'return': <class 'list'>}
+order => ['c', 'a', 'b', 'd', 'e', 'g', 'return']
+annotate => ({'c': <class 'float'>, 'a': <class 'int'>, 'b': 's', 'd': <class 'bool'>, 'e': <class 'str'>, 'g': <class 'bytes'>, 'return': <class 'list'>}, {'c': <class 'float'>, 'a': <class 'int'>, 'b': 's', 'd': <class 'bool'>, 'e': <class 'str'>, 'g': <class 'bytes'>, 'return': <class 'list'>}, 'function')
+annotate names => ('__annotate__', 'f.__annotate__', ('format',), 1, 1)
+formats => [True, True, True]
+format 3 !! NotImplementedError 
+format 4 !! NotImplementedError 
+no argument !! TypeError f.__annotate__() missing 1 required positional argument: 'format'
+keyword !! TypeError f.__annotate__() got some positional-only arguments passed as keyword arguments: 'format'
+cached => True
+fresh from annotate => False
+none => ({}, None, True)
+lambda => ({}, None)
+lazy !! NameError name 'Undefined' is not defined
+lazy later => {'a': 'now defined', 'return': 2}
+not evaluated at def => []
+evaluated once => ({'a': 1, 'b': 2, 'return': 3}, {'a': 1, 'b': 2, 'return': 3}, [1, 2, 3])
+closure => ('closure', True, True)
+star => {'args': 7}
+locals not evaluated => (1, {})
+async and generator => ({'a': <class 'int'>, 'return': <class 'str'>}, {'a': <class 'int'>})
+set annotations => ({'z': 1}, None)
+set to None => ({}, None)
+set bad !! TypeError __annotations__ must be set to a dict object
+delete => {}
+set annotate => ({'q': 1}, {'q': 2})
+set annotate None => (None, {'q': 1})
+set annotate bad !! TypeError __annotate__ must be callable or None
+delete annotate !! TypeError __annotate__ cannot be deleted
+annotate returns non-dict !! TypeError __annotate__ returned non-dict of type 'int'
+class => {'a': <class 'int'>, 'b': 'str', 'c': <class 'dict'>, 'g': 'in class', '_C__private': <class 'int'>}
+class annotate => (True, '__annotate__', 'C.__annotate__')
+class dict => ['__annotate_func__', '__annotations_cache__']
+method sees class => {'x': 'in class', '_C__y': <class 'int'>, 'return': 'C'}
+method qualname => C.m.__annotate__
+instance !! AttributeError 'C' object has no attribute '__annotations__'
+not inherited => ({}, None, ['__annotate_func__', '__annotations_cache__'])
+empty => ({}, None)
+built in !! AttributeError type object 'int' has no attribute '__annotations__'
+built in annotate !! AttributeError type object 'int' has no attribute '__annotate__'
+set on built in !! TypeError cannot set '__annotations__' attribute of immutable type 'int'
+conditional => {'a': <class 'int'>, 'c': <class 'str'>, 'd': <class 'float'>, 'w': <class 'int'>, 'z': <class 'complex'>}
+lazy class !! NameError name 'NotYet' is not defined
+lazy class later => {'a': 5}
+set class annotations => ({'n': 1}, None, ['__annotate_func__', '__annotations_cache__'])
+delete class annotations => {}
+delete twice !! AttributeError __annotations__
+set class annotate => ({'k': 1}, ['__annotate_func__', '__annotations_cache__'])
+set class annotate bad !! TypeError __annotate__ must be callable or None
+delete class annotate !! TypeError cannot delete __annotate__ attribute
+class in function => {'a': 'enclosing', 'b': 'own'}
+metaclass => ({'x': <class 'int'>}, {'y': <class 'str'>})
+comprehension and lambda => ([0, 1], 1)
+module => ('not a global', {'mx': <class 'int'>, 'my': 'str', 'mz': <class 'float'>})
+module annotate => ({'mx': <class 'int'>, 'my': 'str', 'mz': <class 'float'>}, '__annotate__', '__annotate__')
+conditional set => [0, 1, 2]
+plain module => ({}, None, ['__annotate__', '__annotations__'])
+set module annotate => {'a': 1}
+set module annotations => ({'b': 1}, False)
+delete module annotations => {}
+exec => ({'a': <class 'int'>, 'b': <class 'str'>}, False)
+exec partial => {}
+module that stopped part way => {'a': <class 'int'>}
+errors !! NameError name 'compile_error' is not defined
+errors => ['yield expression cannot be used within an annotation', 'named expression cannot be used within an annotation', 'await expression cannot be used within an annotation', 'yield expression cannot be used within an annotation', 'named expression cannot be used within an annotation', "annotated name 'x' can't be global", 'only single target (not tuple) can be annotated', 'only single target (not list) can be annotated', 'only single target (not tuple) can be annotated', 'illegal target for annotation']
+classmethod and staticmethod => ({'a': <class 'int'>, 'return': <class 'str'>}, {'a': <class 'float'>}, {'a': <class 'int'>, 'return': <class 'str'>}, {'a': <class 'int'>, 'return': <class 'str'>}, {'a': <class 'float'>}, ['__annotate__', '__annotations__', '__doc__', '__module__', '__name__', '__qualname__'])
+set on classmethod => ({'z': 1}, {'a': <class 'int'>, 'return': <class 'str'>})
+delete on classmethod => {'a': <class 'int'>, 'return': <class 'str'>}
+delete on staticmethod !! AttributeError 'staticmethod' object has no attribute '__annotations__'
+nested qualname => ('outer.<locals>.inner.__annotate__', 'make.<locals>.Inner.__annotate__', 'C.__annotate__')
