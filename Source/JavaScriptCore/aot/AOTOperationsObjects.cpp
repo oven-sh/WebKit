@@ -75,6 +75,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     const JSInstruction* instruction = codeBlock->instructions().at(callFrame->bytecodeIndex()).ptr();
     ObjectAllocationProfile profile;
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), instruction->as<OpNewObject>().m_inlineCapacity);
+    if (count > 1 && !(Options::aotDisableFastPaths() & 4096)) {
+        // All of it is known, so there is no call for a structure for every property on the way.
+        Vector<UniquedStringImpl*, 32> names;
+        Graph::forEachLiteralProperty(instruction, count, [&](unsigned identifier, VirtualRegister) {
+            names.append(codeBlock->identifier(identifier).impl());
+        });
+        if (Structure* structure = callerData(callFrame)->instance->structureOfLiteral(profile.structure(), names.span())) {
+            DeferGC deferGC(vm);
+            unsigned inlineCapacity = structure->inlineCapacity();
+            Butterfly* butterfly = nullptr;
+            if (unsigned outOfLineCapacity = structure->outOfLineCapacity())
+                butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
+            JSObject* object = JSFinalObject::createWithButterfly(vm, structure, butterfly);
+            for (unsigned i = 0; i < count; ++i)
+                object->putDirectOffset(vm, offsetForPropertyNumber(i, inlineCapacity), JSValue::decode(values[i]));
+            if (count <= inlineCapacity)
+                fillAllocationCache(vm, callerData(callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(inlineCapacity), AllocatorForMode::EnsureAllocator), inlineCapacity);
+            OPERATION_RETURN(scope, object);
+        }
+    }
     JSObject* object = constructEmptyObject(vm, profile.structure());
     unsigned index = 0;
     bool inOrder = true;

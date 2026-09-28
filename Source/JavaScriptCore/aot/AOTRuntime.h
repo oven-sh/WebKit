@@ -255,6 +255,10 @@ struct Instance {
     // are wherever the collector put them, and code that does that is not for this realm.
     JS_EXPORT_PRIVATE void* placeForEnvironment(ImageEnvironment) const;
 
+    // Structure::createWithProperties() of the structure of an empty object literal with that inline capacity: the same one for
+    // the same names. They stay.
+    Structure* structureOfLiteral(Structure* empty, std::span<UniquedStringImpl* const>);
+
     void** runtimeTable;
     JSGlobalObject* globalObject;
     VM* vm; // Where a JSWebAssemblyInstance has its own: code that finds the VM from any frame need not tell the two apart.

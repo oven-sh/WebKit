@@ -155,6 +155,7 @@ struct Instance::Collections {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Collections);
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
+    UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
 };
@@ -474,6 +475,25 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
 {
     for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
         data->visit(visitor);
+    for (Structure* structure : collections->shapes.values()) {
+        if (structure)
+            visitor.appendUnbarriered(structure);
+    }
+}
+
+Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStringImpl* const> names)
+{
+    ASSERT(empty->storedPrototype() == globalObject->objectPrototype());
+    Vector<uintptr_t, 32> words;
+    words.append(empty->inlineCapacity());
+    for (UniquedStringImpl* name : names)
+        words.append(std::bit_cast<uintptr_t>(name));
+    String key { std::span { reinterpret_cast<const Latin1Character*>(words.span().data()), words.size() * sizeof(void*) } };
+    if (auto it = collections->shapes.find(key); it != collections->shapes.end())
+        return it->value;
+    Structure* result = Structure::createWithProperties(*vm, empty, names);
+    collections->shapes.add(WTF::move(key), result); // (The structure keeps the names.)
+    return result;
 }
 template void Instance::visit(AbstractSlotVisitor&, bool);
 template void Instance::visit(SlotVisitor&, bool);

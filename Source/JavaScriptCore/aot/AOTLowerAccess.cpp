@@ -446,7 +446,7 @@ void Lowering::lowerGetFromScope(Node* node)
         ValueFromBlock fastResult = m_out.anchor(value);
         m_out.branch(m_out.isZero64(value), rarely(slowCase), usually(continuation));
         m_out.appendTo(slowCase, continuation);
-        ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTReadLazyClosureVar, m_globalObject, scope, m_out.constInt32(offset)));
+        ValueFromBlock slowResult = m_out.anchor(vmCall(node, Int64, Entry::operationAOTReadLazyClosureVar, m_globalObject, distance ? environmentAt(*distance) : scope, m_out.constInt32(offset)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, fastResult, slowResult));

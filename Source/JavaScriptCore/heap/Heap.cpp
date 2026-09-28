@@ -1198,6 +1198,50 @@ TypeCountSet Heap::objectTypeCounts()
         dataLogLn("FNSTATS structures=", structures[0], " withPrevious=", structures[1], " dictionary=", structures[2], " withTable=", structures[3], " auxiliaryBytes=", bytesBySize[0]);
         for (auto& [info, entry] : byClass)
             dataLogLn("FNSTATS class ", info->className, " count=", entry.first, " bytes=", entry.second);
+        // What the structures are for.
+        UncheckedKeyHashMap<Structure*, uint64_t> instances;
+        UncheckedKeyHashSet<Structure*> parents;
+        Vector<Structure*> all;
+        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+            if (!isJSCellKind(kind))
+                return IterationStatus::Continue;
+            auto* cell = static_cast<JSCell*>(heapCell);
+            instances.add(cell->structure(), 0).iterator->value++;
+            if (auto* structure = dynamicDowncast<Structure>(cell)) {
+                all.append(structure);
+                if (Structure* previous = structure->previousID())
+                    parents.add(previous);
+            }
+            return IterationStatus::Continue;
+        });
+        struct Census { uint64_t total, one, many, intermediate, unusedLeaf, properties, root; };
+        UncheckedKeyHashMap<const ClassInfo*, Census> census;
+        uint64_t byProperties[5][3] = { };
+        for (Structure* structure : all) {
+            auto& entry = census.add(structure->classInfoForCells(), Census { }).iterator->value;
+            uint64_t count = instances.get(structure);
+            unsigned properties = structure->maxOffset() == invalidOffset ? 0 : structure->inlineSize() + structure->outOfLineSize();
+            entry.total++;
+            entry.properties += properties;
+            if (!structure->previousID())
+                entry.root++;
+            unsigned how = count ? 0 : parents.contains(structure) ? 1 : 2;
+            if (count == 1)
+                entry.one++;
+            else if (count)
+                entry.many++;
+            else if (how == 1)
+                entry.intermediate++;
+            else
+                entry.unusedLeaf++;
+            byProperties[properties < 1 ? 0 : properties < 4 ? 1 : properties < 9 ? 2 : properties < 21 ? 3 : 4][how]++;
+        }
+        for (auto& [info, entry] : census) {
+            if (entry.total >= 60)
+                dataLogLn("STRUCT ", info->className, " total=", entry.total, " oneInstance=", entry.one, " moreInstances=", entry.many, " intermediate=", entry.intermediate, " unusedLeaf=", entry.unusedLeaf, " roots=", entry.root, " properties=", entry.properties);
+        }
+        for (unsigned i = 0; i < 5; ++i)
+            dataLogLn("STRUCTSIZE bucket=", i, " used=", byProperties[i][0], " intermediate=", byProperties[i][1], " unusedLeaf=", byProperties[i][2]);
     }
     return result;
 }

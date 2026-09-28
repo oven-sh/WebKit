@@ -316,6 +316,11 @@ public:
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
+    // A structure like `empty`, which has no properties, with these, in this order and with no attributes: made in one step, with
+    // no structure for each of the steps in between. It is not a transition of anything, so it is for whoever asks to see to it
+    // that whoever else wants the same gets the same. Null if a name is there twice.
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
     // removePropertyWithoutTransition() and the property is not found.

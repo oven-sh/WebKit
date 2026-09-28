@@ -73,7 +73,14 @@ private:
     LValue lowDouble(Node*);
     LValue lowBoolean(Node*);
     LValue lowCell(Node* node) { return lowJSValue(node); }
-    LValue environmentAt(uint32_t distance) { return m_out.sub(m_instance, m_out.constIntPtr(distance)); } // ImageEnvironment::distance
+    // ImageEnvironment::distance. In two steps, of which the first is the same for everything nearby, and is kept from being merged
+    // with the second: what is left of that fits in a load or a store, which the distance from the Instance does not.
+    LValue environmentAt(uint32_t distance)
+    {
+        constexpr uint32_t window = 16 * KB;
+        uint32_t start = roundUpToMultipleOf<window>(distance);
+        return m_out.add(m_out.opaque(m_out.sub(m_instance, m_out.constIntPtr(start))), m_out.constIntPtr(start - distance));
+    }
     LValue callee() { return m_out.load64(m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot)); } // The object the function was called as.
     LValue lowConstantRegister(VirtualRegister); // For an operand that BytecodeUseDef does not count among the uses.
     LValue convert(LValue, Rep from, Type fromType, Rep to);

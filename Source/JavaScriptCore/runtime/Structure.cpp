@@ -406,6 +406,21 @@ void Structure::destroy(JSCell* cell)
     }
 }
 
+Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names)
+{
+    RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto());
+    DeferGC deferGC(vm);
+    Structure* result = Structure::create(vm, empty->globalObject(), empty->storedPrototype(), empty->typeInfo(), empty->classInfoForCells(), empty->indexingType(), empty->inlineCapacity());
+    for (UniquedStringImpl* name : names) {
+        if (JSC::isValidOffset(result->get(vm, name)))
+            return nullptr;
+        result->addPropertyWithoutTransition(vm, name, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
+            result->setMaxOffset(vm, newMaxOffset);
+        });
+    }
+    return result;
+}
+
 Structure* Structure::create(PolyProtoTag, VM& vm, JSGlobalObject* globalObject, JSObject* prototype, const TypeInfo& typeInfo, const ClassInfo* classInfo, IndexingType indexingType, unsigned inlineCapacity)
 {
     Structure* result = Structure::create(vm, globalObject, prototype, typeInfo, classInfo, indexingType, inlineCapacity);
