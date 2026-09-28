@@ -208,7 +208,7 @@ PYTHON_NATIVE(stopIterationInit)
         return JSValue::encode(raiseTypeError(globalObject, scope, makeString(typeName(globalObject, args[0]), "() takes no keyword arguments"_s)));
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
-    setMember(globalObject, self, "value"_s, args.size() > 1 ? args[1] : jsUndefined());
+    self->putDirect(vm, names.field_value, args.size() > 1 ? args[1] : jsUndefined());
     RETURN_NONE();
 }
 
@@ -222,7 +222,7 @@ PYTHON_NATIVE(systemExitInit)
     PyTuple* arguments = argumentsAfterFirst(globalObject, args);
     self->putDirect(vm, names.private_args, arguments);
     if (args.size() > 1)
-        setMember(globalObject, self, "code"_s, args.size() == 2 ? args[1] : JSValue(arguments));
+        self->putDirect(vm, names.field_code, args.size() == 2 ? args[1] : JSValue(arguments));
     RETURN_NONE();
 }
 
@@ -247,20 +247,28 @@ PYTHON_NATIVE(exceptionInitWithKeywords)
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         String name = args.keywordName(i)->value(globalObject);
-        bool isKnown = name == "name"_s || (which == KeywordException::Import && (name == "path"_s || name == "name_from"_s)) || (which == KeywordException::Attribute && name == "obj"_s);
-        if (!isKnown)
+        const Identifier* field = nullptr;
+        if (name == "name"_s)
+            field = &names.field_name;
+        else if (which == KeywordException::Import && name == "path"_s)
+            field = &names.field_path;
+        else if (which == KeywordException::Import && name == "name_from"_s)
+            field = &names.field_nameFrom;
+        else if (which == KeywordException::Attribute && name == "obj"_s)
+            field = &names.field_object;
+        if (!field)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString(which == KeywordException::Import ? "ImportError"_s : which == KeywordException::Attribute ? "AttributeError"_s : "NameError"_s, "() got an unexpected keyword argument '"_s, name, '\'')));
-        setMember(globalObject, self, name, args.keywordValue(i));
+        self->putDirect(vm, *field, args.keywordValue(i));
     }
     if (which == KeywordException::Import && args.size() == 2)
-        setMember(globalObject, self, "msg"_s, args[1]);
+        self->putDirect(vm, names.field_message, args[1]);
     RETURN_NONE();
 }
 
 PYTHON_NATIVE(importErrorStr)
 {
     NATIVE_PROLOGUE();
-    JSValue message = getMember(globalObject, asObject(args.at(0)), "msg"_s);
+    JSValue message = asObject(args.at(0))->getDirect(vm, names.field_message);
     String text = message && message.isString() ? String(asString(message)->value(globalObject)) : strOfException(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsString(vm, text));
@@ -314,18 +322,19 @@ static std::optional<BuiltinType> osErrorTypeFor(int errorNumber)
 static void fillOSError(JSGlobalObject* globalObject, JSObject* self, const NativeArguments& args)
 {
     VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
     unsigned count = args.size() - 1;
-    self->putDirect(vm, vm.pythonNames().private_args, argumentsAfterFirst(globalObject, args));
+    self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     if (count < 2 || count > 5)
         return;
-    setMember(globalObject, self, "errno"_s, args[1]);
-    setMember(globalObject, self, "strerror"_s, args[2]);
+    self->putDirect(vm, names.field_errorNumber, args[1]);
+    self->putDirect(vm, names.field_errorText, args[2]);
     if (count >= 3) {
-        setMember(globalObject, self, "filename"_s, args[3]);
+        self->putDirect(vm, names.field_filename, args[3]);
         self->putDirect(vm, vm.pythonNames().private_args, PyTuple::create(globalObject, { args[1], args[2] }));
     }
     if (count == 5)
-        setMember(globalObject, self, "filename2"_s, args[5]);
+        self->putDirect(vm, names.field_filename2, args[5]);
 }
 
 PYTHON_NATIVE(osErrorNew)
@@ -359,10 +368,10 @@ PYTHON_NATIVE(osErrorStr)
 {
     NATIVE_PROLOGUE();
     JSObject* self = asObject(args.at(0));
-    JSValue errorNumber = getMember(globalObject, self, "errno"_s);
-    JSValue message = getMember(globalObject, self, "strerror"_s);
-    JSValue filename = getMember(globalObject, self, "filename"_s);
-    JSValue filename2 = getMember(globalObject, self, "filename2"_s);
+    JSValue errorNumber = self->getDirect(vm, names.field_errorNumber);
+    JSValue message = self->getDirect(vm, names.field_errorText);
+    JSValue filename = self->getDirect(vm, names.field_filename);
+    JSValue filename2 = self->getDirect(vm, names.field_filename2);
     auto text = [&] (JSValue value, bool asRepr) -> String { return asRepr ? repr(globalObject, value) : str(globalObject, value ? value : jsUndefined()); };
     if (filename && !isNone(filename)) {
         String number = text(errorNumber, false);
@@ -450,7 +459,7 @@ PYTHON_NATIVE(syntaxErrorInit)
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
     if (args.size() >= 2)
-        setMember(globalObject, self, "msg"_s, args[1]);
+        self->putDirect(vm, names.field_message, args[1]);
     if (args.size() == 3) {
         MarkedArgumentBuffer details;
         collect(globalObject, args[2], details);
@@ -459,9 +468,9 @@ PYTHON_NATIVE(syntaxErrorInit)
             return JSValue::encode(raiseTypeError(globalObject, scope, makeString("function takes "_s, details.size() < 4 ? "at least 4"_s : "at most 7"_s, " arguments ("_s, details.size(), " given)"_s)));
         if (details.size() == 5)
             return JSValue::encode(raiseTypeError(globalObject, scope, "end_offset must be provided when end_lineno is provided"_s));
-        static constexpr ASCIILiteral attributes[] = { "filename"_s, "lineno"_s, "offset"_s, "text"_s, "end_lineno"_s, "end_offset"_s };
+        const Identifier* fields[] = { &names.field_filename, &names.field_line, &names.field_offset, &names.field_text, &names.field_endLine, &names.field_endOffset };
         for (unsigned i = 0; i < std::min<unsigned>(details.size(), 6); ++i)
-            setMember(globalObject, self, attributes[i], details.at(i));
+            self->putDirect(vm, *fields[i], details.at(i));
     }
     RETURN_NONE();
 }
@@ -517,9 +526,9 @@ PYTHON_NATIVE(unicodeErrorInit)
         return JSValue::encode(raiseTypeError(globalObject, scope, isDecode ? makeString("a bytes-like object is required, not '"_s, typeName(globalObject, args[2]), '\'') : makeString(name, "() argument 2 must be str, not "_s, typeName(globalObject, args[2]))));
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
-    static constexpr ASCIILiteral attributes[] = { "encoding"_s, "object"_s, "start"_s, "end"_s, "reason"_s };
+    const Identifier* fields[] = { &names.field_encoding, &names.field_subject, &names.field_start, &names.field_end, &names.field_reason };
     for (unsigned i = 0; i < 5; ++i)
-        setMember(globalObject, self, attributes[i], args[i + 1]);
+        self->putDirect(vm, *fields[i], args[i + 1]);
     RETURN_NONE();
 }
 
@@ -528,17 +537,17 @@ PYTHON_NATIVE(unicodeErrorStr)
     bool isDecode = unpack<bool>(callFrame, 0);
     NATIVE_PROLOGUE();
     JSObject* self = asObject(args.at(0));
-    auto get = [&] (ASCIILiteral name) { return getMember(globalObject, self, name); };
-    JSValue object = get("object"_s);
+    auto get = [&] (const Identifier& field) { return self->getDirect(vm, field); };
+    JSValue object = get(names.field_subject);
     if (!object)
         return JSValue::encode(jsEmptyString(vm));
-    String encoding = str(globalObject, get("encoding"_s));
+    String encoding = str(globalObject, get(names.field_encoding));
     RETURN_IF_EXCEPTION(scope, { });
-    String reason = str(globalObject, get("reason"_s));
+    String reason = str(globalObject, get(names.field_reason));
     RETURN_IF_EXCEPTION(scope, { });
-    auto start = toIndex(globalObject, get("start"_s), true);
+    auto start = toIndex(globalObject, get(names.field_start), true);
     RETURN_IF_EXCEPTION(scope, { });
-    auto end = toIndex(globalObject, get("end"_s), true);
+    auto end = toIndex(globalObject, get(names.field_end), true);
     RETURN_IF_EXCEPTION(scope, { });
     ASCIILiteral verb = isDecode ? "decode"_s : "encode"_s;
     if (*end == *start + 1 && *start >= 0) {
@@ -579,26 +588,30 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
     addGetSet(globalObject, base, "__suppress_context__"_s, getSuppressContext, setSuppressContext);
 
     // What in CPython is a field of the exception's struct: it is None until it is set, and is not in __dict__.
-    auto addFields = [&] (PyType* type, std::initializer_list<ASCIILiteral> fields) {
-        for (ASCIILiteral field : fields)
-            type->putDirect(vm, Identifier::fromString(vm, field), PyNativeObject::create(globalObject, BuiltinType::MemberDescriptor, jsString(vm, String(field)), type, jsUndefined()));
+    auto& names = vm.pythonNames();
+    auto addFields = [&] (PyType* type, std::initializer_list<const Identifier*> fields) {
+        for (const Identifier* field : fields) {
+            // The name of the field says what the attribute is called.
+            String attribute = field->string();
+            type->putDirect(vm, Identifier::fromString(vm, attribute), createMemberDescriptor(globalObject, type, jsString(vm, attribute), field, jsUndefined()));
+        }
     };
     addMethods(globalObject, realm->typeStopIteration(), { { "__init__"_s, stopIterationInit } });
-    addFields(realm->typeStopIteration(), { "value"_s });
+    addFields(realm->typeStopIteration(), { &names.field_value });
     addMethods(globalObject, realm->typeSystemExit(), { { "__init__"_s, systemExitInit } });
-    addFields(realm->typeSystemExit(), { "code"_s });
+    addFields(realm->typeSystemExit(), { &names.field_code });
     addMethods(globalObject, realm->typeKeyError(), { { "__str__"_s, keyErrorStr } });
     addMethods(globalObject, realm->typeOSError(), {
         { "__new__"_s, osErrorNew, Kind::New },
         { "__init__"_s, osErrorInit },
         { "__str__"_s, osErrorStr },
     });
-    addFields(realm->typeOSError(), { "errno"_s, "strerror"_s, "filename"_s, "filename2"_s });
+    addFields(realm->typeOSError(), { &names.field_errorNumber, &names.field_errorText, &names.field_filename, &names.field_filename2 });
     addMethods(globalObject, realm->typeSyntaxError(), {
         { "__init__"_s, syntaxErrorInit },
         { "__str__"_s, syntaxErrorStr },
     });
-    addFields(realm->typeSyntaxError(), { "msg"_s, "filename"_s, "lineno"_s, "offset"_s, "text"_s, "end_lineno"_s, "end_offset"_s, "print_file_and_line"_s });
+    addFields(realm->typeSyntaxError(), { &names.field_message, &names.field_filename, &names.field_line, &names.field_offset, &names.field_text, &names.field_endLine, &names.field_endOffset, &names.field_printFileAndLine });
     addMethods(globalObject, realm->typeUnicodeEncodeError(), {
         { "__init__"_s, unicodeErrorInit, Kind::Method, pack(false) },
         { "__str__"_s, unicodeErrorStr, Kind::Method, pack(false) },
@@ -611,13 +624,13 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
         { "__init__"_s, exceptionInitWithKeywords, Kind::Method, pack(KeywordException::Import) },
         { "__str__"_s, importErrorStr },
     });
-    addFields(realm->typeImportError(), { "msg"_s, "name"_s, "path"_s, "name_from"_s });
+    addFields(realm->typeImportError(), { &names.field_message, &names.field_name, &names.field_path, &names.field_nameFrom });
     addMethods(globalObject, realm->typeAttributeError(), { { "__init__"_s, exceptionInitWithKeywords, Kind::Method, pack(KeywordException::Attribute) } });
-    addFields(realm->typeAttributeError(), { "name"_s, "obj"_s });
+    addFields(realm->typeAttributeError(), { &names.field_name, &names.field_object });
     addMethods(globalObject, realm->typeNameError(), { { "__init__"_s, exceptionInitWithKeywords, Kind::Method, pack(KeywordException::Name) } });
-    addFields(realm->typeNameError(), { "name"_s });
-    addFields(realm->typeUnicodeEncodeError(), { "encoding"_s, "object"_s, "start"_s, "end"_s, "reason"_s });
-    addFields(realm->typeUnicodeDecodeError(), { "encoding"_s, "object"_s, "start"_s, "end"_s, "reason"_s });
+    addFields(realm->typeNameError(), { &names.field_name });
+    addFields(realm->typeUnicodeEncodeError(), { &names.field_encoding, &names.field_subject, &names.field_start, &names.field_end, &names.field_reason });
+    addFields(realm->typeUnicodeDecodeError(), { &names.field_encoding, &names.field_subject, &names.field_start, &names.field_end, &names.field_reason });
 }
 
 // ---- print()

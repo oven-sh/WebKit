@@ -826,6 +826,51 @@ PYTHON_NATIVE(descriptorGet)
     RELEASE_AND_RETURN(scope, JSValue::encode(bindDescriptor(globalObject, args.at(0), !instance || isNone(instance) ? JSValue() : instance, type)));
 }
 
+// The class that a descriptor written in C++ is an attribute of, and what it is called.
+static std::pair<PyType*, JSString*> ownerAndNameOf(JSValue descriptor)
+{
+    if (auto* getSet = dynamicDowncast<PyGetSetDescriptor>(descriptor))
+        return { getSet->owner(), getSet->name() };
+    auto* member = asNativeObject(descriptor);
+    return { asType(member->field(1)), asString(member->field(0)) };
+}
+
+// member.__get__(instance, owner=None), member.__set__(instance, value) and member.__delete__(instance), and the same of a getset_descriptor
+enum class DescriptorOperation : uint8_t { Get, Set, Delete };
+PYTHON_NATIVE(nativeDescriptorOperation)
+{
+    auto operation = unpack<DescriptorOperation>(callFrame, 0);
+    NATIVE_PROLOGUE();
+    ASCIILiteral method = operation == DescriptorOperation::Get ? "__get__"_s : operation == DescriptorOperation::Set ? "__set__"_s : "__delete__"_s;
+    unsigned count = operation == DescriptorOperation::Set ? 3 : 2;
+    if (!args.check(globalObject, scope, method, count, operation == DescriptorOperation::Get ? 3 : count))
+        return { };
+    auto [owner, name] = ownerAndNameOf(args[0]);
+    JSValue instance = args[1];
+    if (operation == DescriptorOperation::Get && isNone(instance)) {
+        if (args.size() < 3 || isNone(args[2]))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "__get__(None, None) is invalid"_s));
+        return JSValue::encode(args[0]);
+    }
+    if (!typeOf(globalObject, instance)->isSubtypeOf(owner))
+        return JSValue::encode(raiseTypeError(globalObject, scope, makeString("descriptor '"_s, name->value(globalObject).data, "' for '"_s, owner->nameString(globalObject), "' objects doesn't apply to a '"_s, typeName(globalObject, instance), "' object"_s)));
+    if (operation == DescriptorOperation::Get)
+        RELEASE_AND_RETURN(scope, JSValue::encode(bindDescriptor(globalObject, args[0], instance, typeOf(globalObject, instance))));
+    setDescriptor(globalObject, args[0], instance, name->view(globalObject), operation == DescriptorOperation::Set ? args[2] : JSValue());
+    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_NONE();
+}
+
+// <member 'x' of 'A' objects>, <attribute '__dict__' of 'A' objects>
+PYTHON_NATIVE(nativeDescriptorRepr)
+{
+    NATIVE_PROLOGUE();
+    UNUSED_PARAM(scope);
+    auto [owner, name] = ownerAndNameOf(args[0]);
+    auto* getSet = dynamicDowncast<PyGetSetDescriptor>(args[0]);
+    return JSValue::encode(jsString(vm, makeString('<', getSet && !getSet->isMember() ? "attribute"_s : "member"_s, " '"_s, name->value(globalObject).data, "' of '"_s, owner->nameString(globalObject), "' objects>"_s)));
+}
+
 PYTHON_NATIVE(propertySet)
 {
     NATIVE_PROLOGUE();
@@ -1079,6 +1124,22 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
         addGetSet(globalObject, type, "__name__"_s, getFunctionName<false>, setFunctionName<false>);
         addGetSet(globalObject, type, "__qualname__"_s, getFunctionName<true>, setFunctionName<true>);
         addGetSet(globalObject, type, "__doc__"_s, getFunctionDoc, setFunctionDoc);
+    }
+    for (PyType* type : { realm->typeMemberDescriptor(), realm->typeGetSetDescriptor() }) {
+        addMethods(globalObject, type, {
+            { "__get__"_s, nativeDescriptorOperation, Kind::Method, pack(DescriptorOperation::Get) },
+            { "__set__"_s, nativeDescriptorOperation, Kind::Method, pack(DescriptorOperation::Set) },
+            { "__delete__"_s, nativeDescriptorOperation, Kind::Method, pack(DescriptorOperation::Delete) },
+            { "__repr__"_s, nativeDescriptorRepr },
+        });
+        addMember(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).second; });
+        addMember(globalObject, type, "__objclass__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return ownerAndNameOf(self).first; });
+        addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+            auto [owner, name] = ownerAndNameOf(self);
+            JSValue qualifiedName = owner->lookupOwn(globalObject->vm(), globalObject->vm().pythonNames().dunder_qualname);
+            String prefix = qualifiedName && qualifiedName.isString() ? String(asString(qualifiedName)->value(globalObject)) : owner->nameString(globalObject);
+            return jsString(globalObject->vm(), makeString(prefix, '.', name->value(globalObject).data));
+        });
     }
     PyType* function = realm->typeFunction();
     addMethods(globalObject, function, { { "__get__"_s, functionGet } });

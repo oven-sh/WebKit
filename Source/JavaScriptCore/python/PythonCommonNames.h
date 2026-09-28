@@ -56,6 +56,13 @@ namespace Python {
     v(dict) v(capacity) v(code) v(yieldFrom) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
     v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes)
 
+// The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.
+#define FOR_EACH_PYTHON_EXCEPTION_FIELD(v) \
+    v(value, "value") v(code, "code") v(message, "msg") v(filename, "filename") v(line, "lineno") v(offset, "offset") v(text, "text") \
+    v(endLine, "end_lineno") v(endOffset, "end_offset") v(printFileAndLine, "print_file_and_line") v(name, "name") v(path, "path") \
+    v(nameFrom, "name_from") v(object, "obj") v(errorNumber, "errno") v(errorText, "strerror") v(filename2, "filename2") \
+    v(encoding, "encoding") v(subject, "object") v(start, "start") v(end, "end") v(reason, "reason")
+
 struct CommonNames {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(CommonNames);
 
@@ -66,6 +73,9 @@ struct CommonNames {
 #undef DECLARE
 #define DECLARE(name) const Identifier private_##name;
     FOR_EACH_PYTHON_PRIVATE_NAME(DECLARE)
+#undef DECLARE
+#define DECLARE(name, attribute) const Identifier field_##name;
+    FOR_EACH_PYTHON_EXCEPTION_FIELD(DECLARE)
 #undef DECLARE
 
     const Identifier globals; // ".globals": the variable that a function finds its module's namespace in.

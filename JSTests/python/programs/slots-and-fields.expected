@@ -1,0 +1,12 @@
+B's A's B's
+A's
+'B' object has no attribute 'x'
+x
+'B' object has no attribute 'w' and no __dict__ for setting new attributes
+False <member 'x' of 'A' objects> member_descriptor x True
+{'q': 2} {'q': 2} 1
+5 {} {} f
+7 (5,)
+m f 1 2 t 3 4 {}
+m n p None
+zzz None

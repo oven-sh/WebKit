@@ -135,16 +135,19 @@ String typeName(JSGlobalObject* globalObject, JSValue value)
     return typeOf(globalObject, value)->nameString(globalObject);
 }
 
-JSValue getMember(JSGlobalObject* globalObject, JSObject* object, const String& name)
+JSObject* createMemberDescriptor(JSGlobalObject* globalObject, PyType* owner, JSString* name, const Identifier* storage, JSValue initialValue)
 {
     VM& vm = globalObject->vm();
-    return object->getDirect(vm, Identifier::fromString(vm, makeString('.', name)));
+    // What is in a slot is a property of the instance under a name that is the descriptor's own, as a private field of a class of JavaScript's
+    // is. Nothing else can name it, so it is in no dict and no list of properties, and a slot of a class and a slot of the same name of a class
+    // derived from it are two slots.
+    Symbol* key = storage ? Symbol::create(vm, static_cast<SymbolImpl&>(*storage->impl())) : Symbol::create(vm, PrivateSymbolImpl::create(*name->value(globalObject)->impl()).get());
+    return PyNativeObject::create(globalObject, BuiltinType::MemberDescriptor, name, owner, initialValue, key);
 }
 
-void setMember(JSGlobalObject* globalObject, JSObject* object, const String& name, JSValue value)
+static PropertyName storageOfMember(PyNativeObject* member)
 {
-    VM& vm = globalObject->vm();
-    object->putDirect(vm, Identifier::fromString(vm, makeString('.', name)), value, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    return uncheckedDowncast<Symbol>(member->field(3).asCell())->privateName();
 }
 
 // ---- Exceptions
@@ -159,11 +162,11 @@ JSObject* createException(JSGlobalObject* globalObject, PyType* type, JSValue ar
     if (!argument)
         return exception;
     if (type == realm->typeStopIteration())
-        setMember(globalObject, exception, "value"_s, argument);
+        exception->putDirect(vm, vm.pythonNames().field_value, argument);
     else if (type == realm->typeSystemExit())
-        setMember(globalObject, exception, "code"_s, argument);
+        exception->putDirect(vm, vm.pythonNames().field_code, argument);
     else if (type->isSubtypeOf(realm->typeSyntaxError()) || type->isSubtypeOf(realm->typeImportError()))
-        setMember(globalObject, exception, "msg"_s, argument);
+        exception->putDirect(vm, vm.pythonNames().field_message, argument);
     return exception;
 }
 
@@ -212,7 +215,7 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type,
 JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, const String& name)
 {
     JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeNameError(), makeString("name '"_s, name, "' is not defined"_s));
-    setMember(globalObject, exception, "name"_s, jsString(globalObject->vm(), name));
+    exception->putDirect(globalObject->vm(), globalObject->vm().pythonNames().field_name, jsString(globalObject->vm(), name));
     setContext(globalObject, exception);
     throwException(globalObject, scope, exception);
     return { };
@@ -374,13 +377,12 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
         if (!instance)
             return value;
         auto* member = uncheckedDowncast<PyNativeObject>(value.asCell());
-        String name = asString(member->field(0))->value(globalObject);
-        if (JSValue stored = getMember(globalObject, asObject(instance), name))
+        if (JSValue stored = asObject(instance)->getDirect(vm, storageOfMember(member)))
             return stored;
         // One of a built-in type has a value from the start.
         if (JSValue initial = member->field(2))
             return initial;
-        return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, name, '\''));
+        return raise(globalObject, scope, BuiltinType::AttributeError, makeString('\'', type->nameString(globalObject), "' object has no attribute '"_s, asString(member->field(0))->value(globalObject).data, '\''));
     }
     case DescriptorKind::General:
         if (!descriptor.getter)
@@ -489,8 +491,8 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     if (message.isNull())
         message = makeString('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\'');
     JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeAttributeError(), message);
-    setMember(globalObject, exception, "name"_s, jsString(vm, attribute.toString()));
-    setMember(globalObject, exception, "obj"_s, value);
+    exception->putDirect(vm, vm.pythonNames().field_name, jsString(vm, attribute.toString()));
+    exception->putDirect(vm, vm.pythonNames().field_object, value);
     setContext(globalObject, exception);
     throwException(globalObject, scope, exception);
     return { };
@@ -521,15 +523,16 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
     unsigned hooks = type->hooks(globalObject);
 
     JSValue result;
-    if (hooks & PyType::HasCustomGetAttribute) [[unlikely]] {
+    if (hooks & PyType::HasCustomGetAttribute) [[unlikely]]
         result = call(globalObject, type->lookup(vm, names.dunder_getattribute), value, nameAsString(vm, name));
-        if (scope.exception() && !catchException(globalObject, BuiltinType::AttributeError))
-            return { };
-    } else {
+    else
         result = genericGetAttribute(globalObject, value, name);
-        // A property's getter may say there is no such attribute, and __getattr__ gets its say then too.
-        if (scope.exception() && (!(hooks & PyType::HasGetAttr) || !catchException(globalObject, BuiltinType::AttributeError)))
+    // AttributeError is how it is said that there is no such attribute, whoever says it: the getter of a property may. __getattr__ gets its
+    // say then too.
+    if (scope.exception()) [[unlikely]] {
+        if (!catchException(globalObject, BuiltinType::AttributeError))
             return { };
+        result = { };
     }
     if (result || !(hooks & PyType::HasGetAttr))
         return result;
@@ -566,74 +569,95 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
     return raiseNoAttribute(globalObject, scope, value, name);
 }
 
+// descriptor.__set__(value, newValue), or __delete__ if `newValue` is empty, for a descriptor that has such a thing. False if it has not.
+static bool setThroughDescriptor(JSGlobalObject* globalObject, JSValue found, JSValue value, PyType* type, StringView attribute, JSValue newValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    Descriptor descriptor = classifyDescriptor(globalObject, found);
+    switch (descriptor.kind) {
+    case DescriptorKind::GetSet: {
+        auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(found.asCell());
+        if (!getSet->setter()) {
+            if (getSet->isMember())
+                raise(globalObject, scope, BuiltinType::AttributeError, "readonly attribute"_s);
+            else
+                raise(globalObject, scope, BuiltinType::AttributeError, makeString("attribute '"_s, attribute, "' of '"_s, getSet->owner()->nameString(globalObject), "' objects is not writable"_s));
+            return true;
+        }
+        scope.release();
+        getSet->setter()(globalObject, value, newValue);
+        return true;
+    }
+    case DescriptorKind::Property: {
+        JSValue function = uncheckedDowncast<PyNativeObject>(found.asCell())->field(newValue ? 1 : 2);
+        if (!function || isNone(function)) {
+            raise(globalObject, scope, BuiltinType::AttributeError, makeString("property '"_s, attribute, "' of '"_s, type->nameString(globalObject), "' object has no "_s, newValue ? "setter"_s : "deleter"_s));
+            return true;
+        }
+        scope.release();
+        if (newValue)
+            call(globalObject, function, value, newValue);
+        else
+            call(globalObject, function, value);
+        return true;
+    }
+    case DescriptorKind::Member: {
+        PropertyName storage = storageOfMember(uncheckedDowncast<PyNativeObject>(found.asCell()));
+        if (newValue) {
+            asObject(value)->putDirect(vm, storage, newValue);
+            return true;
+        }
+        if (!asObject(value)->getDirect(vm, storage)) {
+            // Deleting an empty slot says only which.
+            raise(globalObject, scope, BuiltinType::AttributeError, attribute.toString());
+            return true;
+        }
+        scope.release();
+        JSCell::deleteProperty(asObject(value), globalObject, storage);
+        return true;
+    }
+    case DescriptorKind::General:
+        if (descriptor.isData) {
+            JSValue function = typeOf(globalObject, found)->lookup(vm, newValue ? names.dunder_set : names.dunder_delete);
+            if (!function) {
+                raise(globalObject, scope, BuiltinType::AttributeError, newValue ? "__set__"_s : "__delete__"_s);
+                return true;
+            }
+            scope.release();
+            if (newValue)
+                call(globalObject, function, found, value, newValue);
+            else
+                call(globalObject, function, found, value);
+            return true;
+        }
+        break;
+    default:
+        break;
+    }
+    return false;
+}
+
+void setDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue instance, StringView attribute, JSValue newValue)
+{
+    setThroughDescriptor(globalObject, descriptor, instance, typeOf(globalObject, instance), attribute, newValue);
+}
+
 // object.__setattr__ and object.__delattr__, and type's. `newValue` is empty to delete.
 void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name, JSValue newValue)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& names = vm.pythonNames();
     PyType* type = typeOf(globalObject, value);
     StringView attribute { name.uid() };
 
     JSValue found = type->lookup(vm, name);
     if (found) {
-        Descriptor descriptor = classifyDescriptor(globalObject, found);
-        switch (descriptor.kind) {
-        case DescriptorKind::GetSet: {
-            auto* getSet = uncheckedDowncast<PyGetSetDescriptor>(found.asCell());
-            if (!getSet->setter()) {
-                if (getSet->isMember())
-                    raise(globalObject, scope, BuiltinType::AttributeError, "readonly attribute"_s);
-                else
-                    raise(globalObject, scope, BuiltinType::AttributeError, makeString("attribute '"_s, attribute, "' of '"_s, getSet->owner()->nameString(globalObject), "' objects is not writable"_s));
-                return;
-            }
-            RELEASE_AND_RETURN(scope, getSet->setter()(globalObject, value, newValue));
-        }
-        case DescriptorKind::Property: {
-            JSValue function = uncheckedDowncast<PyNativeObject>(found.asCell())->field(newValue ? 1 : 2);
-            if (!function || isNone(function)) {
-                raise(globalObject, scope, BuiltinType::AttributeError, makeString("property '"_s, attribute, "' of '"_s, type->nameString(globalObject), "' object has no "_s, newValue ? "setter"_s : "deleter"_s));
-                return;
-            }
-            scope.release();
-            if (newValue)
-                call(globalObject, function, value, newValue);
-            else
-                call(globalObject, function, value);
+        bool wasSet = setThroughDescriptor(globalObject, found, value, type, attribute, newValue);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (wasSet)
             return;
-        }
-        case DescriptorKind::Member:
-            if (newValue) {
-                setMember(globalObject, asObject(value), attribute.toString(), newValue);
-                return;
-            }
-            if (!getMember(globalObject, asObject(value), attribute.toString())) {
-                // Deleting an empty slot says only which.
-                raise(globalObject, scope, BuiltinType::AttributeError, attribute.toString());
-                return;
-            }
-            scope.release();
-            asObject(value)->deleteProperty(globalObject, Identifier::fromString(vm, makeString('.', attribute)));
-            return;
-        case DescriptorKind::General:
-            if (descriptor.isData) {
-                JSValue function = typeOf(globalObject, found)->lookup(vm, newValue ? names.dunder_set : names.dunder_delete);
-                if (!function) {
-                    raise(globalObject, scope, BuiltinType::AttributeError, newValue ? "__set__"_s : "__delete__"_s);
-                    return;
-                }
-                scope.release();
-                if (newValue)
-                    call(globalObject, function, found, value, newValue);
-                else
-                    call(globalObject, function, found, value);
-                return;
-            }
-            break;
-        default:
-            break;
-        }
     }
 
     if (isType(value)) {

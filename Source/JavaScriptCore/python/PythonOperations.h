@@ -104,11 +104,12 @@ JSValue loadMethod(JSGlobalObject*, JSValue base, PropertyName, JSValue& self);
 JSValue lookupSpecial(JSGlobalObject*, JSValue, PropertyName, JSValue& self);
 // What `descriptor`, found in a class, gives when got from `instance` (empty for the class itself) of `type`.
 JSValue bindDescriptor(JSGlobalObject*, JSValue descriptor, JSValue instance, PyType*);
+// descriptor.__set__(instance, newValue), or __delete__ if `newValue` is empty. `attribute` is what to call it if it cannot be done.
+void setDescriptor(JSGlobalObject*, JSValue descriptor, JSValue instance, StringView attribute, JSValue newValue);
 
 // What is in a slot: one of __slots__, or what in CPython is a field of the C struct of a built-in type. It is a property of the instance under
 // a name that no attribute can have, and that __dict__ does not show. Empty if nothing is in it.
-JSValue getMember(JSGlobalObject*, JSObject*, const String& name);
-void setMember(JSGlobalObject*, JSObject*, const String& name, JSValue);
+JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name, const Identifier* storage = nullptr, JSValue initialValue = JSValue());
 
 // The property that JavaScript sees on something of Python's, other than what it has of its own: getattr(), and a few names that mean to
 // JavaScript what others mean to Python, like toString and Symbol.iterator. Empty if there is none.

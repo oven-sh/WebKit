@@ -223,7 +223,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
                 }
                 if (slot == names.dunder_weakref)
                     continue;
-                type->putDirect(vm, slot, PyNativeObject::create(globalObject, BuiltinType::MemberDescriptor, slotNames.at(i), type));
+                type->putDirect(vm, slot, createMemberDescriptor(globalObject, type, asString(slotNames.at(i))));
             }
         }
         type->putDirect(vm, property, value);
