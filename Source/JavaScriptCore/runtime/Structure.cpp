@@ -991,8 +991,11 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         RELEASE_ASSERT(table);
         if (transitionKind == TransitionKind::Seal)
             table->seal();
-        else if (transitionKind == TransitionKind::FixProperties)
+        else if (transitionKind == TransitionKind::FixProperties) {
+            // (Nothing that happens to the object from here on moves what it has now: there is no gap for it to move down into.)
+            RELEASE_ASSERT(!table->hasDeletedOffset());
             table->fix();
+        }
         else
             table->freeze();
 

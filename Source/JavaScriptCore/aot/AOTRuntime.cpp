@@ -191,6 +191,13 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->collections->sizeFromInstance = size;
     instance->structureIDBase = JSC::structureIDBase();
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
+    // (putDirect() does as it is told.)
+    for (unsigned number = 1; number < globalObject->immutableIntrinsics().size(); ++number) {
+        const ImmutableIntrinsics::Entry& entry = ImmutableIntrinsics::shared()->at(number);
+        if (entry.holder != ImmutableIntrinsics::globalObject)
+            break;
+        RELEASE_ASSERT(JSValue::encode(globalObject->getDirect(vm, Identifier::fromString(vm, entry.name))) == instance->intrinsics[number]);
+    }
     if (Image* image = Image::withShapes()) {
         instance->dispatch = image->at<uint32_t>(image->header().dispatchOffset);
         instance->rowsOfSelectors = image->at<uint32_t>(image->header().rowsOfSelectorsOffset);

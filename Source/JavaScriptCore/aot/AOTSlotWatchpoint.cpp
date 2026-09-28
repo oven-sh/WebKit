@@ -57,26 +57,50 @@ static unsigned indexOf(Data* data, Slot* slot)
     return slot - data->slots;
 }
 
+// Of an object whose properties were fixed (JSObject::fixProperties()): what it had then, it has, where it had it. If it cannot be
+// given more either, what it does not have it never will. There is nothing to watch for.
+static bool holdsForGood(const ObjectPropertyCondition& condition)
+{
+    Structure* structure = condition.object()->structure();
+    if (!structure->heirsMayOverrideReadOnlyProperties())
+        return false;
+    switch (condition.kind()) {
+    case PropertyCondition::Presence:
+        return condition.attributes() & PropertyAttribute::DontDelete && condition.attributes() & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue);
+    case PropertyCondition::Absence:
+    case PropertyCondition::AbsenceOfSetEffect:
+        return !structure->isStructureExtensible() && structure->typeInfo().isImmutablePrototypeExoticObject();
+    default:
+        return false;
+    }
+}
+
 bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditionSet& conditions)
 {
     if (!conditions.isValid())
         return false;
+    unsigned numberToWatch = 0;
     for (const ObjectPropertyCondition& condition : conditions) {
+        if (holdsForGood(condition))
+            continue;
         if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
             return false;
+        numberToWatch++;
     }
 
     unsigned index = indexOf(data, slot);
-    if (!conditions.size()) {
+    if (!numberToWatch) {
         stopWatching(data, slot);
         return true;
     }
 
     if (!data->watchpoints)
         data->watchpoints = new SlotWatchpointMap;
-    FixedVector<SlotWatchpoint> watchpoints(conditions.size());
+    FixedVector<SlotWatchpoint> watchpoints(numberToWatch);
     unsigned i = 0;
     for (const ObjectPropertyCondition& condition : conditions) {
+        if (holdsForGood(condition))
+            continue;
         auto& watchpoint = watchpoints[i++];
         watchpoint.initialize(data, condition, index);
         watchpoint.install(vm);

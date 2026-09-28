@@ -3456,19 +3456,27 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     static constexpr ASCIILiteral names[] = {
         "Object"_s, "Function"_s, "Array"_s, "String"_s, "Number"_s, "Boolean"_s, "Symbol"_s, "RegExp"_s, "Promise"_s, "Map"_s, "Set"_s,
-        "Math"_s, "JSON"_s, "Reflect"_s,
+        "Math"_s, "JSON"_s, "Reflect"_s, "Date"_s, "WeakMap"_s, "WeakSet"_s, "ArrayBuffer"_s,
+        // Of these, only the variable. (Programs do assign to Error.stackTraceLimit and Error.prepareStackTrace.)
+        "Error"_s, "TypeError"_s, "RangeError"_s, "SyntaxError"_s, "ReferenceError"_s, "EvalError"_s, "URIError"_s, "AggregateError"_s,
+        "Uint8Array"_s, "DataView"_s, "Proxy"_s, "WeakRef"_s, "BigInt"_s, "parseInt"_s, "parseFloat"_s, "isNaN"_s, "isFinite"_s,
+        "encodeURIComponent"_s, "decodeURIComponent"_s, "encodeURI"_s, "decodeURI"_s,
     };
-    for (ASCIILiteral name : names) {
-        Identifier identifier = Identifier::fromString(vm, name);
+    constexpr unsigned numberWhoseObjectsAreFixed = 18;
+    RELEASE_ASSERT(names[numberWhoseObjectsAreFixed - 1] == "ArrayBuffer"_s);
+    for (unsigned i = 0; i < std::size(names); ++i) {
+        Identifier identifier = Identifier::fromString(vm, names[i]);
         JSValue value = get(this, identifier);
         scope.assertNoException();
         JSObject* object = value.getObject();
         RELEASE_ASSERT(object);
-        object->fixProperties(this);
-        JSValue prototype = object->isCallable() ? object->get(this, vm.propertyNames->prototype) : JSValue();
-        scope.assertNoException();
-        if (JSObject* prototypeObject = prototype ? prototype.getObject() : nullptr)
-            prototypeObject->fixProperties(this);
+        if (i < numberWhoseObjectsAreFixed) {
+            object->fixProperties(this);
+            JSValue prototype = object->isCallable() ? object->get(this, vm.propertyNames->prototype) : JSValue();
+            scope.assertNoException();
+            if (JSObject* prototypeObject = prototype ? prototype.getObject() : nullptr)
+                prototypeObject->fixProperties(this);
+        }
         putDirect(vm, identifier, value, PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete);
     }
     m_iteratorPrototype->fixProperties(this);

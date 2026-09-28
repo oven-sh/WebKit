@@ -69,8 +69,23 @@ function inheritedByIntrinsic() { return Math.toString() + typeof Math.hasOwnPro
 check(repeat(inheritedByIntrinsic), "[object Math]functionArray1functionfloor1", "what they inherit, and what their functions have");
 function ownOfFunction() { return Math.floor.extra; }
 check(repeat(ownOfFunction), undefined, "the functions are not fixed"); Math.floor.extra = 5; check(repeat(ownOfFunction), 5, "and can be given properties"); delete Math.floor.extra;
-function otherGlobals() { return typeof Date.now() + typeof Error("x").message + typeof parseInt + typeof globalThis + typeof undefinedGlobal; }
-check(repeat(otherGlobals), "numberstringfunctionobjectundefined", "globals that are not fixed");
+function otherGlobals() { return typeof print + typeof undefinedGlobal + typeof Intl + typeof Float64Array; }
+check(repeat(otherGlobals), "functionundefinedobjectfunction", "globals that are not fixed");
+// ---- Of some, only the variable is fixed.
+function dates() { let d = new Date(0); return typeof Date.now() + d.getTime() + Date.UTC(1970, 0, 1) + (d instanceof Date) + Date.prototype.getTime.call(d) + typeof Date.parse; }
+check(repeat(dates), "number00true0function", "Date");
+function errors(m) { let all = [new Error(m), new TypeError(m), RangeError(m), new SyntaxError(m), new ReferenceError(m), new EvalError(m), new URIError(m), new AggregateError([], m)]; return all.map(e => e.name + e.message + (e instanceof Error)).join(); }
+check(repeat(errors, "!"), "Error!true,TypeError!true,RangeError!true,SyntaxError!true,ReferenceError!true,EvalError!true,URIError!true,AggregateError!true", "errors");
+function thrower(x) { if (x) throw new TypeError("thrown"); return 1; } function catches(x) { try { return thrower(x); } catch (e) { return e instanceof TypeError && e.constructor === TypeError && e.message; } }
+check(repeat(catches, true), "thrown", "thrown"); check(repeat(catches, false), 1, "not thrown");
+function errorStatics() { return Error.stackTraceLimit; }
+let limit = Error.stackTraceLimit; check(repeat(errorStatics), limit, "Error.stackTraceLimit"); Error.stackTraceLimit = 3; check(repeat(errorStatics), 3, "can be assigned to"); Error.stackTraceLimit = limit;
+Error.prepareStackTrace = 1; check(Error.prepareStackTrace, 1, "and Error.prepareStackTrace"); delete Error.prepareStackTrace;
+function functions() { return "" + parseInt("12px") + parseFloat("1.5") + isNaN("x") + isFinite(1) + encodeURIComponent("a b") + decodeURIComponent("%20") + encodeURI("a b") + decodeURI("a") + (globalThis === this0) + typeof BigInt(1) + new Uint8Array(2).length + new WeakMap().has({}) + new WeakSet().has({}) + new ArrayBuffer(4).byteLength + typeof new Proxy({}, {}) + new DataView(new ArrayBuffer(1)).byteLength + typeof new WeakRef({}).deref(); }
+var this0 = this;
+check(repeat(functions), "121.5truetruea%20b a%20batruebigint2falsefalse4object1object", "functions and the rest");
+function storesToVariables() { Error = 1; Date = 2; parseInt = 3; delete this0.TypeError; return typeof Error + typeof Date + typeof parseInt + typeof TypeError; }
+check(repeat(storesToVariables), "functionfunctionfunctionfunction", "their variables stay");
 globalThis.mutableGlobal = 1; function readsMutable() { return mutableGlobal; } check(repeat(readsMutable), 1, "a global"); mutableGlobal = 2; check(repeat(readsMutable), 2, "a global that changed");
 
 // ---- Stores are refused as they would be anyway.
