@@ -50,6 +50,22 @@ function expected(name, left, right)
 }
 noInline(expected);
 
+// A function that has seen nothing. It takes source text that has not been seen either: code is kept by its text, and what
+// is remembered of how it went wrong the last time is kept with it.
+let functionsMade = 0;
+function fresh(parameters, body)
+{
+    let f = eval("(function (" + parameters + ") { /* " + ++functionsMade + " */ " + body + " })");
+    noInline(f);
+    return f;
+}
+
+// The text alone, for whoever has to evaluate it where its own variables are. `block` has its braces.
+function freshSource(parameters, block)
+{
+    return "(function (" + parameters + ") { /* " + ++functionsMade + " */ " + block + " })";
+}
+
 function check(what, actual, wanted)
 {
     let shown = show(actual);

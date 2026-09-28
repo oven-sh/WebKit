@@ -2527,6 +2527,8 @@ static uint64_t fastFlatIntoBuffer(JSGlobalObject* globalObject, T* resultBuffer
                 continue;
             if constexpr (std::is_same_v<T, double>)
                 resultBuffer[resultIndex] = value;
+            else if (Options::keepNumberEncodings(7))
+                resultBuffer[resultIndex].setWithoutWriteBarrier(JSValue(JSValue::EncodeAsDouble, value));
             else
                 resultBuffer[resultIndex].setWithoutWriteBarrier(JSValue(value));
             ++resultIndex;

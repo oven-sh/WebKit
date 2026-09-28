@@ -6,10 +6,10 @@ load("./resources/tagged-arithmetic.js", "caller relative");
 function makers() {
     // A function of its own each time, so that each is compiled for what it alone has seen.
     return {
-        add: new Function("a", "b", "return $vm.tagged.add(a, b);"),
-        sub: new Function("a", "b", "return $vm.tagged.sub(a, b);"),
-        mul: new Function("a", "b", "return $vm.tagged.mul(a, b);"),
-        div: new Function("a", "b", "return $vm.tagged.div(a, b);"),
+        add: fresh("a, b", "return $vm.tagged.add(a, b);"),
+        sub: fresh("a, b", "return $vm.tagged.sub(a, b);"),
+        mul: fresh("a, b", "return $vm.tagged.mul(a, b);"),
+        div: fresh("a, b", "return $vm.tagged.div(a, b);"),
     };
 }
 
@@ -21,7 +21,6 @@ for (let trainedLeft in groups) {
         let functions = makers();
         for (let name in functions) {
             let f = functions[name];
-            noInline(f);
             // Until it is compiled for these, and without overflow.
             for (let i = 0; i < testLoopCount; ++i) {
                 let left = small[trainedLeft][i % small[trainedLeft].length], right = small[trainedRight][(i >> 2) % small[trainedRight].length];

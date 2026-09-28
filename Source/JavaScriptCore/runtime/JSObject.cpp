@@ -1075,7 +1075,7 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
     }
         
     case ALL_DOUBLE_INDEXING_TYPES: {
-        if (!value.isNumber()) {
+        if (!isNumberForDoubleShape(value)) {
             thisObject->convertDoubleToContiguous(vm);
             // Reloop.
             return putByIndex(cell, globalObject, propertyName, value, shouldThrow);
@@ -1811,7 +1811,8 @@ void JSObject::convertInt32ForValue(VM& vm, JSValue value)
 {
     ASSERT(!value.isInt32());
     
-    if (value.isDouble() && !std::isnan(value.asDouble()) && Options::allowDoubleShape()) {
+    // The int32s that are in it would be doubles from then on.
+    if (value.isDouble() && !std::isnan(value.asDouble()) && Options::allowDoubleShape() && !Options::keepNumberEncodings(22)) {
         convertInt32ToDouble(vm);
         return;
     }
@@ -1943,6 +1944,8 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
         return convertUndecidedToDouble(vm);
         
     case ALL_INT32_INDEXING_TYPES:
+        if (Options::keepNumberEncodings(23))
+            return ContiguousDoubles();
         return convertInt32ToDouble(vm);
         
     case ALL_CONTIGUOUS_INDEXING_TYPES:
@@ -3611,7 +3614,7 @@ bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObje
         ASSERT(!indexingShouldBeSparse());
         if (attributes)
             return putDirectIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, attributes, mode, ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm));
-        if (!value.isNumber()) {
+        if (!isNumberForDoubleShape(value)) {
             convertDoubleToContiguous(vm);
             return putDirectIndexSlowOrBeyondVectorLength(globalObject, i, value, attributes, mode);
         }

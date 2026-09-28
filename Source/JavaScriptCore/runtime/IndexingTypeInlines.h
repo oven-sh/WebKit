@@ -42,4 +42,11 @@ inline IndexingType indexingTypeForValue(JSValue value)
     return ContiguousShape;
 }
 
+// Whether a value can be put in an array of doubles. An int32 can, as far as JavaScript can tell, but it comes out a double.
+// (NaN cannot either, which is for whoever asks to see to: it is what a hole looks like.)
+ALWAYS_INLINE bool isNumberForDoubleShape(JSValue value)
+{
+    return value.isNumber() && !(value.isInt32() && Options::keepNumberEncodings(21));
+}
+
 } // namespace JSC

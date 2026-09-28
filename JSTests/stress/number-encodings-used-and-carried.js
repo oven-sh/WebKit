@@ -43,7 +43,7 @@ for (let name in routes) {
         for (let surprise in kinds) {
             if (trained === surprise)
                 continue;
-            let functions = routes[name].map(body => eval("(function (x, i) " + body + ")"));
+            let functions = routes[name].map(body => eval(freshSource("x, i", body)));
             functions.forEach(noInline);
             let run = (values, i) => {
                 let x = values[i % values.length];
@@ -83,16 +83,49 @@ for (let i = 0; i < testLoopCount * 2; ++i) {
 }
 
 // Optimized code that is left because of a surprise, and entered again at the head of the loop that was being run.
-function aroundALoop(x, n) { let y = x; for (let k = 0; k < n; ++k) { if (y < k * 0.25) sink = k; } return y; }
-noInline(aroundALoop);
 for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)), list(float(2), int(1)), list(int(1), float(0.5))]) {
-    let f = eval("(" + aroundALoop.toString() + ")");
+    let f = eval(freshSource("x, n", "{ let y = x; for (let k = 0; k < n; ++k) { if (y < k * 0.25) sink = k; } return y; }"));
     noInline(f);
     for (let i = 0; i < 4; ++i)
         expect("around a long loop", f(trained, 100000), show(trained));
     for (let i = 0; i < 4; ++i) {
         expect("around a long loop, the other kind", f(surprise, 100000), show(surprise));
         expect("around a long loop, the first kind again", f(trained, 100000), show(trained));
+    }
+}
+
+// The same, of a number that is not an argument: those are looked at on the way in, before any local is.
+const source = { v: 0.5 };
+for (let comparison of ["y < k * 0.25", "y < k"]) {
+    for (let [trained, surprise] of [list(float(0.5), int(1)), list(int(1), float(2)), list(float(2), int(1)), list(int(1), float(0.5))]) {
+        let f = eval(freshSource("n", "{ let y = source.v; for (let k = 0; k < n; ++k) { if (" + comparison + ") sink = k; } return y; }"));
+        noInline(f);
+        for (let i = 0; i < 4; ++i) {
+            source.v = trained;
+            expect("loaded, and kept around a long loop", f(100000), show(trained));
+        }
+        for (let i = 0; i < 4; ++i) {
+            source.v = surprise;
+            expect("loaded, and kept around a long loop, the other kind", f(100000), show(surprise));
+            source.v = trained;
+            expect("loaded, and kept around a long loop, the first kind again", f(100000), show(trained));
+        }
+    }
+}
+
+// Copied from one property to another, and used as a number, by code that hands it to nothing else.
+for (let [trained, surprise] of [list(float(0.5), int(1)), list(float(2), int(1))]) {
+    let copy = eval(freshSource("", "{ let y = source.v; results.last = y; sink = y * 1.5; }"));
+    noInline(copy);
+    for (let i = 0; i < testLoopCount * 2; ++i) {
+        source.v = trained;
+        copy();
+        expect("copied", results.last, show(trained));
+    }
+    for (let i = 0; i < 50; ++i) {
+        source.v = surprise;
+        copy();
+        expect("copied, the other kind", results.last, show(surprise));
     }
 }
 

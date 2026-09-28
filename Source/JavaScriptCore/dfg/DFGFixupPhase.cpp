@@ -6102,7 +6102,9 @@ private:
 
                             // DoubleRep makes a double of an int32. That does for arithmetic, but this is only being put
                             // away, to be taken out again as what it was.
-                            if (Options::keepNumberEncodings(2) && (node->op() == SetLocal || node->op() == PutByOffset || node->op() == PutClosureVar || node->op() == PutGlobalVariable))
+                            // (DoubleRepRealUse is what is stored in an array of doubles.)
+                            if ((Options::keepNumberEncodings(2) && (node->op() == SetLocal || node->op() == PutByOffset || node->op() == PutClosureVar || node->op() == PutGlobalVariable))
+                                || (Options::keepNumberEncodings(28) && edge.useKind() == DoubleRepRealUse))
                                 m_insertionSet.insertNode(indexForChecks, SpecNone, CheckNotInt32, originForChecks, Edge(edge.node(), UntypedUse));
 
                             result = m_insertionSet.insertNode(

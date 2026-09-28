@@ -24,6 +24,7 @@
 #include "ClonedArguments.h"
 #include "DirectArguments.h"
 #include "Error.h"
+#include "IndexingTypeInlines.h"
 #include "JSArray.h"
 #include "JSCellInlines.h"
 #include "JSObjectInlines.h"
@@ -122,6 +123,8 @@ inline IndexingType mergeIndexingTypesForCopying(IndexingType type, IndexingType
         if ((type == ArrayWithInt32 || type == ArrayWithDouble) && (other == ArrayWithInt32 || other == ArrayWithDouble)) {
             if (type == other)
                 return type;
+            if (Options::keepNumberEncodings(26))
+                return NonArray;
             return ArrayWithDouble;
         }
     }
@@ -305,7 +308,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
 
     case ArrayWithDouble: {
         ASSERT(Options::allowDoubleShape());
-        if (!value.isNumber()) {
+        if (!isNumberForDoubleShape(value)) {
             convertDoubleToContiguous(vm);
             scope.release();
             push(globalObject, value);

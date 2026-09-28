@@ -27,6 +27,7 @@
 #include "BrandedStructure.h"
 #include "ButterflyInlines.h"
 #include "Error.h"
+#include "IndexingTypeInlines.h"
 #include "JSArrayInlines.h"
 #include "JSFunctionInlines.h"
 #include "JSGenericTypedArrayViewInlines.h"
@@ -1147,7 +1148,7 @@ ALWAYS_INLINE void JSObject::initializeIndex(ObjectInitializationScope& scope, u
     case ALL_DOUBLE_INDEXING_TYPES: {
         ASSERT(i < butterfly->publicLength());
         ASSERT(i < butterfly->vectorLength());
-        if (!v.isNumber()) {
+        if (!isNumberForDoubleShape(v)) {
             convertDoubleToContiguousWhilePerformingSetIndex(vm, i, v);
             return;
         }
@@ -1469,7 +1470,7 @@ inline bool JSObject::trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayPro
     case ALL_WRITABLE_DOUBLE_INDEXING_TYPES: {
         if (i >= butterfly->vectorLength())
             return false;
-        if (!v.isNumber()) {
+        if (!isNumberForDoubleShape(v)) {
             convertDoubleToContiguousWhilePerformingSetIndex(vm, i, v);
             return true;
         }
@@ -1531,7 +1532,7 @@ inline void JSObject::setIndexQuickly(VM& vm, unsigned i, JSValue v)
     }
     case ALL_DOUBLE_INDEXING_TYPES: {
         ASSERT(i < butterfly->vectorLength());
-        if (!v.isNumber()) {
+        if (!isNumberForDoubleShape(v)) {
             convertDoubleToContiguousWhilePerformingSetIndex(vm, i, v);
             return;
         }

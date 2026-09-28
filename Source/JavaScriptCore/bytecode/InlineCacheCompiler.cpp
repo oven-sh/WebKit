@@ -2591,6 +2591,8 @@ void InlineCacheCompiler::generateWithGuard(unsigned index, AccessCase& accessCa
             switch (accessCase.m_type) {
             case AccessCase::IndexedDoubleStore: {
                 RELEASE_ASSERT(m_scratchFPR != InvalidFPRReg);
+                if (Options::keepNumberEncodings(27))
+                    failAndRepatch.append(jit.branchIfInt32(valueGPR));
                 auto notInt = jit.branchIfNotInt32(valueGPR);
                 jit.convertInt32ToDouble(valueGPR, m_scratchFPR);
                 auto ready = jit.jump();

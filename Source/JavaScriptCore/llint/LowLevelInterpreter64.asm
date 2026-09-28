@@ -2071,14 +2071,11 @@ macro putByValOp(opcodeName, opcodeStruct, osrExitPoint)
         contiguousPutByVal(
             macro (operand, scratch, address)
                 loadConstantOrVariable(size, operand, scratch)
-                bqb scratch, numberTag, .notInt
-                ci2ds scratch, ft0
-                jmp .ready
-            .notInt:
+                # Whether an int32 may be stored as a double is for the slow path to say (Options::keepNumberEncodings).
+                bqaeq scratch, numberTag, .opPutByValSlow
                 addq numberTag, scratch
                 fq2d scratch, ft0
                 bdnequn ft0, ft0, .opPutByValSlow
-            .ready:
                 stored ft0, address
                 writeBarrierOnOperands(size, get, m_base, m_value)
             end)

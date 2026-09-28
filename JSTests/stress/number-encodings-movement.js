@@ -81,7 +81,7 @@ for (let name in routes) {
         for (let surprise in kinds) {
             if (trained === surprise)
                 continue;
-            let f = eval("(function (x, i) " + body + ")");
+            let f = eval(freshSource("x, i", body));
             noInline(f);
             let run = (values, i) => {
                 let x = values[i % values.length];

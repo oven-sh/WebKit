@@ -37,7 +37,7 @@ const steps = { int: int(1), integral: float(1), fractional: float(0.5) };
 for (let name in sources) {
     for (let trained in steps) {
         for (let surprise in steps) {
-            let f = eval(sources[name]);
+            let f = eval(sources[name].replace("{", "{ /* " + ++functionsMade + " */ "));
             noInline(f);
             let run = (n, step) => {
                 let got = show(f(n, step)), wanted = model(name, n, step);

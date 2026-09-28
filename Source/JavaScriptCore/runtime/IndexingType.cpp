@@ -37,6 +37,10 @@ IndexingType leastUpperBoundOfIndexingTypes(IndexingType a, IndexingType b)
     // It doesn't make sense to LUB something that is an array with something that isn't.
     ASSERT((a & IsArray) == (b & IsArray));
 
+    // An array of doubles holds int32s only by making doubles of them.
+    if (Options::keepNumberEncodings(24) && ((hasInt32(a) && hasDouble(b)) || (hasDouble(a) && hasInt32(b))))
+        return (a & ~IndexingShapeMask) | ContiguousShape;
+
     // Boy, this sure is easy right now.
     return std::max(a, b);
 }
@@ -48,7 +52,7 @@ bool isProvenValidTypeForIndexingShapeStorage(IndexingType indexingType, Specula
     case ALL_INT32_INDEXING_TYPES:
         return isInt32Speculation(type);
     case ALL_DOUBLE_INDEXING_TYPES:
-        return isBytecodeRealNumberSpeculation(type);
+        return isBytecodeRealNumberSpeculation(type) && !((type & SpecInt32Only) && Options::keepNumberEncodings(25));
     case ALL_CONTIGUOUS_INDEXING_TYPES:
     case ALL_ARRAY_STORAGE_INDEXING_TYPES:
         return isSubtypeSpeculation(type, SpecBytecodeTop);
@@ -69,13 +73,13 @@ IndexingType leastUpperBoundOfIndexingTypeAndTypeForSpeculation(IndexingType ind
             return (indexingType & ~IndexingShapeMask) | Int32Shape;
         // Even though NaN wouldn't be a valid value to store in a double array many DFG nodes will say they produce one so this somewhat lies.
         // FIXME: Should this really say that it wants a double for NaNs.
-        if (isFullNumberSpeculation(type))
+        if (isFullNumberSpeculation(type) && !(Options::keepNumberEncodings(25) && (hasInt32(indexingType) || (type & SpecInt32Only))))
             return (indexingType & ~IndexingShapeMask) | DoubleShape;
         return (indexingType & ~IndexingShapeMask) | ContiguousShape;
     case ALL_DOUBLE_INDEXING_TYPES:
         // Even though NaN wouldn't be a valid value to store in a double array many DFG nodes will say they produce one so this somewhat lies.
         // FIXME: Should this really say that it wants a double for NaNs.
-        if (isFullNumberSpeculation(type))
+        if (isFullNumberSpeculation(type) && !((type & SpecInt32Only) && Options::keepNumberEncodings(25)))
             return indexingType;
         return (indexingType & ~IndexingShapeMask) | ContiguousShape;
     case ALL_CONTIGUOUS_INDEXING_TYPES:
