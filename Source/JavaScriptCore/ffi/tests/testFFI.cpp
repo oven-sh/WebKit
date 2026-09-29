@@ -37,6 +37,16 @@
 #include <wtf/text/StringConcatenateNumbers.h>
 #include <wtf/text/StringToIntegerConversion.h>
 
+#if OS(UNIX)
+#include <signal.h>
+#include <spawn.h>
+#include <sys/resource.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+extern char** environ;
+#endif
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
@@ -86,6 +96,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <iterator>
 #include <limits>
 #include <wtf/MathExtras.h>
+#include <wtf/Threading.h>
 #include <wtf/Vector.h>
 #include <wtf/WeakRandom.h>
 #include <wtf/text/CString.h>
@@ -2431,6 +2442,125 @@ static void testFixtureTable()
     FFI_CHECK_EQ(ffi_mix_5(1, -1, 3, -4, 5, -6, 7, -8), 1 * 1.0 + 2 * -1.0 + 3 * 3.0 + 4 * -4.0 + 5 * 5.0 + 6 * -6.0 + 7 * 7.0 + 8 * -8.0);
 }
 
+// The kernel can only deliver an overflow of the native stack on an alternate signal stack. The
+// signal handler that JSC registers with the first VM asks for that stack, and a thread that WTF
+// creates has one. ASan builds keep the handler on the thread's own stack, so they are not tested.
+#if OS(UNIX) && !ASAN_ENABLED
+
+static constexpr int nativeStackOverflowWasReported = 42;
+static constexpr const char* nativeStackOverflowOption = "--native-stack-overflow";
+static const char* s_programPath;
+
+IGNORE_WARNINGS_BEGIN("infinite-recursion")
+static NEVER_INLINE int overflowTheNativeStack(int depth)
+{
+    volatile char frame[1024];
+    frame[0] = static_cast<char>(depth);
+    // Reading the frame after the call keeps this from being a tail call.
+    return overflowTheNativeStack(depth + 1) + frame[0];
+}
+IGNORE_WARNINGS_END
+
+// Runs in a process of its own: what an embedder with a crash handler does, then the overflow.
+static int runNativeStackOverflowChild(const char* thread)
+{
+    // The failure of this test is a crash. It leaves no core file.
+    struct rlimit noCoreFile { 0, 0 };
+    setrlimit(RLIMIT_CORE, &noCoreFile);
+
+    static std::array<uint8_t, 64 * KB> mainThreadAlternateStack;
+    stack_t alternateStack { };
+    alternateStack.ss_sp = mainThreadAlternateStack.data();
+    alternateStack.ss_size = mainThreadAlternateStack.size();
+
+    struct sigaction action { };
+    action.sa_sigaction = [](int, siginfo_t*, void*) {
+        stack_t current { };
+        sigaltstack(nullptr, &current);
+        _exit((current.ss_flags & SS_ONSTACK) ? nativeStackOverflowWasReported : EXIT_FAILURE);
+    };
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    if (sigaltstack(&alternateStack, nullptr) || sigaction(SIGSEGV, &action, nullptr) || sigaction(SIGBUS, &action, nullptr))
+        return EXIT_FAILURE;
+
+    JSC::initialize();
+    // The first VM registers the signal handlers of JSC. They chain to the handler above.
+    RefPtr vm = VM::create();
+
+    if (!strcmp(thread, "main")) {
+        // Without a limit, the stack of the main thread grows until the memory is used up.
+        struct rlimit stackLimit;
+        if (getrlimit(RLIMIT_STACK, &stackLimit))
+            return EXIT_FAILURE;
+        stackLimit.rlim_cur = std::min<rlim_t>(stackLimit.rlim_cur, 8 * MB);
+        if (setrlimit(RLIMIT_STACK, &stackLimit))
+            return EXIT_FAILURE;
+        overflowTheNativeStack(0);
+    } else {
+        Thread::create("NativeStackOverflow"_s, [] {
+            overflowTheNativeStack(0);
+        })->waitForCompletion();
+    }
+    return EXIT_FAILURE;
+}
+
+// The exit code of the child, or the negated number of the signal that killed it.
+static int runNativeStackOverflowOn(const char* thread)
+{
+    char* arguments[] = { const_cast<char*>(s_programPath), const_cast<char*>(nativeStackOverflowOption), const_cast<char*>(thread), nullptr };
+    pid_t child;
+    if (posix_spawnp(&child, s_programPath, nullptr, nullptr, arguments, environ))
+        return EXIT_FAILURE;
+
+    int status = 0;
+    while (waitpid(child, &status, 0) == -1) {
+        if (errno != EINTR)
+            return EXIT_FAILURE;
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -WTERMSIG(status);
+}
+
+static void testNativeStackOverflowIsReported()
+{
+    FFI_CHECK_EQ(runNativeStackOverflowOn("main"), nativeStackOverflowWasReported);
+    FFI_CHECK_EQ(runNativeStackOverflowOn("WTF"), nativeStackOverflowWasReported);
+}
+
+static void testThreadHasAlternateSignalStack()
+{
+    stack_t alternateStack { };
+    int result = -1;
+    Thread::create("AlternateSignalStack"_s, [&] {
+        result = sigaltstack(nullptr, &alternateStack);
+    })->waitForCompletion();
+    FFI_CHECK(!result);
+    FFI_CHECK(!(alternateStack.ss_flags & SS_DISABLE));
+#if !OS(ANDROID)
+    // bionic gives every thread a smaller one, and that one stays.
+    FFI_CHECK_EQ(alternateStack.ss_size, 512 * KB);
+#endif
+
+#if OS(LINUX)
+    // The stack goes away with its thread.
+    auto numberOfMappings = [] {
+        size_t lines = 0;
+        if (FILE* maps = fopen("/proc/self/maps", "r")) {
+            for (int character = fgetc(maps); character != EOF; character = fgetc(maps))
+                lines += character == '\n';
+            fclose(maps);
+        }
+        return lines;
+    };
+    size_t mappingsBefore = numberOfMappings();
+    for (unsigned i = 0; i < 1000; ++i)
+        Thread::create("AlternateSignalStack"_s, [] { })->waitForCompletion();
+    FFI_CHECK(numberOfMappings() < mappingsBefore + 100);
+#endif
+}
+
+#endif // OS(UNIX) && !ASAN_ENABLED
+
 } // anonymous namespace
 
 static int runAll()
@@ -2462,6 +2592,11 @@ static int runAll()
         RUN(testOptimizingTierPointerArgumentWithNonViewCells());
     }
 
+#if OS(UNIX) && !ASAN_ENABLED
+    RUN(testNativeStackOverflowIsReported());
+    RUN(testThreadHasAlternateSignalStack());
+#endif
+
     dataLogLn(s_failureCount ? "FAILED: " : "OK: ", s_checkCount - s_failureCount, " checks passed, ", s_failureCount, " failed.");
     VM& leaked = s_vm.releaseNonNull().leakRef();
     UNUSED_PARAM(leaked);
@@ -2482,6 +2617,11 @@ static int runAll()
 int main(int argc, char** argv)
 {
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
+#if OS(UNIX) && !ASAN_ENABLED
+    s_programPath = argv[0];
+    if (argc == 3 && !strcmp(argv[1], nativeStackOverflowOption))
+        return runNativeStackOverflowChild(argv[2]);
+#endif
     if (argc == 2)
         s_filter = argv[1];
     else if (argc > 2) {
