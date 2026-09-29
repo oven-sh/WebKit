@@ -622,6 +622,20 @@ out of tracebacks when CPython takes them out: `removeImportlibFrames()`.
 The statement calls whatever `__import__` is in the builtins of the frame, with the globals and the locals of the frame, unless it is the one that there was to begin with, which there is no need to call.
 `import a.b.c as d` imports `a` and gets `b` from it and `c` from that, as `from` would.
 
+**`import` finds what is JavaScript's too.** `JavaScriptImporter` is the last on `sys.meta_path`, so what is Python's by a name is what the name means, and a program that has no JavaScript in it is asked nothing new
+until an import has failed. It is `lib/_javascript_importer.py`, twenty lines in the shape of `BuiltinImporter`, over `_javascript.find_module()` and `load_module()`.
+
+- **Where to look is for the host to say**, `Configuration::findJavaScriptModule`, since what a name means is a matter of `node_modules` and the like, which the engine knows nothing of. It is given the name and where Python
+  looked, and gives back what the module loader knows the module by, the file that it is in, and what its `__path__` is to have in it if there may be modules below it. If it is null there is no such importer.
+- **A name that is the standard library's is never JavaScript's**, whether or not there is such a module here. Much of the library tries `import readline` or `import zlib` to see whether it can, and is not to be given something else.
+- **It is loaded and run before `import` returns**, by `JSModuleLoader::loadModuleSync()`, which is what `require()` of an ES module is done with. Python's `import` does not wait, so a module that awaits something as
+  it is run, or imports one that does, is `ImportError`. Once JavaScript has waited for it, with `await import()`, it can be imported like any other.
+- **JavaScript remembers what it has loaded.** Taken out of `sys.modules` and imported again, it is the same object and is not run again. One that threw throws the same again.
+- **In a cycle it is the module of Python's that is seen half done.** What JavaScript imports that is Python's is run once all of the graph has been loaded and before any of it is linked, since what it exports is not known
+  until then. So if it imports what imported it, that is the first that has been asked of that module, and it is run there and then, as it would be by `require()`.
+
+`interop/importing-javascript.py` has each of these.
+
 A frozen module is source here, and not code that has been compiled and marshalled, since there is nothing yet that compiles ahead of time. What `_imp.find_frozen()` gives for the data is made when it is asked for.
 
 The name of the file that code is from goes with the source, and all the code that is compiled from one source has the one name. `_imp._fix_co_filename()` gives the source another name, which is what it does in CPython

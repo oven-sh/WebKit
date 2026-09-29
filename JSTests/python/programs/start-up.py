@@ -4,7 +4,7 @@ import sys
 t = lambda label, f: print(label, "=>", ascii(f()).replace(__file__, "main.py").replace(sys.path[0], "HERE"))
 main = sys.modules["__main__"]
 # What is written in C in CPython and has not been written here yet has something written in Python in its place, or is not needed to begin with. What the engine has of its own is its own.
-OURS = {"_frame", "_framelocals", "js", "_py_abc", "_weakrefset"}
+OURS = {"_frame", "_framelocals", "_javascript", "_javascript_importer", "js", "_py_abc", "_weakrefset"}
 THEIRS = {"_abc", "_stat", "_signal", "time", "zipimport", "_distutils_hack", "sitecustomize", "usercustomize"}
 EXPECTED = ["__main__", "_codecs", "_collections_abc", "_frozen_importlib", "_frozen_importlib_external", "_imp", "_io", "_sitebuiltins", "_thread", "_warnings", "_weakref", "abc", "builtins", "codecs", "encodings", "encodings.aliases", "encodings.utf_8", "errno", "genericpath", "marshal", "os", "os.path", "posix", "posixpath", "site", "stat", "sys"]
 t("what has been imported", lambda: [name for name in EXPECTED if name not in sys.modules])

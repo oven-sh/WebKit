@@ -4486,9 +4486,27 @@ void GlobalObject::configurePython(JSGlobalObject*, Python::Configuration& confi
 // What a program that is Python's ends with is what the process ends with.
 static std::optional<int> pythonExitStatus;
 
+// `import a.b` is b.mjs or b.js, where Python looked for b.py.
+static std::optional<Python::JavaScriptModule> findJavaScriptModuleForPython(JSGlobalObject*, const String& name, std::span<const String> directories)
+{
+    size_t dot = name.reverseFind('.');
+    StringView last = StringView(name).substring(dot == notFound ? 0 : dot + 1);
+    for (auto& directory : directories) {
+        for (auto suffix : { ".mjs"_s, ".js"_s }) {
+            String path = makeString(directory.isEmpty() ? "."_s : StringView(directory), '/', last, suffix);
+            if (FileSystem::fileType(path) == FileSystem::FileType::Regular) {
+                URL url = absoluteFileURL(path);
+                return Python::JavaScriptModule { url.string(), url.fileSystemPath(), { } };
+            }
+        }
+    }
+    return std::nullopt;
+}
+
 // The modules that have to do with the system, which it is for the host to say that there are
 static void addPythonHostModules(Python::Configuration& configuration)
 {
+    configuration.findJavaScriptModule = findJavaScriptModuleForPython;
     configuration.builtinModules.append({ "posix"_s, Python::createPosixModule });
     configuration.builtinModules.append({ "_posixsubprocess"_s, Python::createPosixSubprocessModule });
     configuration.builtinModules.append({ "_signal"_s, Python::createSignalModule });

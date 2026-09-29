@@ -215,6 +215,17 @@ void reportUncaughtException(JSGlobalObject* globalObject, JSValue exception)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    // JavaScript can throw anything. What is no Error is no exception, and nothing of Python's that shows one knows what to make of it.
+    if (!isInstance(globalObject, exception, globalObject->pyRealm()->typeBaseException())) {
+        String text = exception.toWTFString(globalObject);
+        if (scope.exception()) {
+            if (!scope.tryClearException())
+                return;
+            text = typeName(globalObject, exception);
+        }
+        writeToStandardError(globalObject, concatenate("Uncaught "_s, text, '\n'));
+        return;
+    }
     JSValue type = typeOf(globalObject, exception)->object();
     JSValue traceback = exception.isObject() ? asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback) : JSValue();
     if (!traceback)

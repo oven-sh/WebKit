@@ -59,6 +59,9 @@ JSObject* addModule(JSGlobalObject*, JSValue name);
 JSValue importModuleLevel(JSGlobalObject*, JSValue name, JSValue globals, JSValue locals, JSValue fromList, int level);
 // PyImport_ImportModule(): as the statement would, by whatever __import__ is where this is called from. It is the module that was named that is returned, and not the package that it is in.
 JS_EXPORT_PRIVATE JSValue importModule(JSGlobalObject*, const String& name);
+// The namespace object of a module of JavaScript's, which is loaded and run if it has not been, all before this returns. `key` is what the module loader knows it by. It raises ImportError if the
+// module awaits something as it is run.
+JS_EXPORT_PRIVATE JSValue loadJavaScriptModule(JSGlobalObject*, const String& key);
 // PyImport_ImportModuleAttrString()
 JSValue importModuleAttribute(JSGlobalObject*, const String& module, ASCIILiteral attribute);
 // PyImport_GetImporter()

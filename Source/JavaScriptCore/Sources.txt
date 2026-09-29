@@ -792,6 +792,7 @@ python/PythonLifecycle.cpp
 python/PythonListSort.cpp
 python/PythonLocale.cpp
 python/PythonJavaScript.cpp
+python/PythonJavaScriptModules.cpp
 python/PythonLexer.cpp
 python/PythonBinasciiModule.cpp
 python/PythonBisectModule.cpp

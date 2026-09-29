@@ -55,6 +55,15 @@ struct FrozenModule {
     ImplementationVisibility visibility { ImplementationVisibility::Public };
 };
 
+// What `import a.b` means, if it is something of JavaScript's.
+struct JavaScriptModule {
+    String key; // What the module loader knows it by: what GlobalObjectMethodTable::moduleLoaderResolve gives. Null if there is nothing to load, and it is only somewhere for others to be, as `node` is for `node:fs`.
+    String file; // __file__. Null if it is in none.
+    // What its __path__ has in it, if there may be others below it, so that `import a.b.c` is worth asking about. It is what the host is given to find them by, and can be anything that is not the name of a
+    // directory, which Python would look in. Null if there are none.
+    String package;
+};
+
 // What whoever embeds the engine tells Python about the program: what PyConfig is to whoever embeds CPython. It is asked for once for each
 // global object, through GlobalObjectMethodTable::configurePython, when Python is first used there.
 struct Configuration {
@@ -82,6 +91,9 @@ struct Configuration {
     // What io.open_code() is: given the name of a file whose contents are to be run, a str, it returns a file that is open for reading bytes, or nothing, having thrown. It is for what wants a say in what is
     // run, or has it somewhere other than in a file. Null is open(path, "rb"). PyFile_SetOpenCodeHook() of CPython.
     JSValue (*openCode)(JSGlobalObject*, JSValue path) { nullptr };
+    // Finds the module of JavaScript's that `import name` means, the name being the whole of it, dots and all. It is asked when nothing of Python's has been found by that name. `directories` is where Python looked:
+    // sys.path, or the __path__ of what the module is below, which is what the host gave for it if that is JavaScript's too. Nothing if there is none, or if it threw. Null if none can be imported.
+    std::optional<JavaScriptModule> (*findJavaScriptModule)(JSGlobalObject*, const String& name, std::span<const String> directories) { nullptr };
 
     // ---- What `python` is told on its command line and in its environment: the rest of PyConfig. readCommandLine() fills it in, and much of what is above. As it comes it is what a program has that is not started that way.
 

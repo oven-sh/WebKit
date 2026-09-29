@@ -239,6 +239,7 @@ JSObject* createWarningsModule(JSGlobalObject*);
 JSObject* createASTModule(JSGlobalObject*);
 void initializeTracebackTypes(JSGlobalObject*);
 JSObject* createFrameModule(JSGlobalObject*);
+JSObject* createJavaScriptModule(JSGlobalObject*);
 
 void initializeRangeType(JSGlobalObject*);
 // What the __dict__ and __weakref__ of a class whose instances have such things get and set.

@@ -271,6 +271,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_contextvars"_s, createContextVarsModule },
     { "_frame"_s, createFrameModule },
     { "_imp"_s, createImpModule },
+    { "_javascript"_s, createJavaScriptModule },
     { "_opcode"_s, createOpcodeModule },
     { "_random"_s, createRandomModule },
     { "_sre"_s, createSREModule },
@@ -907,6 +908,7 @@ static constexpr FrozenModule s_frozenBootstrap[] = {
 // `_PyImport_FrozenStdlib`
 static constexpr FrozenModule s_frozenLibrary[] = {
     { "_framelocals"_s, s_librarySource__framelocals, false, { }, ImplementationVisibility::Private },
+    { "_javascript_importer"_s, s_librarySource__javascript_importer, false, { }, ImplementationVisibility::Private },
 #ifdef PYTHON_MULTIARCH
     // sysconfig._get_sysconfigdata_name(). CPython has this in a file, which it writes when it is built.
     { "_sysconfigdata__" PYTHON_PLATFORM "_" PYTHON_MULTIARCH ""_s, s_librarySource__sysconfigdata },
@@ -1092,6 +1094,19 @@ void initializeExternalImport(JSGlobalObject* globalObject)
     // init_importlib_external()
     callMethodNamed(globalObject, importState(globalObject).importlib.get(), identifier(vm, "_install_external_importers"_s));
     RETURN_IF_EXCEPTION(scope, void());
+
+    // What is JavaScript's comes after all that is Python's.
+    if (globalObject->pyRealm()->configuration().findJavaScriptModule) {
+        JSValue importer = importModuleAttribute(globalObject, "_javascript_importer"_s, "JavaScriptImporter"_s);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSValue finders = sysAttribute(globalObject, "meta_path"_s);
+        if (!finders) {
+            raise(globalObject, scope, BuiltinType::RuntimeError, "lost sys.meta_path"_s);
+            return;
+        }
+        callMethodNamed(globalObject, finders, identifier(vm, "append"_s), importer);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 
     // init_zipimport()
     JSValue hooks = sysAttribute(globalObject, "path_hooks"_s);

@@ -1,0 +1,75 @@
+---- one of them
+who is asked => ['BuiltinImporter', 'FrozenImporter', 'PathFinder', 'JavaScriptImporter']
+what it is => (<module 'plain' from 'HERE/plain.mjs'>, <class 'module'>, True)
+what importing says of it => ('plain', 'HERE/plain.mjs', '', <class '_javascript_importer.JavaScriptImporter'>, False, False)
+its spec => ('plain', 'HERE/plain.mjs', True, '', None, None, True)
+what it exports => (0, 1, 1, 'hello you', 3)
+it is the one that JavaScript has => (True, True)
+from => [('b', "<class 'bump'>"), ('count', '1'), ('default', "<class 'hello'>")]
+all of it => [('Thing', "<class 'Thing'>"), ('bump', "<class 'bump'>"), ('count', '1'), ('isMe', '<JSFunction isMe>')]
+what it does not export => ImportError: cannot import name 'nothing' from 'plain' (HERE/plain.mjs)
+nor has => AttributeError: module 'plain' has no attribute 'nothing'
+below it => ModuleNotFoundError: No module named 'plain.below'; 'plain' is not a package
+it is run once => ([('again', "<module 'plain' from 'HERE/plain.mjs'>"), ('count', '1'), ('plain', "<module 'plain' from 'HERE/plain.mjs'>")], 1)
+forgotten by Python, it is not by JavaScript => (True, True, 1)
+reloaded => (True, 1)
+dir => ['Thing', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__', '_hidden', 'bump', 'count', 'default', 'isMe']
+what JavaScript sees of that => (['Thing', '_hidden', 'bump', 'count', 'default', 'isMe'], True)
+---- which
+what is Python's comes first => 'Python'
+.mjs before .js => '.mjs'
+neither => ModuleNotFoundError: No module named 'there_is_nothing_by_this_name'
+a name that is the standard library's => [(True, True, None), (True, True, None)]
+is not found => ModuleNotFoundError: No module named 'readline'
+nor below it => None
+find_spec => ['HERE/plain.mjs', 'HERE/either.mjs', 'HERE/both.py', None, 'HERE/waits.mjs']
+finding runs nothing => False
+what is not a str on the path => (None, None, {'by': 'chain_four.py'}, b'bytes', 5)
+---- in a package, and in a directory
+as the package is imported => (<module 'package.beside' from 'HERE/package/beside.mjs'>, "in a package of Python's", "in a package of Python's", 'package.beside', 'package', 'package')
+later => (False, [('later', "<module 'package.later' from 'HERE/package/later.mjs'>")], 'asked for later', [('l', "<module 'package.later' from 'HERE/package/later.mjs'>")], [('where', "'asked for later'")])
+a directory => [('directory', "<module 'directory' (namespace) from ['HERE/directory']>"), ('other', "<module 'directory.other' from 'HERE/directory/other.py'>"), ('where', "('in a directory', 'Python, in the same directory', ['HERE/directory'])")]
+not there => ModuleNotFoundError: No module named 'package.nothing'
+---- what goes wrong
+throws => ValueError: as it is run, 1
+    and it is not left behind => False
+throws => ValueError: as it is run, 1
+    and it is not left behind => False
+throws_what_is_no_error => ImportError: an object that is no Error
+    and it is not left behind => False
+throws_what_is_no_error => ImportError: an object that is no Error
+    and it is not left behind => False
+throws_a_number => ImportError: 5
+    and it is not left behind => False
+wrong => SyntaxError: Unexpected token ';'
+    and it is not left behind => False
+waits => ImportError: cannot import 'file://HERE/waits.mjs', which awaits something as it is run, or imports what does. `import` does not wait.
+    and it is not left behind => False
+waits => ImportError: cannot import 'file://HERE/waits.mjs', which awaits something as it is run, or imports what does. `import` does not wait.
+    and it is not left behind => False
+imports_what_waits => ImportError: cannot import 'file://HERE/imports_what_waits.mjs', which awaits something as it is run, or imports what does. `import` does not wait.
+    and it is not left behind => False
+imports_what_is_missing => JSError: Could not open file 'HERE/there_is_no_such_file.mjs'.
+    and it is not left behind => False
+imports_what_is_not_exported => SyntaxError: Export named 'nothing' not found in module 'file://HERE/plain.mjs'.
+    and it is not left behind => False
+what it says besides => ('HERE/waits.mjs', None)
+what is waited for is there already => 1
+or will be as soon as anything else is run => ImportError: cannot import 'file://HERE/waits_a_turn.mjs', which awaits something as it is run, or imports what does. `import` does not wait.
+while JavaScript is waiting for it => ImportError: cannot import 'file://HERE/waits.mjs', which awaits something as it is run, or imports what does. `import` does not wait.
+once it has => ([<module 'waits' from 'HERE/waits.mjs'>], True, 'what it was waiting for', 'what it was waiting for')
+---- round and round
+what the one of Python's saw => [['early', 'hoisted', 'secondWhenThisWasRun'], 'hoisted', 'set before', True, 'cycle_first']
+what the one of JavaScript's saw => ['sys', 'before']
+and afterwards => ('set after', True)
+each as it is => ['Object', 'Made', 'Map', 'dict']
+and the same from either end => [True, True, True, True]
+---- without it
+nothing new => ModuleNotFoundError: No module named 'either_again'
+what has been imported has been => [('plain', "<module 'plain' from 'HERE/plain.mjs'>")]
+what has been forgotten is not found => ModuleNotFoundError: No module named 'either'
+with it again => [('either', "<module 'either' from 'HERE/either.mjs'>")]
+---- what else asks about a module
+inspect => ('HERE/plain.mjs', None, None, None)
+its source => 'import * as self from "./plain.mjs";'
+the importer => (<class '_javascript_importer.JavaScriptImporter'>, 'HERE/plain.mjs', 'plain', None, 'HERE/package/beside.mjs', None, None)
