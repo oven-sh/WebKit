@@ -1,18 +1,19 @@
 //@ skip if not $jitTests
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12")
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=150", "--missCountForLLIntTierUp=12")
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=3")
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=0")
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntICs=0")
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntUnsetCaching=1", "--useLLIntStringLengthFastPath=0", "--useLLIntPrototypeCacheRearming=1")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=150", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=3", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=0", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntICs=0", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntUnsetCaching=1", "--useLLIntStringLengthFastPath=0", "--useLLIntPrototypeCacheRearming=1", "--useStartupJITDeferralAfterLLIntMisses=0")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=1")
-//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--maximumBytecodeCostForLLIntMissTierUp=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--maximumBytecodeCostForLLIntMissTierUp=0", "--useStartupJITDeferralAfterLLIntMisses=0")
 //@ runDefault("--useJIT=0", "--missCountForLLIntTierUp=12")
 
 // A get_by_id or put_by_id site counts the calls of its slow path in the LLInt. The call that makes the count
 // Options::missCountForLLIntTierUp() lowers the threshold of the Baseline JIT for the function from
-// thresholdForJITAfterWarmUp to thresholdForJITSoon. The executions so far count, and the startup deferral does not
-// apply. A function with no such site waits for thresholdForJITAfterWarmUp.
+// thresholdForJITAfterWarmUp to thresholdForJITSoon. The executions so far count. The startup deferral applies to
+// that threshold too, but not with --useStartupJITDeferralAfterLLIntMisses=0. A function with no such site waits
+// for thresholdForJITAfterWarmUp.
 //
 // An execution counts 15 (5 at the start of a call, 10 at the return), and 1 for each turn of a loop.
 // With thresholdForJITAfterWarmUp=100000, 200 calls are far from the Baseline JIT without the misses.
