@@ -50,14 +50,23 @@ struct GCRequest {
     void dump(PrintStream&) const;
     
     std::optional<CollectionScope> scope;
-    RefPtr<SharedTask<void()>> didFinishEndPhase;
 #if USE(BUN_JSC_ADDITIONS)
     // Set by an embedder on a collection it requests because the application has gone idle (as opposed to one paced by
     // allocation, forced by the program, or by memory pressure). Only such a collection may let optimized code that has
     // no execution counter of its own age out (CodeBlock::shouldJettisonDueToOldAge).
     bool isIdle { false };
+    // Written like any other member, so that a GCRequest has no padding. It is passed by value, so it is a temporary in
+    // the frames of whoever asks for a collection, and that collection scans those frames conservatively. Padding keeps
+    // what the slot held before: over a pointer to a cell, the byte or two written beside it make a new pointer, into
+    // whichever cell lies at (the old address & ~0xff) + that byte, and the scan takes that cell for referenced.
+    uint8_t padding[sizeof(void*) - sizeof(std::optional<CollectionScope>) - sizeof(bool)] { };
 #endif
+    RefPtr<SharedTask<void()>> didFinishEndPhase;
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+static_assert(sizeof(GCRequest) == 2 * sizeof(void*), "GCRequest has no padding");
+#endif
 
 } // namespace JSC
 
