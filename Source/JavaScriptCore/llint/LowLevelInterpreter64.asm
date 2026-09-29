@@ -1646,7 +1646,7 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
     loadi JSCell::m_structureID[t3], t1
     loadi %opcodeStruct%::Metadata::%modeMetadataName%.defaultMode.structureID[t2], t0
     bineq t0, t1, slowLabel
-    loadis %opcodeStruct%::Metadata::%modeMetadataName%.defaultMode.cachedOffset[t2], t1
+    loadh %opcodeStruct%::Metadata::%modeMetadataName%.defaultMode.cachedOffset[t2], t1
     loadPropertyAtVariableOffset(t1, t3, t0)
     valueProfile(size, opcodeStruct, valueProfileName, t0, t2)
     return(t0)
@@ -1656,7 +1656,7 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
     loadi JSCell::m_structureID[t3], t1
     loadi %opcodeStruct%::Metadata::%modeMetadataName%.protoLoadMode.structureID[t2], t3
     bineq t3, t1, slowLabel
-    loadis %opcodeStruct%::Metadata::%modeMetadataName%.protoLoadMode.cachedOffset[t2], t1
+    loadh %opcodeStruct%::Metadata::%modeMetadataName%.protoLoadMode.cachedOffset[t2], t1
     loadp %opcodeStruct%::Metadata::%modeMetadataName%.protoLoadMode.cachedSlot[t2], t3
     loadPropertyAtVariableOffset(t1, t3, t0)
     valueProfile(size, opcodeStruct, valueProfileName, t0, t2)
@@ -1664,6 +1664,7 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
 
 .opGetByIdArrayLength:
     bbneq t1, constexpr GetByIdMode::ArrayLength, .opGetByIdUnset
+.opGetByIdArrayLengthLoad:
     loadb JSCell::m_indexingTypeAndMisc[t3], t0
     btiz t0, IsArray, slowLabel
     btiz t0, IndexingShapeMask, slowLabel
@@ -1675,11 +1676,28 @@ macro performGetByIDHelper(opcodeStruct, modeMetadataName, valueProfileName, slo
     return(t0)
 
 .opGetByIdUnset:
+    bbneq t1, constexpr GetByIdMode::Unset, .opGetByIdStringLength
     loadi JSCell::m_structureID[t3], t1
     loadi %opcodeStruct%::Metadata::%modeMetadataName%.unsetMode.structureID[t2], t0
     bineq t0, t1, slowLabel
     valueProfile(size, opcodeStruct, valueProfileName, ValueUndefined, t2)
     return(ValueUndefined)
+
+.opGetByIdStringLength:
+    # A receiver that is not a string can be an array: the site keeps this mode for both.
+    bbneq JSCell::m_type[t3], StringType, .opGetByIdArrayLengthLoad
+    loadp JSString::m_fiber[t3], t0
+    btpnz t0, isRopeInPointer, .opGetByIdStringLengthRope
+    loadi StringImpl::m_length[t0], t0
+    orq numberTag, t0
+    valueProfile(size, opcodeStruct, valueProfileName, t0, t2)
+    return(t0)
+
+.opGetByIdStringLengthRope:
+    loadi JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t3], t0
+    orq numberTag, t0
+    valueProfile(size, opcodeStruct, valueProfileName, t0, t2)
+    return(t0)
 
 end
 

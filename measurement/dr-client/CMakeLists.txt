@@ -1,0 +1,7 @@
+cmake_minimum_required(VERSION 3.14)
+project(threadcount C CXX)
+find_package(DynamoRIO REQUIRED)
+add_library(threadcount SHARED threadcount.c)
+configure_DynamoRIO_client(threadcount)
+use_DynamoRIO_extension(threadcount drmgr)
+use_DynamoRIO_extension(threadcount drreg)

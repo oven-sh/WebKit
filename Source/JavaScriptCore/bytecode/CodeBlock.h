@@ -646,6 +646,8 @@ public:
 
     void jitSoon();
     void jitNextInvocation();
+    // One get_by_id or put_by_id site made Options::missCountForLLIntTierUp() calls of its LLInt slow path.
+    void jitSoonAfterLLIntICMisses();
 
     const BaselineExecutionCounter& llintExecuteCounter() const
     {

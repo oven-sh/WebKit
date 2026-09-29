@@ -1,0 +1,56 @@
+[JSC] LLInt property caches: misses count toward the Baseline JIT, and get_by_id caches an absent property, the length of a string, and a prototype load more than once
+
+The LLInt has one cache entry for each get_by_id site, and the entry is for
+one structure. A site that sees receivers of several structures calls
+llint_slow_path_get_by_id for each receiver whose structure is not the one of
+the entry, and overwrites the entry. Nothing counted these calls. The function
+went to the Baseline JIT, where an inline cache has an entry for each
+structure, when its execution counter reached thresholdForJITAfterWarmUp, as
+a function whose sites all hit does. The entry also never held an absent
+property (GetByIdMode::Unset had a fast path, but the slow path made a cache
+only for a slot that is not unset), never the length of a string, and a value
+of the prototype chain at most once for each site: the countdown to that cache
+ran once, and an own property at the site set it to zero for the life of the
+CodeBlock.
+
+Four changes, each with an option.
+
+missCountForLLIntTierUp (12, 0 turns it off). Each get_by_id and put_by_id
+site counts the calls of its slow path. The call that makes the count of one
+site 12 calls CodeBlock::jitSoonAfterLLIntICMisses(), which is jitSoon() for a
+CodeBlock that runs in the LLInt and waits for more than thresholdForJITSoon:
+the execution counter starts again with thresholdForJITSoon as its threshold.
+The memory pressure scale and the startup deferral scale apply as they do to
+every threshold. A site counts for itself, so the first visits of the sites of
+a large function do not add up to 12.
+
+useLLIntUnsetCaching. A get_by_id that finds no property counts down like one
+that finds its value on the prototype chain, and is cached in
+GetByIdMode::Unset: the structure of the receiver, and a watchpoint for the
+absence of the property on each object of the chain. It is not cached for a
+receiver or a chain object that is a global object (a variable of a later
+script is a property of the global object and makes no new structure), for a
+proxy, for a structure with an impure getOwnPropertySlot, or for a dictionary
+that was made flat before.
+
+useLLIntStringLengthCaching. GetByIdMode::StringLength is a new mode. Its fast
+path reads the length of a string from the StringImpl, or from the rope. A
+receiver that is not a string goes to the fast path of ArrayLength, so a site
+that sees strings and arrays keeps one mode.
+
+useLLIntPrototypeCacheRearming. The countdown starts again when a watchpoint or
+a collection clears the cache of a site, when an own property replaces it, and
+when the countdown ends. So the cache of a site follows the receivers that the
+site sees. A cache that is replaced gives up its watchpoints. After a result
+that could not be cached the countdown is 8 times as long, and after 255 slow
+path calls of a site it does not start again.
+
+GetByIdModeMetadata has the 16 bytes it had. The cached offset has 16 bits
+(a property at an offset above 65535 is not cached), and the two bytes after
+it are the miss count and the countdown, in every mode. The countdown was one
+of the bytes that a pointer leaves zero in ProtoLoad mode. The miss count of
+put_by_id is in what was padding. The fast paths of the modes that were there
+have the instructions they had.
+
+$vm.llintGetByIdCaches(f) and $vm.llintGetByIdCacheHits(f, receiver) say what
+each get_by_id site of a function has cached, for the tests.

@@ -1,0 +1,7 @@
+5000, four off	/workspace/wkbuild/release-new/bin/jsc --thresholdForJITAfterWarmUp=5000 --missCountForLLIntTierUp=0 --useLLIntUnsetCaching=0 --useLLIntStringLengthFastPath=0 --useLLIntPrototypeCacheRearming=0 tsc-workload.js -- 1
+5000, defaults	/workspace/wkbuild/release-new/bin/jsc --thresholdForJITAfterWarmUp=5000 tsc-workload.js -- 1
+5000, four on	/workspace/wkbuild/release-new/bin/jsc --thresholdForJITAfterWarmUp=5000 --missCountForLLIntTierUp=12 --useLLIntUnsetCaching=1 --useLLIntStringLengthFastPath=1 --useLLIntPrototypeCacheRearming=1 tsc-workload.js -- 1
+500, four off	/workspace/wkbuild/release-new/bin/jsc --thresholdForJITAfterWarmUp=500 --missCountForLLIntTierUp=0 --useLLIntUnsetCaching=0 --useLLIntStringLengthFastPath=0 --useLLIntPrototypeCacheRearming=0 tsc-workload.js -- 1
+scale 10, four off	/workspace/wkbuild/release-new/bin/jsc --thresholdForJITAfterWarmUp=500 --startupJITDeferralScale=10 --missCountForLLIntTierUp=0 --useLLIntUnsetCaching=0 --useLLIntStringLengthFastPath=0 --useLLIntPrototypeCacheRearming=0 tsc-workload.js -- 1
+scale 10, defaults	/workspace/wkbuild/release-new/bin/jsc --thresholdForJITAfterWarmUp=500 --startupJITDeferralScale=10 tsc-workload.js -- 1
+scale 10, defaults, deferral kept	/workspace/wkbuild/release-new/bin/jsc --thresholdForJITAfterWarmUp=500 --startupJITDeferralScale=10 --useStartupJITDeferralAfterLLIntMisses=1 tsc-workload.js -- 1

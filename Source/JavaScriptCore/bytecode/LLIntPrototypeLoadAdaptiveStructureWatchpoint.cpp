@@ -136,6 +136,7 @@ void LLIntPrototypeLoadAdaptiveStructureWatchpoint::fireInternal(VM& vm, const F
 void LLIntPrototypeLoadAdaptiveStructureWatchpoint::clearLLIntGetByIdCache(GetByIdModeMetadata& metadata)
 {
     metadata.clearToDefaultModeWithoutCache();
+    metadata.rearmIfPossible();
 }
 
 } // namespace JSC

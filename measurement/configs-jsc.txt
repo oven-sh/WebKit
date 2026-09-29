@@ -1,0 +1,5 @@
+5000, all off	/workspace/wkbuild/release-pin/bin/jsc --thresholdForJITAfterWarmUp=5000 --missCountForLLIntTierUp=0 --useLLIntUnsetCaching=0 --useLLIntStringLengthCaching=0 --useLLIntPrototypeCacheRearming=0 tsc-workload.js -- 1
+5000, all on (N=12)	/workspace/wkbuild/release-pin/bin/jsc --thresholdForJITAfterWarmUp=5000 tsc-workload.js -- 1
+500, all off	/workspace/wkbuild/release-pin/bin/jsc --thresholdForJITAfterWarmUp=500 --missCountForLLIntTierUp=0 --useLLIntUnsetCaching=0 --useLLIntStringLengthCaching=0 --useLLIntPrototypeCacheRearming=0 tsc-workload.js -- 1
+5000, tier-up only	/workspace/wkbuild/release-pin/bin/jsc --thresholdForJITAfterWarmUp=5000 --useLLIntUnsetCaching=0 --useLLIntStringLengthCaching=0 --useLLIntPrototypeCacheRearming=0 tsc-workload.js -- 1
+5000, 2+3+4 only	/workspace/wkbuild/release-pin/bin/jsc --thresholdForJITAfterWarmUp=5000 --missCountForLLIntTierUp=0 tsc-workload.js -- 1

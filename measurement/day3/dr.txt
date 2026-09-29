@@ -1,0 +1,16 @@
+5000, defaults, no concurrent JIT | exit 0 | 1648 s | 
+Malloc=1, 5000, defaults, no concurrent JIT | exit 0 | 65 s | 
+no concurrent GC, 5000, defaults | exit 0 | 2758 s | 
+Malloc=1, no concurrent GC, 5000, defaults | exit 0 | 1042 s | 
+noscav, no concurrent GC, 5000, defaults | exit 0 | 2679 s | round 0: 2674402 ms, 3489 diagnostics, 1285534 bytes emitted threadcount: main=36943434084 jit=0 gc=0 other=13909582 total=36957343666 threads=6 
+noscav, 5000, four off | exit 0 | 2108 s | round 0: 2101987 ms, 3489 diagnostics, 1285534 bytes emitted threadcount: main=36190793160 jit=0 gc=0 other=13703719 total=36204496879 threads=6 
+noscav, scale 10, four off | exit 0 | 2493 s | round 0: 2486171 ms, 3489 diagnostics, 1285534 bytes emitted threadcount: main=37497456123 jit=0 gc=0 other=13702411 total=37511158534 threads=6 
+noscav, 500, four off | exit 0 | 2843 s | round 0: 2835564 ms, 3489 diagnostics, 1285534 bytes emitted threadcount: main=37575006717 jit=0 gc=0 other=13928040 total=37588934757 threads=6 
+cjit, scale 10, defaults | exit 0 | 89 s | 
+cjit, 5000, four off | exit 0 | 188 s | 
+cjit, 5000, four off (again) | exit 0 | 69 s | 
+cjit, 5000, defaults | exit 0 | 361 s | 
+cjit, 500, four off | exit 0 | 158 s | 
+cjit, scale 10, four off | exit 0 | 430 s | 
+cjit, scale 10, defaults, deferral kept | exit 0 | 930 s | 
+dr cjit batch done 14:10:42

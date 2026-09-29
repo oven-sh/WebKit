@@ -1,0 +1,164 @@
+{
+ "files": [
+  {
+   "name": "/src/f0_sql.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f0_sql.ts"
+  },
+  {
+   "name": "/src/f1_sqlite.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f1_sqlite.ts"
+  },
+  {
+   "name": "/src/f2_assertion_error.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f2_assertion_error.ts"
+  },
+  {
+   "name": "/src/f3_child.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f3_child.ts"
+  },
+  {
+   "name": "/src/f4_primary.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f4_primary.ts"
+  },
+  {
+   "name": "/src/f5_debugger.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f5_debugger.ts"
+  },
+  {
+   "name": "/src/f6_cp-sync.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f6_cp-sync.ts"
+  },
+  {
+   "name": "/src/f7_cp.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f7_cp.ts"
+  },
+  {
+   "name": "/src/f8_glob.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f8_glob.ts"
+  },
+  {
+   "name": "/src/f9_streams.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f9_streams.ts"
+  },
+  {
+   "name": "/src/f10_watch.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f10_watch.ts"
+  },
+  {
+   "name": "/src/f11_html.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f11_html.ts"
+  },
+  {
+   "name": "/src/f12_http.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f12_http.ts"
+  },
+  {
+   "name": "/src/f13_http1_server_fallback.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f13_http1_server_fallback.ts"
+  },
+  {
+   "name": "/src/f14_cdp.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f14_cdp.ts"
+  },
+  {
+   "name": "/src/f15_pre_execution.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f15_pre_execution.ts"
+  },
+  {
+   "name": "/src/f16_quic.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f16_quic.ts"
+  },
+  {
+   "name": "/src/f17_state.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f17_state.ts"
+  },
+  {
+   "name": "/src/f18_stats.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f18_stats.ts"
+  },
+  {
+   "name": "/src/f19_shared.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f19_shared.ts"
+  },
+  {
+   "name": "/src/f20_mysql.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f20_mysql.ts"
+  },
+  {
+   "name": "/src/f21_postgres.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f21_postgres.ts"
+  },
+  {
+   "name": "/src/f22_query.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f22_query.ts"
+  },
+  {
+   "name": "/src/f23_shared.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f23_shared.ts"
+  },
+  {
+   "name": "/src/f24_sqlite.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f24_sqlite.ts"
+  },
+  {
+   "name": "/src/f25_duplexify.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f25_duplexify.ts"
+  },
+  {
+   "name": "/src/f26_end-of-stream.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f26_end-of-stream.ts"
+  },
+  {
+   "name": "/src/f27_fast-utf8-stream.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f27_fast-utf8-stream.ts"
+  },
+  {
+   "name": "/src/f28_broadcast.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f28_broadcast.ts"
+  },
+  {
+   "name": "/src/f29_classic.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f29_classic.ts"
+  },
+  {
+   "name": "/src/f30_consumers.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f30_consumers.ts"
+  },
+  {
+   "name": "/src/f31_from.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f31_from.ts"
+  },
+  {
+   "name": "/src/f32_pull.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f32_pull.ts"
+  },
+  {
+   "name": "/src/f33_push.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f33_push.ts"
+  },
+  {
+   "name": "/src/f34_share.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f34_share.ts"
+  },
+  {
+   "name": "/src/f35_transform.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f35_transform.ts"
+  },
+  {
+   "name": "/src/f36_native-readable.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f36_native-readable.ts"
+  },
+  {
+   "name": "/src/f37_operators.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f37_operators.ts"
+  },
+  {
+   "name": "/src/f38_pipeline.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f38_pipeline.ts"
+  },
+  {
+   "name": "/src/f39_readable.ts",
+   "path": "/workspace/wkbuild/workloads/tsc-inputs/f39_readable.ts"
+  }
+ ]
+}
