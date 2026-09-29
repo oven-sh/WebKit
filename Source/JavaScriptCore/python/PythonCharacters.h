@@ -81,6 +81,19 @@ private:
     size_t m_lengthLookedThrough { 0 };
 };
 
+// The characters of a string that has pairs, each in a place of its own, which is how CPython keeps such a string. It is for what has to go back and forth in one by so many characters at a time.
+class ExpandedString : public RefCounted<ExpandedString> {
+public:
+    // Null if there is not the memory.
+    static RefPtr<ExpandedString> tryCreate(std::span<const char16_t>);
+    std::span<const char32_t> characters() const { return m_characters.span(); }
+
+private:
+    ExpandedString() = default;
+
+    Vector<char32_t> m_characters;
+};
+
 class SurrogatePairCache {
     WTF_MAKE_TZONE_ALLOCATED(SurrogatePairCache);
     WTF_MAKE_NONCOPYABLE(SurrogatePairCache);
@@ -96,8 +109,14 @@ public:
     Found find(StringImpl&, RefPtr<SurrogatePairs>&);
     // `longer` is a new string that begins with all of `shorter`. What is known of the one is a start on the other.
     void didAppend(StringImpl& shorter, StringImpl& longer);
+    // Of a string of 16 bit characters. Null if there is not the memory. It is kept so that to look in the same string time after time, each time from where the last left off, is not to go through it all each time.
+    RefPtr<ExpandedString> expand(VM&, StringImpl&);
 
-    void clear() { m_entries.fill(Entry { }); }
+    void clear()
+    {
+        m_entries.fill(Entry { });
+        m_expansions.fill(Expansion { });
+    }
 
 private:
     struct Entry {
@@ -115,6 +134,12 @@ private:
     static constexpr unsigned size = 64;
     static_assert(!(size & (size - 1)));
     std::array<Entry, size> m_entries { };
+
+    struct Expansion {
+        RefPtr<StringImpl> string;
+        RefPtr<ExpandedString> characters;
+    };
+    std::array<Expansion, size> m_expansions { };
 };
 
 // The characters of one string.

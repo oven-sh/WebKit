@@ -946,12 +946,6 @@ PYTHON_NATIVE(chainNext)
     STOP();
 }
 
-PYTHON_NATIVE(chainClassGetItem)
-{
-    NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(newGenericAlias(globalObject, args[0], args[1])));
-}
-
 // ---- product, combinations, combinations_with_replacement and permutations
 
 namespace {
@@ -1635,9 +1629,9 @@ ItertoolsState& initializeItertools(JSGlobalObject* globalObject)
     add(create(state.batched, "itertools.batched"_s), batchedNew, Arguments::AreThoseOfTheClass, batchedNext);
     PyType* chain = create(state.chain, "itertools.chain"_s);
     add(chain, chainNew, Arguments::AreNotChecked, chainNext);
+    addClassGetItemIfGeneric(globalObject, chain);
     addMethods(globalObject, chain, {
         { "from_iterable"_s, chainFromIterable, Kind::ClassMethod },
-        { "__class_getitem__"_s, chainClassGetItem, Kind::ClassMethod },
     });
     PyType* combinations = create(state.combinations, "itertools.combinations"_s);
     add(combinations, combinationsNew, Arguments::AreThoseOfTheClass, combinationsNext, pack(false));

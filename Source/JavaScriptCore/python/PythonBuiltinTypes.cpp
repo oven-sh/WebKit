@@ -359,6 +359,9 @@ PYTHON_NATIVE(objectNew)
         PyType* builtin = type;
         while (builtin->hasFlag(PyType::IsHeapType))
             builtin = builtin->base();
+        // One of JavaScript's is made by JavaScript.
+        if (!builtin->hasFlag(PyType::IsJavaScript) && builtin->cannotBeInstantiated(vm))
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot create '"_s, type->nameString(globalObject), "' instances"_s)));
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("object.__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, builtin->nameString(globalObject), ".__new__()"_s)));
     }
     if (hasExcessArguments(args)) {

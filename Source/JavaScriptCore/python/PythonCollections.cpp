@@ -944,12 +944,6 @@ PYTHON_NATIVE(dequeSizeOf)
     return JSValue::encode(intFromInt64(globalObject, typeOf(globalObject, self)->basicSize() + blocks * sizeOfBlock));
 }
 
-PYTHON_NATIVE(collectionsClassGetItem)
-{
-    NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(newGenericAlias(globalObject, args[0], args[1])));
-}
-
 // ---- What goes through a deque, either way
 
 namespace {
@@ -1346,6 +1340,7 @@ CollectionsState& initializeCollections(JSGlobalObject* globalObject)
 
     PyType* deque = create(state.deque, "collections.deque"_s, PyType::IsBaseType | PyType::IsSequence | PyType::HasWeakReferences | PyType::IsSubscriptedAsSequence | PyType::AddsAsSequence);
     addGenericGetAttribute(globalObject, deque);
+    addClassGetItemIfGeneric(globalObject, deque);
     addMethods(globalObject, deque, {
         { "__new__"_s, dequeNew, Kind::New, 0, { }, Arguments::AreNotChecked },
         { "__init__"_s, dequeInit, Kind::Wrapper, 0, "(iterable=<unrepresentable>, maxlen=<unrepresentable>)"_s, Arguments::AreThoseOfTheClass },
@@ -1379,7 +1374,6 @@ CollectionsState& initializeCollections(JSGlobalObject* globalObject)
         { "reverse"_s, dequeReverse },
         { "rotate"_s, dequeRotate },
         { "__sizeof__"_s, dequeSizeOf },
-        { "__class_getitem__"_s, collectionsClassGetItem, Kind::ClassMethod },
     });
     addComparisons(globalObject, deque, dequeCompare);
     deque->putDirect(vm, vm.pythonNames().dunder_hash, jsUndefined());
@@ -1391,6 +1385,7 @@ CollectionsState& initializeCollections(JSGlobalObject* globalObject)
     PyType* defaultDict = createBuiltinType(globalObject, "collections.defaultdict"_s, realm->typeDict(), realm->typeDict()->layout(), PyType::IsBaseType | PyType::IsMapping | PyType::IsDerivedFromBuiltin);
     state.defaultDict.set(vm, realm, defaultDict);
     addGenericGetAttribute(globalObject, defaultDict);
+    addClassGetItemIfGeneric(globalObject, defaultDict);
     addMethods(globalObject, defaultDict, {
         { "__init__"_s, defaultDictInit, Kind::Wrapper, 0, { }, Arguments::AreNotChecked },
         { "__repr__"_s, defaultDictRepr },
@@ -1400,7 +1395,6 @@ CollectionsState& initializeCollections(JSGlobalObject* globalObject)
         { "copy"_s, defaultDictCopy },
         { "__copy__"_s, defaultDictCopy },
         { "__reduce__"_s, defaultDictReduce },
-        { "__class_getitem__"_s, collectionsClassGetItem, Kind::ClassMethod },
     });
     addMember(globalObject, defaultDict, "default_factory"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
         JSValue factory = defaultFactoryOf(globalObject->vm(), self);

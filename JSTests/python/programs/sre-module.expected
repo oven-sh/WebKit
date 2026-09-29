@@ -1,0 +1,405 @@
+---- what there is
+the module => ('_sre', '', 'BuiltinImporter', None, ['CODESIZE', 'MAGIC', 'MAXGROUPS', 'MAXREPEAT', 'ascii_iscased', 'ascii_tolower', 'compile', 'copyright', 'getcodesize', 'template', 'unicode_iscased', 'unicode_tolower'])
+constants => (20230612, 4, 4294967295, 1073741823, ' SRE 2.2.2 Copyright (c) 1997-2002 by Secret Labs AB ', 4, True)
+Pattern => ('re', 'Pattern', ['Pattern', 'object'], ['__class_getitem__', '__copy__', '__deepcopy__', '__doc__', '__eq__', '__ge__', '__gt__', '__hash__', '__le__', '__lt__', '__module__', '__ne__', '__repr__', 'findall', 'finditer', 'flags', 'fullmatch', 'groupindex', 'groups', 'match', 'pattern', 'scanner', 'search', 'split', 'sub', 'subn'], None, 96, 4, 0, True, 21376, "<class 're.Pattern'>", 'Compiled regular expression object.')
+made or derived from => ("TypeError: cannot create 're.Pattern' instances", "TypeError: cannot create 're.Pattern' instances", "TypeError: cannot create 're.Pattern' instances", "TypeError: cannot create 're.Pattern' instances", "TypeError: type 're.Pattern' is not an acceptable base type", "TypeError: cannot set 'x' attribute of immutable type 're.Pattern'")
+Pattern.__class_getitem__ => ('classmethod_descriptor', '($type, object, /)', 'Patterns are generic over the type of string they handle (str or bytes)')
+Pattern.__copy__ => ('method_descriptor', '($self, /)', None)
+Pattern.__deepcopy__ => ('method_descriptor', '($self, memo, /)', None)
+Pattern.__eq__ => ('wrapper_descriptor', '($self, value, /)', 'Return self==value.')
+Pattern.__ge__ => ('wrapper_descriptor', '($self, value, /)', 'Return self>=value.')
+Pattern.__gt__ => ('wrapper_descriptor', '($self, value, /)', 'Return self>value.')
+Pattern.__hash__ => ('wrapper_descriptor', '($self, /)', 'Return hash(self).')
+Pattern.__le__ => ('wrapper_descriptor', '($self, value, /)', 'Return self<=value.')
+Pattern.__lt__ => ('wrapper_descriptor', '($self, value, /)', 'Return self<value.')
+Pattern.__ne__ => ('wrapper_descriptor', '($self, value, /)', 'Return self!=value.')
+Pattern.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+Pattern.findall => ('method_descriptor', '($self, /, string, pos=0, endpos=sys.maxsize)', 'Return a list of all non-overlapping matches of pattern in string.')
+Pattern.finditer => ('method_descriptor', '($self, /, string, pos=0, endpos=sys.maxsize)', 'Return an iterator over all non-overlapping matches for the RE pattern in string.\n\nFor each match, the iterator returns a match object.')
+Pattern.flags => ('member_descriptor', None, 'The regex matching flags.')
+Pattern.fullmatch => ('method_descriptor', '($self, /, string, pos=0, endpos=sys.maxsize)', 'Matches against all of the string.')
+Pattern.groupindex => ('getset_descriptor', None, 'A dictionary mapping group names to group numbers.')
+Pattern.groups => ('member_descriptor', None, 'The number of capturing groups in the pattern.')
+Pattern.match => ('method_descriptor', '($self, /, string, pos=0, endpos=sys.maxsize)', 'Matches zero or more characters at the beginning of the string.')
+Pattern.pattern => ('member_descriptor', None, 'The pattern string from which the RE object was compiled.')
+Pattern.scanner => ('method_descriptor', '($self, /, string, pos=0, endpos=sys.maxsize)', None)
+Pattern.search => ('method_descriptor', '($self, /, string, pos=0, endpos=sys.maxsize)', 'Scan through string looking for a match, and return a corresponding match object instance.\n\nReturn None if no position in the string matches.')
+Pattern.split => ('method_descriptor', '($self, /, string, maxsplit=0)', 'Split string by the occurrences of pattern.')
+Pattern.sub => ('method_descriptor', '($self, /, repl, string, count=0)', 'Return the string obtained by replacing the leftmost non-overlapping occurrences of pattern in string by the replacement repl.')
+Pattern.subn => ('method_descriptor', '($self, /, repl, string, count=0)', 'Return the tuple (new_string, number_of_subs_made) found by replacing the leftmost non-overlapping occurrences of pattern with the replacement repl.')
+Match => ('re', 'Match', ['Match', 'object'], ['__class_getitem__', '__copy__', '__deepcopy__', '__doc__', '__getitem__', '__module__', '__repr__', 'end', 'endpos', 'expand', 'group', 'groupdict', 'groups', 'lastgroup', 'lastindex', 'pos', 're', 'regs', 'span', 'start', 'string'], None, 88, 8, 0, False, 21376, "<class 're.Match'>", 'The result of re.match() and re.search().\nMatch objects always have a boolean value of True.')
+made or derived from => ("TypeError: cannot create 're.Match' instances", "TypeError: cannot create 're.Match' instances", "TypeError: cannot create 're.Match' instances", "TypeError: cannot create 're.Match' instances", "TypeError: type 're.Match' is not an acceptable base type", "TypeError: cannot set 'x' attribute of immutable type 're.Match'")
+Match.__class_getitem__ => ('classmethod_descriptor', '($type, object, /)', 'Matches are generic over the type of string which was matched (str or bytes)')
+Match.__copy__ => ('method_descriptor', '($self, /)', None)
+Match.__deepcopy__ => ('method_descriptor', '($self, memo, /)', None)
+Match.__getitem__ => ('wrapper_descriptor', '($self, key, /)', 'Return self[key].')
+Match.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+Match.end => ('method_descriptor', '($self, group=0, /)', 'Return index of the end of the substring matched by group.')
+Match.endpos => ('member_descriptor', None, 'The index into the string beyond which the RE engine will not go.')
+Match.expand => ('method_descriptor', '($self, /, template)', 'Return the string obtained by doing backslash substitution on the string template, as done by the sub() method.')
+Match.group => ('method_descriptor', None, 'group([group1, ...]) -> str or tuple.\n    Return subgroup(s) of the match by indices or names.\n    For 0 returns the entire match.')
+Match.groupdict => ('method_descriptor', '($self, /, default=None)', 'Return a dictionary containing all the named subgroups of the match, keyed by the subgroup name.\n\n  default\n    Is used for groups that did not participate in the match.')
+Match.groups => ('method_descriptor', '($self, /, default=None)', 'Return a tuple containing all the subgroups of the match, from 1.\n\n  default\n    Is used for groups that did not participate in the match.')
+Match.lastgroup => ('getset_descriptor', None, 'The name of the last matched capturing group.')
+Match.lastindex => ('getset_descriptor', None, 'The integer index of the last matched capturing group.')
+Match.pos => ('member_descriptor', None, 'The index into the string at which the RE engine started looking for a match.')
+Match.re => ('member_descriptor', None, 'The regular expression object.')
+Match.regs => ('getset_descriptor', None, None)
+Match.span => ('method_descriptor', '($self, group=0, /)', 'For match object m, return the 2-tuple (m.start(group), m.end(group)).')
+Match.start => ('method_descriptor', '($self, group=0, /)', 'Return index of the start of the substring matched by group.')
+Match.string => ('member_descriptor', None, 'The string passed to match() or search().')
+SRE_Scanner => ('_sre', 'SRE_Scanner', ['SRE_Scanner', 'object'], ['__doc__', '__module__', 'match', 'pattern', 'search'], None, 264, 0, 0, False, 21376, "<class '_sre.SRE_Scanner'>", None)
+made or derived from => ("TypeError: cannot create '_sre.SRE_Scanner' instances", "TypeError: cannot create '_sre.SRE_Scanner' instances", "TypeError: cannot create '_sre.SRE_Scanner' instances", "TypeError: cannot create '_sre.SRE_Scanner' instances", "TypeError: type '_sre.SRE_Scanner' is not an acceptable base type", "TypeError: cannot set 'x' attribute of immutable type '_sre.SRE_Scanner'")
+SRE_Scanner.match => ('method_descriptor', '($self, /)', None)
+SRE_Scanner.pattern => ('member_descriptor', None, None)
+SRE_Scanner.search => ('method_descriptor', '($self, /)', None)
+SRE_Template => ('_sre', 'SRE_Template', ['SRE_Template', 'object'], ['__doc__', '__module__'], None, 40, 16, 0, False, 21376, "<class '_sre.SRE_Template'>", None)
+made or derived from => ("TypeError: cannot create '_sre.SRE_Template' instances", "TypeError: cannot create '_sre.SRE_Template' instances", "TypeError: cannot create '_sre.SRE_Template' instances", "TypeError: cannot create '_sre.SRE_Template' instances", "TypeError: type '_sre.SRE_Template' is not an acceptable base type", "TypeError: cannot set 'x' attribute of immutable type '_sre.SRE_Template'")
+compile => ('builtin_function_or_method', '($module, /, pattern, flags, code, groups, groupindex,\n        indexgroup)', None, '_sre')
+template => ('builtin_function_or_method', '($module, pattern, template, /)', '\n\n  template\n    A list containing interleaved literal strings (str or bytes) and group\n    indices (int), as returned by re._parser.parse_template():\n        [literal1, group1, ..., literalN, groupN]', '_sre')
+getcodesize => ('builtin_function_or_method', '($module, /)', None, '_sre')
+ascii_iscased => ('builtin_function_or_method', '($module, character, /)', None, '_sre')
+unicode_iscased => ('builtin_function_or_method', '($module, character, /)', None, '_sre')
+ascii_tolower => ('builtin_function_or_method', '($module, character, /)', None, '_sre')
+unicode_tolower => ('builtin_function_or_method', '($module, character, /)', None, '_sre')
+---- characters
+ascii_iscased => [False, True, True, True, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False]
+ascii_iscased of the wrong thing => ['TypeError: _sre.ascii_iscased() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'TypeError: _sre.ascii_iscased() takes exactly one argument (2 given)', 'TypeError: _sre.ascii_iscased() takes no keyword arguments']
+unicode_iscased => [False, True, True, True, False, False, False, True, True, True, True, True, True, True, True, True, True, True, True, True, True, False, False, False, False, False, False]
+unicode_iscased of the wrong thing => ['TypeError: _sre.unicode_iscased() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'TypeError: _sre.unicode_iscased() takes exactly one argument (2 given)', 'TypeError: _sre.unicode_iscased() takes no keyword arguments']
+ascii_tolower => [0, 97, 97, 122, 91, 127, 128, 181, 192, 223, 255, 304, 305, 383, 453, 931, 962, 7838, 8490, 64261, 66560, 1114111, 1114112, 2147483647, -1, -65, 1]
+ascii_tolower of the wrong thing => ['TypeError: _sre.ascii_tolower() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'TypeError: _sre.ascii_tolower() takes exactly one argument (2 given)', 'TypeError: _sre.ascii_tolower() takes no keyword arguments']
+unicode_tolower => [0, 97, 97, 122, 91, 127, 128, 181, 224, 223, 255, 105, 305, 383, 454, 963, 962, 223, 107, 64261, 66600, 1114111, 1114112, 2147483647, -1, -65, 1]
+unicode_tolower of the wrong thing => ['TypeError: _sre.unicode_tolower() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'TypeError: _sre.unicode_tolower() takes exactly one argument (2 given)', 'TypeError: _sre.unicode_tolower() takes no keyword arguments']
+---- a pattern
+what it has => ('(?P<first>a+)(b)?(?P<last>c)?', 34, 3, mappingproxy({'first': 1, 'last': 3}), 'mappingproxy', {'first': 1, 'last': 3}, 'no __setitem__')
+with no names => ({}, 'dict', False, 0)
+nothing can be set => ['AttributeError: readonly attribute', 'AttributeError: readonly attribute', 'AttributeError: readonly attribute', "AttributeError: attribute 'groupindex' of 're.Pattern' objects is not writable", "AttributeError: 're.Pattern' object has no attribute 'x' and no __dict__ for setting new attributes", 'AttributeError: readonly attribute', "AttributeError: 're.Pattern' object has no attribute '__dict__'"]
+repr => re.compile('a')
+repr => re.compile('a', re.IGNORECASE)
+repr => re.compile('a', re.IGNORECASE|re.MULTILINE|re.DOTALL|re.VERBOSE)
+repr => re.compile('a', re.ASCII)
+repr => re.compile('a')
+repr => re.compile(b'a')
+repr => re.compile(b'a', re.LOCALE)
+repr => re.compile(b'a', re.IGNORECASE|re.LOCALE)
+repr => re.compile('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa)
+repr => PatternError: bad escape (end of pattern) at position 3 (line 2, column 1)
+repr => re.compile('éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀éа😀é)
+repr => re.compile('a')
+repr => re.compile(b'\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x, re.DOTALL)
+repr of what is made by hand => ['re.compile(None)', "re.compile('a', 0x200)", "re.compile('a', 0x1)", "re.compile('a', re.IGNORECASE|0x401)", "re.compile('a', re.IGNORECASE|re.LOCALE|re.MULTILINE|re.DOTALL|re.UNICODE|re.VERBOSE|re.DEBUG|re.ASCII|0xfffffe01)", "re.compile(b'a', re.UNICODE)", "re.compile('a', re.UNICODE|re.ASCII)", "re.compile('a', re.LOCALE|re.UNICODE)"]
+equal => (True, True, False, True, False, False, False, True, NotImplemented, NotImplemented, "TypeError: '<' not supported between instances of 're.Pattern' and 're.Pattern'", True)
+equal, of two that are not the same one => [(True, False, False, True)]
+not equal, by the code alone => [(False, True)]
+hash => (True, True, 1, "TypeError: unhashable type: 'bytearray'")
+copies => (True, True, True, 'TypeError: Pattern.__deepcopy__() takes exactly one argument (0 given)', 'TypeError: Pattern.__copy__() takes no arguments (1 given)')
+generic => ('re.Pattern[str]', 're.Match[bytes]', True)
+weakly referred to => (True, "TypeError: cannot create weak reference to 're.Match' object")
+---- how each is called
+match => ['None', "<re.Match object; span=(1, 2), match='b'>", 'None', 'None', "<re.Match object; span=(1, 2), match='b'>", "<re.Match object; span=(1, 2), match='b'>", 'None', "<re.Match object; span=(1, 2), match='b'>", 'None', 'None', 'None', 'None', 'None', "<re.Match object; span=(1, 2), match='b'>", 'None']
+match(*(), **{}) => TypeError: match() missing required argument 'string' (pos 1)
+match(*(5,), **{}) => TypeError: expected string or bytes-like object, got 'int'
+match(*(None,), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+match(*([],), **{}) => TypeError: expected string or bytes-like object, got 'list'
+match(*(b'abc',), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+match(*('abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+match(*('abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+match(*('abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+match(*('abc', 0, None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+match(*('abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+match(*('abc', 0, -9223372036854775809), **{}) => OverflowError: Python int too large to convert to C ssize_t
+match(*('abc', 0, 1, 2), **{}) => TypeError: match() takes at most 3 arguments (4 given)
+match(*('abc',), **{'other': 1}) => TypeError: match() got an unexpected keyword argument 'other'
+match(*('abc',), **{'string': 'x'}) => TypeError: argument for match() given by name ('string') and position (1)
+match(*(), **{'pos': 1}) => TypeError: match() missing required argument 'string' (pos 1)
+fullmatch => ['None', 'None', 'None', 'None', "<re.Match object; span=(1, 2), match='b'>", 'None', 'None', 'None', 'None', 'None', 'None', 'None', 'None', 'None', 'None']
+fullmatch(*(), **{}) => TypeError: fullmatch() missing required argument 'string' (pos 1)
+fullmatch(*(5,), **{}) => TypeError: expected string or bytes-like object, got 'int'
+fullmatch(*(None,), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+fullmatch(*([],), **{}) => TypeError: expected string or bytes-like object, got 'list'
+fullmatch(*(b'abc',), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+fullmatch(*('abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+fullmatch(*('abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+fullmatch(*('abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+fullmatch(*('abc', 0, None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+fullmatch(*('abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+fullmatch(*('abc', 0, -9223372036854775809), **{}) => OverflowError: Python int too large to convert to C ssize_t
+fullmatch(*('abc', 0, 1, 2), **{}) => TypeError: fullmatch() takes at most 3 arguments (4 given)
+fullmatch(*('abc',), **{'other': 1}) => TypeError: fullmatch() got an unexpected keyword argument 'other'
+fullmatch(*('abc',), **{'string': 'x'}) => TypeError: argument for fullmatch() given by name ('string') and position (1)
+fullmatch(*(), **{'pos': 1}) => TypeError: fullmatch() missing required argument 'string' (pos 1)
+search => ["<re.Match object; span=(1, 2), match='b'>", "<re.Match object; span=(1, 2), match='b'>", 'None', 'None', "<re.Match object; span=(1, 2), match='b'>", "<re.Match object; span=(1, 2), match='b'>", 'None', "<re.Match object; span=(1, 2), match='b'>", "<re.Match object; span=(1, 2), match='b'>", 'None', 'None', "<re.Match object; span=(1, 2), match='b'>", 'None', "<re.Match object; span=(1, 2), match='b'>", "<re.Match object; span=(1, 2), match='b'>"]
+search(*(), **{}) => TypeError: search() missing required argument 'string' (pos 1)
+search(*(5,), **{}) => TypeError: expected string or bytes-like object, got 'int'
+search(*(None,), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+search(*([],), **{}) => TypeError: expected string or bytes-like object, got 'list'
+search(*(b'abc',), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+search(*('abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+search(*('abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+search(*('abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+search(*('abc', 0, None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+search(*('abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+search(*('abc', 0, -9223372036854775809), **{}) => OverflowError: Python int too large to convert to C ssize_t
+search(*('abc', 0, 1, 2), **{}) => TypeError: search() takes at most 3 arguments (4 given)
+search(*('abc',), **{'other': 1}) => TypeError: search() got an unexpected keyword argument 'other'
+search(*('abc',), **{'string': 'x'}) => TypeError: argument for search() given by name ('string') and position (1)
+search(*(), **{'pos': 1}) => TypeError: search() missing required argument 'string' (pos 1)
+findall => ["['b']", "['b']", '[]', '[]', "['b']", "['b']", '[]', "['b']", "['b']", '[]', '[]', "['b']", '[]', "['b']", "['b']"]
+findall(*(), **{}) => TypeError: findall() missing required argument 'string' (pos 1)
+findall(*(5,), **{}) => TypeError: expected string or bytes-like object, got 'int'
+findall(*(None,), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+findall(*([],), **{}) => TypeError: expected string or bytes-like object, got 'list'
+findall(*(b'abc',), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+findall(*('abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+findall(*('abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+findall(*('abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+findall(*('abc', 0, None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+findall(*('abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+findall(*('abc', 0, -9223372036854775809), **{}) => OverflowError: Python int too large to convert to C ssize_t
+findall(*('abc', 0, 1, 2), **{}) => TypeError: findall() takes at most 3 arguments (4 given)
+findall(*('abc',), **{'other': 1}) => TypeError: findall() got an unexpected keyword argument 'other'
+findall(*('abc',), **{'string': 'x'}) => TypeError: argument for findall() given by name ('string') and position (1)
+findall(*(), **{'pos': 1}) => TypeError: findall() missing required argument 'string' (pos 1)
+finditer => ["[<re.Match object; span=(1, 2), match='b'>]", "[<re.Match object; span=(1, 2), match='b'>]", '[]', '[]', "[<re.Match object; span=(1, 2), match='b'>]", "[<re.Match object; span=(1, 2), match='b'>]", '[]', "[<re.Match object; span=(1, 2), match='b'>]", "[<re.Match object; span=(1, 2), match='b'>]", '[]', '[]', "[<re.Match object; span=(1, 2), match='b'>]", '[]', "[<re.Match object; span=(1, 2), match='b'>]", "[<re.Match object; span=(1, 2), match='b'>]"]
+finditer(*(), **{}) => TypeError: finditer() missing required argument 'string' (pos 1)
+finditer(*(5,), **{}) => TypeError: expected string or bytes-like object, got 'int'
+finditer(*(None,), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+finditer(*([],), **{}) => TypeError: expected string or bytes-like object, got 'list'
+finditer(*(b'abc',), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+finditer(*('abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+finditer(*('abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+finditer(*('abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+finditer(*('abc', 0, None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+finditer(*('abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+finditer(*('abc', 0, -9223372036854775809), **{}) => OverflowError: Python int too large to convert to C ssize_t
+finditer(*('abc', 0, 1, 2), **{}) => TypeError: finditer() takes at most 3 arguments (4 given)
+finditer(*('abc',), **{'other': 1}) => TypeError: finditer() got an unexpected keyword argument 'other'
+finditer(*('abc',), **{'string': 'x'}) => TypeError: argument for finditer() given by name ('string') and position (1)
+finditer(*(), **{'pos': 1}) => TypeError: finditer() missing required argument 'string' (pos 1)
+scanner => ['SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner', 'SRE_Scanner']
+scanner(*(), **{}) => TypeError: scanner() missing required argument 'string' (pos 1)
+scanner(*(5,), **{}) => TypeError: expected string or bytes-like object, got 'int'
+scanner(*(None,), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+scanner(*([],), **{}) => TypeError: expected string or bytes-like object, got 'list'
+scanner(*(b'abc',), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+scanner(*('abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+scanner(*('abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+scanner(*('abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+scanner(*('abc', 0, None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+scanner(*('abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+scanner(*('abc', 0, -9223372036854775809), **{}) => OverflowError: Python int too large to convert to C ssize_t
+scanner(*('abc', 0, 1, 2), **{}) => TypeError: scanner() takes at most 3 arguments (4 given)
+scanner(*('abc',), **{'other': 1}) => TypeError: scanner() got an unexpected keyword argument 'other'
+scanner(*('abc',), **{'string': 'x'}) => TypeError: argument for scanner() given by name ('string') and position (1)
+scanner(*(), **{'pos': 1}) => TypeError: scanner() missing required argument 'string' (pos 1)
+sub => ['aXcX', 'aXcb', 'aXcX', 'aXcX', 'aXcb', 'aXcb', 'abcb', 'ac', '', 'aaa', 'aXcb']
+sub(*(), **{}) => TypeError: sub() missing required argument 'repl' (pos 1)
+sub(*('X',), **{}) => TypeError: sub() missing required argument 'string' (pos 2)
+sub(*('X', 5), **{}) => TypeError: expected string or bytes-like object, got 'int'
+sub(*('X', None), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+sub(*(5, 'abc'), **{}) => TypeError: decoding to str: need a bytes-like object, int found
+sub(*(None, 'abc'), **{}) => TypeError: decoding to str: need a bytes-like object, NoneType found
+sub(*(b'X', 'abc'), **{}) => TypeError: sequence item 1: expected str instance, bytes found
+sub(*('X', b'abc'), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+sub(*('X', 'abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+sub(*('X', 'abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+sub(*('X', 'abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+sub(*('X', 'abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+sub(*('X', 'abc', 1, 2), **{}) => TypeError: sub() takes at most 3 arguments (4 given)
+sub(*('X', 'abc'), **{'other': 1}) => TypeError: sub() got an unexpected keyword argument 'other'
+sub(*(5, 'aaa'), **{}) => TypeError: decoding to str: need a bytes-like object, int found
+sub(*(b'X', 'aaa'), **{}) => aaa
+subn => [('aXcX', 2), ('aXcb', 1), ('aXcX', 2), ('aXcX', 2), ('aXcb', 1), ('aXcb', 1), ('abcb', 0), ('ac', 2), ('', 0), ('aaa', 0), ('aXcb', 1)]
+subn(*(), **{}) => TypeError: subn() missing required argument 'repl' (pos 1)
+subn(*('X',), **{}) => TypeError: subn() missing required argument 'string' (pos 2)
+subn(*('X', 5), **{}) => TypeError: expected string or bytes-like object, got 'int'
+subn(*('X', None), **{}) => TypeError: expected string or bytes-like object, got 'NoneType'
+subn(*(5, 'abc'), **{}) => TypeError: decoding to str: need a bytes-like object, int found
+subn(*(None, 'abc'), **{}) => TypeError: decoding to str: need a bytes-like object, NoneType found
+subn(*(b'X', 'abc'), **{}) => TypeError: sequence item 1: expected str instance, bytes found
+subn(*('X', b'abc'), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+subn(*('X', 'abc', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+subn(*('X', 'abc', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+subn(*('X', 'abc', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+subn(*('X', 'abc', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+subn(*('X', 'abc', 1, 2), **{}) => TypeError: subn() takes at most 3 arguments (4 given)
+subn(*('X', 'abc'), **{'other': 1}) => TypeError: subn() got an unexpected keyword argument 'other'
+subn(*(5, 'aaa'), **{}) => TypeError: decoding to str: need a bytes-like object, int found
+subn(*(b'X', 'aaa'), **{}) => ('aaa', 0)
+split => [['a', 'c', 'd'], ['a', 'cbd'], ['a', 'c', 'd'], ['a', 'c', 'd'], ['a', 'cbd'], ['a', 'cbd'], ['abcbd'], [''], ['aaa']]
+split(*(), **{}) => TypeError: split() missing required argument 'string' (pos 1)
+split(*(5,), **{}) => TypeError: expected string or bytes-like object, got 'int'
+split(*(b'a',), **{}) => TypeError: cannot use a string pattern on a bytes-like object
+split(*('a', 'x'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+split(*('a', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+split(*('a', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+split(*('a', 1, 2), **{}) => TypeError: split() takes at most 2 arguments (3 given)
+split(*('a',), **{'other': 1}) => TypeError: split() got an unexpected keyword argument 'other'
+---- what can be looked through
+a class derived from str => [('b', 'str', True, 'S', 'str', 'str', ['str', 'str'], 'str', True, False, ['str', 'str'])]
+str itself => [(True, True, True, True, True)]
+bytes itself => [(True, True, True, True)]
+a class derived from bytes => [(b'b', 'bytes', True, 'bytes', 'bytes')]
+bytes of another kind => [(b'b', 'bytes', (1, 2), True, [b'b', b'b'], [b'a', b'c', b''], b'aXcX', 'bytes', b'-a-b-c-b-', [(0, 1), (1, 2), (2, 3), (3, 4)])]
+bytes of another kind => [(b'b', 'bytes', (1, 2), True, [b'b', b'b'], [b'a', b'c', b''], b'aXcX', 'bytes', b'-a-b-c-b-', [(0, 1), (1, 2), (2, 3), (3, 4)])]
+bytes of another kind => [(b'b', 'bytes', (1, 2), True, [b'b', b'b'], [b'a', b'c', b''], b'aXcX', 'bytes', b'-a-b-c-b-', [(0, 1), (1, 2), (2, 3), (3, 4)])]
+bytes of another kind => [(b'b', 'bytes', (0, 1), True, [b'b', b'b'], [b'', b'c', b''], b'XcX', 'bytes', b'-b-c-b-', [(0, 1), (1, 2), (2, 3)])]
+bytes of another kind => [(b'b', 'bytes', (1, 2), True, [b'b', b'b'], [b'a', b'c', b''], b'aXcX', 'bytes', b'-a-b-c-b-', [(0, 1), (1, 2), (2, 3), (3, 4)])]
+what is not one after another => TypeError: expected string or bytes-like object, got 'memoryview'
+what has been released => [(None, "TypeError: expected string or bytes-like object, got 'memoryview'")]
+of more than a byte each => [(b'\x01', (2, 3))]
+a class that shows bytes => [(None, <re.Match object; span=(1, 2), match=b'b'>, ['__buffer__', '__release_buffer__'], (1, 2), None, b'b', ['__buffer__', '__release_buffer__'], True, None, [b'b', b'b'], ['__buffer__', '__release_buffer__'], None, None, ['__buffer__', '__release_buffer__'])]
+the wrong one for the pattern => ('TypeError: cannot use a string pattern on a bytes-like object', 'TypeError: cannot use a bytes pattern on a string-like object', 'TypeError: cannot use a string pattern on a bytes-like object', 'TypeError: cannot use a bytes pattern on a string-like object', 'TypeError: cannot use a string pattern on a bytes-like object', 'TypeError: cannot use a string pattern on a bytes-like object', 'TypeError: cannot use a string pattern on a bytes-like object')
+a pattern compiled from None does for either => [((0, 1), (0, 1), None, True)]
+changed afterwards => [(b'bc', None, b'Bc', None, b'', (1, 3), (b'',), "<re.Match object; span=(1, 3), match=b''>")]
+---- characters of every width
+one at a time => (['a', '\xe9', '\u0430', '\U0001f600', 'b', '\U00010400', '\ud800', 'c'], [(0, 1), (1, 2), (2, 3), (3, 4), (4, 5), (5, 6), (6, 7), (7, 8)], 8, (0, 8), True)
+where things are => [((4, 5), 'b', 4, 5, 0, 8, "<re.Match object; span=(4, 5), match='b'>"), ((5, 6), '\U00010400', 5, 6, 0, 8, "<re.Match object; span=(5, 6), match='\U00010400'>"), ((6, 8), '\ud800c', 6, 7, 0, 8, "<re.Match object; span=(6, 8), match='\\ud800c'>"), ((3, 4), '\U0001f600', 3, 4, 3, 8, "<re.Match object; span=(3, 4), match='\U0001f600'>"), ((4, 5), 'b', 4, 5, 4, 5, "<re.Match object; span=(4, 5), match='b'>"), ((3, 4), '\U0001f600', 3, 4, 0, 4, "<re.Match object; span=(3, 4), match='\U0001f600'>"), ((3, 5), '\U0001f600b', 4, 5, 0, 8, "<re.Match object; span=(3, 5), match='\U0001f600b'>")]
+half of one => (None, None, (0, 1), ['\ud800', '\udc00'], ['\udc00', '\ud800'])
+split and replaced => (['a\xe9\u0430', 'b\U00010400\ud800c'], 'a---b--c', '|a|\xe9|\u0430|\U0001f600|b|\U00010400|\ud800|c|', 'aa\xe9\xe9\u0430\u0430\U0001f600\U0001f600bb\U00010400\U00010400\ud800\ud800cc', '01234567', (4, 5), None, '|a\xe9\u0430|\U0001f600|b\U00010400|\ud800|c|', (1, 3))
+in either case => ((5, 6), ['\U00010400'], ['\u0430'], ['\xe9'], [], ['K', '\u212a', 'k'], ['s', 'S', '\u017f'], ['\ufb05', '\ufb06'], ['\u03a3', '\u03c3', '\u03c2'], ['\xdf', '\u1e9e'], ['i', 'I', '\u0130', '\u0131'])
+a long one, over and over => [1600]
+the same, and a great many of them => [5000, (0, 5000), (0, 6000)]
+---- a match
+what it has => ('xxaacyy', '(?P<first>a+)(b)?(?P<last>c)?', 1, 6, 3, 'last', ((2, 5), (2, 4), (-1, -1), (4, 5)), True, "<re.Match object; span=(2, 5), match='aac'>", True, True, True)
+nothing can be set => ['AttributeError: readonly attribute', 'AttributeError: readonly attribute', 'AttributeError: readonly attribute', 'AttributeError: readonly attribute', "AttributeError: attribute 'lastindex' of 're.Match' objects is not writable", "AttributeError: attribute 'lastgroup' of 're.Match' objects is not writable", "AttributeError: attribute 'regs' of 're.Match' objects is not writable", "AttributeError: 're.Match' object has no attribute 'x' and no __dict__ for setting new attributes", "AttributeError: 're.Match' object has no attribute '__dict__'", True, "TypeError: object of type 're.Match' has no len()", "TypeError: 're.Match' object is not iterable", "TypeError: 're.Match' object is not reversible", "TypeError: argument of type 're.Match' is not a container or iterable", "TypeError: 're.Match' object is not iterable", 'TypeError: Value after * must be an iterable, not re.Match', 'no __setitem__', True, False]
+group => ('aac', 'aac', 'aa', None, 'c', 'aa', 'c', ('aa', None, 'c'), ('aac', 'aa', 'aa'), 'aa', 'aac', 'aa', None, 'aa', 'c')
+group 4 => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group -1 => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group 'other' => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group '' => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group None => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group 1.5 => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group b'first' => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group (1,) => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group [] => ["TypeError: cannot use 'list' as a dict key (unhashable type: 'list')", "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')", "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')", "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')", "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')", "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')", "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"]
+group 9223372036854775808 => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group -9223372036854775808 => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group 1267650600228229401496703205376 => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group Index => ['aa', 'aa', 2, 4, (2, 4), ('aa', 'aa'), 'aa']
+group Index => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group Index => ['IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group', 'IndexError: no such group']
+group Index => ['ValueError: no', 'ValueError: no', 'ValueError: no', 'ValueError: no', 'ValueError: no', 'ValueError: no', 'ValueError: no']
+group 'first' => ['aa', 'aa', 2, 4, (2, 4), ('aa', 'aa'), 'aa']
+how they are called => ('TypeError: Match.group() takes no keyword arguments', 'TypeError: Match.start() takes no keyword arguments', 'TypeError: start expected at most 1 argument, got 2', 'TypeError: span expected at most 1 argument, got 2', 'TypeError: expected 1 argument, got 0', 'TypeError: expected 1 argument, got 2', 'TypeError: groups() takes at most 1 argument (2 given)', "TypeError: groups() got an unexpected keyword argument 'other'", 'TypeError: groupdict() takes at most 1 argument (2 given)', "TypeError: expand() missing required argument 'template' (pos 1)", 'TypeError: expand() takes at most 1 argument (2 given)', "TypeError: expand() missing required argument 'template' (pos 1)")
+start, end and span => ([(2, 5, (2, 5)), (2, 4, (2, 4)), (-1, -1, (-1, -1)), (4, 5, (4, 5)), (2, 4, (2, 4)), (4, 5, (4, 5))], 2, 5, (2, 5))
+groups => (('aa', None, 'c'), ('aa', None, 'c'), ('aa', '-', 'c'), ('aa', 5, 'c'), (), (None, 'b'), ('', 'b'))
+groupdict => ({'first': 'aa', 'last': 'c'}, {'first': 'aa', 'last': 'c'}, {'first': 'aa', 'last': 'c'}, {}, 'dict', False, ['b', 'a'])
+lastindex and lastgroup => [(None, None), (1, None), (1, None), (1, None), (2, 'y'), (2, None), (2, 'y'), (1, 'x'), (None, None), (1, None)]
+repr => ["<re.Match object; span=(0, 0), match=''>", "<re.Match object; span=(0, 100), match='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>", "<re.Match object; span=(0, 100), match=b'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa>", '<re.Match object; span=(0, 3), match=\'\\\'"\\n\'>', "<re.Match object; span=(0, 80), match='\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9\U0001f600\xe9>", "<re.Match object; span=(1, 2), match='b'>", "<re.Match object; span=(1, 2), match=b'b'>"]
+expand => ('aa', '[aa|aa|aa|aac]', '', 'plain', '\n\t\\', 'c', '', 'PatternError: invalid group reference 4 at position 1', "IndexError: unknown group name 'other'", 'PatternError: missing group name at position 3', 'PatternError: bad escape (end of pattern) at position 0', b'a', 'TypeError: decoding to str: need a bytes-like object, int found', 'TypeError: decoding to str: need a bytes-like object, NoneType found', 'aa', 'str')
+expand, of bytes => [(b'[b]', b'plain', b'[b]', b'[b]', 'bytes', 'a')]
+---- replacing
+with a template => ('[ab] [a]', 'aaaa', '\\\\', '\n', 'a0', 'a', '\\1', 'PatternError: invalid group reference 1 at position 1', "IndexError: unknown group name 'x'", 'PatternError: bad escape \\q at position 0', 'PatternError: bad escape (end of pattern) at position 0', 'a')
+a template is looked at even if nothing is found => PatternError: invalid group reference 1 at position 1
+with a great many parts => a-b-c-a-b-c-a-b-c-a-b-c
+with a function => ('XbX', 'b', 'b', 'aabaa', 'TypeError: sequence item 0: expected str instance, int found', 'TypeError: sequence item 0: expected str instance, bytes found', 'ZeroDivisionError: division by zero', 'TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given', 'aba', 'AbA', '<re.Match ')
+with a class derived from str => ('XbX', 'str', '[a]b[a]', 'str')
+bytes => (b'XbX', b'[a]b[a]', b'XbX', b'[a]b[a]', b'[a]b[a]', b'XbX', 'bytes', 'TypeError: sequence item 0: expected a bytes-like object, str found', 'TypeError: sequence item 0: expected a bytes-like object, str found', 'PatternError: invalid group reference 1 at position 1')
+nothing at all => ('-a-b-c-', '-', '-a-b--d-', ('-a-b-c-', 4), '-b---c-', '|ab| |cd|', 'a-ba-b', '-a-bc', '-a\nb', '-a\n-b', 'a-\n-', 'a-\nb-\n-')
+what re keeps => (True, 'SRE_Template')
+---- one after another
+findall => (['a', 'a'], ['a', 'a'], [('a', 'b'), ('a', '')], [('a', ''), ('', 'b')], ['', '', ''], ['', 'aa', '', ''], ['', 'a', '', ''], ['', '', ''], [('', ''), ('', '')], [], ['a', 'a'], [('ab', 'a'), ('ab', 'a')])
+split => (['a', 'b', '', 'c'], ['a', ',', 'b'], ['a', ',', None, 'b', None, ';', 'c'], ['', 'a', 'b', 'c', ''], ['', 'a', '', 'b', 'c', ''], ['', 'ab', ' ', 'cd', ''], ['a', 'ba', 'b'], [''], ['', ''], ['', '', 'a', '', 'b', '', ''], ['a', 'b,c'], ['x', 'a', None, 'y'])
+finditer => [('callable_iterator', True, [(0, 1), (2, 3)], [], 'StopIteration: ')]
+it goes on from where it was => [((0, 1), (1, 1), <re.Match object; span=(2, 2), match=''>)]
+a scanner => [('a', (1, 2), <re.Match object; span=(2, 3), match='a'>, None, None, 'AttributeError: readonly attribute', 'TypeError: search() takes no arguments', 'TypeError: match() takes no arguments')]
+match and search by turns => [((0, 1), (2, 3), (3, 4), None, None)]
+of nothing => [([(0, 0)], None), ([(0, 0), (1, 1), (2, 2)], None), ([(0, 0)], None), ([(1, 1), (2, 2)], None), ([(2, 2)], None), ([(2, 2)], None), ([(1, 1)], None), ([], None)]
+---- code made by hand
+compile => [((0, 1), 'x', 0, 0, {}), ((0, 1), 'x', 0, 0, {}), ((0, 1), 'x', 1, 0, {}), ((0, 1), 'x', 0, 0, {})]
+compile() => TypeError: compile() missing required argument 'pattern' (pos 1)
+compile('x',) => TypeError: compile() missing required argument 'flags' (pos 2)
+compile('x', 0, [LITERAL, 97, SUCCESS], 0, {}) => TypeError: compile() missing required argument 'indexgroup' (pos 6)
+compile('x', 0, [LITERAL, 97, SUCCESS], 0, {}, (), 1) => TypeError: compile() takes at most 6 arguments (7 given)
+compile('x', '0', [LITERAL, 97, SUCCESS], 0, {}, ()) => TypeError: 'str' object cannot be interpreted as an integer
+compile('x', 1.5, [LITERAL, 97, SUCCESS], 0, {}, ()) => TypeError: 'float' object cannot be interpreted as an integer
+compile('x', 2147483648, [LITERAL, 97, SUCCESS], 0, {}, ()) => OverflowError: Python int too large to convert to C int
+compile('x', 0, (LITERAL, 97, SUCCESS), 0, {}, ()) => TypeError: compile() argument 'code' must be list, not tuple
+compile('x', 0, None, 0, {}, ()) => TypeError: compile() argument 'code' must be list, not None
+compile('x', 0, [LITERAL, 97, SUCCESS], '0', {}, ()) => TypeError: 'str' object cannot be interpreted as an integer
+compile('x', 0, [LITERAL, 97, SUCCESS], 9223372036854775808, {}, ()) => OverflowError: Python int too large to convert to C ssize_t
+compile('x', 0, [LITERAL, 97, SUCCESS], 0, [], ()) => TypeError: compile() argument 'groupindex' must be dict, not list
+compile('x', 0, [LITERAL, 97, SUCCESS], 0, None, ()) => TypeError: compile() argument 'groupindex' must be dict, not None
+compile('x', 0, [LITERAL, 97, SUCCESS], 0, {}, []) => TypeError: compile() argument 'indexgroup' must be tuple, not list
+compile('x', 0, [LITERAL, 97, SUCCESS], 0, {}, None) => TypeError: compile() argument 'indexgroup' must be tuple, not None
+compile(5, 0, [LITERAL, 97, SUCCESS], 0, {}, ()) => TypeError: expected string or bytes-like object, got 'int'
+compile([], 0, [LITERAL, 97, SUCCESS], 0, {}, ()) => TypeError: expected string or bytes-like object, got 'list'
+compile('x', 0, ['a'], 0, {}, ()) => TypeError: an integer is required
+compile('x', 0, [1.5], 0, {}, ()) => TypeError: an integer is required
+compile('x', 0, [None], 0, {}, ()) => TypeError: an integer is required
+compile('x', 0, [-1], 0, {}, ()) => OverflowError: can't convert negative value to unsigned int
+compile('x', 0, [4294967296], 0, {}, ()) => OverflowError: regular expression code size limit exceeded
+compile('x', 0, [18446744073709551616], 0, {}, ()) => OverflowError: Python int too large to convert to C unsigned long
+compile('x', 0, [4294967295], 0, {}, ()) => RuntimeError: invalid SRE code
+compile('x', 0, [], 0, {}, ()) => RuntimeError: invalid SRE code
+compile('x', 0, [LITERAL, 97, SUCCESS], -1, {}, ()) => RuntimeError: invalid SRE code
+compile('x', 0, [LITERAL, 97, SUCCESS], 1073741824, {}, ()) => RuntimeError: invalid SRE code
+compile(5, 0, ['a'], 0, {}, ()) => TypeError: an integer is required
+compile(5, 0, [], 0, {}, ()) => TypeError: expected string or bytes-like object, got 'int'
+what the names are kept as => [(mappingproxy({'n': 1}), 'n', {'n': 'a'}, 'a')]
+names and no tuple of them => [(None, 1, {'n': 'a'})]
+a tuple and no names => [(None, {})]
+names that are wrong => [('IndexError: no such group', 'IndexError: no such group', 'OverflowError: Python int too large to convert to C ssize_t', 'IndexError: no such group')]
+no SUCCESS at the end => RuntimeError: invalid SRE code
+an argument is missing => RuntimeError: invalid SRE code
+no such thing => RuntimeError: invalid SRE code
+a mark too many => RuntimeError: invalid SRE code
+AT what => RuntimeError: invalid SRE code
+a set with no end => RuntimeError: invalid SRE code
+a set that skips too far => RuntimeError: invalid SRE code
+a category that there is not => RuntimeError: invalid SRE code
+what is not for a set => RuntimeError: invalid SRE code
+a bitmap that is too short => RuntimeError: invalid SRE code
+a jump by itself => RuntimeError: invalid SRE code
+a branch to two places => RuntimeError: invalid SRE code
+least is more than most => RuntimeError: invalid SRE code
+a repeat with no UNTIL => RuntimeError: invalid SRE code
+a group that there is not => RuntimeError: invalid SRE code
+info with flags that there are not => RuntimeError: invalid SRE code
+info with a prefix and a set => RuntimeError: invalid SRE code
+info that is literal with no prefix => RuntimeError: invalid SRE code
+info with a prefix that is too long => RuntimeError: invalid SRE code
+info that ends in the wrong place => RuntimeError: invalid SRE code
+an assertion with no SUCCESS => RuntimeError: invalid SRE code
+SUBPATTERN => RuntimeError: invalid SRE code
+RANGE outside a set => RuntimeError: invalid SRE code
+a set => [((0, 1), (), ((0, 1),)), None, None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), None]
+a set that is turned about => [((2, 3), (), ((2, 3),)), ((0, 1), (), ((0, 1),)), None, ((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),)), ((2, 3), (), ((2, 3),)), ((0, 1), (), ((0, 1),))]
+a range => [((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),)), None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), None]
+a bitmap => [((0, 1), (), ((0, 1),)), None, None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), None]
+a branch => [((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),)), None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), None]
+one repeated => [((0, 2), (), ((0, 2),)), None, None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 2), (), ((0, 2),)), None]
+as few as will do => [((0, 1), (), ((0, 1),)), None, None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), None]
+a group repeated => [((0, 2), ('a',), ((0, 2), (1, 2))), ((0, 0), (None,), ((0, 0), (-1, -1))), ((0, 0), (None,), ((0, 0), (-1, -1))), ((0, 0), (None,), ((0, 0), (-1, -1))), ((0, 0), (None,), ((0, 0), (-1, -1))), ((0, 2), (b'a',), ((0, 2), (1, 2))), ((0, 0), (None,), ((0, 0), (-1, -1)))]
+marks the wrong way about => ['SystemError: The span of capturing group is wrong, please report a bug for the re module.', None, None, 'SystemError: The span of capturing group is wrong, please report a bug for the re module.', 'SystemError: The span of capturing group is wrong, please report a bug for the re module.', 'SystemError: The span of capturing group is wrong, please report a bug for the re module.', None]
+half a group => [((0, 1), (None,), ((0, 1), (-1, -1))), None, None, ((1, 2), (None,), ((1, 2), (-1, -1))), ((1, 2), (None,), ((1, 2), (-1, -1))), ((0, 1), (None,), ((0, 1), (-1, -1))), None]
+the second and not the first => [((0, 1), (None, 'a'), ((0, 1), (-1, -1), (0, 1))), None, None, ((1, 2), (None, 'a'), ((1, 2), (-1, -1), (1, 2))), ((1, 2), (None, 'a'), ((1, 2), (-1, -1), (1, 2))), ((0, 1), (None, b'a'), ((0, 1), (-1, -1), (0, 1))), None]
+FAILURE => [None, None, None, None, None, None, None]
+SUCCESS in the middle => [((0, 1), (), ((0, 1),)), None, None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), None]
+UNTIL with no REPEAT => ['RuntimeError: invalid SRE code', 'RuntimeError: invalid SRE code', 'RuntimeError: invalid SRE code', 'RuntimeError: invalid SRE code', 'RuntimeError: invalid SRE code', 'RuntimeError: invalid SRE code', 'RuntimeError: invalid SRE code']
+a literal that no character is => [None, None, None, None, None, None, None]
+anything but that => [((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),)), None, ((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),))]
+by the locale => [((0, 1), (), ((0, 1),)), ((1, 2), (), ((1, 2),)), None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), ((1, 2), (), ((1, 2),))]
+a word by the locale => [((0, 1), (), ((0, 1),)), ((0, 1), (), ((0, 1),)), None, ((1, 2), (), ((1, 2),)), ((1, 2), (), ((1, 2),)), ((0, 1), (), ((0, 1),)), ((1, 2), (), ((1, 2),))]
+template => ['SRE_Template', 'SRE_Template', 'SRE_Template', 'SRE_Template', 'SRE_Template', 'SRE_Template', 'SRE_Template', 'SRE_Template', 'SRE_Template', 'SRE_Template']
+template() => TypeError: template expected 2 arguments, got 0
+template('P',) => TypeError: template expected 2 arguments, got 1
+template('P', [''], 1) => TypeError: template expected 2 arguments, got 3
+template('P', ()) => TypeError: template() argument 2 must be list, not tuple
+template('P', None) => TypeError: template() argument 2 must be list, not None
+template('P', 'a') => TypeError: template() argument 2 must be list, not str
+template('P', []) => TypeError: invalid template
+template('P', ['a', 1]) => TypeError: invalid template
+template('P', ['a', 'x', 'b']) => TypeError: an integer is required
+template('P', ['a', 1.5, 'b']) => TypeError: an integer is required
+template('P', ['a', -1, 'b']) => TypeError: invalid template
+template('P', ['a', 9223372036854775808, 'b']) => OverflowError: Python int too large to convert to C ssize_t
+template('P', ['a', None, 'b']) => TypeError: an integer is required
+template(None, ['a']) => SRE_Template
+template(5, ['a', 1, 'b']) => SRE_Template
+---- what takes a long time, and what goes deep
+deep => ((0, 100000), (0, 40001), (0, 21), (0, 1000), (0, 12), (0, 30000), (0, 100001), (0, 30000))
+many groups => [(500, 500, 500, (499, 500))]
+by the locale => ([b'ab_1'], [b'a', b'A'], [b'a', b'B'], b'|ab| \xe9', [b'\xe9'], [b'a'])

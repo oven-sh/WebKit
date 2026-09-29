@@ -48,7 +48,7 @@ static PyTuple* exceptionsOf(VM& vm, JSValue group)
     return uncheckedDowncast<PyTuple>(asObject(group)->getDirect(vm, vm.pythonNames().private_groupExceptions).asCell());
 }
 
-// PySequence_Check(): whether it can be indexed as a sequence is, which is to say by a number. What is written in Python and has __getitem__ may be either, and counts unless it is a dict.
+// PySequence_Check(): whether it can be indexed as a sequence is, which is to say by a number. What is written in Python and has __getitem__ may be either, and counts unless it is a dict. The __getitem__ of a class that is built in is for a sequence or for a mapping.
 bool isSequence(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -60,7 +60,7 @@ bool isSequence(JSGlobalObject* globalObject, JSValue value)
         PyType* base = asType(entry.get());
         if (!base->getDirect(vm, vm.pythonNames().dunder_getitem))
             continue;
-        return base->hasFlag(PyType::IsHeapType) || base->hasFlag(PyType::IsSequence) || base == realm->typeStr() || base == realm->typeBytes() || base == realm->typeByteArray();
+        return base->hasFlag(PyType::IsHeapType) || base->hasFlag(PyType::IsSequence) || base == realm->typeStr() || base == realm->typeBytes() || base == realm->typeByteArray() || base->hasFlag(PyType::IsJavaScript);
     }
     return false;
 }

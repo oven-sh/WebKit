@@ -30,6 +30,7 @@
 #include "JSBigInt.h"
 #include "PythonCharacters.h"
 #include "PythonCodecs.h"
+#include "PythonLocale.h"
 #include "PythonText.h"
 #if OS(UNIX)
 #include <langinfo.h>
@@ -603,15 +604,16 @@ bool fixEncoderState(JSGlobalObject* globalObject, TextIOState& state)
 }
 
 // _Py_GetLocaleEncodingObject(): what the environment says text is in. The locale of the process is left as it is, since it is not Python's alone.
-String localeEncoding()
+String localeEncoding(JSGlobalObject* globalObject)
 {
 #if OS(UNIX)
-    if (locale_t locale = newlocale(LC_CTYPE_MASK, "", nullptr)) {
+    if (locale_t locale = characterLocale(globalObject)) {
         String name = String::fromLatin1(nl_langinfo_l(CODESET, locale));
-        freelocale(locale);
         if (!name.isEmpty())
             return name;
     }
+#else
+    UNUSED_PARAM(globalObject);
 #endif
     return "utf-8"_s;
 }
@@ -996,7 +998,7 @@ PYTHON_NATIVE(textIOInit)
     if (encoding.isNull())
         encoding = "utf-8"_s;
     else if (encoding == "locale"_s)
-        encoding = localeEncoding();
+        encoding = localeEncoding(globalObject);
     state.encoding.set(vm, self, jsString(vm, encoding));
 
     JSValue codecInfo = lookupTextEncoding(globalObject, encoding);
@@ -1092,7 +1094,7 @@ PYTHON_NATIVE(textIOReconfigure)
             String name = textOfString(globalObject, encoding);
             RETURN_IF_EXCEPTION(scope, { });
             if (name == "locale"_s)
-                encoding = jsString(vm, localeEncoding());
+                encoding = jsString(vm, localeEncoding(globalObject));
             if (isNone(errors))
                 errors = jsNontrivialString(vm, "strict"_s);
         }

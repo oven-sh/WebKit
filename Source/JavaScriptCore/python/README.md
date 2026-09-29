@@ -454,6 +454,8 @@ of that is to show in Python, and `len(s)` and `s[i]` are to take no longer for 
   nowhere to keep it, so it is kept for the strings lately asked about, in a cache of the VM's that is emptied when the collector has run, as what `String.prototype.split()` came to is. Whoever is using one holds
   on to it, since the collector can run in the middle.
 - **`Characters`** is what the rest of the code uses: `count()`, `codeUnitOf(index)` and `characterAt(offset)`, of one string.
+- **What has to go back and forth by so many characters at a time**, as what matches a regular expression does, has such a string with each character in a place of its own: `ExpandedString`. That is how CPython keeps
+  one all the time. It is made once and kept in the same cache, so that `pattern.match(text, pos)` in a loop does not go through the whole of `text` each time round, and the collector is told how much there is of it.
 - **Order is by character.** The halves of a pair are numbered below U+E000 and a pair stands for what is above U+FFFF, so `compareStrings()` finds the code unit that two strings first differ in, goes back one if
   that is in the middle of a pair, and compares the characters there.
 - **Half a pair by itself is a character**, as it is in Python, where `surrogateescape` makes them. It is not part of a pair that has the same for one of its halves: `'\ud83d' in '\U0001f600'` is false. So what is
@@ -463,9 +465,9 @@ of that is to show in Python, and `len(s)` and `s[i]` are to take no longer for 
 ### What kind of thing a character is
 
 Whether a character is a letter, a digit or a space, whether `repr()` shows it, whether a name can have it in it, and what it is in another case, are asked of `PythonUnicodeType.h`, which is `Objects/unicodectype.c`
-over the same table, `PythonUnicodeTypeDatabase.h`. `str`'s methods go by it, and the lexer, `int()` and `float()`, `repr()`, and format specifications. ICU is not asked. It knows whatever version of
+over the same table, `PythonUnicodeTypeDatabase.h`. `str`'s methods go by it, and the lexer, `int()` and `float()`, `repr()`, format specifications and regular expressions. ICU is not asked. It knows whatever version of
 Unicode came with the system, so a program would do one thing on one machine and another on the next, and it does not always mean the same by the question: one character for one, the sharp s in upper case is itself to
-ICU and `S` to CPython.
+ICU and `S` to CPython, which regular expressions that ignore case depend on.
 
 The table is not written by hand. `lib/convert-unicode-type-database.py` makes it from CPython's, and is to be run again when the version of CPython changes. `programs/every-character.py` asks everything of every character.
 
@@ -521,6 +523,18 @@ asked first, `"ab" * x` takes whatever has `__index__`, and `[1].__add__(2)` rai
 
 - A class that a program derives from `list` or `bytearray` has their `+=` in the first part too. That is what comes of how CPython fills in what such a class can do, and it decides what is run.
 - With `*=`, what is on the right is not come to if what is on the left can do anything that a sequence can, though it cannot do this.
+
+### A method is not all that CPython goes by
+
+A class that CPython writes in C fills in slots, and `__getitem__` and `__add__` are made from those for a program to call. There are two slots for each, one for a sequence and one for a mapping or a number, and which of
+them a class has filled in decides things that the method alone does not. Here there are only the methods, so a class that is written in C++ says the rest in its flags, and what an operator does goes by the class that the
+method it found belongs to. So a class that a program derives is the same as its base until it has a method of its own, as with slots.
+
+- **`IsSubscriptedAsSequence`**: `sq_item` and no `mp_subscript`, as `deque` has. `d[key]` takes a number and nothing else, and says so in other words than `d.__getitem__(key)` does.
+- **`AddsAsSequence`**: `sq_concat` and `sq_repeat`. See above, and `isSequenceSlot()`.
+- **`isSequence()`** is `PySequence_Check()`: whether there is `sq_item`. `iter()`, `reversed()` and `in` go through what has `__getitem__` and no `__iter__` only if so. A `re.Match` has `mp_subscript` alone, and cannot be gone through.
+- **`IsDerivedFromBuiltin`**: what the operators do with a `dict` or a `list` without asking, they do only if that is exactly what it is. A class that a program derives is known by being a heap type. One that is written in
+  C++, as `defaultdict` is, says so.
 
 ### `__dict__` is the object
 
@@ -585,8 +599,13 @@ What CPython writes in C is written here in C++, and what CPython writes in Pyth
 written in Python it can see all the way into. It can replace a function in it, derive from a class in it and override any method, read what begins with an underscore, find its frames on the stack and its
 lines in a traceback, and ask for its source. Programs do. So a module is written in the language that CPython wrote it in, function for function, and each file here that is a port says of what.
 
-A class that is built in and belongs to a module is made when the module is first imported: `createBuiltinType()`. What the module has to keep for the realm, those classes among it, is a struct in `PyRealm`,
-as CPython keeps a module's state: `ThreadModuleState`.
+A class that is built in and belongs to a module is made when the module is first imported: `createBuiltinType()`. What the module has to keep for the realm, those classes among it, is a struct that the realm keeps for
+it, as CPython keeps a module's state: `PyRealm::moduleState<T>()`, which makes one the first time that it is asked and tells the collector of what is in it. So a module is added without `PyRealm.h` hearing of it.
+
+Where a class of CPython's has `PyObject_GenericGetAttr` written into its own `tp_getattro`, which does nothing that it would not have inherited, it has a `__getattribute__` of its own for a program to find:
+`addGenericGetAttribute()`. It costs nothing, since `PyType::hooks()` knows it for `object`'s.
+
+What is ported from CPython is CPython's authors' work made over, and is under CPython's licence, which is in `lib/importlib/LICENSE`. What matches regular expressions has a notice of its own, which is at the top of it.
 
 An instance of such a class has what in CPython is a C struct. Here it is a struct as well, derived from `NativeState`, and one kind of cell holds any of them: `PyStateObject`. So a class that is ported does not
 take a cell type, a subspace and a destructor of its own, only what it has and what of that the collector is to be told of. Where CPython leaves making the instance to `object.__new__()` and its `tp_alloc`, so that
@@ -661,6 +680,23 @@ What `io.open_code()` does is the host's to say, if it wants to: `Configuration:
 `Modules/posixmodule.c`, in parts: `PythonPosixShared.cpp` has what turns arguments into names of files, descriptors and ids, and what raises; `Paths`, `Descriptors`, `Directories`, `Identity` and `Processes` have the
 functions; `Constants` has the constants, and the names that `sysconf()` and the like go by. It has everything that CPython's has on macOS but `fork()`, `forkpty()` and `register_at_fork()`: see *Where it differs*.
 What CPython has only on Linux is not written, and what is written for Linux has not been compiled.
+
+### Regular expressions
+
+A regular expression is compiled by Python, in the package `re`, to a list of numbers. `_sre` is what goes by them.
+
+- **`PythonSREEngine.h` does the matching.** It is `Modules/_sre/sre_lib.h`, which is a machine with a stack of its own for going back, all labels and `goto`. There is nothing of Python's objects in it. It is not written out again
+  by hand, since what would go wrong in doing so is what no test is sure to find: `lib/convert-sre-engine.py` makes it from CPython's, changing what C++ requires and nothing else. CPython includes the file three times, once for
+  each width of character, and here it is a template. It keeps CPython's names, so that the two can be laid side by side.
+- **`PythonSRE.cpp` is the rest**, `Modules/_sre/sre.c`: `Pattern`, `Match`, the scanner, what a replacement is compiled to, and what looks over the numbers before they are trusted, since a program can call `_sre.compile()` itself.
+- **A `str` is gone through as it is** if a character of it is a code unit, which is nearly always. Otherwise see `ExpandedString`, under *Characters and code units*.
+- **Bytes are gone through where they are**, without a copy, and any of JavaScript's typed arrays and `ArrayBuffer`s will do. The engine keeps pointers, which nothing else here does: see *Where the bytes are is not kept*. They are good for as
+  long as nothing of a program's is run. That is so within one run of the engine, but for what has been put off, so after that has been seen to it looks whether the bytes are where they were, and gives up if not. Between one run and
+  the next, in `sub()` with a function and in `finditer()`, anything may have happened, so `State::findBytesAgain()` is called before each run, and what is cut out of the bytes is cut from what there is now.
+  `interop/regular-expressions-over-bytes-that-change.mjs` empties, resizes and gives away what is being gone through.
+- **`re.LOCALE`** asks the C library, of a locale that belongs to the realm: `characterLocale()`. The locale of the process is not Python's alone and is left as it is.
+
+`programs/sre-at-random.py` makes regular expressions at random and tries them on strings made at random, of each width and of bytes. Both this and CPython are given the same numbers to go by, so what differs is the engine's doing.
 
 ### One rounding or two
 
@@ -877,7 +913,7 @@ There is nothing that is per process, nothing that is set after something is mad
 
 ## Where it differs from CPython on purpose
 
-- **A `bytearray` can be resized while there is a `memoryview` of it.** CPython raises `BufferError`, and can because the view is released the
+- **A `bytearray` can be resized while there is a `memoryview` of it, or while a regular expression is going through it.** CPython raises `BufferError`, and can because the view is released the
   moment the last reference to it goes. Here it would stay locked until the next collection, and programs that are right would fail. A view
   holds no pointer, only where it is looking, and checks each time. For the same reason the `__release_buffer__()` of a class that has one is called when
   the last `memoryview` of it is released, by `release()` or by `with`, and not when it is merely let go of.

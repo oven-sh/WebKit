@@ -166,6 +166,37 @@ auto SurrogatePairCache::find(StringImpl& string, RefPtr<SurrogatePairs>& pairs)
     return Found::Some;
 }
 
+RefPtr<ExpandedString> ExpandedString::tryCreate(std::span<const char16_t> codeUnits)
+{
+    auto result = adoptRef(*new ExpandedString);
+    if (!result->m_characters.tryReserveInitialCapacity(codeUnits.size()))
+        return nullptr;
+    for (size_t i = 0; i < codeUnits.size(); ++i) {
+        if (isPairAt(codeUnits, i)) {
+            result->m_characters.append(U16_GET_SUPPLEMENTARY(codeUnits[i], codeUnits[i + 1]));
+            ++i;
+        } else
+            result->m_characters.append(codeUnits[i]);
+    }
+    result->m_characters.shrinkToFit();
+    return result;
+}
+
+RefPtr<ExpandedString> SurrogatePairCache::expand(VM& vm, StringImpl& string)
+{
+    ASSERT(!string.is8Bit());
+    Expansion& expansion = m_expansions[PtrHash<StringImpl*>::hash(&string) & (size - 1)];
+    if (expansion.string != &string) {
+        RefPtr characters = ExpandedString::tryCreate(string.span16());
+        if (!characters)
+            return nullptr;
+        // It goes when the collector next runs, which is to be the sooner for it.
+        vm.heap.deprecatedReportExtraMemory(characters->characters().size_bytes());
+        expansion = { &string, WTF::move(characters) };
+    }
+    return expansion.characters;
+}
+
 Characters::Characters(VM& vm, const String& string)
     : m_length(string.length())
 {

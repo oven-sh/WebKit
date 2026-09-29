@@ -1058,6 +1058,8 @@ PYTHON_NATIVE(bytesJoin)
     MarkedArgumentBuffer items;
     collectFast(globalObject, args[1], items, "can only join an iterable"_s);
     RETURN_IF_EXCEPTION(scope, { });
+    if (items.size() == 1 && isBytes(selfValue) && isExactly(globalObject, items.at(0), BuiltinType::Bytes))
+        return JSValue::encode(items.at(0));
     Buffers buffers(globalObject);
     for (unsigned i = 0; i < items.size(); ++i) {
         auto item = tryBufferOf(globalObject, items.at(i));

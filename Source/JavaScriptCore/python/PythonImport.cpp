@@ -249,6 +249,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_contextvars"_s, createContextVarsModule },
     { "_frame"_s, createFrameModule },
     { "_imp"_s, createImpModule },
+    { "_sre"_s, createSREModule },
     { "_io"_s, createIOModule },
     { "_thread"_s, createThreadModule },
     { "_typing"_s, createTypingModule },

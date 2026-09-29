@@ -1824,7 +1824,7 @@ JSValue getIterator(JSGlobalObject* globalObject, JSValue value)
             return raiseTypeError(globalObject, scope, concatenate("iter() returned non-iterator of type '"_s, typeName(globalObject, iterator), '\''));
         return iterator;
     }
-    if (!method && type->lookup(vm, names.dunder_getitem))
+    if (!method && isSequence(globalObject, value))
         return PyIterator::create(globalObject, PyIterator::Kind::Sequence, value);
 
     return raiseTypeError(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object is not iterable"_s));
@@ -1835,7 +1835,7 @@ bool hasWhatItTakesToBeIterated(JSGlobalObject* globalObject, JSValue value)
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
     PyType* type = typeOf(globalObject, value);
-    return type->lookup(vm, names.dunder_iter) || (type->lookup(vm, names.dunder_getitem) && !isDict(value));
+    return type->lookup(vm, names.dunder_iter) || isSequence(globalObject, value);
 }
 
 JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator, JSValue* returnedByGenerator)
