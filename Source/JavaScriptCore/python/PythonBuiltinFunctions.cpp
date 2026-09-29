@@ -30,6 +30,7 @@
 #include "PythonBytes.h"
 #include "PythonCodecs.h"
 #include "PythonGenerators.h"
+#include "PythonImport.h"
 #include <wtf/SafeStrerror.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -632,13 +633,13 @@ PYTHON_NATIVE(builtinBuildClass)
 PYTHON_NATIVE(builtinImport)
 {
     NATIVE_PROLOGUE();
-    if (!args.size() || !args[0].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, "__import__() argument 1 must be str"_s));
-    JSValue fromList = args.at(3);
-    JSValue levelValue = args.at(4);
-    unsigned level = levelValue && levelValue.isInt32() ? levelValue.asInt32() : 0;
-    JSObject* globals = globalsOfFrame(globalObject, callerOf(callFrame));
-    RELEASE_AND_RETURN(scope, JSValue::encode(importModule(globalObject, globals, asString(args[0])->value(globalObject), fromList ? fromList : jsUndefined(), level, false)));
+    int level = 0;
+    if (JSValue value = args.at(4)) {
+        auto given = toCInt(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        level = *given;
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(importModuleLevel(globalObject, args.at(0), args.at(1), args.at(2), args.at(3), level)));
 }
 
 void initializeBuiltinFunctions(JSGlobalObject* globalObject, JSObject* namespaceObject)

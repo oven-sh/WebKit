@@ -325,7 +325,6 @@ JS_EXPORT_PRIVATE JSObject* newBuiltinModule(JSGlobalObject*, ASCIILiteral name)
 JSObject* tryModule(JSGlobalObject*, JSValue);
 
 // import name, as the statement does it. `fromList` is None or a tuple of names.
-JS_EXPORT_PRIVATE JSValue importModule(JSGlobalObject*, JSObject* globals, const String& name, JSValue fromList, unsigned level, bool wantsLeaf);
 void registerModule(JSGlobalObject*, const String& name, JSValue module);
 // The source in a file. Null, with nothing raised, if it cannot be read.
 SourceCode readSourceIfPresent(JSGlobalObject*, const String& path);

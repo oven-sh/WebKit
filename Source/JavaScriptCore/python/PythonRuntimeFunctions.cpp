@@ -24,6 +24,7 @@
  */
 
 #include "config.h"
+#include "PythonImport.h"
 #include "PythonRuntimeFunctions.h"
 
 #include "FunctionExecutable.h"
@@ -1158,121 +1159,28 @@ PYTHON_RUNTIME_FUNCTION(runtimeBuildClass)
     RELEASE_AND_RETURN(scope, JSValue::encode(buildClass(globalObject, argument(0), asString(argument(1)), bases, keywords)));
 }
 
-PYTHON_RUNTIME_FUNCTION(importName)
+// importName(globals, builtins, locals, name, fromList, level). The globals are the namespace, and the locals are that too, or a mapping, or None.
+PYTHON_RUNTIME_FUNCTION(runtimeImportName)
 {
     PROLOGUE();
-    String name = asString(argument(1))->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(importModule(globalObject, asObject(argument(0)), name, argument(2), argument(3).asInt32(), argument(4).asBoolean())));
+    JSValue globals = PyDict::backedBy(globalObject, asObject(argument(0)));
+    JSValue locals = argument(2) == argument(0) ? globals : argument(2);
+    RELEASE_AND_RETURN(scope, JSValue::encode(importName(globalObject, asObject(argument(1)), globals, locals, argument(3), argument(4), argument(5))));
 }
 
-PYTHON_RUNTIME_FUNCTION(importFrom)
+PYTHON_RUNTIME_FUNCTION(runtimeImportFrom)
 {
     PROLOGUE();
-    auto name = asString(argument(1))->toIdentifier(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue value = getAttributeIfPresent(globalObject, argument(0), name);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (value)
-        return JSValue::encode(value);
-    // A module of the package that has not been made an attribute of it yet, as when packages import each other.
-    JSValue packageName = getAttributeIfPresent(globalObject, argument(0), vm.pythonNames().dunder_name);
-    RETURN_IF_EXCEPTION(scope, { });
-    // A name that is no string is no name.
-    if (packageName && !packageName.isString())
-        packageName = { };
-    if (packageName) {
-        String package = asString(packageName)->value(globalObject);
-        if (JSValue module = uncheckedDowncast<PyDict>(realm->modules())->getString(globalObject, concatenate(package, '.', name.string())))
-            return JSValue::encode(module);
-    }
-
-    // What follows is the rest of _PyEval_ImportFrom(), which is all about what to say.
-    // FIXME: If the module is in the way of one of the standard library's, or may be of some other, it says so. That goes by sys.path, the working directory and
-    // sys.stdlib_module_names, and comes with the rest of importing.
-    String shownName = repr(globalObject, argument(1));
-    RETURN_IF_EXCEPTION(scope, { });
-    String shownPackage = repr(globalObject, packageName ? packageName : JSValue(jsString(vm, String("<unknown module name>"_s))));
-    RETURN_IF_EXCEPTION(scope, { });
-    auto attribute = [&] (JSValue object, ASCIILiteral attributeName) { return getAttributeIfPresent(globalObject, object, Identifier::fromString(vm, attributeName)); };
-    JSValue spec = getAttributeIfPresent(globalObject, argument(0), vm.pythonNames().dunder_spec);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue origin;
-    bool isInitializing = false;
-    if (spec) {
-        // _PyModuleSpec_GetFileOrigin()
-        JSValue hasLocation = attribute(spec, "has_location"_s);
-        RETURN_IF_EXCEPTION(scope, { });
-        bool isLocated = hasLocation && isTrue(globalObject, hasLocation);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (isLocated) {
-            origin = attribute(spec, "origin"_s);
-            RETURN_IF_EXCEPTION(scope, { });
-            if (origin && !origin.isString())
-                origin = { };
-        }
-        // PyModule_GetFilenameObject()
-        if (!origin && isInstance(globalObject, argument(0), realm->typeModule())) {
-            origin = getStoredAttribute(vm, asObject(argument(0)), vm.pythonNames().dunder_file);
-            if (origin && !origin.isString())
-                origin = { };
-        }
-        // _PyModuleSpec_IsInitializing()
-        JSValue initializing = attribute(spec, "_initializing"_s);
-        RETURN_IF_EXCEPTION(scope, { });
-        isInitializing = initializing && isTrue(globalObject, initializing);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    String location = origin ? concatenate(" ("_s, asString(origin)->value(globalObject).data, ')') : emptyString();
-    String message = isInitializing
-        ? concatenate("cannot import name "_s, shownName, " from partially initialized module "_s, shownPackage, " (most likely due to a circular import)"_s, location)
-        : concatenate("cannot import name "_s, shownName, " from "_s, shownPackage, origin ? location : String(" (unknown location)"_s));
-
-    // _PyErr_SetImportErrorWithNameFrom()
-    JSValue error = call(globalObject, realm->typeImportError(), jsString(vm, message));
-    RETURN_IF_EXCEPTION(scope, { });
-    auto& names = vm.pythonNames();
-    asObject(error)->putDirect(vm, names.field_name, packageName ? packageName : jsUndefined());
-    asObject(error)->putDirect(vm, names.field_path, origin ? origin : jsUndefined());
-    asObject(error)->putDirect(vm, names.field_nameFrom, argument(1));
-    throwException(globalObject, scope, error);
-    return { };
+    RELEASE_AND_RETURN(scope, JSValue::encode(importFrom(globalObject, argument(0), argument(1))));
 }
 
-// from module import *
-PYTHON_RUNTIME_FUNCTION(importStar)
+// from module import *: importStar(module, globals, locals)
+PYTHON_RUNTIME_FUNCTION(runtimeImportStar)
 {
     PROLOGUE();
-    JSObject* globals = asObject(argument(1));
-    JSValue all = getAttributeIfPresent(globalObject, argument(0), vm.pythonNames().dunder_all);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (all) {
-        MarkedArgumentBuffer names;
-        collect(globalObject, all, names);
-        RETURN_IF_EXCEPTION(scope, { });
-        for (unsigned i = 0; i < names.size(); ++i) {
-            if (!names.at(i).isString())
-                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Item in __all__ must be str, not "_s, typeName(globalObject, names.at(i)))));
-            auto name = asString(names.at(i))->toIdentifier(globalObject);
-            RETURN_IF_EXCEPTION(scope, { });
-            JSValue value = getAttribute(globalObject, argument(0), name);
-            RETURN_IF_EXCEPTION(scope, { });
-            globals->putDirect(vm, name, value);
-        }
-        return JSValue::encode(jsUndefined());
-    }
-    JSObject* module = tryModule(globalObject, argument(0));
-    if (!module)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::ImportError, "from-import-* object has no __dict__ and no __all__"_s));
-    // Everything whose name does not begin with an underscore.
-    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    module->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, { });
-    for (auto& name : properties) {
-        if (name.string().startsWith('_'))
-            continue;
-        globals->putDirect(vm, name, module->getDirect(vm, name));
-    }
+    JSValue locals = argument(2) == argument(1) ? JSValue(PyDict::backedBy(globalObject, asObject(argument(1)))) : argument(2);
+    scope.release();
+    importAllFrom(globalObject, locals, argument(0));
     return JSValue::encode(jsUndefined());
 }
 
@@ -1350,9 +1258,9 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("length"_s, runtimeLength);
     add("displayHook"_s, displayHook);
     add("buildClass"_s, runtimeBuildClass);
-    add("importName"_s, importName);
-    add("importFrom"_s, importFrom);
-    add("importStar"_s, importStar);
+    add("importName"_s, runtimeImportName);
+    add("importFrom"_s, runtimeImportFrom);
+    add("importStar"_s, runtimeImportStar);
     object->putDirect(vm, Identifier::fromString(vm, "Ellipsis"_s), globalObject->pyRealm()->ellipsis());
     return object;
 }

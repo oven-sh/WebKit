@@ -30,6 +30,7 @@
 #include "PyFrame.h"
 #include "PyTuple.h"
 #include "PythonContextVars.h"
+#include "PythonImport.h"
 #include "PythonSequences.h"
 #include "TopExceptionScope.h"
 #include <wtf/Scope.h>
@@ -94,7 +95,7 @@ static JSValue warningsAttribute(JSGlobalObject* globalObject, ASCIILiteral name
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue module;
     if (tryImport) {
-        module = importModule(globalObject, nullptr, "warnings"_s, jsUndefined(), 0, false);
+        module = importModule(globalObject, "warnings"_s);
         if (scope.exception()) {
             // What is written here will do.
             catchException(globalObject, BuiltinType::ImportError);

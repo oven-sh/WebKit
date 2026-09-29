@@ -34,6 +34,8 @@
 #include "PythonBytes.h"
 #include "PythonCodecs.h"
 #include "PythonConfiguration.h"
+#include "PythonIO.h"
+#include "PythonImport.h"
 #include "PythonSequences.h"
 #include "PythonStrings.h"
 #include "TopExceptionScope.h"
@@ -185,7 +187,8 @@ void reportUncaughtException(JSGlobalObject* globalObject, JSValue exception)
     JSValue traceback = exception.isObject() ? asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback) : JSValue();
     if (!traceback)
         traceback = jsUndefined();
-    if (JSObject* sys = tryModule(globalObject, findOrLoadModule(globalObject, "sys"_s))) {
+    {
+        JSObject* sys = globalObject->pyRealm()->sysModule();
         for (auto [name, value] : { std::pair { "last_exc"_s, exception }, std::pair { "last_type"_s, type }, std::pair { "last_value"_s, exception }, std::pair { "last_traceback"_s, traceback } })
             putStoredAttribute(vm, sys, Identifier::fromString(vm, name), value);
     }
@@ -351,7 +354,7 @@ PYTHON_NATIVE(sysBreakpointHook)
         return ignore();
     String moduleName = lastDot == notFound ? "builtins"_str : named.left(lastDot);
     String attribute = lastDot == notFound ? named : named.substring(lastDot + 1);
-    JSValue module = importModule(globalObject, nullptr, moduleName, jsUndefined(), 0, true);
+    JSValue module = importModule(globalObject, moduleName);
     if (scope.exception()) {
         if (catchException(globalObject, BuiltinType::ImportError))
             return ignore();
@@ -690,15 +693,16 @@ PYTHON_NATIVE(standardStreamWrite)
     // What cannot be written is an error, but not in the middle of reporting one.
     auto bytes = encodeString(globalObject, text, "utf-8"_s, descriptor == 2 ? "backslashreplace"_s : "strict"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue posix = findOrLoadModule(globalObject, "posix"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (posix) {
-        JSValue write = getAttribute(globalObject, posix, Identifier::fromString(vm, "write"_s));
-        RETURN_IF_EXCEPTION(scope, { });
-        JSValue data = newBytes(globalObject, bytes->span());
-        RETURN_IF_EXCEPTION(scope, { });
-        call(globalObject, write, jsNumber(descriptor), data);
-        RETURN_IF_EXCEPTION(scope, { });
+    if (const FileOperations* files = fileOperations(globalObject)) {
+        auto rest = bytes->span();
+        while (!rest.empty()) {
+            int64_t written = files->write(descriptor, rest);
+            if (written == -EINTR)
+                continue;
+            if (written < 0)
+                return JSValue::encode(raiseOSError(globalObject, scope, static_cast<int>(-written)));
+            rest = rest.subspan(static_cast<size_t>(written));
+        }
     }
     return JSValue::encode(jsNumber(stringLength(globalObject, asString(text))));
 }
@@ -768,7 +772,15 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
         return newList(globalObject, values);
     };
     set("modules"_s, realm->modules());
-    set("path"_s, listOf(configuration.moduleSearchPaths));
+    Vector<String> searchPaths;
+    if (!configuration.firstSearchPath.isNull())
+        searchPaths.append(configuration.firstSearchPath);
+    searchPaths.appendVector(configuration.moduleSearchPaths);
+    set("path"_s, listOf(searchPaths));
+    set("meta_path"_s, newList(globalObject));
+    set("path_hooks"_s, newList(globalObject));
+    set("path_importer_cache"_s, PyDict::create(globalObject));
+    set("builtin_module_names"_s, builtinModuleNames(globalObject));
     set("argv"_s, listOf(configuration.arguments));
     set("orig_argv"_s, listOf(configuration.arguments));
     set("executable"_s, jsString(vm, configuration.executable));
@@ -800,8 +812,8 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     JSObject* implementation = newSimpleNamespace(globalObject);
     auto describe = [&] (ASCIILiteral name, JSValue value) { putStoredAttribute(vm, implementation, Identifier::fromString(vm, name), value); };
     describe("name"_s, jsString(vm, configuration.implementationName));
-    // Nothing that has been compiled is kept in a file.
-    describe("cache_tag"_s, jsUndefined());
+    // What goes in the name of a file of compiled code, so that each implementation and version has its own. None are written yet: see dont_write_bytecode.
+    describe("cache_tag"_s, strOrMemoryError(globalObject, concatenate(configuration.implementationName, '-', major, minor)));
     describe("version"_s, versionInfo);
     describe("hexversion"_s, jsNumber(hexVersion));
     set("implementation"_s, implementation);

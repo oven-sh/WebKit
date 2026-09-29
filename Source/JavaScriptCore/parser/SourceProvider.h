@@ -190,6 +190,12 @@ public:
     }
 
     void setSourceURLDirective(const String& sourceURLDirective) { m_sourceURLDirective = sourceURLDirective; }
+    // Python can say, of code that has been compiled, that it is from some other file than was thought: _imp._fix_co_filename().
+    void setSourceURL(const String& sourceURL)
+    {
+        m_sourceURL = sourceURL;
+        m_sourceURLStripped = String();
+    }
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
     void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
 

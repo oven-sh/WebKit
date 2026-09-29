@@ -31,6 +31,7 @@
 #include "GetterSetter.h"
 #include "JSGenerator.h"
 #include "PythonGenerators.h"
+#include "PythonIO.h"
 #include "UnlinkedFunctionExecutable.h"
 
 // object, type, and the types of functions, methods, descriptors, modules and generators.
@@ -1558,66 +1559,11 @@ PYTHON_NATIVE(moduleGetAttribute)
     RELEASE_AND_RETURN(scope, JSValue::encode(getModuleAttribute(globalObject, args[0], *name)));
 }
 
-// _module_repr() and _module_repr_from_spec() of CPython's Lib/importlib/_bootstrap.py, which is what module.__repr__() calls.
+// It is for importlib to say: _PyImport_ImportlibModuleRepr()
 PYTHON_NATIVE(moduleRepr)
 {
     NATIVE_PROLOGUE();
-    JSValue module = args[0];
-    auto get = [&] (JSValue object, ASCIILiteral attribute) { return getAttributeIfPresent(globalObject, object, Identifier::fromString(vm, attribute)); };
-    auto result = [&] (auto... parts) { return JSValue::encode(strOrMemoryError(globalObject, concatenate("<module "_s, parts..., '>'))); };
-    auto reprOf = [&] (JSValue value) { return value ? repr(globalObject, value) : "'?'"_str; };
-
-    JSValue loader = get(module, "__loader__"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue spec = get(module, "__spec__"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    bool hasSpec = spec && isTrue(globalObject, spec);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (hasSpec) {
-        JSValue name = getAttribute(globalObject, spec, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(scope, { });
-        String nameText = reprOf(isNone(name) ? JSValue() : name);
-        RETURN_IF_EXCEPTION(scope, { });
-        JSValue origin = getAttribute(globalObject, spec, Identifier::fromString(vm, "origin"_s));
-        RETURN_IF_EXCEPTION(scope, { });
-        if (isNone(origin)) {
-            loader = getAttribute(globalObject, spec, Identifier::fromString(vm, "loader"_s));
-            RETURN_IF_EXCEPTION(scope, { });
-            if (isNone(loader))
-                return result(nameText);
-            String loaderText = repr(globalObject, loader);
-            RETURN_IF_EXCEPTION(scope, { });
-            return result(nameText, " ("_s, loaderText, ')');
-        }
-        JSValue hasLocation = getAttribute(globalObject, spec, Identifier::fromString(vm, "has_location"_s));
-        RETURN_IF_EXCEPTION(scope, { });
-        bool isFromThere = isTrue(globalObject, hasLocation);
-        RETURN_IF_EXCEPTION(scope, { });
-        String originText = isFromThere ? repr(globalObject, origin) : str(globalObject, origin);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (isFromThere)
-            return result(nameText, " from "_s, originText);
-        nameText = repr(globalObject, name);
-        RETURN_IF_EXCEPTION(scope, { });
-        return result(nameText, " ("_s, originText, ')');
-    }
-
-    JSValue name = get(module, "__name__"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    String nameText = reprOf(name);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue file = get(module, "__file__"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (file) {
-        String fileText = repr(globalObject, file);
-        RETURN_IF_EXCEPTION(scope, { });
-        return result(nameText, " from "_s, fileText);
-    }
-    if (!loader || isNone(loader))
-        return result(nameText);
-    String loaderText = repr(globalObject, loader);
-    RETURN_IF_EXCEPTION(scope, { });
-    return result(nameText, " ("_s, loaderText, ')');
+    RELEASE_AND_RETURN(scope, JSValue::encode(callMethodNamed(globalObject, realm->importState().importlib.get(), Identifier::fromString(vm, "_module_repr"_s), args[0])));
 }
 
 // ---- Generators

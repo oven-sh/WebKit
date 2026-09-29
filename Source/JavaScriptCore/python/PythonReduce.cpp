@@ -29,6 +29,7 @@
 
 #include "PyTuple.h"
 #include "PythonBytes.h"
+#include "PythonImport.h"
 #include "PythonNumbers.h"
 #include "PythonSequences.h"
 #include "PythonStrings.h"
@@ -44,7 +45,7 @@ static JSValue fromCopyreg(JSGlobalObject* globalObject, ASCIILiteral name)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue copyreg = importModule(globalObject, nullptr, "copyreg"_s, jsUndefined(), 0, true);
+    JSValue copyreg = importModule(globalObject, "copyreg"_s);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, getAttribute(globalObject, copyreg, Identifier::fromString(vm, name)));
 }

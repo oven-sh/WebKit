@@ -30,6 +30,7 @@
 #include "FunctionExecutable.h"
 #include "PyFrame.h"
 #include "PythonGenerators.h"
+#include "PythonImport.h"
 #include "SourceProvider.h"
 #include "TopExceptionScope.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -104,6 +105,50 @@ int lineOfTracebackFor(JSGlobalObject* globalObject, JSValue exception, PyFrame*
             return lineOf(cursor);
     }
     return -1;
+}
+
+void removeImportlibFrames(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Exception* raised = scope.exception();
+    if (!raised || vm.isTerminationException(raised) || !raised->value().isObject())
+        return;
+    JSObject* exception = asObject(raised->value());
+    // If it is an ImportError, every run of importlib's frames goes. Otherwise, those that end in a call to _call_with_frames_removed().
+    bool alwaysTrims = typeOf(globalObject, exception)->isSubtypeOf(globalObject->pyRealm()->typeImportError());
+    JSValue base = exception->getDirect(vm, vm.pythonNames().private_traceback);
+    if (!base || !isTraceback(globalObject, base))
+        return;
+
+    // What has the link to a traceback: the one before it, or nothing if it is the exception.
+    auto setLink = [&] (PyNativeObject* holder, JSValue next) {
+        if (holder)
+            holder->setField(vm, TracebackField::Next, next);
+        else
+            base = next;
+    };
+    bool isInImportlib = false;
+    PyNativeObject* previous = nullptr;
+    PyNativeObject* outer = nullptr;
+    for (JSValue cursor = base; !isNone(cursor);) {
+        PyNativeObject* entry = asNative(cursor);
+        JSValue next = entry->field(TracebackField::Next);
+        PyFrame* frame = asFrame(entry->field(TracebackField::Frame));
+        const String& filename = frame->executable()->source().provider()->sourceURL();
+        bool isNowInImportlib = filename == "<frozen importlib._bootstrap>"_s || filename == "<frozen importlib._bootstrap_external>"_s;
+        // This is where the run begins.
+        if (isNowInImportlib && !isInImportlib)
+            outer = previous;
+        isInImportlib = isNowInImportlib;
+        if (isInImportlib && (alwaysTrims || frame->functionInfo().name.string() == "_call_with_frames_removed"_s)) {
+            setLink(outer, next);
+            previous = outer;
+        } else
+            previous = entry;
+        cursor = next;
+    }
+    exception->putDirect(vm, vm.pythonNames().private_traceback, base);
 }
 
 template<unsigned field>

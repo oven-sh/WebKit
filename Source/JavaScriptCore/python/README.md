@@ -532,13 +532,25 @@ was padding.
 
 ### Modules, and what is up to the host
 
-`import` finds a module in `sys.modules`, among those that are written in C++, or in a file on `sys.path`. (The last is to be `importlib`, which
-is written in Python.) An ES module can import a Python file: it is a synthetic module record, made when it is needed as for CommonJS, that
-exports each global by name and the module as the default.
+Importing is divided as CPython divides it. What the statement means, `__import__()`, `sys.modules` and the tables of what is built in and what is frozen are `Python/import.c`, which is `PythonImport.cpp`, and
+`_imp`, which is `PythonImpModule.cpp`. Finding a module and loading it is `importlib`, which is written in Python, and is CPython's own: `lib/importlib/_bootstrap.py` and `_bootstrap_external.py` are its files as
+they are, and are in the engine as they are in CPython's binary. So finders, loaders, specs, path hooks, namespace packages and the locks are not like CPython's. They are CPython's. Its frames are on the stack and are taken
+out of tracebacks when CPython takes them out: `removeImportlibFrames()`.
 
-What is up to the host is asked of it as JavaScript asks it, through `GlobalObjectMethodTable`: `configurePython` for `sys.argv`, `sys.path` and the
-like, and `createPythonBuiltinModule` for modules that it is for the host to provide. `posix` is one: it is what a program reaches the system with, so whether there is such a module is the host's to say. It is
-written here all the same (`createPosixModule()`, which the host calls or does not), since otherwise each host would write it again.
+The statement calls whatever `__import__` is in the builtins of the frame, with the globals and the locals of the frame, unless it is the one that there was to begin with, which there is no need to call.
+`import a.b.c as d` imports `a` and gets `b` from it and `c` from that, as `from` would.
+
+A frozen module is source here, and not code that has been compiled and marshalled, since there is nothing yet that compiles ahead of time. What `_imp.find_frozen()` gives for the data is made when it is asked for.
+
+The name of the file that code is from goes with the source, and all the code that is compiled from one source has the one name. `_imp._fix_co_filename()` gives the source another name, which is what it does in CPython
+to the code and all the code in it. It does it as well to code that `code.replace()` made from that, which in CPython has a name of its own.
+
+An ES module can import a Python file: it is a synthetic module record, made when it is needed as for CommonJS, that exports each global by name and the module as the default. The file is imported by the name that
+`import` would find it by, if it is somewhere on `sys.path`, and otherwise as `importlib.util.spec_from_file_location()` would have it.
+
+What is up to the host is asked of it as JavaScript asks it, through `GlobalObjectMethodTable::configurePython`, which fills in a `Configuration`, as whoever embeds CPython fills in a `PyConfig`: `sys.argv`, `sys.path` and
+the like, and what there is to import besides what the engine has, `builtinModules` and `frozenModules`, which are `PyImport_AppendInittab()` and `PyImport_FrozenModules`. `posix` is one: it is what a program reaches the
+system with, so whether there is such a module is the host's to say. It is written here all the same (`createPosixModule()`, which the host lists or does not), since otherwise each host would write it again.
 
 What is done to an open file is asked of the host too, if it wants to be asked: `Configuration::files`, a `FileOperations`, which is `open`, `close`, `read`, `write` and the few others that `io.FileIO` is made of.
 `FileIO` and the functions of `posix` that do the same go through it. That is so that what Python writes to the standard output can go the way that what JavaScript writes there goes, and the two come out in the
@@ -557,7 +569,8 @@ An instance of such a class has what in CPython is a C struct. Here it is a stru
 take a cell type, a subspace and a destructor of its own, only what it has and what of that the collector is to be told of. Where CPython leaves making the instance to `object.__new__()` and its `tp_alloc`, so that
 one can be had that `__init__()` has never been called on, the class says how one is made: `PyType::setAllocator()`.
 
-Besides that there is what the front end itself is easier said in Python for: `lib/*.py` are compiled by it when a realm is made, and are in no traceback.
+Besides that there is what the front end itself is easier said in Python for: `lib/_framelocals.py`, which is frozen, is imported when a realm is made, and is in no traceback. It is a class that CPython writes in C, and
+is to be written in C++.
 
 ### What is put off
 

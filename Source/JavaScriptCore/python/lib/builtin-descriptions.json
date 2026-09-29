@@ -1565,6 +1565,7 @@
 ["enumerate.__new__", "builtin_function_or_method", "($type, *args, **kwargs)", "Create and return a new object.  See help(type) for accurate signature."],
 ["enumerate.__next__", "wrapper_descriptor", "($self, /)", "Implement next(self)."],
 ["enumerate.__reduce__", "method_descriptor", "($self, /)", "Return state information for pickling."],
+["errno:", "module", null, "This module makes available standard errno system symbols.\n\nThe value of each symbol is the corresponding integer value,\ne.g., on most systems, errno.ENOENT equals the integer 2.\n\nThe dictionary errno.errorcode maps numeric codes to symbol names,\ne.g., errno.errorcode[2] could be the string 'ENOENT'.\n\nSymbols that are not relevant to the underlying system are not defined.\n\nTo map error codes to error messages, use the function os.strerror(),\ne.g. os.strerror(2) could return 'No such file or directory'."],
 ["filter", "type", "(function, iterable, /)", "Return an iterator yielding those items of iterable for which\nfunction(item) is true.  If function is None, return the items that\nare true.", [32, 0, 0, 0, 21762]],
 ["filter.__iter__", "wrapper_descriptor", "($self, /)", "Implement iter(self)."],
 ["filter.__new__", "builtin_function_or_method", "($type, *args, **kwargs)", "Create and return a new object.  See help(type) for accurate signature."],

@@ -31,11 +31,13 @@
 #include "PythonCodecs.h"
 #include "PythonCompiler.h"
 #include "PythonConfiguration.h"
+#include "PythonIO.h"
+#include "PythonImport.h"
 #include "SourceProvider.h"
 #include <wtf/MonotonicTime.h>
 #include <wtf/WallTime.h>
 
-// import, and the modules that are written in C++.
+// Modules, and some of those that are written in C++.
 
 namespace JSC { namespace Python {
 
@@ -295,7 +297,7 @@ PYTHON_NATIVE(mathIsqrt)
     RELEASE_AND_RETURN(scope, JSValue::encode(intFromInt64(globalObject, root)));
 }
 
-static JSObject* createMathModule(JSGlobalObject* globalObject)
+JSObject* createMathModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* module = newBuiltinModule(globalObject, "math"_s);
@@ -352,7 +354,7 @@ PYTHON_NATIVE(timeMonotonicNanoseconds)
     return JSValue::encode(intFromInt64(globalObject, static_cast<int64_t>(MonotonicTime::now().secondsSinceEpoch().nanoseconds())));
 }
 
-static JSObject* createTimeModule(JSGlobalObject* globalObject)
+JSObject* createTimeModule(JSGlobalObject* globalObject)
 {
     JSObject* module = newBuiltinModule(globalObject, "time"_s);
     JSObject* ns = module;
@@ -364,281 +366,51 @@ static JSObject* createTimeModule(JSGlobalObject* globalObject)
     return module;
 }
 
-static JSValue findOrLoad(JSGlobalObject*, const String& fullName, JSValue parent);
-
-// For what is written in C++ and needs a module that the host provides. Empty, with nothing raised, if there is no such module.
-JSValue findOrLoadModule(JSGlobalObject* globalObject, const String& name)
-{
-    return findOrLoad(globalObject, name, JSValue());
-}
-
-static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& name)
-{
-    if (name == "sys"_s)
-        return createSysModule(globalObject);
-    if (name == "math"_s)
-        return createMathModule(globalObject);
-    if (name == "time"_s)
-        return createTimeModule(globalObject);
-    if (name == "_frame"_s)
-        return createFrameModule(globalObject);
-    if (name == "_typing"_s)
-        return createTypingModule(globalObject);
-    if (name == "_contextvars"_s)
-        return createContextVarsModule(globalObject);
-    if (name == "_warnings"_s)
-        return createWarningsModule(globalObject);
-    if (name == "_weakref"_s)
-        return createWeakrefModule(globalObject);
-    if (name == "_thread"_s)
-        return createThreadModule(globalObject);
-    if (name == "marshal"_s)
-        return createMarshalModule(globalObject);
-    if (name == "_io"_s)
-        return createIOModule(globalObject);
-    if (name == "_codecs"_s)
-        return createCodecsModule(globalObject);
-    if (name == "_ast"_s)
-        return createASTModule(globalObject);
-    if (auto create = globalObject->globalObjectMethodTable()->createPythonBuiltinModule)
-        return create(globalObject, name);
-    return nullptr;
-}
-
-// import js: JavaScript's global object, as it is.
-static JSValue createJavaScriptModule(JSGlobalObject* globalObject, const String& name)
-{
-    return name == "js"_s ? JSValue(globalObject->globalThis()) : JSValue();
-}
-
-// ---- The modules that are written in Python and come with the engine
-
-struct LibrarySource {
-    ASCIILiteral name;
-    std::span<const unsigned char> source;
-};
-
-#include "PythonLibrarySources.h"
-
-static std::optional<String> librarySourceFor(const String& name)
-{
-    for (auto& library : s_librarySources) {
-        if (name == library.name)
-            return String::fromUTF8(byteCast<char8_t>(library.source));
-    }
-    return std::nullopt;
-}
-
-// ---- import
-
 JSValue sysAttribute(JSGlobalObject* globalObject, ASCIILiteral name)
 {
     VM& vm = globalObject->vm();
-    JSValue sys = modulesOf(globalObject)->getString(globalObject, "sys"_s);
-    if (!sys) {
-        sys = createSysModule(globalObject);
-        registerModule(globalObject, "sys"_s, sys);
-    }
-    return getStoredAttribute(vm, asObject(sys), Identifier::fromString(vm, name));
+    return getStoredAttribute(vm, globalObject->pyRealm()->sysModule(), Identifier::fromString(vm, name));
 }
 
-// Runs the source of a module. Empty if it raised.
-static JSValue loadSourceModule(JSGlobalObject* globalObject, const String& fullName, const SourceCode& source, bool isPackage, ImplementationVisibility visibility = ImplementationVisibility::Public)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& names = vm.pythonNames();
-
-    const String& path = source.provider()->sourceURL();
-    JSObject* module = newModule(globalObject, fullName);
-    JSObject* ns = module;
-    ns->putDirect(vm, names.dunder_file, jsString(vm, path));
-    size_t lastDot = fullName.reverseFind('.');
-    if (isPackage) {
-        MarkedArgumentBuffer directories;
-        directories.append(jsString(vm, path.left(path.reverseFind('/'))));
-        ns->putDirect(vm, names.dunder_path, newList(globalObject, directories));
-        ns->putDirect(vm, names.dunder_package, jsString(vm, fullName));
-    } else
-        ns->putDirect(vm, names.dunder_package, lastDot == notFound ? jsEmptyString(vm) : jsString(vm, fullName.left(lastDot)));
-
-    ns->putDirect(vm, Identifier::fromString(vm, "__builtins__"_s), PyDict::backedBy(globalObject, globalObject->pyRealm()->builtinsModule()));
-
-    // It is there to be found while it runs, in case what it imports imports it.
-    registerModule(globalObject, fullName, module);
-
-    JSFunction* function = compileModule(globalObject, source, ns, visibility);
-    if (function)
-        call(globalObject, function);
-    if (scope.exception()) {
-        // Comparing strings cannot raise, so this is safe with an exception pending.
-        return { };
-    }
-    return module;
-}
-
-// Runs a module, and leaves things as `import` leaves them.
-static JSValue loadAndRegister(JSGlobalObject* globalObject, const String& fullName, const SourceCode& source, bool isPackage, JSValue parent)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue module = loadSourceModule(globalObject, fullName, source, isPackage);
-    if (!module) {
-        // A module that failed to load is as if it had never been.
-        Exception* exception = scope.exception();
-        if (exception && scope.tryClearException()) {
-            modulesOf(globalObject)->remove(globalObject, jsString(vm, fullName));
-            throwException(globalObject, scope, exception);
-        }
-        return { };
-    }
-    // What is in sys.modules now is the module, whatever that is.
-    if (JSValue registered = modulesOf(globalObject)->getString(globalObject, fullName))
-        module = registered;
-    if (parent) {
-        size_t lastDot = fullName.reverseFind('.');
-        setAttribute(globalObject, parent, Identifier::fromString(vm, fullName.substring(lastDot + 1)), module);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    return module;
-}
-
-// The source in a file, read as any Python program would read it: with what the host provides as the module posix. Null, with nothing
-// raised, if there is no such file.
-static SourceCode readSource(JSGlobalObject*, const String& path);
-
+// The source in a file, for showing a line of it. Null if there is no reading it, whatever the matter is: whoever asks has something else to say.
 SourceCode readSourceIfPresent(JSGlobalObject* globalObject, const String& path)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    SourceCode source = readSource(globalObject, path);
-    // Whatever is the matter with it, there is no reading it, and whoever asks has something else to say.
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    const FileOperations* files = fileOperations(globalObject);
+    if (!files)
+        return { };
+    int descriptor = files->open(path.utf8(), O_RDONLY | O_CLOEXEC, 0);
+    if (descriptor < 0)
+        return { };
+    Vector<uint8_t> bytes;
+    std::array<uint8_t, 64 * KB> chunk;
+    int64_t count;
+    while ((count = files->read(descriptor, chunk)) > 0 || count == -EINTR) {
+        if (count > 0)
+            bytes.append(std::span(chunk).first(static_cast<size_t>(count)));
+    }
+    files->close(descriptor);
+    if (count < 0)
+        return { };
+    SourceCode source = makeSource(globalObject, bytes.span(), SourceOrigin(), path);
     if (scope.exception()) [[unlikely]] {
-        if (!scope.tryClearException())
-            return { };
+        scope.tryClearException();
         return { };
     }
     return source;
-}
-
-static SourceCode readSource(JSGlobalObject* globalObject, const String& path)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue posix = findOrLoad(globalObject, "posix"_s, JSValue());
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!posix)
-        return { };
-    auto function = [&] (ASCIILiteral name) { return getAttribute(globalObject, posix, Identifier::fromString(vm, name)); };
-
-    JSValue flags = function("O_RDONLY"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue open = function("open"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue descriptor = call(globalObject, open, jsString(vm, path), flags);
-    if (scope.exception()) [[unlikely]] {
-        // There being no such file, or its being something in the way of one, is not an error: there are other places to look.
-        catchException(globalObject, BuiltinType::FileNotFoundError) || catchException(globalObject, BuiltinType::NotADirectoryError);
-        return { };
-    }
-
-    Vector<uint8_t> bytes;
-    JSValue read = function("read"_s);
-    while (!scope.exception()) {
-        JSValue chunk = call(globalObject, read, descriptor, jsNumber(64 * KB));
-        if (scope.exception())
-            break;
-        auto buffer = bufferOf(globalObject, chunk);
-        if (!buffer || buffer->empty())
-            break;
-        bytes.append(*buffer);
-    }
-    // It is closed whatever went wrong, and what went wrong first is what is reported.
-    Exception* failure = scope.exception();
-    if (failure && !scope.tryClearException())
-        return { };
-    JSValue close = function("close"_s);
-    if (!scope.exception())
-        call(globalObject, close, descriptor);
-    if (failure) {
-        if (scope.exception() && !scope.tryClearException())
-            return { };
-        throwException(globalObject, scope, failure);
-        return { };
-    }
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, makeSource(globalObject, bytes.span(), SourceOrigin(), path));
-}
-
-// The module with the full name, from sys.modules or by loading it. Empty, with nothing raised, if there is no such module.
-// FIXME: What looks through sys.path here is to be importlib, which is written in Python and does all that `import` is defined to do.
-static JSValue findOrLoad(JSGlobalObject* globalObject, const String& fullName, JSValue parent)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (JSValue module = modulesOf(globalObject)->getString(globalObject, fullName))
-        return module;
-
-    if (!parent) {
-        JSObject* nativeModule = createNativeModule(globalObject, fullName);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (nativeModule) {
-            registerModule(globalObject, fullName, nativeModule);
-            return nativeModule;
-        }
-        if (JSValue module = createJavaScriptModule(globalObject, fullName)) {
-            registerModule(globalObject, fullName, module);
-            return module;
-        }
-        if (auto source = librarySourceFor(fullName))
-            RELEASE_AND_RETURN(scope, loadSourceModule(globalObject, fullName, makeSource(*source, SourceOrigin(), concatenate("<frozen "_s, fullName, '>')), false, ImplementationVisibility::Private));
-    }
-
-    JSValue searchPath;
-    if (parent) {
-        searchPath = getAttributeIfPresent(globalObject, parent, vm.pythonNames().dunder_path);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!searchPath)
-            return { };
-    } else
-        searchPath = sysAttribute(globalObject, "path"_s);
-
-    size_t lastDot = fullName.reverseFind('.');
-    String leaf = lastDot == notFound ? fullName : fullName.substring(lastDot + 1);
-    MarkedArgumentBuffer directories;
-    collect(globalObject, searchPath, directories);
-    RETURN_IF_EXCEPTION(scope, { });
-    for (unsigned i = 0; i < directories.size(); ++i) {
-        if (!directories.at(i).isString())
-            continue;
-        String directory = asString(directories.at(i))->value(globalObject);
-        if (directory.isEmpty())
-            directory = "."_s;
-        SourceCode source = readSource(globalObject, concatenate(directory, '/', leaf, "/__init__.py"_s));
-        RETURN_IF_EXCEPTION(scope, { });
-        bool isPackage = !source.isNull();
-        if (!isPackage) {
-            source = readSource(globalObject, concatenate(directory, '/', leaf, ".py"_s));
-            RETURN_IF_EXCEPTION(scope, { });
-            if (source.isNull())
-                continue;
-        }
-        RELEASE_AND_RETURN(scope, loadAndRegister(globalObject, fullName, source, isPackage, parent));
-    }
-    return { };
 }
 
 // ---- A module that is asked for by where it is, and not by name: `import ... from "./module.py"` in JavaScript
 
 // To Python a module is known by its name, and there is one of each name. So a file is given the name that `import` would find it by: where it
 // is from the first directory of sys.path that it is in. If it is in none, `import` cannot find it, and it goes by the name of the file.
-static String moduleNameForPath(JSGlobalObject* globalObject, const String& path, bool& isPackage)
+static String moduleNameForPath(JSGlobalObject* globalObject, const String& path, bool& isOnSearchPath)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    isOnSearchPath = false;
     String stem = path.endsWith(".py"_s) ? path.left(path.length() - 3) : path;
-    isPackage = stem.endsWith("/__init__"_s);
-    if (isPackage)
+    if (stem.endsWith("/__init__"_s))
         stem = stem.left(stem.length() - 9);
 
     MarkedArgumentBuffer directories;
@@ -656,8 +428,10 @@ static String moduleNameForPath(JSGlobalObject* globalObject, const String& path
                 continue;
             rest = rest.substring(1);
         }
-        if (!rest.isEmpty() && !rest.contains('.'))
+        if (!rest.isEmpty() && !rest.contains('.')) {
+            isOnSearchPath = true;
             return makeStringByReplacingAll(rest.toString(), '/', '.');
+        }
     }
     size_t slash = stem.reverseFind('/');
     return slash == notFound ? stem : stem.substring(slash + 1);
@@ -667,21 +441,26 @@ JSValue importModuleFromSource(JSGlobalObject* globalObject, const SourceCode& s
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    bool isPackage;
-    String fullName = moduleNameForPath(globalObject, source.provider()->sourceURL(), isPackage);
+    startPython(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (JSValue module = modulesOf(globalObject)->getString(globalObject, fullName))
+    const String& path = source.provider()->sourceURL();
+    bool isOnSearchPath;
+    String fullName = moduleNameForPath(globalObject, path, isOnSearchPath);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue name = jsString(vm, fullName);
+    JSValue module = getImportedModule(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (module)
         return module;
-    // The packages that it is in come first, as they do for `import`.
-    JSValue parent;
-    if (size_t lastDot = fullName.reverseFind('.'); lastDot != notFound) {
-        parent = importModule(globalObject, nullptr, fullName.left(lastDot), jsUndefined(), 0, true);
-        RETURN_IF_EXCEPTION(scope, { });
-        // One of them may have imported it.
-        if (JSValue module = modulesOf(globalObject)->getString(globalObject, fullName))
-            return module;
-    }
-    RELEASE_AND_RETURN(scope, loadAndRegister(globalObject, fullName, source, isPackage, parent));
+    if (isOnSearchPath)
+        RELEASE_AND_RETURN(scope, importModule(globalObject, fullName));
+    // importlib.util.spec_from_file_location(), and then what `import` does with a spec.
+    JSValue importlib = globalObject->pyRealm()->importState().importlib.get();
+    JSValue external = getAttribute(globalObject, importlib, Identifier::fromString(vm, "_bootstrap_external"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue spec = callMethodNamed(globalObject, external, Identifier::fromString(vm, "spec_from_file_location"_s), name, jsString(vm, path));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, callMethodNamed(globalObject, importlib, Identifier::fromString(vm, "_load"_s), spec));
 }
 
 void exportModule(JSGlobalObject* globalObject, const SourceCode& source, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)
@@ -712,106 +491,11 @@ void initializeLibrary(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
-    auto attribute = [&] (JSValue module, ASCIILiteral name) {
-        return asObject(module)->getDirect(vm, Identifier::fromString(vm, name));
-    };
-    JSValue frameLocals = findOrLoad(globalObject, "_framelocals"_s, JSValue());
+    JSValue frameLocals = importModule(globalObject, "_framelocals"_s);
     RELEASE_ASSERT(frameLocals);
-    auto* proxy = asType(attribute(frameLocals, "FrameLocalsProxy"_s));
+    auto* proxy = asType(asObject(frameLocals)->getDirect(vm, Identifier::fromString(vm, "FrameLocalsProxy"_s)));
     proxy->setFlag(PyType::IsMapping);
     realm->setFrameLocalsProxyType(vm, proxy);
-}
-
-JSValue importModule(JSGlobalObject* globalObject, JSObject* globals, const String& givenName, JSValue fromList, unsigned level, bool wantsLeaf)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto& names = vm.pythonNames();
-
-    String name = givenName;
-    if (level) {
-        // from . import x, from ..package import y: relative to the package that this module is in.
-        JSValue packageValue = globals ? globals->getDirect(vm, names.dunder_package) : JSValue();
-        String package;
-        if (packageValue && packageValue.isString())
-            package = asString(packageValue)->value(globalObject);
-        else if (JSValue moduleName = globals ? globals->getDirect(vm, names.dunder_name) : JSValue(); moduleName && moduleName.isString()) {
-            package = asString(moduleName)->value(globalObject);
-            if (!globals->getDirect(vm, names.dunder_path)) {
-                size_t dot = package.reverseFind('.');
-                package = dot == notFound ? emptyString() : package.left(dot);
-            }
-        }
-        if (package.isEmpty())
-            return raise(globalObject, scope, BuiltinType::ImportError, "attempted relative import with no known parent package"_s);
-        for (unsigned i = 1; i < level; ++i) {
-            size_t dot = package.reverseFind('.');
-            if (dot == notFound)
-                return raise(globalObject, scope, BuiltinType::ImportError, "attempted relative import beyond top-level package"_s);
-            package = package.left(dot);
-        }
-        name = name.isEmpty() ? package : concatenate(package, '.', name);
-    } else if (name.isEmpty())
-        return raiseValueError(globalObject, scope, "Empty module name"_s);
-
-    // a, then a.b, then a.b.c.
-    JSValue first;
-    JSValue module;
-    size_t position = 0;
-    while (true) {
-        size_t dot = name.find('.', position);
-        String fullName = dot == notFound ? name : name.left(dot);
-        JSValue next = findOrLoad(globalObject, fullName, module);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!next) {
-            JSObject* error = createException(globalObject, globalObject->pyRealm()->typeModuleNotFoundError(), module && !getAttributeIfPresent(globalObject, module, names.dunder_path)
-                ? concatenate("No module named '"_s, fullName, "'; '"_s, name.left(position - 1), "' is not a package"_s)
-                : concatenate("No module named '"_s, fullName, '\''));
-            error->putDirect(vm, vm.pythonNames().field_name, jsString(vm, fullName));
-            throwException(globalObject, scope, error);
-            return { };
-        }
-        module = next;
-        if (!first)
-            first = module;
-        if (dot == notFound)
-            break;
-        position = dot + 1;
-    }
-
-    bool hasFromList = !isNone(fromList) && isTrue(globalObject, fromList);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!hasFromList) {
-        if (wantsLeaf)
-            return module;
-        if (!level)
-            return first;
-        // import of a relative name cannot be written, but __import__ can be asked for it.
-        return module;
-    }
-
-    // from package import module: what is named may be a module of the package that has not been loaded.
-    JSValue path = getAttributeIfPresent(globalObject, module, names.dunder_path);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (path) {
-        MarkedArgumentBuffer wanted;
-        collect(globalObject, fromList, wanted);
-        RETURN_IF_EXCEPTION(scope, { });
-        for (unsigned i = 0; i < wanted.size(); ++i) {
-            if (!wanted.at(i).isString())
-                continue;
-            String item = asString(wanted.at(i))->value(globalObject);
-            if (item == "*"_s)
-                continue;
-            JSValue present = getAttributeIfPresent(globalObject, module, Identifier::fromString(vm, item));
-            RETURN_IF_EXCEPTION(scope, { });
-            if (present)
-                continue;
-            findOrLoad(globalObject, concatenate(name, '.', item), module);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-    }
-    return module;
 }
 
 } } // namespace JSC::Python

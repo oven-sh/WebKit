@@ -2083,6 +2083,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonFileOperations.h
     python/PythonFunctionInfo.h
     python/PythonIOState.h
+    python/PythonImportState.h
     python/PythonMonitoring.h
     python/PythonNumbers.h
     python/PythonOperations.h
@@ -2191,6 +2192,8 @@ add_custom_command(
 set(JavaScriptCore_PYTHON_LIBRARY
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/__future__.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_framelocals.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/importlib/_bootstrap.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/importlib/_bootstrap_external.py
 )
 add_custom_command(
     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h
@@ -2199,7 +2202,7 @@ add_custom_command(
     COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/generate-library-sources.py ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h ${JavaScriptCore_PYTHON_LIBRARY}
     VERBATIM)
 list(APPEND JavaScriptCore_HEADERS ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h)
-WEBKIT_ADD_SOURCE_DEPENDENCIES(${CMAKE_CURRENT_SOURCE_DIR}/python/PythonModules.cpp ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h)
+WEBKIT_ADD_SOURCE_DEPENDENCIES(${CMAKE_CURRENT_SOURCE_DIR}/python/PythonImport.cpp ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonLibrarySources.h)
 
 # GENERATOR: "PythonBuiltinDescriptions.h": the signatures and docstrings of what is built into Python
 add_custom_command(

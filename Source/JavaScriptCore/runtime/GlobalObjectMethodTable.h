@@ -99,9 +99,6 @@ struct GlobalObjectMethodTable {
 
     // What Python is to be told about the program that it is part of, when it is first used. See PythonConfiguration.h.
     void (*configurePython)(JSGlobalObject*, Python::Configuration&);
-    // The built-in modules of Python that are how a program gets at the system are up to the host, as everything of that kind is: posix,
-    // _socket, select. Returns null if it has no module of the name.
-    JSObject* (*createPythonBuiltinModule)(JSGlobalObject*, const String& name);
 };
 
 } // namespace JSC

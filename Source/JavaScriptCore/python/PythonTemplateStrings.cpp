@@ -28,6 +28,7 @@
 #include "PythonBuiltins.h"
 
 #include "PyTuple.h"
+#include "PythonImport.h"
 
 // t"..." : PEP 750. This is CPython's Objects/templateobject.c and Objects/interpolationobject.c.
 
@@ -242,7 +243,7 @@ PYTHON_NATIVE(templateReduce)
 {
     NATIVE_PROLOGUE();
     auto* self = asNativeObject(args[0]);
-    JSValue module = importModule(globalObject, nullptr, "string.templatelib"_s, jsUndefined(), 0, true);
+    JSValue module = importModule(globalObject, "string.templatelib"_s);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue function = getAttribute(globalObject, module, Identifier::fromString(vm, "_template_unpickle"_s));
     RETURN_IF_EXCEPTION(scope, { });

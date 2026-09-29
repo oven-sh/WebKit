@@ -783,9 +783,12 @@ python/PythonBytesIO.cpp
 python/PythonFileIO.cpp
 python/PythonFileOperations.cpp
 python/PythonIOBase.cpp
+python/PythonImpModule.cpp
+python/PythonImport.cpp
 python/PythonMarshal.cpp
 python/PythonModules.cpp
 python/PythonContextVars.cpp
+python/PythonErrnoModule.cpp
 python/PythonExceptionDisplay.cpp
 python/PythonExceptionGroups.cpp
 python/PythonMonitoring.cpp

@@ -31,6 +31,7 @@
 #include "PythonASTModule.h"
 #include "PythonConfiguration.h"
 #include "PythonCodecRegistryState.h"
+#include "PythonImportState.h"
 #include "PythonIOState.h"
 #include "PythonPosixState.h"
 #include "PythonThreadModule.h"
@@ -346,6 +347,7 @@ public:
     Python::WarningsState& warnings() { return m_warnings; }
     Python::ThreadModuleState& threadModule() { return m_threadModule; }
     Python::CodecRegistryState& codecRegistry() { return m_codecRegistry; }
+    Python::ImportState& importState() { return m_importState; }
     Python::IOModuleState& ioModule() { return m_ioModule; }
     Python::PosixModuleState& posixModule() { return m_posixModule; }
     // What whoever embeds the engine had to say, which it was asked when this was made.
@@ -354,6 +356,7 @@ public:
 
     // sys.modules
     JSObject* modules() const { return m_modules.get(); }
+    JSObject* sysModule() const { return m_sysModule.get(); }
 
     // The exception being handled: what sys.exception() gives, and what a new exception's __context__ is.
     // The exception that is being handled: what sys.exception() gives, a bare `raise` raises again, and a new exception has for its context.
@@ -399,6 +402,7 @@ private:
     Python::WarningsState m_warnings;
     Python::ThreadModuleState m_threadModule;
     Python::CodecRegistryState m_codecRegistry;
+    Python::ImportState m_importState;
     Python::IOModuleState m_ioModule;
     Python::PosixModuleState m_posixModule;
     Python::Configuration m_configuration;
@@ -409,6 +413,7 @@ private:
     WriteBarrier<Unknown> m_asyncGeneratorFirstIterationHook;
     WriteBarrier<Unknown> m_asyncGeneratorFinalizerHook;
     WriteBarrier<JSObject> m_modules;
+    WriteBarrier<JSObject> m_sysModule;
     WriteBarrier<Exception> m_handledException;
     WriteBarrier<Exception> m_outerHandledException;
     WriteBarrier<Unknown> m_returnValue;

@@ -28,6 +28,7 @@
 #include "PythonBuiltins.h"
 
 #include "PyTuple.h"
+#include "PythonImport.h"
 
 // list[int] and int | str: types.GenericAlias and typing.Union. This is CPython's Objects/genericaliasobject.c and Objects/unionobject.c.
 
@@ -690,7 +691,7 @@ private:
         auto scope = DECLARE_THROW_SCOPE(vm);
         if (isUnionable(m_globalObject, argument))
             return argument;
-        JSValue typing = importModule(m_globalObject, nullptr, "typing"_s, jsUndefined(), 0, true);
+        JSValue typing = importModule(m_globalObject, "typing"_s);
         RETURN_IF_EXCEPTION(scope, { });
         JSValue function = getAttribute(m_globalObject, typing, Identifier::fromString(vm, "_type_check"_s));
         RETURN_IF_EXCEPTION(scope, { });

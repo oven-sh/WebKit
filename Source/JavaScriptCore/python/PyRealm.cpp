@@ -30,6 +30,7 @@
 #include "GlobalObjectMethodTable.h"
 #include "ObjectConstructor.h"
 #include "PythonBuiltins.h"
+#include "PythonImport.h"
 #include "PythonBytes.h"
 #include "PythonContextVars.h"
 #include "PythonRuntimeFunctions.h"
@@ -58,6 +59,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_warnings.visit(visitor);
     thisObject->m_threadModule.visit(visitor);
     thisObject->m_codecRegistry.visit(visitor);
+    thisObject->m_importState.visit(visitor);
     thisObject->m_ioModule.visit(visitor);
     thisObject->m_posixModule.visit(visitor);
     thisObject->m_ast.visit(visitor);
@@ -72,6 +74,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_asyncContextFrameStructure);
     visitor.append(thisObject->m_builtinsModule);
     visitor.append(thisObject->m_modules);
+    visitor.append(thisObject->m_sysModule);
     visitor.append(thisObject->m_auditHooks);
     visitor.append(thisObject->m_asyncGeneratorFirstIterationHook);
     visitor.append(thisObject->m_asyncGeneratorFinalizerHook);
@@ -251,6 +254,11 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     }
     for (auto& type : m_types)
         putDocOfBuiltinType(vm, globalObject, type.get());
+    m_sysModule.set(vm, this, Python::createSysModule(globalObject));
+    Python::registerModule(globalObject, "sys"_s, m_sysModule.get());
+    // import js: JavaScript's global object, as it is. It is there already, so that importing it makes nothing of it.
+    Python::registerModule(globalObject, "js"_s, globalObject->globalThis());
+    Python::initializeImport(globalObject);
     Python::initializeLibrary(globalObject);
 }
 

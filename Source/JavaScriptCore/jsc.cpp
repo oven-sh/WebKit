@@ -1169,7 +1169,6 @@ private:
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
     static void configurePython(JSGlobalObject*, Python::Configuration&);
-    static JSObject* createPythonBuiltinModule(JSGlobalObject*, const String& name);
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(GlobalObject, JSGlobalObject);
 
@@ -1204,7 +1203,6 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &canCompileStrings,
     &trustedScriptStructure,
     &configurePython,
-    &createPythonBuiltinModule,
 };
 
 GlobalObject::GlobalObject(VM& vm, Structure* structure)
@@ -4483,13 +4481,6 @@ void GlobalObject::configurePython(JSGlobalObject*, Python::Configuration& confi
     configuration = pythonConfiguration();
 }
 
-JSObject* GlobalObject::createPythonBuiltinModule(JSGlobalObject* globalObject, const String& name)
-{
-    if (name == "posix"_s)
-        return Python::createPosixModule(globalObject);
-    return nullptr;
-}
-
 // jsc file.py, as `python file.py` would run it.
 static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
 {
@@ -4520,7 +4511,8 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
         configuration.arguments.append(program);
         configuration.arguments.appendVector(options.m_arguments);
         String path = absoluteFileURL(program).fileSystemPath();
-        configuration.moduleSearchPaths.append(path.left(path.reverseFind('/')));
+        configuration.firstSearchPath = path.left(path.reverseFind('/'));
+        configuration.builtinModules.append({ "posix"_s, Python::createPosixModule });
         break;
     }
 

@@ -99,7 +99,6 @@ void initializeCodeType(JSGlobalObject*);
 void forEachBranch(UnlinkedCodeBlock*, const ScopedLambda<void(unsigned offset, unsigned notTaken, unsigned taken)>&);
 void addMonitoring(JSGlobalObject*, JSObject* sys); // sys.monitoring, sys.settrace() and sys.setprofile(): PythonMonitoring.cpp
 JSObject* createSysModule(JSGlobalObject*);
-JSValue findOrLoadModule(JSGlobalObject*, const String& name);
 
 // While something is being written out, so that a list that contains itself comes out as [[...]]: Py_ReprEnter() and Py_ReprLeave().
 class ReprGuard {
@@ -185,6 +184,10 @@ PyType* createBuiltinType(JSGlobalObject*, ASCIILiteral name, PyType* base, PyTy
 void addClassGetItemIfGeneric(JSGlobalObject*, PyType*); // C[int], if CPython's has that
 JSObject* createThreadModule(JSGlobalObject*);
 JSObject* createMarshalModule(JSGlobalObject*);
+JSObject* createErrnoModule(JSGlobalObject*);
+JSObject* createImpModule(JSGlobalObject*);
+JSObject* createMathModule(JSGlobalObject*);
+JSObject* createTimeModule(JSGlobalObject*);
 JSObject* createCodecsModule(JSGlobalObject*);
 JSObject* createIOModule(JSGlobalObject*);
 JSValue marshalDumps(JSGlobalObject*, JSValue); // PyMarshal_WriteObjectToString()

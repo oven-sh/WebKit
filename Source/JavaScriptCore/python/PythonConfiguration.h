@@ -25,21 +25,47 @@
 
 #pragma once
 
-#include "PythonFileOperations.h"
-#include <wtf/Vector.h>
+#include "ImplementationVisibility.h"
 #include "JSCJSValue.h"
+#include "PythonFileOperations.h"
+#include <span>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
-namespace JSC { namespace Python {
+namespace JSC {
+
+class JSGlobalObject;
+class JSObject;
+
+namespace Python {
+
+// A module that is written in C++: `struct _inittab` of CPython.
+struct BuiltinModule {
+    ASCIILiteral name;
+    JSObject* (*create)(JSGlobalObject*); // Null if it raised.
+};
+
+// A module that is written in Python and is not in a file: `struct _frozen` of CPython, but that it is the source that there is here, and not what comes of compiling it.
+struct FrozenModule {
+    ASCIILiteral name;
+    std::span<const uint8_t> source; // If there is no source at all, there is no importing anything of this name, from here or from anywhere after.
+    bool isPackage { false };
+    ASCIILiteral originalName { }; // What it is called in the library, if that is something else.
+    ImplementationVisibility visibility { ImplementationVisibility::Public };
+};
 
 // What whoever embeds the engine tells Python about the program: what PyConfig is to whoever embeds CPython. It is asked for once for each
 // global object, through GlobalObjectMethodTable::configurePython, when Python is first used there.
 struct Configuration {
     Vector<String> arguments; // sys.argv
-    Vector<String> moduleSearchPaths; // sys.path
+    Vector<String> moduleSearchPaths; // sys.path, after what follows
+    String firstSearchPath; // What sys.path begins with: where the program is, or "" for wherever the process is at the time. Null for neither. PyConfig.sys_path_0
     String executable; // sys.executable
     String implementationName { "javascriptcore"_s }; // sys.implementation.name
     const FileOperations* files { systemFileOperations() }; // Null if there are to be no files.
+    Vector<BuiltinModule> builtinModules; // Besides the engine's own: PyImport_AppendInittab()
+    Vector<FrozenModule> frozenModules; // Besides the engine's own, and before all of them but importlib: PyImport_FrozenModules
+    bool usesFrozenModules { true }; // -X frozen_modules
     // What io.open_code() is: given the name of a file whose contents are to be run, a str, it returns a file that is open for reading bytes, or nothing, having thrown. It is for what wants a say in what is
     // run, or has it somewhere other than in a file. Null is open(path, "rb"). PyFile_SetOpenCodeHook() of CPython.
     JSValue (*openCode)(JSGlobalObject*, JSValue path) { nullptr };

@@ -74,6 +74,12 @@ const FileOperations* systemFileOperations()
                 return 0;
             return resultOrError(::fcntl(descriptor, F_SETFD, wanted));
         },
+        [] () -> std::optional<CString> {
+            Vector<char> buffer(PATH_MAX);
+            if (!::getcwd(buffer.mutableSpan().data(), buffer.size()))
+                return std::nullopt;
+            return CString(buffer.span().data());
+        },
     };
     return &operations;
 }

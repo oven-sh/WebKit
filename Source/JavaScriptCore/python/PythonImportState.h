@@ -26,17 +26,28 @@
 
 #pragma once
 
-#include "JSExportMacros.h"
+#include "WriteBarrier.h"
 
 namespace JSC {
 
-class JSGlobalObject;
 class JSObject;
 
 namespace Python {
 
-// The module posix, which is what `os` is made from. It is written here so that it is written once, but it is what a program reaches the system with, so whether there is such a module is up to whoever embeds the
-// engine: it is there if this is among Configuration::builtinModules. Null where it is not written.
-JS_EXPORT_PRIVATE JSObject* createPosixModule(JSGlobalObject*);
+// What `struct _import_state` of CPython has for each interpreter, but for sys.modules, which the realm has.
+struct ImportState {
+    WriteBarrier<JSObject> importlib; // The module _frozen_importlib, which is importlib._bootstrap.
+    WriteBarrier<Unknown> importFunction; // What builtins.__import__ was to begin with.
+    unsigned lockDepth { 0 }; // How many times the import lock has been taken. There is one thread.
+    int overrideOfFrozenModules { 0 };
+    bool isStarted { false }; // Whether all that is done before a program is run has been done.
+
+    template<typename Visitor>
+    void visit(Visitor& visitor)
+    {
+        visitor.append(importlib);
+        visitor.append(importFunction);
+    }
+};
 
 } } // namespace JSC::Python

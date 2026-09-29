@@ -40,6 +40,7 @@
 #include "PyStateObject.h"
 #include "PyWeakReference.h"
 #include "ObjectConstructor.h"
+#include "PythonImport.h"
 #include "PythonNumbers.h"
 #include "TopExceptionScope.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -626,6 +627,51 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
     return { };
 }
 
+// The end of _Py_module_getattro_impl(): as much help as can be given. Null if it raised.
+String messageForNoModuleAttribute(JSGlobalObject* globalObject, JSObject* module, StringView attribute)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue moduleName = getStoredAttribute(vm, module, vm.pythonNames().dunder_name);
+    if (!moduleName || !stringIn(moduleName))
+        return concatenate("module has no attribute '"_s, attribute, '\'');
+    String name = stringIn(moduleName)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    String plain = concatenate("module '"_s, name, "' has no attribute '"_s, attribute, '\'');
+    JSValue spec = getStoredAttribute(vm, module, vm.pythonNames().dunder_spec);
+    if (!spec)
+        return plain;
+    JSValue origin = fileOriginOfSpec(globalObject, spec);
+    RETURN_IF_EXCEPTION(scope, { });
+    String originText;
+    if (origin) {
+        originText = stringIn(origin)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    bool isShadowing = isPossiblyShadowing(globalObject, origin);
+    if (isShadowing) {
+        auto isShadowingLibrary = isShadowingStandardLibrary(globalObject, moduleName);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (*isShadowingLibrary)
+            return concatenate(plain, " (consider renaming '"_s, originText, "' since it has the same name as the standard library module named '"_s, name, "' and prevents importing that standard library module)"_s);
+    }
+    auto isInitializing = isSpecInitializing(globalObject, spec);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (*isInitializing) {
+        // Of what is not the standard library's, it is only said that it may be in the way of something if it has not been run to its end.
+        if (isShadowing)
+            return concatenate(plain, " (consider renaming '"_s, originText, "' if it has the same name as a library you intended to import)"_s);
+        if (origin)
+            return concatenate("partially initialized module '"_s, name, "' from '"_s, originText, "' has no attribute '"_s, attribute, "' (most likely due to a circular import)"_s);
+        return concatenate("partially initialized module '"_s, name, "' has no attribute '"_s, attribute, "' (most likely due to a circular import)"_s);
+    }
+    auto isSubmodule = isUninitializedSubmodule(globalObject, spec, jsString(vm, attribute.toString()));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (*isSubmodule)
+        return concatenate("cannot access submodule '"_s, attribute, "' of module '"_s, name, "' (most likely due to a circular import)"_s);
+    return plain;
+}
+
 JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, PropertyName name)
 {
     VM& vm = globalObject->vm();
@@ -634,11 +680,8 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     if (isClass(value))
         message = concatenate("type object '"_s, asType(value)->nameString(globalObject), "' has no attribute '"_s, attribute, '\'');
     else if (JSObject* module = tryModule(globalObject, value)) {
-        JSValue moduleName = getStoredAttribute(vm, module, vm.pythonNames().dunder_name);
-        if (JSString* text = moduleName ? stringIn(moduleName) : nullptr)
-            message = concatenate("module '"_s, text->value(globalObject).data, "' has no attribute '"_s, attribute, '\'');
-        else
-            message = concatenate("module has no attribute '"_s, attribute, '\'');
+        message = messageForNoModuleAttribute(globalObject, module, attribute);
+        RETURN_IF_EXCEPTION(scope, { });
     }
     if (message.isNull())
         message = concatenate('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\'');

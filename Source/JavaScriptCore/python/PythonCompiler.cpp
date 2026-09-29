@@ -39,6 +39,7 @@
 #include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
 #include "PythonCodecs.h"
+#include "PythonImport.h"
 #include "PythonOperations.h"
 #include "PythonParser.h"
 #include "PythonSymbolTable.h"
@@ -862,6 +863,13 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
+    startPython(globalObject);
+    if (Exception* exception = scope.exception()) {
+        JSValue value = exception->value();
+        scope.clearException();
+        reportUncaughtException(globalObject, value);
+        return 1;
+    }
 
     JSObject* module = newModule(globalObject, "__main__"_s);
     module->putDirect(vm, Identifier::fromString(vm, "__builtins__"_s), realm->builtinsModule());

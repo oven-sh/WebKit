@@ -4910,22 +4910,39 @@ private:
 
     // ---- Imports
 
+    // What __import__() is given for the locals: the namespace, where names are kept in one, and None in a function.
+    RegisterID* localsForImport()
+    {
+        if (m_info.usesNamespace)
+            return m_namespace.get();
+        return isFunctionKind(m_info.kind) ? none() : m_globals.get();
+    }
+
+    void emitImportName(RegisterID* dst, RegisterID* name, RegisterID* fromList, unsigned level, Node& node)
+    {
+        emitRuntimeCall(dst, "importName"_s, { m_globals.get(), m_builtins.get(), localsForImport(), name, fromList, constant(jsNumber(level)) }, node);
+    }
+
     void emitImport(Import& node)
     {
         for (Alias* alias : node.names) {
+            // import a.b.c gives a.
             Reg module = g.newTemporary();
-            // import a.b.c gives a, and import a.b.c as d gives c.
-            emitRuntimeCall(module.get(), "importName"_s, { m_globals.get(), stringConstant(*alias->name), none(), constant(jsNumber(0)), constant(jsBoolean(!!alias->asName)) }, node);
-            if (alias->asName) {
-                emitStoreName(*alias->asName, module.get(), node);
-                continue;
-            }
+            emitImportName(module.get(), stringConstant(*alias->name), none(), 0, node);
             StringView name = alias->name->string();
             size_t dot = name.find('.');
-            if (dot == notFound)
-                emitStoreName(*alias->name, module.get(), node);
-            else
-                emitStoreName(Identifier::fromString(m_vm, name.left(dot).toString()), module.get(), node);
+            if (!alias->asName) {
+                emitStoreName(dot == notFound ? *alias->name : Identifier::fromString(m_vm, name.left(dot).toString()), module.get(), node);
+                continue;
+            }
+            // import a.b.c as d gives c, which is got from b, which is got from a.
+            while (dot != notFound) {
+                size_t start = dot + 1;
+                dot = name.find('.', start);
+                Identifier attribute = Identifier::fromString(m_vm, name.substring(start, dot == notFound ? name.length() - start : dot - start).toString());
+                emitRuntimeCall(module.get(), "importFrom"_s, { module.get(), stringConstant(attribute) }, node);
+            }
+            emitStoreName(*alias->asName, module.get(), node);
         }
     }
 
@@ -4943,10 +4960,10 @@ private:
 
         Reg module = g.newTemporary();
         Reg moduleName = node.module ? Reg(stringConstant(*node.module)) : Reg(stringConstant(m_vm.propertyNames->emptyIdentifier));
-        emitRuntimeCall(module.get(), "importName"_s, { m_globals.get(), moduleName.get(), fromList.get(), constant(jsNumber(node.level)), constant(jsBoolean(false)) }, node);
+        emitImportName(module.get(), moduleName.get(), fromList.get(), node.level, node);
         for (Alias* alias : node.names) {
             if (*alias->name == "*"_s) {
-                emitRuntimeCall(nullptr, "importStar"_s, { module.get(), m_globals.get() }, node);
+                emitRuntimeCall(nullptr, "importStar"_s, { module.get(), m_globals.get(), localsForImport() }, node);
                 continue;
             }
             Reg value = g.newTemporary();

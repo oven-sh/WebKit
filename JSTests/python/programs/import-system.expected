@@ -1,0 +1,195 @@
+---- what does the importing
+sys.meta_path => ['BuiltinImporter', 'FrozenImporter', 'PathFinder']
+sys.path_hooks => ['FileFinder.path_hook.<locals>.path_hook_for_FileFinder']
+what is written in C => [('sys', True), ('builtins', True), ('_imp', True), ('marshal', True), ('_io', True), ('_thread', True), ('_warnings', True), ('_weakref', True), ('posix', True), ('os', False), ('nothing', False)]
+it is a tuple, in order => ('tuple', True)
+sys => [("<module 'sys' (built-in)>", 'sys', '', 'BuiltinImporter', 'sys', 'built-in', '', False, None, None, False, False)]
+builtins => [("<module 'builtins' (built-in)>", 'builtins', '', 'BuiltinImporter', 'builtins', 'built-in', '', False, None, None, False, False)]
+_imp => [("<module '_imp' (built-in)>", '_imp', '', 'BuiltinImporter', '_imp', 'built-in', '', False, None, None, False, False)]
+marshal => [("<module 'marshal' (built-in)>", 'marshal', '', 'BuiltinImporter', 'marshal', 'built-in', '', False, None, None, False, False)]
+---- modules in files
+import plain => ({'plain': 'plain'}, ('plain', 'plain', '', 'D/plain.py', 'D/__pycache__/plain.TAG.pyc', 'plain', 'SourceFileLoader', True))
+it is run once => (1, {'plain': 'plain'}, {'p': 'plain'}, 1)
+what it has => [("<module 'plain' from 'D/plain.py'>", ['__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__', '_hidden', 'value'], 'D/plain.py', 'D/__pycache__/plain.TAG.pyc', True, '', None, "ModuleSpec(name='plain', loader=LOADER, origin='D/plain.py')", 'plain', 'D/plain.py')]
+from => ({'value': 1}, {'v': 1, '_hidden': 2}, {'value': 1})
+what is not there => ("ImportError: cannot import name 'nothing' from 'plain' (D/plain.py) | name='plain' path='D/plain.py' name_from='nothing'", "ModuleNotFoundError: No module named 'plain.nothing'; 'plain' is not a package | name='plain.nothing' path=None name_from=None", "ModuleNotFoundError: No module named 'nothing_at_all' | name='nothing_at_all' path=None name_from=None", "ModuleNotFoundError: No module named 'nothing_at_all' | name='nothing_at_all' path=None name_from=None", "ModuleNotFoundError: No module named 'nothing_at_all' | name='nothing_at_all' path=None name_from=None", "ModuleNotFoundError: No module named 'plain.value'; 'plain' is not a package | name='plain.value' path=None name_from=None")
+an attribute that is not there => AttributeError: module 'plain' has no attribute 'nothing'
+---- packages
+import pkg => ({'pkg': 'pkg'}, [('pkg', 'pkg', 'pkg', ['D/pkg'], 'D/pkg/__init__.py', ['D/pkg'])], ['pkg'])
+import pkg.one => ({'pkg': 'pkg'}, [('pkg.one', 'pkg.one', 'pkg')], True)
+import pkg.sub.deep => ({'pkg': 'pkg'}, ['pkg', 'pkg.one', 'pkg.sub', 'pkg.sub.deep'])
+as => ({'a': 'pkg.one'}, {'b': 'pkg.sub.deep'}, {'c': 'pkg.sub'}, {'d': 'pkg'})
+from a package => ({'one': 'pkg.one'}, {'sub': 'pkg.sub'}, {'deep': 'pkg.sub.deep'}, {'two': 'pkg.two'}, {'x': 'pkg.one', 'y': 'pkg.two'})
+relative => {'one': 'pkg.one', 'name': 'one', 'deep': 'pkg.sub.deep', 'up': 'pkg.one', 'upper': 'one', 'same': 'pkg.sub'}
+what a package has => AttributeError: module 'pkg.sub.deep' has no attribute '__path__'
+of a package, what is not there => ("ImportError: cannot import name 'nothing' from 'pkg' (D/pkg/__init__.py) | name='pkg' path='D/pkg/__init__.py' name_from='nothing'", "ModuleNotFoundError: No module named 'pkg.nothing' | name='pkg.nothing' path=None name_from=None", "ModuleNotFoundError: No module named 'pkg.one.nothing'; 'pkg.one' is not a package | name='pkg.one.nothing' path=None name_from=None", "ModuleNotFoundError: No module named 'pkg.nothing' | name='pkg.nothing' path=None name_from=None", "ModuleNotFoundError: No module named 'pkg.sub.nothing' | name='pkg.sub.nothing' path=None name_from=None")
+as, of what is not an attribute => [(None, {'a': 'pkg.one'}, "AttributeError: module 'pkg' has no attribute 'one'", None, {'a': 'pkg.one'}, True)]
+---- from where
+from . import deep => {'deep': 'pkg.sub.deep'}
+from .deep import up => {'up': 'pkg.one'}
+from .. import one => {'one': 'pkg.one'}
+from ..one import name => {'name': 'one'}
+from ... import x => ImportError: attempted relative import beyond top-level package | name=None path=None name_from=None
+from .... import x => ImportError: attempted relative import beyond top-level package | name=None path=None name_from=None
+from .nothing import x => ModuleNotFoundError: No module named 'pkg.sub.nothing' | name='pkg.sub.nothing' path=None name_from=None
+from . import nothing => ImportError: cannot import name 'nothing' from 'pkg.sub' (D/pkg/sub/__init__.py) | name='pkg.sub' path='D/pkg/sub/__init__.py' name_from='nothing'
+from .. import sub => {'sub': 'pkg.sub'}
+from ..sub import deep => {'deep': 'pkg.sub.deep'}
+from ..sub.deep import same => {'same': 'pkg.sub'}
+no package => ImportError: attempted relative import with no known parent package | name=None path=None name_from=None
+__package__ = '' => ImportError: attempted relative import with no known parent package | name=None path=None name_from=None
+__package__ = None => ImportError: attempted relative import with no known parent package | name=None path=None name_from=None
+__package__ = 5 => TypeError: package must be a string
+a name with a dot => {'__warningregistry__': {'version': 0}, 'one': 'pkg.one'}
+a name with a dot, and a path => ImportError: cannot import name 'one' from 'pkg.sub' (D/pkg/sub/__init__.py) | name='pkg.sub' path='D/pkg/sub/__init__.py' name_from='one'
+a name that is not a str => TypeError: __name__ must be a string
+a package that is not imported => ModuleNotFoundError: No module named 'absent' | name='absent' path=None name_from=None
+a package that is not one => ImportError: cannot import name 'one' from 'plain' (D/plain.py) | name='plain' path='D/plain.py' name_from='one'
+a spec => {'one': 'pkg.one'}
+a spec and no package => {'one': 'pkg.one'}
+a spec whose parent is not a str => TypeError: __spec__.parent must be a string
+a spec that has no parent => AttributeError: 'object' object has no attribute 'parent'
+a spec that agrees => {'one': 'pkg.one'}
+__spec__ = None => {'one': 'pkg.one'}
+a spec that disagrees => RuntimeError: unable to get warnings.WarningMessage
+neither => RuntimeError: unable to get warnings.WarningMessage
+---- from module import *
+all that does not begin with _ => ['a', 'f', 'sys']
+__all__ => {'a': 1, '_b': 2, 'later': 'from __getattr__'}
+__all__ = a tuple => {'a': 1}
+__all__ = [] => {}
+__all__ = a str => {'a': 1, 'b': 2}
+__all__ = what is not there => AttributeError: module 'stars_odd' has no attribute 'zz'
+__all__ = an int in it => TypeError: Item in stars_odd.__all__ must be str, not int
+__all__ = bytes in it => TypeError: Item in stars_odd.__all__ must be str, not bytes
+__all__ = an int => TypeError: 'int' object does not support indexing
+__all__ = None => TypeError: 'NoneType' object does not support indexing
+__all__ = a dict => TypeError: dict is not a sequence
+__all__ = a set => TypeError: 'set' object does not support indexing
+__all__ = a generator => TypeError: 'generator' object does not support indexing
+__all__ = derived from str => {'a': 1}
+of a package, whose modules are imported for it => {'inner': 'stars_pkg.inner', 'x': 1}
+of what has neither => ('ImportError: from-import-* object has no __dict__ and no __all__ | name=None path=None name_from=None', None, {'x': 1}, "AttributeError: 'Odd' object has no attribute '__name__'", 'TypeError: Key in odd.__dict__ must be str, not int', 'TypeError: module __name__ must be a string, not int')
+into the locals => [(None, ['a', 'f', 'sys'])]
+which can be any mapping => [(None, ['a', '_b', 'later', 'plain', 'v'])]
+---- round in a circle
+what has not been run to its end => ({'circle_a': 'circle_a'}, ["partially initialized module 'circle_a' from 'D/circle_a.py' has no attribute 'x' (most likely due to a circular import)", ("cannot import name 'x' from partially initialized module 'circle_a' (most likely due to a circular import) (D/circle_a.py)", 'circle_a', 'D/circle_a.py', 'x')])
+a module of a package that is not yet an attribute of it => ({'ring': 'ring'}, [('ring.first', True, False), "partially initialized module 'ring' from 'D/ring/__init__.py' has no attribute 'first' (most likely due to a circular import)"])
+---- modules that fail
+import fails => ('ValueError: from the module', [('main.py', 'go', 0), ('D/fails.py', '<module>', 3)], [])
+import fails_import => ("ModuleNotFoundError: No module named 'nothing_here_either' | name='nothing_here_either' path=None name_from=None", [('main.py', 'go', 0), ('D/fails_import.py', '<module>', 1)], [])
+import fails_syntax => ('SyntaxError: invalid syntax (fails_syntax.py, line 2)', [('main.py', 'go', 0)], [])
+import fails_deep => ('ValueError: from the module', [('main.py', 'go', 0), ('D/fails_deep.py', '<module>', 1), ('D/fails.py', '<module>', 3)], [])
+import fails_from => ("ImportError: cannot import name 'nothing' from 'plain' (D/plain.py) | name='plain' path='D/plain.py' name_from='nothing'", [('main.py', 'go', 0), ('D/fails_from.py', '<module>', 1)], [])
+import fails_exit => ('SystemExit: 3', [('main.py', 'go', 0), ('D/fails_exit.py', '<module>', 1)], [])
+import failing_pkg => ('ZeroDivisionError: division by zero', [('main.py', 'go', 0), ('D/failing_pkg/__init__.py', '<module>', 2), ('D/failing_pkg/bad.py', '<module>', 1)], ['failing_pkg.good'])
+it is run again each time => ('ValueError: from the module', 'ValueError: from the module', ['fails is run', 'fails is run'])
+SyntaxError => [('D/fails_syntax.py', 2, 5, 'y = = 2\n', 'invalid syntax')]
+one that puts something else in its place => ({'replaces': 'something else'}, 'something else')
+one that takes itself out => [("KeyError: 'removes'", [('main.py', '_catch', 0), ('<frozen importlib._bootstrap>', '_find_and_load', 1371), ('<frozen importlib._bootstrap>', '_find_and_load_unlocked', 1342), ('<frozen importlib._bootstrap>', '_load_unlocked', 949)])]
+---- sys.modules
+None => (None, "ModuleNotFoundError: import of halted halted; None in sys.modules | name='halted' path=None name_from=None", "ModuleNotFoundError: import of halted halted; None in sys.modules | name='halted' path=None name_from=None", "ModuleNotFoundError: No module named 'halted.more'; 'halted' is not a package | name='halted.more' path=None name_from=None", None)
+anything at all => (None, {'anything': 5}, {'real': 5}, "ImportError: cannot import name 'nothing' from '<unknown module name>' (unknown location) | name=None path=None name_from='nothing'", "ModuleNotFoundError: No module named 'anything.more'; 'anything' is not a package | name='anything.more' path=None name_from=None", 5)
+taken out, it is run again => (None, None, {'plain': 'plain'}, 1)
+a package taken out, and not its modules => (None, None, {'pkg': 'pkg'}, ['pkg'], False)
+sys.modules is another dict => [(None, None, None, {'plain': 'plain'}, 0, False, None)]
+a module by a name that it has not => (None, {'alias': 'plain'}, {'value': 1}, None)
+---- __import__()
+__import__('plain',) => plain
+__import__('pkg.one',) => pkg
+__import__('pkg.sub.deep',) => pkg
+__import__('pkg.one', None, None, ('name',)) => pkg.one
+__import__('pkg.one', None, None, ['name']) => pkg.one
+__import__('pkg', None, None, ('one', 'two')) => pkg
+__import__('pkg', None, None, ('nothing',)) => pkg
+__import__('pkg', None, None, ('*',)) => pkg
+__import__('pkg.one', None, None, ()) => pkg
+__import__('pkg.one', None, None, None) => pkg
+__import__('pkg.one', None, None, 0) => pkg
+__import__('pkg.one', None, None, 1) => pkg.one
+__import__('pkg.one', None, None, 'x') => pkg.one
+__import__('pkg', None, None, (5,)) => TypeError: Item in ``from list'' must be str, not int
+__import__('pkg', None, None, (b'one',)) => TypeError: Item in ``from list'' must be str, not bytes
+__import__('plain', None, None, (5,)) => plain
+__import__('pkg.one', {}, {}, (), 0) => pkg
+__import__('one', {'__package__': 'pkg'}, None, (), 1) => pkg.one
+__import__('', {'__package__': 'pkg'}, None, (), 1) => pkg
+__import__('', {'__package__': 'pkg.sub'}, None, (), 2) => pkg
+__import__('sub.deep', {'__package__': 'pkg'}, None, (), 1) => pkg.sub
+__import__('sub.deep', {'__package__': 'pkg'}, None, ('up',), 1) => pkg.sub.deep
+__import__('one', {'__package__': 'pkg.sub'}, None, (), 2) => pkg.one
+__import__('one', {'__package__': 'pkg.sub'}, None, (), 3) => ImportError: attempted relative import beyond top-level package | name=None path=None name_from=None
+__import__('one', None, None, (), 1) => TypeError: globals must be a dict
+__import__('one', 5, None, (), 1) => TypeError: globals must be a dict
+__import__('one', [], None, (), 1) => TypeError: globals must be a dict
+__import__('one', {}, None, (), 1) => KeyError: "'__name__' not in globals"
+__import__('',) => ValueError: Empty module name
+__import__('', None, None, (), 0) => ValueError: Empty module name
+__import__('plain', None, None, (), -1) => ValueError: level must be >= 0
+__import__('plain', None, None, (), True) => TypeError: globals must be a dict
+__import__('plain', None, None, (), 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+__import__('plain', None, None, (), '1') => TypeError: 'str' object cannot be interpreted as an integer
+__import__('plain', None, None, (), 1099511627776) => OverflowError: Python int too large to convert to C int
+__import__('plain', None, None, (), 1180591620717411303424) => OverflowError: Python int too large to convert to C int
+__import__(5,) => TypeError: module name must be a string
+__import__(None,) => TypeError: module name must be a string
+__import__(b'plain',) => TypeError: module name must be a string
+__import__() => TypeError: __import__() missing required argument 'name' (pos 1)
+__import__('plain', 1, 2, 3, 0, 5) => TypeError: __import__() takes at most 5 arguments (6 given)
+__import__('.',) => ModuleNotFoundError: No module named '.' | name='.' path=None name_from=None
+__import__('plain.',) => ModuleNotFoundError: No module named 'plain.'; 'plain' is not a package | name='plain.' path=None name_from=None
+__import__('.plain',) => ValueError: Empty module name
+__import__('pkg..one',) => ModuleNotFoundError: No module named 'pkg.' | name='pkg.' path=None name_from=None
+__import__('pkg.',) => ModuleNotFoundError: No module named 'pkg.' | name='pkg.' path=None name_from=None
+__import__('a\x00b',) => ModuleNotFoundError: No module named 'a\x00b' | name='a\x00b' path=None name_from=None
+__import__('\ud800',) => ModuleNotFoundError: No module named '\ud800' | name='\ud800' path=None name_from=None
+__import__(' plain',) => ModuleNotFoundError: No module named ' plain' | name=' plain' path=None name_from=None
+by name => ('pkg.one', "TypeError: __import__() got an unexpected keyword argument 'other'")
+a name of a class derived from str => ('plain', 'pkg', 'pkg')
+---- another __import__
+what it is given => (['C', 'd', 'f', 'name', 'one', 'pkg', 'plain', 't'], [('plain', 'runner', 'the globals', None, 0), ('pkg.one', 'runner', 'the globals', None, 0), ('pkg.sub.deep', 'runner', 'the globals', None, 0), ('pkg', 'runner', 'the globals', ('one', 'two'), 0), ('pkg.one', 'runner', 'the globals', ('*',), 0), ('plain', 'runner', None, None, 0), ('pkg', 'runner', None, ('one',), 0), ('pkg.one', 'runner', None, None, 0), ('plain', 'runner', 'dict', None, 0), ('pkg', 'runner', 'dict', ('one',), 0)])
+from within a package => ImportError: cannot import name 'one' from 'pkg.sub' (D/pkg/sub/__init__.py) | name='pkg.sub' path='D/pkg/sub/__init__.py' name_from='one'
+with locals of its own => (None, [('plain', 'g', 'dict', None, 0)])
+what it returns is what is bound => ({'plain': 'whatever it returns'}, {'pkg': 'whatever it returns'}, "ImportError: cannot import name 'one' from '<unknown module name>' (unknown location) | name=None path=None name_from='one'", ['upper'], "ImportError: cannot import name 'nothing' from '<unknown module name>' (unknown location) | name=None path=None name_from='nothing'")
+one that cannot be called => TypeError: 'int' object is not callable
+none => ('ImportError: __import__ not found | name=None path=None name_from=None', 'ImportError: __import__ not found | name=None path=None name_from=None')
+the builtins of the globals => ImportError: cannot import name 'one' from 'sys' (unknown location) | name='sys' path=None name_from='one'
+which have none => ImportError: __import__ not found | name=None path=None name_from=None
+---- finders and loaders
+a finder => ({'found': 'found'}, [('found', None, None), ('create', 'found'), ('exec', 'found')], [("<module 'found' (from the finder)>", 'the loader', True, 'from the finder', '', False, False)])
+of a package => ({'found_pkg': 'found_pkg'}, [('found_pkg', None, None), ('create', 'found_pkg'), ('exec', 'found_pkg'), ('found_pkg.inner', [], None), ('create', 'found_pkg.inner'), ('exec', 'found_pkg.inner')], [], 'found_pkg')
+what it does not find goes on to the next => (None, {'plain': 'plain'}, [('plain', None, None)])
+a finder that has no find_spec => [("ModuleNotFoundError: No module named 'sought' | name='sought' path=None name_from=None", [('main.py', '_catch', 0)])]
+a finder that raises => [('ZeroDivisionError: division by zero', [('main.py', '_catch', 0), ('<frozen importlib._bootstrap>', '_find_and_load', 1371), ('<frozen importlib._bootstrap>', '_find_and_load_unlocked', 1333), ('<frozen importlib._bootstrap>', '_find_spec', 1267), ('main.py', '<lambda>', 0)])]
+a finder that raises ImportError => [('ImportError: from the finder | name=None path=None name_from=None', [('main.py', '_catch', 0), ('main.py', '<lambda>', 0), ('main.py', '<genexpr>', 0)])]
+a finder that returns something else => [("AttributeError: 'int' object has no attribute 'loader'", [('main.py', '_catch', 0), ('<frozen importlib._bootstrap>', '_find_and_load', 1371), ('<frozen importlib._bootstrap>', '_find_and_load_unlocked', 1342), ('<frozen importlib._bootstrap>', '_load_unlocked', 916)])]
+no finders => ModuleNotFoundError: No module named 'sought' | name='sought' path=None name_from=None
+sys.meta_path = None => ImportError: sys.meta_path is None, Python is likely shutting down | name=None path=None name_from=None
+a loader that has no exec_module => [("AttributeError: 'L' object has no attribute 'load_module'", [('main.py', '_catch', 0), ('<frozen importlib._bootstrap>', '_find_and_load', 1371), ('<frozen importlib._bootstrap>', '_find_and_load_unlocked', 1342), ('<frozen importlib._bootstrap>', '_load_unlocked', 922), ('<frozen importlib._bootstrap>', '_load_backward_compatible', 882)], False)]
+a loader that creates something else => [('Odd', ['__loader__', '__name__', '__package__', '__spec__', 'x'])]
+a loader that raises in create_module => [('ZeroDivisionError: division by zero', [('main.py', '_catch', 0), ('<frozen importlib._bootstrap>', '_find_and_load', 1371), ('<frozen importlib._bootstrap>', '_find_and_load_unlocked', 1342), ('<frozen importlib._bootstrap>', '_load_unlocked', 924), ('<frozen importlib._bootstrap>', 'module_from_spec', 816), ('main.py', '<lambda>', 0)], False)]
+a loader that raises in exec_module => [('ZeroDivisionError: division by zero', [('main.py', '_catch', 0), ('<frozen importlib._bootstrap>', '_find_and_load', 1371), ('<frozen importlib._bootstrap>', '_find_and_load_unlocked', 1342), ('<frozen importlib._bootstrap>', '_load_unlocked', 938), ('main.py', '<lambda>', 0)], False)]
+a loader that has exec_module and not create_module => [('ImportError: loaders that define exec_module() must also define create_module() | name=None path=None name_from=None', [('main.py', '_catch', 0)], False)]
+---- sys.path
+not on it => ModuleNotFoundError: No module named 'only_there' | name='only_there' path=None name_from=None
+on it => ({'only_there': 'only_there'}, 'D/elsewhere/only_there.py')
+the first that has it => (None, {'plain': 'plain'}, 'D/plain.py')
+what has been asked of each => [('D', 'FileFinder'), ('D/elsewhere', 'FileFinder'), ('D/failing_pkg', 'FileFinder'), ('D/pkg', 'FileFinder'), ('D/pkg/sub', 'FileFinder'), ('D/ring', 'FileFinder'), ('D/stars_pkg', 'FileFinder')]
+with 5 on it => ({'plain': 'plain'}, 'D/plain.py', 'str')
+with None on it => ({'plain': 'plain'}, 'D/plain.py', 'str')
+with b'bytes' on it => ({'plain': 'plain'}, 'D/plain.py', 'str')
+with 'D/absent' on it => ({'plain': 'plain'}, 'D/plain.py', 'NoneType')
+with 'D/plain.py' on it => ({'plain': 'plain'}, 'D/plain.py', 'NoneType')
+with '' on it => ({'plain': 'plain'}, 'D/plain.py', 'str')
+a hook => (None, {'plain': 'plain'}, ["a hook's", 'plain', 'D'])
+a file that is written afterwards => {'late': 'late'}
+sys.path is another list => (None, {'plain': 'plain'})
+or nothing => (None, "ModuleNotFoundError: No module named 'plain' | name='plain' path=None name_from=None")
+or None => (None, "TypeError: 'NoneType' object is not iterable")
+---- packages that are in no one place
+a directory with no __init__.py => ({'spread': 'spread'}, [("<module 'spread' (namespace) from ['D/part1/spread', 'D/part2/spread']>", '_NamespacePath', ['D/part1/spread', 'D/part2/spread'], None, 'NamespaceLoader', True, True)])
+it is looked for again when sys.path is not what it was => ({'spread': 'spread'}, ['D/part3/spread', 'D/part1/spread', 'D/part2/spread'])
+a package before a module of the same name => ({'both': 'both'}, 'D/both/__init__.py')
+__path__ that a program set => (None, {'pkg': 'pkg'}, None, {'pkg': 'pkg'}, 'D/elsewhere/only_there.py', "ModuleNotFoundError: No module named 'pkg.one' | name='pkg.one' path=None name_from=None")
+---- who is told
+import => (None, {'plain': 'plain', 'pkg': 'pkg', 'marshal': 'marshal'}, "ModuleNotFoundError: No module named 'nothing_at_all' | name='nothing_at_all' path=None name_from=None", [('plain', None, True, True, True), ('pkg.sub.deep', None, True, True, True), ('pkg.sub', None, True, True, True), ('pkg', None, True, True, True), ('pkg.one', None, True, True, True), ('nothing_at_all', None, True, True, True)])

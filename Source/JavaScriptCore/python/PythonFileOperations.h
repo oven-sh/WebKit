@@ -53,6 +53,7 @@ struct FileOperations {
     int (*status)(int descriptor, FileStatus&);
     bool (*isTerminal)(int descriptor);
     int (*setInheritable)(int descriptor, bool);
+    std::optional<CString> (*currentDirectory)(); // getcwd(). Nothing if there is no telling.
 };
 
 // By asking the system. Null where there is no way written to.

@@ -28,6 +28,7 @@
 #include "PythonBuiltins.h"
 
 #include "PyTuple.h"
+#include "PythonImport.h"
 
 // What `def f[T]`, `class C[T]` and `type A = ...` make: type variables, and aliases. This is CPython's Objects/typevarobject.c, and Modules/_typingmodule.c,
 // which is where a program gets at the classes. Much of what they do they leave to the `typing` module, which is written in Python and is imported when it
@@ -65,7 +66,7 @@ static JSValue fromTyping(JSGlobalObject* globalObject, ASCIILiteral name)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue typing = importModule(globalObject, nullptr, "typing"_s, jsUndefined(), 0, true);
+    JSValue typing = importModule(globalObject, "typing"_s);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, getAttribute(globalObject, typing, Identifier::fromString(vm, name)));
 }
