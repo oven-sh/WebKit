@@ -122,11 +122,17 @@ static unsigned scratchWordsFor(Node* node)
         return node->as<OpNewArray>().m_argc;
     case op_new_array_with_spread:
         return node->as<OpNewArrayWithSpread>().m_argc;
-    case op_call_varargs:
-    case op_tail_call_varargs:
-    case op_construct_varargs:
-    case op_super_construct_varargs:
-        return 1;
+    // Arguments that there are no registers for, or that the function called wants in memory.
+    case op_call:
+        return node->as<OpCall>().m_argc;
+    case op_call_ignore_result:
+        return node->as<OpCallIgnoreResult>().m_argc;
+    case op_tail_call:
+        return node->as<OpTailCall>().m_argc;
+    case op_construct:
+        return node->as<OpConstruct>().m_argc;
+    case op_super_construct:
+        return node->as<OpSuperConstruct>().m_argc;
     case op_strcat:
         return node->as<OpStrcat>().m_count;
     case op_enumerator_next:
@@ -149,59 +155,54 @@ bool Lowering::run()
     m_proc.setNumEntrypoints(numEntrypoints);
 
     LBasicBlock prologue = m_out.newBlock();
-    m_handleExceptions = m_out.newBlock();
     for (BasicBlock* block : m_graph.m_rpo) {
         m_out.setFrequency(block->isGeneric ? coldFrequency : 1);
         block->lowered = m_out.newBlock();
     }
     m_out.setFrequency(1);
 
-    m_out.appendTo(prologue, m_handleExceptions);
+    m_out.appendTo(prologue);
     m_out.initializeConstants(m_proc, prologue);
 
-    // Runs on every way in, so what it computes may only depend on the frame pointer.
+    // Runs on every way in, so what it computes may only depend on the frame pointer and on what is in the same register throughout.
     m_callFrame = m_out.framePointer();
-    m_numberTag = m_out.constInt64(JSValue::NumberTag);
-    m_notCellMask = m_out.constInt64(JSValue::NotCellMask);
-    m_proc.addFastConstant(m_numberTag->key());
-    m_proc.addFastConstant(m_notCellMask->key());
-    m_instance = m_out.loadPtr(addressFor(VirtualRegister(CallFrameSlot::codeBlock)));
-    {
-        // instance->data[the index in the header]
-        LValue index;
-        if constexpr (usesStubs) {
-            // Which is right in front of the code.
-            PatchpointValue* patchpoint = m_out.patchpoint(pointerType());
-            patchpoint->effects = Effects::none();
-            patchpoint->setGenerator([headerReferences = &m_graph.headerReferences](CCallHelpers& jit, const StackmapGenerationParams& params) {
-                headerReferences->loadIndex(jit, params[0].gpr());
-            });
-            index = patchpoint;
-        } else {
-            // Which is what the frame has for a callee: CalleeBits::asNativeCallee().
-            int64_t fromBoxedToIndex = static_cast<int64_t>(lowestAccessibleAddress()) - JSValue::NativeCalleeTag + OBJECT_OFFSETOF(CodeHeader, index);
-            m_graph.wideIntegerConstants.add(fromBoxedToIndex);
-            LValue boxed = m_out.load64(addressFor(VirtualRegister(CallFrameSlot::callee)));
-            index = m_out.zeroExtPtr(m_out.load32(m_out.address(m_heaps.AOTCodeHeader_index, m_out.add(boxed, m_out.constInt64(fromBoxedToIndex)), 0)));
-        }
-        m_data = m_out.loadPtr(m_out.baseIndex(m_heaps.AOTInstance_data, m_instance, index));
-        m_info = m_out.add(m_out.loadPtr(m_instance, m_heaps.AOTInstance_infos), m_out.mul(index, m_out.constIntPtr(sizeof(FunctionInfo))));
-    }
+    m_instance = registerOnEntry(instanceGPR);
+    m_numberTag = registerOnEntry(GPRInfo::numberTagRegister);
+    m_notCellMask = registerOnEntry(GPRInfo::notCellMaskRegister);
+    LValue data = wordByIndex(nullptr, Instance::offsetOfData(), sizeof(Data*), true);
+    if (m_graph.startsCold) {
+        // It has none until it has shown that it is worth one, and until it is called by somebody who looks, nothing says even that.
+        m_data = m_out.select(m_out.notNull(data), data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+        m_constants = wordByIndex(m_out.loadPtr(m_instance, m_heaps.AOTInstance_infos), FunctionInfo::offsetOfConstants(), sizeof(FunctionInfo), false);
+    } else
+        m_dataOrNothing = data;
     m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
     m_globalObject = m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);
     m_table = m_out.loadPtr(m_instance, m_heaps.AOTInstance_runtimeTable);
-    if (m_graph.needsFunctionObject()) {
-        B3::SlotBaseValue* slot = m_out.lockedStackSlot(sizeof(EncodedJSValue));
-        m_graph.calleeSlot = slot->slot();
-        m_calleeSlot = slot;
+    if (m_graph.needsFunctionObject())
+        m_calleeSlot = m_out.lockedStackSlot(sizeof(EncodedJSValue));
+    if (m_graph.convention().signature == Signature::List)
+        m_listSlot = m_out.lockedStackSlot(2 * sizeof(EncodedJSValue));
+    if (unsigned homes = m_graph.numberOfHomes())
+        m_homes = m_out.lockedStackSlot(homes * sizeof(EncodedJSValue));
+    if (m_dataOrNothing) {
+        // A function that goes round and round wants caches of its own from the start. The first time, they are made now.
+        LBasicBlock hasNone = m_out.newBlock();
+        LBasicBlock hasData = m_out.newBlock();
+        ValueFromBlock had = m_out.anchor(m_dataOrNothing);
+        m_out.branch(m_out.notNull(m_dataOrNothing), usually(hasData), rarely(hasNone));
+        m_out.appendTo(hasNone, hasData);
+        callStub(Stub::LinkFunction, Void, { }, { }, StubClobbers::Nothing);
+        ValueFromBlock made = m_out.anchor(wordByIndex(nullptr, Instance::offsetOfData(), sizeof(Data*), true));
+        m_out.jump(hasData);
+        m_out.appendTo(hasData);
+        m_data = m_out.phi(pointerType(), had, made);
     }
 
     unsigned scratchWords = 0;
     for (BasicBlock* block : m_graph.m_rpo) {
         for (Node* node : block->nodes) {
             scratchWords = std::max(scratchWords, scratchWordsFor(node));
-            if (node->isMadeWhenWanted)
-                m_madeWhenWanted.add(node, m_out.lockedStackSlot(sizeof(EncodedJSValue)));
             for (auto& use : node->uses)
                 use.node->useCount++;
         }
@@ -221,17 +222,6 @@ bool Lowering::run()
         m_out.entrySwitch(successors);
     } else
         m_out.jump(m_graph.root->lowered);
-
-    m_out.appendTo(m_handleExceptions, m_graph.root->lowered);
-    {
-        LValue thunk = entry(Entry::HandleException);
-        PatchpointValue* patchpoint = m_out.patchpoint(Void);
-        patchpoint->append(thunk, ValueRep::SomeRegister);
-        patchpoint->effects.terminal = true;
-        patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
-            jit.farJump(params[0].gpr(), JITThunkPtrTag);
-        });
-    }
 
     // Phis first: a block's phis are referred to from predecessors that may be lowered before it.
     for (BasicBlock* block : m_graph.m_rpo) {
@@ -264,41 +254,6 @@ bool Lowering::run()
         m_out.appendTo(m_returnBlock);
         m_out.ret(m_out.phi(Int64, m_returnValues));
     }
-    if (m_tailCallBlock) {
-        m_out.appendTo(m_tailCallBlock);
-        LValue callee = m_out.phi(Int64, m_tailCallCallees);
-        LValue target = m_out.phi(Int64, m_tailCallTargets);
-        PatchpointValue* patchpoint = m_out.patchpoint(Void);
-        patchpoint->append(ConstrainedValue(callee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR)));
-        patchpoint->append(ConstrainedValue(target, ValueRep::reg(GPRInfo::regT12)));
-        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-        patchpoint->effects.terminal = true;
-        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, numParameters = m_graph.codeBlock()->numParameters()](CCallHelpers& jit, const StackmapGenerationParams& params) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            jit.emitRestore(params.proc().calleeSaveRegisterAtOffsetList());
-            jit.move(CCallHelpers::TrustedImm32(numParameters), GPRInfo::regT9);
-            stubCalls->tailCall(jit, Stub::TailCallFinish);
-        });
-    }
-    if (m_throwTDZBlock) {
-        m_out.appendTo(m_throwTDZBlock);
-        LValue site = m_out.phi(Int32, m_throwTDZSites);
-        callStub(Stub::OperationVoidWithGlobalObject, Void, { { site, GPRInfo::regT10 } },
-            { { GPRInfo::regT9, static_cast<uint32_t>(static_cast<unsigned>(Entry::operationAOTThrowTDZError) * sizeof(void*)) }, { GPRInfo::argumentGPR1, 0 } });
-        m_out.unreachable();
-    }
-
-    // The registers that live in memory do so where the interpreter would have them.
-    unsigned numHomedLocals = 0;
-    for (unsigned i = 0; i < m_graph.numLocals(); ++i) {
-        if (m_graph.isHomed(virtualRegisterForLocal(i)))
-            numHomedLocals = i + 1;
-    }
-    if (numHomedLocals) {
-        size_t size = numHomedLocals * sizeof(Register);
-        m_proc.addStackSlot(size)->setOffsetFromFP(-static_cast<intptr_t>(size));
-    }
-
     m_heaps.computeRangesAndDecorateInstructions();
     m_proc.deleteOrphans();
     m_out.applyBlockOrder();
@@ -310,9 +265,64 @@ void Lowering::unsupported(Node* node)
     m_graph.fail("no lowering"_s, node->opcode);
 }
 
-TypedPointer Lowering::addressFor(VirtualRegister reg, ptrdiff_t offset)
+TypedPointer Lowering::addressFor(VirtualRegister reg)
 {
-    return m_out.address(m_callFrame, m_heaps.variables[reg.offset()], offset);
+    return m_out.address(m_homes, m_heaps.variables[m_graph.homeOf(reg)]);
+}
+
+// The word at base + addend + the function's index * scale. No base: the Instance.
+LValue Lowering::wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool mayChange)
+{
+    PatchpointValue* patchpoint = m_out.patchpoint(pointerType());
+    if (base)
+        patchpoint->append(ConstrainedValue(base, ValueRep::SomeRegister));
+    patchpoint->effects = Effects::none();
+    if (mayChange)
+        patchpoint->effects.reads = HeapRange::top();
+    patchpoint->setGenerator([indexReferences = &m_graph.indexReferences, hasBase = !!base, addend, scale](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        indexReferences->load(jit, hasBase ? params[1].gpr() : instanceGPR, params[0].gpr(), addend, scale);
+    });
+    return patchpoint;
+}
+
+LValue Lowering::registerOnEntry(Reg reg)
+{
+    return m_out.m_block->appendNew<ArgumentRegValue>(m_proc, Origin(), reg);
+}
+
+// What is done once, on the way in that callers use.
+void Lowering::lowerEntry()
+{
+    if (m_calleeSlot)
+        m_out.store64(registerOnEntry(calleeGPR), m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot));
+    if (m_listSlot) {
+        m_out.store64(registerOnEntry(argumentGPR(0)), m_out.address(m_heaps.root, m_listSlot, 0));
+        m_out.store64(registerOnEntry(argumentGPR(1)), m_out.address(m_heaps.root, m_listSlot, sizeof(EncodedJSValue)));
+    }
+}
+
+LValue Lowering::numberOfArgumentsPassed()
+{
+    return m_out.load32(m_out.address(m_heaps.root, m_listSlot, 0));
+}
+
+LValue Lowering::argumentsPassed()
+{
+    return m_out.loadPtr(m_out.address(m_heaps.root, m_listSlot, sizeof(EncodedJSValue)));
+}
+
+// index: not counting `this`.
+LValue Lowering::argumentPassedOrUndefined(unsigned index)
+{
+    LBasicBlock isThere = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    ValueFromBlock isNot = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
+    m_out.branch(m_out.above(numberOfArgumentsPassed(), m_out.constInt32(index)), usually(isThere), rarely(continuation));
+    m_out.appendTo(isThere, continuation);
+    ValueFromBlock is = m_out.anchor(m_out.load64(m_out.address(m_heaps.root, argumentsPassed(), index * sizeof(EncodedJSValue))));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return m_out.phi(Int64, isNot, is);
 }
 
 TypedPointer Lowering::slotWord(unsigned slot, unsigned word)
@@ -353,41 +363,32 @@ LValue Lowering::entry(Entry which)
     return result;
 }
 
-void Lowering::callPreflight(Node* node)
+// Whether anybody could ask, while the stub is at it, where the function that called it has got to.
+static bool mayLookAtStack(Stub stub)
 {
-    m_out.store32(m_out.constInt32(callSiteBitsOf(node)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
-#if ASSERT_ENABLED
-    m_out.storePtr(m_callFrame, m_out.address(m_heaps.root, m_vm, VM::topCallFrameOffset()));
-#endif
+    switch (stub) {
+    case Stub::Prologue:
+    case Stub::LinkFunction:
+    case Stub::PlainOperation:
+    case Stub::PlainOperationWithGlobalObject:
+    case Stub::PlainOperationWithVM:
+    case Stub::WriteBarrier:
+    case Stub::ToBoolean:
+        return false;
+    default:
+        return true;
+    }
 }
 
-void Lowering::checkException(LValue exception)
+PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers, Node* place)
 {
-    if (!exception)
-        exception = m_out.load64(m_vm, m_heaps.VM_exception);
-    LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(m_out.notZero64(exception), rarely(m_handleExceptions), usually(continuation));
-    m_out.appendTo(continuation);
-}
-
-LType Lowering::operationTuple(LType type)
-{
-    if (type == Void)
-        return pointerType();
-    LType& result = m_tuples[static_cast<unsigned>(type.kind())];
-    if (!result.isTuple())
-        result = m_proc.addTuple({ type, pointerType() });
-    return result;
-}
-
-PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers)
-{
-    bool callsJS = stub == Stub::GetById || stub == Stub::GetByIdWellKnown || stub == Stub::GetLength || stub == Stub::GetByVal;
-    if (callsJS) {
-        // These call getters, from the frame of whoever called them.
-        m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>((CallFrame::headerSizeInRegisters + 1) * sizeof(EncodedJSValue)));
-        RELEASE_ASSERT(clobbers == StubClobbers::WhatCDoes);
-        clobbers = StubClobbers::WhatJSDoes;
+    m_graph.emitsCalls = true;
+    if (!place)
+        place = m_node;
+    CallSite site;
+    if (mayLookAtStack(stub)) {
+        RELEASE_ASSERT(place);
+        site.bits = callSiteBitsOf(place);
     }
 
     // The address of a slot is worked out where it is wanted. As a value it would be worked out ahead of every loop it is wanted
@@ -404,22 +405,22 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     }
     if (slotArgument)
         patchpoint->append(ConstrainedValue(m_data, ValueRep::SomeRegister));
-    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     switch (clobbers) {
-    case StubClobbers::WhatCDoes:
+    case StubClobbers::WhatCallsDo:
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
-        break;
-    case StubClobbers::WhatJSDoes:
-        patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
         break;
     case StubClobbers::Temporaries: {
         RegisterSet temporaries;
         temporaries.add(GPRInfo::regT9, IgnoreVectors);
         temporaries.add(GPRInfo::regT10, IgnoreVectors);
         temporaries.add(GPRInfo::regT11, IgnoreVectors);
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobber(temporaries);
         break;
     }
+    case StubClobbers::Nothing:
+        break;
     }
     if (type == Double)
         patchpoint->resultConstraints = { ValueRep::reg(FPRInfo::returnValueFPR) };
@@ -427,7 +428,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         // Whoever asked for several results says where they are.
     } else if (type != Void)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, callsJS, slotArgument](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, slotArgument, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (slotArgument)
             jit.addPtr(CCallHelpers::TrustedImm32(slotArgument->second), params[params.size() - 1].gpr(), slotArgument->first);
@@ -439,12 +440,9 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
                 jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
         }
         if (valueOfT9)
-            stubCalls->call(jit, stub, *valueOfT9);
+            stubCalls->call(jit, stub, *valueOfT9, site);
         else
-            stubCalls->call(jit, stub);
-        // A function that was passed too few arguments, or that ended in a tail call, does not leave the stack pointer where it was.
-        if (callsJS)
-            jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+            stubCalls->call(jit, stub, site);
     });
     return patchpoint;
 }
@@ -482,20 +480,17 @@ LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function
 
     Vector<StubImmediate, 2> immediates;
     immediates.append({ GPRInfo::regT9, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)) });
-    if (throws)
-        immediates.append({ GPRInfo::regT10, callSiteBitsOf(node) });
-    PatchpointValue* result = callStub(stub, type, placed, immediates);
+    PatchpointValue* result = callStub(stub, type, placed, immediates, StubClobbers::WhatCallsDo, node);
     return type == Void ? nullptr : result;
 }
 
-unsigned Lowering::allocateSite(Node* node, unsigned identifier, unsigned extra)
+unsigned Lowering::allocateSite(Node*, unsigned identifier, unsigned extra)
 {
     RELEASE_ASSERT(Site::fits(identifier, extra));
     unsigned slot = allocateSlot();
     while (m_graph.sites.size() <= slot)
         m_graph.sites.append(Site { });
     m_graph.sites[slot].identifierAndExtra = identifier | extra << Site::identifierBits;
-    m_graph.sites[slot].callSiteBits = callSiteBitsOf(node);
     return slot;
 }
 
@@ -506,19 +501,6 @@ unsigned Lowering::sharedSite(Node* node, unsigned identifier, unsigned extra)
     return m_sharedSites.ensure(static_cast<uint64_t>(node->bytecodeIndex.offset()) << 32 | identifier, [&] {
         return allocateSite(node, identifier, extra);
     }).iterator->value;
-}
-
-unsigned Lowering::siteOfKnownCall(Node* node, unsigned knownCallee, bool isConstruct)
-{
-    auto allocate = [&] {
-        unsigned slot = allocateSite(node, knownCallee, isConstruct);
-        unsigned second = allocateSlot();
-        RELEASE_ASSERT(second == slot + 1);
-        return slot;
-    };
-    if (!m_graph.hasGuards())
-        return allocate();
-    return m_sharedSites.ensure(static_cast<uint64_t>(node->bytecodeIndex.offset()) << 32 | 1u << 31 | knownCallee, allocate).iterator->value;
 }
 
 void Lowering::storeBarrier(LValue owner)
@@ -655,36 +637,8 @@ LValue Lowering::lowRaw(Node* node)
     default:
         break;
     }
-    if (node->isMadeWhenWanted)
-        return makeIfNotMade(node);
     RELEASE_ASSERT(node->lowered);
     return node->lowered;
-}
-
-TypedPointer Lowering::whereItIsOnceMade(Node* node)
-{
-    return m_out.address(m_heaps.root, m_madeWhenWanted.get(node), 0);
-}
-
-LValue Lowering::makeIfNotMade(Node* node)
-{
-    LBasicBlock make = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-
-    LValue made = m_out.load64(whereItIsOnceMade(node));
-    ValueFromBlock earlier = m_out.anchor(made);
-    m_out.branch(m_out.notZero64(made), unsure(continuation), unsure(make));
-
-    m_out.appendTo(make, continuation);
-    LValue result = node->isBytecode(op_create_rest)
-        ? vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_globalObject, m_out.constInt32(node->as<OpCreateRest>().m_numParametersToSkip))
-        : vmCall(node, pointerType(), Entry::operationAOTCreateClonedArguments, m_globalObject);
-    m_out.store64(result, whereItIsOnceMade(node));
-    ValueFromBlock now = m_out.anchor(result);
-    m_out.jump(continuation);
-
-    m_out.appendTo(continuation);
-    return m_out.phi(Int64, earlier, now);
 }
 
 LValue Lowering::lowConstantRegister(VirtualRegister reg)
@@ -694,11 +648,16 @@ LValue Lowering::lowConstantRegister(VirtualRegister reg)
         RELEASE_ASSERT(number != notAConstantOfProgram);
         return m_out.load64(m_out.address(m_out.loadPtr(m_instance, m_heaps.AOTInstance_constantsOfProgram), m_heaps.AOTConstants[number]));
     }
-    LValue constants = m_graph.startsCold ? m_out.loadPtr(m_info, m_heaps.AOTFunctionInfo_constants) : m_out.loadPtr(m_data, m_heaps.AOTData_constants);
+    LValue constants = m_graph.startsCold ? m_constants : m_out.loadPtr(m_data, m_heaps.AOTData_constants);
     return m_out.load64(m_out.address(constants, m_heaps.AOTConstants[reg.toConstantIndex()]));
 }
 
-LValue Lowering::lowJSValue(Node* node) { return convert(lowRaw(node), node->rep(), node->type, Rep::JSValue); }
+LValue Lowering::lowJSValue(Node* node)
+{
+    if (node->loweredAsJSValue)
+        return node->loweredAsJSValue;
+    return convert(lowRaw(node), node->rep(), node->type, Rep::JSValue);
+}
 
 LValue Lowering::lowInt32(Node* node)
 {
@@ -755,15 +714,18 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
         Node* place = node;
         for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
             place = m_block->nodes[i];
-        if (place->kind == NodeKind::Bytecode)
-            m_out.store32(m_out.constInt32(callSiteBitsOf(place)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
         // (Neither is an address of anything, by the time the program runs.)
         m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
         m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
-        plainCall(Void, Entry::operationAOTVerifyFact, m_globalObject, m_callFrame, value, m_out.constInt64(expected), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
-            m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
+        if (place->kind == NodeKind::Bytecode) {
+            vmCall(place, Void, Entry::operationAOTVerifyFact, m_globalObject, value, m_out.constInt64(expected), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
+                m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
+        }
     }
     node->lowered = convert(value, rep, node->type, node->rep());
+    // Whoever wants it the way it came gets that. If nobody wants it any other way, nothing comes of the conversion.
+    if (rep == Rep::JSValue && node->rep() != Rep::JSValue)
+        node->loweredAsJSValue = value;
 }
 
 void Lowering::setProj(Node* node, VirtualRegister reg, LValue value, Rep rep)
@@ -865,6 +827,8 @@ void Lowering::lowerBlock(BasicBlock* block)
         m_out.m_block->append(phi->lowered);
     if (block->endsWithGuard)
         m_exit = newColdBlock();
+    if (block == m_graph.root)
+        lowerEntry();
 
     Node* terminal = block->terminal();
     if (terminal && terminal->kind != NodeKind::Guard && !(terminal->kind == NodeKind::Bytecode && (isBranch(terminal->opcode) || isTerminal(terminal->opcode) || isThrow(terminal->opcode))))
@@ -872,6 +836,7 @@ void Lowering::lowerBlock(BasicBlock* block)
 
     // The origin of a B3 value is the opcode it was made for, plus one: for saying what the code's bytes went to.
     auto setOrigin = [&](Node* node) {
+        m_node = node && node->instruction ? node : nullptr;
         unsigned tag = !node ? 0 : node->kind == NodeKind::Bytecode ? node->opcode + 1 : numOpcodeIDs + 1 + static_cast<unsigned>(node->kind);
         m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(tag) << 4));
     };
@@ -882,10 +847,6 @@ void Lowering::lowerBlock(BasicBlock* block)
         if (node->isElided)
             continue;
         setOrigin(node);
-        if (node->isMadeWhenWanted) {
-            m_out.store64(m_out.int64Zero, whereItIsOnceMade(node));
-            continue;
-        }
         lowerNode(node);
         if (m_graph.failed())
             return;
@@ -936,19 +897,19 @@ void Lowering::lowerNode(Node* node)
         // The guard that the block ends in sees to these.
         return;
     case NodeKind::Argument:
-        if (node->reg == VirtualRegister(CallFrameSlot::callee)) {
+        if (node->reg == VirtualRegister(CallFrameSlot::callee))
             setJSValue(node, callee());
-            return;
-        }
-        setJSValue(node, m_out.load64(addressFor(node->reg)));
+        else if (!node->reg.toArgument())
+            setJSValue(node, registerOnEntry(thisGPR));
+        else if (m_graph.convention().signature == Signature::List)
+            setJSValue(node, argumentPassedOrUndefined(node->reg.toArgument() - 1));
+        else
+            setJSValue(node, registerOnEntry(argumentGPR(node->reg.toArgument() - 1)));
         return;
     case NodeKind::GetStack:
         setJSValue(node, m_out.load64(addressFor(node->reg)));
         return;
     case NodeKind::SetStack:
-        // An argument's home is its own slot in the frame, which it is in already.
-        if (node->uses[0].node->kind == NodeKind::Argument && node->uses[0].node->reg == node->reg)
-            return;
         m_out.store64(lowJSValue(node->uses[0].node), addressFor(node->reg));
         return;
     case NodeKind::Proj:
@@ -967,7 +928,7 @@ void Lowering::lowerBytecode(Node* node)
         lowerGuarded(node);
         return;
     }
-    if (tryLowerArith(node) || tryLowerAccess(node) || tryLowerCallVariant(node) || tryLowerCall(node) || tryLowerMisc(node) || tryLowerObjects(node) || tryLowerIteration(node))
+    if (tryLowerArith(node) || tryLowerAccess(node) || tryLowerCall(node) || tryLowerMisc(node) || tryLowerObjects(node) || tryLowerIteration(node))
         return;
     if (m_graph.failed())
         return;

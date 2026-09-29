@@ -123,6 +123,8 @@ void Lowering::guardReentry(BasicBlock* block)
 
         if (!node->isInteger() || (value->isInteger() && value->range.min >= node->range.min && value->range.max <= node->range.max)) {
             node->lowered = convert(lowRaw(value), value->rep(), node->type, node->rep());
+            if (node->rep() != Rep::JSValue)
+                node->loweredAsJSValue = value->rep() == Rep::JSValue ? lowRaw(value) : value->loweredAsJSValue;
             continue;
         }
         // It has to be an integer, and no bigger than the loop's own get.
@@ -215,8 +217,7 @@ void Lowering::emitGuard(Node* guard)
                 exitUnless(isCell(lowJSValue(guard->uses[0].node)));
             return;
         }
-        unsigned slot = siteOfKnownCall(guard, m_graph.indexOfKnownCallee(known->keyFor(false)), false);
-        exitUnless(m_out.equal(loadSlotWord(slot, 1), lowJSValue(guard->uses[0].node)));
+        RELEASE_ASSERT_NOT_REACHED(); // There is no such guard of what is not proven (inlineCall()).
         return;
     }
     case GuardKind::TypedArrayStorage: {

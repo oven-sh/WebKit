@@ -170,7 +170,6 @@ struct Node {
     uint32_t fact { 0 }; // EXPERIMENT: Options::aotFacts().
     uint8_t iteratedFact { 0 }; // Likewise: it is an array. What an element holds, plus one.
     bool hasFact(unsigned kind, unsigned bitOfOption) const { return fact >> 28 == kind && (Options::aotFacts() & bitOfOption); }
-    bool isMadeWhenWanted { false }; // See Graph::findListsOfArguments().
     Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
     Node* otherSite { nullptr };
     // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
@@ -180,6 +179,7 @@ struct Node {
 
     // Lowering state.
     B3::Value* lowered { nullptr };
+    B3::Value* loweredAsJSValue { nullptr }; // If that is how it came, and not how it is held (rep()).
     B3::Value* loweredLength { nullptr }; // GuardKind::TypedArrayStorage
     unsigned useCount { 0 };
     bool isHandled { false }; // A guard: it has done what the instruction does. If not, it lets everything by, and the instruction is on its own.
@@ -333,6 +333,21 @@ public:
     // from the unwinder, with nothing in machine registers.
     bool isHomed(VirtualRegister reg) const { return m_homed.get(registerIndex(reg)); }
     bool hasHomedRegisters() const { return !m_homed.isEmpty(); }
+    // Where: they are next to each other in the frame, and this is which of them it is.
+    unsigned homeOf(VirtualRegister reg) const
+    {
+        ASSERT(isHomed(reg));
+        unsigned result = 0;
+        for (unsigned index : m_homed) {
+            if (index == registerIndex(reg))
+                return result;
+            ++result;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+        return 0;
+    }
+    unsigned numberOfHomes() const { return m_homed.bitCount(); }
+    Convention convention() const { return m_convention; }
 
     Node* addNode(NodeKind);
     BasicBlock* addBlock();
@@ -367,11 +382,6 @@ public:
     const KnownFunction* knownCalleeWithoutFacts(const Node*, bool* isProven) const;
     // What is iterated by an op_iterator_open, op_iterator_next or op_iterator_close_check is an array: Node::iteratedFact. Or 0.
     static unsigned iteratedFactOf(const Node*);
-    // An op_tail_call of what the callee is proven to be, whose frame fits where this function's own is: however few arguments this
-    // one was passed, there is room for as many as it has parameters. So that is where the frame is made, and where it stays: the
-    // callee is passed as many as it has parameters.
-    bool isSiblingCall(const Node*) const;
-    static constexpr unsigned mostArgumentsOfSiblingCall = 12; // They are all in registers at once.
     bool calleeIsProven(const Node*) const; // See KnownFunction::isProven.
     // Before there is a graph to tell which scope a read is from: unless the code has a variable of its own of that name, there.
     const KnownFunction* probablyFunctionInVariableOfModule(unsigned identifier, unsigned scopeOffset) const;
@@ -386,13 +396,6 @@ public:
     void elideReadsOfCalleesNotPassed();
     // See ProgramFacts.
     void noteUsesOfProvenFunctions(const FactsOfExecutables&);
-    // f(a, ...b), f.apply(o, b): the arguments go from where they are to the frame of the callee (Stub::MakeFrameWithList). What
-    // would have been made only to be copied from, right before the call, is not (Node::isElided): the call sees to it, if it turns
-    // out that copying will not do. An array of the rest of the arguments, or an arguments object, that such calls pass on says
-    // nothing that the frame does not say, until somebody gets hold of it: it is made when somebody does (Node::isMadeWhenWanted).
-    void findListsOfArguments();
-    // The list, if the node is a call that takes one and takes all of it.
-    static Node* listOfArgumentsOf(const Node*);
     // An op_get_from_scope or an op_put_to_scope: how far below the Instance the environment is that has the variable, if it is
     // one of a module, whose place is known (ImageEnvironment::distance). Then the scope that the instruction names is not needed.
     std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);
@@ -432,6 +435,7 @@ public:
     Vector<ImageKey> knownCallees;
     bool callsItself { false }; // As good as a loop.
     bool makesCalls { false }; // Of functions, in frames of their own.
+    bool emitsCalls { false }; // There may be an instruction in the code that calls something, if only a stub. (A jump is not one.)
     // Integers of the program's that are as big as addresses are (see the check for those in AOTCompiler.cpp).
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;
 
@@ -513,8 +517,7 @@ public:
     // An op_new_object that is made whole (Node::numberOfLiteralProperties): what with. Nothing, if it is not a shape to be known by.
     std::optional<KnownShape> shapeOfLiteral(const Node*) const;
     StubCalls stubCalls;
-    HeaderReferences headerReferences;
-    B3::Air::StackSlot* calleeSlot { nullptr }; // Where the object the function was called as is kept: see CodeHeader::calleeSlot.
+    IndexReferences indexReferences;
 
 private:
     VM& m_vm;
@@ -532,6 +535,7 @@ private:
     BitVector m_namesAssignedTo; // By index of the identifier: op_put_to_scope by name.
     unsigned m_numArguments;
     unsigned m_numLocals;
+    Convention m_convention;
     SegmentedVector<Node, 32> m_nodes;
     Node* m_emptyConstant { nullptr };
     UncheckedKeyHashMap<EncodedJSValue, Node*, EncodedJSValueHash, EncodedJSValueHashTraits> m_constants;

@@ -94,7 +94,11 @@ public:
             return m_codeBlock;
         }
         bool hasCode() const { return m_codeBlock || m_aotFunction; } // !!codeBlock()
+        // Set: it is a frame of code from the static compiler. There is nothing in such a frame for anybody but the code: all there is to
+        // know about it is what is asked here.
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }
+        // Between such a frame and callerFrame(), if that is not another: the frame of what let the code in, which has saved registers.
+        CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
         // Of the code that the frame runs, if it is JavaScript.
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
         JS_EXPORT_PRIVATE bool isBuiltinFunction() const; // hasCode()
@@ -162,7 +166,9 @@ public:
         CalleeBits m_callee { };
         mutable CodeBlock* m_codeBlock { nullptr };
         AOT::FunctionRef m_aotFunction;
+        CallFrame* m_aotAdapterFrame { nullptr };
         void* m_returnPC { nullptr };
+        void* m_callerReturnPC { nullptr }; // Where m_callerFrame is going to be returned to.
         size_t m_index { 0 };
         size_t m_argumentCountIncludingThis { 0 };
         BytecodeIndex m_bytecodeIndex { };
@@ -208,6 +214,10 @@ private:
     void readFrame(CallFrame*);
     void readInlinableNativeCalleeFrame(CallFrame*);
     void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
+    void findCaller(CallFrame*);
+#if ENABLE(FTL_JIT)
+    void readAOTFrame(CallFrame*, void* returnPC, uint32_t index);
+#endif
 #if ENABLE(DFG_JIT)
     void readInlinedFrame(CallFrame*, CodeOrigin*);
 #endif
@@ -215,6 +225,7 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
+    AOT::Instance* m_aotInstance { nullptr }; // Of the frames of code from the static compiler that are being gone through, once it has been looked up.
     bool m_topEntryFrameIsEmpty { false };
 };
 

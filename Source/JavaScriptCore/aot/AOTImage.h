@@ -34,7 +34,10 @@ namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL; // "BUNAOT01"
 static constexpr size_t imagePageSize = 16 * KB;
-static constexpr size_t imageFunctionAlignment = 16;
+static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
+static constexpr size_t imageStubsAlignment = 16; // And of whatever else is not a function.
+static constexpr unsigned mostCopiesOfStubsInImage = 8;
+static constexpr unsigned numberOfAdapters = 5;
 
 struct ImageHeader {
     uint64_t magic;
@@ -70,6 +73,15 @@ struct ImageHeader {
     uint32_t regExpsOffset; // ImageRegExp, in the order of their hashes.
     uint32_t numberOfRegExps;
     uint32_t textOfRegExpsOffset;
+    // For telling what an address is in (whatIsAt()).
+    uint32_t startsOfFunctionsOffset; // uint32_t, by index, which is the order they are in: where each starts, in the code. And one more, which is beyond everything.
+    uint32_t granulesOfCodeOffset; // uint32_t: for each 1 << shiftOfGranuleOfCode bytes of the code, the last function to start no later than they do.
+    uint32_t callSitesOffset; // See callSiteAt().
+    uint32_t endOfFunctions; // In the code.
+    uint32_t sizeOfStubs;
+    uint32_t numberOfCopiesOfStubs;
+    uint32_t copiesOfStubs[mostCopiesOfStubsInImage]; // Where each is, in the code.
+    uint32_t returnsIntoAdapters[numberOfAdapters]; // From the start of the stubs: StubBlob::returnsIntoAdapters.
     uint32_t stubOffsets[numberOfStubs]; // From the start of the code, which starts with a copy of the stubs.
 };
 
@@ -144,7 +156,7 @@ public:
     // The thread that has the VM. False: there is not going to be code for it.
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
-    Vector<ReportableSitesOfFunction> takeReportableSites() { return std::exchange(m_reportableSites, { }); } // After that. By CodeHeader::index.
+    Vector<ReportableSitesOfFunction> takeReportableSites() { return std::exchange(m_reportableSites, { }); } // After that. By the index of the function.
 
 private:
     struct Function {
@@ -183,6 +195,8 @@ public:
 
     static bool hasAny();
     static bool containsCode(const void*); // Any image's.
+    static Image* withCode(); // The one that has any.
+    const void* code() const { return m_code; }
     // Of the image that has any.
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
     JS_EXPORT_PRIVATE static uint32_t numberOfFunctionsOfImageWithEnvironments();
@@ -223,8 +237,8 @@ private:
 class ImageView {
 public:
     struct Function {
-        void* entry; // That checks the number of arguments.
-        uint32_t index; // CodeHeader::index
+        uint64_t entry; // An EntryWord.
+        uint32_t index;
         const Site* sites; // Where they are going to be.
         const ImageFunction* function; // Likewise.
         uint32_t numSlots;
@@ -278,10 +292,6 @@ bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 Ref<JITCode> codeOfFunctionFromImage(ImageCode, CodeSpecializationKind);
 bool canDoWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // There are FunctionFacts.
-
-// Options::aotWriteImage(): everything the process compiles goes to Options::aotImagePath() when it exits.
-void addToImageBeingWritten(ScriptExecutable*, CodeSpecializationKind, const JITCode&);
-void addToImageBeingWritten(VM&, const String& pattern, OptionSet<Yarr::Flags>); // Every regular expression that is used, too.
 
 } } // namespace JSC::AOT
 

@@ -151,6 +151,7 @@ Graph::Graph(VM& vm, UnlinkedCodeBlock* codeBlock, const ScopeChain& scopeChain)
     , m_scopeChain(scopeChain)
     , m_numArguments(codeBlock->numParameters())
     , m_numLocals(codeBlock->numCalleeLocals())
+    , m_convention(conventionOf(codeBlock))
 {
 }
 
@@ -544,20 +545,6 @@ bool Graph::calleeIsProven(const Node* node) const
     return knownCallee(node, &isProven) && isProven;
 }
 
-bool Graph::isSiblingCall(const Node* node) const
-{
-    if (!usesStubs || !Options::aotSiblingCalls() || (Options::aotDisableFastPaths() & 128) || !node->isBytecode(op_tail_call) || m_codeBlock->codeType() != FunctionCode)
-        return false;
-    unsigned argumentCountIncludingThis = node->as<OpTailCall>().m_argc;
-    if (argumentCountIncludingThis > m_codeBlock->numParameters() || argumentCountIncludingThis > mostArgumentsOfSiblingCall)
-        return false;
-    bool isProven = false;
-    const KnownFunction* known = knownCallee(node, &isProven);
-    // (A function that is passed too few moves its frame down to make room for the rest. One that did that every time round would
-    // run out of stack, which is what a call in tail position is not to do.)
-    return known && isProven && known->forCall && argumentCountIncludingThis >= known->forCall->numParameters();
-}
-
 const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
 {
     bool proven = false;
@@ -724,7 +711,7 @@ bool Graph::passesNoFunctionObject(const Node* node)
         calleeRegister = node->as<OpCall>().m_callee;
     else if (node->isBytecode(op_call_ignore_result))
         calleeRegister = node->as<OpCallIgnoreResult>().m_callee;
-    else if (isSiblingCall(node))
+    else if (node->isBytecode(op_tail_call))
         calleeRegister = node->as<OpTailCall>().m_callee;
     else
         return false;
@@ -1057,104 +1044,6 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
             for (auto& use : phi->uses)
                 note(phi, use);
         }
-    }
-}
-
-Node* Graph::listOfArgumentsOf(const Node* node)
-{
-    if (node->kind != NodeKind::Bytecode)
-        return nullptr;
-    auto ofAll = [&](auto bytecode) -> Node* {
-        return bytecode.m_firstVarArg || !bytecode.m_arguments.isValid() ? nullptr : node->use(bytecode.m_arguments);
-    };
-    switch (node->opcode) {
-    case op_call_varargs:
-        return ofAll(node->as<OpCallVarargs>());
-    case op_tail_call_varargs:
-        return ofAll(node->as<OpTailCallVarargs>());
-    case op_construct_varargs:
-        return ofAll(node->as<OpConstructVarargs>());
-    case op_super_construct_varargs:
-        return ofAll(node->as<OpSuperConstructVarargs>());
-    default:
-        return nullptr;
-    }
-}
-
-void Graph::findListsOfArguments()
-{
-    if (!usesStubs || !Options::aotCallsWithLists())
-        return;
-
-    UncheckedKeyHashMap<Node*, unsigned> numberOfUses;
-    bool writesToItsArguments = false;
-    auto note = [&](Node* user) {
-        // What a handler is to find a parameter to be is put where the parameter was passed.
-        if (user->kind == NodeKind::SetStack && user->reg.isArgument())
-            writesToItsArguments = true;
-        for (auto& use : user->uses) {
-            if (use.node->isBytecode(op_spread) || use.node->isBytecode(op_new_array_with_spread) || use.node->isBytecode(op_create_rest) || use.node->isBytecode(op_create_cloned_arguments))
-                ++numberOfUses.add(use.node, 0).iterator->value;
-        }
-    };
-    for (BasicBlock* block : m_rpo) {
-        for (Node* node : block->nodes)
-            note(node);
-        for (Node* phi : block->phis)
-            note(phi);
-    }
-    if (numberOfUses.isEmpty())
-        return;
-
-    // Of an array of the rest of the arguments or an arguments object: by calls that do not need there to be one.
-    UncheckedKeyHashMap<Node*, unsigned> numberOfUsesThatPassItOn;
-    for (BasicBlock* block : m_rpo) {
-        for (unsigned index = 0; index < block->nodes.size(); ++index) {
-            Node* list = listOfArgumentsOf(block->nodes[index]);
-            if (!list)
-                continue;
-            if (list->isBytecode(op_create_cloned_arguments)) {
-                ++numberOfUsesThatPassItOn.add(list, 0).iterator->value;
-                continue;
-            }
-            // The last first. Nothing is between them and the call, so nobody can tell when they are done.
-            Vector<Node*, 4> parts;
-            if (list->isBytecode(op_spread))
-                parts.append(list);
-            else if (list->isBytecode(op_new_array_with_spread)) {
-                auto bytecode = list->as<OpNewArrayWithSpread>();
-                if (bytecode.m_argc > mostItemsInList)
-                    continue;
-                parts.append(list);
-                for (unsigned i = bytecode.m_argc; i--;) {
-                    Node* element = list->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)));
-                    if (element->isBytecode(op_spread))
-                        parts.append(element);
-                }
-            } else
-                continue;
-            bool areRightBeforeTheCall = parts.size() <= index;
-            for (unsigned i = 0; areRightBeforeTheCall && i < parts.size(); ++i)
-                areRightBeforeTheCall = block->nodes[index - 1 - i] == parts[i] && numberOfUses.get(parts[i]) == 1;
-            if (!areRightBeforeTheCall)
-                continue;
-            for (Node* part : parts) {
-                part->isElided = true;
-                if (!part->isBytecode(op_spread))
-                    continue;
-                Node* spread = part->use(part->as<OpSpread>().m_argument);
-                if (spread->isBytecode(op_create_rest))
-                    ++numberOfUsesThatPassItOn.add(spread, 0).iterator->value;
-            }
-        }
-    }
-
-    for (auto& [node, uses] : numberOfUsesThatPassItOn) {
-        // Whoever else uses it finds out first whether it has been made. An array is likely to be used where that would tell.
-        if (node->isBytecode(op_create_rest))
-            node->isMadeWhenWanted = uses == numberOfUses.get(node) && node->as<OpCreateRest>().m_numParametersToSkip <= listSkipMask;
-        else
-            node->isMadeWhenWanted = !writesToItsArguments;
     }
 }
 
@@ -1763,8 +1652,9 @@ private:
         guard->instruction = call;
         guard->bytecodeIndex = BytecodeIndex(offset);
         guard->uses.append({ bytecode.m_callee, get(block, bytecode.m_callee) });
-        const KnownFunction* known = m_graph.knownCallee(guard);
-        if (!known || !canBeInlined(known, bytecode.m_argc))
+        bool isProven = false;
+        const KnownFunction* known = m_graph.knownCallee(guard, &isProven);
+        if (!known || !isProven || !canBeInlined(known, bytecode.m_argc))
             return nullptr;
         append(block, guard);
 

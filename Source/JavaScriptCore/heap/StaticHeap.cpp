@@ -93,7 +93,7 @@ struct StaticHeap::Header {
     uint64_t numberOfModules;
     uint64_t tdz; // StaticHeapTDZ[]
     uint64_t numberOfTDZ;
-    uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::CodeHeader::index.
+    uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::ImageFunction::index.
     uint64_t factsOfFunctions; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
     uint64_t rowsOfFunctions; // RowOfFunction[], likewise. See rowOf().
     // Options::staticHeapGuardsShortFunctionExecutables(): from here to there in Arena::Cells, every other page is not to be there.
@@ -903,7 +903,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         // (Whatever cannot be constructed with like that has code for it, or is not to be constructed with.)
         if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction()) {
             void* stub = image.addressOfStub(AOT::Stub::ConstructByCalling);
-            executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, stub, stub, FunctionExecutable::aotIndexOfWhatConstructsByCalling);
+            executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, stub, std::bit_cast<uintptr_t>(stub), FunctionExecutable::aotIndexOfWhatConstructsByCalling);
         }
         unlinked->setStaticExecutable(executable);
         made++;

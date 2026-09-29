@@ -140,7 +140,6 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
-    v(Bool, useAOT, false, Normal, "Compile functions with the static (ahead-of-time) compiler. Without an image, functions are compiled in-process when they are first linked, which is how the compiler is tested."_s) \
     v(Bool, aotVerbose, false, Normal, "Log what the static compiler compiles and why it declines a function."_s) \
     v(Bool, aotDumpGraph, false, Normal, "Dump the static compiler's IR."_s) \
     v(Bool, aotDumpB3, false, Normal, "Dump the B3 the static compiler produces."_s) \
@@ -149,9 +148,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotForceVeneers, false, Normal, "In an image, make every direct call from one function to another the way one that is out of reach is made. For testing."_s) \
     v(OptionString, aotFilter, nullptr, Normal, "Only functions whose name contains this string are compiled by the static compiler."_s) \
     v(Unsigned, aotB3OptLevel, 2, Normal, "B3 optimization level for the static compiler."_s) \
-    v(OptionString, aotImagePath, nullptr, Normal, "An image of code from the static compiler: functions it has code for run that code. With aotWriteImage, where to write one."_s) \
-    v(Bool, aotWriteImage, false, Normal, "With useAOT: what the static compiler compiles is written to aotImagePath when the process exits."_s) \
-    v(Bool, aotUseLiveScopes, false, Normal, "With useAOT: the static compiler looks at the scope chain the function was closed over, which it cannot do ahead of time."_s) \
+    v(OptionString, aotImagePath, nullptr, Normal, "An image of code from the static compiler: functions it has code for run that code."_s) \
     v(Unsigned, aotReportSlowPaths, 0, Normal, "If not zero: every that many times an operation of the static compiler's that keeps count is called, say which were called most, and for what."_s) \
     v(Bool, definePlainInstanceFieldsInConstructor, false, Normal, "The constructor of a class all of whose instance fields are a name and nothing else (class C { a; b; }) defines them itself, instead of calling a function that does."_s) \
     v(Bool, evaluateObjectLiteralValuesFirst, false, Normal, "The values of the properties of an object literal are all worked out before the object is made, where nobody can tell: making the object and giving it its properties is then one run of instructions."_s) \
@@ -159,9 +156,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, aotThreads, 0, Normal, "How many threads compile an image. Zero: as many as there are processors."_s) \
     v(Unsigned, aotLimit, 0, Normal, "If not zero, the static compiler only compiles this many functions."_s) \
     v(Unsigned, aotDisableFastPaths, 0, Normal, "For debugging the static compiler. 1: get_by_id cache, 2: put_by_id replace, 4: put_by_id transition, 8: get_by_val, 16: put_by_val, 32: scope caches, 64: closure variable stores, 128: tail calls (made as calls), 256: get_by_id on the prototype chain, 512: put_by_id transitions that are not direct, 1024: the megamorphic cache, 2048: allocation without the runtime, 4096: the equality thunks."_s) \
-    v(Bool, aotUseLiveCalleeHints, false, Normal, "With useAOT: a call of a global variable is compiled for the function that the variable holds when the caller is compiled. For testing what is done, ahead of time, for calls of a module's functions."_s) \
     v(Bool, aotSplitLoops, true, Normal, "The static compiler makes two copies of every loop: one that only does what is quick, and leaves for the other when it cannot."_s) \
-    v(Bool, aotCallsWithLists, true, Normal, "A call whose arguments are a list that is put together when it is made (f(...a), f.apply(o, a), f.apply(o, arguments)) gets its frame from a stub that copies them there, and what would only have been made to be copied from is not made."_s) \
     v(Bool, staticHeapGuardsShortFunctionExecutables, false, Normal, "For testing. Each FunctionExecutable in the short form is the last thing on a page, and there is nothing at the addresses of the page after it: whatever takes one for more than it is crashes."_s) \
     v(Bool, staticHeapMakesShortFunctionExecutables, true, Normal, "In a static heap that goes without bytecode, the FunctionExecutable of a function that there is nothing out of the ordinary to say about is in the short form."_s) \
     v(Bool, aotCallsBoundFunctionsWithStub, true, Normal, "Where there is no JIT to make a thunk for it, a bound function whose target is a function is called by a stub that makes the frame of the target, and not by way of C++."_s) \
@@ -175,10 +170,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotLogsFacts, false, Normal, "For finding out why the compiler took something for a fact: once the whole of the program has been looked at, says what it found of each closed function and of each variable, and what it went by. Lines that start with FACTLOG."_s) \
     v(Bool, aotTrustsDeclaredTypes, false, Normal, "UNSOUND, for measuring what checks cost and nothing else: there is no code for op_check_type, and what it is given is taken to be what it would have let by. With aotVerifiesFacts, says where that is not so."_s) \
     v(Bool, aotResolvesScopesItself, true, Normal, "Where a variable of the code around a function is goes by what that code declares, whether or not the bytecode has been rewritten to say so."_s) \
-    v(Unsigned, aotLean, 0, Normal, "EXPERIMENT, for sizing; what comes of it does not run. Which functions: 1 those every call of which is known, 2 those that say which body they are (aotFacts), 4 all. What they do without: 16 header, arity, whether it is linked; 32 saying in the frame which function it is."_s) \
     v(Unsigned, aotFacts, 0, Normal, "EXPERIMENT, for sizing; what comes of it does not run. $$t(value, n) with n >= 1 << 28 is no check: n is something a type checker would have told the compiler. A bit for each thing done with them: 1 fields at fixed offsets, 2 what fields and elements hold, 4 direct calls, 8 builtins without a lookup, 16 for-of over arrays, 32 elements, 64 nothing (they are taken out, that is all)."_s) \
     v(Bool, aotStoresHomedRegistersOnlyWhereRead, true, Normal, "A register that a handler reads is written to memory only where such a handler can be got to before it is written again, rather than everywhere in the function."_s) \
-    v(Bool, aotSiblingCalls, true, Normal, "A call in tail position of a function that the callee is proven to be, with no more arguments than the caller has parameters, is made in the frame of the caller: the arguments go where its own were, and it jumps."_s) \
     v(Bool, aotCallIntrinsics, true, Normal, "A call of what may be one of the functions that the static compiler's stubs know a quick way with goes by way of a stub that finds out (AOT::StubIntrinsic)."_s) \
     v(Unsigned, aotCallIntrinsicsMustBeRight, 0, Normal, "For testing. A bit for each StubIntrinsic: a call that its stub cannot see to itself is a trap."_s) \
     v(Unsigned, aotLoopsToSplit, 3, Normal, "Which loops aotSplitLoops is for. 1: all. 2: those with something in them that the fast copy does better (arithmetic, elements got at by index, a call that it does not make). 3: those in which no call is made. 4: both. 5: those in which no call is made, or that have a call that the fast copy does not make or an element got at by its index."_s) \

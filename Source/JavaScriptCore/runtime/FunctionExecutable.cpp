@@ -60,7 +60,7 @@ void FunctionExecutable::becomeStatic(VM& vm)
     m_singleton.invalidate(vm, StringFireDetail("Made when the program was built"));
 }
 
-void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, void* entry, uint32_t index)
+void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, uint64_t entry, uint32_t index)
 {
     m_aotEntry[static_cast<unsigned>(kind)] = entry;
     m_aotIndex[static_cast<unsigned>(kind)] = index;

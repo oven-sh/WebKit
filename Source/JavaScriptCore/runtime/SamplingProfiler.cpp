@@ -86,9 +86,11 @@ ALWAYS_INLINE static void reportStats()
 
 class FrameWalker {
 public:
-    FrameWalker(VM& vm, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+    // pc: where the thread is, if that is in the frame, or else where the frame is going to be returned to.
+    FrameWalker(VM& vm, CallFrame* callFrame, void* pc, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
         : m_vm(vm)
         , m_callFrame(callFrame)
+        , m_pc(pc)
         , m_entryFrame(vm.topEntryFrame)
         , m_codeBlockSetLocker(codeBlockSetLocker)
         , m_machineThreadsLocker(machineThreadsLocker)
@@ -126,12 +128,20 @@ protected:
         CalleeBits unsafeCallee = m_callFrame->unsafeCallee();
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
 #if ENABLE(FTL_JIT)
-        if (unsafeCallee.isNativeCallee() && AOT::isCodeHeader(unsafeCallee.asNativeCallee())) {
-            // See CallFrame::callee().
-            stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(m_callFrame))), m_callFrame->unsafeCallSiteIndex());
-            stackTrace[m_depth].aotFunction = AOT::FunctionRef::of(m_callFrame);
+        switch (m_whatIsAtPC.kind) {
+        case AOT::WhatIsAt::Function: {
+            AOT::FunctionRef function { m_vm.m_aotInstanceOfProgram ? m_vm.m_aotInstanceOfProgram : m_vm.m_aotInstances[0], m_whatIsAtPC.index };
+            auto callSite = AOT::tryCallSiteAt(*function.info().function(), m_whatIsAtPC.offset);
+            stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(), CallSiteIndex(callSite.value_or(0)));
+            stackTrace[m_depth].aotFunction = function;
             m_depth++;
             return;
+        }
+        case AOT::WhatIsAt::Stub:
+        case AOT::WhatIsAt::Adapter:
+            return;
+        case AOT::WhatIsAt::SomethingElse:
+            break;
         }
 #endif
         if (unsafeCallee.isNativeCallee())
@@ -169,7 +179,6 @@ protected:
 #endif
                     break;
                 }
-                case NativeCallee::Category::AOT:
                 case NativeCallee::Category::InlineCache: {
                     break;
                 }
@@ -182,7 +191,21 @@ protected:
     SUPPRESS_ASAN
     void advanceToParentFrame()
     {
+#if ENABLE(FTL_JIT)
+        void* pc = removeCodePtrTag(m_callFrame->rawReturnPC());
+        if (m_whatIsAtPC.kind == AOT::WhatIsAt::Function || m_whatIsAtPC.kind == AOT::WhatIsAt::Stub) {
+            m_callFrame = m_callFrame->callerFrame();
+            m_pc = pc;
+            return;
+        }
+        EntryFrame* entryFrameOfCallee = m_entryFrame;
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
+        if (m_entryFrame != entryFrameOfCallee && m_callFrame && AOT::hasCode())
+            pc = AOT::returnAddressInto(m_callFrame, entryFrameOfCallee);
+        m_pc = pc;
+#else
+        m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
+#endif
     }
 
     bool NODELETE isAtTop() const
@@ -203,6 +226,13 @@ protected:
                 sNumFailedWalks++;
             return;
         }
+
+#if ENABLE(FTL_JIT)
+        // What kind of frame it is says what there is in it to look at.
+        m_whatIsAtPC = AOT::whatIsAt(m_pc);
+        if (m_whatIsAtPC.kind != AOT::WhatIsAt::SomethingElse)
+            return;
+#endif
 
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
         if (!codeBlock || m_callFrame->unsafeCallee().isNativeCallee())
@@ -241,6 +271,10 @@ protected:
 
     VM& m_vm;
     CallFrame* m_callFrame;
+    void* m_pc;
+#if ENABLE(FTL_JIT)
+    AOT::WhatIsAt m_whatIsAtPC { };
+#endif
     EntryFrame* m_entryFrame;
     const AbstractLocker& m_codeBlockSetLocker;
     const AbstractLocker& m_machineThreadsLocker;
@@ -252,8 +286,8 @@ class CFrameWalker : public FrameWalker {
 public:
     typedef FrameWalker Base;
 
-    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
-        : Base(vm, callFrame, codeBlockSetLocker, machineThreadsLocker)
+    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, void* pc, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, callFrame, pc, codeBlockSetLocker, machineThreadsLocker)
         , m_machineFrame(machineFrame)
     {
     }
@@ -436,6 +470,10 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 topFrameIsLLInt = true;
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
+#if ENABLE(FTL_JIT)
+            } else if (AOT::whatIsAt(machinePC).kind != AOT::WhatIsAt::SomethingElse) {
+                // Likewise. (The frame is that of the caller if the function has none, or has not made it yet: then the caller is left out.)
+#endif
             } else {
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
                 regExp = m_vm.m_executingRegExp;
@@ -446,15 +484,21 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     shouldAppendTopFrameAsCCode = true;
             }
 
+            void* pcOfFrame = machinePC;
+#if ENABLE(FTL_JIT)
+            if (callFrame && callFrame != machineFrame && AOT::hasCode())
+                pcOfFrame = AOT::returnAddressInto(callFrame, machineFrame);
+#endif
+
             size_t walkSize;
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
             if (Options::sampleCCode()) {
-                CFrameWalker walker(m_vm, machineFrame, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                CFrameWalker walker(m_vm, machineFrame, callFrame, pcOfFrame, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             } else {
-                FrameWalker walker(m_vm, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                FrameWalker walker(m_vm, callFrame, pcOfFrame, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             }

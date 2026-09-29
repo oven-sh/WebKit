@@ -12,25 +12,27 @@
 
 namespace JSC {
 
+class CCallHelpers;
 class CodeBlock;
 class JSScope;
 
+namespace B3 { namespace Air {
+class Code;
+} }
+
 namespace AOT {
 
-// Options::useAOT() without an image: compiles the function now, from its unlinked code and the shape of the scope chain, and
-// makes the result the CodeBlock's code. False if the function is not for the static compiler, in which case nothing changed.
-RefPtr<JITCode> tryCompile(VM&, ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);
-
-// The same compilation, for an image. Any thread, as long as nothing else is done with the VM's heap meanwhile.
+// Compiles a function, or the code of a program or a module, for an image. Any thread, as long as nothing else is done with the VM's heap
+// meanwhile. False if it is not for the static compiler.
 struct CompiledCode;
 // See ProgramFacts. Any thread, likewise. False: there is no telling what the code does.
 JS_EXPORT_PRIVATE bool noteUsesOfProvenFunctionsForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FactsOfExecutables&, VariableFacts*);
 // See KnownFunction::returnType. Any thread, likewise.
 JS_EXPORT_PRIVATE uint64_t inferReturnTypeForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const ProgramFacts*, VariableFacts*, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, const String& nameForLog = String());
-// hasDirectEntry: see CompiledFunctionInfo::directEntryOffset.
-JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr, bool hasDirectEntry = false, const ProgramFacts* = nullptr, VariableFacts* = nullptr);
+JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr, const ProgramFacts* = nullptr, VariableFacts* = nullptr);
 
-ScopeChain scopeChainFor(JSScope*);
+// What a function does before it returns, for what leaves it some other way.
+void emitEpilogueBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 
 void reportStatistics();
 JS_EXPORT_PRIVATE void setOriginForStatistics(ASCIILiteral); // TEMPORARY-PROVABILITY-STATS

@@ -139,7 +139,7 @@ void Lowering::lowerIteratorNext(Node* node)
         // Every loop over an array would have a copy of how that is done, and every loop has to be ready for anything else.
         PatchpointValue* shortcut = callStub(Stub::IteratorNext, m_proc.addTuple({ Int64, Int64, Int64, Int32 }),
             { { next, GPRInfo::argumentGPR0 }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 } },
-            { { GPRInfo::regT10, callSiteBitsOf(node) } });
+            { });
         shortcut->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1), ValueRep::reg(GPRInfo::argumentGPR2), ValueRep::reg(GPRInfo::regT9) };
 
         LBasicBlock genericCase = m_out.newBlock();

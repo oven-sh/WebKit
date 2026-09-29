@@ -7,6 +7,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTConvention.h"
 #include "CCallHelpers.h"
 #include <wtf/Vector.h>
 
@@ -71,27 +72,36 @@ enum class StubIntrinsic : uint8_t {
 static constexpr unsigned numberOfStubIntrinsics = static_cast<unsigned>(StubIntrinsic::NumberOfStubIntrinsics) - 1;
 StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool resultIsWanted);
 
-// See Stub::MakeFrameWithList.
-static constexpr uint32_t listSkipMask = 0xffff;
-static constexpr uint32_t listIsArrayLike = 0x10000; // f.apply(o, list): nobody is asked how to iterate over it.
-static constexpr unsigned mostItemsInList = 32;
+// What an adapter (see adapt()) saves, from its frame pointer.
+static constexpr ptrdiff_t offsetOfInstanceRegisterInAdapter = -24; // (In the order a RegisterAtOffsetList has them in.)
+static constexpr ptrdiff_t offsetOfNumberTagRegisterInAdapter = -16;
+static constexpr ptrdiff_t offsetOfNotCellMaskRegisterInAdapter = -8;
+static constexpr ptrdiff_t offsetOfInstanceInAdapter = -32; // And there: the Instance of the code that it lets in.
+static constexpr unsigned sizeOfWhatAdapterSaves = 32;
+
+// Instance::granulesOfCode has an entry for each so many bytes of an image's code.
+static constexpr unsigned shiftOfGranuleOfCode = 8;
 
 #define FOR_EACH_AOT_STUB(v) \
     /* After the frame pointer is set up. T9 = the size of the frame. Checks that there is stack for it and sets the stack */ \
-    /* pointer. Clobbers only T0-T3. */ \
+    /* pointer. Clobbers only T11, T12. */ \
     v(Prologue) \
+    /* Calls whatever it is given. calleeGPR = that, thisGPR = this (Construct: new.target), countGPR = how many arguments, which */ \
+    /* are where a function with Signature::Registers has its parameters. Result in the return value register. Jumped to, */ \
+    /* with nothing of the caller's on the stack, it is a tail call. (These come first: other stubs end in them.) */ \
+    v(Call) \
+    v(Construct) \
+    /* The same, of arguments that are in memory, as for a function with Signature::List: argumentGPR(0) = how many, */ \
+    /* argumentGPR(1) = where. They stay there until this comes back. */ \
+    v(CallList) \
+    v(ConstructList) \
+    /* The same, of what is in a list of some kind: argumentGPR(0) = the list, as op_call_varargs has it, argumentGPR(1) = how many */ \
+    /* of the first to leave out. */ \
+    v(CallVarargs) \
+    v(ConstructVarargs) \
     /* A call, as Call is, of what may be the function that a StubIntrinsic is for: T9 = which. There is one for each, and */ \
     /* no other way of getting here. */ \
     v(CallIntrinsic) \
-    /* The same, but for the call itself: if it is not that function after all, nothing has been done, and this comes back */ \
-    /* two instructions further on than it was called from. */ \
-    v(TryCallIntrinsic) \
-    /* The frame of a call whose arguments are a list that is put together when it is made. A1 = this, A2 = the items, A3 = how */ \
-    /* many, A4 = a bit for each that is to be spread, A5 = listIsArrayLike or not, and listSkipMask. An item to be spread that is */ \
-    /* nothing stands for the arguments the caller was itself passed, but for that many. The frame goes below the caller's, which */ \
-    /* has to put the stack pointer back. Leaves A0 and T10 alone, and the number of arguments in T9: what Call wants. If an */ \
-    /* item is not an array that can just be copied, it comes back two instructions further on, and there is no frame. */ \
-    v(MakeFrameWithList) \
     /* See generateEnter(). */ \
     v(Enter) \
     v(EnterFunctionForCall) \
@@ -103,16 +113,11 @@ static constexpr unsigned mostItemsInList = 32;
     v(ConstructByCalling) \
     /* See generateCallBoundFunction(). */ \
     v(CallBoundFunction) \
-    /* From the direct entry of a function that has nothing of the realm yet, and that may have been called as no object. The */ \
-    /* frame is made, with the Instance in it. T9 = CodeHeader::index, T10 = ImageEnvironment::distance of its module. Goes back there. */ \
+    /* Called by a function that has found that it has nothing of the realm yet, and needs it. Every register is left as it was. */ \
     v(LinkFunction) \
-    /* On entry to a function that may have been passed too few arguments, before anything else. T9 = numParameters, */ \
-    /* T10 = the link register as it was on entry. Comes back, with the link register as it was, once the frame has them all. */ \
-    /* Clobbers only T0-T7, T11. */ \
-    v(ArityCheck) \
-    /* Calls to C++. T9 = Entry * 8, T10 = the call site (not for the Plain ones, which are for operations that do not throw */ \
-    /* and do not look at the stack), the arguments where C++ wants them. In the ones so named the first argument is the */ \
-    /* global object, or the VM, and the stub supplies it. */ \
+    /* Calls to C++. T9 = Entry * 8, the arguments where C++ wants them. The Plain ones are for operations that do not throw and */ \
+    /* do not look at the stack. In the ones so named the first argument is the global object, or the VM, and the stub */ \
+    /* supplies it. */ \
     v(OperationValue) \
     v(OperationVoid) \
     v(OperationDouble) \
@@ -126,10 +131,10 @@ static constexpr unsigned mostItemsInList = 32;
     v(WriteBarrier) \
     /* A0 = a value. Leaves whether it is truthy, 0 or 1, in A0. Clobbers only that and T9-T11. */ \
     v(ToBoolean) \
-    /* A0, A1 = two values, T10 = the call site. Leaves whether they are equal, 0 or 1, in A0. */ \
+    /* A0, A1 = two values. Leaves whether they are equal, 0 or 1, in A0. */ \
     v(StrictEqual) \
     v(LooseEqual) \
-    /* A0, A1 = the operands, T10 = the call site. The result, a JSValue, in A0. */ \
+    /* A0, A1 = the operands. The result, a JSValue, in A0. */ \
     v(Add) \
     v(Sub) \
     v(Mul) \
@@ -144,9 +149,9 @@ static constexpr unsigned mostItemsInList = 32;
     v(LessEq) \
     v(Greater) \
     v(GreaterEq) \
-    /* A0 = base, A1 = property, T10 = the call site. Result in A0. */ \
+    /* A0 = base, A1 = property. Result in A0. */ \
     v(GetByVal) \
-    /* A0 = base, A1 = property, A2 = value, A3 = whether the code is strict, T10 = the call site. */ \
+    /* A0 = base, A1 = property, A2 = value, A3 = whether the code is strict. */ \
     v(PutByVal) \
     /* A0 = base, A1 = site, whose identifier is WellKnownIdentifier::Length. Result in A0. */ \
     v(GetLength) \
@@ -167,31 +172,14 @@ static constexpr unsigned mostItemsInList = 32;
     v(GetFromScope) \
     /* A0 = scope, A1 = value, A2 = site. */ \
     v(PutToScope) \
-    /* T0 = callee, T9 = argumentCountIncludingThis, T10 = the call site; the arguments are in the frame being made, at the */ \
-    /* stack pointer. Result in the return value register. Clobbers what a call to JS does. */ \
-    v(Call) \
-    v(Construct) \
-    /* As Call and Construct, at a site that has a callee in mind (Lowering::lowerCallToKnownFunction()) and did not get it, or */ \
-    /* not yet. A1 = the site's slot. */ \
-    v(CallAndLink) \
-    v(ConstructAndLink) \
-    /* In place of a call straight to a function that is out of reach. The frame is made, CodeBlock and all. T0 = callee. */ \
-    v(CallFarFunction) \
-    v(ConstructFarFunction) \
-    /* As for Call, but nothing is called yet. Leaves in T12 where to jump to make the call as a tail call, having seen to it that */ \
-    /* the callee has code, or zero if it has to be an ordinary call (it is not a function). T0 is left as it was. */ \
-    v(TailCallPrepare) \
-    /* Jumped to, with the function's callee saves restored. T0 = callee, T12 = what TailCallPrepare said, T9 = the function's */ \
-    /* numParameters. Moves the frame that was made over the function's own, and goes. */ \
-    v(TailCallFinish) \
     /* As GetById, for a site whose identifier is a WellKnownIdentifier. */ \
     v(GetByIdWellKnown) \
-    /* A0 = next, A1 = iterator, A2 = iterable, as op_iterator_next has them, T10 = the call site. If T9 comes back zero, A0 = done, */ \
+    /* A0 = next, A1 = iterator, A2 = iterable, as op_iterator_next has them. If T9 comes back zero, A0 = done, */ \
     /* A1 = value, A2 = next. Else there is no shortcut: nothing was done, and A0-A2 are as they were. */ \
     v(IteratorNext) \
     /* What follows is what the JIT has thunks for, which there may not be a JIT to make. */ \
     /* Jumped to, in the frame of a function of the static compiler's in which, or in something called by which, an exception was */ \
-    /* thrown, with the call site stored. Finds the handler and goes there. */ \
+    /* thrown, with the link register saying where it is at. Finds the handler and goes there. */ \
     v(HandleException) \
     /* Jumped to from Prologue, in the frame there is no room for. */ \
     v(ThrowStackOverflowAtPrologue) \
@@ -246,7 +234,6 @@ struct Site {
     static constexpr unsigned isImport = 2; // The scope is the environment of a module, and the name one of its imports.
 
     uint32_t identifierAndExtra { 0 }; // The index of an identifier of the function, and above it whatever else the operation is told.
-    uint32_t callSiteBits { 0 };
 };
 
 // What an object is made with, where all of that is plain from the code that makes it: the names of its properties, in the order
@@ -281,17 +268,18 @@ static_assert(sizeof(ImageKey) == 16);
 // Where a function calls a stub: all that has to be filled in when the function's code is put somewhere.
 struct StubCall {
     static constexpr uint32_t noFunction = std::numeric_limits<uint32_t>::max();
+    static constexpr uint32_t noCallSite = std::numeric_limits<uint32_t>::max();
 
     uint32_t offset; // Of the call instruction, in the function's code.
     Stub stub;
     bool isTailCall; // A jump.
-    // A call that is better made straight to a function, if the function's code ends up within reach: which of the caller's known
-    // callees (CompiledFunctionInfo::knownCallees). The stub does the same thing the long way.
-    bool skipsArityCheck { false };
-    bool isDirect { false }; // To CompiledFunctionInfo::directEntryOffset: nobody has seen to it that the function has been called before.
-    bool hasNoOtherWay { false }; // Nothing was passed that the stub could find the function by. If it is out of reach, it is got to in two steps.
     uint16_t thunk { 0 }; // One more than which of StubBlob::thunkOffsets it is by way of. Zero: none.
+    // Not to a stub at all, but to a function: which of the caller's known callees (CompiledFunctionInfo::knownCallees). If it ends up
+    // out of reach, it is got to in two steps.
     uint32_t function { noFunction };
+    // Where in the bytecode the function is while what is called runs (CallSiteIndex::bits()): what is going to be returned to is all that
+    // says so. None: nobody is going to ask.
+    uint32_t callSite { noCallSite };
 };
 
 // A way into a stub that puts a number in T9 first. There are few enough numbers that a stub is given there, and enough places that
@@ -302,41 +290,53 @@ struct StubBlob {
     Vector<uint8_t> bytes;
     unsigned offsets[numberOfStubs];
     Vector<unsigned> thunkOffsets; // By thunkFor().
+    Vector<unsigned> returnsIntoAdapters; // Where what an adapter calls comes back to: see WhatIsAt::Adapter.
     void* inJITMemory; // A copy that code in the JIT's memory can call.
 };
 const StubBlob& stubBlob();
 
-// Where whoever finds that there is no room for a function's frame is told which function: what its frames have for a callee.
-static constexpr GPRReg boxedHeaderGPR = GPRInfo::regT12;
-
-// The places in a function's code that refer to the CodeHeader in front of it, by how far away it is: which is not known until the
-// code is where it is going to be.
-class HeaderReferences {
+// What in a function's code goes by which function it is: its index is not known until the image is put together, and is then written
+// into the instructions.
+struct IndexReference {
+    uint32_t offset; // Of the first of two instructions.
+    uint32_t addend;
+    uint16_t scale;
+};
+class IndexReferences {
 public:
-    // What a frame of the function has for a callee: CalleeBits::boxNativeCallee() of the header.
-    void moveBoxedHeader(CCallHelpers&, GPRReg);
-    // The address of the header with the tag in it, which takes one instruction: for a stub that does the rest of that itself.
-    void moveTaggedHeader(CCallHelpers&, GPRReg);
-    void loadIndex(CCallHelpers&, GPRReg); // CodeHeader::index
-    void link(LinkBuffer&, CCallHelpers::Label header);
+    // dest = the word at base + addend + index * scale
+    void load(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
+    Vector<IndexReference> link(LinkBuffer&);
+    static void fill(uint8_t* code, const IndexReference&, uint32_t index);
 
 private:
     struct Reference {
-        CCallHelpers::Label instruction;
-        GPRReg reg;
-        bool isLoadOfIndex;
+        CCallHelpers::Label instructions;
+        uint32_t addend;
+        uint32_t scale;
     };
-    Vector<Reference, 4> m_references;
+    Vector<Reference, 2> m_references;
 };
+
+struct CallSite {
+    uint32_t bits { StubCall::noCallSite };
+};
+
+#if CPU(ARM64)
+// For stubs and the like: which function of the image it is that has `pc` in it, in indexOfFunctionGPR. Clobbers x14 and the assembler's own.
+static constexpr GPRReg indexOfFunctionGPR = ARM64Registers::x15;
+void loadIndexOfFunctionAt(CCallHelpers&, GPRReg pc);
+#endif
 
 // The calls of one compilation.
 class StubCalls {
 public:
-    void call(CCallHelpers&, Stub);
-    void call(CCallHelpers&, Stub, uint32_t valueOfT9);
+    void call(CCallHelpers&, Stub, CallSite);
+    void call(CCallHelpers&, Stub, uint32_t valueOfT9, CallSite);
     void tailCall(CCallHelpers&, Stub);
-    void callFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect = false, bool hasNoOtherWay = false);
-    void jumpToFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool hasNoOtherWay); // To its direct entry.
+    void tailCall(CCallHelpers&, Stub, uint32_t valueOfT9);
+    void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);
+    void jumpToFunction(CCallHelpers&, uint32_t knownCallee);
     // Links them to the copy in the JIT's memory, and says where they are.
     Vector<StubCall> link(LinkBuffer&);
 
@@ -345,9 +345,7 @@ private:
         CCallHelpers::Call call;
         Stub stub;
         bool isTailCall;
-        bool skipsArityCheck { false };
-        bool isDirect { false };
-        bool hasNoOtherWay { false };
+        uint32_t callSite;
         uint32_t function { StubCall::noFunction };
         uint16_t thunk { 0 };
     };

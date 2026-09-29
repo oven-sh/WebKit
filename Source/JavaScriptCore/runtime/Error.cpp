@@ -24,6 +24,7 @@
 #include "config.h"
 #include "Error.h"
 
+#include "AOTFunction.h"
 #include "ErrorInstanceInlines.h"
 #include "ExecutableBaseInlines.h"
 #include "Interpreter.h"
@@ -126,8 +127,10 @@ static JSObject* createGetterTypeError(JSGlobalObject* globalObject, const Strin
 
 class FindFirstCallerFrameWithCodeblockFunctor {
 public:
+    // None: the first that there is.
     FindFirstCallerFrameWithCodeblockFunctor(CallFrame* startCallFrame)
         : m_startCallFrame(startCallFrame)
+        , m_foundStartCallFrame(!startCallFrame)
     { }
 
     IterationStatus operator()(StackVisitor& visitor) const
@@ -176,7 +179,7 @@ private:
 #if ENABLE(FTL_JIT)
     mutable AOT::FunctionRef m_aotFunction;
 #endif
-    mutable bool m_foundStartCallFrame { false };
+    mutable bool m_foundStartCallFrame;
     mutable BytecodeIndex m_bytecodeIndex { 0 };
 };
 
@@ -194,6 +197,9 @@ std::unique_ptr<Vector<StackFrame>> getStackTrace(VM& vm, JSObject* obj, bool us
 
 static FindFirstCallerFrameWithCodeblockFunctor findFirstCallerFrameWithCode(VM& vm, CallFrame* startCallFrame)
 {
+    // (It is a stub's, which is nobody's: nobody who walks the stack gets to see it.)
+    if (startCallFrame && vm.topCallFrame == startCallFrame && AOT::topFrameIsNotTheEnginesOwn(startCallFrame))
+        startCallFrame = nullptr;
     if (startCallFrame && vm.topCallFrame == startCallFrame && startCallFrame->isZombieFrame()) {
         auto* entryFrame = vm.topEntryFrame;
         auto* callerFrame = startCallFrame->callerFrame(entryFrame);

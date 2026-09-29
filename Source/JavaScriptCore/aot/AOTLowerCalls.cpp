@@ -8,10 +8,10 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTCompiler.h"
 #include "AOTProgram.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
-#include "BaselineJITRegisters.h"
 #include "BytecodeStructs.h"
 #include "CCallHelpers.h"
 #include "JSCInlines.h"
@@ -21,183 +21,269 @@ namespace JSC { namespace AOT {
 
 using namespace B3;
 
-// A call of what is probably a function that the compiler knows (Graph::knownCallee()). Finding a callee's code takes looking at the
-// callee, its executable and its CodeBlock, one after the other, and then a jump to wherever that says. Here the site remembers one
-// callee, which the runtime has found to be a closure of that function (operationAOTLinkCall()), and its CodeBlock. For that callee
-// the call is an instruction, to an address that is known when the image is put together, past the check of the number of
-// arguments if there are enough. Any other callee is called the way any callee is.
-bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, bool isConstruct, bool hasResult)
-{
-    if (!usesStubs)
-        return false;
-    const KnownFunction* known = m_graph.knownCallee(node);
-    if (!known)
-        return false;
-    UnlinkedFunctionCodeBlock* target = isConstruct ? known->forConstruct : known->forCall;
-    if (!target)
-        return false;
-    unsigned index = m_graph.indexOfKnownCallee(known->keyFor(isConstruct));
-    bool isProven = m_graph.calleeIsProven(node);
-    if (!isProven && !Site::fits(index, isConstruct))
-        return false;
-    bool skipsArityCheck = argc >= target->numParameters();
-    unsigned slot = isProven ? 0 : siteOfKnownCall(node, index, isConstruct);
-    bool passesCallee = !m_graph.passesNoFunctionObject(node);
-    // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
-    bool checksIsInitialized = isProven && !known->isDeclaration;
+// See AOTConvention.h. Whatever is called, the arguments are in registers when the call is made, or in memory that is this function's
+// own; nothing is made on the stack for the callee, and the stack pointer is where it was when the call comes back.
+// A patchpoint goes into the block when it is made: whatever it takes has to have been made before.
 
-    Vector<ConstrainedValue> inFrame;
+Lowering::Arguments Lowering::lowerArguments(Node* node, unsigned argc, unsigned argv)
+{
+    Arguments result;
     int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
-    for (unsigned i = 0; i < argc; ++i) {
-        Value::OffsetType offsetFromSP = (virtualRegisterForArgumentIncludingThis(i).offset() - CallerFrameAndPC::sizeInRegisters) * sizeof(EncodedJSValue);
-        inFrame.append(ConstrainedValue(lowJSValue(node->use(VirtualRegister(firstArgument + i))), ValueRep::stackArgument(offsetFromSP)));
-    }
-    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
-    static_assert(BaselineJITRegisters::Call::calleeGPR == GPRInfo::argumentGPR0);
-    if (passesCallee || checksIsInitialized)
-        patchpoint->append(ConstrainedValue(lowJSValue(node->use(calleeRegister)), ValueRep::reg(GPRInfo::argumentGPR0)));
-    if (!isProven)
-        patchpoint->append(ConstrainedValue(m_data, ValueRep::reg(GPRInfo::argumentGPR1)));
-    patchpoint->append(ConstrainedValue(m_instance, ValueRep::reg(GPRInfo::argumentGPR2)));
-    patchpoint->appendVector(inFrame);
+    for (unsigned i = 0; i < argc; ++i)
+        result.append(lowJSValue(node->use(VirtualRegister(firstArgument + i))));
+    return result;
+}
+
+LValue Lowering::storeArgumentsToScratch(const Arguments& arguments)
+{
+    if (arguments.size() == 1)
+        return m_out.intPtrZero;
+    for (unsigned i = 1; i < arguments.size(); ++i)
+        m_out.store64(arguments[i], scratchWord(i - 1));
+    return m_scratch;
+}
+
+void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode)
+{
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
+    if (mode == CallMode::TailCall) {
+        patchpoint->effects.terminal = true;
+        return;
+    }
+    m_graph.emitsCalls = true;
+    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-    uint32_t callSiteBits = callSiteBitsOf(node);
-    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, slot, index, skipsArityCheck, isProven, passesCallee, checksIsInitialized](CCallHelpers& jit, const StackmapGenerationParams& params) {
+}
+
+LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments, CallMode mode, StubIntrinsic intrinsic)
+{
+    unsigned count = arguments.size() - 1;
+    bool inMemory = count > numberOfArgumentGPRs;
+    // (What is in this function's frame is gone by the time a tail call gets there.)
+    if (inMemory && mode == CallMode::TailCall)
+        mode = CallMode::Call;
+    LValue list = inMemory ? storeArgumentsToScratch(arguments) : nullptr;
+    LValue countInMemory = inMemory ? m_out.constIntPtr(count) : nullptr;
+
+    PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
+    patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
+    patchpoint->append(ConstrainedValue(arguments[0], ValueRep::reg(thisGPR)));
+    if (inMemory) {
+        patchpoint->append(ConstrainedValue(countInMemory, ValueRep::reg(argumentGPR(0))));
+        patchpoint->append(ConstrainedValue(list, ValueRep::reg(argumentGPR(1))));
+    } else {
+        for (unsigned i = 0; i < count; ++i)
+            patchpoint->append(ConstrainedValue(arguments[i + 1], ValueRep::reg(argumentGPR(i))));
+    }
+    finishCall(patchpoint, mode);
+    CallSite site { mode == CallMode::TailCall ? StubCall::noCallSite : callSiteBitsOf(node) };
+    patchpoint->setGenerator([graph = &m_graph, count, inMemory, mode, intrinsic, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        constexpr GPRReg callee = GPRInfo::argumentGPR0;
-        constexpr GPRReg data = GPRInfo::argumentGPR1;
-        auto slotOfNewFrame = [](CallFrameSlot slot, ptrdiff_t offset = 0) {
-            return CCallHelpers::Address(CCallHelpers::stackPointerRegister, (static_cast<int>(slot) - CallerFrameAndPC::sizeInRegisters) * static_cast<int>(sizeof(Register)) + offset);
-        };
-        if (isProven) {
-            // It is a function of this realm: the variable it was read from is one of a module of this realm.
-            CCallHelpers::Jump isNotInitialized;
-            if (checksIsInitialized)
-                isNotInitialized = jit.branch64(CCallHelpers::Equal, callee, CCallHelpers::TrustedImm64(JSValue::ValueUndefined));
-            jit.storePair64(GPRInfo::argumentGPR2, passesCallee ? callee : ARM64Registers::zr, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(slotOfNewFrame(CallFrameSlot::codeBlock).offset));
-            jit.store32(CCallHelpers::TrustedImm32(argc), slotOfNewFrame(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
-            jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-            stubCalls->callFunction(jit, isConstruct ? Stub::ConstructFarFunction : Stub::CallFarFunction, index, false, true, !passesCallee);
-            CCallHelpers::Label done = jit.label();
-            jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
-            if (checksIsInitialized) {
-                // Called like anything else, it is an error like any other.
-                params.addLatePath([=](CCallHelpers& jit) {
-                    AllowMacroScratchRegisterUsage allowScratch(jit);
-                    isNotInitialized.link(&jit);
-                    jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-                    stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call, argc);
-                    jit.jump().linkTo(done, &jit);
-                });
-            }
+        StubCalls& stubCalls = graph->stubCalls;
+        if (inMemory) {
+            stubCalls.call(jit, mode == CallMode::Construct ? Stub::ConstructList : Stub::CallList, site);
             return;
         }
-        ptrdiff_t offsetOfSlot = Data::offsetOfSlots() + slot * sizeof(Slot);
-        CCallHelpers::JumpList slow;
-        jit.loadPtr(CCallHelpers::Address(data, offsetOfSlot + OBJECT_OFFSETOF(Slot, pointer)), GPRInfo::regT9);
-        slow.append(jit.branchPtr(CCallHelpers::NotEqual, GPRInfo::regT9, callee));
-        // It is a function of this realm (operationAOTLinkCall()).
-        static_assert(static_cast<int>(CallFrameSlot::callee) == static_cast<int>(CallFrameSlot::codeBlock) + 1);
-        jit.storePair64(GPRInfo::argumentGPR2, callee, CCallHelpers::stackPointerRegister, CCallHelpers::TrustedImm32(slotOfNewFrame(CallFrameSlot::codeBlock).offset));
-        jit.store32(CCallHelpers::TrustedImm32(argc), slotOfNewFrame(CallFrameSlot::argumentCountIncludingThis, LowWordOffset));
-        jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-        stubCalls->callFunction(jit, isConstruct ? Stub::ConstructFarFunction : Stub::CallFarFunction, index, skipsArityCheck);
-        CCallHelpers::Label done = jit.label();
-        jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
-
-        params.addLatePath([=](CCallHelpers& jit) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            slow.link(&jit);
-            jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), data);
-            jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-            stubCalls->call(jit, isConstruct ? Stub::ConstructAndLink : Stub::CallAndLink, argc);
-            jit.jump().linkTo(done, &jit);
-        });
+        Stub stub = intrinsic != StubIntrinsic::None ? Stub::CallIntrinsic : mode == CallMode::Construct ? Stub::Construct : Stub::Call;
+        uint32_t which = intrinsic != StubIntrinsic::None ? static_cast<uint32_t>(intrinsic) : count;
+        if (mode != CallMode::TailCall) {
+            stubCalls.call(jit, stub, which, site);
+            return;
+        }
+        emitEpilogueBeforeLeaving(jit, *graph, params.code());
+        stubCalls.tailCall(jit, stub, which);
     });
+    if (mode == CallMode::TailCall)
+        return nullptr;
+    return patchpoint;
+}
+
+// A call of what a variable is proven to hold (KnownFunction::isProven): to where the function's code is, which is known when the image
+// is put together, with what the function has a use for and nothing else.
+bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegister, const Arguments& arguments, CallMode mode, bool hasResult)
+{
+    bool isConstruct = mode == CallMode::Construct;
+    bool isProven = false;
+    const KnownFunction* known = m_graph.knownCallee(node, &isProven);
+    if (!known || !isProven || !(isConstruct ? known->forConstruct : known->forCall))
+        return false;
+    Convention convention = isConstruct ? known->conventionForConstruct : known->conventionForCall;
+    unsigned index = m_graph.indexOfKnownCallee(known->keyFor(isConstruct));
+    bool passesCallee = !m_graph.passesNoFunctionObject(node);
+    bool takesList = convention.signature == Signature::List;
+    if (takesList && mode == CallMode::TailCall)
+        mode = CallMode::Call;
+
+    LValue callee = passesCallee || !known->isDeclaration ? lowJSValue(node->use(calleeRegister)) : nullptr;
+    if (!known->isDeclaration) {
+        // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
+        LBasicBlock isNotInitialized = newColdBlock();
+        LBasicBlock isInitialized = m_out.newBlock();
+        m_out.branch(m_out.equal(callee, m_out.constInt64(JSValue::ValueUndefined)), rarely(isNotInitialized), usually(isInitialized));
+        m_out.appendTo(isNotInitialized);
+        vmCall(node, Void, isConstruct ? Entry::operationAOTThrowNotAConstructor : Entry::operationAOTThrowNotAFunction, m_globalObject, callee);
+        m_out.unreachable();
+        m_out.appendTo(isInitialized);
+    }
+
+    unsigned count = arguments.size() - 1;
+    LValue list = takesList ? storeArgumentsToScratch(arguments) : nullptr;
+    LValue countInMemory = takesList ? m_out.constIntPtr(count) : nullptr;
+    LValue undefined = m_out.constInt64(JSValue::ValueUndefined);
+
+    PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
+    if (passesCallee)
+        patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
+    if (convention.usesThis)
+        patchpoint->append(ConstrainedValue(arguments[0], ValueRep::reg(thisGPR)));
+    if (takesList) {
+        patchpoint->append(ConstrainedValue(countInMemory, ValueRep::reg(argumentGPR(0))));
+        patchpoint->append(ConstrainedValue(list, ValueRep::reg(argumentGPR(1))));
+    } else {
+        for (unsigned i = 0; i < convention.numberOfParameters; ++i)
+            patchpoint->append(ConstrainedValue(i < count ? arguments[i + 1] : undefined, ValueRep::reg(argumentGPR(i))));
+    }
+    finishCall(patchpoint, mode);
+    CallSite site { mode == CallMode::TailCall ? StubCall::noCallSite : callSiteBitsOf(node) };
+    patchpoint->setGenerator([graph = &m_graph, index, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        if (mode != CallMode::TailCall) {
+            graph->stubCalls.callFunction(jit, index, site);
+            return;
+        }
+        emitEpilogueBeforeLeaving(jit, *graph, params.code());
+        graph->stubCalls.jumpToFunction(jit, index);
+    });
+    if (mode == CallMode::TailCall) {
+        // What comes after this in the bytecode returns what the call returned, if it was made like any other. It is not got to.
+        m_out.appendTo(m_out.newBlock());
+        setJSValue(node, m_out.int64Zero);
+        return true;
+    }
     if (hasResult)
         setJSValue(node, patchpoint);
     return true;
 }
 
-void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, bool isConstruct, bool hasResult)
+void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, CallMode mode, bool hasResult)
 {
-    // A call to whatever the callee turns out to be. There is nothing at the call site to link: the thunk finds the callee's
-    // code from the callee, every time.
-    unsigned frameSize = (CallFrame::headerSizeInRegisters + argc) * sizeof(EncodedJSValue);
-    m_proc.requestCallArgAreaSizeInBytes(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(frameSize));
-
-    if (lowerCallToKnownFunction(node, calleeRegister, argc, argv, isConstruct, hasResult))
+    if (mode == CallMode::TailCall && ((Options::aotDisableFastPaths() & 128) || argc - 1 > numberOfArgumentGPRs))
+        mode = CallMode::Call;
+    Arguments arguments = lowerArguments(node, argc, argv);
+    if (lowerCallToKnownFunction(node, calleeRegister, arguments, mode, hasResult))
         return;
-    LValue callee = lowJSValue(node->use(calleeRegister));
 
-    if constexpr (usesStubs) {
-        // The arguments go in the frame being made; the stub does the rest of what every call does.
-        Vector<ConstrainedValue> inFrame;
-        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
-        for (unsigned i = 0; i < argc; ++i) {
-            Value::OffsetType offsetFromSP = (virtualRegisterForArgumentIncludingThis(i).offset() - CallerFrameAndPC::sizeInRegisters) * sizeof(EncodedJSValue);
-            inFrame.append(ConstrainedValue(lowJSValue(node->use(VirtualRegister(firstArgument + i))), ValueRep::stackArgument(offsetFromSP)));
+    Node* calleeNode = node->use(calleeRegister);
+    LValue callee = lowJSValue(calleeNode);
+    // What the callee was found as says what it may well be.
+    StubIntrinsic intrinsic = StubIntrinsic::None;
+    if (mode != CallMode::Construct && calleeNode->isBytecode(op_get_by_id))
+        intrinsic = stubIntrinsicFor(m_graph.codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
+    if (mode == CallMode::TailCall) {
+        LBasicBlock otherwise = leaveIfFunction(calleeNode, callee);
+        if (emitCall(node, callee, arguments, mode, intrinsic)) {
+            // (It turned out not to be one that can be made like that.)
+            RELEASE_ASSERT_NOT_REACHED();
         }
-        PatchpointValue* patchpoint = m_out.patchpoint(Int64);
-        patchpoint->append(ConstrainedValue(callee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR)));
-        patchpoint->appendVector(inFrame);
-        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-        patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
-        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-        uint32_t callSiteBits = callSiteBitsOf(node);
-        // What the callee was found as says what it may well be.
-        StubIntrinsic intrinsic = StubIntrinsic::None;
-        if (Node* calleeNode = node->use(calleeRegister); !isConstruct && calleeNode->isBytecode(op_get_by_id))
-            intrinsic = stubIntrinsicFor(m_graph.codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
-        patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc, callSiteBits, isConstruct, intrinsic](CCallHelpers& jit, const StackmapGenerationParams& params) {
-            AllowMacroScratchRegisterUsage allowScratch(jit);
-            jit.move(CCallHelpers::TrustedImm32(callSiteBits), GPRInfo::regT10);
-            if (intrinsic != StubIntrinsic::None)
-                stubCalls->call(jit, Stub::CallIntrinsic, static_cast<uint32_t>(intrinsic));
-            else
-                stubCalls->call(jit, isConstruct ? Stub::Construct : Stub::Call, argc);
-            jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
-        });
-        if (hasResult)
-            setJSValue(node, patchpoint);
-        return;
+        m_out.appendTo(otherwise);
+        mode = CallMode::Call;
+    }
+    LValue result = emitCall(node, callee, arguments, mode, intrinsic);
+    if (hasResult)
+        setJSValue(node, result);
+}
+
+// A call in tail position leaves nothing behind of the function that makes it. Whatever there is to say about a callee that cannot be
+// called is said of the caller, so that call is made like any other: what comes next returns what it returns, if it returns.
+// Goes on where the callee is a function, and hands back where it is not.
+LBasicBlock Lowering::leaveIfFunction(Node* calleeNode, LValue callee)
+{
+    LBasicBlock isFunction = m_out.newBlock();
+    LBasicBlock otherwise = newColdBlock();
+    if (!isSubtype(calleeNode->type, TCell)) {
+        LBasicBlock isCellCase = m_out.newBlock();
+        m_out.branch(isCell(callee), usually(isCellCase), rarely(otherwise));
+        m_out.appendTo(isCellCase);
+    }
+    m_out.branch(isCellOfType(callee, JSFunctionType), usually(isFunction), rarely(otherwise));
+    m_out.appendTo(isFunction);
+    return otherwise;
+}
+
+// f(...list), f.apply(o, list): a stub asks how long the list is, makes room, has it copied there, and makes the call (Stub::CallVarargs).
+void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, VirtualRegister thisRegister, VirtualRegister argumentsRegister, int firstVarArg, CallMode mode)
+{
+    if (mode == CallMode::TailCall && (Options::aotDisableFastPaths() & 128))
+        mode = CallMode::Call;
+    LValue callee = lowJSValue(node->use(calleeRegister));
+    LValue thisValue = lowJSValue(node->use(thisRegister));
+    LValue list = lowJSValue(node->use(argumentsRegister));
+    LBasicBlock otherwise = mode == CallMode::TailCall ? leaveIfFunction(node->use(calleeRegister), callee) : nullptr;
+    if (otherwise) {
+        // Likewise what there is to say about what is no list.
+        LBasicBlock isCellCase = m_out.newBlock();
+        LBasicBlock isNotObject = m_out.newBlock();
+        LBasicBlock isList = m_out.newBlock();
+        m_out.branch(isCell(list), usually(isCellCase), rarely(otherwise));
+        m_out.appendTo(isCellCase);
+        m_out.branch(isObjectCell(list), usually(isList), rarely(isNotObject));
+        m_out.appendTo(isNotObject);
+        m_out.branch(isCellOfType(list, JSCellButterflyType), usually(isList), rarely(otherwise));
+        m_out.appendTo(isList);
     }
 
-    Vector<ConstrainedValue> arguments;
-    arguments.append(ConstrainedValue(callee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR)));
-    arguments.append(ConstrainedValue(entry(isConstruct ? Entry::CallLinkInfoForConstruct : Entry::CallLinkInfoForCall), ValueRep::reg(BaselineJITRegisters::Call::callLinkInfoGPR)));
-    arguments.append(ConstrainedValue(entry(isConstruct ? Entry::VirtualConstruct : Entry::VirtualCall), ValueRep::reg(BaselineJITRegisters::Call::callTargetGPR)));
-
-    auto addArgument = [&](LValue value, VirtualRegister reg, int offset) {
-        Value::OffsetType offsetFromSP = (reg.offset() - CallerFrameAndPC::sizeInRegisters) * sizeof(EncodedJSValue) + offset;
-        arguments.append(ConstrainedValue(value, ValueRep::stackArgument(offsetFromSP)));
-    };
-    addArgument(callee, VirtualRegister(CallFrameSlot::callee), 0);
-    addArgument(m_out.constInt32(argc), VirtualRegister(CallFrameSlot::argumentCountIncludingThis), LowWordOffset);
-    int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
-    for (unsigned i = 0; i < argc; ++i)
-        addArgument(lowJSValue(node->use(VirtualRegister(firstArgument + i))), virtualRegisterForArgumentIncludingThis(i), 0);
-
-    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
-    patchpoint->appendVector(arguments);
-    patchpoint->append(m_notCellMask, ValueRep::reg(GPRInfo::notCellMaskRegister));
-    patchpoint->append(m_numberTag, ValueRep::reg(GPRInfo::numberTagRegister));
-    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobberLate(RegisterSet::registersToSaveForJSCall(RegisterSet::allScalarRegisters()));
-    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-
-    uint32_t callSiteBits = callSiteBitsOf(node);
-    patchpoint->setGenerator([=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    for (;;) {
+    PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
+    patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
+    patchpoint->append(ConstrainedValue(thisValue, ValueRep::reg(thisGPR)));
+    patchpoint->append(ConstrainedValue(list, ValueRep::reg(argumentGPR(0))));
+    finishCall(patchpoint, mode);
+    CallSite site { mode == CallMode::TailCall ? StubCall::noCallSite : callSiteBitsOf(node) };
+    patchpoint->setGenerator([graph = &m_graph, firstVarArg, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        jit.store32(CCallHelpers::TrustedImm32(callSiteBits), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
-        jit.call(BaselineJITRegisters::Call::callTargetGPR, JSEntryPtrTag);
-        jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
+        jit.move(CCallHelpers::TrustedImm32(firstVarArg), argumentGPR(1));
+        if (mode != CallMode::TailCall) {
+            graph->stubCalls.call(jit, mode == CallMode::Construct ? Stub::ConstructVarargs : Stub::CallVarargs, site);
+            return;
+        }
+        emitEpilogueBeforeLeaving(jit, *graph, params.code());
+        graph->stubCalls.tailCall(jit, Stub::CallVarargs);
     });
+    if (mode == CallMode::TailCall) {
+        m_out.appendTo(otherwise);
+        mode = CallMode::Call;
+        continue;
+    }
+    setJSValue(node, patchpoint);
+    return;
+    }
+}
 
-    if (hasResult)
-        setJSValue(node, patchpoint);
+// A call whose callee is written "eval". If that is what it is, the code runs in the scope of the caller. If not, this is a call like any
+// other.
+void Lowering::lowerCallDirectEval(Node* node)
+{
+    auto bytecode = node->as<OpCallDirectEval>();
+    LValue callee = lowJSValue(node->use(bytecode.m_callee));
+    Arguments arguments = lowerArguments(node, bytecode.m_argc, bytecode.m_argv);
+    LValue scope = lowCell(node->use(bytecode.m_scope));
+    LValue thisValue = lowJSValue(node->use(bytecode.m_thisValue));
+
+    // Empty: it is not eval after all.
+    LValue result = vmCall(node, Int64, Entry::operationAOTCallDirectEval, m_globalObject, callee, m_out.constInt32(arguments.size() - 1),
+        arguments.size() > 1 ? arguments[1] : m_out.constInt64(JSValue::ValueUndefined), scope, thisValue, m_out.constInt32(node->bytecodeIndex.asBits()), m_out.constInt32(bytecode.m_lexicallyScopedFeatures));
+
+    LBasicBlock notEval = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    ValueFromBlock evalResult = m_out.anchor(result);
+    m_out.branch(m_out.isZero64(result), rarely(notEval), usually(continuation));
+
+    m_out.appendTo(notEval, continuation);
+    ValueFromBlock callResult = m_out.anchor(emitCall(node, callee, arguments));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    setJSValue(node, m_out.phi(Int64, evalResult, callResult));
 }
 
 bool Lowering::tryLowerCall(Node* node)
@@ -205,25 +291,53 @@ bool Lowering::tryLowerCall(Node* node)
     switch (node->opcode) {
     case op_call: {
         auto bytecode = node->as<OpCall>();
-        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, true);
+        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, CallMode::Call, true);
         return true;
     }
     case op_call_ignore_result: {
         auto bytecode = node->as<OpCallIgnoreResult>();
-        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, false);
+        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, CallMode::Call, false);
         return true;
     }
     case op_tail_call: {
-        // As an ordinary call: the op_ret that follows returns the result. The frame is not reused.
         auto bytecode = node->as<OpTailCall>();
-        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, true);
+        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, CallMode::TailCall, true);
         return true;
     }
     case op_construct: {
         auto bytecode = node->as<OpConstruct>();
-        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, true, true);
+        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, CallMode::Construct, true);
         return true;
     }
+    case op_super_construct: {
+        // What sets it apart from op_construct is what the other tiers learn from it.
+        auto bytecode = node->as<OpSuperConstruct>();
+        lowerCall(node, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, CallMode::Construct, true);
+        return true;
+    }
+    case op_call_varargs: {
+        auto bytecode = node->as<OpCallVarargs>();
+        lowerCallVarargs(node, bytecode.m_callee, bytecode.m_thisValue, bytecode.m_arguments, bytecode.m_firstVarArg, CallMode::Call);
+        return true;
+    }
+    case op_tail_call_varargs: {
+        auto bytecode = node->as<OpTailCallVarargs>();
+        lowerCallVarargs(node, bytecode.m_callee, bytecode.m_thisValue, bytecode.m_arguments, bytecode.m_firstVarArg, CallMode::TailCall);
+        return true;
+    }
+    case op_construct_varargs: {
+        auto bytecode = node->as<OpConstructVarargs>();
+        lowerCallVarargs(node, bytecode.m_callee, bytecode.m_thisValue, bytecode.m_arguments, bytecode.m_firstVarArg, CallMode::Construct);
+        return true;
+    }
+    case op_super_construct_varargs: {
+        auto bytecode = node->as<OpSuperConstructVarargs>();
+        lowerCallVarargs(node, bytecode.m_callee, bytecode.m_thisValue, bytecode.m_arguments, bytecode.m_firstVarArg, CallMode::Construct);
+        return true;
+    }
+    case op_call_direct_eval:
+        lowerCallDirectEval(node);
+        return true;
     default:
         return false;
     }

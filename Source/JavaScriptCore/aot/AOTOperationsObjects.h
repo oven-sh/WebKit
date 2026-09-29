@@ -49,6 +49,8 @@ struct Slot;
     v(operationAOTCreateScopedArguments) \
     v(operationAOTCreateClonedArguments) \
     v(operationAOTCreateRest) \
+    v(operationAOTThrowNotAFunction) \
+    v(operationAOTThrowNotAConstructor) \
     v(operationAOTToThis) \
     v(operationAOTToObject) \
     v(operationAOTToPrimitive) \
@@ -102,10 +104,8 @@ struct Slot;
     v(operationAOTAsyncIteratorNextWithDriver) \
     v(operationAOTMaterializeArrayIterator) \
     v(operationAOTThrowIteratorResultIsNotObject) \
-    v(operationAOTSizeFrameForVarargs) \
-    v(operationAOTSetupVarargsFrame) \
-    v(operationAOTPrepareTailCall) \
-    v(operationAOTLinkCall) \
+    v(operationAOTSizeOfVarargs) \
+    v(operationAOTLoadVarargs) \
     v(operationAOTLinkFunction) \
     v(operationAOTConstructByCalling) \
     v(operationAOTNoteFilled) \
@@ -153,10 +153,12 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCreateInternalFieldObject, JSObject*, (JSG
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (JSGlobalObject*, JSScope*, JSCell* symbolTable, EncodedJSValue initialValue, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPushWithScope, JSObject*, (JSGlobalObject*, JSScope*, EncodedJSValue object));
 JSC_DECLARE_JIT_OPERATION(operationAOTResolveScopeForHoistingFuncDeclInEval, EncodedJSValue, (JSGlobalObject*, JSScope*, uint32_t identifierIndex));
-JSC_DECLARE_JIT_OPERATION(operationAOTCreateDirectArguments, JSObject*, (JSGlobalObject*));
-JSC_DECLARE_JIT_OPERATION(operationAOTCreateScopedArguments, JSObject*, (JSGlobalObject*, JSObject* scope));
-JSC_DECLARE_JIT_OPERATION(operationAOTCreateClonedArguments, JSObject*, (JSGlobalObject*));
-JSC_DECLARE_JIT_OPERATION(operationAOTCreateRest, JSObject*, (JSGlobalObject*, uint32_t numParametersToSkip));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateDirectArguments, JSObject*, (JSGlobalObject*, JSObject* callee, uint32_t count, EncodedJSValue* arguments, uint32_t numberOfParameters));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateScopedArguments, JSObject*, (JSGlobalObject*, JSObject* scope, JSObject* callee, uint32_t count, EncodedJSValue* arguments));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateClonedArguments, JSObject*, (JSGlobalObject*, JSObject* callee, uint32_t count, EncodedJSValue* arguments));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateRest, JSObject*, (JSGlobalObject*, uint32_t count, EncodedJSValue* arguments, uint32_t numParametersToSkip));
+JSC_DECLARE_JIT_OPERATION(operationAOTThrowNotAFunction, void, (JSGlobalObject*, EncodedJSValue callee));
+JSC_DECLARE_JIT_OPERATION(operationAOTThrowNotAConstructor, void, (JSGlobalObject*, EncodedJSValue callee));
 
 // Conversions and tests.
 JSC_DECLARE_JIT_OPERATION(operationAOTToThis, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t isStrict));
@@ -223,15 +225,15 @@ JSC_DECLARE_JIT_OPERATION(operationAOTMaterializeArrayIterator, JSObject*, (JSGl
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (JSGlobalObject*));
 
 // Calls.
-JSC_DECLARE_JIT_OPERATION(operationAOTSizeFrameForVarargs, size_t, (JSGlobalObject*, EncodedJSValue arguments, uint32_t numUsedStackSlots, uint32_t firstVarArgOffset));
-JSC_DECLARE_JIT_OPERATION(operationAOTSetupVarargsFrame, CallFrame*, (JSGlobalObject*, CallFrame* newCallFrame, EncodedJSValue arguments, uint32_t firstVarArgOffset, uint32_t length));
-JSC_DECLARE_JIT_OPERATION(operationAOTPrepareTailCall, size_t, (JSGlobalObject*, EncodedJSValue callee));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject*, EncodedJSValue callee, uint32_t knownCallee, Slot*, uint32_t isConstruct));
+JSC_DECLARE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject*, EncodedJSValue arguments, uint32_t firstVarArgOffset));
+JSC_DECLARE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject*, EncodedJSValue* where, EncodedJSValue arguments, uint32_t firstVarArgOffset, uint32_t length));
+
+
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (CallFrame*));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* calleeFrame, uint32_t index, uint32_t distanceOfEnvironment));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, void* addressInFunction));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance*, uint32_t index));
-JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (CallFrame* calleeFrame, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));
+JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (JSGlobalObject*, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));
 
 } } // namespace JSC::AOT
 

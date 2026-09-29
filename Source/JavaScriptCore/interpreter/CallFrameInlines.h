@@ -43,28 +43,9 @@ inline Register& CallFrame::uncheckedR(VirtualRegister reg)
 
 ALWAYS_INLINE VM& CallFrame::deprecatedVM() const
 {
-    if (isAOTFrame()) [[unlikely]]
-        return AOT::vmOf(this);
     JSCell* callee = this->callee().asCell();
     ASSERT(callee);
     return callee->vm();
-}
-
-inline bool CallFrame::isAOTFrame() const
-{
-#if ENABLE(FTL_JIT)
-    CalleeBits bits = rawCallee();
-    return bits.isNativeCallee() && bits.asNativeCallee()->category() == NativeCallee::Category::AOT;
-#else
-    return false;
-#endif
-}
-
-inline CalleeBits CallFrame::callee() const
-{
-    if (isAOTFrame()) [[unlikely]]
-        return CalleeBits(std::bit_cast<int64_t>(AOT::calleeOf(this)));
-    return rawCallee();
 }
 
 inline JSValue CallFrame::guaranteedJSValueCallee() const
@@ -76,16 +57,12 @@ inline JSValue CallFrame::guaranteedJSValueCallee() const
 inline JSObject* CallFrame::jsCallee() const
 {
     ASSERT(!callee().isNativeCallee());
-    if (isAOTFrame()) [[unlikely]]
-        return AOT::calleeOf(this);
     return this[static_cast<int>(CallFrameSlot::callee)].object();
 }
 
 inline CodeBlock* CallFrame::codeBlock() const
 {
     ASSERT(!callee().isNativeCallee());
-    if (isAOTFrame()) [[unlikely]]
-        return AOT::codeBlockOf(this);
     return this[static_cast<int>(CallFrameSlot::codeBlock)].Register::codeBlock();
 }
 
@@ -96,8 +73,6 @@ inline SUPPRESS_ASAN CodeBlock* CallFrame::unsafeCodeBlock() const
 
 inline JSGlobalObject* CallFrame::lexicalGlobalObject(VM& vm) const
 {
-    if (isAOTFrame()) [[unlikely]]
-        return AOT::globalObjectOf(this);
     if (callee().isNativeCallee())
         return lexicalGlobalObjectFromNativeCallee(vm);
     return jsCallee()->realm();
@@ -105,7 +80,7 @@ inline JSGlobalObject* CallFrame::lexicalGlobalObject(VM& vm) const
 
 inline bool CallFrame::isZombieFrame() const
 {
-    if (rawCallee().isNativeCallee())
+    if (callee().isNativeCallee())
         return false;
     return jsCallee() == jsCallee()->realm()->zombieFrameCallee();
 }

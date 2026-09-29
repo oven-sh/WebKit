@@ -56,14 +56,14 @@ JSC_DECLARE_JIT_OPERATION(operationAOTFillImportSlot, JSObject*, (JSGlobalObject
 JSC_DECLARE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject*, JSObject* scope, EncodedJSValue value, uint32_t identifierIndex, Slot*, uint32_t how));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrow, void, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject*, EncodedJSValue, uint32_t mask));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject*, CallFrame*, EncodedJSValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t, uint32_t));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject*, EncodedJSValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
 JSC_DECLARE_JIT_OPERATION(operationAOTHandleTraps, void, (JSGlobalObject*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*, uint32_t index));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject*, EncodedJSValue, uint32_t tableIndex));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchChar, int32_t, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
+JSC_DECLARE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject*, EncodedJSValue, uint32_t tableIndex));
+JSC_DECLARE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFMod, double, (double, double));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPow, double, (double, double));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToInt32, int32_t, (double));

@@ -198,88 +198,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (JSGl
 
 // ---- Calls
 
-// The number of arguments, having made sure that there is stack for a frame that holds them below the caller's own
-// numUsedStackSlots.
-JSC_DEFINE_JIT_OPERATION(operationAOTSizeFrameForVarargs, size_t, (JSGlobalObject* globalObject, EncodedJSValue arguments, uint32_t numUsedStackSlots, uint32_t firstVarArgOffset))
+// Stub::CallVarargs: how many there are, and then all of them, one after the other.
+JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* globalObject, EncodedJSValue arguments, uint32_t firstVarArgOffset))
 {
-    AOT_OPERATION_BEGIN(globalObject);
-    OPERATION_RETURN(scope, sizeFrameForVarargs(globalObject, callFrame, vm, JSValue::decode(arguments), numUsedStackSlots, firstVarArgOffset));
-}
-
-// Called with the stack pointer below newCallFrame.
-JSC_DEFINE_JIT_OPERATION(operationAOTSetupVarargsFrame, CallFrame*, (JSGlobalObject* globalObject, CallFrame* newCallFrame, EncodedJSValue arguments, uint32_t firstVarArgOffset, uint32_t length))
-{
-    AOT_OPERATION_BEGIN(globalObject);
-    setupVarargsFrame(globalObject, callFrame, newCallFrame, JSValue::decode(arguments), firstVarArgOffset, length);
-    OPERATION_RETURN(scope, newCallFrame);
-}
-
-// A caller gives up its frame before it jumps to the callee, and from then on nobody can say on whose behalf code is being
-// compiled or an error thrown. So whatever a call may need doing is done first: true means that the callee is a function that
-// has code to jump to. False means that this had better be an ordinary call.
-JSC_DEFINE_JIT_OPERATION(operationAOTPrepareTailCall, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedCallee))
-{
-    AOT_OPERATION_BEGIN(globalObject);
-    JSValue callee = JSValue::decode(encodedCallee);
-    JSFunction* function = callee.isCell() ? dynamicDowncast<JSFunction>(callee.asCell()) : nullptr;
-    if (!function)
-        OPERATION_RETURN(scope, false);
-    ExecutableBase* executable = function->executable();
-    DeferTraps deferTraps(vm); // Nothing gets to throw away the code that is about to run.
-    if (!executable->isHostFunction()) {
-        CodeBlock* codeBlock = nullptr;
-        uncheckedDowncast<FunctionExecutable>(executable)->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), CodeSpecializationKind::CodeForCall, codeBlock);
-        OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject);
+    unsigned length = sizeOfVarargs(globalObject, JSValue::decode(arguments), firstVarArgOffset);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (length > maxArguments) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        OPERATION_RETURN(scope, 0);
     }
-    // Asking is what puts the answer where the thunk looks for it.
-    executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
-    OPERATION_RETURN(scope, true);
+    OPERATION_RETURN(scope, length);
 }
 
-// A call that was compiled for one function in particular (which of the caller's known callees) is being made. If this callee is a
-// closure of that function, and runs the code that the call goes straight to, then from now on this callee gets called that way.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* globalObject, EncodedJSValue encodedCallee, uint32_t knownCallee, Slot* cache, uint32_t isConstruct))
+JSC_DEFINE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject* globalObject, EncodedJSValue* where, EncodedJSValue arguments, uint32_t firstVarArgOffset, uint32_t length))
 {
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    // (Not for a function that has nowhere to keep it.)
-    if (SharedData::contains(cache))
-        return;
-    countAttemptToLinkCall(cache);
-
-    Data* caller = callerData(callFrame);
-    JITCode* code = caller->code;
-    JSValue callee = JSValue::decode(encodedCallee);
-    JSFunction* function = callee.isCell() ? dynamicDowncast<JSFunction>(callee.asCell()) : nullptr;
-    if (!code->isFromImage() || !function || function->isHostFunction())
-        return;
-    CodeSpecializationKind kind = isConstruct ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
-    FunctionExecutable* executable = function->jsExecutable();
-    const ImageFunction* functionOfCallee;
-    uint32_t indexOfCallee;
-    if (isConstruct && executable->constructsByCalling())
-        return;
-    if (executable->aotEntryFor(kind)) {
-        // The call is going to go straight to the code, which takes it that it has been run before.
-        DeferGCForAWhile deferGC(vm);
-        if (caller->instance != vm.m_aotInstanceOfProgram || !linkStaticFunction(vm, executable, kind, function->scope()))
-            return;
-        indexOfCallee = executable->aotIndexFor(kind);
-        functionOfCallee = caller->instance->infos[indexOfCallee].function();
-    } else {
-        if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
-            return;
-        auto* codeOfCallee = static_cast<JITCode*>(executable->generatedJITCodeFor(kind).ptr());
-        if (codeOfCallee->instance() != caller->instance || !codeOfCallee->isFromImage())
-            return;
-        indexOfCallee = codeOfCallee->header().index;
-        functionOfCallee = codeOfCallee->imageFunction();
-    }
-    // (The number is one of the caller's image.)
-    if (code->imageFunction()->knownCallees()[knownCallee] != indexOfCallee || &Image::of(*functionOfCallee) != &Image::of(*code->imageFunction()))
-        return;
-    fillCallCache(vm, caller, cache, function);
+    AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject);
+    loadVarargs(globalObject, std::bit_cast<JSValue*>(where), JSValue::decode(arguments), firstVarArgOffset, length);
+    OPERATION_RETURN(scope);
 }
 
 // llint_virtual_call(), which begins by asking for the CodeBlock of the caller, in case there is an error to report. Nearly always
@@ -327,21 +263,21 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     return encodeResult(executable->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
 }
 
-// Stub::LinkFunction. Whoever made the call is code of a module that is linked as compiled, and so then are the modules it imports
-// from, and theirs (JSModuleRecord::isLinkedAsInImage()): there is nothing that could be in the way.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* calleeFrame, uint32_t index, uint32_t distanceOfEnvironment))
+// Stub::LinkFunction. Whoever called the function knew what it was calling: code of a module that is linked as compiled, and so then are
+// the modules it imports from, and theirs (JSModuleRecord::isLinkedAsInImage()). There is nothing that could be in the way.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* instance, void* addressInFunction))
 {
-    auto* instance = std::bit_cast<Instance*>(calleeFrame->unsafeCodeBlock());
     VM& vm = *instance->vm;
-    NativeCallFrameTracer tracer(vm, calleeFrame->callerFrame());
     DeferGCForAWhile deferGC(vm);
     DeferTraps deferTraps(vm);
+    uint32_t index = FunctionRef::at(instance, addressInFunction).index;
+    RELEASE_ASSERT(!instance->data[index]);
     auto [executable, kind] = StaticHeap::executableOfFunction(index);
-    auto* scope = std::bit_cast<JSScope*>(std::bit_cast<uint8_t*>(instance) - distanceOfEnvironment);
     RELEASE_ASSERT(executable->aotIndexFor(kind) == index);
-    RELEASE_ASSERT(linkStaticFunction(vm, executable, kind, scope));
-    const ImageFunction& function = *instance->infos[index].function();
-    return tagCodePtr<JSEntryPtrTag>(const_cast<uint8_t*>(Image::of(function).codeFor(function)) + function.directEntryOffset);
+    const ImageFunction* function = instance->infos[index].function();
+    Ref<JITCode> code = codeOfFunctionFromImage({ &Image::of(*function), function }, kind);
+    code->setInstance(*instance);
+    RELEASE_ASSERT(Data::create(*instance, executable, executable->unlinkedExecutable()->codeBlockIfThereIsOne(kind), code.get()));
 }
 
 // For a stub that is about to fill a slot: didFillSlot(), but for the epoch.
@@ -357,28 +293,32 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance* instanc
     instance->ensureData(index);
 }
 
-// The frame is that of a function that has found no room for it, and is not yet one that anybody could make sense of.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance, uint32_t index))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance))
 {
-    Data* data = instance->ensureData(index);
-    VM& vm = *data->instance->vm;
+    VM& vm = *instance->vm;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    callFrame->convertToZombieFrame(vm, data->ensureCodeBlock());
-    throwStackOverflowError(data->instance->globalObject, scope);
+    throwStackOverflowError(instance->globalObject, scope);
 }
 
-// calleeFrame: what a call to the callee would be made with, complete but for the return address. Empty if the callee is not
-// eval after all.
-JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (CallFrame* calleeFrame, JSScope* callerScopeChain, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures))
+// Empty if the callee is not eval after all.
+JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope* callerScopeChain, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures))
 {
-    CallFrame* callFrame = calleeFrame->callerFrame();
-    VM& vm = callFrame->deprecatedVM();
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    calleeFrame->setCodeBlock(nullptr);
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, caller(callFrame).ensureData()->ensureCodeBlock(), BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
+    AOT_OPERATION_BEGIN(globalObject);
+    // What eval() looks at of the frame that a call would have been made with.
+    // It makes that the last frame that the VM knows of, so it has to lead somewhere: to where this was called from.
+    // (A Register starts out as whatever was there.)
+    uint64_t words[CallFrame::headerSizeInRegisters + 2] { };
+    Register* frame = std::bit_cast<Register*>(&words[0]);
+    CallFrame* calleeFrame = CallFrame::create(frame);
+    frame[0] = callFrame;
+    *std::bit_cast<void**>(&frame[1]) = __builtin_return_address(0);
+    frame[static_cast<int>(CallFrameSlot::callee)] = JSValue::decode(callee);
+    frame[static_cast<int>(CallFrameSlot::argumentCountIncludingThis)].lowWord() = std::min(count, 1u) + 1;
+    frame[static_cast<int>(CallFrameSlot::thisArgument)] = JSValue::decode(thisValue);
+    frame[static_cast<int>(CallFrameSlot::firstArgument)] = JSValue::decode(firstArgument);
+    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, caller(globalObject, callFrame).ensureData()->ensureCodeBlock(), BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
 }
 
 } } // namespace JSC::AOT

@@ -47,7 +47,6 @@ void NativeCallee::dump(PrintStream& out) const
 #endif
         break;
     }
-    case Category::AOT:
     case Category::InlineCache: {
         out.print(RawPointer(this));
         break;
@@ -65,8 +64,6 @@ void NativeCallee::operator delete(NativeCallee* callee, std::destroying_delete_
 #endif
         break;
     }
-    case Category::AOT:
-        RELEASE_ASSERT_NOT_REACHED();
     case Category::InlineCache: {
         break;
     }

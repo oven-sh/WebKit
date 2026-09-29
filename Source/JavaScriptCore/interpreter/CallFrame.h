@@ -207,11 +207,7 @@ using JSInstruction = BaseInstruction<JSOpcodeTraits>;
         // to see if it's a cell, and if it's not, we throw an exception.
         inline JSValue guaranteedJSValueCallee() const;
         inline JSObject* jsCallee() const;
-        // A frame of code from the static compiler (aot/) has neither where every other has them. To everybody who asks here it has
-        // both, and is a frame like the interpreter's.
-        inline CalleeBits callee() const;
-        CalleeBits rawCallee() const { return CalleeBits(this[static_cast<int>(CallFrameSlot::callee)].unboxedInt64()); }
-        inline bool isAOTFrame() const;
+        CalleeBits callee() const { return CalleeBits(this[static_cast<int>(CallFrameSlot::callee)].unboxedInt64()); }
         SUPPRESS_ASAN CalleeBits unsafeCallee() const { return CalleeBits(this[static_cast<int>(CallFrameSlot::callee)].asanUnsafeUnboxedInt64()); }
         CodeBlock* codeBlock() const;
         CodeBlock** addressOfCodeBlock() const { return std::bit_cast<CodeBlock**>(this + static_cast<int>(CallFrameSlot::codeBlock)); }

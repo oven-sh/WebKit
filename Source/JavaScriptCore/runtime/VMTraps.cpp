@@ -26,6 +26,8 @@
 #include "config.h"
 #include "VMTraps.h"
 
+#include "AOTFunction.h"
+#include "StackVisitor.h"
 #include "CallFrameInlines.h"
 #include "CodeBlock.h"
 #include "CodeBlockSet.h"
@@ -184,18 +186,16 @@ void VMTraps::invalidateCodeBlocksOnStack(Locker<Lock>&, CallFrame* topCallFrame
 
     m_needToInvalidateCodeBlocks = false;
 
-    EntryFrame* entryFrame = vm().topEntryFrame;
-    CallFrame* callFrame = topCallFrame;
-
-    if (!entryFrame)
+    if (!vm().topEntryFrame)
         return; // Not running JS code. Nothing to invalidate.
 
-    while (callFrame) {
-        CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() || callFrame->isAOTFrame() ? nullptr : callFrame->codeBlock();
+    StackVisitor::visit(topCallFrame, vm(), [&](StackVisitor& visitor) {
+        visitor.unwindToMachineCodeBlockFrame();
+        CodeBlock* codeBlock = visitor->isNativeCalleeFrame() || visitor->aotFunction() ? nullptr : visitor->codeBlock();
         if (codeBlock && JSC::JITCode::isOptimizingJIT(codeBlock->jitType()))
             codeBlock->jettison(Profiler::JettisonDueToVMTraps);
-        callFrame = callFrame->callerFrame(entryFrame);
-    }
+        return IterationStatus::Continue;
+    });
 }
 
 class VMTraps::SignalSender final : public ThreadSafeRefCounted<VMTraps::SignalSender> {

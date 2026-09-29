@@ -13,6 +13,8 @@
 #include "AOTProgram.h"
 #include "AOTStubs.h"
 #include "AirCode.h"
+#include "AirGenerate.h"
+#include "AirInstInlines.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Generate.h"
 #include "B3NaturalLoops.h"
@@ -55,39 +57,7 @@ Statistics& statistics()
     return stats;
 }
 
-void loadInstance(CCallHelpers& jit, CCallHelpers::Address codeBlockSlot, GPRReg instanceGPR)
-{
-    jit.loadPtr(codeBlockSlot, instanceGPR);
-}
-
-void jumpToThunk(CCallHelpers& jit, GPRReg dataGPR, Entry entry)
-{
-    jit.loadPtr(CCallHelpers::Address(dataGPR, Instance::offsetOfRuntimeTable()), dataGPR);
-    jit.loadPtr(CCallHelpers::Address(dataGPR, static_cast<unsigned>(entry) * sizeof(void*)), dataGPR);
-    jit.farJump(dataGPR, JITThunkPtrTag);
-}
-
 } // anonymous namespace
-
-ScopeChain scopeChainFor(JSScope* scope)
-{
-    ScopeChain chain;
-    for (; scope; scope = scope->next()) {
-        ScopeChainEntry entry;
-        if (scope->isJSLexicalEnvironment()) {
-            entry.kind = ScopeChainEntry::Lexical;
-            entry.symbolTable = uncheckedDowncast<JSLexicalEnvironment>(scope)->symbolTable();
-            entry.isModule = scope->type() == ModuleEnvironmentType;
-        } else if (scope->isGlobalLexicalEnvironment())
-            entry.kind = ScopeChainEntry::GlobalLexical;
-        else if (scope->isGlobalObject())
-            entry.kind = ScopeChainEntry::Global;
-        chain.append(entry);
-        if (entry.kind != ScopeChainEntry::Lexical)
-            break;
-    }
-    return chain;
-}
 
 static ScopeChain unknownScopeChain()
 {
@@ -434,15 +404,60 @@ static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
     return true;
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeChain& scopeChain, const CalleeHints* hints, const ModuleLinkage* linkage, void* ownerForLinkBuffer, RefPtr<JITCode>& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, bool hasDirectEntry = false, const ProgramFacts* facts = nullptr, VariableFacts* variableFacts = nullptr)
+// What holds the same thing all the way through is used where it is: as a value it would be copied to another register on the way in, which
+// would then have to be saved.
+static void usePinnedRegistersWhereTheyAre(B3::Air::Code& code)
 {
-    Graph graph(vm, unlinkedCodeBlock, scopeChain);
+    using namespace B3::Air;
+    Vector<std::pair<Tmp, Tmp>, 4> copies;
+    for (Inst& inst : *code[0]) {
+        if (inst.kind.opcode != Move || inst.args().size() != 2 || !inst.args()[0].isTmp() || !inst.args()[1].isTmp())
+            continue;
+        Tmp from = inst.args()[0].tmp();
+        Tmp to = inst.args()[1].tmp();
+        if (!from.isReg() || !code.isPinned(from.reg()) || from.reg() == Reg(MacroAssembler::framePointerRegister) || to.isReg())
+            continue;
+        copies.append({ to, from });
+        inst = Inst();
+    }
+    if (copies.isEmpty())
+        return;
+    code[0]->insts().removeAllMatching([](const Inst& inst) { return !inst; });
+    for (B3::Air::BasicBlock* block : code) {
+        for (Inst& inst : *block) {
+            inst.forEachTmpFast([&](Tmp& tmp) {
+                for (auto& [copy, reg] : copies) {
+                    if (tmp == copy)
+                        tmp = reg;
+                }
+            });
+        }
+    }
+}
+
+// A function that calls nothing, keeps nothing on the stack and saves nothing has no frame.
+static bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
+{
+    return !graph.emitsCalls && !code.frameSize() && !code.calleeSaveRegisterAtOffsetList().registerCount();
+}
+
+void emitEpilogueBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Code& code)
+{
+    if (hasNoFrame(graph, code))
+        return;
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
+    jit.emitFunctionEpilogue();
+}
+
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const ProgramFacts* facts, VariableFacts* variableFacts)
+{
+    Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setFacts(facts);
     graph.setVariableFacts(variableFacts);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
-    // (It is code in an image that gets to.)
-    graph.startsCold = (!ownerForLinkBuffer || Options::aotWriteImage()) && mayStartCold(unlinkedCodeBlock);
+    graph.startsCold = mayStartCold(unlinkedCodeBlock);
     auto declined = [&] {
         reason = graph.failureReason();
         reasonOpcode = graph.failureOpcode();
@@ -459,7 +474,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
-    graph.findListsOfArguments();
     if (Options::aotDumpGraph()) [[unlikely]] {
         dataLogLn("AOT graph:");
         graph.dump(WTF::dataFile());
@@ -468,6 +482,9 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     B3::Procedure proc(/* usesSIMD = */ false);
     proc.setOptLevel(Options::aotB3OptLevel());
     proc.setPositionIndependent();
+    proc.pinRegister(instanceGPR);
+    proc.pinRegister(GPRInfo::numberTagRegister);
+    proc.pinRegister(GPRInfo::notCellMaskRegister);
     if (Options::aotReportStats()) [[unlikely]]
         proc.setNeedsPCToOriginMap();
     Lowering lowering(graph, proc);
@@ -489,75 +506,24 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         }
     }
 
-    // EXPERIMENT: Options::aotLean().
-    bool isLean = false;
-    if (unsigned lean = Options::aotLean(); lean && unlinkedCodeBlock->codeType() == FunctionCode) {
-        isLean = (lean & 4) || ((lean & 1) && facts && facts->isClosed);
-        if (!isLean && (lean & 2)) {
-            for (const auto& instruction : unlinkedCodeBlock->instructions()) {
-                if (instruction->opcodeID() == op_check_type && instruction->as<OpCheckType>().m_mask >> 28 == FactBody) {
-                    isLean = true;
-                    break;
-                }
-            }
-        }
-    }
-    bool hasLeanEntry = isLean && (Options::aotLean() & 16);
-    bool saysNotWhichItIs = isLean && (Options::aotLean() & 32);
-
     StubCalls& stubCalls = graph.stubCalls;
-    bool makesCalls = graph.makesCalls;
-    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, &graph, makesCalls, saysNotWhichItIs](CCallHelpers& jit, B3::Air::Code& code) {
+    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, &graph](CCallHelpers& jit, B3::Air::Code& code) {
+        if (hasNoFrame(graph, code))
+            return;
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.emitFunctionPrologue();
-        if (saysNotWhichItIs) {
-            if (makesCalls || code.frameSize() > 256)
-                stubCalls.call(jit, Stub::Prologue, code.frameSize());
-            else if (code.frameSize())
-                jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
-            jit.emitSave(code.calleeSaveRegisterAtOffsetList());
-            return;
-        }
-        // The frame has the Instance where a CodeBlock would be, and the object that was called for a callee. Once there is known to
-        // be room for the frame that is put aside, and what says which function this is takes its place. Until then nobody looks,
-        // and if there is no room, whoever says so wants to know which function (generateThrowStackOverflowAtPrologue()).
-        constexpr unsigned frameSizeThatNeedsNoCheck = 256;
-        if (usesStubs && (makesCalls || code.frameSize() > frameSizeThatNeedsNoCheck)) {
-            // The stub does all that.
-            if (graph.calleeSlot)
-                jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT11);
-            graph.headerReferences.moveTaggedHeader(jit, boxedHeaderGPR);
-            stubCalls.call(jit, Stub::Prologue, code.frameSize());
-            if (graph.calleeSlot)
-                jit.store64(GPRInfo::regT11, CCallHelpers::Address(GPRInfo::callFrameRegister, graph.calleeSlot->offsetFromFP()));
-            jit.emitSave(code.calleeSaveRegisterAtOffsetList());
-            return;
-        }
-        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR);
-        auto becomeFrameOfThisFunction = makeScopeExit([&] {
-            if (!graph.calleeSlot) {
-                jit.store64(boxedHeaderGPR, CCallHelpers::addressFor(CallFrameSlot::callee));
-                return;
-            }
-            jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), GPRInfo::regT9);
-            jit.store64(boxedHeaderGPR, CCallHelpers::addressFor(CallFrameSlot::callee));
-            jit.store64(GPRInfo::regT9, CCallHelpers::Address(GPRInfo::callFrameRegister, graph.calleeSlot->offsetFromFP()));
-        });
         // The limit leaves room for the runtime to do what it has to when the stack is used up, which is a great deal more than this.
         // However deep the calls go, whatever made the last of them has checked.
-        if constexpr (usesStubs) {
+        constexpr unsigned frameSizeThatNeedsNoCheck = 256;
+        if (graph.makesCalls || code.frameSize() > frameSizeThatNeedsNoCheck)
+            stubCalls.call(jit, Stub::Prologue, code.frameSize(), CallSite { });
+        else if (code.frameSize())
             jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
-            jit.emitSave(code.calleeSaveRegisterAtOffsetList());
-            return;
-        }
-        loadInstance(jit, CCallHelpers::addressFor(CallFrameSlot::codeBlock), GPRInfo::regT0);
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT0, Instance::offsetOfVM()), GPRInfo::regT1);
-        jit.addPtr(CCallHelpers::TrustedImm32(-static_cast<int32_t>(code.frameSize())), GPRInfo::callFrameRegister, GPRInfo::regT2);
-        auto ok = jit.branchPtr(CCallHelpers::BelowOrEqual, CCallHelpers::Address(GPRInfo::regT1, VM::offsetOfSoftStackLimit()), GPRInfo::regT2);
-        jumpToThunk(jit, GPRInfo::regT0, Entry::ThrowStackOverflowAtPrologue);
-        ok.link(&jit);
-        jit.move(GPRInfo::regT2, CCallHelpers::stackPointerRegister);
         jit.emitSave(code.calleeSaveRegisterAtOffsetList());
+    }));
+    proc.code().setEpilogueGenerator(createSharedTask<B3::Air::PrologueGeneratorFunction>([&graph](CCallHelpers& jit, B3::Air::Code& code) {
+        emitEpilogueBeforeLeaving(jit, graph, code);
+        jit.ret();
     }));
     for (unsigned i = 0; i < graph.catchEntrypoints.size(); ++i) {
         // From catchThunk(): the frame pointer is this frame's again, and what this function saved on entry is still saved.
@@ -567,141 +533,45 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         }));
     }
 
-    B3::prepareForGeneration(proc);
+    B3::generateToAir(proc);
+    usePinnedRegistersWhereTheyAre(proc.code());
+    B3::Air::prepareForGeneration(proc.code());
     CCallHelpers jit;
-    // The CodeHeader. What is in it is filled in when it is known.
-    CCallHelpers::Label header = jit.label();
-    // (One word, not none: an offset of nothing says that there is no such entry.)
-    for (unsigned i = 0; i < (hasLeanEntry ? 1 : sizeof(CodeHeader) / sizeof(uint32_t)); ++i)
-        jit.m_assembler.buffer().putInt(0);
-    unsigned numParameters = unlinkedCodeBlock->numParameters();
-    bool checksArity = unlinkedCodeBlock->codeType() == FunctionCode && numParameters != 1 && !hasLeanEntry;
-    CCallHelpers::Label arityCheckWithStub;
-    CCallHelpers::Jump arityChecked;
-    CCallHelpers::Jump arityFixed;
-    CCallHelpers::Label tooFewArguments;
-    if (usesStubs && checksArity) {
-        // What is done about too few comes first: it refers to the header, which has to be within reach.
-        tooFewArguments = jit.label();
-        graph.headerReferences.moveTaggedHeader(jit, boxedHeaderGPR); // In case there is no room for more.
-        jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
-        stubCalls.call(jit, Stub::ArityCheck, numParameters);
-        arityFixed = jit.jump();
-    }
-    CCallHelpers::Label directEntry;
-    CCallHelpers::Jump directlyEntered;
-    if (hasLeanEntry) {
-        directEntry = jit.label();
-        if (!graph.catchEntrypoints.isEmpty())
-            directlyEntered = jit.jump();
-    } else if (usesStubs && hasDirectEntry) {
-        // The frame is made, with the Instance in it, and the callee is where every call has it. If the function has nothing of the
-        // realm yet, it is called the way a function nobody knows anything about is, which sees to that.
-        // (One that may have been called as no object at all is found by its number, which is at hand.)
-        CCallHelpers::Label noData = jit.label();
-        if (graph.needsFunctionObject())
-            stubCalls.tailCall(jit, unlinkedCodeBlock->isConstructor() ? Stub::ConstructFarFunction : Stub::CallFarFunction);
-        else {
-            jit.move(CCallHelpers::TrustedImm32(graph.distanceOfEnvironmentOfModule()), GPRInfo::regT10);
-            stubCalls.tailCall(jit, Stub::LinkFunction);
-        }
-        directEntry = jit.label();
-        graph.headerReferences.loadIndex(jit, GPRInfo::regT9);
-        jit.loadPtr(CCallHelpers::calleeFrameSlot(CallFrameSlot::codeBlock).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta()), GPRInfo::regT10);
-        jit.addLeftShift64(GPRInfo::regT10, GPRInfo::regT9, CCallHelpers::TrustedImm32(3), GPRInfo::regT10);
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT10, Instance::offsetOfData()), GPRInfo::regT10);
-        jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::regT10).linkTo(noData, &jit);
-        if (!checksArity && !graph.catchEntrypoints.isEmpty())
-            directlyEntered = jit.jump();
-    }
-    if (usesStubs && checksArity) {
-        // Nothing has been pushed: the frame's slots are found from the stack pointer.
-        arityCheckWithStub = jit.label();
-        jit.load32(CCallHelpers::calleeFrameSlot(CallFrameSlot::argumentCountIncludingThis).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta() + LowWordOffset), GPRInfo::regT9);
-        jit.branch32(CCallHelpers::Below, GPRInfo::regT9, CCallHelpers::TrustedImm32(numParameters)).linkTo(tooFewArguments, &jit);
-        // The only way in is what comes first.
-        if (!graph.catchEntrypoints.isEmpty())
-            arityChecked = jit.jump();
-    }
+    // The way in is what comes first.
+    CCallHelpers::Jump toTheWayIn;
+    if (!graph.catchEntrypoints.isEmpty())
+        toTheWayIn = jit.jump();
     CCallHelpers::Label startOfCode = jit.label();
     jit.setOopsIsJustABreakpoint();
     B3::generate(proc, jit);
-
-    CCallHelpers::Label entryLabel = proc.code().entrypointLabel(0);
-    CCallHelpers::Label arityCheckLabel = entryLabel;
-    if (directlyEntered.isSet())
-        directlyEntered.linkTo(entryLabel, &jit);
-    if (usesStubs && checksArity) {
-        if (arityChecked.isSet())
-            arityChecked.linkTo(entryLabel, &jit);
-        else
-            RELEASE_ASSERT(!CCallHelpers::differenceBetween(startOfCode, entryLabel));
-        arityFixed.linkTo(entryLabel, &jit);
-        arityCheckLabel = arityCheckWithStub;
-    } else if (checksArity) {
-        // What FTL::compile() emits, with the VM and the thunk found from the callee frame's CodeBlock.
-        arityCheckLabel = jit.label();
-        auto slotBeforePrologue = [](CallFrameSlot slot) {
-            return CCallHelpers::calleeFrameSlot(slot).withOffset(sizeof(CallerFrameAndPC) - prologueStackPointerDelta());
-        };
-        jit.load32(slotBeforePrologue(CallFrameSlot::argumentCountIncludingThis).withOffset(LowWordOffset), GPRInfo::argumentGPR2);
-        jit.branch32(CCallHelpers::AboveOrEqual, GPRInfo::argumentGPR2, CCallHelpers::TrustedImm32(numParameters)).linkTo(entryLabel, &jit);
-
-        graph.headerReferences.moveBoxedHeader(jit, boxedHeaderGPR);
-        loadInstance(jit, slotBeforePrologue(CallFrameSlot::codeBlock), GPRInfo::regT5);
-        static_assert(stackAlignmentRegisters() == 2);
-        unsigned aligned = WTF::roundUpToMultipleOf(stackAlignmentRegisters(), numParameters + CallFrame::headerSizeInRegisters) == numParameters + CallFrame::headerSizeInRegisters ? numParameters : numParameters + 1;
-        jit.move(CCallHelpers::TrustedImm32(aligned), GPRInfo::argumentGPR0);
-        jit.sub32(GPRInfo::argumentGPR0, GPRInfo::argumentGPR2, GPRInfo::argumentGPR0);
-        jit.add32(CCallHelpers::TrustedImm32(1), GPRInfo::argumentGPR0, GPRInfo::argumentGPR1);
-        jit.and32(CCallHelpers::TrustedImm32(~1U), GPRInfo::argumentGPR1);
-        jit.lshiftPtr(CCallHelpers::TrustedImm32(3), GPRInfo::argumentGPR1);
-        jit.subPtr(CCallHelpers::stackPointerRegister, GPRInfo::argumentGPR1, GPRInfo::argumentGPR3);
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, Instance::offsetOfVM()), GPRInfo::argumentGPR1);
-        auto stackOverflow = jit.branchPtr(CCallHelpers::Above, CCallHelpers::Address(GPRInfo::argumentGPR1, VM::offsetOfSoftStackLimit()), GPRInfo::argumentGPR3);
-
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, Instance::offsetOfRuntimeTable()), GPRInfo::regT5);
-        jit.loadPtr(CCallHelpers::Address(GPRInfo::regT5, static_cast<unsigned>(Entry::ArityFixup) * sizeof(void*)), GPRInfo::regT5);
-        jit.tagPtr(NoPtrTag, CCallHelpers::linkRegister);
-        jit.move(CCallHelpers::linkRegister, GPRInfo::argumentGPR1);
-        jit.call(GPRInfo::regT5, JITThunkPtrTag);
-        jit.move(GPRInfo::argumentGPR1, CCallHelpers::linkRegister);
-        jit.untagPtr(NoPtrTag, CCallHelpers::linkRegister);
-        jit.jump().linkTo(entryLabel, &jit);
-
-        stackOverflow.link(&jit);
-        jit.emitFunctionPrologue();
-        jumpToThunk(jit, GPRInfo::regT5, Entry::ThrowStackOverflowAtPrologue);
-    }
-
-    LinkBuffer linkBuffer(jit, ownerForLinkBuffer, LinkBuffer::Profile::FTL, JITCompilationCanFail);
+    if (toTheWayIn.isSet())
+        toTheWayIn.linkTo(proc.code().entrypointLabel(0), &jit);
+    else
+        RELEASE_ASSERT(!CCallHelpers::differenceBetween(startOfCode, proc.code().entrypointLabel(0)));
+    LinkBuffer linkBuffer(jit, nullptr, LinkBuffer::Profile::FTL, JITCompilationCanFail);
     if (linkBuffer.didFailToAllocate()) {
         graph.fail("out of executable memory"_s);
         return declined();
     }
 
-    graph.headerReferences.link(linkBuffer, header);
-    {
-        CodeHeader contents;
-        contents.visibility = unlinkedCodeBlock->codeType() == FunctionCode && unlinkedCodeBlock->isBuiltinFunction() ? ImplementationVisibility::Private : ImplementationVisibility::Public;
-        contents.calleeSlot = graph.calleeSlot ? safeCast<int16_t>(graph.calleeSlot->offsetFromFP() / static_cast<int>(sizeof(Register))) : 0;
-        // (Whoever puts it in an image gives it another.)
-        contents.index = ownerForLinkBuffer ? allocateFunctionIndex() : 0;
-        if (!hasLeanEntry)
-            performJITMemcpy<jitMemcpyRepatch>(linkBuffer.locationOf<JSEntryPtrTag>(header).untaggedPtr(), &contents, sizeof(contents));
-    }
-
     CompiledFunctionInfo info;
     info.stubCalls = stubCalls.link(linkBuffer);
+    info.indexReferences = graph.indexReferences.link(linkBuffer);
     info.codeSize = linkBuffer.size();
     void* start = linkBuffer.entrypoint<JSEntryPtrTag>().untaggedPtr();
+    // (It turned out to be what comes first anyway.)
+    if (toTheWayIn.isSet() && static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(proc.code().entrypointLabel(0)).untaggedPtr()) - static_cast<uint8_t*>(start) == sizeof(uint32_t)) {
+        start = static_cast<uint8_t*>(start) + sizeof(uint32_t);
+        info.codeSize -= sizeof(uint32_t);
+        for (auto& call : info.stubCalls)
+            call.offset -= sizeof(uint32_t);
+        for (auto& reference : info.indexReferences)
+            reference.offset -= sizeof(uint32_t);
+    }
     auto offsetOf = [&](CCallHelpers::Label label) {
         return static_cast<unsigned>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(label).untaggedPtr()) - static_cast<uint8_t*>(start));
     };
-    info.entryOffset = offsetOf(entryLabel);
-    info.arityCheckOffset = offsetOf(arityCheckLabel);
-    if (directEntry.isSet())
-        info.directEntryOffset = offsetOf(directEntry);
+    info.convention = graph.convention();
     info.frameSizeInBytes = proc.frameSize();
     info.numSlots = graph.numICSlots;
     info.sites = WTF::move(graph.sites);
@@ -714,7 +584,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
     info.callSites = WTF::move(graph.callSites);
-    info.callSites.append(0); // generateThrowStackOverflowAtPrologue()
     std::ranges::sort(info.callSites);
     info.callSites.shrink(std::ranges::unique(info.callSites).begin() - info.callSites.begin());
     while (info.siteConstants.size() < info.numSlots)
@@ -765,7 +634,23 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     }
 
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::aotDumpDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
-    result = adoptRef(*new JITCode(start, codeRef.executableMemory(), WTF::move(info), JITCode::wayInto(unlinkedCodeBlock)));
+#if CPU(ARM64)
+    // What the JIT's memory is handed out in multiples of is made up with these. One stays if what is before it is a call: where that
+    // would come back to says whose frame it is, and what comes after the function is another function.
+    {
+        constexpr uint32_t breakpoint = 0xd4200000;
+        unsigned atLeast = sizeof(uint32_t);
+        for (auto& call : info.stubCalls) {
+            if (!call.isTailCall)
+                atLeast = std::max<unsigned>(atLeast, call.offset + 2 * sizeof(uint32_t));
+        }
+        while (info.codeSize > atLeast && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == breakpoint)
+            info.codeSize -= sizeof(uint32_t);
+    }
+#endif
+    // Out of the JIT's memory, which goes back to the JIT.
+    result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
+    result.info = WTF::move(info);
     return true;
 }
 
@@ -814,95 +699,15 @@ uint64_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, c
     return inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;
 }
 
-bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, bool hasDirectEntry, const ProgramFacts* facts, VariableFacts* variableFacts)
+bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts)
 {
     MonotonicTime before = MonotonicTime::now();
-    RefPtr<JITCode> jitCode;
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
-    bool ok = compile(vm, unlinkedCodeBlock, unknownScopeChain(), hints, linkage, nullptr, jitCode, reason, reasonOpcode, hasDirectEntry, facts, variableFacts);
+    bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts);
     if (Options::aotReportStats()) [[unlikely]]
-        recordStatistics(ok, ok ? jitCode->size() : 0, unlinkedCodeBlock->instructionsSize(), MonotonicTime::now() - before, reason, reasonOpcode);
-    if (!ok)
-        return false;
-    // Out of the JIT's memory, which goes back to the JIT.
-    result.info = jitCode->info();
-    result.bytes.append(std::span { static_cast<const uint8_t*>(jitCode->dataAddressAtOffset(0)), jitCode->size() });
-#if CPU(ARM64)
-    // What the JIT's allocator rounds a size up with.
-    constexpr uint32_t breakpoint = 0xd4200000;
-    while (result.bytes.size() > sizeof(CodeHeader) + sizeof(uint32_t)) {
-        uint32_t last;
-        memcpy(&last, result.bytes.span().data() + result.bytes.size() - sizeof(last), sizeof(last));
-        if (last != breakpoint)
-            break;
-        result.bytes.shrink(result.bytes.size() - sizeof(last));
-    }
-    result.info.codeSize = result.bytes.size();
-#endif
-    return true;
-}
-
-static CString nameOf(ScriptExecutable* executable)
-{
-    if (auto* function = dynamicDowncast<FunctionExecutable>(executable))
-        return function->ecmaName().utf8();
-    return executable->type() == ModuleProgramExecutableType ? "<module>" : "<global>";
-}
-
-RefPtr<JITCode> tryCompile(VM& vm, ScriptExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
-{
-    if (unlinkedCodeBlock->codeType() == EvalCode)
-        return nullptr;
-    if (const char* filter = Options::aotFilter()) {
-        if (!strstr(nameOf(executable).data(), filter))
-            return nullptr;
-    }
-
-    if (unsigned skip = Options::aotSkip()) {
-        static std::atomic<unsigned> count;
-        if (++count == skip)
-            return nullptr;
-    }
-    if (unsigned limit = Options::aotLimit()) {
-        // For finding the function that is miscompiled: bisect on the limit, and the last one compiled is it.
-        static std::atomic<unsigned> count;
-        unsigned index = ++count;
-        if (index > limit)
-            return nullptr;
-        if (index == limit) {
-            Options::aotDumpGraph() = true;
-            dataLogLn("AOT: function #", index, " is ", nameOf(executable), " ", executable->source().view().left(400));
-        }
-    }
-
-    MonotonicTime before = MonotonicTime::now();
-    RefPtr<JITCode> jitCode;
-    ASCIILiteral reason;
-    OpcodeID reasonOpcode = op_nop;
-    // By default, with no more to go by than there is when a program is compiled before it is run.
-    std::unique_ptr<LiveHints> hints;
-    if (Options::aotUseLiveCalleeHints())
-        hints = makeUnique<LiveHints>(scope->realm());
-    bool ok = compile(vm, unlinkedCodeBlock, Options::aotUseLiveScopes() ? scopeChainFor(scope) : unknownScopeChain(), hints.get(), nullptr, executable, jitCode, reason, reasonOpcode);
-
-    if (Options::aotVerbose()) [[unlikely]] {
-        if (ok) {
-            dataLogLn("AOT: compiled ", nameOf(executable), ": ", jitCode->size(), " bytes for ", unlinkedCodeBlock->instructionsSize(), " of bytecode, frame ", jitCode->info().frameSizeInBytes);
-            if (auto key = imageKeyFor(executable, kind))
-                dataLogLn("AOT: ", nameOf(executable), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") is at ", RawPointer(jitCode->dataAddressAtOffset(0)), " size ", jitCode->size(), " hash ", hashOfCode({ static_cast<const uint8_t*>(jitCode->dataAddressAtOffset(0)), jitCode->size() }));
-        }
-        else
-            dataLogLn("AOT: declined ", nameOf(executable), ": ", reason, reasonOpcode != op_nop ? " " : "", reasonOpcode != op_nop ? opcodeNames[reasonOpcode] : ""_s);
-    }
-    if (Options::aotReportStats()) [[unlikely]]
-        recordStatistics(ok, ok ? jitCode->size() : 0, unlinkedCodeBlock->instructionsSize(), MonotonicTime::now() - before, reason, reasonOpcode);
-    if (!ok)
-        return nullptr;
-
-    if (Options::aotWriteImage()) [[unlikely]]
-        addToImageBeingWritten(executable, kind, *jitCode);
-    return jitCode;
+        recordStatistics(ok, ok ? result.bytes.size() : 0, unlinkedCodeBlock->instructionsSize(), MonotonicTime::now() - before, reason, reasonOpcode);
+    return ok;
 }
 
 void reportStatistics()

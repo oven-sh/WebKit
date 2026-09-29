@@ -35,18 +35,15 @@ class VM;
 namespace AOT {
 
 // Code from the static compiler has no address in it: not of the VM, not of a C++ function, not of a thunk. Everything it needs
-// that is not in its frame it finds from the Instance, which is where a frame of the interpreter's has its CodeBlock, as a frame
-// of WebAssembly's has its instance there.
+// that it was not passed it finds from the Instance, which is in a register all the while (AOTConvention.h).
 //
-//     frame -> Instance -> runtimeTable[Entry]              C++ operations and thunks: one table per VM
-//                       -> vm, globalObject
-//                       -> data[index of the function] -> constants[i]
-//                                                      -> identifiers[i]
-//                                                      -> slots[i]      the function's inline caches
+//     Instance -> runtimeTable[Entry]              C++ operations and thunks: one table per VM
+//              -> vm, globalObject
+//              -> data[index of the function] -> constants[i]
+//                                             -> identifiers[i]
+//                                             -> slots[i]      the function's inline caches
 //
-// And where such a frame has its callee is what says which function it is a frame of: the CodeHeader in front of the function's
-// code, which the function finds from where it is itself. So the same bytes run wherever they are mapped, in any realm of any VM
-// of any process.
+// So the same bytes run wherever they are mapped, in any VM of any process.
 
 #define FOR_EACH_AOT_OPERATION(v) \
     v(operationAOTValueAdd) \
@@ -100,7 +97,6 @@ namespace AOT {
 #define FOR_EACH_AOT_THUNK(v) \
     v(HandleException) \
     v(ThrowStackOverflowAtPrologue) \
-    v(ArityFixup) \
     v(VirtualCall) \
     v(VirtualConstruct) \
     v(VirtualTailCall) \
@@ -111,7 +107,6 @@ namespace AOT {
     v(CallLinkInfoForTailCall) \
     v(StructureIDBase) \
     v(LookupExceptionHandler) \
-    v(LookupExceptionHandlerFromCallerFrame) \
     v(ThrowStackOverflowError) \
     v(NativeCallTrampoline) \
     v(MegamorphicCache) \
@@ -232,27 +227,13 @@ struct Slot {
 };
 static_assert(sizeof(Slot) == 16);
 
-// What comes right before the code of a function. To whoever finds it in a frame it is a NativeCallee.
-struct alignas(16) CodeHeader {
-    uint64_t refCount { 3 }; // ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr: one strong reference, nothing else. Stays that way.
-    NativeCallee::Category category { NativeCallee::Category::AOT };
-    ImplementationVisibility visibility { ImplementationVisibility::Public };
-    // Where in its frames the function keeps the object it was called as: which Register, from the frame pointer. 0: it does not
-    // (Graph::needsFunctionObject()), and there may have been none.
-    int16_t calleeSlot { 0 };
-    uint32_t index { 0 }; // Which function: see Instance::data.
-
-    static const CodeHeader* fromCallee(CalleeBits bits) { return std::bit_cast<const CodeHeader*>(bits.asNativeCallee()); }
-};
-static_assert(sizeof(CodeHeader) == sizeof(NativeCallee) && alignof(CodeHeader) == alignof(NativeCallee));
-
 struct Data;
 struct ImageEnvironment;
 struct ImageFunction;
 struct Site;
 
 // What the stubs, and the code itself, want to know about a function that stays as it is for as long as the function is there. By
-// CodeHeader::index: Instance::infos.
+// the function's index: Instance::infos.
 struct FunctionInfo {
     static constexpr uint16_t hasSiteConstants = 1; // After the last of the sites: ImageFunction::siteConstants().
     static constexpr uint16_t startsCold = 2; // See CompiledFunctionInfo::startsCold.
@@ -309,6 +290,9 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfConstantsOfProgram() { return OBJECT_OFFSETOF(Instance, constantsOfProgram); }
     static constexpr ptrdiff_t offsetOfSharedData() { return OBJECT_OFFSETOF(Instance, sharedData); }
     static constexpr ptrdiff_t offsetOfMisses() { return OBJECT_OFFSETOF(Instance, misses); }
+    static constexpr ptrdiff_t offsetOfCode() { return OBJECT_OFFSETOF(Instance, code); }
+    static constexpr ptrdiff_t offsetOfGranulesOfCode() { return OBJECT_OFFSETOF(Instance, granulesOfCode); }
+    static constexpr ptrdiff_t offsetOfStartsOfFunctionsAfterFirst() { return OBJECT_OFFSETOF(Instance, startsOfFunctionsAfterFirst); }
     // The function's own Data, which it gets now if it has been doing without (SharedData). It has been linked.
     JS_EXPORT_PRIVATE Data* ensureData(uint32_t index);
     void countMiss(uint32_t index)
@@ -354,10 +338,15 @@ struct Instance {
     VM* vm; // Where a JSWebAssemblyInstance has its own: code that finds the VM from any frame need not tell the two apart.
     struct Collections;
     Collections* collections; // Of what there is in data.
-    FunctionInfo* infos; // By CodeHeader::index, like data.
+    FunctionInfo* infos; // By the index of the function, like data.
     Data* sharedData; // SharedData::get()
-    uint16_t* misses; // By CodeHeader::index: how often a slot has failed a function that has no Data of its own.
-    const uint32_t* factsOfFunctions; // By CodeHeader::index: StaticHeap::factsAt(). Zero: none. Null: no function has any.
+    uint16_t* misses; // By the index of the function: how often a slot has failed a function that has no Data of its own.
+    const uint32_t* factsOfFunctions; // By the index of the function: StaticHeap::factsAt(). Zero: none. Null: no function has any.
+    // For telling which function an address is in (loadIndexOfFunctionAt(), Image::whatIsAt()): where the image's code is; for each
+    // granule of it, the last function that starts no later than the granule does; and where each function but the first starts.
+    const uint8_t* code;
+    const uint32_t* granulesOfCode;
+    const uint32_t* startsOfFunctionsAfterFirst;
     const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
     uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
     uint32_t missesToSpare;
@@ -369,7 +358,7 @@ struct Instance {
     uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
     // The realm's (JSGlobalObject::immutableIntrinsics()), where code gets at them with one load.
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
-    Data* data[0]; // By CodeHeader::index. Null: the function has not been linked in this realm.
+    Data* data[0]; // By the index of the function. Null: the function has not been linked in this realm.
 };
 
 // TEMPORARY-SHAPE-STATS: structures whose layout the compiler could have known. 1: of an object literal. 2: what a constructor's stores end in.
@@ -381,18 +370,7 @@ uint8_t kindOfKnownShape(Structure*);
 enum class SymbolTablesWillDo : bool { No, Yes };
 JS_EXPORT_PRIVATE bool constantsAreOfNoRealm(UnlinkedCodeBlock*, SymbolTablesWillDo = SymbolTablesWillDo::No);
 
-// A number for a function that is compiled in this process. The functions of an image have theirs already, from zero.
-uint32_t allocateFunctionIndex();
-bool reserveFunctionIndicesForImage(uint32_t count); // False: too late.
-
-// Whether something that may have been read out of a frame at any moment at all is one. Any thread.
-JS_EXPORT_PRIVATE bool isCodeHeader(const void*);
-// About a frame whose callee is a CodeHeader.
-JS_EXPORT_PRIVATE Data* dataOf(const CallFrame*);
-JS_EXPORT_PRIVATE CodeBlock* codeBlockOf(const CallFrame*);
-JS_EXPORT_PRIVATE JSObject* calleeOf(const CallFrame*); // Null if the function has no use for it (CodeHeader::calleeSlot).
-JS_EXPORT_PRIVATE VM& vmOf(const CallFrame*);
-JS_EXPORT_PRIVATE JSGlobalObject* globalObjectOf(const CallFrame*);
+JS_EXPORT_PRIVATE const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction&);
 
 struct Data {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Data);
@@ -515,12 +493,9 @@ struct Quote {
 
 // What a compilation produces, other than the code: all of it is plain data, and none of it is an address.
 struct CompiledFunctionInfo {
-    unsigned codeSize { 0 };
-    unsigned entryOffset { 0 };
-    unsigned arityCheckOffset { 0 };
-    // For a caller that knows, without looking, that this is the function it is calling: which may then be the first call there ever
-    // was, with nothing of what the function has of the realm made yet. Zero: there is no such way in.
-    unsigned directEntryOffset { 0 };
+    unsigned codeSize { 0 }; // The way in is where it starts.
+    Convention convention;
+    Vector<IndexReference> indexReferences;
     unsigned frameSizeInBytes { 0 };
     unsigned numSlots { 0 };
     bool usesStaticImports { false };
@@ -561,6 +536,7 @@ struct ImageCatchEntrypoint {
 
 // Followed by numSlots Site, then perhaps numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero
 // for none), then numberOfKnownCallees uint32_t, then numberOfCatchEntrypoints ImageCatchEntrypoint, then CompiledFunctionInfo::plans.
+// The way in is where the code starts.
 struct ImageFunction {
     uint32_t codeOffset; // In the code.
     uint32_t codeSize;
@@ -576,12 +552,12 @@ struct ImageFunction {
     uint16_t whereCalleeSavesStart;
     uint16_t frameSizeInUnits; // Of stackAlignmentBytes().
     uint16_t numberOfCatchEntrypoints;
-    uint16_t directEntryOffset;
-    uint8_t entryOffsetInWords;
-    uint8_t arityCheckOffsetInWords;
+    uint8_t numberOfParameters; // Convention::numberOfParameters
+    uint8_t takesList; // Signature::List
+    uint32_t callSites; // From ImageHeader::callSitesOffset: see callSiteAt(). Zero: none.
+    uint32_t index; // Which function it is: they are numbered in the order their code is in.
 
-    unsigned entryOffset() const { return entryOffsetInWords * sizeof(uint32_t); }
-    unsigned arityCheckOffset() const { return arityCheckOffsetInWords * sizeof(uint32_t); }
+    Convention convention() const { return { takesList ? Signature::List : Signature::Registers, numberOfParameters, true }; }
     unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
     // A bit for each by Reg::index(), in half the room: no callee saves any of the rest.
 #if CPU(ARM64)
@@ -601,13 +577,13 @@ struct ImageFunction {
 
     const Site* sites() const { return reinterpret_cast<const Site*>(this + 1); } // (FunctionInfo::function() goes by that.)
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
-    const uint32_t* knownCallees() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); } // CodeHeader::index of each. Or, if the image has no code for it, noSuchFunction.
+    const uint32_t* knownCallees() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); } // the index of the function of each. Or, if the image has no code for it, noSuchFunction.
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(knownCallees() + numberOfKnownCallees); }
     const uint32_t* plans() const { return reinterpret_cast<const uint32_t*>(catchEntrypoints() + numberOfCatchEntrypoints); }
     static constexpr uint32_t noSuchFunction = std::numeric_limits<uint32_t>::max();
 };
 
-static_assert(sizeof(ImageFunction) == 36);
+static_assert(sizeof(ImageFunction) == 40);
 
 inline const ImageFunction* FunctionInfo::function() const
 {
@@ -616,12 +592,11 @@ inline const ImageFunction* FunctionInfo::function() const
 
 class JITCode final : public JSC::JITCode {
 public:
-    // The code is either in memory that the handle owns, or in an image that is mapped for as long as the process lives. What there
-    // is to know about code in an image is in the image, and stays there.
+    // The code is in an image, which is mapped for as long as the process lives. What there is to know about it is in the image, and
+    // stays there.
     // Way: how whoever makes frames the way the interpreter wants them gets in (generateEnter(), generateEnterFunction()).
     enum class Way : uint8_t { TopLevel, Call, Construct };
     static Way wayInto(UnlinkedCodeBlock*);
-    JITCode(void* code, RefPtr<ExecutableMemoryHandle>&&, CompiledFunctionInfo&&, Way);
     JITCode(void* code, const ImageFunction&, Way);
     ~JITCode() final;
 
@@ -633,48 +608,25 @@ public:
     bool contains(void*) final;
 
     const RegisterAtOffsetList* calleeSaveRegisters() const { return m_calleeSaveRegisters; }
-    const CompiledFunctionInfo& info() const { return m_owned->info; } // Not of code in an image.
-    bool isFromImage() const { return !!m_function; }
     const ImageFunction* imageFunction() const { return m_function; }
-    unsigned codeSize() const { return m_function ? m_function->codeSize : m_owned->info.codeSize; }
-    unsigned entryOffset() const { return m_function ? m_function->entryOffset() : m_owned->info.entryOffset; }
-    unsigned arityCheckOffset() const { return m_function ? m_function->arityCheckOffset() : m_owned->info.arityCheckOffset; }
-    void* directEntry() const { return tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(m_code) + (m_function ? m_function->directEntryOffset : m_owned->info.directEntryOffset)); }
-    unsigned frameSizeInBytes() const { return m_function ? m_function->frameSizeInBytes() : m_owned->info.frameSizeInBytes; }
-    unsigned numSlots() const { return m_function ? m_function->numSlots : m_owned->info.numSlots; }
-    const Site* sites() const { return m_function ? m_function->sites() : m_owned->info.sites.span().data(); }
-    template<typename Functor> void forEachCatchEntrypoint(const Functor& functor) const // (offset of the op_catch, offset in the code)
-    {
-        if (m_function) {
-            for (unsigned i = 0; i < m_function->numberOfCatchEntrypoints; ++i)
-                functor(m_function->catchEntrypoints()[i].bytecodeOffset, m_function->catchEntrypoints()[i].codeOffset);
-            return;
-        }
-        for (auto& [bytecodeOffset, codeOffset] : m_owned->info.catchEntrypoints)
-            functor(bytecodeOffset, codeOffset);
-    }
+    uint32_t index() const { return m_function->index; }
+    unsigned codeSize() const { return m_function->codeSize; }
+    unsigned frameSizeInBytes() const { return m_function->frameSizeInBytes(); }
+    unsigned numSlots() const { return m_function->numSlots; }
+    const Site* sites() const { return m_function->sites(); }
     const void* start() const { return m_code; }
-    const CodeHeader& header() const { return *static_cast<const CodeHeader*>(m_code); }
-    // Where a caller that has put the Instance in the frame goes. Checks the number of arguments.
-    static constexpr ptrdiff_t offsetOfEntry() { return OBJECT_OFFSETOF(JITCode, m_entry); }
+    static constexpr ptrdiff_t offsetOfEntry() { return OBJECT_OFFSETOF(JITCode, m_entry); } // An EntryWord.
     // One of these is the code of one executable, which is of one realm.
     static constexpr ptrdiff_t offsetOfInstance() { return OBJECT_OFFSETOF(JITCode, m_instance); }
     Instance* instance() const { return m_instance; }
     void setInstance(Instance& instance) { m_instance = &instance; }
 
 private:
-    struct Owned {
-        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Owned);
-        RefPtr<ExecutableMemoryHandle> handle;
-        CompiledFunctionInfo info;
-    };
-
     void* m_code;
-    void* m_entry;
+    uint64_t m_entry;
     Instance* m_instance { nullptr };
     const ImageFunction* m_function { nullptr };
     const RegisterAtOffsetList* m_calleeSaveRegisters;
-    std::unique_ptr<Owned> m_owned;
 };
 
 // Makes the code the function's. It gets no CodeBlock. False: an exception was thrown.

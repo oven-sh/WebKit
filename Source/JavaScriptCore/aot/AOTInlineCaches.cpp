@@ -383,20 +383,6 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, St
 
 // ---- Calls
 
-void countAttemptToLinkCall(Slot* cache)
-{
-    if (SharedData::contains(cache))
-        return;
-    countFailure(cache);
-}
-
-void fillCallCache(VM& vm, Data* data, Slot* cache, JSFunction* callee)
-{
-    if (SharedData::contains(cache))
-        return;
-    fill(vm, data, &cache[0], callee->structure(), Slot::pointerIsCell, callee);
-}
-
 // ---- Allocation
 
 void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator allocator)

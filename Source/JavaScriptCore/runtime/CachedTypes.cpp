@@ -6156,6 +6156,13 @@ struct BytecodeLinkEncoder::Impl {
         for (unsigned i = 0; i < functionsToCompile.size(); ++i)
             indexOfFunction.add(functionsToCompile[i].executable, i);
         Vector<std::unique_ptr<AOT::ModuleHints>> hints(modules.size());
+        Vector<std::array<AOT::Convention, 2>> conventions(functionsToCompile.size());
+        for (unsigned i = 0; i < functionsToCompile.size(); ++i) {
+            if (auto* codeBlock = functionsToCompile[i].forCall)
+                conventions[i][0] = AOT::conventionOf(codeBlock);
+            if (auto* codeBlock = functionsToCompile[i].forConstruct)
+                conventions[i][1] = AOT::conventionOf(codeBlock);
+        }
         AOT::ModuleHints::Describe describe = [&](UnlinkedFunctionExecutable* executable, AOT::KnownFunction& known) {
             auto it = indexOfFunction.find(executable);
             if (it == indexOfFunction.end())
@@ -6163,6 +6170,8 @@ struct BytecodeLinkEncoder::Impl {
             auto& function = functionsToCompile[it->value];
             known.forCall = function.forCall;
             known.forConstruct = function.forConstruct;
+            known.conventionForCall = conventions[it->value][0];
+            known.conventionForConstruct = conventions[it->value][1];
             known.key.module = modules[function.module].entryOffset + 1;
             known.key.start = function.key.start;
             known.key.kind = static_cast<uint32_t>(function.key.kind) << 1;
@@ -6175,7 +6184,6 @@ struct BytecodeLinkEncoder::Impl {
             hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, bindingsOfModule(index).span(), describe);
             hints[index]->noteFunctionsPutInVariablesBy(codeBlock, describe);
         }
-        Vector<UnlinkedCodeBlock*> bodiesOfFacts;
         if (Options::aotFacts() & 4) {
             unsigned bodies = 0;
             for (auto& function : functionsToCompile) {
@@ -6192,7 +6200,6 @@ struct BytecodeLinkEncoder::Impl {
                         known.needsNoFunctionObject = true;
                         known.returnType = AOT::TTop;
                         AOT::noteBodyOfFact(instruction->as<OpCheckType>().m_mask & 0xfffffff, known);
-                        bodiesOfFacts.append(function.forCall);
                         ++bodies;
                     }
                     break;
@@ -6234,19 +6241,6 @@ struct BytecodeLinkEncoder::Impl {
             variables += hintsOfModule->numberOfVariables();
             proven += hintsOfModule->numberProven();
         }
-        UncheckedKeyHashSet<UnlinkedCodeBlock*> calledDirectly;
-        for (auto& hintsOfModule : hints) {
-            if (!hintsOfModule)
-                continue;
-            hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
-                if (function.forCall)
-                    calledDirectly.add(function.forCall);
-                if (function.forConstruct)
-                    calledDirectly.add(function.forConstruct);
-            });
-        }
-        for (auto* body : bodiesOfFacts)
-            calledDirectly.add(body);
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that the bundler tells of or that are given one");
 
@@ -6595,7 +6589,7 @@ struct BytecodeLinkEncoder::Impl {
                     AOT::setOriginForStatistics(origin);
                 }
                 AOT::CompiledCode code;
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), calledDirectly.contains(jobs[index].codeBlock), factsOfCode.get(jobs[index].codeBlock), variableFacts)) {
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfCode.get(jobs[index].codeBlock), variableFacts)) {
                     // (A function's key says where its source starts, if it is a function that somebody wrote.)
                     {
                         auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);

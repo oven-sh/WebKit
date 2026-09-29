@@ -223,7 +223,7 @@ protected:
     }
     void pinCodeGenerationModeForResumableBody() { m_codeForGeneratorBodyWasGenerated = true; }
 
-    // Which function one in the short form is (AOT::CodeHeader::index).
+    // Which function one in the short form is (AOT::ImageFunction::index).
     uint32_t indexOfShortForm() const { return m_aotIndex[m_aotEntry[0] ? 0 : 1]; }
     JS_EXPORT_PRIVATE const SourceCode& sourceOfShortForm() const;
     JS_EXPORT_PRIVATE SourceProvider* sourceProviderOfShortForm() const;
@@ -233,7 +233,7 @@ protected:
     JS_EXPORT_PRIVATE DerivedContextType derivedContextTypeOfShortForm() const;
 
     // Of a FunctionExecutable: see aotEntryFor(). (Here, because this is as far as the short form goes.)
-    void* m_aotEntry[2] { };
+    uint64_t m_aotEntry[2] { }; // AOT::EntryWord
     uint32_t m_aotIndex[2] { };
     SourceCode m_source;
     Intrinsic m_intrinsic { NoIntrinsic };

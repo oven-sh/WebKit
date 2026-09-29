@@ -272,16 +272,16 @@ bool Lowering::tryLowerAllocation(Node* node)
         return true;
     }
     case op_create_direct_arguments:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateDirectArguments, m_globalObject));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateDirectArguments, m_globalObject, callee(), numberOfArgumentsPassed(), argumentsPassed(), m_out.constInt32(m_graph.codeBlock()->numParameters() - 1)));
         return true;
     case op_create_scoped_arguments:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateScopedArguments, m_globalObject, lowCell(node->use(node->as<OpCreateScopedArguments>().m_scope))));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateScopedArguments, m_globalObject, lowCell(node->use(node->as<OpCreateScopedArguments>().m_scope)), callee(), numberOfArgumentsPassed(), argumentsPassed()));
         return true;
     case op_create_cloned_arguments:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateClonedArguments, m_globalObject));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateClonedArguments, m_globalObject, callee(), numberOfArgumentsPassed(), argumentsPassed()));
         return true;
     case op_create_rest:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_globalObject, m_out.constInt32(node->as<OpCreateRest>().m_numParametersToSkip)));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_globalObject, numberOfArgumentsPassed(), argumentsPassed(), m_out.constInt32(node->as<OpCreateRest>().m_numParametersToSkip)));
         return true;
     default:
         return false;

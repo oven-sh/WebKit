@@ -37,7 +37,7 @@ static std::optional<Stub> stubFor(OpcodeID opcode)
 
 LValue Lowering::callBinaryStub(Node* node, Stub stub, LType type, LValue a, LValue b)
 {
-    return callStub(stub, type, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { { GPRInfo::regT10, callSiteBitsOf(node) } });
+    return callStub(stub, type, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { }, StubClobbers::WhatCallsDo, node);
 }
 
 static Entry operationFor(OpcodeID opcode)
@@ -471,7 +471,7 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
 
     if (isCompact()) {
         return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } },
-            { { GPRInfo::regT10, callSiteBitsOf(node) } });
+            { });
     }
 
     LBasicBlock notBothInt = m_out.newBlock();

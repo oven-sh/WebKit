@@ -810,16 +810,14 @@ CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
 }
 
 #if ENABLE(FTL_JIT)
-CatchInfo::CatchInfo(const UnlinkedHandlerInfo* handler, AOT::Data* data)
+CatchInfo::CatchInfo(const UnlinkedHandlerInfo* handler, const AOT::FunctionRef& function)
 {
     m_valid = !!handler;
     if (!m_valid)
         return;
     m_type = handler->type();
-    data->code->forEachCatchEntrypoint([&](unsigned bytecodeOffset, unsigned codeOffset) {
-        if (bytecodeOffset == handler->target)
-            m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(tagCodePtr<ExceptionHandlerPtrTag>(data->code->executableAddressAtOffset(codeOffset)));
-    });
+    m_isOfAOT = true;
+    m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(tagCodePtr<ExceptionHandlerPtrTag>(function.addressOfCatchEntrypoint(handler->target)));
     RELEASE_ASSERT(m_nativeCode);
     m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
 }
@@ -894,11 +892,13 @@ public:
         if (AOT::FunctionRef function = visitor->aotFunction()) {
             m_codeBlock = nullptr;
             if (!m_isTermination) {
-                auto* handler = function.handlerFor(m_callFrame->bytecodeIndex().offset());
-                m_handler = { handler, handler ? function.ensureData() : nullptr };
+                m_handler = { function.handlerFor(visitor->bytecodeIndex().offset()), function };
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
             }
+            // There is nothing else that such a frame could be, and nobody is told of its going.
+            copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
+            return visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
         } else
 #endif
             m_codeBlock = visitor->codeBlock();
@@ -1029,7 +1029,7 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     ASSERT(reinterpret_cast<void*>(callFrame) != vm.topEntryFrame);
-    CodeBlock* codeBlock = callFrame->isNativeCalleeFrame() || callFrame->isAOTFrame() ? nullptr : callFrame->codeBlock();
+    CodeBlock* codeBlock = nullptr;
 
     JSValue exceptionValue = exception->value();
     ASSERT(!exceptionValue.isEmpty());

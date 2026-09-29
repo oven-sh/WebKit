@@ -394,8 +394,6 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(FTL_JIT)
-    if (Options::aotWriteImage()) [[unlikely]]
-        AOT::addToImageBeingWritten(*vm, m_patternString, m_flags);
     if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags)) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;
@@ -492,8 +490,6 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(FTL_JIT)
-    if (Options::aotWriteImage()) [[unlikely]]
-        AOT::addToImageBeingWritten(*vm, m_patternString, m_flags);
     if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags)) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;

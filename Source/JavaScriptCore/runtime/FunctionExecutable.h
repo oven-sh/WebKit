@@ -319,12 +319,12 @@ public:
     }
 
     // Of one that was made when the program was built, and is nobody's to write to: where the code that was compiled for it then is,
-    // and which function that is (AOT::CodeHeader::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which go by these.
-    void* aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; }
+    // and which function that is (AOT::ImageFunction::index). Its entry points are AOT::Stub::EnterStaticFunctionFor*, which go by these.
+    uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; } // An AOT::EntryWord.
     uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
     void setUnlinkedExecutableWhileStaticHeapIsBuilt(UnlinkedFunctionExecutable* unlinked) { inFull()->m_unlinkedExecutable.setWithoutWriteBarrier(unlinked); }
     JS_EXPORT_PRIVATE void becomeStatic(VM&);
-    JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, void* stub, void* entry, uint32_t index);
+    JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, void* stub, uint64_t entry, uint32_t index);
     // There is code to call it with and none to construct with, and to construct is to make an object, call it, and see what
     // comes back (AOT::Stub::ConstructByCalling, which is then what aotEntryFor() is). That will do for a function that has no way
     // of telling: see generateUnlinkedCodeBlockForFunctions().

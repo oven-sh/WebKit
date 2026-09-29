@@ -45,12 +45,12 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     CallFrame* topJSCallFrame = vm.topJSCallFrame();
     if (Options::breakOnThrow()) [[unlikely]] {
-        CodeBlock* codeBlock = topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();
+        CodeBlock* codeBlock = !topJSCallFrame || topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();
         dataLog("In call frame ", RawPointer(topJSCallFrame), " for code block ", codeBlock, "\n");
         WTFBreakpointTrap();
     }
     
-    if (auto* shadowChicken = vm.shadowChicken())
+    if (auto* shadowChicken = vm.shadowChicken(); shadowChicken && topJSCallFrame)
         shadowChicken->log(vm, topJSCallFrame, ShadowChicken::Packet::throwPacket());
 
     Exception* exception = scope.exception();
@@ -87,7 +87,7 @@ void genericUnwind(VM& vm, CallFrame* callFrame)
         catchRoutine = LLInt::handleUncaughtException(vm).code().taggedPtr();
 
 #if ENABLE(FTL_JIT)
-    if (handler.m_valid && callFrame->isAOTFrame()) {
+    if (handler.m_valid && handler.m_isOfAOT) {
         // The handler has no way to find the VM before it has its frame: AOT::catchThunk() gives it that, and goes on to it.
         dispatchAndCatchRoutine = catchRoutine;
         catchRoutine = AOT::catchThunk();

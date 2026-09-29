@@ -119,7 +119,14 @@ private:
     LValue isCellOfType(LValue cell, JSType type) { return m_out.equal(cellType(cell), m_out.constInt32(type)); }
     LValue isObjectCell(LValue cell) { return m_out.aboveOrEqual(cellType(cell), m_out.constInt32(ObjectType)); }
 
-    TypedPointer addressFor(VirtualRegister, ptrdiff_t offset = 0);
+    TypedPointer addressFor(VirtualRegister); // Where a register that lives in memory does (Graph::isHomed()).
+    LValue registerOnEntry(Reg); // What was in it when the function was called.
+    LValue wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool mayChange);
+    void lowerEntry();
+    // Of a function with Signature::List.
+    LValue numberOfArgumentsPassed(); // Not counting `this`.
+    LValue argumentsPassed(); // Where the first is.
+    LValue argumentPassedOrUndefined(unsigned index);
     TypedPointer slotWord(unsigned slot, unsigned word); // Word 0: structureID and offset. Word 1: pointer.
     LValue slotAddress(unsigned slot);
     unsigned allocateSlot() { return m_graph.numICSlots++; }
@@ -141,9 +148,6 @@ private:
 
     // Calls into C++.
     LValue entry(Entry);
-    void callPreflight(Node*);
-    void checkException(LValue exception = nullptr);
-    LType operationTuple(LType);
     // For an operation declared with JSC_DECLARE_JIT_OPERATION: hands back the result, having checked for an exception.
     template<typename... Args> LValue vmCall(Node*, LType, Entry, Args...);
     // For one declared NOEXCEPT.
@@ -159,13 +163,14 @@ private:
         GPRReg reg;
         uint32_t value;
     };
-    enum class StubClobbers : uint8_t { WhatCDoes, WhatJSDoes, Temporaries };
-    B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::WhatCDoes);
+    enum class StubClobbers : uint8_t { WhatCallsDo, Temporaries, Nothing };
+    // place: where the function is to be said to be meanwhile, if not at what is being lowered.
+    B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::WhatCallsDo, Node* place = nullptr);
     LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // No node: it does not throw.
     // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
     // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
-    bool isCompact() const { return usesStubs && ((!m_block->isInLoop && !m_graph.callsItself) || m_block->isGeneric); }
+    bool isCompact() const { return (!m_block->isInLoop && !m_graph.callsItself) || m_block->isGeneric; }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     bool isFusedWithGetFromScope(Node*);
     // A slot that a stub can be told about.
@@ -178,8 +183,6 @@ private:
     unsigned allocateSite(Node*, unsigned identifier, unsigned extra = 0);
     // The one site of an instruction that is in both copies of a loop: what the generic copy finds out, the fast one goes by.
     unsigned sharedSite(Node*, unsigned identifier, unsigned extra = 0);
-    // The two slots of a call of a known function: see lowerCallToKnownFunction().
-    unsigned siteOfKnownCall(Node*, unsigned knownCallee, bool isConstruct);
 
     // AOTLowerArith.cpp
     bool tryLowerArith(Node*);
@@ -258,26 +261,20 @@ private:
     void checkIsObjectOrThrowIteratorResultIsNotObject(Node*, LValue);
     LValue inlineWatchpointSetIsStillValid(LValue set);
 
-    // AOTLowerVarargs.cpp
-    using Arguments = Vector<LValue, 8>; // Including this.
-    bool tryLowerCallVariant(Node*);
-    Arguments lowerArguments(Node*, unsigned argc, unsigned argv);
-    LValue emitCall(Node*, LValue callee, const Arguments&, bool isConstruct = false);
-    void emitTailCall(Node*, LValue callee, const Arguments&); // Ends the block.
-    LValue canTailCall(Node*, LValue callee, Type calleeType);
-    void lowerTailCall(Node*);
-    void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, bool isConstruct, bool isTail);
-    bool lowerSiblingCall(Node*); // Graph::isSiblingCall()
-    LValue emitCallVarargs(Node*, LValue callee, LValue thisValue, LValue arguments, LValue length, int firstVarArg, bool isConstruct, bool isTail);
-    // Node::isMadeWhenWanted: where it is once it has been made, and it, made now if it has not been.
-    TypedPointer whereItIsOnceMade(Node*);
-    LValue makeIfNotMade(Node*);
-    void lowerCallDirectEval(Node*);
-
     // AOTLowerCalls.cpp
+    using Arguments = Vector<LValue, 8>; // The first is `this`; for a construction, new.target.
+    enum class CallMode : uint8_t { Call, Construct, TailCall };
     bool tryLowerCall(Node*);
-    void lowerCall(Node*, VirtualRegister callee, unsigned argc, unsigned argv, bool isConstruct, bool hasResult);
-    bool lowerCallToKnownFunction(Node*, VirtualRegister callee, unsigned argc, unsigned argv, bool isConstruct, bool hasResult);
+    Arguments lowerArguments(Node*, unsigned argc, unsigned argv);
+    // Of whatever the callee turns out to be. A tail call ends the block, and there is no result.
+    LValue emitCall(Node*, LValue callee, const Arguments&, CallMode = CallMode::Call, StubIntrinsic = StubIntrinsic::None);
+    void lowerCall(Node*, VirtualRegister callee, unsigned argc, unsigned argv, CallMode, bool hasResult);
+    bool lowerCallToKnownFunction(Node*, VirtualRegister callee, const Arguments&, CallMode, bool hasResult);
+    void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, CallMode);
+    void lowerCallDirectEval(Node*);
+    LValue storeArgumentsToScratch(const Arguments&); // But for the first. Where they are.
+    void finishCall(B3::PatchpointValue*, CallMode);
+    LBasicBlock leaveIfFunction(Node* calleeNode, LValue callee);
 
     Graph& m_graph;
     B3::Procedure& m_proc;
@@ -287,23 +284,19 @@ private:
     LValue m_callFrame { nullptr };
     LValue m_instance { nullptr };
     LValue m_data { nullptr };
-    LValue m_info { nullptr }; // The FunctionInfo.
+    LValue m_dataOrNothing { nullptr };
+    LValue m_constants { nullptr }; // Of a function that starts cold: FunctionInfo::constants.
     LValue m_calleeSlot { nullptr };
+    LValue m_listSlot { nullptr }; // Signature::List: how many arguments were passed, and where they are.
+    LValue m_homes { nullptr };
     LValue m_vm { nullptr };
     LValue m_globalObject { nullptr };
     LValue m_table { nullptr };
     LValue m_numberTag { nullptr };
     LValue m_notCellMask { nullptr };
     LValue m_scratch { nullptr };
-    UncheckedKeyHashMap<Node*, LValue> m_madeWhenWanted;
-    LBasicBlock m_handleExceptions { nullptr };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;
-    LBasicBlock m_tailCallBlock { nullptr };
-    Vector<ValueFromBlock, 4> m_tailCallCallees;
-    Vector<ValueFromBlock, 4> m_tailCallTargets;
-    LBasicBlock m_throwTDZBlock { nullptr };
-    Vector<ValueFromBlock, 4> m_throwTDZSites;
     LBasicBlock m_exit { nullptr }; // While a guard is lowered: the way to the generic copy.
     Vector<std::pair<BasicBlock*, LBasicBlock>, 2> m_edges; // While a branch is lowered: the ways to successors that have phis.
     LBasicBlock m_afterSlotChecks { nullptr };
@@ -312,28 +305,13 @@ private:
     UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sharedSites; // By bytecode offset and identifier.
     BasicBlock* m_block { nullptr };
     unsigned m_nodeIndex { 0 }; // Of the node being lowered, in m_block.
-    LType m_tuples[8] { };
+    Node* m_node { nullptr }; // It, if it has a place in the bytecode.
 };
 
 template<typename... Args>
 LValue Lowering::vmCall(Node* node, LType type, Entry function, Args... args)
 {
-    if constexpr (usesStubs)
-        return callOperationThroughStub(node, type, function, { args... });
-    callPreflight(node);
-    if (type == B3::Double) {
-        // Comes back in a floating point register, so there is no room for the exception next to it.
-        LValue result = m_out.call(type, entry(function), args...);
-        checkException();
-        return result;
-    }
-    LValue result = m_out.call(operationTuple(type), entry(function), args...);
-    if (type == B3::Void) {
-        checkException(result);
-        return nullptr;
-    }
-    checkException(m_out.extract(result, 1));
-    return m_out.extract(result, 0);
+    return callOperationThroughStub(node, type, function, { args... });
 }
 
 template<typename Functor>
@@ -357,9 +335,7 @@ LValue Lowering::isCellAnd(Node* node, LValue value, const Functor& test)
 template<typename... Args>
 LValue Lowering::plainCall(LType type, Entry function, Args... args)
 {
-    if constexpr (usesStubs)
-        return callOperationThroughStub(nullptr, type, function, { args... });
-    return m_out.call(type, entry(function), args...);
+    return callOperationThroughStub(nullptr, type, function, { args... });
 }
 
 } } // namespace JSC::AOT

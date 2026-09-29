@@ -27,6 +27,7 @@
 #include "CallLinkInfo.h"
 
 #include "AOTRuntime.h"
+#include "StackVisitor.h"
 
 #include "BaselineJITRegisters.h"
 #include "CCallHelpers.h"
@@ -345,15 +346,16 @@ std::tuple<CodeBlock*, BytecodeIndex> CallLinkInfo::retrieveCaller(JSCell* owner
     if (!codeBlock)
         return { };
     if (codeBlock->jitType() == JITType::AOTJIT) {
-        // Every call site of code from the static compiler uses the same CallLinkInfo. The frame says which one this is.
+        // Every call site of code from the static compiler uses the same CallLinkInfo. The stack says which one this is.
         VM& vm = codeBlock->vm();
-        for (CallFrame* frame = vm.topCallFrame; frame; frame = frame->callerFrame()) {
-            if (!frame->isNativeCalleeFrame() && frame->codeBlock() == codeBlock)
-                return std::tuple { codeBlock, frame->bytecodeIndex() };
-            if (frame->callerFrame() <= frame)
-                break;
-        }
-        return std::tuple { codeBlock, BytecodeIndex(0) };
+        BytecodeIndex bytecodeIndex(0);
+        StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) {
+            if (!visitor->aotFunction() || visitor->aotFunction().codeBlockIfThereIsOne() != codeBlock)
+                return IterationStatus::Continue;
+            bytecodeIndex = visitor->bytecodeIndex();
+            return IterationStatus::Done;
+        });
+        return std::tuple { codeBlock, bytecodeIndex };
     }
     CodeOrigin codeOrigin = this->codeOrigin();
     if (auto* baselineCodeBlock = codeOrigin.codeOriginOwner())

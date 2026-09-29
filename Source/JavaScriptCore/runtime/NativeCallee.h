@@ -41,9 +41,6 @@ public:
     enum class Category : uint8_t {
         InlineCache,
         Wasm,
-        // Not one of these at all, but what is in front of a function from the static compiler (AOT::CodeHeader), which starts the
-        // same way. It is part of the code: it is not counted, and not written to.
-        AOT,
     };
 
     Category category() const { return m_category; }

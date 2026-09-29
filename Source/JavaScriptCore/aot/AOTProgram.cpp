@@ -27,7 +27,6 @@ WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VariableFacts::Cell);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ProgramFacts);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CalleeHints);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ModuleHints);
-WTF_MAKE_TZONE_ALLOCATED_IMPL(LiveHints);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ModuleLinkage);
 
 static Lock s_declaredNamesLock;
@@ -212,7 +211,6 @@ Vector<unsigned> VariableFacts::takeReadersOfWhatGrew()
 
 CalleeHints::~CalleeHints() = default;
 ModuleHints::~ModuleHints() = default;
-LiveHints::~LiveHints() = default;
 
 void ModuleHints::add(unsigned scopeOffset, UnlinkedFunctionExecutable* executable, const Describe& describe)
 {
@@ -292,6 +290,39 @@ unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
     return std::min(capacity, JSFinalObject::maxInlineCapacity);
 }
 
+Convention conventionOf(UnlinkedCodeBlock* codeBlock)
+{
+    Convention result;
+    unsigned numberOfParameters = codeBlock->numParameters() - 1;
+    bool takesList = numberOfParameters > numberOfArgumentGPRs;
+    result.usesThis = codeBlock->isConstructor();
+    for (const auto& instruction : codeBlock->instructions()) {
+        switch (instruction->opcodeID()) {
+        case op_create_direct_arguments:
+        case op_create_scoped_arguments:
+        case op_create_cloned_arguments:
+        case op_create_rest:
+        case op_argument_count:
+            takesList = true;
+            break;
+        case op_get_argument:
+            // (It counts `this`.)
+            takesList |= static_cast<unsigned>(instruction->as<OpGetArgument>().m_index) > numberOfParameters;
+            break;
+        default:
+            break;
+        }
+        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints() && !result.usesThis; ++checkpoint) {
+            computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
+                result.usesThis |= reg == virtualRegisterForArgumentIncludingThis(0);
+            });
+        }
+    }
+    result.signature = takesList ? Signature::List : Signature::Registers;
+    result.numberOfParameters = takesList ? 0 : numberOfParameters;
+    return result;
+}
+
 bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)
 {
     if (codeBlock->codeType() != FunctionCode || codeBlock->isConstructor())
@@ -337,41 +368,6 @@ const KnownFunction* ModuleHints::find(UniquedStringImpl*, std::optional<unsigne
     if (it == m_variables.end() || it->value.numberOfFunctions != 1 || !it->value.isDescribed)
         return nullptr;
     return &it->value.function;
-}
-
-LiveHints::LiveHints(JSGlobalObject* globalObject)
-    : m_globalObject(globalObject)
-{
-}
-
-const KnownFunction* LiveHints::find(UniquedStringImpl* name, std::optional<unsigned> scopeOffset) const
-{
-    if (scopeOffset)
-        return nullptr;
-    VM& vm = m_globalObject->vm();
-    JSValue value;
-    // Looking, and nothing else: no getter is called and nothing is reified.
-    if (auto entry = m_globalObject->globalLexicalEnvironment()->symbolTable()->get(name); !entry.isNull())
-        value = m_globalObject->globalLexicalEnvironment()->variableAt(entry.scopeOffset()).get();
-    else if (auto entry = m_globalObject->symbolTable()->get(name); !entry.isNull())
-        value = m_globalObject->variableAt(entry.scopeOffset()).get();
-    else
-        value = m_globalObject->getDirect(vm, PropertyName(Identifier::fromUid(vm, name)));
-    auto* function = value ? dynamicDowncast<JSFunction>(value) : nullptr;
-    if (!function || function->isHostOrBuiltinFunction())
-        return nullptr;
-    FunctionExecutable* executable = function->jsExecutable();
-    auto key = imageKeyFor(executable, CodeSpecializationKind::CodeForCall);
-    if (!key)
-        return nullptr;
-    auto known = makeUniqueWithoutFastMallocCheck<KnownFunction>();
-    known->executable = executable->unlinkedExecutable();
-    known->key = *key;
-    auto [forCall, forConstruct] = known->executable->codeBlocksDecodingCached(vm);
-    known->forCall = forCall;
-    known->forConstruct = forConstruct;
-    m_functions.append(WTF::move(known));
-    return m_functions.last().get();
 }
 
 } } // namespace JSC::AOT

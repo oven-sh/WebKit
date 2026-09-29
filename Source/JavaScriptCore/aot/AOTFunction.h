@@ -11,6 +11,7 @@
 #include "Identifier.h"
 #include "LineColumn.h"
 #include "WriteBarrier.h"
+#include <optional>
 #include <span>
 #include <wtf/text/WTFString.h>
 
@@ -19,6 +20,7 @@ namespace JSC {
 class CallFrame;
 class CodeBlock;
 class FunctionExecutable;
+class RegisterAtOffsetList;
 class ScriptExecutable;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionExecutable;
@@ -31,6 +33,7 @@ namespace AOT {
 struct Data;
 struct FunctionFacts;
 struct FunctionInfo;
+struct ImageFunction;
 struct Instance;
 struct Slot;
 
@@ -53,7 +56,10 @@ struct AllocationPlan {
 // What a frame of code from the static compiler is a frame of: a function, in a realm. There need be nothing in memory that stands
 // for it (SharedData).
 struct FunctionRef {
-    JS_EXPORT_PRIVATE static FunctionRef of(const CallFrame*);
+    // What has that address in its code.
+    JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
+    // Where in its bytecode it is, if that is where it is going to be returned to.
+    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*); // None, unless its code is the static compiler's.
     // What has run as this executable's code of this kind. None, if its realm is no more.
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind);
@@ -71,6 +77,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
     JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset) const;
+    JS_EXPORT_PRIVATE void* addressOfCatchEntrypoint(unsigned bytecodeOffset) const; // Where the code is for the op_catch that is there.
     const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
     // Of the body of an async function that is waiting in that state: where it goes on from. Nowhere in particular: the beginning.
@@ -108,5 +115,44 @@ struct FunctionRef {
     Instance* instance { nullptr };
     uint32_t index { 0 };
 };
+
+// ---- Frames
+//
+// A frame of this compiler's code has nothing in it that says so. What it is a frame of is told from the address that is going to be
+// returned to in it, which is in the frame of whatever it called.
+struct WhatIsAt {
+    enum Kind : uint8_t {
+        SomethingElse, // Not in an image.
+        Function, // In the code of a function: `index` says which, and `offset` how far in.
+        // In a stub. Its frame, if it has one, is nobody's: whoever walks the stack goes on to the next, which is that of what
+        // called the stub.
+        Stub,
+        // In a stub that was called the way the rest of the engine calls a function (adapt()): what is above its frame pointer is
+        // what such a caller puts there, its caller is found the way such a frame's is, and it has saved registers.
+        Adapter,
+    };
+    Kind kind { SomethingElse };
+    uint32_t index { 0 };
+    uint32_t offset { 0 };
+};
+JS_EXPORT_PRIVATE WhatIsAt whatIsAt(const void* address); // Any thread.
+// The address that is going to be returned to in `frame`: found by going from frame to frame, starting at one that is further in
+// (that of a function of C++ that is running, or the EntryFrame of code that `frame` is waiting for). Null: it is not out from there.
+JS_EXPORT_PRIVATE void* returnAddressInto(const void* frame, const void* startingFrom);
+// Where in its bytecode a function is that is going to be returned to that far into its code (CallSiteIndex::bits()).
+JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
+JS_EXPORT_PRIVATE const RegisterAtOffsetList& registersThatAdapterSaves();
+JS_EXPORT_PRIVATE bool hasCode(); // There is an image with code in it: otherwise none of this comes to anything.
+// Nothing: nobody was to ask about what is called from there, or it is not where anything is going to return to.
+JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
+// Of a frame of code from the static compiler, or of a stub that such code called: whose realm's. The adapter that let the code in says.
+JS_EXPORT_PRIVATE Instance* instanceOfFrame(const void* frame);
+// frame: the last that the VM was told of (VM::topCallFrame). Whether it is a stub's, or such code's: then there is nothing in it of what a
+// frame has in the engine's own convention, and nothing is to be asked of it but by way of a StackVisitor.
+JS_EXPORT_PRIVATE bool topFrameIsNotTheEnginesOwn(const void* frame);
+// frame: one in the engine's own convention, of a host function, say. The function that made the call, if it is code from the static compiler.
+JS_EXPORT_PRIVATE FunctionRef functionThatCalled(const CallFrame*);
+// Its CodeBlock, made now if there is none, for whoever has to have one to report an error with. Null if it is not such code.
+JS_EXPORT_PRIVATE CodeBlock* codeBlockOfFunctionThatCalled(const CallFrame*);
 
 } } // namespace JSC::AOT

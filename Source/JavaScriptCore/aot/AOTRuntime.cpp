@@ -94,22 +94,12 @@ RuntimeTable::RuntimeTable(VM& vm)
     auto set = [&](Entry entry, void* pointer) {
         m_entries[static_cast<unsigned>(entry)] = pointer;
     };
-    if constexpr (usesStubs) {
-        set(Entry::HandleException, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::HandleException)));
-        set(Entry::ThrowStackOverflowAtPrologue, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::ThrowStackOverflowAtPrologue)));
-        set(Entry::VirtualCall, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::VirtualCall)));
-        set(Entry::VirtualConstruct, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::VirtualConstruct)));
-        set(Entry::VirtualTailCall, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::VirtualTailCall)));
-    } else {
-        set(Entry::HandleException, vm.getCTIStub(CommonJITThunkID::HandleException).code().taggedPtr());
-        set(Entry::ThrowStackOverflowAtPrologue, vm.getCTIStub(CommonJITThunkID::ThrowStackOverflowAtPrologue).code().taggedPtr());
-        set(Entry::VirtualCall, vm.getCTIVirtualCall(CallMode::Regular).code().taggedPtr());
-        set(Entry::VirtualConstruct, vm.getCTIVirtualCall(CallMode::Construct).code().taggedPtr());
-        set(Entry::VirtualTailCall, vm.getCTIVirtualCall(CallMode::Tail).code().taggedPtr());
-    }
-    set(Entry::ArityFixup, LLInt::arityFixup().taggedPtr());
+    set(Entry::HandleException, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::HandleException)));
+    set(Entry::ThrowStackOverflowAtPrologue, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::ThrowStackOverflowAtPrologue)));
+    set(Entry::VirtualCall, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::VirtualCall)));
+    set(Entry::VirtualConstruct, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::VirtualConstruct)));
+    set(Entry::VirtualTailCall, tagCodePtr<JITThunkPtrTag>(addressOfStub(Stub::VirtualTailCall)));
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
-    set(Entry::LookupExceptionHandlerFromCallerFrame, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandlerFromCallerFrame));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
 
@@ -247,6 +237,11 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->factsOfFunctions = environmentsSize ? StaticHeap::factsOfFunctions(vm) : nullptr;
     instance->constantsOfProgram = environmentsSize ? StaticHeap::constantsOfProgram(vm) : nullptr;
     instance->sharedData = SharedData::get();
+    if (Image* image = Image::withCode()) {
+        instance->code = static_cast<const uint8_t*>(image->code());
+        instance->granulesOfCode = image->at<uint32_t>(image->header().granulesOfCodeOffset);
+        instance->startsOfFunctionsAfterFirst = image->at<uint32_t>(image->header().startsOfFunctionsOffset) + 1;
+    }
     instance->missesForEightSlots = Options::aotMissesForEightSlots();
     instance->missesToSpare = Options::aotMissesToSpare();
     instance->collections->sizeOfMisses = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(uint16_t));
@@ -303,55 +298,78 @@ void* Instance::placeForEnvironment(ImageEnvironment environment) const
     return const_cast<char*>(reinterpret_cast<const char*>(this)) - environment.distance;
 }
 
-static std::atomic<uint32_t> s_nextFunctionIndex { 0 };
-
-uint32_t allocateFunctionIndex()
+SUPPRESS_ASAN void* returnAddressInto(const void* frame, const void* startingFrom)
 {
-    uint32_t index = s_nextFunctionIndex++;
-    RELEASE_ASSERT(index < Instance::maxFunctions);
-    return index;
+    struct Record {
+        const Record* previous;
+        void* returnAddress;
+    };
+    for (auto* record = static_cast<const Record*>(startingFrom); record && record < frame; record = record->previous) {
+        if (record->previous == frame)
+            return removeCodePtrTag(record->returnAddress);
+    }
+    return nullptr;
 }
 
-bool reserveFunctionIndicesForImage(uint32_t count)
-{
-    uint32_t expected = 0;
-    return count < Instance::maxFunctions && s_nextFunctionIndex.compare_exchange_strong(expected, count);
+namespace {
+struct FrameRecord {
+    const FrameRecord* previous;
+    void* returnAddress;
+};
 }
 
-bool isCodeHeader(const void* pointer)
+SUPPRESS_ASAN Instance* instanceOfFrame(const void* frame)
 {
-    if (std::bit_cast<uintptr_t>(pointer) % alignof(CodeHeader))
+    for (auto* record = static_cast<const FrameRecord*>(frame);; record = record->previous) {
+        WhatIsAt::Kind kind = whatIsAt(removeCodePtrTag(record->returnAddress)).kind;
+        RELEASE_ASSERT(kind != WhatIsAt::SomethingElse);
+        if (kind == WhatIsAt::Adapter)
+            return *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(record->previous) + offsetOfInstanceInAdapter);
+    }
+}
+
+NEVER_INLINE bool topFrameIsNotTheEnginesOwn(const void* frame)
+{
+    if (!hasCode())
         return false;
-    if (!Image::containsCode(pointer) && !isJITPC(const_cast<void*>(pointer)))
-        return false;
-    return static_cast<const CodeHeader*>(pointer)->category == NativeCallee::Category::AOT;
+    void* returnAddress = returnAddressInto(frame, __builtin_frame_address(0));
+    return returnAddress && whatIsAt(returnAddress).kind != WhatIsAt::SomethingElse;
 }
 
-Data* dataOf(const CallFrame* callFrame)
+SUPPRESS_ASAN FunctionRef functionThatCalled(const CallFrame* callFrame)
 {
-    auto* instance = std::bit_cast<Instance*>(callFrame->unsafeCodeBlock());
-    return instance->data[CodeHeader::fromCallee(callFrame->rawCallee())->index];
+    if (!hasCode())
+        return { };
+    for (auto* record = reinterpret_cast<const FrameRecord*>(callFrame);; record = record->previous) {
+        WhatIsAt what = whatIsAt(removeCodePtrTag(record->returnAddress));
+        if (what.kind == WhatIsAt::Function)
+            return { instanceOfFrame(record->previous), what.index };
+        if (what.kind != WhatIsAt::Stub)
+            return { };
+    }
 }
 
-CodeBlock* codeBlockOf(const CallFrame* callFrame)
+CodeBlock* codeBlockOfFunctionThatCalled(const CallFrame* callFrame)
 {
-    return FunctionRef::of(callFrame).ensureData()->ensureCodeBlock();
+    FunctionRef function = functionThatCalled(callFrame);
+    return function ? function.ensureCodeBlock() : nullptr;
 }
 
-JSObject* calleeOf(const CallFrame* callFrame)
+const RegisterAtOffsetList& registersThatAdapterSaves()
 {
-    int calleeSlot = CodeHeader::fromCallee(callFrame->rawCallee())->calleeSlot;
-    return calleeSlot ? callFrame->registers()[calleeSlot].object() : nullptr;
-}
-
-VM& vmOf(const CallFrame* callFrame)
-{
-    return *std::bit_cast<Instance*>(callFrame->unsafeCodeBlock())->vm;
-}
-
-JSGlobalObject* globalObjectOf(const CallFrame* callFrame)
-{
-    return std::bit_cast<Instance*>(callFrame->unsafeCodeBlock())->globalObject;
+    static LazyNeverDestroyed<RegisterAtOffsetList> list;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        RegisterSet registers;
+        registers.add(instanceGPR, IgnoreVectors);
+        registers.add(GPRInfo::numberTagRegister, IgnoreVectors);
+        registers.add(GPRInfo::notCellMaskRegister, IgnoreVectors);
+        list.construct(registers);
+        // (In the order of their numbers, upwards.)
+        list->adjustOffsets(offsetOfInstanceRegisterInAdapter - list->find(instanceGPR)->offset());
+        RELEASE_ASSERT(list->find(GPRInfo::numberTagRegister)->offset() == offsetOfNumberTagRegisterInAdapter && list->find(GPRInfo::notCellMaskRegister)->offset() == offsetOfNotCellMaskRegisterInAdapter);
+    });
+    return list.get();
 }
 
 bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesWillDo symbolTablesWillDo)
@@ -457,7 +475,7 @@ static void fillInfo(FunctionInfo& info, ScriptExecutable* executable, UnlinkedC
     info.identifiers = unlinkedCodeBlock->identifiers().span().data();
     info.sites = code.sites();
     info.setExecutable(executable, unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->codeType() == FunctionCode ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, false);
-    info.flags = (!code.isFromImage() ? 0 : code.imageFunction()->hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants) | FunctionInfo::slotsAmongFlags(code.numSlots());
+    info.flags = (code.imageFunction()->hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants) | FunctionInfo::slotsAmongFlags(code.numSlots());
 }
 
 Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, CodeBlock* codeBlock)
@@ -474,15 +492,15 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->code = &code;
     // (Of a program that was put together with all it needs, they are what its FunctionInfo says. The unlinked code, if there is
     // any, may have been decoded since, and has the same in a place of its own.)
-    FunctionInfo& info = instance.infos[code.header().index];
+    FunctionInfo& info = instance.infos[code.index()];
     data->identifiers = info.sites ? info.identifiers : unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
-    data->hasSiteConstants = code.isFromImage() && code.imageFunction()->hasSiteConstants;
+    data->hasSiteConstants = code.imageFunction()->hasSiteConstants;
     data->numSlots = numSlots;
     data->slotEpoch = 1;
 
-    RELEASE_ASSERT(sizeof(Instance) + (code.header().index + 1) * sizeof(Data*) <= instance.collections->sizeFromInstance);
-    Data*& place = instance.data[code.header().index];
+    RELEASE_ASSERT(sizeof(Instance) + (code.index() + 1) * sizeof(Data*) <= instance.collections->sizeFromInstance);
+    Data*& place = instance.data[code.index()];
     RELEASE_ASSERT(!place);
     place = data;
     data->indexAmongAll = instance.collections->all.size();
@@ -497,7 +515,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     }
     if (!info.sites) {
         if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
-            dataLogLn("AOT: nothing was known of function ", code.header().index, " when the program was built");
+            dataLogLn("AOT: nothing was known of function ", code.index(), " when the program was built");
         fillInfo(info, executable, unlinkedCodeBlock, code, data->constants);
     }
     RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::mostSlotsSaid) && (!info.executable() || info.executable() == executable));
@@ -506,16 +524,16 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
 
 Data* Instance::ensureData(uint32_t index)
 {
+    // (One that starts cold, and that only those have called that know what they are calling, has nothing there at all.)
     Data* data = this->data[index];
-    RELEASE_ASSERT(data);
-    if (data != sharedData)
+    if (data && data != sharedData)
         return data;
     const FunctionInfo& info = infos[index];
     auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(info.kind());
     // (An executable that was made when the program was built has no way of holding on to one.)
     Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function()), info.function() }, info.kind());
-    RELEASE_ASSERT(code->header().index == index);
+    RELEASE_ASSERT(code->index() == index);
     code->setInstance(*this);
     this->data[index] = nullptr;
     s_gotDataLater++;
@@ -524,9 +542,18 @@ Data* Instance::ensureData(uint32_t index)
     return data;
 }
 
-FunctionRef FunctionRef::of(const CallFrame* callFrame)
+FunctionRef FunctionRef::at(Instance* instance, const void* address)
 {
-    return { std::bit_cast<Instance*>(callFrame->unsafeCodeBlock()), CodeHeader::fromCallee(callFrame->rawCallee())->index };
+    WhatIsAt what = whatIsAt(address);
+    RELEASE_ASSERT(what.kind == WhatIsAt::Function);
+    return { instance, what.index };
+}
+
+BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
+{
+    WhatIsAt what = whatIsAt(returnAddress);
+    RELEASE_ASSERT(what.kind == WhatIsAt::Function && what.index == index);
+    return CallSiteIndex(callSiteAt(*info().function(), what.offset)).bytecodeIndex();
 }
 
 FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
@@ -535,8 +562,9 @@ FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpeciali
         return { vm.m_aotInstanceOfProgram, executable->aotIndexFor(kind) };
     if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
         return { };
-    auto& code = static_cast<JITCode&>(executable->generatedJITCodeFor(kind).get());
-    return { code.instance(), code.header().index };
+    Ref generated = executable->generatedJITCodeFor(kind);
+    auto& code = static_cast<JITCode&>(generated.get());
+    return { code.instance(), code.index() };
 }
 
 CodeBlock* FunctionRef::ensureCodeBlock() const
@@ -593,8 +621,9 @@ FunctionRef FunctionRef::of(CodeBlock* codeBlock)
     // (Not by way of its Data, which code that is not going to run again has let go of: CodeBlock::releaseAOTData().)
     if (codeBlock->jitType() != JITType::AOTJIT)
         return { };
-    auto* code = static_cast<JITCode*>(codeBlock->jitCode().get());
-    return code->instance() ? FunctionRef { code->instance(), code->header().index } : FunctionRef { };
+    RefPtr generated = codeBlock->jitCode();
+    auto* code = static_cast<JITCode*>(generated.get());
+    return code->instance() ? FunctionRef { code->instance(), code->index() } : FunctionRef { };
 }
 
 bool FunctionRef::constructsAt(BytecodeIndex bytecodeIndex) const
@@ -810,6 +839,16 @@ unsigned FunctionRef::instructionsSize() const
     return unlinkedCodeBlockIfThereIsOne()->instructions().size();
 }
 
+void* FunctionRef::addressOfCatchEntrypoint(unsigned bytecodeOffset) const
+{
+    const ImageFunction& function = *info().function();
+    for (unsigned i = 0; i < function.numberOfCatchEntrypoints; ++i) {
+        if (function.catchEntrypoints()[i].bytecodeOffset == bytecodeOffset)
+            return const_cast<uint8_t*>(Image::of(function).codeFor(function)) + function.catchEntrypoints()[i].codeOffset;
+    }
+    return nullptr;
+}
+
 const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) const
 {
     auto* facts = this->facts();
@@ -882,7 +921,7 @@ void Data::destroy(Data* data)
     // (MegamorphicCache::ConstructionEntry::m_site)
     if (auto* cache = instance.vm->megamorphicCache())
         cache->bumpEpoch();
-    Data*& place = instance.data[data->code->header().index];
+    Data*& place = instance.data[data->code->index()];
     RELEASE_ASSERT(place == data);
     place = nullptr;
     auto removeFrom = [&](Vector<Data*>& list, unsigned Data::*index) {
@@ -907,7 +946,7 @@ void Data::destroy(Data* data)
 
 FunctionRef Data::function() const
 {
-    return { instance, code->header().index };
+    return { instance, code->index() };
 }
 
 CodeBlock* Data::ensureCodeBlock()
@@ -1018,10 +1057,10 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
 {
     Instance& instance = Instance::ensure(globalObject);
     code->setInstance(instance);
-    uint32_t index = code->header().index;
+    uint32_t index = code->index();
     if (instance.data[index])
         RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
-    else if (code->imageFunction() && code->imageFunction()->startsCold && Options::aotStartFunctionsCold() && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
+    else if (code->imageFunction()->startsCold && Options::aotStartFunctionsCold() && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
         if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
             dataLogLn("AOT: nothing was known of function ", index, " when the program was built");
         fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
@@ -1058,7 +1097,7 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
     if (!found)
         return false;
     Ref<JITCode> code = codeOfFunctionFromImage(found, kind);
-    RELEASE_ASSERT(code->header().index == executable->aotIndexFor(kind));
+    RELEASE_ASSERT(code->index() == executable->aotIndexFor(kind));
     code->setInstance(*instance);
     return !!Data::create(*instance, executable, unlinkedCodeBlock, code.get());
 }
@@ -1127,10 +1166,8 @@ void Instance::dumpSlotStatistics()
         slots += data->numSlots;
         bool any = false;
         OpcodeID last = op_nop;
-        auto& instructions = data->unlinkedCodeBlock->instructions();
         for (unsigned i = 0; i < data->numSlots; ++i) {
-            uint32_t bits = data->sites[i].callSiteBits;
-            OpcodeID opcode = bits || !i ? instructions.at(CallSiteIndex(bits).bytecodeIndex().offset())->opcodeID() : last;
+            OpcodeID opcode = last; // (A site no longer says which instruction it is of.)
             last = opcode;
             total[opcode]++;
             Slot& slot = data->slots[i];
@@ -1150,7 +1187,7 @@ void Instance::dumpSlotStatistics()
         // TEMPORARY-SLOT-STATS: who has a Data.
         uint64_t count[4] = { }, slotsOf[4] = { }, filledOf[4] = { };
         for (Data* data : collections->all) {
-            const FunctionInfo& info = infos[data->code->header().index];
+            const FunctionInfo& info = infos[data->code->index()];
             bool hasLoop = false;
             if (data->unlinkedCodeBlock->codeType() == FunctionCode && !(info.flags & FunctionInfo::startsCold)) {
                 for (const auto& instruction : data->unlinkedCodeBlock->instructions())
@@ -1313,17 +1350,8 @@ JITCode::Way JITCode::wayInto(UnlinkedCodeBlock* codeBlock)
     return codeBlock->isConstructor() ? Way::Construct : Way::Call;
 }
 
-JITCode::JITCode(void* code, RefPtr<ExecutableMemoryHandle>&& handle, CompiledFunctionInfo&& info, Way way)
-    : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(stubFor(way)))), handle ? ShareAttribute::NotShared : ShareAttribute::Shared)
-    , m_code(code)
-    , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + info.arityCheckOffset))
-    , m_owned(makeUnique<Owned>(WTF::move(handle), WTF::move(info)))
-{
-    m_calleeSaveRegisters = &m_owned->info.calleeSaveRegisters;
-}
-
 // There are as many of these as there are ways to pick the first few of the registers that a callee saves.
-static const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
+const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
 {
     static Lock lock;
     static NeverDestroyed<UncheckedKeyHashMap<uint64_t, Vector<std::unique_ptr<RegisterAtOffsetList>, 1>>> lists;
@@ -1361,7 +1389,7 @@ JITCode::JITCode(void* code, const ImageFunction& function, Way way)
     // Code in an image is nobody's memory: the collector, which paces itself by what the heap holds on to, is not to count it.
     : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(stubFor(way)))), ShareAttribute::Shared)
     , m_code(code)
-    , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + function.arityCheckOffset()))
+    , m_entry(EntryWord::encode(code, function.convention()))
     , m_function(&function)
     , m_calleeSaveRegisters(calleeSaveRegistersOf(function))
 {

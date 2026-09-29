@@ -418,13 +418,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: not in an image: ", executable->ecmaName().string(), " of ", executable->source().provider()->sourceURL(), " at ", executable->source().startOffset(), kind == CodeSpecializationKind::CodeForCall ? "" : " (construct)");
     }
-    if (Options::useAOT()) [[unlikely]] {
-        if (auto code = AOT::tryCompile(vm, executable, kind, unlinkedCodeBlock, scope)) {
-            throwScope.release();
-            AOT::install(vm, executable, kind, unlinkedCodeBlock, globalObject, code.releaseNonNull());
-            return nullptr;
-        }
-    }
 #endif
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
 }
@@ -522,14 +515,6 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     if (RefPtr<BaselineJITCode> baselineRef = installedUnlinkedBaselineCode ? nullptr : codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {
         codeBlock->setupWithUnlinkedBaselineCode(baselineRef.releaseNonNull());
         installedUnlinkedBaselineCode = true;
-    }
-#endif
-#if ENABLE(FTL_JIT)
-    if (!installedUnlinkedBaselineCode && Options::useAOT() && codeBlock->codeType() != FunctionCode) [[unlikely]] {
-        if (auto code = AOT::tryCompile(vm, this, kind, codeBlock->unlinkedCodeBlock(), scope)) {
-            codeBlock->installAOTCode(code.releaseNonNull());
-            installedUnlinkedBaselineCode = true;
-        }
     }
 #endif
     if (!installedUnlinkedBaselineCode) {

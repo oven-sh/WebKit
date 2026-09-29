@@ -114,6 +114,8 @@ struct KnownFunction {
     UnlinkedFunctionCodeBlock* forCall { nullptr }; // Either may be missing.
     UnlinkedFunctionCodeBlock* forConstruct { nullptr };
     ImageKey key; // Of the code for a call. That for construction is the same but for the bit that says so.
+    Convention conventionForCall; // conventionOf() each of them.
+    Convention conventionForConstruct;
     // The variable it was found in holds a closure of it from when it is initialized, and never anything else: the bundler, which
     // has seen every use there is of the variable, says so (ModuleHints::prove()). Then a call of what is read from that variable needs no check that this is the callee, once it is seen
     // to have been initialized.
@@ -137,6 +139,8 @@ struct KnownFunction {
         forCall = other.forCall;
         forConstruct = other.forConstruct;
         key = other.key;
+        conventionForCall = other.conventionForCall;
+        conventionForConstruct = other.conventionForConstruct;
         isProven = other.isProven;
         isDeclaration = other.isDeclaration;
         escapes = other.escapes;
@@ -159,8 +163,7 @@ struct KnownFunction {
 // calls it come to the same answer.
 bool needsFunctionObject(UnlinkedCodeBlock*);
 
-// What a variable that is called holds, or probably holds. If it is not proven, it is a reason to compile a call for that callee,
-// behind a check that it is the callee (see Lowering::lowerCallToKnownFunction()).
+// What a variable that is called holds, or probably holds. Only what is proven makes a difference to how it is called.
 class CalleeHints {
     WTF_MAKE_TZONE_ALLOCATED(CalleeHints);
     WTF_MAKE_NONCOPYABLE(CalleeHints);
@@ -277,21 +280,6 @@ static constexpr uint32_t notAConstantOfProgram = std::numeric_limits<uint32_t>:
 using NumbersOfConstants = UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<uint32_t>>;
 JS_EXPORT_PRIVATE void setNumbersOfConstantsOfProgram(const NumbersOfConstants*); // Not while anything is being compiled.
 const Vector<uint32_t>* numbersOfConstantsOfProgramFor(UnlinkedCodeBlock*); // Null: the function has its own.
-
-// Options::aotUseLiveCalleeHints(): from what the global variables hold when the caller is compiled. For testing what the hints
-// are used for on programs that are not modules.
-class LiveHints final : public CalleeHints {
-    WTF_MAKE_TZONE_ALLOCATED(LiveHints);
-public:
-    explicit LiveHints(JSGlobalObject*);
-    ~LiveHints() final;
-
-    const KnownFunction* find(UniquedStringImpl*, std::optional<unsigned> scopeOffset) const final;
-
-private:
-    JSGlobalObject* m_globalObject;
-    mutable Vector<std::unique_ptr<KnownFunction>> m_functions;
-};
 
 } } // namespace JSC::AOT
 

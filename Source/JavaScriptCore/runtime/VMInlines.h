@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTFunction.h"
 #include "Debugger.h"
 #include "EntryFrame.h"
 #include "FuzzerAgent.h"
@@ -88,6 +89,11 @@ inline CallFrame* VM::topJSCallFrame() const
     CallFrame* frame = topCallFrame;
     if (!frame) [[unlikely]]
         return frame;
+#if ENABLE(FTL_JIT)
+    // There is nothing to be asked of it.
+    if (AOT::topFrameIsNotTheEnginesOwn(frame)) [[unlikely]]
+        return nullptr;
+#endif
     if (!frame->isNativeCalleeFrame() && !frame->isZombieFrame()) [[likely]]
         return frame;
     EntryFrame* entryFrame = topEntryFrame;

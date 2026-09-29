@@ -1097,13 +1097,6 @@ void CodeBlock::setupWithUnlinkedBaselineCode(Ref<BaselineJITCode> jitCode)
 void CodeBlock::adoptAOTCode(AOT::JITCode& jitCode, AOT::Data* data)
 {
     ASSERT(!m_jitData);
-    for (size_t i = 0; i < numberOfExceptionHandlers(); ++i) {
-        HandlerInfo& handler = exceptionHandler(i);
-        jitCode.forEachCatchEntrypoint([&](unsigned bytecodeOffset, unsigned codeOffset) {
-            if (bytecodeOffset == handler.target)
-                handler.nativeCode = CodeLocationLabel<ExceptionHandlerPtrTag>(tagCodePtr<ExceptionHandlerPtrTag>(jitCode.executableAddressAtOffset(codeOffset)));
-        });
-    }
     setJITCode(Ref { jitCode });
     WTF::storeStoreFence();
     m_jitData = data;
@@ -2261,8 +2254,7 @@ void CodeBlock::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
         identifiers += unlinkedCodeBlock()->identifiers().size();
         OpcodeID last = op_nop;
         for (unsigned i = 0; i < data->numSlots; ++i) {
-            uint32_t bits = data->sites[i].callSiteBits;
-            OpcodeID opcode = bits || !i ? instructions().at(CallSiteIndex(bits).bytecodeIndex().offset())->opcodeID() : last;
+            OpcodeID opcode = last; // (A site no longer says which instruction it is of.)
             last = opcode;
             total[opcode]++;
             auto* words = reinterpret_cast<uint64_t*>(&data->slots[i]);

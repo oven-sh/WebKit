@@ -807,7 +807,7 @@ void Options::notifyOptionsChanged()
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
 
     // Code in an image goes with the bytecode it was compiled from.
-    if (Options::useAOT() || Options::aotImagePath()) {
+    if (Options::aotImagePath()) {
         Options::resolveAllScopeSlotsStatically() = true;
         Options::evaluateObjectLiteralValuesFirst() = true;
         Options::definePlainInstanceFieldsInConstructor() = true;

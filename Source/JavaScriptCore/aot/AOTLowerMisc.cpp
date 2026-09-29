@@ -96,9 +96,8 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
         m_out.unreachable();
         return;
     case op_throw:
-        callPreflight(node);
-        m_out.call(pointerType(), entry(Entry::operationAOTThrow), m_globalObject, lowJSValue(node->use(node->as<OpThrow>().m_value)));
-        m_out.jump(m_handleExceptions);
+        vmCall(node, Void, Entry::operationAOTThrow, m_globalObject, lowJSValue(node->use(node->as<OpThrow>().m_value)));
+        m_out.unreachable();
         return;
     case op_throw_static_error:
         throwStaticError(node);
@@ -200,11 +199,7 @@ void Lowering::lowerSwitch(Node* node)
     if (node->opcode == op_switch_string) {
         auto bytecode = node->as<OpSwitchString>();
         const auto& table = codeBlock->unlinkedStringSwitchJumpTable(bytecode.m_tableIndex);
-        callPreflight(node);
-        LValue offset = plainCall(Int32, Entry::operationAOTSwitchString, m_globalObject, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex));
-        LBasicBlock ok = m_out.newBlock();
-        m_out.branch(m_out.equal(offset, m_out.constInt32(INT32_MIN)), rarely(m_handleExceptions), usually(ok));
-        m_out.appendTo(ok);
+        LValue offset = vmCall(node, Int32, Entry::operationAOTSwitchString, m_globalObject, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex));
         for (auto& entry : table.m_offsetTable)
             addCase(entry.value.m_branchOffset, entry.value.m_branchOffset);
         m_out.switchInstruction(offset, cases, blockFor(node, table.m_defaultOffset), FTL::Weight());
@@ -218,13 +213,9 @@ void Lowering::lowerSwitch(Node* node)
     LBasicBlock defaultBlock = blockFor(node, table.m_defaultOffset);
 
     LValue value;
-    if (isChar) {
-        callPreflight(node);
-        value = plainCall(Int32, Entry::operationAOTSwitchChar, m_globalObject, lowJSValue(scrutinee));
-        LBasicBlock ok = m_out.newBlock();
-        m_out.branch(m_out.equal(value, m_out.constInt32(INT32_MIN)), rarely(m_handleExceptions), usually(ok));
-        m_out.appendTo(ok);
-    } else if (scrutinee->rep() == Rep::Int32)
+    if (isChar)
+        value = vmCall(node, Int32, Entry::operationAOTSwitchChar, m_globalObject, lowJSValue(scrutinee));
+    else if (scrutinee->rep() == Rep::Int32)
         value = lowInt32(scrutinee);
     else {
         // An int32, or a double that is one; anything else goes to the default.
@@ -261,9 +252,12 @@ void Lowering::lowerCatch(Node* node)
     auto bytecode = node->as<OpCatch>();
     LValue exception = plainCall(pointerType(), Entry::operationAOTCatch, m_vm);
     LBasicBlock caught = m_out.newBlock();
-    // Termination is not for catching: keep unwinding.
-    m_out.store32(m_out.constInt32(callSiteBitsOf(node)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
-    m_out.branch(m_out.isNull(exception), rarely(m_handleExceptions), usually(caught));
+    LBasicBlock notForCatching = newColdBlock();
+    m_out.branch(m_out.isNull(exception), rarely(notForCatching), usually(caught));
+    // Termination: keep unwinding.
+    m_out.appendTo(notForCatching);
+    callStub(Stub::HandleException, Void, { }, { });
+    m_out.unreachable();
     m_out.appendTo(caught);
     setProj(node, bytecode.m_exception, exception);
     setProj(node, bytecode.m_thrownValue, m_out.load64(m_out.address(m_heaps.root, exception, Exception::valueOffset())));
@@ -382,20 +376,15 @@ bool Lowering::tryLowerMisc(Node* node)
         setJSValue(node, m_out.loadPtr(lowCell(node->use(node->as<OpGetParentScope>().m_scope)), m_heaps.JSScope_next));
         return true;
     case op_argument_count:
-        setInt32(node, m_out.sub(m_out.load32(addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), LowWordOffset)), m_out.int32One));
+        setInt32(node, numberOfArgumentsPassed());
         return true;
     case op_get_argument: {
-        auto bytecode = node->as<OpGetArgument>();
-        LValue count = m_out.load32(addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), LowWordOffset));
-        LBasicBlock present = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        ValueFromBlock absent = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
-        m_out.branch(m_out.above(count, m_out.constInt32(bytecode.m_index)), unsure(present), unsure(continuation));
-        m_out.appendTo(present, continuation);
-        ValueFromBlock loaded = m_out.anchor(m_out.load64(addressFor(virtualRegisterForArgumentIncludingThis(bytecode.m_index))));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        setJSValue(node, m_out.phi(Int64, absent, loaded));
+        // (It counts `this`.)
+        unsigned index = node->as<OpGetArgument>().m_index - 1;
+        if (m_graph.convention().signature == Signature::List)
+            setJSValue(node, argumentPassedOrUndefined(index));
+        else
+            setJSValue(node, registerOnEntry(argumentGPR(index)));
         return true;
     }
     case op_check_tdz: {
@@ -406,14 +395,7 @@ bool Lowering::tryLowerMisc(Node* node)
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(m_out.isZero64(lowJSValue(value)), rarely(slowPath), usually(continuation));
         m_out.appendTo(slowPath, continuation);
-        if (usesStubs && node->as<OpCheckTdz>().m_targetVirtualRegister != m_graph.codeBlock()->thisRegister()) {
-            // All that differs from one to the next is where it is.
-            if (!m_throwTDZBlock)
-                m_throwTDZBlock = m_out.newBlock();
-            m_throwTDZSites.append(m_out.anchor(m_out.constInt32(callSiteBitsOf(node))));
-            m_out.jump(m_throwTDZBlock);
-        } else
-            throwTDZError(node);
+        throwTDZError(node);
         m_out.appendTo(continuation);
         return true;
     }

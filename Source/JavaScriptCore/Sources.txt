@@ -58,7 +58,6 @@ aot/AOTLowerGuards.cpp
 aot/AOTLowerIteration.cpp
 aot/AOTLowerMisc.cpp
 aot/AOTLowerObjects.cpp
-aot/AOTLowerVarargs.cpp
 aot/AOTOperations.cpp
 aot/AOTOperationsCalls.cpp
 aot/AOTOperationsObjects.cpp

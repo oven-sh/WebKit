@@ -31,7 +31,7 @@ namespace JSC { namespace AOT {
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    countOperationOnBehalfOf(callFrame); \
+    countOperationOnBehalfOf(globalObject, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
@@ -54,8 +54,8 @@ void noteSlowPathSlow(ASCIILiteral operation, JSValue base, UniquedStringImpl* n
         Structure* structure = base.asCell()->structure();
         key.print(structure->isUncacheableDictionary() ? " [uncacheable dictionary]" : structure->isDictionary() ? " [dictionary]" : "", structure->propertyAccessesAreCacheable() ? "" : " [not cacheable]", " ", structure->classInfoForCells()->className);
         VM& vm = base.asCell()->vm();
-        if (CallFrame* frame = vm.topCallFrame; frame && frame->isAOTFrame()) {
-            if (auto* executable = FunctionRef::of(frame).executable()) {
+        if (FunctionRef function = vm.topCallFrame ? functionThatCalled(vm.topCallFrame) : FunctionRef { }) {
+            if (auto* executable = function.executable()) {
                 StringPrintStream caller;
                 caller.print(operation, " ", detail, " IN ");
                 if (auto* function = dynamicDowncast<FunctionExecutable>(executable))
@@ -240,14 +240,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue base = JSValue::decode(encodedBase);
-    const Identifier& ident = identifierAt(callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
     JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (slot.isUnset() && structureBefore && structureBefore->knownShape())
-        caller(callFrame).instance->lookAtObjectPrototype();
-    ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(callFrame), base, structureBefore, ident, slot, cache);
+        caller(globalObject, callFrame).instance->lookAtObjectPrototype();
+    ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(globalObject, callFrame), base, structureBefore, ident, slot, cache);
     noteSlowPath("get_by_id"_s, base, ident.impl(), whyNotCached.isEmpty() ? "cached"_s : whyNotCached);
     if (Options::aotReportSlowPaths()) [[unlikely]]
         noteShapeOfRead(base, slot);
@@ -259,11 +259,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue base = JSValue::decode(encodedBase);
     JSValue value = JSValue::decode(encodedValue);
-    const Identifier& ident = identifierAt(callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     bool isDirect = flagBits & 1;
     bool isStrict = flagBits & 2;
 
-    PutPropertySlot slot(base, isStrict, putByIdContextOf(callFrame));
+    PutPropertySlot slot(base, isStrict, putByIdContextOf(globalObject, callFrame));
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
     if (isDirect)
         CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, value, slot, &oldStructure);
@@ -272,7 +272,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (!isDirect)
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
-    cachePutById(globalObject, callerData(callFrame), base, oldStructure, ident, slot, isDirect, cache);
+    cachePutById(globalObject, callerData(globalObject, callFrame), base, oldStructure, ident, slot, isDirect, cache);
     OPERATION_RETURN(scope);
 }
 
@@ -364,7 +364,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject* g
     Slot unusedSlot { };
     if ((Options::aotDisableFastPaths() & 32) || SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = identifierAt(callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     UNUSED_VARIABLE(uid);
     // The compiler has seen what the code around the function declares, and this is not among it: asking each of those scopes by
@@ -435,7 +435,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
     Slot unusedSlot { };
     if ((Options::aotDisableFastPaths() & 32) || SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = identifierAt(callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     noteSlowPath("get_from_scope"_s, scopeObject, uid);
 
@@ -448,7 +448,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
         cache->pointer = address;
         WTF::storeStoreFence();
         cache->structureID = scopeObject->structureID();
-        didFillSlot(vm, callerData(callFrame));
+        didFillSlot(vm, callerData(globalObject, callFrame));
     };
 
     if (scopeObject->type() == ModuleEnvironmentType) {
@@ -490,7 +490,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
         auto* environment = uncheckedDowncast<JSLexicalEnvironment>(scopeObject);
         auto entry = environment->symbolTable()->get(uid);
         if (!entry.isNull()) {
-            cacheVariableOfEnvironment(vm, callerData(callFrame), cache, environment, entry.scopeOffset());
+            cacheVariableOfEnvironment(vm, callerData(globalObject, callFrame), cache, environment, entry.scopeOffset());
             OPERATION_RETURN(scope, JSValue::encode(environment->variableAt(entry.scopeOffset()).get()));
         }
     }
@@ -528,7 +528,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObje
                 cache->pointer = nullptr;
                 WTF::storeStoreFence();
                 cache->structureID = scopeObject->structureID();
-                didFillSlot(vm, callerData(callFrame));
+                didFillSlot(vm, callerData(globalObject, callFrame));
             }
         }
         return slot.getValue(globalObject, ident);
@@ -558,7 +558,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
     Slot unusedSlot { };
     if ((Options::aotDisableFastPaths() & 64) || SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
-    const Identifier& ident = identifierAt(callFrame, identifierIndex);
+    const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = ident.impl();
     GetPutInfo getPutInfo(static_cast<ResolveMode>(how & 1), GlobalProperty, static_cast<InitializationMode>((how >> 1) & 3), how & 8 ? ECMAMode::strict() : ECMAMode::sloppy());
     JSValue value = JSValue::decode(encodedValue);
@@ -581,7 +581,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject* globalOb
             // From now on it is written to without a word to anybody.
             if (set)
                 set->invalidate(vm, StringFireDetail("Executed op_put_to_scope in code from the static compiler"));
-            cacheVariableOfEnvironment(vm, callerData(callFrame), cache, environment, offset);
+            cacheVariableOfEnvironment(vm, callerData(globalObject, callFrame), cache, environment, offset);
             OPERATION_RETURN(scope);
         }
     }
@@ -626,12 +626,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
 
 // Options::aotVerifiesFacts()
 // That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject* globalObject, CallFrame* callFrame, EncodedJSValue encodedValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
 {
     Type actual = typeOfValue(JSValue::decode(encodedValue));
+    // (Nothing: what a stub takes for there being no exception.)
     if (isSubtype(actual, type)) [[likely]]
-        return;
+        return 0;
     VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     NativeCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     scope.clearException();
@@ -643,7 +645,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject*
     else
         dataLog("a node of kind ", which);
     if (identifierIndexPlusOne)
-        dataLog(" of `", identifierAt(callFrame, identifierIndexPlusOne - 1).impl(), "`");
+        dataLog(" of `", identifierAt(globalObject, callFrame, identifierIndexPlusOne - 1).impl(), "`");
     if (scopeWhenCompiled)
         dataLog(" (scope ", RawPointer(std::bit_cast<void*>(static_cast<uintptr_t>(scopeWhenCompiled))), " offset ", scopeOffset, ")");
     dataLog(" gives was found to be ");
@@ -694,39 +696,31 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer)
 }
 
 // The jump offset, relative to the switch; 0 for the default.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t tableIndex))
+JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t tableIndex))
 {
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    AOT_OPERATION_PROLOGUE(globalObject);
     JSValue value = JSValue::decode(encodedValue);
     if (!value.isString())
-        return 0;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        OPERATION_RETURN(scope, 0);
     auto string = asString(value)->value(globalObject);
-    if (scope.exception()) [[unlikely]]
-        return INT32_MIN; // Out of memory resolving a rope: the caller checks.
-    const UnlinkedStringJumpTable& table = caller(callFrame).stringSwitchJumpTable(tableIndex);
-    return table.offsetForValue(string.data.impl());
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0); // Out of memory resolving a rope.
+    const UnlinkedStringJumpTable& table = caller(globalObject, callFrame).stringSwitchJumpTable(tableIndex);
+    OPERATION_RETURN(scope, table.offsetForValue(string.data.impl()));
 }
 
 // The character of a one character string, or -1.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSwitchChar, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))
+JSC_DEFINE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue))
 {
-    VM& vm = globalObject->vm();
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    AOT_OPERATION_PROLOGUE(globalObject);
     JSValue value = JSValue::decode(encodedValue);
     if (!value.isString())
-        return -1;
+        OPERATION_RETURN(scope, -1);
     JSString* string = asString(value);
     if (string->length() != 1)
-        return -1;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        OPERATION_RETURN(scope, -1);
     auto view = string->view(globalObject);
-    if (scope.exception()) [[unlikely]]
-        return INT32_MIN;
-    return view[0];
+    OPERATION_RETURN_IF_EXCEPTION(scope, -1);
+    OPERATION_RETURN(scope, view[0]);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTFMod, double, (double a, double b))

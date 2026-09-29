@@ -51,7 +51,7 @@ using Opcode = OpcodeID;
 class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
 namespace AOT {
-struct Data;
+struct FunctionRef;
 }
 
 struct UnlinkedHandlerInfo;
@@ -124,13 +124,14 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
 
         CatchInfo(const HandlerInfo*, CodeBlock*);
 #if ENABLE(FTL_JIT)
-        CatchInfo(const UnlinkedHandlerInfo*, AOT::Data*);
+        CatchInfo(const UnlinkedHandlerInfo*, const AOT::FunctionRef&);
 #endif
 #if ENABLE(WEBASSEMBLY)
         CatchInfo(const Wasm::HandlerInfo*, const Wasm::Callee*);
 #endif
 
         bool m_valid { false };
+        bool m_isOfAOT { false }; // The handler is in code from the static compiler.
         HandlerType m_type;
 #if ENABLE(JIT)
         CodePtr<ExceptionHandlerPtrTag> m_nativeCode;

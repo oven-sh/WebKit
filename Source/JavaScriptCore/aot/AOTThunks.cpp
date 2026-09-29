@@ -32,8 +32,8 @@ using TrustedImm32 = CCallHelpers::TrustedImm32;
 using TrustedImm64 = CCallHelpers::TrustedImm64;
 using TrustedImmPtr = CCallHelpers::TrustedImmPtr;
 
-// A thunk has no frame: the frame pointer is the caller's, and the return address is where it was put by the call. It may use the
-// registers that a C function need not preserve and that hold no argument of its operation. The tag registers are not set up.
+// A thunk has no frame: the frame pointer is that of the stub that called it in place of the operation, and the return address is where
+// it was put by the call. It may use the registers that a C function need not preserve and that hold no argument of its operation.
 constexpr GPRReg argument0 = GPRInfo::argumentGPR0;
 constexpr GPRReg argument1 = GPRInfo::argumentGPR1;
 constexpr GPRReg argument2 = GPRInfo::argumentGPR2;
@@ -50,7 +50,7 @@ constexpr GPRReg cacheGPR = GPRInfo::argumentGPR7; // No operation that has one 
 
 void loadInstance(CCallHelpers& jit, GPRReg result)
 {
-    jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), result);
+    jit.move(instanceGPR, result);
 }
 
 void loadVM(CCallHelpers& jit, GPRReg result)
@@ -111,14 +111,12 @@ void branchIfNotObjectValue(CCallHelpers& jit, GPRReg value, JumpList& slowCases
 // One of the calling function's identifiers.
 void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
 {
-    // instance->infos[the index in the header that the frame has for a callee]
-    jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), scratch4);
-    jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(lowestAccessibleAddress()) - JSValue::NativeCalleeTag + OBJECT_OFFSETOF(CodeHeader, index)), result);
-    jit.load32(BaseIndex(scratch4, result, CCallHelpers::TimesOne), scratch4);
+    // Which function that is, is told from where the stub is to go back to.
+    jit.loadPtr(Address(GPRInfo::callFrameRegister, CallFrame::returnPCOffset()), scratch4);
+    loadIndexOfFunctionAt(jit, scratch4);
     static_assert(sizeof(FunctionInfo) == 32);
-    jit.lshiftPtr(TrustedImm32(5), scratch4);
-    loadInstance(jit, result);
-    jit.loadPtr(Address(result, Instance::offsetOfInfos()), result);
+    jit.lshiftPtr(indexOfFunctionGPR, TrustedImm32(5), scratch4);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfInfos()), result);
     jit.addPtr(scratch4, result);
     jit.loadPtr(Address(result, FunctionInfo::offsetOfIdentifiers()), result);
     jit.zeroExtend32ToWord(index, scratch4);
@@ -189,8 +187,7 @@ static void branchIfSlotIsStillOfUse(CCallHelpers& jit, GPRReg slot, JumpList& s
     }
     Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, scratch0, TrustedImm32(Slot::attemptsMask));
     Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(slot, OBJECT_OFFSETOF(Slot, structureID)));
-    jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), scratch0); // The Instance.
-    jit.loadPtr(Address(scratch0, Instance::offsetOfSharedData()), scratch0);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), scratch0);
     jit.subPtr(slot, scratch0, scratch0);
     slowCases.append(jit.branchPtr(CCallHelpers::AboveOrEqual, scratch0, CCallHelpers::TrustedImmPtr(SharedData::size)));
     hasGivenUp.link(&jit);
