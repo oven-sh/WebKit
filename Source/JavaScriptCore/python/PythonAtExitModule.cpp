@@ -140,7 +140,7 @@ PYTHON_NATIVE(atExitClear)
 PYTHON_NATIVE(atExitCallbackCount)
 {
     UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsNumber(callbacksOf(globalObject)->length()));
+    return JSValue::encode(intFromUInt64(globalObject, callbacksOf(globalObject)->length()));
 }
 
 // unregister(func, /)

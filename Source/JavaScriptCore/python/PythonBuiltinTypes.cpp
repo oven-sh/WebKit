@@ -1386,7 +1386,7 @@ PYTHON_NATIVE(methodHash)
     RETURN_IF_EXCEPTION(scope, { });
     // By which object it is, whatever the object's own __hash__ says, since that is how they are compared.
     int64_t result = (self.isCell() ? hashOfPointer(self.asCell()) : static_cast<int64_t>(JSValue::encode(self))) ^ function;
-    return JSValue::encode(jsNumber(result == -1 ? -2 : result));
+    return JSValue::encode(intFromInt64(globalObject, result == -1 ? -2 : result));
 }
 
 // What a bound method does not have itself, the function has.

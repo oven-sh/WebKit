@@ -419,7 +419,7 @@ static bool fire(const Site& site, MonitoringEvent event, JSValue second, JSValu
 
 static bool fireAtOffset(const Site& site, MonitoringEvent event, JSValue third = JSValue(), JSValue fourth = JSValue())
 {
-    return fire(site, event, jsNumber(site.offset), third, fourth);
+    return fire(site, event, intFromUInt64(site.globalObject, site.offset), third, fourth);
 }
 
 // Every place that anything is told of counts as an instruction. What the engine runs is its own business.
@@ -457,7 +457,7 @@ static bool finishPendingCall(JSGlobalObject* globalObject, CallFrame* callFrame
         return true;
     // The frame has gone on since, and is told of as if it had not.
     frame->setLineOverride(frame->lineAt(vm, index));
-    bool succeeded = fire(*site, hasRaised ? MonitoringEvent::CRaise : MonitoringEvent::CReturn, jsNumber(site->offset), callable, argument, frame->pendingCallTools());
+    bool succeeded = fire(*site, hasRaised ? MonitoringEvent::CRaise : MonitoringEvent::CReturn, intFromUInt64(globalObject, site->offset), callable, argument, frame->pendingCallTools());
     frame->setLineOverride(-1);
     return succeeded;
 }
@@ -582,7 +582,7 @@ std::optional<BytecodeIndex> frameIsAtLine(JSGlobalObject* globalObject, CallFra
     frame->takeWhereItGoesOnFrom();
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     if (isAfterBackwardJump) {
-        fireAtOffset(*site, MonitoringEvent::Jump, jsNumber(jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken));
+        fireAtOffset(*site, MonitoringEvent::Jump, intFromUInt64(globalObject, jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken));
         if (auto next = whereItGoesOnFrom())
             return next;
     }
@@ -647,7 +647,7 @@ static void tellOfBranch(JSGlobalObject* globalObject, CallFrame* callFrame, Byt
     if (!toolsFor(*site, event))
         return;
     JumpTargets targets = jumpTargetsAfter(callFrame->codeBlock(), site->offset, skipped);
-    RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, event, jsNumber(isTaken ? targets.taken : targets.notTaken))));
+    RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, event, intFromUInt64(globalObject, isTaken ? targets.taken : targets.notTaken))));
 }
 
 void frameIsBranching(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, bool isTaken)
@@ -675,7 +675,7 @@ void frameIsJumping(JSGlobalObject* globalObject, CallFrame* callFrame, Bytecode
     fireInstruction(*site);
     RETURN_IF_EXCEPTION(scope, void());
     if (toolsFor(*site, MonitoringEvent::Jump))
-        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::Jump, jsNumber(jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken))));
+        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::Jump, intFromUInt64(globalObject, jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken))));
 }
 
 // code.co_branches(): where each jump that depends on something is, where it goes on to if it is not made, and where it goes if it is
@@ -1012,7 +1012,7 @@ PYTHON_NATIVE(monitoringGetEvents)
     NATIVE_PROLOGUE();
     auto tool = toolArgument(globalObject, args.at(0));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsNumber(eventsOf(stateOf(globalObject), *tool)));
+    return JSValue::encode(intFromUInt64(globalObject, eventsOf(stateOf(globalObject), *tool)));
 }
 
 static constexpr uint32_t returnFromCEvents = bit(MonitoringEvent::CReturn) | bit(MonitoringEvent::CRaise);
@@ -1063,7 +1063,7 @@ PYTHON_NATIVE(monitoringGetLocalEvents)
         return JSValue::encode(raiseTypeError(globalObject, scope, "code must be a code object"_s));
     auto tool = toolArgument(globalObject, jsNumber(*number));
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsNumber(localEventsOf(stateOf(globalObject), executableOfCode(args.at(1)), *tool)));
+    return JSValue::encode(intFromUInt64(globalObject, localEventsOf(stateOf(globalObject), executableOfCode(args.at(1)), *tool)));
 }
 
 PYTHON_NATIVE(monitoringSetLocalEvents)

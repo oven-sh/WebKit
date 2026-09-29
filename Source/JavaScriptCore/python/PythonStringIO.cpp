@@ -458,7 +458,7 @@ PYTHON_NATIVE(stringIOWrite)
     unsigned size = Characters(vm, text).count();
     if (size && !writeString(globalObject, state, args[1]))
         return { };
-    return JSValue::encode(jsNumber(size));
+    return JSValue::encode(intFromUInt64(globalObject, size));
 }
 
 PYTHON_NATIVE(stringIOClose)

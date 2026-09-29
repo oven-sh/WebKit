@@ -354,7 +354,7 @@ void raiseFromTokenizer(JSGlobalObject* globalObject, TokenStream& stream, const
     };
     JSValue text = textOf(globalObject, line);
     RETURN_IF_EXCEPTION(scope, void());
-    JSValue details = PyTuple::create(globalObject, { jsNontrivialString(vm, "<string>"_s), jsNumber(error.line), jsNumber(inCharacters(error.column + 1)), text, jsNumber(error.line), jsNumber(inCharacters(error.endColumn + 1)) });
+    JSValue details = PyTuple::create(globalObject, { jsNontrivialString(vm, "<string>"_s), intFromUInt64(globalObject, error.line), jsNumber(inCharacters(error.column + 1)), text, intFromUInt64(globalObject, error.line), jsNumber(inCharacters(error.endColumn + 1)) });
     scope.release();
     raiseWithDetails(globalObject, scope, BuiltinType::SyntaxError, error.message, details);
 }
@@ -374,11 +374,11 @@ void raiseForStop(JSGlobalObject* globalObject, TokenStream& stream, const Synta
         JSValue exception = call(globalObject, globalObject->pyRealm()->type(BuiltinType::SyntaxError)->object(), jsNontrivialString(vm, "unexpected EOF in multi-line statement"_s));
         RETURN_IF_EXCEPTION(scope, void());
         auto set = [&] (ASCIILiteral name, JSValue value) { setAttribute(globalObject, exception, Identifier::fromString(vm, name), value); };
-        set("lineno"_s, jsNumber(stream.line()));
+        set("lineno"_s, intFromUInt64(globalObject, stream.line()));
         RETURN_IF_EXCEPTION(scope, void());
         set("offset"_s, intFromInt64(globalObject, lengthInUTF8(buffered)));
         RETURN_IF_EXCEPTION(scope, void());
-        set("end_lineno"_s, stream.line() ? jsNumber(stream.line()) : jsUndefined());
+        set("end_lineno"_s, stream.line() ? intFromUInt64(globalObject, stream.line()) : jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
         set("end_offset"_s, jsUndefined());
         RETURN_IF_EXCEPTION(scope, void());
@@ -409,7 +409,7 @@ void raiseForStop(JSGlobalObject* globalObject, TokenStream& stream, const Synta
     auto line = buffered.first(buffered.size() ? buffered.size() - 1 : 0);
     JSValue text = textOf(globalObject, line);
     RETURN_IF_EXCEPTION(scope, void());
-    JSValue details = PyTuple::create(globalObject, { jsNontrivialString(vm, "<string>"_s), jsNumber(stream.line()), intFromInt64(globalObject, lengthInCharacters(line) + 1), text, jsUndefined(), jsUndefined() });
+    JSValue details = PyTuple::create(globalObject, { jsNontrivialString(vm, "<string>"_s), intFromUInt64(globalObject, stream.line()), intFromInt64(globalObject, lengthInCharacters(line) + 1), text, jsUndefined(), jsUndefined() });
     scope.release();
     raiseWithDetails(globalObject, scope, type, message, details);
 }

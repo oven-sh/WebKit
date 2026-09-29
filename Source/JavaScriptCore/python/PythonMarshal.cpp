@@ -934,7 +934,7 @@ JSValue Reader::readCode(bool isMarked)
     parts.append(jsNumber(counts[0]));
     parts.append(jsNumber(counts[1]));
     parts.append(jsNumber(counts[2]));
-    parts.append(jsNumber(variables.size()));
+    parts.append(intFromUInt64(m_globalObject, variables.size()));
     parts.append(jsNumber(counts[3]));
     parts.append(jsNumber(counts[4]));
     parts.append(objects.at(0));

@@ -853,7 +853,7 @@ JSObject* createThreadModule(JSGlobalObject* globalObject)
     addFunction(globalObject, module, "get_native_id"_s, threadGetNativeIdentifier);
     addFunction(globalObject, module, "set_name"_s, threadSetName);
     addFunction(globalObject, module, "_get_name"_s, threadGetName);
-    put("_NAME_MAXLEN"_s, jsNumber(longestThreadName));
+    put("_NAME_MAXLEN"_s, intFromUInt64(globalObject, longestThreadName));
 #endif
     return module;
 }

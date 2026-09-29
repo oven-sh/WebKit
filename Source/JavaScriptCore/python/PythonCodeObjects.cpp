@@ -80,7 +80,7 @@ JSValue cellForClass(JSGlobalObject* globalObject, JSValue returnedByBody)
     SymbolTableEntry::Fast entry = scope->symbolTable()->get(globalObject->vm().pythonNames().dunder_class.impl());
     if (entry.isNull())
         return jsUndefined();
-    return PyNativeObject::create(globalObject, BuiltinType::Cell, scope, jsNumber(entry.scopeOffset().offset()));
+    return PyNativeObject::create(globalObject, BuiltinType::Cell, scope, intFromUInt64(globalObject, entry.scopeOffset().offset()));
 }
 
 JSValue contentsOfCell(JSValue cell)
@@ -198,7 +198,7 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
         if (info.variablesGivenAsCells.contains(names[i]))
             cells->initializeAt(vm, i, environment->variableAt(offset).get());
         else
-            cells->initializeAt(vm, i, PyNativeObject::create(globalObject, BuiltinType::Cell, environment, jsNumber(offset.offset())));
+            cells->initializeAt(vm, i, PyNativeObject::create(globalObject, BuiltinType::Cell, environment, intFromUInt64(globalObject, offset.offset())));
     }
     return cells;
 }

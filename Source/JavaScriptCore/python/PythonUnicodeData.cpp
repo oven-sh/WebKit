@@ -839,7 +839,7 @@ PYTHON_NATIVE(ucdMirrored)
         else if (record->mirroredChanged != 0xFF)
             index = record->mirroredChanged;
     }
-    return JSValue::encode(jsNumber(index));
+    return JSValue::encode(intFromUInt64(globalObject, index));
 }
 
 // east_asian_width(chr, /)

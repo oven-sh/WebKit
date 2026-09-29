@@ -49,6 +49,17 @@ class SourceCode;
 
 namespace Python {
 
+// To JavaScript a number is a number. Here what is an int32 is an int and what is a double is a float, so JSC::jsNumber() makes a float of an integer that does not fit in an int32, and an int of a double that has nothing after
+// the point. This hides it from everything in this namespace, and takes only what is sure to fit. Anything wider is for intFromInt64() or intFromUInt64(), and a double is for floatFromDouble(). What is wanted as a number of
+// JavaScript's, whichever it comes to, is asked for by its whole name.
+template<typename T>
+concept IntegerThatFitsInInt32 = std::is_integral_v<T> && (sizeof(T) < sizeof(int32_t) || (sizeof(T) == sizeof(int32_t) && std::is_signed_v<T>));
+template<typename T>
+concept EnumThatFitsInInt32 = std::is_enum_v<T> && IntegerThatFitsInInt32<std::underlying_type_t<T>>;
+template<typename T>
+requires IntegerThatFitsInInt32<T> || EnumThatFitsInInt32<T>
+ALWAYS_INLINE JSValue jsNumber(T value) { return JSC::jsNumber(static_cast<int32_t>(value)); }
+
 // What the language does. Each of these is what an opcode or a built-in function comes down to, for any values at all. They
 // raise Python exceptions, in the way that JavaScriptCore throws: the caller checks its scope.
 

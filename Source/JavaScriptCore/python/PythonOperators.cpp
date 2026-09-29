@@ -1330,8 +1330,8 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
     case HeapBigIntType:
         return hashOfNumber(globalObject, classify(value));
     case JSFunctionType:
-        // One that is bound to an object is equal to another that is: see JSFunction.__eq__.
-        if (cell->inherits<JSBoundFunction>())
+        // One that is bound to an object is equal to another that is: see JSFunction.__eq__. One that is written in C++ goes by what it belongs to as well, as in CPython: see nativeCallableHash().
+        if (cell->inherits<JSBoundFunction>() || cell->inherits<PyNativeFunction>())
             break;
         return hashOfPointer(cell);
     case SymbolType:

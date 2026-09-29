@@ -1712,7 +1712,7 @@ JSObject* createSREModule(JSGlobalObject* globalObject)
     addFunction(globalObject, module, "ascii_tolower"_s, sreCharacter, pack(Question::AsciiToLower));
     addFunction(globalObject, module, "unicode_tolower"_s, sreCharacter, pack(Question::UnicodeToLower));
     auto add = [&] (ASCIILiteral name, JSValue value) { module->putDirect(vm, Identifier::fromString(vm, name), value); };
-    add("MAGIC"_s, jsNumber(SRE_MAGIC));
+    add("MAGIC"_s, intFromUInt64(globalObject, SRE_MAGIC));
     add("CODESIZE"_s, jsNumber(static_cast<int>(sizeof(SRE_CODE))));
     add("MAXREPEAT"_s, intFromInt64(globalObject, SRE_MAXREPEAT));
     add("MAXGROUPS"_s, intFromInt64(globalObject, SRE_MAXGROUPS));

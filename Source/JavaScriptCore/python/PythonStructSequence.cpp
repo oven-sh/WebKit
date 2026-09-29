@@ -242,9 +242,9 @@ void makeStructSequenceType(JSGlobalObject* globalObject, PyType* type, std::spa
     }
     type->putDirect(vm, vm.pythonNames().private_fieldNames, names);
     auto set = [&] (ASCIILiteral name, JSValue value) { type->putDirect(vm, Identifier::fromString(vm, name), value); };
-    set("n_sequence_fields"_s, jsNumber(countInSequence));
-    set("n_fields"_s, jsNumber(static_cast<unsigned>(fields.size())));
-    set("n_unnamed_fields"_s, jsNumber(unnamed));
+    set("n_sequence_fields"_s, intFromUInt64(globalObject, countInSequence));
+    set("n_fields"_s, intFromUInt64(globalObject, static_cast<unsigned>(fields.size())));
+    set("n_unnamed_fields"_s, intFromUInt64(globalObject, unnamed));
     set("__match_args__"_s, PyTuple::createFromArguments(globalObject, matched));
 }
 

@@ -345,7 +345,7 @@ static bool callShowWarning(JSGlobalObject* globalObject, JSValue category, JSVa
         return false;
     }
     MarkedArgumentBuffer arguments;
-    for (JSValue argument : { message, category, filename, jsNumber(line), jsUndefined(), jsUndefined() })
+    for (JSValue argument : { message, category, filename, intFromInt64(globalObject, line), jsUndefined(), jsUndefined() })
         arguments.append(argument);
     if (source)
         arguments.append(source);
@@ -389,7 +389,7 @@ static bool warnExplicit(JSGlobalObject* globalObject, JSValue category, JSValue
     if (source && isNone(source))
         source = { };
 
-    JSValue key = PyTuple::create(globalObject, { text, category, jsNumber(line) });
+    JSValue key = PyTuple::create(globalObject, { text, category, intFromInt64(globalObject, line) });
     if (registryDict) {
         bool wasWarned = alreadyWarned(globalObject, registryDict, key, false);
         RETURN_IF_EXCEPTION(scope, false);

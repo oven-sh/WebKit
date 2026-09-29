@@ -732,7 +732,7 @@ PYTHON_RUNTIME_FUNCTION(runtimeNewCoroutine)
     MarkedArgumentBuffer origin;
     for (CallFrame* frame = callerOf(callFrame); frame && depth; frame = callerOf(frame), --depth) {
         PyFrame* object = PyFrame::forCallFrame(vm, frame);
-        origin.append(PyTuple::create(globalObject, { jsString(vm, object->executable()->source().provider()->sourceURL()), jsNumber(object->line(vm)), jsString(vm, object->functionInfo().name.string()) }));
+        origin.append(PyTuple::create(globalObject, { jsString(vm, object->executable()->source().provider()->sourceURL()), intFromUInt64(globalObject, object->line(vm)), jsString(vm, object->functionInfo().name.string()) }));
     }
     coroutine->putDirect(vm, vm.pythonNames().private_origin, PyTuple::createFromArguments(globalObject, origin));
     return JSValue::encode(coroutine);

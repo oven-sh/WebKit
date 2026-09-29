@@ -73,7 +73,7 @@ PYTHON_NATIVE(viewIter)
 PYTHON_NATIVE(viewLen)
 {
     UNUSED_PARAM(globalObject);
-    return JSValue::encode(jsNumber(dictOfView(callFrame->argument(0))->size()));
+    return JSValue::encode(intFromUInt64(globalObject, dictOfView(callFrame->argument(0))->size()));
 }
 
 PYTHON_NATIVE(viewRepr)

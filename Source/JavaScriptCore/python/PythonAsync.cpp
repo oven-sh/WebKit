@@ -183,7 +183,7 @@ enum PromiseAwaiterState { AwaiterNotBegun, AwaiterWaiting, AwaiterDone };
 
 static JSValue newPromiseAwaiter(JSGlobalObject* globalObject, JSValue promise, bool isIteratorResult)
 {
-    return PyNativeObject::create(globalObject, BuiltinType::PromiseAwaiter, promise, jsNumber(AwaiterNotBegun), jsBoolean(isIteratorResult));
+    return PyNativeObject::create(globalObject, BuiltinType::PromiseAwaiter, promise, JSC::jsNumber(AwaiterNotBegun), jsBoolean(isIteratorResult));
 }
 
 JSValue awaitableFor(JSGlobalObject* globalObject, JSValue value)
@@ -195,7 +195,7 @@ static JSValue finishPromiseAwaiter(JSGlobalObject* globalObject, PyNativeObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    self->setField(vm, 1, jsNumber(AwaiterDone));
+    self->setField(vm, 1, JSC::jsNumber(AwaiterDone));
     if (self->field(2).isTrue()) {
         if (!settled.isObject())
             return raiseTypeError(globalObject, scope, concatenate("iterator result "_s, repr(globalObject, settled), " is not an object"_s));
@@ -224,7 +224,7 @@ PYTHON_NATIVE(promiseAwaiterSend)
         RETURN_IF_EXCEPTION(scope, { });
         if (!waits)
             RELEASE_AND_RETURN(scope, JSValue::encode(finishPromiseAwaiter(globalObject, self, self->field(0))));
-        self->setField(vm, 1, jsNumber(AwaiterWaiting));
+        self->setField(vm, 1, JSC::jsNumber(AwaiterWaiting));
         return JSValue::encode(self->field(0));
     }
     case AwaiterWaiting:
@@ -237,7 +237,7 @@ PYTHON_NATIVE(promiseAwaiterSend)
 PYTHON_NATIVE(promiseAwaiterThrow)
 {
     NATIVE_PROLOGUE();
-    asNative(args[0])->setField(vm, 1, jsNumber(AwaiterDone));
+    asNative(args[0])->setField(vm, 1, JSC::jsNumber(AwaiterDone));
     // A promise can be rejected with anything at all.
     JSValue exception = args[1];
     if (isClass(exception) || args.size() > 2) {
@@ -252,7 +252,7 @@ PYTHON_NATIVE(promiseAwaiterClose)
 {
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    asNative(args[0])->setField(vm, 1, jsNumber(AwaiterDone));
+    asNative(args[0])->setField(vm, 1, JSC::jsNumber(AwaiterDone));
     RETURN_NONE();
 }
 

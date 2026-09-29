@@ -88,7 +88,7 @@ PYTHON_NATIVE(astInit)
         setAttribute(globalObject, self, *property, value);
     };
     for (unsigned i = 0; i < given; ++i) {
-        JSValue name = getItem(globalObject, fields, jsNumber(i));
+        JSValue name = getItem(globalObject, fields, intFromUInt64(globalObject, i));
         RETURN_IF_EXCEPTION(scope, { });
         set(name, args[i + 1]);
         RETURN_IF_EXCEPTION(scope, { });
@@ -183,7 +183,7 @@ PYTHON_NATIVE(astReduce)
         int64_t fieldCount = length(globalObject, fields);
         RETURN_IF_EXCEPTION(scope, { });
         for (int64_t i = 0; i < fieldCount; ++i) {
-            JSValue name = getItem(globalObject, fields, jsNumber(i));
+            JSValue name = getItem(globalObject, fields, intFromInt64(globalObject, i));
             RETURN_IF_EXCEPTION(scope, { });
             JSValue value = asDict(dict)->get(globalObject, name);
             RETURN_IF_EXCEPTION(scope, { });
@@ -323,7 +323,7 @@ static String reprOfNodes(JSGlobalObject* globalObject, JSValue list, int depth)
     StringBuilder result;
     result.append(isAList ? '[' : '(');
     for (int64_t i = 0; i < std::min<int64_t>(size, 2); ++i) {
-        JSValue item = getItem(globalObject, list, jsNumber(i ? size - 1 : 0));
+        JSValue item = getItem(globalObject, list, intFromInt64(globalObject, i ? size - 1 : 0));
         RETURN_IF_EXCEPTION(scope, { });
         if (i)
             result.append(", "_s);
@@ -356,7 +356,7 @@ static String reprOfNode(JSGlobalObject* globalObject, JSValue self, int depth)
     StringBuilder result;
     result.append(name, '(');
     for (int64_t i = 0; i < fieldCount; ++i) {
-        JSValue fieldName = getItem(globalObject, fields, jsNumber(i));
+        JSValue fieldName = getItem(globalObject, fields, intFromInt64(globalObject, i));
         RETURN_IF_EXCEPTION(scope, { });
         auto property = attributeName(globalObject, scope, fieldName);
         RETURN_IF_EXCEPTION(scope, { });

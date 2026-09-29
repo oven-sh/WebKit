@@ -1,0 +1,14 @@
+functions that are there already => True [] []
+constructors => True [] []
+functions made now => True [] []
+objects => True [] []
+methods of objects => True [] []
+bound by JavaScript => True [] []
+plain objects, dates and the rest => True [] []
+symbols => True [] []
+---- what is equal has the same
+True True 2 False True
+True True 2
+get set parseInt Map m False False
+---- never -1
+True

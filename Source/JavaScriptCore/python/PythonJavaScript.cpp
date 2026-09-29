@@ -257,9 +257,9 @@ PYTHON_NATIVE(functionHash)
     UNUSED_PARAM(scope);
     auto* self = tryMethodOfObject(args[0]);
     if (!self || !self->boundThis().isCell())
-        return JSValue::encode(jsNumber(hashOfPointer(args[0].asCell())));
+        return JSValue::encode(intFromInt64(globalObject, hashOfPointer(args[0].asCell())));
     int64_t result = hashOfPointer(self->boundThis().asCell()) ^ hashOfPointer(self->targetFunction());
-    return JSValue::encode(jsNumber(result == -1 ? -2 : result));
+    return JSValue::encode(intFromInt64(globalObject, result == -1 ? -2 : result));
 }
 
 static JSValue getFunctionSelf(JSGlobalObject* globalObject, JSValue self)

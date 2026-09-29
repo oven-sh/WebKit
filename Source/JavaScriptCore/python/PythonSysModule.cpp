@@ -521,7 +521,7 @@ PYTHON_NATIVE(returnZero)
 PYTHON_NATIVE(sysGetRecursionLimit)
 {
     UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsNumber(globalObject->vm().pythonRecursionLimit()));
+    return JSValue::encode(intFromUInt64(globalObject, globalObject->vm().pythonRecursionLimit()));
 }
 
 PYTHON_NATIVE(sysSetRecursionLimit)
@@ -751,7 +751,7 @@ PYTHON_NATIVE(standardStreamWrite)
             rest = rest.subspan(static_cast<size_t>(written));
         }
     }
-    return JSValue::encode(jsNumber(stringLength(globalObject, asString(text))));
+    return JSValue::encode(intFromUInt64(globalObject, stringLength(globalObject, asString(text))));
 }
 
 static JSObject* createPreliminaryStream(JSGlobalObject* globalObject, int descriptor)

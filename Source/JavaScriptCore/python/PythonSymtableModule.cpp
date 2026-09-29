@@ -86,7 +86,7 @@ JSValue newSymbolTableEntry(JSGlobalObject* globalObject, Block& block)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyDict* symbols = PyDict::create(globalObject);
     for (Symbol& symbol : block.symbols) {
-        symbols->set(globalObject, jsString(vm, symbol.name->string()), jsNumber(symbol.flags | static_cast<unsigned>(symbol.scope) << scopeOffset));
+        symbols->set(globalObject, jsString(vm, symbol.name->string()), intFromUInt64(globalObject, symbol.flags | static_cast<unsigned>(symbol.scope) << scopeOffset));
         RETURN_IF_EXCEPTION(scope, { });
     }
     MarkedArgumentBuffer parameters;
@@ -141,7 +141,7 @@ PyType* entryType(JSGlobalObject* globalObject)
     addMember(globalObject, type, "varnames"_s, [] (JSGlobalObject*, JSValue self) { return stateOf<SymtableEntry>(self).parameters.get(); });
     addMember(globalObject, type, "children"_s, [] (JSGlobalObject*, JSValue self) { return stateOf<SymtableEntry>(self).children.get(); });
     addMember(globalObject, type, "nested"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(stateOf<SymtableEntry>(self).isNested); });
-    addMember(globalObject, type, "type"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(static_cast<unsigned>(stateOf<SymtableEntry>(self).type)); });
+    addMember(globalObject, type, "type"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, static_cast<unsigned>(stateOf<SymtableEntry>(self).type)); });
     addMember(globalObject, type, "lineno"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(stateOf<SymtableEntry>(self).line); });
     return type;
 }
@@ -182,7 +182,7 @@ JSObject* createSymtableModule(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     JSObject* module = newBuiltinModule(globalObject, "_symtable"_s);
     addFunction(globalObject, module, "symtable"_s, symtableSymtable);
-    auto add = [&] (ASCIILiteral name, unsigned value) { module->putDirect(vm, Identifier::fromString(vm, name), jsNumber(value)); };
+    auto add = [&] (ASCIILiteral name, unsigned value) { module->putDirect(vm, Identifier::fromString(vm, name), intFromUInt64(globalObject, value)); };
     add("USE"_s, Use);
     add("DEF_GLOBAL"_s, DefGlobal);
     add("DEF_NONLOCAL"_s, DefNonlocal);

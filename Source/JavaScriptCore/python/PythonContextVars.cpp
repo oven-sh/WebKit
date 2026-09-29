@@ -239,7 +239,7 @@ JSValue find(VariableMap* map, JSValue variable) { return map ? find(rootOf(map)
 
 VariableMap* newMap(JSGlobalObject* globalObject, unsigned count, TrieNode* root)
 {
-    return VariableMap::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), jsNumber(count), root);
+    return VariableMap::create(globalObject->vm(), globalObject->internalFieldTupleStructure(), JSC::jsNumber(count), root);
 }
 
 VariableMap* mapWith(JSGlobalObject* globalObject, VariableMap* map, JSValue variable, JSValue value)
@@ -478,7 +478,7 @@ PYTHON_NATIVE(contextLength)
 {
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
-    return JSValue::encode(jsNumber(countOf(mapOf(args[0]))));
+    return JSValue::encode(intFromUInt64(globalObject, countOf(mapOf(args[0]))));
 }
 
 PYTHON_NATIVE(contextGetItem)

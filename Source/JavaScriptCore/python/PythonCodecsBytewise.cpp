@@ -576,7 +576,7 @@ static constexpr auto undefinedMapping = "character maps to <undefined>"_s;
 static JSValue lookUpInMapping(JSGlobalObject* globalObject, JSValue mapping, uint32_t key)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue item = getItem(globalObject, mapping, jsNumber(key));
+    JSValue item = getItem(globalObject, mapping, intFromUInt64(globalObject, key));
     if (scope.exception()) {
         catchException(globalObject, BuiltinType::LookupError);
         return { };
@@ -708,7 +708,7 @@ PYTHON_NATIVE(encodingMapSize)
     UNUSED_PARAM(globalObject);
     auto& map = stateOf<EncodingMapState>(args[0]);
     // What it comes to in CPython: sizeof(struct encoding_map) - 1, and the second and third levels.
-    return JSValue::encode(jsNumber(63 + 16 * map.count2 + 128 * map.count3));
+    return JSValue::encode(intFromUInt64(globalObject, 63 + 16 * map.count2 + 128 * map.count3));
 }
 
 static PyType* encodingMapType(JSGlobalObject* globalObject)
@@ -761,7 +761,7 @@ JSValue buildEncodingMap(JSGlobalObject* globalObject, JSValue string)
     if (needsDict) {
         PyDict* result = PyDict::create(globalObject);
         for (unsigned i = 0; i < length; ++i) {
-            result->set(globalObject, jsNumber(static_cast<uint32_t>(characters[i])), jsNumber(i));
+            result->set(globalObject, intFromUInt64(globalObject, static_cast<uint32_t>(characters[i])), intFromUInt64(globalObject, i));
             RETURN_IF_EXCEPTION(scope, { });
         }
         return result;

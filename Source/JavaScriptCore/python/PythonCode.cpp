@@ -382,7 +382,7 @@ PYTHON_NATIVE(codeLines)
     std::optional<unsigned> runLine;
     auto finishRun = [&] (unsigned end) {
         if (runLine && end > runStart)
-            runs.append(PyTuple::create(globalObject, { jsNumber(runStart), jsNumber(end), jsNumber(*runLine) }));
+            runs.append(PyTuple::create(globalObject, { intFromUInt64(globalObject, runStart), intFromUInt64(globalObject, end), intFromUInt64(globalObject, *runLine) }));
         runStart = end;
     };
     forEachInstruction(compiled, [&] (unsigned offset, std::optional<std::pair<unsigned, unsigned>> range) {
@@ -425,10 +425,10 @@ PYTHON_NATIVE(codePositions)
                     start = placeOf(provider, range->first, compiled.info->lineDelta);
                     end = placeOf(provider, range->second, compiled.info->lineDelta);
                 }
-                last = PyTuple::create(globalObject, { jsNumber(start.line), jsNumber(end.line), jsNumber(start.column), jsNumber(end.column) });
+                last = PyTuple::create(globalObject, { intFromUInt64(globalObject, start.line), intFromUInt64(globalObject, end.line), intFromUInt64(globalObject, start.column), intFromUInt64(globalObject, end.column) });
             } else
                 // Before a module has begun it is on the line before its first.
-                last = PyTuple::create(globalObject, { jsNumber(firstLineOf(*compiled.info) - isAllOfItsSource(*compiled.info)), jsNumber(firstLineOf(*compiled.info)), jsNumber(0), jsNumber(0) });
+                last = PyTuple::create(globalObject, { intFromUInt64(globalObject, firstLineOf(*compiled.info) - isAllOfItsSource(*compiled.info)), intFromUInt64(globalObject, firstLineOf(*compiled.info)), jsNumber(0), jsNumber(0) });
             lastRange = range;
             distinct.append(last);
         }
@@ -452,7 +452,7 @@ PYTHON_NATIVE(codeBranches)
     UNUSED_PARAM(scope);
     MarkedArgumentBuffer branches;
     forEachBranch(compiledCodeOf(vm, executableOf(args[0])).codeBlock, [&] (unsigned offset, unsigned notTaken, unsigned taken) {
-        branches.append(PyTuple::create(globalObject, { jsNumber(offset), jsNumber(notTaken), jsNumber(taken) }));
+        branches.append(PyTuple::create(globalObject, { intFromUInt64(globalObject, offset), intFromUInt64(globalObject, notTaken), intFromUInt64(globalObject, taken) }));
     });
     return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::CodeLines, PyTuple::createFromArguments(globalObject, branches)));
 }
@@ -1054,19 +1054,19 @@ void initializeCodeType(JSGlobalObject* globalObject)
     addMember(globalObject, code, "co_name"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).name.string()); });
     addMember(globalObject, code, "co_qualname"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).qualifiedName); });
     addMember(globalObject, code, "co_filename"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), executableOf(self)->source().provider()->sourceURL()); });
-    addMember(globalObject, code, "co_firstlineno"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(firstLineOf(infoOf(executableOf(self)))); });
-    addMember(globalObject, code, "co_flags"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(flagsOf(infoOf(executableOf(self)))); });
-    addMember(globalObject, code, "co_argcount"_s, [] (JSGlobalObject*, JSValue self) -> JSValue {
+    addMember(globalObject, code, "co_firstlineno"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, firstLineOf(infoOf(executableOf(self)))); });
+    addMember(globalObject, code, "co_flags"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, flagsOf(infoOf(executableOf(self)))); });
+    addMember(globalObject, code, "co_argcount"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
         const FunctionInfo& info = infoOf(executableOf(self));
-        return jsNumber(info.usesNamespace ? 0 : info.positionalCount);
+        return intFromUInt64(globalObject, info.usesNamespace ? 0 : info.positionalCount);
     });
-    addMember(globalObject, code, "co_posonlyargcount"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { 
+    addMember(globalObject, code, "co_posonlyargcount"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { 
         const FunctionInfo& info = infoOf(executableOf(self));
-        return jsNumber(info.usesNamespace || info.kind == CodeKind::GeneratorExpression || info.kind == CodeKind::Comprehension || info.kind == CodeKind::TypeParameters ? 0 : info.positionalOnlyCount);
+        return intFromUInt64(globalObject, info.usesNamespace || info.kind == CodeKind::GeneratorExpression || info.kind == CodeKind::Comprehension || info.kind == CodeKind::TypeParameters ? 0 : info.positionalOnlyCount);
     });
-    addMember(globalObject, code, "co_kwonlyargcount"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(infoOf(executableOf(self)).keywordOnlyCount); });
+    addMember(globalObject, code, "co_kwonlyargcount"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, infoOf(executableOf(self)).keywordOnlyCount); });
     addGetSet(globalObject, code, "co_varnames"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, detailsOf(globalObject->vm(), executableOf(self)).variableNames); });
-    addMember(globalObject, code, "co_nlocals"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsNumber(detailsOf(globalObject->vm(), executableOf(self)).variableNames.size()); });
+    addMember(globalObject, code, "co_nlocals"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, detailsOf(globalObject->vm(), executableOf(self)).variableNames.size()); });
     addMember(globalObject, code, "co_names"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, detailsOf(globalObject->vm(), executableOf(self)).names); });
     addGetSet(globalObject, code, "co_cellvars"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, detailsOf(globalObject->vm(), executableOf(self)).cellVariables); });
     addGetSet(globalObject, code, "co_freevars"_s, [] (JSGlobalObject* globalObject, JSValue self) { return tupleOfNames(globalObject, sortedFreeVariables(infoOf(executableOf(self)))); });
@@ -1074,7 +1074,7 @@ void initializeCodeType(JSGlobalObject* globalObject)
     addMember(globalObject, code, "co_consts"_s, getConstants);
     addGetSet(globalObject, code, "co_code"_s, getBytes);
     addGetSet(globalObject, code, "_co_code_adaptive"_s, getBytes);
-    addMember(globalObject, code, "co_stacksize"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsNumber(compiledCodeOf(globalObject->vm(), executableOf(self)).codeBlock->numCalleeLocals()); });
+    addMember(globalObject, code, "co_stacksize"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, compiledCodeOf(globalObject->vm(), executableOf(self)).codeBlock->numCalleeLocals()); });
     // Where the lines are and what catches what are the engine's to know, and are asked of it: co_lines() and co_positions().
     auto noBytes = [] (JSGlobalObject* globalObject, JSValue) -> JSValue { return newBytes(globalObject, { }); };
     addMember(globalObject, code, "co_linetable"_s, noBytes);

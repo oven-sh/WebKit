@@ -364,7 +364,7 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     int offset = characterOffset(std::max(error.column + 1, 0));
     int endOffset = error.endColumn + 1 > 0 ? characterOffset(error.endColumn + 1) : error.endColumn + 1;
 
-    PyTuple* details = PyTuple::create(globalObject, { jsString(vm, givenSource.provider()->sourceURL()), jsNumber(error.line), jsNumber(offset), lineText, jsNumber(error.endLine), jsNumber(endOffset) });
+    PyTuple* details = PyTuple::create(globalObject, { jsString(vm, givenSource.provider()->sourceURL()), intFromUInt64(globalObject, error.line), jsNumber(offset), lineText, intFromUInt64(globalObject, error.endLine), jsNumber(endOffset) });
     JSValue exception = call(globalObject, globalObject->pyRealm()->type(type), jsString(vm, error.message), details);
     RETURN_IF_EXCEPTION(scope, { });
     // There CPython makes it of what is wrong and nothing else, and then tells it where: PyErr_RangedSyntaxLocationObject(). So it has been made of nothing else.
@@ -483,7 +483,7 @@ static void raiseTokenizerError(JSGlobalObject* globalObject, ThrowScope& scope,
 {
     VM& vm = globalObject->vm();
     JSValue lineText = jsString(vm, String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(text)));
-    PyTuple* details = PyTuple::create(globalObject, { jsUndefined(), jsNumber(line), jsNumber(offset), lineText, jsNumber(line), jsNumber(endOffset) });
+    PyTuple* details = PyTuple::create(globalObject, { jsUndefined(), intFromUInt64(globalObject, line), jsNumber(offset), lineText, intFromUInt64(globalObject, line), jsNumber(endOffset) });
     JSValue exception = call(globalObject, globalObject->pyRealm()->typeSyntaxError(), jsString(vm, message), details);
     RETURN_IF_EXCEPTION(scope, void());
     setAttribute(globalObject, exception, Identifier::fromString(vm, "filename"_s), jsString(vm, sourceURL));

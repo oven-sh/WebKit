@@ -1,0 +1,22 @@
+instances => True [] []
+methods of them => True [] []
+methods of the class => True [] []
+functions => True [] []
+functions of modules => True [] []
+built in => True [] []
+methods of what is built in => True [] []
+of a great many lists => True [] []
+of a great many numbers => True [] []
+of big numbers, floats and strings => True [] []
+what is in a class => True [] []
+classes => True [] []
+partial and the like => True [] []
+code, frames and cells => True [] ['cell']
+generators and coroutines => True [] []
+---- what is equal has the same
+True True False 2 False 3000
+True True 2 False True True
+True True True True False
+True True True
+---- never -1
+True

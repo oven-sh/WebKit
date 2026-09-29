@@ -2466,9 +2466,9 @@ private:
         Ref<Label> enough = g.newLabel();
         Reg isEnough = g.newTemporary();
         if (m_info.hasVariadic)
-            g.emitBinaryOp<OpGreatereq>(isEnough.get(), given.get(), constant(jsNumber(positionalCount)), OperandTypes());
+            g.emitBinaryOp<OpGreatereq>(isEnough.get(), given.get(), constant(JSC::jsNumber(positionalCount)), OperandTypes());
         else
-            g.emitEqualityOp<OpStricteq>(isEnough.get(), given.get(), constant(jsNumber(positionalCount)));
+            g.emitEqualityOp<OpStricteq>(isEnough.get(), given.get(), constant(JSC::jsNumber(positionalCount)));
         g.emitJumpIfTrue(isEnough.get(), enough.get());
         // Too few or too many. The runtime raises, or gives a tuple with the default for each parameter in that parameter's place. How
         // many have one is not known here: __defaults__ can be set.
@@ -2478,16 +2478,16 @@ private:
             for (unsigned i = 0; i < positionalCount; ++i) {
                 Ref<Label> wasGiven = g.newLabel();
                 Reg isGiven = g.newTemporary();
-                g.emitBinaryOp<OpGreater>(isGiven.get(), given.get(), constant(jsNumber(i)), OperandTypes());
+                g.emitBinaryOp<OpGreater>(isGiven.get(), given.get(), constant(JSC::jsNumber(i)), OperandTypes());
                 g.emitJumpIfTrue(isGiven.get(), wasGiven.get());
-                emitGetItem(parameterRegister(i), defaults.get(), constant(jsNumber(i)));
+                emitGetItem(parameterRegister(i), defaults.get(), constant(JSC::jsNumber(i)));
                 emitLabel(wasGiven.get());
             }
         }
         emitLabel(enough.get());
 
         for (unsigned i = positionalCount; i < positionalCount + m_info.keywordOnlyCount; ++i)
-            emitRuntimeCall(parameterRegister(i), "keywordDefault"_s, { callee.get(), constant(jsNumber(i)) }, node);
+            emitRuntimeCall(parameterRegister(i), "keywordDefault"_s, { callee.get(), constant(JSC::jsNumber(i)) }, node);
         if (m_info.hasVariadic)
             emitRuntimeCall(parameterRegister(m_info.variadicIndex()), "listToTuple"_s, { rest.get() }, node);
         if (m_info.hasKeywordVariadic)
@@ -2666,7 +2666,7 @@ private:
     RegisterID* emitAwaitValue(RegisterID* dst, RegisterID* value, const Node& node, AwaitContext context = AwaitContext::Await)
     {
         Reg awaitable = g.newTemporary();
-        emitRuntimeCall(awaitable.get(), "getAwaitable"_s, { value, constant(jsNumber(static_cast<unsigned>(context))) }, node);
+        emitRuntimeCall(awaitable.get(), "getAwaitable"_s, { value, constant(JSC::jsNumber(static_cast<unsigned>(context))) }, node);
         return emitDelegate(dst, awaitable.get(), node);
     }
 
@@ -3759,7 +3759,7 @@ private:
 
         // That it is a sequence, and how long: exactly so, or at least so if a star takes up the slack.
         Reg fits = g.newTemporary();
-        emitRuntimeCall(fits.get(), "matchSequence"_s, { subject, constant(jsNumber(star < 0 ? size : size - 1)), constant(jsBoolean(star >= 0)) }, node);
+        emitRuntimeCall(fits.get(), "matchSequence"_s, { subject, constant(JSC::jsNumber(star < 0 ? size : size - 1)), constant(jsBoolean(star >= 0)) }, node);
         g.emitJumpIfFalse(fits.get(), mismatch);
         if (onlyWildcards)
             return;
@@ -3773,13 +3773,13 @@ private:
                     continue;
                 Reg index = g.newTemporary();
                 if (static_cast<int>(i) < star)
-                    g.emitLoad(index.get(), jsNumber(i));
+                    g.emitLoad(index.get(), JSC::jsNumber(i));
                 else {
                     if (!length) {
                         length = g.newTemporary();
                         emitRuntimeCall(length.get(), "length"_s, { subject }, node);
                     }
-                    emitBinaryOperation(index.get(), BinaryOperator::Sub, false, length.get(), constant(jsNumber(size - i)));
+                    emitBinaryOperation(index.get(), BinaryOperator::Sub, false, length.get(), constant(JSC::jsNumber(size - i)));
                 }
                 Reg value = g.newTemporary();
                 mark(element);
@@ -3807,7 +3807,7 @@ private:
     {
         unsigned size = node.keys.size();
         Reg fits = g.newTemporary();
-        emitRuntimeCall(fits.get(), "matchMapping"_s, { subject, constant(jsNumber(size)) }, node);
+        emitRuntimeCall(fits.get(), "matchMapping"_s, { subject, constant(JSC::jsNumber(size)) }, node);
         g.emitJumpIfFalse(fits.get(), mismatch);
         if (!size && !node.rest)
             return;
@@ -3868,7 +3868,7 @@ private:
 
         Reg cls = emitToTemporary(node.cls);
         Reg found = g.newTemporary();
-        emitRuntimeCall(found.get(), "matchClass"_s, { subject, cls.get(), constant(jsNumber(positional)), constant(names) }, node);
+        emitRuntimeCall(found.get(), "matchClass"_s, { subject, cls.get(), constant(JSC::jsNumber(positional)), constant(names) }, node);
         emitJumpIfMarker(found.get(), mismatch);
         auto values = emitUnpackExactly(found.get(), positional + keywords);
         for (unsigned i = 0; i < positional + keywords; ++i) {
@@ -4457,7 +4457,7 @@ private:
             store(m_names.dunder_module, moduleName.get());
         }
         store(m_names.dunder_qualname, constant(jsString(m_vm, m_info.qualifiedName)));
-        store(m_names.dunder_firstlineno, constant(jsNumber(m_info.firstLine)));
+        store(m_names.dunder_firstlineno, constant(JSC::jsNumber(m_info.firstLine)));
         if (!node.typeParameters.empty()) {
             Reg typeParameters = emitLoadClosure(nullptr, Identifier::fromString(m_vm, ".type_params"_s), node);
             store(m_names.dunder_type_params, typeParameters.get());
@@ -4919,7 +4919,7 @@ private:
 
     void emitImportName(RegisterID* dst, RegisterID* name, RegisterID* fromList, unsigned level, Node& node)
     {
-        emitRuntimeCall(dst, "importName"_s, { m_globals.get(), m_builtins.get(), localsForImport(), name, fromList, constant(jsNumber(level)) }, node);
+        emitRuntimeCall(dst, "importName"_s, { m_globals.get(), m_builtins.get(), localsForImport(), name, fromList, constant(JSC::jsNumber(level)) }, node);
     }
 
     void emitImport(Import& node)

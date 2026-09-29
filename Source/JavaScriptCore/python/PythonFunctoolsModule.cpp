@@ -777,7 +777,7 @@ PYTHON_NATIVE(cacheInfo)
     arguments.append(intFromInt64(globalObject, cache.hits));
     arguments.append(intFromInt64(globalObject, cache.misses));
     arguments.append(cache.maximumSize == -1 ? jsUndefined() : intFromInt64(globalObject, cache.maximumSize));
-    arguments.append(jsNumber(cache.cache->size()));
+    arguments.append(intFromUInt64(globalObject, cache.cache->size()));
     RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, cache.infoType.get(), arguments)));
 }
 

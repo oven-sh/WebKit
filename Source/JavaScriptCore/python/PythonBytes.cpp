@@ -371,7 +371,7 @@ static bool resize(JSGlobalObject* globalObject, JSUint8Array* view, size_t newL
         raiseMemoryError(globalObject, scope);
         return false;
     }
-    view->putDirect(vm, capacityName, jsNumber(static_cast<double>(newCapacity)));
+    view->putDirect(vm, capacityName, JSC::jsNumber(static_cast<double>(newCapacity)));
     return true;
 }
 
@@ -402,7 +402,7 @@ static bool replaceRange(JSGlobalObject* globalObject, JSUint8Array* view, size_
             JSValue known = view->getDirect(vm, capacityName);
             size_t capacity = known ? static_cast<size_t>(known.asNumber()) : length;
             view->dropFrontOfOwnedStorage(dropped, length - dropped);
-            view->putDirect(vm, capacityName, jsNumber(static_cast<double>(capacity - dropped)));
+            view->putDirect(vm, capacityName, JSC::jsNumber(static_cast<double>(capacity - dropped)));
             if (!resize(globalObject, view, length - dropped))
                 return false;
             if (!copy.isEmpty())
@@ -3366,14 +3366,14 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         addMethods(globalObject, type, { { "__release_buffer__"_s, builtinReleaseBuffer } });
     addGetSet(globalObject, memory, "nbytes"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) { return intFromInt64(globalObject, self->byteLength()); }>);
     addGetSet(globalObject, memory, "readonly"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsBoolean(self->isReadOnly()); }>);
-    addGetSet(globalObject, memory, "itemsize"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsNumber(self->itemSize()); }>);
+    addGetSet(globalObject, memory, "itemsize"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return intFromUInt64(globalObject, self->itemSize()); }>);
     addGetSet(globalObject, memory, "format"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue {
         VM& vm = globalObject->vm();
         if (self->layout().formatHasAtSign)
             return strOrMemoryError(globalObject, concatenate('@', self->format()));
         return jsSingleCharacterString(vm, static_cast<Latin1Character>(self->format()));
     }>);
-    addGetSet(globalObject, memory, "ndim"_s, memoryAttribute<[] (JSGlobalObject*, PyMemoryView* self) -> JSValue { return jsNumber(static_cast<unsigned>(self->dimensions().size())); }>);
+    addGetSet(globalObject, memory, "ndim"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return intFromUInt64(globalObject, static_cast<unsigned>(self->dimensions().size())); }>);
     addGetSet(globalObject, memory, "shape"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return tupleOfDimensions<&Dimension::length>(globalObject, self); }>);
     addGetSet(globalObject, memory, "strides"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView* self) -> JSValue { return tupleOfDimensions<&Dimension::stride>(globalObject, self); }>);
     addGetSet(globalObject, memory, "suboffsets"_s, memoryAttribute<[] (JSGlobalObject* globalObject, PyMemoryView*) -> JSValue { return globalObject->pyRealm()->emptyTuple(); }>);

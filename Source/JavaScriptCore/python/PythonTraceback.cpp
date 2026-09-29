@@ -64,7 +64,7 @@ void addTracebackEntry(JSGlobalObject* globalObject, JSValue exception, CallFram
     if (!head || !isTraceback(globalObject, head))
         head = jsUndefined();
     unsigned sourceOffset = callFrame->codeBlock()->expressionInfoForBytecodeIndex(bytecodeIndex).divot;
-    JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, PyFrame::forCallFrame(vm, callFrame), jsNumber(bytecodeIndex.offset()), jsNumber(sourceOffset));
+    JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, PyFrame::forCallFrame(vm, callFrame), JSC::jsNumber(bytecodeIndex.offset()), JSC::jsNumber(sourceOffset));
     asObject(exception)->putDirect(vm, vm.pythonNames().private_traceback, entry);
 }
 
@@ -252,7 +252,7 @@ static JSValue getFrameLocals(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue getFrameLine(JSGlobalObject* globalObject, JSValue self)
 {
-    return jsNumber(asFrame(self)->line(globalObject->vm()));
+    return intFromUInt64(globalObject, asFrame(self)->line(globalObject->vm()));
 }
 
 static void setFrameLine(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -271,7 +271,7 @@ static JSValue getFrameLastInstruction(JSGlobalObject* globalObject, JSValue sel
 {
     // A generator that has not started has been made, which is the beginning of its code.
     auto index = asFrame(self)->bytecodeIndex(globalObject->vm());
-    return jsNumber(index ? index->offset() : 0);
+    return intFromUInt64(globalObject, index ? index->offset() : 0);
 }
 
 static JSValue getFrameGenerator(JSGlobalObject*, JSValue self)

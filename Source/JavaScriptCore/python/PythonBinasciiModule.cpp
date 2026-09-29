@@ -360,7 +360,7 @@ PYTHON_NATIVE(binasciiCRCHQX)
     unsigned crc = *given & 0xffff;
     for (uint8_t byte : data)
         crc = ((crc << 8) & 0xff00) ^ crcTableHQX[(crc >> 8) ^ byte];
-    return JSValue::encode(jsNumber(crc));
+    return JSValue::encode(intFromUInt64(globalObject, crc));
 }
 
 // crc32(data, crc=0, /)

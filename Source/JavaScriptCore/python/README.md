@@ -87,6 +87,11 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 | a class | a `PyType` |
 | unbound, deleted | the empty value, as for JavaScript's `let` before it is initialized |
 
+**`jsNumber()` will not take anything wider than an int32 here.** To JavaScript a number is a number, so `JSC::jsNumber()` makes a double of an integer that does not fit, which to Python is a `float`, and an int32 of a double that has
+nothing after the point, which is an `int`. `socket.ntohl(0xFFFF)` was `4294901760.0`, and the hash of a function of JavaScript's was a `float` whenever the function was far enough up in memory, so that it could not be a key.
+Inside `namespace Python` the name is a template that takes only what is sure to fit, and hides the other, so anything else does not compile: it is for `intFromInt64()`, `intFromUInt64()` or `floatFromDouble()`. What really is
+wanted as a number of JavaScript's, as an operand that the code generator gives or something kept in an internal field, is asked for as `JSC::jsNumber()`.
+
 ### Being told of what is run
 
 `sys.monitoring` (PEP 669), and `sys.settrace()` and `sys.setprofile()`, which are made out of it as in CPython's `legacy_tracing.c`. It is all in `PythonMonitoring.cpp`.

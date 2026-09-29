@@ -1714,7 +1714,7 @@ JSObject* createArrayModule(JSGlobalObject* globalObject)
             { "tounicode"_s, arrayToUnicode },
         });
         addGetSet(globalObject, type, "typecode"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return strOfCharacter(globalObject, static_cast<char32_t>(stateOf<ArrayState>(self).descriptor.typecode)); });
-        addGetSet(globalObject, type, "itemsize"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(stateOf<ArrayState>(self).descriptor.itemSize); });
+        addGetSet(globalObject, type, "itemsize"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, stateOf<ArrayState>(self).descriptor.itemSize); });
 
         PyType* iterator = createBuiltinType(globalObject, "array.arrayiterator"_s, realm->typeObject(), PyType::Layout::Native, 0);
         iterator->setInstanceStructure(vm, PyStateObject::createStructure(vm, globalObject, iterator));
