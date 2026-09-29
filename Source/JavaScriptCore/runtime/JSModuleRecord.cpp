@@ -176,18 +176,17 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     RELEASE_ASSERT(environment->symbolTable() == executable->moduleEnvironmentSymbolTable());
     FunctionExecutable* functionExecutable = executable->linkedFunctionDeclaration(*index);
     if (!functionExecutable) {
-        UnlinkedFunctionExecutable* unlinkedExecutable = nullptr;
-        if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = uninstantiated->unlinkedCodeBlock.get())
-            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
-        else if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->unlinkedCodeBlock())
-            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
-        else
-            unlinkedExecutable = m_functionDeclarationSlots->decode(vm, *index);
-        RELEASE_ASSERT(unlinkedExecutable);
-        functionExecutable = executable->linkFunctionDeclaration(vm, *index, unlinkedExecutable);
+        UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = uninstantiated->unlinkedCodeBlock.get();
+        if (!unlinkedCodeBlock)
+            unlinkedCodeBlock = executable->unlinkedCodeBlock();
+        if (unlinkedCodeBlock)
+            functionExecutable = unlinkedCodeBlock->executableOfFunctionDecl(*index);
+        if (!functionExecutable) {
+            UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock ? unlinkedCodeBlock->functionDecl(*index) : m_functionDeclarationSlots->decode(vm, *index);
+            RELEASE_ASSERT(unlinkedExecutable);
+            functionExecutable = executable->linkFunctionDeclaration(vm, *index, unlinkedExecutable);
+        }
     }
-    UnlinkedFunctionExecutable* unlinkedExecutable = functionExecutable->unlinkedExecutable();
-
     // InitializeEnvironment step 24.a.iii, for this one declaration.
     JSGlobalObject* globalObject = environment->globalObject();
     JSFunction* function = nullptr;
@@ -205,13 +204,13 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     // Entries that are still in the bytecode cache are not watched.
     if (SymbolTable* symbolTable = environment->symbolTable(); !symbolTable->hasCachedEntriesPending()) {
         ConcurrentJSLocker locker(symbolTable->m_lock);
-        auto iter = symbolTable->find(locker, unlinkedExecutable->name().impl());
+        auto iter = symbolTable->find(locker, functionExecutable->name().impl());
         if (iter != symbolTable->end(locker)) {
             ASSERT(iter->value.scopeOffset() == offset);
             watchpointSet = iter->value.watchpointSet();
         }
     }
-    symbolTablePutTouchWatchpointSet(vm, environment, unlinkedExecutable->name(), function, &environment->variableAt(offset), watchpointSet);
+    symbolTablePutTouchWatchpointSet(vm, environment, functionExecutable->name(), function, &environment->variableAt(offset), watchpointSet);
 
     // An empty slot is one that was never stored to, so each declaration gets here at most once.
     ASSERT(uninstantiated->remaining);

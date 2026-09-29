@@ -458,6 +458,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     if (!linkFunctionsEagerly)
         m_numberOfUnmaterializedFunctionExecutables = static_cast<unsigned>(m_functionDecls.size() - firstLazilyMaterializedFunctionDecl() + m_functionExprs.size());
     for (size_t count = linkFunctionsEagerly ? m_functionDecls.size() : 0, i = 0; i < count; ++i) {
+        if (FunctionExecutable* executable = unlinkedCodeBlock->executableOfFunctionDecl(i)) {
+            m_functionDecls[i].set(vm, this, executable);
+            continue;
+        }
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionDecl(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
@@ -466,6 +470,10 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
     }
 
     for (size_t count = linkFunctionsEagerly ? m_functionExprs.size() : 0, i = 0; i < count; ++i) {
+        if (FunctionExecutable* executable = unlinkedCodeBlock->executableOfFunctionExpr(i)) {
+            m_functionExprs[i].set(vm, this, executable);
+            continue;
+        }
         UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock->functionExpr(i);
         if (shouldUpdateFunctionHasExecutedCache)
             vm.functionHasExecutedCache()->insertUnexecutedRange(ownerExecutable->sourceID(), unlinkedExecutable->unlinkedFunctionStart(), unlinkedExecutable->unlinkedFunctionEnd());
@@ -929,11 +937,21 @@ FunctionExecutable* CodeBlock::linkFunctionExpr(unsigned index, UnlinkedFunction
 FunctionExecutable* CodeBlock::materializeFunctionDeclSlow(unsigned index)
 {
     ASSERT(index >= firstLazilyMaterializedFunctionDecl());
+    if (FunctionExecutable* executable = m_unlinkedCode->executableOfFunctionDecl(index)) {
+        m_functionDecls[index].set(vm(), this, executable);
+        m_numberOfUnmaterializedFunctionExecutables--;
+        return executable;
+    }
     return materializeFunctionExecutable(m_functionDecls[index], m_unlinkedCode->functionDecl(index));
 }
 
 FunctionExecutable* CodeBlock::materializeFunctionExprSlow(unsigned index)
 {
+    if (FunctionExecutable* executable = m_unlinkedCode->executableOfFunctionExpr(index)) {
+        m_functionExprs[index].set(vm(), this, executable);
+        m_numberOfUnmaterializedFunctionExecutables--;
+        return executable;
+    }
     if (codeType() == ModuleCode && Options::useSharedModuleFunctionExpressionExecutables()) {
         ASSERT(!m_functionExprs[index] && m_numberOfUnmaterializedFunctionExecutables);
         RELEASE_ASSERT(!isCompilationThread());
@@ -1361,7 +1379,7 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
         if (uncheckedDowncast<ModuleProgramExecutable>(ownerExecutable())->isAsync())
             resumableCodeOwner = ownerExecutable();
     } else if (m_unlinkedCode->codeType() == FunctionCode && isGeneratorOrAsyncFunctionBodyParseMode(m_unlinkedCode->parseMode()))
-        resumableCodeOwner = uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable();
+        resumableCodeOwner = ownerExecutable()->isShortForm() ? static_cast<JSCell*>(ownerExecutable()) : uncheckedDowncast<FunctionExecutable>(ownerExecutable())->unlinkedExecutable(); // (What is the function's own.)
 
     for (size_t i = 0; i < count; i++) {
         JSValue constant = constants[i].get();

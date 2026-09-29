@@ -22,6 +22,7 @@
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include <wtf/BitVector.h>
+#include <sys/mman.h>
 #include <wtf/text/AtomStringTable.h>
 #include <wtf/text/SymbolRegistry.h>
 
@@ -94,6 +95,10 @@ struct StaticHeap::Header {
     uint64_t numberOfTDZ;
     uint64_t infosOfFunctions; // AOT::FunctionInfo[], by AOT::CodeHeader::index.
     uint64_t factsOfFunctions; // uint32_t[], likewise. Zero: the unlinked code of functions is here instead.
+    uint64_t rowsOfFunctions; // RowOfFunction[], likewise. See rowOf().
+    // Options::staticHeapGuardsShortFunctionExecutables(): from here to there in Arena::Cells, every other page is not to be there.
+    uint64_t guardedFrom;
+    uint64_t guardedTo;
     uint64_t numberOfFunctions;
     // See PositionsToKeep. If there are any, FunctionFacts::ExpressionInfo is where the positions of a function's call sites are, and
     // an odd number among factsOfFunctions is one more than where those of code that has no facts are.
@@ -183,6 +188,19 @@ PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
     if (auto* ofVM = t_ofVMOfThread)
         return ofVM->container;
     return PreciseAllocation::containerOfStaticCells();
+}
+
+// See keepWhatIsWantedOfFunctions().
+static bool s_functionsAreMadeInScratch;
+static bool s_nextCellIsOfAFunction;
+static Vector<FunctionExecutable*> s_executablesInScratch;
+static UncheckedKeyHashSet<void*> s_cellsInScratch;
+static Vector<std::span<const WriteBarrier<UnlinkedFunctionExecutable>>> s_listsOfFunctionsInFunctions;
+const StaticHeap::RowOfFunction* StaticHeap::s_rowsOfFunctions;
+
+void StaticHeap::willAllocateUnlinkedFunctionSlow()
+{
+    s_nextCellIsOfAFunction = true;
 }
 
 // Where the cells are and how big, for as long as the region is being built. Nothing needs to be told once it is.
@@ -281,6 +299,12 @@ void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
     }
     if (!Region::isAllocatingOnThisThread())
         return nullptr;
+    if (std::exchange(s_nextCellIsOfAFunction, false) && s_functionsAreMadeInScratch) {
+        void* cell = Region::allocate(Region::Arena::Scratch, size, 16, sizeOfCellHeader);
+        Region::AllocationScope notInRegion(false);
+        s_cellsInScratch.add(cell);
+        return cell;
+    }
     bool isMutable = Region::isAllocatingWhatIsMutable();
     void* cell = Region::allocate(isMutable ? Region::Arena::MutableCells : Region::Arena::Cells, size, 16, sizeOfCellHeader);
     Region::AllocationScope notInRegion(false);
@@ -321,7 +345,8 @@ public:
 
     void check(const void* pointer, const char* what)
     {
-        if (!pointer || StaticHeap::contains(pointer))
+        bool isKept = std::bit_cast<uintptr_t>(pointer) - Region::startOf(Region::Arena::Scratch) >= Region::arenaReservation;
+        if (!pointer || (StaticHeap::contains(pointer) && isKept))
             return;
         numberOfEscapes++;
         if (m_reported.add(pointer).isNewEntry && m_reported.size() <= 40) {
@@ -333,6 +358,8 @@ public:
     void append(const ConservativeRoots&) final { }
     void appendUnbarriered(JSCell* cell) final
     {
+        // (UnlinkedCodeBlock::executableIn())
+        cell = std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(cell) & ~UnlinkedCodeBlock::isExecutable);
         // (Which are looked at on their own.)
         if (cell && cell->type() == StructureType)
             return;
@@ -491,7 +518,8 @@ static void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
     bytes.append(static_cast<uint8_t>(value));
 }
 
-// How many there are. Then for each, in the order of the bytecode: twice how much further on it is than the one before, and one more
+// The line and the column that the function starts at, in the text of the module (StaticHeap::whereFunctionStarts()). Then
+// how many there are. Then for each, in the order of the bytecode: twice how much further on it is than the one before, and one more
 // if something is constructed there; a position; and if something is constructed there another, of where that expression starts.
 // A position that is on the same line of the same source as the one before is one more than twice how many columns further on it is
 // (as a number that has its sign at the bottom). Any other is four times how many lines further down it is (likewise), and two more if
@@ -513,6 +541,8 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
         }
         if (!codeBlock->hasExpressionInfo())
             offsets.clear();
+        appendVarint(stream, firstLine);
+        appendVarint(stream, startColumn);
         appendVarint(stream, offsets.size());
         uint32_t previousOffset = 0;
         int64_t previousLine = 0;
@@ -857,7 +887,12 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
             }
             return;
         }
+        s_nextCellIsOfAFunction = true;
         executable = unlinked->link(vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
+        if (s_functionsAreMadeInScratch) {
+            Region::AllocationScope notInRegion(false);
+            s_executablesInScratch.append(executable);
+        }
         executable->becomeStatic(vm);
         for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
             if (auto& function = code[static_cast<unsigned>(kind)]) {
@@ -1001,7 +1036,7 @@ Ref<Decoder> StaticHeap::decoderOfWhatWasLeftInPayload(VM& vm, Decoder& placed)
 
 FunctionExecutable* StaticHeap::standInFor(VM& vm, FunctionExecutable* executable)
 {
-    RELEASE_ASSERT(isUsedBy(vm) && contains(executable));
+    RELEASE_ASSERT(isUsedBy(vm) && contains(executable) && !executable->isShortForm());
     static NeverDestroyed<decltype(StaticHeapOfVM::standIns)> standInsOfFirstVM;
     auto& standIns = ofVM(vm) ? ofVM(vm)->standIns : standInsOfFirstVM.get();
     if (auto it = standIns.find(executable); it != standIns.end())
@@ -1115,6 +1150,175 @@ void* StaticHeap::takePlaceForSourceProvider(VM& vm, size_t entryOffset, size_t 
     return nullptr;
 }
 
+// A FunctionExecutable and an UnlinkedFunctionExecutable are made for every function, as ever: that is what finds the function's code and
+// says what there is to say about it. But most of what is in them is for code that is yet to be parsed, compiled or replaced, and a
+// program that goes without its bytecode has none. So they are made in Arena::Scratch, and this is when all that is done. What
+// is kept goes where cells go:
+// - For most functions, a FunctionExecutable in the short form, which see, and a row in a table. What is in the
+//   UnlinkedFunctionExecutable that the row does not say is the same for a great many functions, which have one between them.
+// - Both as they are, for a function that there is more to say about.
+// - The UnlinkedFunctionExecutable as it is, of a builtin, which is found by it.
+// The code that a function is in refers to its FunctionExecutable (UnlinkedCodeBlock::executableIn()).
+void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
+{
+    auto isScratch = [](uintptr_t bits) { return bits - Region::startOf(Region::Arena::Scratch) < Region::used(Region::Arena::Scratch) && s_cellsInScratch.contains(std::bit_cast<void*>(bits)); };
+    auto place = [&](const void* bytes, size_t size) {
+        void* cell = Region::allocate(Region::Arena::Cells, size, 16, sizeOfCellHeader);
+        memcpy(cell, bytes, size);
+        s_cellsBeingBuilt[0].append({ cell, size });
+        return cell;
+    };
+    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, UnlinkedFunctionExecutable*> kept;
+    auto keep = [&](UnlinkedFunctionExecutable* function) {
+        if (!isScratch(std::bit_cast<uintptr_t>(function)))
+            return function;
+        return kept.ensure(function, [&] { return static_cast<UnlinkedFunctionExecutable*>(place(function, sizeof(UnlinkedFunctionExecutable))); }).iterator->value;
+    };
+    std::span factsOfFunctions { std::bit_cast<const uint32_t*>(header.factsOfFunctions), static_cast<size_t>(header.numberOfFunctions) };
+
+    // The executables first, one after the other: they are what is looked at when a function is called.
+    std::span<RowOfFunction> rows { static_cast<RowOfFunction*>(Region::allocate(Region::Arena::Data, header.numberOfFunctions * sizeof(RowOfFunction), pageSizeOfImage)), static_cast<size_t>(header.numberOfFunctions) };
+    zeroSpan(rows);
+    header.rowsOfFunctions = std::bit_cast<uint64_t>(rows.data());
+    UncheckedKeyHashMap<FunctionExecutable*, FunctionExecutable*> moved;
+    Vector<std::pair<uint32_t, UnlinkedFunctionExecutable*>> inShortForm;
+    Vector<FunctionExecutable*> inFull;
+    Structure* structureOfShortForm = vm.shortFunctionExecutableStructure.get();
+    UncheckedKeyHashMap<ASCIILiteral, unsigned> why;
+    for (auto* executable : s_executablesInScratch) {
+        UnlinkedFunctionExecutable* unlinked = executable->unlinkedExecutable();
+        RELEASE_ASSERT(isScratch(std::bit_cast<uintptr_t>(executable)) && isScratch(std::bit_cast<uintptr_t>(unlinked)));
+        bool hasCodeToCall = executable->aotEntryFor(CodeSpecializationKind::CodeForCall);
+        bool hasCode = hasCodeToCall || (executable->aotEntryFor(CodeSpecializationKind::CodeForConstruct) && !executable->constructsByCalling());
+        uint32_t index = executable->aotIndexFor(hasCodeToCall ? CodeSpecializationKind::CodeForCall : CodeSpecializationKind::CodeForConstruct);
+        size_t module = (std::bit_cast<uintptr_t>(executable->source().provider()) - std::bit_cast<uintptr_t>(addressOfSourceProvider(0))) / sizeOfPlaceForSourceProvider;
+        auto saysWhereItStarts = [&] {
+            uint32_t at = factsOfFunctions[index];
+            return at && !(at & 1) && inData<AOT::FunctionFacts>(at)->find(AOT::FunctionFacts::ExpressionInfo);
+        };
+        bool canBeShort = hasCode && unlinked->canBeSharedByStaticExecutables() && saysWhereItStarts()
+            && isPlaceOfSourceProvider(executable->source().provider()) && module < (1u << RowOfFunction::bitsOfModule)
+            && unlinked->parameterCount() < (1u << RowOfFunction::bitsOfParameterCount)
+            && executable->intrinsic() == NoIntrinsic && executable->evalContextType() == EvalContextType::None && !executable->overrideLineNumber()
+            && executable->derivedContextType() == unlinked->derivedContextType() && executable->lexicallyScopedFeatures() == unlinked->lexicallyScopedFeatures();
+        if (!canBeShort) {
+            inFull.append(executable);
+            if (Options::aotReportStats()) [[unlikely]] // TEMPORARY-SHORT-FORM-STATS
+                why.add(!hasCode ? "no code"_s : !unlinked->canBeSharedByStaticExecutables() ? unlinked->whyItCannotBeSharedByStaticExecutables() : !saysWhereItStarts() ? "does not say where it starts"_s : "something else"_s, 0).iterator->value++;
+            continue;
+        }
+        char* copy;
+        if (Options::staticHeapGuardsShortFunctionExecutables()) [[unlikely]] {
+            // (A cell is halfway between two multiples of 16, so it cannot end where a page does. What is in between is no address.)
+            auto* pages = static_cast<char*>(Region::allocate(Region::Arena::Cells, 2 * pageSizeOfImage, pageSizeOfImage));
+            if (!header.guardedFrom)
+                header.guardedFrom = std::bit_cast<uintptr_t>(pages) - Region::startOf(Region::Arena::Cells);
+            header.guardedTo = std::bit_cast<uintptr_t>(pages) + 2 * pageSizeOfImage - Region::startOf(Region::Arena::Cells);
+            copy = pages + pageSizeOfImage - sizeOfCellHeader - FunctionExecutable::sizeOfShortForm;
+            memcpy(copy, static_cast<const void*>(executable), FunctionExecutable::sizeOfShortForm);
+            memset(copy + FunctionExecutable::sizeOfShortForm, 0xfb, sizeOfCellHeader);
+            s_cellsBeingBuilt[0].append({ copy, FunctionExecutable::sizeOfShortForm });
+        } else
+            copy = static_cast<char*>(place(executable, FunctionExecutable::sizeOfShortForm));
+        *reinterpret_cast<uint32_t*>(copy + JSCell::structureIDOffset()) = structureOfShortForm->id().bits();
+        *reinterpret_cast<uint8_t*>(copy + JSCell::typeInfoTypeOffset()) = ShortFunctionExecutableType;
+        *reinterpret_cast<uint8_t*>(copy + JSCell::typeInfoFlagsOffset()) = structureOfShortForm->typeInfo().inlineTypeFlags();
+        moved.add(executable, reinterpret_cast<FunctionExecutable*>(copy));
+        RowOfFunction& row = rows[index];
+        row.nameImpl = unlinked->ecmaName().impl();
+        row.module = module;
+        row.parameterCount = unlinked->parameterCount();
+        row.isArrowFunctionContext = executable->isArrowFunctionContext();
+        row.isInsideOrdinaryFunction = executable->isInsideOrdinaryFunction();
+        inShortForm.append({ index, unlinked });
+    }
+
+    // Then what they have between them, which is not much.
+    UncheckedKeyHashMap<String, UnlinkedFunctionExecutable*> shared;
+    for (auto& [index, unlinked] : inShortForm) {
+        auto bytes = unlinked->whatIsSharedByStaticExecutables();
+        auto* one = shared.ensure(String { std::span { reinterpret_cast<const Latin1Character*>(bytes.data()), bytes.size() } }, [&] {
+            return static_cast<UnlinkedFunctionExecutable*>(place(bytes.data(), bytes.size()));
+        }).iterator->value;
+        rows[index].unlinkedFunction = static_cast<uint32_t>(std::bit_cast<uintptr_t>(one) - Region::startOf(Region::Arena::Cells));
+    }
+
+    // Then what is kept as it is.
+    for (auto* executable : inFull) {
+        auto* copy = static_cast<FunctionExecutable*>(place(executable, sizeof(FunctionExecutable)));
+        moved.add(executable, copy);
+        copy->setUnlinkedExecutableWhileStaticHeapIsBuilt(keep(executable->unlinkedExecutable()));
+    }
+    size_t ofExecutablesInFull = kept.size();
+    Vector<UnlinkedCodeBlock*> codeBlocks;
+    for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
+        forEachCell(arena, [&](void* pointer, size_t) {
+            if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(static_cast<JSCell*>(pointer)))
+                codeBlocks.append(codeBlock);
+        });
+    }
+    for (auto* codeBlock : codeBlocks) {
+        for (auto list : { codeBlock->functionDecls(), codeBlock->functionExprs() }) {
+            for (auto& entry : list) {
+                UnlinkedFunctionExecutable* unlinked = entry.get();
+                if (!isScratch(std::bit_cast<uintptr_t>(unlinked)))
+                    continue;
+                FunctionExecutable* executable = unlinked->staticExecutable();
+                reinterpret_cast<uintptr_t&>(const_cast<WriteBarrier<UnlinkedFunctionExecutable>&>(entry)) = executable ? std::bit_cast<uintptr_t>(moved.get(executable)) | UnlinkedCodeBlock::isExecutable : std::bit_cast<uintptr_t>(keep(unlinked));
+            }
+        }
+    }
+    for (auto& module : std::span { std::bit_cast<StaticHeapModule*>(header.modules), static_cast<size_t>(header.numberOfModules) }) {
+        if (module.isBuiltinFunction && module.codeBlock)
+            module.codeBlock = std::bit_cast<uint64_t>(keep(std::bit_cast<UnlinkedFunctionExecutable*>(module.codeBlock)));
+    }
+    size_t foundBy = kept.size() - ofExecutablesInFull;
+
+    // And whatever refers to an executable refers to what has become of it.
+    for (uint32_t at : factsOfFunctions) {
+        if (!at || at & 1)
+            continue;
+        auto* facts = inData<AOT::FunctionFacts>(at);
+        for (auto fact : { AOT::FunctionFacts::FunctionDecls, AOT::FunctionFacts::FunctionExprs }) {
+            const uint32_t* words = facts->find(fact);
+            if (!words)
+                continue;
+            for (auto& entry : std::span { const_cast<uintptr_t*>(inMalloc<uintptr_t>(words[0])), static_cast<size_t>(words[1]) }) {
+                if (!isScratch(entry))
+                    continue;
+                auto* unlinked = std::bit_cast<UnlinkedFunctionExecutable*>(entry);
+                FunctionExecutable* executable = unlinked->staticExecutable();
+                entry = executable ? std::bit_cast<uintptr_t>(moved.get(executable)) | UnlinkedCodeBlock::isExecutable : std::bit_cast<uintptr_t>(keep(unlinked));
+            }
+        }
+    }
+    for (auto& entry : kept) {
+        if (FunctionExecutable* executable = entry.value->staticExecutable())
+            entry.value->setStaticExecutable(moved.get(executable));
+    }
+    for (auto& info : std::span { std::bit_cast<AOT::FunctionInfo*>(header.infosOfFunctions), static_cast<size_t>(header.numberOfFunctions) }) {
+        if (ScriptExecutable* executable = info.executable(); isScratch(std::bit_cast<uintptr_t>(executable)))
+            info.setExecutable(moved.get(uncheckedDowncast<FunctionExecutable>(executable)), info.kind(), info.constantsAreOfNoRealm());
+    }
+
+    // What is left is the functions in a function that there is no code for, and so no executable, and so no way to get to them.
+    // (Whether anything else refers to what is about to be gone is for whoever checks what cells refer to.)
+    size_t inFunctionsWithoutCode = 0;
+    for (auto list : s_listsOfFunctionsInFunctions) {
+        for (auto& entry : list) {
+            if (!isScratch(std::bit_cast<uintptr_t>(entry)))
+                continue;
+            const_cast<WriteBarrier<UnlinkedFunctionExecutable>&>(entry).clear();
+            ++inFunctionsWithoutCode;
+        }
+    }
+    s_rowsOfFunctions = rows.data();
+    for (auto& [reason, count] : why)
+        dataLogLn("StaticHeap:     in full, ", reason, ": ", count);
+    if (Options::aotReportStats()) [[unlikely]]
+        dataLogLn("StaticHeap: of ", s_executablesInScratch.size(), " FunctionExecutables ", inShortForm.size(), " are in the short form, with ", shared.size(), " UnlinkedFunctionExecutables between them and ", rows.size_bytes(), " bytes of rows; ", inFull.size(), " are kept in full; ", foundBy, " more UnlinkedFunctionExecutables are kept for what finds a function by one; ", inFunctionsWithoutCode, " functions are in functions that there is no code for");
+}
+
 Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions)
 {
     s_whatTheCompilerSaysOfFunctions = whatTheCompilerSaysOfFunctions;
@@ -1123,6 +1327,12 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     auto forgetCells = makeScopeExit([] {
         for (auto& cells : s_cellsBeingBuilt)
             cells = { };
+        s_functionsAreMadeInScratch = false;
+        s_nextCellIsOfAFunction = false;
+        s_executablesInScratch = { };
+        s_cellsInScratch = { };
+        s_listsOfFunctionsInFunctions = { };
+        s_rowsOfFunctions = nullptr;
     });
     if (positionsToKeep)
         whatIsKeptOfPayloadStartsAt = payload.size();
@@ -1231,6 +1441,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         s_factsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
                         zeroSpan(s_factsBeingBuilt);
                         header.factsOfFunctions = std::bit_cast<uint64_t>(s_factsBeingBuilt.data());
+                        s_functionsAreMadeInScratch = whatIsKeptOfPayloadStartsAt && positionsToKeep && Options::staticHeapMakesShortFunctionExecutables();
                     }
                     header.numberOfFunctions = infosOfFunctions.size();
                 }
@@ -1318,6 +1529,11 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         if (decoder.leavesFunctionCodeInPayload()) {
                             for (auto& [function, offsets] : functions) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+                                    if (auto* code = function->codeBlockIfThereIsOne(kind); code && s_functionsAreMadeInScratch) {
+                                        Region::AllocationScope notInRegion(false);
+                                        s_listsOfFunctionsInFunctions.append(code->functionDecls());
+                                        s_listsOfFunctionsInFunctions.append(code->functionExprs());
+                                    }
                                     if (auto* code = function->codeBlockIfThereIsOne(kind))
                                         code->leaveToStaticHeap(code->numberOfUnlinkedStringSwitchJumpTables() || code->numberOfConstantIdentifierSets(), !!s_arraysBeingBuilt);
                                 }
@@ -1444,6 +1660,9 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             dataLogLn("StaticHeap: ", s_symbolRegistriesBeingBuilt[0]->size(), " registered symbols, ", s_symbolRegistriesBeingBuilt[1]->size(), " private ones");
     }
 
+    if (s_functionsAreMadeInScratch)
+        keepWhatIsWantedOfFunctions(vm, header);
+
     // What the collector never looks at must not be all that keeps something alive.
     {
         ClosureChecker checker(vm);
@@ -1518,27 +1737,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             bigInt->hash();
     });
 
-    if (Options::aotReportStats()) [[unlikely]] {
+    if (Options::aotReportStats()) [[unlikely]]
         dataLogLn("StaticHeap: ", Region::bytesThatAreFree(), " bytes of what was allocated were freed and not used again");
-        // TEMPORARY-SHARING-STATS
-        Region::AllocationScope notInRegion(false);
-        UncheckedKeyHashSet<String> distinct;
-        uint64_t all = 0, withMore = 0;
-        forEachCell(Region::Arena::Cells, [&](void* pointer, size_t) {
-            auto* executable = dynamicDowncast<UnlinkedFunctionExecutable>(static_cast<JSCell*>(pointer));
-            if (!executable)
-                return;
-            ++all;
-            auto [bytes, hasMore] = executable->whatIsNotAPosition();
-            if (hasMore) {
-                ++withMore;
-                return;
-            }
-            distinct.add(String { std::span { reinterpret_cast<const Latin1Character*>(bytes.data()), bytes.size() } });
-        });
-        dataLogLn("StaticHeap: of ", all, " UnlinkedFunctionExecutables ", withMore, " have rare data or the like; the rest are ", distinct.size(), " different ones, but for where they are in the source");
-        distinct.clear();
-    }
+    if (Options::aotReportStats()) [[unlikely]]
+        dataLogLn("StaticHeap: ", Region::bytesThatAreFree(), " bytes of what was allocated were freed and not used again");
     Region::forgetWhatIsFree();
     Vector<uint8_t> image;
     if (ok) {
@@ -1632,7 +1834,10 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
         if (!Region::map(static_cast<Region::Arena>(i), fileDescriptor, offsetInFile + header.arenaOffset[i], header.arenaSize[i]))
             return false;
     }
+    for (uint64_t at = header.guardedFrom; at < header.guardedTo; at += 2 * pageSizeOfImage)
+        RELEASE_ASSERT(!mprotect(reinterpret_cast<void*>(Region::startOf(Region::Arena::Cells) + at + pageSizeOfImage), pageSizeOfImage, PROT_NONE));
     s_header = &header;
+    s_rowsOfFunctions = std::bit_cast<const RowOfFunction*>(header.rowsOfFunctions);
     atoms->setStaticAtoms({ std::bit_cast<const uint32_t*>(header.staticAtoms), static_cast<uint32_t>(header.capacityOfStaticAtoms - 1), Region::base });
     return true;
 }
@@ -1739,6 +1944,28 @@ String StaticHeap::nameOfSource(uint32_t source)
     auto* starts = std::bit_cast<const uint32_t*>(s_header->namesOfSources);
     auto* text = reinterpret_cast<const char8_t*>(starts + s_header->numberOfSources + 1);
     return String::fromUTF8(std::span { text + starts[source - 1], static_cast<size_t>(starts[source] - starts[source - 1]) });
+}
+
+// The first thing that makePositions() wrote.
+LineColumn StaticHeap::whereFunctionStarts(uint32_t indexOfFunction)
+{
+    RELEASE_ASSERT(s_header && s_header->hasPositionsOfCallSites && indexOfFunction < s_header->numberOfFunctions);
+    uint32_t word = std::bit_cast<const uint32_t*>(s_header->factsOfFunctions)[indexOfFunction];
+    RELEASE_ASSERT(word && !(word & 1));
+    const uint32_t* where = inData<AOT::FunctionFacts>(word)->find(AOT::FunctionFacts::ExpressionInfo);
+    RELEASE_ASSERT(where);
+    const uint8_t* at = inData<uint8_t>(*where);
+    auto readVarint = [&] {
+        unsigned value = 0;
+        for (unsigned shift = 0;; shift += 7) {
+            uint8_t byte = *at++;
+            value |= static_cast<unsigned>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                return value;
+        }
+    };
+    unsigned line = readVarint();
+    return { line, readVarint() };
 }
 
 bool StaticHeap::payloadIsLeftOut()

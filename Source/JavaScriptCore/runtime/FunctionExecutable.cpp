@@ -53,6 +53,7 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 
 void FunctionExecutable::becomeStatic(VM& vm)
 {
+    static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_source) == sizeOfShortForm);
     // Which realm's it is remains to be seen (topLevelExecutable()), and there is going to be more than one function made of it, or
     // there may as well be.
     m_topLevelExecutable.clear();
@@ -68,7 +69,7 @@ void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, voi
 
 ScriptExecutable* FunctionExecutable::topLevelExecutableOfStaticExecutable() const
 {
-    SourceProvider* provider = source().provider();
+    SourceProvider* provider = sourceProvider();
     RELEASE_ASSERT(StaticHeap::isPlaceOfSourceProvider(provider));
     return StaticHeap::topLevelExecutableOfModuleWithProvider(vm(), provider);
 }
@@ -119,6 +120,9 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     FunctionExecutable* thisObject = uncheckedDowncast<FunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    if (thisObject->isShortForm())
+        return;
+    thisObject = thisObject->inFull();
 #if USE(BUN_JSC_ADDITIONS)
     thisObject->visitSourceFetcher(visitor);
 #endif
@@ -199,6 +203,45 @@ FunctionExecutable* FunctionExecutable::fromGlobalCode(const Identifier& name, J
     return executable;
 }
 
+// ---- The short form
+
+SourceProvider* ScriptExecutable::sourceProviderOfShortForm() const
+{
+    return StaticHeap::sourceProviderOfModule(StaticHeap::rowOf(indexOfShortForm()).module);
+}
+
+LineColumn ScriptExecutable::whereShortFormStarts() const
+{
+    return StaticHeap::whereFunctionStarts(indexOfShortForm());
+}
+
+// Hardly anybody asks, and what they want is which source it is: there is no text for the rest to be about.
+const SourceCode& ScriptExecutable::sourceOfShortForm() const
+{
+    static Lock lock;
+    static NeverDestroyed<UncheckedKeyHashMap<uint32_t, std::unique_ptr<SourceCode>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> sources;
+    Locker locker { lock };
+    return *sources->ensure(indexOfShortForm(), [&] {
+        LineColumn start = whereShortFormStarts();
+        return makeUniqueWithoutFastMallocCheck<SourceCode>(RefPtr { sourceProviderOfShortForm() }, 0, 0, static_cast<int>(start.line), static_cast<int>(start.column));
+    }).iterator->value;
+}
+
+CodeFeatures ScriptExecutable::featuresOfShortForm() const
+{
+    return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->features();
+}
+
+LexicallyScopedFeatures ScriptExecutable::lexicallyScopedFeaturesOfShortForm() const
+{
+    return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->lexicallyScopedFeatures();
+}
+
+DerivedContextType ScriptExecutable::derivedContextTypeOfShortForm() const
+{
+    return uncheckedDowncast<FunctionExecutable>(this)->unlinkedExecutable()->derivedContextType();
+}
+
 FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 {
     ASSERT(!m_rareData);
@@ -216,15 +259,15 @@ FunctionExecutable::RareData& FunctionExecutable::ensureRareDataSlow()
 JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
 {
     VM& vm = getVM(globalObject);
-    ASSERT(!m_rareData || !m_rareData->m_asString);
+    ASSERT(!rareData() || !rareData()->m_asString);
 
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     const auto& cache = [&](JSString* asString) {
-        if (!m_rareData)
+        if (!rareData())
             return asString;
         WTF::storeStoreFence();
-        m_rareData->m_asString.set(vm, this, asString);
+        rareData()->m_asString.set(vm, this, asString);
         return asString;
     };
 
@@ -243,7 +286,7 @@ JSString* FunctionExecutable::toStringSlow(JSGlobalObject* globalObject)
 #if USE(BUN_JSC_ADDITIONS)
     // It still starts the way whoever tells one kind of function from another by its text expects.
     // (The source of a constructor that nobody wrote is one of the engine's own. Its class's is the program's.)
-    if ((isClass() ? classSource() : source()).provider()->hasNoText()) {
+    if ((isClass() ? classSource().provider() : sourceProvider())->hasNoText()) {
         if (isClass())
             return cacheIfNoException(jsMakeNontrivialString(globalObject, "class "_s, ecmaName().string(), " { [native code] }"_s));
         ASCIILiteral before = "function "_s;

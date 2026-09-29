@@ -11302,6 +11302,7 @@ void SpeculativeJIT::compileFunctionToString(Node* node)
 
     getExecutable(*this, function.gpr(), executable.gpr());
     Jump isNativeExecutable = branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(NativeExecutableType));
+    slowCases.append(branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(ShortFunctionExecutableType)));
 
     loadPtr(Address(executable.gpr(), FunctionExecutable::offsetOfRareData()), result.gpr());
     slowCases.append(branchTestPtr(Zero, result.gpr()));

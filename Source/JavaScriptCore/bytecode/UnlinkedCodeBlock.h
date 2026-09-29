@@ -268,6 +268,17 @@ public:
     size_t numberOfUnlinkedStringSwitchJumpTables() const { return m_rareData ? m_rareData->m_unlinkedStringSwitchJumpTables.size() : 0; }
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
 
+    // In what StaticHeap has made, one of the functions in the code that is marked is not what it says it is, but the function's
+    // FunctionExecutable, which is there for good (StaticHeap::keepWhatIsWantedOfFunctions()). To be asked first.
+    static constexpr uintptr_t isExecutable = 1;
+    static FunctionExecutable* executableIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry)
+    {
+        uintptr_t bits = std::bit_cast<uintptr_t>(entry);
+        return bits & isExecutable ? std::bit_cast<FunctionExecutable*>(bits - isExecutable) : nullptr;
+    }
+    FunctionExecutable* executableOfFunctionDecl(int index) const { return executableIn(m_functionDecls[index]); }
+    FunctionExecutable* executableOfFunctionExpr(int index) const { return executableIn(m_functionExprs[index]); }
+
     UnlinkedFunctionExecutable* functionDecl(int index)
     {
         if (auto* executable = m_functionDecls[index].get()) [[likely]]

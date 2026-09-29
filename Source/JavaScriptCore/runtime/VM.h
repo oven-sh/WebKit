@@ -565,6 +565,7 @@ public:
     WriteBarrier<Structure> evalExecutableStructure;
     WriteBarrier<Structure> programExecutableStructure;
     WriteBarrier<Structure> functionExecutableStructure;
+    WriteBarrier<Structure> shortFunctionExecutableStructure;
 #if ENABLE(WEBASSEMBLY)
     WriteBarrier<Structure> pinballCompletionStructure;
     WriteBarrier<Structure> webAssemblyCalleeGroupStructure;

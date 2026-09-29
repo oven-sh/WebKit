@@ -26,6 +26,7 @@ class JSCell;
 class JSString;
 class PreciseAllocation;
 class FunctionExecutable;
+class Identifier;
 namespace AOT {
 struct FunctionInfo;
 struct ImageFunction;
@@ -138,6 +139,31 @@ public:
     // with in an order that does not change, in a block that is where this says.
     static constexpr uint32_t offsetOfFirstStructureBlock = 16 * 1024;
 
+    // What there is to say about a function whose FunctionExecutable is in the short form, which see. By AOT::CodeHeader::index.
+    struct RowOfFunction {
+        static constexpr unsigned bitsOfModule = 17;
+        static constexpr unsigned bitsOfParameterCount = 12;
+        const Identifier& name() const LIFETIME_BOUND { return *reinterpret_cast<const Identifier*>(&nameImpl); }
+
+        WTF::UniquedStringImpl* nameImpl; // UnlinkedFunctionExecutable::ecmaName()
+        uint32_t unlinkedFunction; // How far into Arena::Cells. See unlinkedFunctionOf().
+        uint32_t module : bitsOfModule; // See sourceProviderOfModule().
+        uint32_t parameterCount : bitsOfParameterCount;
+        uint32_t isArrowFunctionContext : 1;
+        uint32_t isInsideOrdinaryFunction : 1;
+    };
+    static_assert(sizeof(RowOfFunction) == 16);
+    static const RowOfFunction& rowOf(uint32_t indexOfFunction) { return s_rowsOfFunctions[indexOfFunction]; }
+    static UnlinkedFunctionExecutable* unlinkedFunctionOf(const RowOfFunction& row) { return reinterpret_cast<UnlinkedFunctionExecutable*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Cells) + row.unlinkedFunction); }
+    static SourceProvider* sourceProviderOfModule(size_t index) { return reinterpret_cast<SourceProvider*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss) + bmalloc::StaticRegion::offsetOfSourceProvidersInBss + index * sizeOfPlaceForSourceProvider); }
+    JS_EXPORT_PRIVATE static LineColumn whereFunctionStarts(uint32_t indexOfFunction);
+    // The next cell is an UnlinkedFunctionExecutable. See keepWhatIsWantedOfFunctions().
+    static void willAllocateUnlinkedFunction()
+    {
+        if (s_isBuilding) [[unlikely]]
+            willAllocateUnlinkedFunctionSlow();
+    }
+
     // A cell is halfway between two multiples of 16: this far past one.
     static constexpr size_t sizeOfCellHeader = 8;
 
@@ -220,6 +246,9 @@ private:
     static inline void* const placeOfEveryCellWhileBuilding = reinterpret_cast<void*>(1); // Heap::m_placeOfNextCell: wherever there is room.
 
     JS_EXPORT_PRIVATE static bool s_isBuilding;
+    JS_EXPORT_PRIVATE static void willAllocateUnlinkedFunctionSlow();
+    static void keepWhatIsWantedOfFunctions(VM&, Header&);
+    JS_EXPORT_PRIVATE static const RowOfFunction* s_rowsOfFunctions;
     JS_EXPORT_PRIVATE static VM* s_vm;
     JS_EXPORT_PRIVATE static bool s_isShared;
     JS_EXPORT_PRIVATE static bool s_hasNoCompilerThreads;

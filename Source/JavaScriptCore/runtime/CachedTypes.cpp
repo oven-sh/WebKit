@@ -5134,6 +5134,7 @@ bool Encoder::DeferredBody::pointBackAt(Encoder& encoder, ptrdiff_t callRecord, 
 
 ALWAYS_INLINE UnlinkedFunctionExecutable* CachedFunctionExecutable::decode(Decoder& decoder) const
 {
+    StaticHeap::willAllocateUnlinkedFunction();
     UnlinkedFunctionExecutable* executable = new (NotNull, allocateCell<UnlinkedFunctionExecutable>(decoder.vm())) UnlinkedFunctionExecutable(decoder, *this);
     executable->finishCreation(decoder.vm());
     return executable;

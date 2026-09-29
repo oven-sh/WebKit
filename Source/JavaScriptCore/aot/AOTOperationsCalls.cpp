@@ -311,6 +311,11 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
         DeferGCForAWhile deferGC(vm);
         // (The executable is every VM's, and says what it says. It is the function that gets another.)
         if (!linkStaticFunction(vm, executable, kind, function->scopeUnchecked())) [[unlikely]] {
+            // (That takes other code, and this is all there is.)
+            if (executable->isShortForm()) {
+                throwSyntaxError(function->realm(), scope, makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time for a module that is not linked the way it was then, and there is no other code for it"_s));
+                return encodeResult(nullptr, std::bit_cast<void*>(&vm));
+            }
             executable = StaticHeap::standInFor(vm, executable);
             function->replaceExecutable(vm, executable);
         }

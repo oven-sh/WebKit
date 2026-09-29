@@ -76,7 +76,8 @@ void ExecutableBase::dump(PrintStream& out) const
             out.print("ModuleProgramExecutable w/o CodeBlock"_s);
         return;
     }
-    case FunctionExecutableType: {
+    case FunctionExecutableType:
+    case ShortFunctionExecutableType: {
         FunctionExecutable* function = uncheckedDowncast<FunctionExecutable>(realThis);
         if (!function->eitherCodeBlock())
             out.print("FunctionExecutable w/o CodeBlock"_s);

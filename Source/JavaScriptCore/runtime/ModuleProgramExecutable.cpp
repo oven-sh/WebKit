@@ -170,6 +170,8 @@ FunctionExecutable* ModuleProgramExecutable::functionDeclaration(VM& vm, unsigne
 {
     if (FunctionExecutable* executable = m_functionDeclarations[index].get())
         return executable;
+    if (FunctionExecutable* executable = unlinkedCodeBlock()->executableOfFunctionDecl(index))
+        return executable;
     return linkFunctionDeclaration(vm, index, unlinkedCodeBlock()->functionDecl(index));
 }
 

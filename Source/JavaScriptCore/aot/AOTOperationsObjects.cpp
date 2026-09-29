@@ -447,7 +447,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* gl
         break;
     }
     // Optimized code may take the only closure of a function for a constant. Once there have been two, nobody has to be told.
-    if (executable->singleton().hasBeenInvalidated())
+    if (executable->singletonHasBeenInvalidated())
         fillAllocationCache(vm, callerData(callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), 0, executable);
     OPERATION_RETURN(scope, result);
 }

@@ -11829,6 +11829,9 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(testPtr);
 
         m_out.appendTo(functionExecutableCase, testPtr);
+        LBasicBlock isInFull = m_out.newBlock();
+        m_out.branch(isType(executable, ShortFunctionExecutableType), rarely(slowCase), usually(isInFull));
+        m_out.appendTo(isInFull, testPtr);
         LValue rareData = m_out.loadPtr(executable, m_heaps.FunctionExecutable_rareData);
         m_out.branch(m_out.notNull(rareData), usually(hasRareData), rarely(slowCase));
 

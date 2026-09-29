@@ -1330,6 +1330,9 @@ ImageKey imageKeyForTopLevelCode(uint32_t module)
 
 std::optional<ImageKey> imageKeyFor(ScriptExecutable* scriptExecutable, CodeSpecializationKind kind)
 {
+    // All the code there is for it is what it says it has.
+    if (scriptExecutable->isShortForm())
+        return std::nullopt;
     SourceProvider* provider = scriptExecutable->source().provider();
     // The source of a constructor that nobody wrote is one of the engine's own.
     if (auto* function = dynamicDowncast<FunctionExecutable>(scriptExecutable); function && function->unlinkedExecutable()->isBuiltinDefaultClassConstructor() && function->topLevelExecutable())

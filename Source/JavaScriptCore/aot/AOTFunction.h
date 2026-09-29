@@ -75,6 +75,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
     // Of the body of an async function that is waiting in that state: where it goes on from. Nowhere in particular: the beginning.
     JS_EXPORT_PRIVATE BytecodeIndex resumePointOf(int32_t state) const;
+    // The functions in it. (See UnlinkedCodeBlock::executableIn().)
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionDecls() const;
     std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functionExprs() const;
 

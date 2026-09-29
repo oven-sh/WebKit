@@ -413,14 +413,45 @@ public:
         ensureRareData().m_classElementDefinitions = FixedVector<ClassElementDefinition>(WTF::move(classElementDefinitions));
     }
 
-    // TEMPORARY-SHARING-STATS: everything about it but where it is in the source and which FunctionExecutable is made of it.
-    // The second: whether it has anything that is its own besides (rare data, code).
-    std::pair<std::array<uint8_t, 128>, bool> whatIsNotAPosition() const
+    bool hasName() const { return m_hasName; }
+
+    // See the short form of FunctionExecutable. Functions that are alike in everything but what they are called, how many parameters
+    // they have and where they are in the source have one of these between them: this is what is in it.
+    bool canBeSharedByStaticExecutables() const
     {
-        static_assert(sizeof(UnlinkedFunctionExecutable) <= 128);
-        std::array<uint8_t, 128> bytes { };
-        memcpy(bytes.data(), this, sizeof(UnlinkedFunctionExecutable));
+        return !m_nameIsDeferred && !m_membersAreDeferred && !m_scalarsAreDeferred && !m_members.live().rareData && !m_members.live().parentScopeTDZVariables
+            && !m_isBuiltinFunction && !m_isBuiltinDefaultClassConstructor;
+    }
+    ASCIILiteral whyItCannotBeSharedByStaticExecutables() const // TEMPORARY-SHORT-FORM-STATS
+    {
+        if (m_nameIsDeferred || m_membersAreDeferred || m_scalarsAreDeferred)
+            return "something is deferred"_s;
+        if (m_isBuiltinFunction || m_isBuiltinDefaultClassConstructor)
+            return "builtin"_s;
+        if (auto* rareData = m_members.live().rareData.get()) {
+            if (!rareData->m_classSource.isNull())
+                return "rare data: source of a class"_s;
+            if (rareData->m_classElementDefinitions.size())
+                return "rare data: class elements"_s;
+            if (rareData->m_plainInstanceFieldNames.size())
+                return "rare data: names of fields"_s;
+            if (rareData->m_parentPrivateNameEnvironment.size())
+                return "rare data: private names"_s;
+            return "rare data: something else"_s;
+        }
+        if (m_members.live().parentScopeTDZVariables)
+            return "variables that may not be initialized"_s;
+        return "nothing"_s;
+    }
+    std::array<uint8_t, 104> whatIsSharedByStaticExecutables() const
+    {
+        static_assert(sizeof(UnlinkedFunctionExecutable) == 104);
+        RELEASE_ASSERT(canBeSharedByStaticExecutables());
+        std::array<uint8_t, 104> bytes;
+        memcpy(bytes.data(), static_cast<const void*>(this), sizeof(UnlinkedFunctionExecutable));
         auto* copy = reinterpret_cast<UnlinkedFunctionExecutable*>(bytes.data());
+        copy->m_parameterCount = 0;
+        memset(static_cast<void*>(&copy->m_ecmaName), 0, sizeof(m_ecmaName));
         copy->m_firstLineOffset = 0;
         copy->m_lineCount = 0;
         copy->m_unlinkedFunctionStart = 0;
@@ -431,11 +462,9 @@ public:
         copy->m_parametersStartOffset = 0;
         copy->m_unlinkedFunctionEnd = 0;
         memset(static_cast<void*>(&copy->m_staticExecutable), 0, sizeof(m_staticExecutable));
-        // (Where its code is in a payload that may not be there.)
         memset(static_cast<void*>(&copy->m_unlinkedCodeBlockForCall), 0, sizeof(m_unlinkedCodeBlockForCall));
         memset(static_cast<void*>(&copy->m_unlinkedCodeBlockForConstruct), 0, sizeof(m_unlinkedCodeBlockForConstruct));
-        bool hasMore = m_membersAreDeferred || !!m_members.live().rareData || !!m_members.live().parentScopeTDZVariables;
-        return { bytes, hasMore };
+        return bytes;
     }
 
 private:

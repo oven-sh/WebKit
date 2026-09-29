@@ -38,6 +38,13 @@ bool StaticRegion::beginBuilding()
         munmap(result, size);
         return false;
     }
+    void* scratch = mmap(reinterpret_cast<void*>(startOf(Arena::Scratch)), arenaReservation, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (scratch != reinterpret_cast<void*>(startOf(Arena::Scratch))) {
+        if (scratch != MAP_FAILED)
+            munmap(scratch, arenaReservation);
+        munmap(result, size);
+        return false;
+    }
     memset(s_used, 0, sizeof(s_used));
     s_isBuilding = true;
     return true;
@@ -50,6 +57,7 @@ void StaticRegion::endBuilding()
     ::free(std::exchange(s_sizes, nullptr));
     s_capacityOfSizes = 0;
     munmap(reinterpret_cast<void*>(base), numberOfArenasInFile * arenaReservation);
+    munmap(reinterpret_cast<void*>(startOf(Arena::Scratch)), arenaReservation);
 }
 
 void* StaticRegion::allocate(Arena arena, size_t size, size_t alignment, size_t misalignment)

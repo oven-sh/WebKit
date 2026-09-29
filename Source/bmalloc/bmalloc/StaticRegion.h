@@ -33,8 +33,10 @@ public:
         Bss,
         // The program's machine code and what goes with it (JSC::AOT::Image), from the file as well, but not built here.
         Image,
+        // Only there while the region is built, and in no file: for what is made on the way to what is kept.
+        Scratch,
     };
-    static constexpr unsigned numberOfArenas = 7;
+    static constexpr unsigned numberOfArenas = 8;
     static constexpr unsigned numberOfArenasInFile = 5;
 
     static constexpr uintptr_t base = 0x200000000000ULL; // Beyond where mimalloc asks for memory, and far from where the kernel puts things.

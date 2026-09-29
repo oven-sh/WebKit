@@ -673,8 +673,7 @@ UnlinkedCodeBlock* FunctionRef::makeUnlinkedCodeBlockFromFacts() const
         const uint32_t* list = StaticHeap::inData<uint32_t>(*word);
         parts.linkTimeConstants = { list + 2, list[1] };
     }
-    parts.functionDecls = functionDecls();
-    parts.functionExprs = functionExprs();
+    // (Nor for the functions in it, which are asked for here: functionDecl(), functionExpr().)
     if (const uint32_t* words = facts->find(FunctionFacts::Handlers))
         parts.handlers = { StaticHeap::inData<UnlinkedHandlerInfo>(words[0]), words[1] };
     if (const uint32_t* word = facts->find(FunctionFacts::ExpressionInfo); word && !StaticHeap::hasPositionsOfCallSites())
@@ -745,6 +744,9 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
     }
     if (!at)
         return std::nullopt;
+    // (Where the function starts.)
+    readVarint(at);
+    readVarint(at);
     ReportedPosition result;
     uint64_t offset = 0;
     int64_t line = 0;
@@ -943,8 +945,11 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
     return lineColumn;
 }
 
-static FunctionExecutable* functionOf(Data& data, unsigned index, UnlinkedFunctionExecutable* unlinkedExecutable)
+static FunctionExecutable* functionOf(Data& data, unsigned index, const WriteBarrier<UnlinkedFunctionExecutable>& entry)
 {
+    if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
+        return result;
+    UnlinkedFunctionExecutable* unlinkedExecutable = entry.get();
     if (FunctionExecutable* result = unlinkedExecutable->staticExecutable(); result && StaticHeap::contains(data.executable))
         return result;
     if (!data.functions)
@@ -964,20 +969,23 @@ FunctionExecutable* Data::functionDecl(unsigned index)
     // A module shares them with whoever else runs its code.
     if (function().codeType() != FunctionCode)
         return codeBlock->functionDecl(index);
-    return functionOf(*this, index, function().functionDecls()[index].get());
+    return functionOf(*this, index, function().functionDecls()[index]);
 }
 
 FunctionExecutable* Data::functionExpr(unsigned index)
 {
     if (function().codeType() != FunctionCode)
         return codeBlock->functionExpr(index);
-    return functionOf(*this, function().functionDecls().size() + index, function().functionExprs()[index].get());
+    return functionOf(*this, function().functionDecls().size() + index, function().functionExprs()[index]);
 }
 
 FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 {
     if (!dataIfItHasAny()) {
-        if (FunctionExecutable* result = functionDecls()[index]->staticExecutable())
+        auto& entry = functionDecls()[index];
+        if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
+            return result;
+        if (FunctionExecutable* result = entry->staticExecutable())
             return result;
     }
     return ensureData()->functionDecl(index);
@@ -986,7 +994,10 @@ FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
 FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
 {
     if (!dataIfItHasAny()) {
-        if (FunctionExecutable* result = functionExprs()[index]->staticExecutable())
+        auto& entry = functionExprs()[index];
+        if (FunctionExecutable* result = UnlinkedCodeBlock::executableIn(entry))
+            return result;
+        if (FunctionExecutable* result = entry->staticExecutable())
             return result;
     }
     return ensureData()->functionExpr(index);

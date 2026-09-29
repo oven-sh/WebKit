@@ -93,6 +93,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
     };
 
     switch (type()) {
+    case ShortFunctionExecutableType:
+        RELEASE_ASSERT_NOT_REACHED();
     case FunctionExecutableType: {
         FunctionExecutable* executable = static_cast<FunctionExecutable*>(this);
         executable->m_codeBlockForCall.clear();
@@ -291,7 +293,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(vm.heap.isDeferred());
-    ASSERT(type() == FunctionExecutableType || endColumn() != UINT_MAX); // a function's is computed on demand, possibly from the bytecode cache
+    ASSERT(isFunctionExecutable() || endColumn() != UINT_MAX); // a function's is computed on demand, possibly from the bytecode cache
 
     JSGlobalObject* globalObject = scope->realm();
 
@@ -362,11 +364,13 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
     // The constructor of a class is compiled ahead of time to construct with. All that its code to be called with does is throw this.
-    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->m_unlinkedExecutable.get()) && StaticHeap::payloadIsLeftOut()) [[unlikely]] {
+    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && StaticHeap::contains(executable->unlinkedExecutable()) && StaticHeap::payloadIsLeftOut()) [[unlikely]] {
         String name = executable->name().string();
         throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
         return nullptr;
     }
+    // All the code there is for it is what it says it has.
+    RELEASE_ASSERT(!executable->isShortForm());
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
     // We continue using the same CodeGenerationMode for Generators because live generator objects can
@@ -541,6 +545,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 ScriptExecutable* ScriptExecutable::topLevelExecutable()
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->topLevelExecutable();
     default:
@@ -580,6 +585,7 @@ auto ScriptExecutable::ensureTemplateObjectMapImpl(std::unique_ptr<TemplateObjec
 auto ScriptExecutable::ensureTemplateObjectMap(VM& vm) -> TemplateObjectMap&
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return static_cast<FunctionExecutable*>(this)->ensureTemplateObjectMap(vm);
     case EvalExecutableType:
@@ -626,6 +632,7 @@ unsigned ScriptExecutable::typeProfilingEndOffset() const
 void ScriptExecutable::recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables, int lastLine, unsigned endColumn)
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         // Since UnlinkedFunctionExecutable holds the information to calculate lastLine and endColumn, we do not need to remember them in ScriptExecutable's fields.
         uncheckedDowncast<FunctionExecutable>(this)->recordParse(features, lexicallyScopedFeatures, hasCapturedVariables);
@@ -639,6 +646,7 @@ void ScriptExecutable::recordParse(CodeFeatures features, LexicallyScopedFeature
 int ScriptExecutable::lastLine() const
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->lastLine();
     default:
@@ -650,6 +658,7 @@ int ScriptExecutable::lastLine() const
 unsigned ScriptExecutable::endColumn() const
 {
     switch (type()) {
+    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->endColumn();
     default:

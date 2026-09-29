@@ -86,7 +86,11 @@ public:
     }
     bool isFunctionExecutable() const
     {
-        return type() == FunctionExecutableType;
+        return type() == FunctionExecutableType || type() == ShortFunctionExecutableType;
+    }
+    bool isShortFunctionExecutable() const // See FunctionExecutable.
+    {
+        return type() == ShortFunctionExecutableType;
     }
     bool isProgramExecutable() const
     {
