@@ -590,18 +590,7 @@ void doPendingWork(JSGlobalObject* globalObject)
         if (scope.exception()) [[unlikely]] {
             if (vm.hasPendingTerminationException())
                 return;
-            String shown = emptyString();
-            {
-                // What is being said is about what was raised, which is kept meanwhile.
-                Exception* raised = scope.exception();
-                if (!scope.tryClearException())
-                    return;
-                shown = repr(realmOfReference, callback);
-                if (scope.exception() && !scope.tryClearException())
-                    return;
-                throwException(realmOfReference, scope, raised);
-            }
-            reportUnraisable(realmOfReference, concatenate("Exception ignored while calling weakref callback "_s, shown));
+            reportUnraisableShowing(realmOfReference, "Exception ignored while calling weakref callback"_s, callback);
             RETURN_IF_EXCEPTION(scope, void());
         }
     }

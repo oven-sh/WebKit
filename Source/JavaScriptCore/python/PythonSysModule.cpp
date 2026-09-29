@@ -335,6 +335,26 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& givenMessage, 
         failed("Exception ignored in sys.unraisablehook"_s, hook);
 }
 
+void reportUnraisableShowing(JSGlobalObject* globalObject, ASCIILiteral message, JSValue shown)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!scope.exception() || vm.hasPendingTerminationException())
+        return;
+    // What is being said is about what was raised, which is kept meanwhile.
+    Exception* raised = takeRaisedException(vm);
+    String text = repr(globalObject, shown);
+    if (scope.exception()) {
+        if (vm.hasPendingTerminationException())
+            return;
+        scope.clearException();
+        text = { };
+    } else
+        text = concatenate(message, ' ', text);
+    restoreRaisedException(globalObject, raised);
+    reportUnraisable(globalObject, text);
+}
+
 // ---- breakpoint()
 
 // sys.breakpointhook(*args, **kws): what $PYTHONBREAKPOINT names is called, which is pdb.set_trace if it names nothing.

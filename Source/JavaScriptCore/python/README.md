@@ -349,6 +349,9 @@ what part of a line to point at, and with what; lines that are the same over and
   takes what comes at half its offset: `traceback.py` does with `tb_lasti`, and so does `dis`.
 - When the standard library is there, `sys.excepthook` can go to its `traceback` module as CPython's does, and will find what it needs.
 
+**What is printed of an exception that has nowhere to go**, by what `sys.unraisablehook` is at first, is less, because in CPython that is written in C: `formatTraceback()` is `_PyTraceBack_Print()` of `Python/traceback.c`. There is
+one line of source for each frame, read from the file, with nothing under it. `sys.tracebacklimit` says how many frames, and it is the innermost that are kept. What led to the exception, and its notes, are not shown.
+
 **`BaseExceptionGroup`, and what `except*` is compiled into calls of** (`PythonExceptionGroups.cpp`), are `Objects/exceptions.c` and `_PyEval_ExceptionGroupMatch()`, function for function.
 `ExceptionGroup` has two bases, and is made when a realm is as a class statement would make it, as in CPython.
 

@@ -929,12 +929,6 @@ private:
 
 } // anonymous namespace
 
-String formatTraceback(JSGlobalObject* globalObject, JSValue traceback)
-{
-    String stack = formatStack(globalObject, traceback);
-    return stack.isEmpty() ? stack : concatenate("Traceback (most recent call last):\n"_s, stack);
-}
-
 String formatException(JSGlobalObject* globalObject, JSValue exception)
 {
     return Formatter(globalObject).format(exception);

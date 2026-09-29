@@ -382,13 +382,8 @@ PYTHON_NATIVE(ioBaseDel)
         return { };
     callMethodNamed(globalObject, self, names.attribute_close);
     if (scope.exception()) {
-        Exception* raised = takeRaisedException(vm);
+        reportUnraisableShowing(globalObject, "Exception ignored while finalizing file"_s, self);
         RETURN_IF_EXCEPTION(scope, { });
-        String shown = repr(globalObject, self);
-        if (scope.exception() && !scope.tryClearException())
-            return { };
-        restoreRaisedException(globalObject, raised);
-        reportUnraisable(globalObject, concatenate("Exception ignored while finalizing file "_s, shown));
     }
     RETURN_NONE();
 }

@@ -426,9 +426,13 @@ JSValue prepareReraiseStar(JSGlobalObject*, JSValue original, JSArray* exception
 void forEachTracebackEntry(JSGlobalObject*, JSValue traceback, const ScopedLambda<void(PyFrame*, unsigned bytecodeOffset, unsigned line)>&); // From the outermost frame in.
 String appendSyntaxErrorLocation(JSGlobalObject*, StringBuilder&, JSValue exception);
 bool isSpace(char32_t); // str.isspace()
-String formatTraceback(JSGlobalObject*, JSValue traceback); // "Traceback (most recent call last):" and what follows, or nothing if it is not a traceback.
+String formatTraceback(JSGlobalObject*, JSValue traceback); // PyTraceBack_Print(): "Traceback (most recent call last):" and what follows, or nothing if it is not a traceback.
+// _Py_DisplaySourceLine(): a line of a file, without what it is indented by. Null if there is no such line, or no such file.
+String sourceLineForDisplay(JSGlobalObject*, const String& filename, int64_t line);
 // What has been raised has nowhere to go: sys.unraisablehook is told of it, and nothing is raised any longer. PyErr_FormatUnraisable() and PyErr_WriteUnraisable().
 void reportUnraisable(JSGlobalObject*, const String& message, JSValue object = JSValue());
+// PyErr_FormatUnraisable("message %R", shown). If there is no showing it, nothing is said of what was being done either.
+void reportUnraisableShowing(JSGlobalObject*, ASCIILiteral message, JSValue shown);
 // sys.audit(event, *arguments). False if a hook raised. It costs nothing to speak of while there are no hooks.
 bool auditSlow(JSGlobalObject*, ASCIILiteral event, const ArgList& arguments);
 // What has been raised and not caught by a program that is being run: sys.excepthook is given it. PyErr_Print(), but for SystemExit.

@@ -280,53 +280,6 @@ static String normalizeModule(const String& filename)
     return filename.endsWith(".py"_s) ? filename.left(filename.length() - 3) : filename;
 }
 
-// _Py_DisplaySourceLine(): a line of a file, without what it is indented by. Null if there is no such line, or no such file.
-static String sourceLine(JSGlobalObject* globalObject, const String& filename, int64_t line)
-{
-    if (line <= 0 || filename.isEmpty())
-        return { };
-    SourceCode source = readSourceIfPresent(globalObject, filename);
-    if (source.isNull()) {
-        // _Py_FindSourceFile(): a file of that name in one of the directories that modules are looked for in.
-        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
-        size_t slash = filename.reverseFind('/');
-        String tail = slash == notFound ? filename : filename.substring(slash + 1);
-        JSValue path = sysAttribute(globalObject, "path"_s);
-        if (!path || !isList(path))
-            return { };
-        for (unsigned i = 0; i < asList(path)->length() && source.isNull(); ++i) {
-            JSValue directory = listGet(globalObject, asList(path), i);
-            if (scope.exception()) {
-                scope.clearException();
-                return { };
-            }
-            if (!directory.isString())
-                continue;
-            String prefix = asString(directory)->value(globalObject);
-            source = readSourceIfPresent(globalObject, concatenate(prefix, prefix.isEmpty() || prefix.endsWith('/') ? ""_s : "/"_s, tail));
-        }
-        if (source.isNull())
-            return { };
-    }
-    StringView text = source.view();
-    size_t start = 0;
-    for (int64_t i = 1; i < line; ++i) {
-        start = text.find('\n', start);
-        if (start == notFound)
-            return { };
-        ++start;
-    }
-    if (start >= text.length())
-        return { };
-    size_t end = text.find('\n', start);
-    StringView result = text.substring(start, end == notFound ? text.length() - start : end - start);
-    while (!result.isEmpty() && (result[0] == ' ' || result[0] == '\t' || result[0] == '\f'))
-        result = result.substring(1);
-    while (!result.isEmpty() && result[result.length() - 1] == '\r')
-        result = result.left(result.length() - 1);
-    return result.toString();
-}
-
 // show_warning(): what is done with it if there is no warnings.py
 static void showWarning(JSGlobalObject* globalObject, JSValue filename, int64_t line, JSValue text, JSValue category, JSValue givenSourceLine)
 {
@@ -365,7 +318,7 @@ static void showWarning(JSGlobalObject* globalObject, JSValue filename, int64_t 
     }
     if (!filename.isString())
         return;
-    String found = sourceLine(globalObject, asString(filename)->value(globalObject), line);
+    String found = sourceLineForDisplay(globalObject, asString(filename)->value(globalObject), line);
     if (!found.isNull())
         writeString(concatenate("  "_s, found, '\n'));
 }

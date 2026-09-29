@@ -213,12 +213,8 @@ void warnOfNotBeingClosed(JSGlobalObject* globalObject, JSValue self, JSValue so
     if (scope.exception()) {
         // What has nothing to do with the warning can come up when everything is being taken down.
         if (isInstance(globalObject, scope.exception()->value(), globalObject->pyRealm()->type(BuiltinType::Warning))) {
-            Exception* warning = takeRaisedException(vm);
-            String file = repr(globalObject, self);
-            if (scope.exception() && !scope.tryClearException())
-                return;
-            restoreRaisedException(globalObject, warning);
-            reportUnraisable(globalObject, concatenate("Exception ignored while finalizing file "_s, file));
+            reportUnraisableShowing(globalObject, "Exception ignored while finalizing file"_s, self);
+            RETURN_IF_EXCEPTION(scope, void());
         }
     }
     // PyErr_SetRaisedException(), which does away with whatever else there is.

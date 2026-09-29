@@ -483,6 +483,108 @@ void forEachTracebackEntry(JSGlobalObject* globalObject, JSValue traceback, cons
         function(asFrame(asNative(cursor)->field(TracebackField::Frame)), asNative(cursor)->field(TracebackField::BytecodeOffset).asInt32(), lineOf(cursor));
 }
 
+// _Py_DisplaySourceLine(): a line of a file, without what it is indented by. Null if there is no such line, or no such file.
+String sourceLineForDisplay(JSGlobalObject* globalObject, const String& filename, int64_t line)
+{
+    if (line <= 0 || filename.isEmpty())
+        return { };
+    // <string>, <stdin> and the like are the names of no files.
+    if (filename.startsWith('<') && filename.endsWith('>'))
+        return { };
+    SourceCode source = readSourceIfPresent(globalObject, filename);
+    if (source.isNull()) {
+        // _Py_FindSourceFile(): a file of that name in one of the directories that modules are looked for in.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        size_t slash = filename.reverseFind('/');
+        String tail = slash == notFound ? filename : filename.substring(slash + 1);
+        JSValue path = sysAttribute(globalObject, "path"_s);
+        if (!path || !isList(path))
+            return { };
+        for (unsigned i = 0; i < asList(path)->length() && source.isNull(); ++i) {
+            JSValue directory = listGet(globalObject, asList(path), i);
+            if (scope.exception()) {
+                scope.clearException();
+                return { };
+            }
+            if (!directory.isString())
+                continue;
+            String prefix = asString(directory)->value(globalObject);
+            source = readSourceIfPresent(globalObject, concatenate(prefix, prefix.isEmpty() || prefix.endsWith('/') ? ""_s : "/"_s, tail));
+        }
+        if (source.isNull())
+            return { };
+    }
+    StringView text = source.view();
+    size_t start = 0;
+    for (int64_t i = 1; i < line; ++i) {
+        start = text.find('\n', start);
+        if (start == notFound)
+            return { };
+        ++start;
+    }
+    if (start >= text.length())
+        return { };
+    size_t end = text.find('\n', start);
+    StringView result = text.substring(start, end == notFound ? text.length() - start : end - start);
+    while (!result.isEmpty() && (result[0] == ' ' || result[0] == '\t' || result[0] == '\f'))
+        result = result.substring(1);
+    while (!result.isEmpty() && result[result.length() - 1] == '\r')
+        result = result.left(result.length() - 1);
+    return result.toString();
+}
+
+// _PyTraceBack_Print() and tb_printinternal() of CPython's Python/traceback.c. It is not what an exception that gets away is shown by, which is written in Python and says a good deal more.
+String formatTraceback(JSGlobalObject* globalObject, JSValue traceback)
+{
+    if (!traceback || !isTraceback(globalObject, traceback))
+        return emptyString();
+    // PyTraceBack_LIMIT
+    int64_t limit = 1000;
+    if (JSValue given = sysAttribute(globalObject, "tracebacklimit"_s); given && isInstance(globalObject, given, globalObject->pyRealm()->typeInt())) {
+        // PyLong_AsLongAndOverflow(). It is an int, so that asking raises nothing.
+        limit = *toIndex(globalObject, given, true);
+        if (limit <= 0)
+            return emptyString();
+    }
+    int64_t depth = 0;
+    forEachTracebackEntry(globalObject, traceback, [&] (PyFrame*, unsigned, unsigned) { ++depth; });
+
+    // TB_RECURSIVE_CUTOFF
+    static constexpr unsigned cutoff = 3;
+    TextBuilder builder;
+    builder.append("Traceback (most recent call last):\n"_s);
+    String lastFile;
+    String lastName;
+    unsigned lastLine = 0;
+    unsigned count = 0;
+    auto finishRun = [&] {
+        if (count > cutoff)
+            builder.append("  [Previous line repeated "_s, count - cutoff, " more time"_s, count - cutoff > 1 ? "s"_s : ""_s, "]\n"_s);
+    };
+    forEachTracebackEntry(globalObject, traceback, [&] (PyFrame* frame, unsigned, unsigned line) {
+        // It is the innermost that are shown.
+        if (depth-- > limit)
+            return;
+        String file = frame->executable()->source().provider()->sourceURL();
+        String name = frame->functionInfo().name.string();
+        if (lastFile.isNull() || file != lastFile || line != lastLine || name != lastName) {
+            finishRun();
+            lastFile = file;
+            lastLine = line;
+            lastName = name;
+            count = 0;
+        }
+        if (++count > cutoff)
+            return;
+        // tb_displayline()
+        builder.append("  File \""_s, file, "\", line "_s, line, ", in "_s, name, '\n');
+        if (String text = sourceLineForDisplay(globalObject, file, line); !text.isNull())
+            builder.append("    "_s, text, '\n');
+    });
+    finishRun();
+    return builder.tryFinish();
+}
+
 // For a SyntaxError, where in the source it is, which is not where it was raised: the file and the line, the text of the line, and under that what part
 // of it. This is TracebackException._format_syntax_error() of CPython's Lib/traceback.py. What is left to say is then its message alone, with the name
 // of the file if there was no line to give with it, which this returns. Null if it is not a SyntaxError.
