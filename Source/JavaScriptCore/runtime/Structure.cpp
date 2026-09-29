@@ -722,9 +722,63 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
     return transition;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+String Structure::sourceConstructorName() const
+{
+    for (const Structure* current = this; current; current = current->previousID()) {
+        if (current->hasRareData()) {
+            const String& name = current->rareData()->sourceConstructorName();
+            if (!name.isEmpty())
+                return name;
+        }
+    }
+    return String();
+}
+
+static String computeSourceConstructorName(VM& vm, Structure* oldStructure)
+{
+    String existing = oldStructure->sourceConstructorName();
+    if (!existing.isEmpty())
+        return existing;
+
+    if (oldStructure->hasPolyProto())
+        return String();
+    JSValue protoValue = oldStructure->storedPrototype();
+    if (!protoValue.isObject())
+        return String();
+    JSObject* protoObject = asObject(protoValue);
+    JSGlobalObject* globalObject = oldStructure->realm();
+    if (!globalObject)
+        return String();
+    if (protoObject == globalObject->objectPrototype())
+        return String();
+    if (protoObject->structure()->typeInfo().overridesGetOwnPropertySlot())
+        return String();
+
+    PropertySlot slot(protoObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
+    bool found = JSObject::getOwnPropertySlot(protoObject, globalObject, vm.propertyNames->constructor, slot);
+    slot.disallowVMEntry.reset();
+    if (!found || !slot.isValue())
+        return String();
+
+    JSValue constructorValue = slot.getPureResult();
+    if (JSObject* constructorObject = dynamicDowncast<JSObject>(constructorValue)) {
+        if (JSFunction* function = dynamicDowncast<JSFunction>(constructorObject))
+            return function->nameWithoutGC(vm);
+        if (InternalFunction* function = dynamicDowncast<InternalFunction>(constructorObject))
+            return function->name();
+    }
+    return String();
+}
+#endif
+
 Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JSValue prototype, DeferredStructureTransitionWatchpointFire& deferred)
 {
     ASSERT(isValidPrototype(prototype));
+
+#if USE(BUN_JSC_ADDITIONS)
+    String sourceName = computeSourceConstructorName(vm, structure);
+#endif
 
     DeferGC deferGC(vm);
     JSObject* key = prototype.isNull() ? nullptr : asObject(prototype);
@@ -749,6 +803,10 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
     transition->setTransitionKind(TransitionKind::ChangePrototype);
     transition->setMaxOffset(vm, structure->maxOffset());
     checkOffset(transition->transitionOffset(), transition->inlineCapacity());
+#if USE(BUN_JSC_ADDITIONS)
+    if (!sourceName.isEmpty())
+        transition->ensureRareData(vm)->setSourceConstructorName(WTF::move(sourceName));
+#endif
     if (shouldChain) {
         GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
         structure->m_transitionTable.add(vm, structure, transition);
@@ -875,6 +933,13 @@ Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, Dicti
     transition->setMaxOffset(vm, structure->maxOffset());
     transition->setDictionaryKind(kind);
     transition->setHasBeenDictionary(true);
+#if USE(BUN_JSC_ADDITIONS)
+    {
+        String sourceName = structure->sourceConstructorName();
+        if (!sourceName.isEmpty())
+            transition->ensureRareData(vm)->setSourceConstructorName(WTF::move(sourceName));
+    }
+#endif
     
     transition->checkOffsetConsistency();
     return transition;
