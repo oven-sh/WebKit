@@ -5,6 +5,9 @@ import signal
 import subprocess
 import sys
 
+# A shell has what it starts in the background ignore SIGINT, and that is inherited: by this, which then leaves it ignored, and by what this starts.
+signal.signal(signal.SIGINT, signal.default_int_handler)
+
 
 def show(e):
     return type(e).__name__ + ": " + str(e)

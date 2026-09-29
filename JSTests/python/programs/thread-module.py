@@ -1,7 +1,11 @@
 # _thread, as far as a program goes that does not start a thread.
+import signal
 import sys
 import time
 import _thread
+
+# A shell has what it starts in the background ignore SIGINT, and that is inherited: by this, which then leaves it ignored, and by what this starts.
+signal.signal(signal.SIGINT, signal.default_int_handler)
 
 
 def nowhere(text):
