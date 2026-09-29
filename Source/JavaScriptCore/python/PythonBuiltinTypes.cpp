@@ -913,6 +913,11 @@ void addGenericGetAttribute(JSGlobalObject* globalObject, PyType* type)
     addMethods(globalObject, type, { { "__getattribute__"_s, objectGetAttribute } });
 }
 
+void addGenericSetAttribute(JSGlobalObject* globalObject, PyType* type)
+{
+    addMethods(globalObject, type, { { "__setattr__"_s, objectSetAttr }, { "__delattr__"_s, objectDelAttr } });
+}
+
 // ---- type
 
 PYTHON_NATIVE(typeNew)

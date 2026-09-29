@@ -1,0 +1,56 @@
+pack_into 8 cleared => BufferError: the buffer was made shorter while it was being packed into 0 b''
+pack_into 8 cut to one => BufferError: the buffer was made shorter while it was being packed into 1 b'.'
+pack_into 8 cut to just too few => BufferError: the buffer was made shorter while it was being packed into 7 b'......'
+pack_into 8 cut to just enough => None 8 b'..BADC'
+pack_into 8 added to => None 65544 b'\x00\x00\x00\x00\x00\x00'
+pack_into 8 cleared and filled again => None 8 b'##BADC'
+pack_into 64 cleared => BufferError: the buffer was made shorter while it was being packed into 0 b''
+pack_into from the end 64 cleared => BufferError: the buffer was made shorter while it was being packed into 0
+pack_into 64 cut to one => BufferError: the buffer was made shorter while it was being packed into 1 b'.'
+pack_into from the end 64 cut to one => BufferError: the buffer was made shorter while it was being packed into 1
+pack_into 64 cut to just too few => BufferError: the buffer was made shorter while it was being packed into 63 b'......'
+pack_into from the end 64 cut to just too few => BufferError: the buffer was made shorter while it was being packed into 63
+pack_into 64 cut to just enough => None 64 b'..BADC'
+pack_into from the end 64 cut to just enough => None 64
+pack_into 64 added to => None 65600 b'\x00\x00\x00\x00\x00\x00'
+pack_into from the end 64 added to => None 65600
+pack_into 64 cleared and filled again => None 64 b'##BADC'
+pack_into from the end 64 cleared and filled again => None 64
+pack_into 4096 cleared => BufferError: the buffer was made shorter while it was being packed into 0 b''
+pack_into from the end 4096 cleared => BufferError: the buffer was made shorter while it was being packed into 0
+pack_into 4096 cut to one => BufferError: the buffer was made shorter while it was being packed into 1 b'.'
+pack_into from the end 4096 cut to one => BufferError: the buffer was made shorter while it was being packed into 1
+pack_into 4096 cut to just too few => BufferError: the buffer was made shorter while it was being packed into 4095 b'......'
+pack_into from the end 4096 cut to just too few => BufferError: the buffer was made shorter while it was being packed into 4095
+pack_into 4096 cut to just enough => None 4096 b'..BADC'
+pack_into from the end 4096 cut to just enough => None 4096
+pack_into 4096 added to => None 69632 b'\x00\x00\x00\x00\x00\x00'
+pack_into from the end 4096 added to => None 69632
+pack_into 4096 cleared and filled again => None 4096 b'##BADC'
+pack_into from the end 4096 cleared and filled again => None 4096
+pack_into 1048576 cleared => BufferError: the buffer was made shorter while it was being packed into 0 b''
+pack_into from the end 1048576 cleared => BufferError: the buffer was made shorter while it was being packed into 0
+pack_into 1048576 cut to one => BufferError: the buffer was made shorter while it was being packed into 1 b'.'
+pack_into from the end 1048576 cut to one => BufferError: the buffer was made shorter while it was being packed into 1
+pack_into 1048576 cut to just too few => BufferError: the buffer was made shorter while it was being packed into 1048575 b'......'
+pack_into from the end 1048576 cut to just too few => BufferError: the buffer was made shorter while it was being packed into 1048575
+pack_into 1048576 cut to just enough => None 1048576 b'..BADC'
+pack_into from the end 1048576 cut to just enough => None 1048576
+pack_into 1048576 added to => None 1114112 b'\x00\x00\x00\x00\x00\x00'
+pack_into from the end 1048576 added to => None 1114112
+pack_into 1048576 cleared and filled again => None 1048576 b'##BADC'
+pack_into from the end 1048576 cleared and filled again => None 1048576
+iter_unpack 8 cleared => (b'ab',) 1 ['BufferError: the buffer was made shorter while it was being unpacked'] BufferError: the buffer was made shorter while it was being unpacked 0 StopIteration: 
+iter_unpack 8 cut short => (b'ab',) 1 ['BufferError: the buffer was made shorter while it was being unpacked'] BufferError: the buffer was made shorter while it was being unpacked 0 StopIteration: 
+iter_unpack 8 cut to a whole number => (b'ab',) 2 [(b'ab',), 'BufferError: the buffer was made shorter while it was being unpacked'] BufferError: the buffer was made shorter while it was being unpacked 0 StopIteration: 
+iter_unpack 8 added to => (b'ab',) 4 [(b'ab',), (b'ab',)] StopIteration:  0 StopIteration: 
+iter_unpack 8 changed => (b'ab',) 4 [(b'XY',), (b'ab',)] StopIteration:  0 StopIteration: 
+iter_unpack 4096 cleared => (b'ab',) 1 ['BufferError: the buffer was made shorter while it was being unpacked'] BufferError: the buffer was made shorter while it was being unpacked 0 StopIteration: 
+iter_unpack 4096 cut short => (b'ab',) 1 ['BufferError: the buffer was made shorter while it was being unpacked'] BufferError: the buffer was made shorter while it was being unpacked 0 StopIteration: 
+iter_unpack 4096 cut to a whole number => (b'ab',) 2 [(b'ab',), 'BufferError: the buffer was made shorter while it was being unpacked'] BufferError: the buffer was made shorter while it was being unpacked 0 StopIteration: 
+iter_unpack 4096 added to => (b'ab',) 2048 [(b'ab',), (b'ab',)] StopIteration:  0 StopIteration: 
+iter_unpack 4096 changed => (b'ab',) 2048 [(b'XY',), (b'ab',)] StopIteration:  0 StopIteration: 
+ValueError: and then this bytearray(b'')
+error: required argument is not an integer bytearray(b'..BA\x00\x00..')
+BufferError: the buffer was made shorter while it was being packed into bytearray(b'........')
+(25185,) None BufferError: the buffer was made shorter while it was being unpacked StopIteration: 

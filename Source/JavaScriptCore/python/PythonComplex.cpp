@@ -687,6 +687,21 @@ static PyComplex* callComplexMethod(JSGlobalObject* globalObject, JSValue value)
     return complex;
 }
 
+std::optional<std::pair<double, double>> toComplexParts(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    PyComplex* complex = tryComplex(value);
+    if (!complex) {
+        complex = callComplexMethod(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
+    if (complex)
+        return std::pair { complex->real(), complex->imaginary() };
+    auto real = toDouble(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return std::pair { *real, 0.0 };
+}
+
 static bool isRealNumber(JSGlobalObject* globalObject, JSValue value)
 {
     VM& vm = globalObject->vm();

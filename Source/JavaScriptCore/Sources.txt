@@ -818,6 +818,7 @@ python/PythonSignatures.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp
 python/PythonStructMember.cpp
+python/PythonStructModule.cpp
 python/PythonStructSequence.cpp
 python/PythonSymbolTable.cpp
 python/PythonSysModule.cpp

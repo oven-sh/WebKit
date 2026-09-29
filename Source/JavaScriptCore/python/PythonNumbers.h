@@ -70,6 +70,8 @@ int64_t bitLengthOfInt(const Number&); // int.bit_length()
 JSValue intFromDigits(JSGlobalObject*, std::span<const uint64_t>, bool isNegative = false);
 Vector<uint64_t, 4> digitsOfInt(const Number&);
 double toDouble(JSGlobalObject*, ThrowScope&, const Number&); // Raises OverflowError if it is an int too large.
+// PyComplex_AsCComplex(): of a complex, of what has __complex__(), or of what can be made a float, which is then the real part. Nothing if it raised.
+std::optional<std::pair<double, double>> toComplexParts(JSGlobalObject*, JSValue);
 // PyFloat_Pack2(), PyFloat_Pack4() and PyFloat_Pack8() of CPython's Objects/floatobject.c: a float as two, four or eight bytes, the least first or the most. The first two are false, having raised OverflowError, if there is
 // no room for it. And the other way about, which cannot go wrong.
 bool packFloat2(JSGlobalObject*, double, std::span<uint8_t, 2>, bool isLittleEndian);

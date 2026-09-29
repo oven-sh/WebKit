@@ -732,6 +732,16 @@ to do with objects is `PythonMathModule.cpp`, by hand. See *One rounding or two*
 `PythonRandomModule.cpp` is `Modules/_randommodule.c`, and has the notice of the authors of the Mersenne Twister at the top of it. From the same seed come the same numbers as in CPython, from every function in `random.py`. To seed
 `random` with a `str` or `bytes` takes `hashlib`, which is the host's.
 
+### `struct`
+
+`PythonStructModule.cpp` is `Modules/_struct.c`. There is a table for each order that bytes can be in, as there, with what packs and what unpacks for each character of a format. CPython has a function for each size of int in each
+table. They differ in how they come by the bytes and not in what the bytes are, or in what is said of a number that there is no room for, so here there is one, which goes by the size in the table. Where the least byte comes first,
+CPython puts what it does natively into the table for `<` wherever the sizes are the same, and that shows: `<F` says nothing of a number that a `float` of C's has no room for, and `>F` raises. The tables here are as that leaves them.
+
+Floats are packed by `packFloat2()` and the rest, in `PythonNumbers.cpp`, which are `PyFloat_Pack2()` and the rest of `Objects/floatobject.c`, and are `memoryview`'s as well.
+
+Turning what is given into numbers can run anything, so `pack_into()` packs into bytes of its own and copies them afterwards, if there is still room where they were to go: see *Where the bytes are is not kept*.
+
 ### `select`
 
 `PythonSelectModule.cpp` is `Modules/selectmodule.c`: `select()`, `poll`, and `kevent` and `kqueue` where there are those. `epoll`, which is Linux's, is not written, and `selectors` makes do with `poll`. Each of them begins again when
@@ -1033,6 +1043,8 @@ There is nothing that is per process, nothing that is set after something is mad
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots. What sets do with one another is CPython's `Objects/setobject.c`, function for function: how long each takes, which of two keys that are equal
   is kept, and what is asked of the keys and how often (`programs/sets-with-one-another.py`). The one thing that is otherwise is for the sake of the order: `a ^ b` has what is only in `a` first.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
+- **What `struct` is packing into or unpacking from can be resized meanwhile**, as what a regular expression is going through can. If it has been made too short by the time that there is something to write or to read, that is
+  `BufferError`.
 - **A NaN has 50 bits to be told from another by, and not 51.** The engine has other uses for some of what would be NaNs, and JavaScript never sees those, because every number that it reads out of memory is made the one NaN
   first. Python can tell NaNs apart, with `struct`, `marshal` and `memoryview`, so `floatFromDouble()` keeps the sign and all of the rest but bit 50: `purifyNaNKeepingPayload()`, in `runtime/PureNaN.h`, which says why it is that bit.
   Without it, eight bytes of a program's choosing would be a pointer of its choosing.
