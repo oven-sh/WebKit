@@ -4,6 +4,8 @@
 #
 # Runs each of interop/*.mjs and interop/*.py that has a file of what it should print beside it, in several configurations of the engine.
 # There is nothing to compare these with, since no other Python has JavaScript in it: what is expected was read and found right.
+#
+# What a run that fails printed is kept, and where is said: one that fails only now and then may not do so again for the asking.
 
 # The part of the library that is written in Python does not come with the engine. It is CPython's, as it is.
 [ -n "$PYTHONPATH" ] || { echo "PYTHONPATH is to name the Lib directory of CPython 3.14" >&2; exit 2; }
@@ -16,6 +18,9 @@ cd "$(dirname "$0")/interop" || exit 2
 eager="--thresholdForJITAfterWarmUp=1 --thresholdForJITSoon=1"
 failures=0
 runs=0
+kept=${TMPDIR:-/tmp}/python-interop-that-failed
+actual=$(mktemp) || exit 2
+trap 'rm -f "$actual"' EXIT
 for expected in "$@"; do
     test=${expected%.expected}
     for options in "" "--useJIT=0" "$eager" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
@@ -26,9 +31,12 @@ for expected in "$@"; do
         esac
         # Where things are in memory is not part of what is expected.
         # shellcheck disable=SC2086
-        if ! "$jsc" --useDollarVM=1 $options $module "$test" 2>&1 | sed -e 's/0x[0-9a-f]*/0x/g' | cmp -s - "$expected"; then
+        "$jsc" --useDollarVM=1 $options $module "$test" 2>&1 | sed -e 's/0x[0-9a-f]*/0x/g' > "$actual"
+        if ! cmp -s "$actual" "$expected"; then
             failures=$((failures + 1))
-            echo "FAIL: $test $options"
+            mkdir -p "$kept"
+            cp "$actual" "$kept/$test.$failures.txt"
+            echo "FAIL: $test $options (see $kept/$test.$failures.txt)"
         fi
     done
 done

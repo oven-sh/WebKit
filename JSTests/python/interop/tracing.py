@@ -1,10 +1,15 @@
 import sys
 log = []
+# Only what is in this file. Something else can be run at any time: what a weak reference calls when what it refers to has gone is called some time after that has been found out, and importlib has such.
 def tracer(frame, event, arg):
+    if frame.f_code.co_filename != __file__:
+        return None
     what = arg[0].__name__ if event == "exception" else (arg if event == "return" and isinstance(arg, (int, str, type(None))) else None)
     log.append((frame.f_code.co_name, event, frame.f_lineno - frame.f_code.co_firstlineno, what))
     return tracer
 def profiler(frame, event, arg):
+    if frame.f_code.co_filename != __file__:
+        return
     log.append((frame.f_code.co_name, event, getattr(arg, "__name__", None) or getattr(arg, "name", None)))
 def start(): log.clear(); sys.settrace(tracer)
 def start_profile(): log.clear(); sys.setprofile(profiler)

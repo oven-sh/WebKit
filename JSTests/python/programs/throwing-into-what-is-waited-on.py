@@ -89,8 +89,9 @@ print("---- traced")
 log = []
 
 
+# Only what is in this file: what a weak reference calls when what it refers to has gone can be run at any time, and importlib has such.
 def tracer(frame, event, arg):
-    if event in ("exception", "call", "return") and frame.f_code.co_name not in ("attempt", "keep", "<lambda>"):
+    if event in ("exception", "call", "return") and frame.f_code.co_filename == __file__ and frame.f_code.co_name not in ("attempt", "keep", "<lambda>"):
         log.append((event, frame.f_code.co_name, type(arg).__name__ if event != "exception" else (arg[0].__name__, type(arg[1]).__name__)))
     return tracer
 
@@ -109,7 +110,7 @@ M.use_tool_id(1, "t")
 seen = []
 # How often something is handled and raised again on its way goes by how what nobody wrote is put together, which is not the same here.
 for name in ("PY_THROW", "PY_RESUME", "RAISE", "PY_UNWIND", "PY_YIELD", "PY_RETURN"):
-    M.register_callback(1, getattr(M.events, name), (lambda name: lambda code, offset, *value: code.co_name in ("attempt", "keep", "<lambda>") or seen.append((name, code.co_name, *[type(v).__name__ for v in value])))(name))
+    M.register_callback(1, getattr(M.events, name), (lambda name: lambda code, offset, *value: code.co_filename != __file__ or code.co_name in ("attempt", "keep", "<lambda>") or seen.append((name, code.co_name, *[type(v).__name__ for v in value])))(name))
 M.set_events(1, M.events.PY_THROW | M.events.PY_RESUME | M.events.RAISE | M.events.PY_UNWIND | M.events.PY_YIELD | M.events.PY_RETURN)
 for make, arguments in cases:
     del seen[:]
