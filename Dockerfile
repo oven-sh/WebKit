@@ -289,13 +289,12 @@ ENV LTO_FLAG="${LTO_FLAG}"
 #
 # For aarch64 this is a cross build. ICU's configure then wants a build for this container to take its tools from,
 # though none of them is run to build these two libraries.
-# -O3 like WebKit and Bun, and like ICU's own runConfigureICU.
 COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CPPFLAGS="$ICU_CPPFLAGS" && \
-    export CFLAGS="$CFLAGS $G -O3 -std=c17 $LTO_FLAG" && \
-    export CXXFLAGS="$CXXFLAGS $G -O3 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export CFLAGS="$CFLAGS $G -Os -std=c17 $LTO_FLAG" && \
+    export CXXFLAGS="$CXXFLAGS $G -Os -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     if [ "$LINUX_ARCH" = aarch64 ]; then \
         ICU_CROSS="--host=aarch64-unknown-linux-gnu --with-cross-build=/icu-host"; \

@@ -147,13 +147,12 @@ ARG DEFAULT_CFLAGS
 #
 # For aarch64 this is a cross build. ICU's configure then wants a build for this container to take its tools from,
 # though none of them is run to build these two libraries.
-# -O3 like WebKit and Bun, and like ICU's own runConfigureICU.
 COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export G=$(if [ -n "${LTO_FLAG:-}" ]; then echo "-g1"; fi) && \
     export CPPFLAGS="$ICU_CPPFLAGS" && \
-    export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS -O3 -std=c17 $LTO_FLAG" && \
-    export CXXFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CXXFLAGS -O3 -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
+    export CFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CFLAGS -Os -std=c17 $LTO_FLAG" && \
+    export CXXFLAGS="${DEFAULT_CFLAGS} $G ${MARCH_FLAG} $CXXFLAGS -Os -std=c++20 -fno-exceptions $LTO_FLAG -fno-c++-static-destructors " && \
     export LDFLAGS="-fuse-ld=lld " && \
     if [ "$LINUX_ARCH" = aarch64 ]; then \
         ICU_CROSS="--host=aarch64-alpine-linux-musl --with-cross-build=/icu-host"; \

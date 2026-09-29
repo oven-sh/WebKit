@@ -109,14 +109,13 @@ ARG ANDROID_API
 ARG ANDROID_ARCH
 
 # ICU's libraries, with the lane's flags, and its data, which `base` made, as the third.
-# -O3 like WebKit and Bun, and like ICU's own runConfigureICU.
 COPY icu/ /icu-bun/
 RUN --mount=type=tmpfs,target=/icu \
     export TARGET_TRIPLE="${ANDROID_ARCH}-unknown-linux-android${ANDROID_API}" && \
     export CROSS_FLAGS="--target=${TARGET_TRIPLE} --sysroot=${NDK_SYSROOT}" && \
     export CPPFLAGS="${ICU_CPPFLAGS}" && \
-    export CFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -O3 -std=c17 ${LTO_FLAG}" && \
-    export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -O3 -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
+    export CFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c17 ${LTO_FLAG}" && \
+    export CXXFLAGS="${CROSS_FLAGS} ${DEFAULT_CFLAGS} ${MARCH_FLAG} -Os -std=c++20 -fno-exceptions ${LTO_FLAG} -fno-c++-static-destructors" && \
     export LDFLAGS="${CROSS_FLAGS} --rtlib=compiler-rt -fuse-ld=lld" && \
     cd /icu && tar -xf /icu.tgz --strip-components=1 && rm /icu.tgz && cd icu4c/source && \
     { ./configure --host=${ANDROID_ARCH}-linux-android \
