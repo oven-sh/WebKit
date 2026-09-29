@@ -750,6 +750,11 @@ Floats are packed by `packFloat2()` and the rest, in `PythonNumbers.cpp`, which 
 
 Turning what is given into numbers can run anything, so `pack_into()` packs into bytes of its own and copies them afterwards, if there is still room where they were to go: see *Where the bytes are is not kept*.
 
+### `binascii`
+
+`PythonBinasciiModule.cpp` is `Modules/binascii.c`. The tables for the two checksums are worked out from their polynomials when it is compiled. `b2a_qp()` goes through what it is given once, where CPython goes through it twice, the
+first time to find how long the result will be.
+
 ### `select`
 
 `PythonSelectModule.cpp` is `Modules/selectmodule.c`: `select()`, `poll`, and `kevent` and `kqueue` where there are those. `epoll`, which is Linux's, is not written, and `selectors` makes do with `poll`. Each of them begins again when

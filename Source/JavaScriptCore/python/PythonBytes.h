@@ -177,6 +177,8 @@ Buffer bufferOrNothing(JSGlobalObject*, JSValue);
 // The same, raising TypeError if it has none: a bytes-like object is required, not 'str'.
 Buffer bufferOf(JSGlobalObject*, JSValue);
 
+// _Py_strhex_bytes_with_sep(), for what is called as bytes.hex() is: (data, sep=<none>, bytes_per_sep=1). A character for each byte. Null if it raised.
+String hexOfBuffer(JSGlobalObject*, const NativeArguments&, const Buffer&);
 String reprOfBytes(std::span<const uint8_t>);
 int64_t hashOfBytes(std::span<const uint8_t>);
 

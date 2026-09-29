@@ -1478,7 +1478,7 @@ static String hexOf(std::span<const uint8_t> content, std::optional<char> separa
 // hex(sep=<none>, bytes_per_sep=1). Null if it raised.
 // `content` is asked for what is in it when the arguments have been looked at, since looking at them can change it.
 template<typename Content>
-static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args, const Content& content)
+static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, const NativeArguments& args, const Content& content, bool isForBytes = false)
 {
     JSValue separatorValue = args.at(1);
     JSValue groupValue = args.at(2);
@@ -1507,13 +1507,20 @@ static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, 
             raiseTypeError(globalObject, scope, "sep must be str or bytes."_s);
             return { };
         }
-        if (character >= 0x80) {
+        // What is to be bytes can have any byte in it.
+        if (character >= (isForBytes ? 0x100 : 0x80)) {
             raiseValueError(globalObject, scope, "sep must be ASCII."_s);
             return { };
         }
         separator = static_cast<char>(character);
     }
     RELEASE_AND_RETURN(scope, textOrMemoryError(globalObject, hexOf(content.span(), separator, group)));
+}
+
+String hexOfBuffer(JSGlobalObject* globalObject, const NativeArguments& args, const Buffer& buffer)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    RELEASE_AND_RETURN(scope, hexWithArguments(globalObject, scope, args, buffer, true));
 }
 
 PYTHON_NATIVE(bytesHex)

@@ -192,6 +192,7 @@ JSObject* createImpModule(JSGlobalObject*);
 JSObject* createOpcodeModule(JSGlobalObject*);
 JSObject* createRandomModule(JSGlobalObject*);
 JSObject* createSREModule(JSGlobalObject*);
+JSObject* createBinasciiModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);
 JSObject* createStructModule(JSGlobalObject*);
 JSObject* createUnicodeDataModule(JSGlobalObject*);

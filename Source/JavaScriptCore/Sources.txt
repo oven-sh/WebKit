@@ -784,6 +784,7 @@ python/PythonLifecycle.cpp
 python/PythonLocale.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
+python/PythonBinasciiModule.cpp
 python/PythonBufferedIO.cpp
 python/PythonBytesIO.cpp
 python/PythonFileIO.cpp
