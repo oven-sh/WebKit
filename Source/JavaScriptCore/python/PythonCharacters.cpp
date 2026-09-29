@@ -144,9 +144,8 @@ auto SurrogatePairCache::find(StringImpl& string, RefPtr<SurrogatePairs>& pairs)
     ASSERT(!string.is8Bit());
     StringImpl* key = keyFor(string);
     Entry& entry = entryFor(key);
-    // Every string that is the beginning of a buffer is the same as every other, as far as it goes.
     if (entry.string != key)
-        entry = { key, SurrogatePairs::create(), key == &string ? string.length() : std::numeric_limits<size_t>::max() };
+        entry = { key, SurrogatePairs::create(), 0 };
     // What is wanted is what is known of the string so far, and to add to that from the string. Neither will do if it has been added to from another.
     if (std::min<size_t>(entry.pairs->lengthLookedThrough(), string.length()) > entry.lengthInCommon)
         entry.pairs = entry.pairs->tryCopy(entry.lengthInCommon);

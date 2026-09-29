@@ -103,7 +103,8 @@ private:
     struct Entry {
         RefPtr<StringImpl> string; // Or the buffer that it is the beginning of: see ExtensibleStringImpl.h.
         RefPtr<SurrogatePairs> pairs;
-        // How far the string is known to be the same as what `pairs` is about. Past that, `pairs` may have been added to from another string that began the same.
+        // How far the string is known to be the same as what `pairs` is about, which is as far as `pairs` has been added to from it, or from what it was made by adding to. Past that, `pairs` may have been added to
+        // from another string that began the same. That is so of a buffer too. The strings that are the beginning of it are all the same as far as they go, but `pairs` is not theirs alone.
         size_t lengthInCommon { 0 };
     };
 
