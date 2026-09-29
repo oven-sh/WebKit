@@ -397,6 +397,8 @@ bool finalizePython(JSGlobalObject* globalObject)
     if (scope.exception())
         reportUnraisable(globalObject, "Exception ignored on threading shutdown"_s);
 
+    callAtExitFunctions(globalObject);
+
     // flush_std_files()
     bool succeeded = true;
     for (ASCIILiteral name : { "stdout"_s, "stderr"_s }) {

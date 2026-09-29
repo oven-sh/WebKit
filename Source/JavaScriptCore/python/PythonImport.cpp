@@ -244,6 +244,7 @@ static void removeModule(JSGlobalObject* globalObject, JSValue name)
 // `_PyImport_Inittab`. One that has nothing to make it with was made with the realm, and cannot be made again.
 static constexpr BuiltinModule s_builtinModules[] = {
     { "_ast"_s, createASTModule },
+    { "atexit"_s, createAtExitModule },
     { "_codecs"_s, createCodecsModule },
     { "_collections"_s, createCollectionsModule },
     { "_contextvars"_s, createContextVarsModule },

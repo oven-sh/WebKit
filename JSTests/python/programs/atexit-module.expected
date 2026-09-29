@@ -1,0 +1,49 @@
+the module => ('atexit', '', 'BuiltinImporter', 'allow programmer to define multiple exit functions to be executed\nupon normal program termination.\n\nTwo public functions, register and unregister, are defined.\n', ['_clear', '_ncallbacks', '_run_exitfuncs', 'register', 'unregister'])
+_clear => ('builtin_function_or_method', '($module, /)', 'Clear the list of previously registered exit functions.', 'atexit')
+_ncallbacks => ('builtin_function_or_method', '($module, /)', 'Return the number of registered exit functions.', 'atexit')
+_run_exitfuncs => ('builtin_function_or_method', '($module, /)', 'Run all registered exit functions.\n\nIf a callback raises an exception, it is logged with sys.unraisablehook.', 'atexit')
+register => ('builtin_function_or_method', '($module, func, /, *args, **kwargs)', 'Register a function to be executed upon normal program termination\n\n    func - function to be called at exit\n    args - optional arguments to pass to func\n    kwargs - optional keyword arguments to pass to func\n\n    func is returned to facilitate usage as a decorator.', 'atexit')
+unregister => ('builtin_function_or_method', '($module, func, /)', 'Unregister an exit function which was previously registered using\natexit.register\n\n    func - function to be unregistered', 'atexit')
+register => 4
+the last first => (None, [((), {'func': 5}), ((3,), {'x': 4}), ((1, 2), {}), ((), {})], 0, None, [])
+what will not do => ['TypeError: register() takes at least 1 argument (0 given)', 'TypeError: the first argument must be callable', 'TypeError: the first argument must be callable', 'TypeError: the first argument must be callable', 'TypeError: register() takes at least 1 argument (0 given)', 'TypeError: the first argument must be callable', 0]
+how the rest are called => ['TypeError: atexit._clear() takes no arguments (1 given)', 'TypeError: atexit._clear() takes no keyword arguments', 'TypeError: atexit._run_exitfuncs() takes no arguments (1 given)', 'TypeError: atexit._run_exitfuncs() takes no keyword arguments', 'TypeError: atexit._ncallbacks() takes no arguments (1 given)', 'TypeError: atexit._ncallbacks() takes no keyword arguments', 'TypeError: atexit.unregister() takes exactly one argument (0 given)', 'TypeError: atexit.unregister() takes exactly one argument (2 given)', 'TypeError: atexit.unregister() takes no keyword arguments', None, None]
+as a decorator => ['<lambda>', None, ['decorated']]
+_clear => (2, None, 0, None, [])
+unregister => (None, 2, None, [('other', (4,)), ('other', (2,))])
+unregister what is not there => (None, 1, None)
+it is by == => (None, [('eq', 'a', 5), ('eq', 'b', 5), ('eq', 'c', 5)], 1, None, ['b'])
+== that raises => ('ValueError: no', [('eq', 'a', 5), ('eq', 'b', 5)], 2, None)
+== that clears => (None, 0, None)
+== that registers => (None, 4, None, [((9,), {}), ((2,), {}), 'meddler', ((1,), {})])
+== that unregisters => RecursionError: maximum recursion depth exceeded
+---- what is done meanwhile
+registering => (None, ['outer', ((2,), {}), 'meddler'], 0, None, [])
+clearing => (None, [((2,), {}), ((1,), {})], 0)
+unregistering => (None, [((2,), {}), ((1,), {})], 0)
+running => (None, [((2,), {}), ((2,), {}), ((2,), {}), ((2,), {}), ((2,), {}), ((1,), {}), ((1,), {}), ((1,), {}), ((1,), {}), ((1,), {})], 0)
+---- what is raised
+it is said, and the rest are called => (None, [((3,), {}), ((2,), {}), ((1,), {})], [('KeyboardInterrupt', '', 'Exception ignored in atexit callback <function raiser_of_KeyboardInterrupt', None), ('SystemExit', '3', 'Exception ignored in atexit callback <function raiser_of_SystemExit', None), ('KeyError', "'not shown'", None, None), ('KeyError', "'shown'", 'Exception ignored in atexit callback <Shown>', None), ('TypeError', 'second', 'Exception ignored in atexit callback <function raiser_of_TypeError', None), ('ValueError', 'first', 'Exception ignored in atexit callback <function raiser_of_ValueError', None)], 0)
+called wrongly => (None, [('TypeError', 'len() takes exactly one argument (0 given)', 'Exception ignored in atexit callback <built-in function len>', None), ('TypeError', '<lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given', 'Exception ignored in atexit callback <function <lambda>.<locals>.<lambda>', None)])
+Exception ignored in atexit callback <Shown>:
+Traceback (most recent call last):
+  File "atexit-module.py", line 104, in __call__
+    def __call__(self): raise KeyError("shown")
+KeyError: 'shown'
+as it is shown => (<Shown>, None)
+---- when the program ends
+the last line of the program
+what is written and not flushed is flushed afterwards
+with-arguments
+sys.stdout is still there: True and so are modules: True
+Exception ignored in atexit callback <Shown>:
+Traceback (most recent call last):
+  File "atexit-module.py", line 104, in __call__
+    def __call__(self): raise KeyError("shown")
+KeyError: 'shown'
+Exception ignored in atexit callback <Shown>:
+Traceback (most recent call last):
+  File "atexit-module.py", line 104, in __call__
+    def __call__(self): raise KeyError("shown")
+KeyError: 'shown'
+the first registered is the last called

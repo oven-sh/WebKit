@@ -604,7 +604,8 @@ it first (`PythonLifecycle.cpp`).
 The part of the library that is written in Python does not come with the engine. Where it is is for the host to say, in `Configuration::moduleSearchPaths` or `frozenModules`. The shell goes by `PYTHONPATH` and
 `PYTHONHOME`, as CPython does.
 
-When a program is over is for the host to say as well, since one that is in two languages is not over when the Python that began it has been run to its end: `finalizePython()`.
+When a program is over is for the host to say as well, since one that is in two languages is not over when the Python that began it has been run to its end: `finalizePython()`. It does what `Py_FinalizeEx()` does while
+there is still an interpreter to do it in, in the same order: `threading._shutdown()`, what has been registered with `atexit`, and flushing the standard streams.
 
 ### Where the library is written
 

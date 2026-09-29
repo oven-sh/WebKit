@@ -185,6 +185,7 @@ void addClassGetItemIfGeneric(JSGlobalObject*, PyType*); // C[int], if CPython's
 JSObject* createThreadModule(JSGlobalObject*);
 JSObject* createMarshalModule(JSGlobalObject*);
 JSObject* createErrnoModule(JSGlobalObject*);
+JSObject* createAtExitModule(JSGlobalObject*);
 JSObject* createCollectionsModule(JSGlobalObject*);
 JSObject* createImpModule(JSGlobalObject*);
 JSObject* createOpcodeModule(JSGlobalObject*);

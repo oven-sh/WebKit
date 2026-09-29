@@ -1,0 +1,495 @@
+---- as it is
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 30, in part_of_a_line
+    def part_of_a_line(): x = 1; raise ValueError("part of a line")
+ValueError: part of a line
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 34, in over_several_lines
+    return (1 +
+TypeError: unsupported operand type(s) for +: 'int' and 'list'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 56, in indented
+    raise ValueError("after a tab, a space and a tab")
+ValueError: after a tab, a space and a tab
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 60, in <lambda>
+    for f in (part_of_a_line, over_several_lines, outer, indented, lambda: again(0), lambda: again(2), lambda: again(3), lambda: again(4), lambda: again(5), lambda: again(30), lambda: one(4)):
+  File "how-the-unraisable-is-shown.py", line 47, in again
+    raise KeyError("the bottom")
+KeyError: 'the bottom'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 60, in <lambda>
+    for f in (part_of_a_line, over_several_lines, outer, indented, lambda: again(0), lambda: again(2), lambda: again(3), lambda: again(4), lambda: again(5), lambda: again(30), lambda: one(4)):
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 47, in again
+    raise KeyError("the bottom")
+KeyError: 'the bottom'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 60, in <lambda>
+    for f in (part_of_a_line, over_several_lines, outer, indented, lambda: again(0), lambda: again(2), lambda: again(3), lambda: again(4), lambda: again(5), lambda: again(30), lambda: one(4)):
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 47, in again
+    raise KeyError("the bottom")
+KeyError: 'the bottom'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 60, in <lambda>
+    for f in (part_of_a_line, over_several_lines, outer, indented, lambda: again(0), lambda: again(2), lambda: again(3), lambda: again(4), lambda: again(5), lambda: again(30), lambda: one(4)):
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  [Previous line repeated 1 more time]
+  File "how-the-unraisable-is-shown.py", line 47, in again
+    raise KeyError("the bottom")
+KeyError: 'the bottom'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 60, in <lambda>
+    for f in (part_of_a_line, over_several_lines, outer, indented, lambda: again(0), lambda: again(2), lambda: again(3), lambda: again(4), lambda: again(5), lambda: again(30), lambda: one(4)):
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  [Previous line repeated 2 more times]
+  File "how-the-unraisable-is-shown.py", line 47, in again
+    raise KeyError("the bottom")
+KeyError: 'the bottom'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 60, in <lambda>
+    for f in (part_of_a_line, over_several_lines, outer, indented, lambda: again(0), lambda: again(2), lambda: again(3), lambda: again(4), lambda: again(5), lambda: again(30), lambda: one(4)):
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  [Previous line repeated 27 more times]
+  File "how-the-unraisable-is-shown.py", line 47, in again
+    raise KeyError("the bottom")
+KeyError: 'the bottom'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 60, in <lambda>
+    for f in (part_of_a_line, over_several_lines, outer, indented, lambda: again(0), lambda: again(2), lambda: again(3), lambda: again(4), lambda: again(5), lambda: again(30), lambda: one(4)):
+  File "how-the-unraisable-is-shown.py", line 51, in one
+    def one(n): return two(n)
+  File "how-the-unraisable-is-shown.py", line 52, in two
+    def two(n): return one(n - 1) if n else 1 / 0
+  File "how-the-unraisable-is-shown.py", line 51, in one
+    def one(n): return two(n)
+  File "how-the-unraisable-is-shown.py", line 52, in two
+    def two(n): return one(n - 1) if n else 1 / 0
+  File "how-the-unraisable-is-shown.py", line 51, in one
+    def one(n): return two(n)
+  File "how-the-unraisable-is-shown.py", line 52, in two
+    def two(n): return one(n - 1) if n else 1 / 0
+  File "how-the-unraisable-is-shown.py", line 51, in one
+    def one(n): return two(n)
+  File "how-the-unraisable-is-shown.py", line 52, in two
+    def two(n): return one(n - 1) if n else 1 / 0
+  File "how-the-unraisable-is-shown.py", line 51, in one
+    def one(n): return two(n)
+  File "how-the-unraisable-is-shown.py", line 52, in two
+    def two(n): return one(n - 1) if n else 1 / 0
+ZeroDivisionError: division by zero
+---- what has no file
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "<string>", line 1, in <lambda>
+ZeroDivisionError: division by zero
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "<made up>", line 2, in f
+ValueError: in a string
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "/no/such/file.py", line 2, in f
+ValueError: in no such file
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "/elsewhere/atexit-module.py", line 2, in f
+ValueError: found by the end of its name
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "/elsewhere/atexit-module.py", line 2, in f
+    import atexit
+ValueError: found by the end of its name
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "/elsewhere/atexit-module.py", line 2, in f
+    import atexit
+ValueError: found by the end of its name
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "/elsewhere/atexit-module.py", line 2, in f
+ValueError: found by the end of its name
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "/elsewhere/atexit-module.py", line 2, in f
+ValueError: found by the end of its name
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "/elsewhere/atexit-module.py", line 2, in f
+ValueError: found by the end of its name
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 100002, in f
+ValueError: past the end
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "<half", line 2, in f
+ValueError: <half
+---- sys.tracebacklimit
+limit None
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit 1000
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit 5
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit 3
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit 2
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit 1
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit 0
+Exception ignored in atexit callback <it>:
+ZeroDivisionError: division by zero
+limit -1
+Exception ignored in atexit callback <it>:
+ZeroDivisionError: division by zero
+limit -5
+Exception ignored in atexit callback <it>:
+ZeroDivisionError: division by zero
+limit 1267650600228229401496703205376
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit -1267650600228229401496703205376
+Exception ignored in atexit callback <it>:
+ZeroDivisionError: division by zero
+limit True
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit False
+Exception ignored in atexit callback <it>:
+ZeroDivisionError: division by zero
+limit 1.5
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit '2'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit []
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 42, in outer
+    def outer(): return [middle()]
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+limit I(2)
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 41, in middle
+    def middle(): return inner() + 1
+  File "how-the-unraisable-is-shown.py", line 40, in inner
+    def inner(): return 1 / 0
+ZeroDivisionError: division by zero
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 48, in again
+    return again(n - 1)
+  File "how-the-unraisable-is-shown.py", line 47, in again
+    raise KeyError("the bottom")
+KeyError: 'the bottom'
+---- what is said of it
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 94, in __call__
+    def __call__(self): raise KeyError("no repr")
+KeyError: 'no repr'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+NoStr: <exception str() failed>
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+some.where.Elsewhere: x
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+<unknown>NoModule: x
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+Inner.Deep: x
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+ValueError: 
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+ValueError: 
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+ValueError: ('a', 'b')
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+KeyError: 'k'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+SystemExit: 3
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+KeyboardInterrupt: 
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+FileNotFoundError: [Errno 2] no: 'file'
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+SyntaxError: bad (f.py, line 1)
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+ExceptionGroup: g (2 sub-exceptions)
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 0: bad
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+ValueError: two
+lines
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+ValueError: é中😀
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 129, in chained
+    raise ValueError("neither the cause nor the context is shown") from e
+ValueError: neither the cause nor the context is shown
+Exception ignored in atexit callback <it>:
+Traceback (most recent call last):
+  File "how-the-unraisable-is-shown.py", line 26, in __call__
+    def __call__(self): return self.f()
+  File "how-the-unraisable-is-shown.py", line 116, in f
+    def f(): raise e
+ValueError: nor are notes
