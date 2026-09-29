@@ -27,6 +27,7 @@
 
 #include "PythonArena.h"
 #include "PythonToken.h"
+#include <wtf/TZoneMalloc.h>
 #include <wtf/text/StringView.h>
 
 namespace JSC {
@@ -54,5 +55,69 @@ struct ScanRange {
 // The scanner. It alone reads the source: what the parser needs to know is all in the tokens.
 // True if it got to the end. Otherwise the error says why not, and the tokens are those before it and then TokenKind::Error.
 bool tokenize(VM&, Arena&, StringView source, const ScanRange&, Vector<Token>&, Vector<SyntaxWarning>&, SyntaxError&);
+
+// Where the scanner gets the source from if it is given a line at a time: what CPython's tokenizer has as `underflow`.
+class LineSource {
+public:
+    virtual ~LineSource() = default;
+    enum class Result : uint8_t {
+        Line, // If nothing was added, that is the end.
+        Failed, // Something has been raised.
+    };
+    // Adds the next line to what there is.
+    virtual Result readLine(Vector<char16_t>&) = 0;
+};
+
+// A token, and as much of what CPython's tokenizer knows on giving it as the module _tokenize goes by. Places are in code units of TokenStream::source().
+struct StreamedToken {
+    TokenKind kind { TokenKind::EndMarker };
+    bool hasText { false }; // Some are nowhere.
+    unsigned start { 0 };
+    unsigned end { 0 };
+    unsigned line { 0 }; // tok->lineno
+    unsigned firstLine { 0 }; // tok->first_lineno
+    unsigned lineStart { 0 }; // tok->line_start
+    unsigned multiLineStart { 0 }; // tok->multi_line_start
+    unsigned inputEnd { 0 }; // tok->inp
+    bool hasImplicitNewline { false }; // tok->implicit_newline
+    bool isAtEndOfFile { false }; // tok->done == E_EOF
+    // CPython's tokenizer goes by bytes of UTF-8, and takes one of them for a token where it has no reason to think that it is part of anything. If it is the first of several, the token ends in the middle of a character:
+    // the last that is between `start` and `end`.
+    bool endsInMiddleOfCharacter { false };
+};
+
+// The same scanner, for whoever wants the tokens one at a time and as they are written, and has the source a line at a time. No more of the source is asked for than it takes to make out the next token. A line is
+// whatever it was given for one: lines are counted by how many times it has asked.
+class TokenStream {
+    WTF_MAKE_TZONE_ALLOCATED(TokenStream);
+    WTF_MAKE_NONCOPYABLE(TokenStream);
+public:
+    // With `hasExtraTokens` there are comments and the ends of lines that mean nothing, and less is found fault with: `tok_extra_tokens`.
+    TokenStream(VM&, LineSource&, bool hasExtraTokens);
+    ~TokenStream();
+
+    enum class Result : uint8_t {
+        Token,
+        Error, // See error().
+        Failed, // The LineSource did.
+    };
+    // After TokenKind::EndMarker, and after anything but a token, it is not to be asked again.
+    Result next(StreamedToken&);
+
+    // All that has been read.
+    std::span<const char16_t> source() const;
+    const SyntaxError& error() const;
+    // What there is to warn of since this was last asked.
+    Vector<SyntaxWarning> takeWarnings();
+    // Of where it stopped: tok->lineno, tok->buf and tok->inp.
+    unsigned line() const;
+    unsigned bufferStart() const;
+    // Where the line of that number begins.
+    unsigned startOfLine(unsigned line) const;
+
+private:
+    struct Implementation;
+    const std::unique_ptr<Implementation> m_implementation;
+};
 
 } } // namespace JSC::Python

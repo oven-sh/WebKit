@@ -56,6 +56,8 @@ struct SyntaxError {
     // In CPython there are two kinds of thing that its tokenizer can find wrong. One kind it raises an exception for itself. That comes before whatever its parser has found wrong earlier in the
     // source, and the line that goes with it is without the end of the line. For the other it only says that it can go no further, and the parser says why if it gets that far.
     bool isFromTokenizer { false };
+    // _PyTokenizer_syntaxerror_known_range(): a program is given the columns in bytes, as they are, which is how CPython's tokenizer works them out. It sees to it for the rest that they are in characters, and not for these.
+    bool hasColumnsInBytes { false };
     // It was in an f-string when it stopped, and so what the parser has found wrong is not to give way to it.
     bool isInsideFString { false };
     // The line that CPython's tokenizer, which is asked for one token at a time, would have got to. If that is beyond the line that is wrong, the line is fetched again, and comes without its end.
@@ -64,6 +66,16 @@ struct SyntaxError {
     bool lineGoesOnToTheEnd { false };
     // Whether a last line that nothing ends is taken to be ended. See ScanRange::LastLine.
     bool lastLineIsEnded { true };
+    // If it is not from the tokenizer, what CPython's tokenizer says in place of raising anything: `tok->done`. The parser has its own words for each, which are the message. The module _tokenize has others.
+    enum class Stop : uint8_t {
+        None,
+        EndOfFile, // E_EOF
+        Dedent, // E_DEDENT
+        TabSpace, // E_TABSPACE
+        TooDeep, // E_TOODEEP
+        LineContinuation, // E_LINECONT
+    };
+    Stop stop { Stop::None };
     // Where the scanner stopped, the bracket that was opened last and not closed, if any.
     char openBracket { 0 };
     unsigned openBracketLine { 0 };

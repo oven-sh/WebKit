@@ -831,6 +831,7 @@ python/PythonPosixProcesses.cpp
 python/PythonPosixShared.cpp
 python/PythonStringIO.cpp
 python/PythonTextIO.cpp
+python/PythonTokenizeModule.cpp
 python/PythonThreadModule.cpp
 python/PythonTime.cpp
 python/PythonWarnings.cpp

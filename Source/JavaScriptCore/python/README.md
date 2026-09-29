@@ -11,7 +11,7 @@ The language is Python 3.14. CPython is the specification: `Grammar/python.gram`
 
 | | | checked against CPython by |
 |---|---|---|
-| `PythonLexer` | source to tokens. It alone reads the source | |
+| `PythonLexer` | source to tokens. It alone reads the source | `tokenize`: every file of `Lib`, and 100,000 damaged programs |
 | `PythonParser` | tokens to `PythonAST`, by recursive descent | `$vm.pythonAST`: every file of `Lib`, and 150,000 damaged programs |
 | `PythonSymbolTable` | what each name refers to | `$vm.pythonSymbolTable`: the same files, and 60,000 meddled programs |
 | `PythonCodeGenerator` | the tree to bytecode, through `BytecodeGenerator` | running programs |
@@ -698,6 +698,25 @@ A regular expression is compiled by Python, in the package `re`, to a list of nu
 
 `programs/sre-at-random.py` makes regular expressions at random and tries them on strings made at random, of each width and of bytes. Both this and CPython are given the same numbers to go by, so what differs is the engine's doing.
 
+### `tokenize`
+
+CPython has one tokenizer. Its parser asks it for tokens, and so does the module `_tokenize`, which `tokenize` is written in Python over. It is the same here: `TokenStream`, in `PythonLexer.h`, is the scanner that the compiler
+has, asked for one token at a time by whoever has the source a line at a time. So what `tokenize` says of a program is what the compiler makes of it, and every file that is put through `tokenize` and compared with
+CPython is a test of the compiler's scanner.
+
+- **No more is read than it takes to make out the next token.** What has the source at a prompt, or from a generator, sees the tokens of a line before it is asked for the next. When the scanner comes to the end of what it has
+  it asks for more: `Lexer::readMore()`, which is CPython's `tok_underflow_readline()`. For the compiler, which has all of the source, that is a test for null where it was already at the end.
+- **A line is whatever was given for one**, however many newlines are in it, and lines are counted by how many times it has asked. Newlines are not made alike first, as they are for the compiler, so a carriage return by itself
+  ends nothing.
+- **What a token comes to is not worked out**: not the value of a number, nor of a string, nor which names are keywords. What is wrong with an escape is for the parser to say.
+- **With `extra_tokens`** there are comments and the ends of lines that mean nothing, and less is found fault with, so that what is not yet a program can be coloured in as it is typed.
+- **Each token comes with what the tokenizer knew on giving it**: `StreamedToken`. `PythonTokenizeModule.cpp` is `Python/Python-tokenize.c` over that, with what it does to keep from making the line again for each token, since
+  which line a token is said to be on comes of it.
+- **Where CPython's tokenizer raises nothing** and only says that it can go no further, the parser has one thing to say about it and `_tokenize` another: `SyntaxError::Stop`.
+
+`programs/tokenize-module.py` has what is written by hand, in what order lines are asked for and tokens given, and a program that is spoiled at random. All of CPython's `Lib`, 1869 files of which some are wrong on purpose, comes out
+the same both ways of asking and both ways of giving the lines. That is not among the tests, since it is to be compared with the CPython that the files came with.
+
 ### One rounding or two
 
 `a * b + c` is one instruction on some processors, and it rounds once where a multiplication and then an addition round twice. JavaScriptCore is built with `-ffp-contract=off`, so that it is never used unasked, as
@@ -917,6 +936,8 @@ There is nothing that is per process, nothing that is set after something is mad
   moment the last reference to it goes. Here it would stay locked until the next collection, and programs that are right would fail. A view
   holds no pointer, only where it is looking, and checks each time. For the same reason the `__release_buffer__()` of a class that has one is called when
   the last `memoryview` of it is released, by `release()` or by `with`, and not when it is merely let go of.
+- **`tokenize` takes a t-string whose format specification goes over more than one line.** CPython 3.14.7 raises `MemoryError`, though it compiles it. And once `_tokenize.TokenizerIter` has raised something it is over, where
+  CPython's goes on from wherever it had got to.
 - **What line a frame that is over says that it is on**, if it was left by way of what nobody wrote: the end of a `finally`, or what is done at the end of `except E as e`. In CPython it is the last line that was
   written by somebody, which it has because it writes such things out again wherever they are come to. Here there is one of each, and it is said to be where the `try` is. Knowing better would take writing down
   each line as it is come to. `tb_lineno` is right, which is what a traceback is printed from.

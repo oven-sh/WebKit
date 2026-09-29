@@ -1,0 +1,41 @@
+'\xe9 = 0123' leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers 1 6 1 7 '\xe9 = 0123'
+"\xe9\xe9 = ub''" 'u' and 'b' prefixes are incompatible 1 8 1 10 "\xe9\xe9 = ub''"
+'\xe9 = 1_' invalid decimal literal 1 6 1 6 '\xe9 = 1_'
+"\xe9 = 'abc" unterminated string literal (detected at line 1) 1 5 1 5 "\xe9 = 'abc"
+'\xe9 = 0b12' invalid digit '2' in binary literal 1 8 1 8 '\xe9 = 0b12'
+'\xe9 = (]' closing parenthesis ']' does not match opening parenthesis '(' 1 6 1 6 '\xe9 = (]'
+'\xe9 = 1a' invalid decimal literal 1 5 1 5 '\xe9 = 1a'
+'\xe9 = \U0001f600' invalid character '😀' (U+1F600) 1 5 1 5 '\xe9 = \U0001f600'
+'\xe9 = $' invalid syntax 1 5 1 6 '\xe9 = $\n'
+"\xe9 = f'{'" f-string: expecting '}' 1 8 1 8 "\xe9 = f'{'"
+"\xe9 = f'}'" f-string: single '}' is not allowed 1 7 1 7 "\xe9 = f'}'"
+'\xe9\xe9 = 00012 + x' leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers 1 8 1 11 '\xe9\xe9 = 00012 + x'
+"'\xe9'; bf''" 'b' and 'f' prefixes are incompatible 1 7 1 9 "'\xe9'; bf''"
+'\U0001f600 = 1; x = 007' invalid character '😀' (U+1F600) 1 1 1 1 '\U0001f600 = 1; x = 007'
+"'\u4e2d'; tf''" 'f' and 't' prefixes are incompatible 1 8 1 10 "'\u4e2d'; tf''"
+'x = 0123' leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers 1 5 1 6 'x = 0123'
+"ub''" 'u' and 'b' prefixes are incompatible 1 1 1 3 "ub''"
+f ' 147 unterminated f-string literal (detected at line 1) 1 442 442
+f ' 148 unterminated f-string literal (detected at line 1) 1 445 445
+f ' 149 too many nested f-strings or t-strings 1 449 449
+f ' 150 too many nested f-strings or t-strings 1 449 449
+f """ 147 unterminated triple-quoted f-string literal (detected at line 1) 1 736 736
+f """ 148 unterminated triple-quoted f-string literal (detected at line 1) 1 741 741
+f """ 149 too many nested f-strings or t-strings 1 749 749
+f """ 150 too many nested f-strings or t-strings 1 749 749
+t ' 147 unterminated t-string literal (detected at line 1) 1 442 442
+t ' 148 unterminated t-string literal (detected at line 1) 1 445 445
+t ' 149 too many nested f-strings or t-strings 1 449 449
+t ' 150 too many nested f-strings or t-strings 1 449 449
+t """ 147 unterminated triple-quoted t-string literal (detected at line 1) 1 736 736
+t """ 148 unterminated triple-quoted t-string literal (detected at line 1) 1 741 741
+t """ 149 too many nested f-strings or t-strings 1 749 749
+t """ 150 too many nested f-strings or t-strings 1 749 749
+rf ' 147 unterminated f-string literal (detected at line 1) 1 589 589
+rf ' 148 unterminated f-string literal (detected at line 1) 1 593 593
+rf ' 149 too many nested f-strings or t-strings 1 599 599
+rf ' 150 too many nested f-strings or t-strings 1 599 599
+rf """ 147 unterminated triple-quoted f-string literal (detected at line 1) 1 883 883
+rf """ 148 unterminated triple-quoted f-string literal (detected at line 1) 1 889 889
+rf """ 149 too many nested f-strings or t-strings 1 899 899
+rf """ 150 too many nested f-strings or t-strings 1 899 899

@@ -136,11 +136,46 @@ public:
         }
     }
 
+    // What a TokenStream has besides.
+    struct Stream {
+        LineSource& lines;
+        Vector<char16_t>& buffer;
+        Vector<StreamedToken>& tokens;
+        bool hasExtraTokens;
+        Vector<unsigned> lineStarts { }; // Of each line, from the first.
+        bool hasFailedToRead { false };
+        bool isAtEndOfFile { false }; // tok->done == E_EOF
+        bool hasImplicitNewline { false };
+        bool isBetweenTokens { true }; // tok->start == NULL
+        bool isAfterCommentOnBlankLine { false }; // tok->comment_newline
+        std::optional<unsigned> inputEndAtEndOfFile;
+        unsigned firstLine { 0 };
+        unsigned multiLineStart { 0 };
+    };
+
+    // For a TokenStream.
+    Lexer(VM& vm, Arena& arena, Stream& stream, Vector<Token>& tokens, Vector<SyntaxWarning>& warnings, SyntaxError& error)
+        : Lexer(vm, arena, std::span<const CharacterType> { }, ScanRange { }, tokens, warnings, error)
+    {
+        m_stream = &stream;
+        m_line = 0;
+    }
+
+    bool isDone() const { return m_isDone; }
+    unsigned line() const { return m_line; }
+    unsigned bufferStart() const { return m_bufferStart; }
+
+    // tok_get(): as far as the next token, or the next few if they come together. False if it can go no further.
+    bool step()
+    {
+        return !m_strings.isEmpty() && m_strings.last().isScanningText ? scanStringText() : scanToken();
+    }
+
     bool run()
     {
         m_bufferStart = m_lineStart;
         while (!m_isDone) {
-            bool ok = !m_strings.isEmpty() && m_strings.last().isScanningText ? scanStringText() : scanToken();
+            bool ok = step();
             if (!ok) {
                 m_position = std::min(m_position, m_end);
                 // It is nowhere. What is kept for it is where the tokenizer is, which is where something is said to be wrong if the tokenizer says so, or if that is where it is said to be.
@@ -190,13 +225,70 @@ private:
 
     // ---- Reading
 
-    unsigned at(unsigned position) const { return position < m_end ? m_source[position] : 0; }
-    unsigned current() const { return at(m_position); }
-    bool isAtEnd() const { return m_position >= m_end; }
+    unsigned at(unsigned position)
+    {
+        if (position < m_end) [[likely]]
+            return m_source[position];
+        while (readMore()) {
+            if (position < m_end)
+                return m_source[position];
+        }
+        return 0;
+    }
+    unsigned current() { return at(m_position); }
+    bool isAtEnd() { return m_position >= m_end && !readMore(); }
     static bool isNewline(unsigned c) { return c == '\n' || c == '\r'; }
 
+    // tok_nextc(), when it has come to the end of what has been read, and tok_underflow_readline(). False if there is no more, which is always so of a source that is all there from the start.
+    NEVER_INLINE bool readMore()
+    {
+        if constexpr (sizeof(CharacterType) == sizeof(char16_t)) {
+            if (!m_stream || m_stream->isAtEndOfFile || m_stream->hasFailedToRead || m_error)
+                return false;
+            // What came before is let go of, unless a token is under way.
+            unsigned bufferStartBefore = m_bufferStart;
+            bool letsGo = m_stream->isBetweenTokens && m_strings.isEmpty();
+            if (letsGo)
+                m_bufferStart = m_end;
+            auto& buffer = m_stream->buffer;
+            unsigned start = buffer.size();
+            if (m_stream->lines.readLine(buffer) == LineSource::Result::Failed) {
+                m_stream->hasFailedToRead = true;
+                return false;
+            }
+            if (buffer.size() == start) {
+                m_stream->isAtEndOfFile = true;
+                // CPython's tokenizer is then holding nothing, at the beginning of the room that it has, and still has it that the line begins where the last one did in that room.
+                if (letsGo)
+                    m_stream->inputEndAtEndOfFile = bufferStartBefore;
+                return false;
+            }
+            m_stream->hasImplicitNewline = buffer.last() != '\n';
+            if (m_stream->hasImplicitNewline)
+                buffer.append('\n');
+            m_source = buffer.span();
+            m_end = buffer.size();
+            ++m_line;
+            m_lineStart = start;
+            m_columnCacheOffset = start;
+            m_columnCacheValue = 0;
+            m_stream->lineStarts.append(start);
+            if (std::ranges::find(buffer.span().subspan(start), 0) != buffer.span().end()) {
+                fail("source code cannot contain null bytes"_s, m_line, -1, m_line, -1);
+                return false;
+            }
+            return true;
+        }
+        return false;
+    }
+
     // The line that this is on, or the last one there is if this is the end, after its newline.
-    unsigned lastLine() const { return isAtEnd() && m_position == m_lineStart && m_line > 1 ? m_line - 1 : m_line; }
+    unsigned lastLine()
+    {
+        if (m_stream)
+            return m_line;
+        return isAtEnd() && m_position == m_lineStart && m_line > 1 ? m_line - 1 : m_line;
+    }
 
     // Takes a newline, however it is spelled.
     void consumeNewline()
@@ -205,17 +297,23 @@ private:
         if (current() == '\r' && at(m_position + 1) == '\n')
             ++m_position;
         ++m_position;
+        // A line is what was read for one.
+        if (m_stream)
+            return;
         ++m_line;
         m_lineStart = m_position;
         m_columnCacheOffset = m_position;
         m_columnCacheValue = 0;
     }
 
+    // What ends a line in a string. What is read a line at a time is taken as it comes, and there a carriage return is a character like any other.
+    bool isNewlineInString(unsigned c) const { return c == '\n' || (c == '\r' && !m_stream); }
+
     // Takes a character of a string, which may be a newline. That is always '\n'.
     unsigned consumeInString()
     {
         unsigned c = current();
-        if (isNewline(c)) {
+        if (isNewlineInString(c)) {
             consumeNewline();
             return '\n';
         }
@@ -258,6 +356,9 @@ private:
 
     bool fail(String&& message, unsigned line, int column, unsigned endLine, int endColumn, SyntaxError::Kind kind = SyntaxError::Kind::SyntaxError, SaidBy saidBy = SaidBy::Tokenizer)
     {
+        // What went wrong in reading comes to light as the end of the source, and is not that.
+        if (m_stream && (m_error || m_stream->hasFailedToRead))
+            return false;
         m_error = { kind, false, WTF::move(message), line, column, endLine, endColumn };
         m_error.isFromTokenizer = saidBy == SaidBy::Tokenizer;
         m_error.isInsideFString = !m_strings.isEmpty();
@@ -337,7 +438,35 @@ private:
         token.isInsideBrackets = !m_brackets.isEmpty();
         m_tokens.append(token);
         m_lineHasTokens = true;
+        if (m_stream) [[unlikely]]
+            m_stream->tokens.append({ kind, true, start, m_position, m_line, m_stream->firstLine, m_lineStart, m_stream->multiLineStart, m_stream->inputEndAtEndOfFile.value_or(m_end), m_stream->hasImplicitNewline, m_stream->isAtEndOfFile });
         return m_tokens.last();
+    }
+
+    bool hasExtraTokens() const { return m_stream && m_stream->hasExtraTokens; }
+
+    // What the token that has just been added is said to be made of, if not of all that was taken for it.
+    void setStreamedText(unsigned start, unsigned end)
+    {
+        if (!m_stream)
+            return;
+        m_stream->tokens.last().start = start;
+        m_stream->tokens.last().end = end;
+    }
+
+    void setStreamedTokenIsNowhere()
+    {
+        if (m_stream)
+            m_stream->tokens.last().hasText = false;
+    }
+
+    // A string is beginning, or a piece of one.
+    void noteStartOfString()
+    {
+        if (!m_stream)
+            return;
+        m_stream->firstLine = m_line;
+        m_stream->multiLineStart = m_lineStart;
     }
 
     const Identifier* makeText(std::span<const CharacterType> characters)
@@ -373,9 +502,17 @@ private:
         return false;
     }
 
+    bool stop(SyntaxError::Stop why)
+    {
+        if (m_error.stop == SyntaxError::Stop::None)
+            m_error.stop = why;
+        return false;
+    }
+
     bool failForTabs()
     {
-        return failOnLine("inconsistent use of tabs and spaces in indentation"_s, SyntaxError::Kind::TabError);
+        failOnLine("inconsistent use of tabs and spaces in indentation"_s, SyntaxError::Kind::TabError);
+        return stop(SyntaxError::Stop::TabSpace);
     }
 
     bool failForUnclosedBracket()
@@ -383,7 +520,7 @@ private:
         Bracket bracket = m_brackets.last();
         fail(concatenate('\'', bracket.character, "' was never closed"_s), bracket.line, bracket.column, bracket.line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
         m_error.isAtEndOfSource = true;
-        return false;
+        return stop(SyntaxError::Stop::EndOfFile);
     }
 
     // The source has ended where it may not.
@@ -397,7 +534,7 @@ private:
         }
         failWhereTokenizerIs("unexpected EOF while parsing"_s, position);
         m_error.isAtEndOfSource = true;
-        return false;
+        return stop(SyntaxError::Stop::EndOfFile);
     }
 
     // A backslash has been taken. What follows has to be the end of the line.
@@ -412,11 +549,12 @@ private:
             int fromBeginning = isAtEnd() ? -1 : 0;
             for (unsigned i = m_bufferStart; i < m_position; ++i)
                 fromBeginning += lengthInUTF8(m_source[i]);
-            return fail("unexpected character after line continuation character"_s, m_line, fromBeginning, m_line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
+            fail("unexpected character after line continuation character"_s, m_line, fromBeginning, m_line, noColumn, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
+            return stop(SyntaxError::Stop::LineContinuation);
         }
         // There being no other line to go on to, the tokenizer is still on this one.
         unsigned afterNewline = m_position + (current() == '\r' && at(m_position + 1) == '\n' ? 2 : 1);
-        if (afterNewline >= m_end)
+        if (afterNewline >= m_end && !readMore())
             return failAtEnd(m_position + 1);
         consumeNewline();
         return true;
@@ -466,12 +604,19 @@ private:
             return true;
         }
         if (indentation.column > last.column) {
-            if (m_indentation.size() >= maximumIndentation)
-                return failOnLine("too many levels of indentation"_s, SyntaxError::Kind::IndentationError);
+            if (m_indentation.size() >= maximumIndentation) {
+                failOnLine("too many levels of indentation"_s, SyntaxError::Kind::IndentationError);
+                return stop(SyntaxError::Stop::TooDeep);
+            }
             if (indentation.alternateColumn <= last.alternateColumn)
                 return failForTabs();
             m_indentation.append(indentation);
             add(TokenKind::Indent, m_position);
+            // It is the white space, or it is nowhere.
+            if (hasExtraTokens())
+                setStreamedText(m_bufferStart, m_position);
+            else
+                setStreamedTokenIsNowhere();
             return true;
         }
         // Whether it comes back to where something began is found out before anything is said to have ended.
@@ -481,10 +626,15 @@ private:
         // A function that is scanned by itself ends where something is indented less than it is.
         bool endsWhatIsScanned = remaining == 1 && indentation.column < m_indentation[0].column;
         if (indentation.column != m_indentation[remaining - 1].column && !endsWhatIsScanned)
-            return failWhereTokenizerIs("unindent does not match any outer indentation level"_s, endOfLine() + (endOfLine() < m_end || m_lastLine == ScanRange::LastLine::IsEnded), SyntaxError::Kind::IndentationError);
+{
+            failWhereTokenizerIs("unindent does not match any outer indentation level"_s, endOfLine() + (endOfLine() < m_end || m_lastLine == ScanRange::LastLine::IsEnded), SyntaxError::Kind::IndentationError);
+            return stop(SyntaxError::Stop::Dedent);
+        }
         while (m_indentation.size() > remaining) {
             m_indentation.removeLast();
             add(TokenKind::Dedent, m_position);
+            if (!hasExtraTokens())
+                setStreamedTokenIsNowhere();
         }
         if (endsWhatIsScanned)
             return true;
@@ -512,6 +662,9 @@ private:
 
     bool finish(unsigned endOfLineStart)
     {
+        // It is not the end if there is no telling what comes next.
+        if (m_stream && (m_error || m_stream->hasFailedToRead))
+            return false;
         if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0))
             return failForUnclosedBracket();
         // What ends the last line is added if it is not there, and takes up room.
@@ -525,6 +678,8 @@ private:
             Token& token = add(kind, m_position);
             token.line = token.endLine = line;
             token.column = token.endColumn = column;
+            if (kind != TokenKind::Dedent || !hasExtraTokens())
+                setStreamedTokenIsNowhere();
         };
         auto addDedents = [&] {
             while (m_indentation.size() > 1) {
@@ -619,18 +774,29 @@ private:
 
     bool scanToken()
     {
+        // That a line is blank is forgotten once anything on it has been given.
+        if (m_stream && !m_isAtBeginningOfLine)
+            m_isBlankLine = false;
         while (true) {
+            if (m_stream)
+                m_stream->isBetweenTokens = true;
             if (m_isAtBeginningOfLine) {
                 m_isAtBeginningOfLine = false;
                 m_isBlankLine = false;
                 m_lineHasTokens = false;
+                size_t tokensBefore = m_tokens.size();
                 if (!scanIndentation())
                     return false;
+                // No more is looked at than has to be before these are given.
+                if (m_stream && m_tokens.size() != tokensBefore)
+                    return true;
             }
 
             unsigned c = current();
             while (c == ' ' || c == '\t' || c == '\f')
                 c = at(++m_position);
+            if (m_stream)
+                m_stream->isBetweenTokens = false;
 
             // What ends the line begins where the comment does, if there is one.
             unsigned endOfLineStart = m_position;
@@ -639,28 +805,53 @@ private:
                     ++m_position;
                 if (m_arena.hasTypeComments && scanTypeComment(endOfLineStart))
                     return true;
+                if (hasExtraTokens()) {
+                    bool lineHadTokens = m_lineHasTokens;
+                    add(TokenKind::Comment, endOfLineStart);
+                    m_lineHasTokens = lineHadTokens;
+                    m_stream->isAfterCommentOnBlankLine = m_isBlankLine;
+                    return true;
+                }
                 c = current();
             }
 
             if (isAtEnd())
                 return finish(endOfLineStart);
 
-            if (isNewline(c)) {
+            // What is read a line at a time is taken as it comes, and there a carriage return by itself ends nothing. It is passed over, and is part of whatever follows, which is not looked at to see if it begins a name.
+            bool isAfterCarriageReturn = m_stream && c == '\r' && at(m_position + 1) != '\n';
+            if (isAfterCarriageReturn)
+                c = at(++m_position);
+
+            if (isNewline(c) && !isAfterCarriageReturn) {
                 unsigned start = m_position;
                 bool isSignificant = !m_isBlankLine && m_brackets.isEmpty();
+                if (m_stream && std::exchange(m_stream->isAfterCommentOnBlankLine, false))
+                    isSignificant = false;
+                unsigned length = c == '\r' && at(m_position + 1) == '\n' ? 2 : 1;
                 if (isSignificant) {
                     // It ends where the line does, and the next line has not begun.
-                    m_position += c == '\r' && at(m_position + 1) == '\n' ? 2 : 1;
+                    m_position += length;
                     add(TokenKind::Newline, endOfLineStart);
+                    setStreamedText(endOfLineStart, m_position - 1);
+                    m_position = start;
+                } else if (hasExtraTokens()) {
+                    m_position += length;
+                    add(TokenKind::NonLogicalNewline, start);
                     m_position = start;
                 }
                 consumeNewline();
-                m_bufferStart = m_position;
+                // A stream sees to this when it reads.
+                if (!m_stream)
+                    m_bufferStart = m_position;
                 m_isAtBeginningOfLine = true;
-                if (isSignificant)
+                if (isSignificant || hasExtraTokens())
                     return true;
                 continue;
             }
+
+            if (isAfterCarriageReturn)
+                return scanAfterCarriageReturn(endOfLineStart, c);
 
             if (c == '\\') {
                 ++m_position;
@@ -679,6 +870,28 @@ private:
                 return scanString(m_position, false, false, false);
             return scanOperator();
         }
+    }
+
+    // Only in a stream. `start` is where the carriage return is, and `c` is what follows it, which is where this is.
+    bool scanAfterCarriageReturn(unsigned start, unsigned c)
+    {
+        size_t tokensBefore = m_stream->tokens.size();
+        bool succeeded;
+        if (c == '\\') {
+            ++m_position;
+            return consumeLineContinuation() && scanToken();
+        }
+        if (isASCIIDigit(c) || (c == '.' && isASCIIDigit(at(m_position + 1))))
+            succeeded = scanNumber();
+        else if (c == '"' || c == '\'')
+            succeeded = scanString(m_position, false, false, false);
+        else
+            succeeded = scanOperator();
+        if (succeeded && m_stream->tokens.size() > tokensBefore) {
+            m_stream->tokens[tokensBefore].start = start;
+            m_stream->tokens[tokensBefore].endsInMiddleOfCharacter = c >= 0x80;
+        }
+        return succeeded;
     }
 
     bool scanNameOrPrefixedString()
@@ -705,7 +918,9 @@ private:
 
             auto incompatible = [&] (char first, char second) {
                 unsigned column = columnOf(start);
-                return fail(concatenate('\'', first, "' and '"_s, second, "' prefixes are incompatible"_s), m_line, column, m_line, columnOf(m_position));
+                fail(concatenate('\'', first, "' and '"_s, second, "' prefixes are incompatible"_s), m_line, column, m_line, columnOf(m_position));
+                m_error.hasColumnsInBytes = true;
+                return false;
             };
             if (sawU && sawB)
                 return incompatible('u', 'b');
@@ -733,6 +948,10 @@ private:
             c = at(++m_position);
         }
         auto characters = m_source.subspan(start, m_position - start);
+        if (m_stream && (isASCII || m_stream->hasExtraTokens)) {
+            add(TokenKind::Name, start);
+            return true;
+        }
         if (!isASCII)
             return addNormalizedName(start, characters);
 
@@ -853,7 +1072,7 @@ private:
         }
     }
 
-    bool isFollowedBy(unsigned position, ASCIILiteral rest) const
+    bool isFollowedBy(unsigned position, ASCIILiteral rest)
     {
         for (size_t i = 0; i < rest.length(); ++i) {
             if (at(position + i) != static_cast<unsigned char>(rest[i]))
@@ -865,6 +1084,8 @@ private:
     // A number may run into a keyword, as in 1if x else y, which is frowned upon. It may not run into anything else that could be part of a name.
     bool verifyEndOfNumber(ASCIILiteral kind)
     {
+        if (hasExtraTokens())
+            return true;
         unsigned c = current();
         bool isKeyword = false;
         switch (c) {
@@ -927,6 +1148,10 @@ private:
 
     bool addInteger(unsigned start, unsigned digitsStart, uint8_t radix)
     {
+        if (m_stream) {
+            add(TokenKind::Number, start);
+            return true;
+        }
         uint64_t value = 0;
         bool overflowed = false;
         Vector<Latin1Character, 32> digits;
@@ -958,6 +1183,10 @@ private:
 
     bool addReal(unsigned start, NumberKind kind)
     {
+        if (m_stream) {
+            add(TokenKind::Number, start);
+            return true;
+        }
         Vector<Latin1Character, 32> characters;
         unsigned end = kind == NumberKind::Imaginary ? m_position - 1 : m_position;
         for (unsigned i = start; i < end; ++i) {
@@ -1010,9 +1239,11 @@ private:
             if (hasOtherDigits && !consumeDecimalTail())
                 return false;
             unsigned c = current();
-            if (hasOtherDigits && c != '.' && c != 'e' && c != 'E' && c != 'j' && c != 'J') {
+            if (hasOtherDigits && c != '.' && c != 'e' && c != 'E' && c != 'j' && c != 'J' && !hasExtraTokens()) {
                 unsigned column = columnOf(start);
-                return fail("leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers"_s, m_line, column, m_line, columnOf(zerosEnd));
+                fail("leading zeros in decimal integer literals are not permitted; use an 0o prefix for octal integers"_s, m_line, column, m_line, columnOf(zerosEnd));
+                m_error.hasColumnsInBytes = true;
+                return false;
             }
         } else if (current() != '.') {
             if (!consumeDecimalTail())
@@ -1265,6 +1496,7 @@ private:
     {
         unsigned line = m_line;
         unsigned column = columnOf(start);
+        noteStartOfString();
         unsigned quote = current();
         unsigned quoteSize = at(m_position + 1) == quote && at(m_position + 2) == quote ? 3 : 1;
         m_position += quoteSize;
@@ -1273,7 +1505,7 @@ private:
         bool hasEscapedQuote = false;
         unsigned endQuoteSize = 0;
         while (endQuoteSize != quoteSize) {
-            if (isAtEnd() || (quoteSize == 1 && isNewline(current()))) {
+            if (isAtEnd() || (quoteSize == 1 && isNewlineInString(current()))) {
                 unsigned detectedAt = lastLine();
                 // In f"{x" the second quote was meant to end the whole, and what is missing is the brace.
                 if (!m_strings.isEmpty() && m_strings.last().quote == quote && m_strings.last().quoteSize == quoteSize)
@@ -1296,13 +1528,18 @@ private:
             }
             endQuoteSize = 0;
             if (c == '\\' && !isAtEnd()) {
-                if (consumeInString() == quote)
+                unsigned escaped = consumeInString();
+                if (escaped == quote)
                     hasEscapedQuote = true;
+                // Whatever follows a carriage return goes with it.
+                if (escaped == '\r' && !isAtEnd())
+                    consumeInString();
             }
         }
 
-        const Identifier* value = decodeString(contentStart, m_position - quoteSize, isRaw, isBytes, line, column);
-        if (!value)
+        // What it comes to is for the parser to find out.
+        const Identifier* value = m_stream ? nullptr : decodeString(contentStart, m_position - quoteSize, isRaw, isBytes, line, column);
+        if (!value && !m_stream)
             return false;
         Token& token = add(TokenKind::String, start, line, column);
         token.text = value;
@@ -1316,9 +1553,6 @@ private:
     // At the opening quote of one.
     bool scanStringStart(unsigned start, bool isRaw, bool isTemplate)
     {
-        if (m_strings.size() >= maximumStringNesting)
-            return fail("too many nested f-strings or t-strings"_s);
-
         StringState state;
         state.isRaw = isRaw;
         state.isTemplate = isTemplate;
@@ -1326,7 +1560,11 @@ private:
         state.quoteSize = at(m_position + 1) == state.quote && at(m_position + 2) == state.quote ? 3 : 1;
         state.line = m_line;
         state.column = columnOf(start);
+        noteStartOfString();
         m_position += state.quoteSize;
+        // What is not in any such string counts for one.
+        if (m_strings.size() + 2 > maximumStringNesting)
+            return fail("too many nested f-strings or t-strings"_s);
         add(isTemplate ? TokenKind::TStringStart : TokenKind::FStringStart, start);
         m_strings.append(state);
         return true;
@@ -1335,6 +1573,11 @@ private:
     // The text is what is between `start` and `end`. Of two braces that stand for one, the second is part of the token and not of the text.
     bool addStringText(StringState& state, unsigned start, unsigned end, unsigned line, unsigned column)
     {
+        if (m_stream) {
+            add(state.isTemplate ? TokenKind::TStringMiddle : TokenKind::FStringMiddle, start, line, column);
+            setStreamedText(start, end);
+            return true;
+        }
         const Identifier* value = decodeString(start, end, state.isRaw, false, line, column);
         Token& token = add(state.isTemplate ? TokenKind::TStringMiddle : TokenKind::FStringMiddle, start, line, column);
         token.text = value;
@@ -1358,15 +1601,21 @@ private:
     bool scanStringText()
     {
         StringState& state = m_strings.last();
+        // If it is at the end of what has been read, the line that it begins on is the next.
+        isAtEnd();
         unsigned start = m_position;
         unsigned line = m_line;
         unsigned column = columnOf(start);
+        if (m_stream) {
+            m_stream->isBetweenTokens = false;
+            m_stream->firstLine = m_line;
+        }
 
         if (current() == '{' && at(m_position + 1) != '{')
             return enterExpression(state) && scanToken();
 
         bool isAtClosingQuotes = true;
-        for (unsigned i = 0; i < state.quoteSize; ++i) {
+        for (unsigned i = 0; i < state.quoteSize && isAtClosingQuotes; ++i) {
             if (at(m_position + i) != state.quote)
                 isAtClosingQuotes = false;
         }
@@ -1377,11 +1626,13 @@ private:
             return true;
         }
 
+        if (m_stream)
+            m_stream->multiLineStart = m_lineStart;
         bool isInNamedEscape = false;
         unsigned endQuoteSize = 0;
         while (endQuoteSize != state.quoteSize) {
             bool isInFormatSpecification = state.isInFormatSpecification && state.isInExpression();
-            if (isAtEnd() || (state.quoteSize == 1 && isNewline(current()))) {
+            if (isAtEnd() || (state.quoteSize == 1 && isNewlineInString(current()))) {
                 if (isInFormatSpecification && !isAtEnd())
                     return fail(concatenate(state.prefix(), "-string: newlines are not allowed in format specifiers for single quoted "_s, state.prefix(), "-strings"_s), m_line, columnOf(m_position), m_line, columnOf(m_position));
                 unsigned detectedAt = lastLine();
@@ -1429,6 +1680,8 @@ private:
 
             if (c == '\\') {
                 unsigned next = current();
+                if (m_stream && next == '\r')
+                    next = at(++m_position);
                 // Before a brace it is only a backslash, and the brace is still a brace.
                 if (next == '{' || next == '}') {
                     if (!state.isRaw)
@@ -1633,7 +1886,7 @@ private:
                 } else {
                     if (c != ':' || !state->expressionEnd)
                         state->expressionEnd = start;
-                    if (state->isInDebugExpression || state->isTemplate)
+                    if ((state->isInDebugExpression || state->isTemplate) && !m_stream)
                         expressionSource = makeExpressionSource(*state);
                 }
             }
@@ -1686,10 +1939,11 @@ private:
                     m_end = start;
                     return finish(m_position);
                 }
-                return fail(concatenate("unmatched '"_s, character, '\''));
+                if (!hasExtraTokens())
+                    return fail(concatenate("unmatched '"_s, character, '\''));
             }
-            Bracket opening = m_brackets.takeLast();
-            if (!((opening.character == '(' && c == ')') || (opening.character == '[' && c == ']') || (opening.character == '{' && c == '}'))) {
+            Bracket opening = m_brackets.isEmpty() ? Bracket { } : m_brackets.takeLast();
+            if (!hasExtraTokens() && !((opening.character == '(' && c == ')') || (opening.character == '[' && c == ']') || (opening.character == '{' && c == '}'))) {
                 if (state && opening.character == '{' && state->braceDepth - 1 == state->expressionStartDepth)
                     return fail(concatenate(state->prefix(), "-string: unmatched '"_s, character, '\''));
                 if (opening.line != m_line)
@@ -1754,6 +2008,7 @@ private:
     bool m_endIsBeginningOfLine { false }; // The last line is nothing but `# type: ignore`, which takes what ends the line with it, though here there is nothing that does.
     bool m_hasEnclosingBracket { false };
     bool m_isDone { false };
+    Stream* m_stream { nullptr };
 
     Vector<Indentation, 16> m_indentation;
     Vector<Bracket, 16> m_brackets;
@@ -1767,6 +2022,64 @@ bool tokenize(VM& vm, Arena& arena, StringView source, const ScanRange& range, V
     if (source.is8Bit())
         return Lexer<Latin1Character>(vm, arena, source.span8(), range, tokens, warnings, error).run();
     return Lexer<char16_t>(vm, arena, source.span16(), range, tokens, warnings, error).run();
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TokenStream);
+
+struct TokenStream::Implementation {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Implementation);
+
+    Implementation(VM& vm, LineSource& lines, bool hasExtraTokens)
+        : stream { lines, buffer, streamed, hasExtraTokens }
+        , lexer(vm, arena, stream, tokens, warnings, error)
+    {
+    }
+
+    Arena arena;
+    Vector<char16_t> buffer;
+    Vector<StreamedToken> streamed;
+    size_t next { 0 };
+    Vector<Token> tokens;
+    Vector<SyntaxWarning> warnings;
+    SyntaxError error;
+    Lexer<char16_t>::Stream stream;
+    Lexer<char16_t> lexer;
+};
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(TokenStream::Implementation);
+
+TokenStream::TokenStream(VM& vm, LineSource& lines, bool hasExtraTokens)
+    : m_implementation(makeUnique<Implementation>(vm, lines, hasExtraTokens))
+{
+}
+
+TokenStream::~TokenStream() = default;
+
+auto TokenStream::next(StreamedToken& token) -> Result
+{
+    auto& self = *m_implementation;
+    while (self.next >= self.streamed.size()) {
+        self.streamed.shrink(0);
+        self.tokens.shrink(0);
+        self.next = 0;
+        ASSERT(!self.lexer.isDone());
+        if (!self.lexer.step() || self.stream.hasFailedToRead || self.error)
+            return self.stream.hasFailedToRead ? Result::Failed : Result::Error;
+    }
+    token = self.streamed[self.next++];
+    return Result::Token;
+}
+
+std::span<const char16_t> TokenStream::source() const { return m_implementation->buffer.span(); }
+const SyntaxError& TokenStream::error() const { return m_implementation->error; }
+Vector<SyntaxWarning> TokenStream::takeWarnings() { return std::exchange(m_implementation->warnings, { }); }
+unsigned TokenStream::line() const { return m_implementation->lexer.line(); }
+unsigned TokenStream::bufferStart() const { return m_implementation->lexer.bufferStart(); }
+
+unsigned TokenStream::startOfLine(unsigned line) const
+{
+    auto& starts = m_implementation->stream.lineStarts;
+    return line && line <= starts.size() ? starts[line - 1] : 0;
 }
 
 } } // namespace JSC::Python

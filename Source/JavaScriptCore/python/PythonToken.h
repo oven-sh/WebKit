@@ -138,6 +138,9 @@ enum class TokenKind : uint8_t {
     // Only if they are asked for: PyCF_TYPE_COMMENTS.
     TypeComment, // # type: int
     TypeIgnore, // # type: ignore. The parser does not see these: they are taken out and kept for the whole to have.
+    // Only for a TokenStream that is asked for them, which the parser never is given.
+    Comment,
+    NonLogicalNewline, // What ends a line that has nothing on it, or is between brackets.
 #define DECLARE(name, text) name,
     FOR_EACH_PYTHON_OPERATOR_TOKEN(DECLARE)
 #undef DECLARE

@@ -347,7 +347,7 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
 
     // _PyPegen_byte_offset_to_character_offset(): how many characters there are in so many bytes of the line. It is the line that is wrong that is gone by, though it end on another.
     auto characterOffset = [&] (int bytes) -> int {
-        if (!hasLine)
+        if (!hasLine || error.hasColumnsInBytes)
             return bytes;
         int count = 0;
         int used = 0;
