@@ -130,7 +130,7 @@ PYTHON_NATIVE(strNew)
     NATIVE_PROLOGUE();
     auto* type = asType(args.at(0));
     // Without keywords it is called in a way of its own, which puts this differently.
-    if (args.size() > 4 && !args.keywordCount())
+    if (args.size() > 4 && !args.keywordCount() && type == realm->typeStr())
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("str expected at most 3 arguments, got "_s, args.size() - 1)));
     if (!checkArgumentsSlow(globalObject, callFrame))
         return { };

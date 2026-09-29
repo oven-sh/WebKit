@@ -279,6 +279,22 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
         return fail(concatenate(prefix, "expected at most "_s, maximum, " argument"_s, plural(maximum), ", got "_s, given));
     }
 
+    // (type == base_tp || type->tp_init == base_tp->tp_init) && !_PyArg_NoKeywords(), which is what Argument Clinic writes for a __new__() that takes no keywords, and the same the other way about for an __init__(). Both are
+    // given whatever the class was called with. If a class derived from this one has its own of the other, the keywords are taken to be for that.
+    auto keywordsAreForADerivedClass = [&] {
+        if (!function->takesArgumentsOfTheClass() || !implicit)
+            return false;
+        bool isNew = function->kind() == PyNativeFunction::Kind::New;
+        PyType* owner = asType(function->owner());
+        // These are written by hand in CPython, and let none by.
+        PyRealm* realm = globalObject->pyRealm();
+        if (owner == realm->typeSet() || owner == realm->typeClassMethod() || owner == realm->typeStaticMethod() || owner == realm->typeGenericAlias())
+            return false;
+        PyType* type = isNew ? asType(args[0]) : typeOf(globalObject, args[0]);
+        const Identifier& other = isNew ? vm.pythonNames().dunder_init : vm.pythonNames().dunder_new;
+        return type != owner && type->lookup(vm, other) != owner->lookup(vm, other);
+    };
+
     auto family = signature.family();
     // A class that takes one is not called in the way that a method that takes one is.
     if (function->takesArgumentsOfTheClass() && family == NativeSignature::Family::OneArgument)
@@ -299,7 +315,7 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
             return true;
         return fail(concatenate(functionString(globalObject, callFrame), maximum ? " takes exactly one argument ("_s : " takes no arguments ("_s, given, " given)"_s));
     case NativeSignature::Family::Positional:
-        if (keywordCount)
+        if (keywordCount && !keywordsAreForADerivedClass())
             return fail(concatenate(functionString(globalObject, callFrame), " takes no keyword arguments"_s));
         if (given >= minimum && (signature.hasVarPositional() || given <= maximum))
             return true;
@@ -320,6 +336,9 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     unsigned requiredLimit = signature.requiredKeywordOnlyCount() ? maximum + signature.requiredKeywordOnlyCount() : minimum;
     bool hasVarPositional = signature.hasVarPositional();
 
+    // zip_new() and map_new() take their keywords apart on their own, as those of something that is given nothing else.
+    if (PyRealm* realm = globalObject->pyRealm(); keywordCount > 1 && function->takesArgumentsOfTheClass() && (function->owner() == realm->typeZip() || function->owner() == realm->typeMap()))
+        return fail(concatenate(name, "() takes at most 1 keyword argument ("_s, keywordCount, " given)"_s));
     if (!hasVarPositional && !signature.hasVarKeywords() && given + keywordCount > total)
         return fail(concatenate(name, "() takes at most "_s, total, given ? " "_s : " keyword "_s, "argument"_s, plural(total), " ("_s, given + keywordCount, " given)"_s));
     if (!hasVarPositional && given > maximum) {

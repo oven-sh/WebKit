@@ -719,14 +719,17 @@ PYTHON_NATIVE(sliceNew)
 PYTHON_NATIVE(enumerateNew)
 {
     NATIVE_PROLOGUE();
-    // It puts things in its own way: enumerate_vectorcall() of CPython's Objects/enumobject.c.
+    // It puts things in its own way: enumerate_vectorcall() of CPython's Objects/enumobject.c. A class derived from it is not called that way, and puts them as anything else does.
     unsigned given = args.size() - 1 + args.keywordCount();
-    if (!given || given > 2) {
+    bool isExact = asType(args[0]) == realm->typeEnumerate();
+    if (!isExact && !checkArgumentsSlow(globalObject, callFrame))
+        return { };
+    if (isExact && (!given || given > 2)) {
         if (args.size() == 1)
             return JSValue::encode(raiseTypeError(globalObject, scope, "enumerate() missing required argument 'iterable'"_s));
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("enumerate() takes at most 2 arguments ("_s, given, " given)"_s)));
     }
-    for (unsigned i = 0; i < args.keywordCount(); ++i) {
+    for (unsigned i = 0; isExact && i < args.keywordCount(); ++i) {
         // Each is to be the name of what has not been given yet.
         String keyword = args.keywordName(i)->value(globalObject);
         bool isExpected = given == 1 ? keyword == "iterable"_s : args.keywordCount() == 1 ? keyword == "start"_s : keyword == "iterable"_s || keyword == "start"_s;

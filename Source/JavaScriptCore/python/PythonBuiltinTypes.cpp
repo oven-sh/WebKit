@@ -962,10 +962,8 @@ PYTHON_NATIVE(typeNew)
     if (!args.size() || !isClass(args[0]))
         return JSValue::encode(raiseTypeError(globalObject, scope, "type.__new__(X): X is not a type object"_s));
     auto* metatype = asType(args[0]);
-    if (args.size() == 2 && !args.keywordCount() && metatype == realm->typeType())
-        return JSValue::encode(typeOf(globalObject, args[1])->object());
     if (args.size() != 4)
-        return JSValue::encode(raiseTypeError(globalObject, scope, "type() takes 1 or 3 arguments"_s));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() takes exactly 3 arguments ("_s, args.size() - 1, " given)"_s)));
     if (!args[1].isString())
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 1 must be str, not "_s, typeName(globalObject, args[1]))));
     if (!isTuple(args[2]))
@@ -1539,7 +1537,7 @@ PYTHON_NATIVE(superInit)
     if (!args.checkNoKeywords(globalObject, scope, "super"_s))
         return { };
     if (args.size() > 3)
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("super() expected at most 2 arguments, got "_s, args.size() - 1)));
+        return JSValue::encode(raiseTypeError(globalObject, scope, typeOf(globalObject, args[0]) == realm->typeSuper() ? concatenate("super() expected at most 2 arguments, got "_s, args.size() - 1) : concatenate("super() takes at most 2 arguments ("_s, args.size() - 1, " given)"_s)));
     auto* object = asNativeObject(args[0]);
     if (args.size() == 1)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "super(): no arguments"_s));

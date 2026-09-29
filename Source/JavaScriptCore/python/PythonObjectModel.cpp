@@ -1475,6 +1475,9 @@ JSValue instantiate(JSGlobalObject* globalObject, PyType* type, const ArgList& a
             return raiseTypeError(globalObject, scope, "type() takes no keyword arguments"_s);
         return typeOf(globalObject, arguments.at(0))->object();
     }
+    // Which is said here, of type itself, so that it is not said that it takes exactly three.
+    if (type == realm->typeType() && arguments.size() - (keywordNames ? keywordNames->length() : 0) != 3)
+        return raiseTypeError(globalObject, scope, "type() takes 1 or 3 arguments"_s);
 
     RELEASE_AND_RETURN(scope, instantiateFrom(globalObject, type, type, arguments, keywordNames));
 }
