@@ -36,6 +36,7 @@
 #include "PythonConfiguration.h"
 #include "PythonIO.h"
 #include "PythonImport.h"
+#include "PythonPlatform.h"
 #include "PythonSequences.h"
 #include "PythonStandardLibraryNames.h"
 #include "PythonStrings.h"
@@ -851,14 +852,11 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     describe("cache_tag"_s, strOrMemoryError(globalObject, concatenate(configuration.implementationName, '-', major, minor)));
     describe("version"_s, versionInfo);
     describe("hexversion"_s, jsNumber(hexVersion));
-    set("implementation"_s, implementation);
-#if OS(DARWIN)
-    set("platform"_s, text("darwin"_s));
-#elif OS(WINDOWS)
-    set("platform"_s, text("win32"_s));
-#else
-    set("platform"_s, text("linux"_s));
+#ifdef PYTHON_MULTIARCH
+    describe("_multiarch"_s, text(PYTHON_MULTIARCH ""_s));
 #endif
+    set("implementation"_s, implementation);
+    set("platform"_s, text(PYTHON_PLATFORM ""_s));
     set("platlibdir"_s, text("lib"_s));
     set("byteorder"_s, text("little"_s));
     set("maxsize"_s, intFromInt64(globalObject, std::numeric_limits<int64_t>::max()));

@@ -37,6 +37,7 @@
 #include "PythonConfiguration.h"
 #include "PythonIO.h"
 #include "PythonOperations.h"
+#include "PythonPlatform.h"
 #include "TopExceptionScope.h"
 
 namespace JSC { namespace Python {
@@ -855,6 +856,10 @@ static constexpr FrozenModule s_frozenBootstrap[] = {
 // `_PyImport_FrozenStdlib`
 static constexpr FrozenModule s_frozenLibrary[] = {
     { "_framelocals"_s, s_librarySource__framelocals, false, { }, ImplementationVisibility::Private },
+#ifdef PYTHON_MULTIARCH
+    // sysconfig._get_sysconfigdata_name(). CPython has this in a file, which it writes when it is built.
+    { "_sysconfigdata__" PYTHON_PLATFORM "_" PYTHON_MULTIARCH ""_s, s_librarySource__sysconfigdata },
+#endif
 };
 
 // use_frozen()

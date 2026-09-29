@@ -619,6 +619,9 @@ it, as CPython keeps a module's state: `PyRealm::moduleState<T>()`, which makes 
 Where a class of CPython's has `PyObject_GenericGetAttr` written into its own `tp_getattro`, which does nothing that it would not have inherited, it has a `__getattribute__` of its own for a program to find:
 `addGenericGetAttribute()`. It costs nothing, since `PyType::hooks()` knows it for `object`'s.
 
+One file of the library CPython writes when it is built: what `sysconfig` is told about the build, `_sysconfigdata__darwin_darwin` or the like. It is Python there, so it is Python here (`lib/_sysconfigdata.py`), and comes with the
+engine since it is about the engine. It says what is true of this implementation, which is little: nearly all of CPython's is about the C compiler. A host that has more to say lists one of its own, which is found first.
+
 What is ported from CPython is CPython's authors' work made over, and is under CPython's licence, which is in `lib/importlib/LICENSE`. What matches regular expressions has a notice of its own, which is at the top of it.
 
 An instance of such a class has what in CPython is a C struct. Here it is a struct as well, derived from `NativeState`, and one kind of cell holds any of them: `PyStateObject`. So a class that is ported does not
