@@ -123,6 +123,7 @@ bool hasCapacityToUseLargeGigacage();
     /* Bun Features */\
     v(Bool, useV8DateParser, false, Normal, nullptr) \
     v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces."_s) \
+    v(Size, largeHeapSizeForSharedMarking, 32 * MB, Normal, "A HeapMarking::SerialUnlessLarge heap marks a full collection with the helper thread pool when its live size after the last collection is at least this many bytes."_s) \
     v(Bool, evalMode, false, Normal, "Set to true for less aggressive function call completion value discarding."_s) \
     FOR_EACH_JSC_FFI_OPTION(v) \
     \
