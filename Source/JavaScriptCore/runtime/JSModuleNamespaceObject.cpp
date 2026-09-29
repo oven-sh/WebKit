@@ -150,6 +150,54 @@ static JSValue getValue(JSModuleEnvironment* environment, PropertyName localName
     return environment->variableAt(scopeOffset).get();
 }
 
+JSValue JSModuleNamespaceObject::exportedValue(JSGlobalObject* globalObject, ExportEntry& exportEntry, JSModuleEnvironment*& environment, ScopeOffset& scopeOffset)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (exportEntry.localName == vm.propertyNames->starNamespacePrivateName) {
+        // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver
+        // 10. If binding.[[BindingName]] is "*namespace*", then
+        //     a. Return ? GetModuleNamespace(targetModule).
+        // We call getModuleNamespace() to ensure materialization. And after that, looking up the value from the scope to encourage module namespace object IC.
+        exportEntry.moduleRecord->getModuleNamespace(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    environment = exportEntry.moduleRecord->moduleEnvironment();
+    JSValue value = getValue(environment, exportEntry.localName, scopeOffset);
+    if (!value) [[unlikely]]
+        value = environment->readVariable(vm, scopeOffset);
+#if USE(BUN_JSC_ADDITIONS)
+    if (!value) [[unlikely]] {
+        // Same idea as the *namespace* case above: a lazy export of a SyntheticModuleRecord is materialized on
+        // first read, then looked up from the scope again so that the module namespace object IC applies to it.
+        SyntheticModuleRecord::materializeLazyExport(globalObject, exportEntry.moduleRecord.get(), exportEntry.localName);
+        RETURN_IF_EXCEPTION(scope, { });
+        value = getValue(environment, exportEntry.localName, scopeOffset);
+    }
+#endif
+    return value;
+}
+
+bool JSModuleNamespaceObject::isInitializedExport(JSGlobalObject* globalObject, PropertyName propertyName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_isDeferred) [[unlikely]] {
+        ensureDeferredNamespaceEvaluation(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    auto iterator = m_exports.find(propertyName.uid());
+    if (iterator == m_exports.end())
+        return false;
+    JSModuleEnvironment* environment = nullptr;
+    ScopeOffset scopeOffset;
+    JSValue value = exportedValue(globalObject, iterator->value, environment, scopeOffset);
+    RETURN_IF_EXCEPTION(scope, false);
+    return !!value;
+}
+
 bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -184,28 +232,10 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
     switch (slot.internalMethodType()) {
     case PropertySlot::InternalMethodType::GetOwnProperty:
     case PropertySlot::InternalMethodType::Get: {
-        if (exportEntry.localName == vm.propertyNames->starNamespacePrivateName) {
-            // https://tc39.es/ecma262/#sec-module-namespace-exotic-objects-get-p-receiver
-            // 10. If binding.[[BindingName]] is "*namespace*", then
-            //     a. Return ? GetModuleNamespace(targetModule).
-            // We call getModuleNamespace() to ensure materialization. And after that, looking up the value from the scope to encourage module namespace object IC.
-            exportEntry.moduleRecord->getModuleNamespace(globalObject);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
-        JSModuleEnvironment* environment = exportEntry.moduleRecord->moduleEnvironment();
+        JSModuleEnvironment* environment = nullptr;
         ScopeOffset scopeOffset;
-        JSValue value = getValue(environment, exportEntry.localName, scopeOffset);
-        if (!value) [[unlikely]]
-            value = environment->readVariable(vm, scopeOffset);
-#if USE(BUN_JSC_ADDITIONS)
-        if (!value) [[unlikely]] {
-            // Same idea as the *namespace* case above: a lazy export of a SyntheticModuleRecord is materialized on
-            // first read, then looked up from the scope again so that the module namespace object IC applies to it.
-            SyntheticModuleRecord::materializeLazyExport(globalObject, exportEntry.moduleRecord.get(), exportEntry.localName);
-            RETURN_IF_EXCEPTION(scope, false);
-            value = getValue(environment, exportEntry.localName, scopeOffset);
-        }
-#endif
+        JSValue value = exportedValue(globalObject, exportEntry, environment, scopeOffset);
+        RETURN_IF_EXCEPTION(scope, false);
         // If the value is filled with TDZ value, throw a reference error.
         if (!value) {
             RefPtr uid = propertyName.uid();
@@ -340,8 +370,12 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
         propertyNames.add(name);
     }
     if (propertyNames.includeSymbolProperties()) {
-        scope.release();
-        thisObject->getOwnNonIndexPropertyNames(globalObject, propertyNames, mode);
+        // 3. Let symbolKeys be OrdinaryOwnPropertyKeys(O). What else is kept in it is not a property of it: [[GetOwnProperty]] does not find it.
+        PropertyNameArrayBuilder symbolKeys(vm, PropertyNameMode::Symbols, propertyNames.privateSymbolMode());
+        thisObject->getOwnNonIndexPropertyNames(globalObject, symbolKeys, mode);
+        RETURN_IF_EXCEPTION(scope, void());
+        for (auto& key : symbolKeys)
+            propertyNames.add(key);
     }
 }
 

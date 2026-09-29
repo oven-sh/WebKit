@@ -1061,7 +1061,7 @@ sets. It costs JavaScript a test of a bit when a closure is made: nothing in the
 
 An object of JavaScript's is an instance of its class: `type(js.Map.new()) is js.Map`. All are derived from `js.Object`, and a function that is no class is
 an instance of `js.Function`. Its attributes are its properties, as JavaScript finds them. `obj[key]`, `len()`, `in`, iteration and `isinstance()` do what they
-would in JavaScript. `import js` is the global object.
+would in JavaScript. `import js` is the global object, and a module is a module: see below.
 
 - **Whether a property can be set or deleted is for JavaScript to say.** A setter is run, a `Proxy` is asked, and what is frozen stays as it was. What it will not do is `AttributeError`, which is
   what a dataclass that is frozen raises, and what `importlib` and the like expect of what will not take an attribute. Deleting what is not there is `AttributeError` too, though JavaScript
@@ -1080,6 +1080,23 @@ would in JavaScript. `import js` is the global object.
   (`listGet`, `listSet`). The strings that a tag function is given are such an array.
 - What a `t"..."` has, `strings` and `values`, is what a tag function is given, so `tag(t.strings, ...t.values)` needs nothing from either side. And a
   function of Python's can be a tag.
+
+### A module is a module, whichever language it is in
+
+**A module of JavaScript's is, to Python, its namespace object, as it is.** That is an instance of `module`, as an `Array` is a `list`: `typeOf()` says so. It is the same object that `import * as ns` gives JavaScript,
+so it is the same from either side, and nothing stands for it.
+
+- **What it exports are its attributes**, as they are at the time: `export let count` is seen to change. They are JavaScript's to set, so setting or deleting one is `AttributeError`.
+- **What has not been given a value yet is not there yet**, as in a module of Python's that is half way through being imported: `hasattr()` is false, and `dir()` and `from m import *` leave it out. JavaScript throws a
+  `ReferenceError` for such a thing. `JSModuleNamespaceObject::isInitializedExport()` asks without.
+- **What Python sets on it besides is kept in it, out of JavaScript's sight**: `__name__`, `__spec__`, `__path__`, and the modules below it. They are properties of it like the attributes of any object of Python's. JavaScript
+  finds nothing in a namespace object but what is exported and what is keyed by a symbol, so it does not find them, by any means. `[[OwnPropertyKeys]]` used to list them, going by what was in the object where the
+  specification says symbols, and no longer does. `vars(m)` is those, and not what is exported.
+- `from m import *` leaves out `default`, as `export * from` does.
+- **Calling it calls what it exports by default.** Python has no way of writing `import express from "express"`. What it writes is `import express`, and then `express()`. A namespace object cannot be called, so
+  there is nothing else that that can mean, and it is asked only where there was nothing left to do but raise (`callDefaultExport()`), as with a class that is called without `new`. To JavaScript it is still not a function.
+
+`interop/a-module-is-a-module.mjs` looks at one from both sides.
 
 ### A class is a class, whichever language made it
 

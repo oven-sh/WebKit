@@ -109,6 +109,17 @@ inline void* handleHostCall(VM& vm, JSCell* owner, CallFrame* calleeFrame, JSVal
         }
 
         auto* globalObject = callLinkInfo->globalObjectForSlowPath(owner);
+        if (callee.isCell() && callee.asCell()->type() == ModuleNamespaceObjectType) [[unlikely]] {
+            if (auto* codeBlock = std::get<0>(callLinkInfo->retrieveCaller(owner)); codeBlock && codeBlock->source().provider()->isPython()) {
+                NativeCallFrameTracer tracer(vm, calleeFrame);
+                calleeFrame->setCallee(asObject(callee));
+                vm.encodedHostCallReturnValue = Python::callDefaultExport(globalObject, calleeFrame);
+                AssertNoGC assertNoGC;
+                if (scope.exception()) [[unlikely]]
+                    return nullptr;
+                return LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr();
+            }
+        }
         calleeFrame->setCallee(globalObject->zombieFrameCallee());
         ASSERT(callData.type == CallData::Type::None);
         RELEASE_AND_RETURN(scope, throwNotAFunctionErrorFromCallIC(globalObject, owner, callee, callLinkInfo));

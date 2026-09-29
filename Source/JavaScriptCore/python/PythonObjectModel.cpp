@@ -33,6 +33,7 @@
 #include "JSGlobalProxy.h"
 #include "FunctionExecutable.h"
 #include "JSCInlines.h"
+#include "JSModuleNamespaceObject.h"
 #include "PyDict.h"
 #include "PyInstance.h"
 #include "PyNativeFunction.h"
@@ -91,6 +92,8 @@ PyType* typeOf(JSGlobalObject* globalObject, JSValue value)
             return realm->typeJSSymbol();
         case PyTypeType:
             return uncheckedDowncast<PyType>(cell)->metatype();
+        case ModuleNamespaceObjectType:
+            return realm->typeModule();
         case JSFunctionType:
             if (auto* native = dynamicDowncast<PyNativeFunction>(cell)) {
                 switch (native->kind()) {
@@ -614,6 +617,18 @@ static JSValue getJavaScriptProperty(JSGlobalObject* globalObject, JSObject* obj
     RELEASE_AND_RETURN(scope, JSBoundFunction::bind(globalObject, vm.topCallFrame, function, object, ArgList()));
 }
 
+// What a module of JavaScript's exports by that name. Empty if it exports nothing by it, or has not got as far as giving it a value, which is how it is with a module of Python's
+// that is in the middle of being imported: the attribute is not there yet.
+static JSValue getExport(JSGlobalObject* globalObject, JSModuleNamespaceObject* module, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    bool isThere = module->isInitializedExport(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isThere)
+        return { };
+    RELEASE_AND_RETURN(scope, module->get(globalObject, name));
+}
+
 // object.__getattribute__, likewise.
 JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* type, PropertyName name)
 {
@@ -632,6 +647,12 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
         if (property)
             return property;
     } else if (JSObject* storage = attributeStorage(globalObject, value, type)) {
+        if (auto* module = dynamicDowncast<JSModuleNamespaceObject>(value)) [[unlikely]] {
+            JSValue exported = getExport(globalObject, module, name);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (exported)
+                return exported;
+        }
         if (JSValue own = getStoredAttribute(vm, storage, name))
             return own;
     }
@@ -1043,6 +1064,9 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
     }
 
     if (JSObject* storage = attributeStorage(globalObject, value, type)) {
+        // What a module of JavaScript's exports is for it alone to set.
+        if (auto* module = dynamicDowncast<JSModuleNamespaceObject>(value); module && module->hasExport(name)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, value, name, !newValue));
         if (newValue) {
             if (!tryPutStoredAttribute(vm, storage, name, newValue)) [[unlikely]]
                 RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, value, name, false));
@@ -1184,12 +1208,35 @@ static const FunctionInfo* pythonInfoOf(JSValue callable)
     return function->jsExecutable()->unlinkedExecutable()->pythonInfo();
 }
 
+// Python has no way of writing `import express from "express"`. What it writes is `import express`, which gives it the module, and then `express()`. A module of JavaScript's cannot be called, so
+// there is nothing else that that can mean: it is what the module exports by default that is called. It is asked only where there is nothing left to do but raise. Empty if there is no such thing.
+static JSValue defaultExportToCall(JSGlobalObject* globalObject, JSValue callable)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* module = dynamicDowncast<JSModuleNamespaceObject>(callable);
+    if (!module)
+        return { };
+    JSValue exported = getExport(globalObject, module, vm.propertyNames->defaultKeyword);
+    RETURN_IF_EXCEPTION(scope, { });
+    return exported && exported.isCallable() ? exported : JSValue();
+}
+
 bool isCallable(JSGlobalObject* globalObject, JSValue value)
 {
     if (!value.isCell())
         return false;
     if (value.asCell()->type() == PyInstanceType)
         return !!typeOf(globalObject, value)->lookup(globalObject->vm(), globalObject->vm().pythonNames().dunder_call);
+    if (value.asCell()->type() == ModuleNamespaceObjectType) [[unlikely]] {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+        bool hasSomethingToCall = !!defaultExportToCall(globalObject, value);
+        if (scope.exception()) [[unlikely]] {
+            (void)scope.tryClearException();
+            return false;
+        }
+        return hasSomethingToCall;
+    }
     return value.isCallable();
 }
 
@@ -1202,6 +1249,16 @@ static JSValue raiseNotCallable(JSGlobalObject* globalObject, ThrowScope& scope,
 {
     throwException(globalObject, scope, createNotCallableError(globalObject, callable));
     return { };
+}
+
+JSC_DEFINE_HOST_FUNCTION(callDefaultExport, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue function = defaultExportToCall(globalObject, callFrame->jsCallee());
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!function)
+        return JSValue::encode(raiseNotCallable(globalObject, scope, callFrame->jsCallee()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, function, ArgList(callFrame))));
 }
 
 // f(*values) can be given any number of them, and a call is not to fail, or to leave what is called nothing to run in, because they were put on the stack. Most of what can be called does not need them there: see
@@ -1221,8 +1278,13 @@ JSValue call(JSGlobalObject* globalObject, JSValue callable, const ArgList& argu
     if (areBetterKeptOffStack(vm, arguments)) [[unlikely]]
         RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, callable, arguments, nullptr));
     auto callData = JSC::getCallData(callable);
-    if (callData.type == CallData::Type::None) [[unlikely]]
-        return raiseNotCallable(globalObject, scope, callable);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        JSValue instead = defaultExportToCall(globalObject, callable);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!instead)
+            return raiseNotCallable(globalObject, scope, callable);
+        RELEASE_AND_RETURN(scope, call(globalObject, instead, arguments));
+    }
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, jsUndefined(), arguments));
 }
 
@@ -1434,8 +1496,13 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto callData = JSC::getCallData(callable);
-    if (callData.type == CallData::Type::None) [[unlikely]]
-        return raiseNotCallable(globalObject, scope, callable);
+    if (callData.type == CallData::Type::None) [[unlikely]] {
+        JSValue instead = defaultExportToCall(globalObject, callable);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!instead)
+            return raiseNotCallable(globalObject, scope, callable);
+        RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, instead, arguments, keywordNames, thisValue));
+    }
     unsigned keywordCount = keywordNames ? keywordNames->length() : 0;
 
     // A function of Python's can be given a value for each of its parameters, in place of the arguments. What is more than it has names for is on its way to a tuple, or to an exception, and goes straight there.

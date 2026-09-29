@@ -2181,8 +2181,17 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
         slowPathLog("Call callee is not a function: ", callee, "\n");
 
         ASSERT(callData.type == CallData::Type::None);
-        if (callerCodeBlock->source().provider()->isPython())
+        if (callerCodeBlock->source().provider()->isPython()) {
+            if (callee.isCell() && callee.asCell()->type() == ModuleNamespaceObjectType) {
+                SlowPathFrameTracer tracer(vm, calleeFrame);
+                calleeFrame->setCallee(asObject(callee));
+                vm.encodedHostCallReturnValue = Python::callDefaultExport(globalObject, calleeFrame);
+                AssertNoGC assertNoGC;
+                auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
+                LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);
+            }
             LLINT_CALL_THROW(globalObject, Python::createNotCallableError(globalObject, callee));
+        }
         LLINT_CALL_THROW(globalObject, createNotAFunctionError(globalObject, callee));
     }
 

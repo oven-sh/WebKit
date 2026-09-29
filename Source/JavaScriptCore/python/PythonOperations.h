@@ -41,6 +41,7 @@ namespace JSC {
 
 class BytecodeIndex;
 class CodeBlock;
+class JSModuleNamespaceObject;
 class PyDict;
 class PyNativeObject;
 class PyRange;
@@ -89,6 +90,8 @@ String typeNameOfArgument(JSGlobalObject*, JSValue); // As _PyArg_BadArgument() 
 
 JSObject* createException(JSGlobalObject*, PyType*, const String& message);
 JSObject* createNotCallableError(JSGlobalObject*, JSValue callee);
+// What calling a module of JavaScript's comes to, from Python: calling what it exports by default. The module is the callee of the frame. It raises the above if there is no such thing to call.
+JSC_DECLARE_HOST_FUNCTION(callDefaultExport);
 // NameError: name 'x' is not defined
 JSValue raiseNameError(JSGlobalObject*, ThrowScope&, const String& name);
 // Makes what is being handled now the __context__ of an exception that is about to be raised.
@@ -175,6 +178,9 @@ bool isJavaScriptObject(JSValue, PyType* type);
 //
 // A cell of Python's does not let JavaScript make a property of it anything else (definePropertyFromJavaScript()), or freeze it. A function is a JSFunction, which does.
 //
+// A module of JavaScript's is its namespace object. What that exports are its attributes, and are not kept here. What Python sets on it besides is, as __spec__: JavaScript finds
+// nothing in a namespace object but what is exported and what is keyed by a symbol, so it does not see them, and has nothing to say about them.
+//
 // A name that JavaScript would take for an index, as "0", cannot be that of a property like the rest: to the engine that is an element of an array. It
 // can only come from getattr() and the like or by way of a __dict__, not being something that can be written after a dot. An attribute of such a name is
 // kept where a key of a __dict__ that is not a string is: in the dict, which is made if there was none.
@@ -197,7 +203,7 @@ inline JSValue getStoredAttribute(VM& vm, JSObject* object, PropertyName name)
 // Whether JavaScript has left it so that the attribute can be deleted. It is to be asked first.
 inline bool mayDeleteStoredAttribute(VM& vm, JSObject* object, PropertyName name)
 {
-    if (object->structure()->typeInfo().overloadsOperators() || isIndexLike(name)) [[likely]]
+    if (object->structure()->typeInfo().overloadsOperators() || isIndexLike(name) || object->type() == ModuleNamespaceObjectType) [[likely]]
         return true;
     unsigned attributes;
     return !object->getDirect(vm, name, attributes) || !(attributes & PropertyAttribute::DontDelete);
@@ -213,7 +219,7 @@ inline void putStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSVa
 // The same, if JavaScript has left it so that it can be. False if it has not.
 inline bool tryPutStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSValue value)
 {
-    if (object->structure()->typeInfo().overloadsOperators() || isIndexLike(name)) [[likely]] {
+    if (object->structure()->typeInfo().overloadsOperators() || isIndexLike(name) || object->type() == ModuleNamespaceObjectType) [[likely]] {
         putStoredAttribute(vm, object, name, value);
         return true;
     }
@@ -372,6 +378,8 @@ JS_EXPORT_PRIVATE JSObject* newModule(JSGlobalObject*, const String& name, PyTyp
 JS_EXPORT_PRIVATE JSObject* newBuiltinModule(JSGlobalObject*, ASCIILiteral name);
 // The value, if it is a module. Otherwise null.
 JSObject* tryModule(JSGlobalObject*, JSValue);
+// A list of the names of what a module of JavaScript's exports, less what it has not got as far as giving a value.
+JSArray* namesOfExports(JSGlobalObject*, JSModuleNamespaceObject*);
 
 // import name, as the statement does it. `fromList` is None or a tuple of names.
 void registerModule(JSGlobalObject*, const String& name, JSValue module);

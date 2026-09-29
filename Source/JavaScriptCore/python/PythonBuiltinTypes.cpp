@@ -30,6 +30,7 @@
 #include "FunctionPrototype.h"
 #include "GetterSetter.h"
 #include "JSGenerator.h"
+#include "JSModuleNamespaceObject.h"
 #include "PythonGenerators.h"
 #include "PythonIO.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -752,7 +753,16 @@ PYTHON_NATIVE(moduleDir)
         return JSValue::encode(raiseTypeError(globalObject, scope, "<module>.__dict__ is not a dictionary"_s));
     if (JSValue function = asDict(dict)->getString(globalObject, "__dir__"_s))
         RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, function)));
-    RELEASE_AND_RETURN(scope, JSValue::encode(keysOf(globalObject, asDict(dict))));
+    JSValue keys = keysOf(globalObject, asDict(dict));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (auto* module = dynamicDowncast<JSModuleNamespaceObject>(args[0])) {
+        JSArray* all = namesOfExports(globalObject, module);
+        RETURN_IF_EXCEPTION(scope, { });
+        listExtend(globalObject, all, keys);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(all);
+    }
+    return JSValue::encode(keys);
 }
 
 static JSValue getClass(JSGlobalObject* globalObject, JSValue self)

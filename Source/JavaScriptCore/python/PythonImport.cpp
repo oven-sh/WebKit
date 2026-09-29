@@ -28,6 +28,7 @@
 #include "PythonImport.h"
 
 #include "JSCInlines.h"
+#include "JSModuleNamespaceObject.h"
 #include "PyDict.h"
 #include "PyRealm.h"
 #include "PyTuple.h"
@@ -833,6 +834,8 @@ void importAllFrom(JSGlobalObject* globalObject, JSValue locals, JSValue module)
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = vm.pythonNames();
     bool skipsLeadingUnderscores = false;
+    // As `export * from` does.
+    bool skipsDefault = false;
     JSValue all = getAttributeIfPresent(globalObject, module, names.dunder_all);
     RETURN_IF_EXCEPTION(scope, void());
     if (!all) {
@@ -848,6 +851,14 @@ void importAllFrom(JSGlobalObject* globalObject, JSValue locals, JSValue module)
         all = call(globalObject, globalObject->pyRealm()->typeList(), keys);
         RETURN_IF_EXCEPTION(scope, void());
         skipsLeadingUnderscores = true;
+        if (auto* javaScriptModule = dynamicDowncast<JSModuleNamespaceObject>(module)) {
+            JSArray* exported = namesOfExports(globalObject, javaScriptModule);
+            RETURN_IF_EXCEPTION(scope, void());
+            listExtend(globalObject, exported, all);
+            RETURN_IF_EXCEPTION(scope, void());
+            all = exported;
+            skipsDefault = true;
+        }
     }
     for (int64_t position = 0; ; ++position) {
         JSValue name = sequenceItem(globalObject, all, position);
@@ -871,6 +882,8 @@ void importAllFrom(JSGlobalObject* globalObject, JSValue locals, JSValue module)
         auto attribute = string->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
         if (skipsLeadingUnderscores && attribute.string().startsWith('_'))
+            continue;
+        if (skipsDefault && attribute == vm.propertyNames->defaultKeyword)
             continue;
         JSValue value = getAttribute(globalObject, module, attribute);
         RETURN_IF_EXCEPTION(scope, void());

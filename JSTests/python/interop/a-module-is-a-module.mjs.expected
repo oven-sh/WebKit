@@ -1,0 +1,134 @@
+---- what it is
+  <class 'module'>
+  True
+  True
+  True
+  <class 'module'>
+  "<module '?'>"
+  "<module '?'>"
+  True
+  True
+  True
+  True
+  True
+  1
+---- what it has
+  ['Thing', '_private', 'again', 'bump', 'count', 'default', 'whatThisIs']
+  0
+  (1, 1, 2, 2)
+  'hello you'
+  (<class 'Thing'>, 5, True)
+  'not for import *'
+  'object'
+  'undefined'
+  True
+  2
+  True
+  2
+  2
+  ['Thing', '_private', 'again', 'bump', 'count', 'default', 'whatThisIs']
+---- what it has not
+  AttributeError: module has no attribute 'nothing'
+  False
+  'instead'
+  AttributeError: module has no attribute '__name__'
+  AttributeError: module has no attribute '__file__'
+  AttributeError: module has no attribute '__spec__'
+  'Create a module object.\n\nThe name must be a string; the optional doc argument can have any type.'
+  AttributeError: module has no attribute 'toString'
+  AttributeError: module has no attribute 'constructor'
+  TypeError: object of type 'module' has no len()
+  TypeError: 'module' object is not subscriptable
+  TypeError: argument of type 'module' is not a container or iterable
+  TypeError: 'module' object is not iterable
+  'hello undefined'
+---- set and delete
+  AttributeError: can't set attribute 'count' of 'module' object
+  AttributeError: can't set attribute 'count' of 'module' object
+  AttributeError: can't set attribute 'count' of 'module' object
+  AttributeError: can't set attribute 'count' of 'module' object
+  AttributeError: can't delete attribute 'count' of 'module' object
+  AttributeError: can't delete attribute 'count' of 'module' object
+  2
+  None
+  [1]
+  True
+  {'extra': [1]}
+  True
+  None
+  "<module 'named'>"
+  AttributeError: module 'named' has no attribute 'nothing'
+  None
+  AttributeError: module 'named' has no attribute 'extra'
+  AttributeError: 'module' object has no attribute 'extra'
+  None
+  1
+  None
+  2
+  'in the way'
+  TypeError: __class__ assignment: 'Derived' object layout differs from 'module'
+  None
+  'made up anything'
+  None
+  None
+  ['as', 'it', 'says']
+  None
+  ['__name__', 'by_dict']
+---- imported
+  [('put_there', "<module 'named'>")]
+  [('put_there', "<module 'named'>"), ('same', 'True')]
+  [('T', "<class 'Thing'>"), ('count', '2'), ('default', "<class 'hello'>")]
+  [('Thing', "<class 'Thing'>"), ('again', "<module 'named'>"), ('bump', "<class 'bump'>"), ('by_dict', '1'), ('count', '2'), ('whatThisIs', "<class 'whatThisIs'>")]
+  ImportError: cannot import name 'nothing' from 'named' (unknown location)
+  None
+  [('_private', "'not for import *'"), ('bump', "<class 'bump'>"), ('default', "<class 'hello'>")]
+  None
+  ModuleNotFoundError: No module named 'put_there.below'; 'put_there' is not a package
+---- called
+  'hello you'
+  'hello undefined'
+  'hello a'
+  ["'hello again'"]
+  True
+  (True, [1, 2], [])
+  True
+  1
+  TypeError: 'module' object is not callable
+  False
+  TypeError: 'module' object is not callable
+  TypeError: 'module' object is not callable
+  False
+  ((1, 2), {'x': 3})
+  ((1,), {'y': 2})
+  ((), {})
+  'hello you'
+  ['hello a', 'hello b']
+  'hello partly'
+  'hello by operator.call'
+  ['a', 'b']
+  AttributeError: module 'named' has no attribute '__call__'
+  <method-wrapper '__call__' of type object at 0x>
+---- to JavaScript
+  it is not to be called: object TypeError: ns is not a function. (In 'ns("you")', 'ns' is an instance of Module) TypeError
+  the same one: true
+  as it was: true [["Thing","_private","again","bump","count","default","whatThisIs","Symbol(Symbol.toStringTag)"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],["Symbol(Symbol.toStringTag)"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],false,true,false,"Module",null]
+  what Python has set: [[null,false,false,null,false,true,false,false],[null,false,false,null,false,true,false,false]]
+---- and still has
+  <module 'named'>
+  None
+---- in the middle
+  ['before', 'hoisted']
+  1
+  AttributeError: module has no attribute 'after'
+  False
+  'not yet'
+  AttributeError: module has no attribute 'later'
+  'a function is there from the start'
+  AttributeError: module has no attribute 'seen'
+  [('before', '1')]
+  ImportError: cannot import name 'after' from '<unknown module name>' (unknown location)
+  [('before', '1'), ('hoisted', "<class 'hoisted'>")]
+  AttributeError: can't set attribute 'after' of 'module' object
+---- afterwards
+  (1, 2, None)
+  True

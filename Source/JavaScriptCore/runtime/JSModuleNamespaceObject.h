@@ -74,6 +74,10 @@ public:
 
     AbstractModuleRecord* moduleRecord() LIFETIME_BOUND { return m_moduleRecord.get(); }
 
+    bool hasExport(PropertyName propertyName) const { return m_exports.contains(propertyName.uid()); }
+    // Whether [[Get]] of it would give a value. It throws for an export that is yet to be initialized, which one of a module in a cycle may be.
+    JS_EXPORT_PRIVATE bool isInitializedExport(JSGlobalObject*, PropertyName);
+
 #if USE(BUN_JSC_ADDITIONS)
     WTF::TriState m_hasESModuleMarker = WTF::TriState::Indeterminate;
 #endif
@@ -91,6 +95,9 @@ private:
     };
 
     using ExportMap = OrderedHashMap<RefPtr<UniquedStringImpl>, ExportEntry, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>>;
+
+    // Empty if it is yet to be initialized.
+    JSValue exportedValue(JSGlobalObject*, ExportEntry&, JSModuleEnvironment*&, ScopeOffset&);
 
     ExportMap m_exports;
     WriteBarrier<AbstractModuleRecord> m_moduleRecord;

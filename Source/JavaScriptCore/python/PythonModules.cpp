@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "GlobalObjectMethodTable.h"
+#include "JSModuleNamespaceObject.h"
 #include "PythonBytes.h"
 #include "PythonCodecs.h"
 #include "PythonCompiler.h"
@@ -68,9 +69,31 @@ JSObject* newBuiltinModule(JSGlobalObject* globalObject, ASCIILiteral name)
 
 JSObject* tryModule(JSGlobalObject* globalObject, JSValue value)
 {
-    if (!value.isCell() || value.asCell()->type() != PyInstanceType)
+    if (!value.isCell())
+        return nullptr;
+    if (value.asCell()->type() == ModuleNamespaceObjectType)
+        return asObject(value);
+    if (value.asCell()->type() != PyInstanceType)
         return nullptr;
     return typeOf(globalObject, value)->isSubtypeOf(globalObject->pyRealm()->typeModule()) ? asObject(value) : nullptr;
+}
+
+JSArray* namesOfExports(JSGlobalObject* globalObject, JSModuleNamespaceObject* module)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // All are enumerable. Asked for those that are, it looks at each, and throws if one is yet to be initialized.
+    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    JSModuleNamespaceObject::getOwnPropertyNames(module, globalObject, names, DontEnumPropertiesMode::Include);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    MarkedArgumentBuffer strings;
+    for (auto& name : names) {
+        bool isThere = module->isInitializedExport(globalObject, name);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (isThere)
+            strings.append(jsString(vm, name.string()));
+    }
+    return asList(newList(globalObject, strings));
 }
 
 // PyMapping_GetOptionalItem(), of the dict that an object is the properties of. Empty if it is not there, or if it raised.
