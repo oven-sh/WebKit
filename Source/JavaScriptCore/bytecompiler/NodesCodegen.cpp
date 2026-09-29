@@ -618,7 +618,8 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 
     auto* propertyList = m_list;
     RefPtr<RegisterID> newObject;
-    if (propertyList->m_node->m_type & PropertyNode::Spread) {
+    // (What is said of the literal is said of an op_new_object: what it makes may have to be laid out to suit its type, whatever it is a copy of.)
+    if ((propertyList->m_node->m_type & PropertyNode::Spread) && !typeTag()) {
         // Only one element and it is spread.
         if (!propertyList->m_next) {
             RefPtr<RegisterID> function = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::cloneObject);

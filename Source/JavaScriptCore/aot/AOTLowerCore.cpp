@@ -63,6 +63,7 @@ static bool mayBeQuoted(const Graph& graph, Node* node)
         return mayNotBeAFunction(node->as<OpTailCall>().m_callee);
     case op_construct:
         return !isAlwaysTheFunction();
+    case op_type_tag: // (On behalf of the access that comes next, and as if it were that.)
     case op_get_by_id_with_this:
     case op_get_by_id_direct:
     case op_get_by_val_with_this:
@@ -489,6 +490,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     }
     if (slotArgument)
         patchpoint->append(ConstrainedValue(m_data, ValueRep::SomeRegister));
+    patchpoint->clobberLate(RegisterSet { ARM64Registers::lr }); // hasNoFrame()
     switch (clobbers) {
     case StubClobbers::WhatCallsDo:
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
@@ -529,6 +531,34 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
             stubCalls->call(jit, stub, site);
     });
     return patchpoint;
+}
+
+void Lowering::coldCall(Node* node, Entry function, LValue first, LValue second)
+{
+    if (!Options::aotKeepsRegistersInColdCalls()) {
+        if (second)
+            vmCall(node, Void, function, m_globalObject, first, second);
+        else
+            vmCall(node, Void, function, m_globalObject, first);
+        return;
+    }
+    PatchpointValue* patchpoint = m_out.patchpoint(Void);
+    patchpoint->append(ConstrainedValue(first, ValueRep::reg(GPRInfo::argumentGPR1)));
+    if (second)
+        patchpoint->append(ConstrainedValue(second, ValueRep::reg(GPRInfo::argumentGPR2)));
+    RegisterSet temporaries;
+    temporaries.add(GPRInfo::regT9, IgnoreVectors);
+    temporaries.add(GPRInfo::regT10, IgnoreVectors);
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobber(temporaries);
+    CallSite site { callSiteBitsOf(node) };
+    patchpoint->setGenerator([graph = &m_graph, function, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        bool isLeaf = hasNoFrame(*graph, params.proc().code());
+        if (isLeaf)
+            jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
+        graph->stubCalls.call(jit, isLeaf ? Stub::ColdOperationVoidOfLeaf : Stub::ColdOperationVoid, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)), site);
+    });
 }
 
 LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)
@@ -665,6 +695,8 @@ LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
         if (from == Rep::JSValue) {
             if (isSubtype(fromType, TInt32))
                 return m_out.intToDouble(unboxInt32(value));
+            if (isSubtype(fromType, TDouble))
+                return unboxDouble(value);
             return numberToDouble(value);
         }
         break;
@@ -826,6 +858,8 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
         RELEASE_ASSERT_NOT_REACHED();
     }
     node->lowered = convert(value, rep, node->type, node->rep());
+    if (m_sameAs && m_sameAs->loweredAsJSValue && node->rep() != Rep::JSValue)
+        node->loweredAsJSValue = m_sameAs->loweredAsJSValue;
     // Whoever wants it the way it came gets that. If nobody wants it any other way, nothing comes of the conversion.
     if (rep == Rep::JSValue && node->rep() != Rep::JSValue)
         node->loweredAsJSValue = value;

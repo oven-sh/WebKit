@@ -69,6 +69,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
+const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object can only hold what its type says, as a plain property"_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError { "Attempting to change access mechanism for an unconfigurable property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError { "Attempting to change configurable attribute of unconfigurable property."_s };
@@ -2395,6 +2396,17 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             slot.setNonconfigurable();
             return false;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (uint16_t bornAs = structure->bornAs(); bornAs && SlotsOfBornObjects::areStructs()) [[unlikely]] {
+            if (auto* named = SlotsOfBornObjects::named(bornAs, propertyName.uid()); named && !named->mayBeAbsent) {
+                if (!SlotsOfBornObjects::audits()) {
+                    slot.setNonconfigurable();
+                    return false;
+                }
+                SlotsOfBornObjects::audit("a field that has to be there is deleted"_s, bornAs, thisObject);
+            }
+        }
+#endif
 
         PropertyOffset offset = invalidOffset;
         if (structure->isUncacheableDictionary()) {

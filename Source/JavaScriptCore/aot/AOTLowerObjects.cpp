@@ -86,11 +86,12 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
     return object;
 }
 
-void Lowering::settleWhatWasBorn(LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values)
+void Lowering::settleWhatWasBorn(Node* node, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values)
 {
     if (!Options::aotTypesFields() || !layout || !TypeTable::shared())
         return;
-    auto holds = TypeTable::shared()->holdsOfSlots(layout);
+    // (Of structs, `layout` is the family.)
+    auto holds = TypeTable::areStructs() ? TypeTable::shared()->holdsOfSlotsOfFamily(layout) : TypeTable::shared()->holdsOfSlots(layout);
     LBasicBlock someIsNot = nullptr;
     for (unsigned slot = 0; slot < inSlots.size() && slot < holds.size(); ++slot) {
         if (!inSlots[slot] || !holds[slot].saysSomething())
@@ -104,7 +105,10 @@ void Lowering::settleWhatWasBorn(LValue object, uint32_t layout, const Vector<No
     LBasicBlock settled = m_out.newBlock();
     m_out.jump(settled);
     m_out.appendTo(someIsNot);
-    plainCall(Void, Entry::operationAOTSettleWhatWasBorn, m_instance, object);
+    if (TypeTable::areStructs())
+        vmCall(node, Void, Entry::operationAOTSettleStruct, m_globalObject, object);
+    else
+        plainCall(Void, Entry::operationAOTSettleWhatWasBorn, m_instance, object);
     m_out.jump(settled);
     m_out.appendTo(settled);
 }
@@ -149,6 +153,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             }
             unsigned slot = allocateSlots(2);
             auto shapeOfThis = m_graph.shapeOfLiteral(node);
+            bool hasSlotsOutside = shapeOfThis && shapeOfThis->hasSlotsOutside();
             noteShapeSite(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
             countShape(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
             if (auto shape = WTF::move(shapeOfThis)) {
@@ -158,14 +163,15 @@ bool Lowering::tryLowerAllocation(Node* node)
                     Vector<Node*, 8> nodesInSlots;
                     inSlots.fill(m_out.int64Zero, shape->numberOfSlots());
                     nodesInSlots.fill(nullptr, shape->numberOfSlots());
+                    auto holds = shape->family ? TypeTable::shared()->holdsOfSlotsOfFamily(shape->family) : Vector<TypeTable::Holds, 8> { };
                     for (unsigned i = 0; i < count; ++i) {
-                        inSlots[shape->slots[i]] = values[i];
+                        inSlots[shape->slots[i]] = shape->family && Options::aotTypesFields() ? asHeld(inSlotsOfLayout[i], values[i], holds[shape->slots[i]]) : values[i];
                         nodesInSlots[shape->slots[i]] = inSlotsOfLayout[i];
                     }
                     values = WTF::move(inSlots);
                     inSlotsOfLayout = WTF::move(nodesInSlots);
                 }
-                layout = shape->number;
+                layout = TypeTable::areStructs() ? shape->family : shape->number;
                 m_graph.noteShapeOfSite(slot, WTF::move(*shape));
             }
             {
@@ -180,7 +186,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             Vector<ValueFromBlock, 2> results;
-            if (!isCompact() && values.size() <= JSFinalObject::maxInlineCapacity) {
+            if (!isCompact() && values.size() <= JSFinalObject::maxInlineCapacity && !hasSlotsOutside) {
                 results.append(m_out.anchor(allocateObjectWithProperties(slot, values, slowCase)));
                 m_out.jump(continuation);
             } else
@@ -192,8 +198,13 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), results);
-            settleWhatWasBorn(object, layout, inSlotsOfLayout, values);
+            settleWhatWasBorn(node, object, layout, inSlotsOfLayout, values);
             setJSValue(node, object);
+            return true;
+        }
+        if (uint16_t family = Graph::familyOfNewObject(node)) {
+            noteShapeSite(Instance::LiteralWithLayout);
+            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObjectOfFamily, m_globalObject, m_out.constInt32(family), slotAddress(allocateSlots(2))));
             return true;
         }
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObject, m_globalObject, m_out.constInt32(node->as<OpNewObject>().m_inlineCapacity), slotAddress(allocateSlots(2))));
@@ -260,7 +271,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), fastResult, slowResult);
-            settleWhatWasBorn(object, layout, inSlotsOfLayout, values);
+            settleWhatWasBorn(node, object, layout, inSlotsOfLayout, values);
             setJSValue(node, object);
             return true;
         }
@@ -401,7 +412,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 void Lowering::throwTDZError(Node* node)
 {
     bool isThis = node->as<OpCheckTdz>().m_targetVirtualRegister == code().codeBlock()->thisRegister();
-    vmCall(node, Void, Entry::operationAOTThrowTDZError, m_globalObject, m_out.constInt32(isThis));
+    coldCall(node, Entry::operationAOTThrowTDZError, m_out.constInt32(isThis));
     m_out.unreachable();
 }
 

@@ -212,8 +212,32 @@ struct SlotsOfBornObjects {
         uint16_t unused;
     };
     enum class Says : uint8_t { Nothing, Admits, Refuses };
+    // With these the objects are structs: what one was born as is the number of a family, every name of the family has a slot that is its own in every object of
+    // the family, whether or not the object has the property, and code reads and writes the slots without asking. So:
+    //   - a property of such a name that is added later goes in its slot;
+    //   - what the slot does not hold is not stored, one that has to be there is not deleted, and none is made into anything but a plain property: whoever
+    //     tries is told so, as with a property that cannot be written.
+    struct Named {
+        uint32_t identifier; // StaticHeap::identifiersOfProgram()
+        uint16_t slot;
+        uint16_t mayBeAbsent;
+    };
+    // Makes an object that was born as nothing one of the family, where it is, if it has what it takes. (It may run out of room. It does not run code.)
+    using Adopt = bool (*)(VM&, JSObject*, uint16_t family);
 
     JS_EXPORT_PRIVATE static void set(std::span<const uint32_t> index, const Held*);
+    // inlineSlots: by family, how many of its slots are in the object. The rest are outside it, one after the other from the first place there is.
+    JS_EXPORT_PRIVATE static void setNames(const uint32_t* index, const Named*, const uint8_t* inlineSlots, Adopt, bool audits); // index: as for the slots, by family. After set().
+    static unsigned inlineSlots(uint16_t bornAs) { return s_inlineSlots[bornAs]; }
+    static PropertyOffset offsetOfSlot(unsigned slot, unsigned inlineSlots) { return slot < inlineSlots ? static_cast<PropertyOffset>(slot) : firstOutOfLineOffset + static_cast<PropertyOffset>(slot - inlineSlots); }
+    static PropertyOffset offsetInFamily(uint16_t bornAs, unsigned slot) { return offsetOfSlot(slot, inlineSlots(bornAs)); }
+    // Options::aotAuditsTypes() when the program was compiled: nothing is refused, and what would have been is logged.
+    static bool audits() { return s_audits; }
+    JS_EXPORT_PRIVATE static void audit(ASCIILiteral what, uint16_t family, JSValue);
+    JS_EXPORT_PRIVATE static ASCIILiteral s_whyNotAdopted; // The last time.
+    static bool areStructs() { return s_named; }
+    JS_EXPORT_PRIVATE static const Named* named(uint16_t bornAs, UniquedStringImpl*);
+    static std::span<const Named> namesOf(uint16_t bornAs) { return s_named && bornAs < s_count ? std::span { s_named + (s_indexOfNamed[bornAs] >> 8), s_indexOfNamed[bornAs] & 0xff } : std::span<const Named> { }; }
     static bool areThere() { return s_count; }
     // Of a slot in the object itself.
     static const Held* heldIn(uint16_t bornAs, unsigned slot)
@@ -227,6 +251,8 @@ struct SlotsOfBornObjects {
         return held.kinds ? &held : nullptr;
     }
     static unsigned numberOfSlots(uint16_t bornAs) { return bornAs < s_count ? s_index[bornAs] & 0xff : 0; }
+    // Of structs: in a slot that says what it holds a number is encoded as a double, whatever its value, so that code that reads one has nothing to tell apart.
+    static JSValue asHeld(uint16_t bornAs, unsigned slot, JSValue value) { return value.isInt32() && heldIn(bornAs, slot) ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value; }
     JS_EXPORT_PRIVATE static bool admits(const Held&, JSValue);
     static Says says(uint16_t bornAs, unsigned slot, JSValue value)
     {
@@ -235,6 +261,10 @@ struct SlotsOfBornObjects {
             return Says::Nothing;
         bool isAdmitted = admits(*held, value);
         (isAdmitted ? s_timesAdmitted : s_timesRefused)++;
+        if (!isAdmitted && s_audits) [[unlikely]] {
+            audit("a slot is given what it does not hold"_s, bornAs, value);
+            return Says::Nothing;
+        }
         return isAdmitted ? Says::Admits : Says::Refuses;
     }
     // TEMPORARY-SHAPE-COUNTS: stores that were looked at by whoever does not know the types.
@@ -245,6 +275,11 @@ private:
     JS_EXPORT_PRIVATE static const uint32_t* s_index; // By layout: where its slots start among s_held << 8 | how many it has.
     JS_EXPORT_PRIVATE static uint32_t s_count;
     JS_EXPORT_PRIVATE static const Held* s_held;
+    JS_EXPORT_PRIVATE static const uint32_t* s_indexOfNamed;
+    JS_EXPORT_PRIVATE static const Named* s_named;
+    JS_EXPORT_PRIVATE static const uint8_t* s_inlineSlots;
+    static Adopt s_adopt;
+    JS_EXPORT_PRIVATE static bool s_audits;
 };
 #endif
 
@@ -394,7 +429,10 @@ public:
     // that whoever else wants the same gets the same. Null if a name is there twice.
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
     // Likewise, each in the slot that is said (all of them in the object itself). The slots up to the last that nothing is in stay so.
-    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots);
+    // reserved: so many slots are spoken for, whether or not anything is in them.
+    // inlineSlots: slots from that one on are outside the object (SlotsOfBornObjects::offsetOfSlot()).
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max());
+    PropertyOffset nextOffsetFor(PropertyTable*, UniquedStringImpl*);
     // The number that a program compiled ahead of time knows the layout by (AOT::KnownShape): what is where in an object of this
     // Structure was settled then. Zero: none. No Structure that another turns into has one.
     // Code stores to the properties of such objects without asking, so nobody gets to watch for that.

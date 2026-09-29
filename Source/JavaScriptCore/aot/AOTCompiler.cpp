@@ -381,6 +381,7 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
             case op_get_by_val:
             case op_get_length:
             case op_check_type:
+            case op_type_tag:
             case op_check_tdz:
             case op_to_this:
             case op_jtrue: case op_jfalse: case op_typeof: case op_is_object: case op_instanceof: case op_in_by_id:
@@ -554,9 +555,27 @@ static void usePinnedRegistersWhereTheyAre(B3::Air::Code& code)
 }
 
 // A function that calls nothing, keeps nothing on the stack and saves nothing has no frame.
-static bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
+bool hasNoFrame(const Graph& graph, B3::Air::Code& code)
 {
-    return !graph.emitsCalls && !code.frameSize() && !code.calleeSaveRegisterAtOffsetList().registerCount();
+    // (What is caught is caught in a frame.)
+    if (code.frameSize() || code.calleeSaveRegisterAtOffsetList().registerCount() || graph.emitsCallsWhateverIsLeft || !graph.catchEntrypoints.isEmpty())
+        return false;
+    if (!graph.emitsCalls)
+        return true;
+    // What was written with a call in it may have turned out never to be reached. Whatever calls says that it overwrites the link register.
+    if (!graph.callsAreLeft) {
+        bool found = false;
+        for (B3::Air::BasicBlock* block : code) {
+            for (B3::Air::Inst& inst : *block) {
+                if (inst.kind.opcode == B3::Air::Patch)
+                    found |= !inst.origin || inst.origin->opcode() != B3::Patchpoint || inst.origin->as<B3::PatchpointValue>()->lateClobbered().contains(ARM64Registers::lr, IgnoreVectors);
+                else
+                    found |= inst.kind.opcode == B3::Air::ColdCCall;
+            }
+        }
+        graph.callsAreLeft = found;
+    }
+    return !*graph.callsAreLeft;
 }
 
 void emitEpilogueBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Code& code)

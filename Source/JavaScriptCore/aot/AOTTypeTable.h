@@ -54,6 +54,9 @@ public:
             Type result = typeAdmittedByMask(kindsButForThoseBorn());
             if (first)
                 result |= typeOfObjectBornWithin(first, last);
+            // (In a slot of a struct that says what it holds.)
+            if (areStructs())
+                result &= ~TInt32;
             return result;
         }
     };
@@ -61,6 +64,9 @@ public:
     struct Field {
         uint16_t slot;
         bool isOptional;
+        uint8_t inlineSlots { 255 }; // Of a struct: slots from that one on are outside the object.
+        bool isInObject() const { return slot < inlineSlots; }
+        bool mayBeEmpty { false }; // Of a struct: some object of the family may have nothing there, whatever this type says.
         // The layouts that have the property in that slot; and ones that have no property of the name. None: 0, 0.
         uint16_t first;
         uint16_t last;
@@ -72,8 +78,46 @@ public:
     // Of a type that is a shape, if there are layouts that have it in a slot.
     std::optional<Field> fieldOf(uint32_t type, UniquedStringImpl* name) const;
 
+    // Version 4 of the table: the objects are structs (SlotsOfBornObjects::Named). What an object was born as is the number of its family, so Field::first and
+    // Field::last are that, as are those of Holds; every name of the family has a slot in every object of it, and an object that has no such property has nothing there.
+    bool hasStructs() const { return m_hasStructs; }
+    static bool areStructs() { return shared() && shared()->hasStructs(); }
+    static bool areStructsToGoBy() { return areStructs() && !Options::aotAuditsTypes(); }
+    unsigned numberOfFamilies() const { return m_families.size() - 1; }
+    struct NameOfFamily {
+        UniquedStringImpl* name;
+        uint16_t slot;
+        bool mayBeAbsent;
+        Holds holds;
+    };
+    struct Family {
+        unsigned capacity { 0 };
+        unsigned inlineSlots { 0 };
+        Vector<NameOfFamily, 8> names;
+    };
+    Family family(uint32_t number) const;
+    bool isUsable(uint32_t family) const; // Its objects can be made.
+    unsigned inlineSlotsOf(uint32_t family) const { return m_words[m_families[family]] >> 16; }
+    // Of what an op_new_object is said to make: a layout, or a shape. Zero: none, or no structs.
+    uint16_t familyOfWhatIsMade(uint32_t type) const
+    {
+        if (auto layout = layoutOf(type))
+            return layout->family;
+        return familyOf(type);
+    }
+    // Of a type that is a shape. Zero: none, or no structs.
+    uint16_t familyOf(uint32_t type) const
+    {
+        auto words = record(type);
+        if (!m_hasStructs || words.size() < 3 || words[0] != Shape || !isUsable(words[1] >> 16))
+            return 0;
+        return words[1] >> 16;
+    }
+
     struct Layout {
         uint32_t number { 0 };
+        uint16_t family { 0 };
+        unsigned inlineSlots { 0 }; // Of a struct.
         unsigned capacity { 0 }; // One more than the last slot.
         Vector<std::pair<UniquedStringImpl*, uint16_t>, 8> properties; // In the order they are added in.
         Vector<Holds, 8> holds; // Likewise.
@@ -82,6 +126,7 @@ public:
     std::optional<Layout> layoutOf(uint32_t type) const;
     unsigned numberOfLayouts() const { return m_layouts.size() - 1; }
     Vector<Holds, 8> holdsOfSlots(uint32_t layout) const; // By slot.
+    Vector<Holds, 8> holdsOfSlotsOfFamily(uint32_t family) const; // Likewise.
     // TEMPORARY-SHAPE-COUNTS: why nothing is made of an access that has this for a type, as a number. Zero: nothing is said.
     unsigned reasonOf(uint32_t type) const
     {
@@ -106,6 +151,9 @@ private:
     Vector<Identifier> m_namesOfObjectPrototype;
     Vector<uint32_t> m_words;
     Vector<uint32_t> m_layouts; // By number: where it is.
+    Vector<uint32_t> m_families; // Likewise.
+    bool m_hasStructs { false };
+    unsigned wordsBeforePropertiesOfLayout() const { return m_hasStructs ? 3 : 2; }
     Vector<uint32_t> m_types; // Likewise.
 };
 

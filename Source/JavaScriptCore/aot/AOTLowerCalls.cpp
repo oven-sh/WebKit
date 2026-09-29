@@ -52,6 +52,7 @@ void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode, Rep result
     }
     m_graph.emitsCalls = true;
     patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+    patchpoint->clobberLate(RegisterSet { ARM64Registers::lr });
     patchpoint->resultConstraints = { result == Rep::Double ? ValueRep::reg(FPRInfo::returnValueFPR) : ValueRep::reg(GPRInfo::returnValueGPR) };
 }
 
@@ -363,6 +364,7 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
     LBasicBlock otherwise = mode == CallMode::TailCall ? leaveIfFunction(node->use(calleeRegister), callee) : nullptr;
     // (Stub::TailCallVarargs is called.)
     m_graph.emitsCalls = true;
+    m_graph.emitsCallsWhateverIsLeft = true;
 
     for (;;) {
     PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
@@ -431,6 +433,7 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
 
     bool isJustWhatWasPassed = items.size() == 1 && items[0].kind == ListDescriptor::Passed;
     m_graph.emitsCalls = true;
+    m_graph.emitsCallsWhateverIsLeft = true;
     LValue first;
     LValue second = nullptr;
     uint32_t descriptor = ListDescriptor::ofItems(items.size());

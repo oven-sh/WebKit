@@ -626,6 +626,43 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
     OPERATION_RETURN(scope);
 }
 
+// Comes back if the value is of the family by then.
+JSC_DEFINE_JIT_OPERATION(operationAOTAssertBornAs, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t family))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.isUndefinedOrNull()) {
+        // What getting at a property of it says.
+        if (!SlotsOfBornObjects::audits())
+            value.toObject(globalObject);
+        OPERATION_RETURN(scope);
+    }
+    if (value.isObject() && (asObject(value)->structure()->bornAs() == family || Instance::adopt(vm, asObject(value), safeCast<uint16_t>(family))))
+        OPERATION_RETURN(scope);
+    if (!value.isObject())
+        SlotsOfBornObjects::s_whyNotAdopted = "it is no object"_s;
+    if (SlotsOfBornObjects::audits()) {
+        SlotsOfBornObjects::audit(SlotsOfBornObjects::s_whyNotAdopted, safeCast<uint16_t>(family), value);
+        OPERATION_RETURN(scope);
+    }
+    throwTypeError(globalObject, scope, makeString("Type check failed: this is not an object of the type it is used as, and cannot be made one: "_s, SlotsOfBornObjects::s_whyNotAdopted));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSettleStruct, void, (JSGlobalObject* globalObject, JSObject* object))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    uint16_t family = object->structure()->bornAs();
+    for (unsigned slot = 0; slot < SlotsOfBornObjects::numberOfSlots(family); ++slot) {
+        JSValue value = object->getDirect(SlotsOfBornObjects::offsetInFamily(family, slot));
+        if (value && SlotsOfBornObjects::says(family, slot, value) == SlotsOfBornObjects::Says::Refuses) {
+            throwTypeError(globalObject, scope, TypedFieldError);
+            OPERATION_RETURN(scope);
+        }
+    }
+    OPERATION_RETURN(scope);
+}
+
 // Options::aotVerifiesFacts()
 // That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))

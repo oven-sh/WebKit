@@ -10,6 +10,7 @@
 #include "AOTProgram.h"
 #include "AOTStubs.h"
 #include "AOTType.h"
+#include "AOTTypeTable.h"
 #include "BytecodeIndex.h"
 #include "BytecodeStructs.h"
 #include "CallFrame.h"
@@ -234,6 +235,8 @@ struct Node {
             if (node->firstLayout >= first && node->lastLayout <= last)
                 return true;
         }
+        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::aotAuditsTypes())
+            return true;
         return type && isSubtype(type, TCell) && isBornWithinIfCell(first, last);
     }
     // Likewise, if it is a cell at all: it may be undefined, or null, or a number.
@@ -497,6 +500,9 @@ public:
     static CallOperands operandsOfCall(const JSInstruction*); // op_call or op_call_ignore_result
     // What the source says of the instruction that is there (op_type_tag), or of the one that the node is. None: 0.
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
+    // TypeTable::hasStructs(): the field that an op_get_by_id or op_put_by_id gets at without asking, if it does.
+    static std::optional<TypeTable::Field> fieldOfStructGotAtBy(const Node*);
+    static uint16_t familyOfNewObject(const Node*); // TypeTable::hasStructs(): what an op_new_object makes is born as that. Zero: nothing.
     static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }
     // The properties that an object literal starts out with: functor(index of the identifier, register the value is in).
     // An object literal: where the op_put_by_id are that make the object of an op_new_object what the literal says, as far as they
@@ -580,6 +586,8 @@ public:
     bool callsItself { false }; // As good as a loop.
     bool makesCalls { false }; // Of functions, in frames of their own.
     bool emitsCalls { false }; // There may be an instruction in the code that calls something, if only a stub. (A jump is not one.)
+    bool emitsCallsWhateverIsLeft { false }; // And there is no telling by looking at what the code has come to.
+    mutable std::optional<bool> callsAreLeft; // hasNoFrame()
     // Integers of the program's that are as big as addresses are (see the check for those in AOTCompiler.cpp).
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> wideIntegerConstants;
 

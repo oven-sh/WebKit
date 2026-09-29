@@ -84,6 +84,8 @@ namespace AOT {
     v(operationAOTPutToScope) \
     v(operationAOTThrow) \
     v(operationAOTCheckType) \
+    v(operationAOTAssertBornAs) \
+    v(operationAOTSettleStruct) \
     v(operationAOTVerifyFact) \
     v(operationAOTHandleTraps) \
     v(operationAOTWriteBarrier) \
@@ -298,6 +300,9 @@ static_assert(sizeof(FunctionInfo) == 32);
 // One for each realm that runs code from the static compiler.
 struct Instance {
     static Instance& ensure(JSGlobalObject*);
+    static bool adopt(VM&, JSObject*, uint16_t family); // SlotsOfBornObjects::Adopt
+    Structure* emptyStructureOfFamily(uint16_t family);
+    static JSObject* newObjectOf(VM&, Structure*); // With nothing in it, and room outside it if the Structure has slots there.
     static void destroy(Instance*);
 
     // For the collector. Nothing is kept alive because a slot refers to it.
@@ -425,7 +430,7 @@ struct Instance {
     uint64_t allocationCounts[numberOfAllocationCounts] { };
     static constexpr ptrdiff_t offsetOfAllocationCounts() { return OBJECT_OFFSETOF(Instance, allocationCounts); }
     // TEMPORARY-SHAPE-COUNTS: likewise. What became of the accesses that go by a type.
-    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, AssertionMade, ServedWithoutAssertion, ExitTaken, AssertionRepeated, TakenOutAtBirth, ExitBaseIsNoCell, ExitBaseIsNoPlainObject, ExitBaseWasNeverBorn, ExitBaseWasNeverBornAndHasNoRoom, ExitBaseWasBornOtherwise, ExitSlotIsEmpty, ExitOther, NumberOfShapeCounts };
+    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, AssertionMade, ServedWithoutAssertion, ExitTaken, AssertionRepeated, TakenOutAtBirth, ExitBaseIsNoCell, ExitBaseIsNoPlainObject, ExitBaseWasNeverBorn, ExitBaseWasNeverBornAndHasNoRoom, ExitBaseWasBornOtherwise, ExitSlotIsEmpty, ExitOther, Adopted, NumberOfShapeCounts };
     uint64_t shapeCounts[NumberOfShapeCounts] { };
     uint64_t readsForReason[1024] { };
     static constexpr unsigned numberOfCountsOfSites = 8192; // TEMPORARY-SITE-COUNTS: kindOfSite()

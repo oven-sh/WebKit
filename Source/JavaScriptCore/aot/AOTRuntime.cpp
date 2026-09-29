@@ -174,6 +174,9 @@ struct Instance::Collections {
     Vector<Slot*> transitionsSinceLastCollection;
     UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
+    // Instance::adopt(): what an object of a Structure turns into when it is made one of a family. Null: it cannot be. (Both are kept.)
+    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> adoptions;
+    UncheckedKeyHashMap<uint32_t, Structure*> emptyOfFamilies;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
     size_t sizeOfInfos { 0 }; // If they are the Instance's own.
@@ -1305,6 +1308,13 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
     }
     for (Structure* structure : collections->knownShapes.values())
         visitor.appendUnbarriered(structure);
+    for (Structure* structure : collections->emptyOfFamilies.values())
+        visitor.appendUnbarriered(structure);
+    for (auto& [from, to] : collections->adoptions) {
+        visitor.appendUnbarriered(from.first);
+        if (to)
+            visitor.appendUnbarriered(to);
+    }
     for (ScriptExecutable* executable : collections->executablesWithoutData)
         visitor.appendUnbarriered(executable);
 }
@@ -1351,7 +1361,7 @@ void Instance::dumpSlotStatistics(PrintStream& out)
     for (unsigned i = 0; i < numberOfBuckets; ++i)
         out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
     {
-        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s, "assertion made"_s, "access served with no assertion"_s, "exit taken"_s, "assertion of what had passed the same before"_s, "taken out of its slot at birth"_s, "exit: the base is no cell"_s, "exit: the base is no plain object"_s, "exit: the base was never given a layout, and has room"_s, "exit: the base was never given a layout, and has no room"_s, "exit: the base was born as something else"_s, "exit: nothing is in the slot"_s, "exit: something else"_s };
+        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s, "assertion made"_s, "access served with no assertion"_s, "exit taken"_s, "assertion of what had passed the same before"_s, "taken out of its slot at birth"_s, "exit: the base is no cell"_s, "exit: the base is no plain object"_s, "exit: the base was never given a layout, and has room"_s, "exit: the base was never given a layout, and has no room"_s, "exit: the base was born as something else"_s, "exit: nothing is in the slot"_s, "exit: something else"_s, "made one of a family where it was"_s };
         static_assert(std::size(names) == NumberOfShapeCounts);
         for (unsigned i = 0; i < NumberOfShapeCounts; ++i) {
             if (shapeCounts[i])
@@ -1432,12 +1442,146 @@ Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStri
     Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), description.inlineCapacity);
     RELEASE_ASSERT(empty->inlineCapacity() == description.inlineCapacity);
     auto slots = slotsOfKnownShape(shape);
-    Structure* result = slots.empty() ? Structure::createWithProperties(*vm, empty, names) : Structure::createWithProperties(*vm, empty, names, slots);
+    Structure* result = slots.empty() ? Structure::createWithProperties(*vm, empty, names) : Structure::createWithProperties(*vm, empty, names, slots, description.reserved, description.family ? description.inlineSlots : std::numeric_limits<unsigned>::max());
     RELEASE_ASSERT(result);
     result->setKnownShape(*vm, safeCast<uint16_t>(shape));
+    if (SlotsOfBornObjects::areStructs())
+        result->setBornAs(description.family);
     collections->knownShapes.add(shape, result);
     noteKnownShape(result, 1);
     return result;
+}
+
+Structure* Instance::emptyStructureOfFamily(uint16_t family)
+{
+    if (auto it = collections->emptyOfFamilies.find(family); it != collections->emptyOfFamilies.end())
+        return it->value;
+    unsigned capacity = SlotsOfBornObjects::numberOfSlots(family);
+    RELEASE_ASSERT(capacity);
+    DeferGC deferGC(*vm);
+    unsigned inlineSlots = SlotsOfBornObjects::inlineSlots(family);
+    Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), KnownShape::inlineCapacityFor(inlineSlots));
+    RELEASE_ASSERT(empty->inlineCapacity() >= inlineSlots);
+    Structure* result = Structure::createWithProperties(*vm, empty, { }, std::span<const uint16_t> { }, capacity, inlineSlots);
+    RELEASE_ASSERT(result);
+    result->setBornAs(family);
+    collections->emptyOfFamilies.add(family, result);
+    return result;
+}
+
+JSObject* Instance::newObjectOf(VM& vm, Structure* structure)
+{
+    unsigned outOfLineCapacity = structure->outOfLineCapacity();
+    if (!outOfLineCapacity)
+        return constructEmptyObject(vm, structure);
+    DeferGC deferGC(vm);
+    Butterfly* butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
+    gcSafeZeroMemory(std::bit_cast<EncodedJSValue*>(butterfly->propertyStorage() - outOfLineCapacity), outOfLineCapacity * sizeof(EncodedJSValue));
+    return JSFinalObject::createWithButterfly(vm, structure, butterfly);
+}
+
+bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
+{
+    Structure* old = object->structure();
+    unsigned capacity = SlotsOfBornObjects::numberOfSlots(family);
+    auto no = [](ASCIILiteral why) {
+        SlotsOfBornObjects::s_whyNotAdopted = why;
+        return false;
+    };
+    if (object->type() != FinalObjectType)
+        return no("it is no plain object"_s);
+    if (old->bornAs())
+        return no("it is of another type's family"_s);
+    if (!capacity)
+        return no("there is no such family"_s);
+    unsigned inlineSlots = SlotsOfBornObjects::inlineSlots(family);
+    if (old->hasPolyProto())
+        return no("of its prototype"_s);
+    if (old->inlineCapacity() < inlineSlots)
+        return no("it has no room"_s);
+    if (!old->isStructureExtensible())
+        return no("it is not extensible"_s);
+    if (old->isDictionary() && old->isUncacheableDictionary())
+        return no("it has been through too much (a dictionary)"_s);
+    Instance& instance = ensure(old->globalObject());
+    // What the family has no slot for comes after the family's: in the object if all the family's are, and there is room; if not, outside.
+    Vector<std::pair<PropertyOffset, uint16_t>, 16> moves; // From where to which slot, in the order the properties are in.
+    Vector<UniquedStringImpl*, 16> names;
+    Vector<uint16_t, 16> slots;
+    // (The slots are numbered as for an object with room for just so many, so what is left of a bigger one goes unused.)
+    {
+        BitVector taken;
+        unsigned next = capacity;
+        bool isPlain = true;
+        old->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            isPlain &= !entry.attributes();
+            auto* named = SlotsOfBornObjects::named(family, entry.key());
+            unsigned slot = named && !taken.get(named->slot) ? named->slot : next++;
+            taken.set(slot);
+            names.append(entry.key());
+            slots.append(safeCast<uint16_t>(slot));
+            moves.append({ entry.offset(), safeCast<uint16_t>(slot) });
+            return true;
+        });
+        if (!isPlain)
+            return no("it has a property that is not plain"_s);
+        for (auto& named : SlotsOfBornObjects::namesOf(family)) {
+            if (!named.mayBeAbsent && !taken.get(named.slot))
+                return no("it lacks a property that the type says it has"_s);
+        }
+    }
+    // What is in it has to be what the slots hold. (Which may take making something else what it has to be.)
+    Vector<JSValue, 16> values;
+    for (auto [from, to] : moves) {
+        JSValue value = object->getDirect(from);
+        if (to < capacity && SlotsOfBornObjects::says(family, to, value) == SlotsOfBornObjects::Says::Refuses)
+            return no("a property of it is not what the type says"_s);
+        values.append(to < capacity ? SlotsOfBornObjects::asHeld(family, to, value) : value);
+    }
+    if (object->structure() != old)
+        return object->structure()->bornAs() == family; // It has itself in it.
+    Structure* adopted;
+    if (auto it = instance.collections->adoptions.find({ old, family }); it != instance.collections->adoptions.end())
+        adopted = it->value;
+    else {
+        DeferGC deferGC(vm);
+        Structure* empty = old->storedPrototype().isObject()
+            ? old->globalObject()->structureCache().emptyObjectStructureForPrototype(old->globalObject(), asObject(old->storedPrototype()), old->inlineCapacity())
+            : Structure::create(vm, old->globalObject(), jsNull(), old->typeInfo(), old->classInfoForCells(), NonArray, old->inlineCapacity());
+        adopted = empty->inlineCapacity() == old->inlineCapacity() && empty->indexingType() == old->indexingType() ? Structure::createWithProperties(vm, empty, names.span(), slots.span(), capacity, inlineSlots) : nullptr;
+        if (adopted)
+            adopted->setBornAs(family);
+        // (A dictionary is one object's own.)
+        if (!old->isDictionary())
+            instance.collections->adoptions.add({ old, family }, adopted);
+    }
+    if (!adopted)
+        return no("it has elements, or no structure can be made for it"_s);
+    {
+        DeferGC deferGC(vm);
+        unsigned oldOutside = old->outOfLineCapacity();
+        unsigned newOutside = adopted->outOfLineCapacity();
+        // (It has no elements. How much room there is outside is for the Structure to say, and the collector goes by that.)
+        if (newOutside != oldOutside) {
+            Butterfly* butterfly = nullptr;
+            if (newOutside) {
+                butterfly = Butterfly::create(vm, nullptr, 0, newOutside, false, IndexingHeader(), 0);
+                gcSafeZeroMemory(std::bit_cast<EncodedJSValue*>(butterfly->propertyStorage() - newOutside), newOutside * sizeof(EncodedJSValue));
+            }
+            object->nukeStructureAndSetButterfly(vm, object->structureID(), butterfly);
+        } else {
+            for (unsigned i = 0; i < newOutside; ++i)
+                object->locationForOffset(firstOutOfLineOffset + i)->clear();
+        }
+        for (unsigned offset = 0; offset < old->inlineCapacity(); ++offset)
+            object->locationForOffset(offset)->clear();
+        for (unsigned i = 0; i < moves.size(); ++i)
+            object->putDirectOffset(vm, SlotsOfBornObjects::offsetOfSlot(moves[i].second, inlineSlots), values[i]);
+        object->setStructure(vm, adopted);
+        vm.writeBarrier(object);
+    }
+    instance.shapeCounts[Adopted]++;
+    return true;
 }
 
 std::span<const uint16_t> Instance::slotsOfKnownShape(uint32_t shape) const

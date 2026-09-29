@@ -27,6 +27,8 @@
 #include "config.h"
 #include "Structure.h"
 
+#include "StaticHeap.h"
+
 #include "BrandedStructure.h"
 #include "BuiltinNames.h"
 #include "DumpContext.h"
@@ -425,34 +427,52 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     return result;
 }
 
-Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots)
+Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved, unsigned inlineSlots)
 {
     RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && names.size() == slots.size());
+    inlineSlots = std::min<unsigned>(inlineSlots, empty->inlineCapacity());
+    auto offsetOf = [&](unsigned slot) { return SlotsOfBornObjects::offsetOfSlot(slot, inlineSlots); };
     DeferGC deferGC(vm);
     Structure* result = Structure::create(vm, empty->globalObject(), empty->storedPrototype(), empty->typeInfo(), empty->classInfoForCells(), empty->indexingType(), empty->inlineCapacity());
     PropertyTable* table = result->ensurePropertyTable(vm);
     BitVector taken;
+    unsigned numberOfSlots = reserved;
+    for (uint16_t slot : slots)
+        numberOfSlots = std::max<unsigned>(numberOfSlots, slot + 1);
     for (unsigned i = 0; i < names.size(); ++i) {
-        RELEASE_ASSERT(slots[i] < empty->inlineCapacity() && !taken.get(slots[i]));
+        RELEASE_ASSERT(!taken.get(slots[i]));
         if (JSC::isValidOffset(result->get(vm, names[i])))
             return nullptr;
         taken.set(slots[i]);
         // (for-in takes the property it comes to first to be the first in the object, and so on, unless it is told otherwise: as it is
         // when a property has been taken out.)
-        if (slots[i] != i)
+        if (slots[i] != i || numberOfSlots > inlineSlots)
             result->setIsQuickPropertyAccessAllowedForEnumeration(false);
         // A property is put where one has been taken out of, if there is such a place, and in the last of them.
-        table->addDeletedOffset(slots[i]);
+        table->addDeletedOffset(offsetOf(slots[i]));
         result->addPropertyWithoutTransition(vm, names[i], 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
-            RELEASE_ASSERT(offset == static_cast<PropertyOffset>(slots[i]));
-            result->setMaxOffset(vm, newMaxOffset);
+            RELEASE_ASSERT(offset == offsetOf(slots[i]));
+            if (newMaxOffset > result->maxOffset())
+                result->setMaxOffset(vm, newMaxOffset);
         });
         RELEASE_ASSERT(result->propertyTableOrNull() == table);
     }
+    if (numberOfSlots && offsetOf(numberOfSlots - 1) > result->maxOffset())
+        result->setMaxOffset(vm, offsetOf(numberOfSlots - 1));
     // And that is what the rest are, as far as anybody can tell: what an object has room for is what it has and what it has had.
-    for (PropertyOffset slot = 0; slot < result->maxOffset(); ++slot) {
+    for (unsigned slot = 0; slot < numberOfSlots; ++slot) {
         if (!taken.get(slot))
-            table->addDeletedOffset(slot);
+            table->addDeletedOffset(offsetOf(slot));
+    }
+    // (If anything is outside, all there is room for in the object counts as spoken for.)
+    if (numberOfSlots > inlineSlots) {
+        for (unsigned offset = inlineSlots; offset < empty->inlineCapacity(); ++offset)
+            table->addDeletedOffset(offset);
+    }
+    // (That is nowhere but in the table, so the table is not for whatever this turns into to take. Adding a property has seen to that.)
+    if (names.empty()) {
+        ConcurrentJSLocker locker(result->m_lock);
+        result->pin(locker, vm, table);
     }
     result->checkOffsetConsistency();
     return result;
@@ -541,7 +561,7 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
         switch (structure->transitionKind()) {
         case TransitionKind::PropertyAddition: {
             PropertyTableEntry entry(structure->m_transitionPropertyName.get(), structure->transitionOffset(), structure->transitionPropertyAttributes());
-            auto nextOffset = table->nextOffset(structure->inlineCapacity(), !structure->bornAs());
+            auto nextOffset = structure->bornAs() && (isInlineOffset(structure->transitionOffset()) || SlotsOfBornObjects::areStructs()) && table->takeDeletedOffset(structure->transitionOffset()) ? structure->transitionOffset() : table->nextOffset(structure->inlineCapacity(), !structure->bornAs(), !(structure->bornAs() && SlotsOfBornObjects::areStructs()));
             ASSERT_UNUSED(nextOffset, nextOffset == structure->transitionOffset());
             auto [offset, attribute, result] = table->add(vm, entry);
             ASSERT_UNUSED(result, result);
@@ -1230,6 +1250,12 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
 const uint32_t* SlotsOfBornObjects::s_index;
 uint32_t SlotsOfBornObjects::s_count;
 const SlotsOfBornObjects::Held* SlotsOfBornObjects::s_held;
+const uint32_t* SlotsOfBornObjects::s_indexOfNamed;
+const SlotsOfBornObjects::Named* SlotsOfBornObjects::s_named;
+const uint8_t* SlotsOfBornObjects::s_inlineSlots;
+SlotsOfBornObjects::Adopt SlotsOfBornObjects::s_adopt;
+bool SlotsOfBornObjects::s_audits;
+ASCIILiteral SlotsOfBornObjects::s_whyNotAdopted;
 uint64_t SlotsOfBornObjects::s_timesAdmitted;
 uint64_t SlotsOfBornObjects::s_timesRefused;
 
@@ -1242,6 +1268,60 @@ void SlotsOfBornObjects::set(std::span<const uint32_t> index, const Held* held)
     s_count = index.size();
 }
 
+void SlotsOfBornObjects::audit(ASCIILiteral what, uint16_t family, JSValue value)
+{
+    static Lock lock;
+    static NeverDestroyed<UncheckedKeyHashMap<String, unsigned>> seen;
+    StringPrintStream out;
+    out.print(what, "\tfamily ", family, "\t");
+    if (value && value.isObject()) {
+        JSObject* object = asObject(value);
+        Structure* structure = object->structure();
+        out.print(structure->classInfoForCells()->className, " capacity ", structure->inlineCapacity(), " needs ", numberOfSlots(family), " born ", structure->bornAs(), structure->isDictionary() ? " dictionary" : "", " {");
+        {
+            unsigned count = 0;
+            structure->forEachProperty(object->vm(), [&](const PropertyTableEntry& entry) {
+                if (count++ < 24)
+                    out.print(count > 1 ? "," : "", StringView(entry.key()));
+                return true;
+            });
+        }
+        out.print("}");
+    } else if (value)
+        out.print(value.isString() ? "a string" : value.isNumber() ? "a number" : value.isUndefined() ? "undefined" : value.isNull() ? "null" : value.isBoolean() ? "a boolean" : "something else");
+    Locker locker { lock };
+    if (seen->add(out.toString(), 0).iterator->value++)
+        return;
+    dataLogLn("AUDIT\t", out.toCString());
+}
+
+void SlotsOfBornObjects::setNames(const uint32_t* index, const Named* named, const uint8_t* inlineSlots, Adopt adopt, bool audits)
+{
+    RELEASE_ASSERT(s_count && !s_named);
+    s_inlineSlots = inlineSlots;
+    s_audits = audits;
+    s_indexOfNamed = index;
+    s_adopt = adopt;
+    WTF::storeStoreFence();
+    s_named = named;
+}
+
+const SlotsOfBornObjects::Named* SlotsOfBornObjects::named(uint16_t bornAs, UniquedStringImpl* name)
+{
+    auto names = namesOf(bornAs);
+    if (names.empty())
+        return nullptr;
+    // (Every name of the program is an atom that every thread has.)
+    UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
+    if (!identifiers)
+        return nullptr;
+    for (auto& entry : names) {
+        if (identifiers[entry.identifier] == name)
+            return &entry;
+    }
+    return nullptr;
+}
+
 bool SlotsOfBornObjects::admits(const Held& held, JSValue value)
 {
     unsigned kinds = held.kinds;
@@ -1249,6 +1329,8 @@ bool SlotsOfBornObjects::admits(const Held& held, JSValue value)
         if (value.isCell()) {
             uint16_t bornAs = value.asCell()->structure()->bornAs();
             if (bornAs >= held.first && bornAs <= held.last)
+                return true;
+            if (!bornAs && s_named && value.isObject() && s_adopt(value.asCell()->vm(), asObject(value), held.first))
                 return true;
         }
         kinds &= ~SoundTypeOtherObject;

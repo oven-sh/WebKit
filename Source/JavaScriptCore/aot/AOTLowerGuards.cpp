@@ -330,9 +330,11 @@ void Lowering::lowerGuarded(Node* node)
         Node* value = node->use(node->as<OpCheckType>().m_value);
         if (guard->lowered)
             setDouble(node, guard->lowered);
-        else if (value->rep() != Rep::JSValue)
+        else if (value->rep() != Rep::JSValue) {
+            m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
-        else
+            m_sameAs = nullptr;
+        } else
             setJSValue(node, lowRaw(value));
         return;
     }

@@ -231,6 +231,17 @@ inline void Structure::cacheSpecialProperty(JSGlobalObject* globalObject, VM& vm
     rareData()->cacheSpecialProperty(globalObject, vm, this, value, key, slot);
 }
 
+inline PropertyOffset Structure::nextOffsetFor(PropertyTable* table, UniquedStringImpl* name)
+{
+    if (m_bornAs) [[unlikely]] {
+        if (auto* named = SlotsOfBornObjects::named(m_bornAs, name); named && table->takeDeletedOffset(SlotsOfBornObjects::offsetInFamily(m_bornAs, named->slot)))
+            return SlotsOfBornObjects::offsetInFamily(m_bornAs, named->slot);
+        if (SlotsOfBornObjects::areStructs())
+            return table->nextOffset(m_inlineCapacity, false, false);
+    }
+    return table->nextOffset(m_inlineCapacity, !m_bornAs);
+}
+
 template<Structure::ShouldPin shouldPin, typename Func>
 inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned attributes, const Func& func)
 {
@@ -269,7 +280,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
 
     auto rep = propertyName.uid();
 
-    PropertyOffset newOffset = table->nextOffset(m_inlineCapacity, !m_bornAs);
+    PropertyOffset newOffset = nextOffsetFor(table, rep);
 
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
@@ -444,7 +455,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     else if (propertyName == vm.propertyNames->then)
         setHasSpecialProperties(true);
 
-    PropertyOffset newOffset = table->nextOffset(m_inlineCapacity, !m_bornAs);
+    PropertyOffset newOffset = nextOffsetFor(table, rep);
 
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));

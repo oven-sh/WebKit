@@ -61,6 +61,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject* glob
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 
+// One that has nothing yet, of a family of structs: what it is given goes where the family has it.
+JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfFamily, JSObject*, (JSGlobalObject* globalObject, uint32_t family, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    if (StructureID structureID = cache[0].structureID)
+        OPERATION_RETURN(scope, Instance::newObjectOf(vm, structureID.decode()));
+    Structure* structure = Instance::ensure(globalObject).emptyStructureOfFamily(safeCast<uint16_t>(family));
+    fillAllocationCache(vm, callerData(globalObject, callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator));
+    OPERATION_RETURN(scope, Instance::newObjectOf(vm, structure));
+}
+
 // An object literal: op_new_object and the op_put_by_id that follow it. values: what goes in each of the first `count` slots of the object:
 // which is the values of the properties one after the other, unless the literal is made as a layout that says otherwise
 // (KnownShape::slots). Then some may have nothing in them.
@@ -69,7 +80,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     AOT_OPERATION_BEGIN(globalObject);
     if (StructureID structureID = cache[0].structureID) {
         // All that was missing was room.
-        JSObject* object = constructEmptyObject(vm, structureID.decode());
+        Structure* structure = structureID.decode();
+        if (uint16_t family = structure->bornAs(); family && SlotsOfBornObjects::areStructs() && structure->outOfLineCapacity()) [[unlikely]] {
+            JSObject* object = Instance::newObjectOf(vm, structure);
+            for (unsigned i = 0; i < count; ++i) {
+                if (values[i])
+                    object->putDirectOffset(vm, SlotsOfBornObjects::offsetInFamily(family, i), JSValue::decode(values[i]));
+            }
+            OPERATION_RETURN(scope, object);
+        }
+        JSObject* object = constructEmptyObject(vm, structure);
         for (unsigned i = 0; i < count; ++i)
             object->putDirectOffset(vm, i, JSValue::decode(values[i]));
         OPERATION_RETURN(scope, object);
@@ -122,9 +142,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
             DeferGC deferGC(vm);
             unsigned inlineCapacity = structure->inlineCapacity();
             Butterfly* butterfly = nullptr;
-            if (unsigned outOfLineCapacity = structure->outOfLineCapacity())
+            if (unsigned outOfLineCapacity = structure->outOfLineCapacity()) {
                 butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
+                gcSafeZeroMemory(std::bit_cast<EncodedJSValue*>(butterfly->propertyStorage() - outOfLineCapacity), outOfLineCapacity * sizeof(EncodedJSValue));
+            }
             JSObject* object = JSFinalObject::createWithButterfly(vm, structure, butterfly);
+            if (structure->bornAs() && SlotsOfBornObjects::areStructs())
+                inlineCapacity = SlotsOfBornObjects::inlineSlots(structure->bornAs());
             for (unsigned i = 0; i < count; ++i)
                 object->putDirectOffset(vm, offsetForPropertyNumber(slotOf(i), inlineCapacity), JSValue::decode(values[slotOf(i)]));
             if (numberOfSlots <= inlineCapacity)

@@ -169,13 +169,17 @@ private:
     LValue layoutOf(LValue cell);
     LValue layoutBornAs(LValue cell); // Structure::bornAs()
     LValue layoutBornAsOrNone(Node*, LValue);
+    TypedPointer slotOfStruct(LValue object, const TypeTable::Field&);
+    LValue asHeld(Node* valueNode, LValue value, TypeTable::Holds); // The value as a slot of a struct has it: a number is encoded as a double.
+    Node* m_sameAs { nullptr }; // setResult(): the node is this one by another name.
+    void assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family); // Goes on if it is of the family: if need be, made so.
     UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_layoutsBornAs; // What that gave, and in which block.
     void branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds, LBasicBlock otherwise);
     // What the node is, if it is a string that the program spells out, of characters that take a byte each.
     static std::optional<String> stringWrittenInProgram(Node*);
     LValue isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
     // Options::aotTypesFields(): what has just been made as that layout, with those in its slots (null: nothing), is left with nothing in a slot that the slot does not hold.
-    void settleWhatWasBorn(LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values);
+    void settleWhatWasBorn(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values);
     void guardField(Node* guard);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
@@ -227,6 +231,9 @@ private:
     // place: where the function is to be said to be meanwhile, if not at what is being lowered.
     B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::WhatCallsDo, Node* place = nullptr);
     LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // No node: it does not throw.
+    // Of an operation that takes the global object and these and gives nothing back, from where the code hardly ever gets. It is no reason for the function to have a
+    // frame, or to keep anything anywhere but where it is.
+    void coldCall(Node*, Entry, LValue first, LValue second = nullptr);
     // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
     // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);

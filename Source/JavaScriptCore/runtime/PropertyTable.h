@@ -157,7 +157,8 @@ public:
     void addDeletedOffset(PropertyOffset);
     
     // reusesOffsetsInObject: see Structure::bornAs().
-    PropertyOffset nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject = true);
+    PropertyOffset nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject = true, bool reusesOffsetsOutside = true);
+    bool takeDeletedOffset(PropertyOffset wanted); // False: that is not one of them.
 
     // Copy this PropertyTable, ensuring the copy has at least the capacity provided.
     PropertyTable* copy(VM&, unsigned newCapacity);
@@ -496,12 +497,23 @@ inline void PropertyTable::addDeletedOffset(PropertyOffset offset)
     m_deletedOffsets->append(offset);
 }
 
-inline PropertyOffset PropertyTable::nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject)
+inline bool PropertyTable::takeDeletedOffset(PropertyOffset wanted)
+{
+    if (!m_deletedOffsets)
+        return false;
+    size_t index = m_deletedOffsets->find(wanted);
+    if (index == notFound)
+        return false;
+    m_deletedOffsets->removeAt(index);
+    return true;
+}
+
+inline PropertyOffset PropertyTable::nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject, bool reusesOffsetsOutside)
 {
     if (hasDeletedOffset()) {
         if (reusesOffsetsInObject) [[likely]]
             return takeDeletedOffset();
-        for (size_t i = m_deletedOffsets->size(); i--;) {
+        for (size_t i = reusesOffsetsOutside ? m_deletedOffsets->size() : 0; i--;) {
             PropertyOffset offset = m_deletedOffsets->at(i);
             if (isOutOfLineOffset(offset)) {
                 m_deletedOffsets->removeAt(i);

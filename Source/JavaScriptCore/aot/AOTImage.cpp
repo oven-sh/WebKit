@@ -407,6 +407,9 @@ Vector<uint8_t> ImageBuilder::finish()
         unsigned inlineCapacity { 0 };
         Vector<uint32_t, 8> names;
         Vector<uint16_t, 8> slots;
+        uint16_t family { 0 };
+        uint16_t reserved { 0 };
+        uint16_t inlineSlots { 0 };
     };
     // The layouts of the table of types come first, by their own numbers, whether or not anything is made so.
     Vector<Shape> shapes(1 + (TypeTable::shared() ? TypeTable::shared()->numberOfLayouts() : 0));
@@ -444,6 +447,9 @@ Vector<uint8_t> ImageBuilder::finish()
                 shape.names.append(selectorFor(name));
             if (known.number) {
                 shape.slots = known.slots;
+                shape.family = known.family;
+                shape.reserved = known.reserved;
+                shape.inlineSlots = known.inlineSlots;
                 constant = known.number;
                 if (shapes[constant].names.isEmpty())
                     shapes[constant] = WTF::move(shape);
@@ -453,6 +459,15 @@ Vector<uint8_t> ImageBuilder::finish()
             }
             Vector<uint32_t, 16> words { known.inlineCapacity };
             words.appendVector(shape.names);
+            if (known.family) {
+                shape.slots = known.slots;
+                shape.family = known.family;
+                shape.reserved = known.reserved;
+                shape.inlineSlots = known.inlineSlots;
+                words.append(0xffff0000u | known.family);
+                for (uint16_t slot : known.slots)
+                    words.append(slot);
+            }
             String key { std::span { reinterpret_cast<const Latin1Character*>(words.span().data()), words.size() * sizeof(uint32_t) } };
             // (A Structure has sixteen bits to say which in. The rest are made the way they would be if nobody had noticed.)
             if (auto it = numberOfShape.find(key); it != numberOfShape.end())
@@ -480,9 +495,10 @@ Vector<uint8_t> ImageBuilder::finish()
                 if (!selectorIsRead.get(shape.names[i]))
                     continue;
                 unsigned at = shape.slots.isEmpty() ? i : shape.slots[i];
-                int32_t location = at < shape.inlineCapacity || !shape.inlineCapacity
+                unsigned inObject = shape.family ? shape.inlineSlots : shape.inlineCapacity;
+                int32_t location = at < inObject || !inObject
                     ? static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + at)
-                    : -static_cast<int32_t>(at - shape.inlineCapacity) - 2;
+                    : -static_cast<int32_t>(at - inObject) - 2;
                 rows[shape.names[i]].append({ number, location });
             }
         }
@@ -532,13 +548,35 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint16_t> slotsOfShapes;
     size_t numberOfPropertiesOfShapes = 0;
     for (auto& shape : shapes) {
-        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1) });
+        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1), shape.family, shape.reserved, shape.inlineSlots, 0 });
         slotsOfShapes.appendVector(shape.slots);
         numberOfPropertiesOfShapes += shape.names.size();
     }
     Vector<uint32_t> indexOfHeldInSlots;
     Vector<SlotsOfBornObjects::Held> heldInSlots;
-    if (Options::aotTypesFields() && TypeTable::shared()) {
+    Vector<uint32_t> indexOfNamed;
+    Vector<SlotsOfBornObjects::Named> named;
+    Vector<uint8_t> inlineSlotsOfFamilies;
+    if (Options::aotTypesFields() && TypeTable::areStructs()) {
+        RELEASE_ASSERT_WITH_MESSAGE(numbersOfIdentifiers, "Structs go by the numbers of the program's identifiers");
+        for (uint32_t number = 0; number <= TypeTable::shared()->numberOfFamilies(); ++number) {
+            auto family = TypeTable::shared()->family(number);
+            RELEASE_ASSERT(heldInSlots.size() < (1u << 24) && named.size() < (1u << 24));
+            indexOfHeldInSlots.append(static_cast<uint32_t>(heldInSlots.size()) << 8 | family.capacity);
+            size_t start = heldInSlots.size();
+            for (unsigned slot = 0; slot < family.capacity; ++slot)
+                heldInSlots.append({ 0, 0, 0, 0 });
+            size_t startOfNamed = named.size();
+            for (auto& name : family.names) {
+                heldInSlots[start + name.slot] = { safeCast<uint16_t>(name.holds.kinds), name.holds.first, name.holds.last, 0 };
+                // (A name that the program has no use for is not one that it can add a property by.)
+                if (auto it = numbersOfIdentifiers->find(name.name); it != numbersOfIdentifiers->end())
+                    named.append({ it->value, name.slot, name.mayBeAbsent });
+            }
+            indexOfNamed.append(static_cast<uint32_t>(startOfNamed) << 8 | (named.size() - startOfNamed));
+            inlineSlotsOfFamilies.append(safeCast<uint8_t>(family.inlineSlots));
+        }
+    } else if (Options::aotTypesFields() && TypeTable::shared()) {
         for (uint32_t number = 0; number < shapes.size() && number <= TypeTable::shared()->numberOfLayouts(); ++number) {
             auto holds = shapes[number].names.isEmpty() ? Vector<TypeTable::Holds, 8> { } : TypeTable::shared()->holdsOfSlots(number);
             RELEASE_ASSERT(holds.size() < 256 && heldInSlots.size() < (1u << 24));
@@ -956,6 +994,10 @@ Vector<uint8_t> ImageBuilder::finish()
     header.indexOfHeldInSlotsOffset = place(indexOfHeldInSlots.sizeInBytes());
     header.sizeOfIndexOfHeldInSlots = indexOfHeldInSlots.size();
     header.heldInSlotsOffset = place(heldInSlots.sizeInBytes());
+    header.indexOfNamedOffset = indexOfNamed.isEmpty() ? 0 : place(indexOfNamed.sizeInBytes());
+    header.namedOffset = place(named.sizeInBytes());
+    header.inlineSlotsOfFamiliesOffset = place(inlineSlotsOfFamilies.sizeInBytes());
+    header.auditsTypes = Options::aotAuditsTypes();
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
     header.numberOfSelectors = selectors.size();
     header.rowsOfSelectorsOffset = place(rowOfSelector.sizeInBytes());
@@ -1027,6 +1069,11 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.slotsOfShapesOffset, slotsOfShapes.span().data(), slotsOfShapes.sizeInBytes());
     memcpy(base + header.indexOfHeldInSlotsOffset, indexOfHeldInSlots.span().data(), indexOfHeldInSlots.sizeInBytes());
     memcpy(base + header.heldInSlotsOffset, heldInSlots.span().data(), heldInSlots.sizeInBytes());
+    if (header.indexOfNamedOffset) {
+        memcpy(base + header.indexOfNamedOffset, indexOfNamed.span().data(), indexOfNamed.sizeInBytes());
+        memcpy(base + header.namedOffset, named.span().data(), named.sizeInBytes());
+        memcpy(base + header.inlineSlotsOfFamiliesOffset, inlineSlotsOfFamilies.span().data(), inlineSlotsOfFamilies.sizeInBytes());
+    }
     memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
     memcpy(base + header.rowsOfSelectorsOffset, rowOfSelector.span().data(), rowOfSelector.sizeInBytes());
     memcpy(base + header.textOfSelectorsOffset, textOfSelectors.span().data(), textOfSelectors.size());
@@ -1238,6 +1285,8 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     all.hasAny.store(true, std::memory_order_release);
     if (header.sizeOfIndexOfHeldInSlots)
         SlotsOfBornObjects::set({ image->at<uint32_t>(header.indexOfHeldInSlotsOffset), header.sizeOfIndexOfHeldInSlots }, image->at<SlotsOfBornObjects::Held>(header.heldInSlotsOffset));
+    if (header.indexOfNamedOffset)
+        SlotsOfBornObjects::setNames(image->at<uint32_t>(header.indexOfNamedOffset), image->at<SlotsOfBornObjects::Named>(header.namedOffset), image->at<uint8_t>(header.inlineSlotsOfFamiliesOffset), Instance::adopt, header.auditsTypes);
     return image;
 }
 

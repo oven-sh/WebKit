@@ -49,6 +49,7 @@ private:
         Vector<BasicBlock*> blocks; // In reverse post order.
 
         bool writesIndexed { false };
+        bool changesStructures { false }; // Of plain objects with no elements: one may be made one of a family, or given a property it did not have.
         bool writesVariables { false };
         Vector<unsigned, 8> propertiesWritten;
     };
@@ -253,6 +254,20 @@ private:
                 return !mayBe(left, byContent) || !mayBe(right, byContent);
             return isSubtype(left | right, TAnyObject | TSymbol);
         };
+        if (node->opcode == op_type_tag) {
+            loop.changesStructures |= !node->uses[0].node->isKnownToBeBornWithin(node->firstLayout, node->lastLayout);
+            return true;
+        }
+        if (auto field = Graph::fieldOfStructGotAtBy(node)) {
+            bool isRead = node->opcode == op_get_by_id;
+            loop.changesStructures |= !node->use(isRead ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base)->isKnownToBeBornWithin(field->first, field->last);
+            if (isRead)
+                return true;
+            // (What the slot does not hold is stored the long way, which runs no code either: the property is plain.)
+            loop.propertiesWritten.append(node->as<OpPutById>().m_property);
+            loop.changesStructures = true;
+            return true;
+        }
         switch (node->opcode) {
         case op_loop_hint:
         case op_jmp:
@@ -382,7 +397,7 @@ private:
     {
         switch (guard->opcode) {
         case op_get_by_id:
-            return !loop.propertiesWritten.contains(guard->as<OpGetById>().m_property);
+            return !loop.propertiesWritten.contains(guard->as<OpGetById>().m_property) && !loop.changesStructures;
         case op_get_by_val:
         case op_get_length:
             return !loop.writesIndexed;

@@ -408,13 +408,31 @@ bool Lowering::tryLowerMisc(Node* node)
         m_out.appendTo(continuation);
         return true;
     }
+    case op_type_tag: {
+        Node* value = node->uses[0].node;
+        if (value->isKnownToBeBornWithin(node->firstLayout, node->lastLayout)) {
+            noteShapeSite(Instance::ServedWithoutAssertion);
+            m_sameAs = value;
+            setResult(node, lowRaw(value), value->rep());
+            m_sameAs = nullptr;
+            return true;
+        }
+        noteShapeSite(Instance::AssertionMade);
+        countShape(Instance::AssertionMade);
+        LValue jsValue = lowJSValue(value);
+        assertBornAs(node, value, jsValue, node->firstLayout);
+        setJSValue(node, jsValue);
+        return true;
+    }
     case op_check_type: {
         auto bytecode = node->as<OpCheckType>();
         Node* value = node->use(bytecode.m_value);
         unsigned mask = bytecode.m_mask;
         if (value->isKnownToPass(mask)) {
             // Something earlier has seen to it.
+            m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
+            m_sameAs = nullptr;
             return true;
         }
         if (Options::aotTrustsDeclaredTypes()) [[unlikely]] {
@@ -430,7 +448,7 @@ bool Lowering::tryLowerMisc(Node* node)
         emitTypeTests(value, jsValue, mask, continuation, slowPath);
 
         m_out.appendTo(slowPath, continuation);
-        vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, jsValue, m_out.constInt32(mask));
+        coldCall(node, Entry::operationAOTCheckType, jsValue, m_out.constInt32(mask));
         // Where the tests leave nothing open, what gets here is not coming back: and then nothing has to be kept for when it does,
         // which is what would have everything that is in use in a register that has to be saved.
         Type admitted = value->type & typeAdmittedByMask(mask);

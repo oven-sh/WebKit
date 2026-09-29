@@ -247,6 +247,50 @@ static void generateOperation(CCallHelpers& jit, Returns returns, bool withGloba
     callAndCheckException(jit, T11, returns);
 }
 
+static void generateColdOperation(CCallHelpers& jit, bool ofLeaf)
+{
+    constexpr GPRReg fp = GPRInfo::callFrameRegister;
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    constexpr GPRReg scratch = ARM64Registers::x16;
+    if (ofLeaf) {
+        // What its prologue would have done.
+        jit.pushPair(fp, T10);
+        jit.move(sp, fp);
+    }
+    jit.emitFunctionPrologue();
+    constexpr unsigned numberOfGPRs = 16; // x0 to x15
+    constexpr unsigned numberOfFPRs = 24; // d0 to d7, d16 to d31
+    auto fpr = [](unsigned i) { return static_cast<FPRReg>(i < 8 ? ARM64Registers::q0 + i : ARM64Registers::q16 + (i - 8)); };
+    jit.subPtr(TrustedImm32((numberOfGPRs + numberOfFPRs) * 8), sp);
+    for (unsigned i = 0; i < numberOfGPRs; i += 2)
+        jit.storePair64(static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1), sp, TrustedImm32(i * 8));
+    for (unsigned i = 0; i < numberOfFPRs; ++i)
+        jit.storeDouble(fpr(i), Address(sp, (numberOfGPRs + i) * 8));
+    loadInstance(jit, T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
+    jit.call(T11, OperationPtrTag);
+    jit.move(GPRInfo::returnValueGPR, scratch);
+    for (unsigned i = 0; i < numberOfGPRs; i += 2)
+        jit.loadPair64(sp, TrustedImm32(i * 8), static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1));
+    for (unsigned i = 0; i < numberOfFPRs; ++i)
+        jit.loadDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i));
+    jit.emitFunctionEpilogue();
+    Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
+    if (ofLeaf) {
+        jit.move(CCallHelpers::linkRegister, scratch);
+        jit.popPair(fp, CCallHelpers::linkRegister);
+        jit.farJump(scratch, NoPtrTag);
+    } else
+        jit.ret();
+    exception.link(&jit);
+    loadInstance(jit, T9);
+    jumpToEntry(jit, T9, Entry::HandleException);
+}
+static void generateColdOperationVoid(CCallHelpers& jit) { generateColdOperation(jit, false); }
+static void generateColdOperationVoidOfLeaf(CCallHelpers& jit) { generateColdOperation(jit, true); }
+
 static void generateOperationValue(CCallHelpers& jit) { generateOperation(jit, Returns::Value, false); }
 static void generateOperationVoid(CCallHelpers& jit) { generateOperation(jit, Returns::Void, false); }
 static void generateOperationDouble(CCallHelpers& jit) { generateOperation(jit, Returns::Double, false); }
@@ -2544,6 +2588,7 @@ FOR_EACH_AOT_STUB(AOT_NO_STUB)
 static constexpr Stub stubsThatCallOperations[] = {
     Stub::OperationValue, Stub::OperationVoid, Stub::OperationDouble, Stub::OperationValueWithGlobalObject, Stub::OperationVoidWithGlobalObject, Stub::OperationDoubleWithGlobalObject,
     Stub::PlainOperation, Stub::PlainOperationWithGlobalObject, Stub::PlainOperationWithVM,
+    Stub::ColdOperationVoid, Stub::ColdOperationVoidOfLeaf,
 };
 static constexpr Stub stubsThatCallFunctions[] = { Stub::Call, Stub::Construct };
 static constexpr unsigned numberOfCountsWithThunk = numberOfArgumentGPRs + 1; // From none to as many as there are registers for.

@@ -1359,6 +1359,31 @@ void Graph::notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words)
     plans.appendVector(words);
 }
 
+std::optional<TypeTable::Field> Graph::fieldOfStructGotAtBy(const Node* node)
+{
+    if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::areStructsToGoBy() || node->guard)
+        return std::nullopt;
+    uint32_t tag = typeTagOf(node);
+    if (!tag)
+        return std::nullopt;
+    unsigned identifier;
+    if (node->isBytecode(op_get_by_id) && (Options::aotShapes() & 2))
+        identifier = node->as<OpGetById>().m_property;
+    else if (node->isBytecode(op_put_by_id) && (Options::aotShapes() & 4))
+        identifier = node->as<OpPutById>().m_property;
+    else
+        return std::nullopt;
+    return TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(identifier).impl());
+}
+
+uint16_t Graph::familyOfNewObject(const Node* node)
+{
+    if (!Options::aotTypesFields() || !TypeTable::areStructs() || !(Options::aotShapes() & 1))
+        return 0;
+    uint32_t tag = typeTagOf(node);
+    return tag ? TypeTable::shared()->familyOfWhatIsMade(tag) : 0;
+}
+
 std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
 {
     if (node->graph != this)
@@ -1367,7 +1392,7 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
     std::optional<TypeTable::Layout> layout;
     if (uint32_t tag = typeTagOf(node); tag && (Options::aotShapes() & 1) && TypeTable::shared())
         layout = TypeTable::shared()->layoutOf(tag);
-    if ((count < 2 && !layout) || count > KnownShape::maxProperties)
+    if ((count < 2 && !layout && !familyOfNewObject(node)) || count > KnownShape::maxProperties)
         return std::nullopt;
     KnownShape shape;
     shape.inlineCapacity = KnownShape::inlineCapacityFor(count);
@@ -1387,17 +1412,37 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
         shape.names.append(name);
     }
     // (If it is still the literal that was looked at.)
-    if (layout && layout->properties.size() == count && layout->capacity <= JSFinalObject::maxInlineCapacity) {
+    if (layout && layout->properties.size() == count && (layout->family || layout->capacity <= JSFinalObject::maxInlineCapacity)) {
         bool isAsWritten = true;
         for (unsigned i = 0; i < count; ++i)
             isAsWritten &= layout->properties[i].first == shape.names[i];
         if (isAsWritten) {
             shape.number = layout->number;
+            shape.family = layout->family;
+            shape.reserved = layout->family ? layout->capacity : 0;
+            shape.inlineSlots = layout->inlineSlots;
             for (auto& property : layout->properties)
                 shape.slots.append(property.second);
-            shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->capacity);
+            shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->family ? layout->inlineSlots : layout->capacity);
             return shape;
         }
+    }
+    // It is of the family all the same, if it is said to be of one: each property in the slot the family has for its name.
+    if (uint16_t number = familyOfNewObject(node)) {
+        auto family = TypeTable::shared()->family(number);
+        BitVector taken;
+        for (UniquedStringImpl* name : shape.names) {
+            auto* found = family.names.findIf([&](auto& entry) { return entry.name == name; }) != notFound ? &family.names[family.names.findIf([&](auto& entry) { return entry.name == name; })] : nullptr;
+            if (!found || taken.get(found->slot))
+                return std::nullopt;
+            taken.set(found->slot);
+            shape.slots.append(found->slot);
+        }
+        shape.family = number;
+        shape.reserved = family.capacity;
+        shape.inlineSlots = family.inlineSlots;
+        shape.inlineCapacity = KnownShape::inlineCapacityFor(family.inlineSlots);
+        return shape;
     }
     if (count < 2)
         return std::nullopt;
@@ -2197,6 +2242,21 @@ private:
         return TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
     }
 
+    // TypeTable::hasStructs(): the family that the base of the access after the op_type_tag there is said to be of, and where the base is.
+    std::pair<uint16_t, VirtualRegister> familyAssertedAt(unsigned offset)
+    {
+        if (!Options::aotTypesFields() || !TypeTable::areStructs())
+            return { };
+        unsigned next = offset + m_instructions.at(offset)->size();
+        if (next >= m_instructions.size() || !goesByTypeWhereverItIs(next))
+            return { };
+        const JSInstruction* access = m_instructions.at(next).ptr();
+        VirtualRegister base = access->opcodeID() == op_get_by_id ? access->as<OpGetById>().m_base : access->as<OpPutById>().m_base;
+        if (base.isConstant())
+            return { };
+        return { TypeTable::shared()->familyOf(m_graph.typeTagAt(next)), base };
+    }
+
     // Options::aotTypesFields() with one copy of the code: an access that goes by the type of the base does so in a loop as anywhere else, and wants no guard.
     bool goesByTypeWhereverItIs(unsigned offset)
     {
@@ -2873,8 +2933,36 @@ private:
             const JSInstruction* instruction = m_instructions.at(offset).ptr();
             OpcodeID opcode = instruction->opcodeID();
             // (Graph::typeTagAt())
-            if (opcode == op_type_tag)
+            if (opcode == op_type_tag) {
+                // Of structs, it says more than that: what the next instruction gets at is of the family, or this does not go on. From here on whoever has the
+                // value in hand has something that is known for what it was born as, so it is a definition, as a check is.
+                auto [family, baseRegister] = familyAssertedAt(offset);
+                if (!family || !m_graph.isTracked(baseRegister))
+                    continue;
+                Node* base = get(block, baseRegister);
+                Node* node = m_graph.addNode(NodeKind::Bytecode);
+                node->opcode = opcode;
+                node->instruction = instruction;
+                // (If it throws, it is on behalf of that instruction: what it says is what that would have said.)
+                node->bytecodeIndex = BytecodeIndex(offset + instruction->size());
+                node->uses.append({ baseRegister, base });
+                node->firstLayout = node->lastLayout = family;
+                node->reg = baseRegister;
+                append(block, node);
+                for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
+                    if (block->valuesAtTail[index] == base && !m_graph.m_homed.get(index))
+                        block->valuesAtTail[index] = node;
+                }
                 continue;
+            }
+            if (opcode == op_check_type && !isFact(instruction->as<OpCheckType>().m_mask) && (instruction->as<OpCheckType>().m_mask & MaskOtherObject) && !Options::aotAuditsTypes()) {
+                // What comes next lets less by.
+                unsigned next = offset + instruction->size();
+                if (next < block->bytecodeEnd && m_instructions.at(next)->opcodeID() == op_type_tag) {
+                    if (auto [family, base] = familyAssertedAt(next); family && base == instruction->as<OpCheckType>().m_value && m_graph.isTracked(base))
+                        continue;
+                }
+            }
             if (opcode == op_check_type && isFact(instruction->as<OpCheckType>().m_mask)) {
                 // It is taken out here, and nothing further on knows of it but by what it leaves on the node.
                 auto bytecode = instruction->as<OpCheckType>();

@@ -38,6 +38,7 @@ void noteEverySiteOf(Graph&);
 void emitEpilogueBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 // All of that but for letting go of the frame, for Stub::TailCallVarargs.
 void emitRestoreBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
+bool hasNoFrame(const Graph&, B3::Air::Code&); // Once the code is what it is going to be.
 
 void reportStatistics();
 JS_EXPORT_PRIVATE void setOriginForStatistics(ASCIILiteral); // TEMPORARY-PROVABILITY-STATS

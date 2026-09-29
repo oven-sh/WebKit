@@ -56,6 +56,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTFillImportSlot, JSObject*, (JSGlobalObject
 JSC_DECLARE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject*, JSObject* scope, EncodedJSValue value, uint32_t identifierIndex, Slot*, uint32_t how));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrow, void, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject*, EncodedJSValue, uint32_t mask));
+JSC_DECLARE_JIT_OPERATION(operationAOTAssertBornAs, void, (JSGlobalObject*, EncodedJSValue, uint32_t family)); // Lowering::assertBornAs()
+JSC_DECLARE_JIT_OPERATION(operationAOTSettleStruct, void, (JSGlobalObject*, JSObject*)); // Lowering::settleWhatWasBorn()
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject*, EncodedJSValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
 JSC_DECLARE_JIT_OPERATION(operationAOTHandleTraps, void, (JSGlobalObject*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));

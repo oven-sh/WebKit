@@ -427,6 +427,7 @@ private:
 
         // ---- The same thing by another name.
         case op_check_type:
+        case op_type_tag:
         case op_mov:
         case op_to_this:
         case op_to_object:

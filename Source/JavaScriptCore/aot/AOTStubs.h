@@ -127,6 +127,10 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(OperationValueWithGlobalObject) \
     v(OperationVoidWithGlobalObject) \
     v(OperationDoubleWithGlobalObject) \
+    /* Likewise (the global object, then A1 and A2; nothing comes back), for what is hardly ever called: all registers but T9, T10 and the */ \
+    /* assembler's own are as they were. OfLeaf: the caller has no frame, and T10 = where it is to return to. It has one for the while. */ \
+    v(ColdOperationVoid) \
+    v(ColdOperationVoidOfLeaf) \
     v(PlainOperation) \
     v(PlainOperationWithGlobalObject) \
     v(PlainOperationWithVM) \
@@ -248,7 +252,12 @@ struct KnownShape {
     // by that number. If not, the properties are one after the other, and it is given a number.
     uint32_t number { 0 };
     Vector<uint16_t, 8> slots;
-    unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : *std::ranges::max_element(slots) + 1; }
+    // If the layouts are of structs (TypeTable::hasStructs()): the family, and how many slots every object of it has.
+    uint16_t family { 0 };
+    uint16_t reserved { 0 };
+    uint16_t inlineSlots { 0 }; // Slots from that one on are outside the object.
+    bool hasSlotsOutside() const { return family && reserved > inlineSlots; }
+    unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
 
     static constexpr unsigned maxProperties = 1000; // See ImageDispatchEntry.
     static unsigned inlineCapacityFor(unsigned numberOfProperties);

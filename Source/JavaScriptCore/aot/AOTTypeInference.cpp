@@ -247,6 +247,7 @@ private:
 
         // ---- The same thing by another name, if that is what is made of it.
         case op_check_type:
+        case op_type_tag:
         case op_to_this:
         case op_to_object:
         case op_identity_with_profile:
@@ -700,6 +701,10 @@ private:
             auto bytecode = node->as<OpCheckType>();
             return typeOf(bytecode.m_value) & typeAdmittedByMask(bytecode.m_mask);
         }
+        case op_type_tag:
+            if (Options::aotAuditsTypes()) [[unlikely]]
+                return node->uses[0].node->type;
+            return node->uses[0].node->type & typeOfObjectBornAs(node->firstLayout);
         case op_urshift:
             return TInt32; // The bits of the result: the op_unsigned that follows makes the number of them. A BigInt throws.
         case op_unsigned:
@@ -784,9 +789,14 @@ private:
             return TBoolean;
 
         case op_new_object:
+            if (uint16_t family = Graph::familyOfNewObject(node); family && (!node->numberOfLiteralProperties || m_graph.shapeOfLiteral(node)))
+                return typeOfObjectBornAs(family);
             if (Options::aotTypesFields() && node->numberOfLiteralProperties) {
-                if (auto shape = m_graph.shapeOfLiteral(node); shape && shape->number)
+                if (auto shape = m_graph.shapeOfLiteral(node); shape && shape->number) {
+                    if (TypeTable::areStructs())
+                        return shape->family ? typeOfObjectBornAs(shape->family) : TFinalObject;
                     return typeOfObjectBornAs(shape->number);
+                }
             }
             return TFinalObject;
         case op_get_by_id:
@@ -797,11 +807,14 @@ private:
                 return TypeTable::Holds { guard->heldKinds, guard->heldFirst, guard->heldLast }.type() | (guard->firstWithout ? TUndefined : TNone);
             }
             // However it is read, it is that or the code does not go on (Lowering::lowerGetById()).
-            if (Options::aotTypesFields() && !Options::aotAssertsTypes() && (Options::aotShapes() & 2) && !node->guard && TypeTable::shared()) {
+            if (Options::aotTypesFields() && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() && (Options::aotShapes() & 2) && !node->guard && TypeTable::shared()) {
                 if (uint32_t tag = Graph::typeTagOf(node)) {
                     if (auto field = TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); field && field->holds.saysSomething()) {
                         if (!typeOf(node->as<OpGetById>().m_base))
                             return TNone;
+                        // (Of a struct: the slot holds that, and nothing else is looked at.)
+                        if (TypeTable::areStructs())
+                            return field->holds.type() | (field->isOptional ? TUndefined : TNone);
                         return field->holds.kindsOnly().type();
                     }
                 }
