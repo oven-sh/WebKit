@@ -435,6 +435,43 @@ JSValue sequenceConcatenate(JSGlobalObject* globalObject, bool inPlace, JSValue 
     return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, left), "' object can't be concatenated"_s));
 }
 
+// A dict, and what stands for one, have a length and can be subscripted, but as a mapping and not as a sequence.
+static bool isOnlyAMapping(JSGlobalObject* globalObject, JSValue value)
+{
+    return isDict(value) || typeOf(globalObject, value) == globalObject->pyRealm()->typeMappingProxy();
+}
+
+// PySequence_Size()
+int64_t sequenceSize(JSGlobalObject* globalObject, JSValue sequence)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (isOnlyAMapping(globalObject, sequence)) {
+        raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, sequence), " is not a sequence"_s));
+        return -1;
+    }
+    RELEASE_AND_RETURN(scope, length(globalObject, sequence));
+}
+
+// What PySequence_GetItem() looks at before it gets anything
+void checkIsIndexable(JSGlobalObject* globalObject, JSValue sequence)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isOnlyAMapping(globalObject, sequence))
+        raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, sequence), " is not a sequence"_s));
+    else if (!typeOf(globalObject, sequence)->lookup(vm, vm.pythonNames().dunder_getitem))
+        raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, sequence), "' object does not support indexing"_s));
+}
+
+// PySequence_GetItem()
+JSValue sequenceItem(JSGlobalObject* globalObject, JSValue sequence, int64_t index)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    checkIsIndexable(globalObject, sequence);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, getItem(globalObject, sequence, intFromInt64(globalObject, index)));
+}
+
 // PyNumber_Absolute()
 JSValue absolute(JSGlobalObject* globalObject, JSValue value)
 {

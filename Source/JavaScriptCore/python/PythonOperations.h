@@ -446,6 +446,9 @@ JSValue binaryOperation(JSGlobalObject*, BinaryOperator, bool inPlace, JSValue, 
 JSValue unaryOperation(JSGlobalObject*, UnaryOperator, JSValue);
 JSValue absolute(JSGlobalObject*, JSValue); // abs()
 JSValue sequenceConcatenate(JSGlobalObject*, bool inPlace, JSValue, JSValue); // PySequence_Concat() and PySequence_InPlaceConcat()
+int64_t sequenceSize(JSGlobalObject*, JSValue); // PySequence_Size()
+JSValue sequenceItem(JSGlobalObject*, JSValue, int64_t index); // PySequence_GetItem()
+void checkIsIndexable(JSGlobalObject*, JSValue); // What that looks at before it gets anything. It may raise.
 JSValue compare(JSGlobalObject*, ComparisonOperator, JSValue, JSValue);
 bool isTrue(JSGlobalObject*, JSValue);
 bool isEqual(JSGlobalObject*, JSValue, JSValue); // x is y or x == y, which is what containers ask.

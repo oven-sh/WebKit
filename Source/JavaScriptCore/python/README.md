@@ -796,6 +796,14 @@ The dict is one that no program sees, and it is asked with a hash that is known 
 
 `partial(p, ...)` is of what `p` is of only if `p` has no `__dict__` yet, and asking for that makes one. Here that is whether the object has any properties.
 
+### `_heapq` and `_bisect`
+
+`PythonHeapqModule.cpp` is `Modules/_heapqmodule.c` and `PythonBisectModule.cpp` is `Modules/_bisectmodule.c`. Both are gone about just as they are there, since which things are compared with which, and in what order, is
+something that a program can see: after each comparison the list is looked at again, and how long it is; a heap of more than 2500 is made in another order than a smaller one; and what is of the same class as what is looked for is
+compared by asking the class outright, until it has nothing to say. The two kinds of heap are one template.
+
+`_heapq.__about__` is four thousand characters of prose, and is not all ASCII. It comes from CPython with the signatures and the docstrings, in a table of its own: `findModuleText()`.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see

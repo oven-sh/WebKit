@@ -82,6 +82,15 @@ const BuiltinDescription* findAttributeDescription(StringView type, StringView a
 const BuiltinDescription* findModuleDescription(StringView module) { return find(module, ':', { }); }
 const BuiltinDescription* findFunctionDescription(StringView module, StringView function) { return find(module, ':', function); }
 
+String findModuleText(ASCIILiteral key)
+{
+    for (auto& text : s_builtinTexts) {
+        if (text.key == key)
+            return String::fromUTF8(text.utf8);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
 // ---- Signatures
 
 NativeSignature::NativeSignature(ASCIILiteral text)

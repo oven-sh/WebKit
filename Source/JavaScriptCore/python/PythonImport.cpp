@@ -262,6 +262,8 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_abc"_s, createABCModule },
     { "_operator"_s, createOperatorModule },
     { "_functools"_s, createFunctoolsModule },
+    { "_heapq"_s, createHeapqModule },
+    { "_bisect"_s, createBisectModule },
     { "_tokenize"_s, createTokenizeModule },
     { "_io"_s, createIOModule },
     { "_thread"_s, createThreadModule },
@@ -784,19 +786,6 @@ JSValue importFrom(JSGlobalObject* globalObject, JSValue module, JSValue name)
     asObject(error)->putDirect(vm, names.field_nameFrom, name);
     throwException(globalObject, scope, error);
     return { };
-}
-
-// PySequence_GetItem()
-static JSValue sequenceItem(JSGlobalObject* globalObject, JSValue sequence, int64_t index)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PyType* type = typeOf(globalObject, sequence);
-    if (isDict(sequence) || type == globalObject->pyRealm()->typeMappingProxy())
-        return raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, sequence), " is not a sequence"_s));
-    if (!type->lookup(vm, vm.pythonNames().dunder_getitem))
-        return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, sequence), "' object does not support indexing"_s));
-    RELEASE_AND_RETURN(scope, getItem(globalObject, sequence, intFromInt64(globalObject, index)));
 }
 
 void importAllFrom(JSGlobalObject* globalObject, JSValue locals, JSValue module)

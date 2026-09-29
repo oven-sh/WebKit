@@ -779,6 +779,7 @@ python/PythonContainerTypes.cpp
 python/PythonDictViews.cpp
 python/PythonExceptionTypes.cpp
 python/PythonFunctoolsModule.cpp
+python/PythonHeapqModule.cpp
 python/PythonGenerators.cpp
 python/PythonGenericAlias.cpp
 python/PythonIterators.cpp
@@ -789,6 +790,7 @@ python/PythonLocale.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
 python/PythonBinasciiModule.cpp
+python/PythonBisectModule.cpp
 python/PythonBufferedIO.cpp
 python/PythonBytesIO.cpp
 python/PythonFileIO.cpp
