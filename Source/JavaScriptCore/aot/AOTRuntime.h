@@ -17,6 +17,7 @@
 #include "ExecutableAllocator.h"
 #include "ImmutableIntrinsics.h"
 #include "JITCode.h"
+#include "LinkTimeConstant.h"
 #include "Opcode.h"
 #include "RegisterAtOffsetList.h"
 #include "StructureID.h"
@@ -93,6 +94,27 @@ namespace AOT {
     v(operationAOTPow) \
     v(operationAOTDoubleToInt32) \
     FOR_EACH_AOT_OBJECT_OPERATION(v) \
+    FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
+
+// What the DFG and the FTL call for a method whose receiver and arguments they know the types of (DirectMethod).
+#define FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
+    v(operationStringStartsWith) \
+    v(operationStringStartsWithWithIndex) \
+    v(operationStringEndsWith) \
+    v(operationStringEndsWithWithEndPosition) \
+    v(operationStringIndexOf) \
+    v(operationStringIndexOfWithIndex) \
+    v(operationStringLastIndexOf) \
+    v(operationStringSlice) \
+    v(operationStringSliceWithEnd) \
+    v(operationStringSubstring) \
+    v(operationStringSubstringWithEnd) \
+    v(operationStringTrim) \
+    v(operationStringTrimStart) \
+    v(operationStringTrimEnd) \
+    v(operationToLowerCase) \
+    v(operationToUpperCase) \
+    v(operationStringLocaleCompare) \
 
 #define FOR_EACH_AOT_THUNK(v) \
     v(HandleException) \
@@ -364,6 +386,7 @@ struct Instance {
     // that does not have it either. This looks at what that has now, if it is not what it had when this last looked.
     void lookAtObjectPrototype();
     static constexpr ptrdiff_t offsetOfIntrinsics() { return OBJECT_OFFSETOF(Instance, intrinsics); }
+    static constexpr ptrdiff_t offsetOfLinkTimeConstants() { return OBJECT_OFFSETOF(Instance, linkTimeConstants); }
     static constexpr ptrdiff_t offsetOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, objectPrototype); }
     static constexpr ptrdiff_t offsetOfStructureIDOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, structureIDOfObjectPrototype); }
     static constexpr ptrdiff_t offsetOfSelectorsOnObjectPrototype() { return OBJECT_OFFSETOF(Instance, selectorsOnObjectPrototype); }
@@ -402,7 +425,7 @@ struct Instance {
     uint64_t allocationCounts[numberOfAllocationCounts] { };
     static constexpr ptrdiff_t offsetOfAllocationCounts() { return OBJECT_OFFSETOF(Instance, allocationCounts); }
     // TEMPORARY-SHAPE-COUNTS: likewise. What became of the accesses that go by a type.
-    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, NumberOfShapeCounts };
+    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, AssertionMade, ServedWithoutAssertion, ExitTaken, AssertionRepeated, NumberOfShapeCounts };
     uint64_t shapeCounts[NumberOfShapeCounts] { };
     uint64_t readsForReason[1024] { };
     static constexpr ptrdiff_t offsetOfReadsForReason() { return OBJECT_OFFSETOF(Instance, readsForReason); }
@@ -418,6 +441,8 @@ struct Instance {
     uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
     // The realm's (JSGlobalObject::immutableIntrinsics()), where code gets at them with one load.
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
+    // The realm's (JSGlobalObject::linkTimeConstant()), which keeps them: those that code has asked for. It makes each when it is first wanted. Zero: not yet.
+    EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     // By the index of the function. Reading one is enough to have the page it is on, so they are small.
     //     Less than leastStateWithData: it has no Data of its own (SharedData). The low half is how often a slot has failed it, and
     //     isLinkedWithoutData whether it has been linked in this realm: one that only those call who know what they are calling need not be.

@@ -786,6 +786,9 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
         for (unsigned i = 0; i < numbersOfConstants->size(); ++i) {
             JSValue value = codeBlock->constantRegisters()[i].get();
             uint32_t number = numbersOfConstants->at(i);
+            // (What says which of the realm's things is meant is not read as a constant: AOT::NodeKind::LinkTimeConstant.)
+            if (codeBlock->constantsSourceCodeRepresentation()[i] == SourceCodeRepresentation::LinkTimeConstant)
+                value = JSValue();
             RELEASE_ASSERT(!value == (number == AOT::notAConstantOfProgram));
             if (!value)
                 continue;

@@ -632,6 +632,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
 {
     Type type = static_cast<Type>(highHalfOfType) << 64 | lowHalfOfType;
     Type actual = typeOfValue(JSValue::decode(encodedValue));
+    // What it was born as.
+    if (actual & TFinalObjectTag)
+        actual = (actual & ~TFinalObject) | typeOfObjectBornAs(JSValue::decode(encodedValue).asCell()->structure()->bornAs());
     // Which function it is, if it is one of the program's.
     if (actual & TFunctionTag) {
         if (auto* function = dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()); function && !function->isHostFunction()) {

@@ -8,6 +8,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTRuntime.h"
 #include "ImmutableIntrinsics.h"
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
@@ -198,6 +199,50 @@ unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name)
     if (!number || !intrinsics->at(number).isCell)
         return 0;
     return intrinsics->at(number).canonical;
+}
+
+namespace {
+using Takes = DirectMethod::Takes;
+using Returns = DirectMethod::Returns;
+#define AOT_ENTRY(name) static_cast<uint16_t>(Entry::name)
+const DirectMethod directMethods[] = {
+    { "startsWith"_s, Takes::String, Returns::Boolean, AOT_ENTRY(operationStringStartsWith) },
+    { "startsWith"_s, Takes::StringAndInt32, Returns::Boolean, AOT_ENTRY(operationStringStartsWithWithIndex) },
+    { "endsWith"_s, Takes::String, Returns::Boolean, AOT_ENTRY(operationStringEndsWith) },
+    { "endsWith"_s, Takes::StringAndInt32, Returns::Boolean, AOT_ENTRY(operationStringEndsWithWithEndPosition) },
+    { "indexOf"_s, Takes::String, Returns::Int32, AOT_ENTRY(operationStringIndexOf) },
+    { "indexOf"_s, Takes::StringAndInt32, Returns::Int32, AOT_ENTRY(operationStringIndexOfWithIndex) },
+    { "includes"_s, Takes::String, Returns::WhetherIndex, AOT_ENTRY(operationStringIndexOf) },
+    { "includes"_s, Takes::StringAndInt32, Returns::WhetherIndex, AOT_ENTRY(operationStringIndexOfWithIndex) },
+    { "lastIndexOf"_s, Takes::String, Returns::Int32, AOT_ENTRY(operationStringLastIndexOf) },
+    { "slice"_s, Takes::Int32, Returns::String, AOT_ENTRY(operationStringSlice) },
+    { "slice"_s, Takes::Int32AndInt32, Returns::String, AOT_ENTRY(operationStringSliceWithEnd) },
+    { "substring"_s, Takes::Int32, Returns::String, AOT_ENTRY(operationStringSubstring) },
+    { "substring"_s, Takes::Int32AndInt32, Returns::String, AOT_ENTRY(operationStringSubstringWithEnd) },
+    { "trim"_s, Takes::Nothing, Returns::String, AOT_ENTRY(operationStringTrim) },
+    { "trimStart"_s, Takes::Nothing, Returns::String, AOT_ENTRY(operationStringTrimStart) },
+    { "trimEnd"_s, Takes::Nothing, Returns::String, AOT_ENTRY(operationStringTrimEnd) },
+    // (They are told how far somebody has looked already.)
+    { "toLowerCase"_s, Takes::NothingAndZero, Returns::String, AOT_ENTRY(operationToLowerCase) },
+    { "toUpperCase"_s, Takes::NothingAndZero, Returns::String, AOT_ENTRY(operationToUpperCase) },
+    { "localeCompare"_s, Takes::String, Returns::Int32, AOT_ENTRY(operationStringLocaleCompare) },
+};
+#undef AOT_ENTRY
+}
+
+unsigned directMethodOfStrings(const StringImpl& name, unsigned argumentCountIncludingThis)
+{
+    for (unsigned i = 0; i < std::size(directMethods); ++i) {
+        if (directMethods[i].argumentCountIncludingThis() == argumentCountIncludingThis && WTF::equal(&name, directMethods[i].name.span8()))
+            return i + 1;
+    }
+    return 0;
+}
+
+const DirectMethod& directMethod(unsigned number)
+{
+    RELEASE_ASSERT(number && number <= std::size(directMethods));
+    return directMethods[number - 1];
 }
 
 } } // namespace JSC::AOT

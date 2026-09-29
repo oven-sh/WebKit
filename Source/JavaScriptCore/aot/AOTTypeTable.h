@@ -36,6 +36,16 @@ public:
     JS_EXPORT_PRIVATE static void load(VM&);
     static const TypeTable* shared(); // Null: there is none.
 
+    // What is ever put in a slot, as far as whoever checked the types could tell.
+    struct Holds {
+        static constexpr uint32_t anything = 1u << 30;
+        uint32_t kinds { anything }; // The bits of a check (SoundTypeMask).
+        // If it is an object that a literal or a constructor of the program makes: the layouts it may have been born as. 0, 0: any.
+        uint16_t first { 0 };
+        uint16_t last { 0 };
+        bool saysSomething() const { return !(kinds & anything); }
+    };
+
     struct Field {
         uint16_t slot;
         bool isOptional;
@@ -45,6 +55,7 @@ public:
         uint16_t firstWithout;
         uint16_t lastWithout;
         uint32_t type;
+        Holds holds;
     };
     // Of a type that is a shape, if there are layouts that have it in a slot.
     std::optional<Field> fieldOf(uint32_t type, UniquedStringImpl* name) const;
@@ -53,6 +64,7 @@ public:
         uint32_t number { 0 };
         unsigned capacity { 0 }; // One more than the last slot.
         Vector<std::pair<UniquedStringImpl*, uint16_t>, 8> properties; // In the order they are added in.
+        Vector<Holds, 8> holds; // Likewise.
     };
     // Of a type that says what a literal is made as.
     std::optional<Layout> layoutOf(uint32_t type) const;
@@ -66,7 +78,8 @@ public:
 
 private:
     enum Kind : uint32_t { Tags = 1, Shape, Array, Union, IsLayout };
-    static constexpr unsigned wordsOfField = 7;
+    static constexpr unsigned wordsOfField = 9;
+    static constexpr unsigned wordsOfPropertyOfLayout = 4;
 
     std::span<const uint32_t> record(uint32_t type) const
     {

@@ -506,6 +506,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject* glob
 }
 
 // op_new_reg_exp_shared. cache->pointer: the object that does for the site, which the code looks for before it comes here.
+// TEMPORARY-SHAPE-COUNTS: how often something is tested that has passed the same test before. (Roughly: what is at an address may be something new.)
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteAssertion, void, (Instance* instance, EncodedJSValue value, uint32_t layouts))
+{
+    static NeverDestroyed<UncheckedKeyHashSet<uint64_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>> seen;
+    if (seen->size() > 200000)
+        seen->clear();
+    JSValue decoded = JSValue::decode(value);
+    if (!decoded || !decoded.isCell())
+        return;
+    if (!seen->add((static_cast<uint64_t>(value) << 20) ^ layouts).isNewEntry)
+        instance->shapeCounts[Instance::AssertionRepeated]++;
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance* instance, uint32_t which))
+{
+    EncodedJSValue result = JSValue::encode(instance->globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(which)));
+    instance->linkTimeConstants[which] = result;
+    return result;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalObject* globalObject, JSCell* cell, uint32_t forTest, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);

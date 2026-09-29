@@ -33,6 +33,7 @@
 #include "CCallHelpers.h"
 #include "CallLinkInfo.h"
 #include "CodeBlock.h"
+#include "DFGOperations.h"
 #include "JITOperations.h"
 #include "JITThunks.h"
 #include "JSCInlines.h"
@@ -91,6 +92,7 @@ void* nearCallTargetFor(void* code)
 
 RuntimeTable::RuntimeTable(VM& vm)
 {
+    using namespace DFG; // FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS
 #define AOT_FILL_OPERATION(name) \
     m_entries[static_cast<unsigned>(Entry::name)] = tagCFunctionPtr<void*, OperationPtrTag>(name);
     FOR_EACH_AOT_OPERATION(AOT_FILL_OPERATION)
@@ -460,11 +462,9 @@ bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesWil
     auto& constants = unlinkedCodeBlock->constantRegisters();
     auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
     for (unsigned i = 0; i < constants.size(); ++i) {
-        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant) {
-            if (intrinsicForLinkTimeConstant(constants[i].get()))
-                continue;
-            return false;
-        }
+        // (Code has those from the Instance: NodeKind::LinkTimeConstant.)
+        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
+            continue;
         JSValue constant = constants[i].get();
         if (!constant || !constant.isCell())
             continue;
@@ -661,7 +661,7 @@ static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
     BytecodeIndex bytecodeIndex = CallSiteIndex(PackedSite::bits(site)).bytecodeIndex();
     if (!frame)
         return { function, bytecodeIndex, 0 };
-    return { FunctionRef { function.instance, inlineFrameOf(record, frame).function }, bytecodeIndex, frame };
+    return { FunctionRef { function.instance, inlineFrameOf(record, frame).function }, bytecodeIndex, frame, false, PackedSite::isOfTailCall(site) };
 }
 
 FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
@@ -1351,7 +1351,7 @@ void Instance::dumpSlotStatistics(PrintStream& out)
     for (unsigned i = 0; i < numberOfBuckets; ++i)
         out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
     {
-        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s };
+        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s, "assertion made"_s, "access served with no assertion"_s, "exit taken"_s, "assertion of what had passed the same before"_s };
         for (unsigned i = 0; i < NumberOfShapeCounts; ++i) {
             if (shapeCounts[i])
                 out.println("SHAPECOUNT\t", shapeCounts[i], "\t", names[i]);

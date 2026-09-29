@@ -382,10 +382,6 @@ private:
         }
         case op_unsigned:
             return Range::of(0, UINT32_MAX);
-        case op_call:
-            if (node->guard && m_graph.intrinsicOfCall(node) == CallIntrinsic::StringCharCodeAt)
-                return Range::of(0, UINT16_MAX);
-            return byType(node);
         case op_get_by_val:
             {
                 if (auto type = Graph::typedArrayAccessed(node)) {
@@ -420,6 +416,20 @@ private:
             return byType(node);
         case op_argument_count:
             return Range::of(0, INT32_MAX);
+        case op_call: {
+            if (node->guard && m_graph.intrinsicOfCall(node) == CallIntrinsic::StringCharCodeAt)
+                return Range::of(0, UINT16_MAX);
+            // @toLength() of an integer: what it is, or zero.
+            auto bytecode = node->as<OpCall>();
+            if (bytecode.m_argc != 2 || Graph::linkTimeConstantOf(node->use(bytecode.m_callee)) != LinkTimeConstant::toLength)
+                return byType(node);
+            Range argument = rangeOf(VirtualRegister(-static_cast<int>(bytecode.m_argv) + CallFrame::thisArgumentOffset() + 1));
+            if (argument.isNone())
+                return Range::none();
+            if (!argument.isKnown())
+                return byType(node);
+            return Range::of(std::max<int64_t>(argument.min, 0), std::max<int64_t>(argument.max, 0));
+        }
         case op_get_length: {
             // In the fast copy of a loop, all that gets past the guard is a length that is an int32.
             Type base = node->use(node->as<OpGetLength>().m_base)->type;

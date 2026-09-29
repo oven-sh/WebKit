@@ -14,6 +14,7 @@
 #include "BytecodeStructs.h"
 #include "CallFrame.h"
 #include "Instruction.h"
+#include "LinkTimeConstant.h"
 #include "GetPutInfo.h"
 #include "Opcode.h"
 #include "ScopeOffset.h"
@@ -54,8 +55,9 @@ struct KnownFunction;
 enum class NodeKind : uint8_t {
     Bytecode, // An instruction. Defines at most one register, or several through Proj nodes.
     Constant, // A value known now: anything that is not a cell.
-    ConstantCell, // A constant register that holds a cell or a link time constant: loaded from the CodeBlock.
+    ConstantCell, // A constant register that holds a cell: loaded from the CodeBlock.
     Intrinsic, // One of the realm's ImmutableIntrinsics that is a cell: loaded from the Instance.
+    LinkTimeConstant, // What the realm has for one of the things only the engine's own functions can name (`intrinsic` says which). It is made when it is first wanted, so this is where it is read.
     Argument, // The value an argument register has on entry.
     Phi,
     Proj, // One of the registers defined by an instruction that defines several. uses[0] is the instruction.
@@ -86,6 +88,10 @@ enum class GuardKind : uint8_t {
     KnownCallee, // That the callee (uses[0]) is a closure of the function that the call was compiled for (Graph::knownCallee()).
     TypedArrayStorage, // That the typed array (uses[0]) is of a fixed length. It is where the length and the storage are loaded.
     IsIntrinsic, // That uses[0] is the one of the realm's ImmutableIntrinsics that Node::intrinsic says. Made by inlineCalls().
+    // Options::aotAssertsTypes(). Of an op_get_by_id or an op_put_by_id whose base has a type (TypeTable): that the base was born with the property in
+    // Node::slotOfField (as one of firstLayout to lastLayout), and that it is still there. It does what the instruction does. After
+    // it the base is known for what it was born as (a Narrow with narrowedTo), so the next one has that much less to see to.
+    Field,
 };
 
 // What a constructor does first, as a rule, is give the new object its properties:
@@ -210,9 +216,29 @@ struct Node {
     Node* guard { nullptr }; // An instruction that is only got to when this has found that there is a short way to do it.
     Node* guarded { nullptr }; // The other way round.
     Node* target { nullptr }; // NodeKind::Narrow: the phi of the loop's header that the value is on its way to.
+    Type narrowedTo { TNone }; // NodeKind::Narrow, if there is no target: what a GuardKind::Field found the value to be.
+    uint16_t slotOfField { 0 }; // GuardKind::Field
+    uint16_t firstLayout { 0 }; // Likewise, and the Narrow that comes after it.
+    uint16_t lastLayout { 0 };
+    // Whether the value is certain to have been born as one of those: by its type, or because it is what got past a test for no more than those.
+    bool isKnownToBeBornWithin(uint16_t first, uint16_t last) const
+    {
+        if (type && isSubtype(type, TFinalObject)) {
+            auto layouts = layoutsBornAs(type);
+            if (layouts.lowest >= first && layouts.highest <= last)
+                return true;
+        }
+        for (const Node* node = this; node->kind == NodeKind::Narrow && node->narrowedTo; node = node->uses[0].node) {
+            if (node->firstLayout >= first && node->lastLayout <= last)
+                return true;
+        }
+        return false;
+    }
     unsigned expectedMask { 0 }; // op_get_by_val: the mask of the op_check_type that what it gets goes to next, if it does.
     GuardKind guardKind { GuardKind::Whole };
     uint16_t intrinsic { 0 }; // NodeKind::Intrinsic: its number.
+    // A call: the DirectMethod that it is a call of if what it is made on is a string, and what it is passed what that takes. The read of what is called: likewise.
+    uint8_t directMethod { 0 };
     bool structureIsChecked { false }; // A guard of a property access: another guard has seen to the base's structure.
     bool slotIsPlain { false }; // Likewise: another guard has seen to that.
     bool calleeIsChecked { false };
@@ -481,6 +507,7 @@ public:
     uint32_t distanceOfEnvironmentOfModule();
     // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
     void elideReadsOfCalleesNotPassed();
+    void findDirectMethods(); // Node::directMethod. Once the types are known.
     // See ProgramFacts.
     void noteUsesOfProvenFunctions(const FactsOfExecutables&);
     // f(a, ...b), f.apply(o, arguments): what the callee is passed is put together from where it is (Stub::CallVarargs, Stub::CallList).
@@ -490,6 +517,8 @@ public:
     void findListsOfArguments();
     // The list, if the node is a call that takes one and takes all of it.
     static Node* listOfArgumentsOf(const Node*);
+    // One of the things that only the engine's own functions can name, and that nobody can put anything else in the place of.
+    static std::optional<LinkTimeConstant> linkTimeConstantOf(const Node*);
     // An op_get_from_scope or an op_put_to_scope: how far below the Instance the environment is that has the variable, if it is
     // one of a module, whose place is known (ImageEnvironment::distance). Then the scope that the instruction names is not needed.
     std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);

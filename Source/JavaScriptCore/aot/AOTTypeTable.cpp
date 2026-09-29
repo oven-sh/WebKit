@@ -41,7 +41,7 @@ void TypeTable::load(VM& vm)
         at += 4;
         return result;
     };
-    RELEASE_ASSERT(word() == 2);
+    RELEASE_ASSERT_WITH_MESSAGE(word() == 3, "The table of types is of another version");
     auto table = makeUnique<TypeTable>();
     for (uint32_t count = word(); count--;) {
         uint32_t length = word();
@@ -59,7 +59,7 @@ void TypeTable::load(VM& vm)
     for (uint32_t count = word(); count--;) {
         table->m_layouts.append(here());
         word();
-        at += word() * 2 * 4;
+        at += word() * wordsOfPropertyOfLayout * 4;
     }
     table->m_types.append(0);
     for (uint32_t count = word(); count--;) {
@@ -84,7 +84,7 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
         if ((bits & 4) || !field[2])
             return std::nullopt;
         bool isInherited = m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; });
-        return Field { static_cast<uint16_t>(field[1]), !!(bits & 1), safeCast<uint16_t>(field[2]), safeCast<uint16_t>(field[3]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[4]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[5]), field[6] };
+        return Field { static_cast<uint16_t>(field[1]), !!(bits & 1), safeCast<uint16_t>(field[2]), safeCast<uint16_t>(field[3]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[4]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[5]), field[6], Holds { field[7], static_cast<uint16_t>(field[8] >> 16), static_cast<uint16_t>(field[8]) } };
     }
     return std::nullopt;
 }
@@ -98,8 +98,11 @@ std::optional<TypeTable::Layout> TypeTable::layoutOf(uint32_t type) const
     result.number = words[1];
     auto layout = m_words.span().subspan(m_layouts[result.number]);
     result.capacity = layout[0];
-    for (unsigned i = 0; i < layout[1]; ++i)
-        result.properties.append({ m_names[layout[2 + i * 2]].impl(), safeCast<uint16_t>(layout[3 + i * 2]) });
+    for (unsigned i = 0; i < layout[1]; ++i) {
+        auto property = layout.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+        result.properties.append({ m_names[property[0]].impl(), safeCast<uint16_t>(property[1]) });
+        result.holds.append(Holds { property[2], static_cast<uint16_t>(property[3] >> 16), static_cast<uint16_t>(property[3]) });
+    }
     return result;
 }
 

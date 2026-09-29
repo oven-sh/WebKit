@@ -151,6 +151,17 @@ constexpr NumbersOnRails numbersOnRails(Type type, unsigned firstBit, unsigned b
 // Functions and layouts are numbered from 1.
 constexpr Type typeOfFunction(uint32_t number) { return TFunctionTag | numberOnRails(number, firstBitOfFunctionNumber, bitsOfFunctionNumber); }
 constexpr Type typeOfObjectBornAs(uint32_t layout) { return TFinalObjectTag | numberOnRails(layout, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
+// One of first to last. (And, as it may be, some others: what the two have in common, from the top bit down, is all that can be said.)
+constexpr Type typeOfObjectBornWithin(uint32_t first, uint32_t last)
+{
+    Type result = TFinalObjectTag;
+    bool differ = false;
+    for (unsigned i = bitsOfLayoutNumber; i--;) {
+        differ |= (first >> i & 1) != (last >> i & 1);
+        result |= Type(differ ? 3 : first >> i & 1 ? 2 : 1) << (firstBitOfLayoutNumber + 2 * i);
+    }
+    return result;
+}
 // The one function that the value is, if it is a function. Zero: there is no telling.
 constexpr uint32_t functionThatIs(Type type)
 {

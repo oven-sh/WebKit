@@ -70,6 +70,7 @@ void reportShapeStatistics()
     dataLogLn("AOT: sites that go by a type: ", s_shapeSites[Instance::ReadHas].load(), " reads (", s_shapeSites[Instance::ReadLacks].load(), " of which also know what lacks it) of ", s_shapeSites[Instance::ReadHas].load() + s_shapeSites[Instance::ReadUntyped].load(),
         ", ", s_shapeSites[Instance::WriteHas].load(), " writes of ", s_shapeSites[Instance::WriteHas].load() + s_shapeSites[Instance::WriteUntyped].load(),
         "; ", s_shapeSites[Instance::LiteralWithLayout].load(), " literals of ", s_shapeSites[Instance::LiteralWithLayout].load() + s_shapeSites[Instance::LiteralWithout].load());
+    dataLogLn("AOT: accesses in first copies: ", s_shapeSites[Instance::AssertionMade].load(), " test what the object was born as, ", s_shapeSites[Instance::ServedWithoutAssertion].load(), " know");
 }
 void noteShapeSite(Instance::ShapeCount which) { s_shapeSites[which].fetch_add(1, std::memory_order_relaxed); }
 
@@ -102,7 +103,32 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
-    if (auto field = (Options::aotShapes() & 2) ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+    // A string has what String.prototype has, which is what that had to begin with. (Graph::findDirectMethods(): it may well be one.)
+    if (unsigned method = std::exchange(node->directMethod, 0)) {
+        unsigned number = intrinsicFoundOnPrimitive(TString, *node->graph->codeBlock()->identifier(bytecode.m_property).impl());
+        RELEASE_ASSERT(number);
+        LValue ofStrings = m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[number]);
+        if (isSubtype(baseNode->type, TString)) {
+            setJSValue(node, ofStrings);
+            node->directMethod = method;
+            return;
+        }
+        LBasicBlock otherwise = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue isString = isCellAnd(baseNode, lowJSValue(baseNode), [&](LValue cell) { return isCellOfType(cell, StringType); });
+        ValueFromBlock quick = m_out.anchor(ofStrings);
+        m_out.branch(isString, unsure(continuation), unsure(otherwise));
+        m_out.appendTo(otherwise);
+        lowerGetById(node);
+        ValueFromBlock found = m_out.anchor(lowJSValue(node));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, quick, found));
+        node->directMethod = method;
+        return;
+    }
+    // (With Options::aotAssertsTypes() that is for the guards of the first copy. What gets here is the other.)
+    if (auto field = (Options::aotShapes() & 2) && !Options::aotAssertsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         // An object that a literal of the program made says how it is laid out, and the type says which layouts have the property, and
         // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
         LValue base = lowJSValue(baseNode);
@@ -234,7 +260,7 @@ void Lowering::lowerPutById(Node* node)
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
-    if (auto field = (Options::aotShapes() & 4) ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+    if (auto field = (Options::aotShapes() & 4) && !Options::aotAssertsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock has = m_out.newBlock();

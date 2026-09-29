@@ -37,7 +37,8 @@ public:
         // (What is taken over comes after what there is, so what it calls gets its turn.)
         for (unsigned i = 0; i < m_graph.blocks.size(); ++i) {
             BasicBlock* block = m_graph.blocks[i].get();
-            if (!block->isReachable || block->isGeneric)
+            // (Where a call is made after all, it is made.)
+            if (!block->isReachable || block->isGeneric || block->isSeldomReached)
                 continue;
             for (unsigned index = 0; index < block->nodes.size(); ++index) {
                 // (The rest of the block is another block from then on, which comes later.)
@@ -123,7 +124,6 @@ public:
             case op_create_scoped_arguments:
             case op_create_cloned_arguments:
             case op_create_rest:
-            case op_argument_count:
                 return false;
             default:
                 break;
@@ -182,6 +182,11 @@ private:
         UnlinkedFunctionCodeBlock* callee = nullptr;
         Node* scopeOfClosure = nullptr;
         unsigned intrinsicToCheckFor = 0;
+        // Options::aotVerbose(): why one of the engine's own functions does not become part of its caller.
+        auto notTaken = [&](ASCIILiteral why) {
+            dataLogLnIf(Options::aotVerbose(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
+            return false;
+        };
         if (calleeNode->isBytecode(op_new_func_exp)) {
             // The closure is made here, so what it closes over is at hand.
             auto bytecode = calleeNode->as<OpNewFuncExp>();
@@ -192,7 +197,7 @@ private:
         } else if (unsigned intrinsic = methodOfArraysThatMayWellBeCalled(call, calleeNode, argc, argv)) {
             callee = m_program.codeOfBuiltin(ImmutableIntrinsics::shared()->at(intrinsic).builtinCode - 1);
             if (!callee || readsCallee(callee))
-                return false;
+                return notTaken(callee ? "it reads its callee"_s : "there is no code for it"_s);
             intrinsicToCheckFor = ImmutableIntrinsics::shared()->at(intrinsic).canonical;
         } else {
             bool isProven = false;
@@ -203,15 +208,17 @@ private:
         }
         auto about = m_program.about(callee);
         // (A closure that is called where it is made is as good as called from one place.)
+        if (intrinsicToCheckFor && (!about || !canBePartOfAnother(callee)))
+            return notTaken(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
         if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isWorthIt(callee, about->facts)))
-            return false;
+            return intrinsicToCheckFor ? notTaken("it is too big"_s) : false;
         if (m_sizeTakenOver + callee->instructionsSize() > Options::aotInlinesAtMost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
-            return false;
+            return intrinsicToCheckFor ? notTaken("the caller has taken over enough"_s) : false;
         unsigned depth = 0;
         for (unsigned frame = caller.inlineFrame(); frame; frame = m_graph.inlineFrames[frame].parent)
             ++depth;
         if (depth >= deepest || m_graph.codeBlock() == callee)
-            return false;
+            return intrinsicToCheckFor ? notTaken("it is too deep"_s) : false;
         for (Graph* graph : m_chain(caller)) {
             if (graph->codeBlock() == callee)
                 return false;
@@ -225,7 +232,7 @@ private:
         if (!scopeOfClosure && !intrinsicToCheckFor && (inlinee->needsFunctionObject() || !inlinee->scopeIsEnvironmentOfModule()))
             return false;
         if (!parseBytecode(*inlinee) || !inlinee->catchEntrypoints.isEmpty() || inlinee->hasHomedRegisters())
-            return false;
+            return intrinsicToCheckFor ? notTaken("its bytecode is not parsed, or it catches, or it has registers with homes"_s) : false;
 
         // Where it returns, and what.
         Vector<std::pair<BasicBlock*, Node*>, 4> returns;
@@ -238,20 +245,21 @@ private:
                 returns.append({ itsBlock, terminal->use(terminal->as<OpRet>().m_value) });
         }
         if (returns.isEmpty())
-            return false;
+            return intrinsicToCheckFor ? notTaken("it never returns"_s) : false;
         // (One of the engine's own has no use for the scope it was made in: there is nothing there.)
         if (intrinsicToCheckFor) {
             for (BasicBlock* itsBlock : inlinee->m_rpo) {
                 for (Node* node : itsBlock->nodes) {
                     for (auto& use : node->uses) {
                         if (use.node->isBytecode(op_get_scope))
-                            return false;
+                            return notTaken("it uses its scope"_s);
                     }
                 }
             }
         }
 
         // ---- Nothing is in the way.
+        dataLogLnIf(Options::aotVerbose() && intrinsicToCheckFor, "AOT: a builtin is made part of its caller at bc#", call->bytecodeIndex.offset());
         m_didInline = true;
         m_sizeTakenOver += callee->instructionsSize();
         m_parents.add(inlinee.get(), &caller);
@@ -259,9 +267,18 @@ private:
 
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         BasicBlock* entry = inlinee->root;
+        // (What it is called as is at hand, or nothing reads it: a copy that goes by the function's name and is never looked at.)
+        auto isReadOfCallee = [&](Node* node) {
+            if (node->kind != NodeKind::Argument || node->reg != VirtualRegister(CallFrameSlot::callee))
+                return false;
+            node->replacement = calleeNode;
+            return true;
+        };
         entry->nodes.removeAllMatching([&](Node* node) {
             if (node->kind != NodeKind::Argument)
                 return false;
+            if (isReadOfCallee(node))
+                return true;
             RELEASE_ASSERT(node->reg.isArgument());
             unsigned argument = node->reg.toArgument();
             node->replacement = argument < argc ? call->use(VirtualRegister(firstArgument + static_cast<int>(argument))) : m_graph.constant(jsUndefined());
@@ -269,11 +286,18 @@ private:
         });
         for (BasicBlock* itsBlock : inlinee->m_rpo) {
             itsBlock->nodes.removeAllMatching([&](Node* node) {
+                if (isReadOfCallee(node))
+                    return true;
                 if (intrinsicToCheckFor && node->isBytecode(op_get_scope))
                     return true;
                 // (So that nothing is left that wants the closure but what calls it.)
                 if (node->isBytecode(op_is_callable) && resolve(node->use(node->as<OpIsCallable>().m_operand))->isBytecode(op_new_func_exp)) {
                     node->replacement = m_graph.constant(jsBoolean(true));
+                    return true;
+                }
+                // (It does not count `this`.)
+                if (node->isBytecode(op_argument_count)) {
+                    node->replacement = m_graph.constant(jsNumber(argc - 1));
                     return true;
                 }
                 if (!node->isBytecode(op_get_argument))
@@ -359,7 +383,9 @@ private:
             itsBlock->successors.append(continuation);
             continuation->predecessors.append(itsBlock);
         }
-        if (returns.size() == 1 && !callAfterAll)
+        if (call->opcode == op_call_ignore_result) {
+            // Nobody wants it, and the call that is made after all has none.
+        } else if (returns.size() == 1 && !callAfterAll)
             call->replacement = returns[0].second;
         else {
             Node* phi = m_graph.addNode(NodeKind::Phi);
@@ -396,14 +422,20 @@ private:
         if (!Options::aotInlinesBuiltins() || !Options::useImmutableIntrinsics() || !calleeNode->isBytecode(op_get_by_id) || argc < 2)
             return 0;
         const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
-        if (!intrinsics)
+        if (!intrinsics) {
+            dataLogLnIf(Options::aotVerbose(), "AOT: no builtin is made part of anything: the intrinsics are not known");
             return 0;
+        }
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         auto bytecode = calleeNode->as<OpGetById>();
         if (resolve(call->use(VirtualRegister(firstArgument))) != resolve(calleeNode->use(bytecode.m_base)))
             return 0;
-        if (!resolve(call->use(VirtualRegister(firstArgument + 1)))->isBytecode(op_new_func_exp))
-            return 0;
+        // A closure made for the occasion, or a function that is known: either way what the method calls is plain.
+        if (Node* passed = resolve(call->use(VirtualRegister(firstArgument + 1))); !passed->isBytecode(op_new_func_exp)) {
+            bool isProven = false;
+            if (!passed->isBytecode(op_get_from_scope) || !passed->graph->knownFunctionReadBy(passed, &isProven) || !isProven)
+                return 0;
+        }
         static const unsigned prototype = [&] {
             unsigned array = intrinsics->find(ImmutableIntrinsics::globalObject, *String("Array"_s).impl());
             return array ? intrinsics->find(intrinsics->at(array).canonical, *String("prototype"_s).impl()) : 0;

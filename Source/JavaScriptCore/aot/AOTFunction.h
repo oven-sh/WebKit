@@ -127,6 +127,8 @@ struct FunctionRef::Place {
     unsigned inlineFrame { 0 };
     // placeOfInlinedCall(): the call was a tail call, so this is somewhere that nobody is any more.
     bool hasBeenLeft { false };
+    // placeAt(): likewise the call that is being made here, once what is called runs (PackedSite::isTailCall).
+    bool isTailCall { false };
 };
 
 // ---- Frames

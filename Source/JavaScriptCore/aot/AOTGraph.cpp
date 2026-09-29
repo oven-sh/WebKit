@@ -10,6 +10,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTBuiltins.h"
 #include "AOTProgram.h"
 #include "AOTStubs.h"
 #include "BytecodeStructs.h"
@@ -411,6 +412,13 @@ Graph::CallOperands Graph::operandsOfCall(const JSInstruction* instruction)
     }
     auto bytecode = instruction->as<OpCallIgnoreResult>();
     return { bytecode.m_callee, bytecode.m_argc, bytecode.m_argv };
+}
+
+std::optional<LinkTimeConstant> Graph::linkTimeConstantOf(const Node* node)
+{
+    if (node->kind != NodeKind::LinkTimeConstant)
+        return std::nullopt;
+    return static_cast<LinkTimeConstant>(node->intrinsic);
 }
 
 CallIntrinsic Graph::intrinsicOfCall(const Node* node) const
@@ -816,6 +824,69 @@ uint32_t Graph::distanceOfEnvironmentOfModule()
     RELEASE_ASSERT(m_scopeIsEnvironmentOfModule);
     usesStaticImports = true;
     return m_linkage->distanceOfEnvironment;
+}
+
+void Graph::findDirectMethods()
+{
+    if (!Options::aotCallsMethodsDirectly() || !Options::useImmutableIntrinsics() || !ImmutableIntrinsics::shared())
+        return;
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode || node->guard || node->guarded)
+                continue;
+            if (node->opcode != op_call && node->opcode != op_call_ignore_result && node->opcode != op_tail_call)
+                continue;
+            VirtualRegister calleeRegister;
+            unsigned argc;
+            unsigned argv;
+            if (node->opcode == op_call) {
+                auto bytecode = node->as<OpCall>();
+                calleeRegister = bytecode.m_callee, argc = bytecode.m_argc, argv = bytecode.m_argv;
+            } else if (node->opcode == op_call_ignore_result) {
+                auto bytecode = node->as<OpCallIgnoreResult>();
+                calleeRegister = bytecode.m_callee, argc = bytecode.m_argc, argv = bytecode.m_argv;
+            } else {
+                auto bytecode = node->as<OpTailCall>();
+                calleeRegister = bytecode.m_callee, argc = bytecode.m_argc, argv = bytecode.m_argv;
+            }
+            Node* callee = node->use(calleeRegister);
+            if (!callee->isBytecode(op_get_by_id) || callee->guard || callee->guarded || callee->isElided)
+                continue;
+            auto read = callee->as<OpGetById>();
+            Node* base = callee->use(read.m_base);
+            int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+            if (node->use(VirtualRegister(firstArgument)) != base || !mayBe(base->type, TString))
+                continue;
+            const StringImpl& name = *callee->graph->codeBlock()->identifier(read.m_property).impl();
+            unsigned method = directMethodOfStrings(name, argc);
+            if (!method || !intrinsicFoundOnPrimitive(TString, name))
+                continue;
+            // Not if what is passed is plainly something else.
+            auto mayBeAt = [&](unsigned argument, Type type) { return mayBe(node->use(VirtualRegister(firstArgument + static_cast<int>(argument)))->type, type); };
+            bool mayFit = true;
+            switch (directMethod(method).takes) {
+            case DirectMethod::Takes::Nothing:
+            case DirectMethod::Takes::NothingAndZero:
+                break;
+            case DirectMethod::Takes::String:
+                mayFit = mayBeAt(1, TString);
+                break;
+            case DirectMethod::Takes::Int32:
+                mayFit = mayBeAt(1, TInt32);
+                break;
+            case DirectMethod::Takes::StringAndInt32:
+                mayFit = mayBeAt(1, TString) && mayBeAt(2, TInt32);
+                break;
+            case DirectMethod::Takes::Int32AndInt32:
+                mayFit = mayBeAt(1, TInt32) && mayBeAt(2, TInt32);
+                break;
+            }
+            if (!mayFit)
+                continue;
+            node->directMethod = method;
+            callee->directMethod = method;
+        }
+    }
 }
 
 void Graph::elideReadsOfCalleesNotPassed()
@@ -1553,6 +1624,9 @@ void Node::dump(PrintStream& out) const
     case NodeKind::ConstantCell:
         out.print("ConstantCell(", reg, ")");
         break;
+    case NodeKind::LinkTimeConstant:
+        out.print("LinkTimeConstant(", intrinsic, ")");
+        break;
     case NodeKind::Intrinsic:
         out.print("Intrinsic(", intrinsic, " ", ImmutableIntrinsics::shared()->at(ImmutableIntrinsics::shared()->at(intrinsic).holder).name, ".", ImmutableIntrinsics::shared()->at(intrinsic).name, ")");
         break;
@@ -1581,6 +1655,9 @@ void Node::dump(PrintStream& out) const
             break;
         case GuardKind::Nothing:
             out.print("Guard()");
+            break;
+        case GuardKind::Field:
+            out.print("GuardField(", opcode, " bc#", bytecodeIndex.offset(), ", slot ", slotOfField, " of #", firstLayout, "..", lastLayout, ")");
             break;
         case GuardKind::Reentry:
             out.print("GuardReentry");
@@ -2101,12 +2178,54 @@ private:
         }
     }
 
+    // What the type of the base says of the property that the instruction gets at (GuardKind::Field).
+    std::optional<TypeTable::Field> fieldGotAtBy(unsigned offset)
+    {
+        if (!Options::aotAssertsTypes() || !TypeTable::shared())
+            return std::nullopt;
+        uint32_t tag = m_graph.typeTagAt(offset);
+        if (!tag)
+            return std::nullopt;
+        const JSInstruction* instruction = m_instructions.at(offset).ptr();
+        unsigned identifier;
+        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapes() & 2))
+            identifier = instruction->as<OpGetById>().m_property;
+        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapes() & 4) && !instruction->as<OpPutById>().m_flags.isDirect())
+            identifier = instruction->as<OpPutById>().m_property;
+        else
+            return std::nullopt;
+        return TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
+    }
+
     // With the blocks and the loops known: where the guards go. False if nowhere.
     bool chooseGuards()
     {
         if (!Options::aotSplitLoops() || !Options::aotLoopsToSplit() || !usesStubs || m_graph.loopsAreNotSplit)
             return false;
         unsigned size = m_instructions.size();
+        // Options::aotAssertsTypes(): there are two copies of all of it, not just of the loops.
+        BitVector fieldAccesses;
+        if (Options::aotAssertsTypes() && TypeTable::shared()) {
+            BitVector partOfWhatIsMade;
+            unsigned count = 0;
+            for (const auto& instruction : m_instructions) {
+                unsigned offset = instruction.offset();
+                if (instruction->opcodeID() == op_new_object) {
+                    for (unsigned store : Graph::storesOfLiteral(m_instructions, offset))
+                        partOfWhatIsMade.set(store);
+                } else if (instruction->opcodeID() == op_create_this) {
+                    for (auto& store : NewObjectPlan::forCreateThis(m_instructions, offset).stores)
+                        partOfWhatIsMade.set(store.offset);
+                }
+                if (!partOfWhatIsMade.get(offset) && fieldGotAtBy(offset)) {
+                    fieldAccesses.set(offset);
+                    ++count;
+                }
+            }
+            if (count < std::max(1u, Options::aotAssertsTypesIfAccesses()))
+                fieldAccesses.clearAll();
+        }
+        bool hasTwoCopiesOfAll = !fieldAccesses.isEmpty();
         struct OfBlock {
             Vector<unsigned, 8> guards;
             bool hasWhatIsBetterInFastCopy { false };
@@ -2224,17 +2343,25 @@ private:
 
         bool found = false;
         for (BasicBlock* block : m_graph.m_rpo) {
-            if (!block->isInLoop || !hasTwoCopies.get(block->index))
+            bool isInLoopWithTwoCopies = block->isInLoop && hasTwoCopies.get(block->index);
+            if (!isInLoopWithTwoCopies && (!hasTwoCopiesOfAll || block == m_graph.root))
                 continue;
             if (m_inLoop.isEmpty()) {
                 m_inLoop.ensureSize(size + 1);
                 m_guards.ensureSize(size + 1);
                 m_loopHeaders.ensureSize(size + 1);
             }
-            if (block->isLoopHeader)
+            if (block->isLoopHeader && isInLoopWithTwoCopies)
                 m_loopHeaders.set(block->bytecodeBegin);
-            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size())
+            for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
                 m_inLoop.set(offset);
+                if (fieldAccesses.get(offset)) {
+                    m_guards.set(offset);
+                    found = true;
+                }
+            }
+            if (!isInLoopWithTwoCopies)
+                continue;
             for (unsigned offset : ofBlocks[block->index].guards) {
                 m_guards.set(offset);
                 found = true;
@@ -2605,18 +2732,7 @@ private:
         unsigned index = reg.toConstantIndex();
         while (m_constantCells.size() <= index)
             m_constantCells.append(nullptr);
-        if (m_codeBlock->constantSourceCodeRepresentation(reg) == SourceCodeRepresentation::LinkTimeConstant) {
-            if (auto number = intrinsicForLinkTimeConstant(m_codeBlock->getConstant(reg)))
-                return m_graph.intrinsic(*number);
-            if (!m_constantCells[index]) {
-                Node* node = m_graph.addNode(NodeKind::ConstantCell);
-                node->range = IntegerRange::unknown();
-                node->reg = reg;
-                node->type = TTop; // Which one it is is known, but not what the realm makes of it.
-                m_constantCells[index] = node;
-            }
-            return m_constantCells[index];
-        }
+        RELEASE_ASSERT(m_codeBlock->constantSourceCodeRepresentation(reg) != SourceCodeRepresentation::LinkTimeConstant);
         JSValue value = m_codeBlock->getConstant(reg);
         if (!value || !value.isCell())
             return m_graph.constant(value);
@@ -2633,6 +2749,16 @@ private:
 
     Node* get(BasicBlock* block, VirtualRegister reg)
     {
+        if (reg.isConstant() && m_codeBlock->constantSourceCodeRepresentation(reg) == SourceCodeRepresentation::LinkTimeConstant) {
+            JSValue which = m_codeBlock->getConstant(reg);
+            if (auto number = intrinsicForLinkTimeConstant(which))
+                return m_graph.intrinsic(*number);
+            Node* node = m_graph.addNode(NodeKind::LinkTimeConstant);
+            node->range = IntegerRange::unknown();
+            node->intrinsic = safeCast<uint16_t>(which.asInt32AsAnyInt());
+            node->type = TTop; // Which one it is is known, but not what the realm makes of it.
+            return append(block, node);
+        }
         if (reg.isConstant())
             return constantFor(reg);
         if (reg == VirtualRegister(CallFrameSlot::callee)) {
@@ -2892,6 +3018,25 @@ private:
                 }
             }
 
+            if (comesAfterGuard && block->predecessors[0]->terminal()->guardKind == GuardKind::Field) {
+                // The base got past the guard: whatever has it in hand has something that is known for what it was born as.
+                Node* guard = block->predecessors[0]->terminal();
+                VirtualRegister baseRegister = opcode == op_get_by_id ? instruction->as<OpGetById>().m_base : instruction->as<OpPutById>().m_base;
+                Node* base = get(block, baseRegister);
+                Node* narrow = m_graph.addNode(NodeKind::Narrow);
+                narrow->reg = baseRegister;
+                narrow->bytecodeIndex = BytecodeIndex(offset);
+                narrow->uses.append({ VirtualRegister(), base });
+                narrow->narrowedTo = typeOfObjectBornWithin(guard->firstLayout, guard->lastLayout);
+                narrow->firstLayout = guard->firstLayout;
+                narrow->lastLayout = guard->lastLayout;
+                append(block, narrow);
+                for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
+                    if (block->valuesAtTail[index] == base && !m_graph.m_homed.get(index))
+                        block->valuesAtTail[index] = narrow;
+                }
+            }
+
             Node* node = m_graph.addNode(NodeKind::Bytecode);
             node->opcode = opcode;
             node->instruction = instruction;
@@ -2994,6 +3139,12 @@ private:
             forEachUse(instruction, [&](VirtualRegister reg) {
                 guard->uses.append({ reg, get(block, reg) });
             });
+            if (auto field = fieldGotAtBy(block->bytecodeEnd)) {
+                guard->guardKind = GuardKind::Field;
+                guard->slotOfField = field->slot;
+                guard->firstLayout = field->first;
+                guard->lastLayout = field->last;
+            }
             append(block, guard);
             return;
         }

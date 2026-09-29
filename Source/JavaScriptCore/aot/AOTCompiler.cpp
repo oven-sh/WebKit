@@ -129,6 +129,7 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
         switch (node->kind) {
         case NodeKind::Constant:
         case NodeKind::ConstantCell:
+        case NodeKind::LinkTimeConstant:
             return "a constant"_s;
         case NodeKind::Intrinsic:
             return "an intrinsic"_s;
@@ -332,8 +333,10 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
                     count(makeString("METHODOF "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type), " . "_s, StringView(callee->graph->codeBlock()->identifier(callee->as<OpGetById>().m_property).impl())));
                 } else {
                     count(makeString("CALL "_s, origin(callee)));
-                    if (callee->kind == NodeKind::ConstantCell) {
-                        bool isLinkTime = callee->graph->codeBlock()->constantSourceCodeRepresentation(callee->reg) == SourceCodeRepresentation::LinkTimeConstant;
+                    if (callee->kind == NodeKind::LinkTimeConstant)
+                        count(makeString("CALLCONST cell link time constant "_s, callee->intrinsic));
+                    else if (callee->kind == NodeKind::ConstantCell) {
+                        bool isLinkTime = false;
                         JSValue value = callee->graph->codeBlock()->getConstant(callee->reg);
                         count(makeString("CALLCONST cell "_s, isLinkTime ? makeString("link time constant "_s, value.asInt32AsAnyInt()) : value.isCell() ? String::fromLatin1(value.asCell()->classInfo()->className.characters()) : "?"_s, codeBlock->isBuiltinFunction() ? " in a builtin"_s : ""_s));
                     } else if (callee->kind == NodeKind::Constant)
@@ -483,6 +486,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
+    graph.findDirectMethods();
     graph.findListsOfArguments();
     analyzeEscapes(graph);
     if (Options::aotDumpGraph()) [[unlikely]] {

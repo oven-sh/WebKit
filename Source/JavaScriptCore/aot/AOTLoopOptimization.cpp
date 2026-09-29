@@ -215,6 +215,7 @@ private:
         case NodeKind::Constant:
         case NodeKind::ConstantCell:
         case NodeKind::Intrinsic:
+        case NodeKind::LinkTimeConstant: // (That the realm makes it is nothing that a program can see.)
         case NodeKind::Argument:
         case NodeKind::Phi:
         case NodeKind::Proj:
@@ -223,6 +224,8 @@ private:
         case NodeKind::Narrow:
             return true;
         case NodeKind::Guard:
+            if (node->guardKind == GuardKind::Field && node->opcode == op_put_by_id)
+                loop.propertiesWritten.append(node->as<OpPutById>().m_property);
             if (node->guardKind != GuardKind::Whole)
                 return true;
             if (!applies(node))

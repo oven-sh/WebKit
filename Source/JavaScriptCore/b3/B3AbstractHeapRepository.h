@@ -222,6 +222,7 @@ namespace JSC::B3 {
     macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
     macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
     macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
+    macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
     macro(AOTIdentifiers, 0, sizeof(void*)) \
     macro(AOTRuntimeTable, 0, sizeof(void*)) \
     macro(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>)) \

@@ -6930,13 +6930,15 @@ struct BytecodeLinkEncoder::Impl {
                 }
                 ++functions;
                 Vector<uint32_t> numbers;
+                auto& representations = job.codeBlock->constantsSourceCodeRepresentation();
                 for (auto& constant : job.codeBlock->constantRegisters()) {
                     JSValue value = constant.get();
                     uint32_t number = AOT::notAConstantOfProgram;
                     auto take = [&] {
                         return next++;
                     };
-                    if (!value) {
+                    // (What says which of the realm's things is meant is not read as a constant: NodeKind::LinkTimeConstant.)
+                    if (!value || representations[numbers.size()] == SourceCodeRepresentation::LinkTimeConstant) {
                     } else if (!value.isCell())
                         number = others.ensure(static_cast<uint64_t>(JSValue::encode(value)), take).iterator->value;
                     else {

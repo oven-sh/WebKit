@@ -108,7 +108,8 @@ uint32_t Lowering::siteOf(Node* node)
     uint32_t bits = CallSiteIndex(node->bytecodeIndex).bits();
     if (m_graph.inlineFrames.isEmpty())
         return bits;
-    return PackedSite::pack(node->graph->inlineFrame(), bits);
+    bool isTailCall = node->graph->inlineFrame() && node->kind == NodeKind::Bytecode && (node->opcode == op_tail_call || node->opcode == op_tail_call_varargs);
+    return PackedSite::pack(node->graph->inlineFrame(), bits, isTailCall);
 }
 
 void noteEverySiteOf(Graph& graph)
@@ -999,12 +1000,28 @@ void Lowering::lowerNode(Node* node)
     case NodeKind::Phi:
         RELEASE_ASSERT_NOT_REACHED();
         return;
+    case NodeKind::LinkTimeConstant: {
+        // The Instance has what has been asked for before.
+        LBasicBlock isNotThere = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue had = m_out.load64(m_instance, m_heaps.AOTInstance_linkTimeConstants[node->intrinsic]);
+        ValueFromBlock quick = m_out.anchor(had);
+        m_out.branch(m_out.notZero64(had), usually(continuation), rarely(isNotThere));
+        m_out.appendTo(isNotThere);
+        ValueFromBlock made = m_out.anchor(plainCall(Int64, Entry::operationAOTLinkTimeConstant, m_instance, m_out.constInt32(node->intrinsic)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, quick, made));
+        return;
+    }
     case NodeKind::Guard:
         // One that has been moved to a pre-header.
         emitGuard(node);
         return;
     case NodeKind::Narrow:
-        // The guard that the block ends in sees to these.
+        // The guard that the block ends in sees to these. Or, if it comes after one, has.
+        if (node->narrowedTo)
+            setJSValue(node, lowJSValue(node->uses[0].node));
         return;
     case NodeKind::Argument:
         if (node->reg == VirtualRegister(CallFrameSlot::callee))

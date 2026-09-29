@@ -426,6 +426,12 @@ private:
         } else
             return std::nullopt;
         Node* callee = node->use(calleeRegister);
+        if (argc == 2 && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::toLength) {
+            Type argument = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1))->type;
+            if (!argument)
+                return TNone;
+            return isSubtype(argument, TInt32) ? TInt32 : TNumber;
+        }
         unsigned number = 0;
         if (callee->kind == NodeKind::Intrinsic)
             number = callee->intrinsic;
@@ -522,6 +528,7 @@ private:
         case NodeKind::Constant:
         case NodeKind::ConstantCell:
         case NodeKind::Intrinsic:
+        case NodeKind::LinkTimeConstant:
         case NodeKind::Argument:
             return node->type;
         case NodeKind::Phi: {
@@ -540,6 +547,8 @@ private:
         case NodeKind::Guard:
             return TNone;
         case NodeKind::Narrow:
+            if (node->narrowedTo)
+                return node->uses[0].node->type & node->narrowedTo;
             return node->target ? node->uses[0].node->type & node->target->type : node->uses[0].node->type;
         case NodeKind::Proj:
             return computeProj(node);
@@ -802,7 +811,13 @@ private:
                     return *result;
             }
             return TAnyObject;
-        case op_to_object:
+        case op_to_object: {
+            // An object is the object it is.
+            Type operand = typeOf(node->as<OpToObject>().m_operand);
+            if (!operand)
+                return TNone;
+            return isSubtype(operand, TAnyObject) ? operand : TAnyObject;
+        }
         case op_super_construct:
         case op_construct_varargs:
         case op_super_construct_varargs:

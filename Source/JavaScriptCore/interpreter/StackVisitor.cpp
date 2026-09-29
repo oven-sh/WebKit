@@ -294,6 +294,8 @@ void StackVisitor::findCaller(CallFrame* callFrame)
 #if ENABLE(FTL_JIT)
 void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t index)
 {
+    // Whether what is above is something that was called from here, and runs. (Not: nothing, or the frame that was being made for what turned out not to be a function.)
+    bool calleeRuns = m_frame.m_callFrame && (m_frame.m_aotFunction || m_frame.m_isWasmFrame || (!m_frame.m_callee.isNativeCallee() && m_frame.m_callee.rawPtr() && m_frame.m_callee.asCell()->isCallable()));
     m_frame.m_callFrame = callFrame;
     m_previousReturnPC = returnPC;
     m_frame.m_returnPC = returnPC;
@@ -310,6 +312,7 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
     auto place = m_frame.m_aotFunctionOfFrame.placeAt(returnPC);
     m_frame.m_aotFunction = place.function;
     m_frame.m_aotInlineFrame = place.inlineFrame;
+    m_frame.m_aotHasBeenLeft = place.isTailCall && calleeRuns;
     m_frame.m_bytecodeIndex = place.bytecodeIndex;
     m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfThereIsOne();
     findCaller(callFrame);

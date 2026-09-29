@@ -39,6 +39,8 @@ void Lowering::lowerGuard(BasicBlock* block, Node* guard)
 
     // What the generic copy wants boxed is boxed on the way there.
     m_out.appendTo(m_exit);
+    if (guard->guardKind == GuardKind::Field)
+        countShape(Instance::ExitTaken);
     emitUpsilons(block, block->successors[1]);
     m_out.jump(block->successors[1]->lowered);
     m_exit = nullptr;
@@ -70,6 +72,13 @@ LValue Lowering::trapBits()
 // from: what the value is known to be. Every type can be told from every other by looking.
 void Lowering::exitUnlessOfType(LValue value, Type from, Type wanted)
 {
+    // Which function it is, or what it was born as, is not looked into: if that has to be known, and is not, it does not pass.
+    if ((from & wanted & TFunctionTag) && !isSubtype(from & TWhicheverFunction, wanted))
+        wanted &= ~TFunction;
+    if ((from & wanted & TFinalObjectTag) && !isSubtype(from & TWhicheverLayout, wanted))
+        wanted &= ~TFinalObject;
+    from &= TAllTags;
+    wanted &= TAllTags;
     LBasicBlock pass = m_out.newBlock();
     Type remaining = from;
     LValue type = nullptr;
@@ -102,12 +111,13 @@ void Lowering::exitUnlessOfType(LValue value, Type from, Type wanted)
     consider(TSymbol, [&] { return isType(SymbolType); });
     consider(TBigInt, [&] { return isType(HeapBigIntType); });
     consider(TCellOther, [&] { return m_out.below(cellTypeOfValue(), m_out.constInt32(ObjectType)); });
-    consider(TFunction, [&] { return m_out.bitOr(isType(JSFunctionType), isType(InternalFunctionType)); });
+    consider(TFunctionTag, [&] { return m_out.bitOr(isType(JSFunctionType), isType(InternalFunctionType)); });
     consider(TArray, [&] { return m_out.bitOr(isType(ArrayType), isType(DerivedArrayType)); });
     for (unsigned i = 0; i < NumberOfTypedArrayTypesExcludingDataView; ++i) {
         JSType typedArrayType = static_cast<JSType>(FirstTypedArrayType + i);
         consider(typeOfTypedArray(typedArrayType), [&] { return isType(typedArrayType); });
     }
+    consider(TFinalObjectTag, [&] { return isType(FinalObjectType); });
     m_out.jump(mayBe(remaining, wanted) ? pass : m_exit);
     m_out.appendTo(pass);
 }
@@ -182,6 +192,10 @@ void Lowering::emitGuard(Node* guard)
         return;
     case GuardKind::Reentry:
         guardReentry(guard->block);
+        return;
+    case GuardKind::Field:
+        guardField(guard);
+        guard->isHandled = true;
         return;
     case GuardKind::Structure:
         checkStructure(guard->uses[0].node, lowJSValue(guard->uses[0].node), loadSlotWord(slotOfPropertyGuard(guard->site), 0));
@@ -382,6 +396,40 @@ void Lowering::guardGetById(Node* guard)
 
     m_out.appendTo(continuation);
     guard->lowered = m_out.phi(Int64, plainResult, intricateResult);
+}
+
+void Lowering::guardField(Node* guard)
+{
+    bool isRead = guard->opcode == op_get_by_id;
+    Node* baseNode = guard->use(isRead ? guard->as<OpGetById>().m_base : guard->as<OpPutById>().m_base);
+    LValue base = lowJSValue(baseNode);
+    if (!baseNode->isKnownToBeBornWithin(guard->firstLayout, guard->lastLayout)) {
+        noteShapeSite(Instance::AssertionMade);
+        countShape(Instance::AssertionMade);
+        if (Options::aotCountsAllocations()) [[unlikely]]
+            plainCall(Void, Entry::operationAOTNoteAssertion, m_instance, base, m_out.constInt32(guard->firstLayout << 16 | guard->lastLayout));
+        if (!isSubtype(baseNode->type, TCell))
+            exitUnless(isCell(base));
+        exitUnless(isOneOf(layoutBornAs(base), guard->firstLayout, guard->lastLayout));
+    } else {
+        noteShapeSite(Instance::ServedWithoutAssertion);
+        countShape(Instance::ServedWithoutAssertion);
+    }
+    // No two names are ever the same place.
+    TypedPointer slot = m_out.address(m_heaps.properties[isRead ? guard->as<OpGetById>().m_property : guard->as<OpPutById>().m_property], base, JSObject::offsetOfInlineStorage() + guard->slotOfField * sizeof(EncodedJSValue));
+    // It is where it was, or nothing is (Structure::bornAs()).
+    LValue whatIsThere = m_out.load64(slot);
+    exitUnless(m_out.notZero64(whatIsThere));
+    if (isRead) {
+        guard->lowered = whatIsThere;
+        return;
+    }
+    // That it can be written is a matter of what the object is now.
+    exitUnless(m_out.testIsZero32(m_out.load32(m_out.address(m_heaps.root, structureOf(base), Structure::bitFieldOffset())), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
+    Node* valueNode = guard->use(guard->as<OpPutById>().m_value);
+    m_out.store64(lowJSValue(valueNode), slot);
+    if (mayBe(valueNode->type, TCell))
+        storeBarrier(base);
 }
 
 void Lowering::guardPutById(Node* guard)

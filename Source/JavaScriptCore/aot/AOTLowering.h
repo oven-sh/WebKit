@@ -7,6 +7,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTBuiltins.h"
 #include "AOTGraph.h"
 #include "AOTTypeTable.h"
 #include "AOTRuntime.h"
@@ -167,6 +168,7 @@ private:
     // Which layout the cell is of (Structure::knownShape()), and whether that is one of first to last.
     LValue layoutOf(LValue cell);
     LValue layoutBornAs(LValue cell); // Structure::bornAs()
+    void guardField(Node* guard);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
     struct OwnData {

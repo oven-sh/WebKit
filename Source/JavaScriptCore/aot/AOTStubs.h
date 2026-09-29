@@ -354,14 +354,18 @@ static constexpr unsigned mostItemsInList = ListDescriptor::mostItems;
 struct PackedSite {
     static constexpr unsigned shift = 24;
     static constexpr unsigned mostInlineFrames = 254; // (StubCall::noCallSite is not one.)
-    static bool fits(uint32_t bits) { return !(bits >> shift); }
-    static uint32_t pack(unsigned inlineFrame, uint32_t bits)
+    // A tail call, in a function that has become part of one that goes on afterwards. It is made like any other call; but once what is
+    // called runs, whoever made it is gone, as far as anybody can tell.
+    static constexpr uint32_t isTailCall = 1u << (shift - 1);
+    static bool fits(uint32_t bits) { return !(bits >> (shift - 1)); }
+    static uint32_t pack(unsigned inlineFrame, uint32_t bits, bool tailCall = false)
     {
         RELEASE_ASSERT(inlineFrame <= mostInlineFrames && fits(bits));
-        return inlineFrame << shift | bits;
+        return inlineFrame << shift | (tailCall ? isTailCall : 0) | bits;
     }
     static unsigned inlineFrame(uint32_t site) { return site >> shift; }
-    static uint32_t bits(uint32_t site) { return site & ((1u << shift) - 1); }
+    static uint32_t bits(uint32_t site) { return site & (isTailCall - 1); }
+    static bool isOfTailCall(uint32_t site) { return site & isTailCall; }
 };
 
 // A call that is passed items (ListDescriptor) is where all of them are gone through, as far as its frame says. This says where in the

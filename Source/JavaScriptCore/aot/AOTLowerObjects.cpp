@@ -656,7 +656,46 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_in_by_val: {
         auto bytecode = node->as<OpInByVal>();
-        return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property)));
+        Node* baseNode = node->use(bytecode.m_base);
+        Node* propertyNode = node->use(bytecode.m_property);
+        if (isCompact() || (Options::aotDisableFastPaths() & 8) || !mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber))
+            return setBooleanResult(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_property)));
+
+        // An element that is there, in contiguous or int32 storage. Whether one that is not there is to be had from anywhere else is for the runtime to find out.
+        LValue base = lowJSValue(baseNode);
+        LBasicBlock haveIndex = m_out.newBlock();
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock rightShape = m_out.newBlock();
+        LBasicBlock inBounds = m_out.newBlock();
+        LBasicBlock slowCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue index = lowIndex(propertyNode, haveIndex, slowCase);
+
+        m_out.appendTo(haveIndex, cellCase);
+        if (isSubtype(baseNode->type, TCell))
+            m_out.jump(cellCase);
+        else
+            m_out.branch(isCell(base), usually(cellCase), rarely(slowCase));
+
+        m_out.appendTo(cellCase, rightShape);
+        LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
+        m_out.branch(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), usually(rightShape), rarely(slowCase));
+
+        m_out.appendTo(rightShape, inBounds);
+        LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+        m_out.branch(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), usually(inBounds), rarely(slowCase));
+
+        m_out.appendTo(inBounds, slowCase);
+        ValueFromBlock isThere = m_out.anchor(m_out.booleanTrue);
+        m_out.branch(m_out.notZero64(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)))), usually(continuation), rarely(slowCase));
+
+        m_out.appendTo(slowCase, continuation);
+        ValueFromBlock found = m_out.anchor(m_out.notZero64(vmCall(node, Int64, Entry::operationAOTInByVal, m_globalObject, base, lowJSValue(propertyNode))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        setBoolean(node, m_out.phi(Int32, isThere, found));
+        return true;
     }
     case op_del_by_id: {
         auto bytecode = node->as<OpDelById>();

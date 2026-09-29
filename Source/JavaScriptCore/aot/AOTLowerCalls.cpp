@@ -201,6 +201,112 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
 
     Node* calleeNode = node->use(calleeRegister);
     LValue callee = lowJSValue(calleeNode);
+    // @toLength() of an integer that is not negative is that integer, and of one that is, zero.
+    if (mode == CallMode::Call && argc == 2 && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::toLength) {
+        Node* argumentNode = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1));
+        if (argumentNode->isInteger() && argumentNode->range.min >= 0) {
+            if (hasResult)
+                setResult(node, lowRaw(argumentNode), argumentNode->rep());
+            return;
+        }
+        LBasicBlock isInteger = m_out.newBlock();
+        LBasicBlock otherwise = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isInt32(arguments[1]), usually(isInteger), rarely(otherwise));
+        m_out.appendTo(isInteger);
+        LValue integer = unboxInt32(arguments[1]);
+        ValueFromBlock quick = m_out.anchor(boxInt32(m_out.select(m_out.lessThan(integer, m_out.int32Zero), m_out.int32Zero, integer)));
+        m_out.jump(continuation);
+        m_out.appendTo(otherwise);
+        ValueFromBlock called = m_out.anchor(emitCall(node, callee, arguments, mode, StubIntrinsic::None));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        if (hasResult)
+            setJSValue(node, m_out.phi(Int64, quick, called));
+        return;
+    }
+    // A method of strings, if that is what it is called on, and it is passed what the method takes: then there is nothing to find out, and
+    // no frame to make. Anything else is called as anything is.
+    LBasicBlock afterDirectCall = nullptr;
+    std::optional<ValueFromBlock> resultOfDirectCall;
+    if (node->directMethod && mode != CallMode::Construct) {
+        // (What comes after a call in tail position returns what it returned. None of these calls anything back.)
+        mode = CallMode::Call;
+        const DirectMethod& method = directMethod(node->directMethod);
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        auto nodeAt = [&](unsigned argument) { return node->use(VirtualRegister(firstArgument + static_cast<int>(argument))); };
+        LValue fits = nullptr;
+        auto also = [&](LValue condition) { fits = fits ? m_out.bitAnd(fits, condition) : condition; };
+        auto mustBeString = [&](unsigned argument) {
+            if (!isSubtype(nodeAt(argument)->type, TString))
+                also(isCellAnd(nodeAt(argument), arguments[argument], [&](LValue cell) { return isCellOfType(cell, StringType); }));
+        };
+        auto mustBeInt32 = [&](unsigned argument) {
+            if (!isSubtype(nodeAt(argument)->type, TInt32))
+                also(isInt32(arguments[argument]));
+        };
+        mustBeString(0);
+        Vector<LValue, 8> passed { m_globalObject, arguments[0] };
+        switch (method.takes) {
+        case DirectMethod::Takes::Nothing:
+            break;
+        case DirectMethod::Takes::NothingAndZero:
+            passed.append(m_out.int32Zero);
+            break;
+        case DirectMethod::Takes::String:
+            mustBeString(1);
+            passed.append(arguments[1]);
+            break;
+        case DirectMethod::Takes::Int32:
+            mustBeInt32(1);
+            passed.append(unboxInt32(arguments[1]));
+            break;
+        case DirectMethod::Takes::StringAndInt32:
+            mustBeString(1);
+            mustBeInt32(2);
+            passed.append(arguments[1]);
+            passed.append(unboxInt32(arguments[2]));
+            break;
+        case DirectMethod::Takes::Int32AndInt32:
+            mustBeInt32(1);
+            mustBeInt32(2);
+            passed.append(unboxInt32(arguments[1]));
+            passed.append(unboxInt32(arguments[2]));
+            break;
+        }
+        LBasicBlock otherwise = nullptr;
+        if (fits) {
+            LBasicBlock direct = m_out.newBlock();
+            otherwise = m_out.newBlock();
+            afterDirectCall = m_out.newBlock();
+            m_out.branch(fits, usually(direct), rarely(otherwise));
+            m_out.appendTo(direct);
+        }
+        LValue returned = callOperationThroughStub(node, Int64, static_cast<Entry>(method.operation), passed);
+        LValue boxed = nullptr;
+        switch (method.returns) {
+        case DirectMethod::Returns::Boolean:
+            boxed = boxBoolean(m_out.testNonZero32(m_out.castToInt32(returned), m_out.constInt32(0xff)));
+            break;
+        case DirectMethod::Returns::Int32:
+            boxed = boxInt32(m_out.castToInt32(returned));
+            break;
+        case DirectMethod::Returns::WhetherIndex:
+            boxed = boxBoolean(m_out.greaterThanOrEqual(m_out.castToInt32(returned), m_out.int32Zero));
+            break;
+        case DirectMethod::Returns::String:
+            boxed = returned;
+            break;
+        }
+        if (!fits) {
+            if (hasResult)
+                setJSValue(node, boxed);
+            return;
+        }
+        resultOfDirectCall = m_out.anchor(boxed);
+        m_out.jump(afterDirectCall);
+        m_out.appendTo(otherwise);
+    }
     // What the callee was found as says what it may well be.
     StubIntrinsic intrinsic = StubIntrinsic::None;
     if (mode != CallMode::Construct && calleeNode->isBytecode(op_get_by_id))
@@ -215,6 +321,12 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         mode = CallMode::Call;
     }
     LValue result = emitCall(node, callee, arguments, mode, intrinsic);
+    if (afterDirectCall) {
+        ValueFromBlock called = m_out.anchor(result);
+        m_out.jump(afterDirectCall);
+        m_out.appendTo(afterDirectCall);
+        result = m_out.phi(Int64, *resultOfDirectCall, called);
+    }
     if (hasResult)
         setJSValue(node, result);
 }

@@ -392,6 +392,8 @@ bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)
 
 bool readsCallee(UnlinkedCodeBlock* codeBlock)
 {
+    // A function expression that has a name is given a copy of itself to go by that name, whether or not it ever says the name.
+    Vector<VirtualRegister, 2> copies;
     bool result = false;
     for (const auto& instruction : codeBlock->instructions()) {
         switch (instruction->opcodeID()) {
@@ -400,12 +402,29 @@ bool readsCallee(UnlinkedCodeBlock* codeBlock)
         case op_create_cloned_arguments:
         case op_call_direct_eval:
             return true;
+        case op_mov:
+            if (auto bytecode = instruction->as<OpMov>(); bytecode.m_src == VirtualRegister(CallFrameSlot::callee)) {
+                copies.append(bytecode.m_dst);
+                continue;
+            }
+            break;
         default:
             break;
         }
         for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
             computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
                 result |= reg == VirtualRegister(CallFrameSlot::callee);
+            });
+        }
+        if (result)
+            return true;
+    }
+    if (copies.isEmpty())
+        return false;
+    for (const auto& instruction : codeBlock->instructions()) {
+        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
+            computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
+                result |= copies.contains(reg);
             });
         }
         if (result)
