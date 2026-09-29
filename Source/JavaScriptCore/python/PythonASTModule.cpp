@@ -481,9 +481,8 @@ static void initializeASTState(JSGlobalObject* globalObject, ASTState& state)
         // It is only AST itself that says what module it is in.
         type->setDottedName("ast.AST"_s);
         using Kind = PyNativeFunction::Kind;
-        // These are what object has, and it says so for itself.
-        for (const Identifier* name : { &names.dunder_getattribute, &names.dunder_setattr, &names.dunder_delattr })
-            type->putDirect(vm, *name, realm->typeObject()->getDirect(vm, *name));
+        addGenericGetAttribute(globalObject, type);
+        addGenericSetAttribute(globalObject, type);
         addMethods(globalObject, type, {
             { "__new__"_s, astNew, Kind::New, 0, { }, PyNativeFunction::Arguments::AreNotChecked },
             { "__init__"_s, astInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreNotChecked },

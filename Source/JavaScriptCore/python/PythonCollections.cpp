@@ -709,6 +709,8 @@ PYTHON_NATIVE(dequeLength)
 PYTHON_NATIVE(dequeIndex)
 {
     NATIVE_PROLOGUE();
+    if (!args.checkNoKeywords(globalObject, scope, "deque.index"_s))
+        return { };
     // _PyArg_CheckPositional()
     if (unsigned count = args.size() - 1; count < 1 || count > 3)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("index expected at "_s, count < 1 ? "least 1 argument"_s : "most 3 arguments"_s, ", got "_s, count)));

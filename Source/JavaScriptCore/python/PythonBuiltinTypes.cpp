@@ -163,8 +163,9 @@ bool checkArguments(JSGlobalObject* globalObject, CallFrame* callFrame)
         raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, name, "' requires a '"_s, ownerName, "' object but received a '"_s, typeName(globalObject, first), '\''));
         break;
     case PyNativeFunction::Kind::Method:
+        // By its __qualname__, which has nothing of the module in it
         if (!first)
-            raiseTypeError(globalObject, scope, concatenate("unbound method "_s, ownerName, '.', name, "() needs an argument"_s));
+            raiseTypeError(globalObject, scope, concatenate("unbound method "_s, owner->nameWithoutModule(globalObject), '.', name, "() needs an argument"_s));
         else
             raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, name, "' for '"_s, ownerName, "' objects doesn't apply to a '"_s, typeName(globalObject, first), "' object"_s));
         break;

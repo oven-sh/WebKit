@@ -13,6 +13,7 @@
 #   methods.py           what comes of every method of the built-in classes, of several instances of each, given what it is meant for and what it is not quite
 #   special-methods.py   what the language makes of what a program's own special methods do: each of them, given each of some eighty things to do, and everything that would call it
 #   other-objects.py     what comes of every attribute of everything else that is built in, in each of the states that it can be in: iterators, views, generators, functions, descriptors, frames, classes, exceptions
+#   native-modules.py    what each module that is written in C++ has, and each class in it, and what comes of calling every function and every method in them wrongly, in some hundred thousand ways. It must never crash.
 #   syntax-trees.py      what comes of compiling, and of running, syntax trees that a program has made wrongly, in something over a million ways. It must never crash.
 #
 # Beside each is what CPython prints, in a .reference file, which is made by running it with CPython.
@@ -23,7 +24,7 @@
 jsc=$1
 show=${2:-0}
 cd "$(dirname "$0")" || exit 2
-for audit in own-attributes wrong-arguments language-features syntax-errors syntax-trees operations methods special-methods other-objects; do
+for audit in own-attributes wrong-arguments native-modules language-features syntax-errors syntax-trees operations methods special-methods other-objects; do
     "$jsc" $audit.py > /tmp/python-audit-$audit.txt 2> /tmp/python-audit-$audit.err || echo "$audit: stopped early: $(tail -1 /tmp/python-audit-$audit.err)"
     # Whatever python3 is has a library of its own.
     env -u PYTHONPATH python3 compare.py $audit $audit.reference /tmp/python-audit-$audit.txt "$show"

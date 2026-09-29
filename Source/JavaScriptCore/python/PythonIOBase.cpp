@@ -415,6 +415,8 @@ PYTHON_NATIVE(ioBaseSelfIfOpen)
 PYTHON_NATIVE(ioBaseExit)
 {
     NATIVE_PROLOGUE();
+    if (!args.checkNoKeywords(globalObject, scope, "_IOBase.__exit__"_s))
+        return { };
     RELEASE_AND_RETURN(scope, JSValue::encode(callMethodNamed(globalObject, args[0], names.attribute_close)));
 }
 
@@ -697,7 +699,7 @@ static void initializeBaseClasses(JSGlobalObject* globalObject, IOModuleState& s
     addMethods(globalObject, bufferedIOBase, {
         { "detach"_s, ioUnsupported, Kind::Method, pack(Unsupported::Detach), { }, withDefiningClass },
         { "read"_s, ioUnsupported, Kind::Method, pack(Unsupported::Read), { }, withDefiningClass },
-        { "read1"_s, ioUnsupported, Kind::Method, pack(Unsupported::Read1) },
+        { "read1"_s, ioUnsupported, Kind::Method, pack(Unsupported::Read1), { }, PyNativeFunction::Arguments::AreCheckedAsWithDefiningClass },
         { "readinto"_s, bufferedIOBaseReadInto, Kind::Method, pack(false) },
         { "readinto1"_s, bufferedIOBaseReadInto, Kind::Method, pack(true) },
         { "write"_s, ioUnsupported, Kind::Method, pack(Unsupported::Write), { }, withDefiningClass },

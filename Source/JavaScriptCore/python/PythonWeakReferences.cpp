@@ -470,7 +470,7 @@ PYTHON_NATIVE(weakrefRemoveDead)
 {
     NATIVE_PROLOGUE();
     if (!isDict(args[0]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("_remove_dead_weakref() argument 1 must be dict, not "_s, typeName(globalObject, args[0]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("_remove_dead_weakref() argument 1 must be dict, not "_s, typeNameOfArgument(globalObject, args[0]))));
     PyDict* dict = asDict(args[0]);
     // It is hashed as anything is, and not as a key is, which is said otherwise if it cannot be.
     hash(globalObject, args[1]);
