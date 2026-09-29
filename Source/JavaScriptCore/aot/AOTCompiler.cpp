@@ -590,14 +590,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.knownCallees = WTF::move(graph.knownCallees);
     info.siteConstants = WTF::move(graph.siteConstants);
     info.plans = WTF::move(graph.plans);
+    if (program && mayBecomePartOfAnother(unlinkedCodeBlock, facts))
+        noteEverySiteOf(graph);
     info.quotableSites = WTF::move(graph.quotableSites);
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
-    if (program && mayBecomePartOfAnother(unlinkedCodeBlock, facts))
-        noteEverySiteOf(graph);
     info.isOnlyCalledDirectly = facts && facts->isClosed;
     for (auto& frame : graph.inlineFrames)
-        info.inlineFrames.append({ frame.parent, frame.callSite, frame.knownCallee });
+        info.inlineFrames.append({ frame.parent, frame.callSite, frame.knownCallee, frame.isTailCall });
     info.sitesOfSpreads = WTF::move(graph.sitesOfSpreads);
     info.callSites = WTF::move(graph.callSites);
     std::ranges::sort(info.callSites);

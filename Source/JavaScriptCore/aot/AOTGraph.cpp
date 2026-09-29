@@ -1159,6 +1159,29 @@ void Graph::findListsOfArguments()
     // (What this function was passed is its caller's, and nobody writes to it.)
     for (auto& [node, uses] : numberOfUsesThatPassItOn)
         node->isElided = uses == numberOfUses.get(node);
+
+    // An array that is made of others: [...a, ...b]. Likewise the spreads that nothing comes between and the making of it.
+    for (BasicBlock* block : m_rpo) {
+        for (unsigned index = 0; index < block->nodes.size(); ++index) {
+            Node* array = block->nodes[index];
+            if (!array->isBytecode(op_new_array_with_spread) || array->isElided)
+                continue;
+            auto bytecode = array->as<OpNewArrayWithSpread>();
+            if (bytecode.m_argc < 2 || bytecode.m_argc > 32)
+                continue;
+            for (unsigned before = index; before--;) {
+                Node* spread = block->nodes[before];
+                if (!spread->isBytecode(op_spread) || spread->isElided || numberOfUses.get(spread) != 1)
+                    break;
+                bool isOfThisArray = false;
+                for (auto& use : array->uses)
+                    isOfThisArray |= use.node == spread;
+                if (!isOfThisArray)
+                    break;
+                spread->isElided = true;
+            }
+        }
+    }
 }
 
 void Graph::noteSelectorOfSite(unsigned slot, UniquedStringImpl* name)

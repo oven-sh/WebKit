@@ -325,6 +325,7 @@ public:
         unsigned parent; // Another of these, or none: what the call was in.
         uint32_t callSite; // Where it was, there (CallSiteIndex::bits()).
         unsigned knownCallee; // What was called: indexOfKnownCallee().
+        bool isTailCall { false }; // Whoever made it is gone by the time what was called runs, as far as anybody can tell.
     };
     Vector<InlineFrame> inlineFrames; // From 1. Of the outermost.
     // Everything that is left of the other but for what it knows.
@@ -333,6 +334,9 @@ public:
     const ModuleLinkage* linkage() const { return m_linkage; }
     // Of a closure that was made where its scope is at hand: that. It is what its op_get_scope gets (and is among that node's uses).
     Node* scopeOfClosure { nullptr };
+    // What it returns is what the function that is being compiled returns, there and then: it is that function, or the call that it took
+    // the place of was a tail call in code of which the same goes. Then a tail call in it is one still.
+    bool isInTailPosition { true };
     // Its loops are left as they are: what they call is going to be part of them (see BasicBlock::isGeneric).
     bool loopsAreNotSplit { false };
     unsigned numberOfNodes() const { return m_nodes.size(); }

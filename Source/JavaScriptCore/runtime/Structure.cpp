@@ -584,13 +584,16 @@ Structure* Structure::addPropertyTransition(VM& vm, Structure* structure, Proper
     return addNewPropertyTransition(vm, structure, propertyName, attributes, offset, PutPropertySlot::UnknownContext);
 }
 
-Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred)
+Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset, PutPropertySlot::Context context, DeferredStructureTransitionWatchpointFire* deferred, bool isForOneObject)
 {
     ASSERT(!structure->isDictionary());
     ASSERT(structure->isObject());
     ASSERT(!Structure::addPropertyTransitionToExistingStructure(structure, propertyName, attributes, offset));
     
-    if (structure->shouldDoCacheableDictionaryTransitionForAdd(context)) {
+    bool goesItsOwnWay = isForOneObject && structure->goesItsOwnWay();
+    if (goesItsOwnWay)
+        structure->setWasLeftByLoneObject(true);
+    if (structure->shouldDoCacheableDictionaryTransitionForAdd(context) || goesItsOwnWay) {
         ASSERT(!isCopyOnWrite(structure->indexingMode()));
         Structure* transition = toCacheableDictionaryTransition(vm, structure, deferred);
         ASSERT(structure != transition);
@@ -599,6 +602,8 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     }
     
     Structure* transition = Structure::create(vm, structure, deferred);
+    // (Another has come to where one left that was taken to be the only one.)
+    transition->setIsOnSharedPath(structure->isOnSharedPath() || structure->wasLeftByLoneObject());
 
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
     

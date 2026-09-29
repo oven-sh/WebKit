@@ -357,8 +357,13 @@ SUPPRESS_ASAN FunctionRef functionThatCalled(const CallFrame* callFrame)
         return { };
     for (auto* record = reinterpret_cast<const FrameRecord*>(callFrame);; record = record->previous) {
         WhatIsAt what = whatIsAt(removeCodePtrTag(record->returnAddress));
-        if (what.kind == WhatIsAt::Function)
-            return { instanceOfFrame(record->previous), what.index };
+        if (what.kind == WhatIsAt::Function) {
+            FunctionRef function { instanceOfFrame(record->previous), what.index };
+            // (What it is in the middle of may be what another does, that was made part of it.)
+            if (function.info().function()->hasInlineFrames) [[unlikely]]
+                return function.placeAt(removeCodePtrTag(record->returnAddress)).function;
+            return function;
+        }
         if (what.kind != WhatIsAt::Stub)
             return { };
     }
@@ -615,7 +620,9 @@ FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
 FunctionRef::Place FunctionRef::placeOfInlinedCall(unsigned inlineFrame) const
 {
     InlineFrameOfImage frame = inlineFrameOf(*info().function(), inlineFrame);
-    return placeOfSite(*this, PackedSite::pack(frame.parent, frame.callSite));
+    Place place = placeOfSite(*this, PackedSite::pack(frame.parent, frame.callSite));
+    place.hasBeenLeft = frame.isTailCall;
+    return place;
 }
 
 BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
@@ -1224,59 +1231,46 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
 }
 
 // TEMPORARY-SLOT-STATS
-void Instance::dumpSlotStatistics()
+void Instance::dumpSlotStatistics(PrintStream& out)
 {
-    uint64_t total[numOpcodeIDs] = { }, filled[numOpcodeIDs] = { }, withKnownShape[numOpcodeIDs] = { }, withPointer[numOpcodeIDs] = { };
-    uint64_t functions = 0, functionsWithNothingFilled = 0, slots = 0;
+    static constexpr unsigned numberOfBuckets = 7;
+    static constexpr unsigned upTo[numberOfBuckets] = { 0, 4, 8, 16, 32, 64, UINT_MAX };
+    uint64_t count[numberOfBuckets] = { }, slotsOf[numberOfBuckets] = { }, filledOf[numberOfBuckets] = { };
+    uint64_t functions = 0, withNothingFilled = 0, slots = 0, filled = 0, withPointer = 0, transitions = 0;
+    uint64_t ownConstants = 0, withOwnConstants = 0, withFunctions = 0, withWatchpoints = 0, withCodeBlock = 0, withUnlinkedCode = 0, startedCold = 0;
     for (Data* data : collections->all) {
         functions++;
         slots += data->numSlots;
-        bool any = false;
-        OpcodeID last = op_nop;
+        uint64_t filledHere = 0;
         for (unsigned i = 0; i < data->numSlots; ++i) {
-            OpcodeID opcode = last; // (A site no longer says which instruction it is of.)
-            last = opcode;
-            total[opcode]++;
             Slot& slot = data->slots[i];
             auto* words = reinterpret_cast<uint64_t*>(&slot);
-            if (!words[0] && !words[1])
+            if (!(words[0] & ~static_cast<uint64_t>(Slot::attemptsMask) << 32) && !words[1])
                 continue;
-            any = true;
-            filled[opcode]++;
-            if ((opcode == op_get_by_id || opcode == op_put_by_id) && slot.structureID && slot.structureID.decode()->knownShape())
-                withKnownShape[opcode]++;
-            if (slot.hasPointer())
-                withPointer[opcode]++;
+            filledHere++;
+            withPointer += slot.hasPointer();
+            transitions += !slot.hasPointer() && words[1];
         }
-        functionsWithNothingFilled += !any;
+        filled += filledHere;
+        withNothingFilled += !filledHere;
+        unsigned bucket = 0;
+        while (data->numSlots > upTo[bucket])
+            bucket++;
+        count[bucket]++;
+        slotsOf[bucket] += data->numSlots;
+        filledOf[bucket] += filledHere;
+        withOwnConstants += data->ownsConstants;
+        ownConstants += data->ownsConstants ? data->numberOfOwnConstants : 0;
+        withFunctions += !!data->functions;
+        withWatchpoints += !!data->watchpoints;
+        withCodeBlock += !!data->codeBlock;
+        withUnlinkedCode += !!data->unlinkedCodeBlock;
+        startedCold += !!(infos[data->code->index()].flags & FunctionInfo::startsCold);
     }
-    {
-        // TEMPORARY-SLOT-STATS: who has a Data.
-        uint64_t count[4] = { }, slotsOf[4] = { }, filledOf[4] = { };
-        for (Data* data : collections->all) {
-            const FunctionInfo& info = infos[data->code->index()];
-            bool hasLoop = false;
-            if (data->unlinkedCodeBlock->codeType() == FunctionCode && !(info.flags & FunctionInfo::startsCold)) {
-                for (const auto& instruction : data->unlinkedCodeBlock->instructions())
-                    hasLoop |= instruction->opcodeID() == op_loop_hint;
-            }
-            unsigned kind = data->unlinkedCodeBlock->codeType() != FunctionCode ? 0 : info.flags & FunctionInfo::startsCold ? 1 : hasLoop ? 2 : 3;
-            count[kind]++;
-            slotsOf[kind] += data->numSlots;
-            for (unsigned i = 0; i < data->numSlots; ++i) {
-                auto* words = reinterpret_cast<uint64_t*>(&data->slots[i]);
-                filledOf[kind] += words[0] || words[1];
-            }
-        }
-        static constexpr ASCIILiteral names[] = { "the code of a module"_s, "started cold"_s, "has a loop"_s, "other"_s };
-        for (unsigned i = 0; i < 4; ++i)
-            dataLogLn("WHOHASDATA ", names[i], ": functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
-    }
-    dataLogLn("SLOTS functions=", functions, " ofWhichNothingFilled=", functionsWithNothingFilled, " slots=", slots, " bytes=", slots * sizeof(Slot), " knownShapesMade=", collections->knownShapes.size(), " otherLiteralShapes=", collections->shapes.size());
-    for (unsigned i = 0; i < numOpcodeIDs; ++i) {
-        if (total[i])
-            dataLogLn("SLOTS ", opcodeNames[i], " total=", total[i], " filled=", filled[i], " knownShape=", withKnownShape[i], " withPointer=", withPointer[i]);
-    }
+    out.println("DATA functions=", functions, " startedCold=", startedCold, " withNothingFilled=", withNothingFilled, " headerBytes=", functions * sizeof(Data), " (", sizeof(Data), " each) slots=", slots, " slotBytes=", slots * sizeof(Slot), " filled=", filled, " ofWhichWithPointer=", withPointer, " transitions=", transitions);
+    out.println("DATA withOwnConstants=", withOwnConstants, " ownConstantBytes=", ownConstants * sizeof(EncodedJSValue), " withFunctions=", withFunctions, " withWatchpoints=", withWatchpoints, " withCodeBlock=", withCodeBlock, " withUnlinkedCode=", withUnlinkedCode, " aJITCodeIs=", sizeof(JITCode));
+    for (unsigned i = 0; i < numberOfBuckets; ++i)
+        out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
 }
 
 // TEMPORARY-SHAPE-STATS

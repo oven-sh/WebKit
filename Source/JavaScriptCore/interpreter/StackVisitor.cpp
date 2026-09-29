@@ -148,10 +148,12 @@ void StackVisitor::gotoNextFrame()
         auto place = m_frame.m_aotFunctionOfFrame.placeOfInlinedCall(m_frame.m_aotInlineFrame);
         m_frame.m_aotFunction = place.function;
         m_frame.m_aotInlineFrame = place.inlineFrame;
+        m_frame.m_aotHasBeenLeft = place.hasBeenLeft;
         m_frame.m_bytecodeIndex = place.bytecodeIndex;
         m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfThereIsOne();
         return;
     }
+    m_frame.m_aotHasBeenLeft = false;
 #endif
 #if ENABLE(DFG_JIT)
     if (m_frame.isInlinedDFGFrame()) {

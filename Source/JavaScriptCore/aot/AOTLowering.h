@@ -163,6 +163,8 @@ private:
     // What a frame says where it is with, while what the node does is being done somewhere else.
     uint32_t callSiteBitsOf(Node*);
     uint32_t siteOf(Node*); // The same, of a place that has been said to be one, or is not going to be asked about.
+    // For an operation that goes by a number in the bytecode: see functionOfBytecodeOfCaller().
+    uint32_t whoseBytecode(Node* node) { return node->graph->isOutermost() ? 0 : m_graph.inlineFrames[node->graph->inlineFrame()].knownCallee + 1; }
     unsigned allocateSlots(unsigned count)
     {
         unsigned first = m_graph.numICSlots;
@@ -316,6 +318,7 @@ private:
     FTL::Output m_out;
 
     HowValuesArePassed m_howValuesArePassed; // This function.
+    LValue m_dataOnEntry { nullptr }; // Of a function that starts cold: m_data, but for in a loop.
     LValue m_callFrame { nullptr };
     LValue m_instance { nullptr };
     LValue m_data { nullptr };

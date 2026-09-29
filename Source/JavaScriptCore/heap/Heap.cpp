@@ -65,6 +65,10 @@
 #include "IsoCellSetInlines.h"
 #include "IsoInlinedHeapCellTypeInlines.h"
 #include "JITStubRoutineSet.h"
+#include "JSBoundFunction.h"
+#include "JSLexicalEnvironment.h"
+#include "SymbolTable.h"
+#include "FunctionExecutable.h"
 #include "JITWorklistInlines.h"
 #include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGenerator.h"
@@ -1188,6 +1192,66 @@ TypeCountSet Heap::objectTypeCounts()
             return IterationStatus::Continue;
         });
         out->println("CENSUS begin, auxiliary bytes ", auxiliaryBytes, ", a Structure is ", sizeof(Structure), " bytes");
+        for (AOT::Instance* instance : vm().m_aotInstances)
+            instance->dumpSlotStatistics(*out);
+        // TEMPORARY-IDENTITY-CENSUS: what each thing is one of. Taken before and after a collection, the difference is what the garbage is.
+        {
+            UncheckedKeyHashMap<String, std::pair<uint64_t, uint64_t>> byIdentity;
+            auto bucket = [](unsigned length) -> ASCIILiteral {
+                return !length ? "0"_s : length < 2 ? "1"_s : length < 3 ? "2"_s : length < 5 ? "3-4"_s : length < 9 ? "5-8"_s : length < 17 ? "9-16"_s : length < 65 ? "17-64"_s : length < 513 ? "65-512"_s : "513+"_s;
+            };
+            m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+                if (!isJSCellKind(kind))
+                    return IterationStatus::Continue;
+                auto* cell = static_cast<JSCell*>(heapCell);
+                size_t size = heapCell->cellSize();
+                String key;
+                if (auto* function = dynamicDowncast<JSFunction>(cell); function && !function->isHostFunction() && cell->classInfo() != JSBoundFunction::info()) {
+                    FunctionExecutable* executable = function->jsExecutable();
+                    key = makeString("FUNCTION "_s, executable->ecmaNameWithoutGC(), ' ', executable->sourceURL(), ':', executable->firstLine(), ':', executable->startColumn());
+                } else if (auto* environment = dynamicDowncast<JSLexicalEnvironment>(cell); environment && cell->type() == LexicalEnvironmentType) {
+                    StringBuilder names;
+                    SymbolTable* table = environment->symbolTable();
+                    {
+                        ConcurrentJSLocker locker(table->m_lock);
+                        unsigned shown = 0;
+                        for (auto it = table->begin(locker), end = table->end(locker); it != end && shown < 6; ++it, ++shown)
+                            names.append(' ', StringView(it->key.get()));
+                    }
+                    key = makeString("ENVIRONMENT of "_s, table->scopeSize(), " @"_s, static_cast<uint32_t>(std::bit_cast<uintptr_t>(table)), names.toString());
+                } else if (cell->type() == FinalObjectType) {
+                    Structure* structure = cell->structure();
+                    StringBuilder names;
+                    unsigned shown = 0;
+                    unsigned properties = 0;
+                    structure->forEachProperty(vm(), [&](const PropertyTableEntry& entry) {
+                        ++properties;
+                        if (shown < 8) {
+                            names.append(' ', StringView(entry.key()));
+                            ++shown;
+                        }
+                        return true;
+                    });
+                    if (auto* object = asObject(cell); object->butterfly() && structure->outOfLineCapacity())
+                        size += structure->outOfLineCapacity() * sizeof(EncodedJSValue);
+                    key = makeString("OBJECT of "_s, properties, structure->isDictionary() ? " (dictionary)"_s : ""_s, names.toString());
+                } else if (auto* array = dynamicDowncast<JSArray>(cell)) {
+                    unsigned length = array->length();
+                    if (array->butterfly() && hasAnyArrayStorage(array->indexingType()) == false && array->indexingType() != ArrayClass)
+                        size += (array->butterfly()->vectorLength() + 1) * sizeof(EncodedJSValue);
+                    key = makeString("ARRAY indexing "_s, static_cast<unsigned>(array->indexingType()), " length "_s, bucket(length));
+                } else if (auto* string = dynamicDowncast<JSString>(cell))
+                    key = makeString("STRING "_s, string->isRope() ? "rope"_s : "flat"_s, " length "_s, bucket(string->length()));
+                else
+                    key = makeString("OTHER "_s, String::fromLatin1(cell->classInfo()->className.characters()));
+                auto& entry = byIdentity.add(key, std::pair<uint64_t, uint64_t> { }).iterator->value;
+                entry.first++;
+                entry.second += size;
+                return IterationStatus::Continue;
+            });
+            for (auto& [key, entry] : byIdentity)
+                out->println("IDENTITY\t", entry.first, "\t", entry.second, "\t", key);
+        }
         for (auto& [info, entry] : byClass)
             out->println("CLASS ", info->className, " count=", entry.first, " bytes=", entry.second);
         UncheckedKeyHashMap<String, uint64_t> kinds;

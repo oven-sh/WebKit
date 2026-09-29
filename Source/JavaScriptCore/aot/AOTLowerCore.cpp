@@ -241,6 +241,7 @@ bool Lowering::run()
     if (m_graph.startsCold) {
         // It has none until it has shown that it is worth one, and until it is called by somebody who looks, nothing says even that.
         m_data = m_out.select(m_out.notNull(data), data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+        m_dataOnEntry = m_data;
         m_constants = wordByIndex(m_out.loadPtr(m_instance, m_heaps.AOTInstance_infos), FunctionInfo::offsetOfConstants(), sizeof(FunctionInfo), false);
     } else
         m_dataOrNothing = data;
@@ -912,6 +913,15 @@ void Lowering::lowerBlock(BasicBlock* block)
     m_out.appendTo(block->lowered);
     for (Node* phi : block->phis)
         m_out.m_block->append(phi->lowered);
+    // A function that starts cold has no loop of its own, but may have been given one (inlineCalls()). What it goes round with is looked
+    // for again each time: it is given caches of its own once it has done without often enough, and that may well be on the way round.
+    if (m_dataOnEntry) {
+        m_data = m_dataOnEntry;
+        if (block->isInLoop) {
+            LValue data = wordByIndex(nullptr, Instance::offsetOfData(), sizeof(Data*), true);
+            m_data = m_out.select(m_out.notNull(data), data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+        }
+    }
     if (block->endsWithGuard)
         m_exit = newColdBlock();
     if (block == m_graph.root)

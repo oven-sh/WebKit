@@ -706,7 +706,7 @@ Vector<uint8_t> ImageBuilder::finish()
             // (The first stands for the function itself.)
             appendVarint(callSites, inlineFrames.size() - 1);
             for (unsigned frame = 1; frame < inlineFrames.size(); ++frame) {
-                appendVarint(callSites, inlineFrames[frame].parent);
+                appendVarint(callSites, inlineFrames[frame].parent << 1 | inlineFrames[frame].isTailCall);
                 appendVarint(callSites, inlineFrames[frame].callSite);
                 StubCall call { };
                 call.function = inlineFrames[frame].knownCallee;
@@ -1339,7 +1339,9 @@ InlineFrameOfImage inlineFrameOf(const ImageFunction& function, unsigned frame)
     RELEASE_ASSERT(frame <= count);
     InlineFrameOfImage result { };
     for (unsigned i = 0; i < frame; ++i) {
-        result.parent = static_cast<uint32_t>(readVarint(at));
+        uint64_t parentAndIsTailCall = readVarint(at);
+        result.parent = static_cast<uint32_t>(parentAndIsTailCall >> 1);
+        result.isTailCall = parentAndIsTailCall & 1;
         result.callSite = static_cast<uint32_t>(readVarint(at));
         result.function = static_cast<uint32_t>(readVarint(at));
     }

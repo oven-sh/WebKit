@@ -38,6 +38,7 @@ struct Slot;
     v(operationAOTNewArrayWithSpecies) \
     v(operationAOTSpread) \
     v(operationAOTNewRegExp) \
+    v(operationAOTNewRegExpForReceiver) \
     v(operationAOTNewFunction) \
     v(operationAOTSetFunctionName) \
     v(operationAOTNewInternalFieldObject) \
@@ -142,11 +143,12 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (JSGlobalObject*, J
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArray, JSObject*, (JSGlobalObject*, const EncodedJSValue* values, uint32_t count, uint32_t indexingType));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSize, JSObject*, (JSGlobalObject*, EncodedJSValue size));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayBuffer, JSObject*, (JSGlobalObject*, JSCell* immutableButterfly));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObject*, const EncodedJSValue* values, uint32_t count));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObject*, EncodedJSValue*, uint32_t count, uint32_t yetToBeSpread));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (JSGlobalObject*, EncodedJSValue length, JSObject* array));
 JSC_DECLARE_JIT_OPERATION(operationAOTSpread, JSCell*, (JSGlobalObject*, EncodedJSValue iterable));
 JSCell* spread(JSGlobalObject*, JSValue iterable); // What op_spread makes.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject*, JSCell* regExp));
+JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalObject*, JSCell* regExp, uint32_t forTest, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject*, JSScope*, uint32_t index, uint32_t isExpression, uint32_t functionKind, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (JSGlobalObject*, JSObject* function, EncodedJSValue name));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewInternalFieldObject, JSObject*, (JSGlobalObject*, uint32_t kind));

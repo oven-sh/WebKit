@@ -125,6 +125,8 @@ struct FunctionRef::Place {
     FunctionRef function;
     BytecodeIndex bytecodeIndex;
     unsigned inlineFrame { 0 };
+    // placeOfInlinedCall(): the call was a tail call, so this is somewhere that nobody is any more.
+    bool hasBeenLeft { false };
 };
 
 // ---- Frames
@@ -163,6 +165,7 @@ struct InlineFrameOfImage {
     uint32_t parent;
     uint32_t callSite;
     uint32_t function;
+    bool isTailCall;
 };
 JS_EXPORT_PRIVATE InlineFrameOfImage inlineFrameOf(const ImageFunction&, unsigned frame);
 // For as long as there is one of these, the function that is going to be returned to there is somewhere else as far as anybody can tell.
@@ -181,6 +184,7 @@ JS_EXPORT_PRIVATE bool canTellInstanceOfFrame(const void* frame);
 // frame has in the engine's own convention, and nothing is to be asked of it but by way of a StackVisitor.
 JS_EXPORT_PRIVATE bool topFrameIsNotTheEnginesOwn(const void* frame);
 // frame: one in the engine's own convention, of a host function, say. The function that made the call, if it is code from the static compiler.
+// (The function whose bytecode it is that made the call: see FunctionRef::placeAt().)
 JS_EXPORT_PRIVATE FunctionRef functionThatCalled(const CallFrame*);
 // Its CodeBlock, made now if there is none, for whoever has to have one to report an error with. Null if it is not such code.
 JS_EXPORT_PRIVATE CodeBlock* codeBlockOfFunctionThatCalled(const CallFrame*);

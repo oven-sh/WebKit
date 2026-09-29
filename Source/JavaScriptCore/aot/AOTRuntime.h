@@ -335,7 +335,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfDispatch() { return OBJECT_OFFSETOF(Instance, dispatch); }
     static constexpr ptrdiff_t offsetOfRowsOfSelectors() { return OBJECT_OFFSETOF(Instance, rowsOfSelectors); }
 
-    JS_EXPORT_PRIVATE void dumpSlotStatistics(); // TEMPORARY-SLOT-STATS
+    JS_EXPORT_PRIVATE void dumpSlotStatistics(PrintStream&); // TEMPORARY-SLOT-STATS
 
     void** runtimeTable;
     JSGlobalObject* globalObject;
@@ -509,6 +509,7 @@ struct CompiledFunctionInfo {
         uint32_t parent;
         uint32_t callSite;
         uint32_t knownCallee;
+        bool isTailCall;
     };
     Vector<InlineFrame> inlineFrames; // Graph::inlineFrames
     bool isOnlyCalledDirectly { false }; // ProgramFacts::isClosed: by a call instruction that goes to it, and in no other way.

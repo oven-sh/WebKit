@@ -60,6 +60,8 @@ void cachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure,
 // cache[2]: the structure that the callee has to be making its instances from.
 void fillConstructionCache(VM&, Data*, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator);
 void fillAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uint32_t payload = 0, JSCell* extra = nullptr);
+// cache->pointer: the object, for as long as the collector finds some other reason to keep it.
+void cacheObjectOfSite(VM&, Data*, Slot* cache, JSObject*);
 
 } } // namespace JSC::AOT
 

@@ -337,13 +337,70 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayBuffer, JSObject*, (JSGlobalObject*
 }
 
 // Which of the values are the results of op_spread is plain from the values: nothing else in a register is a JSCellButterfly.
-JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObject* globalObject, const EncodedJSValue* encodedValues, uint32_t count))
+//     yetToBeSpread: which of them (a bit for each) are what is to be spread, and not what came of spreading it: nothing happens between
+//     when that would have been done and now (Graph::findListsOfArguments()).
+JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue* encodedValues, uint32_t count, uint32_t yetToBeSpread))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    const JSValue* values = std::bit_cast<const JSValue*>(encodedValues);
+    JSValue* values = std::bit_cast<JSValue*>(encodedValues);
     auto spreadOf = [](JSValue value) -> JSCellButterfly* {
         return value.isCell() ? dynamicDowncast<JSCellButterfly>(value.asCell()) : nullptr;
     };
+
+    if (yetToBeSpread) {
+        // What iterating over an array comes to is what is in it, if nobody has said otherwise, and nobody can tell that it was not done.
+        auto arrayToCopyFrom = [&](unsigned i) -> JSArray* {
+            if (!(yetToBeSpread >> i & 1) || !values[i].isCell())
+                return nullptr;
+            auto* array = dynamicDowncast<JSArray>(values[i].asCell());
+            return array && array->isIteratorProtocolFastAndNonObservable() ? array : nullptr;
+        };
+        bool allAreArraysToCopyFrom = count > 1;
+        for (unsigned i = 0; i < count; ++i)
+            allAreArraysToCopyFrom &= !(yetToBeSpread >> i & 1) || arrayToCopyFrom(i);
+        if (allAreArraysToCopyFrom) {
+            CheckedUint32 size = 0;
+            for (unsigned i = 0; i < count; ++i) {
+                if (JSArray* array = arrayToCopyFrom(i))
+                    size += array->length();
+                else if (auto* butterfly = spreadOf(values[i]))
+                    size += butterfly->publicLength();
+                else
+                    size += 1;
+            }
+            if (!size.hasOverflowed() && size.value() < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH) {
+                if (JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), size.value())) {
+                    unsigned index = 0;
+                    for (unsigned i = 0; i < count; ++i) {
+                        if (JSArray* array = arrayToCopyFrom(i)) {
+                            for (unsigned j = 0, length = array->length(); j < length; ++j) {
+                                JSValue element = array->tryGetIndexQuickly(j);
+                                result->putDirectIndex(globalObject, index++, element ? element : jsUndefined());
+                                OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
+                            }
+                        } else if (auto* butterfly = spreadOf(values[i])) {
+                            for (unsigned j = 0; j < butterfly->publicLength(); ++j) {
+                                result->putDirectIndex(globalObject, index++, butterfly->get(j));
+                                OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
+                            }
+                        } else {
+                            result->putDirectIndex(globalObject, index++, values[i]);
+                            OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
+                        }
+                    }
+                    OPERATION_RETURN(scope, result);
+                }
+            }
+        }
+        // Each in its turn, then, as it would have been. (What has been made is where the collector looks: in the caller's frame.)
+        for (unsigned i = 0; i < count; ++i) {
+            if (!(yetToBeSpread >> i & 1))
+                continue;
+            JSCell* made = spread(globalObject, values[i]);
+            OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
+            values[i] = made;
+        }
+    }
 
     if (count == 1) {
         if (auto* butterfly = spreadOf(values[0])) {
@@ -439,11 +496,28 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject* glob
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), uncheckedDowncast<RegExp>(regExp), areLegacyFeaturesEnabled));
 }
 
-//     cache: for allocation. cache[0].pointer: the executable.
-JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* globalObject, JSScope* environment, uint32_t index, uint32_t isExpression, uint32_t kind, Slot* cache))
+// op_new_reg_exp_shared. cache->pointer: the object that does for the site, which the code looks for before it comes here.
+JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalObject* globalObject, JSCell* cell, uint32_t forTest, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    FunctionExecutable* executable = isExpression ? functionExprAt(globalObject, callFrame, index) : functionDeclAt(globalObject, callFrame, index);
+    if (StaticHeap::isOnlyForFirstVM(cell) && !StaticHeap::isFirst(vm)) [[unlikely]]
+        cell = RegExp::create(vm, uncheckedDowncast<RegExp>(cell)->pattern(), uncheckedDowncast<RegExp>(cell)->flags());
+    auto* regExp = uncheckedDowncast<RegExp>(cell);
+    // (The code takes what it finds there for good, which it is if nobody can put anything in the way of the builtin.)
+    if (!Options::useSharedRegExpLiteralObjects() || !Options::useImmutableIntrinsics() || !RegExpObject::canShareLiteralAsReceiver(globalObject, forTest))
+        OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
+    RegExpObject* object = RegExpObject::createSharedLiteral(vm, globalObject->regExpStructure(), regExp);
+    cacheObjectOfSite(vm, callerData(globalObject, callFrame), cache, object);
+    OPERATION_RETURN(scope, object);
+}
+
+//     cache: for allocation. cache[0].pointer: the executable.
+//     isExpressionAndWhose: whether it is; above that, see functionOfBytecodeOfCaller().
+JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* globalObject, JSScope* environment, uint32_t index, uint32_t isExpressionAndWhose, uint32_t kind, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    FunctionRef function = functionOfBytecodeOfCaller(globalObject, callFrame, isExpressionAndWhose >> 1);
+    FunctionExecutable* executable = isExpressionAndWhose & 1 ? function.functionExpr(index) : function.functionDecl(index);
     JSFunction* result = nullptr;
     switch (static_cast<FunctionKind>(kind)) {
     case FunctionKind::Normal:

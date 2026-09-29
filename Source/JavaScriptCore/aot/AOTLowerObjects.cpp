@@ -90,7 +90,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 {
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewFunction, m_globalObject, lowCell(node->use(scope)),
-            m_out.constInt32(index), m_out.constInt32(isExpression), m_out.constInt32(static_cast<uint32_t>(kind)), slotAddress(allocateSlots(2))));
+            m_out.constInt32(index), m_out.constInt32(isExpression | whoseBytecode(node) << 1), m_out.constInt32(static_cast<uint32_t>(kind)), slotAddress(allocateSlots(2))));
         return true;
     };
     auto newInternalFieldObject = [&](InternalFieldObjectKind kind) {
@@ -203,8 +203,22 @@ bool Lowering::tryLowerAllocation(Node* node)
         return true;
     case op_new_array_with_spread: {
         auto bytecode = node->as<OpNewArrayWithSpread>();
-        LValue values = storeToScratch(node, bytecode.m_argv, bytecode.m_argc);
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc)));
+        // (An op_spread that has been done away with stands for what it was to spread.)
+        uint32_t yetToBeSpread = 0;
+        Vector<Node*, 8> elements;
+        for (unsigned i = 0; i < bytecode.m_argc; ++i) {
+            Node* element = node->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)));
+            if (element->isBytecode(op_spread) && element->isElided) {
+                RELEASE_ASSERT(i < 32);
+                yetToBeSpread |= 1u << i;
+                element = element->use(element->as<OpSpread>().m_argument);
+            }
+            elements.append(element);
+        }
+        for (unsigned i = 0; i < elements.size(); ++i)
+            m_out.store64(lowJSValue(elements[i]), scratchWord(i));
+        LValue values = m_scratch;
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread)));
         return true;
     }
     case op_new_array_with_species: {
@@ -218,10 +232,26 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_new_reg_exp:
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(node->as<OpNewRegExp>().m_regexp)));
         return true;
-    case op_new_reg_exp_shared:
-        // That one object per site would do is an optimization the other tiers have. A new object each time is what it stands for.
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(node->as<OpNewRegExpShared>().m_regexp)));
+    case op_new_reg_exp_shared: {
+        // One object does for the site: nothing gets hold of it but the builtin it is the receiver of, which leaves it as it is.
+        auto bytecode = node->as<OpNewRegExpShared>();
+        if (!Options::useImmutableIntrinsics() || !Options::useSharedRegExpLiteralObjects()) {
+            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewRegExp, m_globalObject, lowConstantRegister(bytecode.m_regexp)));
+            return true;
+        }
+        unsigned slot = allocateSlot();
+        LBasicBlock make = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue cached = m_out.load64(slotWord(slot, 1));
+        ValueFromBlock found = m_out.anchor(cached);
+        m_out.branch(m_out.notZero64(cached), usually(continuation), rarely(make));
+        m_out.appendTo(make);
+        ValueFromBlock made = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewRegExpForReceiver, m_globalObject, lowConstantRegister(bytecode.m_regexp), m_out.constInt32(bytecode.m_forTest), slotAddress(slot)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, found, made));
         return true;
+    }
 
 #define AOT_NEW_FUNCTION(Struct, opcodeName, isExpression, kind) \
     case opcodeName: { \

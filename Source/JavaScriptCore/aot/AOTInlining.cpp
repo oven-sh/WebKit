@@ -255,6 +255,7 @@ private:
         m_didInline = true;
         m_sizeTakenOver += callee->instructionsSize();
         m_parents.add(inlinee.get(), &caller);
+        inlinee->isInTailPosition = call->opcode == op_tail_call && caller.isInTailPosition;
 
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         BasicBlock* entry = inlinee->root;
@@ -383,7 +384,7 @@ private:
         if (caller.isOutermost())
             m_graph.callSites.append(call->bytecodeIndex.offset());
 
-        Graph::InlineFrame frame { caller.inlineFrame(), CallSiteIndex(call->bytecodeIndex).bits(), m_graph.indexOfKnownCallee(about->key) };
+        Graph::InlineFrame frame { caller.inlineFrame(), CallSiteIndex(call->bytecodeIndex).bits(), m_graph.indexOfKnownCallee(about->key), call->opcode == op_tail_call };
         m_graph.adopt(WTF::move(inlinee), frame);
         return true;
     }

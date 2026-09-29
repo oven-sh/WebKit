@@ -657,6 +657,8 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
+        if (visitor->hasBeenLeftByTailCall())
+            return IterationStatus::Continue;
 
         if (skippedFrames < framesToSkip) {
             skippedFrames++;

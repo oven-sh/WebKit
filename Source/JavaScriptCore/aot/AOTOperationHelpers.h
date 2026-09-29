@@ -88,9 +88,17 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
         data->noteFilled();
 }
 ALWAYS_INLINE const Identifier& identifierAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return static_cast<const Identifier*>(caller(globalObject, callFrame).info().identifiers)[index]; }
-ALWAYS_INLINE FunctionExecutable* functionDeclAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return functionOfBytecodeOfCaller(globalObject, callFrame).functionDecl(index); }
-ALWAYS_INLINE FunctionExecutable* functionExprAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return functionOfBytecodeOfCaller(globalObject, callFrame).functionExpr(index); }
-ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(JSGlobalObject* globalObject, CallFrame* callFrame) { return functionOfBytecodeOfCaller(globalObject, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
+// The same, for an operation that is called often enough to be told: which of the caller's known callees it is, plus one, or none for the
+// caller itself (Lowering::whoseBytecode()). Looking it up means going through the places the caller calls from.
+ALWAYS_INLINE FunctionRef functionOfBytecodeOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame, uint32_t whose)
+{
+    FunctionRef function = caller(globalObject, callFrame);
+    if (!whose) [[likely]]
+        return function;
+    return { function.instance, function.info().function()->knownCallees()[whose - 1] };
+}
+// (Code that is evaluated is not made part of anything, and nothing is made part of it.)
+ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
 } } // namespace JSC::AOT
 

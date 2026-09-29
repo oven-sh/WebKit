@@ -324,6 +324,12 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
         }
 
         Structure* structure = object->structure();
+        // An object that was taken to be going its own way (Structure::goesItsOwnWay()) has been given what it was going to be given, by
+        // the look of it: somebody wants to know what is in it. From now on it is an object like any other.
+        if (structure->isDictionary() && !structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore()) [[unlikely]] {
+            structure->flattenDictionaryStructure(vm, object);
+            structure = object->structure();
+        }
         bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
         structure = object->structure(); // Reifying a static property changes it.
         if (cacheable && !structure->propertyAccessesAreCacheable())
@@ -392,6 +398,13 @@ void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, 
     cache[0].clear();
     fill(vm, data, &cache[2], first, 0, nullptr);
     fillAllocationCache(vm, data, cache, last, allocator, last->inlineCapacity(), callee);
+}
+
+void cacheObjectOfSite(VM& vm, Data* data, Slot* cache, JSObject* object)
+{
+    if (SharedData::contains(cache))
+        return;
+    fill(vm, data, cache, object->structure(), Slot::pointerIsCell, object);
 }
 
 void fillAllocationCache(VM& vm, Data* data, Slot* cache, Structure* structure, Allocator allocator, uint32_t payload, JSCell* extra)
