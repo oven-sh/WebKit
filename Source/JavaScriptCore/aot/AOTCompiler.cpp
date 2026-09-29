@@ -902,7 +902,7 @@ void reportStatistics()
         auto [count, bytes] = stats.byOrigin[tag];
         if (!count && !bytes)
             continue;
-        static constexpr ASCIILiteral kinds[] = { "Bytecode"_s, "Constant"_s, "ConstantCell"_s, "Argument"_s, "Phi"_s, "Proj"_s, "GetStack"_s, "SetStack"_s, "Guard"_s, "Narrow"_s };
+        static constexpr ASCIILiteral kinds[] = { "Bytecode"_s, "Constant"_s, "ConstantCell"_s, "Intrinsic"_s, "Argument"_s, "Phi"_s, "Proj"_s, "GetStack"_s, "SetStack"_s, "Guard"_s, "Narrow"_s };
         ASCIILiteral name = !tag ? "(function)"_s : tag <= numOpcodeIDs ? opcodeNames[tag - 1] : kinds[tag - numOpcodeIDs - 1];
         dataLogLn("  SIZE ", name, " ", count, " ", bytes);
     }

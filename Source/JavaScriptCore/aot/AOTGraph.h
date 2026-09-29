@@ -239,6 +239,10 @@ struct BasicBlock {
     Vector<BasicBlock*, 2> predecessors;
     Vector<BasicBlock*, 2> successors; // For a conditional jump: taken, then not taken. For a switch: the cases in table order, then the default.
     BitVector liveIn; // Indexed by Graph::registerIndex().
+    // Of the registers that live in memory (Graph::isHomed()): those that a handler reads that something in the block can throw to; and
+    // those that some handler that can be got to from the end of the block reads, unless they are written first.
+    BitVector readByHandlersOfBlock;
+    BitVector readByHandlersAfterBlock;
     Vector<Node*> valuesAtTail; // Indexed by Graph::registerIndex().
 
     B3::BasicBlock* lowered { nullptr };

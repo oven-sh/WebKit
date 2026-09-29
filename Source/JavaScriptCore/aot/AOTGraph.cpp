@@ -751,20 +751,56 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
         JSValue table = m_codeBlock->getConstant(reg);
         return table && table.isCell() ? table.asCell() : nullptr;
     };
-    // All of them the same one, whatever else they may be.
-    auto ofAll = [&](const auto& nodes, const auto& nodeOf) -> const void* {
+    // What comes by way of phis and of memory: all of it the same one.
+    if (scope->kind != NodeKind::Bytecode) {
+        Vector<const Node*, 16> worklist { scope };
+        UncheckedKeyHashSet<const Node*> seen;
         const void* result = nullptr;
-        for (auto& entry : nodes) {
-            const Node* input = nodeOf(entry);
-            if (input == scope)
+        while (!worklist.isEmpty()) {
+            const Node* node = worklist.takeLast();
+            if (!seen.add(node).isNewEntry)
                 continue;
-            const void* identity = identityOfScope(input, depth + 1);
-            if (!identity || (result && result != identity))
+            switch (node->kind) {
+            case NodeKind::Phi:
+                for (auto& use : node->uses)
+                    worklist.append(use.node);
+                break;
+            case NodeKind::Narrow:
+                worklist.append(node->uses[0].node);
+                break;
+            case NodeKind::GetStack: {
+                // A register that lives in memory holds whatever was last put there.
+                if (!std::exchange(m_hasStoresToHomed, true)) {
+                    for (BasicBlock* block : m_rpo) {
+                        for (Node* store : block->nodes) {
+                            if (store->kind == NodeKind::SetStack)
+                                m_storesToHomed.add(store->reg.offset(), Vector<Node*>()).iterator->value.append(store);
+                        }
+                    }
+                }
+                auto it = m_storesToHomed.find(node->reg.offset());
+                if (it == m_storesToHomed.end())
+                    return nullptr;
+                for (Node* store : it->value)
+                    worklist.append(store->uses[0].node);
+                break;
+            }
+            case NodeKind::Constant:
+                // What a register holds until it is given a scope. Nothing is read from that.
+                break;
+            case NodeKind::Bytecode: {
+                const void* identity = identityOfScope(node, depth + 1);
+                if (!identity || (result && result != identity))
+                    return nullptr;
+                result = identity;
+                break;
+            }
+            default:
                 return nullptr;
-            result = identity;
+            }
         }
         return result;
-    };
+    }
     switch (scope->kind) {
     case NodeKind::Bytecode:
         switch (scope->opcode) {
@@ -798,25 +834,6 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
         default:
             return nullptr;
         }
-    case NodeKind::Phi:
-        return ofAll(scope->uses, [](const Use& use) { return use.node; });
-    case NodeKind::Narrow:
-        return identityOfScope(scope->uses[0].node, depth + 1);
-    case NodeKind::GetStack: {
-        // A register that lives in memory holds whatever was last put there.
-        if (!std::exchange(m_hasStoresToHomed, true)) {
-            for (BasicBlock* block : m_rpo) {
-                for (Node* node : block->nodes) {
-                    if (node->kind == NodeKind::SetStack)
-                        m_storesToHomed.add(node->reg.offset(), Vector<Node*>()).iterator->value.append(node);
-                }
-            }
-        }
-        auto it = m_storesToHomed.find(scope->reg.offset());
-        if (it == m_storesToHomed.end())
-            return nullptr;
-        return ofAll(it->value, [](Node* store) { return store->uses[0].node; });
-    }
     default:
         return nullptr;
     }
@@ -1419,6 +1436,8 @@ public:
             if (m_graph.failed())
                 return false;
         }
+        if (m_needsEveryStore)
+            makeSkippedStores();
         fillPhis();
         simplifyPhis();
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -2199,7 +2218,9 @@ private:
     {
         unsigned numRegisters = m_graph.numRegisters();
         Vector<BitVector> uses(m_graph.blocks.size());
-        Vector<BitVector> defs(m_graph.blocks.size());
+        Vector<BitVector>& defs = m_defsOfBlocks;
+        defs.clear();
+        defs.grow(m_graph.blocks.size());
         for (BasicBlock* block : m_graph.m_rpo) {
             BitVector& use = uses[block->index];
             BitVector& def = defs[block->index];
@@ -2239,12 +2260,76 @@ private:
         }
     }
 
+    struct SkippedStore {
+        BasicBlock* block;
+        unsigned index; // In the nodes of the block: where it would have been.
+        VirtualRegister reg;
+        Node* value;
+    };
+    Vector<SkippedStore> m_skippedStores;
+    bool m_needsEveryStore { false };
+    Vector<BitVector> m_defsOfBlocks;
+
     void chooseHomedRegisters()
     {
         m_graph.m_homed.ensureSize(m_graph.numRegisters());
         for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
             m_graph.m_homed.merge(entrypoint->liveIn);
         m_graph.homedTypes.fill(TNone, m_graph.numRegisters());
+
+        // It is for the sake of a handler that they do, which has nothing to go by but what is in memory. The number of a register is
+        // put to one use after another: what is in it is only anybody's business where a handler that reads it is still to come.
+        m_skippedStores.clear();
+        m_needsEveryStore = !Options::aotStoresHomedRegistersOnlyWhereRead();
+        if (m_graph.catchEntrypoints.isEmpty() || m_needsEveryStore)
+            return;
+        unsigned numRegisters = m_graph.numRegisters();
+        Vector<BitVector> atStart(m_graph.blocks.size());
+        for (BasicBlock* block : m_graph.m_rpo) {
+            block->readByHandlersOfBlock.ensureSize(numRegisters);
+            block->readByHandlersAfterBlock.ensureSize(numRegisters);
+            atStart[block->index].ensureSize(numRegisters);
+        }
+        for (unsigned i = 0; i < m_codeBlock->numberOfExceptionHandlers(); ++i) {
+            auto& handler = m_codeBlock->exceptionHandler(i);
+            BasicBlock* target = m_graph.blockForOffset[handler.target];
+            for (BasicBlock* block : m_graph.m_rpo) {
+                // (What a block ends in may be done as part of it: see inlineCall().)
+                if (block->bytecodeBegin < handler.end && handler.start <= block->bytecodeEnd)
+                    block->readByHandlersOfBlock.merge(target->liveIn);
+            }
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (unsigned i = m_graph.m_rpo.size(); i--;) {
+                BasicBlock* block = m_graph.m_rpo[i];
+                BitVector after(numRegisters);
+                for (BasicBlock* successor : block->successors)
+                    after.merge(atStart[successor->index]);
+                BitVector start = after;
+                start.exclude(m_defsOfBlocks[block->index]);
+                start.merge(block->readByHandlersOfBlock);
+                if (after != block->readByHandlersAfterBlock || start != atStart[block->index]) {
+                    block->readByHandlersAfterBlock = WTF::move(after);
+                    atStart[block->index] = WTF::move(start);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // If it turns out that a register is read from memory somewhere other than on the way in to a handler.
+    void makeSkippedStores()
+    {
+        for (unsigned i = m_skippedStores.size(); i--;) {
+            auto& skipped = m_skippedStores[i];
+            Node* node = m_graph.addNode(NodeKind::SetStack);
+            node->reg = skipped.reg;
+            node->block = skipped.block;
+            node->uses.append({ VirtualRegister(), skipped.value });
+            skipped.block->nodes.insert(skipped.index, node);
+        }
+        m_skippedStores.clear();
     }
 
     Node* append(BasicBlock* block, Node* node)
@@ -2301,6 +2386,7 @@ private:
         }
         Node* value = block->valuesAtTail[m_graph.registerIndex(reg)];
         if (!value && m_graph.isHomed(reg)) {
+            m_needsEveryStore = true;
             Node* node = m_graph.addNode(NodeKind::GetStack);
             node->reg = reg;
             return append(block, node);
@@ -2320,12 +2406,16 @@ private:
             return;
         }
         if (m_graph.isHomed(reg)) {
-            Node* node = m_graph.addNode(NodeKind::SetStack);
-            node->reg = reg;
-            node->uses.append({ VirtualRegister(), value });
-            append(block, node);
-            // That is for whoever gets here by way of a handler, with nothing to go by but what is in memory. Everybody else knows
-            // what was put there.
+            unsigned index = m_graph.registerIndex(reg);
+            if (m_needsEveryStore || block->readByHandlersOfBlock.get(index) || block->readByHandlersAfterBlock.get(index)) {
+                Node* node = m_graph.addNode(NodeKind::SetStack);
+                node->reg = reg;
+                node->uses.append({ VirtualRegister(), value });
+                append(block, node);
+                // That is for whoever gets here by way of a handler, with nothing to go by but what is in memory. Everybody else
+                // knows what was put there.
+            } else
+                m_skippedStores.append({ block, static_cast<unsigned>(block->nodes.size()), reg, value });
         }
         block->valuesAtTail[m_graph.registerIndex(reg)] = value;
     }
