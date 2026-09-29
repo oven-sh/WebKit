@@ -116,13 +116,6 @@ public:
         , m_lastLine(range.lastLine)
     {
         if (!range.start) {
-            if constexpr (sizeof(CharacterType) == 2) {
-                if (m_end && m_source[0] == 0xFEFF) {
-                    m_position = 1;
-                    m_lineStart = 1;
-                    m_columnCacheOffset = 1;
-                }
-            }
             m_indentation.append({ 0, 0 });
             return;
         }
