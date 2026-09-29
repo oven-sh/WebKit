@@ -27,6 +27,7 @@
 #pragma once
 
 #include "SourceOrigin.h"
+#include <optional>
 #include <span>
 #include <wtf/text/WTFString.h>
 
@@ -48,6 +49,9 @@ JS_EXPORT_PRIVATE int runMain(JSGlobalObject*);
 // Whether what runMain() ran ended by raising something that nothing caught, SystemExit among them, and not by being run to its end. It is over then, as a program that is JavaScript's is after process.exit() or an
 // exception that nothing catches, whatever it has left for later. One that was run to its end is over when the host has nothing left to do for it.
 JS_EXPORT_PRIVATE bool mainHasRaised(JSGlobalObject*);
+// For a host, of what has been thrown and nothing has caught, wherever that was: in something that its event loop called, say. If it is SystemExit the program has said that it is over, and this is the status to end with. If
+// what it was given to exit with is a message, that has been written, as CPython writes it. Nothing if it is anything else, which is for the host to report.
+JS_EXPORT_PRIVATE std::optional<int> exitStatusOfSystemExit(JSGlobalObject*, JSValue thrown);
 // _PyRun_InteractiveLoop(): statements are read from the standard input, with a prompt for each, and run, until there are no more. What one of them raises is shown, and the next is read. It throws only if it is SystemExit, or
 // if there is no going on.
 void runInteractiveLoop(JSGlobalObject*);

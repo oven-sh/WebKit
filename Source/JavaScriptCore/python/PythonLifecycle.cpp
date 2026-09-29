@@ -343,6 +343,14 @@ static bool handleSystemExit(JSGlobalObject* globalObject, JSValue exception, in
     return true;
 }
 
+std::optional<int> exitStatusOfSystemExit(JSGlobalObject* globalObject, JSValue thrown)
+{
+    int status = 0;
+    if (!handleSystemExit(globalObject, thrown, status))
+        return std::nullopt;
+    return status;
+}
+
 void printRaisedException(JSGlobalObject* globalObject)
 {
     printExceptionAndGetStatus(globalObject);
