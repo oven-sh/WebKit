@@ -444,6 +444,8 @@ void reportUncaughtException(JSGlobalObject*, JSValue exception);
 
 JSValue binaryOperation(JSGlobalObject*, BinaryOperator, bool inPlace, JSValue, JSValue);
 JSValue unaryOperation(JSGlobalObject*, UnaryOperator, JSValue);
+JSValue absolute(JSGlobalObject*, JSValue); // abs()
+JSValue sequenceConcatenate(JSGlobalObject*, bool inPlace, JSValue, JSValue); // PySequence_Concat() and PySequence_InPlaceConcat()
 JSValue compare(JSGlobalObject*, ComparisonOperator, JSValue, JSValue);
 bool isTrue(JSGlobalObject*, JSValue);
 bool isEqual(JSGlobalObject*, JSValue, JSValue); // x is y or x == y, which is what containers ask.

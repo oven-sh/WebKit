@@ -196,6 +196,7 @@ JSObject* createOpcodeModule(JSGlobalObject*);
 JSObject* createRandomModule(JSGlobalObject*);
 JSObject* createSREModule(JSGlobalObject*);
 JSObject* createABCModule(JSGlobalObject*);
+JSObject* createOperatorModule(JSGlobalObject*);
 JSObject* createArrayModule(JSGlobalObject*);
 JSObject* createBinasciiModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);

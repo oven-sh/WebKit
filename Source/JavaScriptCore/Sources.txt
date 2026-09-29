@@ -807,6 +807,7 @@ python/PythonNumberTypes.cpp
 python/PythonNumbers.cpp
 python/PythonObjectModel.cpp
 python/PythonOpcodeModule.cpp
+python/PythonOperatorModule.cpp
 python/PythonOperators.cpp
 python/PythonParser.cpp
 python/PythonProperty.cpp

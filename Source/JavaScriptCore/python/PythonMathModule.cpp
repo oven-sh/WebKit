@@ -63,7 +63,7 @@ JSValue shiftRight(JSGlobalObject* globalObject, JSValue a, int64_t count) { ret
 // Of ints
 bool isNegative(JSValue integer) { return compareInts(integer, jsNumber(0)) < 0; }
 bool isZero(JSValue integer) { return !compareInts(integer, jsNumber(0)); }
-JSValue absolute(JSGlobalObject* globalObject, JSValue integer) { return isNegative(integer) ? numberUnaryOperation(globalObject, UnaryOperator::USub, integer) : integer; }
+JSValue absoluteOfInt(JSGlobalObject* globalObject, JSValue integer) { return isNegative(integer) ? numberUnaryOperation(globalObject, UnaryOperator::USub, integer) : integer; }
 
 // PyLong_Check()
 bool isIntOrDerived(JSGlobalObject* globalObject, JSValue value) { return isInstance(globalObject, value, globalObject->pyRealm()->typeInt()); }
@@ -103,7 +103,7 @@ JSValue greatestCommonDivisor(JSGlobalObject* globalObject, JSValue a, JSValue b
         a = b;
         b = remainder;
     }
-    RELEASE_AND_RETURN(scope, absolute(globalObject, a));
+    RELEASE_AND_RETURN(scope, absoluteOfInt(globalObject, a));
 }
 
 // _PyLong_Frexp(), of an int that is more than nothing: it is x * 2 ** exponent, as nearly as a double can say, with x at least a half and less than one.
@@ -498,7 +498,7 @@ PYTHON_NATIVE(mathGcd)
     JSValue result = toInt(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (args.size() == 1)
-        RELEASE_AND_RETURN(scope, JSValue::encode(absolute(globalObject, result)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(absoluteOfInt(globalObject, result)));
     for (unsigned i = 1; i < args.size(); ++i) {
         JSValue x = toInt(globalObject, args[i]);
         RETURN_IF_EXCEPTION(scope, { });
@@ -520,7 +520,7 @@ PYTHON_NATIVE(mathLcm)
     JSValue result = toInt(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     if (args.size() == 1)
-        RELEASE_AND_RETURN(scope, JSValue::encode(absolute(globalObject, result)));
+        RELEASE_AND_RETURN(scope, JSValue::encode(absoluteOfInt(globalObject, result)));
     for (unsigned i = 1; i < args.size(); ++i) {
         JSValue x = toInt(globalObject, args[i]);
         RETURN_IF_EXCEPTION(scope, { });
@@ -537,7 +537,7 @@ PYTHON_NATIVE(mathLcm)
         RETURN_IF_EXCEPTION(scope, { });
         JSValue product = multiply(globalObject, quotient, x);
         RETURN_IF_EXCEPTION(scope, { });
-        result = absolute(globalObject, product);
+        result = absoluteOfInt(globalObject, product);
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(result);

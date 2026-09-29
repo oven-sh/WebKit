@@ -522,12 +522,7 @@ PYTHON_NATIVE(builtinSorted)
 PYTHON_NATIVE(builtinAbs)
 {
     NATIVE_PROLOGUE();
-    JSValue self;
-    JSValue method = lookupSpecial(globalObject, args[0], names.dunder_abs, self);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!method)
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("bad operand type for abs(): '"_s, typeName(globalObject, args[0]), '\'')));
-    RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(absolute(globalObject, args[0])));
 }
 
 // round(number, ndigits=None)

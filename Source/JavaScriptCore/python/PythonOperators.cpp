@@ -254,16 +254,38 @@ bool isSequenceSlot(JSGlobalObject* globalObject, JSValue method)
     return isClass(owner) && asType(owner)->hasFlag(PyType::AddsAsSequence);
 }
 
-// A class that is derived from a built-in sequence still has what that has, whatever it has by the same name for itself.
-static JSValue sequenceSlot(JSGlobalObject* globalObject, PyType* type, const Identifier& name)
+// What a class has for + or * as a sequence has it: sq_concat, sq_repeat, sq_inplace_concat and sq_inplace_repeat. A class that is derived from a built-in sequence has what that has, until it has something of its own by any of
+// the names that it goes by, and then it has nothing: update_one_slot() of CPython's Objects/typeobject.c, for which there is nothing to put there that would call a method. sq_repeat goes by two names.
+static JSValue sequenceSlot(JSGlobalObject* globalObject, PyType* type, BinaryOperator op, bool inPlace)
 {
     VM& vm = globalObject->vm();
-    for (auto& entry : type->mro()->span()) {
-        PyType* base = asType(entry.get());
-        if (base->hasFlag(PyType::IsHeapType))
-            continue;
-        if (JSValue method = base->getDirect(vm, name))
-            return isSequenceSlot(globalObject, method) ? method : JSValue();
+    auto& names = vm.pythonNames();
+    JSValue method = type->lookup(vm, inPlace ? names.inPlaceMethod(op) : names.method(op));
+    if (!method || !isSequenceSlot(globalObject, method))
+        return { };
+    if (op == BinaryOperator::Mult && !inPlace) {
+        JSValue reflected = type->lookup(vm, names.reflectedMethod(op));
+        if (!reflected || !isSequenceSlot(globalObject, reflected))
+            return { };
+    }
+    return method;
+}
+
+// What a class has by a name for + or *, as a number has it: nb_add and nb_multiply. What a built-in sequence has by that name is not for this. But if a class that is derived from one has something of its own by either of
+// the names that it goes by, what it has for this is what looks for a method by name, and that finds whatever there is.
+static JSValue lookupAsNumber(JSGlobalObject* globalObject, PyType* type, BinaryOperator op, const Identifier& name)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    JSValue method = type->lookup(vm, name);
+    if (!method || (op != BinaryOperator::Add && op != BinaryOperator::Mult) || !isSequenceSlot(globalObject, method))
+        return method;
+    if (&name != &names.method(op) && &name != &names.reflectedMethod(op))
+        return { };
+    for (const Identifier* other : { &names.method(op), &names.reflectedMethod(op) }) {
+        JSValue found = type->lookup(vm, *other);
+        if (found && !isSequenceSlot(globalObject, found))
+            return method;
     }
     return { };
 }
@@ -343,10 +365,7 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
     // First as numbers: binary_op1() and binary_iop1() of CPython's Objects/abstract.c. What a built-in sequence has for + and * is not for this. It has its turn when this has come to nothing,
     // so that what it is added to or multiplied by is asked first.
     bool mayBeForSequences = op == BinaryOperator::Add || op == BinaryOperator::Mult;
-    auto lookupForNumbers = [&] (PyType* type, const Identifier& name) -> JSValue {
-        JSValue method = type->lookup(vm, name);
-        return method && mayBeForSequences && isSequenceSlot(globalObject, method) ? JSValue() : method;
-    };
+    auto lookupForNumbers = [&] (PyType* type, const Identifier& name) { return lookupAsNumber(globalObject, type, op, name); };
 
     if (inPlace) {
         // A class that a program derives from list or bytearray has their += as a number has it, too. When CPython fills in what such a class can do, it takes what it finds as __iadd__ for
@@ -368,8 +387,8 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
     // Then as sequences: the rest of PyNumber_Add(), PyNumber_Multiply() and their like.
     if (mayBeForSequences) {
         auto slotOf = [&] (PyType* type, bool wantsInPlace) -> JSValue {
-            JSValue slot = wantsInPlace ? sequenceSlot(globalObject, type, names.inPlaceMethod(op)) : JSValue();
-            return slot ? slot : sequenceSlot(globalObject, type, names.method(op));
+            JSValue slot = wantsInPlace ? sequenceSlot(globalObject, type, op, true) : JSValue();
+            return slot ? slot : sequenceSlot(globalObject, type, op, false);
         };
         if (JSValue slot = slotOf(leftType, inPlace)) {
             if (op == BinaryOperator::Add)
@@ -385,6 +404,48 @@ JSValue binaryOperation(JSGlobalObject* globalObject, BinaryOperator op, bool in
             RELEASE_AND_RETURN(scope, sequenceRepeat(globalObject, slot, right, left));
     }
     return raiseUnsupportedOperands(globalObject, scope, op, inPlace, left, right);
+}
+
+// PySequence_Concat() and PySequence_InPlaceConcat() of CPython's Objects/abstract.c. It is the other way about from +: what a sequence has for it comes first, and what numbers have is come to only if both look like sequences.
+JSValue sequenceConcatenate(JSGlobalObject* globalObject, bool inPlace, JSValue left, JSValue right)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    PyType* leftType = typeOf(globalObject, left);
+    JSValue slot = inPlace ? sequenceSlot(globalObject, leftType, BinaryOperator::Add, true) : JSValue();
+    if (!slot)
+        slot = sequenceSlot(globalObject, leftType, BinaryOperator::Add, false);
+    if (slot)
+        RELEASE_AND_RETURN(scope, call(globalObject, slot, left, right));
+    // A class of a program's that has __add__() has it only as a number has it.
+    if (isSequence(globalObject, left) && isSequence(globalObject, right)) {
+        auto lookupForNumbers = [&] (PyType* type, const Identifier& name) { return lookupAsNumber(globalObject, type, BinaryOperator::Add, name); };
+        if (JSValue method = inPlace ? lookupForNumbers(leftType, names.inPlaceMethod(BinaryOperator::Add)) : JSValue()) {
+            JSValue result = callSpecial(globalObject, leftType, method, left, right);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!isNotImplemented(globalObject, result))
+                return result;
+        }
+        JSValue result = binaryByMethods(globalObject, left, right, names.method(BinaryOperator::Add), names.reflectedMethod(BinaryOperator::Add), lookupForNumbers);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result)
+            return result;
+    }
+    return raiseTypeError(globalObject, scope, concatenate('\'', typeName(globalObject, left), "' object can't be concatenated"_s));
+}
+
+// PyNumber_Absolute()
+JSValue absolute(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_abs, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!method)
+        return raiseTypeError(globalObject, scope, concatenate("bad operand type for abs(): '"_s, typeName(globalObject, value), '\''));
+    RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self));
 }
 
 // What times `value` is one more than a multiple of `modulus`, which is positive. By Euclid's algorithm, as long_invmod() of CPython's

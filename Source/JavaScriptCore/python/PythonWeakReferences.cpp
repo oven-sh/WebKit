@@ -273,19 +273,6 @@ PYTHON_NATIVE(proxyPower)
     RELEASE_AND_RETURN(scope, JSValue::encode(power(globalObject, self, other, modulus)));
 }
 
-// PyNumber_Absolute()
-static JSValue absolute(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue self;
-    JSValue method = lookupSpecial(globalObject, value, vm.pythonNames().dunder_abs, self);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!method)
-        return raiseTypeError(globalObject, scope, concatenate("bad operand type for abs(): '"_s, typeName(globalObject, value), '\''));
-    RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self));
-}
-
 enum class Unary : uint8_t { Negative, Positive, Absolute, Invert, Int, Float, Index, Str, Iter, Bytes, Reversed };
 
 PYTHON_NATIVE(proxyUnary)

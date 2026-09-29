@@ -780,6 +780,12 @@ Turning what is given into numbers can run anything, so `pack_into()` packs into
 match what is derived from `collections.abc.Sequence`, or registered with it, and likewise for a mapping. And `typing` lets a protocol be asked about only by `abc` and `functools`, going by the name of the module that is asking, which
 with `_py_abc` is `_py_abc`: `isinstance()` of a protocol that has attributes that are not methods then raises `TypeError`.
 
+### `_operator`
+
+`PythonOperatorModule.cpp` is `Modules/_operator.c`. `operator.py` has all of it in Python as well, for where there is no `_operator`, but that is not the same to a program. A function that is written in Python is a method of what
+it is an attribute of, and one that is built in is not. `glob.py` has `concat_path = operator.add` in a class, so with the one in Python `Path.glob("**/*")` raised `TypeError`. And `operator.index()` in Python is
+`a.__index__()`, which is not what `PyNumber_Index()` does with an int, or with what does not give one.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see
