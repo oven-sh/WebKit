@@ -92,6 +92,11 @@ JSC_DECLARE_HOST_FUNCTION(ioCannotPickle); // __getstate__ and __reduce__ of wha
 // _PyFileIO_closed()
 bool isFileIOClosed(JSValue);
 
+// io.open(). A null String is None. Empty if it raised.
+JSValue openFile(JSGlobalObject*, JSValue file, const String& mode, int buffering, const String& encoding, const String& errors, const String& newline, bool closesDescriptor, JSValue opener);
+// PyFile_OpenCodeObject(): io.open_code()
+JSValue openCode(JSGlobalObject*, JSValue path);
+
 // ---- Text
 
 // _PyIncrementalNewlineDecoder_decode(): the decode() of an IncrementalNewlineDecoder, without going by way of the method.

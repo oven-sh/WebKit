@@ -535,12 +535,9 @@ PYTHON_NATIVE(threadInterruptMain)
     NATIVE_PROLOGUE();
     int signal = SIGINT;
     if (JSValue value = args.at(0)) {
-        // The "i" of PyArg_ParseTuple()
-        auto given = toCLong(globalObject, value);
+        auto given = toCIntOfFormat(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
-        if (*given > std::numeric_limits<int>::max() || *given < std::numeric_limits<int>::min())
-            return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, *given > 0 ? "signed integer is greater than maximum"_s : "signed integer is less than minimum"_s));
-        signal = static_cast<int>(*given);
+        signal = *given;
     }
     // PyErr_SetInterruptEx()
     if (signal < 1 || signal >= NSIG)

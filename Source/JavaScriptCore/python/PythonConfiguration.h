@@ -27,6 +27,7 @@
 
 #include "PythonFileOperations.h"
 #include <wtf/Vector.h>
+#include "JSCJSValue.h"
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace Python {
@@ -39,6 +40,9 @@ struct Configuration {
     String executable; // sys.executable
     String implementationName { "javascriptcore"_s }; // sys.implementation.name
     const FileOperations* files { systemFileOperations() }; // Null if there are to be no files.
+    // What io.open_code() is: given the name of a file whose contents are to be run, a str, it returns a file that is open for reading bytes, or nothing, having thrown. It is for what wants a say in what is
+    // run, or has it somewhere other than in a file. Null is open(path, "rb"). PyFile_SetOpenCodeHook() of CPython.
+    JSValue (*openCode)(JSGlobalObject*, JSValue path) { nullptr };
 };
 
 } } // namespace JSC::Python

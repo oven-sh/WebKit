@@ -1,0 +1,524 @@
+---- the class
+TextIOWrapper => ('_io', ['TextIOWrapper', '_TextIOBase', '_IOBase', 'object'], ['_CHUNK_SIZE', '__getstate__', '__init__', '__module__', '__next__', '__repr__', '_finalizing', 'buffer', 'close', 'closed', 'detach', 'encoding', 'errors', 'fileno', 'flush', 'isatty', 'line_buffering', 'name', 'newlines', 'read', 'readable', 'readline', 'reconfigure', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write', 'write_through'])
+---- what it is made from
+what is asked of the buffer => [('tell',)]
+what it has => ('test_utf_8', 'strict', True, False, False, None, False, 8192, False, True, True, True, False, "<_io.TextIOWrapper encoding='test_utf_8'>", "AttributeError: 'Buffer' object has no attribute 'name'", "AttributeError: '_io.TextIOWrapper' object has no attribute 'mode'", 'UnsupportedOperation: fileno')
+() => TypeError: TextIOWrapper() missing required argument 'buffer' (pos 1)
+(None) => AttributeError: 'NoneType' object has no attribute 'readable'
+(5) => AttributeError: 'int' object has no attribute 'readable'
+an encoding that there is not => LookupError: unknown encoding: test_none_such
+one that is not of text => LookupError: 'test_binary' is not a text encoding
+an int for the encoding => TypeError: TextIOWrapper() argument 'encoding' must be str or None, not int
+bytes => TypeError: TextIOWrapper() argument 'encoding' must be str or None, not bytes
+a zero in it => ValueError: embedded null character
+'' => LookupError: unknown encoding: 
+errors=5 => TypeError: TextIOWrapper() argument 'errors' must be str or None, not int
+errors=b'' => TypeError: TextIOWrapper() argument 'errors' must be str or None, not bytes
+errors with a zero => ValueError: embedded null character
+errors that there are not => [('test_utf_8', 'no such', False, False)]
+errors=None => [('test_utf_8', 'strict', False, False)]
+errors='' => [('test_utf_8', '', False, False)]
+newline=5 => TypeError: TextIOWrapper() argument 'newline' must be str or None, not int
+newline=b'\n' => TypeError: TextIOWrapper() argument 'newline' must be str or None, not bytes
+newline='x' => ValueError: illegal newline value: x
+newline='\n\r' => ValueError: illegal newline value: 
+
+newline='\r\n\n' => ValueError: illegal newline value: 
+
+
+newline with a zero => ValueError: embedded null character
+newline='\n\0' => ValueError: embedded null character
+seven => TypeError: TextIOWrapper() takes at most 6 arguments (7 given)
+by name => [('test_utf_8', 'ignore', True, True)]
+another name => TypeError: TextIOWrapper() got an unexpected keyword argument 'other'
+an encoding in other letters => [('TEST-Utf 8', 'strict', False, False)]
+what cannot be read => [([('tell',)], False, 'UnsupportedOperation: not readable', 'UnsupportedOperation: not readable', 'UnsupportedOperation: not readable', 1, None)]
+what cannot be written => [([], False, 'UnsupportedOperation: not writable', 'ab')]
+what cannot be sought in => [([], False, 'UnsupportedOperation: underlying stream is not seekable', 'UnsupportedOperation: underlying stream is not seekable', 'a', 1)]
+what is not at its beginning => [(1, [('seek', 2, 0), ('tell',)], None, [('write', 'bytes', b'a\x00'), ('flush',)])]
+what has not what is asked for => ["AttributeError: 'Lacking' object has no attribute 'readable'", "AttributeError: 'Lacking' object has no attribute 'writable'", "AttributeError: 'Lacking' object has no attribute 'seekable'", <_io.TextIOWrapper encoding='test_utf_8'>]
+a codec with no incrementaldecoder => AttributeError: 'Info' object has no attribute 'incrementaldecoder'
+a codec with no incrementalencoder => AttributeError: 'Info' object has no attribute 'incrementaldecoder'
+a codec with no name => AttributeError: 'Info' object has no attribute 'incrementaldecoder'
+a codec with a name that is not a str => AttributeError: 'Info' object has no attribute 'incrementaldecoder'
+a codec with a decoder that cannot be made => AttributeError: 'Info' object has no attribute 'incrementaldecoder'
+a codec with an encoder that raises => AttributeError: 'Info' object has no attribute 'incrementaldecoder'
+a codec that is a plain tuple => AttributeError: 'tuple' object has no attribute 'incrementaldecoder'
+what the encoder and decoder are made with => (None, None, [('decoder', ('strict',), {}), ('encoder', ('strict',), {}), ('decoder', ('ignore',), {}), ('encoder', ('ignore',), {})])
+---- writing
+newline=None => [(9, 0, [], None, [('write', 'bytes', b'a\nb\rc\r\nd\n'), ('flush',)], b'a\nb\rc\r\nd\n')]
+a line at a time => [(None, 2, [], 2, [('write', 'bytes', b'abc\n'), ('flush',)], 2, [('write', 'bytes', b'd\r'), ('flush',)], 1, [])]
+newline='' => [(9, 0, [], None, [('write', 'bytes', b'a\nb\rc\r\nd\n'), ('flush',)], b'a\nb\rc\r\nd\n')]
+a line at a time => [(None, 2, [], 2, [('write', 'bytes', b'abc\n'), ('flush',)], 2, [('write', 'bytes', b'd\r'), ('flush',)], 1, [])]
+newline='\n' => [(9, 0, [], None, [('write', 'bytes', b'a\nb\rc\r\nd\n'), ('flush',)], b'a\nb\rc\r\nd\n')]
+a line at a time => [(None, 2, [], 2, [('write', 'bytes', b'abc\n'), ('flush',)], 2, [('write', 'bytes', b'd\r'), ('flush',)], 1, [])]
+newline='\r' => [(9, 0, [], None, [('write', 'bytes', b'a\rb\rc\r\rd\r'), ('flush',)], b'a\rb\rc\r\rd\r')]
+a line at a time => [(None, 2, [], 2, [('write', 'bytes', b'abc\r'), ('flush',)], 2, [('write', 'bytes', b'd\r'), ('flush',)], 1, [])]
+newline='\r\n' => [(9, 0, [], None, [('write', 'bytes', b'a\r\nb\rc\r\r\nd\r\n'), ('flush',)], b'a\r\nb\rc\r\r\nd\r\n')]
+a line at a time => [(None, 2, [], 2, [('write', 'bytes', b'abc\r\n'), ('flush',)], 2, [('write', 'bytes', b'd\r'), ('flush',)], 1, [])]
+at once => [(None, 2, [('write', 'bytes', b'ab')], 0, [], 2, [('write', 'bytes', b'c\n')])]
+what waits => [(None, None, 3, 2, [], 3, [('write', 'bytes', b'abcdefgh')], 1, 10, [('write', 'bytes', b'i'), ('write', 'bytes', b'0123456789')], 1, 4, [('write', 'bytes', b'j'), ('write', 'bytes', b'\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9')], None, [('flush',)])]
+test_utf_8, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-8' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80b')]
+test_utf_8, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80??b')]
+test_utf_8, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80\\ud800\\udc80b')]
+test_utf_8, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed", 1, 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80\x80b')]
+test_utf_8_slow, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-8' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80b')]
+test_utf_8_slow, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80??b')]
+test_utf_8_slow, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80\\ud800\\udc80b')]
+test_utf_8_slow, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed", 1, 1], None, b'a\xc3\xa9\xe2\x82\xac\xf0\x9f\x98\x80\x80b')]
+test_ascii, strict => [([1, "UnicodeEncodeError: 'ascii' codec can't encode character '\\xe9' in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'ascii' codec can't encode character '\\u20ac' in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'ascii' codec can't encode character '\\U0001f600' in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'ascii' codec can't encode character '\\ud800' in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'ascii' codec can't encode character '\\udc80' in position 0: ordinal not in range(128)", 1], None, b'ab')]
+test_ascii, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'a?????b')]
+test_ascii, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\\xe9\\u20ac\\U0001f600\\ud800\\udc80b')]
+test_ascii, surrogateescape => [([1, "UnicodeEncodeError: 'ascii' codec can't encode character '\\xe9' in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'ascii' codec can't encode character '\\u20ac' in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'ascii' codec can't encode character '\\U0001f600' in position 0: ordinal not in range(128)", "UnicodeEncodeError: 'ascii' codec can't encode character '\\ud800' in position 0: ordinal not in range(128)", 1, 1], None, b'a\x80b')]
+test_latin_1, strict => [([1, 1, "UnicodeEncodeError: 'latin-1' codec can't encode character '\\u20ac' in position 0: ordinal not in range(256)", "UnicodeEncodeError: 'latin-1' codec can't encode character '\\U0001f600' in position 0: ordinal not in range(256)", "UnicodeEncodeError: 'latin-1' codec can't encode character '\\ud800' in position 0: ordinal not in range(256)", "UnicodeEncodeError: 'latin-1' codec can't encode character '\\udc80' in position 0: ordinal not in range(256)", 1], None, b'a\xe9b')]
+test_latin_1, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\xe9????b')]
+test_latin_1, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\xe9\\u20ac\\U0001f600\\ud800\\udc80b')]
+test_latin_1, surrogateescape => [([1, 1, "UnicodeEncodeError: 'latin-1' codec can't encode character '\\u20ac' in position 0: ordinal not in range(256)", "UnicodeEncodeError: 'latin-1' codec can't encode character '\\U0001f600' in position 0: ordinal not in range(256)", "UnicodeEncodeError: 'latin-1' codec can't encode character '\\ud800' in position 0: ordinal not in range(256)", 1, 1], None, b'a\xe9\x80b')]
+test_utf_16, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xdeb\x00')]
+test_utf_16, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xde?\x00?\x00b\x00')]
+test_utf_16, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xde\\\x00u\x00d\x008\x000\x000\x00\\\x00u\x00d\x00c\x008\x000\x00b\x00')]
+test_utf_16, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xdeb\x00')]
+test_utf_16_slow, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xdeb\x00')]
+test_utf_16_slow, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xde?\x00?\x00b\x00')]
+test_utf_16_slow, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xde\\\x00u\x00d\x008\x000\x000\x00\\\x00u\x00d\x00c\x008\x000\x00b\x00')]
+test_utf_16_slow, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\xff\xfea\x00\xe9\x00\xac =\xd8\x00\xdeb\x00')]
+test_utf_16_le, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'a\x00\xe9\x00\xac =\xd8\x00\xdeb\x00')]
+test_utf_16_le, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\x00\xe9\x00\xac =\xd8\x00\xde?\x00?\x00b\x00')]
+test_utf_16_le, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\x00\xe9\x00\xac =\xd8\x00\xde\\\x00u\x00d\x008\x000\x000\x00\\\x00u\x00d\x00c\x008\x000\x00b\x00')]
+test_utf_16_le, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'a\x00\xe9\x00\xac =\xd8\x00\xdeb\x00')]
+test_utf_16_be, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-be' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\x00a\x00\xe9 \xac\xd8=\xde\x00\x00b')]
+test_utf_16_be, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'\x00a\x00\xe9 \xac\xd8=\xde\x00\x00?\x00?\x00b')]
+test_utf_16_be, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'\x00a\x00\xe9 \xac\xd8=\xde\x00\x00\\\x00u\x00d\x008\x000\x000\x00\\\x00u\x00d\x00c\x008\x000\x00b')]
+test_utf_16_be, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-16-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-16-be' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\x00a\x00\xe9 \xac\xd8=\xde\x00\x00b')]
+test_utf_32_le, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-32-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-32-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'a\x00\x00\x00\xe9\x00\x00\x00\xac \x00\x00\x00\xf6\x01\x00b\x00\x00\x00')]
+test_utf_32_le, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\x00\x00\x00\xe9\x00\x00\x00\xac \x00\x00\x00\xf6\x01\x00?\x00\x00\x00?\x00\x00\x00b\x00\x00\x00')]
+test_utf_32_le, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'a\x00\x00\x00\xe9\x00\x00\x00\xac \x00\x00\x00\xf6\x01\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00b\x00\x00\x00')]
+test_utf_32_le, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-32-le' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-32-le' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'a\x00\x00\x00\xe9\x00\x00\x00\xac \x00\x00\x00\xf6\x01\x00b\x00\x00\x00')]
+test_utf_32_be, strict => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-32-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-32-be' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\x00\x00\x00a\x00\x00\x00\xe9\x00\x00 \xac\x00\x01\xf6\x00\x00\x00\x00b')]
+test_utf_32_be, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'\x00\x00\x00a\x00\x00\x00\xe9\x00\x00 \xac\x00\x01\xf6\x00\x00\x00\x00?\x00\x00\x00?\x00\x00\x00b')]
+test_utf_32_be, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'\x00\x00\x00a\x00\x00\x00\xe9\x00\x00 \xac\x00\x01\xf6\x00\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x008\x00\x00\x000\x00\x00\x000\x00\x00\x00\\\x00\x00\x00u\x00\x00\x00d\x00\x00\x00c\x00\x00\x008\x00\x00\x000\x00\x00\x00b')]
+test_utf_32_be, surrogateescape => [([1, 1, 1, 1, "UnicodeEncodeError: 'utf-32-be' codec can't encode character '\\ud800' in position 0: surrogates not allowed", "UnicodeEncodeError: 'utf-32-be' codec can't encode character '\\udc80' in position 0: surrogates not allowed", 1], None, b'\x00\x00\x00a\x00\x00\x00\xe9\x00\x00 \xac\x00\x01\xf6\x00\x00\x00\x00b')]
+test_utf_7, strict => [([1, 1, 1, 1, 1, 1, 1], None, b'a+AOk-+IKw-+2D3eAA-+2AA-+3IA-b')]
+test_utf_7, replace => [([1, 1, 1, 1, 1, 1, 1], None, b'a+AOk-+IKw-+2D3eAA-+2AA-+3IA-b')]
+test_utf_7, backslashreplace => [([1, 1, 1, 1, 1, 1, 1], None, b'a+AOk-+IKw-+2D3eAA-+2AA-+3IA-b')]
+test_utf_7, surrogateescape => [([1, 1, 1, 1, 1, 1, 1], None, b'a+AOk-+IKw-+2D3eAA-+2AA-+3IA-b')]
+write(b'a') => TypeError: write() argument must be str, not bytes
+write(5) => TypeError: write() argument must be str, not int
+write(None) => TypeError: write() argument must be str, not None
+write(['a']) => TypeError: write() argument must be str, not list
+write(bytearray(b'a')) => TypeError: write() argument must be str, not bytearray
+write() => ('TypeError: TextIOWrapper.write() takes exactly one argument (0 given)', 'TypeError: TextIOWrapper.write() takes exactly one argument (2 given)')
+of a class derived from str => [(3, None, b"replaced('\\n', '\\r\\n')")]
+how many were written => [(1, 3, 0)]
+an encoder that returns a str => TypeError: encoder should return a bytes object, not 'str'
+an encoder that returns None => TypeError: encoder should return a bytes object, not 'NoneType'
+an encoder that returns a bytearray => TypeError: encoder should return a bytes object, not 'bytearray'
+an encoder that returns a memoryview => TypeError: encoder should return a bytes object, not 'memoryview'
+an encoder that returns derived from bytes => [(1, None, b'db')]
+when sending it on fails => [(3, 'OSError: from write', [], None, [('flush',)], 1, 'OSError: from write', [('write', b'd'), ('flush',)], True)]
+writelines => [(None, None, b'ab\nc', 'TypeError: write() argument must be str, not bytes', "TypeError: 'int' object is not iterable")]
+---- reading
+newline=None, 1 at a time => [('ab\ncd\nef\ngh\n\n\n\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\n', 'e', 'f', '\n', 'g', 'h', '\n', '\n', '\n', '\n', 'i', 'j', '', '', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n\n\n', 'ij', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\n', 'ef', '\n', 'gh', '\n', '\n', '\n', '\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\n', 'ef\n', 'gh\n\n\n\nij'], ('\r', '\n', '\r\n'))]
+newline=None, 2 at a time => [('ab\ncd\nef\ngh\n\n\n\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\n', 'e', 'f', '\n', 'g', 'h', '\n', '\n', '\n', '\n', 'i', 'j', '', '', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n\n\n', 'ij', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\n', 'ef', '\n', 'gh', '\n', '\n', '\n', '\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\n', 'ef\n', 'gh\n\n\n\nij'], ('\r', '\n', '\r\n'))]
+newline=None, 3 at a time => [('ab\ncd\nef\ngh\n\n\n\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\n', 'e', 'f', '\n', 'g', 'h', '\n', '\n', '\n', '\n', 'i', 'j', '', '', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n\n\n', 'ij', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\n', 'ef', '\n', 'gh', '\n', '\n', '\n', '\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\n', 'ef\n', 'gh\n\n\n\nij'], ('\r', '\n', '\r\n'))]
+newline=None, 100 at a time => [('ab\ncd\nef\ngh\n\n\n\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\n', 'e', 'f', '\n', 'g', 'h', '\n', '\n', '\n', '\n', 'i', 'j', '', '', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n\n\n', 'ij', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\n', 'ef\n', 'gh\n', '\n', '\n', '\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\n', 'ef', '\n', 'gh', '\n', '\n', '\n', '\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\n', 'ef\n', 'gh\n\n\n\nij'], ('\r', '\n', '\r\n'))]
+newline='', 1 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\r\n', 'ef', '\r', 'gh', '\n', '\n', '\r', '\r\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\r\n', 'ef\r', 'gh\n\n\r\r\nij'], ('\r', '\n', '\r\n'))]
+newline='', 2 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\r\n', 'ef', '\r', 'gh', '\n', '\n', '\r', '\r\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\r\n', 'ef\r', 'gh\n\n\r\r\nij'], ('\r', '\n', '\r\n'))]
+newline='', 3 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\r\n', 'ef', '\r', 'gh', '\n', '\n', '\r', '\r\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\r\n', 'ef\r', 'gh\n\n\r\r\nij'], ('\r', '\n', '\r\n'))]
+newline='', 100 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', ('\r', '\n', '\r\n')), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab\n', 'cd\r\n', 'ef\r', 'gh\n', '\n', '\r', '\r\n', 'ij'], ('\r', '\n', '\r\n')), (['ab', '\n', 'cd', '\r\n', 'ef', '\r', 'gh', '\n', '\n', '\r', '\r\n', 'ij', '', ''], ('\r', '\n', '\r\n')), (['', 'a', 'b\n', 'cd\r\n', 'ef\r', 'gh\n\n\r\r\nij'], ('\r', '\n', '\r\n'))]
+newline='\n', 1 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab', '\n', 'cd', '\r\n', 'ef', '\rg', 'h\n', '\n', '\r\r', '\n', 'ij', '', '', ''], None), (['', 'a', 'b\n', 'cd\r\n', 'ef\rgh\n', '\n\r\r\nij'], None)]
+newline='\n', 2 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab', '\n', 'cd', '\r\n', 'ef', '\rg', 'h\n', '\n', '\r\r', '\n', 'ij', '', '', ''], None), (['', 'a', 'b\n', 'cd\r\n', 'ef\rgh\n', '\n\r\r\nij'], None)]
+newline='\n', 3 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab', '\n', 'cd', '\r\n', 'ef', '\rg', 'h\n', '\n', '\r\r', '\n', 'ij', '', '', ''], None), (['', 'a', 'b\n', 'cd\r\n', 'ef\rgh\n', '\n\r\r\nij'], None)]
+newline='\n', 100 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab\n', 'cd\r\n', 'ef\rgh\n', '\n', '\r\r\n', 'ij'], None), (['ab', '\n', 'cd', '\r\n', 'ef', '\rg', 'h\n', '\n', '\r\r', '\n', 'ij', '', '', ''], None), (['', 'a', 'b\n', 'cd\r\n', 'ef\rgh\n', '\n\r\r\nij'], None)]
+newline='\r', 1 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r', '\r', '\ni', 'j', '', '', ''], None), (['', 'a', 'b\ncd\r', '\nef\r', 'gh\n\n\r', '\r\nij'], None)]
+newline='\r', 2 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r', '\r', '\ni', 'j', '', '', ''], None), (['', 'a', 'b\ncd\r', '\nef\r', 'gh\n\n\r', '\r\nij'], None)]
+newline='\r', 3 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r', '\r', '\ni', 'j', '', '', ''], None), (['', 'a', 'b\ncd\r', '\nef\r', 'gh\n\n\r', '\r\nij'], None)]
+newline='\r', 100 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab\ncd\r', '\nef\r', 'gh\n\n\r', '\r', '\nij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r', '\r', '\ni', 'j', '', '', ''], None), (['', 'a', 'b\ncd\r', '\nef\r', 'gh\n\n\r', '\r\nij'], None)]
+newline='\r\n', 1 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r\r', '\ni', 'j', '', '', '', ''], None), (['', 'a', 'b\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij', ''], None)]
+newline='\r\n', 2 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r\r', '\ni', 'j', '', '', '', ''], None), (['', 'a', 'b\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij', ''], None)]
+newline='\r\n', 3 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r\r', '\ni', 'j', '', '', '', ''], None), (['', 'a', 'b\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij', ''], None)]
+newline='\r\n', 100 at a time => [('ab\ncd\r\nef\rgh\n\n\r\r\nij', None), (['a', 'b', '\n', 'c', 'd', '\r', '\n', 'e', 'f', '\r', 'g', 'h', '\n', '\n', '\r', '\r', '\n', 'i', 'j', '', '', '', '', '', ''], None), (['ab\n', 'cd\r', '\nef', '\rgh', '\n\n\r', '\r\ni', 'j', '', ''], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij'], None), (['ab', '\nc', 'd\r', '\ne', 'f\r', 'gh', '\n\n', '\r\r', '\ni', 'j', '', '', '', ''], None), (['', 'a', 'b\ncd\r\n', 'ef\rgh\n\n\r\r\n', 'ij', ''], None)]
+what is asked of the buffer => ([('read1', 8192)], [], [('read1', 8192)], [('read', -1)], [('read1', 8192)], [('read1', 8192)])
+of one that has no read1 => UnsupportedOperation: read1
+how much, by how many bytes there are to a character => [(None, None, '\u20ac', '\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac\u20ac', [('read1', 4), ('read1', 40)])]
+test_utf_8, 1 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_8, 2 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_8, 3 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_8, 5 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_8, 100 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16, 1 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16, 2 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16, 3 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16, 5 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16, 100 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16_le, 1 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16_le, 2 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16_le, 3 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16_le, 5 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_16_le, 100 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_32_be, 1 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_32_be, 2 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_32_be, 3 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_32_be, 5 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_32_be, 100 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_7, 1 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_7, 2 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_7, 3 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_7, 5 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+test_utf_7, 100 at a time => ['a\xe9\u20ac\U0001f600b\n\U0001f601\U0010ffffc\r\nd', ['a', '\xe9', '\u20ac', '\U0001f600', 'b', '\n', '\U0001f601', '\U0010ffff', 'c', '\r', '\n', 'd', '', ''], ['a\xe9', '\u20ac\U0001f600', 'b\n', '\U0001f601\U0010ffff', 'c\r', '\nd', '', ''], ['a\xe9\u20ac', '\U0001f600b\n', '\U0001f601\U0010ffffc', '\r\n', 'd', ''], ['a\xe9\u20ac\U0001f600b\n', '\U0001f601\U0010ffffc\r\n', 'd']]
+read('a') => TypeError: argument should be integer or None, not 'str'
+readline('a') => TypeError: 'str' object cannot be interpreted as an integer
+read(1.5) => TypeError: argument should be integer or None, not 'float'
+readline(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+read([1]) => TypeError: argument should be integer or None, not 'list'
+readline([1]) => TypeError: 'list' object cannot be interpreted as an integer
+read(1180591620717411303424) => OverflowError: cannot fit 'int' into an index-sized integer
+readline(1180591620717411303424) => OverflowError: Python int too large to convert to C ssize_t
+read(b'1') => TypeError: argument should be integer or None, not 'bytes'
+readline(b'1') => TypeError: 'bytes' object cannot be interpreted as an integer
+read(None) and readline(None) => ('abc', "TypeError: 'NoneType' object cannot be interpreted as an integer", 'TypeError: read expected at most 1 argument, got 2')
+what cannot be decoded, strict => [("UnicodeDecodeError: 'utf-8' codec can't decode byte 0xff in position 2: invalid start byte", '', '')]
+what cannot be decoded, replace => [('ab', '\ufffdcd\ufffd', '')]
+what cannot be decoded, ignore => [('ab', 'cd', '')]
+what cannot be decoded, surrogateescape => [('ab', '\udcffcd\udce2\udc82', '')]
+what cannot be decoded, backslashreplace => [('ab', '\\xffcd\\xe2\\x82', '')]
+a buffer that returns None => ("TypeError: underlying read1() should have returned a bytes-like object, not 'NoneType'", 'BlockingIOError: Read returned None.', "TypeError: underlying read1() should have returned a bytes-like object, not 'NoneType'", "TypeError: underlying read1() should have returned a bytes-like object, not 'NoneType'")
+a buffer that returns a str => ("TypeError: underlying read1() should have returned a bytes-like object, not 'str'", "TypeError: can't concat str to bytes", "TypeError: underlying read1() should have returned a bytes-like object, not 'str'", "TypeError: underlying read1() should have returned a bytes-like object, not 'str'")
+a buffer that returns an int => ("TypeError: underlying read1() should have returned a bytes-like object, not 'int'", "TypeError: can't concat int to bytes", "TypeError: underlying read1() should have returned a bytes-like object, not 'int'", "TypeError: underlying read1() should have returned a bytes-like object, not 'int'")
+a buffer that returns a bytearray => ('b', 'ba\n', 'ba\n', 'ba\n')
+a buffer that returns a memoryview => ('m', 'mv\n', 'mv\n', 'mv\n')
+a buffer that returns a list => ("TypeError: underlying read1() should have returned a bytes-like object, not 'list'", "TypeError: can't concat list to bytes", "TypeError: underlying read1() should have returned a bytes-like object, not 'list'", "TypeError: underlying read1() should have returned a bytes-like object, not 'list'")
+a decoder that returns bytes, newline=None => ["TypeError: decoder should return a string result, not 'bytes'", "TypeError: decoder should return a string result, not 'bytes'", "TypeError: decoder should return a string result, not 'bytes'"]
+a decoder that returns bytes, newline='\n' => ["TypeError: decoder should return a string result, not 'bytes'", "TypeError: decoder should return a string result, not 'bytes'", "TypeError: decoder should return a string result, not 'bytes'"]
+a decoder that returns None, newline=None => ["TypeError: decoder should return a string result, not 'NoneType'", "TypeError: decoder should return a string result, not 'NoneType'", "TypeError: decoder should return a string result, not 'NoneType'"]
+a decoder that returns None, newline='\n' => ["TypeError: decoder should return a string result, not 'NoneType'", "TypeError: decoder should return a string result, not 'NoneType'", "TypeError: decoder should return a string result, not 'NoneType'"]
+a decoder that returns an int, newline=None => ["TypeError: decoder should return a string result, not 'int'", "TypeError: decoder should return a string result, not 'int'", "TypeError: decoder should return a string result, not 'int'"]
+a decoder that returns an int, newline='\n' => ["TypeError: decoder should return a string result, not 'int'", "TypeError: decoder should return a string result, not 'int'", "TypeError: decoder should return a string result, not 'int'"]
+a decoder that returns derived from str, newline=None => [('str', 'd'), ('S', 'ds'), ('str', 'ds')]
+a decoder that returns derived from str, newline='\n' => [('str', 'd'), ('S', 'ds'), ('str', 'ds')]
+a decoder that returns a line of one, newline=None => [('str', 'd'), ('S', 'ds\n'), ('S', 'ds\n')]
+a decoder that returns a line of one, newline='\n' => [('str', 'd'), ('S', 'ds\n'), ('S', 'ds\n')]
+a decoder whose state is None => [('TypeError: illegal decoder state', 0)]
+a decoder whose state is a list => [('TypeError: illegal decoder state', 0)]
+a decoder whose state is one thing => [('TypeError: illegal decoder state', 0)]
+a decoder whose state is three => [('TypeError: illegal decoder state', 0)]
+a decoder whose state is a str for the bytes => [("TypeError: illegal decoder state: the first item should be a bytes object, not 'str'", 0)]
+a decoder whose state is a bytearray => [("TypeError: illegal decoder state: the first item should be a bytes object, not 'bytearray'", 0)]
+a decoder whose state is a str for the flags => [("TypeError: 'NoneType' object is not callable", 3)]
+a decoder whose state is None for the flags => [("TypeError: 'NoneType' object is not callable", 3)]
+a decoder whose state is large flags => [("TypeError: 'NoneType' object is not callable", 3)]
+---- where it is
+test_utf_8, 1 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8, 1 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8, 2 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8, 2 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8, 3 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8, 3 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8, 7 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8, 7 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8, 100 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8, 100 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8_slow, 1 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8_slow, 1 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8_slow, 2 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8_slow, 2 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8_slow, 3 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8_slow, 3 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8_slow, 7 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8_slow, 7 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_8_slow, 100 at a time, newline=None => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 23, 24], [])
+test_utf_8_slow, 100 at a time, newline='' => ([0, 1, 3, 6, 10, 11, 12, 16, 20, 21, 340282367000166625996085689099021713430, 23, 24], [])
+test_utf_16, 1 at a time, newline=None => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 30, 32], [])
+test_utf_16, 1 at a time, newline='' => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 340282367079394788510350026692565663772, 30, 32], [])
+test_utf_16, 2 at a time, newline=None => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 30, 32], [])
+test_utf_16, 2 at a time, newline='' => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 340282367079394788510350026692565663772, 30, 32], [])
+test_utf_16, 3 at a time, newline=None => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 30, 32], [])
+test_utf_16, 3 at a time, newline='' => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 340282367079394788510350026692565663772, 30, 32], [])
+test_utf_16, 7 at a time, newline=None => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 30, 32], [])
+test_utf_16, 7 at a time, newline='' => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 340282367079394788510350026692565663772, 30, 32], [])
+test_utf_16, 100 at a time, newline=None => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 30, 32], [])
+test_utf_16, 100 at a time, newline='' => ([0, 4, 6, 8, 12, 14, 16, 20, 24, 26, 340282367079394788510350026692565663772, 30, 32], [])
+test_utf_16_le, 1 at a time, newline=None => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 28, 30], [])
+test_utf_16_le, 1 at a time, newline='' => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 340282367079394788510350026692565663770, 28, 30], [])
+test_utf_16_le, 2 at a time, newline=None => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 28, 30], [])
+test_utf_16_le, 2 at a time, newline='' => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 340282367079394788510350026692565663770, 28, 30], [])
+test_utf_16_le, 3 at a time, newline=None => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 28, 30], [])
+test_utf_16_le, 3 at a time, newline='' => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 340282367079394788510350026692565663770, 28, 30], [])
+test_utf_16_le, 7 at a time, newline=None => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 28, 30], [])
+test_utf_16_le, 7 at a time, newline='' => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 340282367079394788510350026692565663770, 28, 30], [])
+test_utf_16_le, 100 at a time, newline=None => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 28, 30], [])
+test_utf_16_le, 100 at a time, newline='' => ([0, 2, 4, 6, 10, 12, 14, 18, 22, 24, 340282367079394788510350026692565663770, 28, 30], [])
+test_utf_32_be, 1 at a time, newline=None => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 44, 48], [])
+test_utf_32_be, 1 at a time, newline='' => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 340282367237851113538878701879653564456, 44, 48], [])
+test_utf_32_be, 2 at a time, newline=None => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 44, 48], [])
+test_utf_32_be, 2 at a time, newline='' => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 340282367237851113538878701879653564456, 44, 48], [])
+test_utf_32_be, 3 at a time, newline=None => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 44, 48], [])
+test_utf_32_be, 3 at a time, newline='' => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 340282367237851113538878701879653564456, 44, 48], [])
+test_utf_32_be, 7 at a time, newline=None => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 44, 48], [])
+test_utf_32_be, 7 at a time, newline='' => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 340282367237851113538878701879653564456, 44, 48], [])
+test_utf_32_be, 100 at a time, newline=None => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 44, 48], [])
+test_utf_32_be, 100 at a time, newline='' => ([0, 4, 8, 12, 16, 20, 24, 28, 32, 36, 340282367237851113538878701879653564456, 44, 48], [])
+test_utf_7, 1 at a time, newline=None => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 32, 33], [])
+test_utf_7, 1 at a time, newline='' => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 340282367000166625996085689099021713439, 32, 33], [])
+test_utf_7, 2 at a time, newline=None => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 32, 33], [])
+test_utf_7, 2 at a time, newline='' => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 340282367000166625996085689099021713439, 32, 33], [])
+test_utf_7, 3 at a time, newline=None => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 32, 33], [])
+test_utf_7, 3 at a time, newline='' => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 340282367000166625996085689099021713439, 32, 33], [])
+test_utf_7, 7 at a time, newline=None => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 32, 33], [])
+test_utf_7, 7 at a time, newline='' => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 340282367000166625996085689099021713439, 32, 33], [])
+test_utf_7, 100 at a time, newline=None => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 32, 33], [])
+test_utf_7, 100 at a time, newline='' => ([0, 1, 340282367950904576148810996147839565825, 680564734871843039612185603579607777281, 14, 15, 16, 340282367950904576148810996147839565840, 29, 30, 340282367000166625996085689099021713439, 32, 33], [])
+what is asked in telling => [(None, 'a\xe9\u20ac', None, 6, [('flush',), ('tell',)], 6, '\U0001f600', 10)]
+what is asked in seeking => [(None, 'abc', 3, None, 0, [('flush',), ('seek', 0, 0)], 1, [('flush',), ('seek', 1, 0)], 1, [('flush',), ('tell',), ('flush',), ('seek', 1, 0)], 8, [('flush',), ('seek', 0, 2)], '', 3, 'de')]
+after lines => [('ab\n', 3, 'cd\n', 6, 3, 'cd\n', 6)]
+not while it is being gone through => [('ab\n', 'OSError: telling position disabled by next() call', 'cd\n', 'OSError: telling position disabled by next() call', None, 9, 'ef\n', 'OSError: telling position disabled by next() call', 'StopIteration: ', 9, 0, 'ab\n', 'OSError: telling position disabled by next() call', 0, 0)]
+seek(0, 3) => ValueError: invalid whence (3, should be 0, 1 or 2)
+seek(0, -1) => ValueError: invalid whence (-1, should be 0, 1 or 2)
+seek(1, 1) => UnsupportedOperation: can't do nonzero cur-relative seeks
+seek(-1, 1) => UnsupportedOperation: can't do nonzero cur-relative seeks
+seek(1, 2) => UnsupportedOperation: can't do nonzero end-relative seeks
+seek(-1, 2) => UnsupportedOperation: can't do nonzero end-relative seeks
+seek(-1,) => ValueError: negative seek position -1
+seek(-1, 0) => ValueError: negative seek position -1
+seek('a',) => TypeError: '<' not supported between instances of 'str' and 'int'
+seek(None,) => TypeError: '<' not supported between instances of 'NoneType' and 'int'
+seek(1.5,) => 1.5
+seek(0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+seek(0, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+seek() => TypeError: seek expected at least 1 argument, got 0
+seek(0, 0, 0) => TypeError: seek expected at most 2 arguments, got 3
+seek(18446744073709551616,) => 18446744073709551616
+seek(374144419156711147060143317175368453031918731001855,) => ValueError: negative seek value -1
+seek(374144419156711147060143317175368453031918731001856,) => OverflowError: int too big to convert
+seek(1606938044258990275541962092341162602522202993782792835301376,) => OverflowError: int too big to convert
+seek(True,) => True
+seek(0.0, 1) => 0
+seek(0.0, 2) => 6
+seek(0.0,) => 0.0
+seek(9223372036854775808,) => ValueError: negative seek value -9223372036854775808
+a cookie that says more than there is => ["OSError: can't restore logical file position", "OSError: can't restore logical file position", 340282367713220088606017983367207714816, 1461501637671185285599992271265243652648964456448, 18446744073709551616, 129127208515966861314, "OSError: can't restore logical file position"]
+past the end => [(100, '', 100, 1, None, b'ab\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00z')]
+truncate => [('ab', None, 6, [('flush',), ('truncate', None)], 1, [('flush',), ('truncate', 1)], 1, 'TypeError: slice indices must be integers or None or have an __index__ method', 'TypeError: truncate expected at most 1 argument, got 2', b'a')]
+---- reading and writing
+write after read => [('ab', 2, '', 0, 'abcdefghXY', b'abcdefghXY')]
+having said where => [('ab', 2, 2, 0, 'abXYefgh')]
+read after write => [(3, '', 0, 'abc', 1, 0, 'abcd')]
+over a BufferedRandom => [(12, 0, 'h\xe9llo\n', 7, 1, 0, 'h\xe9llo\nw\xf6rld\nW', b'h\xc3\xa9llo\nw\xc3\xb6rld\nW')]
+the mark at the beginning, test_utf_16 => [(1, 1, None, b'\xff\xfea\x00b\x00', 0, 1, None, b'\xff\xfec\x00b\x00', 6, 1, None, b'\xff\xfec\x00b\x00d\x00', 0, 'cbd', 4, 1, 0, 'ced')]
+added to what has one, test_utf_16 => [(4, [(1, None)], b'\xff\xfea\x00b\x00')]
+at the end of nothing, test_utf_16 => [(0, 1, None, b'\xff\xfea\x00')]
+the mark at the beginning, test_utf_16_slow => [(1, 1, None, b'\xff\xfea\x00b\x00', 0, 1, None, b'\xff\xfec\x00b\x00', 6, 1, None, b'\xff\xfec\x00b\x00d\x00', 0, 'cbd', 4, 1, 0, 'ced')]
+added to what has one, test_utf_16_slow => [(4, [(1, None)], b'\xff\xfea\x00b\x00')]
+at the end of nothing, test_utf_16_slow => [(0, 1, None, b'\xff\xfea\x00')]
+---- reconfigure
+nothing => [(None, 1, None, [('write', 'bytes', b'a'), ('flush',)], 'test_utf_8', 'ignore', True, False)]
+the encoding => [(1, None, 'test_latin_1', 'strict', 1, None, 1, None, b'\xc3\xa9\xe9\xe9\x00')]
+the errors => [("UnicodeEncodeError: 'ascii' codec can't encode character '\\xe9' in position 0: ordinal not in range(128)", None, 'test_ascii', 'replace', 1, None, 1, None, 'strict', None, b'?&#233;')]
+the newline => [(2, None, 2, None, 2, None, 2, None, 2, None, 2, None, b'a\nb\r\nc\nd\re\nf\n')]
+for reading => [(None, 'a\r', 'UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read', 'UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read', 'UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read', 'UnsupportedOperation: It is not possible to set the encoding or newline of stream after the first read', None, True, 'b\nc\r')]
+how it is sent on => [(None, True, None, True, None, False, False, None, True, True, None, True)]
+reconfigure(**{'encoding': 5}) => TypeError: reconfigure() argument 'encoding' must be str or None, not int
+reconfigure(**{'encoding': b'a'}) => TypeError: reconfigure() argument 'encoding' must be str or None, not bytes
+reconfigure(**{'encoding': 'test_none_such'}) => LookupError: unknown encoding: test_none_such
+reconfigure(**{'encoding': 'test_binary'}) => LookupError: 'test_binary' is not a text encoding
+reconfigure(**{'encoding': 'test\x00x'}) => LookupError: unknown encoding: test
+reconfigure(**{'errors': 5}) => TypeError: reconfigure() argument 'errors' must be str or None, not int
+reconfigure(**{'errors': 'no such'}) => [(None, 'test_utf_8', 'no such')]
+reconfigure(**{'errors': 'a\x00b'}) => [(None, 'test_utf_8', 'a\x00b')]
+reconfigure(**{'newline': 5}) => TypeError: reconfigure() argument 'newline' must be str or None, not int
+reconfigure(**{'newline': 'x'}) => ValueError: illegal newline value: x
+reconfigure(**{'newline': b'\n'}) => TypeError: reconfigure() argument 'newline' must be str or None, not bytes
+reconfigure(**{'newline': '\n\x00'}) => [(None, 'test_utf_8', 'strict')]
+reconfigure(**{'newline': '\x00'}) => [(None, 'test_utf_8', 'strict')]
+reconfigure(**{'line_buffering': 'a'}) => TypeError: 'str' object cannot be interpreted as an integer
+reconfigure(**{'line_buffering': 1.5}) => TypeError: 'float' object cannot be interpreted as an integer
+reconfigure(**{'line_buffering': 1180591620717411303424}) => OverflowError: Python int too large to convert to C long
+reconfigure(**{'write_through': 'a'}) => TypeError: 'str' object cannot be interpreted as an integer
+reconfigure(**{'write_through': []}) => TypeError: 'list' object cannot be interpreted as an integer
+reconfigure(**{'other': 1}) => TypeError: reconfigure() got an unexpected keyword argument 'other'
+reconfigure(1) => TypeError: reconfigure() takes no positional arguments
+it is as it was if it fails => [('LookupError: unknown encoding: test_none_such', 'test_utf_8', False, 2, None, b'a\r\n')]
+---- closed, detached, and not made
+close => [(3, None, None, [('write', 'bytes', b'abc'), ('flush',), ('flush',)], True, True, None, "<_io.TextIOWrapper encoding='test_utf_8'>")]
+detach => [(2, None, True, [('write', 'bytes', b'ab'), ('flush',)], None, "<_io.TextIOWrapper encoding='test_utf_8'>", False)]
+read() of one that is closed => ValueError: I/O operation on closed file.
+read(0,) of one that is closed => ValueError: I/O operation on closed file.
+readline() of one that is closed => ValueError: I/O operation on closed file.
+readlines() of one that is closed => ValueError: I/O operation on closed file.
+write('a',) of one that is closed => ValueError: I/O operation on closed file.
+write('',) of one that is closed => ValueError: I/O operation on closed file.
+write(5,) of one that is closed => TypeError: write() argument must be str, not int
+writelines([],) of one that is closed => ValueError: I/O operation on closed file.
+flush() of one that is closed => ValueError: I/O operation on closed file.
+seek(0,) of one that is closed => ValueError: I/O operation on closed file.
+tell() of one that is closed => ValueError: I/O operation on closed file.
+truncate() of one that is closed => ValueError: I/O operation on closed file.
+close() of one that is closed => None
+detach() of one that is closed => ValueError: I/O operation on closed file.
+__next__() of one that is closed => ValueError: I/O operation on closed file.
+__iter__() of one that is closed => ValueError: I/O operation on closed file.
+__enter__() of one that is closed => ValueError: I/O operation on closed file.
+readable() of one that is closed => True
+writable() of one that is closed => True
+seekable() of one that is closed => True
+fileno() of one that is closed => UnsupportedOperation: fileno
+isatty() of one that is closed => ValueError: I/O operation on closed file.
+reconfigure() of one that is closed => ValueError: I/O operation on closed file.
+__getstate__() of one that is closed => TypeError: cannot pickle 'TextIOWrapper' instances
+closed of one that is closed => True
+name of one that is closed => AttributeError: 'Buffer' object has no attribute 'name'
+mode of one that is closed => AttributeError: '_io.TextIOWrapper' object has no attribute 'mode'
+buffer of one that is closed => Buffer
+encoding of one that is closed => test_utf_8
+errors of one that is closed => strict
+newlines of one that is closed => None
+line_buffering of one that is closed => False
+write_through of one that is closed => False
+_CHUNK_SIZE of one that is closed => 8192
+_finalizing of one that is closed => False
+repr of one that is closed => <_io.TextIOWrapper encoding='test_utf_8'>
+_CHUNK_SIZE = 1 of one that is closed => None
+read() of one that is detached => ValueError: underlying buffer has been detached
+read(0,) of one that is detached => ValueError: underlying buffer has been detached
+readline() of one that is detached => ValueError: underlying buffer has been detached
+readlines() of one that is detached => ValueError: underlying buffer has been detached
+write('a',) of one that is detached => ValueError: underlying buffer has been detached
+write('',) of one that is detached => ValueError: underlying buffer has been detached
+write(5,) of one that is detached => TypeError: write() argument must be str, not int
+writelines([],) of one that is detached => ValueError: underlying buffer has been detached
+flush() of one that is detached => ValueError: underlying buffer has been detached
+seek(0,) of one that is detached => ValueError: underlying buffer has been detached
+tell() of one that is detached => ValueError: underlying buffer has been detached
+truncate() of one that is detached => ValueError: underlying buffer has been detached
+close() of one that is detached => ValueError: underlying buffer has been detached
+detach() of one that is detached => ValueError: underlying buffer has been detached
+__next__() of one that is detached => ValueError: underlying buffer has been detached
+__iter__() of one that is detached => ValueError: underlying buffer has been detached
+__enter__() of one that is detached => ValueError: underlying buffer has been detached
+readable() of one that is detached => ValueError: underlying buffer has been detached
+writable() of one that is detached => ValueError: underlying buffer has been detached
+seekable() of one that is detached => ValueError: underlying buffer has been detached
+fileno() of one that is detached => ValueError: underlying buffer has been detached
+isatty() of one that is detached => ValueError: underlying buffer has been detached
+reconfigure() of one that is detached => ValueError: underlying buffer has been detached
+__getstate__() of one that is detached => TypeError: cannot pickle 'TextIOWrapper' instances
+closed of one that is detached => ValueError: underlying buffer has been detached
+name of one that is detached => ValueError: underlying buffer has been detached
+mode of one that is detached => AttributeError: '_io.TextIOWrapper' object has no attribute 'mode'
+buffer of one that is detached => None
+encoding of one that is detached => test_utf_8
+errors of one that is detached => strict
+newlines of one that is detached => ValueError: underlying buffer has been detached
+line_buffering of one that is detached => False
+write_through of one that is detached => False
+_CHUNK_SIZE of one that is detached => ValueError: underlying buffer has been detached
+_finalizing of one that is detached => False
+repr of one that is detached => <_io.TextIOWrapper encoding='test_utf_8'>
+_CHUNK_SIZE = 1 of one that is detached => ValueError: underlying buffer has been detached
+read() of one that is not made => ValueError: I/O operation on uninitialized object
+read(0,) of one that is not made => ValueError: I/O operation on uninitialized object
+readline() of one that is not made => ValueError: I/O operation on uninitialized object
+readlines() of one that is not made => ValueError: I/O operation on uninitialized object
+write('a',) of one that is not made => ValueError: I/O operation on uninitialized object
+write('',) of one that is not made => ValueError: I/O operation on uninitialized object
+write(5,) of one that is not made => TypeError: write() argument must be str, not int
+writelines([],) of one that is not made => ValueError: I/O operation on uninitialized object
+flush() of one that is not made => ValueError: I/O operation on uninitialized object
+seek(0,) of one that is not made => ValueError: I/O operation on uninitialized object
+tell() of one that is not made => ValueError: I/O operation on uninitialized object
+truncate() of one that is not made => ValueError: I/O operation on uninitialized object
+close() of one that is not made => ValueError: I/O operation on uninitialized object
+detach() of one that is not made => ValueError: I/O operation on uninitialized object
+__next__() of one that is not made => ValueError: I/O operation on uninitialized object
+__iter__() of one that is not made => ValueError: I/O operation on uninitialized object
+__enter__() of one that is not made => ValueError: I/O operation on uninitialized object
+readable() of one that is not made => ValueError: I/O operation on uninitialized object
+writable() of one that is not made => ValueError: I/O operation on uninitialized object
+seekable() of one that is not made => ValueError: I/O operation on uninitialized object
+fileno() of one that is not made => ValueError: I/O operation on uninitialized object
+isatty() of one that is not made => ValueError: I/O operation on uninitialized object
+reconfigure() of one that is not made => ValueError: I/O operation on uninitialized object
+__getstate__() of one that is not made => TypeError: cannot pickle 'TextIOWrapper' instances
+closed of one that is not made => ValueError: I/O operation on uninitialized object
+name of one that is not made => ValueError: I/O operation on uninitialized object
+mode of one that is not made => AttributeError: '_io.TextIOWrapper' object has no attribute 'mode'
+buffer of one that is not made => None
+encoding of one that is not made => None
+errors of one that is not made => ValueError: I/O operation on uninitialized object
+newlines of one that is not made => ValueError: I/O operation on uninitialized object
+line_buffering of one that is not made => False
+write_through of one that is not made => False
+_CHUNK_SIZE of one that is not made => ValueError: I/O operation on uninitialized object
+_finalizing of one that is not made => False
+repr of one that is not made => ValueError: I/O operation on uninitialized object
+_CHUNK_SIZE = 1 of one that is not made => ValueError: I/O operation on uninitialized object
+object.__new__ => TextIOWrapper
+made again => [('a', None, 'xyz', 'test_latin_1', 'ignore')]
+made again, and it fails => [('LookupError: unknown encoding: test_none_such', 'ValueError: I/O operation on uninitialized object', None, None, 'ValueError: illegal newline value: x', 'ValueError: I/O operation on uninitialized object', 'ValueError: I/O operation on uninitialized object')]
+when flushing fails => [('OSError: from flush | after OSError: from flush', True)]
+when closing the buffer fails => [('NameError: from close', True)]
+when both do => NameError: from close | after OSError: from flush
+with => [(False, None, True)]
+__del__ => [(2, None, True, b'ab', True)]
+what is told when it is let go of => [(None, None, ['TextIOWrapper'])]
+---- the rest
+what is the buffer's => [('the name', "AttributeError: '_io.TextIOWrapper' object has no attribute 'mode'", 42, 'as the buffer says', "<_io.TextIOWrapper name='the name' encoding='test_utf_8'>")]
+mode => [(None, 'r+', "<_io.TextIOWrapper name='the name' mode='r+' encoding='test_utf_8'>", {'mode': 'r+'})]
+name cannot be set => AttributeError: attribute 'name' of '_io.TextIOWrapper' objects is not writable
+closed cannot be set => AttributeError: attribute 'closed' of '_io.TextIOWrapper' objects is not writable
+newlines cannot be set => AttributeError: attribute 'newlines' of '_io.TextIOWrapper' objects is not writable
+errors cannot be set => AttributeError: attribute 'errors' of '_io.TextIOWrapper' objects is not writable
+encoding cannot be set => AttributeError: readonly attribute
+buffer cannot be set => AttributeError: readonly attribute
+line_buffering cannot be set => AttributeError: readonly attribute
+write_through cannot be set => AttributeError: readonly attribute
+_CHUNK_SIZE = 1 => [(None, 1)]
+_CHUNK_SIZE = 100 => [(None, 100)]
+_CHUNK_SIZE = 0 => ValueError: a strictly positive integer is required
+_CHUNK_SIZE = -1 => ValueError: a strictly positive integer is required
+_CHUNK_SIZE = 'a' => TypeError: 'str' object cannot be interpreted as an integer
+_CHUNK_SIZE = 1.5 => TypeError: 'float' object cannot be interpreted as an integer
+_CHUNK_SIZE = None => TypeError: 'NoneType' object cannot be interpreted as an integer
+_CHUNK_SIZE = 1180591620717411303424 => ValueError: cannot fit 'int' into an index-sized integer
+_CHUNK_SIZE = True => [(None, 1)]
+del _CHUNK_SIZE => AttributeError: cannot delete attribute
+_finalizing => [(None, True, 'TypeError: attribute value type must be bool', "TypeError: can't delete numeric/char attribute")]
+attributes => [(None, 1, {'a': 1})]
+weakly referred to => [True]
+a name that is itself => RuntimeError: reentrant call inside _io.TextIOWrapper.__repr__
+derived from => [('t', 'a', "<Sub encoding='test_utf_8'>", True)]
+next goes by way of its readline => <a
+>
+which is to return a str => OSError: readline() should have returned a str object, not 'bytes'
+one that says that it is closed => [('ValueError: I/O operation on closed file.', 'ValueError: I/O operation on closed file.', 'ValueError: I/O operation on closed file.', 'ValueError: I/O operation on closed file.', 'ValueError: I/O operation on closed file.')]
+---- at random, against a str
+test_utf_8, newline=None, 3 at a time => ([], 38, 193532880)
+test_utf_8, newline='', 3 at a time => ([], 36, 739159514)
+test_utf_8, newline='\n', 3 at a time => ([], 49, 342223299)
+test_utf_8, newline='\r', 3 at a time => ([], 42, 292847315)
+test_utf_8, newline='\r\n', 3 at a time => ([], 42, 847465930)
+test_utf_8_slow, newline=None, 3 at a time => ([], 36, 687886029)
+test_utf_8_slow, newline='', 3 at a time => ([], 37, 336518295)
+test_utf_8_slow, newline='\n', 3 at a time => ([], 42, 95402422)
+test_utf_8_slow, newline='\r', 3 at a time => ([], 41, 291588750)
+test_utf_8_slow, newline='\r\n', 3 at a time => ([], 43, 994073260)
+test_utf_16, newline=None, 3 at a time => ([], 29, 938736122)
+test_utf_16, newline='', 3 at a time => ([], 40, 159426990)
+test_utf_16, newline='\n', 3 at a time => ([], 30, 223130353)
+test_utf_16, newline='\r', 3 at a time => ([], 36, 571428298)
+test_utf_16, newline='\r\n', 3 at a time => ([], 36, 398833941)
+test_utf_16_le, newline=None, 3 at a time => ([], 33, 231747418)
+test_utf_16_le, newline='', 3 at a time => ([], 41, 110904969)
+test_utf_16_le, newline='\n', 3 at a time => ([], 51, 960543647)
+test_utf_16_le, newline='\r', 3 at a time => ([], 49, 489949141)
+test_utf_16_le, newline='\r\n', 3 at a time => ([], 44, 951851605)
+test_utf_32_be, newline=None, 3 at a time => ([], 38, 824189080)
+test_utf_32_be, newline='', 3 at a time => ([], 38, 528536661)
+test_utf_32_be, newline='\n', 3 at a time => ([], 44, 664885489)
+test_utf_32_be, newline='\r', 3 at a time => ([], 38, 651832889)
+test_utf_32_be, newline='\r\n', 3 at a time => ([], 40, 989131613)
+test_utf_7, newline=None, 3 at a time => ([], 47, 961482870)
+test_utf_7, newline='', 3 at a time => ([], 42, 743595192)
+test_utf_7, newline='\n', 3 at a time => ([], 32, 286340709)
+test_utf_7, newline='\r', 3 at a time => ([], 51, 868156358)
+test_utf_7, newline='\r\n', 3 at a time => ([], 52, 965236226)

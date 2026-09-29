@@ -748,27 +748,6 @@ PYTHON_NATIVE(posixFstatvfs)
 
 // ---- What is only a matter of names
 
-// PyOS_FSPath()
-JSValue fileSystemPathOf(JSGlobalObject* globalObject, JSValue path)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    PyRealm* realm = globalObject->pyRealm();
-    auto isName = [&] (JSValue value) { return stringIn(value) || isInstance(globalObject, value, realm->typeBytes()); };
-    if (isName(path))
-        return path;
-    JSValue self;
-    JSValue method = lookupSpecial(globalObject, path, Identifier::fromString(vm, "__fspath__"_s), self);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!method || isNone(method))
-        return raiseTypeError(globalObject, scope, concatenate("expected str, bytes or os.PathLike object, not "_s, typeOf(globalObject, path)->nameWithoutModule(globalObject)));
-    JSValue result = self ? callMethod(globalObject, method, self) : call(globalObject, method);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!isName(result))
-        return raiseTypeError(globalObject, scope, concatenate("expected "_s, typeOf(globalObject, path)->nameWithoutModule(globalObject), ".__fspath__() to return str or bytes, not "_s, typeOf(globalObject, result)->nameWithoutModule(globalObject)));
-    return result;
-}
-
 PYTHON_NATIVE(posixFspath)
 {
     NativeArguments args(callFrame);

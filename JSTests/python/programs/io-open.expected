@@ -1,0 +1,183 @@
+---- modes
+open(p, '') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, 'r') => ([('TextIOWrapper', 'r', 'D/file'), ('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, False, 'test_utf_8', 'strict'))
+open(p, 'w') => ([('TextIOWrapper', 'w', 'D/file'), ('BufferedWriter', 'wb', 'D/file'), ('FileIO', 'wb', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'x') => ([('TextIOWrapper', 'x', 'D/file'), ('BufferedWriter', 'xb', 'D/file'), ('FileIO', 'xb', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'a') => ([('TextIOWrapper', 'a', 'D/file'), ('BufferedWriter', 'ab', 'D/file'), ('FileIO', 'ab', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'b') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, '+') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, 't') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, 'rr') => ValueError: invalid mode: 'rr'
+open(p, 'rw') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'rx') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'ra') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'rb') => ([('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, None, None, None))
+open(p, 'r+') => ([('TextIOWrapper', 'r+', 'D/file'), ('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'rt') => ([('TextIOWrapper', 'rt', 'D/file'), ('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, False, 'test_utf_8', 'strict'))
+open(p, 'wr') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'ww') => ValueError: invalid mode: 'ww'
+open(p, 'wx') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'wa') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'wb') => ([('BufferedWriter', 'wb', 'D/file'), ('FileIO', 'wb', 'D/file')], (False, True, True, None, None, None))
+open(p, 'w+') => ([('TextIOWrapper', 'w+', 'D/file'), ('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'wt') => ([('TextIOWrapper', 'wt', 'D/file'), ('BufferedWriter', 'wb', 'D/file'), ('FileIO', 'wb', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'xr') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'xw') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'xx') => ValueError: invalid mode: 'xx'
+open(p, 'xa') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'xb') => ([('BufferedWriter', 'xb', 'D/file'), ('FileIO', 'xb', 'D/file')], (False, True, True, None, None, None))
+open(p, 'x+') => ([('TextIOWrapper', 'x+', 'D/file'), ('BufferedRandom', 'xb+', 'D/file'), ('FileIO', 'xb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'xt') => ([('TextIOWrapper', 'xt', 'D/file'), ('BufferedWriter', 'xb', 'D/file'), ('FileIO', 'xb', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'ar') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'aw') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'ax') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'aa') => ValueError: invalid mode: 'aa'
+open(p, 'ab') => ([('BufferedWriter', 'ab', 'D/file'), ('FileIO', 'ab', 'D/file')], (False, True, True, None, None, None))
+open(p, 'a+') => ([('TextIOWrapper', 'a+', 'D/file'), ('BufferedRandom', 'ab+', 'D/file'), ('FileIO', 'ab+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'at') => ([('TextIOWrapper', 'at', 'D/file'), ('BufferedWriter', 'ab', 'D/file'), ('FileIO', 'ab', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'br') => ([('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, None, None, None))
+open(p, 'bw') => ([('BufferedWriter', 'wb', 'D/file'), ('FileIO', 'wb', 'D/file')], (False, True, True, None, None, None))
+open(p, 'bx') => ([('BufferedWriter', 'xb', 'D/file'), ('FileIO', 'xb', 'D/file')], (False, True, True, None, None, None))
+open(p, 'ba') => ([('BufferedWriter', 'ab', 'D/file'), ('FileIO', 'ab', 'D/file')], (False, True, True, None, None, None))
+open(p, 'bb') => ValueError: invalid mode: 'bb'
+open(p, 'b+') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, 'bt') => ValueError: can't have text and binary mode at once
+open(p, '+r') => ([('TextIOWrapper', '+r', 'D/file'), ('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, '+w') => ([('TextIOWrapper', '+w', 'D/file'), ('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, '+x') => ([('TextIOWrapper', '+x', 'D/file'), ('BufferedRandom', 'xb+', 'D/file'), ('FileIO', 'xb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, '+a') => ([('TextIOWrapper', '+a', 'D/file'), ('BufferedRandom', 'ab+', 'D/file'), ('FileIO', 'ab+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, '+b') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, '++') => ValueError: invalid mode: '++'
+open(p, '+t') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, 'tr') => ([('TextIOWrapper', 'tr', 'D/file'), ('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, False, 'test_utf_8', 'strict'))
+open(p, 'tw') => ([('TextIOWrapper', 'tw', 'D/file'), ('BufferedWriter', 'wb', 'D/file'), ('FileIO', 'wb', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'tx') => ([('TextIOWrapper', 'tx', 'D/file'), ('BufferedWriter', 'xb', 'D/file'), ('FileIO', 'xb', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'ta') => ([('TextIOWrapper', 'ta', 'D/file'), ('BufferedWriter', 'ab', 'D/file'), ('FileIO', 'ab', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'tb') => ValueError: can't have text and binary mode at once
+open(p, 't+') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, 'tt') => ValueError: invalid mode: 'tt'
+open(p, 'rb+') => ([('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, None, None, None))
+open(p, 'r+b') => ([('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, None, None, None))
+open(p, '+rb') => ([('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, None, None, None))
+open(p, 'wb+') => ([('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, None, None, None))
+open(p, 'ab+') => ([('BufferedRandom', 'ab+', 'D/file'), ('FileIO', 'ab+', 'D/file')], (True, True, True, None, None, None))
+open(p, 'xb+') => ([('BufferedRandom', 'xb+', 'D/file'), ('FileIO', 'xb+', 'D/file')], (True, True, True, None, None, None))
+open(p, 'rt+') => ([('TextIOWrapper', 'rt+', 'D/file'), ('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'w+t') => ([('TextIOWrapper', 'w+t', 'D/file'), ('BufferedRandom', 'rb+', 'D/file'), ('FileIO', 'rb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'a+t') => ([('TextIOWrapper', 'a+t', 'D/file'), ('BufferedRandom', 'ab+', 'D/file'), ('FileIO', 'ab+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'x+t') => ([('TextIOWrapper', 'x+t', 'D/file'), ('BufferedRandom', 'xb+', 'D/file'), ('FileIO', 'xb+', 'D/file')], (True, True, True, False, 'test_utf_8', 'strict'))
+open(p, 'rwb') => ValueError: must have exactly one of create/read/write/append mode
+open(p, 'rbt') => ValueError: can't have text and binary mode at once
+open(p, 'r+b+') => ValueError: invalid mode: 'r+b+'
+open(p, 'rbb') => ValueError: invalid mode: 'rbb'
+open(p, 'U') => ValueError: invalid mode: 'U'
+open(p, 'rU') => ValueError: invalid mode: 'rU'
+open(p, 'Ur') => ValueError: invalid mode: 'Ur'
+open(p, 'R') => ValueError: invalid mode: 'R'
+open(p, 'r ') => ValueError: invalid mode: 'r '
+open(p, ' r') => ValueError: invalid mode: ' r'
+open(p, 'rz') => ValueError: invalid mode: 'rz'
+open(p, 'b+') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, 't+') => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+open(p, '+bt') => ValueError: can't have text and binary mode at once
+open(p, 'r\n') => ValueError: invalid mode: 'r
+'
+---- what it takes
+() => TypeError: open() missing required argument 'file' (pos 1)
+mode=5 => TypeError: open() argument 'mode' must be str, not int
+mode=None => TypeError: open() argument 'mode' must be str, not None
+mode=b'r' => TypeError: open() argument 'mode' must be str, not bytes
+a zero in the mode => ValueError: embedded null character
+buffering='a' => TypeError: 'str' object cannot be interpreted as an integer
+buffering=None => TypeError: 'NoneType' object cannot be interpreted as an integer
+buffering=1.5 => TypeError: 'float' object cannot be interpreted as an integer
+buffering=2**40 => OverflowError: Python int too large to convert to C int
+encoding=5 => TypeError: open() argument 'encoding' must be str or None, not int
+encoding=b'' => TypeError: open() argument 'encoding' must be str or None, not bytes
+errors=5 => TypeError: open() argument 'errors' must be str or None, not int
+newline=5 => TypeError: open() argument 'newline' must be str or None, not int
+newline='x' => ValueError: illegal newline value: x
+an encoding that there is not => LookupError: unknown encoding: test_none_such
+nine => TypeError: open() takes at most 8 arguments (9 given)
+another name => TypeError: open() got an unexpected keyword argument 'other'
+binary with an encoding => ValueError: binary mode doesn't take an encoding argument
+with errors => ValueError: binary mode doesn't take an errors argument
+with a newline => ValueError: binary mode doesn't take a newline argument
+with a line at a time => RuntimeWarning: line buffering (buffering=1) isn't supported in binary mode, the default buffer size will be used
+text that is not buffered => ValueError: can't have unbuffered text I/O
+by name => ([('TextIOWrapper', 'r', 'D/file'), ('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, False, 'test_utf_8', 'ignore'))
+a zero in the encoding => ValueError: embedded null character
+a zero in the errors => ValueError: embedded null character
+a zero in the newline => ValueError: embedded null character
+buffering=-1, of bytes => [('BufferedReader', 131072, None)]
+buffering=-1, of text => [('TextIOWrapper', False, 131072, None)]
+buffering=-2, of bytes => [('BufferedReader', 131072, None)]
+buffering=-2, of text => [('TextIOWrapper', False, 131072, None)]
+buffering=-100, of bytes => [('BufferedReader', 131072, None)]
+buffering=-100, of text => [('TextIOWrapper', False, 131072, None)]
+buffering=0, of bytes => [('FileIO', None, None)]
+buffering=0, of text => ValueError: can't have unbuffered text I/O
+buffering=1, of bytes => RuntimeWarning: line buffering (buffering=1) isn't supported in binary mode, the default buffer size will be used
+buffering=1, of text => [('TextIOWrapper', True, 131072, None)]
+buffering=2, of bytes => [('BufferedReader', 2, None)]
+buffering=2, of text => [('TextIOWrapper', False, 2, None)]
+buffering=10, of bytes => [('BufferedReader', 10, None)]
+buffering=10, of text => [('TextIOWrapper', False, 10, None)]
+buffering=4096, of bytes => [('BufferedReader', 4096, None)]
+buffering=4096, of text => [('TextIOWrapper', False, 4096, None)]
+buffering=1000000, of bytes => [('BufferedReader', 1000000, None)]
+buffering=1000000, of text => [('TextIOWrapper', False, 1000000, None)]
+open(bytes) => ([('BufferedReader', 'rb', b'D/file'), ('FileIO', 'rb', b'D/file')], (True, False, True, None, None, None))
+open(what has __fspath__) => ([('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, None, None, None))
+open(that returns bytes) => ([('BufferedReader', 'rb', b'D/file'), ('FileIO', 'rb', b'D/file')], (True, False, True, None, None, None))
+open(that returns an int) => TypeError: expected P.__fspath__() to return str or bytes, not int
+open(None) => TypeError: expected str, bytes or os.PathLike object, not NoneType
+open(a list) => TypeError: expected str, bytes or os.PathLike object, not list
+open(a bytearray) => TypeError: expected str, bytes or os.PathLike object, not bytearray
+open(a float) => TypeError: expected str, bytes or os.PathLike object, not float
+open(a complex) => TypeError: expected str, bytes or os.PathLike object, not complex
+open(what has __float__) => TypeError: expected str, bytes or os.PathLike object, not Float
+open(-1) => ValueError: negative file descriptor
+open(what is not open) => OSError: [Errno 9] Bad file descriptor
+open(a zero in it) => ValueError: embedded null byte
+open('') => FileNotFoundError: [Errno 2] No such file or directory: ''
+open(a directory) => IsADirectoryError: [Errno 21] Is a directory: 'D/'
+open(what is not there) => FileNotFoundError: [Errno 2] No such file or directory: 'D/absent'
+open(True) => RuntimeWarning: bool is used as a file descriptor
+open(2 ** 70) => TypeError: expected str, bytes or os.PathLike object, not int
+what is open already => [(([('BufferedReader', 'rb', 'a descriptor'), ('FileIO', 'rb', 'a descriptor')], (True, False, True, None, None, None)), 'OSError')]
+by its __index__ => [(([('BufferedReader', 'rb', Index()), ('FileIO', 'rb', Index())], (True, False, True, None, None, None)),)]
+and left open => [(([('BufferedReader', 'rb', 'a descriptor'), ('FileIO', 'rb', 'a descriptor')], (True, False, True, None, None, None)), 12, None)]
+closefd=False with a name => ValueError: Cannot use closefd=False with file name
+closefd of other kinds => [((True,), None), ((True,), None), ((True,), 'OSError: [Errno 9] Bad file descriptor'), ((True,), None)]
+opener => (([('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, None, None, None)), ([('TextIOWrapper', 'w', 'D/file'), ('BufferedWriter', 'wb', 'D/file'), ('FileIO', 'wb', 'D/file')], (False, True, True, False, 'test_utf_8', 'strict')), ([('BufferedRandom', 'ab+', b'D/file'), ('FileIO', 'ab+', b'D/file')], (True, True, True, None, None, None)), ([('BufferedReader', 'rb', 'D/file'), ('FileIO', 'rb', 'D/file')], (True, False, True, None, None, None)), [('D/file', 0, False, True), ('D/file', 1, True, True), (b'D/file', 2, True, True), ('D/file', 0, False, True)])
+an opener that returns -1 => ValueError: opener returned -1
+an opener that returns None => TypeError: expected integer from opener
+an opener that returns a str => TypeError: expected integer from opener
+an opener that raises => ZeroDivisionError: division by zero
+an opener that cannot be called => TypeError: 'int' object is not callable
+an opener that returns what is not open => OSError: [Errno 9] Bad file descriptor | after OSError: [Errno 9] Bad file descriptor
+---- what comes of it
+read => [('hello\nworld\n', None)]
+lines => [(['hello\n', 'world\n'], None)]
+write => [(6, None, b'h\xc3\xa9llo\n')]
+append => [(7, 5, None, b'h\xc3\xa9llo\nmore\n')]
+both => [('h\xe9llo\n', 12, 3, 0, 'h\xe9llo\nmore\nend', None)]
+newlines => [(4, None, b'a\r\nb\r\n', [('a\nb\n', None)], [('a\r\nb\r\n', None)])]
+a line at a time => [(2, b'', 2, b'abc\n', 1, b'abc\n', None, b'abc\nd')]
+not buffered => [(2, b'ab', None)]
+with => [(False, None, True, True, True)]
+repr => [("<_io.TextIOWrapper name='D/file' mode='r' encoding='test_utf_8'>", "<_io.BufferedReader name='D/file'>", "<_io.FileIO name='D/file' mode='rb' closefd=True>", None, "<_io.TextIOWrapper name='D/file' mode='r' encoding='test_utf_8'>")]
+x when it is there => FileExistsError: [Errno 17] File exists: 'D/file'
+what was opened is closed if the rest fails => [('LookupError: unknown encoding: test_none_such', 'OSError: [Errno 9] Bad file descriptor')]
+who is told => (None, None, None, [('open', ('D/file', 'r')), ('open', ('D/file', 'r+')), ('open', ('D/file', 'r'))])
+---- open_code
+open_code => [('BufferedReader', 'rb', 'D/file', b'code', None)]
+open_code(b'D/file') => TypeError: open_code() argument 'path' must be str, not bytes
+open_code(P('D/file')) => TypeError: open_code() argument 'path' must be str, not P
+open_code(5) => TypeError: open_code() argument 'path' must be str, not int
+open_code(None) => TypeError: open_code() argument 'path' must be str, not None
+open_code('D/absent') => FileNotFoundError: [Errno 2] No such file or directory: 'D/absent'
+open_code('') => FileNotFoundError: [Errno 2] No such file or directory: ''
+open_code('a\x00b') => ValueError: embedded null byte
+by name => (None, "TypeError: open_code() missing required argument 'path' (pos 1)", 'TypeError: open_code() takes at most 1 argument (2 given)')

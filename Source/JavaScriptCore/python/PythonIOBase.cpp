@@ -743,6 +743,190 @@ IOModuleState& ioState(JSGlobalObject* globalObject)
     return state;
 }
 
+// PyNumber_Check()
+static bool isNumber(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    PyType* type = typeOf(globalObject, value);
+    return type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || type->isSubtypeOf(globalObject->pyRealm()->typeComplex());
+}
+
+// _io_open_impl(). A null String is None.
+JSValue openFile(JSGlobalObject* globalObject, JSValue file, const String& mode, int buffering, const String& encoding, const String& errors, const String& newline, bool closesDescriptor, JSValue opener)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    IOModuleState& io = ioState(globalObject);
+    JSValue pathOrDescriptor = file;
+    if (!isNumber(globalObject, file)) {
+        pathOrDescriptor = fileSystemPathOf(globalObject, file);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+
+    bool isCreating = false;
+    bool isReading = false;
+    bool isWriting = false;
+    bool isAppending = false;
+    bool isUpdating = false;
+    bool isText = false;
+    bool isBinary = false;
+    for (unsigned i = 0; i < mode.length(); ++i) {
+        char16_t c = mode[i];
+        bool* flag = c == 'x' ? &isCreating : c == 'r' ? &isReading : c == 'w' ? &isWriting : c == 'a' ? &isAppending : c == '+' ? &isUpdating : c == 't' ? &isText : c == 'b' ? &isBinary : nullptr;
+        // None of them twice.
+        if (!flag || *flag)
+            return raiseValueError(globalObject, scope, concatenate("invalid mode: '"_s, mode, '\''));
+        *flag = true;
+    }
+    StringBuilder rawMode;
+    if (isCreating)
+        rawMode.append('x');
+    if (isReading)
+        rawMode.append('r');
+    if (isWriting)
+        rawMode.append('w');
+    if (isAppending)
+        rawMode.append('a');
+    if (isUpdating)
+        rawMode.append('+');
+
+    if (isText && isBinary)
+        return raiseValueError(globalObject, scope, "can't have text and binary mode at once"_s);
+    if (isCreating + isReading + isWriting + isAppending > 1)
+        return raiseValueError(globalObject, scope, "must have exactly one of create/read/write/append mode"_s);
+    if (isBinary && !encoding.isNull())
+        return raiseValueError(globalObject, scope, "binary mode doesn't take an encoding argument"_s);
+    if (isBinary && !errors.isNull())
+        return raiseValueError(globalObject, scope, "binary mode doesn't take an errors argument"_s);
+    if (isBinary && !newline.isNull())
+        return raiseValueError(globalObject, scope, "binary mode doesn't take a newline argument"_s);
+    if (isBinary && buffering == 1 && !warn(globalObject, BuiltinType::RuntimeWarning, "line buffering (buffering=1) isn't supported in binary mode, the default buffer size will be used"_s))
+        return { };
+
+    MarkedArgumentBuffer rawArguments;
+    rawArguments.append(pathOrDescriptor);
+    rawArguments.append(jsString(vm, rawMode.isEmpty() ? emptyString() : rawMode.toString()));
+    rawArguments.append(jsBoolean(closesDescriptor));
+    rawArguments.append(opener);
+    JSValue result = call(globalObject, io.fileIO.get(), rawArguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue raw = result;
+
+    // From here on what has been opened is closed if anything goes wrong.
+    auto finish = [&] () -> JSValue {
+        bool isTerminal = false;
+        if (buffering < 0) {
+            JSValue answer = callMethodNamed(globalObject, raw, names.attribute__isatty_open_only);
+            RETURN_IF_EXCEPTION(scope, { });
+            isTerminal = isTrue(globalObject, answer);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        bool isLineBuffered = buffering == 1 || isTerminal;
+        if (isLineBuffered)
+            buffering = -1;
+        if (buffering < 0) {
+            JSValue blockSize = getAttribute(globalObject, raw, names.attribute__blksize);
+            RETURN_IF_EXCEPTION(scope, { });
+            auto size = toCLong(globalObject, blockSize);
+            RETURN_IF_EXCEPTION(scope, { });
+            buffering = static_cast<int>(std::max<int64_t>(std::min<int64_t>(static_cast<int>(*size), 8192 * 1024), defaultBufferSize));
+        }
+        if (buffering < 0)
+            return raiseValueError(globalObject, scope, "invalid buffering size"_s);
+        if (!buffering) {
+            if (!isBinary)
+                return raiseValueError(globalObject, scope, "can't have unbuffered text I/O"_s);
+            return result;
+        }
+        PyType* bufferedClass = isUpdating ? io.bufferedRandom.get() : isCreating || isWriting || isAppending ? io.bufferedWriter.get() : isReading ? io.bufferedReader.get() : nullptr;
+        if (!bufferedClass)
+            return raiseValueError(globalObject, scope, concatenate("unknown mode: '"_s, mode, '\''));
+        JSValue buffer = call(globalObject, bufferedClass, raw, jsNumber(buffering));
+        RETURN_IF_EXCEPTION(scope, { });
+        result = buffer;
+        if (isBinary)
+            return result;
+        auto orNone = [&] (const String& text) -> JSValue { return text.isNull() ? jsUndefined() : JSValue(jsString(vm, text)); };
+        MarkedArgumentBuffer wrapperArguments;
+        wrapperArguments.append(buffer);
+        wrapperArguments.append(orNone(encoding));
+        wrapperArguments.append(orNone(errors));
+        wrapperArguments.append(orNone(newline));
+        wrapperArguments.append(jsBoolean(isLineBuffered));
+        JSValue wrapper = call(globalObject, io.textIOWrapper.get(), wrapperArguments);
+        RETURN_IF_EXCEPTION(scope, { });
+        result = wrapper;
+        setAttribute(globalObject, wrapper, names.attribute_mode, jsString(vm, mode));
+        RETURN_IF_EXCEPTION(scope, { });
+        return result;
+    };
+    JSValue opened = finish();
+    if (!scope.exception())
+        return opened;
+    Exception* raised = takeRaisedException(vm);
+    RETURN_IF_EXCEPTION(scope, { });
+    callMethodNamed(globalObject, result, names.attribute_close);
+    scope.release();
+    chainRaisedExceptions(globalObject, raised);
+    return { };
+}
+
+// open(file, mode='r', buffering=-1, encoding=None, errors=None, newline=None, closefd=True, opener=None)
+PYTHON_NATIVE(ioOpen)
+{
+    NATIVE_PROLOGUE();
+    String mode = "r"_s;
+    if (JSValue value = args.at(1)) {
+        auto given = toTextArgument(globalObject, value, "open"_s, "argument 'mode'"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        mode = *given;
+    }
+    int buffering = -1;
+    if (JSValue value = args.at(2)) {
+        auto given = toCInt(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        buffering = *given;
+    }
+    String texts[3];
+    static constexpr ASCIILiteral textNames[] = { "argument 'encoding'"_s, "argument 'errors'"_s, "argument 'newline'"_s };
+    for (unsigned i = 0; i < 3; ++i) {
+        if (JSValue value = args.at(3 + i)) {
+            auto given = toTextArgument(globalObject, value, "open"_s, textNames[i], true);
+            RETURN_IF_EXCEPTION(scope, { });
+            texts[i] = *given;
+        }
+    }
+    bool closesDescriptor = true;
+    if (JSValue value = args.at(6)) {
+        closesDescriptor = isTrue(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    JSValue opener = args.at(7);
+    RELEASE_AND_RETURN(scope, JSValue::encode(openFile(globalObject, args.at(0), mode, buffering, texts[0], texts[1], texts[2], closesDescriptor, opener ? opener : jsUndefined())));
+}
+
+// PyFile_OpenCodeObject()
+JSValue openCode(JSGlobalObject* globalObject, JSValue path)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!stringIn(path))
+        return raiseTypeError(globalObject, scope, concatenate("'path' must be 'str', not '"_s, typeName(globalObject, path), '\''));
+    if (auto hook = globalObject->pyRealm()->configuration().openCode)
+        RELEASE_AND_RETURN(scope, hook(globalObject, path));
+    RELEASE_AND_RETURN(scope, openFile(globalObject, path, "rb"_s, -1, String(), String(), String(), true, jsUndefined()));
+}
+
+PYTHON_NATIVE(ioOpenCode)
+{
+    NATIVE_PROLOGUE();
+    JSValue path = args.at(0);
+    if (!stringIn(path))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("open_code() argument 'path' must be str, not "_s, typeNameOfArgument(globalObject, path))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(openCode(globalObject, path)));
+}
+
 JSObject* createIOModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -753,8 +937,10 @@ JSObject* createIOModule(JSGlobalObject* globalObject)
     put("DEFAULT_BUFFER_SIZE"_s, jsNumber(static_cast<int32_t>(defaultBufferSize)));
     put("UnsupportedOperation"_s, state.unsupportedOperation.get());
     put("BlockingIOError"_s, realm->type(BuiltinType::BlockingIOError));
-    for (PyType* type : { state.ioBase.get(), state.textIOBase.get(), state.bufferedIOBase.get(), state.rawIOBase.get(), state.fileIO.get(), state.bytesIO.get(), state.bytesIOBuffer.get(), state.bufferedWriter.get(), state.bufferedReader.get(), state.bufferedRWPair.get(), state.bufferedRandom.get(), state.incrementalNewlineDecoder.get(), state.stringIO.get() })
+    for (PyType* type : { state.ioBase.get(), state.textIOBase.get(), state.bufferedIOBase.get(), state.rawIOBase.get(), state.fileIO.get(), state.bytesIO.get(), state.bytesIOBuffer.get(), state.bufferedWriter.get(), state.bufferedReader.get(), state.bufferedRWPair.get(), state.bufferedRandom.get(), state.incrementalNewlineDecoder.get(), state.stringIO.get(), state.textIOWrapper.get() })
         module->putDirect(vm, Identifier::fromString(vm, type->nameWithoutModule(globalObject)), type);
+    addFunction(globalObject, module, "open"_s, ioOpen);
+    addFunction(globalObject, module, "open_code"_s, ioOpenCode);
     addFunction(globalObject, module, "text_encoding"_s, ioTextEncoding);
     return module;
 }

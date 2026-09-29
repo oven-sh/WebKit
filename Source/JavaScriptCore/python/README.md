@@ -616,7 +616,11 @@ A buffered stream reads into its own buffer and writes from it, and what the raw
 
 `StringIO` counts in characters, so what is in it is a character to each 32 bits, as in CPython, but while it has only ever been added to at the end, when it is a string that is being built.
 
-`TextIOWrapper` and `open()` are not written yet. They need the codecs that are found by name, which are in the library.
+`TextIOWrapper` counts in characters as well: how many to read, how long a line may be, and how many of what has been decoded have been given out, which is part of what `tell()` returns. What it returns is the
+same number as in CPython, since a program can keep one and give it to another. `tell()` guesses how far into the bytes it has got by how many bytes there were to a character in the last piece that was read,
+which after `seek()` is a guess about something else and can come to more bytes than there are. CPython looks past the end of them then. Here it is as many as there are.
+
+What `io.open_code()` does is the host's to say, if it wants to: `Configuration::openCode`.
 
 ### `posix`
 

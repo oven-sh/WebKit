@@ -79,6 +79,18 @@ JSValue intFromUInt64(JSGlobalObject* globalObject, uint64_t value)
     return JSBigInt::createFrom(globalObject, value);
 }
 
+std::optional<int> toCIntOfFormat(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto given = toCLong(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (*given > std::numeric_limits<int>::max() || *given < std::numeric_limits<int>::min()) {
+        raise(globalObject, scope, BuiltinType::OverflowError, *given > 0 ? "signed integer is greater than maximum"_s : "signed integer is less than minimum"_s);
+        return std::nullopt;
+    }
+    return static_cast<int>(*given);
+}
+
 uint64_t lowBitsOfInt(JSValue value)
 {
     Number number = classify(value);

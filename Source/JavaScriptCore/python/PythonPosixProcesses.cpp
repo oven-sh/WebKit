@@ -253,24 +253,6 @@ bool toSignalSet(JSGlobalObject* globalObject, JSValue given, sigset_t& mask)
 
 enum SpawnAction : long { SpawnOpen, SpawnClose, SpawnDup2 };
 
-// One of the things in a tuple that PyArg_ParseTuple() takes with "i".
-static std::optional<int> toIntOfTuple(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
-{
-    JSValue integer = toInt(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    auto number = tryInt64(integer);
-    bool isNegative = compareInts(integer, jsNumber(0)) < 0;
-    if ((!number && !isNegative) || (number && *number > std::numeric_limits<int>::max())) {
-        raise(globalObject, scope, BuiltinType::OverflowError, "signed integer is greater than maximum"_s);
-        return std::nullopt;
-    }
-    if (!number || *number < std::numeric_limits<int>::min()) {
-        raise(globalObject, scope, BuiltinType::OverflowError, "signed integer is less than minimum"_s);
-        return std::nullopt;
-    }
-    return static_cast<int>(*number);
-}
-
 // parse_file_actions(). It has been initialized. False if it raised.
 static bool parseFileActions(JSGlobalObject* globalObject, JSValue given, posix_spawn_file_actions_t& actions)
 {
@@ -318,11 +300,11 @@ static bool parseFileActions(JSGlobalObject* globalObject, JSValue given, posix_
             constexpr auto message = "A open file_action tuple must have 5 elements"_s;
             if (!hasLength(5, message))
                 return false;
-            auto descriptor = toIntOfTuple(globalObject, scope, action->at(1));
+            auto descriptor = toCIntOfFormat(globalObject, action->at(1));
             RETURN_IF_EXCEPTION(scope, false);
             auto path = toFileSystemEncoded(globalObject, action->at(2));
             RETURN_IF_EXCEPTION(scope, false);
-            auto flags = toIntOfTuple(globalObject, scope, action->at(3));
+            auto flags = toCIntOfFormat(globalObject, action->at(3));
             RETURN_IF_EXCEPTION(scope, false);
             if (!isInstance(globalObject, action->at(4), realm->typeInt())) {
                 raiseTypeError(globalObject, scope, message);
@@ -336,7 +318,7 @@ static bool parseFileActions(JSGlobalObject* globalObject, JSValue given, posix_
             constexpr auto message = "A close file_action tuple must have 2 elements"_s;
             if (!hasLength(2, message))
                 return false;
-            auto descriptor = toIntOfTuple(globalObject, scope, action->at(1));
+            auto descriptor = toCIntOfFormat(globalObject, action->at(1));
             RETURN_IF_EXCEPTION(scope, false);
             if (failed(posix_spawn_file_actions_addclose(&actions, *descriptor)))
                 return false;
@@ -346,9 +328,9 @@ static bool parseFileActions(JSGlobalObject* globalObject, JSValue given, posix_
             constexpr auto message = "A dup2 file_action tuple must have 3 elements"_s;
             if (!hasLength(3, message))
                 return false;
-            auto descriptor = toIntOfTuple(globalObject, scope, action->at(1));
+            auto descriptor = toCIntOfFormat(globalObject, action->at(1));
             RETURN_IF_EXCEPTION(scope, false);
-            auto descriptor2 = toIntOfTuple(globalObject, scope, action->at(2));
+            auto descriptor2 = toCIntOfFormat(globalObject, action->at(2));
             RETURN_IF_EXCEPTION(scope, false);
             if (failed(posix_spawn_file_actions_adddup2(&actions, *descriptor, *descriptor2)))
                 return false;
