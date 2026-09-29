@@ -37,10 +37,34 @@ static Type typeOfCellOfType(JSType type)
     case ArrayType:
     case DerivedArrayType:
         return TArray;
+    case FinalObjectType:
+        return TFinalObject;
+    case JSMapType:
+        return TMap;
+    case JSSetType:
+        return TSet;
+    case JSWeakMapType:
+        return TWeakMap;
+    case JSWeakSetType:
+        return TWeakSet;
+    case RegExpObjectType:
+        return TRegExp;
+    case JSPromiseType:
+        return TPromise;
+    case JSDateType:
+        return TDate;
+    case ErrorInstanceType:
+        return TError;
+    case ArrayBufferType:
+        return TArrayBuffer;
+    case DataViewType:
+        return TDataView;
+    case StringObjectType:
+        return TStringObject;
     default:
         if (isTypedArrayType(type))
             return typeOfTypedArray(type);
-        return type >= ObjectType ? TObject : TCellOther;
+        return type >= ObjectType ? TOtherObject : TCellOther;
     }
 }
 
@@ -97,6 +121,19 @@ void dumpType(PrintStream& out, Type type)
     take(TFunction, "Function"_s);
     take(TArray, "Array"_s);
     take(TObject, "Object"_s);
+    take(TOtherObject, "OtherObject"_s);
+    take(TFinalObject, "FinalObject"_s);
+    take(TMap, "Map"_s);
+    take(TSet, "Set"_s);
+    take(TWeakMap, "WeakMap"_s);
+    take(TWeakSet, "WeakSet"_s);
+    take(TRegExp, "RegExp"_s);
+    take(TPromise, "Promise"_s);
+    take(TDate, "Date"_s);
+    take(TError, "Error"_s);
+    take(TArrayBuffer, "ArrayBuffer"_s);
+    take(TDataView, "DataView"_s);
+    take(TStringObject, "StringObject"_s);
     take(TTypedArray, "TypedArray"_s);
     for (unsigned i = 0; i < NumberOfTypedArrayTypesExcludingDataView; ++i) {
         if (type & (1u << (firstTypedArrayBit + i))) {
@@ -439,9 +476,12 @@ std::optional<uint32_t> Graph::distanceOfEnvironmentAccessed(const Node* node)
             return found(m_linkage->distanceOfEnvironment);
         return std::nullopt;
     }
-    if (type == Dynamic || !node->isBytecode(op_get_from_scope))
+    if (type == Dynamic)
         return std::nullopt;
-    if (auto variable = resolveStatically(identifier, depth, type); variable.kind == StaticVariable::Import)
+    auto variable = resolveStatically(identifier, depth, type);
+    if (variable.kind == StaticVariable::Closure && variable.isInOutermostEnvironment)
+        return found(m_linkage->distanceOfEnvironment);
+    if (variable.kind == StaticVariable::Import && node->isBytecode(op_get_from_scope))
         return found(variable.import.distanceOfEnvironment);
     return std::nullopt;
 }
@@ -459,7 +499,8 @@ bool Graph::isScopeThatStandsForNoThis(const Node* node)
         return true;
     if (bytecode.m_resolveType == Dynamic)
         return false;
-    return resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType).kind == StaticVariable::Import;
+    auto kind = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType).kind;
+    return kind == StaticVariable::Import || kind == StaticVariable::Closure;
 }
 
 // Counting from the scope that the function was made in.
@@ -488,6 +529,8 @@ std::optional<uint32_t> Graph::distanceOfEnvironmentResolvedTo(const Node* node)
     } else if (bytecode.m_resolveType != Dynamic) {
         if (auto variable = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType); variable.kind == StaticVariable::Import)
             distance = variable.import.distanceOfEnvironment;
+        else if (variable.kind == StaticVariable::Closure && variable.isInOutermostEnvironment)
+            distance = m_linkage->distanceOfEnvironment;
     }
     if (!distance)
         return std::nullopt;
@@ -589,6 +632,31 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProv
         if (const StaticImport* import = m_linkage->findImport(name); import && import->function)
             return import->function;
     }
+    // A read that was left to be resolved when the code is linked (BytecodeOptimizerAccess::resolveScopesStatically() only goes so
+    // far). It reads what it reads all the same: which is no proof of anything, but is not to be overlooked either.
+    if (m_declaredNames) {
+        auto resolution = m_declaredNames->resolve(name);
+        switch (resolution.kind) {
+        case DeclaredNamesLink::Resolution::Slot: {
+            if (!resolution.isInOutermostEnvironment)
+                return nullptr;
+            const KnownFunction* known = m_hints->find(name, resolution.offset);
+            // It is read from the scope that was found for the name, which is that of the module.
+            if (known && known->isProven && isProven && Options::aotResolvesScopesItself()) {
+                const Node* scope = callee->use(bytecode.m_scope);
+                *isProven = scope->isBytecode(op_resolve_scope) && scope->as<OpResolveScope>().m_var == bytecode.m_var;
+            }
+            return known;
+        }
+        case DeclaredNamesLink::Resolution::Stable:
+        case DeclaredNamesLink::Resolution::Global:
+            return m_hints->find(name, std::nullopt);
+        case DeclaredNamesLink::Resolution::Dynamic:
+            break;
+        }
+    }
+    if (const KnownFunction* known = m_hints->findWhateverHasTheName(name))
+        return known;
     return m_hints->find(name, std::nullopt);
 }
 
@@ -699,7 +767,14 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
             return fromOutside(0);
         case op_resolve_scope: {
             ResolveType type = scope->as<OpResolveScope>().m_resolveType;
-            return isStaticClosureVarResolveType(type) ? fromOutside(staticClosureVarHops(type)) : nullptr;
+            if (isStaticClosureVarResolveType(type))
+                return fromOutside(staticClosureVarHops(type));
+            if (type == GlobalProperty && m_declaredNames) {
+                auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(scope->as<OpResolveScope>().m_var).impl());
+                if (resolution.kind == DeclaredNamesLink::Resolution::Slot)
+                    return resolution.scope;
+            }
+            return nullptr;
         }
         case op_get_parent_scope: {
             const Node* inner = scope->use(scope->as<OpGetParentScope>().m_scope);
@@ -836,7 +911,7 @@ void Graph::noteWhatCannotBeToldOfVariables(VariableFacts& facts)
     }
 }
 
-void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutables, Vector<String>& importedDynamically)
+void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutables)
 {
     auto executableMadeBy = [&](Node* node) -> UnlinkedFunctionExecutable* {
         if (node->kind != NodeKind::Bytecode)
@@ -883,17 +958,6 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
         for (Node* node : block->nodes) {
             for (auto& use : node->uses)
                 note(node, use);
-            if (!node->isBytecode(op_call) && !node->isBytecode(op_call_ignore_result) && !node->isBytecode(op_tail_call))
-                continue;
-            VirtualRegister calleeRegister = node->isBytecode(op_call) ? node->as<OpCall>().m_callee : node->isBytecode(op_call_ignore_result) ? node->as<OpCallIgnoreResult>().m_callee : node->as<OpTailCall>().m_callee;
-            unsigned argv = node->isBytecode(op_call) ? node->as<OpCall>().m_argv : node->isBytecode(op_call_ignore_result) ? node->as<OpCallIgnoreResult>().m_argv : node->as<OpTailCall>().m_argv;
-            Node* callee = node->use(calleeRegister);
-            if (callee->kind != NodeKind::ConstantCell || m_codeBlock->constantSourceCodeRepresentation(callee->reg) != SourceCodeRepresentation::LinkTimeConstant
-                || static_cast<LinkTimeConstant>(m_codeBlock->getConstant(callee->reg).asInt32AsAnyInt()) != LinkTimeConstant::importModule)
-                continue;
-            Node* specifier = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1));
-            JSValue value = specifier->kind == NodeKind::ConstantCell && m_codeBlock->constantSourceCodeRepresentation(specifier->reg) != SourceCodeRepresentation::LinkTimeConstant ? m_codeBlock->getConstant(specifier->reg) : JSValue();
-            importedDynamically.append(value && value.isString() ? asString(value)->tryGetValue() : String());
         }
         for (Node* phi : block->phis) {
             for (auto& use : phi->uses)
@@ -1096,6 +1160,16 @@ Graph::StaticVariable Graph::resolveStatically(unsigned identifierIndex, unsigne
         case ScopeChainEntry::Unknown:
             if (m_declaredNames && type == GlobalProperty) {
                 auto resolution = m_declaredNames->resolve(uid);
+                if (resolution.kind == DeclaredNamesLink::Resolution::Slot && Options::aotResolvesScopesItself()) {
+                    // (It is none of the function's own: whatever made the bytecode would have said so.)
+                    result.kind = StaticVariable::Closure;
+                    result.depth = depth + resolution.hops;
+                    result.offset = ScopeOffset(resolution.offset);
+                    result.inModule = resolution.isLazyFunctionSlot;
+                    result.isReadOnly = resolution.isReadOnly;
+                    result.isInOutermostEnvironment = resolution.isInOutermostEnvironment;
+                    return result;
+                }
                 if (resolution.kind == DeclaredNamesLink::Resolution::Global) {
                     result.kind = StaticVariable::Unresolved;
                     result.isInGlobalScopes = true;

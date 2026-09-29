@@ -626,7 +626,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
 
 // Options::aotVerifiesFacts()
 // That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject* globalObject, CallFrame* callFrame, EncodedJSValue encodedValue, uint32_t type, uint32_t which, uint32_t identifierIndexPlusOne))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject* globalObject, CallFrame* callFrame, EncodedJSValue encodedValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne))
 {
     Type actual = typeOfValue(JSValue::decode(encodedValue));
     if (isSubtype(actual, type)) [[likely]]
@@ -638,6 +638,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject*
     dataLog("AOT: A FACT IS NOT ONE: what ");
     if (which >= 1000000)
         dataLog(opcodeNames[which / 1000000], " at bc#", which % 1000000);
+    else if (which % 100 == static_cast<unsigned>(NodeKind::Argument))
+        dataLog("argument ", which / 100);
     else
         dataLog("a node of kind ", which);
     if (identifierIndexPlusOne)

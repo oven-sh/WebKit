@@ -737,10 +737,11 @@ void dumpSoundTypeMask(PrintStream& out, unsigned mask)
         static constexpr ASCIILiteral typedArrays[] = {
             "Int8Array"_s, "Uint8Array"_s, "Uint8ClampedArray"_s, "Int16Array"_s, "Uint16Array"_s, "Int32Array"_s, "Uint32Array"_s,
             "Float16Array"_s, "Float32Array"_s, "Float64Array"_s, "BigInt64Array"_s, "BigUint64Array"_s,
+            "Map"_s, "Set"_s, "WeakMap"_s, "WeakSet"_s, "RegExp"_s, "Promise"_s, "Date"_s, "Error"_s,
         };
-        static_assert(std::size(typedArrays) == NumberOfTypedArrayTypesExcludingDataView);
+        static_assert(std::size(typedArrays) == NumberOfTypedArrayTypesExcludingDataView + std::size(soundTypeOtherKindsOfObject));
         static_assert(Float64ArrayType - FirstTypedArrayType == 9 && BigUint64ArrayType - FirstTypedArrayType == 11);
-        out.print(separator, typedArrays[typedArrayTypeOfSoundTypeMask(mask) - FirstTypedArrayType]);
+        out.print(separator, typedArrays[(mask >> SoundTypeTypedArrayShift) - 1]);
         mask &= SoundTypeAll & ~SoundTypeOtherObject;
     }
     for (auto [bits, name] : names) {

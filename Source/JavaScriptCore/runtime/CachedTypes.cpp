@@ -6015,15 +6015,14 @@ struct BytecodeLinkEncoder::Impl {
         auto graphStarExports = arrayAt(header.starExportsOffset, header.starExportCount, static_cast<const uint32_t*>(nullptr));
         exportsOfLinkAreExposed.fill(ExposedNot, graphModules.size());
         exposureOfLinkSpreadsTo.fill(Vector<uint32_t>(), graphModules.size());
-        keysOfLink.fill(String(), graphModules.size());
         auto expose = [&](uint32_t graphModule, uint8_t how) {
             if (graphModule < exportsOfLinkAreExposed.size())
                 exportsOfLinkAreExposed[graphModule] |= how;
         };
         for (unsigned graphModule = 0; graphModule < graphModules.size(); ++graphModule) {
             auto& module = graphModules[graphModule];
-            if (module.keySid < prelinkedGraphStringSlots.size())
-                keysOfLink[graphModule] = strings->stringForSlot(prelinkedGraphStringSlots[module.keySid]);
+            if (module.flags & Graph::Module::NamespaceMayBeRequested)
+                expose(graphModule, ExposedByRequest);
             auto requested = [&](uint32_t request) {
                 return request < module.requestCount ? graphRequests[module.firstRequest + request].moduleIndex : Graph::noModule;
             };
@@ -6078,9 +6077,10 @@ struct BytecodeLinkEncoder::Impl {
             for (unsigned i = 0; i < module.starExportCount; ++i)
                 exposureOfLinkSpreadsTo[graphModule].append(requested(graphStarExports[module.firstStarExport + i]));
         }
+        spreadExposureOfLink();
         return result;
     }
-    enum : uint8_t { ExposedNot = 0, ExposedByNamespaceImport = 1, ExposedByOtherImport = 2, ExposedByDynamicImport = 4 };
+    enum : uint8_t { ExposedNot = 0, ExposedByNamespaceImport = 1, ExposedByOtherImport = 2, ExposedByRequest = 4 };
     Vector<Identifier> namesOfNamespaceImportsOfLink;
     Vector<uint8_t> exportsOfLinkAreExposed; // By module of the graph.
     Vector<Vector<uint32_t>> exposureOfLinkSpreadsTo; // Whoever can get at all that the one exports can get at all that these do.
@@ -6101,7 +6101,6 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
     }
-    Vector<String> keysOfLink;
     Vector<std::pair<const AOT::KnownFunction*, unsigned>> exportedFunctionsOfLink; // And the module that exports it, which need not be the one that has it.
     Vector<Identifier> namesOfLinkage; // Keeps what the linkages are keyed on.
     Vector<AOT::ImageEnvironment> environmentsOfLink;
@@ -6265,37 +6264,10 @@ struct BytecodeLinkEncoder::Impl {
                 });
             }
             std::atomic<unsigned> unreadable { 0 };
-            Lock importedLock;
-            Vector<String> importedDynamically;
             inParallel(jobs.size(), [&](size_t index) {
-                Vector<String> imported;
-                if (!AOT::noteUsesOfProvenFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfExecutables, variableFacts, imported))
+                if (!AOT::noteUsesOfProvenFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfExecutables, variableFacts))
                     unreadable++;
-                if (!imported.isEmpty()) {
-                    Locker locker { importedLock };
-                    importedDynamically.appendVector(imported);
-                }
             });
-            unsigned unknownSpecifiers = 0;
-            unsigned specifiersOfNoModule = 0;
-            for (auto& specifier : importedDynamically) {
-                if (specifier.isNull()) {
-                    ++unknownSpecifiers;
-                    continue;
-                }
-                size_t slash = specifier.reverseFind('/');
-                StringView name = StringView(specifier).substring(slash == notFound ? 0 : slash + 1);
-                bool found = false;
-                for (unsigned graphModule = 0; graphModule < keysOfLink.size(); ++graphModule) {
-                    auto& key = keysOfLink[graphModule];
-                    if (key.endsWith(name) && (key.length() == name.length() || key[key.length() - name.length() - 1] == '/')) {
-                        exportsOfLinkAreExposed[graphModule] |= ExposedByDynamicImport;
-                        found = true;
-                    }
-                }
-                specifiersOfNoModule += !found;
-            }
-            spreadExposureOfLink();
             if (Options::aotReportStats()) [[unlikely]] {
                 UncheckedKeyHashMap<const AOT::KnownFunction*, uint8_t> exposure;
                 for (auto& [function, graphModule] : exportedFunctionsOfLink)
@@ -6314,12 +6286,11 @@ struct BytecodeLinkEncoder::Impl {
                     });
                 }
                 static constexpr ASCIILiteral names[] = { "has no code for a call"_s, "its value is used"_s, "CLOSED: not exported"_s, "CLOSED: exported, and only ever imported as the variable"_s,
-                    "exported, and imported in a way that is not resolved"_s, "exported by a module whose namespace is imported"_s, "exported by a module that import() names"_s };
-                dataLogLn("AOT: what becomes of ", factsOfFunctions.size(), " proven functions, from ", jobs.size(), " pieces of code (", unreadable.load(), " unreadable), ", (MonotonicTime::now() - before).milliseconds(), " ms; import(): ", importedDynamically.size(), " sites, ", unknownSpecifiers, " of who knows what, ", specifiersOfNoModule, " of no module of the program");
+                    "exported, and imported in a way that is not resolved"_s, "exported by a module whose namespace is imported"_s, "exported by an entry point, or by what import() or require() asks for"_s };
+                dataLogLn("AOT: what becomes of ", factsOfFunctions.size(), " proven functions, from ", jobs.size(), " pieces of code (", unreadable.load(), " unreadable), ", (MonotonicTime::now() - before).milliseconds(), " ms");
                 for (unsigned i = 0; i < 7; ++i)
                     dataLogLn("  FACTS ", functions[i], " functions, ", calls[i], " direct calls: ", names[i]);
             }
-            // (What import() is given that cannot be told when the program is compiled is taken not to be a module of the program.)
             for (auto& [function, graphModule] : exportedFunctionsOfLink) {
                 if (exportsOfLinkAreExposed[graphModule])
                     function->facts->valueIsUsed.store(true);
@@ -6375,6 +6346,7 @@ struct BytecodeLinkEncoder::Impl {
             MonotonicTime before = MonotonicTime::now();
             unsigned rounds = 0;
             size_t inferences = 0;
+            unsigned scopesNeverMade = 0;
             while (!worklist.isEmpty()) {
                 ++rounds;
                 inferences += worklist.size();
@@ -6383,10 +6355,10 @@ struct BytecodeLinkEncoder::Impl {
                     Summary& summary = summaries[index];
                     summary.callees.shrink(0);
                     summary.calleesGivenMore.shrink(0);
-                    uint32_t type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, index, summary.callees, summary.calleesGivenMore);
+                    uint64_t type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, index, summary.callees, summary.calleesGivenMore);
                     summary.changed = false;
                     for (auto* function : summary.functions) {
-                        uint32_t old = function->returnType.load(std::memory_order_relaxed);
+                        uint64_t old = function->returnType.load(std::memory_order_relaxed);
                         summary.changed |= (type | old) != old;
                         function->returnType.store(type | old, std::memory_order_relaxed);
                     }
@@ -6411,11 +6383,35 @@ struct BytecodeLinkEncoder::Impl {
                 if (variableFacts) {
                     for (unsigned reader : variableFacts->takeReadersOfWhatGrew())
                         next.add(reader);
+                    if (next.isEmpty()) {
+                        for (unsigned reader : variableFacts->giveUpOnWhatIsReadAndNeverMade(scopesNeverMade))
+                            next.add(reader);
+                    }
                 }
                 worklist = copyToVector(next);
             }
+            if (Options::aotLogsFacts()) [[unlikely]] {
+                // Once more, now that it is settled, for each to say what it goes by and what it adds.
+                auto nameOfJob = [&](unsigned index) {
+                    auto* executable = jobs[index].executableForStatistics;
+                    return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
+                };
+                for (unsigned index = 0; index < summaries.size(); ++index) {
+                    Summary& summary = summaries[index];
+                    if (summary.facts) {
+                        StringPrintStream out;
+                        for (unsigned p = 1; p < std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::ProgramFacts::mostParameters); ++p)
+                            out.print(" ", AOT::TypeDump(summary.facts->parameterTypes[p].load()));
+                        dataLogLn("FACTLOG function ", nameOfJob(index), summary.facts->isClosed ? " CLOSED, is passed" : " open", summary.facts->isClosed ? out.toString() : String(), ", returns ", AOT::TypeDump(summary.functions[0]->returnType.load()), ", direct calls ", summary.facts->directCalls.load());
+                    }
+                    Vector<const AOT::KnownFunction*> ignored;
+                    Vector<const AOT::KnownFunction*> ignoredToo;
+                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, AOT::VariableFacts::nobody, ignored, ignoredToo, nameOfJob(index));
+                }
+            }
             if (Options::aotReportStats()) [[unlikely]] {
-                UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> byType;
+                dataLogLn("AOT: ", scopesNeverMade, " scopes are read from and never seen to be made");
+                UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> byType;
                 for (auto& summary : summaries) {
                     if (!summary.functions.isEmpty())
                         byType.add(summary.functions[0]->returnType.load(), 0).iterator->value++;
@@ -6446,8 +6442,18 @@ struct BytecodeLinkEncoder::Impl {
                         return orNothing ? "function?"_s : "function"_s;
                     if (isSubtype(rest, TArray))
                         return orNothing ? "array?"_s : "array"_s;
-                    if (isSubtype(rest, TObject))
+                    if (isSubtype(rest, TFinalObject))
                         return orNothing ? "plain object?"_s : "plain object"_s;
+                    if (isSubtype(rest, TMap | TSet | TWeakMap | TWeakSet))
+                        return orNothing ? "map or set?"_s : "map or set"_s;
+                    if (isSubtype(rest, TRegExp))
+                        return orNothing ? "regexp?"_s : "regexp"_s;
+                    if (isSubtype(rest, TPromise))
+                        return orNothing ? "promise?"_s : "promise"_s;
+                    if (isSubtype(rest, TObject & ~TOtherObject))
+                        return orNothing ? "objects of known kinds?"_s : "objects of known kinds"_s;
+                    if (isSubtype(rest, TObject))
+                        return orNothing ? "an object that is no function or array?"_s : "an object that is no function or array"_s;
                     if (isSubtype(rest, TAnyObject))
                         return orNothing ? "some object?"_s : "some object"_s;
                     if (isSubtype(rest, TPrimitive))
@@ -6477,7 +6483,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (variableFacts) {
                     UncheckedKeyHashMap<ASCIILiteral, unsigned> variables;
                     unsigned count = 0;
-                    variableFacts->forEach([&](Variable variable, uint32_t type) {
+                    variableFacts->forEach([&](Variable variable, uint64_t type) {
                         if (variable.offset == Variable::initialValue)
                             return;
                         ++count;

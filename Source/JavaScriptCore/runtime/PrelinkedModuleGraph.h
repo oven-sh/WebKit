@@ -45,7 +45,7 @@ class VM;
 // initializeEnvironment / getModuleNamespace from these arrays and only build their by-name entry maps when something
 // else asks for them. The graph object itself is plain data and exists whether or not the option is on.
 //
-// Blob layout (version 2; written by Bun's src/bundler/prelinked_module_graph.rs `serialize`, bump both together),
+// Blob layout (version 3; written by Bun's src/bundler/prelinked_module_graph.rs `serialize`, bump both together),
 // little-endian u32 throughout, 4-byte aligned:
 //   Header, then the arrays it points at. Module-relative request indices (< 2^16); graph-wide module indices
 //   (noModule = none); sids < stringCount, or starDefaultSid / starNamespaceSid. Imports are sorted by
@@ -56,7 +56,7 @@ class PrelinkedModuleGraph final : public RefCounted<PrelinkedModuleGraph> {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED(PrelinkedModuleGraph);
 public:
     static constexpr uint32_t magic = 0x474d4c50; // "PLMG"
-    static constexpr uint32_t currentVersion = 2;
+    static constexpr uint32_t currentVersion = 3;
     static constexpr uint32_t noModule = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t starDefaultSid = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t starNamespaceSid = std::numeric_limits<uint32_t>::max() - 1;
@@ -86,6 +86,9 @@ public:
             HasTLA = 1 << 2,
             HasStarExports = 1 << 3,
             AllRequestsInGraph = 1 << 4, // every request resolves to another module of this graph
+            // Something other than an import statement of another module of the graph can get at it: it is an entry point, or the
+            // target of an import() or a require(). Any other is one that the bundler made, and only the bundler knows the name of.
+            NamespaceMayBeRequested = 1 << 5,
         };
         uint32_t keySid;
         uint32_t flags;

@@ -758,26 +758,27 @@ static void recordStatistics(bool ok, size_t codeBytes, size_t bytecodeBytes, Se
     }
 }
 
-bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FactsOfExecutables& factsOfExecutables, VariableFacts* variableFacts, Vector<String>& importedDynamically)
+bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FactsOfExecutables& factsOfExecutables, VariableFacts* variableFacts)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     if (!parseBytecode(graph))
         return false;
-    graph.noteUsesOfProvenFunctions(factsOfExecutables, importedDynamically);
+    graph.noteUsesOfProvenFunctions(factsOfExecutables);
     if (variableFacts)
         graph.noteWhatCannotBeToldOfVariables(*variableFacts);
     return true;
 }
 
-uint32_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore)
+uint64_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, const String& nameForLog)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     graph.setFacts(facts);
     graph.setVariableFacts(variableFacts, readerOfFacts);
+    graph.setNameForLog(nameForLog);
     if (!parseBytecode(graph))
         return TTop;
     return inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;

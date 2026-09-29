@@ -3477,7 +3477,7 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
                 VarOffset offset = it->value.varOffset();
                 if (offset.isScope()) {
                     bool isLazyFunctionSlot = m_moduleEnvironmentSymbolTableConstantIndex && entry.m_symbolTableConstantIndex == *m_moduleEnvironmentSymbolTableConstantIndex && m_lazyModuleFunctionDeclarations.contains(it->key.get());
-                    slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0));
+                    slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0) | (it->value.isReadOnly() ? DeclaredNamesLink::Frame::readOnlySlotFlag : 0));
                 }
             }
             node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames, identity);

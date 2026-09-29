@@ -730,6 +730,8 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
     // (Is it what it is known to be? As it comes: once it has been made into what a value of that type is held as, it looks the part.)
     if (Options::aotVerifiesFacts() && rep == Rep::JSValue && node->type && !isSubtype(TAll, node->type)) [[unlikely]] {
         unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
+        if (node->kind == NodeKind::Argument)
+            which += 100 * node->reg.toArgument();
         unsigned identifierPlusOne = 0;
         if (node->isBytecode(op_get_from_scope))
             identifierPlusOne = numberOf(node->as<OpGetFromScope>().m_var) + 1;
@@ -741,7 +743,8 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
             place = m_block->nodes[i];
         if (place->kind == NodeKind::Bytecode)
             m_out.store32(m_out.constInt32(callSiteBitsOf(place)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
-        plainCall(Void, Entry::operationAOTVerifyFact, m_globalObject, m_callFrame, value, m_out.constInt32(node->type), m_out.constInt32(which), m_out.constInt32(identifierPlusOne));
+        m_graph.wideIntegerConstants.add(static_cast<int64_t>(node->type)); // (It is no address.)
+        plainCall(Void, Entry::operationAOTVerifyFact, m_globalObject, m_callFrame, value, m_out.constInt64(node->type), m_out.constInt32(which), m_out.constInt32(identifierPlusOne));
     }
     node->lowered = convert(value, rep, node->type, node->rep());
 }

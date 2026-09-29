@@ -38,27 +38,61 @@ namespace JSC { namespace AOT {
 // What the static compiler knows about a value. Unlike a SpeculatedType this is never a guess: a value whose type is T has
 // been proven to be in T, by a type check that ran, by the operation that made it, or by both. The bits partition the values
 // a virtual register can hold.
-using Type = uint32_t;
+using Type = uint64_t;
 
 static constexpr Type TNone = 0;
-static constexpr Type TInt32 = 1u << 0; // A number that is encoded as an int32.
-static constexpr Type TDouble = 1u << 1; // A number that is encoded as a double (its value may still be integral).
-static constexpr Type TBoolean = 1u << 2;
-static constexpr Type TUndefined = 1u << 3;
-static constexpr Type TNull = 1u << 4;
-static constexpr Type TString = 1u << 5;
-static constexpr Type TSymbol = 1u << 6;
-static constexpr Type TBigInt = 1u << 7;
-static constexpr Type TFunction = 1u << 8; // JSFunctionType or InternalFunctionType.
-static constexpr Type TArray = 1u << 9; // ArrayType or DerivedArrayType.
-static constexpr Type TObject = 1u << 10; // Every other object, but for typed arrays.
-static constexpr Type TCellOther = 1u << 11; // Cells that are not JS values, which bytecode passes around (SymbolTable, ...).
-static constexpr Type TEmpty = 1u << 12; // The hole: a binding in its temporal dead zone.
+static constexpr Type TInt32 = Type(1) << 0; // A number that is encoded as an int32.
+static constexpr Type TDouble = Type(1) << 1; // A number that is encoded as a double (its value may still be integral).
+static constexpr Type TBoolean = Type(1) << 2;
+static constexpr Type TUndefined = Type(1) << 3;
+static constexpr Type TNull = Type(1) << 4;
+static constexpr Type TString = Type(1) << 5;
+static constexpr Type TSymbol = Type(1) << 6;
+static constexpr Type TBigInt = Type(1) << 7;
+static constexpr Type TFunction = Type(1) << 8; // JSFunctionType or InternalFunctionType.
+static constexpr Type TArray = Type(1) << 9; // ArrayType or DerivedArrayType.
+static constexpr Type TOtherObject = Type(1) << 10; // Every object that is none of the others. It may be one that can be called.
+static constexpr Type TCellOther = Type(1) << 11; // Cells that are not JS values, which bytecode passes around (SymbolTable, ...).
+static constexpr Type TEmpty = Type(1) << 12; // The hole: a binding in its temporal dead zone.
 // Typed arrays, one bit for each type, in the order of the JSTypes.
 static constexpr unsigned firstTypedArrayBit = 13;
-static constexpr Type TTypedArray = ((1u << NumberOfTypedArrayTypesExcludingDataView) - 1) << firstTypedArrayBit;
-static_assert(firstTypedArrayBit + NumberOfTypedArrayTypesExcludingDataView <= 32);
-constexpr Type typeOfTypedArray(JSType type) { return 1u << (firstTypedArrayBit + type - FirstTypedArrayType); }
+static constexpr Type TTypedArray = ((Type(1) << NumberOfTypedArrayTypesExcludingDataView) - 1) << firstTypedArrayBit;
+static constexpr unsigned firstBitAfterTypedArrays = 25;
+static_assert(firstTypedArrayBit + NumberOfTypedArrayTypesExcludingDataView <= firstBitAfterTypedArrays);
+// Objects that are told apart by their JSType. None of them can be called.
+static constexpr Type TFinalObject = Type(1) << 25; // What an object literal makes, and `new` of a function or a class that extends nothing.
+static constexpr Type TMap = Type(1) << 26;
+static constexpr Type TSet = Type(1) << 27;
+static constexpr Type TWeakMap = Type(1) << 28;
+static constexpr Type TWeakSet = Type(1) << 29;
+static constexpr Type TRegExp = Type(1) << 30;
+static constexpr Type TPromise = Type(1) << 31;
+static constexpr Type TDate = Type(1) << 32;
+static constexpr Type TError = Type(1) << 33;
+static constexpr Type TArrayBuffer = Type(1) << 34;
+static constexpr Type TDataView = Type(1) << 35;
+static constexpr Type TStringObject = Type(1) << 36;
+// Every object that is not a function, an array or a typed array.
+static constexpr Type TObject = TOtherObject | TFinalObject | TMap | TSet | TWeakMap | TWeakSet | TRegExp | TPromise | TDate | TError | TArrayBuffer | TDataView | TStringObject;
+constexpr Type typeOfTypedArray(JSType type) { return Type(1) << (firstTypedArrayBit + type - FirstTypedArrayType); }
+constexpr Type typeOfObjectOfKind(JSType); // Of a kind that a mask of op_check_type can name.
+
+struct KindOfObject {
+    Type type;
+    JSType jsType;
+};
+static constexpr KindOfObject kindsOfObject[] = {
+    { TFinalObject, FinalObjectType }, { TMap, JSMapType }, { TSet, JSSetType }, { TWeakMap, JSWeakMapType }, { TWeakSet, JSWeakSetType }, { TRegExp, RegExpObjectType },
+    { TPromise, JSPromiseType }, { TDate, JSDateType }, { TError, ErrorInstanceType }, { TArrayBuffer, ArrayBufferType }, { TDataView, DataViewType }, { TStringObject, StringObjectType },
+};
+constexpr Type typeOfObjectOfKind(JSType jsType)
+{
+    for (auto& kind : kindsOfObject) {
+        if (kind.jsType == jsType)
+            return kind.type;
+    }
+    return typeOfTypedArray(jsType);
+}
 
 static constexpr Type TNumber = TInt32 | TDouble;
 static constexpr Type TOther = TUndefined | TNull;
@@ -137,7 +171,7 @@ inline Rep repForType(Type type)
 }
 
 // The masks of op_check_type (see soundTypeTag() in SpeculatedType.h). The two do not carve up the objects the same way: a
-// callable object that is not a JSFunction or an InternalFunction has the Function tag, and is a TObject here.
+// callable object that is not a JSFunction or an InternalFunction has the Function tag, and is a TOtherObject here.
 enum SoundTypeMaskBits : unsigned {
     MaskUndefined = 1, MaskNull = 2, MaskBoolean = 4, MaskNumber = 8, MaskString = 16, MaskSymbol = 32, MaskBigInt = 64,
     MaskFunction = 128, MaskArray = 256, MaskOtherObject = 512,
@@ -162,11 +196,11 @@ inline Type typeAdmittedByMask(unsigned mask)
     if (mask & MaskBigInt)
         result |= TBigInt;
     if (mask & MaskFunction)
-        result |= TFunction | TObject;
+        result |= TFunction | TOtherObject;
     if (mask & MaskArray)
         result |= TArray;
     if (mask & MaskOtherObject)
-        result |= soundTypeMaskNamesTypedArray(mask) ? typeOfTypedArray(typedArrayTypeOfSoundTypeMask(mask)) : TObject | TTypedArray;
+        result |= soundTypeMaskNamesTypedArray(mask) ? typeOfObjectOfKind(typedArrayTypeOfSoundTypeMask(mask)) : TObject | TTypedArray;
     return result;
 }
 
@@ -175,7 +209,7 @@ inline Type typeProvingMask(unsigned mask)
 {
     Type result = typeAdmittedByMask(mask);
     if ((mask & (MaskFunction | MaskOtherObject)) != (MaskFunction | MaskOtherObject) || soundTypeMaskNamesTypedArray(mask))
-        result &= ~TObject;
+        result &= ~TOtherObject;
     return result;
 }
 
@@ -189,6 +223,7 @@ inline std::optional<JSType> typedArrayTypeOf(Type type)
 
 Type typeOfValue(JSValue);
 void dumpType(PrintStream&, Type);
+MAKE_PRINT_ADAPTOR(TypeDump, Type, dumpType);
 
 } } // namespace JSC::AOT
 

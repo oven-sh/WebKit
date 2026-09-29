@@ -43,10 +43,10 @@ const Row rows[] = {
 
     { "Object.keys"_s, TArray }, { "Object.values"_s, TArray }, { "Object.entries"_s, TArray },
     { "Object.getOwnPropertyNames"_s, TArray }, { "Object.getOwnPropertySymbols"_s, TArray },
-    { "Object.assign"_s, TAnyObject }, { "Object.create"_s, TObject }, { "Object.fromEntries"_s, TObject }, { "Object.groupBy"_s, TObject },
+    { "Object.assign"_s, TAnyObject }, { "Object.create"_s, TFinalObject }, { "Object.fromEntries"_s, TFinalObject }, { "Object.groupBy"_s, TFinalObject },
     { "Object.is"_s, TBoolean }, { "Object.isFrozen"_s, TBoolean }, { "Object.isSealed"_s, TBoolean }, { "Object.isExtensible"_s, TBoolean },
     { "Object.hasOwn"_s, TBoolean }, { "Object.getPrototypeOf"_s, TObjectOrNull },
-    { "Object.getOwnPropertyDescriptor"_s, TObject | TUndefined }, { "Object.getOwnPropertyDescriptors"_s, TObject },
+    { "Object.getOwnPropertyDescriptor"_s, TFinalObject | TUndefined }, { "Object.getOwnPropertyDescriptors"_s, TFinalObject },
     { "Object.defineProperty"_s, TAnyObject }, { "Object.defineProperties"_s, TAnyObject },
 
     { "Array.isArray"_s, TBoolean },
@@ -70,7 +70,7 @@ const Row rows[] = {
     { "Symbol.for"_s, TSymbol }, { "Symbol.keyFor"_s, TStringOrUndefined },
     { "Reflect.has"_s, TBoolean }, { "Reflect.set"_s, TBoolean }, { "Reflect.defineProperty"_s, TBoolean }, { "Reflect.deleteProperty"_s, TBoolean },
     { "Reflect.isExtensible"_s, TBoolean }, { "Reflect.preventExtensions"_s, TBoolean }, { "Reflect.setPrototypeOf"_s, TBoolean },
-    { "Reflect.ownKeys"_s, TArray }, { "Reflect.getPrototypeOf"_s, TObjectOrNull }, { "Reflect.getOwnPropertyDescriptor"_s, TObject | TUndefined },
+    { "Reflect.ownKeys"_s, TArray }, { "Reflect.getPrototypeOf"_s, TObjectOrNull }, { "Reflect.getOwnPropertyDescriptor"_s, TFinalObject | TUndefined },
     { "ArrayBuffer.isView"_s, TBoolean },
 
     // Of a string. (They turn whatever they are called on into one.)
@@ -99,12 +99,12 @@ const Row rows[] = {
 // `new` of it, with itself for new.target.
 const Row constructors[] = {
     { "Object"_s, TAnyObject }, { "Array"_s, TArray }, { "Function"_s, TFunction },
-    { "Map"_s, TObject }, { "Set"_s, TObject }, { "WeakMap"_s, TObject }, { "WeakSet"_s, TObject }, { "WeakRef"_s, TObject },
-    { "RegExp"_s, TObject }, { "Promise"_s, TObject }, { "Date"_s, TObject },
-    { "Error"_s, TObject }, { "TypeError"_s, TObject }, { "RangeError"_s, TObject }, { "SyntaxError"_s, TObject }, { "ReferenceError"_s, TObject },
-    { "EvalError"_s, TObject }, { "URIError"_s, TObject }, { "AggregateError"_s, TObject },
-    { "ArrayBuffer"_s, TObject }, { "SharedArrayBuffer"_s, TObject }, { "DataView"_s, TObject },
-    { "String"_s, TObject }, { "Number"_s, TObject }, { "Boolean"_s, TObject },
+    { "Map"_s, TMap }, { "Set"_s, TSet }, { "WeakMap"_s, TWeakMap }, { "WeakSet"_s, TWeakSet }, { "WeakRef"_s, TObject },
+    { "RegExp"_s, TRegExp }, { "Promise"_s, TPromise }, { "Date"_s, TDate },
+    { "Error"_s, TError }, { "TypeError"_s, TError }, { "RangeError"_s, TError }, { "SyntaxError"_s, TError }, { "ReferenceError"_s, TError },
+    { "EvalError"_s, TError }, { "URIError"_s, TError }, { "AggregateError"_s, TError },
+    { "ArrayBuffer"_s, TArrayBuffer }, { "SharedArrayBuffer"_s, TArrayBuffer }, { "DataView"_s, TDataView },
+    { "String"_s, TStringObject }, { "Number"_s, TObject }, { "Boolean"_s, TObject },
 };
 
 struct Tables {

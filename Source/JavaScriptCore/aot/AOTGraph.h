@@ -346,8 +346,8 @@ public:
     uint32_t distanceOfEnvironmentOfModule();
     // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
     void elideReadsOfCalleesNotPassed();
-    // See ProgramFacts. What is imported with import() goes in the list, or null for what cannot be told.
-    void noteUsesOfProvenFunctions(const FactsOfExecutables&, Vector<String>& importedDynamically);
+    // See ProgramFacts.
+    void noteUsesOfProvenFunctions(const FactsOfExecutables&);
     // f(a, ...b), f.apply(o, b): the arguments go from where they are to the frame of the callee (Stub::MakeFrameWithList). What
     // would have been made only to be copied from, right before the call, is not (Node::isElided): the call sees to it, if it turns
     // out that copying will not do. An array of the rest of the arguments, or an arguments object, that such calls pass on says
@@ -373,6 +373,9 @@ public:
         m_readerOfFacts = reader;
     }
     VariableFacts* variableFacts() const { return m_variableFacts; }
+    // Options::aotLogsFacts(): what to call the code, when it comes to saying what it contributes.
+    void setNameForLog(const String& name) { m_nameForLog = name; }
+    const String& nameForLog() const { return m_nameForLog; }
     unsigned readerOfFacts() const { return m_readerOfFacts; }
     // Which scope of the source the value is an environment record of (Variable::scope). Null: there is no telling.
     const void* identityOfScope(const Node*, unsigned depth = 0);
@@ -438,6 +441,7 @@ public:
         bool isReadOnly { false };
         bool isInGlobalScopes { false }; // Unresolved: none of the scopes of the code around the function has it.
         bool isGlobal { false }; // Likewise, however that is known.
+        bool isInOutermostEnvironment { false }; // Closure: it is a variable of the module itself.
         StaticImport import;
 
         // op_resolve_scope: the answer is that many scopes out. (For an import that is not linked, the module that imports it.)
@@ -481,6 +485,7 @@ private:
     const CalleeHints* m_hints { nullptr };
     const ProgramFacts* m_facts { nullptr };
     VariableFacts* m_variableFacts { nullptr };
+    String m_nameForLog;
     unsigned m_readerOfFacts { VariableFacts::nobody };
     UncheckedKeyHashMap<int, Vector<Node*>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> m_storesToHomed; // See identityOfScope().
     bool m_hasStoresToHomed { false };

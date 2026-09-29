@@ -24,9 +24,9 @@ RefPtr<JITCode> tryCompile(VM&, ScriptExecutable*, CodeSpecializationKind, Unlin
 // The same compilation, for an image. Any thread, as long as nothing else is done with the VM's heap meanwhile.
 struct CompiledCode;
 // See ProgramFacts. Any thread, likewise. False: there is no telling what the code does.
-JS_EXPORT_PRIVATE bool noteUsesOfProvenFunctionsForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FactsOfExecutables&, VariableFacts*, Vector<String>& importedDynamically);
+JS_EXPORT_PRIVATE bool noteUsesOfProvenFunctionsForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FactsOfExecutables&, VariableFacts*);
 // See KnownFunction::returnType. Any thread, likewise.
-JS_EXPORT_PRIVATE uint32_t inferReturnTypeForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const ProgramFacts*, VariableFacts*, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore);
+JS_EXPORT_PRIVATE uint64_t inferReturnTypeForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const ProgramFacts*, VariableFacts*, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, const String& nameForLog = String());
 // hasDirectEntry: see CompiledFunctionInfo::directEntryOffset.
 JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr, bool hasDirectEntry = false, const ProgramFacts* = nullptr, VariableFacts* = nullptr);
 

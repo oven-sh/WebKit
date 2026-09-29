@@ -298,10 +298,15 @@ void Lowering::emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicB
         if (isSubtype(TAnyObject & value->type, candidates) && mayBe(candidates, TAnyObject))
             passIf(m_out.aboveOrEqual(type, m_out.constInt32(ObjectType)));
         else {
-            if (mayBe(candidates, TObject))
+            if (mayBe(candidates, TFinalObject))
                 passIf(isType(FinalObjectType));
-            else if ((mask & MaskOtherObject) && !soundTypeMaskNamesTypedArray(mask) && mayBe(value->type, TObject))
-                passIf(isType(FinalObjectType)); // Never callable.
+            // The rest of those that have a type to themselves, if there are few enough that it can be.
+            if (Type others = candidates & TObject & ~(TFinalObject | TOtherObject); others && std::popcount(others) <= 2) {
+                for (auto& kind : kindsOfObject) {
+                    if (mayBe(others, kind.type))
+                        passIf(isType(kind.jsType));
+                }
+            }
             if (isSubtype(TTypedArray, candidates))
                 passIf(m_out.below(m_out.sub(type, m_out.constInt32(FirstTypedArrayType)), m_out.constInt32(NumberOfTypedArrayTypesExcludingDataView)));
             else {
@@ -419,6 +424,10 @@ bool Lowering::tryLowerMisc(Node* node)
         if (value->isKnownToPass(mask)) {
             // Something earlier has seen to it.
             setResult(node, lowRaw(value), value->rep());
+            return true;
+        }
+        if (Options::aotTrustsDeclaredTypes()) [[unlikely]] {
+            setJSValue(node, lowJSValue(value));
             return true;
         }
 

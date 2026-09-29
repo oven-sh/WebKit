@@ -54,6 +54,8 @@ void* addressOfStub(Stub stub)
 {
     if (const void* inImage = Image::addressOfStub(stub))
         return const_cast<void*>(inImage);
+    // (They are made now, which takes somewhere to put them.)
+    RELEASE_ASSERT_WITH_MESSAGE(Options::useJIT(), "There is no image with code in it, and no JIT to do without one.");
     const StubBlob& blob = stubBlob();
     return static_cast<uint8_t*>(blob.inJITMemory) + blob.offsets[static_cast<unsigned>(stub)];
 }

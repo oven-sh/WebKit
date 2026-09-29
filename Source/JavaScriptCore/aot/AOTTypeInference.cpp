@@ -96,8 +96,12 @@ private:
         };
         switch (node->opcode) {
         case op_put_to_scope:
-            if (Variable variable = m_graph.variableAccessedBy(node))
+            if (Variable variable = m_graph.variableAccessedBy(node)) {
                 facts->join(variable, node->use(node->as<OpPutToScope>().m_value)->type);
+                if (!m_graph.nameForLog().isNull()) [[unlikely]]
+                    dataLogLn("FACTLOG put `", m_graph.codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` scope ", RawPointer(variable.scope), " offset ", variable.offset, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), ": ", TypeDump(node->use(node->as<OpPutToScope>().m_value)->type));
+            } else if (!m_graph.nameForLog().isNull()) [[unlikely]]
+                dataLogLn("FACTLOG put `", m_graph.codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` WHO KNOWS WHERE in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
             return;
         case op_create_lexical_environment:
             noteInitialValue(node->as<OpCreateLexicalEnvironment>().m_initialValue);
@@ -137,8 +141,17 @@ private:
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         // A call that nothing has been seen to get to, so far, passes nothing, so far.
         for (unsigned i = 0; i < argc; ++i) {
-            if (!node->use(VirtualRegister(firstArgument + i))->type)
+            if (!node->use(VirtualRegister(firstArgument + i))->type) {
+                if (!m_graph.nameForLog().isNull()) [[unlikely]]
+                    dataLogLn("FACTLOG call of `", known->executable->name().impl(), "` @", known->key.module, ":", known->key.start, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), " IS NOT REACHED: argument ", i, " is nothing");
                 return;
+            }
+        }
+        if (!m_graph.nameForLog().isNull()) [[unlikely]] {
+            StringPrintStream out;
+            for (unsigned i = 1; i < argc; ++i)
+                out.print(" ", TypeDump(node->use(VirtualRegister(firstArgument + i))->type));
+            dataLogLn("FACTLOG call of `", known->executable->name().impl(), "` @", known->key.module, ":", known->key.start, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), " passes", out.toString());
         }
         bool givesMore = false;
         unsigned count = std::min<unsigned>(known->forCall->numParameters(), ProgramFacts::mostParameters);
@@ -507,16 +520,19 @@ private:
             return TBoolean;
 
         case op_new_object:
-        case op_create_this:
+            return TFinalObject;
         case op_new_reg_exp:
         case op_new_reg_exp_shared:
+            return TRegExp;
+        case op_new_promise:
+        case op_create_promise:
+            return TPromise;
+        case op_create_this:
         case op_create_direct_arguments:
         case op_create_scoped_arguments:
         case op_create_cloned_arguments:
-        case op_new_promise:
         case op_new_generator:
         case op_new_async_function_generator:
-        case op_create_promise:
         case op_create_generator:
         case op_create_async_generator:
         case op_get_scope:

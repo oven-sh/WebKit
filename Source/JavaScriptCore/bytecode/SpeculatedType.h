@@ -153,10 +153,16 @@ static constexpr unsigned SoundTypeAll         = (1u << 10) - 1;
 // Above the tags a mask may say more about the objects that SoundTypeOtherObject lets by: that they are typed arrays of one type,
 // which is that many after FirstTypedArrayType, less one. Zero: any will do.
 static constexpr unsigned SoundTypeTypedArrayShift = 10;
-static constexpr unsigned SoundTypeMaskEnd = (NumberOfTypedArrayTypesExcludingDataView + 1) << SoundTypeTypedArrayShift; // No mask is this or more.
+// (After the typed arrays, in the order that whoever makes the masks has them: bun's src/ast/sound_types.rs.)
+static constexpr JSType soundTypeOtherKindsOfObject[] = { JSMapType, JSSetType, JSWeakMapType, JSWeakSetType, RegExpObjectType, JSPromiseType, JSDateType, ErrorInstanceType };
+static constexpr unsigned SoundTypeMaskEnd = (NumberOfTypedArrayTypesExcludingDataView + std::size(soundTypeOtherKindsOfObject) + 1) << SoundTypeTypedArrayShift; // No mask is this or more.
 constexpr unsigned soundTypeTagsOfMask(unsigned mask) { return mask & SoundTypeAll; }
 constexpr bool soundTypeMaskNamesTypedArray(unsigned mask) { return mask > SoundTypeAll; }
-constexpr JSType typedArrayTypeOfSoundTypeMask(unsigned mask) { return static_cast<JSType>(FirstTypedArrayType + (mask >> SoundTypeTypedArrayShift) - 1); }
+constexpr JSType typedArrayTypeOfSoundTypeMask(unsigned mask)
+{
+    unsigned kind = (mask >> SoundTypeTypedArrayShift) - 1;
+    return kind < NumberOfTypedArrayTypesExcludingDataView ? static_cast<JSType>(FirstTypedArrayType + kind) : soundTypeOtherKindsOfObject[kind - NumberOfTypedArrayTypesExcludingDataView];
+}
 constexpr bool isValidSoundTypeMask(unsigned mask)
 {
     if (!soundTypeMaskNamesTypedArray(mask))

@@ -55,6 +55,7 @@ public:
     struct Frame : public RefCounted<Frame> {
         using Slots = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash>; // name -> ScopeOffset | lazyFunctionSlotFlag
         static constexpr unsigned lazyFunctionSlotFlag = 1u << 31; // a module's function declaration: read it with ResolvedLazyClosureVar
+        static constexpr unsigned readOnlySlotFlag = 1u << 30; // storing to it, other than to initialize it, throws
         static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next, const void* identity = nullptr) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next), identity }); }
         bool isBarrier;
         Slots slots;
@@ -93,6 +94,7 @@ public:
         bool isLazyFunctionSlot { false };
         bool isInOutermostEnvironment { false }; // Slot: it is a variable of the module (or the program) itself.
         const void* scope { nullptr }; // Slot: Frame::identity of the record.
+        bool isReadOnly { false };
     };
 
     // Resolve |name| as seen from a function created at this point (i.e. starting from that function's [[Scope]]).
@@ -105,7 +107,7 @@ public:
                     return { };
                 auto it = frame->slots.find(name);
                 if (it != frame->slots.end())
-                    return { Resolution::Slot, hops, it->value & ~Frame::lazyFunctionSlotFlag, !!(it->value & Frame::lazyFunctionSlotFlag), link->m_isOutermost && !frame->next, frame->identity };
+                    return { Resolution::Slot, hops, it->value & ~(Frame::lazyFunctionSlotFlag | Frame::readOnlySlotFlag), !!(it->value & Frame::lazyFunctionSlotFlag), link->m_isOutermost && !frame->next, frame->identity, !!(it->value & Frame::readOnlySlotFlag) };
                 ++hops;
             }
             // The link that has names is a module's, and the last of its frames the module's environment.

@@ -38,7 +38,7 @@ struct ProgramFacts {
     // If closed: everything that is passed for each parameter, `this` being the first, from nothing up (see KnownFunction::returnType).
     // One that there are more of than this has nothing said of the rest.
     static constexpr unsigned mostParameters = 12;
-    std::array<std::atomic<uint32_t>, mostParameters> parameterTypes { };
+    std::array<std::atomic<uint64_t>, mostParameters> parameterTypes { };
 };
 // (One for the code of a function, however many variables hold it.)
 using FactsOfExecutables = UncheckedKeyHashMap<UnlinkedFunctionExecutable*, ProgramFacts*>;
@@ -66,11 +66,14 @@ public:
 
     // Any thread. reader: told of by takeReadersOfWhatGrew() if there turns out to be more to it. TAll: nothing is known.
     static constexpr unsigned nobody = std::numeric_limits<unsigned>::max();
-    uint32_t read(Variable, UniquedStringImpl* name, unsigned reader);
-    void join(Variable, uint32_t type);
+    uint64_t read(Variable, UniquedStringImpl* name, unsigned reader);
+    void join(Variable, uint64_t type);
 
     // Not while any of that is going on.
     Vector<unsigned> takeReadersOfWhatGrew();
+    // A variable that is read holds what its scope was made with, if nothing else. One that nothing at all is known to be in is one
+    // whose scope is not the one it was taken for, or is only read by code that nothing gets to. Nothing is said of those any more.
+    Vector<unsigned> giveUpOnWhatIsReadAndNeverMade(unsigned& count);
     template<typename Functor> void forEach(const Functor& functor) const
     {
         for (auto& shard : m_shards) {
@@ -84,7 +87,7 @@ private:
     using SetOfReaders = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
     struct Cell {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(Cell);
-        std::atomic<uint32_t> type { 0 };
+        std::atomic<uint64_t> type { 0 };
         bool grew { false };
         SetOfReaders readers;
     };
@@ -117,7 +120,7 @@ struct KnownFunction {
     mutable std::atomic<bool> needsNoFunctionObject { false };
     // If proven: everything that a call of it can return. It is worked out for all of them together, from nothing up
     // (inferReturnTypeForImage()), and means what it says once that has come to an end.
-    mutable std::atomic<uint32_t> returnType { 0 };
+    mutable std::atomic<uint64_t> returnType { 0 };
     mutable ProgramFacts* facts { nullptr }; // If proven, and whoever compiles the program keeps them.
 
     KnownFunction() = default;
@@ -161,6 +164,8 @@ public:
 
     // scopeOffset: where the variable is in the scope it was resolved to. None: it was not resolved, so it may be a global.
     virtual const KnownFunction* find(UniquedStringImpl* name, std::optional<unsigned> scopeOffset) const = 0;
+    // For a read of who knows which variable of that name.
+    virtual const KnownFunction* findWhateverHasTheName(UniquedStringImpl*) const { return nullptr; }
 };
 
 // From the code of a module: its function declarations, and the variables it initializes with a function or a class.
@@ -173,6 +178,7 @@ public:
     ~ModuleHints() final;
 
     const KnownFunction* find(UniquedStringImpl*, std::optional<unsigned> scopeOffset) const final;
+    const KnownFunction* findWhateverHasTheName(UniquedStringImpl*) const final;
 
     // What is a hint until the whole of the module has been looked at. Nobody but the module's own code can store to its variables.
     void noteStoresIn(UnlinkedCodeBlock* functionOfModule); // Every function there is in the module, however deep.

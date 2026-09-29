@@ -102,11 +102,11 @@ bool VariableFacts::hasGivenUpOn(Variable variable, UniquedStringImpl* name) con
     return m_scopesGivenUpOn.contains(variable.scope) || m_namesGivenUpOn.contains(name);
 }
 
-uint32_t VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned reader)
+uint64_t VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned reader)
 {
     if (hasGivenUpOn(variable, name))
         return TAll;
-    uint32_t type = 0;
+    uint64_t type = 0;
     for (unsigned offset : { variable.offset, Variable::initialValue }) {
         Variable which { variable.scope, offset };
         Shard& shard = shardFor(which);
@@ -119,16 +119,43 @@ uint32_t VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigne
     return type;
 }
 
-void VariableFacts::join(Variable variable, uint32_t type)
+void VariableFacts::join(Variable variable, uint64_t type)
 {
     Shard& shard = shardFor(variable);
     Locker locker { shard.lock };
     auto& cell = shard.cells.ensure({ variable.scope, variable.offset }, [] { return makeUnique<Cell>(); }).iterator->value;
-    uint32_t before = cell->type.load(std::memory_order_relaxed);
+    uint64_t before = cell->type.load(std::memory_order_relaxed);
     if ((before | type) == before)
         return;
     cell->type.store(before | type, std::memory_order_relaxed);
     cell->grew = true;
+}
+
+Vector<unsigned> VariableFacts::giveUpOnWhatIsReadAndNeverMade(unsigned& count)
+{
+    UncheckedKeyHashSet<const void*> made;
+    for (auto& shard : m_shards) {
+        for (auto& entry : shard.cells) {
+            if (entry.key.second == Variable::initialValue && entry.value->type.load(std::memory_order_relaxed))
+                made.add(entry.key.first);
+        }
+    }
+    SetOfReaders result;
+    for (auto& shard : m_shards) {
+        for (auto& entry : shard.cells) {
+            if (made.contains(entry.key.first) || m_scopesGivenUpOn.contains(entry.key.first) || entry.value->readers.isEmpty())
+                continue;
+            for (unsigned reader : entry.value->readers)
+                result.add(reader);
+        }
+    }
+    for (auto& shard : m_shards) {
+        for (auto& entry : shard.cells) {
+            if (!made.contains(entry.key.first) && !entry.value->readers.isEmpty() && m_scopesGivenUpOn.add(entry.key.first).isNewEntry)
+                ++count;
+        }
+    }
+    return copyToVector(result);
 }
 
 Vector<unsigned> VariableFacts::takeReadersOfWhatGrew()
@@ -359,6 +386,12 @@ const KnownFunction* ModuleHints::find(UniquedStringImpl* name, std::optional<un
     if (it == m_variables.end() || it->value.isAmbiguous || it->value.scopeOffset != *scopeOffset)
         return nullptr;
     return &it->value.function;
+}
+
+const KnownFunction* ModuleHints::findWhateverHasTheName(UniquedStringImpl* name) const
+{
+    auto it = m_variables.find(name);
+    return it == m_variables.end() || it->value.isAmbiguous ? nullptr : &it->value.function;
 }
 
 LiveHints::LiveHints(JSGlobalObject* globalObject)
