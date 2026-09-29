@@ -31,8 +31,11 @@
 namespace JSC {
 
 class PyMemoryView;
+class PyType;
 
 namespace Python {
+
+class NativeArguments;
 
 // bytes and bytearray are both Uint8Arrays. One whose class is bytes, or derived from it, is a bytes, and nothing in Python changes what
 // is in it. Any other is a bytearray, and that includes every Uint8Array that JavaScript makes.

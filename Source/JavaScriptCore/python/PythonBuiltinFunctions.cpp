@@ -255,7 +255,7 @@ PYTHON_NATIVE(builtinDir)
         collect(globalObject, locals, keys);
         RETURN_IF_EXCEPTION(scope, { });
         MarkedArgumentBuffer sortedKeys;
-        sortValues(globalObject, keys, JSValue(), false, sortedKeys);
+        sortValues(globalObject, keys, sortedKeys);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, sortedKeys)));
     }
@@ -268,7 +268,7 @@ PYTHON_NATIVE(builtinDir)
     collect(globalObject, found, values);
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer sorted;
-    sortValues(globalObject, values, JSValue(), false, sorted);
+    sortValues(globalObject, values, sorted);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, sorted)));
 }

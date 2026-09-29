@@ -783,6 +783,7 @@ python/PythonGenericAlias.cpp
 python/PythonIterators.cpp
 python/PythonItertools.cpp
 python/PythonLifecycle.cpp
+python/PythonListSort.cpp
 python/PythonLocale.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp

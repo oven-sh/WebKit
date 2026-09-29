@@ -104,6 +104,13 @@ public:
     // OK to use on new arrays, but not if it might be a RegExpMatchArray or RuntimeArray.
     JS_EXPORT_PRIVATE bool setLength(JSGlobalObject*, unsigned, bool throwException = false);
 
+    // Of an array that has no elements: gives up the room that it has for any. After that, whether it has been given any can be told by whether it has room for them, even if they have been taken out again. It is how
+    // Python's list.sort() finds that a list has been changed by what it was sorted by. False if the array is of a kind that does not keep its elements in a vector, of which there is then no telling.
+    bool releaseVector(VM&);
+    bool hasVector() const { return butterfly()->vectorLength(); }
+    // Whether it is of a kind that keeps its elements in a vector, one after another, and nothing about any of them but what it is.
+    bool hasVectorOfElements() const { return hasUndecided(indexingType()) || hasInt32(indexingType()) || hasDouble(indexingType()) || hasContiguous(indexingType()); }
+
     void pushInline(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE void push(JSGlobalObject*, JSValue);
     JS_EXPORT_PRIVATE JSValue pop(JSGlobalObject*);

@@ -133,7 +133,10 @@ JSObject* newSimpleNamespace(JSGlobalObject*);
 void initializeDictViews(JSGlobalObject*);
 void addIteratorProtocol(JSGlobalObject*, PyType*); // __length_hint__(), __reduce__() and __setstate__(), those of them that it has in CPython
 JSValue getBuiltin(JSGlobalObject*, ASCIILiteral name); // builtins.iter, or whatever a program has put there
-bool sortValues(JSGlobalObject*, MarkedArgumentBuffer& values, JSValue keyFunction, bool reverse, MarkedArgumentBuffer& sorted);
+// list.sort(key=keyFunction, reverse=reverse). False if it raised.
+bool sortList(JSGlobalObject*, JSArray*, JSValue keyFunction, bool reverse);
+// PyList_Sort(), of what is not yet a list. False if it raised.
+bool sortValues(JSGlobalObject*, MarkedArgumentBuffer& values, MarkedArgumentBuffer& sorted);
 JSC_DECLARE_HOST_FUNCTION(typeOr); // __or__ and __ror__ of what there can be a union of
 JSC_DECLARE_HOST_FUNCTION(javaScriptClassNew); // __new__ of a class of JavaScript's, which has JavaScript construct it
 void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);

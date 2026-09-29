@@ -1320,6 +1320,22 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     }
 }
 
+bool JSArray::releaseVector(VM& vm)
+{
+    ASSERT(!length());
+    switch (indexingMode()) {
+    case ArrayWithUndecided:
+    case ArrayWithInt32:
+    case ArrayWithDouble:
+    case ArrayWithContiguous:
+        if (butterfly()->vectorLength())
+            reallocateAndShrinkButterfly(vm, 0);
+        return true;
+    default:
+        return false;
+    }
+}
+
 JSValue JSArray::pop(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();

@@ -217,71 +217,14 @@ PYTHON_NATIVE(listCount)
     RELEASE_AND_RETURN(scope, sequenceCount(globalObject, args, [&] { return self->length(); }, [&] (unsigned i) { return listGet(globalObject, self, i); }));
 }
 
-// A stable merge sort of `values`, by `keys` if there are any. False if a comparison raised.
-bool sortValues(JSGlobalObject* globalObject, MarkedArgumentBuffer& values, JSValue keyFunction, bool reverse, MarkedArgumentBuffer& sorted)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    unsigned count = values.size();
-    MarkedArgumentBuffer keys;
-    bool hasKeys = keyFunction && !isNone(keyFunction);
-    for (unsigned i = 0; hasKeys && i < count; ++i) {
-        keys.append(call(globalObject, keyFunction, values.at(i)));
-        RETURN_IF_EXCEPTION(scope, false);
-    }
-    auto keyOf = [&] (unsigned index) { return hasKeys ? keys.at(index) : values.at(index); };
-    // a comes before b. Only < is ever asked, as Python promises.
-    auto isLess = [&] (unsigned a, unsigned b) -> bool {
-        JSValue result = compare(globalObject, ComparisonOperator::Lt, keyOf(a), keyOf(b));
-        RETURN_IF_EXCEPTION(scope, false);
-        RELEASE_AND_RETURN(scope, isTrue(globalObject, result));
-    };
-
-    Vector<unsigned> order(count);
-    Vector<unsigned> scratch(count);
-    for (unsigned i = 0; i < count; ++i)
-        order[i] = reverse ? count - 1 - i : i; // Turned round twice, so that equal elements stay in order.
-    for (unsigned width = 1; width < count; width *= 2) {
-        for (unsigned low = 0; low < count; low += 2 * width) {
-            unsigned middle = std::min(low + width, count);
-            unsigned high = std::min(low + 2 * width, count);
-            unsigned i = low;
-            unsigned j = middle;
-            unsigned k = low;
-            while (i < middle && j < high) {
-                bool takeRight = isLess(order[j], order[i]);
-                RETURN_IF_EXCEPTION(scope, false);
-                scratch[k++] = takeRight ? order[j++] : order[i++];
-            }
-            while (i < middle)
-                scratch[k++] = order[i++];
-            while (j < high)
-                scratch[k++] = order[j++];
-        }
-        std::swap(order, scratch);
-    }
-    for (unsigned i = 0; i < count; ++i)
-        sorted.append(values.at(order[reverse ? count - 1 - i : i]));
-    return true;
-}
-
-// sort(*, key=None, reverse=False)
 PYTHON_NATIVE(listSort)
 {
     LIST_PROLOGUE("sort");
     JSValue reverseValue = args.keyword(globalObject, "reverse"_s);
     bool reverse = reverseValue && isTrue(globalObject, reverseValue);
     RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer values;
-    for (unsigned i = 0; i < self->length(); ++i) {
-        values.append(listGet(globalObject, self, i));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    MarkedArgumentBuffer sorted;
-    sortValues(globalObject, values, args.keyword(globalObject, "key"_s), reverse, sorted);
+    sortList(globalObject, self, args.keyword(globalObject, "key"_s), reverse);
     RETURN_IF_EXCEPTION(scope, { });
-    scope.release();
-    listReplaceRange(globalObject, self, 0, self->length(), sorted);
     RETURN_NONE();
 }
 

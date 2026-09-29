@@ -203,6 +203,21 @@ Anything that compares the elements of a list, or makes a number of an index, ru
 in the condition of the loop. To read past the end of a list is safe, since `listGet()` looks first, but what it finds there is `undefined`, which is `None`: `l.index(None)` found a `None` in a list that had just been emptied, and
 `l[i] = x` wrote past the end of one. `list-changed-meanwhile.py` does everything to a list that runs a program's code, with elements that change the list in eight ways.
 
+### `list.sort()`
+
+It is CPython's, in two parts. `PythonListSortKernel.h` is the part of `Objects/listobject.c` that has to do with the order of things and not with what they are: finding runs, binary insertion, galloping, merging, and which runs to
+merge when. It is made by `lib/convert-list-sort.py` and is not to be changed by hand. Which things are compared with which, in what order and how many times, is something that a program can see, in a `__lt__()` that counts or
+prints or raises, and it follows from every line of that. `PythonListSort.cpp` is the rest, written by hand: how two things are compared, the look at all the keys beforehand that decides that, and what is done with the list.
+
+- **There is nothing in the list meanwhile**, and it says so: `len()` of it is 0. What was in it goes back afterwards whatever has happened, in place of whatever has been put there.
+- **But not of an array that JavaScript has done something to**: sealed it, so that it cannot be emptied; kept it from being added to, so that it could be emptied and not filled again, and all that was in it would be lost; or
+  made an element of it read-only, which taking it out and putting another in would get round. What is in one of those stays there meanwhile, and is written over afterwards if JavaScript lets it be.
+- **`ValueError: list modified during sort`.** CPython tells by setting `allocated` to -1, which anything that makes room in the list sets to something else. Here the list is left with no room at all,
+  `JSArray::releaseVector()`, and has been changed if it has any afterwards. So `l.append(1); l.pop()` is noticed, and `l.clear()` and `l.extend([])` are not, in both.
+- **What is being sorted is in memory that the collector does not look at**, so that the kernel can move it about as C does. All of it is in a `MarkedArgumentBuffer` as well for as long as that goes on, and nothing is moved
+  by the collector.
+- A `__lt__()` that gives `NotImplemented` is called twice when everything is of one class, as in CPython: once outright, and again in the ordinary way.
+
 ### Where the bytes are is not kept
 
 What is in a `bytearray` moves when it is resized, and JavaScript can give an `ArrayBuffer` away. Either can be done by anything that runs a program's code, and looking at

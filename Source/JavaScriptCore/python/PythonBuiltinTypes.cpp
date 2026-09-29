@@ -414,7 +414,7 @@ PYTHON_NATIVE(objectNew)
         collect(globalObject, methods, unsorted);
         RETURN_IF_EXCEPTION(scope, { });
         MarkedArgumentBuffer sorted;
-        sortValues(globalObject, unsorted, JSValue(), false, sorted);
+        sortValues(globalObject, unsorted, sorted);
         RETURN_IF_EXCEPTION(scope, { });
         TextBuilder joined;
         for (size_t i = 0; i < sorted.size(); ++i) {
