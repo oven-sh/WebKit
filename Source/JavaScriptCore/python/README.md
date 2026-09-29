@@ -815,6 +815,17 @@ CPython's in the last bit somewhere among the numbers that `cmath-module.py` tri
 `PythonResourceModule.cpp` is `Modules/resource.c`. Like `posix`, it is there if the host lists it: `createResourceModule()`. `resource.struct_rusage` is the class that `os.wait3()` and `os.wait4()` give one of, as in CPython, where
 they import this to get it.
 
+### `_symtable`
+
+`PythonSymtableModule.cpp` is `Modules/symtablemodule.c`, and the class of what it gives. What every name refers to is found by what finds it for the compiler, `PythonSymbolTable.cpp`, which is `Python/symtable.c` with the same
+flags, so there is nothing to do but hand it over. Of the 1869 files of CPython's `Lib`, with 156,627 blocks in them, it gives what CPython gives for every one.
+
+The names in a block are in the order in which they were first seen. After them come those that something inside the block uses and the block does not, and those are what is in a set, in whatever order that gives them. It is not
+the same from one run of CPython to the next, nor here.
+
+**What a `SyntaxError` is made of depends on what found it.** The parser and the code generator make one of what is wrong and where. `symtable.c` and `future.c` make one of what is wrong, and then tell it where by setting its
+attributes, so its `args` is the message alone, and so is what `repr()` shows. `FoundIn::WhatNamesReferTo` in `PythonCompiler.cpp` is those two.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see

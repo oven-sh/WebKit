@@ -1,4 +1,5 @@
-# What is said to be wrong with source that will not compile, and where: the class of the exception, msg, lineno, offset, end_lineno, end_offset and text.
+# What is said to be wrong with source that will not compile, and where: the class of the exception, msg, lineno, offset, end_lineno, end_offset and text. And how much it was made of, which is the message alone if it was
+# found in working out what names refer to.
 
 import _warnings
 from syntax_errors_from_tests import SOURCES as from_tests
@@ -12,7 +13,7 @@ def attempt(group, index, source, mode):
         compile(source, "<test>", mode)
         result = "compiles"
     except SyntaxError as e:
-        result = (type(e).__name__, e.msg, e.lineno, e.offset, e.end_lineno, e.end_offset, e.text)
+        result = (type(e).__name__, e.msg, e.lineno, e.offset, e.end_lineno, e.end_offset, e.text, len(e.args))
     except BaseException as e:
         result = (type(e).__name__, str(e))
     print(group, index, "|", ascii(result), "|", ascii(source[:60]))

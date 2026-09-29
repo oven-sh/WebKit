@@ -76,6 +76,10 @@ struct TreeOptions {
 JSValue compileTree(JSGlobalObject*, JSValue tree, const String& filename, Module::Kind, const TreeOptions&);
 // compile(..., PyCF_ONLY_AST): the syntax tree, as objects of the module _ast.
 JSValue parseSource(JSGlobalObject*, const SourceCode&, Module::Kind, const TreeOptions&);
+// _Py_SymtableStringObjectFlags(): what every name in it refers to, as _symtable.symtable() gives it.
+JSValue symbolTableOfSource(JSGlobalObject*, const SourceCode&, Module::Kind);
+struct Block;
+JSValue newSymbolTableEntry(JSGlobalObject*, Block&);
 FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public, unsigned optimizationLevel = 0);
 JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
 // The outermost environment of everything in a module, which is what that gives the function.

@@ -287,7 +287,8 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
 }
 
 // What is wrong is found either in taking the source apart, or afterwards in what came of that.
-enum class FoundIn : uint8_t { Parsing, WhatWasParsed };
+// WhatNamesReferTo is Python/symtable.c and Python/future.c of CPython, and WhatWasParsed all that comes after.
+enum class FoundIn : uint8_t { Parsing, WhatNamesReferTo, WhatWasParsed };
 
 static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope, const SyntaxError& error, const SourceCode& givenSource, FoundIn foundIn)
 {
@@ -315,7 +316,7 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     // The line that it is on. While the source is being taken apart it is at hand. Afterwards CPython has it no more, and looks in the file that it is
     // said to be from, if there is such a file. So there is no line for what compile() was given with a name that was made up.
     SourceCode source = givenSource;
-    if (foundIn == FoundIn::WhatWasParsed) {
+    if (foundIn != FoundIn::Parsing) {
         source = readSourceIfPresent(globalObject, givenSource.provider()->sourceURL());
         RETURN_IF_EXCEPTION(scope, { });
     }
@@ -366,6 +367,11 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     PyTuple* details = PyTuple::create(globalObject, { jsString(vm, givenSource.provider()->sourceURL()), jsNumber(error.line), jsNumber(offset), lineText, jsNumber(error.endLine), jsNumber(endOffset) });
     JSValue exception = call(globalObject, globalObject->pyRealm()->type(type), jsString(vm, error.message), details);
     RETURN_IF_EXCEPTION(scope, { });
+    // There CPython makes it of what is wrong and nothing else, and then tells it where: PyErr_RangedSyntaxLocationObject(). So it has been made of nothing else.
+    if (foundIn == FoundIn::WhatNamesReferTo) {
+        setAttribute(globalObject, exception, Identifier::fromString(vm, "args"_s), PyTuple::create(globalObject, { jsString(vm, error.message) }));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     throwException(globalObject, scope, exception);
     return { };
 }
@@ -620,7 +626,7 @@ static JSValue treeFor(JSGlobalObject* globalObject, Arena& arena, Module& modul
     SyntaxError error;
     auto futureFeatures = SymbolTable::futureFeaturesOf(vm, arena, module, error);
     if (!futureFeatures) {
-        raiseSyntaxError(globalObject, scope, error, source, FoundIn::WhatWasParsed);
+        raiseSyntaxError(globalObject, scope, error, source, FoundIn::WhatNamesReferTo);
         return { };
     }
     if (!optimize(vm, arena, module, options.optimizationLevel, *futureFeatures | options.futureFeatures, !options.isOptimized))
@@ -669,6 +675,27 @@ JSValue parseSource(JSGlobalObject* globalObject, const SourceCode& source, Modu
     RELEASE_AND_RETURN(scope, treeFor(globalObject, arena, *module, source, options));
 }
 
+JSValue symbolTableOfSource(JSGlobalObject* globalObject, const SourceCode& source, Module::Kind kind)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Arena arena;
+    arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
+    Vector<SyntaxWarning> warnings;
+    SyntaxError error;
+    Module* module = parse(vm, arena, source.provider()->source(), kind, warnings, error);
+    if (!issueWarnings(globalObject, warnings, source))
+        return { };
+    std::unique_ptr<SymbolTable> table;
+    if (module)
+        table = SymbolTable::build(vm, arena, *module, 0, error);
+    if (!table) {
+        raiseSyntaxError(globalObject, scope, error, source, module ? FoundIn::WhatNamesReferTo : FoundIn::Parsing);
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, newSymbolTableEntry(globalObject, table->top()));
+}
+
 FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility, unsigned optimizationLevel)
 {
     VM& vm = globalObject->vm();
@@ -707,7 +734,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
             table = SymbolTable::build(vm, arena, *module, inheritedFutureFeatures, error);
         }
         if (!table) {
-            raiseSyntaxError(globalObject, scope, error, source, module ? FoundIn::WhatWasParsed : FoundIn::Parsing);
+            raiseSyntaxError(globalObject, scope, error, source, module ? FoundIn::WhatNamesReferTo : FoundIn::Parsing);
             return nullptr;
         }
         collectCodeWarnings(*module, table->futureFeatures(), optimizationLevel, codeWarnings);

@@ -47,7 +47,7 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
 MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools")
 
@@ -148,6 +148,7 @@ add_type(type(__import__("unicodedata")._ucnhash_CAPI))
 add_type(type(iter(__import__("array").array("b"))))
 add_type(type(__import__("abc").ABC._abc_impl))
 add_type(type(__import__("functools").cmp_to_key(len)))
+add_type(type(__import__("_symtable").symtable("", "", "exec")))
 a_pattern = __import__("re").compile("a")
 for example in (a_pattern, a_pattern.match("a"), a_pattern.scanner("a"), __import__("re")._compile_template(a_pattern, "\\g<0>")):
     add_type(type(example))

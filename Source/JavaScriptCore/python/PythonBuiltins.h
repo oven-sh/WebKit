@@ -88,6 +88,9 @@ inline bool audit(JSGlobalObject* globalObject, ASCIILiteral event, Arguments...
     return auditSlow(globalObject, event, buffer);
 }
 
+// What compile(), eval(), exec() and symtable() are given to go by, ready to be parsed. `function` is which of them, for what is said of what will not do. It may raise.
+SourceCode sourceOfArgument(JSGlobalObject*, ThrowScope&, JSValue source, const String& filename, ASCIILiteral function);
+
 // Code objects: PythonCode.cpp
 FunctionExecutable* executableOfCode(JSValue code);
 const FunctionInfo& infoOfExecutable(FunctionExecutable*);
@@ -201,6 +204,7 @@ JSObject* createFunctoolsModule(JSGlobalObject*);
 JSObject* createHeapqModule(JSGlobalObject*);
 JSObject* createBisectModule(JSGlobalObject*);
 JSObject* createCMathModule(JSGlobalObject*);
+JSObject* createSymtableModule(JSGlobalObject*);
 JSObject* createArrayModule(JSGlobalObject*);
 JSObject* createBinasciiModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);

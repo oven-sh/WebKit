@@ -449,7 +449,8 @@ PYTHON_NATIVE(builtinGlobals)
 // ---- compile(), exec() and eval()
 
 // The source that compile(), exec() and eval() are given, which may be a str or bytes. Null if it raised.
-static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSValue source, const String& filename, ASCIILiteral function)
+// _Py_SourceAsString(), and what is done with what it gives before it is parsed
+SourceCode sourceOfArgument(JSGlobalObject* globalObject, ThrowScope& scope, JSValue source, const String& filename, ASCIILiteral function)
 {
     VM& vm = globalObject->vm();
     // eval() does not mind what it is given being indented.
@@ -499,7 +500,7 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
             return { };
         RELEASE_AND_RETURN(scope, makeSource(globalObject, bytes.span(), SourceOrigin(), filename));
     }
-    raiseTypeError(globalObject, scope, concatenate(function, "() arg 1 must be a string, bytes or "_s, function == "compile"_s ? "AST"_s : "code"_s, " object"_s));
+    raiseTypeError(globalObject, scope, concatenate(function, "() arg 1 must be a "_s, function == "symtable"_s ? "string or bytes"_s : function == "compile"_s ? "string, bytes or AST"_s : "string, bytes or code"_s, " object"_s));
     return { };
 }
 
@@ -574,7 +575,7 @@ PYTHON_NATIVE(builtinCompile)
     if (isTree)
         RELEASE_AND_RETURN(scope, JSValue::encode(compileTree(globalObject, given, filename, moduleKind, options)));
 
-    SourceCode source = sourceOf(globalObject, scope, given, filename, "compile"_s);
+    SourceCode source = sourceOfArgument(globalObject, scope, given, filename, "compile"_s);
     RETURN_IF_EXCEPTION(scope, { });
     if (flags & onlyAST)
         RELEASE_AND_RETURN(scope, JSValue::encode(parseSource(globalObject, source, moduleKind, options)));
@@ -662,7 +663,7 @@ PYTHON_NATIVE(builtinExecOrEval)
     } else {
         if (hasClosure)
             return JSValue::encode(raiseTypeError(globalObject, scope, "closure can only be used when source is a code object"_s));
-        SourceCode text = sourceOf(globalObject, scope, source, "<string>"_s, function);
+        SourceCode text = sourceOfArgument(globalObject, scope, source, "<string>"_s, function);
         RETURN_IF_EXCEPTION(scope, { });
         FunctionExecutable* compiled = compileSource(globalObject, text, isEval ? CodeKind::Expression : CodeKind::Module, true, futureFeaturesOfCaller(callFrame) & FutureFeaturesMask);
         RETURN_IF_EXCEPTION(scope, { });

@@ -832,6 +832,7 @@ python/PythonStructMember.cpp
 python/PythonStructModule.cpp
 python/PythonStructSequence.cpp
 python/PythonSymbolTable.cpp
+python/PythonSymtableModule.cpp
 python/PythonSysModule.cpp
 python/PythonTemplateStrings.cpp
 python/PythonTraceback.cpp
