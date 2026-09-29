@@ -278,8 +278,13 @@ public:
 
     bool usingAPI() { return vmType != VMType::Default; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static Ref<VM> create(HeapType = HeapType::Small, WTF::RunLoop* = nullptr, HeapMarking = HeapMarking::Parallel);
+    JS_EXPORT_PRIVATE static RefPtr<VM> tryCreate(HeapType = HeapType::Small, WTF::RunLoop* = nullptr, HeapMarking = HeapMarking::Parallel);
+#else
     JS_EXPORT_PRIVATE static Ref<VM> create(HeapType = HeapType::Small, WTF::RunLoop* = nullptr);
     JS_EXPORT_PRIVATE static RefPtr<VM> tryCreate(HeapType = HeapType::Small, WTF::RunLoop* = nullptr);
+#endif
     static Ref<VM> createContextGroup(HeapType = HeapType::Small);
     JS_EXPORT_PRIVATE ~VM();
 
@@ -1308,7 +1313,11 @@ public:
 #endif
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    VM(VMType, HeapType, WTF::RunLoop* = nullptr, bool* success = nullptr, HeapMarking = HeapMarking::Parallel);
+#else
     VM(VMType, HeapType, WTF::RunLoop* = nullptr, bool* success = nullptr);
+#endif
     static VM*& sharedInstanceInternal();
     void createNativeThunk();
 
