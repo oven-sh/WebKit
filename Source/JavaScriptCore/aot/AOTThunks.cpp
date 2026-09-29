@@ -368,14 +368,22 @@ void generateFrontEndNewObject(CCallHelpers& jit)
     tailCall(jit, Entry::RawNewObject);
 }
 
+static void emitFillAndReturnObject(CCallHelpers&, GPRReg values, GPRReg count);
+
 // An object of the structure the cache is for, in which the properties are in the object itself, one after the other from the start.
 // Clobbers count.
 static void emitAllocateWithProperties(CCallHelpers& jit, GPRReg cache, GPRReg values, GPRReg count, JumpList& slowCases)
 {
     emitAllocateFromCache(jit, cache, scratch3, slowCases);
-    jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
     jit.load32(Address(cache, OBJECT_OFFSETOF(Slot, offset)), scratch0);
     jit.and32(TrustedImm32(Slot::offsetMask), scratch0);
+    emitFillAndReturnObject(jit, values, count);
+}
+
+// scratch3: an object with its header filled in. scratch0: how many properties there is room for in it. Clobbers count.
+static void emitFillAndReturnObject(CCallHelpers& jit, GPRReg values, GPRReg count)
+{
+    jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
     // From the end: what there is room for and nothing to put in, and then the values.
     auto clear = jit.label();
     Jump cleared = jit.branch32(CCallHelpers::BelowOrEqual, scratch0, count);
@@ -406,7 +414,7 @@ void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
 {
     JumpList slowCases;
     jit.loadPtr(Address(argument4, OBJECT_OFFSETOF(Slot, pointer)), scratch0);
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, scratch0, argument1));
+    Jump isAnotherFunction = jit.branchPtr(CCallHelpers::NotEqual, scratch0, argument1);
     // It is a function, then. What it makes its instances from is still what it was?
     jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
@@ -415,6 +423,39 @@ void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
     jit.load32(Address(argument4, 2 * sizeof(Slot) + OBJECT_OFFSETOF(Slot, structureID)), scratch1);
     slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, scratch1));
     emitAllocateWithProperties(jit, argument4, argument2, argument3, slowCases);
+
+    // The site knows one function, and this is another. See MegamorphicCache::ConstructionEntry.
+    isAnotherFunction.link(&jit);
+    if (Options::aotCachesConstructionForManyFunctions()) {
+        using ConstructionEntry = MegamorphicCache::ConstructionEntry;
+        slowCases.append(jit.branchIfNotFunction(argument1));
+        jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
+        slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
+        jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), scratch1);
+        jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
+        slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
+        loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
+        jit.urshift32(scratch0, TrustedImm32(MegamorphicCache::constructionHashShift), scratch2);
+        jit.urshiftPtr(argument4, TrustedImm32(MegamorphicCache::constructionHashShift), scratch4);
+        jit.xor32(scratch4, scratch2);
+        jit.and32(TrustedImm32(MegamorphicCache::constructionCacheMask), scratch2);
+        static_assert(sizeof(ConstructionEntry) == 24);
+        jit.getEffectiveAddress(BaseIndex(scratch2, scratch2, CCallHelpers::TimesTwo), scratch2);
+        jit.getEffectiveAddress(BaseIndex(cacheGPR, scratch2, CCallHelpers::TimesEight, MegamorphicCache::offsetOfConstructionEntries()), scratch4);
+        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, Address(scratch4, ConstructionEntry::offsetOfFirstStructureID())));
+        slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, argument4, Address(scratch4, ConstructionEntry::offsetOfSite())));
+        jit.load16(Address(scratch4, ConstructionEntry::offsetOfEpoch()), scratch2);
+        jit.load16(Address(cacheGPR, MegamorphicCache::offsetOfEpoch()), scratch0);
+        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, scratch2));
+        // (As big as what it starts out as: there is as much room for properties in the one as in the other.)
+        jit.emitAllocateWithNonNullAllocator(scratch3, JITAllocator::variable(), scratch1, scratch2, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+        jit.load32(Address(scratch4, ConstructionEntry::offsetOfLastStructureID()), scratch4);
+        loadEntry(jit, Entry::StructureIDBase, scratch0);
+        jit.addPtr(scratch0, scratch4);
+        jit.emitStoreStructureWithTypeInfo(scratch4, scratch3, scratch1);
+        jit.load8(Address(scratch4, Structure::inlineCapacityOffset()), scratch0);
+        emitFillAndReturnObject(jit, argument2, argument3);
+    }
     slowCases.link(&jit);
     tailCall(jit, Entry::RawCreateThisWithProperties);
 }

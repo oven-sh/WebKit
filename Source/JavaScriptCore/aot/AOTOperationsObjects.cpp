@@ -206,6 +206,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
     if (!cacheable || last->isDictionary() || count > last->inlineCapacity() || object->butterfly() || first->mayBePrototype() || last->mayBePrototype())
         OPERATION_RETURN(scope, object);
 
+    // The site knows one function, and this is another: a class that extends the one whose constructor this is, as a rule.
+    if (cache->pointer && cache->pointer != constructor && !SharedData::contains(cache) && Options::aotCachesConstructionForManyFunctions()) {
+        if (first->propertyAccessesAreCacheable() && canUseMegamorphicPutFastPath(first))
+            vm.ensureMegamorphicCache().initAsConstruction(first->id(), last->id(), cache);
+        OPERATION_RETURN(scope, object);
+    }
+
     // What follows takes some doing. It works the first time or, as a rule, never.
     if ((cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
         OPERATION_RETURN(scope, object);

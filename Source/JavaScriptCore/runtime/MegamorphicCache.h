@@ -153,6 +153,40 @@ public:
 
     using GetterEntry = LoadEntry;
 
+    // For the static compiler (aot/). A constructor makes an object and stores to it, one property after another, the same ones every
+    // time: an object that starts out with the one structure ends up with the other, with the values in it in that order from the start.
+    // Which structure it starts out with goes by what is being constructed with, and a class that others extend sees many.
+    // That the stores make properties, and do nothing else, goes by the prototype chain, like a StoreEntry.
+    struct ConstructionEntry {
+        static constexpr ptrdiff_t offsetOfFirstStructureID() { return OBJECT_OFFSETOF(ConstructionEntry, m_firstStructureID); }
+        static constexpr ptrdiff_t offsetOfLastStructureID() { return OBJECT_OFFSETOF(ConstructionEntry, m_lastStructureID); }
+        static constexpr ptrdiff_t offsetOfSite() { return OBJECT_OFFSETOF(ConstructionEntry, m_site); }
+        static constexpr ptrdiff_t offsetOfEpoch() { return OBJECT_OFFSETOF(ConstructionEntry, m_epoch); }
+
+        StructureID m_firstStructureID { };
+        StructureID m_lastStructureID { };
+        const void* m_site { nullptr }; // Which constructor: anything that is its own for as long as the epoch lasts.
+        uint16_t m_epoch { invalidEpoch };
+    };
+    static constexpr uint32_t constructionCacheSize = 256;
+    static constexpr uint32_t constructionCacheMask = constructionCacheSize - 1;
+    static constexpr unsigned constructionHashShift = 4;
+    static uint32_t constructionHash(StructureID first, const void* site)
+    {
+        return (std::bit_cast<uint32_t>(first) >> constructionHashShift) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(site) >> constructionHashShift);
+    }
+    static constexpr ptrdiff_t offsetOfConstructionEntries() { return OBJECT_OFFSETOF(MegamorphicCache, m_constructionEntries); }
+    void initAsConstruction(StructureID first, StructureID last, const void* site)
+    {
+        if (!noteDependenceOnPrototypes(first))
+            return;
+        auto& entry = m_constructionEntries[constructionHash(first, site) & constructionCacheMask];
+        entry.m_firstStructureID = first;
+        entry.m_lastStructureID = last;
+        entry.m_site = site;
+        entry.m_epoch = m_epoch;
+    }
+
     static constexpr ptrdiff_t offsetOfLoadCachePrimaryEntries() { return OBJECT_OFFSETOF(MegamorphicCache, m_loadCachePrimaryEntries); }
     static constexpr ptrdiff_t offsetOfLoadCacheSecondaryEntries() { return OBJECT_OFFSETOF(MegamorphicCache, m_loadCacheSecondaryEntries); }
 
@@ -351,6 +385,7 @@ private:
     std::array<HasEntry, hasCacheSecondarySize> m_hasCacheSecondaryEntries { };
     std::array<GetterEntry, getterCachePrimarySize> m_getterCachePrimaryEntries { };
     std::array<GetterEntry, getterCacheSecondarySize> m_getterCacheSecondaryEntries { };
+    std::array<ConstructionEntry, constructionCacheSize> m_constructionEntries { };
     uint16_t m_epoch { 1 };
 };
 

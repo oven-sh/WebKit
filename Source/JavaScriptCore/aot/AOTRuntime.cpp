@@ -877,6 +877,9 @@ std::span<const WriteBarrier<UnlinkedFunctionExecutable>> FunctionRef::functionE
 void Data::destroy(Data* data)
 {
     Instance& instance = *data->instance;
+    // (MegamorphicCache::ConstructionEntry::m_site)
+    if (auto* cache = instance.vm->megamorphicCache())
+        cache->bumpEpoch();
     Data*& place = instance.data[data->code->header().index];
     RELEASE_ASSERT(place == data);
     place = nullptr;
