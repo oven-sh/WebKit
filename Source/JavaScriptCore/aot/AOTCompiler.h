@@ -42,6 +42,10 @@ void emitRestoreBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 void reportStatistics();
 JS_EXPORT_PRIVATE void setOriginForStatistics(ASCIILiteral); // TEMPORARY-PROVABILITY-STATS
 
+struct Node;
+unsigned kindOfSite(Node*, bool isCompact); // TEMPORARY-SITE-COUNTS
+JS_EXPORT_PRIVATE void dumpKindsOfSites();
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(FTL_JIT)

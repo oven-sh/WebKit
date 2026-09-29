@@ -1139,16 +1139,19 @@ static void generatePutById(CCallHelpers& jit)
     loadIndexOfCaller(jit);
     loadInstanceAndDataOfSlot(jit, A2, T9, T10);
     countMissOfSlot(jit, T9, T10);
-    notInTable.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
-    findInDispatchTable(jit, A2, A3, notInTable, notInTable);
-    Jump isOutOfLine = jit.branch64(CCallHelpers::LessThan, T12, TrustedImm32(0));
-    fillEmptySlotFromDispatchTable(jit, A2);
-    jit.store64(A1, CCallHelpers::BaseIndex(A0, T12, CCallHelpers::TimesEight));
-    jit.jump().linkTo(stored, &jit);
-    isOutOfLine.link(&jit);
-    jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T13);
-    jit.store64(A1, CCallHelpers::BaseIndex(T13, T12, CCallHelpers::TimesEight));
-    jit.jump().linkTo(stored, &jit);
+    // (Not where a slot says what it holds: the table does not say which do. See SlotsOfBornObjects.)
+    if (!Options::aotTypesFields()) {
+        notInTable.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        findInDispatchTable(jit, A2, A3, notInTable, notInTable);
+        Jump isOutOfLine = jit.branch64(CCallHelpers::LessThan, T12, TrustedImm32(0));
+        fillEmptySlotFromDispatchTable(jit, A2);
+        jit.store64(A1, CCallHelpers::BaseIndex(A0, T12, CCallHelpers::TimesEight));
+        jit.jump().linkTo(stored, &jit);
+        isOutOfLine.link(&jit);
+        jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T13);
+        jit.store64(A1, CCallHelpers::BaseIndex(T13, T12, CCallHelpers::TimesEight));
+        jit.jump().linkTo(stored, &jit);
+    }
 
     notInTable.link(&jit);
     missAtSite(jit, Entry::operationAOTPutById, 2, Returns::Void);

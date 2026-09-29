@@ -106,6 +106,20 @@ std::optional<TypeTable::Layout> TypeTable::layoutOf(uint32_t type) const
     return result;
 }
 
+Vector<TypeTable::Holds, 8> TypeTable::holdsOfSlots(uint32_t number) const
+{
+    Vector<Holds, 8> result;
+    if (!number || number >= m_layouts.size())
+        return result;
+    auto layout = m_words.span().subspan(m_layouts[number]);
+    result.grow(layout[0]);
+    for (unsigned i = 0; i < layout[1]; ++i) {
+        auto property = layout.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+        result[property[1]] = Holds { property[2], static_cast<uint16_t>(property[3] >> 16), static_cast<uint16_t>(property[3]) };
+    }
+    return result;
+}
+
 } } // namespace JSC::AOT
 
 #endif // ENABLE(FTL_JIT)

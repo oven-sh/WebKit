@@ -92,6 +92,31 @@ LValue Lowering::layoutBornAs(LValue cell)
     return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfBornAs()));
 }
 
+// Zero for what is not a cell. It is for life, so once it has been asked of a value it need not be asked again: not after a call, and not after a store.
+LValue Lowering::layoutBornAsOrNone(Node* node, LValue value)
+{
+    while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz))
+        node = node->uses[0].node;
+    if (auto it = m_layoutsBornAs.find(node); it != m_layoutsBornAs.end() && it->value.first == m_block)
+        return it->value.second;
+    LValue result;
+    if (isSubtype(node->type, TCell))
+        result = layoutBornAs(value);
+    else {
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        ValueFromBlock none = m_out.anchor(m_out.int32Zero);
+        m_out.branch(isCell(value), usually(cellCase), rarely(continuation));
+        m_out.appendTo(cellCase);
+        ValueFromBlock ofCell = m_out.anchor(layoutBornAs(value));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        result = m_out.phi(Int32, none, ofCell);
+    }
+    m_layoutsBornAs.set(node, std::pair { m_block, result });
+    return result;
+}
+
 LValue Lowering::isOneOf(LValue layout, uint16_t first, uint16_t last)
 {
     if (first == last)
@@ -133,23 +158,35 @@ void Lowering::lowerGetById(Node* node)
         // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
         LValue base = lowJSValue(baseNode);
         noteShapeSite(Instance::ReadHas);
-        LBasicBlock cellCase = m_out.newBlock();
+        bool resultIsTyped = Options::aotTypesFields() && field->holds.saysSomething();
+        // (undefined has to be something the field is said to hold.)
+        bool testsForLack = field->firstWithout && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics() && (!resultIsTyped || (field->holds.kinds & MaskUndefined));
         LBasicBlock has = m_out.newBlock();
         LBasicBlock hasNot = m_out.newBlock();
         LBasicBlock mayLack = m_out.newBlock();
-        LBasicBlock otherwise = m_out.newBlock();
+        LBasicBlock otherwise = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
-        if (isSubtype(baseNode->type, TCell))
-            m_out.jump(cellCase);
-        else
-            m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
-        m_out.appendTo(cellCase, has);
-        // What it was born as, whatever has become of it since: the property is where it was then, or nothing is (Structure::bornAs()).
-        LValue layout = layoutBornAs(base);
-        bool testsForLack = field->firstWithout && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics();
-        if (testsForLack)
-            noteShapeSite(Instance::ReadLacks);
-        m_out.branch(isOneOf(layout, field->first, field->last), usually(has), rarely(testsForLack ? mayLack : otherwise));
+        if (baseNode->isKnownToBeBornWithin(field->first, field->last)) {
+            noteShapeSite(Instance::ServedWithoutAssertion);
+            countShape(Instance::ServedWithoutAssertion);
+            m_out.jump(has);
+        } else {
+            noteShapeSite(Instance::AssertionMade);
+            countShape(Instance::AssertionMade);
+            // What it was born as, whatever has become of it since: the property is where it was then, or nothing is (Structure::bornAs()).
+            LValue layout = layoutBornAsOrNone(baseNode, base);
+            if (testsForLack)
+                noteShapeSite(Instance::ReadLacks);
+            if (!testsForLack)
+                m_out.branch(isOneOf(layout, field->first, field->last), usually(has), rarely(otherwise));
+            else {
+                // (What was never born as anything may not be a cell at all.)
+                LBasicBlock hasItNot = m_out.newBlock();
+                m_out.branch(isOneOf(layout, field->first, field->last), usually(has), unsure(hasItNot));
+                m_out.appendTo(hasItNot);
+                m_out.branch(m_out.notZero32(layout), usually(mayLack), rarely(otherwise));
+            }
+        }
         m_out.appendTo(has, mayLack);
         LValue whatIsThere = m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
         LBasicBlock isThere = m_out.newBlock();
@@ -171,7 +208,18 @@ void Lowering::lowerGetById(Node* node)
         m_out.jump(continuation);
         m_out.appendTo(otherwise, continuation);
         countShape(Instance::ReadOther);
-        ValueFromBlock other = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+        LValue readTheLongWay = getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property);
+        if (resultIsTyped) {
+            // What comes next takes it for what the field is said to hold.
+            LBasicBlock isThat = m_out.newBlock();
+            LBasicBlock notSettled = m_out.newBlock();
+            emitTypeTests(nullptr, TTop, readTheLongWay, field->holds.kinds, isThat, notSettled);
+            m_out.appendTo(notSettled);
+            vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, readTheLongWay, m_out.constInt32(field->holds.kinds));
+            m_out.jump(isThat);
+            m_out.appendTo(isThat);
+        }
+        ValueFromBlock other = m_out.anchor(readTheLongWay);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, found, lacking, other));
@@ -273,6 +321,9 @@ void Lowering::lowerPutById(Node* node)
         m_out.appendTo(cellCase, has);
         m_out.branch(isOneOf(layoutOf(base), field->first, field->last), usually(has), rarely(otherwise));
         m_out.appendTo(has, otherwise);
+        // (What the slot does not hold is stored the long way, which takes the property out of the slot.)
+        if (Options::aotTypesFields())
+            branchUnlessHeld(valueNode, value, field->holds.kindsOnly(), otherwise);
         noteShapeSite(Instance::WriteHas);
         countShape(Instance::WriteHas);
         m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));

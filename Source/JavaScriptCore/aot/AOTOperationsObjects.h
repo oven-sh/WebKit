@@ -41,6 +41,8 @@ struct Slot;
     v(operationAOTNewRegExpForReceiver) \
     v(operationAOTNoteAssertion) \
     v(operationAOTLinkTimeConstant) \
+    v(operationAOTSettleWhatWasBorn) \
+    v(operationAOTNoteExit) \
     v(operationAOTNewFunction) \
     v(operationAOTSetFunctionName) \
     v(operationAOTNewInternalFieldObject) \
@@ -151,6 +153,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTSpread, JSCell*, (JSGlobalObject*, Encoded
 JSCell* spread(JSGlobalObject*, JSValue iterable); // What op_spread makes.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject*, JSCell* regExp));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteAssertion, void, (Instance*, EncodedJSValue, uint32_t layouts)); // TEMPORARY-SHAPE-COUNTS
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteExit, void, (Instance*, EncodedJSValue base, uint32_t layouts, uint32_t slot)); // TEMPORARY-SHAPE-COUNTS
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSettleWhatWasBorn, void, (Instance*, JSObject*)); // Lowering::settleWhatWasBorn()
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance*, uint32_t which)); // NodeKind::LinkTimeConstant
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalObject*, JSCell* regExp, uint32_t forTest, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject*, JSScope*, uint32_t index, uint32_t isExpression, uint32_t functionKind, Slot*));

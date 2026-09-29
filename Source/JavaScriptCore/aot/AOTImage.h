@@ -57,6 +57,10 @@ struct ImageHeader {
     uint32_t shapesOffset; // ImageShape, by number.
     uint32_t numberOfShapes; // One more than the last.
     uint32_t slotsOfShapesOffset; // uint16_t: see ImageShape::slots.
+    // Options::aotTypesFields(): SlotsOfBornObjects. The index (uint32_t, by the number of the shape), and what it is an index of. No index: it is not gone by.
+    uint32_t indexOfHeldInSlotsOffset;
+    uint32_t sizeOfIndexOfHeldInSlots;
+    uint32_t heldInSlotsOffset;
     // With numberOfIdentifiersOfProgram, a selector is the number of the identifier, and what it says is for StaticHeap to know.
     uint32_t selectorsOffset; // ImageSelector, by number.
     uint32_t numberOfSelectors; // One more than the last.

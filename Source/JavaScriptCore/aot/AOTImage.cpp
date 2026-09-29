@@ -25,6 +25,7 @@
 #include "Options.h"
 #include "ParseInt.h"
 #include "SourceProvider.h"
+#include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/SHA1.h>
@@ -535,6 +536,17 @@ Vector<uint8_t> ImageBuilder::finish()
         slotsOfShapes.appendVector(shape.slots);
         numberOfPropertiesOfShapes += shape.names.size();
     }
+    Vector<uint32_t> indexOfHeldInSlots;
+    Vector<SlotsOfBornObjects::Held> heldInSlots;
+    if (Options::aotTypesFields() && TypeTable::shared()) {
+        for (uint32_t number = 0; number < shapes.size() && number <= TypeTable::shared()->numberOfLayouts(); ++number) {
+            auto holds = shapes[number].names.isEmpty() ? Vector<TypeTable::Holds, 8> { } : TypeTable::shared()->holdsOfSlots(number);
+            RELEASE_ASSERT(holds.size() < 256 && heldInSlots.size() < (1u << 24));
+            indexOfHeldInSlots.append(static_cast<uint32_t>(heldInSlots.size()) << 8 | holds.size());
+            for (auto& held : holds)
+                heldInSlots.append({ safeCast<uint16_t>(held.kinds), Options::aotAssertsTypes() ? held.first : uint16_t(0), Options::aotAssertsTypes() ? held.last : uint16_t(0), 0 });
+        }
+    }
     Vector<ImageSelector> imageSelectors;
     Vector<uint8_t> textOfSelectors;
     for (uint32_t selector = 0; selector < selectors.size() && !numbersOfIdentifiers; ++selector) {
@@ -692,6 +704,21 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& [at, stubsForIt] : placement)
         startsOfFunctions.append(safeCast<uint32_t>(at));
     startsOfFunctions.append(std::numeric_limits<uint32_t>::max());
+    if (Options::aotCountsAllocations()) [[unlikely]]
+        dumpKindsOfSites();
+    if (Options::aotWritesMap()) [[unlikely]] {
+        // F index, where its code starts, how long that is, and its key. C index, where in its code a stub's return address is, which stub, the place in the bytecode. N index, the place, what was known.
+        auto out = FilePrintStream::open(Options::aotWritesMap(), "w");
+        RELEASE_ASSERT(out);
+        for (unsigned index = 0; index < m_functions.size(); ++index) {
+            auto& function = m_functions[index];
+            out->println("F\t", index, "\t", startsOfFunctions[index], "\t", function.code.bytes.size(), "\t", function.key.module, "\t", function.key.start, "\t", function.key.kind);
+            for (auto& call : function.code.info.stubCalls)
+                out->println("C\t", index, "\t", call.offset + 4, "\t", static_cast<unsigned>(call.stub), "\t", call.callSite);
+            for (auto& [site, note] : function.code.info.notesOfSites)
+                out->println("N\t", index, "\t", site, "\t", note);
+        }
+    }
     Vector<uint32_t> granulesOfCode;
     {
         uint32_t function = 0;
@@ -926,6 +953,9 @@ Vector<uint8_t> ImageBuilder::finish()
     header.shapesOffset = place(imageShapes.sizeInBytes());
     header.numberOfShapes = imageShapes.size();
     header.slotsOfShapesOffset = place(slotsOfShapes.sizeInBytes());
+    header.indexOfHeldInSlotsOffset = place(indexOfHeldInSlots.sizeInBytes());
+    header.sizeOfIndexOfHeldInSlots = indexOfHeldInSlots.size();
+    header.heldInSlotsOffset = place(heldInSlots.sizeInBytes());
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
     header.numberOfSelectors = selectors.size();
     header.rowsOfSelectorsOffset = place(rowOfSelector.sizeInBytes());
@@ -995,6 +1025,8 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
     memcpy(base + header.shapesOffset, imageShapes.span().data(), imageShapes.sizeInBytes());
     memcpy(base + header.slotsOfShapesOffset, slotsOfShapes.span().data(), slotsOfShapes.sizeInBytes());
+    memcpy(base + header.indexOfHeldInSlotsOffset, indexOfHeldInSlots.span().data(), indexOfHeldInSlots.sizeInBytes());
+    memcpy(base + header.heldInSlotsOffset, heldInSlots.span().data(), heldInSlots.sizeInBytes());
     memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
     memcpy(base + header.rowsOfSelectorsOffset, rowOfSelector.span().data(), rowOfSelector.sizeInBytes());
     memcpy(base + header.textOfSelectorsOffset, textOfSelectors.span().data(), textOfSelectors.size());
@@ -1204,6 +1236,8 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         RELEASE_ASSERT(!header.codeSize || !other->header().codeSize);
     all.images.append(image);
     all.hasAny.store(true, std::memory_order_release);
+    if (header.sizeOfIndexOfHeldInSlots)
+        SlotsOfBornObjects::set({ image->at<uint32_t>(header.indexOfHeldInSlotsOffset), header.sizeOfIndexOfHeldInSlots }, image->at<SlotsOfBornObjects::Held>(header.heldInSlotsOffset));
     return image;
 }
 

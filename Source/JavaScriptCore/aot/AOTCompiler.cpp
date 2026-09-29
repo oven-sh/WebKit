@@ -27,7 +27,9 @@
 #include "JSModuleEnvironment.h"
 #include "JSWithScope.h"
 #include "LinkBuffer.h"
+#include "AOTTypeTable.h"
 #include <wtf/Lock.h>
+#include <wtf/StringPrintStream.h>
 #include <wtf/text/StringHash.h>
 
 namespace JSC { namespace AOT {
@@ -102,6 +104,203 @@ static void estimateFrequencies(B3::Procedure& proc)
 static thread_local ASCIILiteral t_originForStatistics = ""_s;
 void setOriginForStatistics(ASCIILiteral origin) { t_originForStatistics = origin; }
 
+static Node* withoutWhatOnlyLooks(Node* node)
+{
+    for (;;) {
+        if (node->kind == NodeKind::Narrow)
+            node = node->uses[0].node;
+        else if (node->isBytecode(op_check_type))
+            node = node->use(node->as<OpCheckType>().m_value);
+        else if (node->isBytecode(op_to_this))
+            node = node->use(node->as<OpToThis>().m_srcDst);
+        else if (node->isBytecode(op_check_tdz))
+            node = node->use(node->as<OpCheckTdz>().m_targetVirtualRegister);
+        else
+            return node;
+    }
+}
+
+static String whereItIsFrom(Node* node)
+{
+    node = withoutWhatOnlyLooks(node);
+    switch (node->kind) {
+    case NodeKind::Constant:
+    case NodeKind::ConstantCell:
+    case NodeKind::LinkTimeConstant:
+        return "a constant"_s;
+    case NodeKind::Intrinsic:
+        return "an intrinsic"_s;
+    case NodeKind::Argument:
+        if (node->reg == virtualRegisterForArgumentIncludingThis(0))
+            return "this"_s;
+        if (node->reg == VirtualRegister(CallFrameSlot::callee))
+            return "the callee"_s;
+        return "a parameter"_s;
+    case NodeKind::Phi:
+        return "a phi"_s;
+    case NodeKind::Proj:
+        return "a proj"_s;
+    case NodeKind::GetStack:
+        return "a variable in memory"_s;
+    case NodeKind::Bytecode:
+        break;
+    default:
+        return "other"_s;
+    }
+    switch (node->opcode) {
+    case op_get_by_id:
+        return "a property"_s;
+    case op_get_by_val:
+        return "an element"_s;
+    case op_get_from_scope: {
+        auto bytecode = node->as<OpGetFromScope>();
+        ResolveType type = bytecode.m_getPutInfo.resolveType();
+        if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
+            return "a closure variable"_s;
+        auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
+        if (variable.isInGlobalScopes)
+            return "a global"_s;
+        switch (variable.kind) {
+        case Graph::StaticVariable::Closure: return "a closure variable"_s;
+        case Graph::StaticVariable::Import: return "a linked import"_s;
+        case Graph::StaticVariable::ModuleImport: return "another import"_s;
+        default: return "an unresolved variable"_s;
+        }
+    }
+    case op_call:
+    case op_call_ignore_result:
+    case op_tail_call:
+    case op_call_varargs:
+        return "the result of a call"_s;
+    case op_construct:
+        return "the result of new"_s;
+    case op_new_object:
+    case op_create_this:
+        return "an object made here"_s;
+    case op_new_array:
+    case op_new_array_buffer:
+    case op_new_array_with_size:
+    case op_new_array_with_spread:
+        return "an array made here"_s;
+    case op_new_func:
+    case op_new_func_exp:
+    case op_new_async_func:
+    case op_new_async_func_exp:
+    case op_new_generator_func:
+    case op_new_generator_func_exp:
+        return "a function made here"_s;
+    default:
+        return makeString("op "_s, opcodeNames[node->opcode]);
+    }
+}
+
+// Options::aotWritesMap(): of each place in the bytecode that code may call a stub for, what was known there. For finding out, of the places a profile says are
+// slow, what the compiler had to go on and what it made of it.
+static CString describeSite(Node* node, bool isCompact, bool withName)
+{
+    BasicBlock* block = node->block;
+    StringPrintStream out;
+    out.print(opcodeNames[node->opcode], "\t", isCompact ? "compact" : "full", block->isGeneric ? " generic" : "", node->guard ? " guarded" : "", node->graph->inlineFrame() ? " inlined" : "");
+    auto operand = [&](VirtualRegister reg) {
+        Node* value = node->use(reg);
+        out.print("\t", whereItIsFrom(value), "\t", TypeDump(value->type));
+    };
+    auto property = [&](VirtualRegister base, unsigned identifier) {
+        operand(base);
+        UniquedStringImpl* name = node->graph->codeBlock()->identifier(identifier).impl();
+        uint32_t tag = Graph::typeTagOf(node);
+        if (!withName)
+            out.print("\t", !tag ? "no tag" : !TypeTable::shared() ? "tag" : !TypeTable::shared()->fieldOf(tag, name) ? "tag, no field" : TypeTable::shared()->fieldOf(tag, name)->holds.saysSomething() ? "tag, field, holds known" : "tag, field");
+        else {
+            out.print("\ttag ", tag);
+            if (tag && TypeTable::shared()) {
+                if (auto field = TypeTable::shared()->fieldOf(tag, name))
+                    out.print(" slot ", field->slot, " layouts ", field->first, "-", field->last, " holds ", field->holds.kinds, " ", field->holds.first, "-", field->holds.last);
+                else
+                    out.print(" nofield reason ", TypeTable::shared()->reasonOf(tag));
+            }
+            out.print("\t", StringView(name));
+        }
+    };
+    switch (node->opcode) {
+    case op_get_by_id: { auto bytecode = node->as<OpGetById>(); property(bytecode.m_base, bytecode.m_property); break; }
+    case op_put_by_id: { auto bytecode = node->as<OpPutById>(); property(bytecode.m_base, bytecode.m_property); break; }
+    case op_in_by_id: { auto bytecode = node->as<OpInById>(); property(bytecode.m_base, bytecode.m_property); break; }
+    case op_get_length: operand(node->as<OpGetLength>().m_base); break;
+    case op_get_by_val: { auto bytecode = node->as<OpGetByVal>(); operand(bytecode.m_base); operand(bytecode.m_property); break; }
+    case op_put_by_val: { auto bytecode = node->as<OpPutByVal>(); operand(bytecode.m_base); operand(bytecode.m_property); break; }
+    case op_in_by_val: { auto bytecode = node->as<OpInByVal>(); operand(bytecode.m_base); operand(bytecode.m_property); break; }
+    case op_stricteq: { auto bytecode = node->as<OpStricteq>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_nstricteq: { auto bytecode = node->as<OpNstricteq>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_jstricteq: { auto bytecode = node->as<OpJstricteq>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_jnstricteq: { auto bytecode = node->as<OpJnstricteq>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_eq: { auto bytecode = node->as<OpEq>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_add: { auto bytecode = node->as<OpAdd>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_less: { auto bytecode = node->as<OpLess>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_jless: { auto bytecode = node->as<OpJless>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_jnless: { auto bytecode = node->as<OpJnless>(); operand(bytecode.m_lhs); operand(bytecode.m_rhs); break; }
+    case op_call: operand(node->as<OpCall>().m_callee); break;
+    case op_call_ignore_result: operand(node->as<OpCallIgnoreResult>().m_callee); break;
+    case op_tail_call: operand(node->as<OpTailCall>().m_callee); break;
+    case op_construct: operand(node->as<OpConstruct>().m_callee); break;
+    case op_iterator_open: operand(node->as<OpIteratorOpen>().m_iterable); break;
+    case op_iterator_next: operand(node->as<OpIteratorNext>().m_iterable); break;
+    case op_jtrue: operand(node->as<OpJtrue>().m_condition); break;
+    case op_jfalse: operand(node->as<OpJfalse>().m_condition); break;
+    case op_not: operand(node->as<OpNot>().m_operand); break;
+    case op_jundefined_or_null: operand(node->as<OpJundefinedOrNull>().m_value); break;
+    case op_jnundefined_or_null: operand(node->as<OpJnundefinedOrNull>().m_value); break;
+    case op_typeof: operand(node->as<OpTypeof>().m_value); break;
+    case op_to_string: operand(node->as<OpToString>().m_operand); break;
+    case op_check_type: operand(node->as<OpCheckType>().m_value); break;
+    default: break;
+    }
+    return out.toCString();
+}
+
+// Options::aotWritesMap(): of each place in the bytecode that code may call a stub for, what was known there.
+static void describeSites(Graph& graph, Vector<std::pair<uint32_t, CString>>& notes)
+{
+    for (BasicBlock* block : graph.m_rpo) {
+        bool isCompact = (!block->isInLoop && !graph.callsItself) || block->isGeneric;
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode || !node->instruction)
+                continue;
+            uint32_t site = CallSiteIndex(node->bytecodeIndex).bits();
+            if (!graph.inlineFrames.isEmpty())
+                site = PackedSite::pack(node->graph->inlineFrame(), site);
+            notes.append({ site, describeSite(node, isCompact, true) });
+        }
+    }
+}
+
+// TEMPORARY-SITE-COUNTS (Options::aotCountsAllocations()): how often each kind of thing is done, by what was known where it is done. The kinds are numbered as they turn up.
+static Lock s_kindsOfSitesLock;
+static UncheckedKeyHashMap<CString, unsigned>& kindsOfSites()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<CString, unsigned>> kinds;
+    return kinds;
+}
+unsigned kindOfSite(Node* node, bool isCompact)
+{
+    CString description = describeSite(node, isCompact, false);
+    Locker locker { s_kindsOfSitesLock };
+    auto& kinds = kindsOfSites();
+    if (auto it = kinds.find(description); it != kinds.end())
+        return it->value;
+    if (kinds.size() + 1 >= Instance::numberOfCountsOfSites)
+        return 0;
+    unsigned number = kinds.size() + 1;
+    kinds.add(description, number);
+    return number;
+}
+void dumpKindsOfSites()
+{
+    Locker locker { s_kindsOfSitesLock };
+    for (auto& entry : kindsOfSites())
+        dataLogLn("SITEKIND\t", entry.value, "\t", entry.key);
+}
+
 static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>& counters)
 {
     UnlinkedCodeBlock* codeBlock = graph.codeBlock();
@@ -110,92 +309,8 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
         counters.add(makeString("BY "_s, t_originForStatistics, ' ', what), 0).iterator->value++;
     };
     count("FUNCTIONS"_s);
-    auto strip = [&](Node* node) {
-        for (;;) {
-            if (node->kind == NodeKind::Narrow)
-                node = node->uses[0].node;
-            else if (node->isBytecode(op_check_type))
-                node = node->use(node->as<OpCheckType>().m_value);
-            else if (node->isBytecode(op_to_this))
-                node = node->use(node->as<OpToThis>().m_srcDst);
-            else if (node->isBytecode(op_check_tdz))
-                node = node->use(node->as<OpCheckTdz>().m_targetVirtualRegister);
-            else
-                return node;
-        }
-    };
-    auto origin = [&](Node* node) -> String {
-        node = strip(node);
-        switch (node->kind) {
-        case NodeKind::Constant:
-        case NodeKind::ConstantCell:
-        case NodeKind::LinkTimeConstant:
-            return "a constant"_s;
-        case NodeKind::Intrinsic:
-            return "an intrinsic"_s;
-        case NodeKind::Argument:
-            if (node->reg == virtualRegisterForArgumentIncludingThis(0))
-                return "this"_s;
-            if (node->reg == VirtualRegister(CallFrameSlot::callee))
-                return "the callee"_s;
-            return "a parameter"_s;
-        case NodeKind::Phi:
-            return "a phi"_s;
-        case NodeKind::Proj:
-            return "a proj"_s;
-        case NodeKind::GetStack:
-            return "a variable in memory"_s;
-        case NodeKind::Bytecode:
-            break;
-        default:
-            return "other"_s;
-        }
-        switch (node->opcode) {
-        case op_get_by_id:
-            return "a property"_s;
-        case op_get_by_val:
-            return "an element"_s;
-        case op_get_from_scope: {
-            auto bytecode = node->as<OpGetFromScope>();
-            ResolveType type = bytecode.m_getPutInfo.resolveType();
-            if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
-                return "a closure variable"_s;
-            auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
-            if (variable.isInGlobalScopes)
-                return "a global"_s;
-            switch (variable.kind) {
-            case Graph::StaticVariable::Closure: return "a closure variable"_s;
-            case Graph::StaticVariable::Import: return "a linked import"_s;
-            case Graph::StaticVariable::ModuleImport: return "another import"_s;
-            default: return "an unresolved variable"_s;
-            }
-        }
-        case op_call:
-        case op_call_ignore_result:
-        case op_tail_call:
-        case op_call_varargs:
-            return "the result of a call"_s;
-        case op_construct:
-            return "the result of new"_s;
-        case op_new_object:
-        case op_create_this:
-            return "an object made here"_s;
-        case op_new_array:
-        case op_new_array_buffer:
-        case op_new_array_with_size:
-        case op_new_array_with_spread:
-            return "an array made here"_s;
-        case op_new_func:
-        case op_new_func_exp:
-        case op_new_async_func:
-        case op_new_async_func_exp:
-        case op_new_generator_func:
-        case op_new_generator_func_exp:
-            return "a function made here"_s;
-        default:
-            return makeString("op "_s, opcodeNames[node->opcode]);
-        }
-    };
+    auto strip = [&](Node* node) { return withoutWhatOnlyLooks(node); };
+    auto origin = [&](Node* node) { return whereItIsFrom(node); };
     auto typeName = [&](Type type) -> ASCIILiteral {
         if (!type) return "nothing"_s;
         if (type & ~(TOther | TEmpty))
@@ -605,6 +720,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     for (auto& frame : graph.inlineFrames)
         info.inlineFrames.append({ frame.parent, frame.callSite, frame.knownCallee, frame.isTailCall });
     info.sitesOfSpreads = WTF::move(graph.sitesOfSpreads);
+    if (Options::aotWritesMap()) [[unlikely]]
+        describeSites(graph, info.notesOfSites);
     info.callSites = WTF::move(graph.callSites);
     std::ranges::sort(info.callSites);
     info.callSites.shrink(std::ranges::unique(info.callSites).begin() - info.callSites.begin());

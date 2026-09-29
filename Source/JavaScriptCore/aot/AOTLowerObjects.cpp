@@ -86,6 +86,29 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
     return object;
 }
 
+void Lowering::settleWhatWasBorn(LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values)
+{
+    if (!Options::aotTypesFields() || !layout || !TypeTable::shared())
+        return;
+    auto holds = TypeTable::shared()->holdsOfSlots(layout);
+    LBasicBlock someIsNot = nullptr;
+    for (unsigned slot = 0; slot < inSlots.size() && slot < holds.size(); ++slot) {
+        if (!inSlots[slot] || !holds[slot].saysSomething())
+            continue;
+        if (!someIsNot)
+            someIsNot = newColdBlock();
+        branchUnlessHeld(inSlots[slot], values[slot], holds[slot], someIsNot);
+    }
+    if (!someIsNot)
+        return;
+    LBasicBlock settled = m_out.newBlock();
+    m_out.jump(settled);
+    m_out.appendTo(someIsNot);
+    plainCall(Void, Entry::operationAOTSettleWhatWasBorn, m_instance, object);
+    m_out.jump(settled);
+    m_out.appendTo(settled);
+}
+
 bool Lowering::tryLowerAllocation(Node* node)
 {
     // TEMPORARY-ESCAPE-STATS
@@ -118,8 +141,12 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_new_object:
         if (unsigned count = node->numberOfLiteralProperties) {
             Vector<LValue, 8> values;
-            for (unsigned i = 0; i < count; ++i)
+            Vector<Node*, 8> inSlotsOfLayout;
+            uint32_t layout = 0;
+            for (unsigned i = 0; i < count; ++i) {
                 values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
+                inSlotsOfLayout.append(node->use(NewObjectPlan::registerOf(i)));
+            }
             unsigned slot = allocateSlots(2);
             auto shapeOfThis = m_graph.shapeOfLiteral(node);
             noteShapeSite(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
@@ -128,11 +155,17 @@ bool Lowering::tryLowerAllocation(Node* node)
                 // Each where the layout has it.
                 if (!shape->slots.isEmpty()) {
                     Vector<LValue, 8> inSlots;
+                    Vector<Node*, 8> nodesInSlots;
                     inSlots.fill(m_out.int64Zero, shape->numberOfSlots());
-                    for (unsigned i = 0; i < count; ++i)
+                    nodesInSlots.fill(nullptr, shape->numberOfSlots());
+                    for (unsigned i = 0; i < count; ++i) {
                         inSlots[shape->slots[i]] = values[i];
+                        nodesInSlots[shape->slots[i]] = inSlotsOfLayout[i];
+                    }
                     values = WTF::move(inSlots);
+                    inSlotsOfLayout = WTF::move(nodesInSlots);
                 }
+                layout = shape->number;
                 m_graph.noteShapeOfSite(slot, WTF::move(*shape));
             }
             {
@@ -158,7 +191,9 @@ bool Lowering::tryLowerAllocation(Node* node)
             results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewObjectLiteral, m_globalObject, scratchAddress(), m_out.constInt32(values.size()), slotAddress(slot))));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
-            setJSValue(node, m_out.phi(pointerType(), results));
+            LValue object = m_out.phi(pointerType(), results);
+            settleWhatWasBorn(object, layout, inSlotsOfLayout, values);
+            setJSValue(node, object);
             return true;
         }
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObject, m_globalObject, m_out.constInt32(node->as<OpNewObject>().m_inlineCapacity), slotAddress(allocateSlots(2))));
@@ -168,8 +203,12 @@ bool Lowering::tryLowerAllocation(Node* node)
         if (unsigned count = node->numberOfLiteralProperties) {
             // There is one of these to a class: worth spelling out. See generateFrontEndCreateThisWithProperties().
             Vector<LValue, 8> values;
-            for (unsigned i = 0; i < count; ++i)
+            Vector<Node*, 8> inSlotsOfLayout;
+            uint32_t layout = 0;
+            for (unsigned i = 0; i < count; ++i) {
                 values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
+                inSlotsOfLayout.append(node->use(NewObjectPlan::registerOf(i)));
+            }
             LValue callee = lowCell(node->use(bytecode.m_callee));
             unsigned slot = allocateSlots(3);
             {
@@ -190,6 +229,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                     noteShapeSite(shape.number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
                 }
                 countShape(shape.number ? Instance::ConstructedWithLayout : Instance::ConstructedWithout);
+                layout = shape.number;
                 if (std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
                     m_graph.noteShapeOfSite(slot, WTF::move(shape));
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
@@ -219,7 +259,9 @@ bool Lowering::tryLowerAllocation(Node* node)
             ValueFromBlock slowResult = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTCreateThisWithProperties, m_globalObject, callee, scratchAddress(), m_out.constInt32(count), slotAddress(slot)));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
-            setJSValue(node, m_out.phi(pointerType(), fastResult, slowResult));
+            LValue object = m_out.phi(pointerType(), fastResult, slowResult);
+            settleWhatWasBorn(object, layout, inSlotsOfLayout, values);
+            setJSValue(node, object);
             return true;
         }
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateThis, m_globalObject, lowCell(node->use(bytecode.m_callee)), m_out.constInt32(bytecode.m_inlineCapacity)));

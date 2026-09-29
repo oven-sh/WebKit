@@ -538,6 +538,17 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     return ReadonlyPropertyChangeError;
             }
 
+            bool slotSaysWhatItHolds = false;
+#if USE(BUN_JSC_ADDITIONS)
+            if (uint16_t bornAs = structure->bornAs(); bornAs && isInlineOffset(offset)) {
+                auto says = SlotsOfBornObjects::says(bornAs, offset, value);
+                if (says == SlotsOfBornObjects::Says::Refuses) [[unlikely]] {
+                    takeOutOfTheSlotItWasBornIn(vm, propertyName);
+                    return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+                }
+                slotSaysWhatItHolds = says == SlotsOfBornObjects::Says::Admits;
+            }
+#endif
             putDirectOffset(vm, offset, value);
             structure->didReplaceProperty(offset);
 
@@ -548,7 +559,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
                 if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
-            } else {
+            } else if (!slotSaysWhatItHolds) {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
                 slot.setExistingProperty(this, offset);
             }
@@ -597,6 +608,17 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (mode == PutModePut && (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor))
             return ReadonlyPropertyChangeError;
 
+        bool slotSaysWhatItHolds = false;
+#if USE(BUN_JSC_ADDITIONS)
+        if (uint16_t bornAs = structure->bornAs(); bornAs && isInlineOffset(offset)) {
+            auto says = SlotsOfBornObjects::says(bornAs, offset, value);
+            if (says == SlotsOfBornObjects::Says::Refuses) [[unlikely]] {
+                takeOutOfTheSlotItWasBornIn(vm, propertyName);
+                return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+            }
+            slotSaysWhatItHolds = says == SlotsOfBornObjects::Says::Admits;
+        }
+#endif
         structure->didReplaceProperty(offset);
         putDirectOffset(vm, offset, value);
 
@@ -609,7 +631,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
             if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
-        } else {
+        } else if (!slotSaysWhatItHolds) {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
             slot.setExistingProperty(this, offset);
         }

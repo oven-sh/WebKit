@@ -441,6 +441,73 @@ LValue Lowering::lowerCompare(Node* node, OpcodeID opcode, VirtualRegister lhs, 
     return m_out.phi(Int32, results);
 }
 
+std::optional<String> Lowering::stringWrittenInProgram(Node* node)
+{
+    if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
+        return std::nullopt;
+    JSValue constant = node->graph->codeBlock()->getConstant(node->reg);
+    if (!constant || !constant.isString())
+        return std::nullopt;
+    String said = asString(constant)->tryGetValue();
+    if (said.isNull() || !said.is8Bit() || said.length() > 40)
+        return std::nullopt;
+    return said;
+}
+
+// value === theString, which says that.
+LValue Lowering::isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String& said, LValue theString)
+{
+    LBasicBlock continuation = m_out.newBlock();
+    LBasicBlock slowCase = newColdBlock();
+    Vector<ValueFromBlock, 6> results;
+    auto isSettledIf = [&](LValue condition, bool answer, bool isLikely = false) {
+        LBasicBlock next = m_out.newBlock();
+        results.append(m_out.anchor(answer ? m_out.booleanTrue : m_out.booleanFalse));
+        m_out.branch(condition, isLikely ? usually(continuation) : unsure(continuation), unsure(next));
+        m_out.appendTo(next);
+    };
+    // (What the program spells out in two places is one string: NumbersOfConstants.)
+    isSettledIf(m_out.equal(value, theString), true);
+    if (!isSubtype(valueNode->type, TCell))
+        isSettledIf(isNotCell(value), false);
+    if (!isSubtype(valueNode->type, TString | ~TCell))
+        isSettledIf(m_out.notEqual(cellType(value), m_out.constInt32(StringType)), false);
+    LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
+    {
+        LBasicBlock next = m_out.newBlock();
+        m_out.branch(m_out.testNonZeroPtr(impl, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(slowCase), usually(next));
+        m_out.appendTo(next);
+    }
+    isSettledIf(m_out.notEqual(m_out.load32(impl, m_heaps.StringImpl_length), m_out.constInt32(said.length())), false, true);
+    {
+        LBasicBlock next = m_out.newBlock();
+        m_out.branch(m_out.testIsZero32(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), rarely(slowCase), usually(next));
+        m_out.appendTo(next);
+    }
+    LValue characters = m_out.loadPtr(impl, m_heaps.StringImpl_data);
+    auto span = said.span8();
+    LValue difference = m_out.int64Zero;
+    for (unsigned at = 0; at < span.size();) {
+        unsigned left = span.size() - at;
+        unsigned width = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
+        uint64_t expected = 0;
+        memcpy(&expected, span.data() + at, width);
+        TypedPointer address = m_out.address(m_heaps.characters8.atAnyIndex(), characters, at);
+        LValue loaded = width == 8 ? m_out.load64(address) : m_out.zeroExt(width == 4 ? m_out.load32(address) : width == 2 ? m_out.load16ZeroExt32(address) : m_out.load8ZeroExt32(address), Int64);
+        difference = m_out.bitOr(difference, m_out.bitXor(loaded, m_out.constInt64(expected)));
+        at += width;
+    }
+    results.append(m_out.anchor(m_out.isZero64(difference)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(slowCase);
+    results.append(m_out.anchor(m_out.notZero64(vmCall(comparison, Int64, Entry::operationAOTCompareStrictEq, m_globalObject, value, theString))));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return m_out.phi(Int32, results);
+}
+
 LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, VirtualRegister rhs)
 {
     Node* left = node->use(lhs);
@@ -469,6 +536,14 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
             return m_out.equal(a, b);
     } else if (isSubtype(both, TAnyObject | TSymbol) || isSubtype(both, TBoolean))
         return m_out.equal(a, b);
+
+    // (== of two strings is ===.)
+    if (Options::aotComparesWithStringsInPlace() && (strict || isSubtype(both, TString))) {
+        if (auto said = stringWrittenInProgram(right); said && (!isCompact() || isSubtype(left->type, TString | TOther)))
+            return isStringThatSays(node, left, a, *said, b);
+        if (auto said = stringWrittenInProgram(left); said && (!isCompact() || isSubtype(right->type, TString | TOther)))
+            return isStringThatSays(node, right, b, *said, a);
+    }
 
     if (isCompact()) {
         return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } },

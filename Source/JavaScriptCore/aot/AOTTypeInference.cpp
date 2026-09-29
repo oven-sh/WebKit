@@ -9,6 +9,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "AOTBuiltins.h"
+#include "AOTTypeTable.h"
 #include "ImmutableIntrinsics.h"
 #include "BytecodeStructs.h"
 #include "JSCInlines.h"
@@ -783,7 +784,29 @@ private:
             return TBoolean;
 
         case op_new_object:
+            if (Options::aotTypesFields() && node->numberOfLiteralProperties) {
+                if (auto shape = m_graph.shapeOfLiteral(node); shape && shape->number)
+                    return typeOfObjectBornAs(shape->number);
+            }
             return TFinalObject;
+        case op_get_by_id:
+            // What got past the guard is what the slot holds; or there is no such property.
+            if (Node* guard = node->guard; guard && guard->guardKind == GuardKind::Field && guard->heldKinds) {
+                if (!typeOf(node->as<OpGetById>().m_base))
+                    return TNone;
+                return TypeTable::Holds { guard->heldKinds, guard->heldFirst, guard->heldLast }.type() | (guard->firstWithout ? TUndefined : TNone);
+            }
+            // However it is read, it is that or the code does not go on (Lowering::lowerGetById()).
+            if (Options::aotTypesFields() && !Options::aotAssertsTypes() && (Options::aotShapes() & 2) && !node->guard && TypeTable::shared()) {
+                if (uint32_t tag = Graph::typeTagOf(node)) {
+                    if (auto field = TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); field && field->holds.saysSomething()) {
+                        if (!typeOf(node->as<OpGetById>().m_base))
+                            return TNone;
+                        return field->holds.kindsOnly().type();
+                    }
+                }
+            }
+            return TAll;
         case op_new_reg_exp:
         case op_new_reg_exp_shared:
             return TRegExp;

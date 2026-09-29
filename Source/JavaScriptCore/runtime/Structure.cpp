@@ -1227,6 +1227,37 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+const uint32_t* SlotsOfBornObjects::s_index;
+uint32_t SlotsOfBornObjects::s_count;
+const SlotsOfBornObjects::Held* SlotsOfBornObjects::s_held;
+uint64_t SlotsOfBornObjects::s_timesAdmitted;
+uint64_t SlotsOfBornObjects::s_timesRefused;
+
+void SlotsOfBornObjects::set(std::span<const uint32_t> index, const Held* held)
+{
+    RELEASE_ASSERT(!s_count);
+    s_index = index.data();
+    s_held = held;
+    WTF::storeStoreFence();
+    s_count = index.size();
+}
+
+bool SlotsOfBornObjects::admits(const Held& held, JSValue value)
+{
+    unsigned kinds = held.kinds;
+    if (held.first) {
+        if (value.isCell()) {
+            uint16_t bornAs = value.asCell()->structure()->bornAs();
+            if (bornAs >= held.first && bornAs <= held.last)
+                return true;
+        }
+        kinds &= ~SoundTypeOtherObject;
+        if (!kinds)
+            return false;
+    }
+    return soundTypeMaskAdmits(kinds, value);
+}
+
 void Structure::setKnownShape(VM& vm, uint16_t shape)
 {
     if (m_knownShape == shape)

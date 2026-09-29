@@ -7,6 +7,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTType.h"
 #include "Identifier.h"
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
@@ -38,12 +39,23 @@ public:
 
     // What is ever put in a slot, as far as whoever checked the types could tell.
     struct Holds {
-        static constexpr uint32_t anything = 1u << 30;
-        uint32_t kinds { anything }; // The bits of a check (SoundTypeMask).
-        // If it is an object that a literal or a constructor of the program makes: the layouts it may have been born as. 0, 0: any.
+        uint32_t kinds { 0 }; // The bits of a check (SoundTypeMaskBits). Zero: anything.
+        // If not zero: what the bit for other objects stands for is objects born as one of these layouts, and no others.
         uint16_t first { 0 };
         uint16_t last { 0 };
-        bool saysSomething() const { return !(kinds & anything); }
+        bool saysSomething() const { return kinds; }
+        unsigned kindsButForThoseBorn() const { return first ? kinds & ~MaskOtherObject : kinds; }
+        Holds kindsOnly() const { return { kinds, 0, 0 }; }
+        // What is read from such a slot, if anything is there.
+        Type type() const
+        {
+            if (!kinds)
+                return TTop;
+            Type result = typeAdmittedByMask(kindsButForThoseBorn());
+            if (first)
+                result |= typeOfObjectBornWithin(first, last);
+            return result;
+        }
     };
 
     struct Field {
@@ -69,6 +81,7 @@ public:
     // Of a type that says what a literal is made as.
     std::optional<Layout> layoutOf(uint32_t type) const;
     unsigned numberOfLayouts() const { return m_layouts.size() - 1; }
+    Vector<Holds, 8> holdsOfSlots(uint32_t layout) const; // By slot.
     // TEMPORARY-SHAPE-COUNTS: why nothing is made of an access that has this for a type, as a number. Zero: nothing is said.
     unsigned reasonOf(uint32_t type) const
     {

@@ -265,7 +265,12 @@ void Lowering::lowerCatch(Node* node)
 
 void Lowering::emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled)
 {
-    Type candidates = value->type & typeProvingMask(mask);
+    emitTypeTests(nullptr, value->type, jsValue, mask, passed, notSettled);
+}
+
+void Lowering::emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled)
+{
+    Type candidates = typeOfValue & typeProvingMask(mask);
     auto passIf = [&](LValue condition) {
         LBasicBlock next = m_out.newBlock();
         m_out.branch(condition, unsure(passed), unsure(next));
@@ -281,15 +286,15 @@ void Lowering::emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicB
         passIf(m_out.equal(jsValue, m_out.constInt64(JSValue::ValueNull)));
     if (mayBe(candidates, TBoolean))
         passIf(isBoolean(jsValue));
-    if (mayBe(value->type & typeAdmittedByMask(mask), TCell)) {
-        if (!isSubtype(value->type, TCell)) {
+    if (mayBe(typeOfValue & typeAdmittedByMask(mask), TCell)) {
+        if (!isSubtype(typeOfValue, TCell)) {
             LBasicBlock cellCase = m_out.newBlock();
             m_out.branch(isCell(jsValue), unsure(cellCase), rarely(notSettled));
             m_out.appendTo(cellCase);
         }
         LValue type = cellType(jsValue);
         auto isType = [&](JSType jsType) { return m_out.equal(type, m_out.constInt32(jsType)); };
-        if (isSubtype(TAnyObject & value->type, candidates) && mayBe(candidates, TAnyObject))
+        if (isSubtype(TAnyObject & typeOfValue, candidates) && mayBe(candidates, TAnyObject))
             passIf(m_out.aboveOrEqual(type, m_out.constInt32(ObjectType)));
         else {
             if (mayBe(candidates, TFinalObject))

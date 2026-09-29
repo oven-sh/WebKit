@@ -144,6 +144,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotDumpGraph, false, Normal, "Dump the static compiler's IR."_s) \
     v(Bool, aotDumpB3, false, Normal, "Dump the B3 the static compiler produces."_s) \
     v(Bool, aotDumpDisassembly, false, Normal, "Dump the machine code the static compiler produces."_s) \
+    v(OptionString, aotWritesMap, nullptr, Normal, "When compiling: a file to write what is where in the image to (functions, the calls of stubs in them, and what was known at each place in the bytecode), for making sense of a profile."_s) \
     v(Bool, aotReportStats, false, Normal, "At exit, report how many functions the static compiler compiled and the reasons it declined the others."_s) \
     v(Bool, aotForceVeneers, false, Normal, "In an image, make every direct call from one function to another the way one that is out of reach is made. For testing."_s) \
     v(OptionString, aotFilter, nullptr, Normal, "Only functions whose name contains this string are compiled by the static compiler."_s) \
@@ -171,6 +172,9 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, aotTypeTable, nullptr, Normal, "When compiling: the types of the program (AOT::TypeTable), which its text refers to by number (useTypeTags)."_s) \
     v(Unsigned, aotShapes, 15, Normal, "What is made of the shapes in the table of types. 1: literals are laid out as it says. 2: reads go by it. 4: so do writes. 8: what a layout is known not to have is undefined."_s) \
     v(Bool, aotAssertsTypes, false, Normal, "When compiling: there are two copies of a function that gets at properties through types. In the first, what an object was born as is tested once, and from then on it is known; whatever does not pass goes on in the other copy, which takes nothing for granted, and stays there."_s) \
+    v(Bool, aotTypesFields, false, Normal, "What is read through a type is of the kind the table of types gives the field. From a slot of an object that was born with one, that is so because whatever is stored there is looked at first, by everybody (SlotsOfBornObjects). From anything else it is read the long way, and looked at: if it is something else, that is a TypeError, as where a parameter is. There is one copy of the code. (With aotAssertsTypes: two, and the second is where it goes on instead.)"_s) \
+    v(Bool, aotSpellsOutFirstCopies, true, Normal, "aotAssertsTypes: in the first copy of a function that has two, what is short is done on the spot, as in a loop, and not by a stub."_s) \
+    v(Bool, aotComparesWithStringsInPlace, true, Normal, "x === 'text': the length and the characters are compared where the comparison is, with what the program says they are."_s) \
     v(Unsigned, aotAssertsTypesIfAccesses, 1, Normal, "...if it has at least so many such accesses."_s) \
     v(Bool, aotFollowsFunctions, true, Normal, "When compiling: which function a value is is part of its type, and is followed wherever it goes. A function that gets nowhere that is not reckoned with is only called by calls that are known."_s) \
     v(Bool, aotInlines, true, Normal, "A call of a function that is proven to be the callee is replaced by what the function does, if that is little or if it is the only call there is."_s) \

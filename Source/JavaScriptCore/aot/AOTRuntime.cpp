@@ -1351,10 +1351,17 @@ void Instance::dumpSlotStatistics(PrintStream& out)
     for (unsigned i = 0; i < numberOfBuckets; ++i)
         out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
     {
-        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s, "assertion made"_s, "access served with no assertion"_s, "exit taken"_s, "assertion of what had passed the same before"_s };
+        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s, "assertion made"_s, "access served with no assertion"_s, "exit taken"_s, "assertion of what had passed the same before"_s, "taken out of its slot at birth"_s, "exit: the base is no cell"_s, "exit: the base is no plain object"_s, "exit: the base was never given a layout, and has room"_s, "exit: the base was never given a layout, and has no room"_s, "exit: the base was born as something else"_s, "exit: nothing is in the slot"_s, "exit: something else"_s };
+        static_assert(std::size(names) == NumberOfShapeCounts);
         for (unsigned i = 0; i < NumberOfShapeCounts; ++i) {
             if (shapeCounts[i])
                 out.println("SHAPECOUNT\t", shapeCounts[i], "\t", names[i]);
+        }
+        out.println("SHAPECOUNT\t", SlotsOfBornObjects::s_timesAdmitted, "\tstore looked at the long way, and let in");
+        out.println("SHAPECOUNT\t", SlotsOfBornObjects::s_timesRefused, "\tstore looked at the long way, and the property taken out of its slot");
+        for (unsigned i = 0; i < numberOfCountsOfSites; ++i) {
+            if (countsOfSites[i])
+                out.println("SHAPECOUNT\t", countsOfSites[i], "\tsitekind ", i);
         }
         for (unsigned i = 0; i < 1024; ++i) {
             if (readsForReason[i])

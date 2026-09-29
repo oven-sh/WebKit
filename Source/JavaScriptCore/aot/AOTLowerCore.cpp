@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTLowering.h"
 
+#include "AOTCompiler.h"
+
 #if ENABLE(FTL_JIT)
 
 #include "AirCode.h"
@@ -873,6 +875,39 @@ LValue Lowering::toBoolean(Node* node)
         return m_out.booleanFalse;
     if (isSubtype(node->type, TBoolean | TOther))
         return m_out.equal(value, m_out.constInt64(JSValue::ValueTrue));
+    // Of these, what is not a cell is true if it is `true`; and a cell is, unless it is a string that says nothing. (An object of a kind of its own may pass for undefined.)
+    if (isSubtype(node->type, TBoolean | TOther | TString | TSymbol | ((TAnyObject) & ~TOtherObject))) {
+        if (!mayBe(node->type, TString) && !mayBe(node->type, TBoolean))
+            return isSubtype(node->type, TCell) ? m_out.booleanTrue : isCell(value);
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 4> results;
+        if (!isSubtype(node->type, TCell)) {
+            results.append(m_out.anchor(m_out.equal(value, m_out.constInt64(JSValue::ValueTrue))));
+            m_out.branch(isCell(value), unsure(cellCase), unsure(continuation));
+        } else
+            m_out.jump(cellCase);
+        m_out.appendTo(cellCase);
+        if (mayBe(node->type, TString)) {
+            if (!isSubtype(node->type & TCell, TString)) {
+                LBasicBlock stringCase = m_out.newBlock();
+                results.append(m_out.anchor(m_out.booleanTrue));
+                m_out.branch(isCellOfType(value, StringType), unsure(stringCase), unsure(continuation));
+                m_out.appendTo(stringCase);
+            }
+            // (A rope says something.)
+            LBasicBlock notRope = m_out.newBlock();
+            LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
+            results.append(m_out.anchor(m_out.booleanTrue));
+            m_out.branch(m_out.testNonZeroPtr(impl, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(continuation), usually(notRope));
+            m_out.appendTo(notRope);
+            results.append(m_out.anchor(m_out.notZero32(m_out.load32(impl, m_heaps.StringImpl_length))));
+        } else
+            results.append(m_out.anchor(m_out.booleanTrue));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return m_out.phi(Int32, results);
+    }
     if (isCompact())
         return callStub(Stub::ToBoolean, Int32, { { value, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
 
@@ -1066,6 +1101,11 @@ void Lowering::lowerNode(Node* node)
 
 void Lowering::lowerBytecode(Node* node)
 {
+    // TEMPORARY-SITE-COUNTS
+    if (Options::aotCountsAllocations()) [[unlikely]] {
+        TypedPointer count = m_out.address(m_heaps.root, m_instance, Instance::offsetOfCountsOfSites() + kindOfSite(node, isCompact()) * sizeof(uint64_t));
+        m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
+    }
     if (node->guard && node->guard->isHandled) {
         lowerGuarded(node);
         return;

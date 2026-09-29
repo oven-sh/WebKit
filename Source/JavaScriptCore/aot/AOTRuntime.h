@@ -425,9 +425,12 @@ struct Instance {
     uint64_t allocationCounts[numberOfAllocationCounts] { };
     static constexpr ptrdiff_t offsetOfAllocationCounts() { return OBJECT_OFFSETOF(Instance, allocationCounts); }
     // TEMPORARY-SHAPE-COUNTS: likewise. What became of the accesses that go by a type.
-    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, AssertionMade, ServedWithoutAssertion, ExitTaken, AssertionRepeated, NumberOfShapeCounts };
+    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, AssertionMade, ServedWithoutAssertion, ExitTaken, AssertionRepeated, TakenOutAtBirth, ExitBaseIsNoCell, ExitBaseIsNoPlainObject, ExitBaseWasNeverBorn, ExitBaseWasNeverBornAndHasNoRoom, ExitBaseWasBornOtherwise, ExitSlotIsEmpty, ExitOther, NumberOfShapeCounts };
     uint64_t shapeCounts[NumberOfShapeCounts] { };
     uint64_t readsForReason[1024] { };
+    static constexpr unsigned numberOfCountsOfSites = 8192; // TEMPORARY-SITE-COUNTS: kindOfSite()
+    uint64_t countsOfSites[numberOfCountsOfSites] { };
+    static constexpr ptrdiff_t offsetOfCountsOfSites() { return OBJECT_OFFSETOF(Instance, countsOfSites); }
     static constexpr ptrdiff_t offsetOfReadsForReason() { return OBJECT_OFFSETOF(Instance, readsForReason); }
     static constexpr ptrdiff_t offsetOfShapeCounts() { return OBJECT_OFFSETOF(Instance, shapeCounts); }
     const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
@@ -626,6 +629,7 @@ struct CompiledFunctionInfo {
     Vector<Quote> quotes; // And what it says at each that it says anything at, for a program that goes without its text (collectQuotes()).
     Vector<UniquedStringImpl*> selectors;
     Vector<KnownShape> shapes;
+    Vector<std::pair<uint32_t, CString>> notesOfSites; // Options::aotWritesMap()
 };
 
 struct ImageCatchEntrypoint {

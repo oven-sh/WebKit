@@ -168,6 +168,14 @@ private:
     // Which layout the cell is of (Structure::knownShape()), and whether that is one of first to last.
     LValue layoutOf(LValue cell);
     LValue layoutBornAs(LValue cell); // Structure::bornAs()
+    LValue layoutBornAsOrNone(Node*, LValue);
+    UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_layoutsBornAs; // What that gave, and in which block.
+    void branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds, LBasicBlock otherwise);
+    // What the node is, if it is a string that the program spells out, of characters that take a byte each.
+    static std::optional<String> stringWrittenInProgram(Node*);
+    LValue isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
+    // Options::aotTypesFields(): what has just been made as that layout, with those in its slots (null: nothing), is left with nothing in a slot that the slot does not hold.
+    void settleWhatWasBorn(LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values);
     void guardField(Node* guard);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
@@ -222,7 +230,7 @@ private:
     // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
     // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
-    bool isCompact() const { return (!m_block->isInLoop && !m_graph.callsItself) || m_block->isGeneric; }
+    bool isCompact() const { return (!m_block->isInLoop && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     bool isFusedWithGetFromScope(Node*);
     // A slot that a stub can be told about.
@@ -291,6 +299,7 @@ private:
     bool guardCall(Node*);
     // Goes to passed if the value is of a type that is certain to get past the check, and to the other block if not.
     void emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled);
+    void emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled);
 
     // AOTLowerObjects.cpp
     bool tryLowerObjects(Node*);

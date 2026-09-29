@@ -39,8 +39,11 @@ void Lowering::lowerGuard(BasicBlock* block, Node* guard)
 
     // What the generic copy wants boxed is boxed on the way there.
     m_out.appendTo(m_exit);
-    if (guard->guardKind == GuardKind::Field)
+    if (guard->guardKind == GuardKind::Field) {
         countShape(Instance::ExitTaken);
+        if (Options::aotCountsAllocations()) [[unlikely]]
+            plainCall(Void, Entry::operationAOTNoteExit, m_instance, lowJSValue(guard->use(guard->opcode == op_get_by_id ? guard->as<OpGetById>().m_base : guard->as<OpPutById>().m_base)), m_out.constInt32(guard->firstLayout << 16 | guard->lastLayout), m_out.constInt32(guard->slotOfField));
+    }
     emitUpsilons(block, block->successors[1]);
     m_out.jump(block->successors[1]->lowered);
     m_exit = nullptr;
@@ -398,19 +401,73 @@ void Lowering::guardGetById(Node* guard)
     guard->lowered = m_out.phi(Int64, plainResult, intricateResult);
 }
 
+// Goes on if the value is what the slot holds, and to `otherwise` if it is not, or if that is not plain.
+void Lowering::branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds holds, LBasicBlock otherwise)
+{
+    if (!holds.saysSomething())
+        return;
+    unsigned kinds = holds.kindsButForThoseBorn();
+    Type rest = valueNode->type & ~typeProvingMask(kinds);
+    if (!rest)
+        return;
+    bool restIsBornRight = holds.first && isSubtype(rest, TCell) && valueNode->isBornWithinIfCell(holds.first, holds.last);
+    if (restIsBornRight && isSubtype(valueNode->type & TCell, rest))
+        return;
+    LBasicBlock held = m_out.newBlock();
+    LBasicBlock notSettled = m_out.newBlock();
+    if (kinds)
+        emitTypeTests(valueNode, value, kinds, held, notSettled);
+    else
+        m_out.jump(notSettled);
+    m_out.appendTo(notSettled);
+    if (holds.first && mayBe(valueNode->type, TFinalObject)) {
+        if (!isSubtype(valueNode->type, TCell)) {
+            LBasicBlock cellCase = m_out.newBlock();
+            m_out.branch(isCell(value), usually(cellCase), rarely(otherwise));
+            m_out.appendTo(cellCase);
+        }
+        m_out.branch(isOneOf(layoutBornAs(value), holds.first, holds.last), usually(held), rarely(otherwise));
+    } else
+        m_out.jump(otherwise);
+    m_out.appendTo(held);
+}
+
 void Lowering::guardField(Node* guard)
 {
     bool isRead = guard->opcode == op_get_by_id;
     Node* baseNode = guard->use(isRead ? guard->as<OpGetById>().m_base : guard->as<OpPutById>().m_base);
     LValue base = lowJSValue(baseNode);
+    LBasicBlock has = nullptr;
+    LBasicBlock done = nullptr;
+    std::optional<ValueFromBlock> thereIsNone;
     if (!baseNode->isKnownToBeBornWithin(guard->firstLayout, guard->lastLayout)) {
-        noteShapeSite(Instance::AssertionMade);
-        countShape(Instance::AssertionMade);
-        if (Options::aotCountsAllocations()) [[unlikely]]
-            plainCall(Void, Entry::operationAOTNoteAssertion, m_instance, base, m_out.constInt32(guard->firstLayout << 16 | guard->lastLayout));
         if (!isSubtype(baseNode->type, TCell))
             exitUnless(isCell(base));
-        exitUnless(isOneOf(layoutBornAs(base), guard->firstLayout, guard->lastLayout));
+        if (!baseNode->isBornWithinIfCell(guard->firstLayout, guard->lastLayout)) {
+            noteShapeSite(Instance::AssertionMade);
+            countShape(Instance::AssertionMade);
+            if (Options::aotCountsAllocations()) [[unlikely]]
+                plainCall(Void, Entry::operationAOTNoteAssertion, m_instance, base, m_out.constInt32(guard->firstLayout << 16 | guard->lastLayout));
+            LValue isOneThatHasIt = isOneOf(layoutBornAs(base), guard->firstLayout, guard->lastLayout);
+            if (!guard->firstWithout)
+                exitUnless(isOneThatHasIt);
+            else {
+                // That it has no such property, and inherits none, goes for what it is now. (TypeTable::fieldOf() has seen to what Object.prototype has.)
+                has = m_out.newBlock();
+                done = m_out.newBlock();
+                LBasicBlock mayHaveNone = m_out.newBlock();
+                m_out.branch(isOneThatHasIt, usually(has), unsure(mayHaveNone));
+                m_out.appendTo(mayHaveNone);
+                exitUnless(isOneOf(layoutOf(base), guard->firstWithout, guard->lastWithout));
+                countShape(Instance::ReadLacks);
+                thereIsNone = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
+                m_out.jump(done);
+                m_out.appendTo(has);
+            }
+        } else {
+            noteShapeSite(Instance::ServedWithoutAssertion);
+            countShape(Instance::ServedWithoutAssertion);
+        }
     } else {
         noteShapeSite(Instance::ServedWithoutAssertion);
         countShape(Instance::ServedWithoutAssertion);
@@ -421,13 +478,21 @@ void Lowering::guardField(Node* guard)
     LValue whatIsThere = m_out.load64(slot);
     exitUnless(m_out.notZero64(whatIsThere));
     if (isRead) {
+        if (done) {
+            ValueFromBlock found = m_out.anchor(whatIsThere);
+            m_out.jump(done);
+            m_out.appendTo(done);
+            whatIsThere = m_out.phi(Int64, found, *thereIsNone);
+        }
         guard->lowered = whatIsThere;
         return;
     }
     // That it can be written is a matter of what the object is now.
     exitUnless(m_out.testIsZero32(m_out.load32(m_out.address(m_heaps.root, structureOf(base), Structure::bitFieldOffset())), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
     Node* valueNode = guard->use(guard->as<OpPutById>().m_value);
-    m_out.store64(lowJSValue(valueNode), slot);
+    LValue value = lowJSValue(valueNode);
+    branchUnlessHeld(valueNode, value, { guard->heldKinds, guard->heldFirst, guard->heldLast }, m_exit);
+    m_out.store64(value, slot);
     if (mayBe(valueNode->type, TCell))
         storeBarrier(base);
 }

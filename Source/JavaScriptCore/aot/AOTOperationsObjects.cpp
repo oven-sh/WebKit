@@ -519,6 +519,30 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteAssertion, void, (Instance* in
         instance->shapeCounts[Instance::AssertionRepeated]++;
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteExit, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t layouts, uint32_t slot))
+{
+    JSValue base = JSValue::decode(encodedBase);
+    auto count = [&](Instance::ShapeCount which) { instance->shapeCounts[which]++; };
+    if (!base || !base.isCell())
+        return count(Instance::ExitBaseIsNoCell);
+    if (base.asCell()->type() != FinalObjectType)
+        return count(Instance::ExitBaseIsNoPlainObject);
+    Structure* structure = base.asCell()->structure();
+    uint16_t bornAs = structure->bornAs();
+    if (!bornAs)
+        return count(structure->inlineCapacity() > slot && !structure->outOfLineCapacity() ? Instance::ExitBaseWasNeverBorn : Instance::ExitBaseWasNeverBornAndHasNoRoom);
+    if (bornAs < (layouts >> 16) || bornAs > (layouts & 0xffff))
+        return count(Instance::ExitBaseWasBornOtherwise);
+    if (!asObject(base)->getDirect(slot))
+        return count(Instance::ExitSlotIsEmpty);
+    count(Instance::ExitOther);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSettleWhatWasBorn, void, (Instance* instance, JSObject* object))
+{
+    instance->shapeCounts[Instance::TakenOutAtBirth] += object->takeOutWhatItsSlotsDoNotHold(*instance->vm);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance* instance, uint32_t which))
 {
     EncodedJSValue result = JSValue::encode(instance->globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(which)));

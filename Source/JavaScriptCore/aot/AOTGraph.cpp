@@ -2197,6 +2197,25 @@ private:
         return TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
     }
 
+    // Options::aotTypesFields() with one copy of the code: an access that goes by the type of the base does so in a loop as anywhere else, and wants no guard.
+    bool goesByTypeWhereverItIs(unsigned offset)
+    {
+        if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::shared())
+            return false;
+        uint32_t tag = m_graph.typeTagAt(offset);
+        if (!tag)
+            return false;
+        const JSInstruction* instruction = m_instructions.at(offset).ptr();
+        unsigned identifier;
+        if (instruction->opcodeID() == op_get_by_id && (Options::aotShapes() & 2))
+            identifier = instruction->as<OpGetById>().m_property;
+        else if (instruction->opcodeID() == op_put_by_id && (Options::aotShapes() & 4))
+            identifier = instruction->as<OpPutById>().m_property;
+        else
+            return false;
+        return !!TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
+    }
+
     // With the blocks and the loops known: where the guards go. False if nowhere.
     bool chooseGuards()
     {
@@ -2226,6 +2245,7 @@ private:
                 fieldAccesses.clearAll();
         }
         bool hasTwoCopiesOfAll = !fieldAccesses.isEmpty();
+        m_graph.hasTwoCopiesOfAll = hasTwoCopiesOfAll;
         struct OfBlock {
             Vector<unsigned, 8> guards;
             bool hasWhatIsBetterInFastCopy { false };
@@ -2273,7 +2293,7 @@ private:
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     }
                 }
-                bool isGuarded = canBeGuarded(instruction);
+                bool isGuarded = canBeGuarded(instruction) && !goesByTypeWhereverItIs(offset);
                 if (isGuarded)
                     ofBlock.guards.append(offset);
                 OpcodeID opcode = instruction->opcodeID();
@@ -3027,9 +3047,10 @@ private:
                 narrow->reg = baseRegister;
                 narrow->bytecodeIndex = BytecodeIndex(offset);
                 narrow->uses.append({ VirtualRegister(), base });
-                narrow->narrowedTo = typeOfObjectBornWithin(guard->firstLayout, guard->lastLayout);
-                narrow->firstLayout = guard->firstLayout;
-                narrow->lastLayout = guard->lastLayout;
+                // (One that has no such property gets past it too.)
+                narrow->firstLayout = guard->firstWithout ? std::min(guard->firstLayout, guard->firstWithout) : guard->firstLayout;
+                narrow->lastLayout = std::max(guard->lastLayout, guard->lastWithout);
+                narrow->narrowedTo = typeOfObjectBornWithin(narrow->firstLayout, narrow->lastLayout);
                 append(block, narrow);
                 for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
                     if (block->valuesAtTail[index] == base && !m_graph.m_homed.get(index))
@@ -3144,6 +3165,15 @@ private:
                 guard->slotOfField = field->slot;
                 guard->firstLayout = field->first;
                 guard->lastLayout = field->last;
+                if (guard->opcode == op_get_by_id && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics()) {
+                    guard->firstWithout = field->firstWithout;
+                    guard->lastWithout = field->lastWithout;
+                }
+                if (Options::aotTypesFields() && field->holds.saysSomething()) {
+                    guard->heldKinds = safeCast<uint16_t>(field->holds.kinds);
+                    guard->heldFirst = field->holds.first;
+                    guard->heldLast = field->holds.last;
+                }
             }
             append(block, guard);
             return;

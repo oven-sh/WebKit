@@ -220,19 +220,38 @@ struct Node {
     uint16_t slotOfField { 0 }; // GuardKind::Field
     uint16_t firstLayout { 0 }; // Likewise, and the Narrow that comes after it.
     uint16_t lastLayout { 0 };
+    // GuardKind::Field, of a read: layouts that have no such property, of which it is undefined. 0, 0: none.
+    uint16_t firstWithout { 0 };
+    uint16_t lastWithout { 0 };
+    // GuardKind::Field, with Options::aotTypesFields(): what the slot holds (TypeTable::Holds). No kinds: anything.
+    uint16_t heldKinds { 0 };
+    uint16_t heldFirst { 0 };
+    uint16_t heldLast { 0 };
     // Whether the value is certain to have been born as one of those: by its type, or because it is what got past a test for no more than those.
     bool isKnownToBeBornWithin(uint16_t first, uint16_t last) const
     {
-        if (type && isSubtype(type, TFinalObject)) {
-            auto layouts = layoutsBornAs(type);
-            if (layouts.lowest >= first && layouts.highest <= last)
-                return true;
-        }
         for (const Node* node = this; node->kind == NodeKind::Narrow && node->narrowedTo; node = node->uses[0].node) {
             if (node->firstLayout >= first && node->lastLayout <= last)
                 return true;
         }
-        return false;
+        return type && isSubtype(type, TCell) && isBornWithinIfCell(first, last);
+    }
+    // Likewise, if it is a cell at all: it may be undefined, or null, or a number.
+    bool isBornWithinIfCell(uint16_t first, uint16_t last) const
+    {
+        if (Type cells = type & TCell; cells && isSubtype(cells, TFinalObject)) {
+            auto layouts = layoutsBornAs(cells);
+            if (layouts.lowest >= first && layouts.highest <= last)
+                return true;
+        }
+        // What was read from a slot says exactly. (A type says what the numbers have in common.)
+        const Node* node = this;
+        while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz))
+            node = node->uses[0].node;
+        if (node->kind != NodeKind::Bytecode || !node->guard || node->guard->guardKind != GuardKind::Field || !node->guard->heldFirst)
+            return false;
+        constexpr unsigned notCells = MaskUndefined | MaskNull | MaskBoolean | MaskNumber;
+        return !(node->guard->heldKinds & ~(notCells | MaskOtherObject)) && node->guard->heldFirst >= first && node->guard->heldLast <= last;
     }
     unsigned expectedMask { 0 }; // op_get_by_val: the mask of the op_check_type that what it gets goes to next, if it does.
     GuardKind guardKind { GuardKind::Whole };
@@ -508,6 +527,7 @@ public:
     // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
     void elideReadsOfCalleesNotPassed();
     void findDirectMethods(); // Node::directMethod. Once the types are known.
+    bool hasTwoCopiesOfAll { false }; // Options::aotAssertsTypes(): not just of its loops.
     // See ProgramFacts.
     void noteUsesOfProvenFunctions(const FactsOfExecutables&);
     // f(a, ...b), f.apply(o, arguments): what the callee is passed is put together from where it is (Stub::CallVarargs, Stub::CallList).

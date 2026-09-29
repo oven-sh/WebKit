@@ -200,6 +200,54 @@ private:
     const Structure* m_structure;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// What each slot of an object that was born with a layout holds (Structure::bornAs()), as the program's types have it. It is part of the program: there is one
+// for the process, nothing ever writes to it, and there is none unless the program was compiled to go by it.
+struct SlotsOfBornObjects {
+    struct Held {
+        uint16_t kinds; // The bits of a check (soundTypeTag()). Zero: anything.
+        // If not zero: what the bit for other objects stands for is objects born as one of these, and no others.
+        uint16_t first;
+        uint16_t last;
+        uint16_t unused;
+    };
+    enum class Says : uint8_t { Nothing, Admits, Refuses };
+
+    JS_EXPORT_PRIVATE static void set(std::span<const uint32_t> index, const Held*);
+    static bool areThere() { return s_count; }
+    // Of a slot in the object itself.
+    static const Held* heldIn(uint16_t bornAs, unsigned slot)
+    {
+        if (bornAs >= s_count)
+            return nullptr;
+        uint32_t word = s_index[bornAs];
+        if (slot >= (word & 0xff))
+            return nullptr;
+        const Held& held = s_held[(word >> 8) + slot];
+        return held.kinds ? &held : nullptr;
+    }
+    static unsigned numberOfSlots(uint16_t bornAs) { return bornAs < s_count ? s_index[bornAs] & 0xff : 0; }
+    JS_EXPORT_PRIVATE static bool admits(const Held&, JSValue);
+    static Says says(uint16_t bornAs, unsigned slot, JSValue value)
+    {
+        const Held* held = heldIn(bornAs, slot);
+        if (!held)
+            return Says::Nothing;
+        bool isAdmitted = admits(*held, value);
+        (isAdmitted ? s_timesAdmitted : s_timesRefused)++;
+        return isAdmitted ? Says::Admits : Says::Refuses;
+    }
+    // TEMPORARY-SHAPE-COUNTS: stores that were looked at by whoever does not know the types.
+    JS_EXPORT_PRIVATE static uint64_t s_timesAdmitted;
+    JS_EXPORT_PRIVATE static uint64_t s_timesRefused;
+
+private:
+    JS_EXPORT_PRIVATE static const uint32_t* s_index; // By layout: where its slots start among s_held << 8 | how many it has.
+    JS_EXPORT_PRIVATE static uint32_t s_count;
+    JS_EXPORT_PRIVATE static const Held* s_held;
+};
+#endif
+
 class Structure : public JSCell {
     static constexpr uint16_t shortInvalidOffset = std::numeric_limits<uint16_t>::max() - 1;
     static constexpr uint16_t useRareDataFlag = std::numeric_limits<uint16_t>::max();
@@ -360,6 +408,9 @@ public:
     //   - a property that is made into an accessor is taken out and put back (JSObject::takeOutOfTheSlotItWasBornIn());
     //   - nothing is moved when a dictionary is flattened.
     // So code that has once seen what an object was born as can go by that for as long as it has the object.
+    // And, where the program was compiled with types for its fields (SlotsOfBornObjects), that what is in such a slot is what the slot is said to hold:
+    //   - whoever puts something else there finds the property taken out of the slot first (JSObject::putDirectInternal()), and
+    //   - nobody remembers how to store to such a slot without asking (the PutPropertySlot is left as it was: not for caching).
     uint16_t bornAs() const { return m_bornAs; }
     void setBornAs(uint16_t layout) { m_bornAs = layout; }
     // Of an uncacheable dictionary: the property, which is in the object itself, is out of it from now on. func: as for adding one, with where it is to be.
