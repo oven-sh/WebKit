@@ -335,8 +335,6 @@ std::optional<ByteVector> encodeCharmap(JSGlobalObject*, JSValue string, JSValue
 JSValue buildEncodingMap(JSGlobalObject*, JSValue string); // PyUnicode_BuildEncodingMap()
 
 // The name of a character, and the character of a name, as unicodedata has them. Null, and nothing, if there is none.
-String nameOfCharacter(char32_t);
-std::optional<char32_t> characterNamed(std::span<const uint8_t> name);
 
 // ---- The registry: Python/codecs.c
 

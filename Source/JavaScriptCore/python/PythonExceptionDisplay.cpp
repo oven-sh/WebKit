@@ -30,8 +30,8 @@
 #include "PythonParser.h"
 #include "PythonSignatures.h"
 #include "PythonSyntaxTreeSource.h"
+#include "PythonUnicodeData.h"
 #include "TopExceptionScope.h"
-#include <unicode/uchar.h>
 #include <wtf/text/StringBuilder.h>
 
 // What is printed when an exception gets away. It is TracebackException, StackSummary and what they use, of CPython's Lib/traceback.py, function for function, which is what CPython prints
@@ -136,10 +136,8 @@ size_t displayWidth(const Line& line, std::optional<size_t> offset = std::nullop
     if (std::ranges::all_of(line, [] (char32_t character) { return character < 0x80; }))
         return offset.value_or(line.size());
     size_t width = 0;
-    for (size_t i = 0; i < count; ++i) {
-        auto kind = u_getIntPropertyValue(line[i], UCHAR_EAST_ASIAN_WIDTH);
-        width += kind == U_EA_WIDE || kind == U_EA_FULLWIDTH ? 2 : 1;
-    }
+    for (size_t i = 0; i < count; ++i)
+        width += Unicode::isWide(line[i]) ? 2 : 1;
     return width;
 }
 

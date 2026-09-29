@@ -84,15 +84,15 @@ static constexpr int64_t center = (blockLength - 1) / 2;
 // sizeof(block) in CPython, for __sizeof__().
 static constexpr int64_t sizeOfBlock = (blockLength + 2) * 8;
 
-struct Block final : NativeState {
-    PYTHON_NATIVE_STATE(Block);
+struct DequeBlock final : NativeState {
+    PYTHON_NATIVE_STATE(DequeBlock);
     WriteBarrier<PyStateObject> leftLink;
     WriteBarrier<PyStateObject> rightLink;
     std::array<WriteBarrier<Unknown>, blockLength> data;
 };
 
 template<typename Visitor>
-void Block::visit(Visitor& visitor)
+void DequeBlock::visit(Visitor& visitor)
 {
     visitor.append(leftLink);
     visitor.append(rightLink);
@@ -100,7 +100,7 @@ void Block::visit(Visitor& visitor)
         visitor.append(item);
 }
 
-Block& fieldsOf(PyStateObject* block) { return block->state<Block>(); }
+DequeBlock& fieldsOf(PyStateObject* block) { return block->state<DequeBlock>(); }
 
 struct DequeState final : NativeState {
     PYTHON_NATIVE_STATE(DequeState);
@@ -124,7 +124,7 @@ DequeState& dequeOf(JSValue value) { return stateOf<DequeState>(value); }
 
 PyStateObject* newBlock(JSGlobalObject* globalObject)
 {
-    return PyStateObject::create(globalObject->vm(), collectionsState(globalObject).blockStructure.get(), makeUnique<Block>());
+    return PyStateObject::create(globalObject->vm(), collectionsState(globalObject).blockStructure.get(), makeUnique<DequeBlock>());
 }
 
 // deque_new()

@@ -758,6 +758,7 @@ python/PythonAtExitModule.cpp
 python/PythonBuiltinFunctions.cpp
 python/PythonBuiltinTypes.cpp
 python/PythonBytes.cpp
+python/PythonCapsule.cpp
 python/PythonCharacters.cpp
 python/PythonClasses.cpp
 python/PythonCode.cpp
@@ -825,6 +826,7 @@ python/PythonSysModule.cpp
 python/PythonTemplateStrings.cpp
 python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp
+python/PythonUnicodeData.cpp
 python/PythonUnicodeType.cpp
 python/PythonSyntaxTreeSource.cpp
 python/PythonSyntaxWarnings.cpp

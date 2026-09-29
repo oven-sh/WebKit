@@ -193,9 +193,12 @@ JSObject* createRandomModule(JSGlobalObject*);
 JSObject* createSREModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);
 JSObject* createStructModule(JSGlobalObject*);
+JSObject* createUnicodeDataModule(JSGlobalObject*);
 JSObject* createTokenizeModule(JSGlobalObject*);
 JSValue getObjectState(JSGlobalObject*, JSValue); // _PyObject_GetState()
 // {Py_tp_getattro, PyObject_GenericGetAttr}: the class has a __getattribute__ in its own name, which does what object's does.
+// PyCapsule_New(), with no pointer in it
+JSValue newCapsule(JSGlobalObject*, ASCIILiteral name);
 void addGenericGetAttribute(JSGlobalObject*, PyType*);
 // The same for PyObject_GenericSetAttr in tp_setattro: a __setattr__ and a __delattr__ of its own.
 void addGenericSetAttribute(JSGlobalObject*, PyType*);

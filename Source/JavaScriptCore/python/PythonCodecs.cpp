@@ -30,7 +30,6 @@
 #include "PythonBuiltins.h"
 #include "PythonBytes.h"
 #include "PythonOperations.h"
-#include <unicode/uchar.h>
 
 // What the codecs are written with, and str.encode() and bytes.decode(): Objects/unicodeobject.c of CPython.
 
@@ -250,34 +249,6 @@ JSValue EncodeErrors::handle(ASCIILiteral encoding, ASCIILiteral reason, size_t 
         return Python::raise(globalObject, scope, BuiltinType::IndexError, concatenate("position "_s, position, " from error handler out of bounds"_s));
     newPosition = static_cast<size_t>(position);
     return replacement;
-}
-
-String nameOfCharacter(char32_t c)
-{
-    char buffer[256];
-    UErrorCode status = U_ZERO_ERROR;
-    int32_t length = u_charName(c, U_UNICODE_CHAR_NAME, buffer, sizeof(buffer), &status);
-    if (U_FAILURE(status) || !length)
-        return { };
-    return String::fromLatin1(buffer);
-}
-
-std::optional<char32_t> characterNamed(std::span<const uint8_t> name)
-{
-    Vector<char, 64> upper;
-    for (uint8_t c : name) {
-        if (c >= 0x80)
-            return std::nullopt;
-        upper.append(toASCIIUpper(static_cast<char>(c)));
-    }
-    upper.append('\0');
-    for (UCharNameChoice choice : { U_UNICODE_CHAR_NAME, U_CHAR_NAME_ALIAS }) {
-        UErrorCode status = U_ZERO_ERROR;
-        char32_t value = u_charFromName(choice, upper.span().data(), &status);
-        if (U_SUCCESS(status))
-            return value;
-    }
-    return std::nullopt;
 }
 
 // ---- str.encode() and bytes.decode()

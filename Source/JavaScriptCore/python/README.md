@@ -484,7 +484,12 @@ ICU and `S` to CPython, which regular expressions that ignore case depend on.
 
 The table is not written by hand. `lib/convert-unicode-type-database.py` makes it from CPython's, and is to be run again when the version of CPython changes. `programs/every-character.py` asks everything of every character.
 
-What ICU is still asked for is what CPython has in `unicodedata`, which is not ported: names, NFKC for names in source, and how wide a character is where a caret is put under it.
+The rest of what there is to know about a character is `unicodedata`'s: `PythonUnicodeData.cpp`, which is `Modules/unicodedata.c`, over `PythonUnicodeDatabase.h` and `PythonUnicodeNames.h`, which
+`lib/convert-unicode-database.py` makes from CPython's tables in the same way. It is in the engine and not left to the host because the engine wants it for itself: the lexer for the NFKC form of a name and for `\N{...}`, the codecs
+for `\N{...}` and `namereplace`, and what shows an exception for how wide a character is where a caret is put under it. So ICU is asked nothing at all, and what a name in source is taken for does not depend on which system it is
+compiled on. `programs/unicodedata-module.py` asks everything of every character, as things are now and as they were in 3.2.0, which is what the IDNA encoding goes by.
+
+`unicodedata._ucnhash_CAPI` is a `PyCapsule`, which is how one module written in C hands another a pointer. Nothing here is handed one that way. A program can see that it is there and what it is called, so it is: `PythonCapsule.cpp`.
 
 ### Adding to a string
 
@@ -694,8 +699,7 @@ else there, which is what is decoded from then on. So a decoder does not keep wh
 
 An encoder counts in characters, since that is what a handler is told and what it answers in: `CodePoints`, which makes nothing unless there are surrogate pairs in the string.
 
-The names of characters, for `\N{...}` and `namereplace`, are ICU's, which has not the names of control characters nor abbreviations (`\N{LF}`), and is of whatever version of Unicode the system has. They are to be
-`unicodedata`'s own.
+The names of characters, for `\N{...}` and `namereplace`, are `unicodedata`'s.
 
 ### `io`
 

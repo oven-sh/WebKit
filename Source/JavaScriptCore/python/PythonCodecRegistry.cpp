@@ -31,6 +31,7 @@
 #include "PythonBytes.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
+#include "PythonUnicodeData.h"
 #include <wtf/text/StringBuilder.h>
 
 // The registry of codecs and of error handlers, and the handlers that are built in: Python/codecs.c of CPython.
@@ -446,7 +447,7 @@ PYTHON_NATIVE(nameReplaceErrors)
     CodePoints characters(text);
     StringBuilder out(OverflowPolicy::RecordOverflow);
     for (int64_t i = parameters->start; i < parameters->end; ++i) {
-        String name = nameOfCharacter(characters[i]);
+        String name = Unicode::nameOfCharacter(characters[i], true);
         if (name.isNull())
             appendUnicodeHex(out, characters[i]);
         else

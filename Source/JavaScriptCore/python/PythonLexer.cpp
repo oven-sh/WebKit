@@ -27,10 +27,10 @@
 #include "PythonLexer.h"
 #include "PythonText.h"
 
+#include "PythonUnicodeData.h"
 #include "PythonUnicodeType.h"
 #include "VM.h"
-#include <unicode/uchar.h>
-#include <unicode/unorm2.h>
+#include <unicode/utf16.h>
 #include <wtf/ASCIICType.h>
 #include <wtf/HexNumber.h>
 #include <wtf/dtoa.h>
@@ -1026,22 +1026,22 @@ private:
             return fail(concatenate("invalid non-printable character U+"_s, hex(static_cast<unsigned>(c), 4)), m_line, column, m_line, column);
         }
 
-        UErrorCode status = U_ZERO_ERROR;
-        const UNormalizer2* normalizer = unorm2_getNFKCInstance(&status);
-        RELEASE_ASSERT(U_SUCCESS(status));
-        Vector<char16_t, 64> normalized;
-        if (!unorm2_isNormalized(normalizer, buffer.span().data(), length, &status)) {
-            status = U_ZERO_ERROR;
-            normalized.grow(length * 2 + 16);
-            int32_t normalizedLength = unorm2_normalize(normalizer, buffer.span().data(), length, normalized.mutableSpan().data(), normalized.size(), &status);
-            if (status == U_BUFFER_OVERFLOW_ERROR) {
-                status = U_ZERO_ERROR;
-                normalized.grow(normalizedLength);
-                normalizedLength = unorm2_normalize(normalizer, buffer.span().data(), length, normalized.mutableSpan().data(), normalized.size(), &status);
+        // unicodedata.normalize("NFKC", name)
+        Vector<char32_t, 64> codePoints;
+        for (char32_t c : StringView(buffer.span()).codePoints())
+            codePoints.append(c);
+        if (!Unicode::isCertainlyNormalized(Unicode::NormalizationForm::NFKC, codePoints.span())) {
+            Vector<char32_t> normalized;
+            RELEASE_ASSERT(Unicode::tryNormalize(Unicode::NormalizationForm::NFKC, codePoints.span(), normalized));
+            buffer.shrink(0);
+            for (char32_t c : normalized) {
+                if (U_IS_BMP(c))
+                    buffer.append(static_cast<char16_t>(c));
+                else {
+                    buffer.append(U16_LEAD(c));
+                    buffer.append(U16_TRAIL(c));
+                }
             }
-            RELEASE_ASSERT(U_SUCCESS(status));
-            normalized.shrink(normalizedLength);
-            buffer = WTF::move(normalized);
         }
 
         char16_t allCharacters = 0;
@@ -1472,23 +1472,17 @@ private:
                 }
                 if (nameEnd <= i + 1 || nameEnd >= end)
                     return failInEscape(std::max(nameEnd, i), "malformed \\N character escape"_s);
-                Vector<char, 64> name;
+                Vector<uint8_t, 64> name;
                 bool isASCII = true;
                 for (unsigned k = i + 1; k < nameEnd; ++k) {
                     if (m_source[k] >= 0x80)
                         isASCII = false;
-                    name.append(toASCIIUpper(static_cast<char>(m_source[k])));
+                    name.append(static_cast<uint8_t>(m_source[k]));
                 }
-                name.append('\0');
-                UErrorCode status = U_ZERO_ERROR;
-                char32_t value = isASCII ? u_charFromName(U_UNICODE_CHAR_NAME, name.span().data(), &status) : 0;
-                if (isASCII && U_FAILURE(status)) {
-                    status = U_ZERO_ERROR;
-                    value = u_charFromName(U_CHAR_NAME_ALIAS, name.span().data(), &status);
-                }
-                if (!isASCII || U_FAILURE(status))
+                auto named = isASCII ? Unicode::characterNamed(name.span()) : std::nullopt;
+                if (!named)
                     return failInEscape(nameEnd + 1, "unknown Unicode character name"_s);
-                appendCodePoint(buffer, allCharacters, value);
+                appendCodePoint(buffer, allCharacters, *named);
                 i = nameEnd + 1;
                 break;
             }

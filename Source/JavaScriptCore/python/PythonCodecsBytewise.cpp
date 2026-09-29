@@ -31,6 +31,7 @@
 #include "PythonBuiltins.h"
 #include "PythonBytes.h"
 #include "PythonOperations.h"
+#include "PythonUnicodeData.h"
 
 // The codecs of a byte to a character, and those that write characters out as escapes: Objects/unicodeobject.c of CPython, and PyBytes_DecodeEscape() of Objects/bytesobject.c.
 
@@ -161,7 +162,7 @@ String decodeUnicodeEscape(JSGlobalObject* globalObject, std::span<const uint8_t
                 if (!nameLength)
                     return;
                 ++s;
-                if (auto named = characterNamed(input.subspan(nameStart, nameLength))) {
+                if (auto named = Unicode::characterNamed(input.subspan(nameStart, nameLength))) {
                     writer.append(*named);
                     message = { };
                     return;
