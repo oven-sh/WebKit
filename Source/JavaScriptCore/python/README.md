@@ -687,6 +687,29 @@ the next; `-d`; `--check-hash-based-pycs`; `-X tracemalloc`, `-X faulthandler`, 
 
 **What is wrong when Python cannot start** is said as `fatal_error()` says it. `startPython()` keeps what it is about, in the words of the `PyStatus` that CPython would end with: `Failed to import encodings module`.
 
+### What is typed
+
+**When a statement that is typed is over is settled by the parser wanting no more of it**, as in CPython, and not by trying what has been typed so far to see whether it will compile, which is what `codeop` has to do. The
+scanner reads a line when it needs one to make the token that the parser has asked for (`TypedTokens`, over a `LineSource`, which is what CPython's tokenizer has as `underflow`), and that is when the prompt is shown. So a
+prompt is shown, and something is said to be wrong, at just the point that CPython does either.
+
+- **Tokens stay where they are put** (`TokenBuffer`, a `SegmentedVector`). The parser holds on to tokens while it looks at others, and now more can be made meanwhile. CPython's parser has an array of pointers for the same
+  reason. All parsing uses it. It is a little quicker than the `Vector` that it took the place of, which copied them all whenever it grew: 19.5 ms against 20.6 for ten of the largest files in the library.
+- **Reading a line at a time and giving tokens as they are written are two things.** `tokenize` wants both. The parser wants the first and not the second: it wants what a token comes to.
+- **What is different about a prompt is asked of the scanner by itself** (`Arena::isTypedAtPrompt`, which is `tok->prompt != NULL`): a line with nothing at all on it ends whatever has been begun, a first line with nothing on it to
+  speak of is a statement that does nothing, and nothing is added to a last line that nothing ends. It has to be by itself because code is generated from source, so what was typed is parsed again when it is all there.
+  Code keeps that it was typed, in `FunctionInfo::futureFeatures` (`IsTypedAtPrompt`), and so does what `marshal` writes.
+- **Going over what is wrong, to see what to say of it, is no reason to ask for more** (`stopReading()`, which is `IUNDERFLOW_STOP`). Nor is what comes after looked at, to see whether the reason is there: there is no after.
+- **What there is to warn of in a line is warned of before the next is asked for.**
+- **Each statement has a name of its own**, `<stdin-3>`, which `linecache` is given the source by. It is shown as `<stdin>`. What the parser finds wrong is said of `<stdin>`, and what is found wrong afterwards of `<stdin-3>`.
+
+**The rest is `PythonInteractive.cpp`:** `PyOS_StdioReadline()`, `tok_underflow_interactive()`, `_PyRun_InteractiveLoop()` and `sys._baserepl()`, and `input()`, which reads a line the same way if it is typed at a terminal. What is
+around them in `Modules/main.c` is in `PythonLifecycle.cpp`: `-i` and `PYTHONINSPECT`, `PYTHONSTARTUP`, `sys.__interactivehook__`, and `_pyrepl` if it is a terminal and that can be had.
+
+- **A line is read by way of stdio**, as in CPython, and not by way of `sys.stdin`, which holds on to what it has read ahead. So which of the two gets what, of input that is not typed, is the same here as there.
+- **What `from __future__ import` asks for goes on being so** for what is typed afterwards.
+- **`SystemExit` is the end once statements are being typed.** Before that, with `-i`, it is shown like anything else: `Configuration::inspect` is what is looked at, and it is cleared on the way in, which shows in `sys.flags`.
+
 ### When it is over
 
 When a program is over is for the host to say as well, since one that is in two languages is not over when the Python that began it has been run to its end: `finalizePython()`. It does what `Py_FinalizeEx()` does while

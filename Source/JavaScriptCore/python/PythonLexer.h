@@ -54,7 +54,7 @@ struct ScanRange {
 
 // The scanner. It alone reads the source: what the parser needs to know is all in the tokens.
 // True if it got to the end. Otherwise the error says why not, and the tokens are those before it and then TokenKind::Error.
-bool tokenize(VM&, Arena&, StringView source, const ScanRange&, Vector<Token>&, Vector<SyntaxWarning>&, SyntaxError&);
+bool tokenize(VM&, Arena&, StringView source, const ScanRange&, TokenBuffer&, Vector<SyntaxWarning>&, SyntaxError&);
 
 // Where the scanner gets the source from if it is given a line at a time: what CPython's tokenizer has as `underflow`.
 class LineSource {
@@ -63,7 +63,9 @@ public:
     enum class Result : uint8_t {
         Line, // If nothing was added, that is the end.
         Failed, // Something has been raised.
+        IsNotText, // What was read cannot be decoded, which is something wrong with the source. `whyNotText` says why.
     };
+    String whyNotText;
     // Adds the next line to what there is.
     virtual Result readLine(Vector<char16_t>&) = 0;
 };
@@ -114,6 +116,32 @@ public:
     unsigned bufferStart() const;
     // Where the line of that number begins.
     unsigned startOfLine(unsigned line) const;
+
+private:
+    struct Implementation;
+    const std::unique_ptr<Implementation> m_implementation;
+};
+
+// The same scanner again, for the parser, of what is typed at a prompt. No more is asked for than the parser has asked for, and it is that which settles when a statement is over: when the parser wants no more. The arena is to
+// say that it is typed.
+class TypedTokens {
+    WTF_MAKE_TZONE_ALLOCATED(TypedTokens);
+    WTF_MAKE_NONCOPYABLE(TypedTokens);
+public:
+    TypedTokens(VM&, Arena&, LineSource&, Vector<SyntaxWarning>&);
+    ~TypedTokens();
+
+    const TokenBuffer& tokens() const;
+    // Makes another, or a few if they come together. False if there are no more to be made, the last having been TokenKind::EndMarker or TokenKind::Error.
+    bool fill();
+    bool isExhausted() const;
+    // From here on nothing is read, and what has been read is all that there is: IUNDERFLOW_STOP. It is for going over what is wrong to see what to say of it, which is no reason to ask for more.
+    void stopReading();
+
+    bool hasFailedToRead() const; // The LineSource did, and has raised something.
+    const SyntaxError& error() const; // Why the last is TokenKind::Error, if it was not that.
+    // All that has been read.
+    std::span<const char16_t> source() const;
 
 private:
     struct Implementation;

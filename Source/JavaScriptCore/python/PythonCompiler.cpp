@@ -39,6 +39,7 @@
 #include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
 #include "PythonCodecs.h"
+#include "PythonLexer.h"
 #include "PythonOperations.h"
 #include "PythonParser.h"
 #include "PythonSymbolTable.h"
@@ -64,6 +65,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
 
     Arena arena;
     arena.usesLessGreater = info->futureFeatures & FutureBarryAsFLUFL;
+    arena.isTypedAtPrompt = info->futureFeatures & IsTypedAtPrompt;
     SyntaxError syntaxError;
     std::unique_ptr<SymbolTable> table;
     void* root = nullptr;
@@ -288,11 +290,15 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
 
 // What is wrong is found either in taking the source apart, or afterwards in what came of that.
 // WhatNamesReferTo is Python/symtable.c and Python/future.c of CPython, and WhatWasParsed all that comes after.
-enum class FoundIn : uint8_t { Parsing, WhatNamesReferTo, WhatWasParsed };
+enum class FoundIn : uint8_t { Parsing, ParsingWhatIsTyped, WhatNamesReferTo, WhatWasParsed };
 
 static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope, const SyntaxError& error, const SourceCode& givenSource, FoundIn foundIn)
 {
     VM& vm = globalObject->vm();
+    // What is typed is kept as it is typed, and the line is always fetched from that, without its end: get_error_line_from_tokenizer_buffers()
+    bool isTyped = foundIn == FoundIn::ParsingWhatIsTyped;
+    if (isTyped)
+        foundIn = FoundIn::Parsing;
     BuiltinType type = BuiltinType::SyntaxError;
     switch (error.kind) {
     case SyntaxError::Kind::SyntaxError:
@@ -342,7 +348,7 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
     bool hasLine = (error.line || foundIn == FoundIn::Parsing) && !source.isNull() && (lineStart < text.length() || foundIn == FoundIn::Parsing);
     // What is taken apart always ends with the end of a line, which is added if it is not there. The line comes with that if it is the one that the tokenizer is on, and is fetched again without it
     // if the tokenizer has gone on. What the tokenizer raises for itself never has it.
-    bool hasEndOfLine = foundIn == FoundIn::Parsing ? !error.isFromTokenizer && error.tokenizerLine <= error.line && (endsLine || error.lastLineIsEnded) : endsLine;
+    bool hasEndOfLine = isTyped ? false : foundIn == FoundIn::Parsing ? !error.isFromTokenizer && error.tokenizerLine <= error.line && (endsLine || error.lastLineIsEnded) : endsLine;
     if (hasLine)
         lineText = strOrMemoryError(globalObject, concatenate(line, hasEndOfLine ? "\n"_s : ""_s));
 
@@ -696,6 +702,63 @@ JSValue symbolTableOfSource(JSGlobalObject* globalObject, const SourceCode& sour
     RELEASE_AND_RETURN(scope, newSymbolTableEntry(globalObject, table->top()));
 }
 
+TypedStatement readTypedStatement(JSGlobalObject* globalObject, LineSource& lines, const String& filename, unsigned futureFeatures, String& text)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Arena arena;
+    arena.maximumDigitsOfIntLiteral = globalObject->pyRealm()->maximumDigitsOfIntAsString;
+    arena.usesLessGreater = futureFeatures & FutureBarryAsFLUFL;
+    arena.isTypedAtPrompt = true;
+    Vector<SyntaxWarning> warnings;
+    SyntaxError error;
+    // What there is to warn of in a line is warned of before the next is asked for.
+    class WarningFirst final : public LineSource {
+    public:
+        WarningFirst(JSGlobalObject* globalObject, LineSource& lines, Vector<SyntaxWarning>& warnings, const String& filename)
+            : m_globalObject(globalObject)
+            , m_lines(lines)
+            , m_warnings(warnings)
+            , m_filename(filename)
+        {
+        }
+
+        Result readLine(Vector<char16_t>& buffer) final
+        {
+            if (!m_warnings.isEmpty() && !issueWarnings(m_globalObject, m_warnings, makeSource(String(buffer.span()), SourceOrigin(), m_filename)))
+                return Result::Failed;
+            Result result = m_lines.readLine(buffer);
+            whyNotText = m_lines.whyNotText;
+            return result;
+        }
+
+    private:
+        JSGlobalObject* m_globalObject;
+        LineSource& m_lines;
+        Vector<SyntaxWarning>& m_warnings;
+        const String& m_filename;
+    };
+    WarningFirst warningFirst(globalObject, lines, warnings, filename);
+    TypedTokens tokens(vm, arena, warningFirst, warnings);
+    bool isAtEndOfInput = false;
+    Module* module = parseTyped(vm, arena, tokens, error, isAtEndOfInput);
+    if (tokens.hasFailedToRead()) {
+        ASSERT(scope.exception());
+        return TypedStatement::Raised;
+    }
+    if (isAtEndOfInput)
+        return TypedStatement::IsTheEnd;
+    text = String(tokens.source());
+    SourceCode source = makeSource(text, SourceOrigin(), filename);
+    if (!issueWarnings(globalObject, warnings, source))
+        return TypedStatement::Raised;
+    if (!module) {
+        raiseSyntaxError(globalObject, scope, error, source, FoundIn::ParsingWhatIsTyped);
+        return TypedStatement::Raised;
+    }
+    return TypedStatement::IsRead;
+}
+
 unsigned configuredOptimizationLevel(JSGlobalObject* globalObject)
 {
     return std::clamp(globalObject->pyRealm()->configuration().optimizationLevel, 0, 2);
@@ -722,6 +785,7 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         arena.impliesDedent = !(parsingFlags & DoNotImplyDedent);
         arena.allowsIncompleteInput = parsingFlags & AllowIncompleteInput;
         arena.hasTypeComments = parsingFlags & TypeComments;
+        arena.isTypedAtPrompt = inheritedFutureFeatures & IsTypedAtPrompt;
         Vector<SyntaxWarning> warnings;
         SyntaxError error;
         Module::Kind moduleKind = kind == CodeKind::Module ? Module::Kind::Module : kind == CodeKind::Expression ? Module::Kind::Expression : Module::Kind::Interactive;
@@ -729,6 +793,9 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
         Module* module = isTree ? readSyntaxTree(vm, arena, source.provider()->source(), moduleKind) : parse(vm, arena, source.provider()->source(), moduleKind, warnings, error);
         // It was written out a moment ago.
         RELEASE_ASSERT(module || !isTree);
+        // It was parsed as it was typed, and what there was to warn of then was warned of then: readTypedStatement()
+        if (arena.isTypedAtPrompt)
+            warnings.clear();
         // What was warned of on the way to something that is wrong was warned of first.
         if (!issueWarnings(globalObject, warnings, source))
             return nullptr;

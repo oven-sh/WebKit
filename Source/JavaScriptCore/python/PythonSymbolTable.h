@@ -177,6 +177,8 @@ enum FutureFeature : unsigned {
     AllowTopLevelAwait = 0x2000, // PyCF_ALLOW_TOP_LEVEL_AWAIT
     FutureBarryAsFLUFL = 0x400000, // CO_FUTURE_BARRY_AS_BDFL
     FutureAnnotations = 0x1000000, // CO_FUTURE_ANNOTATIONS
+    // Not one of CPython's, and not something that compile() can be asked for. See Arena::isTypedAtPrompt. Code has it for as long as it may have to be parsed again.
+    IsTypedAtPrompt = 0x80000000,
     // All that code says of itself in co_flags, most of which have long made no difference: PyCF_MASK.
     FutureFeaturesMask = 0x1FE0000,
 };

@@ -188,6 +188,8 @@ after the file they are not options => (0, "[('int_max_str_digits', 4300), ('gil
 -O => (0, 'False\ndoc\n', '')
 -OO => (0, 'False\nNone\n', '')
 neither => (1, 'True\ndoc\n', 'Traceback (most recent call last):\n  File "<string>", line 5, in <module>\n    assert False, \'seen\'\n           ^^^^^\nAssertionError: seen\n')
+what builtins has => (0, "True [('None', None), ('True', True), ('False', False), ('Ellipsis', Ellipsis), ('NotImplemented', NotImplemented)] None\n", '')
+with -O => (0, 'False\n', '')
 -O, of what is imported => (0, 'imported False\n', '')
 -OO, of what is compiled => (1, 'False\n', 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\n    exec(compile(\'assert 0\\nprint(__debug__)\', \'f\', \'exec\')); exec(compile(\'assert 0, 5\', \'f\', \'exec\', optimize=0))\n                                                              ~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "f", line 1, in <module>\nAssertionError: 5\n')
 -b => (0, "b'a' False False False 1\n", '<string>:1: BytesWarning: str() on a bytes instance\n<string>:1: BytesWarning: Comparison between bytes and string\n<string>:1: BytesWarning: Comparison between bytearray and string\n<string>:1: BytesWarning: Comparison between bytes and int\n')

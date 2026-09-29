@@ -39,6 +39,7 @@
 #include "PythonImport.h"
 #include "PythonOperations.h"
 #include "PythonPlatform.h"
+#include "PythonPosix.h"
 #include "PythonSignals.h"
 #include "TopExceptionScope.h"
 #include <wtf/URL.h>
@@ -269,8 +270,7 @@ void startPython(JSGlobalObject* globalObject)
 
 // ---- Running a program
 
-// flush_io()
-static void flushStandardStreams(JSGlobalObject* globalObject)
+void flushStandardStreams(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -287,6 +287,8 @@ static void flushStandardStreams(JSGlobalObject* globalObject)
         throwException(globalObject, scope, raised);
 }
 
+static int printExceptionAndGetStatus(JSGlobalObject*);
+
 // _Py_HandleSystemExitAndKeyboardInterrupt(): whether the exception was SystemExit, and so the program has ended with that status.
 static bool handleSystemExit(JSGlobalObject* globalObject, JSValue exception, int& status)
 {
@@ -297,8 +299,12 @@ static bool handleSystemExit(JSGlobalObject* globalObject, JSValue exception, in
         importState(globalObject).hasUnhandledKeyboardInterrupt = true;
         return false;
     }
+    // With -i it is not the end, until statements are being typed.
+    if (realm->configuration().inspect)
+        return false;
     if (!isInstance(globalObject, exception, realm->typeSystemExit()))
         return false;
+    fflush(stdout);
     JSValue toPrint = exception;
     JSValue code = getAttribute(globalObject, exception, Identifier::fromString(vm, "code"_s));
     if (scope.exception())
@@ -325,13 +331,21 @@ static bool handleSystemExit(JSGlobalObject* globalObject, JSValue exception, in
     }
     JSValue file = sysAttribute(globalObject, "stderr"_s);
     if (file && !isNone(file)) {
-        for (const String& text : { message, "\n"_str }) {
-            callMethodNamed(globalObject, file, vm.pythonNames().attribute_write, jsString(vm, text));
-            scope.clearException();
-        }
+        callMethodNamed(globalObject, file, vm.pythonNames().attribute_write, jsString(vm, message));
+        scope.clearException();
+    } else {
+        CString encoded = message.utf8();
+        fputs(encoded.data(), stderr);
+        fflush(stderr);
     }
+    writeToStandardError(globalObject, "\n"_s);
     status = 1;
     return true;
+}
+
+void printRaisedException(JSGlobalObject* globalObject)
+{
+    printExceptionAndGetStatus(globalObject);
 }
 
 // pymain_exit_err_print(), of the exception that has been raised.
@@ -698,6 +712,125 @@ static String computeFirstSearchPath(const Vector<String>& arguments)
     return String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(path.span().first(count)));
 }
 
+// pymain_set_inspect()
+static void setInspect(JSGlobalObject* globalObject, bool inspect)
+{
+    PyRealm* realm = globalObject->pyRealm();
+    realm->mutableConfiguration().inspect = inspect;
+    updateSysFlagsFromConfiguration(globalObject, realm->sysModule());
+}
+
+// pymain_run_startup(). If it is the end, that is the status.
+static std::optional<int> runStartupFile(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!globalObject->pyRealm()->configuration().usesEnvironment)
+        return std::nullopt;
+    const char* variable = getenv("PYTHONSTARTUP");
+    if (!variable || !variable[0])
+        return std::nullopt;
+    // pymain_err_print(): it is only the end if it was SystemExit.
+    auto print = [&] () -> std::optional<int> {
+        JSValue value = scope.exception()->value();
+        scope.clearException();
+        int status = 1;
+        if (handleSystemExit(globalObject, value, status))
+            return status;
+        reportUncaughtException(globalObject, value);
+        return std::nullopt;
+    };
+    JSValue startup = decodeFileSystemBytes(globalObject, unsafeSpan(variable));
+    if (scope.exception() || !audit(globalObject, "cpython.run_startup"_s, startup))
+        return print();
+    FILE* file = fopen(variable, "r");
+    if (!file) {
+        int error = errno;
+        writeToStandardError(globalObject, "Could not open PYTHONSTARTUP\n"_s);
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        raiseOSError(globalObject, throwScope, error, startup);
+        return print();
+    }
+    Vector<uint8_t> bytes;
+    readAll(file, bytes);
+    fclose(file);
+    String filename = stringIn(startup)->value(globalObject);
+    runInMainModule(globalObject, bytes.span(), SourceOrigin { URL::fileURLWithFileSystemPath(filename) }, filename);
+    return scope.exception() ? print() : std::nullopt;
+}
+
+// pymain_run_interactive_hook(). If it is the end, that is the status.
+static std::optional<int> runInteractiveHook(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSValue hook = sysAttribute(globalObject, "__interactivehook__"_s);
+    if (!hook)
+        return std::nullopt;
+    if (audit(globalObject, "cpython.run_interactivehook"_s, hook))
+        call(globalObject, hook);
+    if (!scope.exception())
+        return std::nullopt;
+    JSValue value = scope.exception()->value();
+    scope.clearException();
+    writeToStandardError(globalObject, "Failed calling sys.__interactivehook__\n"_s);
+    int status = 1;
+    if (handleSystemExit(globalObject, value, status))
+        return status;
+    reportUncaughtException(globalObject, value);
+    return std::nullopt;
+}
+
+void runStandardInput(JSGlobalObject* globalObject)
+{
+    // _Py_FdIsInteractive()
+    if (isatty(fileno(stdin)) || globalObject->pyRealm()->configuration().interactive) {
+        runInteractiveLoop(globalObject);
+        return;
+    }
+    Vector<uint8_t> bytes;
+    readAll(stdin, bytes);
+    runInMainModule(globalObject, bytes.span(), SourceOrigin(), "<stdin>"_s);
+}
+
+// _pymain_run_repl()
+static int runWhatComesIn(JSGlobalObject* globalObject, bool runsStartupFile)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto& configuration = globalObject->pyRealm()->configuration();
+    if (!checkSignals(globalObject) || !audit(globalObject, "cpython.run_stdin"_s))
+        return printExceptionAndGetStatus(globalObject);
+    const char* wantsBasic = configuration.usesEnvironment ? getenv("PYTHON_BASIC_REPL") : nullptr;
+    if (isatty(fileno(stdin)) && !(wantsBasic && wantsBasic[0])) {
+        importModule(globalObject, "_pyrepl"_s);
+        if (!scope.exception()) {
+            // pymain_run_pyrepl()
+            JSValue console = importModuleAttribute(globalObject, "_pyrepl.main"_s, "interactive_console"_s);
+            if (scope.exception()) {
+                fputs("Could not import _pyrepl.main\n", stderr);
+                return printExceptionAndGetStatus(globalObject);
+            }
+            JSObject* module = addModule(globalObject, jsNontrivialString(vm, "__main__"_s));
+            if (!scope.exception()) {
+                PyDict* keywords = PyDict::create(globalObject);
+                keywords->setString(globalObject, "mainmodule"_s, module);
+                keywords->setString(globalObject, "pythonstartup"_s, jsBoolean(runsStartupFile));
+                MarkedArgumentBuffer none;
+                callWithKeywordDict(globalObject, console, none, keywords);
+            }
+            return scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;
+        }
+        if (!catchException(globalObject, BuiltinType::ModuleNotFoundError)) {
+            fputs("Could not import _pyrepl.main\n", stderr);
+            return printExceptionAndGetStatus(globalObject);
+        }
+    }
+
+    runStandardInput(globalObject);
+    return scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;
+}
+
 // pymain_run_python()
 int runMain(JSGlobalObject* globalObject)
 {
@@ -722,6 +855,17 @@ int runMain(JSGlobalObject* globalObject)
             return printExceptionAndGetStatus(globalObject);
         }
         isImportPath = !isNone(importer);
+    }
+
+    // pymain_import_readline(): before there is anything of the program's to be found in place of them
+    if (!checkSignals(globalObject))
+        return printExceptionAndGetStatus(globalObject);
+    if (!configuration.isIsolated && (configuration.inspect || !runsCode) && isatty(fileno(stdin))) {
+        for (ASCIILiteral name : { "readline"_s, "rlcompleter"_s }) {
+            importModule(globalObject, name);
+            if (scope.exception() && !scope.tryClearException())
+                return 1;
+        }
     }
 
     String first;
@@ -761,17 +905,31 @@ int runMain(JSGlobalObject* globalObject)
     else if (!configuration.runFilename.isNull())
         status = runFile(globalObject, configuration);
     else {
-        // pymain_run_stdin(), for what is not typed
-        if (!audit(globalObject, "cpython.run_stdin"_s))
-            return printExceptionAndGetStatus(globalObject);
-        Vector<uint8_t> bytes;
-        readAll(stdin, bytes);
-        runInMainModule(globalObject, bytes.span(), SourceOrigin(), "<stdin>"_s);
-        status = scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;
+        // pymain_run_stdin()
+        if (isStandardInputInteractive) {
+            // From here on SystemExit is the end.
+            setInspect(globalObject, false);
+            if (auto ended = runStartupFile(globalObject))
+                return *ended;
+            if (auto ended = runInteractiveHook(globalObject))
+                return *ended;
+        }
+        status = runWhatComesIn(globalObject, false);
     }
     if (!checkSignals(globalObject))
         return printExceptionAndGetStatus(globalObject);
-    return status;
+
+    // pymain_repl(). The environment is looked at now, so that the program can have asked for this.
+    if (!configuration.inspect && configuration.usesEnvironment) {
+        if (const char* variable = getenv("PYTHONINSPECT"); variable && variable[0])
+            setInspect(globalObject, true);
+    }
+    if (!(configuration.inspect && isStandardInputInteractive && runsCode))
+        return status;
+    setInspect(globalObject, false);
+    if (auto ended = runInteractiveHook(globalObject))
+        return *ended;
+    return runWhatComesIn(globalObject, true);
 }
 
 #endif // OS(UNIX)

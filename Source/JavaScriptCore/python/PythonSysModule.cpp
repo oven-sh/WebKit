@@ -876,9 +876,17 @@ void updateSysFromConfiguration(JSGlobalObject* globalObject, JSObject* module)
     }
     set("_xoptions"_s, extraOptions);
     set("_stdlib_dir"_s, orNone(configuration.libraryDirectory));
-
-    // set_flags_from_config()
     realm->maximumDigitsOfIntAsString = configuration.maximumDigitsOfIntAsString;
+    updateSysFlagsFromConfiguration(globalObject, module);
+    set("dont_write_bytecode"_s, jsBoolean(!configuration.writesBytecode));
+}
+
+// set_flags_from_config()
+void updateSysFlagsFromConfiguration(JSGlobalObject* globalObject, JSObject* module)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    auto& configuration = realm->configuration();
     MarkedArgumentBuffer flags;
     flags.append(jsNumber(configuration.parserDebug));
     flags.append(jsNumber(configuration.inspect));
@@ -901,8 +909,7 @@ void updateSysFromConfiguration(JSGlobalObject* globalObject, JSObject* module)
     flags.append(jsNumber(1)); // gil
     flags.append(jsNumber(configuration.threadsInheritContext));
     flags.append(jsNumber(configuration.hasContextAwareWarnings));
-    set("flags"_s, newStructSequence(globalObject, realm->typeSysFlags(), flags));
-    set("dont_write_bytecode"_s, jsBoolean(!configuration.writesBytecode));
+    module->putDirect(vm, Identifier::fromString(vm, "flags"_s), newStructSequence(globalObject, realm->typeSysFlags(), flags));
 }
 
 JSObject* createSysModule(JSGlobalObject* globalObject)
@@ -1048,6 +1055,7 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     add("_clear_type_cache"_s, sysClearTypeCache);
     add("_clear_internal_caches"_s, returnNone);
     add("_clear_type_descriptors"_s, sysClearTypeDescriptors);
+    add("_baserepl"_s, sysBaseREPL);
     add("_debugmallocstats"_s, returnNone);
 
     // The compiler that CPython means by this is not one that there is here.

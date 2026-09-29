@@ -46,15 +46,27 @@ namespace {
 class Parser {
 public:
     // `error` is the scanner's, if it has one.
-    Parser(VM& vm, Arena& arena, const Vector<Token>& tokens, SyntaxError& error, Sequence<TypeIgnore*> typeIgnores = { })
+    Parser(VM& vm, Arena& arena, const TokenBuffer& tokens, SyntaxError& error)
         : m_vm(vm)
         , m_arena(arena)
         , m_tokens(tokens)
         , m_error(error)
         , m_scannerError(std::exchange(error, { }))
-        , m_typeIgnores(typeIgnores)
     {
     }
+
+    // Of tokens that are made as they are asked for.
+    Parser(VM& vm, Arena& arena, TypedTokens& supply, SyntaxError& error)
+        : m_vm(vm)
+        , m_arena(arena)
+        , m_tokens(supply.tokens())
+        , m_supply(&supply)
+        , m_error(error)
+    {
+    }
+
+    // There was nothing there to parse, and there will be no more: _PyPegen_interactive_exit()
+    bool isAtEndOfInput() const { return m_isAtEndOfInput; }
 
     // _PyPegen_run_parser(). If the source will not parse it is gone through again, and this time what is in the grammar only to be recognized as a mistake is tried as well, so that
     // there is something to say about it. Whichever of those is come to first is what is said. If none is, all that there is to say is how far the parser got the first time.
@@ -64,7 +76,7 @@ public:
         if (Module* module = parseModuleOnce(kind))
             return module;
         // It did parse, and there is no more to be said.
-        if (m_isBadSingleStatement)
+        if (m_isBadSingleStatement || m_isAtEndOfInput)
             return nullptr;
         unsigned lastToken = m_furthest;
         if (m_arena.allowsIncompleteInput && tokenizerIsAtEndOfSource()) {
@@ -75,6 +87,9 @@ public:
             return nullptr;
         }
         if (!m_error) {
+            // reset_parser_state_for_error_pass()
+            if (m_supply)
+                m_supply->stopReading();
             m_index = 0;
             m_isSecondPass = true;
             m_callsInvalidRules = true;
@@ -94,8 +109,8 @@ public:
             if (m_error.kind == SyntaxError::Kind::IndentationError)
                 return nullptr;
         }
-        // _PyPegen_tokenize_full_source_to_check_for_errors(): what is wrong further on may be the reason.
-        if (!m_scannerError)
+        // _PyPegen_tokenize_full_source_to_check_for_errors(): what is wrong further on may be the reason. There is no further on to what is typed.
+        if (!m_scannerError || m_arena.isTypedAtPrompt)
             return nullptr;
         // If there is something to say already, that is only done while the tokenizer has not come to the end of the source.
         if (hasSomethingToSay && tokenizerIsAtEndOfSource())
@@ -160,7 +175,10 @@ private:
             Vector<Statement*, 16> body;
             if (at(TokenKind::Newline))
                 body.append(make<Pass>(next()));
-            else if (!parseStatement(body))
+            else if (m_supply && at(TokenKind::EndMarker)) {
+                m_isAtEndOfInput = true;
+                return nullptr;
+            } else if (!parseStatement(body))
                 break;
             else {
                 switch (body.last()->kind) {
@@ -180,7 +198,11 @@ private:
                     break;
                 }
             }
-            // bad_single_statement(): there is to be nothing after what the tokenizer has been asked for but white space and comments.
+            // bad_single_statement(): there is to be nothing after what the tokenizer has been asked for but white space and comments. Of what is typed, that is the rest of what has been read.
+            if (m_supply) {
+                m_supply->stopReading();
+                while (m_supply->fill()) { }
+            }
             for (unsigned i = m_furthest + 1; i < m_tokens.size(); ++i) {
                 TokenKind kind = m_tokens[i].kind;
                 if (kind == TokenKind::Newline || kind == TokenKind::Indent || kind == TokenKind::Dedent || kind == TokenKind::EndMarker || kind == TokenKind::TypeComment)
@@ -215,7 +237,14 @@ private:
             break;
         }
         }
-        module->typeIgnores = m_typeIgnores;
+        Vector<TypeIgnore*, 4> typeIgnores;
+        for (auto& comment : m_arena.typeIgnoreComments) {
+            auto* typeIgnore = m_arena.create<TypeIgnore>();
+            typeIgnore->line = comment.line;
+            typeIgnore->tag = { comment.tag, false };
+            typeIgnores.append(typeIgnore);
+        }
+        module->typeIgnores = m_arena.copy(typeIgnores);
         return ok && !m_error ? module : nullptr;
     }
 
@@ -255,8 +284,18 @@ private:
 
     // ---- Tokens
 
+    // _PyPegen_fill_token(), for as many as it takes
+    NEVER_INLINE void fillAsFarAs(unsigned index)
+    {
+        while (index >= m_tokens.size() && m_supply->fill()) { }
+        if (m_supply->isExhausted())
+            m_scannerError = m_supply->error();
+    }
+
     const Token& peek(unsigned ahead = 0)
     {
+        if (m_index + ahead >= m_tokens.size() && m_supply) [[unlikely]]
+            fillAsFarAs(m_index + ahead);
         unsigned index = std::min<unsigned>(m_index + ahead, m_tokens.size() - 1);
         m_furthest = std::max(m_furthest, index);
         // To ask the tokenizer for a token that it cannot give is the end of it, whatever the token was wanted for.
@@ -274,7 +313,7 @@ private:
     const Token& next()
     {
         const Token& token = peek();
-        if (m_index + 1 < m_tokens.size())
+        if (m_index + 1 < m_tokens.size() || (m_supply && !m_supply->isExhausted()))
             ++m_index;
         return token;
     }
@@ -4517,10 +4556,10 @@ private:
 
     VM& m_vm;
     Arena& m_arena;
-    const Vector<Token>& m_tokens;
+    const TokenBuffer& m_tokens;
+    TypedTokens* m_supply { nullptr }; // Where more are to be had, if they are not all there.
     SyntaxError& m_error;
     SyntaxError m_scannerError;
-    Sequence<TypeIgnore*> m_typeIgnores;
     unsigned m_index { 0 };
     // The last token that has been looked at, which is how far CPython's tokenizer would have got, being asked for one token at a time.
     unsigned m_furthest { 0 };
@@ -4531,6 +4570,7 @@ private:
     bool m_failsInEitherPass { false };
     bool m_keepsWhatIsParsed { false };
     bool m_isBadSingleStatement { false };
+    bool m_isAtEndOfInput { false };
     bool m_lastLineIsEnded { true };
     // For each rule of the grammar that CPython does this for: those that are marked (memo), and those that begin with themselves.
     struct Memos {
@@ -4555,24 +4595,19 @@ private:
 
 Module* parse(VM& vm, Arena& arena, StringView source, Module::Kind kind, Vector<SyntaxWarning>& warnings, SyntaxError& error)
 {
-    Vector<Token> tokens;
+    TokenBuffer tokens;
     ScanRange range;
     range.lastLine = kind == Module::Kind::Module ? ScanRange::LastLine::IsEnded : kind == Module::Kind::Interactive ? ScanRange::LastLine::IsEndedByTheEnd : ScanRange::LastLine::IsLeft;
     tokenize(vm, arena, source, range, tokens, warnings, error);
-    // _PyPegen_fill_token()
-    Vector<TypeIgnore*, 4> typeIgnores;
-    if (arena.hasTypeComments) {
-        tokens.removeAllMatching([&] (const Token& token) {
-            if (token.kind != TokenKind::TypeIgnore)
-                return false;
-            auto* typeIgnore = arena.create<TypeIgnore>();
-            typeIgnore->line = token.line;
-            typeIgnore->tag = { token.text, false };
-            typeIgnores.append(typeIgnore);
-            return true;
-        });
-    }
-    return Parser(vm, arena, tokens, error, arena.copy(typeIgnores)).parseModule(kind);
+    return Parser(vm, arena, tokens, error).parseModule(kind);
+}
+
+Module* parseTyped(VM& vm, Arena& arena, TypedTokens& tokens, SyntaxError& error, bool& isAtEndOfInput)
+{
+    Parser parser(vm, arena, tokens, error);
+    Module* module = parser.parseModule(Module::Kind::Interactive);
+    isAtEndOfInput = parser.isAtEndOfInput();
+    return module;
 }
 
 static ScanRange rangeFor(StringView source, unsigned start, unsigned end, unsigned line, bool isInsideBrackets)
@@ -4585,7 +4620,7 @@ static ScanRange rangeFor(StringView source, unsigned start, unsigned end, unsig
 
 Statement* parseDefinition(VM& vm, Arena& arena, StringView source, unsigned start, unsigned end, unsigned line)
 {
-    Vector<Token> tokens;
+    TokenBuffer tokens;
     Vector<SyntaxWarning> warnings;
     SyntaxError error;
     tokenize(vm, arena, source, rangeFor(source, start, end, line, false), tokens, warnings, error);
@@ -4594,7 +4629,7 @@ Statement* parseDefinition(VM& vm, Arena& arena, StringView source, unsigned sta
 
 Expression* parseExpression(VM& vm, Arena& arena, StringView source, unsigned start, unsigned end, unsigned line)
 {
-    Vector<Token> tokens;
+    TokenBuffer tokens;
     Vector<SyntaxWarning> warnings;
     SyntaxError error;
     // If it goes over more than one line it is inside brackets, and if it does not it makes no difference.

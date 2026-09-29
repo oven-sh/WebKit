@@ -84,6 +84,15 @@ public:
     bool impliesDedent { true };
     bool allowsIncompleteInput { false };
     bool hasTypeComments { false }; // PyCF_TYPE_COMMENTS: `# type: int` is not a comment like any other.
+    // Whether it is, or was, typed at a prompt of Python's own, and not only compiled as if it had been: `tok->prompt != NULL`. A line with nothing at all on it then ends whatever has been begun, and a first line with nothing
+    // on it to speak of is a statement that does nothing.
+    bool isTypedAtPrompt { false };
+    // Each `# type: ignore` that the scanner has come to, if so: the line that it is on, and what follows the word.
+    struct TypeIgnoreComment {
+        unsigned line;
+        const Identifier* tag;
+    };
+    Vector<TypeIgnoreComment> typeIgnoreComments;
 
 private:
     static constexpr size_t alignment = 8;

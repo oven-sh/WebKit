@@ -641,6 +641,7 @@ void initializeBuiltinFunctions(JSGlobalObject* globalObject, JSObject* namespac
 {
     auto add = [&] (ASCIILiteral name, NativeFunction function, unsigned data = 0) { addFunction(globalObject, namespaceObject, name, function, data); };
     add("print"_s, builtinPrint);
+    add("input"_s, builtinInput);
     add("repr"_s, builtinRepr_);
     add("ascii"_s, builtinAscii);
     add("len"_s, builtinLen);

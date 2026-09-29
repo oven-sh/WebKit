@@ -688,7 +688,7 @@ static FunctionExecutable* executableFromBytes(JSGlobalObject* globalObject, std
     info->hasDocstring = bits & CodeBit::HasDocstring;
     info->canSeeClassScope = bits & CodeBit::CanSeeClassScope;
     info->typeParameterIndex = reader.number();
-    info->futureFeatures = reader.number() & (FutureFeaturesMask | AllowTopLevelAwait);
+    info->futureFeatures = reader.number() & (FutureFeaturesMask | AllowTopLevelAwait | IsTypedAtPrompt);
     info->optimizationLevel = std::min<uint8_t>(reader.byte(), 2);
     String qualifiedNameInSource = reader.string();
     info->qualifiedNamePrefix = reader.string();

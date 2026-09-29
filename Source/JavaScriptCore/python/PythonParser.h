@@ -39,6 +39,11 @@ namespace Python {
 // Null if the source is not Python, and then the error says why not. The tree lives as long as the arena.
 Module* parse(VM&, Arena&, StringView source, Module::Kind, Vector<SyntaxWarning>&, SyntaxError&);
 
+// One statement that is typed at a prompt, which is read as far as it takes to parse it and no further: _PyParser_InteractiveASTFromFile(). Null, with no error, if there was nothing to read, and then `isAtEndOfInput`; or if
+// reading failed, which the tokens say.
+class TypedTokens;
+Module* parseTyped(VM&, Arena&, TypedTokens&, SyntaxError&, bool& isAtEndOfInput);
+
 // One definition (def or class), or one expression (a lambda or a generator expression), out of the middle of a source that has been
 // parsed before, and so is known to be Python. `start` and `end` are what the node had for them then, and `line` for its line.
 Statement* parseDefinition(VM&, Arena&, StringView source, unsigned start, unsigned end, unsigned line);

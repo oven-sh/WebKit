@@ -27,6 +27,7 @@
 
 #include "PythonSyntaxError.h"
 #include "Identifier.h"
+#include <wtf/SegmentedVector.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC { namespace Python {
@@ -137,7 +138,7 @@ enum class TokenKind : uint8_t {
     TStringEnd,
     // Only if they are asked for: PyCF_TYPE_COMMENTS.
     TypeComment, // # type: int
-    TypeIgnore, // # type: ignore. The parser does not see these: they are taken out and kept for the whole to have.
+    TypeIgnore, // # type: ignore. The parser does not see these: the scanner puts them to one side, in Arena::typeIgnoreComments, for the whole to have.
     // Only for a TokenStream that is asked for them, which the parser never is given.
     Comment,
     NonLogicalNewline, // What ends a line that has nothing on it, or is between brackets.
@@ -195,6 +196,10 @@ struct Token {
         double real;
     };
 };
+
+// What the scanner makes and the parser goes over. A token stays where it is put, so the parser can go on holding one while more are made, as they are when what is typed at a prompt is scanned no further than the parser has
+// asked for. CPython's parser has an array of pointers to them for the same reason.
+using TokenBuffer = SegmentedVector<Token, 8, 0, SegmentedVectorGrowthPolicy::Doubling>;
 
 ASCIILiteral NODELETE tokenKindName(TokenKind);
 

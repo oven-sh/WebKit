@@ -207,6 +207,10 @@ JSObject* createCMathModule(JSGlobalObject*);
 JSObject* createSymtableModule(JSGlobalObject*);
 JSObject* createCSVModule(JSGlobalObject*);
 void updateSysFromConfiguration(JSGlobalObject*, JSObject* sysModule);
+// The part of that which is sys.flags: config_set_sys_flag()
+void updateSysFlagsFromConfiguration(JSGlobalObject*, JSObject* sysModule);
+JSC_DECLARE_HOST_FUNCTION(builtinInput);
+JSC_DECLARE_HOST_FUNCTION(sysBaseREPL);
 JSObject* createArrayModule(JSGlobalObject*);
 JSObject* createBinasciiModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);

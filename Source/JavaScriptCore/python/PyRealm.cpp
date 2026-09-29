@@ -247,7 +247,11 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     builtins->putDirect(vm, Identifier::fromString(vm, "IOError"_s), typeOSError());
     builtins->putDirect(vm, Identifier::fromString(vm, "NotImplemented"_s), m_notImplemented.get());
     builtins->putDirect(vm, Identifier::fromString(vm, "Ellipsis"_s), m_ellipsis.get());
-    builtins->putDirect(vm, vm.pythonNames().dunder_debug, jsBoolean(true));
+    // They are not names that anything looks up, but they are there for whoever looks at what there is.
+    builtins->putDirect(vm, Identifier::fromString(vm, "None"_s), jsUndefined());
+    builtins->putDirect(vm, Identifier::fromString(vm, "False"_s), jsBoolean(false));
+    builtins->putDirect(vm, Identifier::fromString(vm, "True"_s), jsBoolean(true));
+    builtins->putDirect(vm, vm.pythonNames().dunder_debug, jsBoolean(!m_configuration.optimizationLevel));
     builtins->putDirect(vm, vm.pythonNames().dunder_name, jsNontrivialString(vm, "builtins"_s));
 
     m_modules.set(vm, this, PyDict::create(globalObject));

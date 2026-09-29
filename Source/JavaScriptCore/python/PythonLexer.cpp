@@ -33,6 +33,7 @@
 #include <unicode/utf16.h>
 #include <wtf/ASCIICType.h>
 #include <wtf/HexNumber.h>
+#include <wtf/Scope.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/MakeString.h>
 
@@ -102,7 +103,7 @@ constexpr int maximumExpressionNesting = 3;
 template<typename CharacterType>
 class Lexer {
 public:
-    Lexer(VM& vm, Arena& arena, std::span<const CharacterType> source, const ScanRange& range, Vector<Token>& tokens, Vector<SyntaxWarning>& warnings, SyntaxError& error)
+    Lexer(VM& vm, Arena& arena, std::span<const CharacterType> source, const ScanRange& range, TokenBuffer& tokens, Vector<SyntaxWarning>& warnings, SyntaxError& error)
         : m_vm(vm)
         , m_arena(arena)
         , m_source(source)
@@ -136,12 +137,14 @@ public:
         }
     }
 
-    // What a TokenStream has besides.
+    // What there is besides if the source is read a line at a time.
     struct Stream {
         LineSource& lines;
         Vector<char16_t>& buffer;
-        Vector<StreamedToken>& tokens;
+        // For a TokenStream, which wants the tokens as they are written. Null if they are for the parser, which wants what they come to.
+        Vector<StreamedToken>* tokens;
         bool hasExtraTokens;
+        bool mayRead { true }; // Not IUNDERFLOW_STOP
         Vector<unsigned> lineStarts { }; // Of each line, from the first.
         bool hasFailedToRead { false };
         bool isAtEndOfFile { false }; // tok->done == E_EOF
@@ -153,9 +156,8 @@ public:
         unsigned multiLineStart { 0 };
     };
 
-    // For a TokenStream.
-    Lexer(VM& vm, Arena& arena, Stream& stream, Vector<Token>& tokens, Vector<SyntaxWarning>& warnings, SyntaxError& error)
-        : Lexer(vm, arena, std::span<const CharacterType> { }, ScanRange { }, tokens, warnings, error)
+    Lexer(VM& vm, Arena& arena, Stream& stream, ScanRange::LastLine lastLine, TokenBuffer& tokens, Vector<SyntaxWarning>& warnings, SyntaxError& error)
+        : Lexer(vm, arena, std::span<const CharacterType> { }, ScanRange { 0, std::numeric_limits<unsigned>::max(), 1, 0, false, lastLine }, tokens, warnings, error)
     {
         m_stream = &stream;
         m_line = 0;
@@ -171,19 +173,24 @@ public:
         return !m_strings.isEmpty() && m_strings.last().isScanningText ? scanStringText() : scanToken();
     }
 
+    // What the parser is given when step() can go no further.
+    void addErrorToken()
+    {
+        m_position = std::min(m_position, m_end);
+        // It is nowhere. What is kept for it is where the tokenizer is, which is where something is said to be wrong if the tokenizer says so, or if that is where it is said to be.
+        bool isWhereTokenizerIs = m_error.isFromTokenizer || m_error.endColumn == -2;
+        auto [line, column] = isWhereTokenizerIs ? std::pair { m_error.line, static_cast<unsigned>(m_error.column + 1) } : whereTokenizerEnds();
+        Token& token = add(TokenKind::Error, m_position);
+        token.line = token.endLine = line;
+        token.column = token.endColumn = column;
+    }
+
     bool run()
     {
         m_bufferStart = m_lineStart;
         while (!m_isDone) {
-            bool ok = step();
-            if (!ok) {
-                m_position = std::min(m_position, m_end);
-                // It is nowhere. What is kept for it is where the tokenizer is, which is where something is said to be wrong if the tokenizer says so, or if that is where it is said to be.
-                bool isWhereTokenizerIs = m_error.isFromTokenizer || m_error.endColumn == -2;
-                auto [line, column] = isWhereTokenizerIs ? std::pair { m_error.line, static_cast<unsigned>(m_error.column + 1) } : whereTokenizerEnds();
-                Token& token = add(TokenKind::Error, m_position);
-                token.line = token.endLine = line;
-                token.column = token.endColumn = column;
+            if (!step()) {
+                addErrorToken();
                 return false;
             }
         }
@@ -243,7 +250,7 @@ private:
     NEVER_INLINE bool readMore()
     {
         if constexpr (sizeof(CharacterType) == sizeof(char16_t)) {
-            if (!m_stream || m_stream->isAtEndOfFile || m_stream->hasFailedToRead || m_error)
+            if (!m_stream || m_stream->isAtEndOfFile || m_stream->hasFailedToRead || !m_stream->mayRead || m_error)
                 return false;
             // What came before is let go of, unless a token is under way.
             unsigned bufferStartBefore = m_bufferStart;
@@ -252,8 +259,15 @@ private:
                 m_bufferStart = m_end;
             auto& buffer = m_stream->buffer;
             unsigned start = buffer.size();
-            if (m_stream->lines.readLine(buffer) == LineSource::Result::Failed) {
+            switch (m_stream->lines.readLine(buffer)) {
+            case LineSource::Result::Line:
+                break;
+            case LineSource::Result::Failed:
                 m_stream->hasFailedToRead = true;
+                return false;
+            case LineSource::Result::IsNotText:
+                // E_DECODE. It is the parser that says so, of the token that it cannot be given, which is where the tokenizer is: after the last line that could be read.
+                fail(String(m_stream->lines.whyNotText), m_line, static_cast<int>(columnOf(m_position)) - 1, m_line, -2, SyntaxError::Kind::SyntaxError, SaidBy::Parser);
                 return false;
             }
             if (buffer.size() == start) {
@@ -263,7 +277,8 @@ private:
                     m_stream->inputEndAtEndOfFile = bufferStartBefore;
                 return false;
             }
-            m_stream->hasImplicitNewline = buffer.last() != '\n';
+            // What is typed is taken as it comes: tok_underflow_interactive()
+            m_stream->hasImplicitNewline = buffer.last() != '\n' && !m_arena.isTypedAtPrompt;
             if (m_stream->hasImplicitNewline)
                 buffer.append('\n');
             m_source = buffer.span();
@@ -438,26 +453,28 @@ private:
         token.isInsideBrackets = !m_brackets.isEmpty();
         m_tokens.append(token);
         m_lineHasTokens = true;
-        if (m_stream) [[unlikely]]
-            m_stream->tokens.append({ kind, true, start, m_position, m_line, m_stream->firstLine, m_lineStart, m_stream->multiLineStart, m_stream->inputEndAtEndOfFile.value_or(m_end), m_stream->hasImplicitNewline, m_stream->isAtEndOfFile });
+        if (givesTokensAsWritten()) [[unlikely]]
+            m_stream->tokens->append({ kind, true, start, m_position, m_line, m_stream->firstLine, m_lineStart, m_stream->multiLineStart, m_stream->inputEndAtEndOfFile.value_or(m_end), m_stream->hasImplicitNewline, m_stream->isAtEndOfFile });
         return m_tokens.last();
     }
 
     bool hasExtraTokens() const { return m_stream && m_stream->hasExtraTokens; }
+    // And so has no need of what they come to.
+    bool givesTokensAsWritten() const { return m_stream && m_stream->tokens; }
 
     // What the token that has just been added is said to be made of, if not of all that was taken for it.
     void setStreamedText(unsigned start, unsigned end)
     {
-        if (!m_stream)
+        if (!givesTokensAsWritten())
             return;
-        m_stream->tokens.last().start = start;
-        m_stream->tokens.last().end = end;
+        m_stream->tokens->last().start = start;
+        m_stream->tokens->last().end = end;
     }
 
     void setStreamedTokenIsNowhere()
     {
-        if (m_stream)
-            m_stream->tokens.last().hasText = false;
+        if (givesTokensAsWritten())
+            m_stream->tokens->last().hasText = false;
     }
 
     // A string is beginning, or a piece of one.
@@ -587,9 +604,16 @@ private:
             return true;
         unsigned c = current();
         if (c == '#' || isNewline(c)) {
-            // Lines with only a comment or nothing at all have no say in it.
-            m_isBlankLine = true;
-            return true;
+            if (m_arena.isTypedAtPrompt && !indentation.column && c == '\n') {
+                // Nothing at all was typed, which is how it is said that what has been begun is over.
+            } else if (m_arena.isTypedAtPrompt && m_line == 1) {
+                // It is the first line, and there has to be something to make of it.
+                indentation = { };
+            } else {
+                // Lines with only a comment or nothing at all have no say in it.
+                m_isBlankLine = true;
+                return true;
+            }
         }
         if (!m_brackets.isEmpty())
             return true;
@@ -665,7 +689,9 @@ private:
         // It is not the end if there is no telling what comes next.
         if (m_stream && (m_error || m_stream->hasFailedToRead))
             return false;
-        if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0))
+        // If it is only that no more is to be read, that is the end whatever is open: E_INTERACT_STOP
+        bool isOnlyStopped = m_stream && !m_stream->mayRead && !m_stream->isAtEndOfFile;
+        if (m_brackets.size() > (m_hasEnclosingBracket ? 1 : 0) && !isOnlyStopped)
             return failForUnclosedBracket();
         // What ends the last line is added if it is not there, and takes up room.
         bool lastLineIsEnded = m_lastLine == ScanRange::LastLine::IsEnded;
@@ -691,7 +717,7 @@ private:
         if (lastLineIsEnded || m_position == m_lineStart || m_endIsBeginningOfLine)
             addDedents();
         // The parser has not begun if all that there has been is what it is not shown.
-        bool hasBegun = std::ranges::any_of(m_tokens, [] (const Token& token) { return token.kind != TokenKind::TypeIgnore; });
+        bool hasBegun = !m_tokens.isEmpty();
         if (m_lastLine == ScanRange::LastLine::IsEndedByTheEnd && hasBegun) {
             auto addNewline = [&] {
                 addAtEnd(TokenKind::Newline);
@@ -748,6 +774,11 @@ private:
             m_isBlankLine = false;
             return true;
         }
+        // _PyPegen_fill_token(): it is not for the parser.
+        auto putToOneSide = makeScopeExit([&] {
+            Token ignore = m_tokens.takeLast();
+            m_arena.typeIgnoreComments.append({ ignore.line, ignore.text });
+        });
         if (!m_isBlankLine)
             return true;
         // That is all that there is on the line, so the line is no line, and the end of it goes with this. CPython works out how long this is once it has gone past that.
@@ -819,7 +850,7 @@ private:
                 return finish(endOfLineStart);
 
             // What is read a line at a time is taken as it comes, and there a carriage return by itself ends nothing. It is passed over, and is part of whatever follows, which is not looked at to see if it begins a name.
-            bool isAfterCarriageReturn = m_stream && c == '\r' && at(m_position + 1) != '\n';
+            bool isAfterCarriageReturn = givesTokensAsWritten() && c == '\r' && at(m_position + 1) != '\n';
             if (isAfterCarriageReturn)
                 c = at(++m_position);
 
@@ -875,7 +906,8 @@ private:
     // Only in a stream. `start` is where the carriage return is, and `c` is what follows it, which is where this is.
     bool scanAfterCarriageReturn(unsigned start, unsigned c)
     {
-        size_t tokensBefore = m_stream->tokens.size();
+        auto& streamed = *m_stream->tokens;
+        size_t tokensBefore = streamed.size();
         bool succeeded;
         if (c == '\\') {
             ++m_position;
@@ -887,9 +919,9 @@ private:
             succeeded = scanString(m_position, false, false, false);
         else
             succeeded = scanOperator();
-        if (succeeded && m_stream->tokens.size() > tokensBefore) {
-            m_stream->tokens[tokensBefore].start = start;
-            m_stream->tokens[tokensBefore].endsInMiddleOfCharacter = c >= 0x80;
+        if (succeeded && streamed.size() > tokensBefore) {
+            streamed[tokensBefore].start = start;
+            streamed[tokensBefore].endsInMiddleOfCharacter = c >= 0x80;
         }
         return succeeded;
     }
@@ -948,7 +980,7 @@ private:
             c = at(++m_position);
         }
         auto characters = m_source.subspan(start, m_position - start);
-        if (m_stream && (isASCII || m_stream->hasExtraTokens)) {
+        if (givesTokensAsWritten() && (isASCII || m_stream->hasExtraTokens)) {
             add(TokenKind::Name, start);
             return true;
         }
@@ -1148,7 +1180,7 @@ private:
 
     bool addInteger(unsigned start, unsigned digitsStart, uint8_t radix)
     {
-        if (m_stream) {
+        if (givesTokensAsWritten()) {
             add(TokenKind::Number, start);
             return true;
         }
@@ -1183,7 +1215,7 @@ private:
 
     bool addReal(unsigned start, NumberKind kind)
     {
-        if (m_stream) {
+        if (givesTokensAsWritten()) {
             add(TokenKind::Number, start);
             return true;
         }
@@ -1554,8 +1586,8 @@ private:
         }
 
         // What it comes to is for the parser to find out.
-        const Identifier* value = m_stream ? nullptr : decodeString(contentStart, m_position - quoteSize, isRaw, isBytes, line, column);
-        if (!value && !m_stream)
+        const Identifier* value = givesTokensAsWritten() ? nullptr : decodeString(contentStart, m_position - quoteSize, isRaw, isBytes, line, column);
+        if (!value && !givesTokensAsWritten())
             return false;
         Token& token = add(TokenKind::String, start, line, column);
         token.text = value;
@@ -1589,7 +1621,7 @@ private:
     // The text is what is between `start` and `end`. Of two braces that stand for one, the second is part of the token and not of the text.
     bool addStringText(StringState& state, unsigned start, unsigned end, unsigned line, unsigned column)
     {
-        if (m_stream) {
+        if (givesTokensAsWritten()) {
             add(state.isTemplate ? TokenKind::TStringMiddle : TokenKind::FStringMiddle, start, line, column);
             setStreamedText(start, end);
             return true;
@@ -1902,7 +1934,7 @@ private:
                 } else {
                     if (c != ':' || !state->expressionEnd)
                         state->expressionEnd = start;
-                    if ((state->isInDebugExpression || state->isTemplate) && !m_stream)
+                    if ((state->isInDebugExpression || state->isTemplate) && !givesTokensAsWritten())
                         expressionSource = makeExpressionSource(*state);
                 }
             }
@@ -2003,7 +2035,7 @@ private:
     VM& m_vm;
     Arena& m_arena;
     std::span<const CharacterType> m_source;
-    Vector<Token>& m_tokens;
+    TokenBuffer& m_tokens;
     Vector<SyntaxWarning>& m_warnings;
     SyntaxError& m_error;
 
@@ -2033,7 +2065,7 @@ private:
 
 } // anonymous namespace
 
-bool tokenize(VM& vm, Arena& arena, StringView source, const ScanRange& range, Vector<Token>& tokens, Vector<SyntaxWarning>& warnings, SyntaxError& error)
+bool tokenize(VM& vm, Arena& arena, StringView source, const ScanRange& range, TokenBuffer& tokens, Vector<SyntaxWarning>& warnings, SyntaxError& error)
 {
     if (source.is8Bit())
         return Lexer<Latin1Character>(vm, arena, source.span8(), range, tokens, warnings, error).run();
@@ -2046,8 +2078,8 @@ struct TokenStream::Implementation {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(Implementation);
 
     Implementation(VM& vm, LineSource& lines, bool hasExtraTokens)
-        : stream { lines, buffer, streamed, hasExtraTokens }
-        , lexer(vm, arena, stream, tokens, warnings, error)
+        : stream { lines, buffer, &streamed, hasExtraTokens }
+        , lexer(vm, arena, stream, ScanRange::LastLine::IsEnded, tokens, warnings, error)
     {
     }
 
@@ -2055,7 +2087,7 @@ struct TokenStream::Implementation {
     Vector<char16_t> buffer;
     Vector<StreamedToken> streamed;
     size_t next { 0 };
-    Vector<Token> tokens;
+    TokenBuffer tokens;
     Vector<SyntaxWarning> warnings;
     SyntaxError error;
     Lexer<char16_t>::Stream stream;
@@ -2076,7 +2108,7 @@ auto TokenStream::next(StreamedToken& token) -> Result
     auto& self = *m_implementation;
     while (self.next >= self.streamed.size()) {
         self.streamed.shrink(0);
-        self.tokens.shrink(0);
+        self.tokens.clear();
         self.next = 0;
         ASSERT(!self.lexer.isDone());
         if (!self.lexer.step() || self.stream.hasFailedToRead || self.error)
@@ -2097,6 +2129,56 @@ unsigned TokenStream::startOfLine(unsigned line) const
     auto& starts = m_implementation->stream.lineStarts;
     return line && line <= starts.size() ? starts[line - 1] : 0;
 }
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(TypedTokens);
+
+struct TypedTokens::Implementation {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(Implementation);
+
+    Implementation(VM& vm, Arena& arena, LineSource& lines, Vector<SyntaxWarning>& warnings)
+        : stream { lines, buffer, nullptr, false }
+        , lexer(vm, arena, stream, ScanRange::LastLine::IsEndedByTheEnd, tokens, warnings, error)
+    {
+        ASSERT(arena.isTypedAtPrompt);
+    }
+
+    Vector<char16_t> buffer;
+    TokenBuffer tokens;
+    SyntaxError error;
+    bool isExhausted { false };
+    Lexer<char16_t>::Stream stream;
+    Lexer<char16_t> lexer;
+};
+
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(TypedTokens::Implementation);
+
+TypedTokens::TypedTokens(VM& vm, Arena& arena, LineSource& lines, Vector<SyntaxWarning>& warnings)
+    : m_implementation(makeUnique<Implementation>(vm, arena, lines, warnings))
+{
+}
+
+TypedTokens::~TypedTokens() = default;
+
+bool TypedTokens::fill()
+{
+    auto& self = *m_implementation;
+    size_t before = self.tokens.size();
+    while (!self.isExhausted && self.tokens.size() == before) {
+        if (!self.lexer.step() || self.stream.hasFailedToRead || self.error) {
+            self.lexer.addErrorToken();
+            self.isExhausted = true;
+        } else if (self.lexer.isDone())
+            self.isExhausted = true;
+    }
+    return self.tokens.size() != before;
+}
+
+const TokenBuffer& TypedTokens::tokens() const { return m_implementation->tokens; }
+bool TypedTokens::isExhausted() const { return m_implementation->isExhausted; }
+void TypedTokens::stopReading() { m_implementation->stream.mayRead = false; }
+bool TypedTokens::hasFailedToRead() const { return m_implementation->stream.hasFailedToRead; }
+std::span<const char16_t> TypedTokens::source() const { return m_implementation->buffer.span(); }
+const SyntaxError& TypedTokens::error() const { return m_implementation->error; }
 
 } } // namespace JSC::Python
 

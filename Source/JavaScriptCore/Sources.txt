@@ -801,6 +801,7 @@ python/PythonFileIO.cpp
 python/PythonFileOperations.cpp
 python/PythonIOBase.cpp
 python/PythonImpModule.cpp
+python/PythonInteractive.cpp
 python/PythonImport.cpp
 python/PythonMarshal.cpp
 python/PythonMathModule.cpp

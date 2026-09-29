@@ -81,6 +81,14 @@ JSValue symbolTableOfSource(JSGlobalObject*, const SourceCode&, Module::Kind);
 struct Block;
 JSValue newSymbolTableEntry(JSGlobalObject*, Block&);
 FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public, std::optional<unsigned> optimizationLevel = std::nullopt);
+// pyrun_one_parse_ast(): reads one statement that is typed at a prompt, as far as it takes to parse it and no further. `text` is then all that was read, which is to be compiled with IsTypedAtPrompt.
+class LineSource;
+enum class TypedStatement : uint8_t {
+    IsRead,
+    IsTheEnd, // There was nothing to read.
+    Raised, // Because it is not Python, or because of what went wrong with reading it.
+};
+TypedStatement readTypedStatement(JSGlobalObject*, LineSource&, const String& filename, unsigned futureFeatures, String& text);
 // _Py_GetConfig()->optimization_level, which is what `optimize=-1` means. More than 2 is 2.
 unsigned configuredOptimizationLevel(JSGlobalObject*);
 JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);

@@ -46,6 +46,7 @@ struct ImportState {
     // What Python was doing as it started, for saying what it was that could not be done: the PyStatus that CPython would end with
     ASCIILiteral startingFunction;
     ASCIILiteral startingFailure;
+    unsigned typedStatementCount { 0 }; // interp->_interactive_src_count
     // For -X importtime: `find_and_load` of CPython's struct _import_state
     bool hasImportTimeHeaderToPrint { true };
     int importLevel { 0 };
