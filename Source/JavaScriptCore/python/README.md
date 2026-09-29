@@ -1033,6 +1033,9 @@ There is nothing that is per process, nothing that is set after something is mad
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots. What sets do with one another is CPython's `Objects/setobject.c`, function for function: how long each takes, which of two keys that are equal
   is kept, and what is asked of the keys and how often (`programs/sets-with-one-another.py`). The one thing that is otherwise is for the sake of the order: `a ^ b` has what is only in `a` first.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
+- **A NaN has 50 bits to be told from another by, and not 51.** The engine has other uses for some of what would be NaNs, and JavaScript never sees those, because every number that it reads out of memory is made the one NaN
+  first. Python can tell NaNs apart, with `struct`, `marshal` and `memoryview`, so `floatFromDouble()` keeps the sign and all of the rest but bit 50: `purifyNaNKeepingPayload()`, in `runtime/PureNaN.h`, which says why it is that bit.
+  Without it, eight bytes of a program's choosing would be a pointer of its choosing.
 - **In a `__dict__`, keys that are strings come before those that are not**, and before those that JavaScript would take for an index.
 - **There is less room.** An int can be no larger than a `BigInt`, which is 2\*\*30 bits, a `str` no longer than a JavaScript string, which is 2\*\*31 - 1 code units, a `bytes` no longer than a typed array,
   which is 2\*\*32, and a list no longer than what a JavaScript array keeps side by side, which is 2\*\*28 elements. Past that it is a `MemoryError`, where CPython makes it if there is room. And what says that it

@@ -102,4 +102,59 @@ inline constexpr double purifyNaN(double value)
     return value;
 }
 
+// The same, for a language in which a program can tell one NaN from another. It keeps the sign, and as much as it can of the rest.
+//
+// It is not enough for such a NaN to be pure. It has to stay so when its sign is changed, which the interpreter does to the encoded value, without looking: 0x7ffe000000000000 is pure, and is encoded as
+// 0x8000000000000000, which with its top bit turned off is a pointer. What is pure whichever sign it has is what has bit 50 clear, and that is still so when the hardware sets bit 51, as it does to a signalling NaN that it is
+// given to work on. So there are 50 bits to tell NaNs apart by, where the hardware has 51.
+inline constexpr double purifyNaNKeepingPayload(double value)
+{
+    if (value == value) [[likely]]
+        return value;
+    constexpr uint64_t unsafeBit = 1ULL << 50;
+    constexpr uint64_t quietBit = 1ULL << 51;
+    constexpr uint64_t mantissaMask = (1ULL << 52) - 1;
+    uint64_t bits = std::bit_cast<uint64_t>(value) & ~unsafeBit;
+    // With nothing left it would be an infinity.
+    if (!(bits & mantissaMask))
+        bits |= quietBit;
+    return std::bit_cast<double>(bits);
+}
+
+namespace PureNaNInternal {
+constexpr bool staysPure(uint64_t bits)
+{
+    uint64_t purified = std::bit_cast<uint64_t>(purifyNaNKeepingPayload(std::bit_cast<double>(bits)));
+    constexpr uint64_t signBit = 1ULL << 63;
+    constexpr uint64_t quietBit = 1ULL << 51;
+    for (uint64_t candidate : { purified, purified ^ signBit, purified | quietBit, (purified ^ signBit) | quietBit }) {
+        double value = std::bit_cast<double>(candidate);
+        if (value == value || isImpureNaN(value))
+            return false;
+        // As the interpreter changes the sign of one
+        uint64_t encoded = (candidate + JSValueDoubleEncodeOffset) ^ signBit;
+        uint64_t mask = encoded & JSValueNumberTag;
+        if (!mask || mask == JSValueNumberTag)
+            return false;
+    }
+    return (purified & signBit) == (bits & signBit);
+}
+}
+static_assert(PureNaNInternal::staysPure(0x7ff0000000000001ULL));
+static_assert(PureNaNInternal::staysPure(0x7ff4000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0x7ff8000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0x7ffbffffffffffffULL));
+static_assert(PureNaNInternal::staysPure(0x7ffc000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0x7ffe000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0x7fffffffffffffffULL));
+static_assert(PureNaNInternal::staysPure(0xfff0000000000001ULL));
+static_assert(PureNaNInternal::staysPure(0xfff4000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0xfff8000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0xfffbffffffffffffULL));
+static_assert(PureNaNInternal::staysPure(0xfffc000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0xfffe000000000000ULL));
+static_assert(PureNaNInternal::staysPure(0xffffffffffffffffULL));
+static_assert(std::bit_cast<uint64_t>(purifyNaNKeepingPayload(std::bit_cast<double>(0x7ff8000000012345ULL))) == 0x7ff8000000012345ULL);
+static_assert(std::bit_cast<uint64_t>(purifyNaNKeepingPayload(std::bit_cast<double>(0xfff0000000000001ULL))) == 0xfff0000000000001ULL);
+
 } // namespace JSC

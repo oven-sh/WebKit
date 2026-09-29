@@ -119,7 +119,8 @@ uint64_t lowBitsOfInt(JSValue value)
 
 JSValue floatFromDouble(double value)
 {
-    return jsTaggedFloat(value);
+    // It may have been read out of bytes that a program supplied, and then it can be any NaN at all.
+    return jsTaggedFloat(purifyNaNKeepingPayload(value));
 }
 
 JSValue intFromInt64(JSGlobalObject* globalObject, int64_t value)

@@ -1,0 +1,16 @@
+marshal 254 patterns come to 1 kind: ('float', True, True, 'nan', 'float', True, 1.0, 'float', True, True, 'float', True, 'float', 'nan', 'nan', True, False, False, True)
+marshal the sign is kept: True and turned: True
+memoryview 254 patterns come to 1 kind: ('float', True, True, 'nan', 'float', True, 1.0, 'float', True, True, 'float', True, 'float', 'nan', 'nan', True, False, False, True)
+memoryview the sign is kept: True and turned: True
+tolist 254 patterns come to 1 kind: ('float', True, True, 'nan', 'float', True, 1.0, 'float', True, True, 'float', True, 'float', 'nan', 'nan', True, False, False, True)
+tolist the sign is kept: True and turned: True
+complex 254 patterns come to 1 kind: ('float', True, True, 'nan', 'float', True, 1.0, 'float', True, True, 'float', True, 'float', 'nan', 'nan', True, False, False, True)
+complex the sign is kept: True and turned: True
+over and over: [15000, 15000, 15000, 15000, 15000, 15000, 15000]
+0x7ffe000000000010 ['float', 'float', 'float'] float float float (nan+nanj) (nan, nan) nan nan nan True True float float
+0xfffe000000000010 ['float', 'float', 'float'] float float float (nan+nanj) (nan, nan) nan nan nan True True float float
+0xfffc000000000000 ['float', 'float', 'float'] float float float (nan+nanj) (nan, nan) nan nan nan True True float float
+0xffffffffffffffff ['float', 'float', 'float'] float float float (nan+nanj) (nan, nan) nan nan nan True True float float
+of four bytes: 342 {('float', True, True, 'nan')} True
+kept as it is: 126 True True True True
+what is not a NaN is as it was: True

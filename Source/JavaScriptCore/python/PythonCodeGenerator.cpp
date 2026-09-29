@@ -1159,15 +1159,15 @@ private:
         case Kind::BigInteger:
             return g.emitLoad(dst, g.addBigIntConstant(identifierFor(value.text), value.radix, value.isNegative));
         case Kind::Float:
-            return g.emitLoad(dst, jsTaggedFloat(std::bit_cast<double>(value.bits)));
+            return g.emitLoad(dst, floatFromDouble(std::bit_cast<double>(value.bits)));
         case Kind::Imaginary:
-            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(std::bit_cast<double>(value.bits))) }, location);
+            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(purifyNaNKeepingPayload(std::bit_cast<double>(value.bits)))) }, location);
         case Kind::String:
             return g.emitLoad(dst, identifierFor(value.text));
         case Kind::Bytes:
             return emitRuntimeCall(dst, "newBytes"_s, { stringConstant(identifierFor(value.text)) }, location);
         case Kind::Complex:
-            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(std::bit_cast<double>(value.imaginaryBits))), constant(jsDoubleNumber(std::bit_cast<double>(value.bits))) }, location);
+            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(purifyNaNKeepingPayload(std::bit_cast<double>(value.imaginaryBits)))), constant(jsDoubleNumber(purifyNaNKeepingPayload(std::bit_cast<double>(value.bits)))) }, location);
         case Kind::Tuple:
         case Kind::FrozenSet: {
             if (!m_vm.isSafeToRecurse()) [[unlikely]] {
@@ -1653,7 +1653,7 @@ private:
                 return { };
             return jsNumber(static_cast<int32_t>(value.isNegative ? -static_cast<int64_t>(value.bits) : static_cast<int64_t>(value.bits)));
         case Kind::Float:
-            return jsTaggedFloat(std::bit_cast<double>(value.bits));
+            return floatFromDouble(std::bit_cast<double>(value.bits));
         case Kind::String:
             return g.addStringConstant(identifierFor(value.text));
         default:

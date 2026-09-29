@@ -238,7 +238,7 @@ static JSValue makeConstant(JSGlobalObject* globalObject, const CodeDetails::Con
         return constant.isNegative && magnitude && magnitude.isHeapBigInt() ? JSBigInt::unaryMinus(globalObject, magnitude.asHeapBigInt()) : magnitude;
     }
     case Kind::Float:
-        return jsTaggedFloat(std::bit_cast<double>(constant.bits));
+        return floatFromDouble(std::bit_cast<double>(constant.bits));
     case Kind::Imaginary:
         return PyComplex::create(globalObject, 0, std::bit_cast<double>(constant.bits));
     case Kind::String:
