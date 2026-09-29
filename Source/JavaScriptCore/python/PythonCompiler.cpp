@@ -35,6 +35,7 @@
 #include "PyObjects.h"
 #include "PythonASTModule.h"
 #include "PythonASTOptimizer.h"
+#include "PythonBuiltins.h"
 #include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
 #include "PythonCodecs.h"

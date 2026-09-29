@@ -148,6 +148,7 @@ namespace FFI { class CallbackEntryScope; }
 class Debugger;
 class DeferredWorkTimer;
 class PinballCompletion;
+class PyWeakReference;
 class RegExp;
 class RegExpCache;
 class Register;
@@ -582,6 +583,7 @@ public:
     WriteBarrier<Structure> sparseArrayValueMapStructure;
     WriteBarrier<Structure> templateObjectDescriptorStructure;
     WriteBarrier<Structure> pythonCodeConstantStructure;
+    WriteBarrier<Structure> pythonWeakReferenceListStructure;
     WriteBarrier<Structure> unlinkedFunctionExecutableStructure;
     WriteBarrier<Structure> unlinkedProgramCodeBlockStructure;
     WriteBarrier<Structure> unlinkedEvalCodeBlockStructure;
@@ -1516,6 +1518,11 @@ private:
     uint32_t m_pythonLimitUnlessWatched { 1000 };
     uint32_t m_pythonLimit { 1000 }; // sys.setrecursionlimit()
     unsigned m_pythonWatcherCount { 0 };
+    // What Python code is to see to when it next looks at m_pythonLimitUnlessWatched. See Python::doPendingWork().
+    bool m_hasPythonWork { false };
+    bool m_isPythonInterrupted { false };
+    PyWeakReference* m_pythonReferencesToCall { nullptr };
+    uint64_t m_pythonWeakReferenceOrder { 0 };
     bool m_executionForbidden { false };
     bool m_executionForbiddenOnTermination { false };
     bool m_isDebuggerHookInjected { false };
@@ -1554,20 +1561,46 @@ public:
     void setPythonRecursionLimit(uint32_t limit)
     {
         m_pythonLimit = limit;
-        m_pythonLimitUnlessWatched = m_pythonWatcherCount ? 0 : limit;
+        updatePythonLimitUnlessWatched();
     }
+    void updatePythonLimitUnlessWatched() { m_pythonLimitUnlessWatched = m_pythonWatcherCount || m_hasPythonWork ? 0 : m_pythonLimit; }
     // Whether anything is being told of what Python code does. Each realm that has something to tell counts for one.
     bool isPythonWatched() const { return m_pythonWatcherCount; }
     void addPythonWatcher()
     {
         ++m_pythonWatcherCount;
-        m_pythonLimitUnlessWatched = 0;
+        updatePythonLimitUnlessWatched();
     }
     void removePythonWatcher()
     {
-        if (!--m_pythonWatcherCount)
-            m_pythonLimitUnlessWatched = m_pythonLimit;
+        --m_pythonWatcherCount;
+        updatePythonLimitUnlessWatched();
     }
+    // There is something for Python code to see to as soon as it is somewhere that anything can be run: what CPython has its "eval breaker" for. It costs code that is running nothing to be able to be asked, since
+    // it looks at the one word anyway.
+    bool hasPythonWork() const { return m_hasPythonWork; }
+    void setHasPythonWork(bool hasWork)
+    {
+        m_hasPythonWork = hasWork;
+        updatePythonLimitUnlessWatched();
+    }
+    // A weak reference to what is no more, which has a callback. This is called by the collector, with everything else stopped.
+    // Each has the next.
+    PyWeakReference* pythonReferencesToCall() const { return m_pythonReferencesToCall; }
+    void addPythonReferenceToCall(PyWeakReference* reference)
+    {
+        m_pythonReferencesToCall = reference;
+        setHasPythonWork(true);
+    }
+    PyWeakReference* takePythonReferencesToCall() { return std::exchange(m_pythonReferencesToCall, nullptr); }
+    uint64_t nextPythonWeakReferenceOrder() { return ++m_pythonWeakReferenceOrder; }
+    // KeyboardInterrupt is to be raised.
+    void interruptPython()
+    {
+        m_isPythonInterrupted = true;
+        setHasPythonWork(true);
+    }
+    bool takePythonInterrupt() { return std::exchange(m_isPythonInterrupted, false); }
     uint32_t* addressOfPythonDepth() { return &m_pythonDepth; }
     uint32_t* addressOfPythonLimitUnlessWatched() { return &m_pythonLimitUnlessWatched; }
 

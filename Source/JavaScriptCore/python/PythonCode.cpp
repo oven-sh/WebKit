@@ -957,6 +957,8 @@ PYTHON_NATIVE(codeReplace)
     RELEASE_AND_RETURN(scope, JSValue::encode(codeWithParts(globalObject, scope, args[0], given)));
 }
 
+static JSValue codeFromParts(JSGlobalObject*, CodeParts&);
+
 // code(argcount, posonlyargcount, kwonlyargcount, nlocals, stacksize, flags, codestring, constants, names, varnames, filename, name, qualname, firstlineno, linetable,
 //     exceptiontable, freevars=(), cellvars=(), /)
 PYTHON_NATIVE(codeNew)
@@ -976,10 +978,32 @@ PYTHON_NATIVE(codeNew)
     }
     auditNewCode(globalObject, JSValue(), given);
     RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(codeFromParts(globalObject, given)));
+}
+
+JSValue newCodeFromParts(JSGlobalObject* globalObject, const ArgList& values)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    ASSERT(values.size() == std::size(parts));
+    CodeParts given;
+    for (unsigned i = 0; i < values.size(); ++i) {
+        JSValue value = values.at(i);
+        if (!checkPart(globalObject, scope, "code"_s, String::number(i + 1), parts[i].type, value))
+            return { };
+        given.*parts[i].member = value;
+    }
+    RELEASE_AND_RETURN(scope, codeFromParts(globalObject, given));
+}
+
+static JSValue codeFromParts(JSGlobalObject* globalObject, CodeParts& given)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
     static constexpr std::pair<JSValue CodeParts::*, ASCIILiteral> counts[] = { { &CodeParts::argumentCount, "argcount"_s }, { &CodeParts::positionalOnlyCount, "posonlyargcount"_s }, { &CodeParts::keywordOnlyCount, "kwonlyargcount"_s }, { &CodeParts::localCount, "nlocals"_s } };
     for (auto [member, name] : counts) {
         if ((given.*member).asInt32() < 0)
-            return JSValue::encode(raiseValueError(globalObject, scope, concatenate("code: "_s, name, " must not be negative"_s)));
+            return (raiseValueError(globalObject, scope, concatenate("code: "_s, name, " must not be negative"_s)));
     }
     for (auto member : { &CodeParts::names, &CodeParts::variableNames, &CodeParts::freeVariables, &CodeParts::cellVariables }) {
         JSValue tuple = given.*member;
@@ -987,11 +1011,11 @@ PYTHON_NATIVE(codeNew)
             continue;
         for (auto& item : asTuple(tuple)->span()) {
             if (!stringIn(item.get()))
-                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("name tuples must contain only strings, not '"_s, typeName(globalObject, item.get()), '\'')));
+                return (raiseTypeError(globalObject, scope, concatenate("name tuples must contain only strings, not '"_s, typeName(globalObject, item.get()), '\'')));
         }
     }
     if (given.stackSize.asInt32() < 0 || given.flags.asInt32() < 0 || given.argumentCount.asInt32() < given.positionalOnlyCount.asInt32())
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemError, "bad argument to internal function"_s));
+        return (raise(globalObject, scope, BuiltinType::SystemError, "bad argument to internal function"_s));
 
     String filename = asString(given.filename)->value(globalObject);
     String name = asString(given.name)->value(globalObject);
@@ -999,14 +1023,14 @@ PYTHON_NATIVE(codeNew)
     RETURN_IF_EXCEPTION(scope, { });
     FunctionExecutable* executable = executableFromBytes(globalObject, *builtinBufferOf(given.bytes), filename, name, qualifiedName, std::max(given.firstLine.asInt32(), 0));
     if (!executable)
-        return JSValue::encode(raiseValueError(globalObject, scope, "code: co_code is malformed"_s));
+        return (raiseValueError(globalObject, scope, "code: co_code is malformed"_s));
     // The rest is to be what follows from that. What has been seen to already is not looked at again.
     given.bytes = given.filename = given.name = given.qualifiedName = given.firstLine = JSValue();
     if (!given.freeVariables)
         given.freeVariables = realm->emptyTuple();
     if (!given.cellVariables)
         given.cellVariables = realm->emptyTuple();
-    RELEASE_AND_RETURN(scope, JSValue::encode(codeWithParts(globalObject, scope, codeObjectFor(globalObject, executable), given, MakesNoCopy::IfTheSame)));
+    RELEASE_AND_RETURN(scope, codeWithParts(globalObject, scope, codeObjectFor(globalObject, executable), given, MakesNoCopy::IfTheSame));
 }
 
 // ---- Setting it up

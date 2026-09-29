@@ -969,8 +969,13 @@ void initializeGenericAliasAndUnion(JSGlobalObject* globalObject)
         PyType* type = realm->type(static_cast<BuiltinType>(i));
         // Those two have something of their own to do.
         if (type != unionType && type != realm->typeGeneric())
-            addMethodsThatCPythonHas(globalObject, type, { { "__class_getitem__"_s, genericClassGetItem, Kind::ClassMethod } });
+            addClassGetItemIfGeneric(globalObject, type);
     }
+}
+
+void addClassGetItemIfGeneric(JSGlobalObject* globalObject, PyType* type)
+{
+    addMethodsThatCPythonHas(globalObject, type, { { "__class_getitem__"_s, genericClassGetItem, PyNativeFunction::Kind::ClassMethod } });
 }
 
 } } // namespace JSC::Python

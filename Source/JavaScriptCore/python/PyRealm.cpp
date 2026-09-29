@@ -55,6 +55,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_notImplemented);
     thisObject->m_monitoring.visit(visitor);
     thisObject->m_warnings.visit(visitor);
+    thisObject->m_threadModule.visit(visitor);
     thisObject->m_ast.visit(visitor);
     visitor.append(thisObject->m_ellipsis);
     visitor.append(thisObject->m_noDefault);
@@ -143,6 +144,15 @@ PyRealm* PyRealm::create(VM& vm, JSGlobalObject* globalObject)
     return realm;
 }
 
+// Every class has a __doc__, if only None.
+static void putDocOfBuiltinType(VM& vm, JSGlobalObject* globalObject, PyType* type)
+{
+    if (type->getDirect(vm, vm.pythonNames().dunder_doc))
+        return;
+    auto* description = Python::findTypeDescription(type->nameWithoutModule(globalObject));
+    type->putDirect(vm, vm.pythonNames().dunder_doc, description && !description->doc.isNull() ? JSValue(jsString(vm, String(description->doc))) : jsUndefined());
+}
+
 void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
 {
     DeferGC deferGC(vm);
@@ -186,6 +196,7 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
     Python::initializeAsyncTypes(globalObject, builtins);
     Python::initializeExceptionGroups(globalObject, builtins);
     m_asyncContextFrameStructure.set(vm, this, Python::createAsyncContextFrameStructure(vm, globalObject));
+    Python::initializeWeakReferenceTypes(globalObject);
     Python::initializeContextVarTypes(globalObject);
     Python::initializeWarnings(globalObject);
     Python::initializeProperty(globalObject);
@@ -232,14 +243,28 @@ void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
                 m_types[i]->setErrorType(errorType);
         }
     }
-    // Every class has a __doc__, if only None.
-    for (auto& type : m_types) {
-        if (type->getDirect(vm, vm.pythonNames().dunder_doc))
-            continue;
-        auto* description = Python::findTypeDescription(type->nameWithoutModule(globalObject));
-        type->putDirect(vm, vm.pythonNames().dunder_doc, description && !description->doc.isNull() ? JSValue(jsString(vm, String(description->doc))) : jsUndefined());
-    }
+    for (auto& type : m_types)
+        putDocOfBuiltinType(vm, globalObject, type.get());
     Python::initializeLibrary(globalObject);
 }
+
+namespace Python {
+
+PyType* createBuiltinType(JSGlobalObject* globalObject, ASCIILiteral name, PyType* base, PyType::Layout layout, unsigned flags)
+{
+    VM& vm = globalObject->vm();
+    DeferGC deferGC(vm);
+    PyType* type = PyType::createBuiltin(vm, globalObject, name, base, layout, flags);
+    type->finishBuiltin(vm, globalObject, globalObject->pyRealm()->typeType());
+    putDocOfBuiltinType(vm, globalObject, type);
+    addClassGetItemIfGeneric(globalObject, type);
+    // One that CPython makes with PyType_FromSpec(), as a class statement makes a class, has where it is from among what is in it. Py_TPFLAGS_HEAPTYPE says which those are.
+    constexpr unsigned long cpythonHeapType = 1ul << 9;
+    if (String module = type->moduleOfBuiltin(); !module.isNull() && (type->flagsForPython() & cpythonHeapType))
+        type->putDirect(vm, vm.pythonNames().dunder_module, jsString(vm, module));
+    return type;
+}
+
+} // namespace Python
 
 } // namespace JSC

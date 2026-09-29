@@ -859,8 +859,16 @@ PYTHON_NATIVE(reversedNew)
     if (method && !isNone(method))
         RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
     PyType* type = typeOf(globalObject, args[1]);
-    // PySequence_Check(). That it has no __len__() is for len() to say.
-    if (method || !type->lookup(vm, names.dunder_getitem) || isDict(args[1]))
+    // PySequence_Check(). That it has no __len__() is for len() to say. The __getitem__() of a class that a program made will do. That of one that is built in is for a sequence, and takes a number, or for a mapping.
+    bool isSequence = false;
+    for (auto& entry : type->mro()->span()) {
+        PyType* owner = asType(entry.get());
+        if (!owner->lookupOwn(vm, names.dunder_getitem))
+            continue;
+        isSequence = owner->hasFlag(PyType::IsHeapType) || owner->hasFlag(PyType::IsSequence) || owner == realm->typeStr() || owner == realm->typeBytes() || owner == realm->typeByteArray() || owner->hasFlag(PyType::IsJavaScript);
+        break;
+    }
+    if (method || !isSequence || isDict(args[1]))
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object is not reversible"_s)));
     int64_t size = length(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });

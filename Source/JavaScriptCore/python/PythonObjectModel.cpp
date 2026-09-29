@@ -37,6 +37,7 @@
 #include "PyInstance.h"
 #include "PyNativeFunction.h"
 #include "PyObjects.h"
+#include "PyWeakReference.h"
 #include "ObjectConstructor.h"
 #include "PythonNumbers.h"
 #include "TopExceptionScope.h"
@@ -1384,7 +1385,7 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     if (!keywordCount && !keepsOffStack) [[likely]]
         RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, arguments));
 
-    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyBoundMethodType || cell->type() == PyNativeObjectType;
+    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyBoundMethodType || cell->type() == PyNativeObjectType || cell->inherits<PyWeakReference>();
     if (understandsKeywords && keepsOffStack) [[unlikely]] {
         // See NativeArguments.
         JSCellButterfly* values = JSCellButterfly::tryCreateFromArgList(vm, arguments);

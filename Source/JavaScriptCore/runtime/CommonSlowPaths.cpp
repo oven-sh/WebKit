@@ -1863,6 +1863,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_enter)
         Python::raiseRecursionError(globalObject);
         CHECK_EXCEPTION();
     }
+    if (vm.hasPythonWork()) [[unlikely]] {
+        Python::doPendingWork(globalObject);
+        CHECK_EXCEPTION();
+    }
     Python::enterFrame(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), bytecode.m_isResume);
     END();
 }
@@ -1871,6 +1875,10 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_line)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyLine>();
+    if (vm.hasPythonWork()) [[unlikely]] {
+        Python::doPendingWork(globalObject);
+        CHECK_EXCEPTION();
+    }
     std::optional<BytecodeIndex> next = Python::frameIsAtLine(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), static_cast<Python::LineKind>(bytecode.m_kind));
     CHECK_EXCEPTION();
     // The interpreter goes on from the first of these. Compiled code goes on from the second, if there is one, and otherwise from where it is.

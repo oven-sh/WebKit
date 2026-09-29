@@ -120,6 +120,7 @@
 #include "PropertyInlineCache.h"
 #include "PropertyTableInlines.h"
 #include "PyCodeConstant.h"
+#include "PyWeakReference.h"
 #include "PythonCharacters.h"
 #include "PythonCommonNames.h"
 #include "RandomizingFuzzerAgent.h"
@@ -412,6 +413,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     sparseArrayValueMapStructure.setWithoutWriteBarrier(SparseArrayValueMap::createStructure(*this, nullptr, jsNull()));
     templateObjectDescriptorStructure.setWithoutWriteBarrier(JSTemplateObjectDescriptor::createStructure(*this, nullptr, jsNull()));
     pythonCodeConstantStructure.setWithoutWriteBarrier(PyCodeConstant::createStructure(*this, nullptr, jsNull()));
+    pythonWeakReferenceListStructure.setWithoutWriteBarrier(PyWeakReferenceList::createStructure(*this, nullptr, jsNull()));
     unlinkedFunctionExecutableStructure.setWithoutWriteBarrier(UnlinkedFunctionExecutable::createStructure(*this, nullptr, jsNull()));
     unlinkedProgramCodeBlockStructure.setWithoutWriteBarrier(UnlinkedProgramCodeBlock::createStructure(*this, nullptr, jsNull()));
     unlinkedEvalCodeBlockStructure.setWithoutWriteBarrier(UnlinkedEvalCodeBlock::createStructure(*this, nullptr, jsNull()));
@@ -2236,6 +2238,8 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(sparseArrayValueMapStructure);
     visitor.append(templateObjectDescriptorStructure);
     visitor.append(pythonCodeConstantStructure);
+    visitor.append(pythonWeakReferenceListStructure);
+    visitor.appendUnbarriered(m_pythonReferencesToCall);
     visitor.append(unlinkedFunctionExecutableStructure);
     visitor.append(unlinkedProgramCodeBlockStructure);
     visitor.append(unlinkedEvalCodeBlockStructure);

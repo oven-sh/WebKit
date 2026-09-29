@@ -743,6 +743,8 @@ python/PyFrame.cpp
 python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp
+python/PyLock.cpp
+python/PyWeakReference.cpp
 python/PythonConstantFolding.cpp
 python/PythonFrameJump.cpp
 python/PythonASTDumper.cpp
@@ -771,6 +773,7 @@ python/PythonGenericAlias.cpp
 python/PythonIterators.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
+python/PythonMarshal.cpp
 python/PythonModules.cpp
 python/PythonContextVars.cpp
 python/PythonExceptionDisplay.cpp
@@ -799,7 +802,10 @@ python/PythonTypeParameters.cpp
 python/PythonSyntaxTreeSource.cpp
 python/PythonSyntaxWarnings.cpp
 python/PythonUnparse.cpp
+python/PythonThreadModule.cpp
+python/PythonTime.cpp
 python/PythonWarnings.cpp
+python/PythonWeakReferences.cpp
 
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp

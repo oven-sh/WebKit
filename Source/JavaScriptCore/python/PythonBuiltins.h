@@ -92,6 +92,7 @@ inline bool audit(JSGlobalObject* globalObject, ASCIILiteral event, Arguments...
 FunctionExecutable* executableOfCode(JSValue code);
 const FunctionInfo& infoOfExecutable(FunctionExecutable*);
 bool isCode(JSGlobalObject*, JSValue);
+JSValue newCodeFromParts(JSGlobalObject*, const ArgList&); // What code() makes of its eighteen arguments, with nobody told of it: _PyCode_New().
 Vector<Identifier> sortedFreeVariables(const FunctionInfo&); // In the order of co_freevars.
 void initializeCodeType(JSGlobalObject*);
 
@@ -179,6 +180,16 @@ void initializeAsyncTypes(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeExceptionGroups(JSGlobalObject*, JSObject* builtinsNamespace);
 void initializeContextVarTypes(JSGlobalObject*);
 JSObject* createContextVarsModule(JSGlobalObject*);
+// A class that is built in and is made when the module that it is in is first imported, rather than with the realm. It is for whoever asks for it to keep. What is in it is still to be put there.
+PyType* createBuiltinType(JSGlobalObject*, ASCIILiteral name, PyType* base, PyType::Layout, unsigned flags);
+void addClassGetItemIfGeneric(JSGlobalObject*, PyType*); // C[int], if CPython's has that
+JSObject* createThreadModule(JSGlobalObject*);
+JSObject* createMarshalModule(JSGlobalObject*);
+JSValue marshalDumps(JSGlobalObject*, JSValue); // PyMarshal_WriteObjectToString()
+JSValue marshalLoads(JSGlobalObject*, std::span<const uint8_t>); // PyMarshal_ReadObjectFromString()
+void initializeWeakReferenceTypes(JSGlobalObject*);
+JSObject* createWeakrefModule(JSGlobalObject*);
+JSValue newWeakReference(JSGlobalObject*, JSValue object, JSValue callback = JSValue()); // PyWeakref_NewRef()
 void initializeWarnings(JSGlobalObject*);
 JSObject* createWarningsModule(JSGlobalObject*);
 JSObject* createASTModule(JSGlobalObject*);

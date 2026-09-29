@@ -542,8 +542,45 @@ through it, `import` and `print()` included.
 
 ### Where the library is written
 
-Data structures and what the language itself needs, in C++. What is easier said in Python, in Python: `lib/*.py` are compiled by this front
-end when a realm is made, and are in no traceback.
+What CPython writes in C is written here in C++, and what CPython writes in Python is that Python, as it is. A program cannot see into what is written in C: all that there is to match is what it does. What is
+written in Python it can see all the way into. It can replace a function in it, derive from a class in it and override any method, read what begins with an underscore, find its frames on the stack and its
+lines in a traceback, and ask for its source. Programs do. So a module is written in the language that CPython wrote it in, function for function, and each file here that is a port says of what.
+
+A class that is built in and belongs to a module is made when the module is first imported: `createBuiltinType()`. What the module has to keep for the realm, those classes among it, is a struct in `PyRealm`,
+as CPython keeps a module's state: `ThreadModuleState`.
+
+Besides that there is what the front end itself is easier said in Python for: `lib/*.py` are compiled by it when a realm is made, and are in no traceback.
+
+### What is put off
+
+Some things come up when nothing can be run, and are to be run as soon as something can: the callback of a weak reference, which comes up in the middle of a collection, and `KeyboardInterrupt`. CPython has its
+"eval breaker" for that, a word that running code looks at now and then. Here the word is the one that it looks at anyway, `VM::m_pythonLimitUnlessWatched`, which is 0 while there is something to see to, so
+that being able to be asked costs code that is running nothing. `op_py_enter` and `op_py_line` then go the slow way, which is `doPendingWork()`.
+
+### Weak references
+
+`weakref.ref` is a cell that has what it refers to and does not tell the collector, as `JSWeakObjectRef` is, and it lets go of it by the same means: when the collector has found what there is to keep, each
+reference that it is keeping looks whether what it refers to is among that (`reconcileWeakReferencesAtGCEnd()`). If it is not and there is a callback, the reference goes on a list that begins in the `VM` and goes
+from one to the next, which does keep them, and there is something to see to.
+
+An object knows the references to it, so that `ref(x) is ref(x)`, and does not keep them. It has a `PyWeakReferenceList`, in a property that no program can name, in either language. That has the first of
+them and each has the next, as in CPython, and the collector is told of none of it. What the collector is not keeping is dropped from the list at the same time as above, before anything is swept. So there is
+no table of what refers to what, and nothing that a reference costs an object that has none.
+
+There can be one to whatever CPython allows one to, and to an object of JavaScript's. An array is a `list` and an `Error` is an exception, and there cannot be one to those.
+
+### Locks
+
+`_thread.lock` is a cell with a word in it, and to wait for it is to wait for the word as `Atomics.wait()` does, by the same means (`WaiterListManager`). So the engine knows of a thread that is waiting, as it
+does of one that JavaScript has made wait, and can wake it to be terminated. To take one that is free, or let go of one that nothing is waiting for, is to write the word.
+
+There is one thread, and `_thread` is as it is in CPython for a program that has not started another. Starting one fails as it does there when the system will not have it.
+
+### `marshal`
+
+What is written is what CPython writes, byte for byte, and each can read what the other has written, but for two things. What may be come upon again is marked, from version 3 on, and to CPython that is what has
+more than one reference to it. There is no telling that here, so everything is marked that could be, which is read the same. And code is written in the same form, with this engine's `co_code` in it: see
+*Code objects*.
 
 ## The two languages
 
@@ -825,3 +862,5 @@ which takes no time.
 ## What is not decided
 
 Threads, when objects are finalized (`__del__`, and `with`-less file handles), and extension modules written for CPython's C API.
+
+What follows from the second: what a weak reference refers to is gone when the collector finds that it is, and not when the last reference to it goes, and the callback is called some time after that.

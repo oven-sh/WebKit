@@ -1,0 +1,39 @@
+---- what of JavaScript's there can be one to
+an object => (True, True, 1, True)
+a function => (True, True, 1, False)
+an arrow function => (True, True, 1, True)
+a class => (True, True, 1, False)
+an instance of one => (True, True, 1, True)
+a Map => (True, True, 1, True)
+a Promise => (True, True, 1, True)
+one that is frozen => (True, True, 1, True)
+one that cannot be extended => (True, True, 1, True)
+a Proxy => (True, True, 1, True)
+a Date => (True, True, 1, True)
+one with no prototype => (True, True, 1, True)
+a RegExp => (True, True, 1, True)
+globalThis => (True, True, 1, True)
+a WeakRef => (True, True, 1, True)
+an array, which is a list => TypeError: cannot create weak reference to 'list' object
+a Uint8Array, which is a bytearray => TypeError: cannot create weak reference to 'bytearray' object
+an Error, which is an exception => TypeError: cannot create weak reference to 'JSError' object
+a Symbol => TypeError: cannot create weak reference to 'JSSymbol' object
+a string => TypeError: cannot create weak reference to 'str' object
+a number => TypeError: cannot create weak reference to 'float' object
+a BigInt => TypeError: cannot create weak reference to 'int' object
+---- JavaScript sees nothing of it
+its properties => (['a'], ['a'], '{"a":1}', [], ['a'])
+it is as frozen as it was => (True, ['a'])
+---- when it is no more
+they are let go of => ([None, None, None, None], ['a Map', 'a Promise'])
+not while JavaScript has it => (2, [])
+and then => (None, ['what an object had'])
+---- a callback that is JavaScript's
+is called => ['function', True]
+---- a proxy for what is JavaScript's
+does what it does => ('ProxyType', 1, 2, None, 5, True, 1, True)
+and can be called => ('CallableProxyType', 3)
+---- JavaScript's, to what is Python's
+the one object => (True, True)
+to JavaScript, one of Python's => ['function', True, 'object']
+weakref.ref is a class to JavaScript too => True

@@ -1,0 +1,196 @@
+---- the module
+what is in it => ['LockType', 'RLock', 'TIMEOUT_MAX', '_ExceptHookArgs', '_NAME_MAXLEN', '_ThreadHandle', '_count', '_excepthook', '_get_main_thread_ident', '_get_name', '_is_main_interpreter', '_local', '_make_thread_handle', '_shutdown', 'allocate', 'allocate_lock', 'daemon_threads_allowed', 'error', 'exit', 'exit_thread', 'get_ident', 'get_native_id', 'interrupt_main', 'lock', 'set_name', 'stack_size', 'start_joinable_thread', 'start_new', 'start_new_thread']
+names => ('_thread', True, True, 9223372036.0, True)
+the classes => [('lock', '_thread', 'lock', (<class 'object'>,), ['__enter__', '__exit__', '__module__', '__new__', '__repr__', '_at_fork_reinit', 'acquire', 'acquire_lock', 'locked', 'locked_lock', 'release', 'release_lock']), ('RLock', '_thread', 'RLock', (<class 'object'>,), ['__enter__', '__exit__', '__module__', '__new__', '__repr__', '_acquire_restore', '_at_fork_reinit', '_is_owned', '_recursion_count', '_release_save', 'acquire', 'locked', 'release']), ('_local', '_thread', '_local', (<class 'object'>,), ['__delattr__', '__getattribute__', '__module__', '__new__', '__setattr__']), ('_ThreadHandle', '_thread', '_ThreadHandle', (<class 'object'>,), ['__module__', '__new__', '__repr__', '_set_done', 'ident', 'is_done', 'join'])]
+_ExceptHookArgs => ('_ExceptHookArgs', '_thread', 4, 4, ('exc_type', 'exc_value', 'exc_traceback', 'thread'))
+what can be derived from => [('lock', False), ('RLock', True), ('_local', True), ('_ThreadHandle', False), ('_ExceptHookArgs', False)]
+derived from lock => TypeError: type '_thread.lock' is not an acceptable base type
+---- lock
+new => (True, '<unlocked _thread.lock object at 0x>', False, True, True)
+lock(1) => TypeError: lock expected 0 arguments, got 1
+lock(a=1) => TypeError: lock() takes no keyword arguments
+acquire => (True, True, '<locked _thread.lock object at 0x>')
+again, without waiting => (False, False, False, False, True)
+release => (None, False)
+release again => RuntimeError: release unlocked lock
+release_lock => (True, None, False)
+release(1) => TypeError: lock.release() takes no arguments (1 given)
+with => ((True, True), False)
+__exit__ => (True, None, False)
+__exit__ with nothing => (True, None)
+acquire(True, -1) => (True, True, None)
+acquire(True, 0) => (True, True, None)
+acquire(timeout=0.0) => (True, True, None)
+acquire(1, 5) => (True, True, None)
+acquire([], -1) => (True, True, None)
+acquire('a') => (True, True, None)
+acquire(False, 1) => ValueError: can't specify a timeout for a non-blocking call
+acquire(False, 0) => ValueError: can't specify a timeout for a non-blocking call
+acquire(False, -1) => (True, None)
+acquire(True, -2) => ValueError: timeout value must be a non-negative number
+acquire(True, -0.5) => ValueError: timeout value must be a non-negative number
+acquire(True, -1.0) => (True, None)
+acquire(True, 1e100) => OverflowError: timestamp out of range for C PyTime_t
+acquire(True, TIMEOUT_MAX) => (True, None)
+acquire(True, TIMEOUT_MAX + 1) => OverflowError: timestamp out of range for C PyTime_t
+acquire(True, 10 ** 30) => OverflowError: timestamp out of range for C PyTime_t
+acquire(True, 9223372036) => (True, None)
+acquire(True, 9223372037) => OverflowError: timestamp out of range for C PyTime_t
+acquire(True, nan) => ValueError: Invalid value NaN (not a number)
+acquire(True, inf) => OverflowError: timestamp out of range for C PyTime_t
+acquire(True, 'a') => TypeError: 'str' object cannot be interpreted as an integer or float
+acquire(True, None) => TypeError: 'NoneType' object cannot be interpreted as an integer or float
+acquire(True, 1j) => TypeError: 'complex' object cannot be interpreted as an integer or float
+acquire(1, 2, 3) => TypeError: acquire() takes at most 2 arguments (3 given)
+acquire(a=1) => TypeError: acquire() got an unexpected keyword argument 'a'
+acquire(True, blocking=1) => TypeError: argument for acquire() given by name ('blocking') and position (1)
+a timeout with __index__ => (True, None)
+blocking that raises => ValueError: no truth
+waits as long as it is told => ((False, True, True), (False, True, True), (False, True, True))
+_at_fork_reinit => (True, None, False)
+weakly referred to => True
+no attributes => AttributeError: '_thread.lock' object has no attribute 'a' and no __dict__ for setting new attributes
+hash and == => (True, False, True)
+---- RLock
+new => ('<unlocked _thread.RLock object owner=0 count=0 at 0x>', False, False, 0)
+RLock(1, a=2) => RLock
+acquire => (True, '<locked _thread.RLock object owner=ME count=1 at 0x>', True, True, 1)
+again => (True, True, True, '<locked _thread.RLock object owner=ME count=4 at 0x>', 4)
+release => (None, 3, None, None, 1, True, None, False, '<unlocked _thread.RLock object owner=0 count=0 at 0x>')
+release too often => RuntimeError: cannot release un-acquired lock
+_release_save of one not held => RuntimeError: cannot release un-acquired lock
+_release_save => (True, True, (2, ME), False, 0, '<unlocked _thread.RLock object owner=0 count=0 at 0x>')
+_acquire_restore => (None, 3, '<locked _thread.RLock object owner=ME count=3 at 0x>', None, None, None, False)
+as another thread's => (None, '<locked _thread.RLock object owner=12345 count=2 at 0x>', True, False, 0, False, (False, True, True))
+which cannot be released => RuntimeError: cannot release un-acquired lock
+_at_fork_reinit => (None, '<unlocked _thread.RLock object owner=0 count=0 at 0x>')
+_acquire_restore(()) => TypeError: _acquire_restore() argument 1 must be tuple of length 2, not 0
+_acquire_restore((1,)) => TypeError: _acquire_restore() argument 1 must be tuple of length 2, not 1
+_acquire_restore((1, 2, 3)) => TypeError: _acquire_restore() argument 1 must be tuple of length 2, not 3
+_acquire_restore([1, ME]) => (None, '<locked _thread.RLock object owner=ME count=1 at 0x>')
+_acquire_restore(None) => TypeError: _acquire_restore() argument 1 must be 2-item tuple, not None
+_acquire_restore(5) => TypeError: _acquire_restore() argument 1 must be 2-item tuple, not int
+_acquire_restore('ab') => TypeError: _acquire_restore() argument 1 must be 2-item tuple, not str
+_acquire_restore(('a', 1)) => TypeError: 'str' object cannot be interpreted as an integer
+_acquire_restore((1, 'a')) => TypeError: _acquire_restore() argument 1, item 1 must be int, not str
+_acquire_restore((1, -1)) => (None, '<locked _thread.RLock object owner=18446744073709551615 count=1 at 0x>')
+_acquire_restore((1, 2 ** 64 + 5)) => (None, '<locked _thread.RLock object owner=5 count=1 at 0x>')
+_acquire_restore((2 ** 70, 1)) => OverflowError: Python int too large to convert to C ssize_t
+_acquire_restore((1.5, 1)) => TypeError: 'float' object cannot be interpreted as an integer
+_acquire_restore() => TypeError: _acquire_restore() takes exactly 1 argument (0 given)
+with => ((True, 2), False)
+derived from => ('n', '<unlocked MyRLock object owner=0 count=0 at 0x>', True, True)
+acquire(False, 1) => ValueError: can't specify a timeout for a non-blocking call
+acquire(True, -2) => ValueError: timeout value must be a non-negative number
+acquire(True, 1e100) => OverflowError: timestamp out of range for C PyTime_t
+acquire(True, 'a') => TypeError: 'str' object cannot be interpreted as an integer or float
+---- _local
+new => ('_local', {}, {})
+attributes => (None, 1, {}, None, {}, False)
+none such => AttributeError: '_thread._local' object has no attribute 'missing'
+del none such => AttributeError: '_thread._local' object has no attribute 'missing'
+__dict__ is the one dict => (True, None, 2, None, ['b', 'c'])
+__dict__ cannot be set => AttributeError: '_thread._local' object attribute '__dict__' is read-only
+or deleted => AttributeError: '_thread._local' object attribute '__dict__' is read-only
+arguments => TypeError: Initialization arguments are not supported
+by name => TypeError: Initialization arguments are not supported
+what it has comes before what the class has => (None, None, 'mine', None, 5, '_local')
+a name that is no str => TypeError: attribute name must be string, not 'int'
+__class__ => TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses
+dir => []
+derived from => ((1, 2), 'class', 'property', [((1, 2), {'k': 3})], {'given': (1, 2)}, ['__dict__', 'calls', 'prop', 'shared'])
+a property comes first => (None, 'property')
+and cannot be set => AttributeError: property 'prop' of 'Local' object has no setter
+__dict__ cannot be set => AttributeError: 'Local' object attribute '__dict__' is read-only
+with __slots__ => (None, 1, None, 2, {'other': 2})
+weakly referred to => True
+---- _ThreadHandle
+new => ('<_thread._ThreadHandle object: ident=0>', 0, False)
+_ThreadHandle(1, a=2) => <_thread._ThreadHandle object: ident=0>
+join before it is started => RuntimeError: thread not started
+_set_done before it is started => RuntimeError: thread not started
+ident cannot be set => AttributeError: attribute 'ident' of '_thread._ThreadHandle' objects is not writable
+of this thread => ('<_thread._ThreadHandle object: ident=ME>', True, False)
+join => RuntimeError: Cannot join current thread
+join(0) => RuntimeError: Cannot join current thread
+_set_done => (None, True, None, None, None)
+of some other => ('<_thread._ThreadHandle object: ident=12345>', False, None, None, False)
+join('a') => TypeError: 'str' object cannot be interpreted as an integer or float
+join(nan) => ValueError: Invalid value NaN (not a number)
+join(1e100) => OverflowError: timestamp out of range for C PyTime_t
+join([]) => TypeError: 'list' object cannot be interpreted as an integer or float
+join(1, 2) => TypeError: join() takes at most 1 argument (2 given)
+join(timeout=1) => TypeError: _ThreadHandle.join() takes no keyword arguments
+_make_thread_handle('a') => TypeError: ident must be an integer
+_make_thread_handle(1.5) => TypeError: ident must be an integer
+_make_thread_handle(-1) => OverflowError: can't convert negative int to unsigned
+_make_thread_handle(2 ** 64) => OverflowError: int too big to convert
+_make_thread_handle(2 ** 64 - 1) => <_thread._ThreadHandle object: ident=18446744073709551615>
+_make_thread_handle(True) => <_thread._ThreadHandle object: ident=1>
+_make_thread_handle(0) => <_thread._ThreadHandle object: ident=0>
+---- functions
+get_ident => ('int', True, True, True)
+get_native_id => ('int', True)
+_count and the like => (0, True, True, None)
+exit => SystemExit: 
+exit_thread => SystemExit: 
+exit(1) => TypeError: _thread.exit() takes no arguments (1 given)
+stack_size(1) => ValueError: size must be at least 53248 bytes
+stack_size(4096) => ValueError: size must be at least 53248 bytes
+stack_size(53247) => ValueError: size must be at least 53248 bytes
+stack_size(53248) => 0
+stack_size(65536) => 53248
+stack_size(100000) => ValueError: size not valid: 100000 bytes
+stack_size(1048576) => 65536
+stack_size(-1) => ValueError: size must be at least 53248 bytes
+stack_size(0) => 1048576
+stack_size() => (0, 0, 1048576, 0, 0)
+stack_size('a') => TypeError: 'str' object cannot be interpreted as an integer
+stack_size(2 ** 70) => OverflowError: Python int too large to convert to C ssize_t
+names => (None, 'a name', None, True, None, 'é?', None, '')
+set_name(1) => TypeError: set_name() argument 'name' must be str, not int
+set_name(name='n') => (None, 'n', None)
+---- interrupt_main
+is raised there and then => ('caught', (), 2)
+by number => KeyboardInterrupt: 
+some other signal => None
+interrupt_main(0) => ValueError: signal number out of range
+interrupt_main(-1) => ValueError: signal number out of range
+interrupt_main(31) => None
+interrupt_main(32) => ValueError: signal number out of range
+interrupt_main(1000) => ValueError: signal number out of range
+interrupt_main(1099511627776) => OverflowError: signed integer is greater than maximum
+interrupt_main(-1099511627776) => OverflowError: signed integer is less than minimum
+interrupt_main(1180591620717411303424) => OverflowError: Python int too large to convert to C long
+interrupt_main('a') => TypeError: 'str' object cannot be interpreted as an integer
+---- _excepthook
+with a thread => Exception in thread the name:
+ValueError: said
+<flush>
+with none => Exception in thread ME:
+ValueError: said
+<flush>
+with one that has no name => Exception in thread ME:
+ValueError: said
+<flush>
+SystemExit => 
+not what it wants => TypeError: _thread.excepthook argument type must be ExceptHookArgs
+_ExceptHookArgs => (_thread._ExceptHookArgs(exc_type=1, exc_value=2, exc_traceback=3, thread=4), 4, 1)
+of three => TypeError: _thread._ExceptHookArgs() takes a 4-sequence (3-sequence given)
+no sys.stderr and no thread => None
+nor the thread's => AttributeError: 'Thread' object has no attribute '_stderr'
+---- what is asked before a thread is started
+start_new_thread() => TypeError: start_new_thread expected at least 2 arguments, got 0
+start_new_thread(f) => TypeError: start_new_thread expected at least 2 arguments, got 1
+start_new_thread(1, ()) => TypeError: first arg must be callable
+start_new_thread(f, []) => TypeError: 2nd arg must be a tuple
+start_new_thread(f, (), []) => TypeError: optional 3rd arg must be a dictionary
+start_new_thread(f, (), {}, 1) => TypeError: start_new_thread expected at most 3 arguments, got 4
+start_new_thread(f, (), a=1) => TypeError: start_new_thread() takes no keyword arguments
+start_joinable_thread() => TypeError: start_joinable_thread() missing required argument 'function' (pos 1)
+start_joinable_thread(1) => TypeError: thread function must be callable
+start_joinable_thread(f, 1) => TypeError: 'handle' must be a _ThreadHandle
+start_joinable_thread(f, None, Bad()) => ValueError: no truth
+start_joinable_thread(f, a=1) => TypeError: start_joinable_thread() got an unexpected keyword argument 'a'
+start_joinable_thread(f, None, 1, 2) => TypeError: start_joinable_thread() takes at most 3 arguments (4 given)
+with a handle that is in use => RuntimeError: thread already started

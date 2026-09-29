@@ -47,7 +47,9 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal"]
+# Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
+MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread")
 
 
 def generator():
@@ -121,7 +123,7 @@ types = {}
 
 def add_type(a_type):
     is_heap_type = a_type.__flags__ & (1 << 9)
-    if a_type.__name__ in types or (is_heap_type and a_type.__module__ not in ("sys", "typing", "_typing") and a_type is not _ast.AST):
+    if a_type.__name__ in types or (is_heap_type and a_type.__module__ not in MODULES_OF_CLASSES and a_type is not _ast.AST):
         return
     types[a_type.__name__] = a_type
     for base in a_type.__bases__:
@@ -131,9 +133,10 @@ def add_type(a_type):
 for value in vars(builtins).values():
     if isinstance(value, type):
         add_type(value)
-for value in vars(_typing).values():
-    if isinstance(value, type):
-        add_type(value)
+for name in ("_typing", "_weakref", "_thread"):
+    for value in vars(__import__(name)).values():
+        if isinstance(value, type):
+            add_type(value)
 for example in examples():
     add_type(type(example))
 # What is derived from it has nothing of its own that is written in C.

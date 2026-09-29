@@ -292,12 +292,15 @@ class Heap;
     v(pyDictSpace, cellHeapCellType, PyDict) \
     v(pyGetSetDescriptorSpace, cellHeapCellType, PyGetSetDescriptor) \
     v(pyIteratorSpace, cellHeapCellType, PyIterator) \
+    v(pyLockSpace, pyLockHeapCellType, PyLock) \
     v(pyNativeFunctionSpace, cellHeapCellType, PyNativeFunction) \
     v(pyNativeObjectSpace, cellHeapCellType, PyNativeObject) \
     v(pyRangeSpace, cellHeapCellType, PyRange) \
     v(pyRealmSpace, pyRealmHeapCellType, PyRealm) \
     v(pySetSpace, cellHeapCellType, PySet) \
     v(pyTypingObjectSpace, cellHeapCellType, PyTypingObject) \
+    v(pyWeakReferenceSpace, cellHeapCellType, PyWeakReference) \
+    v(pyWeakReferenceListSpace, cellHeapCellType, PyWeakReferenceList) \
     v(pySliceSpace, cellHeapCellType, PySlice) \
     v(pyTypeSpace, pyTypeHeapCellType, PyType) \
     v(proxyRevokeSpace, cellHeapCellType, ProxyRevoke) \
@@ -1191,6 +1194,7 @@ public:
     IsoHeapCellType syntheticModuleRecordHeapCellType;
     IsoHeapCellType moduleNamespaceObjectHeapCellType;
     IsoHeapCellType nativeStdFunctionHeapCellType;
+    IsoHeapCellType pyLockHeapCellType;
     IsoHeapCellType pyRealmHeapCellType;
     IsoHeapCellType pyTypeHeapCellType;
     IsoInlinedHeapCellType<JSString> stringHeapCellType;

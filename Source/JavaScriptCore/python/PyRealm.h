@@ -29,6 +29,7 @@
 #include "PyType.h"
 #include "PythonMonitoring.h"
 #include "PythonASTModule.h"
+#include "PythonThreadModule.h"
 #include "PythonWarnings.h"
 #include "WeakGCMap.h"
 
@@ -114,6 +115,9 @@ namespace JSC {
     v(TupleIterator, "tuple_iterator", Object, Native, 0) \
     v(LineIterator, "line_iterator", Object, Native, 0) \
     v(PositionsIterator, "positions_iterator", Object, Native, 0) \
+    v(WeakReference, "weakref.ReferenceType", Object, Native, PyType::IsBaseType) \
+    v(WeakProxy, "weakref.ProxyType", Object, Native, 0) \
+    v(WeakCallableProxy, "weakref.CallableProxyType", Object, Native, 0) \
     v(Context, "_contextvars.Context", Object, Native, PyType::HasWeakReferences) \
     v(ContextVar, "_contextvars.ContextVar", Object, Native, 0) \
     v(Token, "_contextvars.Token", Object, Native, 0) \
@@ -146,9 +150,9 @@ namespace JSC {
     v(Map, "map", Object, Native, PyType::IsBaseType) \
     v(Filter, "filter", Object, Native, PyType::IsBaseType) \
     v(Reversed, "reversed", Object, Native, PyType::IsBaseType) \
-    v(JSObject, "Object", Object, JavaScript, PyType::IsBaseType | PyType::IsJavaScript | PyType::HasInstanceDict) \
-    v(JSFunction, "Function", JSObject, Native, PyType::IsJavaScript) \
-    v(JSPromise, "Promise", JSObject, JavaScript, PyType::IsBaseType | PyType::IsJavaScript | PyType::HasInstanceDict) \
+    v(JSObject, "Object", Object, JavaScript, PyType::IsBaseType | PyType::IsJavaScript | PyType::HasInstanceDict | PyType::HasWeakReferences) \
+    v(JSFunction, "Function", JSObject, Native, PyType::IsJavaScript | PyType::HasWeakReferences) \
+    v(JSPromise, "Promise", JSObject, JavaScript, PyType::IsBaseType | PyType::IsJavaScript | PyType::HasInstanceDict | PyType::HasWeakReferences) \
     v(JSSymbol, "JSSymbol", Object, Native, 0) \
     FOR_EACH_PYTHON_EXCEPTION_TYPE(v)
 
@@ -336,6 +340,7 @@ public:
     Vector<JSCell*, 16>& objectsBeingWrittenOut() { return m_objectsBeingWrittenOut; }
     Python::MonitoringState& monitoring() { return m_monitoring; }
     Python::WarningsState& warnings() { return m_warnings; }
+    Python::ThreadModuleState& threadModule() { return m_threadModule; }
     Python::ASTState& ast() { return m_ast; }
 
     // sys.modules
@@ -383,6 +388,7 @@ private:
     Vector<JSCell*, 16> m_objectsBeingWrittenOut;
     Python::MonitoringState m_monitoring;
     Python::WarningsState m_warnings;
+    Python::ThreadModuleState m_threadModule;
     Python::ASTState m_ast;
     // By the string in the table of atoms, which the str keeps there.
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;

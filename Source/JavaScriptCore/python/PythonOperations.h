@@ -368,6 +368,9 @@ void leaveFrame(VM&, CallFrame*, BytecodeIndex);
 void raiseRecursionError(JSGlobalObject*);
 void enterFrame(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isResume);
 // Those of op_py_line, op_py_ret and op_py_leave, which are only come to if something is to be told.
+// What is not to be done when it comes up, since anything might be going on, and is put off until Python code is next between one thing and another: the callbacks of weak references, and KeyboardInterrupt. It is
+// _Py_HandlePending() of CPython's Python/ceval_gil.c. See VM::hasPythonWork().
+void doPendingWork(JSGlobalObject*);
 enum class LineKind : uint8_t {
     Line,
     WhereItCanBeGoneOnFrom, // The same, and nothing but the variables and what CodeDetails::jumpBlocks tells of is made use of by what comes after: it is the beginning of a statement. frame.f_lineno = n can go to it.

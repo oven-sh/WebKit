@@ -93,6 +93,8 @@
 #include "PreventCollectionScope.h"
 #include "ProgramExecutable.h"
 #include "ProxyObject.h"
+#include "PyLock.h"
+#include "PyWeakReference.h"
 #include "PythonCharacters.h"
 #include "SamplingProfiler.h"
 #include "ShadowChicken.h"
@@ -396,6 +398,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , syntheticModuleRecordHeapCellType(IsoHeapCellType::Args<SyntheticModuleRecord>())
     , moduleNamespaceObjectHeapCellType(IsoHeapCellType::Args<JSModuleNamespaceObject>())
     , nativeStdFunctionHeapCellType(IsoHeapCellType::Args<JSNativeStdFunction>())
+    , pyLockHeapCellType(IsoHeapCellType::Args<PyLock>())
     , pyRealmHeapCellType(IsoHeapCellType::Args<PyRealm>())
     , pyTypeHeapCellType(IsoHeapCellType::Args<PyType>())
     , weakMapHeapCellType(IsoHeapCellType::Args<JSWeakMap>())
@@ -843,6 +846,10 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         reconcileWeakReferencesInMarkedCells<JSWeakMap>(*m_weakMapSpace, collectionScope);
     if (m_weakObjectRefSpace)
         reconcileWeakReferencesInMarkedCells<JSWeakObjectRef>(*m_weakObjectRefSpace, collectionScope);
+    if (m_pyWeakReferenceListSpace)
+        reconcileWeakReferencesInMarkedCells<PyWeakReferenceList>(*m_pyWeakReferenceListSpace, collectionScope);
+    if (m_pyWeakReferenceSpace)
+        reconcileWeakReferencesInMarkedCells<PyWeakReference>(*m_pyWeakReferenceSpace, collectionScope);
     if (m_errorInstanceSpace)
         reconcileWeakReferencesInMarkedCells<ErrorInstance>(*m_errorInstanceSpace, collectionScope);
 

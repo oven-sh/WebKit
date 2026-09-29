@@ -895,11 +895,6 @@ void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
 }
 
 // obj.__weakref__: the first of the weak references to it. There is no making one yet, so there is none.
-JSValue getWeakReferences(JSGlobalObject*, JSValue)
-{
-    return jsUndefined();
-}
-
 // ---- type
 
 PYTHON_NATIVE(typeNew)

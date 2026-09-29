@@ -796,9 +796,10 @@ static bool checkClassInfo(JSGlobalObject* globalObject, JSValue value, JSValue 
             if (isInstanceCheck) {
                 if (isInstance(globalObject, value, type))
                     return true;
-                // object_isinstance(): what it is not, it may say that it is, by __class__. Only an instance of a class that a program made can say other than what is so.
+                // object_isinstance(): what it is not, it may say that it is, by __class__. Only an instance of a class that a program made can say other than what is so, or of one that has its own way of getting
+                // attributes, as a weakref.proxy has.
                 PyType* actual = typeOf(globalObject, value);
-                if (!actual->hasFlag(PyType::IsHeapType))
+                if (!actual->hasFlag(PyType::IsHeapType) && !(actual->hooks(globalObject) & PyType::HasCustomGetAttribute))
                     return false;
                 JSValue claimed = getAttributeIfPresent(globalObject, value, names.dunder_class);
                 RETURN_IF_EXCEPTION(scope, false);
