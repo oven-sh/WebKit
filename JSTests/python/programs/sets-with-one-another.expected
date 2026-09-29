@@ -1,0 +1,614 @@
+---- which is kept
+set and set => 770 that come to 954295043
+set and frozenset => 770 that come to 604695844
+set and MySet => 770 that come to 246293092
+set and list => 770 that come to 773393761
+set and tuple => 770 that come to 126764717
+set and fromkeys => 770 that come to 618146689
+set and iter => 770 that come to 749849220
+set and <lambda> => 770 that come to 638129014
+frozenset and set => 770 that come to 457542675
+frozenset and frozenset => 770 that come to 736013882
+frozenset and MySet => 770 that come to 610340051
+frozenset and list => 770 that come to 205035842
+frozenset and tuple => 770 that come to 20240757
+frozenset and fromkeys => 770 that come to 959793479
+frozenset and iter => 770 that come to 63601984
+frozenset and <lambda> => 770 that come to 75716286
+MySet and set => 770 that come to 529989119
+MySet and frozenset => 770 that come to 482369689
+MySet and MySet => 770 that come to 734310585
+MySet and list => 770 that come to 128587096
+MySet and tuple => 770 that come to 442349405
+MySet and fromkeys => 770 that come to 895434148
+MySet and iter => 770 that come to 527207489
+MySet and <lambda> => 770 that come to 555733270
+MyFrozen and set => 770 that come to 123410816
+MyFrozen and frozenset => 770 that come to 410451311
+MyFrozen and MySet => 770 that come to 30456828
+MyFrozen and list => 770 that come to 975215514
+MyFrozen and tuple => 770 that come to 812733850
+MyFrozen and fromkeys => 770 that come to 37642089
+MyFrozen and iter => 770 that come to 486397918
+MyFrozen and <lambda> => 770 that come to 517202955
+---- with itself
+set union => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]), False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set intersection => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]), False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set difference => (('set', []), False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set symmetric_difference => (('set', []), False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set issubset => (True, False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set issuperset => (True, False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set isdisjoint => (False, False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set update => (None, False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set intersection_update => (None, False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+set difference_update => (None, False, ('set', []))
+set symmetric_difference_update => (None, False, ('set', []))
+set nothing, with itself => True
+frozenset union => (('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]), False, ('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+frozenset intersection => (('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]), False, ('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+frozenset difference => (('frozenset', []), False, ('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+frozenset symmetric_difference => (('frozenset', []), False, ('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+frozenset issubset => (True, False, ('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+frozenset issuperset => (True, False, ('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+frozenset isdisjoint => (False, False, ('frozenset', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+frozenset update => AttributeError: 'frozenset' object has no attribute 'update'
+frozenset intersection_update => AttributeError: 'frozenset' object has no attribute 'intersection_update'
+frozenset difference_update => AttributeError: 'frozenset' object has no attribute 'difference_update'
+frozenset symmetric_difference_update => AttributeError: 'frozenset' object has no attribute 'symmetric_difference_update'
+frozenset nothing, with itself => True
+MySet union => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]), False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet intersection => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]), False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet difference => (('set', []), False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet symmetric_difference => (('set', []), False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet issubset => (True, False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet issuperset => (True, False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet isdisjoint => (False, False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet update => (None, False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet intersection_update => (None, False, ('MySet', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int')]))
+MySet difference_update => (None, False, ('MySet', []))
+MySet symmetric_difference_update => (None, False, ('MySet', []))
+MySet nothing, with itself => True
+---- with several
+union() => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union([1.0, 5],) => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int'), (5.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union([1.0, 2.0, 5], frozenset({2})) => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int'), (5.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union([1.0], [2.0], [3.0]) => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union([1, 2], 5) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union(5, [1, 2]) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union([1, 2], [[]]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union([[]], [1, 2]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+union({1: 2}, 'ab', range(0, 3)) => ValueError: could not convert string to float: 'a'
+intersection() => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection([1.0, 5],) => (('set', [(1.0, 'float')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection([1.0, 2.0, 5], frozenset({2})) => (('set', [(2.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection([1.0], [2.0], [3.0]) => (('set', []), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection([1, 2], 5) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection(5, [1, 2]) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection([1, 2], [[]]) => ("TypeError: unhashable type: 'list'", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection([[]], [1, 2]) => ("TypeError: unhashable type: 'list'", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection({1: 2}, 'ab', range(0, 3)) => (('set', []), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference() => (('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference([1.0, 5],) => (('set', [(2.0, 'int'), (3.0, 'int'), (4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference([1.0, 2.0, 5], frozenset({2})) => (('set', [(3.0, 'int'), (4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference([1.0], [2.0], [3.0]) => (('set', [(4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference([1, 2], 5) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference(5, [1, 2]) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference([1, 2], [[]]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference([[]], [1, 2]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference({1: 2}, 'ab', range(0, 3)) => (('set', [(3.0, 'int'), (4.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+update() => (None, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+update([1.0, 5],) => (None, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int'), (5.0, 'int')]))
+update([1.0, 2.0, 5], frozenset({2})) => (None, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int'), (5.0, 'int')]))
+update([1.0], [2.0], [3.0]) => (None, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+update([1, 2], 5) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+update(5, [1, 2]) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+update([1, 2], [[]]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+update([[]], [1, 2]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+update({1: 2}, 'ab', range(0, 3)) => (None, ["'a'", "'b'", '0', '1', '2', '3', '4'])
+intersection_update() => (None, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection_update([1.0, 5],) => (None, ('set', [(1.0, 'float')]))
+intersection_update([1.0, 2.0, 5], frozenset({2})) => (None, ('set', [(2.0, 'int')]))
+intersection_update([1.0], [2.0], [3.0]) => (None, ('set', []))
+intersection_update([1, 2], 5) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection_update(5, [1, 2]) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection_update([1, 2], [[]]) => ("TypeError: unhashable type: 'list'", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection_update([[]], [1, 2]) => ("TypeError: unhashable type: 'list'", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+intersection_update({1: 2}, 'ab', range(0, 3)) => (None, ('set', []))
+difference_update() => (None, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference_update([1.0, 5],) => (None, ('set', [(2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference_update([1.0, 2.0, 5], frozenset({2})) => (None, ('set', [(3.0, 'int'), (4.0, 'int')]))
+difference_update([1.0], [2.0], [3.0]) => (None, ('set', [(4.0, 'int')]))
+difference_update([1, 2], 5) => ("TypeError: 'int' object is not iterable", ('set', [(3.0, 'int'), (4.0, 'int')]))
+difference_update(5, [1, 2]) => ("TypeError: 'int' object is not iterable", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference_update([1, 2], [[]]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(3.0, 'int'), (4.0, 'int')]))
+difference_update([[]], [1, 2]) => ("TypeError: cannot use 'list' as a set element (unhashable type: 'list')", ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+difference_update({1: 2}, 'ab', range(0, 3)) => (None, ('set', [(3.0, 'int'), (4.0, 'int')]))
+symmetric_difference() => ('TypeError: set.symmetric_difference() takes exactly one argument (0 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference([1.0, 5],) => (('set', [(2.0, 'int'), (3.0, 'int'), (4.0, 'int'), (5.0, 'int')]), ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference([1.0, 2.0, 5], frozenset({2})) => ('TypeError: set.symmetric_difference() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference([1.0], [2.0], [3.0]) => ('TypeError: set.symmetric_difference() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference([1, 2], 5) => ('TypeError: set.symmetric_difference() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference(5, [1, 2]) => ('TypeError: set.symmetric_difference() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference([1, 2], [[]]) => ('TypeError: set.symmetric_difference() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference([[]], [1, 2]) => ('TypeError: set.symmetric_difference() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference({1: 2}, 'ab', range(0, 3)) => ('TypeError: set.symmetric_difference() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update() => ('TypeError: set.symmetric_difference_update() takes exactly one argument (0 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update([1.0, 5],) => (None, ('set', [(2.0, 'int'), (3.0, 'int'), (4.0, 'int'), (5.0, 'int')]))
+symmetric_difference_update([1.0, 2.0, 5], frozenset({2})) => ('TypeError: set.symmetric_difference_update() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update([1.0], [2.0], [3.0]) => ('TypeError: set.symmetric_difference_update() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update([1, 2], 5) => ('TypeError: set.symmetric_difference_update() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update(5, [1, 2]) => ('TypeError: set.symmetric_difference_update() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update([1, 2], [[]]) => ('TypeError: set.symmetric_difference_update() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update([[]], [1, 2]) => ('TypeError: set.symmetric_difference_update() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+symmetric_difference_update({1: 2}, 'ab', range(0, 3)) => ('TypeError: set.symmetric_difference_update() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset() => ('TypeError: set.issubset() takes exactly one argument (0 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset([1.0, 5],) => (False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset([1.0, 2.0, 5], frozenset({2})) => ('TypeError: set.issubset() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset([1.0], [2.0], [3.0]) => ('TypeError: set.issubset() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset([1, 2], 5) => ('TypeError: set.issubset() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset(5, [1, 2]) => ('TypeError: set.issubset() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset([1, 2], [[]]) => ('TypeError: set.issubset() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset([[]], [1, 2]) => ('TypeError: set.issubset() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+issubset({1: 2}, 'ab', range(0, 3)) => ('TypeError: set.issubset() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint() => ('TypeError: set.isdisjoint() takes exactly one argument (0 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint([1.0, 5],) => (False, ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint([1.0, 2.0, 5], frozenset({2})) => ('TypeError: set.isdisjoint() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint([1.0], [2.0], [3.0]) => ('TypeError: set.isdisjoint() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint([1, 2], 5) => ('TypeError: set.isdisjoint() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint(5, [1, 2]) => ('TypeError: set.isdisjoint() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint([1, 2], [[]]) => ('TypeError: set.isdisjoint() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint([[]], [1, 2]) => ('TypeError: set.isdisjoint() takes exactly one argument (2 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+isdisjoint({1: 2}, 'ab', range(0, 3)) => ('TypeError: set.isdisjoint() takes exactly one argument (3 given)', ('set', [(1.0, 'int'), (2.0, 'int'), (3.0, 'int'), (4.0, 'int')]))
+---- what is asked of the keys
+(1, 2, 3) | set (2, 3, 4) => (['a1', 'a2', 'a3', 'b4'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) & set (2, 3, 4) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) - set (2, 3, 4) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) ^ set (2, 3, 4) => (['a1', 'b4'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) |= set (2, 3, 4) => (None, ['a1', 'a2', 'a3', 'b4'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) &= set (2, 3, 4) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) -= set (2, 3, 4) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) ^= set (2, 3, 4) => (None, ['a1', 'b4'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) <= set (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= set (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) disjoint set (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) | set (2,) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) & set (2,) => (['b2'], ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) - set (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq b2 a2'])
+(1, 2, 3) ^ set (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq b2 a2'])
+(1, 2, 3) |= set (2,) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) &= set (2,) => (None, ['b2'], ['eq a2 b2'])
+(1, 2, 3) -= set (2,) => (None, ['a1', 'a3'], ['eq a2 b2'])
+(1, 2, 3) ^= set (2,) => (None, ['a1', 'a3'], ['eq a2 b2'])
+(1, 2, 3) <= set (2,) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= set (2,) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) disjoint set (2,) => (False, ['a1', 'a2', 'a3'], None)
+(2,) | set (1, 2, 3) => (['a2', 'b1', 'b3'], ['a2'], ['eq a2 b2'])
+(2,) & set (1, 2, 3) => (['a2'], ['a2'], ['eq b2 a2'])
+(2,) - set (1, 2, 3) => ([], ['a2'], ['eq b2 a2'])
+(2,) ^ set (1, 2, 3) => (['b1', 'b3'], ['a2'], ['eq b2 a2'])
+(2,) |= set (1, 2, 3) => (None, ['a2', 'b1', 'b3'], ['eq a2 b2'])
+(2,) &= set (1, 2, 3) => (None, ['a2'], ['eq b2 a2'])
+(2,) -= set (1, 2, 3) => (None, [], ['eq a2 b2'])
+(2,) ^= set (1, 2, 3) => (None, ['b1', 'b3'], ['eq a2 b2'])
+(2,) <= set (1, 2, 3) => (True, ['a2'], ['eq b2 a2'])
+(2,) >= set (1, 2, 3) => (False, ['a2'], None)
+(2,) disjoint set (1, 2, 3) => (False, ['a2'], None)
+(1, 2) | set (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], [])
+(1, 2) & set (3, 4) => ([], ['a1', 'a2'], [])
+(1, 2) - set (3, 4) => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) ^ set (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], [])
+(1, 2) |= set (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], [])
+(1, 2) &= set (3, 4) => (None, [], [])
+(1, 2) -= set (3, 4) => (None, ['a1', 'a2'], [])
+(1, 2) ^= set (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], [])
+(1, 2) <= set (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) >= set (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) disjoint set (3, 4) => (True, ['a1', 'a2'], [])
+() | set (1, 2) => (['b1', 'b2'], [], [])
+() & set (1, 2) => ([], [], [])
+() - set (1, 2) => ([], [], [])
+() ^ set (1, 2) => (['b1', 'b2'], [], [])
+() |= set (1, 2) => (None, ['b1', 'b2'], [])
+() &= set (1, 2) => (None, [], [])
+() -= set (1, 2) => (None, [], [])
+() ^= set (1, 2) => (None, ['b1', 'b2'], [])
+() <= set (1, 2) => (True, [], [])
+() >= set (1, 2) => (False, [], None)
+() disjoint set (1, 2) => (True, [], [])
+(1, 2) | set () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) & set () => ([], ['a1', 'a2'], [])
+(1, 2) - set () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) ^ set () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) |= set () => (None, ['a1', 'a2'], [])
+(1, 2) &= set () => (None, [], [])
+(1, 2) -= set () => (None, ['a1', 'a2'], [])
+(1, 2) ^= set () => (None, ['a1', 'a2'], [])
+(1, 2) <= set () => (False, ['a1', 'a2'], None)
+(1, 2) >= set () => (True, ['a1', 'a2'], [])
+(1, 2) disjoint set () => (True, ['a1', 'a2'], [])
+(1, 2, 3) | set (2, 2, 3, 3) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) & set (2, 2, 3, 3) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) - set (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) ^ set (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) |= set (2, 2, 3, 3) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) &= set (2, 2, 3, 3) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) -= set (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) ^= set (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) <= set (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= set (2, 2, 3, 3) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) disjoint set (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+asked, with set => 225 that come to 280417901
+(1, 2, 3) | frozenset (2, 3, 4) => (['a1', 'a2', 'a3', 'b4'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) & frozenset (2, 3, 4) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) - frozenset (2, 3, 4) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) ^ frozenset (2, 3, 4) => (['a1', 'b4'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) |= frozenset (2, 3, 4) => (None, ['a1', 'a2', 'a3', 'b4'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) &= frozenset (2, 3, 4) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) -= frozenset (2, 3, 4) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) ^= frozenset (2, 3, 4) => (None, ['a1', 'b4'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) <= frozenset (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= frozenset (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) disjoint frozenset (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) | frozenset (2,) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) & frozenset (2,) => (['b2'], ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) - frozenset (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq b2 a2'])
+(1, 2, 3) ^ frozenset (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq b2 a2'])
+(1, 2, 3) |= frozenset (2,) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) &= frozenset (2,) => (None, ['b2'], ['eq a2 b2'])
+(1, 2, 3) -= frozenset (2,) => (None, ['a1', 'a3'], ['eq a2 b2'])
+(1, 2, 3) ^= frozenset (2,) => (None, ['a1', 'a3'], ['eq a2 b2'])
+(1, 2, 3) <= frozenset (2,) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= frozenset (2,) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) disjoint frozenset (2,) => (False, ['a1', 'a2', 'a3'], None)
+(2,) | frozenset (1, 2, 3) => (['a2', 'b1', 'b3'], ['a2'], ['eq a2 b2'])
+(2,) & frozenset (1, 2, 3) => (['a2'], ['a2'], ['eq b2 a2'])
+(2,) - frozenset (1, 2, 3) => ([], ['a2'], ['eq b2 a2'])
+(2,) ^ frozenset (1, 2, 3) => (['b1', 'b3'], ['a2'], ['eq b2 a2'])
+(2,) |= frozenset (1, 2, 3) => (None, ['a2', 'b1', 'b3'], ['eq a2 b2'])
+(2,) &= frozenset (1, 2, 3) => (None, ['a2'], ['eq b2 a2'])
+(2,) -= frozenset (1, 2, 3) => (None, [], ['eq a2 b2'])
+(2,) ^= frozenset (1, 2, 3) => (None, ['b1', 'b3'], ['eq a2 b2'])
+(2,) <= frozenset (1, 2, 3) => (True, ['a2'], ['eq b2 a2'])
+(2,) >= frozenset (1, 2, 3) => (False, ['a2'], None)
+(2,) disjoint frozenset (1, 2, 3) => (False, ['a2'], None)
+(1, 2) | frozenset (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], [])
+(1, 2) & frozenset (3, 4) => ([], ['a1', 'a2'], [])
+(1, 2) - frozenset (3, 4) => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) ^ frozenset (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], [])
+(1, 2) |= frozenset (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], [])
+(1, 2) &= frozenset (3, 4) => (None, [], [])
+(1, 2) -= frozenset (3, 4) => (None, ['a1', 'a2'], [])
+(1, 2) ^= frozenset (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], [])
+(1, 2) <= frozenset (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) >= frozenset (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) disjoint frozenset (3, 4) => (True, ['a1', 'a2'], [])
+() | frozenset (1, 2) => (['b1', 'b2'], [], [])
+() & frozenset (1, 2) => ([], [], [])
+() - frozenset (1, 2) => ([], [], [])
+() ^ frozenset (1, 2) => (['b1', 'b2'], [], [])
+() |= frozenset (1, 2) => (None, ['b1', 'b2'], [])
+() &= frozenset (1, 2) => (None, [], [])
+() -= frozenset (1, 2) => (None, [], [])
+() ^= frozenset (1, 2) => (None, ['b1', 'b2'], [])
+() <= frozenset (1, 2) => (True, [], [])
+() >= frozenset (1, 2) => (False, [], None)
+() disjoint frozenset (1, 2) => (True, [], [])
+(1, 2) | frozenset () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) & frozenset () => ([], ['a1', 'a2'], [])
+(1, 2) - frozenset () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) ^ frozenset () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) |= frozenset () => (None, ['a1', 'a2'], [])
+(1, 2) &= frozenset () => (None, [], [])
+(1, 2) -= frozenset () => (None, ['a1', 'a2'], [])
+(1, 2) ^= frozenset () => (None, ['a1', 'a2'], [])
+(1, 2) <= frozenset () => (False, ['a1', 'a2'], None)
+(1, 2) >= frozenset () => (True, ['a1', 'a2'], [])
+(1, 2) disjoint frozenset () => (True, ['a1', 'a2'], [])
+(1, 2, 3) | frozenset (2, 2, 3, 3) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) & frozenset (2, 2, 3, 3) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) - frozenset (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) ^ frozenset (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) |= frozenset (2, 2, 3, 3) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) &= frozenset (2, 2, 3, 3) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) -= frozenset (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) ^= frozenset (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) <= frozenset (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= frozenset (2, 2, 3, 3) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) disjoint frozenset (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+asked, with frozenset => 99 that come to 362448823
+(1, 2, 3) | list (2, 3, 4) => (['a1', 'a2', 'a3', 'b4'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) & list (2, 3, 4) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) - list (2, 3, 4) => (['a1'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) ^ list (2, 3, 4) => (['a1', 'b4'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) |= list (2, 3, 4) => (None, ['a1', 'a2', 'a3', 'b4'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) &= list (2, 3, 4) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) -= list (2, 3, 4) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) ^= list (2, 3, 4) => (None, ['a1', 'b4'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) <= list (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= list (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) disjoint list (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) | list (2,) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) & list (2,) => (['b2'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) - list (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) ^ list (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'hash b2'])
+(1, 2, 3) |= list (2,) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) &= list (2,) => (None, ['b2'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) -= list (2,) => (None, ['a1', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) ^= list (2,) => (None, ['a1', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) <= list (2,) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= list (2,) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) disjoint list (2,) => (False, ['a1', 'a2', 'a3'], None)
+(2,) | list (1, 2, 3) => (['a2', 'b1', 'b3'], ['a2'], ['eq a2 b2', 'hash b1', 'hash b2', 'hash b3'])
+(2,) & list (1, 2, 3) => (['b2'], ['a2'], ['eq a2 b2', 'hash b1', 'hash b2'])
+(2,) - list (1, 2, 3) => ([], ['a2'], ['eq a2 b2', 'hash b1', 'hash b2', 'hash b3'])
+(2,) ^ list (1, 2, 3) => (['b1', 'b3'], ['a2'], ['eq b2 a2', 'hash b1', 'hash b2', 'hash b3'])
+(2,) |= list (1, 2, 3) => (None, ['a2', 'b1', 'b3'], ['eq a2 b2', 'hash b1', 'hash b2', 'hash b3'])
+(2,) &= list (1, 2, 3) => (None, ['b2'], ['eq a2 b2', 'hash b1', 'hash b2'])
+(2,) -= list (1, 2, 3) => (None, [], ['eq a2 b2', 'hash b1', 'hash b2', 'hash b3'])
+(2,) ^= list (1, 2, 3) => (None, ['b1', 'b3'], ['eq a2 b2', 'hash b1', 'hash b2', 'hash b3'])
+(2,) <= list (1, 2, 3) => (True, ['a2'], ['eq a2 b2', 'hash b1', 'hash b2'])
+(2,) >= list (1, 2, 3) => (False, ['a2'], None)
+(2,) disjoint list (1, 2, 3) => (False, ['a2'], None)
+(1, 2) | list (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], ['hash b3', 'hash b4'])
+(1, 2) & list (3, 4) => ([], ['a1', 'a2'], ['hash b3', 'hash b4'])
+(1, 2) - list (3, 4) => (['a1', 'a2'], ['a1', 'a2'], ['hash b3', 'hash b4'])
+(1, 2) ^ list (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], ['hash b3', 'hash b4'])
+(1, 2) |= list (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], ['hash b3', 'hash b4'])
+(1, 2) &= list (3, 4) => (None, [], ['hash b3', 'hash b4'])
+(1, 2) -= list (3, 4) => (None, ['a1', 'a2'], ['hash b3', 'hash b4'])
+(1, 2) ^= list (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], ['hash b3', 'hash b4'])
+(1, 2) <= list (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) >= list (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) disjoint list (3, 4) => (True, ['a1', 'a2'], ['hash b3', 'hash b4'])
+() | list (1, 2) => (['b1', 'b2'], [], ['hash b1', 'hash b2'])
+() & list (1, 2) => ([], [], ['hash b1', 'hash b2'])
+() - list (1, 2) => ([], [], ['hash b1', 'hash b2'])
+() ^ list (1, 2) => (['b1', 'b2'], [], ['hash b1', 'hash b2'])
+() |= list (1, 2) => (None, ['b1', 'b2'], ['hash b1', 'hash b2'])
+() &= list (1, 2) => (None, [], ['hash b1', 'hash b2'])
+() -= list (1, 2) => (None, [], ['hash b1', 'hash b2'])
+() ^= list (1, 2) => (None, ['b1', 'b2'], ['hash b1', 'hash b2'])
+() <= list (1, 2) => (True, [], ['hash b1', 'hash b2'])
+() >= list (1, 2) => (False, [], None)
+() disjoint list (1, 2) => (True, [], ['hash b1', 'hash b2'])
+(1, 2) | list () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) & list () => ([], ['a1', 'a2'], [])
+(1, 2) - list () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) ^ list () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) |= list () => (None, ['a1', 'a2'], [])
+(1, 2) &= list () => (None, [], [])
+(1, 2) -= list () => (None, ['a1', 'a2'], [])
+(1, 2) ^= list () => (None, ['a1', 'a2'], [])
+(1, 2) <= list () => (False, ['a1', 'a2'], None)
+(1, 2) >= list () => (True, ['a1', 'a2'], [])
+(1, 2) disjoint list () => (True, ['a1', 'a2'], [])
+(1, 2, 3) | list (2, 2, 3, 3) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a2 b2', 'eq a3 b3', 'eq a3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) & list (2, 2, 3, 3) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a2 b2', 'eq a3 b3', 'eq a3 b3', 'eq b2 b2', 'eq b3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) - list (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) ^ list (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b2 b2', 'eq b3 a3', 'eq b3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) |= list (2, 2, 3, 3) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a2 b2', 'eq a3 b3', 'eq a3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) &= list (2, 2, 3, 3) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a2 b2', 'eq a3 b3', 'eq a3 b3', 'eq b2 b2', 'eq b3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) -= list (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) ^= list (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3', 'eq b2 b2', 'eq b3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) <= list (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= list (2, 2, 3, 3) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a2 b2', 'eq a3 b3', 'eq a3 b3', 'hash b2', 'hash b2', 'hash b3', 'hash b3'])
+(1, 2, 3) disjoint list (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+asked, with list => 99 that come to 934303087
+(1, 2, 3) | fromkeys (2, 3, 4) => (['a1', 'a2', 'a3', 'b4'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) & fromkeys (2, 3, 4) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) - fromkeys (2, 3, 4) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) ^ fromkeys (2, 3, 4) => (['a1', 'b4'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) |= fromkeys (2, 3, 4) => (None, ['a1', 'a2', 'a3', 'b4'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) &= fromkeys (2, 3, 4) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) -= fromkeys (2, 3, 4) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3', 'hash b4'])
+(1, 2, 3) ^= fromkeys (2, 3, 4) => (None, ['a1', 'b4'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) <= fromkeys (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= fromkeys (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) disjoint fromkeys (2, 3, 4) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) | fromkeys (2,) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) & fromkeys (2,) => (['b2'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) - fromkeys (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq b2 a2'])
+(1, 2, 3) ^ fromkeys (2,) => (['a1', 'a3'], ['a1', 'a2', 'a3'], ['eq b2 a2'])
+(1, 2, 3) |= fromkeys (2,) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2'])
+(1, 2, 3) &= fromkeys (2,) => (None, ['b2'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) -= fromkeys (2,) => (None, ['a1', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) ^= fromkeys (2,) => (None, ['a1', 'a3'], ['eq a2 b2'])
+(1, 2, 3) <= fromkeys (2,) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= fromkeys (2,) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2', 'hash b2'])
+(1, 2, 3) disjoint fromkeys (2,) => (False, ['a1', 'a2', 'a3'], None)
+(2,) | fromkeys (1, 2, 3) => (['a2', 'b1', 'b3'], ['a2'], ['eq a2 b2'])
+(2,) & fromkeys (1, 2, 3) => (['b2'], ['a2'], ['eq a2 b2', 'hash b1', 'hash b2'])
+(2,) - fromkeys (1, 2, 3) => ([], ['a2'], ['eq b2 a2'])
+(2,) ^ fromkeys (1, 2, 3) => (['b1', 'b3'], ['a2'], ['eq b2 a2'])
+(2,) |= fromkeys (1, 2, 3) => (None, ['a2', 'b1', 'b3'], ['eq a2 b2'])
+(2,) &= fromkeys (1, 2, 3) => (None, ['b2'], ['eq a2 b2', 'hash b1', 'hash b2'])
+(2,) -= fromkeys (1, 2, 3) => (None, [], ['eq a2 b2', 'hash b1', 'hash b2', 'hash b3'])
+(2,) ^= fromkeys (1, 2, 3) => (None, ['b1', 'b3'], ['eq a2 b2'])
+(2,) <= fromkeys (1, 2, 3) => (True, ['a2'], ['eq a2 b2', 'hash b1', 'hash b2'])
+(2,) >= fromkeys (1, 2, 3) => (False, ['a2'], None)
+(2,) disjoint fromkeys (1, 2, 3) => (False, ['a2'], None)
+(1, 2) | fromkeys (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], [])
+(1, 2) & fromkeys (3, 4) => ([], ['a1', 'a2'], ['hash b3', 'hash b4'])
+(1, 2) - fromkeys (3, 4) => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) ^ fromkeys (3, 4) => (['a1', 'a2', 'b3', 'b4'], ['a1', 'a2'], [])
+(1, 2) |= fromkeys (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], [])
+(1, 2) &= fromkeys (3, 4) => (None, [], ['hash b3', 'hash b4'])
+(1, 2) -= fromkeys (3, 4) => (None, ['a1', 'a2'], ['hash b3', 'hash b4'])
+(1, 2) ^= fromkeys (3, 4) => (None, ['a1', 'a2', 'b3', 'b4'], [])
+(1, 2) <= fromkeys (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) >= fromkeys (3, 4) => (False, ['a1', 'a2'], None)
+(1, 2) disjoint fromkeys (3, 4) => (True, ['a1', 'a2'], ['hash b3', 'hash b4'])
+() | fromkeys (1, 2) => (['b1', 'b2'], [], [])
+() & fromkeys (1, 2) => ([], [], ['hash b1', 'hash b2'])
+() - fromkeys (1, 2) => ([], [], [])
+() ^ fromkeys (1, 2) => (['b1', 'b2'], [], [])
+() |= fromkeys (1, 2) => (None, ['b1', 'b2'], [])
+() &= fromkeys (1, 2) => (None, [], ['hash b1', 'hash b2'])
+() -= fromkeys (1, 2) => (None, [], ['hash b1', 'hash b2'])
+() ^= fromkeys (1, 2) => (None, ['b1', 'b2'], [])
+() <= fromkeys (1, 2) => (True, [], ['hash b1', 'hash b2'])
+() >= fromkeys (1, 2) => (False, [], None)
+() disjoint fromkeys (1, 2) => (True, [], ['hash b1', 'hash b2'])
+(1, 2) | fromkeys () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) & fromkeys () => ([], ['a1', 'a2'], [])
+(1, 2) - fromkeys () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) ^ fromkeys () => (['a1', 'a2'], ['a1', 'a2'], [])
+(1, 2) |= fromkeys () => (None, ['a1', 'a2'], [])
+(1, 2) &= fromkeys () => (None, [], [])
+(1, 2) -= fromkeys () => (None, ['a1', 'a2'], [])
+(1, 2) ^= fromkeys () => (None, ['a1', 'a2'], [])
+(1, 2) <= fromkeys () => (False, ['a1', 'a2'], None)
+(1, 2) >= fromkeys () => (True, ['a1', 'a2'], [])
+(1, 2) disjoint fromkeys () => (True, ['a1', 'a2'], [])
+(1, 2, 3) | fromkeys (2, 2, 3, 3) => (['a1', 'a2', 'a3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) & fromkeys (2, 2, 3, 3) => (['b2', 'b3'], ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3'])
+(1, 2, 3) - fromkeys (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) ^ fromkeys (2, 2, 3, 3) => (['a1'], ['a1', 'a2', 'a3'], ['eq b2 a2', 'eq b3 a3'])
+(1, 2, 3) |= fromkeys (2, 2, 3, 3) => (None, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) &= fromkeys (2, 2, 3, 3) => (None, ['b2', 'b3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3'])
+(1, 2, 3) -= fromkeys (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3'])
+(1, 2, 3) ^= fromkeys (2, 2, 3, 3) => (None, ['a1'], ['eq a2 b2', 'eq a3 b3'])
+(1, 2, 3) <= fromkeys (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+(1, 2, 3) >= fromkeys (2, 2, 3, 3) => (True, ['a1', 'a2', 'a3'], ['eq a2 b2', 'eq a3 b3', 'hash b2', 'hash b3'])
+(1, 2, 3) disjoint fromkeys (2, 2, 3, 3) => (False, ['a1', 'a2', 'a3'], None)
+asked, with fromkeys => 99 that come to 157218621
+---- when answering changes them
+| left clear => done
+| left add => done
+| left discard => RuntimeError
+| right clear => done
+| right add => done
+| right discard => done
+| both clear => done
+| both add => done
+| both discard => RuntimeError
+& left clear => done
+& left add => done
+& left discard => RuntimeError
+& right clear => done
+& right add => done
+& right discard => done
+& both clear => done
+& both add => done
+& both discard => RuntimeError
+- left clear => done
+- left add => done
+- left discard => done
+- right clear => done
+- right add => done
+- right discard => done
+- both clear => done
+- both add => done
+- both discard => done
+^ left clear => done
+^ left add => done
+^ left discard => done
+^ right clear => done
+^ right add => done
+^ right discard => done
+^ both clear => done
+^ both add => done
+^ both discard => done
+|= left clear => done
+|= left add => done
+|= left discard => RuntimeError
+|= right clear => done
+|= right add => done
+|= right discard => done
+|= both clear => done
+|= both add => done
+|= both discard => RuntimeError
+&= left clear => done
+&= left add => done
+&= left discard => RuntimeError
+&= right clear => done
+&= right add => done
+&= right discard => done
+&= both clear => done
+&= both add => done
+&= both discard => RuntimeError
+-= left clear => done
+-= left add => done
+-= left discard => RuntimeError
+-= right clear => done
+-= right add => done
+-= right discard => done
+-= both clear => done
+-= both add => done
+-= both discard => RuntimeError
+^= left clear => done
+^= left add => done
+^= left discard => RuntimeError
+^= right clear => done
+^= right add => done
+^= right discard => done
+^= both clear => done
+^= both add => done
+^= both discard => RuntimeError
+<= left clear => done
+<= left add => done
+<= left discard => done
+<= right clear => done
+<= right add => done
+<= right discard => done
+<= both clear => done
+<= both add => done
+<= both discard => done
+>= left clear => done
+>= left add => done
+>= left discard => RuntimeError
+>= right clear => done
+>= right add => done
+>= right discard => done
+>= both clear => done
+>= both add => done
+>= both discard => RuntimeError
+disjoint left clear => done
+disjoint left add => done
+disjoint left discard => RuntimeError
+disjoint right clear => done
+disjoint right add => done
+disjoint right discard => done
+disjoint both clear => done
+disjoint both add => done
+disjoint both discard => RuntimeError
+---- what cannot be hashed
+| a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+| a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+| a number => TypeError: 'int' object is not iterable
+& a list of lists => TypeError: unhashable type: 'list'
+& a list of sets => TypeError: unhashable type: 'set'
+& a number => TypeError: 'int' object is not iterable
+- a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+- a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+- a number => TypeError: 'int' object is not iterable
+^ a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+^ a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+^ a number => TypeError: 'int' object is not iterable
+|= a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+|= a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+|= a number => TypeError: 'int' object is not iterable
+&= a list of lists => TypeError: unhashable type: 'list'
+&= a list of sets => TypeError: unhashable type: 'set'
+&= a number => TypeError: 'int' object is not iterable
+-= a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+-= a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+-= a number => TypeError: 'int' object is not iterable
+^= a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+^= a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+^= a number => TypeError: 'int' object is not iterable
+<= a list of lists => TypeError: unhashable type: 'list'
+<= a list of sets => TypeError: unhashable type: 'set'
+<= a number => TypeError: 'int' object is not iterable
+>= a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+>= a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+>= a number => TypeError: 'int' object is not iterable
+disjoint a list of lists => TypeError: cannot use 'list' as a set element (unhashable type: 'list')
+disjoint a list of sets => TypeError: cannot use 'set' as a set element (unhashable type: 'set')
+disjoint a number => TypeError: 'int' object is not iterable
+---- after a good many have been taken out
+[99990, 99991, 99992, 99993, 99994, 99995, 99996, 99997, 99998, 99999] 10
+[99995, 99996, 99997, 99998, 99999] 5
+[1, 2, 99995, 99996, 99997, 99998, 99999] 7 True True False
+[5, 6]
+[0, 1, 2, 3, 4, 7, 8, 9]

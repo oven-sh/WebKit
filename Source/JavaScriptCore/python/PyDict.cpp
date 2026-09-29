@@ -30,6 +30,7 @@
 #include "ObjectConstructor.h"
 #include "PyTuple.h"
 #include "PythonOperations.h"
+#include "TopExceptionScope.h"
 
 namespace JSC {
 
@@ -79,11 +80,6 @@ void PyHashTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(PyHashTable);
-
-static ALWAYS_INLINE uint32_t foldHash(int64_t hash)
-{
-    return static_cast<uint32_t>(hash) ^ static_cast<uint32_t>(static_cast<uint64_t>(hash) >> 32);
-}
 
 // The hash of a key, with an error that says what it was wanted for.
 int64_t PyHashTable::hashOfKey(JSGlobalObject* globalObject, JSValue key)
@@ -207,7 +203,14 @@ bool PyHashTable::add(JSGlobalObject* globalObject, JSValue key, JSValue value, 
 
     int64_t fullHash = hashOfKey(globalObject, key);
     RETURN_IF_EXCEPTION(scope, false);
-    uint32_t hash = foldHash(fullHash);
+    RELEASE_AND_RETURN(scope, addWithHash(globalObject, key, foldHash(fullHash), value, wasAdded, replace));
+}
+
+bool PyHashTable::addWithHash(JSGlobalObject* globalObject, JSValue key, uint32_t hash, JSValue value, bool* wasAdded, bool replace)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     int entry = find(globalObject, key, hash);
     RETURN_IF_EXCEPTION(scope, false);
     if (wasAdded)
@@ -302,6 +305,29 @@ void PyHashTable::copyFrom(VM& vm, JSGlobalObject* globalObject, PyHashTable& ot
         m_filled = 0;
         m_size = 0;
     }
+    ++m_version;
+}
+
+void PyHashTable::takeFrom(VM& vm, PyHashTable& other)
+{
+    ASSERT(m_stride == other.m_stride && this != &other);
+    m_storage.setMayBeNull(vm, this, other.m_storage.get());
+    m_first = other.m_first;
+    m_used = other.m_used;
+    m_filled = other.m_filled;
+    m_size = other.m_size;
+    ++m_version;
+    other.clear(vm);
+}
+
+void PyHashTable::tidyAfterRemoving(VM& vm, JSGlobalObject* globalObject)
+{
+    if (!m_storage || m_filled - m_size <= m_storage->indexMask() / 4)
+        return;
+    // If there is no room for another it does as it is.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!grow(vm, globalObject))
+        scope.clearException();
     ++m_version;
 }
 

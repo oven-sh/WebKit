@@ -295,64 +295,262 @@ JSValue keyToLookForInSet(JSGlobalObject* globalObject, JSValue key)
     return frozen;
 }
 
+// ---- What sets do with one another. This is CPython's Objects/setobject.c, function for function. Each takes as long as the smaller of the two is, or as what it is given is, and not as long as the set is: `s |= {x}`
+// in a loop is as common as `l.append(x)`. Which of two keys that are equal is kept is as it is there too, and a key that comes out of a set is not asked for its hash again.
+
+static PySet* asSet(JSValue value) { return uncheckedDowncast<PySet>(value.asCell()); }
+// PyDict_CheckExact(). Its keys have their hashes with them as those of a set do. That is not so of what is another way of getting at the properties of an object, whose keys are strings, of which nothing is asked.
+static PyDict* tryExactDict(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!isDict(value) || typeOf(globalObject, value) != globalObject->pyRealm()->typeDict() || asDict(value)->backing())
+        return nullptr;
+    return asDict(value);
+}
+
+// make_new_set_basetype(): a set or a frozenset, as it is or is derived from, with nothing in it.
+static PySet* newSetOfBaseType(JSGlobalObject* globalObject, PySet* so)
+{
+    PyRealm* realm = globalObject->pyRealm();
+    bool isFrozen = typeOf(globalObject, so)->isSubtypeOf(realm->typeFrozenSet());
+    return PySet::create(globalObject->vm(), realm->structureFor(isFrozen ? BuiltinType::FrozenSet : BuiltinType::Set));
+}
+
+PySet* setCopy(JSGlobalObject* globalObject, PySet* so)
+{
+    PySet* result = newSetOfBaseType(globalObject, so);
+    result->copyFrom(globalObject->vm(), globalObject, *so);
+    return result;
+}
+
+// Calls the function with each key of a set or a dict and its hash, until it returns false. What it calls can change the set, and then it goes on with what is there.
+template<typename Function>
+static void forEachEntry(PyHashTable* set, const Function& function)
+{
+    for (unsigned entry = set->firstEntry(); entry < set->entryCount(); ++entry) {
+        if (JSValue key = set->keyAt(entry)) {
+            if (!function(key, set->hashAt(entry)))
+                return;
+        }
+    }
+}
+
+// set_discard_entry(). Whether it was there. It may have raised.
+static bool discardEntry(JSGlobalObject* globalObject, PySet* so, JSValue key, uint32_t hash)
+{
+    int entry = so->find(globalObject, key, hash);
+    if (entry < 0)
+        return false;
+    so->removeEntry(globalObject->vm(), entry);
+    return true;
+}
+
+// set_update_internal()
+bool setUpdate(JSGlobalObject* globalObject, PySet* so, JSValue other)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (isSet(other)) {
+        if (asSet(other) == so)
+            return true;
+        forEachEntry(asSet(other), [&] (JSValue key, uint32_t hash) {
+            return so->addWithHash(globalObject, key, hash);
+        });
+    } else if (PyDict* dict = tryExactDict(globalObject, other)) {
+        forEachEntry(dict, [&] (JSValue key, uint32_t hash) {
+            return so->addWithHash(globalObject, key, hash);
+        });
+    } else {
+        forEach(globalObject, other, [&] (JSValue key) {
+            return so->add(globalObject, key);
+        });
+    }
+    return !scope.exception();
+}
+
+// set_intersection()
+PySet* setIntersection(JSGlobalObject* globalObject, PySet* so, JSValue other)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (other == JSValue(so))
+        RELEASE_AND_RETURN(scope, setCopy(globalObject, so));
+
+    PySet* result = newSetOfBaseType(globalObject, so);
+    if (isSet(other)) {
+        // The smaller is gone through, and it is its keys that are kept.
+        PySet* goneThrough = asSet(other);
+        if (goneThrough->size() > so->size())
+            std::swap(goneThrough, so);
+        forEachEntry(goneThrough, [&] (JSValue key, uint32_t hash) {
+            int entry = so->find(globalObject, key, hash);
+            RETURN_IF_EXCEPTION(scope, false);
+            return entry < 0 || result->addWithHash(globalObject, key, hash);
+        });
+    } else {
+        forEach(globalObject, other, [&] (JSValue key) {
+            // PyObject_Hash(), so what cannot be hashed is not said to have been meant for a set.
+            uint32_t hash = PyHashTable::foldHash(Python::hash(globalObject, key));
+            RETURN_IF_EXCEPTION(scope, false);
+            int entry = so->find(globalObject, key, hash);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (entry < 0)
+                return true;
+            if (!result->addWithHash(globalObject, key, hash))
+                return false;
+            // There can be no more.
+            return result->size() < so->size();
+        });
+    }
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return result;
+}
+
+// set_difference_update_internal()
+bool setDifferenceUpdate(JSGlobalObject* globalObject, PySet* so, JSValue other)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (other == JSValue(so)) {
+        so->clear(vm);
+        return true;
+    }
+    if (isSet(other)) {
+        // If the other is more than eight times as large, what the two have in common is found first, by going through this one.
+        PySet* toRemove = asSet(other);
+        if ((toRemove->size() >> 3) > so->size()) {
+            toRemove = setIntersection(globalObject, so, other);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+        forEachEntry(toRemove, [&] (JSValue key, uint32_t hash) {
+            discardEntry(globalObject, so, key, hash);
+            return !scope.exception();
+        });
+    } else {
+        forEach(globalObject, other, [&] (JSValue key) {
+            // set_discard_key(), which is not what set.discard() is: a set is not looked for as a frozenset.
+            so->remove(globalObject, key);
+            return !scope.exception();
+        });
+    }
+    RETURN_IF_EXCEPTION(scope, false);
+    so->tidyAfterRemoving(vm, globalObject);
+    return true;
+}
+
+// set_difference()
+PySet* setDifference(JSGlobalObject* globalObject, PySet* so, JSValue other)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto copyAndRemove = [&] () -> PySet* {
+        PySet* result = setCopy(globalObject, so);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        setDifferenceUpdate(globalObject, result, other);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return result;
+    };
+    PyHashTable* table = isSet(other) ? static_cast<PyHashTable*>(asSet(other)) : tryExactDict(globalObject, other);
+    // If this one is much the larger, it is quicker to copy it and go through the other.
+    if (!table || (so->size() >> 2) > table->size())
+        return copyAndRemove();
+
+    PySet* result = newSetOfBaseType(globalObject, so);
+    forEachEntry(so, [&] (JSValue key, uint32_t hash) {
+        bool isInOther = table->find(globalObject, key, hash) >= 0;
+        RETURN_IF_EXCEPTION(scope, false);
+        return isInOther || result->addWithHash(globalObject, key, hash);
+    });
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return result;
+}
+
+// set_symmetric_difference_update_set() and set_symmetric_difference_update_dict()
+static bool symmetricDifferenceUpdateFromSet(JSGlobalObject* globalObject, PySet* so, PyHashTable* other)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    forEachEntry(other, [&] (JSValue key, uint32_t hash) {
+        bool wasThere = discardEntry(globalObject, so, key, hash);
+        RETURN_IF_EXCEPTION(scope, false);
+        return wasThere || so->addWithHash(globalObject, key, hash);
+    });
+    return !scope.exception();
+}
+
+// set_symmetric_difference_update()
+bool setSymmetricDifferenceUpdate(JSGlobalObject* globalObject, PySet* so, JSValue other)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (other == JSValue(so)) {
+        so->clear(vm);
+        return true;
+    }
+    if (isSet(other))
+        RELEASE_AND_RETURN(scope, symmetricDifferenceUpdateFromSet(globalObject, so, asSet(other)));
+    if (PyDict* dict = tryExactDict(globalObject, other))
+        RELEASE_AND_RETURN(scope, symmetricDifferenceUpdateFromSet(globalObject, so, dict));
+    // Each once, however often it is given.
+    PySet* otherSet = newSetOfBaseType(globalObject, so);
+    setUpdate(globalObject, otherSet, other);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, symmetricDifferenceUpdateFromSet(globalObject, so, otherSet));
+}
+
+// set_symmetric_difference()
+PySet* setSymmetricDifference(JSGlobalObject* globalObject, PySet* so, JSValue other)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    // There it is a copy of the other, from which what is in this one is taken, and to which what is not is added. What is looked for in what is the same here. But a set here is in the order in which it was added to,
+    // so what is only in this one is put first.
+    PySet* onlyInOther = newSetOfBaseType(globalObject, so);
+    setUpdate(globalObject, onlyInOther, other);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    PySet* result = newSetOfBaseType(globalObject, so);
+    forEachEntry(so, [&] (JSValue key, uint32_t hash) {
+        bool wasThere = discardEntry(globalObject, onlyInOther, key, hash);
+        RETURN_IF_EXCEPTION(scope, false);
+        return wasThere || result->addWithHash(globalObject, key, hash);
+    });
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    setUpdate(globalObject, result, onlyInOther);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    return result;
+}
+
+// set_or(), set_ior() and the rest.
 JSValue setOperation(JSGlobalObject* globalObject, BinaryOperator op, bool inPlace, PySet* left, PySet* right)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // What comes of it is a set or a frozenset, as the left operand is or is derived from.
-    PyRealm* realm = globalObject->pyRealm();
-    bool isFrozen = typeOf(globalObject, left)->isSubtypeOf(realm->typeFrozenSet());
-    PySet* result = PySet::create(vm, realm->structureFor(isFrozen ? BuiltinType::FrozenSet : BuiltinType::Set));
-    auto addAll = [&] (PySet* from, PySet* unlessIn, PySet* onlyIfIn) -> bool {
-        for (unsigned entry = 0; entry < from->entryCount(); ++entry) {
-            JSValue key = from->keyAt(entry);
-            if (!key)
-                continue;
-            if (unlessIn) {
-                int found = unlessIn->find(globalObject, key);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (found >= 0)
-                    continue;
-            }
-            if (onlyIfIn) {
-                int found = onlyIfIn->find(globalObject, key);
-                RETURN_IF_EXCEPTION(scope, false);
-                if (found < 0)
-                    continue;
-            }
-            result->add(globalObject, key);
-            RETURN_IF_EXCEPTION(scope, false);
-        }
-        return true;
-    };
-
     switch (op) {
-    case BinaryOperator::BitOr:
-        addAll(left, nullptr, nullptr);
+    case BinaryOperator::BitOr: {
+        PySet* result = inPlace ? left : setCopy(globalObject, left);
         RETURN_IF_EXCEPTION(scope, { });
-        addAll(right, nullptr, nullptr);
-        break;
-    case BinaryOperator::BitAnd:
-        addAll(left, nullptr, right);
-        break;
+        if (left != right)
+            setUpdate(globalObject, result, right);
+        RETURN_IF_EXCEPTION(scope, { });
+        return result;
+    }
+    case BinaryOperator::BitAnd: {
+        PySet* result = setIntersection(globalObject, left, right);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!inPlace)
+            return result;
+        left->takeFrom(vm, *result);
+        return left;
+    }
     case BinaryOperator::Sub:
-        addAll(left, right, nullptr);
-        break;
-    case BinaryOperator::BitXor:
-        addAll(left, right, nullptr);
+        if (!inPlace)
+            RELEASE_AND_RETURN(scope, setDifference(globalObject, left, right));
+        setDifferenceUpdate(globalObject, left, right);
         RETURN_IF_EXCEPTION(scope, { });
-        addAll(right, left, nullptr);
-        break;
+        return left;
+    case BinaryOperator::BitXor:
+        if (!inPlace)
+            RELEASE_AND_RETURN(scope, setSymmetricDifference(globalObject, left, right));
+        setSymmetricDifferenceUpdate(globalObject, left, right);
+        RETURN_IF_EXCEPTION(scope, { });
+        return left;
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!inPlace)
-        return result;
-    left->clear(vm);
-    left->copyFrom(vm, globalObject, *result);
-    return left;
 }
 
 static bool isSubset(JSGlobalObject* globalObject, PySet* left, PySet* right)
@@ -365,7 +563,7 @@ static bool isSubset(JSGlobalObject* globalObject, PySet* left, PySet* right)
         JSValue key = left->keyAt(entry);
         if (!key)
             continue;
-        int found = right->find(globalObject, key);
+        int found = right->find(globalObject, key, left->hashAt(entry));
         RETURN_IF_EXCEPTION(scope, false);
         if (found < 0)
             return false;

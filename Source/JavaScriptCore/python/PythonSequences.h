@@ -74,6 +74,15 @@ bool builtinSetItem(JSGlobalObject*, JSValue, JSValue key, JSValue); // False if
 JSValue builtinGetIterator(JSGlobalObject*, JSValue);
 int64_t builtinHash(JSGlobalObject*, JSValue);
 JSValue setOperation(JSGlobalObject*, BinaryOperator, bool inPlace, PySet*, PySet*);
+// What the methods of a set do with one other thing, which need not be a set. Those that change the set return false if they raised, and those that make one return null. What is made is a set or a frozenset, as the
+// set is or is derived from.
+PySet* setCopy(JSGlobalObject*, PySet*);
+bool setUpdate(JSGlobalObject*, PySet*, JSValue other);
+PySet* setIntersection(JSGlobalObject*, PySet*, JSValue other);
+bool setDifferenceUpdate(JSGlobalObject*, PySet*, JSValue other);
+PySet* setDifference(JSGlobalObject*, PySet*, JSValue other);
+bool setSymmetricDifferenceUpdate(JSGlobalObject*, PySet*, JSValue other);
+PySet* setSymmetricDifference(JSGlobalObject*, PySet*, JSValue other);
 // What to look for in a set when it is asked whether `key` is in it. Empty if it raised.
 JSValue keyToLookForInSet(JSGlobalObject*, JSValue key);
 JSValue setCompare(JSGlobalObject*, ComparisonOperator, PySet*, PySet*);

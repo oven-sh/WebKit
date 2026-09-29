@@ -7,7 +7,8 @@ import sys
 def load(path):
     found = {}
     for line in open(path, errors="replace"):
-        parts = [p.strip() for p in line.split(" | ")]
+        # From the right, since what is being timed may have one in it.
+        parts = [p.strip() for p in line.rsplit(" | ", 3)]
         if len(parts) == 4:
             found[parts[0]] = parts[1:]
     return found

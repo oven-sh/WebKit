@@ -249,7 +249,39 @@ simple("set: add and discard in turn", lambda n: set(), lambda s, n: [(s.add(i),
 simple("set: s | s, &, -, ^", SET, lambda s, n: (s | s, s & s, s - s, s ^ s))
 simple("set: with another", SET, lambda s, n: (lambda o: (s | o, s & o, s - o, s ^ o, s <= o, s.isdisjoint(o)))(set(range(n // 2, n + n // 2))))
 simple("set: a small one & a large one", SET, lambda s, n: [{i} & s for i in range(n)])
-simple("set: a large one & a small one", SET, lambda s, n: [len(s & {i}) for i in range(64)] * 0 or [s.isdisjoint({i}) for i in range(n)])
+simple("set: a large one & a small one", SET, lambda s, n: [s & {i} for i in range(n)])
+simple("set: s.isdisjoint(a small one)", SET, lambda s, n: [s.isdisjoint({i}) for i in range(n)])
+simple("set: s.intersection([x])", SET, lambda s, n: [s.intersection([i]) for i in range(n)])
+simple("set: s.issuperset([x]), s >= {x}", SET, lambda s, n: [(s.issuperset([i]), s >= {i}, {i} <= s) for i in range(n)])
+
+
+def in_place(operation):
+    def run(s, n):
+        for i in range(n):
+            operation(s, i, n)
+    return run
+
+
+def ior(s, i, n): s |= {n + i}
+def isub(s, i, n): s -= {i}
+def ixor(s, i, n): s ^= {i, n + i}
+def iand(s, i, n): s &= s
+simple("set: s |= {x}", SET, in_place(ior))
+simple("set: s -= {x}", SET, in_place(isub))
+simple("set: s ^= {x, y}", SET, in_place(ixor))
+simple("set: s.update([x])", SET, in_place(lambda s, i, n: s.update([n + i])))
+simple("set: s.update((x,), {y})", SET, in_place(lambda s, i, n: s.update((n + i,), {-i})))
+simple("set: s.difference_update([x])", SET, in_place(lambda s, i, n: s.difference_update([i])))
+simple("set: s.symmetric_difference_update([x])", SET, in_place(lambda s, i, n: s.symmetric_difference_update([i])))
+simple("set: a small one, s.intersection_update", SET, lambda s, n: [{i, -1}.intersection_update(s) for i in range(n)])
+simple("set: a small one - s, ^ is not", SET, lambda s, n: [{i, -1} - s for i in range(n)])
+simple("set: set().union(*many)", lambda n: [[i] for i in range(n)], lambda l, n: set().union(*l))
+simple("set: s.difference(*many)", lambda n: [[i] for i in range(n)], lambda l, n: set(range(n)).difference(*l))
+simple("set: s.intersection(*many)", lambda n: [[1, 2]] * n, lambda l, n: {1, 2, 3}.intersection(*l))
+simple("set: s.update(*many)", lambda n: [[i] for i in range(n)], lambda l, n: set().update(*l))
+simple("set: after most are taken out, for", SET, lambda s, n: (s.difference_update(range(n - 4)), [[x for x in s] for i in range(n)]))
+simple("dict keys: d.keys() & {x}, | is not", D, lambda d, n: [d.keys() & {i} for i in range(n)])
+simple("dict keys: d.keys() >= {x}, isdisjoint", D, lambda d, n: [(d.keys() >= {i}, d.keys().isdisjoint({i})) for i in range(n)])
 simple("set: s.update", SET, lambda s, n: s.update(range(n, 2 * n)))
 simple("set: s == s2", SET, lambda s, n: s == set(s))
 simple("set: for", SET, lambda s, n: [x for x in s])

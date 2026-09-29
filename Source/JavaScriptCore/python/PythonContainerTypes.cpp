@@ -643,47 +643,109 @@ PYTHON_NATIVE(setMethod)
     auto op = unpack<BinaryOperator>(callFrame, 0);
     auto inPlace = unpack<bool>(callFrame, 1);
     SET_PROLOGUE("union");
-    // intersection_update() does nothing if it cannot do it all. The others have done what they had done.
-    bool worksOnCopy = !inPlace || op == BinaryOperator::BitAnd;
-    PySet* working = self;
-    if (worksOnCopy) {
-        working = PySet::create(vm, realm->structureFor(BuiltinType::Set));
-        working->copyFrom(vm, globalObject, *self);
-    }
-    for (unsigned i = 1; i < args.size(); ++i) {
-        PySet* other = setFromIterable(globalObject, realm->structureFor(BuiltinType::Set), args[i]);
+    switch (op) {
+    case BinaryOperator::BitOr: {
+        // set_union() and set_update()
+        PySet* result = inPlace ? self : setCopy(globalObject, self);
         RETURN_IF_EXCEPTION(scope, { });
-        setOperation(globalObject, op, true, working, other);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    if (inPlace) {
-        if (worksOnCopy) {
-            self->clear(vm);
-            self->copyFrom(vm, globalObject, *working);
+        for (unsigned i = 1; i < args.size(); ++i) {
+            if (args[i] == JSValue(self))
+                continue;
+            setUpdate(globalObject, result, args[i]);
+            RETURN_IF_EXCEPTION(scope, { });
         }
+        if (inPlace)
+            RETURN_NONE();
+        return JSValue::encode(result);
+    }
+    case BinaryOperator::BitAnd: {
+        // set_intersection_multi() and set_intersection_update_multi(), which does nothing if it cannot do it all.
+        PySet* result = self;
+        for (unsigned i = 1; i < args.size(); ++i) {
+            result = setIntersection(globalObject, result, args[i]);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (result == self) {
+            result = setCopy(globalObject, self);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (!inPlace)
+            return JSValue::encode(result);
+        self->takeFrom(vm, *result);
         RETURN_NONE();
     }
-    // A set or a frozenset, as it is or is derived from.
-    if (!typeOf(globalObject, self)->isSubtypeOf(realm->typeFrozenSet()))
-        return JSValue::encode(working);
-    PySet* result = PySet::create(vm, realm->structureFor(BuiltinType::FrozenSet));
-    result->copyFrom(vm, globalObject, *working);
-    return JSValue::encode(result);
+    case BinaryOperator::Sub: {
+        // set_difference_multi() and set_difference_update()
+        PySet* result = self;
+        unsigned i = 1;
+        if (!inPlace) {
+            result = args.size() > 1 ? setDifference(globalObject, self, args[i++]) : setCopy(globalObject, self);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        for (; i < args.size(); ++i) {
+            setDifferenceUpdate(globalObject, result, args[i]);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (inPlace)
+            RETURN_NONE();
+        return JSValue::encode(result);
+    }
+    case BinaryOperator::BitXor:
+        // Which take one and no more.
+        if (!inPlace)
+            RELEASE_AND_RETURN(scope, JSValue::encode(setSymmetricDifference(globalObject, self, args[1])));
+        setSymmetricDifferenceUpdate(globalObject, self, args[1]);
+        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_NONE();
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
 }
 
 PYTHON_NATIVE(setRelation)
 {
     auto op = unpack<ComparisonOperator>(callFrame, 0);
     SET_PROLOGUE("issubset");
-    PySet* other = setFromIterable(globalObject, realm->structureFor(BuiltinType::Set), args[1]);
+    if (isSet(args[1]))
+        RELEASE_AND_RETURN(scope, JSValue::encode(setCompare(globalObject, op, self, uncheckedDowncast<PySet>(args[1].asCell()))));
+    if (op == ComparisonOperator::LtE) {
+        // set_issubset(): whether what the two have in common is all of it.
+        PySet* common = setIntersection(globalObject, self, args[1]);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(jsBoolean(common->size() == self->size()));
+    }
+    // set_issuperset(): until there is one that it does not have.
+    bool hasAll = true;
+    forEach(globalObject, args[1], [&] (JSValue value) {
+        int entry = self->find(globalObject, value);
+        hasAll = entry >= 0;
+        return hasAll;
+    });
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(setCompare(globalObject, op, self, other)));
+    return JSValue::encode(jsBoolean(hasAll));
 }
 
 PYTHON_NATIVE(setIsDisjoint)
 {
     SET_PROLOGUE("isdisjoint");
+    if (args[1] == JSValue(self))
+        return JSValue::encode(jsBoolean(!self->size()));
     bool isDisjoint = true;
+    // The smaller is gone through, if it is a set and not of a class derived from one.
+    if (PyType* type = typeOf(globalObject, args[1]); type == realm->typeSet() || type == realm->typeFrozenSet()) {
+        PySet* goneThrough = uncheckedDowncast<PySet>(args[1].asCell());
+        PySet* lookedIn = self;
+        if (goneThrough->size() > lookedIn->size())
+            std::swap(goneThrough, lookedIn);
+        for (unsigned entry = goneThrough->firstEntry(); isDisjoint && entry < goneThrough->entryCount(); ++entry) {
+            JSValue key = goneThrough->keyAt(entry);
+            if (!key)
+                continue;
+            isDisjoint = lookedIn->find(globalObject, key, goneThrough->hashAt(entry)) < 0;
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        return JSValue::encode(jsBoolean(isDisjoint));
+    }
     forEach(globalObject, args[1], [&] (JSValue value) {
         int entry = self->find(globalObject, value);
         if (entry >= 0)

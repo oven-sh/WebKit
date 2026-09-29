@@ -107,14 +107,22 @@ public:
     // The entry with the key, notFound, or raised: comparing keys can run anything.
     int find(JSGlobalObject*, JSValue key);
     int64_t hashOfKey(JSGlobalObject*, JSValue key);
+    // What is kept of a hash, and is what the others here take.
+    static uint32_t foldHash(int64_t hash) { return static_cast<uint32_t>(hash) ^ static_cast<uint32_t>(static_cast<uint64_t>(hash) >> 32); }
     int find(JSGlobalObject*, JSValue key, uint32_t hash);
     // False if it raised. `wasAdded` is whether there was no such key.
     bool add(JSGlobalObject*, JSValue key, JSValue value, bool* wasAdded = nullptr, bool replace = true);
+    // The same, of a key that comes from another table, which has its hash: hashAt(). It is not asked for it again.
+    bool addWithHash(JSGlobalObject*, JSValue key, uint32_t hash, JSValue value, bool* wasAdded = nullptr, bool replace = true);
     // The value that was removed (or the key, of a set); empty if there was none or it raised.
     JSValue remove(JSGlobalObject*, JSValue key);
     void removeEntry(VM&, unsigned entry);
     void clear(VM&);
     void copyFrom(VM&, JSGlobalObject*, PyHashTable&);
+    // What is in the other, which is left with nothing.
+    void takeFrom(VM&, PyHashTable&);
+    // After a good deal may have been removed: if more than a quarter of the places in the index are ones that have been given up, it is made again without them, as CPython's set is.
+    void tidyAfterRemoving(VM&, JSGlobalObject*);
 
     // To go through the entries: from 0 up to entryCount(), skipping those whose key is empty. Adding to the table while doing so may
     // move them, which version() tells.
@@ -122,6 +130,7 @@ public:
     // There is nothing before this one. It has not been removed, and nor has the last, unless there are none at all.
     unsigned firstEntry() const { return m_first; }
     JSValue keyAt(unsigned entry) const { return m_storage->key(entry).get(); }
+    uint32_t hashAt(unsigned entry) const { return m_storage->hash(entry); }
     JSValue valueAt(unsigned entry) const { return m_storage->value(entry).get(); }
     void setValueAt(VM& vm, unsigned entry, JSValue value) { m_storage->value(entry).set(vm, m_storage.get(), value); }
     // Changes whenever a key is added or removed.
@@ -252,6 +261,7 @@ public:
     static PySet* create(JSGlobalObject*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
 
+    bool addWithHash(JSGlobalObject* globalObject, JSValue key, uint32_t hash) { return Base::addWithHash(globalObject, key, hash, JSValue(), nullptr, false); }
     bool add(JSGlobalObject* globalObject, JSValue key, bool* wasAdded = nullptr) { return Base::add(globalObject, key, JSValue(), wasAdded, false); }
 
 private:
