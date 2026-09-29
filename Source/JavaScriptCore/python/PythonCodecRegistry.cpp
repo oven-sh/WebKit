@@ -83,11 +83,6 @@ void unregisterCodecSearchFunction(JSGlobalObject* globalObject, JSValue functio
     }
 }
 
-bool hasCodecSearchFunctions(JSGlobalObject* globalObject)
-{
-    return registry(globalObject).searchPath->length();
-}
-
 String normalizeEncodingName(const String& encoding)
 {
     StringBuilder result;

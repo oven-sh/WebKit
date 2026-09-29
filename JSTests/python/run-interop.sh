@@ -5,6 +5,9 @@
 # Runs each of interop/*.mjs and interop/*.py that has a file of what it should print beside it, in several configurations of the engine.
 # There is nothing to compare these with, since no other Python has JavaScript in it: what is expected was read and found right.
 
+# The part of the library that is written in Python does not come with the engine. It is CPython's, as it is.
+[ -n "$PYTHONPATH" ] || { echo "PYTHONPATH is to name the Lib directory of CPython 3.14" >&2; exit 2; }
+
 jsc=$1
 shift
 cd "$(dirname "$0")/interop" || exit 2

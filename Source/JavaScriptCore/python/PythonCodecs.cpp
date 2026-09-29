@@ -312,87 +312,6 @@ static Shortcut shortcutFor(const String& encoding)
     return Shortcut::None;
 }
 
-// ---- Until `encodings` is imported when a realm is made
-
-// The names that CPython finds by way of encodings.aliases, and the codecs that it has in Python in encodings/*.py over the functions of _codecs. This is to go when that is what finds them here.
-enum class Interim : uint8_t { UTF8, UTF8Signature, ASCII, Latin1, UTF16, UTF16LE, UTF16BE, UTF32, UTF32LE, UTF32BE };
-
-static std::optional<Interim> interimCodecFor(const String& encoding)
-{
-    static constexpr std::pair<ASCIILiteral, Interim> table[] = {
-        { "utf_8"_s, Interim::UTF8 }, { "utf8"_s, Interim::UTF8 }, { "u8"_s, Interim::UTF8 }, { "utf"_s, Interim::UTF8 }, { "cp65001"_s, Interim::UTF8 }, { "utf_8_sig"_s, Interim::UTF8Signature },
-        { "ascii"_s, Interim::ASCII }, { "us_ascii"_s, Interim::ASCII }, { "646"_s, Interim::ASCII }, { "us"_s, Interim::ASCII }, { "latin_1"_s, Interim::Latin1 }, { "latin1"_s, Interim::Latin1 },
-        { "iso_8859_1"_s, Interim::Latin1 }, { "iso8859_1"_s, Interim::Latin1 }, { "8859"_s, Interim::Latin1 }, { "cp819"_s, Interim::Latin1 }, { "latin"_s, Interim::Latin1 },
-        { "l1"_s, Interim::Latin1 }, { "utf_16"_s, Interim::UTF16 }, { "utf16"_s, Interim::UTF16 }, { "u16"_s, Interim::UTF16 }, { "utf_16_le"_s, Interim::UTF16LE },
-        { "utf_16le"_s, Interim::UTF16LE }, { "unicodelittleunmarked"_s, Interim::UTF16LE }, { "utf_16_be"_s, Interim::UTF16BE }, { "utf_16be"_s, Interim::UTF16BE },
-        { "unicodebigunmarked"_s, Interim::UTF16BE }, { "utf_32"_s, Interim::UTF32 }, { "utf32"_s, Interim::UTF32 }, { "u32"_s, Interim::UTF32 }, { "utf_32_le"_s, Interim::UTF32LE },
-        { "utf_32le"_s, Interim::UTF32LE }, { "utf_32_be"_s, Interim::UTF32BE }, { "utf_32be"_s, Interim::UTF32BE },
-    };
-    String name = normalizeEncodingName(encoding);
-    for (auto& [alias, codec] : table) {
-        if (name == alias)
-            return codec;
-    }
-    return std::nullopt;
-}
-
-static String decodeWithInterimCodec(JSGlobalObject* globalObject, Interim codec, std::span<const uint8_t> bytes, const String& errors)
-{
-    int byteOrder = codec == Interim::UTF16LE || codec == Interim::UTF32LE ? -1 : codec == Interim::UTF16BE || codec == Interim::UTF32BE ? 1 : 0;
-    switch (codec) {
-    case Interim::UTF8Signature:
-        if (bytes.size() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
-            bytes = bytes.subspan(3);
-        [[fallthrough]];
-    case Interim::UTF8:
-        return decodeUTF8(globalObject, bytes, errors);
-    case Interim::ASCII:
-        return decodeASCII(globalObject, bytes, errors);
-    case Interim::Latin1:
-        return decodeLatin1(globalObject, bytes);
-    case Interim::UTF16:
-    case Interim::UTF16LE:
-    case Interim::UTF16BE:
-        return decodeUTF16(globalObject, bytes, errors, &byteOrder);
-    case Interim::UTF32:
-    case Interim::UTF32LE:
-    case Interim::UTF32BE:
-        return decodeUTF32(globalObject, bytes, errors, &byteOrder);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static std::optional<ByteVector> encodeWithInterimCodec(JSGlobalObject* globalObject, Interim codec, JSValue string, const String& errors)
-{
-    int byteOrder = codec == Interim::UTF16LE || codec == Interim::UTF32LE ? -1 : codec == Interim::UTF16BE || codec == Interim::UTF32BE ? 1 : 0;
-    switch (codec) {
-    case Interim::UTF8Signature: {
-        auto encoded = encodeUTF8(globalObject, string, errors);
-        if (!encoded)
-            return std::nullopt;
-        ByteVector out;
-        out.appendList({ 0xEF, 0xBB, 0xBF });
-        out.append(encoded->span());
-        return out;
-    }
-    case Interim::UTF8:
-        return encodeUTF8(globalObject, string, errors);
-    case Interim::ASCII:
-        return encodeASCII(globalObject, string, errors);
-    case Interim::Latin1:
-        return encodeLatin1(globalObject, string, errors);
-    case Interim::UTF16:
-    case Interim::UTF16LE:
-    case Interim::UTF16BE:
-        return encodeUTF16(globalObject, string, errors, byteOrder);
-    case Interim::UTF32:
-    case Interim::UTF32LE:
-    case Interim::UTF32BE:
-        return encodeUTF32(globalObject, string, errors, byteOrder);
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 // What is decoded without asking the registry. False if it is for the registry.
 static bool decodeIfKnown(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors, String& result)
 {
@@ -419,10 +338,6 @@ static bool decodeIfKnown(JSGlobalObject* globalObject, std::span<const uint8_t>
     case Shortcut::None:
         break;
     }
-    if (auto interim = interimCodecFor(encoding)) {
-        result = decodeWithInterimCodec(globalObject, *interim, bytes, errors);
-        return true;
-    }
     return false;
 }
 
@@ -430,8 +345,6 @@ static bool decodeIfKnown(JSGlobalObject* globalObject, std::span<const uint8_t>
 static JSValue decodeByRegistry(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (!hasCodecSearchFunctions(globalObject))
-        return raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown encoding: "_s, encoding));
     // What the codec is given is a view that cannot be written through, of bytes that stay where they are.
     JSValue copy = newBytes(globalObject, bytes);
     RETURN_IF_EXCEPTION(scope, { });
@@ -486,10 +399,6 @@ static bool encodeIfKnown(JSGlobalObject* globalObject, JSValue string, const St
     case Shortcut::None:
         break;
     }
-    if (auto interim = interimCodecFor(encoding)) {
-        result = encodeWithInterimCodec(globalObject, *interim, string, errors);
-        return true;
-    }
     return false;
 }
 
@@ -497,8 +406,6 @@ static bool encodeIfKnown(JSGlobalObject* globalObject, JSValue string, const St
 static JSValue encodeByRegistry(JSGlobalObject* globalObject, JSValue string, const String& encoding, const String& errors)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (!hasCodecSearchFunctions(globalObject))
-        return raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown encoding: "_s, encoding));
     JSValue result = encodeTextWithCodec(globalObject, string, encoding, errors);
     RETURN_IF_EXCEPTION(scope, { });
     PyType* type = typeOf(globalObject, result);

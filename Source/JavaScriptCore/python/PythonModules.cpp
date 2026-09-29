@@ -33,6 +33,7 @@
 #include "PythonConfiguration.h"
 #include "PythonIO.h"
 #include "PythonImport.h"
+#include "PythonLifecycle.h"
 #include "SourceProvider.h"
 #include <wtf/MonotonicTime.h>
 #include <wtf/WallTime.h>

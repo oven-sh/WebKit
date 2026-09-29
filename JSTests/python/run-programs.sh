@@ -6,6 +6,9 @@
 #
 #     python3.14 programs/x.py > programs/x.expected
 
+# The part of the library that is written in Python does not come with the engine. It is CPython's, as it is.
+[ -n "$PYTHONPATH" ] || { echo "PYTHONPATH is to name the Lib directory of CPython 3.14" >&2; exit 2; }
+
 jsc=$1
 shift
 cd "$(dirname "$0")/programs" || exit 2
@@ -24,9 +27,9 @@ for program in "$@"; do
         fi
     done
 done
-# And by way of its syntax tree. What runs it that way is on the stack beneath it, which shows in what says how deep the stack is or what is on it.
+# And by way of its syntax tree. What runs it that way is on the stack beneath it, and is __main__, which shows in what says how deep the stack is, what is on it, or what __main__ is.
 for program in "$@"; do
-    case $program in recursion-limit.py | recursion-limit-and-frames.py | uncaught-exceptions.py | warning-filters.py) continue ;; esac
+    case $program in recursion-limit.py | recursion-limit-and-frames.py | start-up.py | uncaught-exceptions.py | warning-filters.py) continue ;; esac
     runs=$((runs + 1))
     if ! "$jsc" ../through-a-syntax-tree.py -- "$program" 2>&1 | cmp -s - "${program%.py}.expected"; then
         failures=$((failures + 1))

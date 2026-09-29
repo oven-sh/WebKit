@@ -78,6 +78,7 @@
 #include "PythonBytes.h"
 #include "PythonCompiler.h"
 #include "PythonConfiguration.h"
+#include "PythonLifecycle.h"
 #include "PythonOperations.h"
 #include "PythonPosixModule.h"
 #include "ReleaseHeapAccessScope.h"
@@ -4489,7 +4490,9 @@ static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
         fprintf(stderr, "Could not open file: %s\n", fileName.utf8().legacyCStringPointer());
         return false;
     }
-    return !Python::runMain(globalObject, byteCast<uint8_t>(buffer.span()), SourceOrigin { absoluteFileURL(fileName) }, fileName);
+    // The program knows where it is from wherever the process goes: config_run_filename_abspath() of CPython.
+    URL url = absoluteFileURL(fileName);
+    return !Python::runMain(globalObject, byteCast<uint8_t>(buffer.span()), SourceOrigin { url }, url.fileSystemPath());
 }
 
 static void runWithOptions(GlobalObject* globalObject, CommandLine& options, bool& success)
@@ -4513,6 +4516,16 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
         String path = absoluteFileURL(program).fileSystemPath();
         configuration.firstSearchPath = path.left(path.reverseFind('/'));
         configuration.builtinModules.append({ "posix"_s, Python::createPosixModule });
+        // Where the library is, as CPython is told: it does not come with the engine.
+        if (const char* searchPath = getenv("PYTHONPATH")) {
+            for (auto directory : StringView::fromLatin1(searchPath).split(':'))
+                configuration.moduleSearchPaths.append(String::fromUTF8(directory.utf8().span()));
+        }
+        if (const char* home = getenv("PYTHONHOME")) {
+            configuration.prefix = configuration.executablePrefix = String::fromUTF8(home);
+            configuration.libraryDirectory = makeString(configuration.prefix, "/lib/python3.14"_s);
+            configuration.moduleSearchPaths.append(configuration.libraryDirectory);
+        }
         break;
     }
 
@@ -5146,6 +5159,8 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
 
                 if (!options.m_reprl && options.m_interactive && success)
                     runInteractive(globalObject);
+                if (!Python::finalizePython(globalObject))
+                    success = false;
             }
         }
 

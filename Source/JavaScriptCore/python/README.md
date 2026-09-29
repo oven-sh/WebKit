@@ -556,6 +556,18 @@ What is done to an open file is asked of the host too, if it wants to be asked: 
 `FileIO` and the functions of `posix` that do the same go through it. That is so that what Python writes to the standard output can go the way that what JavaScript writes there goes, and the two come out in the
 order in which they were written. Left alone, it is the system calls.
 
+### Starting, running and stopping
+
+There are two stages to starting, as there are in CPython. The first is when a realm is made, which is when Python is first used in a global object: the classes, `builtins`, `sys`, and `importlib` as far as what is built
+in and what is frozen. It reads no files and cannot fail. The second is `startPython()`, which is `init_interp_main()`: importing from files, `encodings`, the standard streams, `builtins.open`, `__main__` and `site`. It
+runs a good deal of the library and can fail, most simply because there is no library, and then it throws. There are two ways into Python from outside, `runMain()` and an ES module importing a Python file, and each calls
+it first (`PythonLifecycle.cpp`).
+
+The part of the library that is written in Python does not come with the engine. Where it is is for the host to say, in `Configuration::moduleSearchPaths` or `frozenModules`. The shell goes by `PYTHONPATH` and
+`PYTHONHOME`, as CPython does.
+
+When a program is over is for the host to say as well, since one that is in two languages is not over when the Python that began it has been run to its end: `finalizePython()`.
+
 ### Where the library is written
 
 What CPython writes in C is written here in C++, and what CPython writes in Python is that Python, as it is. A program cannot see into what is written in C: all that there is to match is what it does. What is
@@ -613,8 +625,6 @@ the whole of a call to the codec, which is told each time where the trouble is n
 else there, which is what is decoded from then on. So a decoder does not keep where the bytes are across a call to a handler, and asks the exception afterwards.
 
 An encoder counts in characters, since that is what a handler is told and what it answers in: `CodePoints`, which makes nothing unless there are surrogate pairs in the string.
-
-Until `encodings` is imported when a realm is made, the names that it knows and the codecs that it has in Python over `_codecs` are known to `PythonCodecs.cpp`, in a part of it that says so and is to go.
 
 The names of characters, for `\N{...}` and `namereplace`, are ICU's, which has not the names of control characters nor abbreviations (`\N{LF}`), and is of whatever version of Unicode the system has. They are to be
 `unicodedata`'s own.
@@ -889,6 +899,11 @@ There is nothing that is per process, nothing that is set after something is mad
 - **There is no `os.fork()`.** What it would leave in the new process is the one thread, and the collector and the compilers have threads of their own, which would be waited for and never answer. `os` has none on the
   systems where it cannot be had, so a program that can do without looks first, as the library does. `posix_spawn()`, `exec*()` and `system()` are there.
 - **`os.closerange()` closes what is open**, which it finds out, where CPython on macOS tries every number in the range.
+- **What is written to `sys.stdout` is sent on at once**, as it is by CPython with `-u`, whether or not it is a terminal. Otherwise what Python writes would come out after what JavaScript wrote later. So `sys.stdout.buffer`
+  is a `FileIO`, and `write_through` is true. If it is to be kept back so as not to ask the system so often, it is for the host to keep back, in `FileOperations::write`, along with what JavaScript writes.
+  `Configuration::buffersStandardStreams` is for a host that would sooner have it as CPython has it.
+- **Text is UTF-8 unless it is said to be something else**, whatever the locale: CPython's "UTF-8 mode", which is how it is to be from 3.15 on.
+- **`sys.flags.hash_randomization` is 0**, which is so: the hash of a `str` is what it is to JavaScript, and is the same each time that a program is run.
 
 ## Tests
 
@@ -898,6 +913,8 @@ There is nothing that is per process, nothing that is set after something is mad
 | `JSTests/python/run-interop.sh <jsc>` | the two languages together. There is nothing to compare these with: what is expected was read and found right |
 | `JSTests/python/audits/run-audits.sh <jsc> [n]` | not tests but measures of how far there is to go, over everything that is built in |
 | `JSTests/python/parser.js`, `symbol-table.js` | the first stages by themselves |
+
+All but the last need to be told where the part of the library that is written in Python is: `PYTHONPATH` is to name the `Lib` directory of CPython 3.14.
 
 Two of the audits are of what the built-in classes do, and not of what they have. `operations.py` tries every operator, in place and not, between every two of some hundred values, and the built-in functions
 of one and of two of them. `methods.py` calls every method of several instances of each class with no argument, with each of some ninety, with each two of some forty, with each three of a few, and by keyword, and the methods that the operators are made of as well.

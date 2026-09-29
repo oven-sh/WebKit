@@ -1,0 +1,25 @@
+what has been imported => []
+__main__ => ('__main__', 'main.py', None, None, None, None, 'SourceFileLoader', '__main__', 'main.py', True, ['__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__spec__'])
+its loader can be asked for it => ('main.py', b'# What there is when a program begins.', False, 'code')
+sys.path[0] => ('HERE', True)
+sys.stdin => [('TextIOWrapper', '<stdin>', 'r', 'utf-8', 'surrogateescape', None, 0, False, True, False, True, "<_io.TextIOWrapper name='<stdin>' mode='r' encoding='utf-8'>", 'FileIO', '<stdin>', 'rb', False)]
+sys.stdout => [('TextIOWrapper', '<stdout>', 'w', 'utf-8', 'surrogateescape', None, 1, False, False, True, True, "<_io.TextIOWrapper name='<stdout>' mode='w' encoding='utf-8'>", 'FileIO', '<stdout>', 'wb', False)]
+sys.stderr => [('TextIOWrapper', '<stderr>', 'w', 'utf-8', 'backslashreplace', None, 2, False, False, True, True, "<_io.TextIOWrapper name='<stderr>' mode='w' encoding='utf-8'>", 'FileIO', '<stderr>', 'wb', False)]
+what is read is buffered => ('BufferedReader', False)
+open => (True, True, '_io', 'open', 'open')
+what site adds => [('exit', 'Quitter', '_sitebuiltins'), ('quit', 'Quitter', '_sitebuiltins'), ('copyright', '_Printer', '_sitebuiltins'), ('credits', '_Printer', '_sitebuiltins'), ('license', '_Printer', '_sitebuiltins'), ('help', '_Helper', '_sitebuiltins')]
+exit => ('Use exit() or Ctrl-D (i.e. EOF) to exit', 'Use quit() or Ctrl-D (i.e. EOF) to exit')
+encodings => ('utf-8', 'utf-8', 'surrogateescape', 1)
+codecs by name => [(b'h\xc3\xa9', 'h\ufffd'), (b'h\xc3\xa9', 'h\ufffd'), (b'h\xc3\xa9', 'h\ufffd'), (b'h\xe9', 'h\xe9'), (b'h\xe9', 'h\xe9'), (b'h\xe9', 'h\xe9'), (b'h\xe9', 'h\xe9'), (b'h\x82', 'h\u0398'), (b'h\x00\xe9\x00', '\ue968'), (b'\xef\xbb\xbfh\xc3\xa9', 'h\ufffd'), (b'h\x8e', 'h\xc8'), (b'h?', 'h\u0418'), (b'h\x82', 'h\xda'), (b'h+AOk-', 'h\ufffd'), (b'h\\xe9', 'h\xe9'), (b'h\xe9', 'h\xe9'), (b'\x00\x00\x00h\x00\x00\x00\xe9', '\ufffd'), (b'h?', 'h\ufffd'), (b'h?', 'h\ufffd')]
+codecs that are not of text => 'nop'
+no such codec => [('LookupError', 'unknown encoding: no-such-codec'), ('LookupError', 'unknown encoding: no such'), ('LookupError', "'rot13' is not a text encoding; use codecs.encode() to handle arbitrary codecs"), ('LookupError', 'unknown encoding: no-such')]
+open, with nothing said about how => [('utf-8', 'strict', 'r', 'main.py', False, 'BufferedReader', '# What there is when a program begins.\n', None)]
+finders => ['BuiltinImporter', 'FrozenImporter', 'PathFinder']
+importlib => [('importlib', True, 'importlib._bootstrap', 'importlib', 'importlib._bootstrap_external', True, 'posixpath')]
+__future__ => [('__future__', _Feature((3, 7, 0, 'beta', 1), None, 16777216), '__future__.py', 'Record of phased-in incompatible languag')]
+sys.flags => {'debug': 0, 'inspect': 0, 'interactive': 0, 'optimize': 0, 'no_user_site': 0, 'no_site': 0, 'ignore_environment': 0, 'verbose': 0, 'bytes_warning': 0, 'quiet': 0, 'isolated': 0, 'dev_mode': False, 'safe_path': False, 'int_max_str_digits': 4300, 'warn_default_encoding': 0}
+what is known of the library => ('frozenset', 297, ['__future__', '_abc', '_aix_support', '_android_support', '_apple_support'], True, False)
+sys._getframemodulename => ('__main__', '__main__', '__main__', '__main__', None, '__main__', '__main__')
+written to sys.stdout
+written to sys.stdout.buffer
+printed

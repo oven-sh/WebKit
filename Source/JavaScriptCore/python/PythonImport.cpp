@@ -847,7 +847,6 @@ static constexpr FrozenModule s_frozenBootstrap[] = {
 
 // `_PyImport_FrozenStdlib`
 static constexpr FrozenModule s_frozenLibrary[] = {
-    { "__future__"_s, s_librarySource___future__ },
     { "_framelocals"_s, s_librarySource__framelocals, false, { }, ImplementationVisibility::Private },
 };
 
@@ -1049,13 +1048,5 @@ void initializeExternalImport(JSGlobalObject* globalObject)
     callMethodNamed(globalObject, hooks, identifier(vm, "insert"_s), jsNumber(0), importer);
 }
 
-void startPython(JSGlobalObject* globalObject)
-{
-    auto& state = importState(globalObject);
-    if (state.isStarted)
-        return;
-    state.isStarted = true;
-    initializeExternalImport(globalObject);
-}
 
 } } // namespace JSC::Python

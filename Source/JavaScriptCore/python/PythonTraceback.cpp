@@ -364,6 +364,30 @@ PYTHON_NATIVE(sysGetFrame)
     return JSValue::encode(result);
 }
 
+// _getframemodulename(depth=0)
+PYTHON_NATIVE(sysGetFrameModuleName)
+{
+    NATIVE_PROLOGUE();
+    int depth = 0;
+    if (JSValue value = args.at(0)) {
+        auto given = toCInt(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, { });
+        depth = *given;
+    }
+    if (!audit(globalObject, "sys._getframemodulename"_s, jsNumber(depth)))
+        return { };
+    CallFrame* frame = callerOf(callFrame);
+    while (frame && depth-- > 0)
+        frame = callerOf(frame);
+    if (!frame)
+        RETURN_NONE();
+    // PyFunction_GetModule()
+    JSValue module = getAttributeIfPresent(globalObject, frame->jsCallee(), names.dunder_module);
+    if (scope.exception() && !scope.tryClearException())
+        return { };
+    return JSValue::encode(module ? module : jsUndefined());
+}
+
 // ---- _frame: what FrameLocalsProxy, which is written in Python, is written in terms of
 
 static PyFrame* frameArgument(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value)
@@ -598,6 +622,7 @@ void initializeTracebackTypes(JSGlobalObject* globalObject)
 void addFrameFunctions(JSGlobalObject* globalObject, JSObject* sysNamespace)
 {
     addFunction(globalObject, sysNamespace, "_getframe"_s, sysGetFrame);
+    addFunction(globalObject, sysNamespace, "_getframemodulename"_s, sysGetFrameModuleName);
 }
 
 } } // namespace JSC::Python

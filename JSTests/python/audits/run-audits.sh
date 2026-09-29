@@ -17,10 +17,14 @@
 #
 # Beside each is what CPython prints, in a .reference file, which is made by running it with CPython.
 
+# The part of the library that is written in Python does not come with the engine. It is CPython's, as it is.
+[ -n "$PYTHONPATH" ] || { echo "PYTHONPATH is to name the Lib directory of CPython 3.14" >&2; exit 2; }
+
 jsc=$1
 show=${2:-0}
 cd "$(dirname "$0")" || exit 2
 for audit in own-attributes wrong-arguments language-features syntax-errors syntax-trees operations methods special-methods other-objects; do
     "$jsc" $audit.py > /tmp/python-audit-$audit.txt 2> /tmp/python-audit-$audit.err || echo "$audit: stopped early: $(tail -1 /tmp/python-audit-$audit.err)"
-    python3 compare.py $audit $audit.reference /tmp/python-audit-$audit.txt "$show"
+    # Whatever python3 is has a library of its own.
+    env -u PYTHONPATH python3 compare.py $audit $audit.reference /tmp/python-audit-$audit.txt "$show"
 done

@@ -37,6 +37,7 @@
 #include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonSequences.h"
+#include "PythonStandardLibraryNames.h"
 #include "PythonStrings.h"
 #include "TopExceptionScope.h"
 #include <wtf/text/StringBuilder.h>
@@ -707,8 +708,7 @@ PYTHON_NATIVE(standardStreamWrite)
     return JSValue::encode(jsNumber(stringLength(globalObject, asString(text))));
 }
 
-// FIXME: These should be io.TextIOWrapper objects.
-static JSObject* createStandardStream(JSGlobalObject* globalObject, int descriptor)
+static JSObject* createPreliminaryStream(JSGlobalObject* globalObject, int descriptor)
 {
     VM& vm = globalObject->vm();
     PyType* type = globalObject->pyRealm()->typeStandardStream();
@@ -772,15 +772,23 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
         return newList(globalObject, values);
     };
     set("modules"_s, realm->modules());
-    Vector<String> searchPaths;
-    if (!configuration.firstSearchPath.isNull())
-        searchPaths.append(configuration.firstSearchPath);
-    searchPaths.appendVector(configuration.moduleSearchPaths);
-    set("path"_s, listOf(searchPaths));
+    set("path"_s, listOf(configuration.moduleSearchPaths));
     set("meta_path"_s, newList(globalObject));
     set("path_hooks"_s, newList(globalObject));
     set("path_importer_cache"_s, PyDict::create(globalObject));
     set("builtin_module_names"_s, builtinModuleNames(globalObject));
+    MarkedArgumentBuffer libraryNames;
+    for (ASCIILiteral name : standardLibraryModuleNames)
+        libraryNames.append(jsString(vm, String(name)));
+    set("stdlib_module_names"_s, setFromIterable(globalObject, realm->typeFrozenSet()->instanceStructure(), newList(globalObject, libraryNames)));
+    set("prefix"_s, jsString(vm, configuration.prefix));
+    set("base_prefix"_s, jsString(vm, configuration.prefix));
+    set("exec_prefix"_s, jsString(vm, configuration.executablePrefix));
+    set("base_exec_prefix"_s, jsString(vm, configuration.executablePrefix));
+    set("_stdlib_dir"_s, configuration.libraryDirectory.isNull() ? jsUndefined() : JSValue(jsString(vm, configuration.libraryDirectory)));
+    set("_base_executable"_s, jsString(vm, configuration.executable));
+    set("_home"_s, jsUndefined());
+    set("_framework"_s, jsEmptyString(vm));
     set("argv"_s, listOf(configuration.arguments));
     set("orig_argv"_s, listOf(configuration.arguments));
     set("executable"_s, jsString(vm, configuration.executable));
@@ -853,12 +861,10 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     static constexpr ASCIILiteral unraisableFields[] = { "exc_type"_s, "exc_value"_s, "exc_traceback"_s, "err_msg"_s, "object"_s };
     makeStructSequenceType(globalObject, realm->typeUnraisableHookArgs(), unraisableFields, 5);
 
-    // ---- The standard streams
-    for (auto [name, original, descriptor] : { std::tuple { "stdout"_s, "__stdout__"_s, 1 }, std::tuple { "stderr"_s, "__stderr__"_s, 2 } }) {
-        JSObject* stream = createStandardStream(globalObject, descriptor);
-        set(name, stream);
-        set(original, stream);
-    }
+    // Somewhere to say what goes wrong until there is `io`, which is what the standard streams are made of: _PySys_SetPreliminaryStderr()
+    JSObject* preliminary = createPreliminaryStream(globalObject, 2);
+    set("stderr"_s, preliminary);
+    set("__stderr__"_s, preliminary);
 
     // ---- Functions
     addHook("displayhook"_s, "__displayhook__"_s, sysDisplayHook);

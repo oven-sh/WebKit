@@ -118,8 +118,6 @@ static constexpr int32_t pycMagicNumberToken = 'J' | ('S' << 8) | ('\r' << 16) |
 void initializeImport(JSGlobalObject*);
 // _PyImport_InitExternal(): after this, so can what is in files.
 void initializeExternalImport(JSGlobalObject*);
-// All that is done before a program is run and can go wrong, if it has not been done: init_interp_main() of CPython's Python/pylifecycle.c. Whatever runs Python from outside calls it first.
-void startPython(JSGlobalObject*);
 
 // remove_importlib_frames(): takes importlib's own frames out of the traceback of the exception that has been raised.
 void removeImportlibFrames(JSGlobalObject*);

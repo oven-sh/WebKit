@@ -39,7 +39,6 @@
 #include "PythonBytes.h"
 #include "PythonCodeGenerator.h"
 #include "PythonCodecs.h"
-#include "PythonImport.h"
 #include "PythonOperations.h"
 #include "PythonParser.h"
 #include "PythonSymbolTable.h"
@@ -856,57 +855,6 @@ JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source
     if (!executable)
         return nullptr;
     return bindToGlobals(globalObject, executable, namespaceObject);
-}
-
-int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const SourceOrigin& origin, const String& sourceURL)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    PyRealm* realm = globalObject->pyRealm();
-    startPython(globalObject);
-    if (Exception* exception = scope.exception()) {
-        JSValue value = exception->value();
-        scope.clearException();
-        reportUncaughtException(globalObject, value);
-        return 1;
-    }
-
-    JSObject* module = newModule(globalObject, "__main__"_s);
-    module->putDirect(vm, Identifier::fromString(vm, "__builtins__"_s), realm->builtinsModule());
-    module->putDirect(vm, vm.pythonNames().dunder_file, jsString(vm, sourceURL));
-    module->putDirect(vm, Identifier::fromString(vm, "__cached__"_s), jsUndefined());
-    registerModule(globalObject, "__main__"_s, module);
-
-    SourceCode source = makeSource(globalObject, bytes, origin, sourceURL);
-    JSFunction* function = source.isNull() ? nullptr : compileModule(globalObject, source, module);
-    if (function)
-        call(globalObject, function);
-
-    Exception* exception = scope.exception();
-    if (!exception)
-        return 0;
-    JSValue value = exception->value();
-    scope.clearException();
-    if (isInstance(globalObject, value, realm->typeSystemExit())) {
-        // sys.exit(): its argument is the status, or a message.
-        JSValue arguments = asObject(value)->getDirect(vm, vm.pythonNames().private_args);
-        auto* tuple = arguments ? uncheckedDowncast<PyTuple>(arguments.asCell()) : nullptr;
-        if (!tuple || !tuple->length() || isNone(tuple->at(0)))
-            return 0;
-        if (tuple->at(0).isInt32())
-            return tuple->at(0).asInt32();
-        JSValue file = sysAttribute(globalObject, "stderr"_s);
-        String message = str(globalObject, tuple->at(0));
-        if (!scope.exception() && file && !isNone(file)) {
-            JSValue write = getAttribute(globalObject, file, Identifier::fromString(vm, "write"_s));
-            if (!scope.exception())
-                call(globalObject, write, strOrMemoryError(globalObject, concatenate(message, '\n')));
-        }
-        scope.clearException();
-        return 1;
-    }
-    reportUncaughtException(globalObject, value);
-    return 1;
 }
 
 } } // namespace JSC::Python

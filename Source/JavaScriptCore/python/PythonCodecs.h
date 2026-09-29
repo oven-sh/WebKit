@@ -345,7 +345,6 @@ void registerCodecSearchFunction(JSGlobalObject*, JSValue); // PyCodec_Register(
 void unregisterCodecSearchFunction(JSGlobalObject*, JSValue); // PyCodec_Unregister()
 // Each of these is empty if it raised.
 JSValue lookupCodec(JSGlobalObject*, const String& encoding); // _PyCodec_Lookup()
-bool hasCodecSearchFunctions(JSGlobalObject*); // Only until `encodings` is imported when a realm is made, after which there is always one.
 JSValue lookupTextEncoding(JSGlobalObject*, const String& encoding, ASCIILiteral alternateCommand = { }); // _PyCodec_LookupTextEncoding()
 JSValue makeIncrementalDecoder(JSGlobalObject*, JSValue codecInfo, const String& errors); // _PyCodecInfo_GetIncrementalDecoder()
 JSValue makeIncrementalEncoder(JSGlobalObject*, JSValue codecInfo, const String& errors); // _PyCodecInfo_GetIncrementalEncoder()

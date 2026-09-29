@@ -88,8 +88,5 @@ FunctionExecutable* cloneExecutable(JSGlobalObject*, FunctionExecutable*, Ref<Fu
 // One for a piece of source, of which a program says what is known: code(...). Null if the source is not Python, or does not bear that out.
 FunctionExecutable* executableFromProgram(JSGlobalObject*, const SourceCode&, Ref<FunctionInfo>&&);
 
-// Runs a file as `python file.py` would, as the module __main__. If an exception gets away it is reported on stderr as Python
-// reports it. Returns what the process should exit with.
-JS_EXPORT_PRIVATE int runMain(JSGlobalObject*, std::span<const uint8_t>, const SourceOrigin&, const String& sourceURL);
 
 } } // namespace JSC::Python
