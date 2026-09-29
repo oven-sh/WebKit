@@ -2520,6 +2520,11 @@ llintOp(op_nop, OpNop, macro (unused, unused, dispatch)
 end)
 
 
+llintOp(op_type_tag, OpTypeTag, macro (unused, unused, dispatch)
+    dispatch()
+end)
+
+
 # we can't use callOp because we can't pass `call` as the opcode name, since it's an instruction name
 commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
 end, dispatchAfterRegularCall)

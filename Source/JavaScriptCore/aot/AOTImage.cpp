@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTImage.h"
 
+#include "AOTTypeTable.h"
+
 #if ENABLE(FTL_JIT)
 
 #include "AOTCompiler.h"
@@ -403,8 +405,10 @@ Vector<uint8_t> ImageBuilder::finish()
     struct Shape {
         unsigned inlineCapacity { 0 };
         Vector<uint32_t, 8> names;
+        Vector<uint16_t, 8> slots;
     };
-    Vector<Shape> shapes(1);
+    // The layouts of the table of types come first, by their own numbers, whether or not anything is made so.
+    Vector<Shape> shapes(1 + (TypeTable::shared() ? TypeTable::shared()->numberOfLayouts() : 0));
     UncheckedKeyHashMap<String, uint32_t> numberOfShape;
     BitVector selectorIsRead;
     for (auto& function : m_functions) {
@@ -437,6 +441,15 @@ Vector<uint8_t> ImageBuilder::finish()
             shape.inlineCapacity = known.inlineCapacity;
             for (UniquedStringImpl* name : known.names)
                 shape.names.append(selectorFor(name));
+            if (known.number) {
+                shape.slots = known.slots;
+                constant = known.number;
+                if (shapes[constant].names.isEmpty())
+                    shapes[constant] = WTF::move(shape);
+                else
+                    RELEASE_ASSERT(shapes[constant].names == shape.names && shapes[constant].slots == shape.slots && shapes[constant].inlineCapacity == shape.inlineCapacity);
+                continue;
+            }
             Vector<uint32_t, 16> words { known.inlineCapacity };
             words.appendVector(shape.names);
             String key { std::span { reinterpret_cast<const Latin1Character*>(words.span().data()), words.size() * sizeof(uint32_t) } };
@@ -465,9 +478,10 @@ Vector<uint8_t> ImageBuilder::finish()
             for (unsigned i = 0; i < shape.names.size(); ++i) {
                 if (!selectorIsRead.get(shape.names[i]))
                     continue;
-                int32_t location = i < shape.inlineCapacity || !shape.inlineCapacity
-                    ? static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + i)
-                    : -static_cast<int32_t>(i - shape.inlineCapacity) - 2;
+                unsigned at = shape.slots.isEmpty() ? i : shape.slots[i];
+                int32_t location = at < shape.inlineCapacity || !shape.inlineCapacity
+                    ? static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + at)
+                    : -static_cast<int32_t>(at - shape.inlineCapacity) - 2;
                 rows[shape.names[i]].append({ number, location });
             }
         }
@@ -514,9 +528,11 @@ Vector<uint8_t> ImageBuilder::finish()
         growWithZeros(furthest + shapes.size());
     }
     Vector<ImageShape> imageShapes;
+    Vector<uint16_t> slotsOfShapes;
     size_t numberOfPropertiesOfShapes = 0;
     for (auto& shape : shapes) {
-        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity) });
+        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1) });
+        slotsOfShapes.appendVector(shape.slots);
         numberOfPropertiesOfShapes += shape.names.size();
     }
     Vector<ImageSelector> imageSelectors;
@@ -891,6 +907,7 @@ Vector<uint8_t> ImageBuilder::finish()
     };
     header.shapesOffset = place(imageShapes.sizeInBytes());
     header.numberOfShapes = imageShapes.size();
+    header.slotsOfShapesOffset = place(slotsOfShapes.sizeInBytes());
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
     header.numberOfSelectors = selectors.size();
     header.rowsOfSelectorsOffset = place(rowOfSelector.sizeInBytes());
@@ -955,6 +972,7 @@ Vector<uint8_t> ImageBuilder::finish()
 
     memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
     memcpy(base + header.shapesOffset, imageShapes.span().data(), imageShapes.sizeInBytes());
+    memcpy(base + header.slotsOfShapesOffset, slotsOfShapes.span().data(), slotsOfShapes.sizeInBytes());
     memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
     memcpy(base + header.rowsOfSelectorsOffset, rowOfSelector.span().data(), rowOfSelector.sizeInBytes());
     memcpy(base + header.textOfSelectorsOffset, textOfSelectors.span().data(), textOfSelectors.size());

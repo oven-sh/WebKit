@@ -345,6 +345,8 @@ public:
     // no structure for each of the steps in between. It is not a transition of anything, so it is for whoever asks to see to it
     // that whoever else wants the same gets the same. Null if a name is there twice.
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+    // Likewise, each in the slot that is said (all of them in the object itself). The slots up to the last that nothing is in stay so.
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots);
     // The number that a program compiled ahead of time knows the layout by (AOT::KnownShape): what is where in an object of this
     // Structure was settled then. Zero: none. No Structure that another turns into has one.
     // Code stores to the properties of such objects without asking, so nobody gets to watch for that.

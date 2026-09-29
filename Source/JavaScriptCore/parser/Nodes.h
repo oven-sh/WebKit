@@ -230,11 +230,16 @@ namespace JSC {
 
         ResultType resultDescriptor() const { return m_resultType; }
 
+        // JSToken::m_typeTag of the token that made an expression of this: the name of the property, the brace of the literal.
+        uint32_t typeTag() const { return m_typeTag; }
+        void setTypeTag(uint32_t tag) { m_typeTag = tag; }
+
         bool isOptionalChainBase() const { return m_isOptionalChainBase; }
         void setIsOptionalChainBase() { m_isOptionalChainBase = true; }
 
     private:
         ResultType m_resultType;
+        uint32_t m_typeTag { 0 };
         bool m_isOptionalChainBase { false };
     };
 

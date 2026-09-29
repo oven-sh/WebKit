@@ -168,6 +168,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotCompilesBuiltins, true, Normal, "The image has code for the engine's own functions that are written in JavaScript."_s) \
     v(Unsigned, additionsBeforeLoneObjectIsDictionary, 0, Normal, "An object that has been given that many properties one after the other, none of which any other object was given after the same ones, becomes a dictionary: it is not given a Structure for each of the rest. Zero: never."_s) \
     v(Bool, aotCountsAllocations, false, Normal, "TEMPORARY. When compiling: code counts what it makes, by what the compiler made of what becomes of it (Escape)."_s) \
+    v(OptionString, aotTypeTable, nullptr, Normal, "When compiling: the types of the program (AOT::TypeTable), which its text refers to by number (useTypeTags)."_s) \
+    v(Unsigned, aotShapes, 15, Normal, "What is made of the shapes in the table of types. 1: literals are laid out as it says. 2: reads go by it. 4: so do writes. 8: what a layout is known not to have is undefined."_s) \
     v(Bool, aotInlines, true, Normal, "A call of a function that is proven to be the callee is replaced by what the function does, if that is little or if it is the only call there is."_s) \
     v(Bool, aotInlinesBuiltins, true, Normal, "aotInlines, aotCompilesBuiltins, useImmutableIntrinsics: likewise a call of a method by the name of one of Array.prototype's that is passed a closure made on the spot, after a check that it is that one."_s) \
     v(Unsigned, aotInlinesUpTo, 60, Normal, "aotInlines: how many bytes of bytecode a function may have that is called from several places."_s) \
@@ -209,6 +211,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, staticHeapForgetsNamesOfVariables, true, Normal, "When a program is built, the SymbolTables of its static heap keep only the names that its code may look up when it runs."_s) \
     v(Bool, staticHeapKeepsFunctionCode, false, Normal, "When a static heap is built: the unlinked code of functions that were compiled is decoded into it, rather than left in the payload for whoever asks."_s) \
     v(Bool, useImmutableIntrinsics, false, Normal, "What Object.prototype, Array.prototype, Math and the like have when a realm is made stays as it is: see JSGlobalObject::makeIntrinsicsImmutable()."_s) \
+    v(Bool, useTypeTags, false, Normal, "The text of a program may say something of a token that is no part of the language: a byte that is 1, and six characters that are a number (Lexer::readTypeTag()). It is what whoever made the text knows of the types there."_s) \
     v(Bool, useSoundTypes, false, Normal, "compile $$t(value, <integer literal mask>) calls to op_check_type instead of a call"_s) \
     v(Bool, iterateCheckedArraysByIndex, true, Normal, "With useSoundTypes and useImmutableIntrinsics: for (x of $$t(e, array)) goes through the array by index, having seen to it that iterating over it is what it is for any array."_s) \
     v(Bool, reportSoundTypeViolations, false, Normal, "A type check that fails says so, once for each place, instead of throwing. Not for code from the static compiler, which relies on the checks."_s) \

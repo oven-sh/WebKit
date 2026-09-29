@@ -61,7 +61,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject* glob
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 
-// An object literal: op_new_object and the `count` op_put_by_id that follow it, whose values are at `values`.
+// An object literal: op_new_object and the op_put_by_id that follow it. values: what goes in each of the first `count` slots of the object:
+// which is the values of the properties one after the other, unless the literal is made as a layout that says otherwise
+// (KnownShape::slots). Then some may have nothing in them.
 JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
@@ -76,12 +78,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     FunctionRef function = caller(globalObject, callFrame);
     Vector<unsigned, 32> identifiers;
     unsigned inlineCapacityInBytecode;
+    uint32_t shape = function.siteConstantOf(cache);
+    std::span<const uint16_t> slots;
+    if (shape)
+        slots = function.instance->slotsOfKnownShape(shape);
+    unsigned numberOfSlots = count;
+    auto slotOf = [&](unsigned property) -> unsigned { return slots.empty() ? property : slots[property]; };
     if (AllocationPlan plan = function.planOf(cache)) {
-        RELEASE_ASSERT(plan.count() == count);
+        RELEASE_ASSERT(slots.empty() ? plan.count() == count : plan.count() == slots.size());
+        count = plan.count();
         for (unsigned i = 0; i < count; ++i)
             identifiers.append(plan.identifier(i));
         inlineCapacityInBytecode = plan.inlineCapacity();
     } else {
+        RELEASE_ASSERT(slots.empty());
         // The first so many of Graph::storesOfLiteral(). Which they are was settled when the code was compiled: they are the stores
         // to the register, whatever else there is in between.
         UnlinkedCodeBlock* codeBlock = callerCode(globalObject, callFrame);
@@ -103,12 +113,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     };
     ObjectAllocationProfile profile;
     profile.initializeProfile(vm, globalObject, globalObject, globalObject->objectPrototype(), inlineCapacityInBytecode);
-    if (count > 1 && !(Options::aotDisableFastPaths() & 4096)) {
+    if ((count > 1 || !slots.empty()) && !(Options::aotDisableFastPaths() & 4096)) {
         // All of it is known, so there is no call for a structure for every property on the way.
         Vector<UniquedStringImpl*, 32> names;
         for (unsigned i = 0; i < count; ++i)
             names.append(identifierOf(i).impl());
-        uint32_t shape = function.siteConstantOf(cache);
         if (Structure* structure = shape ? function.instance->structureOfKnownShape(shape, names.span()) : function.instance->structureOfLiteral(profile.structure(), names.span())) {
             DeferGC deferGC(vm);
             unsigned inlineCapacity = structure->inlineCapacity();
@@ -117,8 +126,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
                 butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
             JSObject* object = JSFinalObject::createWithButterfly(vm, structure, butterfly);
             for (unsigned i = 0; i < count; ++i)
-                object->putDirectOffset(vm, offsetForPropertyNumber(i, inlineCapacity), JSValue::decode(values[i]));
-            if (count <= inlineCapacity)
+                object->putDirectOffset(vm, offsetForPropertyNumber(slotOf(i), inlineCapacity), JSValue::decode(values[slotOf(i)]));
+            if (numberOfSlots <= inlineCapacity)
                 fillAllocationCache(vm, callerData(globalObject, callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(inlineCapacity), AllocatorForMode::EnsureAllocator), inlineCapacity);
             OPERATION_RETURN(scope, object);
         }
@@ -127,8 +136,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     bool inOrder = true;
     for (unsigned index = 0; index < count; ++index) {
         PutPropertySlot slot(object, true, PutPropertySlot::PutById);
-        object->putDirect(vm, identifierOf(index), JSValue::decode(values[index]), slot);
-        inOrder &= slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty && slot.cachedOffset() == static_cast<PropertyOffset>(index);
+        object->putDirect(vm, identifierOf(index), JSValue::decode(values[slotOf(index)]), slot);
+        inOrder &= slots.empty() && slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty && slot.cachedOffset() == static_cast<PropertyOffset>(index);
     }
     Structure* structure = object->structure();
     if (inOrder && !structure->isDictionary() && count <= structure->inlineCapacity() && !object->butterfly())

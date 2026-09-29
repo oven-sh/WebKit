@@ -422,6 +422,39 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     return result;
 }
 
+Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots)
+{
+    RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && names.size() == slots.size());
+    DeferGC deferGC(vm);
+    Structure* result = Structure::create(vm, empty->globalObject(), empty->storedPrototype(), empty->typeInfo(), empty->classInfoForCells(), empty->indexingType(), empty->inlineCapacity());
+    PropertyTable* table = result->ensurePropertyTable(vm);
+    BitVector taken;
+    for (unsigned i = 0; i < names.size(); ++i) {
+        RELEASE_ASSERT(slots[i] < empty->inlineCapacity() && !taken.get(slots[i]));
+        if (JSC::isValidOffset(result->get(vm, names[i])))
+            return nullptr;
+        taken.set(slots[i]);
+        // (for-in takes the property it comes to first to be the first in the object, and so on, unless it is told otherwise: as it is
+        // when a property has been taken out.)
+        if (slots[i] != i)
+            result->setIsQuickPropertyAccessAllowedForEnumeration(false);
+        // A property is put where one has been taken out of, if there is such a place, and in the last of them.
+        table->addDeletedOffset(slots[i]);
+        result->addPropertyWithoutTransition(vm, names[i], 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
+            RELEASE_ASSERT(offset == static_cast<PropertyOffset>(slots[i]));
+            result->setMaxOffset(vm, newMaxOffset);
+        });
+        RELEASE_ASSERT(result->propertyTableOrNull() == table);
+    }
+    // And that is what the rest are, as far as anybody can tell: what an object has room for is what it has and what it has had.
+    for (PropertyOffset slot = 0; slot < result->maxOffset(); ++slot) {
+        if (!taken.get(slot))
+            table->addDeletedOffset(slot);
+    }
+    result->checkOffsetConsistency();
+    return result;
+}
+
 Structure* Structure::create(PolyProtoTag, VM& vm, JSGlobalObject* globalObject, JSObject* prototype, const TypeInfo& typeInfo, const ClassInfo* classInfo, IndexingType indexingType, unsigned inlineCapacity)
 {
     Structure* result = Structure::create(vm, globalObject, prototype, typeInfo, classInfo, indexingType, inlineCapacity);

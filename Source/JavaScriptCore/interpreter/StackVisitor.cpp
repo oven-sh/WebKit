@@ -65,6 +65,13 @@ static CallFrame* skipFramesOfStubs(CallFrame* callFrame, EntryFrame*& entryFram
     while (callFrame) {
         switch (AOT::whatIsAt(removeCodePtrTag(returnPC)).kind) {
         case AOT::WhatIsAt::Stub:
+            // One that was got to from outside the VM (Stub::ConstructByCalling is what Reflect.construct() may find itself calling) has made
+            // its frame the way the engine makes one for a native function, and has to be taken for that: it is all there is between
+            // one way in to the VM and the next, and whoever unwinds has to stop at each.
+            if (callFrame->callerFrameOrEntryFrame() == entryFrame) {
+                returnPC = nullptr;
+                return callFrame;
+            }
             returnPC = callFrame->rawReturnPC();
             callFrame = callFrame->callerFrame();
             continue;

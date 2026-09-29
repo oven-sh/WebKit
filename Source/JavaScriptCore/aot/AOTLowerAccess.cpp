@@ -55,10 +55,91 @@ TypedPointer Lowering::cachedPropertyAddress(LValue object, LValue word, const A
     return TypedPointer(heap ? *heap : m_heaps.properties.atAnyNumber(), m_out.add(storage, m_out.shl(location, m_out.constInt32(3))));
 }
 
+std::optional<TypeTable::Field> Lowering::fieldAccessedBy(Node* node, unsigned identifier)
+{
+    uint32_t tag = Graph::typeTagOf(node);
+    if (!tag || !TypeTable::shared())
+        return std::nullopt;
+    return TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(identifier).impl());
+}
+
+// TEMPORARY-SHAPE-COUNTS
+static std::atomic<uint64_t> s_shapeSites[Instance::NumberOfShapeCounts];
+void reportShapeStatistics()
+{
+    dataLogLn("AOT: sites that go by a type: ", s_shapeSites[Instance::ReadHas].load(), " reads (", s_shapeSites[Instance::ReadLacks].load(), " of which also know what lacks it) of ", s_shapeSites[Instance::ReadHas].load() + s_shapeSites[Instance::ReadUntyped].load(),
+        ", ", s_shapeSites[Instance::WriteHas].load(), " writes of ", s_shapeSites[Instance::WriteHas].load() + s_shapeSites[Instance::WriteUntyped].load(),
+        "; ", s_shapeSites[Instance::LiteralWithLayout].load(), " literals of ", s_shapeSites[Instance::LiteralWithLayout].load() + s_shapeSites[Instance::LiteralWithout].load());
+}
+void noteShapeSite(Instance::ShapeCount which) { s_shapeSites[which].fetch_add(1, std::memory_order_relaxed); }
+
+void Lowering::countShape(Instance::ShapeCount which)
+{
+    if (!Options::aotCountsAllocations()) [[likely]]
+        return;
+    TypedPointer count = m_out.address(m_heaps.root, m_instance, Instance::offsetOfShapeCounts() + which * sizeof(uint64_t));
+    m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
+}
+
+LValue Lowering::layoutOf(LValue cell)
+{
+    return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfKnownShape()));
+}
+
+LValue Lowering::isOneOf(LValue layout, uint16_t first, uint16_t last)
+{
+    if (first == last)
+        return m_out.equal(layout, m_out.constInt32(first));
+    return m_out.belowOrEqual(m_out.sub(layout, m_out.constInt32(first)), m_out.constInt32(last - first));
+}
+
 void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
+    if (auto field = (Options::aotShapes() & 2) ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+        // An object that a literal of the program made says how it is laid out, and the type says which layouts have the property, and
+        // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
+        LValue base = lowJSValue(baseNode);
+        noteShapeSite(Instance::ReadHas);
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock has = m_out.newBlock();
+        LBasicBlock hasNot = m_out.newBlock();
+        LBasicBlock mayLack = m_out.newBlock();
+        LBasicBlock otherwise = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        if (isSubtype(baseNode->type, TCell))
+            m_out.jump(cellCase);
+        else
+            m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
+        m_out.appendTo(cellCase, has);
+        LValue layout = layoutOf(base);
+        bool testsForLack = field->firstWithout && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics();
+        if (testsForLack)
+            noteShapeSite(Instance::ReadLacks);
+        m_out.branch(isOneOf(layout, field->first, field->last), usually(has), rarely(testsForLack ? mayLack : otherwise));
+        m_out.appendTo(has, mayLack);
+        countShape(Instance::ReadHas);
+        ValueFromBlock found = m_out.anchor(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue))));
+        m_out.jump(continuation);
+        // (Such an object inherits from Object.prototype, which has what it had to begin with: TypeTable::fieldOf() has seen to that.)
+        m_out.appendTo(mayLack, hasNot);
+        if (testsForLack)
+            m_out.branch(isOneOf(layout, field->firstWithout, field->lastWithout), unsure(hasNot), unsure(otherwise));
+        else
+            m_out.unreachable();
+        m_out.appendTo(hasNot, otherwise);
+        countShape(Instance::ReadLacks);
+        ValueFromBlock lacking = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
+        m_out.jump(continuation);
+        m_out.appendTo(otherwise, continuation);
+        countShape(Instance::ReadOther);
+        ValueFromBlock other = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, found, lacking, other));
+        return;
+    }
     if (node->hasFact(FactField, 1)) {
         LValue address = m_out.add(lowJSValue(baseNode), m_out.constIntPtr(JSObject::offsetOfInlineStorage() + 8 * (node->fact & 255)));
         setJSValue(node, m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address)));
@@ -69,6 +150,13 @@ void Lowering::lowerGetById(Node* node)
         LValue address = m_out.add(m_globalObject, m_out.constIntPtr(1024 + 8 * (node->fact & 1023)));
         setJSValue(node, m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address)));
         return;
+    }
+    noteShapeSite(Instance::ReadUntyped);
+    countShape(Instance::ReadUntyped);
+    if (Options::aotCountsAllocations()) [[unlikely]] {
+        uint32_t tag = Graph::typeTagOf(node);
+        TypedPointer count = m_out.address(m_heaps.root, m_instance, Instance::offsetOfReadsForReason() + (tag && TypeTable::shared() ? TypeTable::shared()->reasonOf(tag) : 0) * sizeof(uint64_t));
+        m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
     }
     setJSValue(node, getByIdCached(node, lowJSValue(baseNode), baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
 }
@@ -134,6 +222,38 @@ void Lowering::lowerPutById(Node* node)
     LValue base = lowJSValue(baseNode);
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
+    LBasicBlock afterTypedStore = nullptr;
+    if (auto field = (Options::aotShapes() & 4) ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+        // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock has = m_out.newBlock();
+        LBasicBlock otherwise = m_out.newBlock();
+        afterTypedStore = m_out.newBlock();
+        if (isSubtype(baseNode->type, TCell))
+            m_out.jump(cellCase);
+        else
+            m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
+        m_out.appendTo(cellCase, has);
+        m_out.branch(isOneOf(layoutOf(base), field->first, field->last), usually(has), rarely(otherwise));
+        m_out.appendTo(has, otherwise);
+        noteShapeSite(Instance::WriteHas);
+        countShape(Instance::WriteHas);
+        m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
+        if (mayBe(valueNode->type, TCell))
+            storeBarrier(base);
+        m_out.jump(afterTypedStore);
+        m_out.appendTo(otherwise, afterTypedStore);
+        countShape(Instance::WriteOther);
+    } else {
+        noteShapeSite(Instance::WriteUntyped);
+        countShape(Instance::WriteUntyped);
+    }
+    auto finish = makeScopeExit([&] {
+        if (afterTypedStore) {
+            m_out.jump(afterTypedStore);
+            m_out.appendTo(afterTypedStore);
+        }
+    });
     if (isCompact() && Site::fits(numberOf(bytecode.m_property), flags)) {
         unsigned slot = sharedSite(node, numberOf(bytecode.m_property), flags);
         m_graph.noteSelectorOfSite(slot, code().codeBlock()->identifier(bytecode.m_property).impl());

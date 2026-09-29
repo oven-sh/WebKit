@@ -8,6 +8,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "AOTGraph.h"
+#include "AOTTypeTable.h"
 #include "AOTRuntime.h"
 #include "B3AbstractHeapRepository.h"
 #include "B3Procedure.h"
@@ -31,6 +32,9 @@ using FTL::usually;
 // AOT IR -> B3. Implemented in AOTLowerCore.cpp (structure, values, calls into C++), AOTLowerArith.cpp, AOTLowerAccess.cpp
 // (properties and scopes), AOTLowerObjects.cpp (allocation, conversions, the rarer kinds of property access),
 // AOTLowerIteration.cpp (for-of and for-in), AOTLowerCalls.cpp and AOTLowerVarargs.cpp (every call that is not a plain one).
+void noteShapeSite(Instance::ShapeCount); // TEMPORARY-SHAPE-COUNTS
+void reportShapeStatistics();
+
 class Lowering {
     WTF_MAKE_NONCOPYABLE(Lowering);
 public:
@@ -157,6 +161,12 @@ private:
     LValue numberOfArgumentsPassed(); // Not counting `this`.
     LValue argumentsPassed(); // Where the first is.
     LValue argumentPassedOrUndefined(unsigned index);
+    void countShape(Instance::ShapeCount); // TEMPORARY-SHAPE-COUNTS
+    // What the type that the source gives the base of the access says of the property (TypeTable).
+    std::optional<TypeTable::Field> fieldAccessedBy(Node*, unsigned identifier);
+    // Which layout the cell is of (Structure::knownShape()), and whether that is one of first to last.
+    LValue layoutOf(LValue cell);
+    LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
     struct OwnData {
         LValue hasAny;

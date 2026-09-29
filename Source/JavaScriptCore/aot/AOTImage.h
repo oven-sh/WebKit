@@ -56,6 +56,7 @@ struct ImageHeader {
     // Shapes and selectors are numbered from one.
     uint32_t shapesOffset; // ImageShape, by number.
     uint32_t numberOfShapes; // One more than the last.
+    uint32_t slotsOfShapesOffset; // uint16_t: see ImageShape::slots.
     // With numberOfIdentifiersOfProgram, a selector is the number of the identifier, and what it says is for StaticHeap to know.
     uint32_t selectorsOffset; // ImageSelector, by number.
     uint32_t numberOfSelectors; // One more than the last.
@@ -104,6 +105,7 @@ struct ImageRegExp {
 struct ImageShape {
     uint16_t numberOfProperties;
     uint16_t inlineCapacity;
+    uint32_t slots; // Where, among ImageHeader::slotsOfShapesOffset, the slot of each property is, plus one. Zero: they are one after the other.
 };
 
 // A name that properties are read by.

@@ -357,6 +357,8 @@ struct Instance {
     // The Structure of a shape that the image numbers (ImageShape), which says so (Structure::knownShape()). It is made when it is
     // first asked for, and stays. names: its properties', which whoever asks has at hand.
     Structure* structureOfKnownShape(uint32_t shape, std::span<UniquedStringImpl* const> names);
+    // The slot of each of its properties, if they are not one after the other (KnownShape::slots).
+    std::span<const uint16_t> slotsOfKnownShape(uint32_t shape) const;
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(Instance, structureIDBase); }
     // What an object of a known shape does not have itself, it does not have at all if it inherits from Object.prototype alone and
     // that does not have it either. This looks at what that has now, if it is not what it had when this last looked.
@@ -399,6 +401,12 @@ struct Instance {
     static constexpr unsigned numberOfAllocationCounts = 4 * 32 * 2;
     uint64_t allocationCounts[numberOfAllocationCounts] { };
     static constexpr ptrdiff_t offsetOfAllocationCounts() { return OBJECT_OFFSETOF(Instance, allocationCounts); }
+    // TEMPORARY-SHAPE-COUNTS: likewise. What became of the accesses that go by a type.
+    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, NumberOfShapeCounts };
+    uint64_t shapeCounts[NumberOfShapeCounts] { };
+    uint64_t readsForReason[1024] { };
+    static constexpr ptrdiff_t offsetOfReadsForReason() { return OBJECT_OFFSETOF(Instance, readsForReason); }
+    static constexpr ptrdiff_t offsetOfShapeCounts() { return OBJECT_OFFSETOF(Instance, shapeCounts); }
     const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
     uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
     uint32_t missesToSpare;

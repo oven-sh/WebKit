@@ -4953,11 +4953,15 @@ template <typename LexerType>
 template <class TreeBuilder> TreeExpression Parser<LexerType>::parseObjectLiteral(TreeBuilder& context)
 {
     JSTokenLocation location(tokenLocation());
+    uint32_t typeTag = m_token.m_typeTag;
     consumeOrFail(OPENBRACE, "Expected opening '{' at the start of an object literal");
 
     SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
-    if (consume(CLOSEBRACE))
-        return context.createObjectLiteral(location);
+    if (consume(CLOSEBRACE)) {
+        TreeExpression empty = context.createObjectLiteral(location);
+        context.setTypeTag(empty, typeTag);
+        return empty;
+    }
     
     TreeProperty property = parseProperty(context);
     failIfFalse(property, "Cannot parse object literal property");
@@ -4982,7 +4986,9 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseObjectLitera
 
     handleProductionOrFail2(CLOSEBRACE, "}", "end", "object literal");
 
-    return context.createObjectLiteral(location, propertyList);
+    TreeExpression literal = context.createObjectLiteral(location, propertyList);
+    context.setTypeTag(literal, typeTag);
+    return literal;
 }
 
 template <typename LexerType>
@@ -5682,6 +5688,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                 }
                 matchOrFail(IDENT, "Expected a property name after ", optionalChainBase ? "'?.'" : "'.'");
                 base = context.createDotAccess(location, base, ident, type, expressionStart, expressionDivot, tokenEndPosition());
+                context.setTypeTag(base, m_token.m_typeTag);
                 if (baseIsSuper && currentScope()->isArrowFunction()) [[unlikely]]
                     currentFunctionScope()->setInnerArrowFunctionUsesSuperProperty();
                 next();

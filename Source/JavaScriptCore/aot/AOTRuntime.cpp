@@ -1350,6 +1350,17 @@ void Instance::dumpSlotStatistics(PrintStream& out)
     out.println("DATA withOwnConstants=", withOwnConstants, " ownConstantBytes=", ownConstants * sizeof(EncodedJSValue), " withFunctions=", withFunctions, " withWatchpoints=", withWatchpoints, " withCodeBlock=", withCodeBlock, " withUnlinkedCode=", withUnlinkedCode, " aJITCodeIs=", sizeof(JITCode));
     for (unsigned i = 0; i < numberOfBuckets; ++i)
         out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
+    {
+        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s };
+        for (unsigned i = 0; i < NumberOfShapeCounts; ++i) {
+            if (shapeCounts[i])
+                out.println("SHAPECOUNT\t", shapeCounts[i], "\t", names[i]);
+        }
+        for (unsigned i = 0; i < 1024; ++i) {
+            if (readsForReason[i])
+                out.println("SHAPECOUNT\t", readsForReason[i], "\treason ", i);
+        }
+    }
     // TEMPORARY-RESIDENCY: how much of what is only there once it is touched has been.
     {
         auto resident = [&](ASCIILiteral name, const void* start, size_t size) {
@@ -1413,12 +1424,22 @@ Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStri
     DeferGC deferGC(*vm);
     Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), description.inlineCapacity);
     RELEASE_ASSERT(empty->inlineCapacity() == description.inlineCapacity);
-    Structure* result = Structure::createWithProperties(*vm, empty, names);
+    auto slots = slotsOfKnownShape(shape);
+    Structure* result = slots.empty() ? Structure::createWithProperties(*vm, empty, names) : Structure::createWithProperties(*vm, empty, names, slots);
     RELEASE_ASSERT(result);
     result->setKnownShape(*vm, safeCast<uint16_t>(shape));
     collections->knownShapes.add(shape, result);
     noteKnownShape(result, 1);
     return result;
+}
+
+std::span<const uint16_t> Instance::slotsOfKnownShape(uint32_t shape) const
+{
+    Image* image = Image::withShapes();
+    const ImageShape& description = image->at<ImageShape>(image->header().shapesOffset)[shape];
+    if (!description.slots)
+        return { };
+    return { image->at<uint16_t>(image->header().slotsOfShapesOffset) + description.slots - 1, description.numberOfProperties };
 }
 
 void Instance::lookAtObjectPrototype()

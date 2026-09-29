@@ -101,6 +101,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_check_traps:
     case op_get_argument:
     case op_nop:
+    case op_type_tag:
     case op_unreachable:
     case op_super_sampler_begin:
     case op_super_sampler_end:
@@ -464,6 +465,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_log_shadow_chicken_tail:
     case op_yield:
     case op_nop:
+    case op_type_tag:
     case op_unreachable:
     case op_super_sampler_begin:
     case op_super_sampler_end:

@@ -173,6 +173,11 @@ static unsigned scratchWordsFor(Node* node)
         return 0;
     switch (node->opcode) {
     case op_new_object:
+        if (Graph::typeTagOf(node)) {
+            if (auto shape = node->graph->shapeOfLiteral(node))
+                return shape->numberOfSlots();
+        }
+        return node->numberOfLiteralProperties;
     case op_create_this:
         return node->numberOfLiteralProperties;
     case op_new_array:

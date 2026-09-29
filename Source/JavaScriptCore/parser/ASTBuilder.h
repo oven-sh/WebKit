@@ -216,6 +216,7 @@ public:
     {
         return new (m_parserArena) PrivateIdentifierNode(location, ident);
     }
+    void setTypeTag(ExpressionNode* node, uint32_t tag) { node->setTypeTag(tag); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location) { return new (m_parserArena) ObjectLiteralNode(location); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location, PropertyListNode* properties) { return new (m_parserArena) ObjectLiteralNode(location, properties); }
 
@@ -1561,6 +1562,7 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
     if (!node)
         node = new (m_parserArena) FunctionCallDotNode(location, dot->base(), dot->identifier(), dot->type(), args, divot, divotStart, divotEnd, isOptionalCall);
     node->setSubexpressionInfo(dot->divot(), dot->divotEnd().offset);
+    node->setTypeTag(dot->typeTag());
     return node;
 }
 
@@ -1705,8 +1707,11 @@ ExpressionNode* ASTBuilder::makeAssignNode(const JSTokenLocation& location, Expr
     ASSERT(loc->isDotAccessorNode());
     DotAccessorNode* dot = static_cast<DotAccessorNode*>(loc);
 
-    if (op == Operator::Equal)
-        return new (m_parserArena) AssignDotNode(location, dot->base(), dot->identifier(), dot->type(), expr, exprHasAssignments, dot->divot(), start, end);
+    if (op == Operator::Equal) {
+        auto* assign = new (m_parserArena) AssignDotNode(location, dot->base(), dot->identifier(), dot->type(), expr, exprHasAssignments, dot->divot(), start, end);
+        assign->setTypeTag(dot->typeTag());
+        return assign;
+    }
 
     if (op == Operator::CoalesceEq || op == Operator::OrEq || op == Operator::AndEq) {
         auto* node = new (m_parserArena) ShortCircuitReadModifyDotNode(location, dot->base(), dot->identifier(), dot->type(), op, expr, exprHasAssignments, divot, start, end);
@@ -1715,6 +1720,7 @@ ExpressionNode* ASTBuilder::makeAssignNode(const JSTokenLocation& location, Expr
     }
 
     ReadModifyDotNode* node = new (m_parserArena) ReadModifyDotNode(location, dot->base(), dot->identifier(), dot->type(), op, expr, exprHasAssignments, divot, start, end);
+    node->setTypeTag(dot->typeTag());
     node->setSubexpressionInfo(dot->divot(), dot->divotEnd().offset);
     return node;
 }

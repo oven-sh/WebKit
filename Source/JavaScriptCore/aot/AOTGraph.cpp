@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTGraph.h"
 
+#include "AOTTypeTable.h"
+
 #if ENABLE(FTL_JIT)
 
 #include "AOTProgram.h"
@@ -153,6 +155,14 @@ Graph::Graph(VM& vm, UnlinkedCodeBlock* codeBlock, const ScopeChain& scopeChain)
     , m_numLocals(codeBlock->numCalleeLocals())
     , m_convention(conventionOf(codeBlock))
 {
+    if (Options::useTypeTags()) [[unlikely]] {
+        auto& instructions = codeBlock->instructions();
+        for (unsigned offset = 0; offset < instructions.size(); offset += instructions.at(offset)->size()) {
+            auto instruction = instructions.at(offset);
+            if (instruction->opcodeID() == op_type_tag)
+                m_typeTags.set(offset + instruction->size(), instruction->as<OpTypeTag>().m_tag);
+        }
+    }
 }
 
 Graph::~Graph() = default;
@@ -219,6 +229,8 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
                 return plan;
             continue;
         }
+        case op_type_tag:
+            continue;
         case op_check_type:
             // If it throws there is no object to be told anything by. That the object would have been made first can be told, if it
             // is made on behalf of a proxy: not a thing to hold every constructor back for.
@@ -1217,7 +1229,10 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
     if (node->graph != this)
         return node->graph->shapeOfLiteral(node);
     unsigned count = node->numberOfLiteralProperties;
-    if (count < 2 || count > KnownShape::maxProperties)
+    std::optional<TypeTable::Layout> layout;
+    if (uint32_t tag = typeTagOf(node); tag && (Options::aotShapes() & 1) && TypeTable::shared())
+        layout = TypeTable::shared()->layoutOf(tag);
+    if ((count < 2 && !layout) || count > KnownShape::maxProperties)
         return std::nullopt;
     KnownShape shape;
     shape.inlineCapacity = KnownShape::inlineCapacityFor(count);
@@ -1236,6 +1251,21 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
             return std::nullopt;
         shape.names.append(name);
     }
+    // (If it is still the literal that was looked at.)
+    if (layout && layout->properties.size() == count && layout->capacity <= JSFinalObject::maxInlineCapacity) {
+        bool isAsWritten = true;
+        for (unsigned i = 0; i < count; ++i)
+            isAsWritten &= layout->properties[i].first == shape.names[i];
+        if (isAsWritten) {
+            shape.number = layout->number;
+            for (auto& property : layout->properties)
+                shape.slots.append(property.second);
+            shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->capacity);
+            return shape;
+        }
+    }
+    if (count < 2)
+        return std::nullopt;
     return shape;
 }
 
@@ -1450,6 +1480,8 @@ void Node::dump(PrintStream& out) const
     switch (kind) {
     case NodeKind::Bytecode:
         out.print(opcode, " bc#", bytecodeIndex.offset());
+        if (uint32_t tag = Graph::typeTagOf(this))
+            out.print(" type#", tag);
         break;
     case NodeKind::Constant:
         out.print("Constant(", constant, ")");
@@ -2630,6 +2662,9 @@ private:
         for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size()) {
             const JSInstruction* instruction = m_instructions.at(offset).ptr();
             OpcodeID opcode = instruction->opcodeID();
+            // (Graph::typeTagAt())
+            if (opcode == op_type_tag)
+                continue;
             if (opcode == op_check_type && isFact(instruction->as<OpCheckType>().m_mask)) {
                 // It is taken out here, and nothing further on knows of it but by what it leaves on the node.
                 auto bytecode = instruction->as<OpCheckType>();

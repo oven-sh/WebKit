@@ -31,6 +31,7 @@
 #include <wtf/Function.h>
 
 #include "AOTCompiler.h"
+#include "AOTTypeTable.h"
 #include "AOTImage.h"
 #include "AOTProgram.h"
 #include "BaselineJITCode.h"
@@ -5588,7 +5589,7 @@ protected:
     // 9: out-of-line jump targets moved into CachedCodeBlockRareData, a code block's scalars lost the number of value profiles;
     // LazyClosureVar resolve types, module function slot table.
     // 10: GenericCacheEntry records the payload's size. 11: op_check_type (opcode numbering).
-    static constexpr uint32_t cachedTypesFormatRevision = 12;
+    static constexpr uint32_t cachedTypesFormatRevision = 13;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -6164,6 +6165,7 @@ struct BytecodeLinkEncoder::Impl {
     Vector<uint8_t> compileImage()
     {
         ImmutableIntrinsics::ensureShared(vm);
+        AOT::TypeTable::load(vm);
         // What a variable can hold, and what a function can be passed, is worked out from every store and every call there is.
         if (functionsLeftOut[0] || functionsLeftOut[1] || functionsLeftOut[2]) {
             dataLogLn("AOT: not all of the program's code is here: ", functionsLeftOut[0], " functions have no code (was a limit put on how deep to generate it?), ", functionsLeftOut[1], " were not placed, ", functionsLeftOut[2], " have no key");

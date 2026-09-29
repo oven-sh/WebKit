@@ -450,6 +450,7 @@ namespace JSC {
         void emit_op_loop_hint(const JSInstruction*);
         void emit_op_check_traps(const JSInstruction*);
         void NODELETE emit_op_nop(const JSInstruction*);
+        void NODELETE emit_op_type_tag(const JSInstruction*);
         void emit_op_super_sampler_begin(const JSInstruction*);
         void emit_op_super_sampler_end(const JSInstruction*);
         void emit_op_lshift(const JSInstruction*);

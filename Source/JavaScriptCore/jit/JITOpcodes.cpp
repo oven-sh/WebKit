@@ -1772,6 +1772,10 @@ void JIT::emit_op_nop(const JSInstruction*)
 {
 }
 
+void JIT::emit_op_type_tag(const JSInstruction*)
+{
+}
+
 void JIT::emit_op_super_sampler_begin(const JSInstruction*)
 {
     add32(TrustedImm32(1), AbsoluteAddress(std::bit_cast<void*>(&g_superSamplerCount)));

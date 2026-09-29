@@ -121,8 +121,20 @@ bool Lowering::tryLowerAllocation(Node* node)
             for (unsigned i = 0; i < count; ++i)
                 values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
             unsigned slot = allocateSlots(2);
-            if (auto shape = m_graph.shapeOfLiteral(node))
+            auto shapeOfThis = m_graph.shapeOfLiteral(node);
+            noteShapeSite(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
+            countShape(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
+            if (auto shape = WTF::move(shapeOfThis)) {
+                // Each where the layout has it.
+                if (!shape->slots.isEmpty()) {
+                    Vector<LValue, 8> inSlots;
+                    inSlots.fill(m_out.int64Zero, shape->numberOfSlots());
+                    for (unsigned i = 0; i < count; ++i)
+                        inSlots[shape->slots[i]] = values[i];
+                    values = WTF::move(inSlots);
+                }
                 m_graph.noteShapeOfSite(slot, WTF::move(*shape));
+            }
             {
                 auto& instructions = code().codeBlock()->instructions();
                 auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
@@ -135,15 +147,15 @@ bool Lowering::tryLowerAllocation(Node* node)
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             Vector<ValueFromBlock, 2> results;
-            if (!isCompact() && count <= JSFinalObject::maxInlineCapacity) {
+            if (!isCompact() && values.size() <= JSFinalObject::maxInlineCapacity) {
                 results.append(m_out.anchor(allocateObjectWithProperties(slot, values, slowCase)));
                 m_out.jump(continuation);
             } else
                 m_out.jump(slowCase);
             m_out.appendTo(slowCase, continuation);
-            for (unsigned i = 0; i < count; ++i)
+            for (unsigned i = 0; i < values.size(); ++i)
                 m_out.store64(values[i], scratchWord(i));
-            results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewObjectLiteral, m_globalObject, scratchAddress(), m_out.constInt32(count), slotAddress(slot))));
+            results.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewObjectLiteral, m_globalObject, scratchAddress(), m_out.constInt32(values.size()), slotAddress(slot))));
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             setJSValue(node, m_out.phi(pointerType(), results));

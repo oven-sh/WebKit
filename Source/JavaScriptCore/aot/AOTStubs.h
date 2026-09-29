@@ -244,6 +244,11 @@ struct Site {
 struct KnownShape {
     unsigned inlineCapacity { 0 }; // Zero: whatever it is, it is enough for all of them.
     Vector<UniquedStringImpl*, 8> names;
+    // If it is one of the layouts of the table of types (TypeTable::Layout): which, and the slot that each property is in. It is known
+    // by that number. If not, the properties are one after the other, and it is given a number.
+    uint32_t number { 0 };
+    Vector<uint16_t, 8> slots;
+    unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : *std::ranges::max_element(slots) + 1; }
 
     static constexpr unsigned maxProperties = 1000; // See ImageDispatchEntry.
     static unsigned inlineCapacityFor(unsigned numberOfProperties);

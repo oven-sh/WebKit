@@ -1562,6 +1562,7 @@ private:
         unsigned oldLineNumber;
         bool hasLineTerminatorBeforeToken;
         JSTokenType lastTokenType;
+        uint32_t typeTag; // (It comes before where the token starts, which is where it is read again from.)
     };
 
     struct SavePoint {
@@ -2050,6 +2051,7 @@ private:
         // So getting this flag and setting it before lexing this token is right.
         result.hasLineTerminatorBeforeToken = m_lexer->hasLineTerminatorBeforeToken();
         result.lastTokenType = m_lastTokenType;
+        result.typeTag = m_token.m_typeTag;
         ASSERT(static_cast<unsigned>(result.startOffset) >= result.oldLineStartOffset);
         return result;
     }
@@ -2067,6 +2069,7 @@ private:
         m_token.m_startPosition.lineStartOffset = lexerState.lastTokenLocation.lineStartOffset;
         m_token.m_endPosition = lexerState.lastTokenEndPosition;
         nextWithoutClearingLineTerminator();
+        m_token.m_typeTag = lexerState.typeTag;
     }
 
     template <class TreeBuilder>

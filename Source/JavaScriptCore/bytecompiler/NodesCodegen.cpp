@@ -611,7 +611,9 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
     if (!m_list) {
         if (dst == generator.ignoredResult())
             return nullptr;
-        return generator.emitNewObject(generator.finalDestination(dst));
+        RegisterID* result = generator.finalDestination(dst);
+        generator.emitTypeTag(typeTag());
+        return generator.emitNewObject(result);
     }
 
     auto* propertyList = m_list;
@@ -670,7 +672,9 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
                     value = generator.move(generator.newTemporary(), value.get());
                 values.append(WTF::move(value));
             }
-            newObject = generator.emitNewObject(generator.tempDestination(dst));
+            newObject = generator.tempDestination(dst);
+            generator.emitTypeTag(typeTag());
+            generator.emitNewObject(newObject.get());
             unsigned index = 0;
             for (auto* p = propertyList; p; p = p->m_next)
                 generator.emitDirectPutById(newObject.get(), *p->m_node->name(), values[index++].get());
@@ -678,8 +682,11 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
         }
     }
 
-    if (!newObject)
-        newObject = generator.emitNewObject(generator.tempDestination(dst));
+    if (!newObject) {
+        newObject = generator.tempDestination(dst);
+        generator.emitTypeTag(typeTag());
+        generator.emitNewObject(newObject.get());
+    }
     generator.emitNode(newObject.get(), propertyList);
     return generator.move(dst, newObject.get());
 }
@@ -1210,6 +1217,7 @@ RegisterID* BaseDotNode::emitGetPropertyValue(BytecodeGenerator& generator, Regi
         return generator.emitGetById(dst, base, thisValue.get(), m_ident);
     }
 
+    generator.emitTypeTag(typeTag());
     return generator.emitGetById(dst, base, m_ident);
 }
 
@@ -1269,6 +1277,7 @@ RegisterID* BaseDotNode::emitPutProperty(BytecodeGenerator& generator, RegisterI
         return generator.emitPutById(base, thisValue.get(), m_ident, value);
     }
 
+    generator.emitTypeTag(typeTag());
     return generator.emitPutById(base, m_ident, value);
 }
 

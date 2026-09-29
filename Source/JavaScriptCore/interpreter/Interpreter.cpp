@@ -659,6 +659,11 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             return IterationStatus::Done;
         if (visitor->hasBeenLeftByTailCall())
             return IterationStatus::Continue;
+        // (A frame like that of a native function, for a function that is not one: see skipFramesOfStubs(). The function's own is below it.)
+        if (!visitor->aotFunction() && !visitor->isNativeCalleeFrame() && visitor->callee().isCell() && !*visitor->callFrame()->addressOfCodeBlock()) {
+            if (auto* function = dynamicDowncast<JSFunction>(visitor->callee().asCell()); function && !function->isHostOrBuiltinFunction())
+                return IterationStatus::Continue;
+        }
 
         if (skippedFrames < framesToSkip) {
             skippedFrames++;

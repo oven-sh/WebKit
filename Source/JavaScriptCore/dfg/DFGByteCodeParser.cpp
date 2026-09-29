@@ -10958,6 +10958,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_nop);
         }
 
+        case op_type_tag:
+            NEXT_OPCODE(op_type_tag);
+
         case op_super_sampler_begin: {
             addToGraph(SuperSamplerBegin);
             NEXT_OPCODE(op_super_sampler_begin);

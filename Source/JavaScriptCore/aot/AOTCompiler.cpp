@@ -738,6 +738,7 @@ void reportStatistics()
     dataLogLn("AOT: compiled ", stats.compiled, " functions (", stats.codeBytes, " bytes of code for ", stats.bytecodeBytes, " of bytecode) in ", stats.time.milliseconds(), " ms; declined ", stats.declined);
     dataLogLn("AOT: ", stats.intrinsicReads, " reads of immutable intrinsics; ", stats.slots, " slots");
     reportEscapeStatistics();
+    reportShapeStatistics();
     dataLogLn("AOT: reads of variables by name: ", stats.scopeReads[Graph::StaticVariable::Closure], " closure, ", stats.scopeReads[Graph::StaticVariable::Import], " linked imports, ", stats.scopeReads[Graph::StaticVariable::ModuleImport], " other imports, ", stats.scopeReadsInGlobalScopes, " globals, ", stats.scopeReads[Graph::StaticVariable::Unresolved] - stats.scopeReadsInGlobalScopes, " unresolved, ", stats.scopeReads[Graph::StaticVariable::Dynamic], " dynamic; ", stats.slots, " slots");
     Vector<std::pair<unsigned, String>> sorted;
     for (auto& entry : stats.reasons)

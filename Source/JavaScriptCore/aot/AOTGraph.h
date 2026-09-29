@@ -450,6 +450,9 @@ public:
         VirtualRegister argument(unsigned indexIncludingThis) const { return VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + static_cast<int>(indexIncludingThis)); }
     };
     static CallOperands operandsOfCall(const JSInstruction*); // op_call or op_call_ignore_result
+    // What the source says of the instruction that is there (op_type_tag), or of the one that the node is. None: 0.
+    uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
+    static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }
     // The properties that an object literal starts out with: functor(index of the identifier, register the value is in).
     // An object literal: where the op_put_by_id are that make the object of an op_new_object what the literal says, as far as they
     // are sure to be got to one after the other. Whatever is done in between to work out what to store knows nothing of the object,
@@ -625,6 +628,7 @@ private:
     const ModuleLinkage* m_linkage { nullptr };
     const DeclaredNamesLink* m_declaredNames { nullptr };
     BitVector m_namesAssignedTo; // By index of the identifier: op_put_to_scope by name.
+    UncheckedKeyHashMap<unsigned, uint32_t, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_typeTags; // By where the instruction is.
     unsigned m_numArguments;
     unsigned m_numLocals;
     Convention m_convention;

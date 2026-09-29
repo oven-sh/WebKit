@@ -768,6 +768,12 @@ namespace JSC {
         void emitTDZCheckIfNecessary(const Variable&, RegisterID* target, RegisterID* scope);
         void liftTDZCheckIfPossible(const Variable&);
         RegisterID* emitNewObject(RegisterID* dst);
+        // For the instruction that is emitted next. (ExpressionNode::typeTag())
+        void emitTypeTag(uint32_t tag)
+        {
+            if (tag) [[unlikely]]
+                OpTypeTag::emit(this, tag);
+        }
         RegisterID* emitNewPromise(RegisterID* dst);
         RegisterID* emitNewGenerator(RegisterID* dst);
         RegisterID* emitNewAsyncFunctionGenerator(RegisterID* dst);
