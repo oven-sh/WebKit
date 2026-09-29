@@ -1328,6 +1328,23 @@ private:
             allCharacters |= static_cast<char16_t>(c);
         };
 
+        // Where something is, for saying what is wrong with an escape. CPython counts in bytes of what it hands to the codec, in which the end of a line is one byte, and a character that is not ASCII has been written
+        // \UXXXXXXXX, which is ten.
+        auto lengthForCodec = [&] (unsigned from, unsigned to) {
+            unsigned length = 0;
+            for (unsigned k = from; k < to; ++k) {
+                unsigned c = m_source[k];
+                if (c < 0x80) {
+                    length += !(c == '\r' && k + 1 < to && m_source[k + 1] == '\n');
+                    continue;
+                }
+                length += 10;
+                if (U16_IS_LEAD(c) && k + 1 < to && U16_IS_TRAIL(m_source[k + 1]))
+                    ++k;
+            }
+            return length;
+        };
+
         unsigned currentLine = line;
         // Only the first in each is warned of.
         bool hasWarned = false;
@@ -1350,7 +1367,12 @@ private:
                 break;
             }
 
-            unsigned escapeStart = i - 1 - start;
+            unsigned escapeIndex = i - 1;
+            // `escapeEnd` is one past the last of what is wrong.
+            auto failInEscape = [&] (unsigned escapeEnd, auto... message) {
+                unsigned position = lengthForCodec(start, escapeIndex);
+                return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, position, '-', position + lengthForCodec(escapeIndex, escapeEnd) - 1, ": "_s, message...));
+            };
             c = m_source[i++];
             switch (c) {
             case '\r':
@@ -1425,12 +1447,12 @@ private:
                     value = value * 16 + toASCIIHexValue(m_source[i++]);
                 if (digits < count) {
                     if (isBytes)
-                        return failHere(concatenate("(value error) invalid \\x escape at position "_s, escapeStart));
+                        return failHere(concatenate("(value error) invalid \\x escape at position "_s, lengthForCodec(start, escapeIndex)));
                     ASCIILiteral form = c == 'x' ? "\\xXX"_s : c == 'u' ? "\\uXXXX"_s : "\\UXXXXXXXX"_s;
-                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + 1 + digits, ": truncated "_s, form, " escape"_s));
+                    return failInEscape(i, "truncated "_s, form, " escape"_s);
                 }
                 if (value > UCHAR_MAX_VALUE)
-                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + 9, ": illegal Unicode character"_s));
+                    return failInEscape(i, "illegal Unicode character"_s);
                 appendCodePoint(buffer, allCharacters, value);
                 break;
             }
@@ -1449,7 +1471,7 @@ private:
                         ++nameEnd;
                 }
                 if (nameEnd <= i + 1 || nameEnd >= end)
-                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + (nameEnd > i ? nameEnd - i + 1 : 1), ": malformed \\N character escape"_s));
+                    return failInEscape(std::max(nameEnd, i), "malformed \\N character escape"_s);
                 Vector<char, 64> name;
                 bool isASCII = true;
                 for (unsigned k = i + 1; k < nameEnd; ++k) {
@@ -1465,7 +1487,7 @@ private:
                     value = u_charFromName(U_CHAR_NAME_ALIAS, name.span().data(), &status);
                 }
                 if (!isASCII || U_FAILURE(status))
-                    return failHere(concatenate("(unicode error) 'unicodeescape' codec can't decode bytes in position "_s, escapeStart, '-', escapeStart + (nameEnd - i) + 2, ": unknown Unicode character name"_s));
+                    return failInEscape(nameEnd + 1, "unknown Unicode character name"_s);
                 appendCodePoint(buffer, allCharacters, value);
                 i = nameEnd + 1;
                 break;

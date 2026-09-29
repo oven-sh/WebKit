@@ -457,6 +457,20 @@ static SourceCode sourceOf(JSGlobalObject* globalObject, ThrowScope& scope, JSVa
     auto isBlank = [] (auto c) { return c == ' ' || c == '\t'; };
     if (JSString* string = stringIn(source)) {
         String text = string->value(globalObject);
+        // PyUnicode_AsUTF8AndSize(): CPython compiles UTF-8, and half of a surrogate pair cannot be put into that. It is for the codec to say so.
+        if (!text.is8Bit()) {
+            auto units = text.span16();
+            for (size_t i = 0; i < units.size(); ++i) {
+                if (!U16_IS_SURROGATE(units[i]))
+                    continue;
+                if (U16_IS_LEAD(units[i]) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1])) {
+                    ++i;
+                    continue;
+                }
+                encodeUTF8(globalObject, string, "strict"_s);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+        }
         if (text.contains(static_cast<char16_t>(0))) {
             raise(globalObject, scope, BuiltinType::SyntaxError, "source code string cannot contain null bytes"_s);
             return { };
