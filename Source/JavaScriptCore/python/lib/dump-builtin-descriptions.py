@@ -47,9 +47,9 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
-MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select")
+MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random")
 
 
 def generator():
@@ -133,7 +133,7 @@ def add_type(a_type):
 for value in vars(builtins).values():
     if isinstance(value, type):
         add_type(value)
-for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select"):
+for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random"):
     for value in vars(__import__(name)).values():
         if isinstance(value, type):
             add_type(value)

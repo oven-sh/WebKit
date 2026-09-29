@@ -806,6 +806,7 @@ python/PythonOperators.cpp
 python/PythonParser.cpp
 python/PythonProperty.cpp
 python/PythonRange.cpp
+python/PythonRandomModule.cpp
 python/PythonReduce.cpp
 python/PythonRepr.cpp
 python/PythonSRE.cpp

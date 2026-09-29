@@ -622,7 +622,7 @@ Where a class of CPython's has `PyObject_GenericGetAttr` written into its own `t
 One file of the library CPython writes when it is built: what `sysconfig` is told about the build, `_sysconfigdata__darwin_darwin` or the like. It is Python there, so it is Python here (`lib/_sysconfigdata.py`), and comes with the
 engine since it is about the engine. It says what is true of this implementation, which is little: nearly all of CPython's is about the C compiler. A host that has more to say lists one of its own, which is found first.
 
-What is ported from CPython is CPython's authors' work made over, and is under CPython's licence, which is in `lib/importlib/LICENSE`. What matches regular expressions has a notice of its own, which is at the top of it.
+What is ported from CPython is CPython's authors' work made over, and is under CPython's licence, which is in `lib/importlib/LICENSE`. What matches regular expressions has a notice of its own, which is at the top of it, and so has the Mersenne Twister.
 
 An instance of such a class has what in CPython is a C struct. Here it is a struct as well, derived from `NativeState`, and one kind of cell holds any of them: `PyStateObject`. So a class that is ported does not
 take a cell type, a subspace and a destructor of its own, only what it has and what of that the collector is to be told of. Where CPython leaves making the instance to `object.__new__()` and its `tp_alloc`, so that
@@ -723,11 +723,14 @@ What CPython has only on Linux is not written, and what is written for Linux has
 thread and none of the engine's others. Here that is `child_exec()`, which CPython wrote to be run in the middle of anything: it asks for no memory, locks nothing, and runs none of the engine, and then the process is another
 program. All that it goes by is worked out beforehand. The one thing that it cannot be asked to do is call `preexec_fn`, which is Python: see *Where it differs*.
 
-### `math`
+### `math` and `_random`
 
 `Modules/mathmodule.c` is in two parts here. What takes numbers of C's and gives numbers of C's, and the tables that go with it, is `PythonMathKernels.h`, which `lib/convert-math-kernels.py` makes from CPython's source without
 changing an expression: the Lanczos approximation for `gamma()`, the sums in two and three doubles that `hypot()` and `sumprod()` are worked out in, `remainder()`, and what `isqrt()`, `factorial()` and `comb()` look up. What has
 to do with objects is `PythonMathModule.cpp`, by hand. See *One rounding or two* for why the first part is taken as it is. The rest is the C library's, which is the one that CPython would be calling.
+
+`PythonRandomModule.cpp` is `Modules/_randommodule.c`, and has the notice of the authors of the Mersenne Twister at the top of it. From the same seed come the same numbers as in CPython, from every function in `random.py`. To seed
+`random` with a `str` or `bytes` takes `hashlib`, which is the host's.
 
 ### `select`
 

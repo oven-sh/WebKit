@@ -252,6 +252,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_frame"_s, createFrameModule },
     { "_imp"_s, createImpModule },
     { "_opcode"_s, createOpcodeModule },
+    { "_random"_s, createRandomModule },
     { "_sre"_s, createSREModule },
     { "_string"_s, createStringModule },
     { "_tokenize"_s, createTokenizeModule },

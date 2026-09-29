@@ -189,6 +189,7 @@ JSObject* createAtExitModule(JSGlobalObject*);
 JSObject* createCollectionsModule(JSGlobalObject*);
 JSObject* createImpModule(JSGlobalObject*);
 JSObject* createOpcodeModule(JSGlobalObject*);
+JSObject* createRandomModule(JSGlobalObject*);
 JSObject* createSREModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);
 JSObject* createTokenizeModule(JSGlobalObject*);
