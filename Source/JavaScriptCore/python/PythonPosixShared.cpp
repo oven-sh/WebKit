@@ -202,7 +202,7 @@ JSValue decodeFileSystemBytes(JSGlobalObject* globalObject, std::span<const char
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSUint8Array* bytes = newBytes(globalObject, byteCast<uint8_t>(characters));
     RETURN_IF_EXCEPTION(scope, { });
-    String text = decodeBytes(globalObject, bytes, bytes->span(), "utf-8"_s, "surrogateescape"_s);
+    String text = decodeBytes(globalObject, bytes->span(), "utf-8"_s, "surrogateescape"_s);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, strOrMemoryError(globalObject, text));
 }

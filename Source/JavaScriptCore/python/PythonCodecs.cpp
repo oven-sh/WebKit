@@ -23,544 +23,516 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+
 #include "config.h"
 #include "PythonCodecs.h"
 
 #include "PythonBuiltins.h"
-#include <expected>
+#include "PythonBytes.h"
+#include "PythonOperations.h"
 #include <unicode/uchar.h>
-#include <wtf/text/StringBuilder.h>
 
-// The codecs that are built in: UTF-8, UTF-16, UTF-32, ASCII and Latin-1. Where an error begins and ends, and what it is called, is as
-// CPython has it, since that is what an error handler is given and what a message says.
+// What the codecs are written with, and str.encode() and bytes.decode(): Objects/unicodeobject.c of CPython.
 
 namespace JSC { namespace Python {
 
-enum class Codec : uint8_t { UTF8, UTF8Signature, ASCII, Latin1, UTF16, UTF16LE, UTF16BE, UTF32, UTF32LE, UTF32BE };
-
-struct CodecInfo {
-    Codec codec;
-    ASCIILiteral name; // As it is in messages.
-};
-
-// utf8, UTF-8 and U8 are all one.
-static std::optional<CodecInfo> findCodec(const String& encoding)
+CodePoints::CodePoints(const String& string)
+    : m_string(string)
 {
-    if (encoding.isNull())
-        return CodecInfo { Codec::UTF8, "utf-8"_s };
-    TextBuilder builder;
-    for (unsigned i = 0; i < encoding.length(); ++i) {
-        char16_t c = encoding[i];
-        builder.append(c == '-' || c == ' ' ? static_cast<char16_t>('_') : toASCIILower(c));
+    if (string.isEmpty())
+        return;
+    if (string.is8Bit()) {
+        auto characters = string.span8();
+        m_characters8 = characters.data();
+        m_size = characters.size();
+        m_isASCII = charactersAreAllASCII(characters);
+        return;
     }
-    String name = builder.tryFinish();
-    static constexpr std::pair<ASCIILiteral, CodecInfo> table[] = {
-        { "utf_8"_s, { Codec::UTF8, "utf-8"_s } }, { "utf8"_s, { Codec::UTF8, "utf-8"_s } }, { "u8"_s, { Codec::UTF8, "utf-8"_s } }, { "utf"_s, { Codec::UTF8, "utf-8"_s } }, { "cp65001"_s, { Codec::UTF8, "utf-8"_s } },
-        { "utf_8_sig"_s, { Codec::UTF8Signature, "utf-8"_s } },
-        { "ascii"_s, { Codec::ASCII, "ascii"_s } }, { "us_ascii"_s, { Codec::ASCII, "ascii"_s } }, { "646"_s, { Codec::ASCII, "ascii"_s } }, { "us"_s, { Codec::ASCII, "ascii"_s } }, { "ansi_x3.4_1968"_s, { Codec::ASCII, "ascii"_s } },
-        { "latin_1"_s, { Codec::Latin1, "latin-1"_s } }, { "latin1"_s, { Codec::Latin1, "latin-1"_s } }, { "iso_8859_1"_s, { Codec::Latin1, "latin-1"_s } }, { "iso8859_1"_s, { Codec::Latin1, "latin-1"_s } },
-        { "8859"_s, { Codec::Latin1, "latin-1"_s } }, { "cp819"_s, { Codec::Latin1, "latin-1"_s } }, { "latin"_s, { Codec::Latin1, "latin-1"_s } }, { "l1"_s, { Codec::Latin1, "latin-1"_s } },
-        { "utf_16"_s, { Codec::UTF16, "utf-16"_s } }, { "utf16"_s, { Codec::UTF16, "utf-16"_s } }, { "u16"_s, { Codec::UTF16, "utf-16"_s } },
-        { "utf_16_le"_s, { Codec::UTF16LE, "utf-16-le"_s } }, { "utf_16le"_s, { Codec::UTF16LE, "utf-16-le"_s } }, { "unicodelittleunmarked"_s, { Codec::UTF16LE, "utf-16-le"_s } },
-        { "utf_16_be"_s, { Codec::UTF16BE, "utf-16-be"_s } }, { "utf_16be"_s, { Codec::UTF16BE, "utf-16-be"_s } }, { "unicodebigunmarked"_s, { Codec::UTF16BE, "utf-16-be"_s } },
-        { "utf_32"_s, { Codec::UTF32, "utf-32"_s } }, { "utf32"_s, { Codec::UTF32, "utf-32"_s } }, { "u32"_s, { Codec::UTF32, "utf-32"_s } },
-        { "utf_32_le"_s, { Codec::UTF32LE, "utf-32-le"_s } }, { "utf_32le"_s, { Codec::UTF32LE, "utf-32-le"_s } },
-        { "utf_32_be"_s, { Codec::UTF32BE, "utf-32-be"_s } }, { "utf_32be"_s, { Codec::UTF32BE, "utf-32-be"_s } },
-    };
-    for (auto& [alias, info] : table) {
-        if (name == alias)
-            return info;
+    auto units = string.span16();
+    bool hasPairs = false;
+    char16_t all = 0;
+    for (size_t i = 0; i < units.size(); ++i) {
+        all |= units[i];
+        if (U16_IS_LEAD(units[i]) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1]))
+            hasPairs = true;
     }
-    return std::nullopt;
+    m_isLatin1 = all < 0x100;
+    m_isASCII = all < 0x80;
+    if (!hasPairs) {
+        m_characters16 = units.data();
+        m_size = units.size();
+        return;
+    }
+    m_expanded.reserveInitialCapacity(units.size());
+    for (size_t i = 0; i < units.size(); ++i) {
+        char32_t c = units[i];
+        if (U16_IS_LEAD(c) && i + 1 < units.size() && U16_IS_TRAIL(units[i + 1]))
+            c = U16_GET_SUPPLEMENTARY(c, units[++i]);
+        m_expanded.append(c);
+    }
+    m_size = m_expanded.size();
 }
 
-enum class ErrorHandler : uint8_t { Strict, Ignore, Replace, BackslashReplace, XMLCharacterReference, NameReplace, SurrogateEscape, SurrogatePass };
+String textOfString(JSGlobalObject* globalObject, JSValue string)
+{
+    String text = stringIn(string)->value(globalObject);
+    return text.isNull() ? emptyString() : text;
+}
 
-static std::optional<ErrorHandler> findErrorHandler(const String& errors)
+String TextWriter::finish(JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (m_builder.hasOverflowed()) {
+        raiseMemoryError(globalObject, scope);
+        return { };
+    }
+    return m_builder.isEmpty() ? emptyString() : m_builder.toString();
+}
+
+ErrorHandler errorHandlerNamed(const String& errors)
 {
     if (errors.isNull() || errors == "strict"_s)
         return ErrorHandler::Strict;
-    if (errors == "ignore"_s)
-        return ErrorHandler::Ignore;
-    if (errors == "replace"_s)
-        return ErrorHandler::Replace;
-    if (errors == "backslashreplace"_s)
-        return ErrorHandler::BackslashReplace;
-    if (errors == "xmlcharrefreplace"_s)
-        return ErrorHandler::XMLCharacterReference;
-    if (errors == "namereplace"_s)
-        return ErrorHandler::NameReplace;
     if (errors == "surrogateescape"_s)
         return ErrorHandler::SurrogateEscape;
+    if (errors == "replace"_s)
+        return ErrorHandler::Replace;
+    if (errors == "ignore"_s)
+        return ErrorHandler::Ignore;
+    if (errors == "backslashreplace"_s)
+        return ErrorHandler::BackslashReplace;
     if (errors == "surrogatepass"_s)
         return ErrorHandler::SurrogatePass;
-    return std::nullopt;
+    if (errors == "xmlcharrefreplace"_s)
+        return ErrorHandler::XMLCharRefReplace;
+    return ErrorHandler::Other;
 }
 
-static void raiseUnknownEncoding(JSGlobalObject* globalObject, ThrowScope& scope, const String& encoding)
-{
-    raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown encoding: "_s, encoding));
-}
-
-static void raiseUnknownErrorHandler(JSGlobalObject* globalObject, ThrowScope& scope, const String& errors)
-{
-    raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown error handler name '"_s, errors, '\''));
-}
-
-// UnicodeEncodeError(encoding, object, start, end, reason), and UnicodeDecodeError likewise.
-static void raiseUnicodeError(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type, ASCIILiteral encoding, JSValue object, size_t start, size_t end, ASCIILiteral reason)
+// The exception is told where the trouble is now: PyUnicodeDecodeError_SetStart() and the rest.
+static void setWhere(JSGlobalObject* globalObject, JSValue exception, size_t start, size_t end, ASCIILiteral reason)
 {
     VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    JSObject* object = asObject(exception);
+    object->putDirect(vm, names.field_start, intFromInt64(globalObject, static_cast<int64_t>(start)));
+    object->putDirect(vm, names.field_end, intFromInt64(globalObject, static_cast<int64_t>(end)));
+    object->putDirect(vm, names.field_reason, jsString(vm, String(reason)));
+}
+
+// What a handler returned, taken apart as by PyArg_ParseTuple() with "On;message". False if it raised.
+static bool parseHandlerResult(JSGlobalObject* globalObject, JSValue result, ASCIILiteral message, JSValue& replacement, int64_t& position)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!isInstance(globalObject, result, globalObject->pyRealm()->typeTuple()) || asTuple(result)->length() != 2) {
+        raiseTypeError(globalObject, scope, message);
+        return false;
+    }
+    replacement = asTuple(result)->at(0);
+    auto index = toSsize(globalObject, asTuple(result)->at(1));
+    RETURN_IF_EXCEPTION(scope, false);
+    position = *index;
+    return true;
+}
+
+bool DecodeErrors::handle(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end, size_t& position, TextWriter& writer)
+{
+    JSGlobalObject* globalObject = m_globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    constexpr auto message = "decoding error handler must return (str, int) tuple"_s;
+    if (!m_handler) {
+        m_handler = lookupErrorHandler(globalObject, m_errors);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    // make_decode_exception()
+    if (!m_exception) {
+        JSValue copy = newBytes(globalObject, input);
+        RETURN_IF_EXCEPTION(scope, false);
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsString(vm, String(encoding)));
+        arguments.append(copy);
+        arguments.append(intFromInt64(globalObject, static_cast<int64_t>(start)));
+        arguments.append(intFromInt64(globalObject, static_cast<int64_t>(end)));
+        arguments.append(jsString(vm, String(reason)));
+        m_exception = call(globalObject, globalObject->pyRealm()->typeUnicodeDecodeError(), arguments);
+        RETURN_IF_EXCEPTION(scope, false);
+    } else
+        setWhere(globalObject, m_exception, start, end, reason);
+
+    JSValue result = call(globalObject, m_handler, m_exception);
+    RETURN_IF_EXCEPTION(scope, false);
+    JSValue replacement;
+    int64_t newPosition;
+    if (!parseHandlerResult(globalObject, result, message, replacement, newPosition))
+        return false;
+    if (!stringIn(replacement)) {
+        raiseTypeError(globalObject, scope, message);
+        return false;
+    }
+
+    // What is being decoded is what the exception has now, which the handler may have changed.
+    JSValue object = asObject(m_exception)->getDirect(vm, vm.pythonNames().field_subject);
+    if (!object) {
+        raiseTypeError(globalObject, scope, "UnicodeError 'object' attribute is not set"_s);
+        return false;
+    }
+    if (!typeOf(globalObject, object)->hasFlag(PyType::IsBytes)) {
+        raiseTypeError(globalObject, scope, "UnicodeError 'object' attribute must be a bytes"_s);
+        return false;
+    }
+    input = *builtinBufferOf(object);
+    int64_t size = static_cast<int64_t>(input.size());
+    if (newPosition < 0)
+        newPosition += size;
+    if (newPosition < 0 || newPosition > size) {
+        raise(globalObject, scope, BuiltinType::IndexError, concatenate("position "_s, newPosition, " from error handler out of bounds"_s));
+        return false;
+    }
+    String text = stringIn(replacement)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    writer.append(text);
+    position = static_cast<size_t>(newPosition);
+    return true;
+}
+
+bool EncodeErrors::makeException(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end)
+{
+    JSGlobalObject* globalObject = m_globalObject;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (m_exception) {
+        setWhere(globalObject, m_exception, start, end, reason);
+        return true;
+    }
     MarkedArgumentBuffer arguments;
     arguments.append(jsString(vm, String(encoding)));
-    arguments.append(object);
-    arguments.append(jsNumber(static_cast<int32_t>(start)));
-    arguments.append(jsNumber(static_cast<int32_t>(end)));
+    arguments.append(m_string);
+    arguments.append(intFromInt64(globalObject, static_cast<int64_t>(start)));
+    arguments.append(intFromInt64(globalObject, static_cast<int64_t>(end)));
     arguments.append(jsString(vm, String(reason)));
-    JSValue exception = call(globalObject, globalObject->pyRealm()->type(type), arguments);
-    RETURN_IF_EXCEPTION(scope, void());
-    throwException(globalObject, scope, exception);
+    m_exception = call(globalObject, globalObject->pyRealm()->typeUnicodeEncodeError(), arguments);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
 }
 
-// ---- Encoding
-
-static void appendASCII(ByteVector& output, const String& text)
+void EncodeErrors::raise(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end)
 {
-    for (unsigned i = 0; i < text.length(); ++i)
-        output.append(static_cast<uint8_t>(text[i]));
+    auto scope = DECLARE_THROW_SCOPE(m_globalObject->vm());
+    if (!makeException(encoding, reason, start, end))
+        return;
+    setContext(m_globalObject, asObject(m_exception));
+    throwException(m_globalObject, scope, m_exception);
 }
 
-static String backslashEscape(char32_t c)
+JSValue EncodeErrors::handle(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end, size_t& newPosition)
 {
-    if (c <= 0xFF)
-        return concatenate("\\x"_s, hex(static_cast<unsigned>(c), 2, Lowercase));
-    if (c <= 0xFFFF)
-        return concatenate("\\u"_s, hex(static_cast<unsigned>(c), 4, Lowercase));
-    return concatenate("\\U"_s, hex(static_cast<unsigned>(c), 8, Lowercase));
+    JSGlobalObject* globalObject = m_globalObject;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    constexpr auto message = "encoding error handler must return (str/bytes, int) tuple"_s;
+    if (!m_handler) {
+        m_handler = lookupErrorHandler(globalObject, m_errors);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (!makeException(encoding, reason, start, end))
+        return { };
+    JSValue result = call(globalObject, m_handler, m_exception);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue replacement;
+    int64_t position;
+    if (!parseHandlerResult(globalObject, result, message, replacement, position))
+        return { };
+    if (!stringIn(replacement) && !typeOf(globalObject, replacement)->hasFlag(PyType::IsBytes))
+        return raiseTypeError(globalObject, scope, message);
+    int64_t size = static_cast<int64_t>(m_length);
+    if (position < 0)
+        position += size;
+    if (position < 0 || position > size)
+        return Python::raise(globalObject, scope, BuiltinType::IndexError, concatenate("position "_s, position, " from error handler out of bounds"_s));
+    newPosition = static_cast<size_t>(position);
+    return replacement;
 }
 
-static String nameEscape(char32_t c)
+String nameOfCharacter(char32_t c)
 {
-    char buffer[128];
+    char buffer[256];
     UErrorCode status = U_ZERO_ERROR;
     int32_t length = u_charName(c, U_UNICODE_CHAR_NAME, buffer, sizeof(buffer), &status);
     if (U_FAILURE(status) || !length)
-        return backslashEscape(c);
-    return concatenate("\\N{"_s, String::fromLatin1(buffer), '}');
-}
-
-static void appendUnit(ByteVector& output, uint32_t unit, unsigned size, bool isBigEndian)
-{
-    for (unsigned i = 0; i < size; ++i)
-        output.append(static_cast<uint8_t>(unit >> (8 * (isBigEndian ? size - 1 - i : i))));
-}
-
-std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue stringValue, const String& encoding, const String& errors)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto info = findCodec(encoding);
-    if (!info) {
-        raiseUnknownEncoding(globalObject, scope, encoding);
-        return std::nullopt;
-    }
-    String string = asString(stringValue)->value(globalObject);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    StringView view = string;
-    ByteVector output;
-    Codec codec = info->codec;
-
-    // All of it, if it is all ASCII, whatever the codec, but for those that have wider units.
-    if (view.is8Bit() && (codec == Codec::UTF8 || codec == Codec::ASCII || codec == Codec::Latin1)) {
-        auto characters = view.span8();
-        if (codec == Codec::Latin1 || charactersAreAllASCII(characters)) {
-            output.append(characters);
-            return output;
-        }
-    }
-
-    // The characters, since errors are counted in them.
-    Vector<char32_t, 64> characters;
-    charactersOf(globalObject, view, characters);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-
-    unsigned unitSize = 1;
-    bool isBigEndian = false;
-    switch (codec) {
-    case Codec::UTF8Signature:
-        output.appendList({ 0xEF, 0xBB, 0xBF });
-        break;
-    case Codec::UTF16:
-        unitSize = 2;
-        appendUnit(output, 0xFEFF, 2, false);
-        break;
-    case Codec::UTF16LE:
-    case Codec::UTF16BE:
-        unitSize = 2;
-        isBigEndian = codec == Codec::UTF16BE;
-        break;
-    case Codec::UTF32:
-        unitSize = 4;
-        appendUnit(output, 0xFEFF, 4, false);
-        break;
-    case Codec::UTF32LE:
-    case Codec::UTF32BE:
-        unitSize = 4;
-        isBigEndian = codec == Codec::UTF32BE;
-        break;
-    default:
-        break;
-    }
-    bool isUTF = codec != Codec::ASCII && codec != Codec::Latin1;
-    char32_t limit = codec == Codec::ASCII ? 0x80 : codec == Codec::Latin1 ? 0x100 : 0x110000;
-
-    auto canEncode = [&] (char32_t c) { return c < limit && !(isUTF && U_IS_SURROGATE(c)); };
-    auto encodeOne = [&] (char32_t c) {
-        if (unitSize == 4)
-            return appendUnit(output, c, 4, isBigEndian);
-        if (unitSize == 2) {
-            if (c >= 0x10000) {
-                appendUnit(output, U16_LEAD(c), 2, isBigEndian);
-                appendUnit(output, U16_TRAIL(c), 2, isBigEndian);
-            } else
-                appendUnit(output, c, 2, isBigEndian);
-            return;
-        }
-        if (!isUTF || c < 0x80)
-            return output.append(static_cast<uint8_t>(c));
-        if (c < 0x800) {
-            output.append(static_cast<uint8_t>(0xC0 | (c >> 6)));
-            output.append(static_cast<uint8_t>(0x80 | (c & 0x3F)));
-        } else if (c < 0x10000) {
-            output.append(static_cast<uint8_t>(0xE0 | (c >> 12)));
-            output.append(static_cast<uint8_t>(0x80 | ((c >> 6) & 0x3F)));
-            output.append(static_cast<uint8_t>(0x80 | (c & 0x3F)));
-        } else {
-            output.append(static_cast<uint8_t>(0xF0 | (c >> 18)));
-            output.append(static_cast<uint8_t>(0x80 | ((c >> 12) & 0x3F)));
-            output.append(static_cast<uint8_t>(0x80 | ((c >> 6) & 0x3F)));
-            output.append(static_cast<uint8_t>(0x80 | (c & 0x3F)));
-        }
-    };
-    // What a handler puts in place of a character is text, which is encoded in its turn.
-    auto encodeText = [&] (const String& text) {
-        for (unsigned i = 0; i < text.length(); ++i)
-            encodeOne(text[i]);
-    };
-
-    std::optional<ErrorHandler> handler;
-    for (size_t i = 0; i < characters.size();) {
-        char32_t c = characters[i];
-        if (canEncode(c)) [[likely]] {
-            encodeOne(c);
-            ++i;
-            continue;
-        }
-        // All that cannot be encoded, up to something that can. UTF-16 and UTF-32 take them one at a time.
-        size_t end = i + 1;
-        while (unitSize == 1 && end < characters.size() && !canEncode(characters[end]))
-            end++;
-        if (!handler) {
-            handler = findErrorHandler(errors);
-            if (!handler) {
-                raiseUnknownErrorHandler(globalObject, scope, errors);
-                return std::nullopt;
-            }
-        }
-        ASCIILiteral reason = isUTF ? "surrogates not allowed"_s : codec == Codec::ASCII ? "ordinal not in range(128)"_s : "ordinal not in range(256)"_s;
-        auto fail = [&] (size_t from, size_t to) {
-            raiseUnicodeError(globalObject, scope, BuiltinType::UnicodeEncodeError, info->name, stringValue, from, to, reason);
-            return std::nullopt;
-        };
-        switch (*handler) {
-        case ErrorHandler::Strict:
-            return fail(i, end);
-        case ErrorHandler::Ignore:
-            break;
-        case ErrorHandler::Replace:
-            for (size_t k = i; k < end; ++k)
-                encodeOne('?');
-            break;
-        case ErrorHandler::BackslashReplace:
-            for (size_t k = i; k < end; ++k)
-                encodeText(backslashEscape(characters[k]));
-            break;
-        case ErrorHandler::XMLCharacterReference:
-            for (size_t k = i; k < end; ++k)
-                encodeText(concatenate("&#"_s, static_cast<unsigned>(characters[k]), ';'));
-            break;
-        case ErrorHandler::NameReplace:
-            for (size_t k = i; k < end; ++k)
-                encodeText(nameEscape(characters[k]));
-            break;
-        case ErrorHandler::SurrogateEscape:
-            // What a byte that could not be decoded was made into goes back to being that byte.
-            for (size_t k = i; k < end; ++k) {
-                // In UTF-16 and UTF-32 a byte is not the whole of anything.
-                if (characters[k] < 0xDC80 || characters[k] > 0xDCFF || unitSize > 1)
-                    return fail(k, end);
-                output.append(static_cast<uint8_t>(characters[k] - 0xDC00));
-            }
-            break;
-        case ErrorHandler::SurrogatePass:
-            for (size_t k = i; k < end; ++k) {
-                char32_t surrogate = characters[k];
-                if (!isUTF || !U_IS_SURROGATE(surrogate))
-                    return fail(k, end);
-                if (unitSize > 1)
-                    appendUnit(output, surrogate, unitSize, isBigEndian);
-                else {
-                    output.append(static_cast<uint8_t>(0xE0 | (surrogate >> 12)));
-                    output.append(static_cast<uint8_t>(0x80 | ((surrogate >> 6) & 0x3F)));
-                    output.append(static_cast<uint8_t>(0x80 | (surrogate & 0x3F)));
-                }
-            }
-            break;
-        }
-        i = end;
-    }
-    UNUSED_PARAM(appendASCII);
-    if (output.hasOverflowed()) {
-        raiseMemoryError(globalObject, scope);
-        return std::nullopt;
-    }
-    return output;
-}
-
-// ---- Decoding
-
-struct DecodeError {
-    size_t length; // How many bytes are at fault.
-    ASCIILiteral reason;
-};
-
-static bool isContinuation(uint8_t byte) { return (byte & 0xC0) == 0x80; }
-
-// One character of UTF-8, at the front of the bytes. Either how many bytes it took, or what is wrong.
-static std::expected<unsigned, DecodeError> decodeUTF8Character(std::span<const uint8_t> s, char32_t& result)
-{
-    constexpr ASCIILiteral invalidStart = "invalid start byte"_s;
-    constexpr ASCIILiteral invalidContinuation = "invalid continuation byte"_s;
-    auto unexpectedEnd = [&] { return std::unexpected(DecodeError { s.size(), "unexpected end of data"_s }); };
-    uint8_t ch = s[0];
-    if (ch < 0x80) {
-        result = ch;
-        return 1;
-    }
-    if (ch < 0xC2)
-        return std::unexpected(DecodeError { 1, invalidStart });
-    if (ch < 0xE0) {
-        if (s.size() < 2)
-            return unexpectedEnd();
-        if (!isContinuation(s[1]))
-            return std::unexpected(DecodeError { 1, invalidContinuation });
-        result = ((ch & 0x1F) << 6) | (s[1] & 0x3F);
-        return 2;
-    }
-    if (ch < 0xF0) {
-        if (s.size() < 2)
-            return unexpectedEnd();
-        uint8_t ch2 = s[1];
-        // Too long a way of writing something short, or half of a pair.
-        if (!isContinuation(ch2) || (ch2 < 0xA0 ? ch == 0xE0 : ch == 0xED))
-            return std::unexpected(DecodeError { 1, invalidContinuation });
-        if (s.size() < 3)
-            return unexpectedEnd();
-        if (!isContinuation(s[2]))
-            return std::unexpected(DecodeError { 2, invalidContinuation });
-        result = ((ch & 0x0F) << 12) | ((ch2 & 0x3F) << 6) | (s[2] & 0x3F);
-        return 3;
-    }
-    if (ch < 0xF5) {
-        if (s.size() < 2)
-            return unexpectedEnd();
-        uint8_t ch2 = s[1];
-        if (!isContinuation(ch2) || (ch2 < 0x90 ? ch == 0xF0 : ch == 0xF4))
-            return std::unexpected(DecodeError { 1, invalidContinuation });
-        if (s.size() < 3)
-            return unexpectedEnd();
-        if (!isContinuation(s[2]))
-            return std::unexpected(DecodeError { 2, invalidContinuation });
-        if (s.size() < 4)
-            return unexpectedEnd();
-        if (!isContinuation(s[3]))
-            return std::unexpected(DecodeError { 3, invalidContinuation });
-        result = ((ch & 0x07) << 18) | ((ch2 & 0x3F) << 12) | ((s[2] & 0x3F) << 6) | (s[3] & 0x3F);
-        return 4;
-    }
-    return std::unexpected(DecodeError { 1, invalidStart });
-}
-
-String decodeBytes(JSGlobalObject* globalObject, JSValue object, std::span<const uint8_t> input, const String& encoding, const String& errors)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    // PyUnicode_FromEncodedObject(): nothing comes to nothing, and it is not so much as asked whether there is such an encoding.
-    if (input.empty())
-        return emptyString();
-    auto info = findCodec(encoding);
-    if (!info) {
-        raiseUnknownEncoding(globalObject, scope, encoding);
         return { };
-    }
-    Codec codec = info->codec;
-    if (codec == Codec::Latin1 || ((codec == Codec::UTF8 || codec == Codec::ASCII) && charactersAreAllASCII(input)))
-        RELEASE_AND_RETURN(scope, textOfBytes(globalObject, input));
+    return String::fromLatin1(buffer);
+}
 
-    size_t position = 0;
-    unsigned unitSize = 1;
-    bool isBigEndian = false;
-    ASCIILiteral name = info->name;
-    auto readUnit = [&] (size_t at) {
-        uint32_t unit = 0;
-        for (unsigned i = 0; i < unitSize; ++i)
-            unit |= static_cast<uint32_t>(input[at + i]) << (8 * (isBigEndian ? unitSize - 1 - i : i));
-        return unit;
+std::optional<char32_t> characterNamed(std::span<const uint8_t> name)
+{
+    Vector<char, 64> upper;
+    for (uint8_t c : name) {
+        if (c >= 0x80)
+            return std::nullopt;
+        upper.append(toASCIIUpper(static_cast<char>(c)));
+    }
+    upper.append('\0');
+    for (UCharNameChoice choice : { U_UNICODE_CHAR_NAME, U_CHAR_NAME_ALIAS }) {
+        UErrorCode status = U_ZERO_ERROR;
+        char32_t value = u_charFromName(choice, upper.span().data(), &status);
+        if (U_SUCCESS(status))
+            return value;
+    }
+    return std::nullopt;
+}
+
+// ---- str.encode() and bytes.decode()
+
+enum class Shortcut : uint8_t { None, UTF8, UTF16, UTF32, ASCII, Latin1 };
+
+// The names that are known without asking: the "fast paths" of PyUnicode_Decode() and PyUnicode_AsEncodedString().
+static Shortcut shortcutFor(const String& encoding)
+{
+    if (encoding.isNull())
+        return Shortcut::UTF8;
+    String lower = normalizeEncodingName(encoding);
+    // What is longer than the longest of them, "iso_8859_1", is not looked at.
+    if (lower.length() > 10)
+        return Shortcut::None;
+    if (lower.startsWith("utf"_s)) {
+        StringView rest = StringView(lower).substring(3);
+        if (rest.startsWith('_'))
+            rest = rest.substring(1);
+        if (rest == "8"_s)
+            return Shortcut::UTF8;
+        if (rest == "16"_s)
+            return Shortcut::UTF16;
+        if (rest == "32"_s)
+            return Shortcut::UTF32;
+        return Shortcut::None;
+    }
+    if (lower == "ascii"_s || lower == "us_ascii"_s)
+        return Shortcut::ASCII;
+    if (lower == "latin1"_s || lower == "latin_1"_s || lower == "iso_8859_1"_s || lower == "iso8859_1"_s)
+        return Shortcut::Latin1;
+    return Shortcut::None;
+}
+
+// ---- Until `encodings` is imported when a realm is made
+
+// The names that CPython finds by way of encodings.aliases, and the codecs that it has in Python in encodings/*.py over the functions of _codecs. This is to go when that is what finds them here.
+enum class Interim : uint8_t { UTF8, UTF8Signature, ASCII, Latin1, UTF16, UTF16LE, UTF16BE, UTF32, UTF32LE, UTF32BE };
+
+static std::optional<Interim> interimCodecFor(const String& encoding)
+{
+    static constexpr std::pair<ASCIILiteral, Interim> table[] = {
+        { "utf_8"_s, Interim::UTF8 }, { "utf8"_s, Interim::UTF8 }, { "u8"_s, Interim::UTF8 }, { "utf"_s, Interim::UTF8 }, { "cp65001"_s, Interim::UTF8 }, { "utf_8_sig"_s, Interim::UTF8Signature },
+        { "ascii"_s, Interim::ASCII }, { "us_ascii"_s, Interim::ASCII }, { "646"_s, Interim::ASCII }, { "us"_s, Interim::ASCII }, { "latin_1"_s, Interim::Latin1 }, { "latin1"_s, Interim::Latin1 },
+        { "iso_8859_1"_s, Interim::Latin1 }, { "iso8859_1"_s, Interim::Latin1 }, { "8859"_s, Interim::Latin1 }, { "cp819"_s, Interim::Latin1 }, { "latin"_s, Interim::Latin1 },
+        { "l1"_s, Interim::Latin1 }, { "utf_16"_s, Interim::UTF16 }, { "utf16"_s, Interim::UTF16 }, { "u16"_s, Interim::UTF16 }, { "utf_16_le"_s, Interim::UTF16LE },
+        { "utf_16le"_s, Interim::UTF16LE }, { "unicodelittleunmarked"_s, Interim::UTF16LE }, { "utf_16_be"_s, Interim::UTF16BE }, { "utf_16be"_s, Interim::UTF16BE },
+        { "unicodebigunmarked"_s, Interim::UTF16BE }, { "utf_32"_s, Interim::UTF32 }, { "utf32"_s, Interim::UTF32 }, { "u32"_s, Interim::UTF32 }, { "utf_32_le"_s, Interim::UTF32LE },
+        { "utf_32le"_s, Interim::UTF32LE }, { "utf_32_be"_s, Interim::UTF32BE }, { "utf_32be"_s, Interim::UTF32BE },
     };
+    String name = normalizeEncodingName(encoding);
+    for (auto& [alias, codec] : table) {
+        if (name == alias)
+            return codec;
+    }
+    return std::nullopt;
+}
+
+static String decodeWithInterimCodec(JSGlobalObject* globalObject, Interim codec, std::span<const uint8_t> bytes, const String& errors)
+{
+    int byteOrder = codec == Interim::UTF16LE || codec == Interim::UTF32LE ? -1 : codec == Interim::UTF16BE || codec == Interim::UTF32BE ? 1 : 0;
     switch (codec) {
-    case Codec::UTF8Signature:
-        if (input.size() >= 3 && input[0] == 0xEF && input[1] == 0xBB && input[2] == 0xBF)
-            position = 3;
-        break;
-    case Codec::UTF16:
-    case Codec::UTF32:
-        // A mark at the front says which way round the bytes are.
-        unitSize = codec == Codec::UTF16 ? 2 : 4;
-        if (input.size() >= unitSize) {
-            uint32_t mark = readUnit(0);
-            if (mark == 0xFEFF)
-                position = unitSize;
-            else if (mark == (unitSize == 2 ? 0xFFFEu : 0xFFFE0000u)) {
-                isBigEndian = true;
-                position = unitSize;
-            }
-        }
-        // From here on it is one or the other, and that is what it is called if something is wrong.
-        if (unitSize == 2)
-            name = isBigEndian ? "utf-16-be"_s : "utf-16-le"_s;
-        else
-            name = isBigEndian ? "utf-32-be"_s : "utf-32-le"_s;
-        break;
-    case Codec::UTF16LE:
-    case Codec::UTF16BE:
-        unitSize = 2;
-        isBigEndian = codec == Codec::UTF16BE;
-        break;
-    case Codec::UTF32LE:
-    case Codec::UTF32BE:
-        unitSize = 4;
-        isBigEndian = codec == Codec::UTF32BE;
-        break;
-    default:
+    case Interim::UTF8Signature:
+        if (bytes.size() >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF)
+            bytes = bytes.subspan(3);
+        [[fallthrough]];
+    case Interim::UTF8:
+        return decodeUTF8(globalObject, bytes, errors);
+    case Interim::ASCII:
+        return decodeASCII(globalObject, bytes, errors);
+    case Interim::Latin1:
+        return decodeLatin1(globalObject, bytes);
+    case Interim::UTF16:
+    case Interim::UTF16LE:
+    case Interim::UTF16BE:
+        return decodeUTF16(globalObject, bytes, errors, &byteOrder);
+    case Interim::UTF32:
+    case Interim::UTF32LE:
+    case Interim::UTF32BE:
+        return decodeUTF32(globalObject, bytes, errors, &byteOrder);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+static std::optional<ByteVector> encodeWithInterimCodec(JSGlobalObject* globalObject, Interim codec, JSValue string, const String& errors)
+{
+    int byteOrder = codec == Interim::UTF16LE || codec == Interim::UTF32LE ? -1 : codec == Interim::UTF16BE || codec == Interim::UTF32BE ? 1 : 0;
+    switch (codec) {
+    case Interim::UTF8Signature: {
+        auto encoded = encodeUTF8(globalObject, string, errors);
+        if (!encoded)
+            return std::nullopt;
+        ByteVector out;
+        out.appendList({ 0xEF, 0xBB, 0xBF });
+        out.append(encoded->span());
+        return out;
+    }
+    case Interim::UTF8:
+        return encodeUTF8(globalObject, string, errors);
+    case Interim::ASCII:
+        return encodeASCII(globalObject, string, errors);
+    case Interim::Latin1:
+        return encodeLatin1(globalObject, string, errors);
+    case Interim::UTF16:
+    case Interim::UTF16LE:
+    case Interim::UTF16BE:
+        return encodeUTF16(globalObject, string, errors, byteOrder);
+    case Interim::UTF32:
+    case Interim::UTF32LE:
+    case Interim::UTF32BE:
+        return encodeUTF32(globalObject, string, errors, byteOrder);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// What is decoded without asking the registry. False if it is for the registry.
+static bool decodeIfKnown(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors, String& result)
+{
+    if (bytes.empty()) {
+        result = emptyString();
+        return true;
+    }
+    switch (shortcutFor(encoding)) {
+    case Shortcut::UTF8:
+        result = decodeUTF8(globalObject, bytes, errors);
+        return true;
+    case Shortcut::UTF16:
+        result = decodeUTF16(globalObject, bytes, errors);
+        return true;
+    case Shortcut::UTF32:
+        result = decodeUTF32(globalObject, bytes, errors);
+        return true;
+    case Shortcut::ASCII:
+        result = decodeASCII(globalObject, bytes, errors);
+        return true;
+    case Shortcut::Latin1:
+        result = decodeLatin1(globalObject, bytes);
+        return true;
+    case Shortcut::None:
         break;
     }
-
-    TextBuilder output;
-    std::optional<ErrorHandler> handler;
-    while (position < input.size()) {
-        auto rest = input.subspan(position);
-        char32_t character = 0;
-        std::expected<unsigned, DecodeError> decoded = 0u;
-        if (unitSize == 1) {
-            if (codec == Codec::ASCII) {
-                if (rest[0] < 0x80) {
-                    character = rest[0];
-                    decoded = 1u;
-                } else
-                    decoded = std::unexpected(DecodeError { 1, "ordinal not in range(128)"_s });
-            } else
-                decoded = decodeUTF8Character(rest, character);
-        } else if (rest.size() < unitSize)
-            decoded = std::unexpected(DecodeError { rest.size(), "truncated data"_s });
-        else if (unitSize == 2) {
-            character = readUnit(position);
-            decoded = 2u;
-            if (U16_IS_LEAD(character)) {
-                if (rest.size() < 4)
-                    decoded = std::unexpected(DecodeError { rest.size(), "unexpected end of data"_s });
-                else if (uint32_t trail = readUnit(position + 2); U16_IS_TRAIL(trail)) {
-                    character = U16_GET_SUPPLEMENTARY(character, trail);
-                    decoded = 4u;
-                } else
-                    decoded = std::unexpected(DecodeError { 2, "illegal UTF-16 surrogate"_s });
-            } else if (U16_IS_TRAIL(character))
-                decoded = std::unexpected(DecodeError { 2, "illegal encoding"_s });
-        } else {
-            character = readUnit(position);
-            decoded = 4u;
-            if (U_IS_SURROGATE(character))
-                decoded = std::unexpected(DecodeError { 4, "code point in surrogate code point range(0xd800, 0xe000)"_s });
-            else if (character > 0x10FFFF)
-                decoded = std::unexpected(DecodeError { 4, "code point not in range(0x110000)"_s });
-        }
-        if (decoded) [[likely]] {
-            output.append(character);
-            position += *decoded;
-            continue;
-        }
-
-        DecodeError error = decoded.error();
-        if (!handler) {
-            handler = findErrorHandler(errors);
-            if (!handler) {
-                raiseUnknownErrorHandler(globalObject, scope, errors);
-                return { };
-            }
-        }
-        auto fail = [&] {
-            raiseUnicodeError(globalObject, scope, BuiltinType::UnicodeDecodeError, name, object, position, position + error.length, error.reason);
-            return String();
-        };
-        switch (*handler) {
-        case ErrorHandler::Ignore:
-            break;
-        case ErrorHandler::Replace:
-            output.append(static_cast<char16_t>(0xFFFD));
-            break;
-        case ErrorHandler::BackslashReplace:
-            for (size_t k = 0; k < error.length; ++k)
-                output.append("\\x"_s, hex(rest[k], 2, Lowercase));
-            break;
-        case ErrorHandler::SurrogateEscape: {
-            // Each byte that is not ASCII becomes half of a pair, which encoding turns back into the byte.
-            size_t escaped = 0;
-            while (escaped < error.length && escaped < 4 && rest[escaped] >= 0x80) {
-                output.append(static_cast<char16_t>(0xDC00 + rest[escaped]));
-                ++escaped;
-            }
-            if (!escaped)
-                return fail();
-            error.length = escaped;
-            break;
-        }
-        case ErrorHandler::SurrogatePass: {
-            char32_t surrogate = 0;
-            size_t size = 0;
-            if (unitSize == 1 && codec != Codec::ASCII && rest.size() >= 3 && (rest[0] & 0xF0) == 0xE0 && isContinuation(rest[1]) && isContinuation(rest[2])) {
-                surrogate = ((rest[0] & 0x0F) << 12) | ((rest[1] & 0x3F) << 6) | (rest[2] & 0x3F);
-                size = 3;
-            } else if (unitSize > 1 && rest.size() >= unitSize) {
-                surrogate = readUnit(position);
-                size = unitSize;
-            }
-            if (!size || !U_IS_SURROGATE(surrogate))
-                return fail();
-            output.append(static_cast<char16_t>(surrogate));
-            error.length = size;
-            break;
-        }
-        case ErrorHandler::Strict:
-        case ErrorHandler::XMLCharacterReference:
-        case ErrorHandler::NameReplace:
-            if (*handler != ErrorHandler::Strict) {
-                raiseTypeError(globalObject, scope, "don't know how to handle UnicodeDecodeError in error callback"_s);
-                return { };
-            }
-            return fail();
-        }
-        position += error.length;
+    if (auto interim = interimCodecFor(encoding)) {
+        result = decodeWithInterimCodec(globalObject, *interim, bytes, errors);
+        return true;
     }
-    RELEASE_AND_RETURN(scope, output.finish(globalObject));
+    return false;
+}
+
+// A str, or an instance of a class derived from it, which is what the codec gave. Empty if it raised.
+static JSValue decodeByRegistry(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!hasCodecSearchFunctions(globalObject))
+        return raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown encoding: "_s, encoding));
+    // What the codec is given is a view that cannot be written through, of bytes that stay where they are.
+    JSValue copy = newBytes(globalObject, bytes);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue view = call(globalObject, globalObject->pyRealm()->typeMemoryView(), copy);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue result = decodeTextWithCodec(globalObject, view, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!stringIn(result))
+        return raiseTypeError(globalObject, scope, concatenate('\'', encoding, "' decoder returned '"_s, typeName(globalObject, result), "' instead of 'str'; use codecs.decode() to decode to arbitrary types"_s));
+    return result;
+}
+
+String decodeBytes(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String text;
+    if (decodeIfKnown(globalObject, bytes, encoding, errors, text))
+        return text;
+    JSValue result = decodeByRegistry(globalObject, bytes, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, textOfString(globalObject, result));
+}
+
+JSValue decodeBytesToObject(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    String text;
+    if (!decodeIfKnown(globalObject, bytes, encoding, errors, text))
+        RELEASE_AND_RETURN(scope, decodeByRegistry(globalObject, bytes, encoding, errors));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, strOrMemoryError(globalObject, text));
+}
+
+static bool encodeIfKnown(JSGlobalObject* globalObject, JSValue string, const String& encoding, const String& errors, std::optional<ByteVector>& result)
+{
+    switch (shortcutFor(encoding)) {
+    case Shortcut::UTF8:
+        result = encodeUTF8(globalObject, string, errors);
+        return true;
+    case Shortcut::UTF16:
+        result = encodeUTF16(globalObject, string, errors, 0);
+        return true;
+    case Shortcut::UTF32:
+        result = encodeUTF32(globalObject, string, errors, 0);
+        return true;
+    case Shortcut::ASCII:
+        result = encodeASCII(globalObject, string, errors);
+        return true;
+    case Shortcut::Latin1:
+        result = encodeLatin1(globalObject, string, errors);
+        return true;
+    case Shortcut::None:
+        break;
+    }
+    if (auto interim = interimCodecFor(encoding)) {
+        result = encodeWithInterimCodec(globalObject, *interim, string, errors);
+        return true;
+    }
+    return false;
+}
+
+// A bytes, or an instance of a class derived from it, which is what the codec gave. Empty if it raised.
+static JSValue encodeByRegistry(JSGlobalObject* globalObject, JSValue string, const String& encoding, const String& errors)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!hasCodecSearchFunctions(globalObject))
+        return raise(globalObject, scope, BuiltinType::LookupError, concatenate("unknown encoding: "_s, encoding));
+    JSValue result = encodeTextWithCodec(globalObject, string, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, { });
+    PyType* type = typeOf(globalObject, result);
+    if (type->hasFlag(PyType::IsBytes))
+        return result;
+    if (type->isSubtypeOf(globalObject->pyRealm()->typeByteArray())) {
+        if (!warn(globalObject, BuiltinType::RuntimeWarning, concatenate("encoder "_s, encoding, " returned bytearray instead of bytes; use codecs.encode() to encode to arbitrary types"_s)))
+            return { };
+        RELEASE_AND_RETURN(scope, newBytes(globalObject, *builtinBufferOf(result)));
+    }
+    return raiseTypeError(globalObject, scope, concatenate('\'', encoding, "' encoder returned '"_s, typeName(globalObject, result), "' instead of 'bytes'; use codecs.encode() to encode to arbitrary types"_s));
+}
+
+std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue string, const String& encoding, const String& errors)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    std::optional<ByteVector> encoded;
+    if (encodeIfKnown(globalObject, string, encoding, errors, encoded))
+        return encoded;
+    JSValue result = encodeByRegistry(globalObject, string, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    ByteVector bytes;
+    bytes.append(*builtinBufferOf(result));
+    return bytes;
+}
+
+JSValue encodeStringToObject(JSGlobalObject* globalObject, JSValue string, const String& encoding, const String& errors)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    std::optional<ByteVector> encoded;
+    if (!encodeIfKnown(globalObject, string, encoding, errors, encoded))
+        RELEASE_AND_RETURN(scope, encodeByRegistry(globalObject, string, encoding, errors));
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, newBytes(globalObject, *encoded));
 }
 
 } } // namespace JSC::Python

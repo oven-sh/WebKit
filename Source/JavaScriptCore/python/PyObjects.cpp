@@ -291,7 +291,8 @@ PyNativeFunction* PyNativeFunction::create(VM& vm, JSGlobalObject* globalObject,
         JSValue moduleName = owner->getDirect(vm, vm.pythonNames().dunder_name);
         if (moduleName && moduleName.isString())
             description = Python::findFunctionDescription(asString(moduleName)->value(globalObject).data, name);
-    }
+    } else
+        description = Python::findFunctionDescription(emptyString(), name);
     if (arguments == Arguments::AreThoseOfTheClass || arguments == Arguments::AreThoseOfTheClassButNotChecked) {
         auto* typeDescription = Python::findTypeDescription(asType(owner)->nameWithoutModule(globalObject));
         if (signature.isNull() && typeDescription)

@@ -29,6 +29,7 @@
 
 #include "PythonBytes.h"
 #include "PythonCodecs.h"
+#include <wtf/Scope.h>
 
 // marshal: Python/marshal.c of CPython.
 //
@@ -1098,7 +1099,7 @@ JSValue Reader::readObject()
         // What is said if they will not do has them in it.
         JSValue object = newBytes(m_globalObject, *bytes);
         RETURN_IF_EXCEPTION(scope, { });
-        String text = decodeBytes(m_globalObject, object, uncheckedDowncast<JSUint8Array>(object.asCell())->span(), "utf-8"_s, "surrogatepass"_s);
+        String text = decodeBytes(m_globalObject, uncheckedDowncast<JSUint8Array>(object.asCell())->span(), "utf-8"_s, "surrogatepass"_s);
         RETURN_IF_EXCEPTION(scope, { });
         JSValue string = strOrMemoryError(m_globalObject, text);
         RETURN_IF_EXCEPTION(scope, { });

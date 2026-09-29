@@ -30,6 +30,7 @@
 #include "PythonMonitoring.h"
 #include "PythonASTModule.h"
 #include "PythonConfiguration.h"
+#include "PythonCodecRegistryState.h"
 #include "PythonIOState.h"
 #include "PythonPosixState.h"
 #include "PythonThreadModule.h"
@@ -344,6 +345,7 @@ public:
     Python::MonitoringState& monitoring() { return m_monitoring; }
     Python::WarningsState& warnings() { return m_warnings; }
     Python::ThreadModuleState& threadModule() { return m_threadModule; }
+    Python::CodecRegistryState& codecRegistry() { return m_codecRegistry; }
     Python::IOModuleState& ioModule() { return m_ioModule; }
     Python::PosixModuleState& posixModule() { return m_posixModule; }
     // What whoever embeds the engine had to say, which it was asked when this was made.
@@ -396,6 +398,7 @@ private:
     Python::MonitoringState m_monitoring;
     Python::WarningsState m_warnings;
     Python::ThreadModuleState m_threadModule;
+    Python::CodecRegistryState m_codecRegistry;
     Python::IOModuleState m_ioModule;
     Python::PosixModuleState m_posixModule;
     Python::Configuration m_configuration;

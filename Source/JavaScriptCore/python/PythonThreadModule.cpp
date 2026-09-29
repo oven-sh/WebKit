@@ -743,7 +743,7 @@ PYTHON_NATIVE(threadGetName)
         return JSValue::encode(raiseOSError(globalObject, scope, result));
     JSValue bytes = newBytes(globalObject, byteCast<uint8_t>(unsafeSpan(name.data())));
     RETURN_IF_EXCEPTION(scope, { });
-    String decoded = decodeBytes(globalObject, bytes, uncheckedDowncast<JSUint8Array>(bytes.asCell())->span(), "utf-8"_s, "surrogateescape"_s);
+    String decoded = decodeBytes(globalObject, uncheckedDowncast<JSUint8Array>(bytes.asCell())->span(), "utf-8"_s, "surrogateescape"_s);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, decoded)));
 }

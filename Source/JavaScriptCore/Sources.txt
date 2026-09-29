@@ -762,7 +762,11 @@ python/PythonClasses.cpp
 python/PythonCode.cpp
 python/PythonCodeGenerator.cpp
 python/PythonCodeObjects.cpp
+python/PythonCodecRegistry.cpp
 python/PythonCodecs.cpp
+python/PythonCodecsBytewise.cpp
+python/PythonCodecsModule.cpp
+python/PythonCodecsUTF.cpp
 python/PythonCommonNames.cpp
 python/PythonCompiler.cpp
 python/PythonComplex.cpp

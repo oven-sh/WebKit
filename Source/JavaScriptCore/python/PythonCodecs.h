@@ -27,7 +27,10 @@
 
 #include "JSCJSValue.h"
 #include "PageCount.h"
+#include <unicode/utf16.h>
 #include <wtf/FastMalloc.h>
+#include <wtf/Vector.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -35,6 +38,8 @@ namespace JSC {
 class JSGlobalObject;
 
 namespace Python {
+
+class Buffer;
 
 // The bytes of something that is being made, which come to as many as a program makes them. It can hold as many as a typed array can, which is more than a Vector can, and where a Vector brings everything down
 // when there is no room for more, this remembers, as TextBuilder does, and takes no more. What makes a bytes or a bytearray of it raises MemoryError then, and anything else that is to have what is in it asks
@@ -175,9 +180,181 @@ private:
     bool m_hasOverflowed { false };
 };
 
-// str.encode() and bytes.decode(). A null String for `encoding` or `errors` is the default: "utf-8", and "strict".
-// Nothing, or a null String, if they raised.
+// ---- str.encode() and bytes.decode()
+
+// PyUnicode_AsEncodedString() and PyUnicode_Decode(). A null String for `encoding` or `errors` is the default: "utf-8", and "strict". Nothing, or a null String, if they raised.
 std::optional<ByteVector> encodeString(JSGlobalObject*, JSValue string, const String& encoding, const String& errors);
-String decodeBytes(JSGlobalObject*, JSValue object, std::span<const uint8_t>, const String& encoding, const String& errors);
+String decodeBytes(JSGlobalObject*, std::span<const uint8_t>, const String& encoding, const String& errors);
+// The same, giving the object, which is the very one that the codec gave if it was one that a program registered. Empty if they raised.
+JSValue encodeStringToObject(JSGlobalObject*, JSValue string, const String& encoding, const String& errors);
+JSValue decodeBytesToObject(JSGlobalObject*, std::span<const uint8_t>, const String& encoding, const String& errors);
+
+// ---- What the codecs are written with
+
+// The characters of a str, by number. It is only if there are surrogate pairs in it that anything is made.
+class CodePoints {
+    WTF_MAKE_NONCOPYABLE(CodePoints);
+public:
+    explicit CodePoints(const String&);
+
+    size_t size() const { return m_size; }
+    char32_t operator[](size_t index) const
+    {
+        ASSERT(index < m_size);
+        return m_characters8 ? m_characters8[index] : m_characters16 ? m_characters16[index] : m_expanded[index];
+    }
+    // PyUnicode_KIND() == PyUnicode_1BYTE_KIND, and PyUnicode_IS_ASCII(). It is what is in it that counts, and not how it is kept.
+    bool isLatin1() const { return m_isLatin1; }
+    bool isASCII() const { return m_isASCII; }
+
+private:
+    String m_string;
+    const Latin1Character* m_characters8 { nullptr };
+    const char16_t* m_characters16 { nullptr };
+    Vector<char32_t> m_expanded;
+    size_t m_size { 0 };
+    bool m_isLatin1 { true };
+    bool m_isASCII { true };
+};
+
+// What a decoder writes to: _PyUnicodeWriter.
+class TextWriter {
+    WTF_MAKE_NONCOPYABLE(TextWriter);
+public:
+    TextWriter() = default;
+
+    void append(char32_t character)
+    {
+        if (U_IS_BMP(character))
+            m_builder.append(static_cast<char16_t>(character));
+        else
+            m_builder.append(character);
+    }
+    void append(const String& text) { m_builder.append(text); }
+    // Where it has got to, to go back to.
+    unsigned position() const { return m_builder.length(); }
+    void goBackTo(unsigned position) { m_builder.shrink(position); }
+    // A null String, having raised MemoryError, if there was no room.
+    String finish(JSGlobalObject*);
+
+private:
+    StringBuilder m_builder { OverflowPolicy::RecordOverflow };
+};
+
+// The text of a str, or of an instance of a class derived from it. It is not null.
+String textOfString(JSGlobalObject*, JSValue);
+
+// _Py_error_handler: the handlers that a codec can do the work of by itself.
+enum class ErrorHandler : uint8_t { Unknown, Strict, SurrogateEscape, Replace, Ignore, BackslashReplace, SurrogatePass, XMLCharRefReplace, Other };
+ErrorHandler errorHandlerNamed(const String& errors); // _Py_GetErrorHandler()
+
+// What a decoder does about what it cannot decode: it asks the handler of the name, which is any function that a program has registered. It lasts as long as the one call to the decoder, so the handler is
+// looked up once and there is one exception, which is told each time where the trouble is now.
+class DecodeErrors {
+    WTF_MAKE_NONCOPYABLE(DecodeErrors);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    DecodeErrors(JSGlobalObject* globalObject, const String& errors, std::span<const uint8_t> input)
+        : input(input)
+        , m_globalObject(globalObject)
+        , m_errors(errors)
+    {
+    }
+
+    // unicode_decode_call_errorhandler_writer(). What the handler gives in place of the bytes from `start` to `end` is written, and `position` is where it says to go on from. False if it raised.
+    // The exception has a copy of the input, and the handler may put something else there: whatever is there afterwards is the input from then on.
+    bool handle(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end, size_t& position, TextWriter&);
+
+    // Whether it is still what the decoder was given, and not what an exception has.
+    bool hasOriginalInput() const { return !m_exception; }
+
+    std::span<const uint8_t> input;
+
+private:
+    JSGlobalObject* m_globalObject;
+    const String& m_errors;
+    JSValue m_handler;
+    JSValue m_exception;
+};
+
+// The same for an encoder.
+class EncodeErrors {
+    WTF_MAKE_NONCOPYABLE(EncodeErrors);
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    EncodeErrors(JSGlobalObject* globalObject, const String& errors, JSValue string, size_t length)
+        : m_globalObject(globalObject)
+        , m_errors(errors)
+        , m_string(string)
+        , m_length(length)
+    {
+    }
+
+    // unicode_encode_call_errorhandler(): what the handler gives in place of the characters from `start` to `end`, which is a bytes or a str, and where it says to go on from. Empty if it raised.
+    JSValue handle(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end, size_t& newPosition);
+    // raise_encode_exception()
+    void raise(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end);
+
+private:
+    bool makeException(ASCIILiteral encoding, ASCIILiteral reason, size_t start, size_t end);
+
+    JSGlobalObject* m_globalObject;
+    const String& m_errors;
+    JSValue m_string;
+    size_t m_length;
+    JSValue m_handler;
+    JSValue m_exception;
+};
+
+// ---- The codecs
+
+// Each decoder gives a null String if it raised. With `consumed`, what is at the end and may be the beginning of something is left, and that is how far it got.
+String decodeUTF7(JSGlobalObject*, std::span<const uint8_t>, const String& errors, size_t* consumed = nullptr);
+String decodeUTF8(JSGlobalObject*, std::span<const uint8_t>, const String& errors, size_t* consumed = nullptr);
+// `byteOrder` is -1 for little-endian, 1 for big-endian, and 0 for whatever a mark at the beginning says, and is set to that.
+String decodeUTF16(JSGlobalObject*, std::span<const uint8_t>, const String& errors, int* byteOrder = nullptr, size_t* consumed = nullptr);
+String decodeUTF32(JSGlobalObject*, std::span<const uint8_t>, const String& errors, int* byteOrder = nullptr, size_t* consumed = nullptr);
+String decodeUnicodeEscape(JSGlobalObject*, std::span<const uint8_t>, const String& errors, size_t* consumed = nullptr);
+String decodeRawUnicodeEscape(JSGlobalObject*, std::span<const uint8_t>, const String& errors, size_t* consumed = nullptr);
+String decodeLatin1(JSGlobalObject*, std::span<const uint8_t>);
+String decodeASCII(JSGlobalObject*, std::span<const uint8_t>, const String& errors);
+// Looking something up in a mapping can run anything, which can change the bytes, and that is seen. So it is asked each time where they are and how many there are.
+String decodeCharmap(JSGlobalObject*, const Buffer&, JSValue mapping, const String& errors);
+std::optional<ByteVector> decodeEscape(JSGlobalObject*, std::span<const uint8_t>, const String& errors); // PyBytes_DecodeEscape()
+
+// Each encoder gives nothing if it raised.
+std::optional<ByteVector> encodeUTF7(JSGlobalObject*, JSValue string);
+std::optional<ByteVector> encodeUTF8(JSGlobalObject*, JSValue string, const String& errors);
+std::optional<ByteVector> encodeUTF16(JSGlobalObject*, JSValue string, const String& errors, int byteOrder);
+std::optional<ByteVector> encodeUTF32(JSGlobalObject*, JSValue string, const String& errors, int byteOrder);
+std::optional<ByteVector> encodeUnicodeEscape(JSGlobalObject*, JSValue string);
+std::optional<ByteVector> encodeRawUnicodeEscape(JSGlobalObject*, JSValue string);
+std::optional<ByteVector> encodeLatin1(JSGlobalObject*, JSValue string, const String& errors);
+std::optional<ByteVector> encodeASCII(JSGlobalObject*, JSValue string, const String& errors);
+std::optional<ByteVector> encodeCharmap(JSGlobalObject*, JSValue string, JSValue mapping, const String& errors);
+JSValue buildEncodingMap(JSGlobalObject*, JSValue string); // PyUnicode_BuildEncodingMap()
+
+// The name of a character, and the character of a name, as unicodedata has them. Null, and nothing, if there is none.
+String nameOfCharacter(char32_t);
+std::optional<char32_t> characterNamed(std::span<const uint8_t> name);
+
+// ---- The registry: Python/codecs.c
+
+String normalizeEncodingName(const String&); // _Py_normalize_encoding()
+void registerCodecSearchFunction(JSGlobalObject*, JSValue); // PyCodec_Register()
+void unregisterCodecSearchFunction(JSGlobalObject*, JSValue); // PyCodec_Unregister()
+// Each of these is empty if it raised.
+JSValue lookupCodec(JSGlobalObject*, const String& encoding); // _PyCodec_Lookup()
+bool hasCodecSearchFunctions(JSGlobalObject*); // Only until `encodings` is imported when a realm is made, after which there is always one.
+JSValue lookupTextEncoding(JSGlobalObject*, const String& encoding, ASCIILiteral alternateCommand = { }); // _PyCodec_LookupTextEncoding()
+JSValue makeIncrementalDecoder(JSGlobalObject*, JSValue codecInfo, const String& errors); // _PyCodecInfo_GetIncrementalDecoder()
+JSValue makeIncrementalEncoder(JSGlobalObject*, JSValue codecInfo, const String& errors); // _PyCodecInfo_GetIncrementalEncoder()
+JSValue encodeWithCodec(JSGlobalObject*, JSValue object, const String& encoding, const String& errors); // PyCodec_Encode()
+JSValue decodeWithCodec(JSGlobalObject*, JSValue object, const String& encoding, const String& errors); // PyCodec_Decode()
+JSValue encodeTextWithCodec(JSGlobalObject*, JSValue object, const String& encoding, const String& errors); // _PyCodec_EncodeText()
+JSValue decodeTextWithCodec(JSGlobalObject*, JSValue object, const String& encoding, const String& errors); // _PyCodec_DecodeText()
+void registerErrorHandler(JSGlobalObject*, const String& name, JSValue handler); // PyCodec_RegisterError()
+std::optional<bool> unregisterErrorHandler(JSGlobalObject*, const String& name); // _PyCodec_UnregisterError()
+JSValue lookupErrorHandler(JSGlobalObject*, const String& name); // PyCodec_LookupError(). A null String is "strict".
 
 } } // namespace JSC::Python

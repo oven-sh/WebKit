@@ -2062,12 +2062,41 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/BunV8HeapSnapshotBuilder.h
     heap/HeapProfiler.h
 
+    python/PyDict.h
+    python/PyInstance.h
     python/PyNativeFunction.h
+    python/PyObjects.h
+    python/PyRealm.h
+    python/PyTuple.h
+    python/PyType.h
+    python/PythonASDL.h
+    python/PythonAST.h
+    python/PythonASTModule.h
+    python/PythonASTValidator.h
+    python/PythonBuiltins.h
+    python/PythonBytes.h
+    python/PythonCodecRegistryState.h
+    python/PythonCodecs.h
+    python/PythonCommonNames.h
+    python/PythonCompiler.h
     python/PythonConfiguration.h
     python/PythonFileOperations.h
     python/PythonFunctionInfo.h
+    python/PythonIOState.h
+    python/PythonMonitoring.h
+    python/PythonNumbers.h
+    python/PythonOperations.h
+    python/PythonOperators.h
     python/PythonPosixModule.h
+    python/PythonPosixState.h
+    python/PythonSequences.h
+    python/PythonSignatures.h
+    python/PythonStrings.h
     python/PythonSyntaxError.h
+    python/PythonText.h
+    python/PythonThreadModule.h
+    python/PythonToken.h
+    python/PythonWarnings.h
 
     ffi/BunFFI.h
     ffi/FFICallHost.h

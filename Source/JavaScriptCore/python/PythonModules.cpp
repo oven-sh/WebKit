@@ -396,6 +396,8 @@ static JSObject* createNativeModule(JSGlobalObject* globalObject, const String& 
         return createMarshalModule(globalObject);
     if (name == "_io"_s)
         return createIOModule(globalObject);
+    if (name == "_codecs"_s)
+        return createCodecsModule(globalObject);
     if (name == "_ast"_s)
         return createASTModule(globalObject);
     if (auto create = globalObject->globalObjectMethodTable()->createPythonBuiltinModule)

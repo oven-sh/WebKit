@@ -570,7 +570,7 @@ SourceCode makeSource(JSGlobalObject* globalObject, std::span<const uint8_t> byt
         translated.append('\n');
     JSValue object = newBytes(globalObject, translated.span());
     RETURN_IF_EXCEPTION(scope, { });
-    String text = decodeBytes(globalObject, object, translated.span(), encoding, String());
+    String text = decodeBytes(globalObject, translated.span(), encoding, String());
     if (Exception* exception = scope.exception()) [[unlikely]] {
         // That there is no such encoding, or that this is not in it, is something wrong with the source.
         JSValue error = exception->value();

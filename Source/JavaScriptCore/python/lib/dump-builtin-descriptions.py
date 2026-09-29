@@ -47,7 +47,7 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
 MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource")
 
@@ -139,6 +139,7 @@ for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource"):
             add_type(value)
 for example in examples():
     add_type(type(example))
+add_type(type(__import__("_codecs").charmap_build("\0a")))
 with __import__("posix").scandir() as entries_of_directory:
     add_type(type(entries_of_directory))
 # What is derived from it has nothing of its own that is written in C.
@@ -171,6 +172,11 @@ for name in MODULES:
     for attribute, value in vars(module).items():
         if type(value).__name__ == "builtin_function_or_method":
             entries.append([name + ":" + attribute, "builtin_function_or_method", text(value.__text_signature__), text(value.__doc__)])
+
+# The functions that belong to no module.
+for name in ("strict", "ignore", "replace", "xmlcharrefreplace", "backslashreplace", "namereplace", "surrogatepass", "surrogateescape"):
+    value = __import__("_codecs").lookup_error(name)
+    entries.append([":" + value.__name__, "builtin_function_or_method", text(value.__text_signature__), text(value.__doc__)])
 
 entries.sort()
 print("[")

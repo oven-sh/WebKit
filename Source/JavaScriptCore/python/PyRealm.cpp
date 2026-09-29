@@ -57,6 +57,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_monitoring.visit(visitor);
     thisObject->m_warnings.visit(visitor);
     thisObject->m_threadModule.visit(visitor);
+    thisObject->m_codecRegistry.visit(visitor);
     thisObject->m_ioModule.visit(visitor);
     thisObject->m_posixModule.visit(visitor);
     thisObject->m_ast.visit(visitor);

@@ -575,7 +575,7 @@ static bool contentFrom(JSGlobalObject* globalObject, const NativeArguments& arg
             raiseTypeError(globalObject, scope, "string argument without an encoding"_s);
             return false;
         }
-        auto encoded = encodeString(globalObject, plain, encoding, errors);
+        auto encoded = encodeString(globalObject, source, encoding, errors);
         RETURN_IF_EXCEPTION(scope, false);
         content = WTF::move(*encoded);
         return true;
@@ -1544,25 +1544,18 @@ PYTHON_NATIVE(bytesDecode)
     RETURN_IF_EXCEPTION(scope, { });
     String errors = optionalText(globalObject, scope, args, 2, "errors"_s, "decode"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    String text = decodeBytes(globalObject, selfValue, content, encoding, errors);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(jsString(vm, text));
+    RELEASE_AND_RETURN(scope, JSValue::encode(decodeBytesToObject(globalObject, content, encoding, errors)));
 }
 
 // str.encode(encoding='utf-8', errors='strict')
 PYTHON_NATIVE(strEncode)
 {
     NATIVE_PROLOGUE();
-    JSValue self = args.at(0);
-    if (auto* boxed = tryBoxedValue(self))
-        self = boxed->value();
     String encoding = optionalText(globalObject, scope, args, 1, "encoding"_s, "encode"_s);
     RETURN_IF_EXCEPTION(scope, { });
     String errors = optionalText(globalObject, scope, args, 2, "errors"_s, "encode"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    auto encoded = encodeString(globalObject, self, encoding, errors);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, encoded->span())));
+    RELEASE_AND_RETURN(scope, JSValue::encode(encodeStringToObject(globalObject, args.at(0), encoding, errors)));
 }
 
 // other % self. It is the class of what is on the left that says what % means, and it is for that class to be this one.

@@ -153,9 +153,11 @@ PYTHON_NATIVE(strNew)
             auto buffer = bufferOrNothing(globalObject, value);
             if (!buffer)
                 return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("decoding to str: need a bytes-like object, "_s, typeName(globalObject, value), " found"_s)));
-            String text = decodeBytes(globalObject, value, *buffer, encodingValue ? String(stringIn(encodingValue)->value(globalObject)) : String(), errorsValue ? String(stringIn(errorsValue)->value(globalObject)) : String());
+            result = decodeBytesToObject(globalObject, *buffer, encodingValue ? String(stringIn(encodingValue)->value(globalObject)) : String(), errorsValue ? String(stringIn(errorsValue)->value(globalObject)) : String());
             RETURN_IF_EXCEPTION(scope, { });
-            result = jsString(vm, text);
+            // What the codec gave, unless it is for a class derived from str to make one of its own of.
+            if (type != realm->typeStr())
+                result = stringIn(result);
         }
     } else if (value) {
         result = strObject(globalObject, value);

@@ -590,6 +590,22 @@ What is written is what CPython writes, byte for byte, and each can read what th
 more than one reference to it. There is no telling that here, so everything is marked that could be, which is read the same. And code is written in the same form, with this engine's `co_code` in it: see
 *Code objects*.
 
+### Codecs
+
+`PythonCodecsUTF.cpp` and `PythonCodecsBytewise.cpp` are the codecs of `Objects/unicodeobject.c`, `PythonCodecRegistry.cpp` is `Python/codecs.c`, and `PythonCodecsModule.cpp` is `_codecs`. The rest of what CPython has, `codecs.py` and
+`encodings/`, is written in Python over those.
+
+What a codec does about what it cannot encode or decode is to call a function, which is looked up by name and can be one that a program has registered. It is told by way of an exception, and there is one for
+the whole of a call to the codec, which is told each time where the trouble is now: `DecodeErrors` and `EncodeErrors`. A decoder's exception has a copy of what is being decoded, and the handler can put something
+else there, which is what is decoded from then on. So a decoder does not keep where the bytes are across a call to a handler, and asks the exception afterwards.
+
+An encoder counts in characters, since that is what a handler is told and what it answers in: `CodePoints`, which makes nothing unless there are surrogate pairs in the string.
+
+Until `encodings` is imported when a realm is made, the names that it knows and the codecs that it has in Python over `_codecs` are known to `PythonCodecs.cpp`, in a part of it that says so and is to go.
+
+The names of characters, for `\N{...}` and `namereplace`, are ICU's, which has not the names of control characters nor abbreviations (`\N{LF}`), and is of whatever version of Unicode the system has. They are to be
+`unicodedata`'s own.
+
 ### `io`
 
 `_io` is `Modules/_io/` of CPython, file for file: `PythonIOBase.cpp`, `PythonFileIO.cpp`, `PythonBytesIO.cpp`, `PythonBufferedIO.cpp`, `PythonTextIO.cpp`, `PythonStringIO.cpp`. What matters in the port of the buffered
