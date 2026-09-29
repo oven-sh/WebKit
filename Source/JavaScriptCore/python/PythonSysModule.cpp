@@ -432,6 +432,24 @@ PYTHON_NATIVE(sysIsInterned)
     return JSValue::encode(jsBoolean(args[0].isString() && realm->isInterned(globalObject, asString(args[0]))));
 }
 
+// sys._clear_type_descriptors(type): takes out of a class the two things that a class statement puts in it for getting at the __dict__ of an instance and at what refers to it weakly. dataclasses makes a class again to
+// give it __slots__, and calls this so that the one it made it from is not kept by them.
+PYTHON_NATIVE(sysClearTypeDescriptors)
+{
+    NATIVE_PROLOGUE();
+    if (!isClass(args[0]))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("_clear_type_descriptors() argument must be type, not "_s, typeNameOfArgument(globalObject, args[0]))));
+    PyType* type = asType(args[0]);
+    if (type->isImmutable())
+        return JSValue::encode(raiseTypeError(globalObject, scope, "argument is immutable"_s));
+    // Out of what the class itself has, and not by way of anything that its own class has to say about it
+    type->deleteAttribute(vm, globalObject, names.dunder_dict);
+    RETURN_IF_EXCEPTION(scope, { });
+    type->deleteAttribute(vm, globalObject, names.dunder_weakref);
+    RETURN_IF_EXCEPTION(scope, { });
+    RETURN_NONE();
+}
+
 // sys.getsizeof(object[, default]): what __sizeof__() says, and what CPython keeps in front of an object of the kind.
 PYTHON_NATIVE(sysGetSizeOf)
 {
@@ -936,6 +954,7 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     add("_get_cpu_count_config"_s, sysGetCpuCountConfig);
     add("_clear_type_cache"_s, sysClearTypeCache);
     add("_clear_internal_caches"_s, returnNone);
+    add("_clear_type_descriptors"_s, sysClearTypeDescriptors);
     add("_debugmallocstats"_s, returnNone);
 
     // The compiler that CPython means by this is not one that there is here.

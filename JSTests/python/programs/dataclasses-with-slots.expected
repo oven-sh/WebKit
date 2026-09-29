@@ -1,0 +1,21 @@
+---- the function
+what it is => ('builtin_function_or_method', '_clear_type_descriptors', '_clear_type_descriptors', 'sys', '($module, type, /)', "Private function for clearing certain descriptors from a type's dictionary.\n\nSee gh-135228 for context.")
+what it takes out => [(['__dict__', '__weakref__'], None, [], None, [])]
+of what has only one of them => [(['__dict__'], None, []), (['__weakref__'], None, []), ([], None, []), ([], None, []), (['__dict__'], None, []), ([], None, []), (['__weakref__'], None, [])]
+and what then => [(None, "AttributeError: 'C' object has no attribute '__dict__'", 'TypeError: vars() argument must have __dict__ attribute', 1, None, 2, True, "AttributeError: 'C' object has no attribute '__weakref__'", 'mappingproxy', "AttributeError: 'C' object has no attribute 'a'")]
+what is derived from it goes on as it was => [(None, [], "AttributeError: 'D' object has no attribute '__dict__'", "AttributeError: 'C' object has no attribute '__dict__'", None, [], {})]
+whatever is there by that name => [(None, ['x'])]
+what will not do => ['TypeError: sys._clear_type_descriptors() takes exactly one argument (0 given)', 'TypeError: argument is immutable', 'TypeError: argument is immutable', 'TypeError: argument is immutable', 'TypeError: argument is immutable', 'TypeError: _clear_type_descriptors() argument must be type, not int', 'TypeError: _clear_type_descriptors() argument must be type, not None', 'TypeError: _clear_type_descriptors() argument must be type, not str', 'TypeError: _clear_type_descriptors() argument must be type, not object', 'TypeError: sys._clear_type_descriptors() takes exactly one argument (2 given)', 'TypeError: sys._clear_type_descriptors() takes no keyword arguments', 'TypeError: _clear_type_descriptors() argument must be type, not C']
+with a class of its own that has something to say => [(None, [], [])]
+---- what it is for
+a dataclass with slots => (('x', 'y'), [], 'P(x=1, y=2)', True, "AttributeError: 'P' object has no attribute '__dict__'", "AttributeError: 'P' object has no attribute 'z' and no __dict__ for setting new attributes", "TypeError: cannot create weak reference to 'P' object", ['x', 'y'], {'x': 1, 'y': 2}, (3, 4), P(x=1, y=5), 'P', '__main__', ('x', 'y'), True)
+copied and pickled => (P(x=1, y=2), P(x=1, y=[2]), ['TypeError: a class that defines __slots__ without defining __getstate__ cannot be pickled', 'TypeError: a class that defines __slots__ without defining __getstate__ cannot be pickled', P(x=1, y=2), P(x=1, y=2), P(x=1, y=2), P(x=1, y=2)], (None, {'x': 1, 'y': 2}))
+frozen => (Frozen(a=1, b=()), True, "FrozenInstanceError: cannot assign to field 'a'", "FrozenInstanceError: cannot delete field 'a'", 1, Frozen(a=1, b=(2,)), Frozen(a=1, b=()), ('a', 'b'))
+that can be referred to weakly => [(('a', '__weakref__'), ['__weakref__'], True), 'TypeError: weakref_slot is True but slots is False']
+derived from one another => (('a',), ('b',), Derived(a=1, b=2), "AttributeError: 'Derived' object has no attribute 'z' and no __dict__ for setting new attributes", Plain(a=1, c=2), {'c': 0}, ['__dict__', '__weakref__'], ['Derived', 'Base', 'object'])
+whose methods know which class they are in => (('<__main__.', 'WithSuper'), 'WithSuper', True, True, 'WithSuper', True)
+with fields of every kind => (Defaults(a=[], c='c', d=0, e=1), Defaults(a=[1], c='x', d=0, e=3), ('a', 'b', 'c', 'd', 'e'), True, True, "TypeError: Defaults.__init__() got an unexpected keyword argument 'd'", <member 'b' of 'Defaults' objects>, 'member_descriptor')
+what will not do => ['TypeError: S already specifies __slots__', ('a',), M(a=1, b=5), ('a',)]
+that is generic => (Generic(v=1), Generic(v=2), ('v',), (T,), (T,), 'Generic[int]', (typing.Generic[T],))
+the first of the two is let go of => [(0, True)]
+what stopped a great deal from being imported => ('type', (), 'Theme')
