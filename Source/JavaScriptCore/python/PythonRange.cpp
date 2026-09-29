@@ -267,9 +267,22 @@ JSValue rangeGetItem(JSGlobalObject* globalObject, PyRange* range, JSValue key)
     RELEASE_AND_RETURN(scope, itemAt(globalObject, range, index));
 }
 
+// range_iter(): what goes through it counts in an int64_t only if one step past the last of them is not too much for one, which is where such an iterator says that it stops when it is pickled.
+static bool isIteratedInSmall(PyRange* range)
+{
+    if (!range->isSmall())
+        return false;
+    if (!range->smallLength())
+        return true;
+    int64_t step = range->smallStep();
+    if (step > 0)
+        return range->smallStop() <= std::numeric_limits<int64_t>::max() - (step - 1);
+    return range->smallStop() >= std::numeric_limits<int64_t>::min() + (-1 - step);
+}
+
 JSValue rangeIterator(JSGlobalObject* globalObject, PyRange* range)
 {
-    if (range->isSmall()) [[likely]]
+    if (isIteratedInSmall(range)) [[likely]]
         return PyIterator::create(globalObject, PyIterator::Kind::Range, JSValue(), JSValue(), range->smallStart(), range->smallLength(), range->smallStep());
     return PyIterator::create(globalObject, PyIterator::Kind::LongRange, range, jsNumber(0));
 }
@@ -312,7 +325,17 @@ PYTHON_NATIVE(rangeReversed)
 {
     NATIVE_PROLOGUE();
     PyRange* range = asRange(args[0]);
-    if (range->isSmall()) [[likely]] {
+    // range_reverse(): likewise, and here it is one step before the first.
+    auto isReversedInSmall = [&] {
+        if (!range->isSmall())
+            return false;
+        uint64_t start = static_cast<uint64_t>(range->smallStart());
+        uint64_t step = static_cast<uint64_t>(range->smallStep());
+        if (range->smallStep() > 0)
+            return start - static_cast<uint64_t>(std::numeric_limits<int64_t>::min()) >= step;
+        return static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - start >= 0 - step;
+    };
+    if (isReversedInSmall()) [[likely]] {
         uint64_t last = static_cast<uint64_t>(range->smallStart()) + (static_cast<uint64_t>(range->smallLength()) - 1) * static_cast<uint64_t>(range->smallStep());
         return JSValue::encode(PyIterator::create(globalObject, PyIterator::Kind::Range, JSValue(), JSValue(), static_cast<int64_t>(last), range->smallLength(), -range->smallStep()));
     }

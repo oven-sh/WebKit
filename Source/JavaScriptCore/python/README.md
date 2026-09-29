@@ -197,6 +197,12 @@ from the executable is in environments of the same shape.
 called and jumps to what it was compiled to, so all that were linked to the old code are unlinked. The DFG makes no `DirectCall` to a function of Python's, that being
 linked to an executable for good.
 
+### How long a list is is not kept either
+
+Anything that compares the elements of a list, or makes a number of an index, runs a program's code, which can make the list shorter. So how long it is is asked for again after each such thing, as CPython asks for `Py_SIZE()`
+in the condition of the loop. To read past the end of a list is safe, since `listGet()` looks first, but what it finds there is `undefined`, which is `None`: `l.index(None)` found a `None` in a list that had just been emptied, and
+`l[i] = x` wrote past the end of one. `list-changed-meanwhile.py` does everything to a list that runs a program's code, with elements that change the list in eight ways.
+
 ### Where the bytes are is not kept
 
 What is in a `bytearray` moves when it is resized, and JavaScript can give an `ArrayBuffer` away. Either can be done by anything that runs a program's code, and looking at

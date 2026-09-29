@@ -1,0 +1,345 @@
+---- empties it
+b[i] => 'IndexError: bytearray index out of range' | bytearray(b'')
+b[-i] => 'IndexError: bytearray index out of range' | bytearray(b'')
+b[i] = v => 'IndexError: bytearray index out of range' | bytearray(b'')
+b[5] = i => 'IndexError: bytearray index out of range' | bytearray(b'')
+b[-1] = i => 'IndexError: bytearray index out of range' | bytearray(b'')
+b[i] = i => 'IndexError: bytearray index out of range' | bytearray(b'')
+del b[i] => 'IndexError: bytearray index out of range' | bytearray(b'')
+b[i:j] => bytearray(b'') | bytearray(b'')
+b[::i] => bytearray(b'') | bytearray(b'')
+b[i:j] = bytes => None | bytearray(b'XY')
+b[2:6] = what has bytes => None | bytearray(b'XY')
+b[2:6] = an iterator => None | bytearray(b'XY')
+b[::2] = what has bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 0' | bytearray(b'')
+b[::2] = an iterator => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 0' | bytearray(b'')
+b[::i] = bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 0' | bytearray(b'')
+b[:] = itself by way of an iterator => None | bytearray(b'WXYZ')
+del b[i:j] => None | bytearray(b'')
+del b[::i] => None | bytearray(b'')
+append => None | bytearray(b'A')
+insert at i => None | bytearray(b'A')
+insert i => None | bytearray(b'A')
+insert i at i => None | bytearray(b'A')
+pop => 'IndexError: pop from empty bytearray' | bytearray(b'')
+pop from the end => 'IndexError: pop from empty bytearray' | bytearray(b'')
+remove => 'ValueError: value not found in bytearray' | bytearray(b'')
+extend by an iterator => None | bytearray(b'XY')
+extend by numbers that change it => None | bytearray(b'AB')
++= => bytearray(b'XY') | bytearray(b'XY')
+* => "bytearray(b'')" | bytearray(b'')
+*= => "bytearray(b'')" | bytearray(b'')
+count from i to j => 0 | bytearray(b'')
+find from i => -1 | bytearray(b'')
+rfind to j => -1 | bytearray(b'')
+startswith from i => False | bytearray(b'')
+replace => bytearray(b'') | bytearray(b'')
+replace so many => bytearray(b'') | bytearray(b'')
+split so many => [bytearray(b'')] | bytearray(b'')
+partition => (bytearray(b''), bytearray(b''), bytearray(b'')) | bytearray(b'')
+rpartition => (bytearray(b''), bytearray(b''), bytearray(b'')) | bytearray(b'')
+strip => bytearray(b'') | bytearray(b'')
+lstrip => bytearray(b'') | bytearray(b'')
+removeprefix => bytearray(b'') | bytearray(b'')
+removesuffix => bytearray(b'') | bytearray(b'')
+center => bytearray(b'************') | bytearray(b'')
+ljust => bytearray(b'            ') | bytearray(b'')
+rjust => bytearray(b'------------') | bytearray(b'')
+zfill => bytearray(b'000000000000') | bytearray(b'')
+expandtabs => bytearray(b'') | bytearray(b'')
+translate => bytearray(b'') | bytearray(b'')
+translate, deleting => bytearray(b'') | bytearray(b'')
+hex => "''" | bytearray(b'')
+% a number => bytearray(b'5|A|') | bytearray(b'')
+resize => None | bytearray(b'\x00\x00\x00')
+bytearray(b, ...) => "bytearray(b'abcdefgh')" | bytearray(b'')
+bytes of an iterator over it => "b'abcdefgh'" | bytearray(b'')
+int.from_bytes => 24930 | bytearray(b'')
+d[i] => 'IndexError: deque index out of range' | deque([])
+d[i] = v => 'IndexError: deque index out of range' | deque([])
+del d[i] => 'IndexError: deque index out of range' | deque([])
+insert => None | deque(['in'])
+rotate => None | deque([])
+* => 0 | deque([])
+*= => 0 | deque([])
+index from i => 'ValueError: deque.index(x): x not in deque' | deque([])
+index from i to j => 'ValueError: deque.index(x): x not in deque' | deque([])
+extend by an iterator => None | deque([89])
+extendleft by an iterator => None | deque([89])
++= => deque([89]) | deque([89])
+---- leaves one
+b[i] => 'IndexError: bytearray index out of range' | bytearray(b'a')
+b[-i] => 'IndexError: bytearray index out of range' | bytearray(b'a')
+b[i] = v => 'IndexError: bytearray index out of range' | bytearray(b'a')
+b[5] = i => 'IndexError: bytearray index out of range' | bytearray(b'a')
+b[-1] = i => None | bytearray(b'A')
+b[i] = i => 'IndexError: bytearray index out of range' | bytearray(b'a')
+del b[i] => 'IndexError: bytearray index out of range' | bytearray(b'a')
+b[i:j] => bytearray(b'') | bytearray(b'a')
+b[::i] => bytearray(b'a') | bytearray(b'a')
+b[i:j] = bytes => None | bytearray(b'aXY')
+b[2:6] = what has bytes => None | bytearray(b'aXY')
+b[2:6] = an iterator => None | bytearray(b'aXY')
+b[::2] = what has bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 1' | bytearray(b'a')
+b[::2] = an iterator => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 1' | bytearray(b'a')
+b[::i] = bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 1' | bytearray(b'a')
+b[:] = itself by way of an iterator => None | bytearray(b'WXYZ')
+del b[i:j] => None | bytearray(b'a')
+del b[::i] => None | bytearray(b'')
+append => None | bytearray(b'aA')
+insert at i => None | bytearray(b'aA')
+insert i => None | bytearray(b'aA')
+insert i at i => None | bytearray(b'aA')
+pop => 'IndexError: pop index out of range' | bytearray(b'a')
+pop from the end => 97 | bytearray(b'')
+remove => 'ValueError: value not found in bytearray' | bytearray(b'a')
+extend by an iterator => None | bytearray(b'aXY')
+extend by numbers that change it => None | bytearray(b'aAB')
++= => bytearray(b'aXY') | bytearray(b'aXY')
+* => "bytearray(b'aa')" | bytearray(b'a')
+*= => "bytearray(b'aa')" | bytearray(b'aa')
+count from i to j => 0 | bytearray(b'a')
+find from i => -1 | bytearray(b'a')
+rfind to j => -1 | bytearray(b'a')
+startswith from i => False | bytearray(b'a')
+replace => bytearray(b'a') | bytearray(b'a')
+replace so many => bytearray(b'a') | bytearray(b'a')
+split so many => [bytearray(b'a')] | bytearray(b'a')
+partition => (bytearray(b'a'), bytearray(b''), bytearray(b'')) | bytearray(b'a')
+rpartition => (bytearray(b''), bytearray(b''), bytearray(b'a')) | bytearray(b'a')
+strip => bytearray(b'') | bytearray(b'a')
+lstrip => bytearray(b'') | bytearray(b'a')
+removeprefix => bytearray(b'a') | bytearray(b'a')
+removesuffix => bytearray(b'a') | bytearray(b'a')
+center => bytearray(b'*****a******') | bytearray(b'a')
+ljust => bytearray(b'a           ') | bytearray(b'a')
+rjust => bytearray(b'-----------a') | bytearray(b'a')
+zfill => bytearray(b'00000000000a') | bytearray(b'a')
+expandtabs => bytearray(b'a') | bytearray(b'a')
+translate => bytearray(b'\x9e') | bytearray(b'a')
+translate, deleting => bytearray(b'a') | bytearray(b'a')
+hex => "'61'" | bytearray(b'a')
+% a number => bytearray(b'5|A|a') | bytearray(b'a')
+resize => None | bytearray(b'a\x00\x00')
+bytearray(b, ...) => "bytearray(b'abcdefgh')" | bytearray(b'a')
+bytes of an iterator over it => "b'abcdefgh'" | bytearray(b'a')
+int.from_bytes => 24930 | bytearray(b'a')
+d[i] => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+d[i] = v => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+del d[i] => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+insert => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+rotate => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+* => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+*= => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+index from i => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+index from i to j => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+extend by an iterator => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+extendleft by an iterator => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
++= => "TypeError: 'slice' object cannot be interpreted as an integer" | deque([97, 98, 99, 100, 101, 102, 103, 104])
+---- takes one off
+b[i] => 102 | bytearray(b'abcdefg')
+b[-i] => 102 | bytearray(b'abcdefg')
+b[i] = v => None | bytearray(b'abcdeAg')
+b[5] = i => None | bytearray(b'abcdeAg')
+b[-1] = i => None | bytearray(b'abcdefA')
+b[i] = i => None | bytearray(b'abcdeA')
+del b[i] => None | bytearray(b'abcdeg')
+b[i:j] => bytearray(b'cdef') | bytearray(b'abcdef')
+b[::i] => bytearray(b'aceg') | bytearray(b'abcdefg')
+b[i:j] = bytes => None | bytearray(b'abXY')
+b[2:6] = what has bytes => None | bytearray(b'abXYg')
+b[2:6] = an iterator => None | bytearray(b'abXY')
+b[::2] = what has bytes => None | bytearray(b'WbXdYfZ')
+b[::2] = an iterator => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 2' | bytearray(b'abcd')
+b[::i] = bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 3' | bytearray(b'abcdef')
+b[:] = itself by way of an iterator => None | bytearray(b'WXYZ')
+del b[i:j] => None | bytearray(b'ab')
+del b[::i] => None | bytearray(b'bdf')
+append => None | bytearray(b'abcdefgA')
+insert at i => None | bytearray(b'abcdeAfg')
+insert i => None | bytearray(b'abcdeAfg')
+insert i at i => None | bytearray(b'abcdeAf')
+pop => 102 | bytearray(b'abcdeg')
+pop from the end => 103 | bytearray(b'abcdef')
+remove => None | bytearray(b'abcdfg')
+extend by an iterator => None | bytearray(b'abcdefXY')
+extend by numbers that change it => None | bytearray(b'abcdefAB')
++= => bytearray(b'abcdefgXY') | bytearray(b'abcdefgXY')
+* => "bytearray(b'abcdefgabcdefg')" | bytearray(b'abcdefg')
+*= => "bytearray(b'abcdefgabcdefg')" | bytearray(b'abcdefgabcdefg')
+count from i to j => 1 | bytearray(b'abcdef')
+find from i => 6 | bytearray(b'abcdefg')
+rfind to j => 6 | bytearray(b'abcdefg')
+startswith from i => True | bytearray(b'abcdefg')
+replace => bytearray(b'abXYZdef') | bytearray(b'abcdef')
+replace so many => bytearray(b'abXYZdefg') | bytearray(b'abcdefg')
+split so many => [bytearray(b'abc'), bytearray(b'efg')] | bytearray(b'abcdefg')
+partition => (bytearray(b'abc'), bytearray(b'd'), bytearray(b'efg')) | bytearray(b'abcdefg')
+rpartition => (bytearray(b'abc'), bytearray(b'd'), bytearray(b'efg')) | bytearray(b'abcdefg')
+strip => bytearray(b'bcdefg') | bytearray(b'abcdefg')
+lstrip => bytearray(b'bcdefg') | bytearray(b'abcdefg')
+removeprefix => bytearray(b'cdefg') | bytearray(b'abcdefg')
+removesuffix => bytearray(b'abcdefg') | bytearray(b'abcdefg')
+center => bytearray(b'**abcdefg***') | bytearray(b'abcdefg')
+ljust => bytearray(b'abcdefg     ') | bytearray(b'abcdefg')
+rjust => bytearray(b'-----abcdefg') | bytearray(b'abcdefg')
+zfill => bytearray(b'00000abcdefg') | bytearray(b'abcdefg')
+expandtabs => bytearray(b'abcdefg') | bytearray(b'abcdefg')
+translate => bytearray(b'\x9e\x9d\x9c\x9b\x9a\x99\x98') | bytearray(b'abcdefg')
+translate, deleting => bytearray(b'abdfg') | bytearray(b'abcdefg')
+hex => "'61:6263:6465:6667'" | bytearray(b'abcdefg')
+% a number => bytearray(b'5|A|abcdefg') | bytearray(b'abcdefg')
+resize => None | bytearray(b'abc')
+bytearray(b, ...) => "bytearray(b'abcdefgh')" | bytearray(b'')
+bytes of an iterator over it => "b'abcdefgh'" | bytearray(b'')
+int.from_bytes => 24930 | bytearray(b'abcdef')
+d[i] => 102 | deque([97, 98, 99, 100, 101, 102, 103])
+d[i] = v => None | deque([97, 98, 99, 100, 101, 'set', 103])
+del d[i] => None | deque([97, 98, 99, 100, 101, 103])
+insert => None | deque([97, 98, 99, 100, 101, 'in', 102, 103])
+rotate => None | deque([101, 102, 103, 97, 98, 99, 100])
+* => 14 | deque([97, 98, 99, 100, 101, 102, 103])
+*= => 14 | deque([97, 98, 99, 100, 101, 102, 103, 97, 98, 99, 100, 101, 102, 103])
+index from i => 6 | deque([97, 98, 99, 100, 101, 102, 103])
+index from i to j => 'ValueError: deque.index(x): x not in deque' | deque([97, 98, 99, 100, 101, 102])
+extend by an iterator => None | deque([97, 98, 99, 100, 101, 102, 103, 89])
+extendleft by an iterator => None | deque([89, 88, 97, 98, 99, 100, 101, 102])
++= => deque([97, 98, 99, 100, 101, 102, 103, 89]) | deque([97, 98, 99, 100, 101, 102, 103, 89])
+---- makes it much longer
+b[i] => 102 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[-i] => 0 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[i] = v => None | bytearray(b'abcdeAgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[5] = i => None | bytearray(b'abcdeAgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[-1] = i => None | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400019
+b[i] = i => None | bytearray(b'abcdeAgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+del b[i] => None | bytearray(b'abcdegh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\... 400021
+b[i:j] => bytearray(b'cdef') | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[::i] => bytearray(b'aceg\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 200018 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[i:j] = bytes => None | bytearray(b'abXYgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x... 400020
+b[2:6] = what has bytes => None | bytearray(b'abXYgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x... 400020
+b[2:6] = an iterator => None | bytearray(b'abXYgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x... 400020
+b[::2] = what has bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 50004' | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[::2] = an iterator => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 50004' | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[::i] = bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 50004' | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+b[:] = itself by way of an iterator => None | bytearray(b'WXYZ')
+del b[i:j] => None | bytearray(b'abgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400018
+del b[::i] => None | bytearray(b'bdfh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 200018
+append => None | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400023
+insert at i => None | bytearray(b'abcdeAfgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0... 400023
+insert i => None | bytearray(b'abcdeAfgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0... 400023
+insert i at i => None | bytearray(b'abcdeAfgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0... 400023
+pop => 102 | bytearray(b'abcdegh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\... 400021
+pop from the end => 0 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400018
+remove => None | bytearray(b'abcdfgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\... 400021
+extend by an iterator => None | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400024
+extend by numbers that change it => None | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400024
++= => bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400024 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400024
+* => "bytearray(b'abcdefgh\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x0... 157 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+*= => "bytearray(b'abcdefgh\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x00\\x0... 157 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 800030
+count from i to j => 1 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+find from i => 6 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+rfind to j => 6 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+startswith from i => True | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+replace => bytearray(b'abXYZdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x... 400024 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+replace so many => bytearray(b'abXYZdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x... 400024 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+split so many => [bytearray(b'abc'), bytearray(b'efgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400039 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+partition => (bytearray(b'abc'), bytearray(b'd'), bytearray(b'efgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0... 400056 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+rpartition => (bytearray(b'abc'), bytearray(b'd'), bytearray(b'efgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x0... 400056 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+strip => bytearray(b'bcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\... 400021 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+lstrip => bytearray(b'bcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\... 400021 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+removeprefix => bytearray(b'cdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x... 400020 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+removesuffix => bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+center => bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+ljust => bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+rjust => bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+zfill => bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+expandtabs => bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+translate => bytearray(b'\x9e\x9d\x9c\x9b\x9a\x99\x98\x97\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff... 400046 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+translate, deleting => bytearray(b'abdfgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x... 400020 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+hex => "'6162:6364:6566:6768:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:0000:000... 132 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+% a number => bytearray(b'5|A|abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400026 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+resize => None | bytearray(b'abc')
+bytearray(b, ...) => "bytearray(b'abcdefgh')" | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+bytes of an iterator over it => "b'abcdefgh'" | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+int.from_bytes => 24930 | bytearray(b'abcdefgh\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00... 400022
+d[i] => 102 | deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300044
+d[i] = v => None | deque([97, 98, 99, 100, 101, 'set', 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,... 300046
+del d[i] => None | deque([97, 98, 99, 100, 101, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ... 300039
+insert => None | deque([97, 98, 99, 100, 101, 'in', 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300050
+rotate => None | deque([0, 0, 0, 97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300044
+* => 200016 | deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300044
+*= => 200016 | deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 600081
+index from i => 6 | deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300044
+index from i to j => 6 | deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300044
+extend by an iterator => None | deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300052
+extendleft by an iterator => None | deque([89, 88, 97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,... 300052
++= => deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300052 | deque([97, 98, 99, 100, 101, 102, 103, 104, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0... 300052
+---- empties it and fills it again
+b[i] => 'IndexError: bytearray index out of range' | bytearray(b'zzzz')
+b[-i] => 122 | bytearray(b'zzzz')
+b[i] = v => 'IndexError: bytearray index out of range' | bytearray(b'zzzz')
+b[5] = i => 'IndexError: bytearray index out of range' | bytearray(b'zzzz')
+b[-1] = i => None | bytearray(b'zzzA')
+b[i] = i => 'IndexError: bytearray index out of range' | bytearray(b'zzzz')
+del b[i] => 'IndexError: bytearray index out of range' | bytearray(b'zzzz')
+b[i:j] => bytearray(b'zz') | bytearray(b'zzzz')
+b[::i] => bytearray(b'zz') | bytearray(b'zzzz')
+b[i:j] = bytes => None | bytearray(b'zzXY')
+b[2:6] = what has bytes => None | bytearray(b'zzXY')
+b[2:6] = an iterator => None | bytearray(b'zzXY')
+b[::2] = what has bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 2' | bytearray(b'zzzz')
+b[::2] = an iterator => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 2' | bytearray(b'zzzz')
+b[::i] = bytes => 'ValueError: attempt to assign bytes of size 4 to extended slice of size 2' | bytearray(b'zzzz')
+b[:] = itself by way of an iterator => None | bytearray(b'WXYZ')
+del b[i:j] => None | bytearray(b'zz')
+del b[::i] => None | bytearray(b'zz')
+append => None | bytearray(b'zzzzA')
+insert at i => None | bytearray(b'zzzzA')
+insert i => None | bytearray(b'zzzzA')
+insert i at i => None | bytearray(b'zzzzA')
+pop => 'IndexError: pop index out of range' | bytearray(b'zzzz')
+pop from the end => 122 | bytearray(b'zzz')
+remove => 'ValueError: value not found in bytearray' | bytearray(b'zzzz')
+extend by an iterator => None | bytearray(b'zzzzXY')
+extend by numbers that change it => None | bytearray(b'zzzzAB')
++= => bytearray(b'zzzzXY') | bytearray(b'zzzzXY')
+* => "bytearray(b'zzzzzzzz')" | bytearray(b'zzzz')
+*= => "bytearray(b'zzzzzzzz')" | bytearray(b'zzzzzzzz')
+count from i to j => 0 | bytearray(b'zzzz')
+find from i => -1 | bytearray(b'zzzz')
+rfind to j => -1 | bytearray(b'zzzz')
+startswith from i => False | bytearray(b'zzzz')
+replace => bytearray(b'zzzz') | bytearray(b'zzzz')
+replace so many => bytearray(b'zzzz') | bytearray(b'zzzz')
+split so many => [bytearray(b'zzzz')] | bytearray(b'zzzz')
+partition => (bytearray(b'zzzz'), bytearray(b''), bytearray(b'')) | bytearray(b'zzzz')
+rpartition => (bytearray(b''), bytearray(b''), bytearray(b'zzzz')) | bytearray(b'zzzz')
+strip => bytearray(b'zzzz') | bytearray(b'zzzz')
+lstrip => bytearray(b'zzzz') | bytearray(b'zzzz')
+removeprefix => bytearray(b'zzzz') | bytearray(b'zzzz')
+removesuffix => bytearray(b'zzzz') | bytearray(b'zzzz')
+center => bytearray(b'****zzzz****') | bytearray(b'zzzz')
+ljust => bytearray(b'zzzz        ') | bytearray(b'zzzz')
+rjust => bytearray(b'--------zzzz') | bytearray(b'zzzz')
+zfill => bytearray(b'00000000zzzz') | bytearray(b'zzzz')
+expandtabs => bytearray(b'zzzz') | bytearray(b'zzzz')
+translate => bytearray(b'\x85\x85\x85\x85') | bytearray(b'zzzz')
+translate, deleting => bytearray(b'zzzz') | bytearray(b'zzzz')
+hex => "'7a7a:7a7a'" | bytearray(b'zzzz')
+% a number => bytearray(b'5|A|zzzz') | bytearray(b'zzzz')
+resize => None | bytearray(b'zzz')
+bytearray(b, ...) => "bytearray(b'abcdefgh')" | bytearray(b'zzzz')
+bytes of an iterator over it => "b'abcdefgh'" | bytearray(b'zzzz')
+int.from_bytes => 24930 | bytearray(b'zzzz')
+d[i] => 'IndexError: deque index out of range' | deque([122, 122, 122, 122])
+d[i] = v => 'IndexError: deque index out of range' | deque([122, 122, 122, 122])
+del d[i] => 'IndexError: deque index out of range' | deque([122, 122, 122, 122])
+insert => None | deque([122, 122, 122, 122, 'in'])
+rotate => None | deque([122, 122, 122, 122])
+* => 8 | deque([122, 122, 122, 122])
+*= => 8 | deque([122, 122, 122, 122, 122, 122, 122, 122])
+index from i => 'ValueError: deque.index(x): x not in deque' | deque([122, 122, 122, 122])
+index from i to j => 'ValueError: deque.index(x): x not in deque' | deque([122, 122, 122, 122])
+extend by an iterator => None | deque([122, 122, 122, 122, 89])
+extendleft by an iterator => None | deque([89, 122, 122, 122, 122])
++= => deque([122, 122, 122, 122, 89]) | deque([122, 122, 122, 122, 89])
