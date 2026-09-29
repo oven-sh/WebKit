@@ -8,9 +8,12 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTBuiltins.h"
+#include "ImmutableIntrinsics.h"
 #include "BytecodeStructs.h"
 #include "JSCInlines.h"
 #include "UnlinkedCodeBlock.h"
+#include "UnlinkedFunctionCodeBlock.h"
 
 namespace JSC { namespace AOT {
 
@@ -58,6 +61,10 @@ public:
                 default:
                     break;
                 }
+                if (calleesGivenMore) {
+                    noteArgumentsOf(node);
+                    noteWhatIsPutInVariablesBy(node);
+                }
             }
         }
         // What is still None is code that no execution reaches with a value. It gets compiled all the same.
@@ -75,10 +82,143 @@ public:
 
     Type returnType() const { return m_returnType; }
     Vector<const KnownFunction*>* calleesConsulted { nullptr };
+    Vector<const KnownFunction*>* calleesGivenMore { nullptr };
 
 private:
+    void noteWhatIsPutInVariablesBy(Node* node)
+    {
+        VariableFacts* facts = m_graph.variableFacts();
+        if (!facts)
+            return;
+        auto noteInitialValue = [&](VirtualRegister initialValue) {
+            if (const void* scope = m_graph.identityOfScope(node))
+                facts->join({ scope, Variable::initialValue }, node->use(initialValue)->type);
+        };
+        switch (node->opcode) {
+        case op_put_to_scope:
+            if (Variable variable = m_graph.variableAccessedBy(node))
+                facts->join(variable, node->use(node->as<OpPutToScope>().m_value)->type);
+            return;
+        case op_create_lexical_environment:
+            noteInitialValue(node->as<OpCreateLexicalEnvironment>().m_initialValue);
+            return;
+        case op_create_generator_frame_environment:
+            noteInitialValue(node->as<OpCreateGeneratorFrameEnvironment>().m_initialValue);
+            return;
+        default:
+            return;
+        }
+    }
+
+    void noteArgumentsOf(Node* node)
+    {
+        unsigned argc;
+        unsigned argv;
+        switch (node->opcode) {
+        case op_call:
+            argc = node->as<OpCall>().m_argc;
+            argv = node->as<OpCall>().m_argv;
+            break;
+        case op_call_ignore_result:
+            argc = node->as<OpCallIgnoreResult>().m_argc;
+            argv = node->as<OpCallIgnoreResult>().m_argv;
+            break;
+        case op_tail_call:
+            argc = node->as<OpTailCall>().m_argc;
+            argv = node->as<OpTailCall>().m_argv;
+            break;
+        default:
+            return;
+        }
+        bool isProven = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
+        if (!known || !isProven || !known->forCall || !known->facts || !known->facts->isClosed)
+            return;
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        // A call that nothing has been seen to get to, so far, passes nothing, so far.
+        for (unsigned i = 0; i < argc; ++i) {
+            if (!node->use(VirtualRegister(firstArgument + i))->type)
+                return;
+        }
+        bool givesMore = false;
+        unsigned count = std::min<unsigned>(known->forCall->numParameters(), ProgramFacts::mostParameters);
+        for (unsigned i = 1; i < count; ++i) {
+            Type type = i < argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
+            Type before = known->facts->parameterTypes[i].fetch_or(type, std::memory_order_relaxed);
+            givesMore |= (before | type) != before;
+        }
+        // (One with no parameters is reached all the same.)
+        Type before = known->facts->parameterTypes[0].fetch_or(TTop, std::memory_order_relaxed);
+        givesMore |= before != TTop;
+        if (givesMore && !calleesGivenMore->contains(known))
+            calleesGivenMore->append(known);
+    }
+
+    // A call of one of the functions of the language itself, if that is what it is bound to be.
+    std::optional<Type> resultOfCallOfBuiltin(Node* node)
+    {
+        if (!Options::aotKnowsWhatBuiltinsReturn())
+            return std::nullopt;
+        VirtualRegister calleeRegister;
+        unsigned argc;
+        unsigned argv;
+        if (node->isBytecode(op_call)) {
+            auto bytecode = node->as<OpCall>();
+            calleeRegister = bytecode.m_callee;
+            argc = bytecode.m_argc;
+            argv = bytecode.m_argv;
+        } else if (node->isBytecode(op_tail_call)) {
+            auto bytecode = node->as<OpTailCall>();
+            calleeRegister = bytecode.m_callee;
+            argc = bytecode.m_argc;
+            argv = bytecode.m_argv;
+        } else
+            return std::nullopt;
+        Node* callee = node->use(calleeRegister);
+        unsigned number = 0;
+        if (callee->kind == NodeKind::Intrinsic)
+            number = callee->intrinsic;
+        else if (callee->isBytecode(op_get_by_id)) {
+            auto bytecode = callee->as<OpGetById>();
+            Type base = callee->use(bytecode.m_base)->type;
+            if (!base)
+                return TNone;
+            number = intrinsicFoundOnPrimitive(base, *m_graph.codeBlock()->identifier(bytecode.m_property).impl());
+        }
+        if (!number)
+            return std::nullopt;
+        auto signature = signatureOfIntrinsic(number);
+        if (!signature)
+            return std::nullopt;
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        switch (signature->condition) {
+        case BuiltinSignature::Condition::Always:
+            break;
+        case BuiltinSignature::Condition::IfFirstArgumentIsNoObject: {
+            if (argc < 2)
+                break;
+            Type first = node->use(VirtualRegister(firstArgument + 1))->type;
+            if (!first)
+                return TNone;
+            if (!isSubtype(first, TPrimitive))
+                return std::nullopt;
+            break;
+        }
+        case BuiltinSignature::Condition::IfThisIsHolder: {
+            Node* thisValue = node->use(VirtualRegister(firstArgument));
+            const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
+            if (thisValue->kind != NodeKind::Intrinsic || thisValue->intrinsic != intrinsics->at(intrinsics->at(number).holder).canonical)
+                return std::nullopt;
+            break;
+        }
+        }
+        return signature->result;
+    }
+
     Type resultOfCall(Node* node)
     {
+        if (auto result = resultOfCallOfBuiltin(node))
+            return *result;
         bool isProven = false;
         const KnownFunction* known = m_graph.knownCallee(node, &isProven);
         if (!known || !isProven || !known->forCall)
@@ -386,8 +526,13 @@ private:
         case op_create_generator_frame_environment:
         case op_push_with_scope:
             return TObject;
-        case op_to_object:
         case op_construct:
+            if (Node* callee = node->use(node->as<OpConstruct>().m_callee); callee->kind == NodeKind::Intrinsic && Options::aotKnowsWhatBuiltinsReturn()) {
+                if (auto result = resultOfConstructingIntrinsic(callee->intrinsic))
+                    return *result;
+            }
+            return TAnyObject;
+        case op_to_object:
         case op_super_construct:
         case op_construct_varargs:
         case op_super_construct_varargs:
@@ -496,6 +641,14 @@ private:
             bool isProven = false;
             if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isProven); known && isProven)
                 return known->isDeclaration ? TFunction : TFunction | TUndefined | TEmpty;
+            if (VariableFacts* facts = m_graph.variableFacts()) {
+                if (Variable variable = m_graph.variableAccessedBy(node)) {
+                    auto bytecode = node->as<OpGetFromScope>();
+                    Type type = facts->read(variable, m_graph.codeBlock()->identifier(bytecode.m_var).impl(), m_graph.readerOfFacts());
+                    // (A function that a module declares is made when it is first read, by whatever reads it.)
+                    return bytecode.m_getPutInfo.resolveType() == ResolvedLazyClosureVar ? type | TFunction : type;
+                }
+            }
             return TAll;
         }
         default:
@@ -512,10 +665,11 @@ private:
 
 } // anonymous namespace
 
-Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesConsulted)
+Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesConsulted, Vector<const KnownFunction*>* calleesGivenMore)
 {
     TypeInference inference(graph);
     inference.calleesConsulted = calleesConsulted;
+    inference.calleesGivenMore = calleesGivenMore;
     inference.run();
     return inference.returnType();
 }

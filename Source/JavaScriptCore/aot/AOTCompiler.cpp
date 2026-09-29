@@ -227,6 +227,8 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
     };
     auto typeName = [&](Type type) -> ASCIILiteral {
         if (!type) return "nothing"_s;
+        if (type & ~(TOther | TEmpty))
+            type &= ~(TOther | TEmpty);
         if (isSubtype(type, TInt32)) return "int32"_s;
         if (isSubtype(type, TNumber)) return "number"_s;
         if (isSubtype(type, TString)) return "string"_s;
@@ -356,6 +358,8 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
                     count("CALL method"_s);
                     count(makeString("METHODBASE "_s, origin(callee->use(callee->as<OpGetById>().m_base)), ", "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type)));
                     count(makeString("METHODNAME "_s, StringView(codeBlock->identifier(callee->as<OpGetById>().m_property).impl())));
+                    count(makeString("METHODON "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type)));
+                    count(makeString("METHODOF "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type), " . "_s, StringView(codeBlock->identifier(callee->as<OpGetById>().m_property).impl())));
                 } else {
                     count(makeString("CALL "_s, origin(callee)));
                     if (callee->kind == NodeKind::ConstantCell) {
@@ -430,10 +434,12 @@ static bool mayStartCold(UnlinkedCodeBlock* unlinkedCodeBlock)
     return true;
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeChain& scopeChain, const CalleeHints* hints, const ModuleLinkage* linkage, void* ownerForLinkBuffer, RefPtr<JITCode>& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, bool hasDirectEntry = false)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeChain& scopeChain, const CalleeHints* hints, const ModuleLinkage* linkage, void* ownerForLinkBuffer, RefPtr<JITCode>& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, bool hasDirectEntry = false, const ProgramFacts* facts = nullptr, VariableFacts* variableFacts = nullptr)
 {
     Graph graph(vm, unlinkedCodeBlock, scopeChain);
     graph.setCalleeHints(hints);
+    graph.setFacts(facts);
+    graph.setVariableFacts(variableFacts);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     // (It is code in an image that gets to.)
     graph.startsCold = (!ownerForLinkBuffer || Options::aotWriteImage()) && mayStartCold(unlinkedCodeBlock);
@@ -752,23 +758,38 @@ static void recordStatistics(bool ok, size_t codeBytes, size_t bytecodeBytes, Se
     }
 }
 
-uint32_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, Vector<const KnownFunction*>& calleesConsulted)
+bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FactsOfExecutables& factsOfExecutables, VariableFacts* variableFacts, Vector<String>& importedDynamically)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     if (!parseBytecode(graph))
-        return TTop;
-    return inferTypes(graph, &calleesConsulted) & TTop;
+        return false;
+    graph.noteUsesOfProvenFunctions(factsOfExecutables, importedDynamically);
+    if (variableFacts)
+        graph.noteWhatCannotBeToldOfVariables(*variableFacts);
+    return true;
 }
 
-bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, bool hasDirectEntry)
+uint32_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore)
+{
+    Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
+    graph.setCalleeHints(hints);
+    graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
+    graph.setFacts(facts);
+    graph.setVariableFacts(variableFacts, readerOfFacts);
+    if (!parseBytecode(graph))
+        return TTop;
+    return inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;
+}
+
+bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, bool hasDirectEntry, const ProgramFacts* facts, VariableFacts* variableFacts)
 {
     MonotonicTime before = MonotonicTime::now();
     RefPtr<JITCode> jitCode;
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
-    bool ok = compile(vm, unlinkedCodeBlock, unknownScopeChain(), hints, linkage, nullptr, jitCode, reason, reasonOpcode, hasDirectEntry);
+    bool ok = compile(vm, unlinkedCodeBlock, unknownScopeChain(), hints, linkage, nullptr, jitCode, reason, reasonOpcode, hasDirectEntry, facts, variableFacts);
     if (Options::aotReportStats()) [[unlikely]]
         recordStatistics(ok, ok ? jitCode->size() : 0, unlinkedCodeBlock->instructionsSize(), MonotonicTime::now() - before, reason, reasonOpcode);
     if (!ok)

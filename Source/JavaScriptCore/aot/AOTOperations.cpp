@@ -624,6 +624,38 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
     OPERATION_RETURN(scope);
 }
 
+// Options::aotVerifiesFacts()
+// That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject* globalObject, CallFrame* callFrame, EncodedJSValue encodedValue, uint32_t type, uint32_t which, uint32_t identifierIndexPlusOne))
+{
+    Type actual = typeOfValue(JSValue::decode(encodedValue));
+    if (isSubtype(actual, type)) [[likely]]
+        return;
+    VM& vm = globalObject->vm();
+    NativeCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    scope.clearException();
+    dataLog("AOT: A FACT IS NOT ONE: what ");
+    if (which >= 1000000)
+        dataLog(opcodeNames[which / 1000000], " at bc#", which % 1000000);
+    else
+        dataLog("a node of kind ", which);
+    if (identifierIndexPlusOne)
+        dataLog(" of `", identifierAt(callFrame, identifierIndexPlusOne - 1).impl(), "`");
+    dataLog(" gives was found to be ");
+    dumpType(WTF::dataFile(), type);
+    dataLog(" and is ");
+    dumpType(WTF::dataFile(), actual);
+    dataLogLn();
+    // Where that is, the way anything that goes wrong in a program says where it went wrong.
+    JSObject* error = createError(globalObject, "the stack:"_s);
+    JSValue stack = error->get(globalObject, vm.propertyNames->stack);
+    if (!scope.exception() && stack.isString())
+        dataLogLn(asString(stack)->value(globalObject).data);
+    // (Not a crash: whatever is there to report those may take its time, and whoever is waiting for this is a test.)
+    _exit(70);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTHandleTraps, void, (JSGlobalObject* globalObject))
 {
     AOT_OPERATION_PROLOGUE(globalObject);

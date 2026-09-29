@@ -55,16 +55,20 @@ public:
     struct Frame : public RefCounted<Frame> {
         using Slots = UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash>; // name -> ScopeOffset | lazyFunctionSlotFlag
         static constexpr unsigned lazyFunctionSlotFlag = 1u << 31; // a module's function declaration: read it with ResolvedLazyClosureVar
-        static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next) }); }
+        static Ref<Frame> create(bool isBarrier, Slots&& slots, RefPtr<Frame> next, const void* identity = nullptr) { return adoptRef(*new Frame { isBarrier, WTF::move(slots), WTF::move(next), identity }); }
         bool isBarrier;
         Slots slots;
         RefPtr<Frame> next;
+        // Which scope of the source the record is for: the same for every Frame there is for it (there is another whenever a name has
+        // been added to it), and for the code that makes the record: it is the SymbolTable among its constants that it makes it from.
+        const void* identity;
 
     private:
-        Frame(bool isBarrier, Slots&& slots, RefPtr<Frame> next)
+        Frame(bool isBarrier, Slots&& slots, RefPtr<Frame> next, const void* identity)
             : isBarrier(isBarrier)
             , slots(WTF::move(slots))
             , next(WTF::move(next))
+            , identity(identity)
         {
         }
     };
@@ -88,6 +92,7 @@ public:
         unsigned offset { 0 };
         bool isLazyFunctionSlot { false };
         bool isInOutermostEnvironment { false }; // Slot: it is a variable of the module (or the program) itself.
+        const void* scope { nullptr }; // Slot: Frame::identity of the record.
     };
 
     // Resolve |name| as seen from a function created at this point (i.e. starting from that function's [[Scope]]).
@@ -100,7 +105,7 @@ public:
                     return { };
                 auto it = frame->slots.find(name);
                 if (it != frame->slots.end())
-                    return { Resolution::Slot, hops, it->value & ~Frame::lazyFunctionSlotFlag, !!(it->value & Frame::lazyFunctionSlotFlag), link->m_isOutermost && !frame->next };
+                    return { Resolution::Slot, hops, it->value & ~Frame::lazyFunctionSlotFlag, !!(it->value & Frame::lazyFunctionSlotFlag), link->m_isOutermost && !frame->next, frame->identity };
                 ++hops;
             }
             // The link that has names is a module's, and the last of its frames the module's environment.
@@ -112,6 +117,31 @@ public:
                 return { Resolution::Global, hops, 0 };
         }
         return { };
+    }
+
+    // Frame::identity of the record that is that many out from the [[Scope]] of a function created at this point. Null: there is no telling.
+    const void* identityOfScope(unsigned hops) const
+    {
+        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
+            for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
+                if (frame->isBarrier)
+                    return nullptr;
+                if (!hops--)
+                    return frame->identity;
+            }
+            if (link->m_isDynamicBarrier)
+                return nullptr;
+        }
+        return nullptr;
+    }
+    template<typename Functor> void forEachScope(const Functor& functor) const
+    {
+        for (const DeclaredNamesLink* link = this; link; link = link->m_parent.get()) {
+            for (const Frame* frame = link->m_frames.get(); frame; frame = frame->next.get()) {
+                if (frame->identity)
+                    functor(frame->identity);
+            }
+        }
     }
 
     // Whether the [[Scope]] of a function created at this point is the environment of the module (or the program) itself.

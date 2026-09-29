@@ -13,6 +13,7 @@
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
 #include "JSCInlines.h"
+#include "JSTemplateObjectDescriptor.h"
 #include "PreciseJumpTargetsInlines.h"
 #include "UnlinkedCodeBlock.h"
 #include "UnlinkedFunctionCodeBlock.h"
@@ -583,6 +584,10 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProv
         if (isProven && variable.import.function)
             *isProven = variable.import.function->isProven;
         return variable.import.function;
+    } else if (variable.kind == StaticVariable::ModuleImport && m_linkage) {
+        // An import that this code is not compiled to read from where it is (resolveStatically()). It is read all the same.
+        if (const StaticImport* import = m_linkage->findImport(name); import && import->function)
+            return import->function;
     }
     return m_hints->find(name, std::nullopt);
 }
@@ -653,6 +658,247 @@ void Graph::elideReadsOfCalleesNotPassed()
         // when it is first read).
         bool isProven = false;
         read->isElided = knownFunctionReadBy(read, &isProven) && isProven;
+    }
+}
+
+const void* Graph::identityOfScope(const Node* scope, unsigned depth)
+{
+    if (depth > 6)
+        return nullptr;
+    auto fromOutside = [&](unsigned hops) -> const void* {
+        return m_declaredNames ? m_declaredNames->identityOfScope(hops) : nullptr;
+    };
+    auto ofTable = [&](VirtualRegister reg) -> const void* {
+        if (!reg.isConstant())
+            return nullptr;
+        JSValue table = m_codeBlock->getConstant(reg);
+        return table && table.isCell() ? table.asCell() : nullptr;
+    };
+    // All of them the same one, whatever else they may be.
+    auto ofAll = [&](const auto& nodes, const auto& nodeOf) -> const void* {
+        const void* result = nullptr;
+        for (auto& entry : nodes) {
+            const Node* input = nodeOf(entry);
+            if (input == scope)
+                continue;
+            const void* identity = identityOfScope(input, depth + 1);
+            if (!identity || (result && result != identity))
+                return nullptr;
+            result = identity;
+        }
+        return result;
+    };
+    switch (scope->kind) {
+    case NodeKind::Bytecode:
+        switch (scope->opcode) {
+        case op_create_lexical_environment:
+            return ofTable(scope->as<OpCreateLexicalEnvironment>().m_symbolTable);
+        case op_create_generator_frame_environment:
+            return ofTable(scope->as<OpCreateGeneratorFrameEnvironment>().m_symbolTable);
+        case op_get_scope:
+            return fromOutside(0);
+        case op_resolve_scope: {
+            ResolveType type = scope->as<OpResolveScope>().m_resolveType;
+            return isStaticClosureVarResolveType(type) ? fromOutside(staticClosureVarHops(type)) : nullptr;
+        }
+        case op_get_parent_scope: {
+            const Node* inner = scope->use(scope->as<OpGetParentScope>().m_scope);
+            if (inner->isBytecode(op_create_lexical_environment))
+                return identityOfScope(inner->use(inner->as<OpCreateLexicalEnvironment>().m_scope), depth + 1);
+            if (inner->isBytecode(op_create_generator_frame_environment))
+                return identityOfScope(inner->use(inner->as<OpCreateGeneratorFrameEnvironment>().m_scope), depth + 1);
+            if (inner->isBytecode(op_get_scope))
+                return fromOutside(1);
+            return nullptr;
+        }
+        default:
+            return nullptr;
+        }
+    case NodeKind::Phi:
+        return ofAll(scope->uses, [](const Use& use) { return use.node; });
+    case NodeKind::Narrow:
+        return identityOfScope(scope->uses[0].node, depth + 1);
+    case NodeKind::GetStack: {
+        // A register that lives in memory holds whatever was last put there.
+        if (!std::exchange(m_hasStoresToHomed, true)) {
+            for (BasicBlock* block : m_rpo) {
+                for (Node* node : block->nodes) {
+                    if (node->kind == NodeKind::SetStack)
+                        m_storesToHomed.add(node->reg.offset(), Vector<Node*>()).iterator->value.append(node);
+                }
+            }
+        }
+        auto it = m_storesToHomed.find(scope->reg.offset());
+        if (it == m_storesToHomed.end())
+            return nullptr;
+        return ofAll(it->value, [](Node* store) { return store->uses[0].node; });
+    }
+    default:
+        return nullptr;
+    }
+}
+
+Variable Graph::variableAccessedBy(const Node* node)
+{
+    VirtualRegister scope;
+    unsigned identifier;
+    unsigned offset;
+    unsigned localScopeDepth = 0;
+    ResolveType type;
+    if (node->isBytecode(op_get_from_scope)) {
+        auto bytecode = node->as<OpGetFromScope>();
+        scope = bytecode.m_scope;
+        identifier = bytecode.m_var;
+        offset = bytecode.m_offset;
+        localScopeDepth = bytecode.m_localScopeDepth;
+        type = bytecode.m_getPutInfo.resolveType();
+    } else {
+        auto bytecode = node->as<OpPutToScope>();
+        scope = bytecode.m_scope;
+        identifier = bytecode.m_var;
+        offset = bytecode.m_offset;
+        type = bytecode.m_getPutInfo.resolveType();
+        if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar)
+            localScopeDepth = bytecode.m_symbolTableOrScopeDepth.scopeDepth();
+    }
+    switch (type) {
+    case ResolvedClosureVar:
+    case ResolvedLazyClosureVar:
+        return { identityOfScope(node->use(scope)), offset };
+    case Dynamic:
+        return { };
+    default:
+        break;
+    }
+    if (auto variable = resolveStatically(identifier, localScopeDepth, type); variable.kind == StaticVariable::Import)
+        return { variable.import.scope, variable.import.scopeOffset };
+    // One that was left to be looked for when the code is linked. It is not one of the function's own.
+    if (m_declaredNames) {
+        auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(identifier).impl());
+        if (resolution.kind == DeclaredNamesLink::Resolution::Slot)
+            return { resolution.scope, resolution.offset };
+    }
+    return { };
+}
+
+void Graph::noteWhatCannotBeToldOfVariables(VariableFacts& facts)
+{
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode)
+                continue;
+            switch (node->opcode) {
+            case op_put_to_scope: {
+                if (variableAccessedBy(node))
+                    break;
+                // Is it in an environment record at all?
+                auto bytecode = node->as<OpPutToScope>();
+                UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
+                ResolveType type = bytecode.m_getPutInfo.resolveType();
+                bool isElsewhere = false;
+                if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && type != Dynamic && m_declaredNames) {
+                    auto kind = m_declaredNames->resolve(name).kind;
+                    // (Assigning to an import throws.)
+                    isElsewhere = kind == DeclaredNamesLink::Resolution::Global || kind == DeclaredNamesLink::Resolution::Stable;
+                }
+                if (!isElsewhere)
+                    facts.giveUpOnName(name);
+                break;
+            }
+            case op_create_scoped_arguments:
+                // An object by way of which the parameters that are in the record can be written.
+                if (const void* scope = identityOfScope(node->use(node->as<OpCreateScopedArguments>().m_scope)))
+                    facts.giveUpOnScope(scope);
+                else {
+                    for (auto& identifier : m_codeBlock->identifiers())
+                        facts.giveUpOnName(identifier.impl());
+                }
+                break;
+            case op_call_direct_eval:
+                // Code that nobody has seen, which can write whatever is in sight of it.
+                if (m_declaredNames)
+                    m_declaredNames->forEachScope([&](const void* scope) { facts.giveUpOnScope(scope); });
+                for (BasicBlock* other : m_rpo) {
+                    for (Node* made : other->nodes) {
+                        if (made->isBytecode(op_create_lexical_environment) || made->isBytecode(op_create_generator_frame_environment)) {
+                            if (const void* scope = identityOfScope(made))
+                                facts.giveUpOnScope(scope);
+                        }
+                    }
+                }
+                for (auto& identifier : m_codeBlock->identifiers())
+                    facts.giveUpOnName(identifier.impl());
+                break;
+            default:
+                break;
+            }
+        }
+    }
+}
+
+void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutables, Vector<String>& importedDynamically)
+{
+    auto executableMadeBy = [&](Node* node) -> UnlinkedFunctionExecutable* {
+        if (node->kind != NodeKind::Bytecode)
+            return nullptr;
+        switch (node->opcode) {
+        case op_new_func:
+            return m_codeBlock->functionDecl(node->as<OpNewFunc>().m_functionDecl);
+        case op_new_func_exp:
+            return m_codeBlock->functionExpr(node->as<OpNewFuncExp>().m_functionDecl);
+        default:
+            return nullptr;
+        }
+    };
+    auto note = [&](Node* user, const Use& use) {
+        // Where it is made, it is on its way to the variable. Anywhere else it goes, it has got out before it got there.
+        if (auto* executable = executableMadeBy(use.node)) {
+            if (auto* facts = factsOfExecutables.get(executable); facts && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
+                facts->valueIsUsed.store(true, std::memory_order_relaxed);
+            return;
+        }
+        if (!use.node->isBytecode(op_get_from_scope))
+            return;
+        bool readIsProven = false;
+        const KnownFunction* known = knownFunctionReadBy(use.node, &readIsProven);
+        if (!known || !known->facts)
+            return;
+        if (user->isBytecode(op_check_tdz))
+            return;
+        bool isCallee = false;
+        if (user->isBytecode(op_call))
+            isCallee = use.reg == user->as<OpCall>().m_callee;
+        else if (user->isBytecode(op_call_ignore_result))
+            isCallee = use.reg == user->as<OpCallIgnoreResult>().m_callee;
+        else if (user->isBytecode(op_tail_call))
+            isCallee = use.reg == user->as<OpTailCall>().m_callee;
+        // (What may be a read of some other variable of that name is no proof of anything, either way.)
+        if (isCallee && readIsProven && known->forCall && knownCallee(user) == known && calleeIsProven(user)) {
+            known->facts->directCalls.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        known->facts->valueIsUsed.store(true, std::memory_order_relaxed);
+    };
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            for (auto& use : node->uses)
+                note(node, use);
+            if (!node->isBytecode(op_call) && !node->isBytecode(op_call_ignore_result) && !node->isBytecode(op_tail_call))
+                continue;
+            VirtualRegister calleeRegister = node->isBytecode(op_call) ? node->as<OpCall>().m_callee : node->isBytecode(op_call_ignore_result) ? node->as<OpCallIgnoreResult>().m_callee : node->as<OpTailCall>().m_callee;
+            unsigned argv = node->isBytecode(op_call) ? node->as<OpCall>().m_argv : node->isBytecode(op_call_ignore_result) ? node->as<OpCallIgnoreResult>().m_argv : node->as<OpTailCall>().m_argv;
+            Node* callee = node->use(calleeRegister);
+            if (callee->kind != NodeKind::ConstantCell || m_codeBlock->constantSourceCodeRepresentation(callee->reg) != SourceCodeRepresentation::LinkTimeConstant
+                || static_cast<LinkTimeConstant>(m_codeBlock->getConstant(callee->reg).asInt32AsAnyInt()) != LinkTimeConstant::importModule)
+                continue;
+            Node* specifier = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1));
+            JSValue value = specifier->kind == NodeKind::ConstantCell && m_codeBlock->constantSourceCodeRepresentation(specifier->reg) != SourceCodeRepresentation::LinkTimeConstant ? m_codeBlock->getConstant(specifier->reg) : JSValue();
+            importedDynamically.append(value && value.isString() ? asString(value)->tryGetValue() : String());
+        }
+        for (Node* phi : block->phis) {
+            for (auto& use : phi->uses)
+                note(phi, use);
+        }
     }
 }
 
@@ -1934,7 +2180,8 @@ private:
             Node* node = m_graph.addNode(NodeKind::ConstantCell);
             node->range = IntegerRange::unknown();
             node->reg = reg;
-            node->type = typeOfValue(value);
+            // (What says how to make the array that a tagged template is passed has that array in its place by the time the code runs.)
+            node->type = value.asCell()->inherits<JSTemplateObjectDescriptor>() ? TArray : typeOfValue(value);
             m_constantCells[index] = node;
         }
         return m_constantCells[index];
@@ -1995,7 +2242,7 @@ private:
             for (unsigned i = 0; i < m_graph.numArguments(); ++i) {
                 Node* node = m_graph.addNode(NodeKind::Argument);
                 node->reg = virtualRegisterForArgumentIncludingThis(i);
-                node->type = TTop;
+                node->type = m_graph.typeOfArgumentOnEntry(i);
                 append(block, node);
                 set(block, node->reg, node);
             }

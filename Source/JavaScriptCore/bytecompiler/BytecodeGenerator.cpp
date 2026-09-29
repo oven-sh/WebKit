@@ -3469,7 +3469,9 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
             continue;
         ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
         unsigned size = entry.m_symbolTable->size(locker);
-        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size) {
+        // (What the code that makes the record makes it from, which is a copy of the table.)
+        const void* identity = VirtualRegister(entry.m_symbolTableConstantIndex).isConstant() ? m_codeBlock->getConstant(VirtualRegister(entry.m_symbolTableConstantIndex)).asCell() : nullptr;
+        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size || node->identity != identity) {
             DeclaredNamesLink::Frame::Slots slots;
             for (auto it = entry.m_symbolTable->begin(locker), end = entry.m_symbolTable->end(locker); it != end; ++it) {
                 VarOffset offset = it->value.varOffset();
@@ -3478,7 +3480,7 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
                     slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0));
                 }
             }
-            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames);
+            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames, identity);
             m_frameSymbolTableSizes[i] = size;
         }
         frames = node;

@@ -346,6 +346,8 @@ public:
     uint32_t distanceOfEnvironmentOfModule();
     // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
     void elideReadsOfCalleesNotPassed();
+    // See ProgramFacts. What is imported with import() goes in the list, or null for what cannot be told.
+    void noteUsesOfProvenFunctions(const FactsOfExecutables&, Vector<String>& importedDynamically);
     // f(a, ...b), f.apply(o, b): the arguments go from where they are to the frame of the callee (Stub::MakeFrameWithList). What
     // would have been made only to be copied from, right before the call, is not (Node::isElided): the call sees to it, if it turns
     // out that copying will not do. An array of the rest of the arguments, or an arguments object, that such calls pass on says
@@ -362,6 +364,28 @@ public:
     // is that of a `with`: and this one is not, so that whoever is called makes undefined of it, or the global `this`.
     bool isScopeThatStandsForNoThis(const Node*);
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
+    // What the program says of the function that this is the code of, for a call.
+    void setFacts(const ProgramFacts* facts) { m_facts = facts; }
+    // reader: who is to look again if there turns out to be more to what it has read (VariableFacts::read()).
+    void setVariableFacts(VariableFacts* facts, unsigned reader = VariableFacts::nobody)
+    {
+        m_variableFacts = facts;
+        m_readerOfFacts = reader;
+    }
+    VariableFacts* variableFacts() const { return m_variableFacts; }
+    unsigned readerOfFacts() const { return m_readerOfFacts; }
+    // Which scope of the source the value is an environment record of (Variable::scope). Null: there is no telling.
+    const void* identityOfScope(const Node*, unsigned depth = 0);
+    // op_get_from_scope, op_put_to_scope. None: it is not in an environment record, or there is no telling which.
+    Variable variableAccessedBy(const Node*);
+    // What has to be known of variables before anything is said of what they hold: see VariableFacts.
+    void noteWhatCannotBeToldOfVariables(VariableFacts&);
+    Type typeOfArgumentOnEntry(unsigned indexIncludingThis) const
+    {
+        if (!m_facts || !m_facts->isClosed || !indexIncludingThis || indexIncludingThis >= ProgramFacts::mostParameters)
+            return TTop;
+        return m_facts->parameterTypes[indexIncludingThis].load(std::memory_order_relaxed);
+    }
     const CalleeHints* calleeHints() const { return m_hints; }
     unsigned indexOfKnownCallee(const ImageKey&);
     Vector<ImageKey> knownCallees;
@@ -455,6 +479,11 @@ private:
     UnlinkedCodeBlock* m_codeBlock;
     ScopeChain m_scopeChain;
     const CalleeHints* m_hints { nullptr };
+    const ProgramFacts* m_facts { nullptr };
+    VariableFacts* m_variableFacts { nullptr };
+    unsigned m_readerOfFacts { VariableFacts::nobody };
+    UncheckedKeyHashMap<int, Vector<Node*>, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> m_storesToHomed; // See identityOfScope().
+    bool m_hasStoresToHomed { false };
     const ModuleLinkage* m_linkage { nullptr };
     const DeclaredNamesLink* m_declaredNames { nullptr };
     BitVector m_namesAssignedTo; // By index of the identifier: op_put_to_scope by name.
@@ -471,7 +500,8 @@ private:
 // Phases. Each returns false (and Graph::failed() says why) if the function is not for the static compiler.
 bool parseBytecode(Graph&);
 // What the function returns. calleesConsulted: the functions whose KnownFunction::returnType that went by.
-Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesConsulted = nullptr);
+// calleesGivenMore: the closed functions that it calls with something that nobody was known to pass them (ProgramFacts::parameterTypes).
+Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesConsulted = nullptr, Vector<const KnownFunction*>* calleesGivenMore = nullptr);
 void inferRanges(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);

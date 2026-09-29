@@ -727,6 +727,22 @@ LValue Lowering::lowBoolean(Node* node)
 void Lowering::setResult(Node* node, LValue value, Rep rep)
 {
     // What a lowering makes may be less specific than what the node is known to be, never the other way around.
+    // (Is it what it is known to be? As it comes: once it has been made into what a value of that type is held as, it looks the part.)
+    if (Options::aotVerifiesFacts() && rep == Rep::JSValue && node->type && !isSubtype(TAll, node->type)) [[unlikely]] {
+        unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
+        unsigned identifierPlusOne = 0;
+        if (node->isBytecode(op_get_from_scope))
+            identifierPlusOne = numberOf(node->as<OpGetFromScope>().m_var) + 1;
+        else if (node->isBytecode(op_get_by_id))
+            identifierPlusOne = numberOf(node->as<OpGetById>().m_property) + 1;
+        // (Something that has a place in the source, for the frame to be reported at.)
+        Node* place = node;
+        for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
+            place = m_block->nodes[i];
+        if (place->kind == NodeKind::Bytecode)
+            m_out.store32(m_out.constInt32(callSiteBitsOf(place)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
+        plainCall(Void, Entry::operationAOTVerifyFact, m_globalObject, m_callFrame, value, m_out.constInt32(node->type), m_out.constInt32(which), m_out.constInt32(identifierPlusOne));
+    }
     node->lowered = convert(value, rep, node->type, node->rep());
 }
 

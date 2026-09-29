@@ -23,6 +23,84 @@ class VM;
 
 namespace AOT {
 
+// What the whole of the program says of a function that is proven (KnownFunction::isProven). Every piece of code there is has its say,
+// on any thread, and what is said only ever adds to what has been said. It means what it says once they have all had it.
+struct ProgramFacts {
+    WTF_MAKE_STRUCT_TZONE_ALLOCATED(ProgramFacts);
+
+    // The function gets somewhere as a value: it is stored, passed, compared, constructed with, asked for a property; or it is called
+    // in a way that is not a call of this function and no other. If not, whoever calls it is known, all of them.
+    std::atomic<bool> valueIsUsed { false };
+    std::atomic<uint32_t> directCalls { 0 };
+
+    // Once that is settled. Nobody gets to call it but the calls that are calls of this function and no other.
+    bool isClosed { false };
+    // If closed: everything that is passed for each parameter, `this` being the first, from nothing up (see KnownFunction::returnType).
+    // One that there are more of than this has nothing said of the rest.
+    static constexpr unsigned mostParameters = 12;
+    std::array<std::atomic<uint32_t>, mostParameters> parameterTypes { };
+};
+// (One for the code of a function, however many variables hold it.)
+using FactsOfExecutables = UncheckedKeyHashMap<UnlinkedFunctionExecutable*, ProgramFacts*>;
+
+// A variable that lives in an environment record: of a module, or of a function whose inner functions use it.
+struct Variable {
+    const void* scope { nullptr }; // DeclaredNamesLink::Frame::identity
+    unsigned offset { 0 };
+    // In place of an offset: what every variable of the scope holds when the record is made.
+    static constexpr unsigned initialValue = std::numeric_limits<unsigned>::max();
+    explicit operator bool() const { return !!scope; }
+};
+
+// Everything that is ever put in each variable, from nothing up. Nothing gets to write one but the code of the program, which is all
+// there to be looked at; where that cannot tell which variable it writes, or something else can write it, nothing is said of it.
+class VariableFacts {
+    WTF_MAKE_TZONE_ALLOCATED(VariableFacts);
+    WTF_MAKE_NONCOPYABLE(VariableFacts);
+public:
+    VariableFacts() = default;
+
+    // Before any of the rest: any thread.
+    void giveUpOnName(UniquedStringImpl*);
+    void giveUpOnScope(const void*);
+
+    // Any thread. reader: told of by takeReadersOfWhatGrew() if there turns out to be more to it. TAll: nothing is known.
+    static constexpr unsigned nobody = std::numeric_limits<unsigned>::max();
+    uint32_t read(Variable, UniquedStringImpl* name, unsigned reader);
+    void join(Variable, uint32_t type);
+
+    // Not while any of that is going on.
+    Vector<unsigned> takeReadersOfWhatGrew();
+    template<typename Functor> void forEach(const Functor& functor) const
+    {
+        for (auto& shard : m_shards) {
+            for (auto& entry : shard.cells)
+                functor(Variable { entry.key.first, entry.key.second }, entry.value->type.load(std::memory_order_relaxed));
+        }
+    }
+    bool hasGivenUpOn(Variable, UniquedStringImpl* name) const;
+
+private:
+    using SetOfReaders = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+    struct Cell {
+        WTF_MAKE_STRUCT_TZONE_ALLOCATED(Cell);
+        std::atomic<uint32_t> type { 0 };
+        bool grew { false };
+        SetOfReaders readers;
+    };
+    struct Shard {
+        Lock lock;
+        UncheckedKeyHashMap<std::pair<const void*, unsigned>, std::unique_ptr<Cell>> cells;
+    };
+    static constexpr unsigned numberOfShards = 64;
+    Shard& shardFor(Variable variable) { return m_shards[(std::bit_cast<uintptr_t>(variable.scope) >> 4 ^ variable.offset) % numberOfShards]; }
+
+    std::array<Shard, numberOfShards> m_shards;
+    Lock m_givenUpLock;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_namesGivenUpOn;
+    UncheckedKeyHashSet<const void*> m_scopesGivenUpOn;
+};
+
 // A function that the compiler has in front of it while it compiles a call.
 struct KnownFunction {
     UnlinkedFunctionExecutable* executable { nullptr };
@@ -40,6 +118,7 @@ struct KnownFunction {
     // If proven: everything that a call of it can return. It is worked out for all of them together, from nothing up
     // (inferReturnTypeForImage()), and means what it says once that has come to an end.
     mutable std::atomic<uint32_t> returnType { 0 };
+    mutable ProgramFacts* facts { nullptr }; // If proven, and whoever compiles the program keeps them.
 
     KnownFunction() = default;
     KnownFunction(const KnownFunction& other) { *this = other; }
@@ -53,6 +132,7 @@ struct KnownFunction {
         isDeclaration = other.isDeclaration;
         needsNoFunctionObject = other.needsNoFunctionObject.load(std::memory_order_relaxed);
         returnType = other.returnType.load(std::memory_order_relaxed);
+        facts = other.facts;
         return *this;
     }
 
@@ -130,6 +210,7 @@ struct StaticImport {
     unsigned scopeOffset { 0 }; // Of the variable, in the environment of the module that has it.
     const KnownFunction* function { nullptr }; // What that module's code puts in the variable, if it is a function (ModuleHints).
     uint32_t distanceOfEnvironment { 0 }; // Of the module that has it: ImageEnvironment::distance.
+    const void* scope { nullptr }; // Variable::scope of the environment of the module that has it.
 };
 
 // What is known of a module because the whole program is there when it is compiled. Unlike a hint, code rests on it with no check

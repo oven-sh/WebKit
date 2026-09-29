@@ -86,6 +86,7 @@ namespace AOT {
     v(operationAOTPutToScope) \
     v(operationAOTThrow) \
     v(operationAOTCheckType) \
+    v(operationAOTVerifyFact) \
     v(operationAOTHandleTraps) \
     v(operationAOTWriteBarrier) \
     v(operationAOTCatch) \

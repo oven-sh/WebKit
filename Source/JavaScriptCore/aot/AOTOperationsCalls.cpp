@@ -8,6 +8,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTOperations.h"
 #include "AOTImage.h"
 #include "AOTInlineCaches.h"
 #include "AOTOperationHelpers.h"

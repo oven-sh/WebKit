@@ -9,6 +9,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "AOTImage.h"
+#include "AOTType.h"
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
 #include "JSCInlines.h"
@@ -21,6 +22,9 @@
 
 namespace JSC { namespace AOT {
 
+WTF_MAKE_TZONE_ALLOCATED_IMPL(VariableFacts);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VariableFacts::Cell);
+WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(ProgramFacts);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(CalleeHints);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ModuleHints);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LiveHints);
@@ -79,6 +83,66 @@ void forgetDeclaredNames()
 {
     Locker locker { s_declaredNamesLock };
     declaredNames().clear();
+}
+
+void VariableFacts::giveUpOnName(UniquedStringImpl* name)
+{
+    Locker locker { m_givenUpLock };
+    m_namesGivenUpOn.add(name);
+}
+
+void VariableFacts::giveUpOnScope(const void* scope)
+{
+    Locker locker { m_givenUpLock };
+    m_scopesGivenUpOn.add(scope);
+}
+
+bool VariableFacts::hasGivenUpOn(Variable variable, UniquedStringImpl* name) const
+{
+    return m_scopesGivenUpOn.contains(variable.scope) || m_namesGivenUpOn.contains(name);
+}
+
+uint32_t VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned reader)
+{
+    if (hasGivenUpOn(variable, name))
+        return TAll;
+    uint32_t type = 0;
+    for (unsigned offset : { variable.offset, Variable::initialValue }) {
+        Variable which { variable.scope, offset };
+        Shard& shard = shardFor(which);
+        Locker locker { shard.lock };
+        auto& cell = shard.cells.ensure({ which.scope, which.offset }, [] { return makeUnique<Cell>(); }).iterator->value;
+        if (reader != nobody)
+            cell->readers.add(reader);
+        type |= cell->type.load(std::memory_order_relaxed);
+    }
+    return type;
+}
+
+void VariableFacts::join(Variable variable, uint32_t type)
+{
+    Shard& shard = shardFor(variable);
+    Locker locker { shard.lock };
+    auto& cell = shard.cells.ensure({ variable.scope, variable.offset }, [] { return makeUnique<Cell>(); }).iterator->value;
+    uint32_t before = cell->type.load(std::memory_order_relaxed);
+    if ((before | type) == before)
+        return;
+    cell->type.store(before | type, std::memory_order_relaxed);
+    cell->grew = true;
+}
+
+Vector<unsigned> VariableFacts::takeReadersOfWhatGrew()
+{
+    SetOfReaders result;
+    for (auto& shard : m_shards) {
+        for (auto& entry : shard.cells) {
+            if (!std::exchange(entry.value->grew, false))
+                continue;
+            for (unsigned reader : entry.value->readers)
+                result.add(reader);
+        }
+    }
+    return copyToVector(result);
 }
 
 CalleeHints::~CalleeHints() = default;
