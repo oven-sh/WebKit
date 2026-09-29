@@ -723,6 +723,12 @@ What CPython has only on Linux is not written, and what is written for Linux has
 thread and none of the engine's others. Here that is `child_exec()`, which CPython wrote to be run in the middle of anything: it asks for no memory, locks nothing, and runs none of the engine, and then the process is another
 program. All that it goes by is worked out beforehand. The one thing that it cannot be asked to do is call `preexec_fn`, which is Python: see *Where it differs*.
 
+### `math`
+
+`Modules/mathmodule.c` is in two parts here. What takes numbers of C's and gives numbers of C's, and the tables that go with it, is `PythonMathKernels.h`, which `lib/convert-math-kernels.py` makes from CPython's source without
+changing an expression: the Lanczos approximation for `gamma()`, the sums in two and three doubles that `hypot()` and `sumprod()` are worked out in, `remainder()`, and what `isqrt()`, `factorial()` and `comb()` look up. What has
+to do with objects is `PythonMathModule.cpp`, by hand. See *One rounding or two* for why the first part is taken as it is. The rest is the C library's, which is the one that CPython would be calling.
+
 ### `select`
 
 `PythonSelectModule.cpp` is `Modules/selectmodule.c`: `select()`, `poll`, and `kevent` and `kqueue` where there are those. `epoll`, which is Linux's, is not written, and `selectors` makes do with `poll`. Each of them begins again when
@@ -788,6 +794,10 @@ the same both ways of asking and both ways of giving the lines. That is not amon
 `a * b + c` is one instruction on some processors, and it rounds once where a multiplication and then an addition round twice. JavaScriptCore is built with `-ffp-contract=off`, so that it is never used unasked, as
 JavaScript's arithmetic requires. What CPython is built with does use it, for what is written in one expression, so `_Py_c_quot()` and `st_mtime` come out one way on ARM64 and another on x86-64, in the last digit.
 A program can see that, and one that keeps a time to compare it with later does. So where CPython has such an expression it is written `multiplyAdd()` here, which is the one instruction where CPython's would be.
+
+That will do for an expression here and there. `math` is made of them, and which of two products in a sum is taken with the addition is for the compiler to say. So `PythonMathModule.cpp` is compiled as CPython is, from a
+`#pragma STDC FP_CONTRACT ON` at the top of it to an `OFF` at the end, and what is written in it is written as CPython writes it, expression for expression. It goes by how a sum is written and not by what the optimizer
+makes of it, so the same source is rounded the same way. With the pragma taken out, `math-module.py` fails for `gamma()`, `lgamma()` and the logarithm of a large int.
 
 ## The two languages
 

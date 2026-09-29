@@ -791,6 +791,7 @@ python/PythonIOBase.cpp
 python/PythonImpModule.cpp
 python/PythonImport.cpp
 python/PythonMarshal.cpp
+python/PythonMathModule.cpp
 python/PythonModules.cpp
 python/PythonContextVars.cpp
 python/PythonErrnoModule.cpp
