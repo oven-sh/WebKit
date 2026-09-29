@@ -25,57 +25,81 @@
 
 #pragma once
 
-#include <WebCore/QuirkNames.h>
-#include <initializer_list>
+#include <WebCore/QuirkBehaviors.h>
+#include <WebCore/URLMatch.h>
+#include <algorithm>
+#include <span>
+#include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 
 namespace WebCore {
-
-struct QuirksData {
-    QuirkBitSet activeQuirks;
-    QuirkSiteBitSet sites;
-
-    inline bool isSite(QuirkSite candidate) const
+class QuirksData {
+public:
+    inline bool isBehaviorEnabled(const QuirkBehaviorID& id) const
     {
-        return sites.get(static_cast<size_t>(candidate));
+        return m_behaviorFlags.get(static_cast<size_t>(id));
+    }
+
+    inline bool isSite(QuirkSite site) const
+    {
+        return m_sites.get(static_cast<size_t>(site));
+    }
+
+    inline bool hasBehaviors() const
+    {
+        return !m_behaviorFlags.isEmpty();
+    }
+
+    inline const Vector<QuirkBehavior>& behaviors() const LIFETIME_BOUND
+    {
+        return m_behaviors;
+    }
+
+    inline const Vector<QuirkBehavior> behaviorsMatching(QuirkBehaviorID id)
+    {
+        return m_behaviors
+            | std::views::filter([&](const auto& behavior) { return behavior.id == id; })
+            | WTF::rangeTo<decltype(m_behaviors)>();
     }
 
     inline void addSite(QuirkSite site)
     {
-        sites.set(static_cast<size_t>(site));
+        m_sites.set(static_cast<size_t>(site));
     }
 
-    inline bool quirkIsEnabled(SiteSpecificQuirk quirk) const
+    inline void setEnabled(const QuirkBehavior& behavior, bool state)
     {
-        return activeQuirks.get(static_cast<size_t>(quirk));
+        if (state)
+            addBehavior(behavior);
+        else
+            removeBehaviorsMatching(behavior.id);
     }
 
-    inline void enableQuirks()
+    inline void addBehavior(const QuirkBehavior& behavior)
     {
-        // No-op to support macro expansions
+        m_behaviorFlags.set(static_cast<size_t>(behavior.id), true);
+        m_behaviors.append(behavior);
     }
 
-    constexpr void enableQuirks(std::initializer_list<SiteSpecificQuirk> quirks)
+    inline void removeBehaviorsMatching(QuirkBehaviorID id)
     {
-        for (auto quirk : quirks)
-            activeQuirks.set(static_cast<size_t>(quirk));
+        m_behaviorFlags.set(static_cast<size_t>(id), false);
+        m_behaviors.removeAllMatching([&](const auto& behavior) { return behavior.id == id; });
     }
 
-    inline void enableQuirk(SiteSpecificQuirk quirk)
+    void merge(const QuirksData& other)
     {
-        return activeQuirks.set(static_cast<size_t>(quirk));
+        auto& [otherBehaviorFlags, otherSites, otherBehaviors] = other;
+        m_behaviorFlags.merge(otherBehaviorFlags);
+        m_sites.merge(otherSites);
+        m_behaviors.appendVector(otherBehaviors);
     }
 
-    inline void setQuirkState(SiteSpecificQuirk quirk, bool state)
-    {
-        return activeQuirks.set(static_cast<size_t>(quirk), state);
-    }
-
-    constexpr void merge(const QuirksData& other)
-    {
-        auto& [otherActiveQuirks, otherSites] = other;
-        activeQuirks.merge(otherActiveQuirks);
-        sites.merge(otherSites);
-    }
+private:
+    QuirkBitSet m_behaviorFlags;
+    QuirkSiteBitSet m_sites;
+    Vector<QuirkBehavior> m_behaviors;
 };
 
 } // namespace WebCore
+

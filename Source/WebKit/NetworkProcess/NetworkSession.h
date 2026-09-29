@@ -30,6 +30,7 @@
 #include "NavigatingToAppBoundDomain.h"
 #include "NetworkNotificationManager.h"
 #include "NetworkResourceLoadIdentifier.h"
+#include "NetworkStorageSession.h"
 #include "PrefetchCache.h"
 #include "PrivateClickMeasurementManagerInterface.h"
 #include "SandboxExtension.h"
@@ -37,9 +38,10 @@
 #include "WebPageProxyIdentifier.h"
 #include "WebResourceLoadStatisticsStore.h"
 #include <WebCore/BlobRegistryImpl.h>
+#include <WebCore/ClientOrigin.h>
 #include <WebCore/DNS.h>
 #include <WebCore/FetchIdentifier.h>
-#include <WebCore/NetworkStorageSession.h>
+#include <WebCore/PageIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/SWServerDelegate.h>
@@ -60,7 +62,7 @@
 
 namespace WebCore {
 class CertificateInfo;
-class NetworkStorageSession;
+enum class IPAddressSpace : uint8_t;
 class ResourceMonitorThrottlerHolder;
 class ResourceRequest;
 class ResourceError;
@@ -68,6 +70,7 @@ class SWServer;
 class SecurityOriginData;
 enum class AdvancedPrivacyProtections : uint16_t;
 enum class IncludeHttpOnlyCookies : bool;
+enum class PermissionState : uint8_t;
 enum class ShouldSample : bool;
 enum class IsInitiatedByDedicatedWorker : bool;
 struct ClientOrigin;
@@ -123,7 +126,7 @@ public:
     virtual HashSet<WebCore::SecurityOriginData> originsWithCredentials() { return { }; }
     virtual void removeCredentialsForOrigins(const Vector<WebCore::SecurityOriginData>&) { }
     virtual void clearCredentials(WallTime) { }
-    virtual void loadImageForDecoding(WebCore::ResourceRequest&&, WebPageProxyIdentifier, size_t, CompletionHandler<void(Expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&&) { ASSERT_NOT_REACHED(); }
+    virtual void loadImageForDecoding(WebCore::ResourceRequest&&, WebPageProxyIdentifier, size_t, CompletionHandler<void(std::expected<Ref<WebCore::FragmentedSharedBuffer>, WebCore::ResourceError>&&)>&&) { ASSERT_NOT_REACHED(); }
 
     // CanMakeCheckedPtr.
     uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
@@ -134,7 +137,7 @@ public:
 
     PAL::SessionID sessionID() const { return m_sessionID; }
     NetworkProcess& networkProcess() { return m_networkProcess; }
-    WebCore::NetworkStorageSession* NODELETE networkStorageSession() const;
+    NetworkStorageSession* NODELETE networkStorageSession() const;
 
     void registerNetworkDataTask(NetworkDataTask&);
     void unregisterNetworkDataTask(NetworkDataTask&);
@@ -166,6 +169,12 @@ public:
     std::optional<WebCore::RegistrableDomain> thirdPartyCNAMEDomainForTesting() const { return m_thirdPartyCNAMEDomainForTesting; }
     void resetFirstPartyDNSData();
     void destroyResourceLoadStatistics(CompletionHandler<void()>&&);
+
+    WebCore::PermissionState requestLocalNetworkAccessPermission(const WebCore::ClientOrigin&, WebCore::IPAddressSpace, bool canPrompt);
+    void setLocalNetworkAccessPermissionForTesting(WebCore::ClientOrigin&&, WebCore::IPAddressSpace, WebCore::PermissionState);
+    WebCore::PermissionState localNetworkAccessPermission(const WebCore::ClientOrigin&, WebCore::IPAddressSpace) const;
+    void removeLocalNetworkAccessPermissions(const WebCore::SecurityOriginData& topOrigin);
+    void clearLocalNetworkAccessPermissionsForTesting();
     
 #if ENABLE(APP_BOUND_DOMAINS)
     virtual bool hasAppBoundSession() const { return false; }
@@ -282,8 +291,8 @@ public:
     const Vector<WebCore::SecurityOriginData>& mockPushSubscriptionOriginsForTesting() const { return m_mockPushSubscriptionOriginsForTesting; }
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    std::optional<int64_t> bytesPerSecondLimit() const { return m_bytesPerSecondLimit; }
-    void setEmulatedConditions(std::optional<int64_t>&& bytesPerSecondLimit);
+    std::pair<std::optional<uint64_t> /* bandwidthBytesPerSecond */, Seconds /* latency */> emulatedConditions() const { return { m_emulatedBandwidthBytesPerSecond, m_emulatedLatency }; }
+    void setEmulatedConditions(std::optional<uint64_t> bandwidthBytesPerSecond, Seconds latency);
 #endif
 
 #if HAVE(NW_PROXY_CONFIG)
@@ -414,13 +423,18 @@ protected:
 #endif
 
     HashMap<WebPageProxyIdentifier, String> m_attributedBundleIdentifierFromPageIdentifiers;
+    // Keyed on the origin pair as well as the space, so a grant does not follow the same origin embedded
+    // in an unrelated site. Nothing writes it yet; the grant and revocation paths land with the
+    // permission store. See https://bugs.webkit.org/show_bug.cgi?id=319907
+    HashMap<std::pair<WebCore::ClientOrigin, WebCore::IPAddressSpace>, WebCore::PermissionState> m_localNetworkAccessPermissions;
 
     Vector<WebCore::SecurityOriginData> m_mockPushSubscriptionOriginsForTesting;
 #if ENABLE(WEB_PUSH_NOTIFICATIONS)
     const Ref<NetworkNotificationManager> m_notificationManager;
 #endif
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    std::optional<int64_t> m_bytesPerSecondLimit;
+    std::optional<uint64_t> m_emulatedBandwidthBytesPerSecond;
+    Seconds m_emulatedLatency;
 #endif
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     bool m_isDeclarativeWebPushEnabled { false };

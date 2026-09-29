@@ -37,6 +37,7 @@
 #include <WebCore/CSSColorType.h>
 #include <WebCore/CSSValueKeywords.h>
 #include <WebCore/StyleColorOptions.h>
+#include <WebCore/StyleCurrentAccentColor.h>
 #include <WebCore/StyleCurrentColor.h>
 #include <WebCore/StyleResolvedColor.h>
 #include <wtf/Markable.h>
@@ -53,6 +54,7 @@ namespace Style {
 enum class ForVisitedLink : bool;
 
 class ComputedStyle;
+class ResolvedColors;
 
 // The following style color kinds are forward declared and stored in
 // UniqueRefs to avoid unnecessarily growing the size of Color for the
@@ -72,6 +74,7 @@ private:
     using ColorKind = Variant<
         EmptyToken,
         ResolvedColor,
+        CurrentAccentColor,
         CurrentColor,
         UniqueRef<ColorLayers>,
         UniqueRef<ColorMix>,
@@ -112,6 +115,7 @@ public:
     Color(CSS::Keyword::White);
 
     WEBCORE_EXPORT Color(ResolvedColor&&);
+    Color(CurrentAccentColor&&);
     WEBCORE_EXPORT Color(CurrentColor&&);
     Color(ColorLayers&&);
     Color(ColorMix&&);
@@ -156,7 +160,7 @@ public:
     bool NODELETE isResolvedColor() const;
     const WebCore::Color& resolvedColor() const;
 
-    WEBCORE_EXPORT WebCore::Color resolveColor(const WebCore::Color& currentColor) const;
+    WEBCORE_EXPORT WebCore::Color resolveColor(const ResolvedColors&) const;
 
     bool isKnownTransparent() const;
 
@@ -174,7 +178,7 @@ private:
     ColorKind value;
 };
 
-WebCore::Color resolveColor(const Color&, const WebCore::Color& currentColor);
+WebCore::Color resolveColor(const Color&, const ResolvedColors&);
 bool containsCurrentColor(const Color&);
 
 void serializationForCSSTokenization(StringBuilder&, const CSS::SerializationContext&, const Color&);
@@ -233,6 +237,9 @@ template<typename... F> decltype(auto) Color::switchOn(F&&... f) const
         },
         [&](const ResolvedColor& resolvedColor) -> ResultType {
             return visitor(resolvedColor);
+        },
+        [&](const CurrentAccentColor& currentColor) -> ResultType {
+            return visitor(currentColor);
         },
         [&](const CurrentColor& currentColor) -> ResultType {
             return visitor(currentColor);

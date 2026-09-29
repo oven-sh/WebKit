@@ -559,7 +559,7 @@ fn fn2() -> vec4<bool> {
   break;
   _ = st4;
 }
-  _ = buffer9;
+  _ = &buffer9;
   _ = st3;
   _ = st4;
 }
@@ -824,7 +824,7 @@ fn fn1() -> array<array<array<f16, 1>, 4>, 1> {
   buffer12.f0[bitcast<u32>((*&buffer12).f0[0])] += bitcast<i32>(transpose(mat2x4h())[unconst_i32(2)]);
   buffer12.f0[unconst_u32(1004040977)] -= buffer12.f0[unconst_u32(156804409)];
   return out;
-  _ = buffer12;
+  _ = &buffer12;
 }
 
 /* zero global variables used */
@@ -1159,6 +1159,9 @@ gpuCanvasContext0.configure({
 } catch {}
 let pipeline2 = await device0.createRenderPipelineAsync({
   layout: 'auto',
+  // A pipeline with no fragment state still needs an attachment, and a depth stencil state is the
+  // one that leaves the bind group layouts generated from the vertex stage alone.
+  depthStencil: {format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'always'},
   vertex: {
     module: shaderModule1,
     entryPoint: 'vertex0',
@@ -1803,8 +1806,8 @@ let pipeline5 = device0.createRenderPipeline({
   entryPoint: 'fragment2',
   constants: {},
   targets: [{format: 'rg8sint', writeMask: GPUColorWrite.ALL}],
-    depthBias: -1554349227,
-    depthBiasClamp: 857.7022484248523,
+    depthBias: 0,
+    depthBiasClamp: 0,
   },
   vertex: {
     module: shaderModule1,
@@ -2265,21 +2268,21 @@ fn compute5() {
   while bool(textureDimensions(et4)[1]) {
   vp7.fract *= vec4h(f16(arrayLength(&buffer42)));
   fn1();
-  _ = buffer42;
+  _ = &buffer42;
 }
   buffer42[unconst_u32(353600062)][(*&buffer43)[unconst_u32(288051123)][1][15]][0][unconst_u32(468377616)][unconst_u32(1301146328)] -= (*&buffer42)[arrayLength(&(*&buffer42))][unconst_u32(105410269)][0][28][0];
-  _ = buffer43;
-  _ = buffer42;
+  _ = &buffer43;
+  _ = &buffer42;
 }
   break;
-  _ = buffer43;
-  _ = buffer42;
+  _ = &buffer43;
+  _ = &buffer42;
   _ = et4;
 }
   let ptr16: ptr<storage, f16, read_write> = &(*&buffer42)[unconst_u32(42003249)][unconst_u32(874565072)][u32((*&buffer42)[unconst_u32(3187546531)][unconst_u32(141457367)][0][28][0])][unconst_u32(617528627)][unconst_u32(294415924)];
   let ptr17: ptr<storage, array<u32, 16>, read_write> = &buffer43[unconst_u32(868263462)][1];
   let ptr18: ptr<storage, array<f16, 1>, read_write> = &(*&buffer42)[u32((*&buffer42)[unconst_u32(18276440)][unconst_u32(1918360008)][unconst_u32(791577241)][unconst_u32(739678655)][0])][unconst_u32(36174182)][0][28];
-  _ = buffer43;
+  _ = &buffer43;
   _ = et4;
 }
 `,
@@ -2375,7 +2378,7 @@ let pipeline10 = device0.createRenderPipeline({
   depthStencil: {
     format: 'stencil8',
     stencilFront: {compare: 'greater-equal', failOp: 'invert', depthFailOp: 'increment-wrap', passOp: 'increment-clamp'},
-    depthBiasSlopeScale: 927.0892584793853,
+    depthBiasSlopeScale: 0,
   },
   vertex: {
     module: shaderModule2,
@@ -2415,7 +2418,7 @@ let pipeline11 = await device0.createRenderPipelineAsync({
   module: shaderModule1,
   constants: {},
   targets: [{format: 'rg8sint', writeMask: GPUColorWrite.ALPHA | GPUColorWrite.GREEN}],
-    depthBiasSlopeScale: 981.3554951032729,
+    depthBiasSlopeScale: 0,
   },
   vertex: {
     module: shaderModule1,
@@ -2515,7 +2518,7 @@ struct VertexOutput5 {
 /* used global variables: buffer57, buffer58 */
 fn fn0() {
   buffer58[3].location_0 = vec4i(i32((*&buffer57)[unconst_u32(972554068)][0][unconst_u32(677562065)][unconst_u32(137284835)][0]));
-  _ = buffer57;
+  _ = &buffer57;
   _ = buffer58;
 }
 
@@ -2587,7 +2590,7 @@ fn fragment6(@builtin(position) position: vec4f, a1: FragmentInput17, a2: Fragme
 fn compute7(a0: ComputeInput6) {
   buffer58[3] = FragmentOutput3(i32((*&buffer57)[unconst_u32(89652279)][0][0][unconst_u32(142827951)][unconst_u32(970808191)]), vec4i(i32((*&buffer57)[unconst_u32(89652279)][0][0][unconst_u32(142827951)][unconst_u32(970808191)])));
   let ptr23: ptr<storage, f16, read_write> = &buffer57[unconst_u32(1467479156)][0][u32(buffer57[unconst_u32(307751459)][0][unconst_u32(188688331)][28][0])][unconst_u32(963883838)][0];
-  _ = buffer57;
+  _ = &buffer57;
 }
 `,
 });
@@ -2891,7 +2894,7 @@ let pipeline15 = await device0.createRenderPipelineAsync({
   fragment: {module: shaderModule4, constants: {}, targets: [{format: 'rg8sint'}]},
   depthStencil: {
     format: 'stencil8',
-    depthBias: -383897484,
+    depthBias: 0,
   },
   vertex: {
     module: shaderModule6,
@@ -3015,7 +3018,7 @@ let pipeline17 = device0.createRenderPipeline({
   depthStencil: {
     format: 'stencil8',
     stencilFront: {compare: 'less', failOp: 'zero', depthFailOp: 'replace', passOp: 'zero'},
-    depthBiasClamp: 255.72057512038594,
+    depthBiasClamp: 0,
   },
   vertex: {
     module: shaderModule3,
@@ -3687,7 +3690,7 @@ fn fn1() -> u32 {
   var out: u32;
   _ = fn0();
   return out;
-  _ = buffer84;
+  _ = &buffer84;
 }
 
 var<workgroup> vw7: atomic<u32>;
@@ -3735,7 +3738,7 @@ fn fn0() -> vec4h {
   var out: vec4h;
   let ptr46: ptr<storage, f16, read_write> = &buffer84[unconst_u32(279781618)][580][22][936][0];
   return out;
-  _ = buffer84;
+  _ = &buffer84;
 }
 
 struct VertexInput33 {
@@ -3788,10 +3791,10 @@ fn fragment9() -> FragmentOutput5 {
   var vf79 = fn0();
   {
   let ptr51: ptr<storage, f16, read_write> = &buffer84[unconst_u32(203719043)][unconst_u32(1794216686)][unconst_u32(903182762)][unconst_u32(952468834)][unconst_u32(2383943006)];
-  _ = buffer84;
+  _ = &buffer84;
 }
   return out;
-  _ = buffer84;
+  _ = &buffer84;
 }
 
 /* zero global variables used */
@@ -3822,6 +3825,8 @@ try {
 } catch {}
 let pipeline24 = device1.createRenderPipeline({
   layout: 'auto',
+  // As above: without an attachment this pipeline is invalid.
+  depthStencil: {format: 'depth24plus', depthWriteEnabled: false, depthCompare: 'always'},
   multisample: {count: 4, mask: 0x6408297c},
   vertex: {
     module: shaderModule8,

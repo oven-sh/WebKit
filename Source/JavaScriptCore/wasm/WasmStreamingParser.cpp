@@ -83,7 +83,7 @@ template <typename ...Args>
 static void dumpWasmSource(const Vector<uint8_t>& source)
 {
     static int count = 0;
-    const char* file = Options::dumpWasmSourceFileName();
+    const char8_t* file = Options::dumpWasmSourceFileName();
     if (!file)
         return;
     auto fileHandle = FileSystem::openFile(WTF::makeString(unsafeSpan(file), (count++), ".wasm"_s),
@@ -260,7 +260,7 @@ auto StreamingParser::consume(std::span<const uint8_t> bytes, size_t& offsetInBy
     return result;
 }
 
-auto StreamingParser::consumeVarUInt32(std::span<const uint8_t> bytes, size_t& offsetInBytes, IsEndOfStream isEndOfStream) -> Expected<uint32_t, State>
+auto StreamingParser::consumeVarUInt32(std::span<const uint8_t> bytes, size_t& offsetInBytes, IsEndOfStream isEndOfStream) -> std::expected<uint32_t, State>
 {
     constexpr size_t maxSize = WTF::LEBDecoder::maxByteLength<uint32_t>();
     size_t bytesRemainingSize = bytes.size() - offsetInBytes;

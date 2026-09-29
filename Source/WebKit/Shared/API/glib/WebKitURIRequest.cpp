@@ -200,7 +200,7 @@ const gchar* webkit_uri_request_get_http_method(WebKitURIRequest* request)
         return nullptr;
 
     if (!request->priv->httpMethod)
-        request->priv->httpMethod = g_intern_string(request->priv->resourceRequest.httpMethod().utf8().data());
+        request->priv->httpMethod = g_intern_string(request->priv->resourceRequest.httpMethod().utf8().legacyCStringPointer());
     return request->priv->httpMethod;
 }
 

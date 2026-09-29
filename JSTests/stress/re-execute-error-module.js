@@ -14,7 +14,7 @@ function shouldBe(actual, expected)
         } catch (error) {
             errorMessage = String(error);
         }
-        shouldBe(errorMessage, `SyntaxError: Importing binding name 'x' is not found.`);
+        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module '${callerSourceOrigin().replace("re-execute-error-module.js", "resources/error-module.js")}'.`);
     }
     {
         let errorMessage = null;
@@ -23,6 +23,6 @@ function shouldBe(actual, expected)
         } catch (error) {
             errorMessage = String(error);
         }
-        shouldBe(errorMessage, `SyntaxError: Importing binding name 'x' is not found.`);
+        shouldBe(errorMessage, `SyntaxError: Export named 'x' not found in module '${callerSourceOrigin().replace("re-execute-error-module.js", "resources/error-module.js")}'.`);
     }
 }()).catch(abort);

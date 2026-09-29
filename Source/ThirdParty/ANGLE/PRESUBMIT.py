@@ -7,6 +7,10 @@ See http://dev.chromium.org/developers/how-tos/depottools/presubmit-scripts
 for more details on the presubmit API built into depot_tools.
 """
 
+import dataclasses
+from typing import Optional
+from typing import Sequence
+from typing import Tuple
 import itertools
 import os
 import re
@@ -26,6 +30,55 @@ _IMPLEMENTATION_AND_HEADER_EXTENSIONS = r'\.(c|cc|cpp|cxx|mm|h|hpp|hxx)$'
 
 # Fragment of a regular expression that matches C++ and Objective-C++ header files.
 _HEADER_EXTENSIONS = r'\.(h|hpp|hxx)$'
+
+
+# Copied from Chrome's BanRule.
+@dataclasses.dataclass
+class BanRule:
+    # String pattern. If the pattern begins with a slash, the pattern will be
+    # treated as a regular expression instead.
+    pattern: str
+
+    # Explanation as a sequence of strings. Each string in the sequence will be
+    # printed on its own line.
+    explanation: Tuple[str, ...]
+
+    # Whether or not to treat this ban as a fatal error.
+    treat_as_error: bool = False
+
+    # Paths that should be excluded from the ban check. Each string is a regular
+    # expression that will be matched against the path of the file being checked
+    # relative to the root of the source tree.
+    excluded_paths: Optional[Sequence[str]] = None
+
+    # If True, surfaces any violation as a Gerrit comment on the CL after
+    # running the CQ.
+    surface_as_gerrit_lint: Optional[bool] = None
+
+
+# Configuration for banned patterns checks.
+_BANNED_CPP_PATTERNS: Sequence[BanRule] = (
+    BanRule(
+        pattern=r'/\bANGLE_UNSAFE_TODO\b',
+        explanation=(
+            'Do not introduce new instances of ANGLE_UNSAFE_TODO. ',
+            'Use ANGLE_UNSAFE_BUFFERS with a // SAFETY: comment instead, ',
+            'or rewrite to be safe.',
+        ),
+        treat_as_error=False,
+        surface_as_gerrit_lint=True,
+    ),
+    BanRule(
+        pattern=r'/#pragma\s+allow_unsafe_buffers\b',
+        explanation=(
+            '#pragma allow_unsafe_buffers is discouraged. Prefer using ',
+            'ANGLE_UNSAFE_BUFFERS with a // SAFETY: comment for ',
+            'specific blocks, or rewrite to be safe.',
+        ),
+        treat_as_error=False,
+        surface_as_gerrit_lint=True,
+    ),
+)
 
 _PRIMARY_EXPORT_TARGETS = [
     '//:libEGL',
@@ -563,8 +616,305 @@ def _CheckGClientExists(input_api, output_api, search_limit=None):
             '\n\nhttps://chromium.googlesource.com/angle/angle/+/refs/heads/main/doc/DevSetup.md')
     ]
 
+
+def _CheckRestrictedTraces(input_api, output_api):
+    import json
+    json_path = 'src/tests/restricted_traces/restricted_traces.json'
+    trace_file = None
+    for f in input_api.AffectedFiles():
+        if f.LocalPath() == json_path:
+            trace_file = f
+            break
+
+    # If the traces JSON file was not modified in this CL, skip the check.
+    if not trace_file:
+        return []
+
+    abs_path = input_api.os_path.join(input_api.PresubmitLocalPath(), json_path)
+    try:
+        with open(abs_path, 'r') as f:
+            json_data = json.load(f)
+    except Exception as e:
+        return [output_api.PresubmitError(f'Failed to parse {json_path}: {e}')]
+
+    if 'traces' not in json_data:
+        return [output_api.PresubmitError(f'{json_path} is missing the "traces" key.')]
+
+    old_traces = []
+    old_contents = trace_file.OldContents()
+    if old_contents:
+        try:
+            old_data = json.loads('\n'.join(old_contents))
+            old_traces = [t.split(' ')[0] for t in old_data.get('traces', [])]
+        except Exception as e:
+            return [output_api.PresubmitError(f'Failed to parse old version of {json_path}: {e}')]
+
+    raw_trace_parts = [trace.split(' ') for trace in json_data['traces']]
+    cq_extra_traces = [
+        p[0] for p in raw_trace_parts if 'ci' not in p[2:] and 'representative' not in p[2:]
+    ]
+
+    TAG_ORDER = ['ci', 'representative', 'smoke']
+
+    def get_sort_key(tag):
+        if tag in TAG_ORDER:
+            return (0, TAG_ORDER.index(tag))
+        else:
+            return (1, tag)
+
+    for p in raw_trace_parts:
+        name = p[0]
+        tags = p[2:]
+
+        if name not in old_traces and tags:
+            return [
+                output_api.PresubmitError(
+                    f'New trace "{name}" has tags: {tags}. '
+                    f'New traces must not have any tags initially so they are tested on CQ.')
+            ]
+
+        sorted_tags = sorted(tags, key=get_sort_key)
+        if tags != sorted_tags:
+            return [
+                output_api.PresubmitError(
+                    f'Trace "{name}" has unsorted tags: {tags}. '
+                    f'Expected order: {sorted_tags} (broadest first: ci, representative, smoke).')
+            ]
+
+    LIMIT_N = 10
+    if len(cq_extra_traces) > LIMIT_N:
+        return [
+            output_api.PresubmitError(
+                f'Too many CQ extra traces ({len(cq_extra_traces)}). Limit is {LIMIT_N}.\n'
+                'Please move some traces to conditional checkout by adding the "ci" tag.')
+        ]
+
+    return []
+
+
+def _CheckUnwrappedVulkanCalls(input_api, output_api):
+    """Runs find_unwrapped_vk_calls.py to detect unwrapped calls."""
+
+    vulkan_dir = input_api.os_path.join('src', 'libANGLE', 'renderer', 'vulkan')
+    vulkan_dir_re = vulkan_dir.replace('\\', '/')
+
+    results = []
+
+    # Only run if Vulkan renderer files are affected
+    def vulkan_source_files(f):
+        return input_api.FilterSourceFile(f, files_to_check=[rf'^{vulkan_dir_re}/.*\.(h|cpp|mm)$'])
+
+    if not input_api.AffectedSourceFiles(vulkan_source_files):
+        return results
+
+    # First, run tests if the script or test files are changed
+    def find_unwrapped_vk_calls_files(f):
+        return input_api.FilterSourceFile(
+            f,
+            files_to_check=[
+                rf'^{vulkan_dir_re}/find_unwrapped_vk_calls_test/.*$',
+                rf'^{vulkan_dir_re}/find_unwrapped_vk_calls\.py$'
+            ])
+
+    if input_api.AffectedSourceFiles(find_unwrapped_vk_calls_files):
+        cmd_name = 'find_unwrapped_vk_calls TESTS'
+        cmd = [
+            input_api.python3_executable,
+            input_api.os_path.join(input_api.PresubmitLocalPath(), vulkan_dir,
+                                   'find_unwrapped_vk_calls_test', 'run_tests.py')
+        ]
+        test_cmd = input_api.Command(
+            name=cmd_name, cmd=cmd, kwargs={}, message=output_api.PresubmitError)
+        if input_api.verbose:
+            print('Running ' + cmd_name)
+        results.extend(input_api.RunTests([test_cmd]))
+
+    # Do not run the script if tests fail
+    for result in results:
+        if isinstance(result, output_api.PresubmitError):
+            return results
+
+    # Finally, run the main script
+    cmd_name = 'find_unwrapped_vk_calls'
+    cmd = [
+        input_api.python3_executable,
+        input_api.os_path.join(input_api.PresubmitLocalPath(), vulkan_dir,
+                               'find_unwrapped_vk_calls.py')
+    ]
+    test_cmd = input_api.Command(
+        name=cmd_name, cmd=cmd, kwargs={}, message=output_api.PresubmitError)
+    if input_api.verbose:
+        print('Running ' + cmd_name)
+    results.extend(input_api.RunTests([test_cmd]))
+
+    return results
+
+
+def _CheckPresubmitTests(input_api, output_api):
+    """Test PRESUBMIT.py during presubmit."""
+
+    return input_api.RunTests(
+        input_api.canned_checks.GetUnitTestsInDirectory(
+            input_api,
+            output_api,
+            input_api.os_path.join(input_api.PresubmitLocalPath(), 'scripts'),
+            files_to_check=[r'^angle_presubmit_utils_unittest\.py$']))
+
+
+def _CheckUnsafeBuffersSafetyComments(input_api, output_api):
+    """Checks that ANGLE_UNSAFE_BUFFERS is accompanied by a
+    // SAFETY: comment.
+    """
+    # We only check C++ source files.
+    exts = ('.h', '.cc', '.cpp', '.mm')
+    file_filter = lambda f: f.LocalPath().endswith(exts)
+
+    unsafe_buffers_regex = re.compile(r'\bANGLE_UNSAFE_BUFFERS\b')
+    safety_comment_regex = re.compile(r'//.*\bSAFETY\b')
+
+    problems = []
+
+    for f in input_api.AffectedSourceFiles(file_filter):
+        lines = f.NewContents()
+        for line_num, line in enumerate(lines, start=1):
+            if line.strip().startswith('//'):
+                continue
+            if unsafe_buffers_regex.search(line):
+                # Check if safety comment is on the same line.
+                if safety_comment_regex.search(line):
+                    continue
+
+                # Check preceding lines for a SAFETY comment.
+                has_safety = False
+                for check_line_num in range(line_num - 1, 0, -1):
+                    check_line = lines[check_line_num - 1].strip()
+                    if not check_line:
+                        continue
+                    if check_line.startswith('//'):
+                        if safety_comment_regex.search(check_line):
+                            has_safety = True
+                            break
+                    else:
+                        # Not a comment line. If it looks like the end of a statement, stop searching.
+                        if check_line.endswith(';') or check_line.endswith(
+                                '{') or check_line.endswith('}'):
+                            break
+
+                if not has_safety:
+                    problems.append(f"{f.LocalPath()}:{line_num}: "
+                                    "ANGLE_UNSAFE_BUFFERS usage must be accompanied by a "
+                                    "// SAFETY: comment.")
+
+    if problems:
+        return [
+            output_api.PresubmitPromptWarning(
+                "ANGLE_UNSAFE_BUFFERS usages must be accompanied by a "
+                "// SAFETY: comment explaining why they are safe.",
+                items=problems)
+        ]
+    return []
+
+
+# Copied from Chrome's _GetMessageForMatchingType.
+def _GetMessageForMatchingType(input_api, affected_file, line_number, line, ban_rule):
+    """
+    Helper method for checking for banned constructs.
+
+    Returns an string composed of the name of the file, the line number
+    where the match has been found and the additional text passed as
+    |message| in case the target type name matches the text inside the
+    line passed as parameter.
+    """
+    result = []
+
+    # Ignore comments about banned types.
+    if input_api.re.search(r'^ *//', line):
+        return result
+    # A // nocheck comment will bypass this error.
+    if line.endswith(' nocheck'):
+        return result
+
+    matched = False
+    if ban_rule.pattern[0:1] == '/':
+        regex = ban_rule.pattern[1:]
+        if input_api.re.search(regex, line):
+            matched = True
+    elif ban_rule.pattern in line:
+        matched = True
+
+    if matched:
+        result.append('    %s:%d:' % (affected_file.LocalPath(), line_number))
+        for line in ban_rule.explanation:
+            result.append('      %s' % line)
+
+    return result
+
+
+# Copied from Chrome's CheckNoBannedPatterns with modifications.
+def _CheckNoBannedPatterns(input_api, output_api):
+    """Make sure that banned patterns are not used."""
+    results = []
+
+    def IsExcludedFile(affected_file, excluded_paths):
+        if not excluded_paths:
+            return False
+
+        local_path = affected_file.UnixLocalPath()
+        for item in excluded_paths:
+            if input_api.re.match(item, local_path):
+                return True
+        return False
+
+    def CheckForMatch(affected_file, line_num, line, ban_rule):
+        if IsExcludedFile(affected_file, ban_rule.excluded_paths):
+            return
+
+        message = _GetMessageForMatchingType(input_api, affected_file, line_num, line, ban_rule)
+        if message:
+            result_loc = []
+            if ban_rule.surface_as_gerrit_lint:
+                if hasattr(output_api, 'PresubmitResultLocation'):
+                    result_loc.append(
+                        output_api.PresubmitResultLocation(
+                            file_path=affected_file.LocalPath(),
+                            start_line=line_num,
+                            end_line=line_num,
+                        ))
+            if ban_rule.treat_as_error:
+                if result_loc:
+                    results.append(
+                        output_api.PresubmitError(
+                            'A banned pattern was used.\n' + '\n'.join(message),
+                            locations=result_loc))
+                else:
+                    results.append(
+                        output_api.PresubmitError('A banned pattern was used.\n' +
+                                                  '\n'.join(message)))
+            else:
+                if result_loc:
+                    results.append(
+                        output_api.PresubmitPromptWarning(
+                            'A banned pattern was used.\n' + '\n'.join(message),
+                            locations=result_loc))
+                else:
+                    results.append(
+                        output_api.PresubmitPromptWarning('A banned pattern was used.\n' +
+                                                          '\n'.join(message)))
+
+    file_filter = lambda f: f.LocalPath().endswith(('.cc', '.mm', '.cpp', '.h'))
+    for f in input_api.AffectedSourceFiles(file_filter):
+        for line_num, line in f.ChangedContents():
+            for ban_rule in _BANNED_CPP_PATTERNS:
+                CheckForMatch(f, line_num, line, ban_rule)
+
+    return results
+
+
 def CheckChangeOnUpload(input_api, output_api):
     results = []
+    results.extend(_CheckPresubmitTests(input_api, output_api))
+    results.extend(_CheckUnsafeBuffersSafetyComments(input_api, output_api))
+    results.extend(_CheckNoBannedPatterns(input_api, output_api))
     results.extend(input_api.canned_checks.CheckForCommitObjects(input_api, output_api))
     results.extend(_CheckTabsInSourceFiles(input_api, output_api))
     results.extend(_CheckNonAsciiInSourceFiles(input_api, output_api))
@@ -581,6 +931,8 @@ def CheckChangeOnUpload(input_api, output_api):
             input_api, output_api, result_factory=output_api.PresubmitError))
     results.extend(_CheckCommitMessageFormatting(input_api, output_api))
     results.extend(_CheckGClientExists(input_api, output_api))
+    results.extend(_CheckRestrictedTraces(input_api, output_api))
+    results.extend(_CheckUnwrappedVulkanCalls(input_api, output_api))
 
     return results
 

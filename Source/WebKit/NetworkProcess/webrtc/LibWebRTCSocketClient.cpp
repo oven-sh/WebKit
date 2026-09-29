@@ -123,7 +123,7 @@ void LibWebRTCSocketClient::signalReadPacket(webrtc::AsyncPacketSocket* socket, 
 {
     ASSERT_UNUSED(socket, m_socket.get() == socket);
     std::span data = unsafeMakeSpan(byteCast<uint8_t>(value), length);
-    m_connection->send(Messages::LibWebRTCNetwork::SignalReadPacket(m_identifier, data, RTCNetwork::IPAddress(address.ipaddr()), address.port(), packetTime, WebRTCNetwork::EcnMarking::kNotEct), 0);
+    m_connection->send(Messages::LibWebRTCNetwork::SignalReadPacket(m_identifier, data, RTCNetwork::SocketAddress(address), packetTime, WebRTCNetwork::EcnMarking::kNotEct), 0);
 }
 
 void LibWebRTCSocketClient::signalSentPacket(webrtc::AsyncPacketSocket* socket, const webrtc::SentPacketInfo& sentPacket)

@@ -302,10 +302,11 @@ JSBigInt* JSBigInt::createFrom(JSGlobalObject* globalObject, double value)
     bool sign = value < 0; // -0 was already handled above.
     uint64_t doubleBits = std::bit_cast<uint64_t>(value);
     int32_t rawExponent = static_cast<int32_t>(doubleBits >> doublePhysicalMantissaSize) & 0x7ff;
-    ASSERT(rawExponent != 0x7ff); // Since value is integer, exponent should not be 0x7ff (full bits, used for infinity etc.).
-    ASSERT(rawExponent >= 0x3ff); // Since value is integer, exponent should be >= 0 + bias (0x3ff).
-    int32_t exponent = rawExponent - 0x3ff;
-    int32_t digits = exponent / digitBits + 1;
+    // value is an integer, so rawExponent is neither below the bias (that would be a fraction) nor
+    // the all-ones pattern that encodes infinity and NaN.
+    RELEASE_ASSERT(rawExponent >= 0x3ff && rawExponent < 0x7ff);
+    unsigned exponent = static_cast<unsigned>(rawExponent) - 0x3ff;
+    size_t digits = exponent / digitBits + 1;
     Vector<Digit, 64> resultVector(FillWith { }, digits, 0);
     auto result = resultVector.mutableSpan();
 
@@ -324,7 +325,7 @@ JSBigInt* JSBigInt::createFrom(JSGlobalObject* globalObject, double value)
 
     int32_t mantissaTopBit = doubleMantissaSize - 1; // 0-indexed.
     // 0-indexed position of most significant bit in the most significant digit.
-    int32_t msdTopBit = exponent % digitBits;
+    int32_t msdTopBit = static_cast<int32_t>(exponent % digitBits);
     // Number of unused bits in mantissa. We'll keep them shifted to the
     // left (i.e. most significant part) of the underlying uint64_t.
     int32_t remainingMantissaBits = 0;
@@ -343,7 +344,7 @@ JSBigInt* JSBigInt::createFrom(JSGlobalObject* globalObject, double value)
     }
     result[digits - 1] = digit;
     // Then fill in the rest of the digits.
-    for (int32_t digitIndex = digits - 2; digitIndex >= 0; digitIndex--) {
+    for (size_t digitIndex = digits - 1; digitIndex-- > 0;) {
         if (remainingMantissaBits > 0) {
             remainingMantissaBits -= digitBits;
             if constexpr (sizeof(Digit) == 4) {
@@ -945,6 +946,40 @@ std::span<JSBigInt::Digit, N * 2> JSBigInt::squareCombaFixed(std::span<const Dig
     return result;
 }
 
+template<typename DigitType>
+static std::span<DigitType> clampedSubspan(std::span<DigitType> x, size_t offset, size_t length)
+{
+    if (offset >= x.size())
+        return { };
+    x = x.subspan(offset);
+    if (x.size() > length)
+        x = x.first(length);
+    return x;
+}
+
+ALWAYS_INLINE static std::span<JSBigInt::Digit> forEachSlidingColumn(std::span<const JSBigInt::Digit> xWindow, std::span<const JSBigInt::Digit> y, std::span<JSBigInt::Digit> result, NOESCAPE const Invocable<JSBigInt::Digit(std::span<const JSBigInt::Digit>)> auto& computeColumn)
+{
+    // Steady state
+    for (; !result.empty() && xWindow.size() >= y.size(); result = result.subspan(1), xWindow = xWindow.subspan(1))
+        result.front() = computeColumn(xWindow.first(y.size()));
+
+    // Shrinking
+    for (; !result.empty() && !xWindow.empty(); result = result.subspan(1), xWindow = xWindow.subspan(1))
+        result.front() = computeColumn(xWindow);
+
+    return result;
+}
+
+ALWAYS_INLINE static std::span<JSBigInt::Digit> accumulateSlidingColumns(std::span<const JSBigInt::Digit> xWindow, std::span<const JSBigInt::Digit> y, std::span<JSBigInt::Digit> result, DigitColumnAccumulator<CarryForm::Flags>& accumulator)
+{
+    return forEachSlidingColumn(xWindow, y, result, [&](std::span<const JSBigInt::Digit> xPart) ALWAYS_INLINE_LAMBDA {
+        auto yDigit = y.rbegin();
+        for (JSBigInt::Digit xDigit : xPart)
+            accumulator.mac(xDigit, *yDigit++);
+        return accumulator.storeAndShift();
+    });
+}
+
 std::span<JSBigInt::Digit> JSBigInt::multiplySingle(std::span<const Digit> multiplicand, Digit multiplier, std::span<Digit> result)
 {
     RELEASE_ASSERT(result.size() > multiplicand.size());
@@ -963,173 +998,184 @@ std::span<JSBigInt::Digit> JSBigInt::multiplySingle(std::span<const Digit> multi
 }
 
 // Z := X * Y.
-// O(n²) "schoolbook" multiplication algorithm. Optimized to minimize
+// O(n^2) "schoolbook" multiplication algorithm. Optimized to minimize
 // bounds and overflow checks: rather than looping over X for every digit
-// of Y (or vice versa), we loop over Z. The {BODY} macro above is what
-// computes one of Z's digits as a sum of the products of relevant digits
-// of X and Y. This yields a nearly 2x improvement compared to more obvious
+// of Y (or vice versa), we loop over Z. The foldProduct below is what folds
+// one product of relevant digits of X and Y into the digit of Z being
+// computed. This yields a nearly 2x improvement compared to more obvious
 // implementations.
 // This method is *highly* performance sensitive even for the advanced
 // algorithms, which use this as the base case of their recursive calls.
-#define MULTIPLY_BODY(min, max) \
-    do { \
-        for (uint32_t j = min; j <= max; j++) { \
-            auto [low, high] = digitMul(x[j], y[i - j]); \
-            zi = digitAdd(zi, low, carry); \
-            next = digitAdd(next, high, nextCarry); \
-        } \
-        result[i] = zi; \
-    } while (0)
-
-std::span<JSBigInt::Digit> JSBigInt::multiplySchoolbook(std::span<const Digit> xSpan, std::span<const Digit> ySpan, std::span<Digit> resultSpan)
+std::span<JSBigInt::Digit> JSBigInt::multiplySchoolbook(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
-    RELEASE_ASSERT(xSpan.size() >= ySpan.size());
-    RELEASE_ASSERT(resultSpan.size() >= xSpan.size() + ySpan.size());
-    RELEASE_ASSERT(xSpan.size());
-    RELEASE_ASSERT(ySpan.size());
+    RELEASE_ASSERT(!y.empty());
+    RELEASE_ASSERT(x.size() >= y.size());
+    // Rejecting a wrapped product length is what lets the compiler discharge the bound checks on
+    // the writes below, which it cannot do against a sum that might have overflowed.
+    size_t fullSize = x.size() + y.size();
+    RELEASE_ASSERT(fullSize >= y.size());
+    RELEASE_ASSERT(result.size() >= fullSize);
+    // Narrowing result to the digits this writes ties each column index to the span's own size, so
+    // the standard library's bound check on each write is hoisted out of the loops below.
+    result = result.first(fullSize);
 
-    const auto* x = xSpan.data();
-    const auto* y = ySpan.data();
-    auto* result = resultSpan.data();
+    // zi is the digit of Z being computed and next the carry into the one above it, each with its
+    // own carry counter. They live across columns, so foldProduct can take just the two digits.
+    Digit zi = 0, next = 0, nextCarry = 0, carry = 0;
+    auto foldProduct = [&](Digit xDigit, Digit yDigit) ALWAYS_INLINE_LAMBDA {
+        auto [low, high] = digitMul(xDigit, yDigit);
+        zi = digitAdd(zi, low, carry);
+        next = digitAdd(next, high, nextCarry);
+    };
 
-    Digit next = 0, nextCarry = 0, carry = 0;
+    auto xHead = x.first(y.size());
+    auto resultHead = result.first(y.size());
+
     // Unrolled first iteration: it's trivial.
     {
-        auto [low, high] = digitMul(x[0], y[0]);
-        result[0] = low;
+        auto [low, high] = digitMul(xHead[0], y[0]);
+        resultHead[0] = low;
         next = high;
     }
     size_t i = 1;
     // Unrolled second iteration: a little less setup.
-    if (i < ySpan.size()) {
-        Digit zi = next;
+    if (i < resultHead.size()) {
+        zi = next;
         next = 0;
-        MULTIPLY_BODY(0, 1);
+        for (size_t j = 0; j <= 1; j++)
+            foldProduct(xHead[j], y[i - j]);
+        resultHead[i] = zi;
         i++;
     }
 
-    // Main part: since xSpan.size() >= ySpan.size() > i, no bounds checks are needed.
-    for (; i < ySpan.size(); i++) {
+    // Main part: since x.size() >= y.size() > i, no bounds checks are needed.
+    for (; i < resultHead.size(); i++) {
         Digit temp = 0;
-        Digit zi = digitAdd(next, carry, temp);
+        zi = digitAdd(next, carry, temp);
         next = nextCarry + temp;
         carry = 0;
         nextCarry = 0;
-        MULTIPLY_BODY(0, i);
+        for (size_t j = 0; j <= i; j++)
+            foldProduct(xHead[j], y[i - j]);
+        resultHead[i] = zi;
     }
 
-    // Last part: i exceeds y now, we have to be careful about bounds.
-    size_t loopEnd = xSpan.size() + ySpan.size() - 2;
-    for (; i <= loopEnd; i++) {
-        size_t maxXIndex = std::min<size_t>(i, xSpan.size() - 1);
-        size_t maxYIndex = ySpan.size() - 1;
-        size_t minXIndex = i - maxYIndex;
+    // Last part: i exceeds y now, so each remaining column but the last is a sliding window.
+    forEachSlidingColumn(x.subspan(1), y, result.subspan(resultHead.size()), [&](std::span<const Digit> xPart) ALWAYS_INLINE_LAMBDA {
+        auto yDigit = y.rbegin();
         Digit temp = 0;
-        Digit zi = digitAdd(next, carry, temp);
+        zi = digitAdd(next, carry, temp);
         next = nextCarry + temp;
         carry = 0;
         nextCarry = 0;
-        MULTIPLY_BODY(minXIndex, maxXIndex);
-    }
+        for (Digit xDigit : xPart)
+            foldProduct(xDigit, *yDigit++);
+        return zi;
+    });
 
     // Write the last digit.
     Digit temp = 0;
-    result[i++] = digitAdd(next, carry, temp);
+    result.back() = digitAdd(next, carry, temp);
     ASSERT(!temp);
-    return resultSpan.first(i);
+    return result;
 }
 
-#undef MULTIPLY_BODY
-
 // For the needs of cachedMod, computes only the low result.size() digits of X * Y.
-void JSBigInt::multiplySpecialLow(std::span<const Digit> xSpan, std::span<const Digit> ySpan, std::span<Digit> resultSpan)
+void JSBigInt::multiplySpecialLow(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
-    RELEASE_ASSERT(ySpan.size() >= 1);
-    RELEASE_ASSERT(xSpan.size() >= 2);
-    RELEASE_ASSERT(xSpan.size() >= ySpan.size() - 1);
-    RELEASE_ASSERT(resultSpan.size());
-
-    const auto* x = xSpan.data();
-    const auto* y = ySpan.data();
-    auto* result = resultSpan.data();
+    RELEASE_ASSERT(y.size() >= 1);
+    RELEASE_ASSERT(x.size() >= 2);
+    RELEASE_ASSERT(x.size() >= y.size() - 1);
+    RELEASE_ASSERT(!result.empty());
 
     DigitColumnAccumulator<CarryForm::Flags> accumulator;
-    size_t lastColumn = resultSpan.size() - 1;
-    size_t mainEnd = std::min({ xSpan.size(), ySpan.size(), lastColumn });
+    size_t lastColumn = result.size() - 1;
     size_t column = 0;
 
     // Expanding phase: both operands still cover the whole column, so the term range is exactly
-    // [0, column] and needs no clamping.
-    for (; column < mainEnd; ++column) {
+    // [0, column] and needs no clamping. Narrowing all three spans to the length this runs for
+    // bounds every index by its own span's size, which is what the compiler can discharge.
+    auto xHead = x;
+    if (xHead.size() > y.size())
+        xHead = xHead.first(y.size());
+    if (xHead.size() > lastColumn)
+        xHead = xHead.first(lastColumn);
+    auto yHead = y.first(xHead.size());
+    auto resultHead = result.first(xHead.size());
+    for (; column < xHead.size(); ++column) {
         for (size_t j = 0; j <= column; ++j)
-            accumulator.mac(x[j], y[column - j]);
-        result[column] = accumulator.storeAndShift();
+            accumulator.mac(xHead[j], yHead[column - j]);
+        resultHead[column] = accumulator.storeAndShift();
     }
 
-    // Shrinking phase: the term range is clipped at both ends.
-    for (; column <= lastColumn; ++column) {
-        size_t maxYIndex = std::min<size_t>(column, ySpan.size() - 1);
-        size_t minXIndex = column - maxYIndex;
-        size_t maxXIndex = std::min<size_t>(column, xSpan.size() - 1);
-        for (size_t j = minXIndex; j <= maxXIndex; ++j)
-            accumulator.mac(x[j], y[column - j]);
+    // The expanding phase stops short of Y only when X or the result runs out first, so at most one
+    // column is still clipped at the Y end. Peel it, and the rest is the sliding window over X.
+    if (column < y.size() && column <= lastColumn) {
+        auto yPart = y.first(column + 1);
+        auto xPart = clampedSubspan(x, 0, yPart.size());
+        auto yDigit = yPart.rbegin();
+        for (Digit xDigit : xPart)
+            accumulator.mac(xDigit, *yDigit++);
         result[column] = accumulator.storeAndShift();
+        ++column;
     }
+
+    if (column > lastColumn)
+        return;
+
+    ASSERT(column >= y.size());
+    auto trailing = accumulateSlidingColumns(x.subspan(std::min(column + 1 - y.size(), x.size())), y, result.subspan(column), accumulator);
+    // Columns past the end of X have no terms of their own and only flush the accumulator.
+    for (Digit& digit : trailing)
+        digit = accumulator.storeAndShift();
 }
 
 // For the needs of cachedMod, computes only product digits from startPosition and onward.
 // result[startPosition] corresponds to product digit startPosition.
 // The accumulator state from positions below startPosition is lost, so the computed digits are an
 // *approximate* value.
-void JSBigInt::multiplySpecialHigh(std::span<const Digit> xSpan, std::span<const Digit> ySpan, std::span<Digit> resultSpan, size_t startPosition)
+void JSBigInt::multiplySpecialHigh(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result, size_t startPosition)
 {
-    RELEASE_ASSERT(xSpan.size() >= ySpan.size());
-    RELEASE_ASSERT(ySpan.size() >= 1);
-    size_t fullSize = xSpan.size() + ySpan.size();
+    RELEASE_ASSERT(y.size() >= 1);
+    RELEASE_ASSERT(x.size() >= y.size());
+    // Rejecting a wrapped product length is what lets the compiler discharge the bound checks on
+    // the writes below, which it cannot do against a sum that might have overflowed.
+    size_t fullSize = x.size() + y.size();
+    RELEASE_ASSERT(fullSize >= y.size());
     RELEASE_ASSERT(startPosition < fullSize);
-    RELEASE_ASSERT(resultSpan.size() >= fullSize);
-
-    const auto* x = xSpan.data();
-    const auto* y = ySpan.data();
-    auto* result = resultSpan.data();
+    RELEASE_ASSERT(result.size() >= fullSize);
+    result = result.first(fullSize);
 
     DigitColumnAccumulator<CarryForm::Flags> accumulator;
     size_t column = startPosition;
 
-    // Expanding phase: column < ySpan.size(), so the term range starts at 0.
-    for (; column < ySpan.size(); ++column) {
+    // Expanding phase: column < y.size(), so the term range starts at 0.
+    for (; column < y.size(); ++column) {
         for (size_t j = 0; j <= column; ++j)
             accumulator.mac(x[j], y[column - j]);
         result[column] = accumulator.storeAndShift();
     }
 
-    // Shrinking phase: the term range is clipped at both ends.
-    size_t lastColumn = fullSize - 2;
-    for (; column <= lastColumn; ++column) {
-        size_t minXIndex = column - (ySpan.size() - 1);
-        size_t maxXIndex = std::min<size_t>(column, xSpan.size() - 1);
-        for (size_t j = minXIndex; j <= maxXIndex; ++j)
-            accumulator.mac(x[j], y[column - j]);
-        result[column] = accumulator.storeAndShift();
-    }
+    // X runs out one column before the result does, so the walk leaves exactly the last column.
+    auto trailing = accumulateSlidingColumns(x.subspan(column + 1 - y.size()), y, result.subspan(column), accumulator);
+    ASSERT_UNUSED(trailing, trailing.size() == 1);
 
     ASSERT(accumulator.fitsInLow());
-    result[column] = accumulator.low();
+    result.back() = accumulator.low();
 }
 
 // Product scanning costs less per single-digit product than multiplySchoolbook (one
-// add-with-carry chain instead of two counter accumulations) but more per result column (it shifts
-// its three-digit running sum). A shape has O(x * y) products and only x + y - 1 columns, so the
-// balance is set by the smaller operand: product scanning wins once the columns are long, and again
-// on very thin shapes, where multiplySchoolbook's expanding phase all but vanishes and it clamps the
-// term range on nearly every column instead.
+// add-with-carry chain instead of two counter accumulations), and multiplySchoolbook answers with
+// its first two columns unrolled outright, which is most of the work on the smallest shapes. So
+// multiplySchoolbook keeps the shapes that are barely more than that unrolled head, and product
+// scanning takes the long columns and the very thin shapes, where the head is a vanishing share of
+// the column count.
 //
-// These bounds are deliberately coarse. Between them the two are within a few percent, and that
-// margin is smaller than the swing caused by where multiplyComba's short inner loops happen to land
-// relative to a cache line: measuring the same shapes across four builds whose only difference was
-// padding ahead of multiplyComba moved individual shapes by up to 6 points and flipped signs. Only
-// bounds whose sign held across all four are encoded here, so do not narrow them without
-// re-measuring the same way.
+// These bounds are coarse and lean towards multiplySchoolbook; product scanning measures ahead
+// between them as well. Do not move them off a single build: multiplyComba swings up to 6 points on
+// where its short inner loops land relative to a cache line, and measuring the same shapes across
+// four builds whose only difference was padding ahead of multiplyComba moved individual shapes by
+// up to 6 points and flipped signs. Only bounds whose sign held across all four are encoded here.
 static constexpr size_t minCombaSmallerSize = 8;
 static constexpr size_t maxCombaThinSmallerSize = 2;
 static constexpr size_t minCombaThinLargerSize = 16;
@@ -1141,69 +1187,59 @@ static constexpr bool shouldUseComba(size_t largerSize, size_t smallerSize)
 
 // Z := X * Y by product scanning. Each column's running sum lives in three digits, so every
 // product feeds a single add-with-carry chain instead of materializing a carry bit per addend.
-// Splitting the column walk into ramp-up, steady and ramp-down phases makes every loop bound exact,
-// so no column pays for clamping its term range.
-//
-// The shift is more per-column work than multiplySchoolbook does, so this is not a win at every
-// shape; see shouldUseComba.
-std::span<JSBigInt::Digit> JSBigInt::multiplyComba(std::span<const Digit> xSpan, std::span<const Digit> ySpan, std::span<Digit> resultSpan)
+// This has no unrolled head, so it is not a win at every shape; see shouldUseComba.
+std::span<JSBigInt::Digit> JSBigInt::multiplyComba(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
-    RELEASE_ASSERT(xSpan.size() >= ySpan.size());
-    RELEASE_ASSERT(resultSpan.size() >= xSpan.size() + ySpan.size());
-    RELEASE_ASSERT(ySpan.size());
-
-    const auto* x = xSpan.data();
-    const auto* y = ySpan.data();
-    auto* result = resultSpan.data();
-    const size_t xSize = xSpan.size();
-    const size_t ySize = ySpan.size();
+    RELEASE_ASSERT(!y.empty());
+    RELEASE_ASSERT(x.size() >= y.size());
+    // Rejecting a wrapped product length is what lets the compiler discharge the bound checks on
+    // the writes below, which it cannot do against a sum that might have overflowed.
+    size_t fullSize = x.size() + y.size();
+    RELEASE_ASSERT(fullSize >= y.size());
+    RELEASE_ASSERT(result.size() >= fullSize);
+    result = result.first(fullSize);
 
     DigitColumnAccumulator<CarryForm::Flags> accumulator;
-    for (size_t i = 0; i < ySize; ++i) {
+
+    // Ramp up: every column starts at x[0], because y does not yet reach back that far.
+    size_t i = 0;
+    for (; i < y.size(); ++i) {
         for (size_t j = 0; j <= i; ++j)
             accumulator.mac(x[j], y[i - j]);
         result[i] = accumulator.storeAndShift();
     }
-    for (size_t i = ySize; i < xSize; ++i) {
-        for (size_t j = i - ySize + 1; j <= i; ++j)
-            accumulator.mac(x[j], y[i - j]);
-        result[i] = accumulator.storeAndShift();
-    }
-    for (size_t i = xSize; i < xSize + ySize - 1; ++i) {
-        for (size_t j = i - ySize + 1; j <= xSize - 1; ++j)
-            accumulator.mac(x[j], y[i - j]);
-        result[i] = accumulator.storeAndShift();
-    }
+
+    accumulateSlidingColumns(x.subspan(1), y, result.subspan(i, x.size() - 1), accumulator);
+
     ASSERT(accumulator.fitsInLow());
-    result[xSize + ySize - 1] = accumulator.low();
-    return resultSpan.first(xSize + ySize);
+    result.back() = accumulator.low();
+    return result;
 }
 
 // Compile-time-specialized forms of multiplySpecialLow / multiplySpecialHigh for cachedMod. The
 // loops below are ordinary loops, but every bound is a compile-time constant, so the index
 // arithmetic folds away and the compiler is free to unroll as far as it pays off.
 //
-// These must accumulate in exactly the same order as the generic versions: multiplySpecialHigh is
+// These must produce exactly the same digits as the generic versions: multiplySpecialHigh is
 // deliberately approximate (it drops the carry coming from columns below StartPosition), and the
-// error bound that cachedMod's corrective loop relies on depends on that accumulation order.
+// error bound cachedMod's corrective loop relies on is derived from that StartPosition and from
+// which products land in each column. Their order within a column is free, since the accumulator
+// carries every column exactly.
 
 // Accumulates x[j] * y[i - j] for j in [min, max] into acc.
-ALWAYS_INLINE static void multiplySpecialColumn(const JSBigInt::Digit* x, const JSBigInt::Digit* y, size_t i, size_t min, size_t max, DigitColumnAccumulator<CarryForm::Flags>& acc)
+template<size_t XSize, size_t YSize>
+ALWAYS_INLINE static void multiplySpecialColumn(std::span<const JSBigInt::Digit, XSize> x, std::span<const JSBigInt::Digit, YSize> y, size_t i, size_t min, size_t max, DigitColumnAccumulator<CarryForm::Flags>& acc)
 {
     for (size_t j = min; j <= max; ++j)
         acc.mac(x[j], y[i - j]);
 }
 
 template<size_t XSize, size_t YSize, size_t StartPosition>
-ALWAYS_INLINE void JSBigInt::multiplySpecialHighFixed(std::span<const Digit, XSize> xSpan, std::span<const Digit, YSize> ySpan, std::span<Digit, XSize + YSize> resultSpan)
+ALWAYS_INLINE void JSBigInt::multiplySpecialHighFixed(std::span<const Digit, XSize> x, std::span<const Digit, YSize> y, std::span<Digit, XSize + YSize> result)
 {
     static_assert(XSize >= YSize && YSize >= 1);
     static_assert(StartPosition < XSize + YSize);
     constexpr size_t loopEnd = XSize + YSize - 2;
-
-    const auto* x = xSpan.data();
-    const auto* y = ySpan.data();
-    auto* result = resultSpan.data();
 
     DigitColumnAccumulator<CarryForm::Flags> acc;
     for (size_t i = StartPosition; i <= loopEnd; ++i) {
@@ -1217,16 +1253,12 @@ ALWAYS_INLINE void JSBigInt::multiplySpecialHighFixed(std::span<const Digit, XSi
 }
 
 template<size_t XSize, size_t YSize, size_t RSize>
-ALWAYS_INLINE void JSBigInt::multiplySpecialLowFixed(std::span<const Digit, XSize> xSpan, std::span<const Digit, YSize> ySpan, std::span<Digit, RSize> resultSpan)
+ALWAYS_INLINE void JSBigInt::multiplySpecialLowFixed(std::span<const Digit, XSize> x, std::span<const Digit, YSize> y, std::span<Digit, RSize> result)
 {
     static_assert(XSize >= 2 && YSize >= 1 && RSize >= 2);
     static_assert(XSize + 1 >= YSize);
     constexpr size_t loopEnd = RSize - 1;
     constexpr size_t mainEnd = std::min({ XSize, YSize, loopEnd });
-
-    const auto* x = xSpan.data();
-    const auto* y = ySpan.data();
-    auto* result = resultSpan.data();
 
     DigitColumnAccumulator<CarryForm::Flags> acc;
     size_t i = 0;
@@ -1314,6 +1346,10 @@ static size_t karatsubaRoundUpLength(size_t length)
     return ((length + additive) >> shift) << shift;
 }
 
+// Returns a chunk width k for splitting an n-digit operand. Callers size product buffers as 2 * k
+// and fill them with up to n digits, so they need 2 * k >= n. That holds with room to spare because
+// the loop below halves n only until it reaches karatsubaThreshold, leaving the re-shift to discard
+// far less than half.
 static size_t karatsubaLength(size_t n)
 {
     n = karatsubaRoundUpLength(n);
@@ -1323,14 +1359,6 @@ static size_t karatsubaLength(size_t n)
         i++;
     }
     return n << i;
-}
-
-template<typename DigitType>
-static std::span<DigitType> clampedSubspan(std::span<DigitType> x, size_t offset, size_t length)
-{
-    if (offset >= x.size())
-        return { };
-    return x.subspan(offset, std::min(length, x.size() - offset));
 }
 
 JSBigInt::Digit JSBigInt::inplaceAddAndPropagate(std::span<Digit> z, std::span<const Digit> x)
@@ -1395,7 +1423,13 @@ void JSBigInt::karatsubaMain(InterruptCheck& interrupt, std::span<Digit> z, std:
         multiplyZeroPadded(interrupt, z.first(std::min(z.size(), 2 * n)), x, y);
         return;
     }
-    ASSERT(scratch.size() >= 4 * n);
+    RELEASE_ASSERT(n <= std::numeric_limits<size_t>::max() / 4);
+    RELEASE_ASSERT(scratch.size() >= 4 * n);
+    // Trimming scratch to exactly the footprint this level touches lets every subspan of it below
+    // be proven in bounds from the size alone, rather than each one re-testing it at run time. z
+    // gets no such treatment: karatsubaStart may pass one shorter than 2 * n, which is why the
+    // writes into it are clamped to its size.
+    scratch = scratch.first(4 * n);
     ASSERT(!(n & 1));
     size_t n2 = n >> 1;
     auto x0 = clampedSubspan(x, 0, n2);
@@ -1455,6 +1489,10 @@ void JSBigInt::karatsubaChunk(InterruptCheck& interrupt, std::span<Digit> z, std
 
 void JSBigInt::karatsubaStart(InterruptCheck& interrupt, std::span<Digit> z, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> scratch, size_t k)
 {
+    // The chunk loop below indexes z at offsets below x.size() + y.size(); these two bounds are
+    // what prove those offsets in range without a test at each one.
+    RELEASE_ASSERT(y.size() <= z.size());
+    RELEASE_ASSERT(x.size() <= z.size() - y.size());
     karatsubaMain(interrupt, z, x, y, scratch, k);
     if (interrupt.interrupted())
         return;
@@ -1468,25 +1506,27 @@ void JSBigInt::karatsubaStart(InterruptCheck& interrupt, std::span<Digit> z, std
     auto x0 = clampedSubspan(x, 0, k);
     auto y0 = clampedSubspan(y, 0, k);
     auto y1 = clampedSubspan(y, k, y.size());
+    Digit overflow = 0;
     if (!y1.empty()) {
         karatsubaChunk(interrupt, product, x0, y1, scratch);
         if (interrupt.interrupted())
             return;
-        inplaceAddAndPropagate(z.subspan(k), product);
+        overflow += inplaceAddAndPropagate(z.subspan(k), product);
     }
     for (size_t i = k; i < x.size(); i += k) {
         auto xi = clampedSubspan(x, i, k);
         karatsubaChunk(interrupt, product, xi, y0, scratch);
         if (interrupt.interrupted())
             return;
-        inplaceAddAndPropagate(z.subspan(i), product);
+        overflow += inplaceAddAndPropagate(z.subspan(i), product);
         if (!y1.empty()) {
             karatsubaChunk(interrupt, product, xi, y1, scratch);
             if (interrupt.interrupted())
                 return;
-            inplaceAddAndPropagate(z.subspan(i + k), product);
+            overflow += inplaceAddAndPropagate(z.subspan(i + k), product);
         }
     }
+    ASSERT_UNUSED(overflow, !overflow);
 }
 
 std::span<JSBigInt::Digit> JSBigInt::multiplyKaratsuba(InterruptCheck& interrupt, std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
@@ -2954,7 +2994,7 @@ JSBigInt::Digit JSBigInt::inplaceSub(std::span<Digit> z, std::span<const Digit> 
 
 bool JSBigInt::greaterThanOrEqual(std::span<const Digit> a, std::span<const Digit> b)
 {
-    ASSERT(a.size() == b.size());
+    RELEASE_ASSERT(a.size() == b.size());
     for (size_t i = a.size(); i-- > 0;) {
         if (a[i] != b[i])
             return a[i] > b[i];
@@ -2964,9 +3004,9 @@ bool JSBigInt::greaterThanOrEqual(std::span<const Digit> a, std::span<const Digi
 
 static std::span<JSBigInt::Digit> spanCopy(std::span<JSBigInt::Digit> z, std::span<const JSBigInt::Digit> x)
 {
-    if (z.data() == x.data())
-        return z;
-    memmoveSpan(z, x);
+    RELEASE_ASSERT(z.size() >= x.size());
+    if (z.data() != x.data())
+        memmoveSpan(z, x);
     return z.first(x.size());
 }
 
@@ -2975,7 +3015,7 @@ static std::span<JSBigInt::Digit> spanCopy(std::span<JSBigInt::Digit> z, std::sp
 std::span<JSBigInt::Digit> JSBigInt::leftShift(std::span<Digit> z, std::span<const Digit> x, unsigned shift)
 {
     ASSERT(shift < digitBits);
-    ASSERT(z.size() >= x.size());
+    RELEASE_ASSERT(z.size() >= x.size());
     if (shift == 0)
         return spanCopy(z, x);
 
@@ -2987,11 +3027,11 @@ std::span<JSBigInt::Digit> JSBigInt::leftShift(std::span<Digit> z, std::span<con
         carry = d >> (digitBits - shift);
     }
 
-    if (i < z.size())
-        z[i++] = carry;
-    else {
-        ASSERT(carry == 0);
+    if (i < z.size()) {
+        z[i] = carry;
+        return z.first(i + 1);
     }
+    ASSERT(!carry);
     return z.first(i);
 }
 
@@ -3008,16 +3048,16 @@ std::span<JSBigInt::Digit> JSBigInt::rightShift(std::span<Digit> z, std::span<co
         return { };
 
     RELEASE_ASSERT(z.size() >= x.size());
+    z = z.first(x.size());
     Digit carry = x[0] >> shift;
-    size_t last = x.size() - 1;
-    size_t i = 0;
-    for (; i < last; i++) {
+    size_t last = z.size() - 1;
+    for (size_t i = 0; i < last; i++) {
         Digit d = x[i + 1];
         z[i] = (d << (digitBits - shift)) | carry;
         carry = d >> shift;
     }
-    z[i++] = carry;
-    return z.first(x.size());
+    z.back() = carry;
+    return z;
 }
 
 // Computes Q(uotient) and R(emainder) for A/B, such that
@@ -3026,6 +3066,7 @@ std::span<JSBigInt::Digit> JSBigInt::rightShift(std::span<Digit> z, std::span<co
 // can pass the other with len == 0.
 // If Q is present, its length must be at least A.len - B.len + 1.
 // If R is present, its length must be at least B.len.
+// Callers must not assume either returned span is trimmed of leading zero digits.
 // See Knuth, Volume 2, section 4.3.1, Algorithm D.
 std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::divideSchoolbook(std::span<Digit> q, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b, InterruptCheck* interrupt)
 {
@@ -3041,6 +3082,10 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
     // Maintaining this consistency is probably more useful than trying to
     // come up with more descriptive names for them.
     const size_t n = b.size();
+    // Every divisor reaching here is a BigInt's digits or a cached-modulo buffer, so this cannot
+    // fail. Bounding n from above is what tells the compiler n + 1 cannot wrap; without it the
+    // window indexing below re-tests its bounds once per quotient digit.
+    RELEASE_ASSERT(n <= maxLength);
     const size_t m = a.size() - n;
 
     // D1.
@@ -3070,16 +3115,25 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
     auto uSpan = u.mutableSpan();
     {
         auto filled = leftShift(uSpan, a, shift);
+        RELEASE_ASSERT(filled.size() <= uSpan.size());
         if (uSpan.size() != filled.size())
             zeroSpan(uSpan.subspan(filled.size()));
     }
-    RELEASE_ASSERT(uSpan.size() == a.size() + 1);
 
     // In each iteration, {qhatv} holds {divisor} * {current quotient digit}.
     // "v" is the book's name for {divisor}, "qhat" the current quotient digit.
     Vector<Digit, 16> qhatv(n + 1);
     auto qhatvSpan = qhatv.mutableSpan();
     RELEASE_ASSERT(qhatvSpan.size() == n + 1);
+    RELEASE_ASSERT(qhatvSpan.size() > normalizedDivisor.size());
+
+    // Each iteration reads and writes the n+1 digit window of U starting at its own digit, and
+    // writes one digit of Q. Bounding both up front is what proves every access inside the loop in
+    // range without a test at each one.
+    RELEASE_ASSERT(m <= uSpan.size());
+    RELEASE_ASSERT(n + 1 <= uSpan.size() - m);
+    if (!q.empty())
+        q = q.first(std::min(m + 1, q.size()));
 
     // D2.
     // Iterate over the dividend's digits (like the "grad school" algorithm).
@@ -3095,25 +3149,27 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
             if (interrupt->interrupted())
                 break;
         }
+        auto window = uSpan.subspan(j, n + 1);
+
         // D3.
         // Estimate the current iteration's quotient digit (see Knuth for details).
         // {qhat} is the current quotient digit.
         Digit qhat = std::numeric_limits<Digit>::max();
 
         // {ujn} is the dividend's most significant remaining digit.
-        Digit ujn = uSpan[j + n];
+        Digit ujn = window[n];
         if (ujn != vn1) {
             // {rhat} is the current iteration's remainder.
             Digit rhat = 0;
             // Estimate the current quotient digit by dividing the most significant
             // digits of dividend and divisor. The result will not be too small,
             // but could be a bit too large.
-            qhat = digitDiv.div(ujn, uSpan[j + n - 1], rhat);
+            qhat = digitDiv.div(ujn, window[n - 1], rhat);
 
             // Decrement the quotient estimate as needed by looking at the next
             // digit, i.e. by testing whether
             // qhat * v_{n-2} > (rhat << digitBits) + u_{j+n-2}.
-            Digit ujn2 = uSpan[j + n - 2];
+            Digit ujn2 = window[n - 2];
             while (productGreaterThan(qhat, vn2, rhat, ujn2)) {
                 qhat--;
                 Digit prevRhat = rhat;
@@ -3129,36 +3185,29 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
         // it from the dividend. If there was "borrow", then the quotient digit
         // was one too high, so we must correct it and undo one subtraction of
         // the (shifted) divisor.
-        if (qhat != 0) {
+        if (qhat) {
             auto filled = multiplySingle(normalizedDivisor, qhat, qhatvSpan);
-            if (qhatvSpan.size() != filled.size())
-                zeroSpan(qhatvSpan.subspan(filled.size()));
+            ASSERT_UNUSED(filled, filled.size() == qhatvSpan.size());
 
-            Digit c = inplaceSub(uSpan.subspan(j), qhatvSpan);
+            Digit c = inplaceSub(window, qhatvSpan);
             if (c) {
-                c = inplaceAdd(uSpan.subspan(j), normalizedDivisor);
-                uSpan[j + n] = uSpan[j + n] + c;
+                c = inplaceAdd(window, normalizedDivisor);
+                window[n] = window[n] + c;
                 qhat--;
             }
         }
 
-        if (!q.empty()) {
-            if (j >= q.size())
-                RELEASE_ASSERT(qhat == 0);
-            else
-                q[j] = qhat;
-        }
+        if (j < q.size())
+            q[j] = qhat;
+        else if (!q.empty())
+            RELEASE_ASSERT(!qhat);
     }
 
-    // Determine the actual quotient length: it's m+1 if q[m] is non-zero, otherwise m.
-    auto qResult = q;
-    if (!q.empty())
-        qResult = q.first(std::min(m + 1, q.size()));
     auto rResult = r;
     if (!r.empty())
         rResult = rightShift(r, uSpan, shift);
 
-    return { qResult, rResult };
+    return { q, rResult };
 }
 
 // Z := X, zero-padding Z. Only the digits of X that fit are read.
@@ -4330,10 +4379,10 @@ JSValue JSBigInt::cbrt(JSGlobalObject* globalObject, JSBigInt* bigInt)
     RELEASE_AND_RETURN(scope, tryConvertToBigInt32(tryCreateFromImpl(globalObject, vm, sign, result)));
 }
 
-// Compute the multiplicative inverse Inv ≈ floor(2^(2n*digitBits) / B) for cached modulo.
-// Given divisor B with n digits, the inverse has n+1 digits.
+// Compute the multiplicative inverse Inv, approximately floor(2^(2n*digitBits) / B), for cached
+// modulo. Given divisor B with n digits, the inverse has n+1 digits.
 // Uses V8's bit-negation trick to avoid a (2n+1)-digit dividend:
-//   A = ~(B << n) ≈ 2^(2n) - B*2^n - 1, then Inv = A/B + 2^n (undo the subtraction).
+//   A = ~(B << n), approximately 2^(2n) - B*2^n - 1, then Inv = A/B + 2^n (undo the subtraction).
 //
 // This is computing I in Algorithm 2.5 in the following reference.
 // R. P. Brent and P. Zimmermann, Modern Computer Arithmetic. Cambridge, U.K.: Cambridge University Press, 2010.
@@ -4348,16 +4397,16 @@ void JSBigInt::cachedModMakeInverse(VM& vm, std::span<const Digit> b)
     // Construct A (2n digits) using bit-negation trick:
     // A[0..n-1] = ~0 (all 1-bits), A[n..2n-1] = ~B[i-n]
     Vector<Digit, 2 * maxCachedModDivisorSize> a(2 * n);
-    size_t i = 0;
-    for (; i < n; i++)
-        a[i] = ~static_cast<Digit>(0);
-    for (; i < 2 * n; i++)
-        a[i] = ~b[i - n];
+    auto aSpan = a.mutableSpan();
+    memsetSpan(aSpan.first(n), 0xFF);
+    auto aHigh = aSpan.subspan(n);
+    for (size_t i = 0; i < n; i++)
+        aHigh[i] = ~b[i];
 
     // Inv = A / B. Since A has 2n digits and B has n digits,
     // quotient has at most n+1 digits (which is invLen).
     auto inv = vm.m_bigIntCachedInverse.mutableSpan();
-    divideSchoolbook(inv, { }, a.span(), b);
+    divideSchoolbook(inv, { }, aSpan, b);
 
     // Undo the bit-negation: add 1 to the upper part (starting at digit n).
     // This corresponds to adding back 2^n that was subtracted by the trick.
@@ -4562,7 +4611,7 @@ void JSBigInt::cachedModFold(std::span<Digit> r, std::span<const Digit> a, std::
 // scratch buffer becomes a stack array with no zeroing. The arithmetic is identical to cachedMod;
 // see the commentary there for the algorithm and the error bound the corrective loop relies on.
 template<size_t N, size_t ASize>
-ALWAYS_INLINE void JSBigInt::cachedModFixed(VM& vm, std::span<Digit, N> r, std::span<const Digit, ASize> a, std::span<const Digit, N> b)
+ALWAYS_INLINE void JSBigInt::cachedModFixed(std::span<Digit, N> r, std::span<const Digit, ASize> a, std::span<const Digit, N> b, std::span<const Digit, N + 1> inv)
 {
     static_assert(N >= 2);
     static_assert(ASize >= N && ASize <= 2 * N);
@@ -4570,8 +4619,6 @@ ALWAYS_INLINE void JSBigInt::cachedModFixed(VM& vm, std::span<Digit, N> r, std::
     constexpr size_t invSize = N + 1;
     constexpr size_t startPos = 2 * N - 2;
     constexpr size_t scratchSize = ASize + invSize;
-
-    auto inv = vm.m_bigIntCachedInverse.span().first<invSize>();
 
     // Step 1: high digits of A * Inv. Only digits from startPos up are computed, so the low part
     // of scratch is left untouched here and is overwritten by step 3 before it is read.
@@ -4626,9 +4673,9 @@ ALWAYS_INLINE void JSBigInt::cachedModFixed(VM& vm, std::span<Digit, N> r, std::
 std::span<const JSBigInt::Digit> JSBigInt::cachedMod(VM& vm, std::span<Digit> r, std::span<const Digit> a, std::span<const Digit> b)
 {
     size_t n = b.size();
-    ASSERT(n >= 2 && n <= maxCachedModDivisorSize);
+    RELEASE_ASSERT(n >= 2 && n <= maxCachedModDivisorSize);
     ASSERT(a.size() >= n && a.size() <= 2 * n);
-    ASSERT(r.size() >= n);
+    RELEASE_ASSERT(r.size() >= n);
 
     r = r.first(n);
 
@@ -4660,11 +4707,11 @@ std::span<const JSBigInt::Digit> JSBigInt::cachedMod(VM& vm, std::span<Digit> r,
         return r;
     }
 
-    // cachedModFixed reads the inverse through a static-extent span, which has no bounds check of
-    // its own, and the size-agnostic path below indexes it up to n. Both rely on the inverse having
-    // been rebuilt for this divisor, which happens in cachedModMakeInverse when the divisor is
-    // armed.
-    ASSERT(vm.m_bigIntCachedInverse.size() == n + 1);
+    // Both the size-specialized path below and the size-agnostic code after it index the inverse up
+    // to n, and rely on it having been rebuilt for this divisor, which happens in
+    // cachedModMakeInverse when the divisor is armed. Asserting the size here rather than trusting
+    // it also lets the compiler fold away the bounds check on every one of those accesses.
+    RELEASE_ASSERT(vm.m_bigIntCachedInverse.size() == n + 1);
     auto inv = vm.m_bigIntCachedInverse.span().first(n + 1);
 
     // Divisors up to maxFixedCachedModDivisorSize digits get a size-specialized path. With every
@@ -4682,7 +4729,7 @@ std::span<const JSBigInt::Digit> JSBigInt::cachedMod(VM& vm, std::span<Digit> r,
         auto dispatchDividend = [&]<size_t N, size_t ASize>(auto&& self) ALWAYS_INLINE_LAMBDA -> bool {
             if constexpr (ASize <= 2 * N) {
                 if (a.size() == ASize) {
-                    cachedModFixed<N, ASize>(vm, r.first<N>(), a.first<ASize>(), b.first<N>());
+                    cachedModFixed<N, ASize>(r.first<N>(), a.first<ASize>(), b.first<N>(), inv.first<N + 1>());
                     return true;
                 }
                 return self.template operator()<N, ASize + 1>(self);
@@ -4763,18 +4810,20 @@ std::span<const JSBigInt::Digit> JSBigInt::cachedMod(VM& vm, std::span<Digit> r,
     constexpr unsigned maxCachedModScratchSize = 3 * maxCachedModDivisorSize + 1;
     ASSERT(scratchSpace <= maxCachedModScratchSize);
     Vector<Digit, maxCachedModScratchSize> scratch(scratchSpace);
+    auto scratchSpan = scratch.mutableSpan();
+    RELEASE_ASSERT(scratchSpan.size() > 2 * n);
     if (a.size() >= inv.size())
-        multiplySpecialHigh(a, inv, scratch.mutableSpan(), startPos);
+        multiplySpecialHigh(a, inv, scratchSpan, startPos);
     else
-        multiplySpecialHigh(inv, a, scratch.mutableSpan(), startPos);
+        multiplySpecialHigh(inv, a, scratchSpan, startPos);
 
     // Step 2: Extract estimated quotient Q from position 2n in the product.
     // This means right-shifting 2n digits.
-    auto qSpan = scratch.span().subspan(2 * n);
+    auto qSpan = scratchSpan.subspan(2 * n);
 
     // Step 3: Compute product_low = B * Q (only low n+1 digits needed).
     // Reuse the low part of scratch for product_low (no overlap with qSpan).
-    auto productLow = scratch.mutableSpan().first(n + 1);
+    auto productLow = scratchSpan.first(n + 1);
     multiplySpecialLow(b, qSpan, productLow);
 
     // Step 4: R = A[0..n-1] - product_low[0..n-1].
@@ -5668,7 +5717,7 @@ JSBigInt::ComparisonResult JSBigInt::compare(JSValue x, JSValue y)
 std::span<JSBigInt::Digit> JSBigInt::addSchoolbook(std::span<const Digit> x, std::span<const Digit> y, std::span<Digit> result)
 {
     RELEASE_ASSERT(x.size() >= y.size());
-    RELEASE_ASSERT(result.size() >= (x.size() + 1));
+    RELEASE_ASSERT(result.size() > x.size());
     Digit carry = 0;
     size_t i = 0;
     for (; i < y.size(); i++) {
@@ -5887,7 +5936,7 @@ inline std::span<JSBigInt::Digit> JSBigInt::absoluteBitwiseOp(std::span<const Di
     if (x.size() < y.size())
         std::swap(x, y);
 
-    ASSERT(x.size() >= y.size());
+    RELEASE_ASSERT(x.size() >= y.size());
 
     size_t numPairs = y.size();
     size_t maxLength = x.size();
@@ -5951,7 +6000,7 @@ std::span<JSBigInt::Digit> JSBigInt::absoluteXor(std::span<const Digit> x, std::
 
 std::span<JSBigInt::Digit> JSBigInt::absoluteAddOne(std::span<const Digit> x, std::span<Digit> result)
 {
-    ASSERT(result.size() >= addOneLength(x));
+    RELEASE_ASSERT(result.size() > x.size());
     Digit carry = 1;
     size_t i = 0;
     for (; i < x.size(); i++) {
@@ -5967,7 +6016,7 @@ std::span<JSBigInt::Digit> JSBigInt::absoluteAddOne(std::span<const Digit> x, st
 std::span<JSBigInt::Digit> JSBigInt::absoluteSubOne(std::span<const Digit> x, std::span<Digit> result)
 {
     ASSERT(!x.empty());
-    ASSERT(result.size() >= subOneLength(x));
+    RELEASE_ASSERT(result.size() >= x.size());
     Digit borrow = 1;
     for (size_t i = 0; i < x.size(); i++) {
         Digit newBorrow = 0;
@@ -6004,6 +6053,7 @@ JSBigInt::ImplResult JSBigInt::leftShiftByAbsolute(JSGlobalObject* globalObject,
 
     Vector<Digit, 16> resultVector(resultLength);
     auto result = resultVector.mutableSpan();
+    RELEASE_ASSERT(result.size() == resultLength);
     if (!bitsShift) {
         size_t i = 0;
         for (; i < digitShift; i++)
@@ -6083,6 +6133,8 @@ JSBigInt::ImplResult JSBigInt::rightShiftByAbsolute(JSGlobalObject* globalObject
     ASSERT(resultLength <= length);
     Vector<Digit, 16> resultVector(resultLength);
     auto result = resultVector.mutableSpan();
+    RELEASE_ASSERT(result.size() == resultLength);
+    RELEASE_ASSERT(resultLength >= 1);
 
     if (!bitsShift) {
         result[resultLength - 1] = 0;
@@ -6554,7 +6606,7 @@ String JSBigInt::toStringGeneric(VM& vm, JSGlobalObject* nullOrGlobalObjectForOO
     // https://bugs.webkit.org/show_bug.cgi?id=180671
     Vector<Latin1Character> resultString;
 
-    ASSERT(radix >= 2 && radix <= 36);
+    RELEASE_ASSERT(radix >= 2 && radix <= 36);
     ASSERT(!x->isZero());
 
     unsigned length = x->length();
@@ -6635,12 +6687,13 @@ String JSBigInt::toStringGeneric(VM& vm, JSGlobalObject* nullOrGlobalObjectForOO
     ASSERT(resultString.size());
     ASSERT(resultString.size() <= static_cast<size_t>(maximumCharactersRequired));
 
-    // Remove leading zeroes.
-    unsigned newSizeNoLeadingZeroes = resultString.size();
-    while (newSizeNoLeadingZeroes  > 1 && resultString[newSizeNoLeadingZeroes - 1] == '0')
-        newSizeNoLeadingZeroes--;
-
-    resultString.shrink(newSizeNoLeadingZeroes);
+    {
+        // Remove leading zeroes; the characters are still least-significant-first, so they trail.
+        auto characters = resultString.span();
+        while (characters.size() > 1 && characters.back() == '0')
+            characters = characters.first(characters.size() - 1);
+        resultString.shrink(characters.size());
+    }
 
     if (sign)
         resultString.append('-');
@@ -6966,15 +7019,19 @@ JSValue JSBigInt::parseInt(JSGlobalObject* globalObject, std::span<const CharTyp
     }
 
     ParseIntSign sign = ParseIntSign::Unsigned;
+    ParseIntMode parseMode = ParseIntMode::AllowEmptyString;
     if (p < data.size()) {
         if (data[p] == '-') {
             sign = ParseIntSign::Signed;
+            parseMode = ParseIntMode::DisallowEmptyString;
             ++p;
-        } else if (data[p] == '+')
+        } else if (data[p] == '+') {
+            parseMode = ParseIntMode::DisallowEmptyString;
             ++p;
+        }
     }
 
-    return parseInt(globalObject, vm, data, p, 10, errorParseMode, sign);
+    return parseInt(globalObject, vm, data, p, 10, errorParseMode, sign, parseMode);
 }
 
 template <typename CharType>
@@ -6982,7 +7039,13 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
 {
     size_t p = startIndex;
 
-    if (parseMode != ParseIntMode::AllowEmptyString && startIndex == data.size()) {
+    // Removing trailing spaces. Trimming the span itself rather than tracking an end index keeps
+    // every read below provably within it, and nothing past the trailing spaces is read again.
+    while (data.size() > p && isStrWhiteSpace(data.back()))
+        data = data.first(data.size() - 1);
+    size_t length = data.size();
+
+    if (parseMode != ParseIntMode::AllowEmptyString && p == length) {
         ASSERT(nullOrGlobalObjectForOOM);
         if (errorParseMode == ErrorParseMode::ThrowExceptions) {
             auto scope = DECLARE_THROW_SCOPE(vm);
@@ -6992,15 +7055,8 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
     }
 
     // Skipping leading zeros
-    while (p < data.size() && data[p] == '0')
+    while (p < length && data[p] == '0')
         ++p;
-
-    int endIndex = data.size() - 1;
-    // Removing trailing spaces
-    while (endIndex >= static_cast<int>(p) && isStrWhiteSpace(data[endIndex]))
-        --endIndex;
-
-    size_t length = endIndex + 1;
 
     if (p == length) {
 #if USE(BIGINT32)
@@ -7081,10 +7137,9 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
     }
 #endif // USE(BIGINT32)
 
-    auto computeLength = [](unsigned radix, unsigned charcount) -> std::optional<unsigned> {
-        ASSERT(2 <= radix && radix <= 36);
-
-        size_t bitsPerChar = maxBitsPerCharTable[radix];
+    ASSERT(2 <= radix && radix <= 36);
+    size_t bitsPerChar = maxBitsPerCharTable[radix];
+    auto computeLength = [](size_t bitsPerChar, unsigned charcount) -> std::optional<unsigned> {
         size_t chars = charcount;
         const unsigned roundup = bitsPerCharTableMultiplier - 1;
         if (chars <= (std::numeric_limits<size_t>::max() - roundup) / bitsPerChar) {
@@ -7120,7 +7175,7 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
             auto [charsPerPart, maxMultiplier] = charactersPerDigitTable[radix];
             size_t numParts = (initialLength + charsPerPart - 1) / charsPerPart;
             auto characters = data.subspan(p, initialLength);
-            auto resultLength = computeLength(radix, initialLength);
+            auto resultLength = computeLength(bitsPerChar, initialLength);
             if (!resultLength) [[unlikely]] {
                 if (nullOrGlobalObjectForOOM) {
                     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -7192,7 +7247,7 @@ JSValue JSBigInt::parseInt(JSGlobalObject* nullOrGlobalObjectForOOM, VM& vm, std
                 }
             }
 
-            auto length = computeLength(radix, initialLength);
+            auto length = computeLength(bitsPerChar, initialLength);
             if (!length) [[unlikely]] {
                 if (nullOrGlobalObjectForOOM) {
                     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -7567,8 +7622,8 @@ JSBigInt::ImplResult JSBigInt::asIntNImpl(JSGlobalObject* globalObject, uint64_t
     // its bits below (n-1) are zero. In that case, the result is the minimum
     // n-bit integer (example: asIntN(3, -12n) => -4n).
     bool hasBit = (topDigit & compareDigit) == compareDigit;
-    ASSERT(n <= INT32_MAX);
-    int32_t N = static_cast<int32_t>(n);
+    ASSERT(n <= maxLengthBits);
+    unsigned N = static_cast<unsigned>(n);
     if (!hasBit)
         RELEASE_AND_RETURN(scope, truncateToNBits(globalObject, N, bigInt));
     if (!bigInt.sign())
@@ -7606,7 +7661,7 @@ JSBigInt::ImplResult JSBigInt::asUintNImpl(JSGlobalObject* globalObject, uint64_
             throwOutOfMemoryError(globalObject, scope, "BigInt generated from this operation is too big"_s);
             return nullptr;
         }
-        RELEASE_AND_RETURN(scope, truncateAndSubFromPowerOfTwo(globalObject, static_cast<int32_t>(n), bigInt, false));
+        RELEASE_AND_RETURN(scope, truncateAndSubFromPowerOfTwo(globalObject, static_cast<unsigned>(n), bigInt, false));
     }
 
     // If bigInt is positive and has up to n bits, return it directly.
@@ -7627,36 +7682,37 @@ JSBigInt::ImplResult JSBigInt::asUintNImpl(JSGlobalObject* globalObject, uint64_
     }
 
     // Otherwise, truncate.
-    ASSERT(n <= INT32_MAX);
-    RELEASE_AND_RETURN(scope, truncateToNBits(globalObject, static_cast<int32_t>(n), bigInt));
+    ASSERT(n < maxLengthBits);
+    RELEASE_AND_RETURN(scope, truncateToNBits(globalObject, static_cast<unsigned>(n), bigInt));
 }
 
 template <typename BigIntImpl>
-JSBigInt::ImplResult JSBigInt::truncateToNBits(JSGlobalObject* globalObject, int32_t n, BigIntImpl bigInt)
+JSBigInt::ImplResult JSBigInt::truncateToNBits(JSGlobalObject* globalObject, unsigned n, BigIntImpl bigInt)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto span = bigInt.digits();
 
-    ASSERT(n != 0);
     ASSERT(span.size() > n / digitBits);
 
-    int32_t neededDigits = (n + (digitBits - 1)) / digitBits;
-    ASSERT(neededDigits <= static_cast<int32_t>(span.size()));
+    // asIntNImpl and asUintNImpl both return early unless n names at least one and at most
+    // maxLengthBits bits of bigInt, so neededDigits is between 1 and span.size().
+    RELEASE_ASSERT(n > 0);
+    size_t neededDigits = (static_cast<size_t>(n) + digitBits - 1) / digitBits;
+    ASSERT(neededDigits <= span.size());
 
     Vector<Digit, 16> resultVector(neededDigits);
     auto result = resultVector.mutableSpan();
 
     // Copy all digits except the MSD.
-    int32_t last = neededDigits - 1;
-    for (int32_t i = 0; i < last; i++)
-        result[i] = span[i];
+    size_t last = neededDigits - 1;
+    memcpySpan(result.first(last), span.first(last));
 
     // The MSD might contain extra bits that we don't want.
     Digit msd = span[last];
     if (n % digitBits != 0) {
-        int32_t drop = digitBits - (n % digitBits);
+        unsigned drop = digitBits - (n % digitBits);
         msd = (msd << drop) >> drop;
     }
     result[last] = msd;
@@ -7665,29 +7721,29 @@ JSBigInt::ImplResult JSBigInt::truncateToNBits(JSGlobalObject* globalObject, int
 
 // Subtracts the least significant n bits of abs(bigInt) from 2^n.
 template <typename BigIntImpl>
-JSBigInt::ImplResult JSBigInt::truncateAndSubFromPowerOfTwo(JSGlobalObject* globalObject, int32_t n, BigIntImpl bigInt, bool resultSign)
+JSBigInt::ImplResult JSBigInt::truncateAndSubFromPowerOfTwo(JSGlobalObject* globalObject, unsigned n, BigIntImpl bigInt, bool resultSign)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(n != 0);
-    ASSERT(n <= static_cast<int32_t>(maxLengthBits));
+    ASSERT(n <= maxLengthBits);
 
     auto span = bigInt.digits();
 
-    int32_t neededDigits = (n + (digitBits - 1)) / digitBits;
-    ASSERT(neededDigits <= static_cast<int32_t>(maxLength)); // Follows from n <= maxLengthBits.
+    RELEASE_ASSERT(n > 0);
+    size_t neededDigits = (static_cast<size_t>(n) + digitBits - 1) / digitBits;
+    ASSERT(neededDigits <= maxLength); // Follows from n <= maxLengthBits.
 
     Vector<Digit, 16> resultVector(neededDigits);
     auto result = resultVector.mutableSpan();
 
     // Process all digits except the MSD.
-    int32_t i = 0;
-    int32_t last = neededDigits - 1;
-    int32_t length = span.size();
+    size_t i = 0;
+    size_t last = neededDigits - 1;
+    size_t length = span.size();
     Digit borrow = 0;
     // Take digits from bigInt unless its length is exhausted.
-    int32_t limit = std::min(last, length);
+    size_t limit = std::min(last, length);
     for (; i < limit; i++) {
         Digit newBorrow = 0;
         Digit difference = digitSub(0, span[i], newBorrow);
@@ -7705,14 +7761,14 @@ JSBigInt::ImplResult JSBigInt::truncateAndSubFromPowerOfTwo(JSGlobalObject* glob
 
     // The MSD might contain extra bits that we don't want.
     Digit msd = last < length ? span[last] : 0;
-    int32_t msdBitsConsumed = n % digitBits;
+    unsigned msdBitsConsumed = n % digitBits;
     Digit resultMSD;
     if (msdBitsConsumed == 0) {
         Digit newBorrow = 0;
         resultMSD = digitSub(0, msd, newBorrow);
         resultMSD = digitSub(resultMSD, borrow, newBorrow);
     } else {
-        int32_t drop = digitBits - msdBitsConsumed;
+        unsigned drop = digitBits - msdBitsConsumed;
         msd = (msd << drop) >> drop;
         Digit minuendMSD = static_cast<Digit>(1) << (digitBits - drop);
         Digit newBorrow = 0;

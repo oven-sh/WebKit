@@ -235,7 +235,7 @@ void Thread::detach()
         didBecomeDetached();
 }
 
-auto Thread::suspend(const ThreadSuspendLocker&) -> Expected<void, PlatformSuspendError>
+auto Thread::suspend(const ThreadSuspendLocker&) -> std::expected<void, PlatformSuspendError>
 {
     // currentMayBeNull, not currentSingleton: the libpas scavenger calls this while holding
     // the heap lock, and currentSingleton would lazy-allocate a Thread for it.

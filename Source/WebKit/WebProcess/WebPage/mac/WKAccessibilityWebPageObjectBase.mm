@@ -71,10 +71,8 @@ namespace ax = WebCore::Accessibility;
     ASSERT(isMainRunLoop());
     RetainPtr<id> axPlugin;
     callOnMainRunLoopAndWait([&axPlugin, &self] {
-        if (RefPtr page = self->m_page.get()) {
-            // FIXME: This is a static analysis false positive.
-            SUPPRESS_UNRETAINED_ARG axPlugin = page->accessibilityObjectForMainFramePlugin();
-        }
+        if (RefPtr page = self->m_page)
+            axPlugin = page->accessibilityObjectForMainFramePlugin();
     });
     return axPlugin.autorelease();
 }
@@ -97,8 +95,8 @@ namespace ax = WebCore::Accessibility;
     if (!isMainRunLoop()) {
         if (RefPtr tree = m_isolatedTree.get()) {
             tree->applyPendingChanges();
-            if (auto* root = tree->rootNode())
-                return root->wrapper();
+            if (RefPtr root = tree->rootNode())
+                return RetainPtr<id> { root->wrapper() }.autorelease();
         }
     }
 #endif // ENABLE(ACCESSIBILITY_ISOLATED_TREE)

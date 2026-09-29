@@ -132,12 +132,10 @@ void SetLimits(const ShBuiltInResources &resources,
 
 void SetOptions(TCompiler *compiler, const ShCompileOptions &options, ffi::CompileOptions *opt)
 {
+    opt->shader_spec    = static_cast<ffi::ShaderSpec>(compiler->getShaderSpec());
     opt->shader_version = compiler->getShaderVersion();
     opt->output         = static_cast<ffi::OutputLanguage>(compiler->getOutputType());
     opt->is_es1         = compiler->getShaderVersion() == 100;
-
-    opt->user_variable_name_prefix = compiler->getResources().UserVariableNamePrefix;
-    opt->user_block_name_prefix    = compiler->getResources().UserBlockNamePrefix;
 
     opt->initialize_uninitialized_variables = options.initializeUninitializedLocals ||
                                               options.initOutputVariables || options.initGLPosition;
@@ -226,6 +224,7 @@ std::vector<InterfaceBlock> ConvertInterfaceBlocks(const rust::Vec<ffi::Interfac
         converted.instanceName = static_cast<std::string>(block.instance_name);
         converted.arraySize    = block.array_size;
         converted.layout       = static_cast<BlockLayoutType>(block.block_layout);
+        converted.isRowMajorLayout = block.is_row_major;
         converted.binding      = block.binding;
         converted.staticUse    = block.static_use;
         converted.active       = block.active;

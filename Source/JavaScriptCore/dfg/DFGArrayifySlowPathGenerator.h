@@ -60,13 +60,13 @@ public:
             case Array::Int32:
             case Array::Double:
             case Array::Contiguous:
-                m_badPropertyJump = jit->speculationCheck(Uncountable, JSValueRegs(), nullptr);
+                m_badPropertyJump = jit->speculationCheck(Uncountable, JSValueSource(), nullptr);
                 break;
             default:
                 break;
             }
         }
-        m_badIndexingTypeJump = jit->speculationCheck(BadIndexingType, JSValueSource::unboxedCell(m_baseGPR), nullptr);
+        m_badIndexingTypeJump = jit->speculationCheck(BadIndexingType, JSValueSource(m_baseGPR), nullptr);
     }
     
 private:

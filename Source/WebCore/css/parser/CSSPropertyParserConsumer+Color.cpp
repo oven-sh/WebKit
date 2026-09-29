@@ -32,6 +32,7 @@
 #include "CSSColor.h"
 #include "CSSColorConversion+Normalize.h"
 #include "CSSColorDescriptors.h"
+#include "CSSColorInterpolationMethod.h"
 #include "CSSColorLayers.h"
 #include "CSSColorMix.h"
 #include "CSSContrastColor.h"
@@ -576,7 +577,7 @@ static std::optional<CSS::Color> consumeColorMixFunction(CSSParserTokenRange& ra
 
     auto args = consumeFunction(range);
 
-    std::optional<ColorInterpolationMethod> colorInterpolationMethod = CSS::defaultInterpolationMethodForColorMix;
+    std::optional<CSS::ColorInterpolationMethod> colorInterpolationMethod = CSS::defaultInterpolationMethodForColorMix;
     if (args.peek().id() == CSSValueIn) {
         colorInterpolationMethod = consumeColorInterpolationMethod(args, state.propertyParserState);
         if (!colorInterpolationMethod)
@@ -860,6 +861,14 @@ std::optional<CSS::Color> consumeColor(CSSParserTokenRange& range, ColorParserSt
     ColorParserStateNester nester { state };
 
     auto keyword = range.peek().id();
+
+    if (keyword == CSSValueInternalCurrentBackgroundColor) {
+        if (state.propertyParserState.context.mode != UASheetMode)
+            return { };
+        consumeIdentRaw(range);
+        return CSS::Color { CSS::KeywordColor { keyword } };
+    }
+
     if (CSS::isColorKeyword(keyword, state.allowedColorTypes)) {
         if (!isColorKeywordAllowed(keyword, state.propertyParserState.context))
             return { };

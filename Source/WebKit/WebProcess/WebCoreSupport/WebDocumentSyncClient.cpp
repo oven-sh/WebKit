@@ -50,10 +50,10 @@ bool WebDocumentSyncClient::siteIsolationEnabled()
     return corePage && corePage->settings().siteIsolationEnabled();
 }
 
-void WebDocumentSyncClient::broadcastDocumentSyncDataToOtherProcesses(const WebCore::DocumentSyncSerializationData& data)
+void WebDocumentSyncClient::broadcastDocumentSyncDataToOtherProcesses(WebCore::DocumentSyncSerializationData&& data)
 {
     ASSERT(siteIsolationEnabled());
-    protect(m_page)->send(Messages::WebPageProxy::BroadcastDocumentSyncData(data));
+    protect(m_page)->send(Messages::WebPageProxy::BroadcastDocumentSyncData(WTF::move(data)));
 }
 
 void WebDocumentSyncClient::broadcastAllDocumentSyncDataToOtherProcesses(WebCore::DocumentSyncData& data)

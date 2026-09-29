@@ -2138,7 +2138,7 @@ void RenderLayerCompositor::logLayerInfo(const RenderLayer& layer, ASCIILiteral 
 
     logString.append(layer.name(), " - "_s, phase);
 
-    LOG(Compositing, "%s", logString.toString().utf8().data());
+    LOG_WITH_STREAM(Compositing, stream << logString.toString());
 }
 #endif
 
@@ -4149,8 +4149,13 @@ bool RenderLayerCompositor::requiresCompositingForPosition(RenderLayerModelObjec
     if (!m_renderView.settings().acceleratedCompositingForFixedPositionEnabled())
         return false;
 
-    if (isSticky)
-        return isAsyncScrollableStickyLayer(layer);
+    if (isSticky) {
+        // rendererForCompositingTests() substitutes the reflected renderer for a RenderReplica, so `layer` can
+        // be the replica's layer while `renderer` is the sticky renderer being reflected. Ask about the sticky
+        // renderer's own layer; for every other caller this is the layer we were passed.
+        CheckedPtr stickyLayer = renderer.layer();
+        return stickyLayer && isAsyncScrollableStickyLayer(*stickyLayer);
+    }
 
     if (queryData.layoutUpToDate == LayoutUpToDate::No) {
         queryData.reevaluateAfterLayout = true;

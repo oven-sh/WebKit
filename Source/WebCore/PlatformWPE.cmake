@@ -1,13 +1,17 @@
 include(platform/Adwaita.cmake)
+include(platform/CoordinatedGraphics.cmake)
 include(platform/GCrypt.cmake)
 include(platform/GStreamer.cmake)
 include(platform/ImageDecoders.cmake)
 include(platform/Skia.cmake)
 include(platform/Soup.cmake)
-include(platform/TextureMapper.cmake)
 
 if (USE_EXTERNAL_HOLEPUNCH)
     include(platform/HolePunch.cmake)
+endif ()
+
+if (USE_TEXTURE_MAPPER)
+    include(platform/TextureMapper.cmake)
 endif ()
 
 list(APPEND WebCore_UNIFIED_SOURCE_LIST_FILES
@@ -53,7 +57,7 @@ list(APPEND WebCore_PRIVATE_FRAMEWORK_HEADERS
     platform/graphics/DMABufBufferAttributes.h
 
     platform/graphics/android/BufferFormatAndroid.h
-    platform/graphics/android/GraphicsContextGLTextureMapperAndroid.h
+    platform/graphics/android/GraphicsContextGLAndroid.h
     platform/graphics/android/PlatformDisplayAndroid.h
 
     platform/graphics/egl/PlatformDisplayDefault.h
@@ -147,10 +151,6 @@ endif ()
 
 if (USE_LIBHYPHEN)
     list(APPEND WebCore_PRIVATE_LIBRARIES Hyphen::Hyphen)
-endif ()
-
-if (USE_LIBSECRET)
-    list(APPEND WebCore_PRIVATE_LIBRARIES Secret::Secret)
 endif ()
 
 if (ENABLE_GAMEPAD)

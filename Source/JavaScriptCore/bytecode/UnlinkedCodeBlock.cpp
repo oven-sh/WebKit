@@ -30,11 +30,15 @@
 #include "BaselineJITCode.h"
 #include "BytecodeLivenessAnalysis.h"
 #include "BytecodeStructs.h"
+#include "CachedBytecode.h"
+#include "CachedTypes.h"
 #include "ClassInfo.h"
 #include "ExecutableInfo.h"
 #include "InstructionStream.h"
 #include "JSCJSValueInlines.h"
 #include "UnlinkedMetadataTableInlines.h"
+#include "UnlinkedModuleProgramCodeBlock.h"
+#include <wtf/CompilationThread.h>
 #include <wtf/DataLog.h>
 
 namespace JSC {
@@ -108,6 +112,8 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.appendValues(thisObject->m_constantRegisters.span());
     // Borrowed (cache-backed) instruction streams and expression info count here as if generated, so the collector
     // paces a program the same whether or not its bytecode came from a cache; estimatedSize() below reports what is owned.
+    // The exception is expression info not yet decoded from a persistent cache (m_cachedExpressionInfo): its size is
+    // only known once its cold record is read, so it counts from the collection after its first use.
     size_t extraMemory = thisObject->metadataSizeInBytes();
     if (thisObject->m_instructions)
         extraMemory += thisObject->m_instructions->sizeInBytes();
@@ -126,6 +132,18 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(UnlinkedCodeBlock);
 
+UnlinkedFunctionExecutable* UnlinkedCodeBlock::functionDeclSlow(unsigned index)
+{
+    ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+    auto* moduleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(this);
+    ModuleFunctionDeclarationSlots* slots = moduleProgramCodeBlock ? moduleProgramCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr;
+    if (!slots || !slots->hasDecodeSource() || index >= slots->size())
+        return nullptr;
+    UnlinkedFunctionExecutable* executable = slots->decode(vm(), index);
+    m_functionDecls[index].set(vm(), this, executable);
+    return executable;
+}
+
 size_t UnlinkedCodeBlock::estimatedSize(JSCell* cell, VM& vm)
 {
     UnlinkedCodeBlock* thisObject = uncheckedDowncast<UnlinkedCodeBlock>(cell);
@@ -139,6 +157,7 @@ size_t UnlinkedCodeBlock::RareData::sizeInBytes(const AbstractLocker&) const
 {
     size_t size = sizeof(RareData);
     size += m_exceptionHandlers.byteSize();
+    size += m_outOfLineJumpTargets.capacity() * sizeof(decltype(m_outOfLineJumpTargets)::KeyValuePairType);
     size += m_unlinkedSwitchJumpTables.byteSize();
     size += m_unlinkedStringSwitchJumpTables.byteSize();
     size += m_typeProfilerInfoMap.capacity() * sizeof(decltype(m_typeProfilerInfoMap)::KeyValuePairType);
@@ -151,18 +170,30 @@ size_t UnlinkedCodeBlock::RareData::sizeInBytes(const AbstractLocker&) const
     return size;
 }
 
-LineColumn UnlinkedCodeBlock::lineColumnForBytecodeIndex(BytecodeIndex bytecodeIndex)
+ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
 {
-    return m_expressionInfo->lineColumnForInstPC(bytecodeIndex.offset());
+    ConcurrentJSLocker locker(m_lock);
+    if (!m_expressionInfo) {
+        RELEASE_ASSERT(m_cachedExpressionInfo);
+        std::unique_ptr<ExpressionInfo> expressionInfo = decodeBorrowedExpressionInfo(m_cachedExpressionInfo);
+        WTF::storeStoreFence(); // expressionInfo() and visitChildren read m_expressionInfo without m_lock
+        m_expressionInfo = WTF::move(expressionInfo);
+    }
+    return *m_expressionInfo;
 }
 
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
 {
-    return m_expressionInfo->entryForInstPC(bytecodeIndex.offset());
+    return expressionInfo().entryForInstPC(bytecodeIndex.offset());
+}
+
+LineColumn UnlinkedCodeBlock::lineColumnInTextForBytecodeIndex(BytecodeIndex bytecodeIndex, SourceProvider& provider, unsigned sourceOffset)
+{
+    return expressionInfo().lineColumnInTextForInstPC(bytecodeIndex.offset(), provider, sourceOffset);
 }
 
 #ifndef NDEBUG
-static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, LineColumn lineColumn, unsigned divot, unsigned startOffset, unsigned endOffset)
+static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& instructionStream, unsigned instructionOffset, unsigned divot, unsigned startOffset, unsigned endOffset)
 {
     const auto instruction = instructionStream.at(instructionOffset);
     ASCIILiteral event = "";
@@ -179,7 +210,7 @@ static void dumpExpressionInfoDetails(size_t index, const JSInstructionStream& i
         case DidAwait: event = " DidAwait"; break;
         }
     }
-    SAFE_DATALOGF("  [%zu] pc %u @ line %u col %u divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, lineColumn.line, lineColumn.column, divot, startOffset, endOffset, instruction->name(), event);
+    SAFE_DATALOGF("  [%zu] pc %u @ divot %u startOffset %u endOffset %u : %s%s\n", index, instructionOffset, divot, startOffset, endOffset, instruction->name(), event);
 }
 
 void UnlinkedCodeBlock::dumpExpressionInfo()
@@ -187,9 +218,9 @@ void UnlinkedCodeBlock::dumpExpressionInfo()
     size_t index = 0;
     dataLogF("UnlinkedCodeBlock %p expressionInfo[] {\n", this);
 
-    ExpressionInfo::Decoder decoder(*m_expressionInfo);
+    ExpressionInfo::Decoder decoder(expressionInfo());
     while (decoder.decode() != IterationStatus::Done) {
-        dumpExpressionInfoDetails(index, instructions(), decoder.instPC(), decoder.lineColumn(), decoder.divot(), decoder.startOffset(), decoder.endOffset());
+        dumpExpressionInfoDetails(index, instructions(), decoder.instPC(), decoder.divot(), decoder.startOffset(), decoder.endOffset());
         index++;
     }
     dataLog("}\n");
@@ -224,6 +255,12 @@ bool UnlinkedCodeBlock::typeProfilerExpressionInfoForBytecodeOffset(unsigned byt
 
 UnlinkedCodeBlock::~UnlinkedCodeBlock()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_cachedPayloadIndex) {
+        if (auto* payloads = vm().persistentBytecodePayloadsIfExists())
+            payloads->release(m_cachedPayloadIndex);
+    }
+#endif
     if (Options::returnEarlyFromInfiniteLoopsForFuzzing()) [[unlikely]] {
         if (auto* instructions = m_instructions.get()) {
             VM& vm = this->vm();
@@ -275,8 +312,10 @@ BytecodeLivenessAnalysis& UnlinkedCodeBlock::livenessAnalysisSlow(CodeBlock* cod
 
 int UnlinkedCodeBlock::outOfLineJumpOffset(JSInstructionStream::Offset bytecodeOffset)
 {
-    ASSERT(m_outOfLineJumpTargets.contains(bytecodeOffset));
-    return m_outOfLineJumpTargets.get(bytecodeOffset);
+    ASSERT(m_rareData && m_rareData->m_outOfLineJumpTargets.contains(bytecodeOffset));
+    if (!m_rareData)
+        return 0;
+    return m_rareData->m_outOfLineJumpTargets.get(bytecodeOffset);
 }
 
 #if ASSERT_ENABLED
@@ -325,15 +364,6 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
 {
     RELEASE_ASSERT(!m_metadata->isFinalized());
 
-    {
-        unsigned numberOfValueProfiles = numParameters();
-        if (m_metadata->hasMetadata()) {
-            numberOfValueProfiles += m_metadata->numValueProfiles();
-        }
-
-        m_valueProfiles = FixedVector<UnlinkedValueProfile>(numberOfValueProfiles);
-    }
-
     if (m_metadata->hasMetadata()) {
         unsigned numberOfArrayProfiles = 0;
 
@@ -341,11 +371,21 @@ void UnlinkedCodeBlock::allocateSharedProfiles(unsigned numBinaryArithProfiles, 
         FOR_EACH_OPCODE_WITH_SIMPLE_ARRAY_PROFILE(COUNT)
 #undef COUNT
         numberOfArrayProfiles += m_metadata->numEntries<OpIteratorNext>();
-        m_arrayProfiles = FixedVector<UnlinkedArrayProfile>(numberOfArrayProfiles);
+        m_numberOfArrayProfiles = numberOfArrayProfiles;
     }
 
     m_binaryArithProfiles = FixedVector<BinaryArithProfile>(numBinaryArithProfiles);
     m_unaryArithProfiles = FixedVector<UnaryArithProfile>(numUnaryArithProfiles);
+}
+
+void UnlinkedCodeBlock::ensureValueAndArrayProfiles()
+{
+    ASSERT(!isCompilationThread() && !Thread::mayBeGCThread());
+    if (m_valueAndArrayProfiles || isBuiltinFunction())
+        return;
+    auto profiles = ValueAndArrayProfiles::create(numberOfValueProfiles(), m_numberOfArrayProfiles);
+    WTF::storeStoreFence(); // The collector and the compiler threads read m_valueAndArrayProfiles without a lock.
+    m_valueAndArrayProfiles = WTF::move(profiles);
 }
 
 } // namespace JSC

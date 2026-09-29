@@ -138,8 +138,7 @@ static PKInstallmentRetailChannel NODELETE platformRetailChannel(ApplePayInstall
 static RetainPtr<id> makeNSArrayElement(const ApplePayInstallmentItem& item)
 {
     ASSERT(PAL::getPKPaymentInstallmentItemClassSingleton());
-    // FIXME: This is a safer cpp false positive.
-    SUPPRESS_UNRETAINED_ARG auto installmentItem = adoptNS([PAL::allocPKPaymentInstallmentItemInstance() init]);
+    RetainPtr installmentItem = adoptNS([PAL::allocPKPaymentInstallmentItemInstance() init]);
     [installmentItem setInstallmentItemType:platformItemType(item.type)];
     [installmentItem setAmount:protect(toDecimalNumber(item.amount)).get()];
     [installmentItem setCurrencyCode:item.currencyCode.createNSString().get()];
@@ -151,8 +150,7 @@ static RetainPtr<id> makeNSArrayElement(const ApplePayInstallmentItem& item)
 
 static std::optional<ApplePayInstallmentItem> makeVectorElement(const ApplePayInstallmentItem*, id arrayElement)
 {
-    // FIXME: This is a static analysis false positive (rdar://160259918).
-    SUPPRESS_UNRETAINED_ARG if (![arrayElement isKindOfClass:PAL::getPKPaymentInstallmentItemClassSingleton()])
+    if (![arrayElement isKindOfClass:PAL::getPKPaymentInstallmentItemClassSingleton()])
         return std::nullopt;
 
     PKPaymentInstallmentItem *item = arrayElement;

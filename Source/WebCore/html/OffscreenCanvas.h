@@ -139,13 +139,10 @@ public:
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
     ExceptionOr<std::optional<OffscreenRenderingContext>> getContext(JSC::JSGlobalObject&, RenderingContextType, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
-    ExceptionOr<RefPtr<ImageBitmap>> transferToImageBitmap();
+    ExceptionOr<Ref<ImageBitmap>> transferToImageBitmap();
     void convertToBlob(ImageEncodeOptions&&, Ref<DeferredPromise>&&);
 
     void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect) final;
-
-    Image* copiedImage() const final;
-    void clearCopiedImage() const final;
 
     SecurityOrigin* securityOrigin() const final;
 
@@ -182,7 +179,6 @@ private:
 
     std::unique_ptr<CanvasRenderingContext> m_context;
     RefPtr<PlaceholderRenderingContextSource> m_placeholderSource;
-    mutable RefPtr<Image> m_copiedImage;
     bool m_detached { false };
     bool m_hasScheduledCommit { false };
 #if ENABLE(WEBGL)

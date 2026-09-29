@@ -68,6 +68,7 @@ fn replace_view_id(state: &mut State, options: &Options) -> TypedId {
                 view_id_name,
                 TYPE_ID_UINT,
                 Precision::High,
+                false,
                 Decorations::new(vec![decoration]),
                 None,
                 None,
@@ -96,8 +97,6 @@ fn generate_preamble(
     view_id: TypedId,
 ) -> Block {
     let mut preamble = Block::new();
-    // Note: if multiview is enabled via #extension all, num_views may not be set.
-    let num_views = state.ir_meta.get_constant_uint_typed(state.ir_meta.get_num_views().max(1));
 
     // Initialize InstanceID and ViewID_OVR as such:
     //
@@ -119,7 +118,17 @@ fn generate_preamble(
         state.ir_meta,
         TYPE_ID_UINT,
         vec![flat_instance],
+        None,
     ));
+    // Note: if multiview is enabled via #extension all, num_views may not be set.
+    // For BinaryOpCode::Div and BinaryOpCode::IMod,
+    // Result precision should propagate to both operands. See ir::instruction::propagate()
+    // Since the result precision is the higher of the two operands' precision,
+    // we only need to ensure num_views has an assigned precision less than or equal to
+    // flat_instance.precision. Use flat_instance.precision for simplicity.
+    let num_views = state
+        .ir_meta
+        .get_constant_uint_typed(state.ir_meta.get_num_views().max(1), flat_instance.precision);
     let instance =
         preamble.add_typed_instruction(instruction::div(state.ir_meta, flat_instance, num_views));
     let view =
@@ -128,6 +137,7 @@ fn generate_preamble(
         state.ir_meta,
         TYPE_ID_INT,
         vec![instance],
+        None,
     ));
 
     preamble.add_void_instruction(OpCode::Store(instance_id, instance));
@@ -142,6 +152,7 @@ fn generate_preamble(
                 Name::new_exact("multiviewBaseViewLayerIndex"),
                 TYPE_ID_INT,
                 Precision::High,
+                false,
                 Decorations::new(vec![Decoration::Uniform]),
                 None,
                 None,
@@ -165,6 +176,7 @@ fn generate_preamble(
             state.ir_meta,
             TYPE_ID_INT,
             vec![view],
+            None,
         ));
         let base =
             preamble.add_typed_instruction(instruction::load(state.ir_meta, base_layer_index));

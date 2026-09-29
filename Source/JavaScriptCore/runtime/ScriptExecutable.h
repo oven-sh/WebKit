@@ -48,16 +48,26 @@ public:
     CodeBlockHash hashFor(CodeSpecializationKind) const;
 
     const SourceCode& source() const LIFETIME_BOUND { return m_source; }
+
+    // Must not build the provider's line-start table so it can be called by assertions.
+    bool hasSourceText() const
+    {
+        return !m_source.isNull() && m_source.provider() && !m_source.provider()->source().isNull();
+    }
     SourceID sourceID() const { return m_source.providerID(); }
     const SourceOrigin& sourceOrigin() const LIFETIME_BOUND { return m_source.provider()->sourceOrigin(); }
+#if USE(BUN_JSC_ADDITIONS)
+    // A ScriptFetcher's Weak handles can ask containsOpaqueRoot(fetcher) to live as long as its code.
+    template<typename Visitor> void visitSourceFetcher(Visitor& visitor) const { visitor.addOpaqueRoot(sourceOrigin().fetcher()); }
+#endif
     // This is NOT the path that should be used for computing relative paths from a script. Use SourceOrigin's URL for that, the values may or may not be the same... This should only be used for `error.sourceURL` and stack traces.
     const String& sourceURL() const LIFETIME_BOUND { return m_source.provider()->sourceURL(); }
     const String& sourceURLStripped() const LIFETIME_BOUND { return m_source.provider()->sourceURLStripped(); }
     const String& preRedirectURL() const LIFETIME_BOUND { return m_source.provider()->preRedirectURL(); }
     int firstLine() const { return m_source.firstLine().oneBasedInt(); }
-    JS_EXPORT_PRIVATE int NODELETE lastLine() const;
+    JS_EXPORT_PRIVATE int lastLine() const;
     unsigned startColumn() const { return m_source.startColumn().oneBasedInt(); }
-    JS_EXPORT_PRIVATE unsigned NODELETE endColumn() const;
+    JS_EXPORT_PRIVATE unsigned endColumn() const;
 
     std::optional<int> NODELETE overrideLineNumber(VM&) const;
     unsigned NODELETE typeProfilingStartOffset() const;
@@ -92,13 +102,22 @@ public:
         
     DECLARE_EXPORT_INFO;
 
-    void NODELETE recordParse(CodeFeatures, LexicallyScopedFeatures, bool hasCapturedVariables, int lastLine, unsigned endColumn);
+    void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
+    {
+        m_features = features;
+        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
+        m_hasCapturedVariables = hasCapturedVariables;
+    }
+
     void installCode(CodeBlock*);
     void installCode(VM&, CodeBlock*, CodeType, CodeSpecializationKind, Profiler::JettisonReason);
     CodeBlock* newCodeBlockFor(CodeSpecializationKind, JSFunction*, JSScope*);
     CodeBlock* newReplacementCodeBlockFor(CodeSpecializationKind);
 
-    void clearCode(IsoCellSet&);
+    // KeepWhatNeedsParsing: linked code goes; unlinked code of a program, eval or module only if a bytecode cache can
+    // hand it back, and a module keeps the symbol table its environment was made from.
+    enum class ClearCode : uint8_t { All, KeepWhatNeedsParsing };
+    void clearCode(IsoCellSet&, ClearCode = ClearCode::All);
 
     Intrinsic intrinsic() const
     {
@@ -137,13 +156,6 @@ private:
 protected:
     ScriptExecutable(Structure*, VM&, const SourceCode&, LexicallyScopedFeatures, DerivedContextType, bool isInArrowFunctionContext, bool isInsideOrdinaryFunction, EvalContextType, Intrinsic);
 
-    void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
-    {
-        m_features = features;
-        m_lexicallyScopedFeatures = lexicallyScopedFeatures;
-        m_hasCapturedVariables = hasCapturedVariables;
-    }
-
     static TemplateObjectMap& ensureTemplateObjectMapImpl(std::unique_ptr<TemplateObjectMap>& dest);
 
     template<typename Visitor>
@@ -151,6 +163,19 @@ protected:
     template<typename Visitor>
     static void visitCodeBlockEdge(Visitor&, CodeBlock*);
     void jettisonCodeBlockEdgeIfDead(VM&, WriteBarrier<CodeBlock>&);
+
+    // The body of a generator or an async function keeps its registers in a generator frame while it is suspended, and
+    // only code that was generated the same way finds them there again: once such a body has run, its code is always
+    // generated the way it was then, whatever the realm asks for by now. (A module keeps the mode its environment's
+    // symbol table was made for: ModuleProgramExecutable::getUnlinkedCodeBlock.)
+    OptionSet<CodeGenerationMode> codeGenerationModeForResumableBody(OptionSet<CodeGenerationMode> current)
+    {
+        if (m_codeForGeneratorBodyWasGenerated)
+            return m_codeGenerationModeForGeneratorBody;
+        m_codeGenerationModeForGeneratorBody = current;
+        return current;
+    }
+    void pinCodeGenerationModeForResumableBody() { m_codeForGeneratorBodyWasGenerated = true; }
 
     SourceCode m_source;
     Intrinsic m_intrinsic { NoIntrinsic };

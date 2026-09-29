@@ -66,6 +66,9 @@ public:
     }
     virtual ~PlaybackSessionModelContext();
 
+    static bool persistedPrefersAutoDimming();
+    static void setPersistedPrefersAutoDimming(bool);
+
     // CheckedPtr interface
     uint32_t checkedPtrCount() const final { return CanMakeCheckedPtr::checkedPtrCount(); }
     uint32_t checkedPtrCountWithoutThreadCheck() const final { return CanMakeCheckedPtr::checkedPtrCountWithoutThreadCheck(); }
@@ -88,7 +91,7 @@ public:
     void legibleMediaSelectionOptionsChanged(const Vector<WebCore::MediaSelectionOption>& options, uint64_t index);
     void audioMediaSelectionIndexChanged(uint64_t selectedIndex);
     void legibleMediaSelectionIndexChanged(uint64_t selectedIndex);
-    void externalPlaybackChanged(bool, PlaybackSessionModel::ExternalPlaybackTargetType, const String&);
+    void externalPlaybackChanged(bool, PlaybackSessionModel::ExternalPlaybackTargetType, const String&, const String&);
     void wirelessVideoPlaybackDisabledChanged(bool);
     void mutedChanged(bool);
     void volumeChanged(double);
@@ -176,6 +179,7 @@ private:
     bool externalPlaybackEnabled() const final { return m_externalPlaybackEnabled; }
     PlaybackSessionModel::ExternalPlaybackTargetType externalPlaybackTargetType() const final { return m_externalPlaybackTargetType; }
     String externalPlaybackLocalizedDeviceName() const final { return m_externalPlaybackLocalizedDeviceName; }
+    String externalPlaybackLocalizedRouteName() const final { return m_externalPlaybackLocalizedRouteName; }
     bool isMuted() const final { return m_muted; }
     double volume() const final { return m_volume; }
     bool isPictureInPictureSupported() const final { return m_pictureInPictureSupported; }
@@ -188,7 +192,7 @@ private:
     WebCore::AudioSessionSoundStageSize soundStageSize() const final { return m_soundStageSize; }
     void setSoundStageSize(WebCore::AudioSessionSoundStageSize) final;
 
-    bool prefersAutoDimming() const final { return m_prefersAutoDimming; }
+    bool prefersAutoDimming() const final { return persistedPrefersAutoDimming(); }
     void setPrefersAutoDimming(bool) final;
 
     void NODELETE swapVideoReceiverEndpointsWith(PlaybackSessionModelContext&);
@@ -225,6 +229,7 @@ private:
     bool m_externalPlaybackEnabled { false };
     PlaybackSessionModel::ExternalPlaybackTargetType m_externalPlaybackTargetType { PlaybackSessionModel::ExternalPlaybackTargetType::TargetTypeNone };
     String m_externalPlaybackLocalizedDeviceName;
+    String m_externalPlaybackLocalizedRouteName;
     bool m_wirelessVideoPlaybackDisabled { false };
     bool m_muted { false };
     double m_volume { 0 };
@@ -239,7 +244,6 @@ private:
 #endif
     std::optional<WebCore::ImmersiveVideoMetadata> m_immersiveVideoMetadata;
 
-    bool m_prefersAutoDimming { true };
 #if !RELEASE_LOG_DISABLED
     uint64_t m_logIdentifier { 0 };
 #endif
@@ -269,6 +273,7 @@ public:
 
     // For testing.
     bool wirelessVideoPlaybackDisabled();
+    WebCore::PlatformTimeRanges seekableRanges();
 
 private:
     friend class PlaybackSessionModelContext;
@@ -306,7 +311,7 @@ private:
     void legibleMediaSelectionOptionsChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, Vector<WebCore::MediaSelectionOption> options, uint64_t selectedIndex);
     void audioMediaSelectionIndexChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, uint64_t selectedIndex);
     void legibleMediaSelectionIndexChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, uint64_t selectedIndex);
-    void externalPlaybackPropertiesChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, bool enabled, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType, String localizedDeviceName);
+    void externalPlaybackPropertiesChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, bool enabled, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType, String localizedDeviceName, String localizedRouteName);
     void wirelessVideoPlaybackDisabledChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, bool);
     void durationChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, double duration);
     void playbackStartedTimeChanged(IPC::Connection&, WebCore::HTMLMediaElementIdentifier, double playbackStartedTime);
@@ -361,9 +366,6 @@ private:
     void addNowPlayingMetadataObserver(PlaybackSessionContextIdentifier, const WebCore::NowPlayingMetadataObserver&);
     void removeNowPlayingMetadataObserver(PlaybackSessionContextIdentifier, const WebCore::NowPlayingMetadataObserver&);
     void setSoundStageSize(PlaybackSessionContextIdentifier, WebCore::AudioSessionSoundStageSize);
-
-    bool prefersAutoDimming() const;
-    void setPrefersAutoDimming(bool);
 
     void updateVideoControlsManager(PlaybackSessionContextIdentifier);
 

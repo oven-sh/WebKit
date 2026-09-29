@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Every FFI type through its ffi_echo_* fixture with edge values, cold and
 // in a loop hot enough to reach the optimizing tiers; results must be

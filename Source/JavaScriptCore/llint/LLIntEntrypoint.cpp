@@ -200,6 +200,17 @@ MacroAssemblerCodeRef<JSEntryPtrTag> defaultCall()
     return LLInt::getCodeRef<JSEntryPtrTag>(llint_default_call_trampoline);
 }
 
+// Where the CallLinkInfos that the call sites which have not run twice yet share send their calls (LazyCallLinkInfo). Baseline
+// code calls through them too.
+MacroAssemblerCodeRef<JSEntryPtrTag> unlinkedCall()
+{
+#if ENABLE(JIT)
+    if (Options::useJIT())
+        return unlinkedCallThunk();
+#endif // ENABLE(JIT)
+    return LLInt::getCodeRef<JSEntryPtrTag>(llint_unlinked_call_trampoline);
+}
+
 CodePtr<JITThunkPtrTag> arityFixup()
 {
 #if ENABLE(JIT)

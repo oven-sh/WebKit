@@ -792,7 +792,7 @@ TEST(ContextMenuTests, HitTestResultImageSuggestedFilename)
     Util::run(&gotProposedMenu);
 }
 
-static RetainPtr<NSString> imageSuggestedFilenameFromCollidingImageURL(HashMap<String, String> imageResponseHeaders)
+static RetainPtr<NSString> imageSuggestedFilenameFromCollidingImageURL(Vector<WTF::KeyValuePair<String, String>> imageResponseHeaders)
 {
     using namespace TestWebKitAPI;
 
@@ -803,7 +803,7 @@ static RetainPtr<NSString> imageSuggestedFilenameFromCollidingImageURL(HashMap<S
             connection.send(HTTPResponse({ { "Content-Type"_s, "text/html"_s } },
                 "<img id='collision' src='collision.gifv' style='width:300px;height:300px'>"_s).serialize(), [connection, imageData, imageResponseHeaders] {
                 connection.receiveHTTPRequest([connection, imageData, imageResponseHeaders](Vector<char>&&) {
-                    HashMap<String, String> headers = imageResponseHeaders;
+                    Vector<WTF::KeyValuePair<String, String>> headers = imageResponseHeaders;
                     connection.send(HTTPResponse(WTF::move(headers), imageData).serialize());
                 });
             });
@@ -973,27 +973,32 @@ TEST(ContextMenuTests, MenuTrackingCancelledWhenPageCloses)
 
     bool didClosePage = false;
     bool menuStayedOpenAfterPageClose = false;
-    RetainPtr closePageTimer = [NSTimer timerWithTimeInterval:0.25 repeats:YES block:[&didClosePage, &menuStayedOpenAfterPageClose, strongWebView = webView](NSTimer *timer) {
+    RetainPtr<NSTimer> menuWatchdogTimer;
+    RetainPtr closePageTimer = [NSTimer timerWithTimeInterval:0.25 repeats:YES block:[&didClosePage, &menuStayedOpenAfterPageClose, &menuWatchdogTimer, strongWebView = webView](NSTimer *timer) {
         // This timer only fires while AppKit is tracking the context menu.
-        if (didClosePage) {
-            menuStayedOpenAfterPageClose = true;
-            [timer invalidate];
-            return;
-        }
-
-        if (![strongWebView _activeMenu])
+        RetainPtr activeMenu = [strongWebView _activeMenu];
+        if (!activeMenu)
             return;
 
+        [timer invalidate];
         [strongWebView _close];
         didClosePage = true;
+
+        // This timer only fires if AppKit is still tracking the menu long after the page was closed.
+        // Dismiss the menu ourselves so the test fails instead of hanging.
+        menuWatchdogTimer = [NSTimer timerWithTimeInterval:2 repeats:NO block:[&menuStayedOpenAfterPageClose, activeMenu](NSTimer *) {
+            menuStayedOpenAfterPageClose = true;
+            [activeMenu cancelTrackingWithoutAnimation];
+        }];
+        [NSRunLoop.mainRunLoop addTimer:menuWatchdogTimer.get() forMode:NSEventTrackingRunLoopMode];
     }];
 
     [NSRunLoop.mainRunLoop addTimer:closePageTimer.get() forMode:NSEventTrackingRunLoopMode];
     [[webView window] orderFrontRegardless];
-    [webView mouseDownAtPoint:NSMakePoint(200, 200) simulatePressure:NO withFlags:0 eventType:NSEventTypeRightMouseDown];
-    [webView mouseUpAtPoint:NSMakePoint(200, 200) withFlags:0 eventType:NSEventTypeRightMouseUp];
+    [webView rightClickAtPoint:NSMakePoint(200, 200)];
     Util::run(&didEndTracking);
     [closePageTimer invalidate];
+    [menuWatchdogTimer invalidate];
 
     EXPECT_TRUE(didClosePage);
     EXPECT_FALSE(menuStayedOpenAfterPageClose);

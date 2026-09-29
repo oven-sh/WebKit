@@ -221,6 +221,14 @@ static constexpr bool NODELETE canUseShorthandForLonghand(CSSPropertyID shorthan
     case CSSPropertyTextDecorationSkip:
         return false;
 
+    // Avoid collapsing width/height into the new `size` shorthand for copy/paste interop
+    // with engines and older WebKit that don't support it yet. See csswg-drafts#820.
+    // The min-size and max-size shorthands are avoided for the same reason.
+    case CSSPropertySize:
+    case CSSPropertyMinSize:
+    case CSSPropertyMaxSize:
+        return false;
+
     // FIXME: -webkit-mask is a legacy shorthand but it's used to serialize -webkit-mask-clip,
     // which should be a legacy shorthand of mask-clip, but it's implemented as a longhand.
     case CSSPropertyWebkitMask:
@@ -307,7 +315,10 @@ StringBuilder StyleProperties::asTextInternal(const CSS::SerializationContext& c
 
         if (propertyID == CSSPropertyCustom)
             serializeIdentifier(result, downcast<CSSCustomPropertyValue>(*property.value()).name());
-        else
+        else if (propertyID == CSSPropertyPageSize) {
+            // `page-size` is stored under its own id but exposed to authors as `size`.
+            result.append(nameLiteral(CSSPropertySize));
+        } else
             result.append(nameLiteral(propertyID));
 
         result.append(": "_s, value, property.isImportant() ? " !important"_s : ""_s, ';');
@@ -412,6 +423,9 @@ const AtomString& StyleProperties::PropertyReference::cssName() const
 {
     if (id() == CSSPropertyCustom)
         return downcast<CSSCustomPropertyValue>(*value()).name();
+    // `page-size` is stored under its own id but exposed to authors as `size`.
+    if (id() == CSSPropertyPageSize)
+        return nameString(CSSPropertySize);
     return nameString(id());
 }
 

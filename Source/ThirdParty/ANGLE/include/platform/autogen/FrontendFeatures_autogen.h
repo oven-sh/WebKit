@@ -27,6 +27,12 @@ struct FrontendFeatures : FeatureSetBase
         &members,
     };
 
+    FeatureInfo loseHardenedContextOnBackendError = {
+        "loseHardenedContextOnBackendError",
+        FeatureCategory::FrontendWorkarounds,
+        &members,
+    };
+
     FeatureInfo disableProgramCachingForTransformFeedback = {
         "disableProgramCachingForTransformFeedback",
         FeatureCategory::FrontendWorkarounds,
@@ -233,6 +239,12 @@ struct FrontendFeatures : FeatureSetBase
 
     FeatureInfo setNeedInitOnInvalidation = {
         "setNeedInitOnInvalidation",
+        FeatureCategory::FrontendFeatures,
+        &members,
+    };
+
+    FeatureInfo compressProgramBinaryBlob = {
+        "compressProgramBinaryBlob",
         FeatureCategory::FrontendFeatures,
         &members,
     };

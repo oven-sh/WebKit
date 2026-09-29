@@ -21,12 +21,13 @@
 //    - Depth/Stencil blit/resolve: Used by FramebufferVk::blit() to implement blit or multisample
 //      resolve on depth/stencil images.
 //    - Generate mipmap: Used by TextureVk::generateMipmapsWithCompute().
-//    - Overlay Draw: Used by OverlayVk to draw a UI for debugging.
 //    - Mipmap generation: Used by TextureVk to generate mipmaps more efficiently in compute.
 //
 
 #ifndef LIBANGLE_RENDERER_VULKAN_UTILSVK_H_
 #define LIBANGLE_RENDERER_VULKAN_UTILSVK_H_
+
+#include <array>
 
 #include "libANGLE/renderer/vulkan/BufferVk.h"
 #include "libANGLE/renderer/vulkan/vk_cache_utils.h"
@@ -77,20 +78,20 @@ class UtilsVk : angle::NonCopyable
 
     struct OffsetAndVertexCount
     {
-        uint32_t srcOffset;
-        uint32_t dstOffset;
-        uint32_t vertexCount;
+        uint32_t srcOffset   = 0;
+        uint32_t dstOffset   = 0;
+        uint32_t vertexCount = 0;
     };
     using OffsetAndVertexCounts = std::vector<OffsetAndVertexCount>;
 
     struct ConvertVertexParameters
     {
-        size_t vertexCount;
-        const angle::Format *srcFormat;
-        const angle::Format *dstFormat;
-        size_t srcStride;
-        size_t srcOffset;
-        size_t dstOffset;
+        size_t vertexCount             = 0;
+        const angle::Format *srcFormat = nullptr;
+        const angle::Format *dstFormat = nullptr;
+        size_t srcStride               = 0;
+        size_t srcOffset               = 0;
+        size_t dstOffset               = 0;
     };
 
     struct ClearFramebufferParameters
@@ -116,122 +117,116 @@ class UtilsVk : angle::NonCopyable
 
     struct ClearTextureParameters
     {
-        VkImageAspectFlags aspectFlags;
-        vk::LevelIndex level;
-        uint32_t layer;
-        gl::Box clearArea;
-        VkClearValue clearValue;
+        VkImageAspectFlags aspectFlags = 0;
+        vk::LevelIndex level           = vk::LevelIndex(0);
+        vk::LayerIndex layer           = vk::LayerIndex(0);
+        gl::Box clearArea              = {};
+        VkClearValue clearValue        = {};
     };
 
     struct BlitResolveParameters
     {
         // |srcOffset| and |dstIndexBufferOffset| define the original blit/resolve offsets, possibly
         // flipped.
-        int srcOffset[2];
-        int dstOffset[2];
+        int srcOffset[2] = {};
+        int dstOffset[2] = {};
         // Amount to add to x and y axis for certain rotations
-        int rotatedOffsetFactor[2];
+        int rotatedOffsetFactor[2] = {};
         // |stretch| is SourceDimension / DestDimension used to transfer dst coordinates to source.
-        float stretch[2];
+        float stretch[2] = {};
         // |srcExtents| is used to normalize source coordinates for sampling.
-        int srcExtents[2];
+        int srcExtents[2] = {};
         // render area, which maps to VkViewport
-        gl::Rectangle renderArea;
+        gl::Rectangle renderArea = {};
         // |blitArea| is the area in destination where blit happens.  It's expected that scissor
         // and source clipping effects have already been applied to it.
-        gl::Rectangle blitArea;
-        vk::LevelIndex srcMip;
-        int srcLayer;
+        gl::Rectangle blitArea  = {};
+        vk::LevelIndex srcMip   = vk::LevelIndex(0);
+        vk::LayerIndex srcLayer = vk::LayerIndex(0);
         // Whether linear or point sampling should be used.
-        bool linear;
-        bool flipX;
-        bool flipY;
-        SurfaceRotation rotation;
+        bool linear              = false;
+        bool flipX               = false;
+        bool flipY               = false;
+        SurfaceRotation rotation = SurfaceRotation::Identity;
     };
 
     struct ClearImageParameters
     {
-        gl::Rectangle clearArea;
+        gl::Rectangle clearArea = {};
 
-        vk::LevelIndex dstMip;
-        int dstLayer;
+        vk::LevelIndex dstMip   = vk::LevelIndex(0);
+        vk::LayerIndex dstLayer = vk::LayerIndex(0);
 
-        VkColorComponentFlags colorMaskFlags;
-        VkClearColorValue colorClearValue;
+        VkColorComponentFlags colorMaskFlags = 0;
+        VkClearColorValue colorClearValue    = {};
     };
 
     struct CopyImageParameters
     {
-        int srcOffset[2];
-        int srcExtents[2];
-        int dstOffset[2];
-        vk::LevelIndex srcMip;
-        int srcLayer;
-        int srcSampleCount;
-        int srcHeight;
-        gl::LevelIndex dstMip;
-        int dstLayer;
-        bool srcPremultiplyAlpha;
-        bool srcUnmultiplyAlpha;
-        bool srcFlipY;
-        bool dstFlipY;
-        SurfaceRotation srcRotation;
-        GLenum srcColorEncoding;
-        GLenum dstColorEncoding;
-        bool copyYuvWithoutColorConversion;
+        int srcOffset[2]                   = {};
+        int srcExtents[2]                  = {};
+        int dstOffset[2]                   = {};
+        vk::LevelIndex srcMip              = vk::LevelIndex(0);
+        vk::LayerIndex srcLayer            = vk::LayerIndex(0);
+        int srcSampleCount                 = 0;
+        int srcHeight                      = 0;
+        gl::OwnerLevel dstMip              = gl::OwnerLevel(0);
+        gl::OwnerLayer dstLayer            = gl::OwnerLayer(0);
+        bool srcPremultiplyAlpha           = false;
+        bool srcUnmultiplyAlpha            = false;
+        bool srcFlipY                      = false;
+        bool dstFlipY                      = false;
+        SurfaceRotation srcRotation        = SurfaceRotation::Identity;
+        GLenum srcColorEncoding            = GL_NONE;
+        GLenum dstColorEncoding            = GL_NONE;
+        bool copyYuvWithoutColorConversion = false;
     };
 
     struct CopyImageBitsParameters
     {
-        int srcOffset[3];
-        gl::LevelIndex srcLevel;
-        int dstOffset[3];
-        gl::LevelIndex dstLevel;
-        uint32_t copyExtents[3];
+        int srcOffset[3]        = {};
+        gl::OwnerLevel srcLevel = gl::OwnerLevel(0);
+        int dstOffset[3]        = {};
+        gl::OwnerLevel dstLevel = gl::OwnerLevel(0);
+        uint32_t copyExtents[3] = {};
     };
 
     struct CopyImageToBufferParameters
     {
-        int srcOffset[2];
-        vk::LevelIndex srcMip;
-        int srcLayer;
-        uint32_t size[2];
-        ptrdiff_t outputOffset;
-        uint32_t outputPitch;
-        bool reverseRowOrder;
-        const angle::Format *outputFormat;
-    };
-
-    struct OverlayDrawParameters
-    {
-        uint32_t textWidgetCount;
-        uint32_t graphWidgetCount;
-        bool rotateXY;
+        int srcOffset[2]                  = {};
+        vk::LevelIndex srcMip             = vk::LevelIndex(0);
+        vk::LayerIndex srcLayer           = vk::LayerIndex(0);
+        uint32_t size[2]                  = {};
+        ptrdiff_t outputOffset            = 0;
+        uint32_t outputPitch              = 0;
+        bool reverseRowOrder              = false;
+        const angle::Format *outputFormat = nullptr;
     };
 
     struct GenerateMipmapParameters
     {
-        uint32_t srcLevel;
-        uint32_t dstLevelCount;
+        uint32_t srcLevel      = 0;
+        uint32_t dstLevelCount = 0;
     };
 
     struct UnresolveParameters
     {
-        gl::DrawBufferMask unresolveColorMask;
-        bool unresolveDepth;
-        bool unresolveStencil;
+        gl::DrawBufferMask unresolveColorMask = {};
+        bool unresolveDepth                   = false;
+        bool unresolveStencil                 = false;
+        bool useDynamicRendering              = false;
     };
 
     struct GenerateFragmentShadingRateParameters
     {
-        uint32_t textureWidth;
-        uint32_t textureHeight;
-        uint32_t attachmentWidth;
-        uint32_t attachmentHeight;
-        uint32_t attachmentBlockWidth;
-        uint32_t attachmentBlockHeight;
-        uint32_t numFocalPoints;
-        gl::FocalPoint focalPoints[gl::IMPLEMENTATION_MAX_FOCAL_POINTS];
+        uint32_t textureWidth                                                       = 0;
+        uint32_t textureHeight                                                      = 0;
+        uint32_t attachmentWidth                                                    = 0;
+        uint32_t attachmentHeight                                                   = 0;
+        uint32_t attachmentBlockWidth                                               = 0;
+        uint32_t attachmentBlockHeight                                              = 0;
+        uint32_t numFocalPoints                                                     = 0;
+        std::array<gl::FocalPoint, gl::IMPLEMENTATION_MAX_FOCAL_POINTS> focalPoints = {};
     };
 
     // Based on the maximum number of levels in GenerateMipmap.comp.
@@ -295,8 +290,8 @@ class UtilsVk : angle::NonCopyable
                                           vk::RenderPassCommandBufferHelper *renderPassCommands,
                                           vk::ImageHelper *dstImage,
                                           const vk::ImageView &dstImageView,
-                                          gl::LevelIndex dstImageLevel,
-                                          uint32_t dstImageLayer,
+                                          gl::OwnerLevel dstImageLevel,
+                                          gl::OwnerLayer dstImageLayer,
                                           vk::ImageHelper *srcImage,
                                           const vk::ImageView *srcDepthView,
                                           const vk::ImageView *srcStencilView,
@@ -304,8 +299,8 @@ class UtilsVk : angle::NonCopyable
 
     angle::Result stencilBlitResolveNoShaderExport(ContextVk *contextVk,
                                                    vk::ImageHelper *dstImage,
-                                                   gl::LevelIndex dstLevelIndex,
-                                                   uint32_t dstLayerIndex,
+                                                   gl::OwnerLevel dstLevelIndex,
+                                                   gl::OwnerLayer dstLayerIndex,
                                                    vk::ImageHelper *srcImage,
                                                    const vk::ImageView *srcStencilView,
                                                    const BlitResolveParameters &params);
@@ -365,16 +360,6 @@ class UtilsVk : angle::NonCopyable
     angle::Result unresolve(ContextVk *contextVk,
                             const FramebufferVk *framebuffer,
                             const UnresolveParameters &params);
-
-    // Overlay utilities.
-    angle::Result drawOverlay(ContextVk *contextVk,
-                              vk::BufferHelper *textWidgetsBuffer,
-                              vk::BufferHelper *graphWidgetsBuffer,
-                              vk::ImageHelper *font,
-                              const vk::ImageView *fontView,
-                              vk::ImageHelper *dst,
-                              const vk::ImageView *dstView,
-                              const OverlayDrawParameters &params);
 
     // Fragment shading rate utility
     angle::Result generateFragmentShadingRate(
@@ -485,8 +470,8 @@ class UtilsVk : angle::NonCopyable
 
     union BlitResolveOffset
     {
-        int32_t resolve[2];
-        float blit[2];
+        std::array<int32_t, 2> resolve;
+        std::array<float, 2> blit;
     };
 
     struct BlitResolveShaderParams
@@ -526,13 +511,6 @@ class UtilsVk : angle::NonCopyable
         uint32_t bit = 0;
     };
 
-    struct OverlayDrawShaderParams
-    {
-        // Structure matching PushConstants in OverlayDraw.vert and OverlayDraw.frag
-        uint32_t viewportSize[2] = {};
-        uint32_t isText          = 0;
-        uint32_t rotateXY        = 0;
-    };
 
     struct GenerateMipmapShaderParams
     {
@@ -543,14 +521,14 @@ class UtilsVk : angle::NonCopyable
 
     struct EtcToBcShaderParams
     {
-        uint32_t offsetX;
-        uint32_t offsetY;
-        int32_t texelOffset;
-        uint32_t width;
-        uint32_t height;
-        uint32_t alphaBits;
-        uint32_t isSigned;
-        uint32_t isEacRg;
+        uint32_t offsetX    = 0;
+        uint32_t offsetY    = 0;
+        int32_t texelOffset = 0;
+        uint32_t width      = 0;
+        uint32_t height     = 0;
+        uint32_t alphaBits  = 0;
+        uint32_t isSigned   = 0;
+        uint32_t isEacRg    = 0;
     };
 
     ANGLE_DISABLE_STRUCT_PADDING_WARNINGS
@@ -564,7 +542,6 @@ class UtilsVk : angle::NonCopyable
         BlitResolve,
         Blit3DSrc,
         ExportStencil,
-        OverlayDraw,
         // Note: unresolve is special as it has a different layout per attachment count.  Depth and
         // stencil each require a binding, so are counted separately.
         Unresolve1Attachment,
@@ -664,7 +641,6 @@ class UtilsVk : angle::NonCopyable
     angle::Result ensureBlitResolveResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureBlitResolveStencilNoExportResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureExportStencilResourcesInitialized(ContextVk *contextVk);
-    angle::Result ensureOverlayDrawResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureGenerateMipmapResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureTransCodeEtcToBcResourcesInitialized(ContextVk *contextVk);
     angle::Result ensureUnresolveResourcesInitialized(ContextVk *contextVk,
@@ -741,30 +717,38 @@ class UtilsVk : angle::NonCopyable
     std::unordered_map<vk::SamplerDesc, vk::DynamicDescriptorPool>
         mImageCopyWithSamplerDescriptorPools;
 
-    ComputeShaderProgramAndPipelines
-        mConvertIndex[vk::InternalShader::ConvertIndex_comp::kArrayLen];
-    ComputeShaderProgramAndPipelines mConvertIndexIndirectLineLoop
-        [vk::InternalShader::ConvertIndexIndirectLineLoop_comp::kArrayLen];
-    ComputeShaderProgramAndPipelines
-        mConvertIndirectLineLoop[vk::InternalShader::ConvertIndirectLineLoop_comp::kArrayLen];
-    ComputeShaderProgramAndPipelines
-        mConvertVertex[vk::InternalShader::ConvertVertex_comp::kArrayLen];
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::ConvertIndex_comp::kArrayLen>
+        mConvertIndex;
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::ConvertIndexIndirectLineLoop_comp::kArrayLen>
+        mConvertIndexIndirectLineLoop;
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::ConvertIndirectLineLoop_comp::kArrayLen>
+        mConvertIndirectLineLoop;
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::ConvertVertex_comp::kArrayLen>
+        mConvertVertex;
     GraphicsShaderProgramAndPipelines mImageClearVSOnly;
-    GraphicsShaderProgramAndPipelines mImageClear[vk::InternalShader::ImageClear_frag::kArrayLen];
-    GraphicsShaderProgramAndPipelines mImageCopy[vk::InternalShader::ImageCopy_frag::kArrayLen];
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::ImageClear_frag::kArrayLen>
+        mImageClear;
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::ImageCopy_frag::kArrayLen>
+        mImageCopy;
     GraphicsShaderProgramAndPipelines mImageCopyFloat;
     std::unordered_map<vk::SamplerDesc, GraphicsShaderProgramAndPipelines> mImageCopyWithSampler;
-    ComputeShaderProgramAndPipelines
-        mCopyImageToBuffer[vk::InternalShader::CopyImageToBuffer_comp::kArrayLen];
-    GraphicsShaderProgramAndPipelines mBlitResolve[vk::InternalShader::BlitResolve_frag::kArrayLen];
-    GraphicsShaderProgramAndPipelines mBlit3DSrc[vk::InternalShader::Blit3DSrc_frag::kArrayLen];
-    ComputeShaderProgramAndPipelines
-        mBlitResolveStencilNoExport[vk::InternalShader::BlitResolveStencilNoExport_comp::kArrayLen];
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::CopyImageToBuffer_comp::kArrayLen>
+        mCopyImageToBuffer;
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::BlitResolve_frag::kArrayLen>
+        mBlitResolve;
+    std::array<GraphicsShaderProgramAndPipelines, vk::InternalShader::Blit3DSrc_frag::kArrayLen>
+        mBlit3DSrc;
+    std::array<ComputeShaderProgramAndPipelines,
+               vk::InternalShader::BlitResolveStencilNoExport_comp::kArrayLen>
+        mBlitResolveStencilNoExport;
     GraphicsShaderProgramAndPipelines mExportStencil;
-    GraphicsShaderProgramAndPipelines mOverlayDraw;
-    ComputeShaderProgramAndPipelines
-        mGenerateMipmap[vk::InternalShader::GenerateMipmap_comp::kArrayLen];
-    ComputeShaderProgramAndPipelines mEtcToBc[vk::InternalShader::EtcToBc_comp::kArrayLen];
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::GenerateMipmap_comp::kArrayLen>
+        mGenerateMipmap;
+    std::array<ComputeShaderProgramAndPipelines, vk::InternalShader::EtcToBc_comp::kArrayLen>
+        mEtcToBc;
 
     // Unresolve shaders are special as they are generated on the fly due to the large number of
     // combinations.

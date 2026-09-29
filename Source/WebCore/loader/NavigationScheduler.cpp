@@ -333,7 +333,6 @@ public:
         }
 
         if (page->settings().useUIProcessForBackForwardItemLoading()) {
-            localFrame->loader().setPendingAsyncBackForwardNavigation();
             localFrame->loader().client().dispatchGoToBackForwardItemAtIndex(m_steps);
             return;
         }
@@ -432,7 +431,7 @@ public:
             return historyItem;
 
         // FIXME: heuristic to fix disambigaute-* tests, we should find something more exact.
-        bool backwards = entry->index() < protect(localFrame.window()->navigation())->currentEntry()->index();
+        bool backwards = entry->index() < protect(protect(protect(localFrame.window())->navigation())->currentEntry())->index();
 
         RefPtr page { localFrame.page() };
         auto items = protect(page->backForward())->allItems();
@@ -475,7 +474,7 @@ public:
         auto completionHandler = std::exchange(m_completionHandler, nullptr);
 
         Ref rootFrame = localFrame->rootFrame();
-        RefPtr upcomingTraverseMethodTracker = protect(localFrame->window()->navigation())->upcomingTraverseMethodTracker(m_key);
+        RefPtr upcomingTraverseMethodTracker = protect(protect(localFrame->window())->navigation())->upcomingTraverseMethodTracker(m_key);
         page->goToItemForNavigationAPI(rootFrame, *historyItem, FrameLoadType::IndexedBackForward, *localFrame, upcomingTraverseMethodTracker.get());
 
         completionHandler(ScheduleHistoryNavigationResult::Completed);
@@ -682,16 +681,21 @@ void NavigationScheduler::scheduleRedirect(Document& initiatingDocument, double 
 
 LockBackForwardList NavigationScheduler::mustLockBackForwardList(Frame& targetFrame)
 {
+    RefPtr localTargetFrame = dynamicDowncast<LocalFrame>(targetFrame);
+    if (!localTargetFrame)
+        return LockBackForwardList::No;
+
+    RefPtr documentLoader = localTargetFrame->loader().documentLoader();
+    if (localTargetFrame->tree().parent() && documentLoader && documentLoader->isInitialAboutBlank() == IsInitialAboutBlank::Yes)
+        return LockBackForwardList::Yes;
+
     // Non-user navigation before the page has finished firing onload should not create a new back/forward item.
     // See https://webkit.org/b/42861 for the original motivation for this.
-
-    RefPtr localTargetFrame = dynamicDowncast<LocalFrame>(targetFrame);
     if (!UserGestureIndicator::processingUserGesture()
-        && localTargetFrame
-        && localTargetFrame->loader().documentLoader()
-        && !localTargetFrame->loader().documentLoader()->wasOnloadDispatched())
+        && documentLoader
+        && !documentLoader->wasOnloadDispatched())
         return LockBackForwardList::Yes;
-    
+
     return LockBackForwardList::No;
 }
 
@@ -820,7 +824,7 @@ void NavigationScheduler::scheduleHistoryNavigation(int steps)
     if (!shouldScheduleNavigation())
         return;
 
-    scheduleHistoryNavigation(m_frame.get(), steps);
+    scheduleHistoryNavigation(protect(m_frame), steps);
 }
 
 void NavigationScheduler::scheduleHistoryNavigation(Frame& originatingFrame, int steps)

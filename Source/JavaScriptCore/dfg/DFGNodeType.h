@@ -296,6 +296,7 @@ namespace JSC { namespace DFG {
     macro(GetGlobalThis, NodeResultJS) \
     macro(UnwrapGlobalProxy, NodeResultJS) \
     macro(GetClosureVar, NodeResultJS) \
+    macro(GetLazyClosureVar, NodeResultJS) \
     macro(PutClosureVar, NodeMustGenerate) \
     macro(GetGlobalVar, NodeResultJS) \
     macro(GetGlobalLexicalVariable, NodeResultJS) \
@@ -672,7 +673,9 @@ namespace JSC { namespace DFG {
     macro(BufferWrite, NodeMustGenerate | NodeHasVarArgs) \
     /* Date access */ \
     macro(DateNow, NodeMustGenerate | NodeResultDouble) \
+    macro(DateGetStorage, NodeResultStorage) \
     macro(DateGetInt32OrNaN, NodeResultJS) \
+    macro(DateGetMilliseconds, NodeResultJS) \
     macro(DateGetTime, NodeResultDouble) \
     macro(DateSetTime, NodeMustGenerate | NodeResultDouble) \
     /* Promise */ \

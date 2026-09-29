@@ -78,6 +78,7 @@ public:
     bool isBorderImageSourceValue() const { return m_classType == ClassType::BorderImageSource; }
     bool isBorderImageWidthValue() const { return m_classType == ClassType::BorderImageWidth; }
     bool isBoxShadowPropertyValue() const { return m_classType == ClassType::BoxShadowProperty; }
+    bool isCalcSizeValue() const { return m_classType == ClassType::CalcSize; }
     bool isColorImageValue() const { return m_classType == ClassType::ColorImage; }
     bool isLightDarkImageValue() const { return m_classType == ClassType::LightDarkImage; }
     bool isCanvasValue() const { return m_classType == ClassType::Canvas; }
@@ -95,10 +96,12 @@ public:
     bool isEasingFunctionValue() const { return m_classType == ClassType::EasingFunction; }
     bool isFilterImageValue() const { return m_classType == ClassType::FilterImage; }
     bool isFilterValue() const { return m_classType == ClassType::Filter; }
+    bool isFlexWrapValue() const { return m_classType == ClassType::FlexWrap; }
     bool isFontFaceSrcLocalValue() const { return m_classType == ClassType::FontFaceSrcLocal; }
     bool isFontFaceSrcResourceValue() const { return m_classType == ClassType::FontFaceSrcResource; }
     bool isFontFamilyNameValue() const { return m_classType == ClassType::FontFamilyName; }
     bool isFontFeatureValue() const { return m_classType == ClassType::FontFeature; }
+    bool isFontPaletteValue() const { return m_classType == ClassType::FontPalette; }
     bool isFontStyleRangeValue() const { return m_classType == ClassType::FontStyleRange; }
     bool isFontStyleWithAngleValue() const { return m_classType == ClassType::FontStyleWithAngle; }
     bool isFontValue() const { return m_classType == ClassType::Font; }
@@ -122,6 +125,9 @@ public:
     bool isNamedImageValue() const { return m_classType == ClassType::NamedImage; }
     bool isOffsetRotateValue() const { return m_classType == ClassType::OffsetRotate; }
     bool isPaintImageValue() const { return m_classType == ClassType::PaintImage; }
+#if ENABLE(SPATIAL_PORTAL)
+    bool isPinnedAnchorNameValue() const { return m_classType == ClassType::PinnedAnchorName; }
+#endif
     bool isPair() const { return m_classType == ClassType::ValuePair; }
     bool isParamValue() const { return m_classType == ClassType::Param; }
     bool isPath() const { return m_classType == ClassType::Path; }
@@ -135,6 +141,7 @@ public:
     bool isRayValue() const { return m_classType == ClassType::Ray; }
     bool isScrollValue() const { return m_classType == ClassType::Scroll; }
     bool isStringValue() const { return m_classType == ClassType::String; }
+    bool isSymbolsFunctionValue() const { return m_classType == ClassType::SymbolsFunction; }
     bool isTextShadowPropertyValue() const { return m_classType == ClassType::TextShadowProperty; }
     bool isTransformListValue() const { return m_classType == ClassType::TransformList; }
     bool isURL() const { return m_classType == ClassType::URL; }
@@ -221,6 +228,7 @@ protected:
         BorderImageSource,
         BorderImageWidth,
         BoxShadowProperty,
+        CalcSize,
         Clip,
         Color,
 #if ENABLE(DARK_MODE_CSS)
@@ -232,11 +240,13 @@ protected:
         DynamicRangeLimit,
         EasingFunction,
         Filter,
+        FlexWrap,
         Font,
         FontFaceSrcLocal,
         FontFaceSrcResource,
         FontFamilyName,
         FontFeature,
+        FontPalette,
         FontStyleRange,
         FontStyleWithAngle,
         FontVariation,
@@ -255,6 +265,9 @@ protected:
         Param,
         Path,
         ShorthandSubstitution,
+#if ENABLE(SPATIAL_PORTAL)
+        PinnedAnchorName,
+#endif
         Position,
         PositionX,
         PositionY,
@@ -268,6 +281,7 @@ protected:
         ValuePair,
         String,
         Substitution,
+        SymbolsFunction,
         View,
         WebkitBoxReflect,
 
@@ -297,8 +311,8 @@ protected:
     ASCIILiteral separatorCSSText() const { return separatorCSSText(separator()); };
 
 private:
-    template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&);
-    template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&) const;
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&);
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&) const;
 
     static inline bool NODELETE customTraverseSubresources(NOESCAPE const Function<bool(const CachedResource&)>&);
     bool NODELETE addDerivedHash(Hasher&) const;

@@ -52,12 +52,6 @@ test/built-ins/Proxy/construct/arguments-realm.js:
 test/built-ins/Proxy/construct/trap-is-not-callable-realm.js:
   default: 3
   strict mode: 3
-test/built-ins/TypedArray/prototype/slice/speciesctor-return-same-buffer-with-offset.js:
-  default: 3
-  strict mode: 3
-test/built-ins/TypedArrayConstructors/ctors/object-arg/iterated-array-changed-by-tonumber.js:
-  default: 3
-  strict mode: 3
 test/built-ins/Uint8Array/prototype/setFromBase64/trailing-garbage.js:
   default: 3
   strict mode: 3
@@ -84,17 +78,6 @@ test/language/eval-code/direct/arrow-fn-body-cntns-arguments-var-bind-arrow-func
 test/language/eval-code/direct/arrow-fn-no-pre-existing-arguments-bindings-are-present-arrow-func-declare-arguments-assign-incl-def-param-arrow-arguments.js:
   default: 3
 test/language/eval-code/direct/arrow-fn-no-pre-existing-arguments-bindings-are-present-arrow-func-declare-arguments-assign.js:
-  default: 3
-test/language/expressions/assignment/fn-name-lhs-cover.js:
-  default: 3
-  strict mode: 3
-test/language/expressions/call/tco-non-eval-function-dynamic.js:
-  default: 3
-test/language/expressions/call/tco-non-eval-function.js:
-  default: 3
-test/language/expressions/call/tco-non-eval-global.js:
-  default: 3
-test/language/expressions/call/tco-non-eval-with.js:
   default: 3
 test/language/expressions/delete/super-property-uninitialized-this.js:
   default: 3
@@ -149,15 +132,10 @@ test/language/statements/with/get-mutable-binding-binding-deleted-in-get-unscopa
   default: 3
 test/language/statements/with/set-mutable-binding-idref-compound-assign-with-proxy-env.js:
   default: 3
-test/staging/sm/ArrayBuffer/slice-species.js:
-  default: 3
-  strict mode: 3
 test/staging/sm/Date/two-digit-years.js:
   default: 3
   strict mode: 3
 test/staging/sm/Function/arguments-parameter-shadowing.js:
-  default: 3
-test/staging/sm/Function/function-name-assignment.js:
   default: 3
 test/staging/sm/Function/function-toString-builtin-name.js:
   default: 3
@@ -179,9 +157,6 @@ test/staging/sm/RegExp/unicode-braced.js:
 test/staging/sm/RegExp/unicode-class-braced.js:
   default: 3
   strict mode: 3
-test/staging/sm/TypedArray/slice-memcpy.js:
-  default: 3
-  strict mode: 3
 test/staging/sm/class/superPropOrdering.js:
   default: 3
   strict mode: 3
@@ -191,9 +166,6 @@ test/staging/sm/expressions/exponentiation-unparenthesised-unary.js:
   default: 3
   strict mode: 3
 test/staging/sm/expressions/object-literal-computed-property-evaluation.js:
-  default: 3
-  strict mode: 3
-test/staging/sm/expressions/short-circuit-compound-assignment-anon-fns.js:
   default: 3
   strict mode: 3
 test/staging/sm/extensions/function-caller-skips-eval-frames.js:

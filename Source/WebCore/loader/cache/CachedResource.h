@@ -357,7 +357,7 @@ protected:
 
     // FIXME: Make the rest of these data members private and use functions in derived classes instead.
     SingleThreadWeakHashCountedSet<CachedResourceClient> m_clients;
-    std::unique_ptr<ResourceRequest> m_originalRequest; // Needed by Ping loads.
+    std::unique_ptr<ResourceRequest> m_originalRequest; // Used by SubresourceLoader::originalHeaders() for CORS checks.
     RefPtr<SubresourceLoader> m_loader;
     RefPtr<FragmentedSharedBuffer> m_data;
 

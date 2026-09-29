@@ -116,6 +116,10 @@ http/wpt/identity/ [ Skip ]
 # -- The above has different, expected behavior on iOS 26 than iOS 18 --
 # -- New failure expectations below this point only!! --
 
+# The IPC payload hardcodes the HAVE(WK_SECURE_CODING_SECTRUST) shape of WebKit::CoreIPCSecTrust,
+# which is only serialized that way on iOS 26 and later. iOS 18 sends a bare std::span instead.
+ipc/cocoa/sectrust-null-data-crash.html [ Skip ]
+
 
 
 

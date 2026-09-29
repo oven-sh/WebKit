@@ -27,12 +27,12 @@
 
 #include <WebCore/PlatformVideoColorSpace.h>
 #include <WebCore/ProcessIdentity.h>
-#include <span>
 #include <wtf/CompletionHandler.h>
 #include <wtf/NativePromise.h>
 
 namespace WebCore {
 
+class SharedBuffer;
 class VideoFrame;
 
 class VideoDecoder : public ThreadSafeRefCounted<VideoDecoder> {
@@ -54,10 +54,12 @@ public:
     };
 
     struct EncodedFrame {
-        std::span<const uint8_t> data;
+        Ref<SharedBuffer> data;
         bool isKeyFrame { false };
         int64_t timestamp { 0 };
         std::optional<uint64_t> duration;
+
+        WEBCORE_EXPORT ~EncodedFrame();
     };
     struct DecodedFrame {
         Ref<VideoFrame> frame;
@@ -67,8 +69,8 @@ public:
 
     static bool isVPXSupported();
 
-    using OutputCallback = Function<void(Expected<DecodedFrame, String>&&)>;
-    using CreateResult = Expected<Ref<VideoDecoder>, String>;
+    using OutputCallback = Function<void(std::expected<DecodedFrame, String>&&)>;
+    using CreateResult = std::expected<Ref<VideoDecoder>, String>;
     using CreatePromise = NativePromise<Ref<VideoDecoder>, String>;
     using CreateCallback = Function<void(CreateResult&&)>;
 

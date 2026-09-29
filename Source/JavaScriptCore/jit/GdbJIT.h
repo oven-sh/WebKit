@@ -60,14 +60,14 @@ class GdbJIT {
     WTF_MAKE_NONCOPYABLE(GdbJIT);
     friend class LazyNeverDestroyed<GdbJIT>;
 public:
-    static void log(const CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag>);
+    static void log(const UTF8CString& name, MacroAssemblerCodeRef<LinkBufferPtrTag>);
 
 private:
     GdbJIT() = default;
     static GdbJIT& singleton();
 
     Lock m_lock;
-    GdbJITCodeMap m_map;
+    GdbJITCodeMap m_map WTF_GUARDED_BY_LOCK(m_lock);
 };
 
 } // namespace JSC

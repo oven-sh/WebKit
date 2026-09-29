@@ -208,6 +208,8 @@ private:
     void loadDataURL();
     void finishNetworkLoad();
 
+    bool startKeepAliveLoadForWebKitLegacy(FrameLoader&);
+
     bool shouldAllowResourceToAskForCredentials() const;
 
     // ResourceHandleClient

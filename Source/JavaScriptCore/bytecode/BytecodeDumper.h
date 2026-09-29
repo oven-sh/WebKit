@@ -67,7 +67,7 @@ public:
     void dumpValue(T v) { m_out.print(v); }
 
 protected:
-    virtual CString registerName(VirtualRegister) const = 0;
+    virtual UTF8CString registerName(VirtualRegister) const = 0;
     virtual int outOfLineJumpOffset(typename InstructionStreamType::Offset) const = 0;
 
     BytecodeDumperBase(PrintStream& out)
@@ -99,11 +99,11 @@ protected:
 
     void dumpBytecode(const JSInstructionStream::Ref& it, const ICStatusMap&);
 
-    CString registerName(VirtualRegister) const override;
+    UTF8CString registerName(VirtualRegister) const override;
     int outOfLineJumpOffset(JSInstructionStream::Offset) const override;
 
 private:
-    virtual CString constantName(VirtualRegister) const;
+    virtual UTF8CString constantName(VirtualRegister) const;
 
     Block* m_block;
 };

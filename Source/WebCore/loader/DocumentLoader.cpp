@@ -86,7 +86,6 @@
 #include "NavigationRequester.h"
 #include "NavigationScheduler.h"
 #include "NetworkLoadMetrics.h"
-#include "NetworkStorageSession.h"
 #include "OriginAccessPatterns.h"
 #include "Page.h"
 #include "Performance.h"
@@ -103,6 +102,7 @@
 #include "ServiceWorkerClientData.h"
 #include "ServiceWorkerProvider.h"
 #include "Settings.h"
+#include "StorageAccessQuirks.h"
 #include "SubresourceLoader.h"
 #include "TextResourceDecoder.h"
 #include "UserContentProvider.h"
@@ -763,7 +763,7 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
         if (!parentFrame)
             return completionHandler(WTF::move(newRequest));
 
-        if (MixedContentChecker::shouldBlockRequest(*parentFrame, newRequest.url())) {
+        if (MixedContentChecker::shouldBlockRequest(*parentFrame, newRequest.url(), MixedContentChecker::IsUpgradable::No, newRequest.targetAddressSpace())) {
             cancelMainResourceLoad(protect(frameLoader())->cancelledError(newRequest));
             return completionHandler(WTF::move(newRequest));
         }
@@ -950,7 +950,7 @@ void DocumentLoader::responseReceived(const CachedResource& resource, const Reso
         Ref document = *frame->document();
         if (Quirks::isMicrosoftTeamsRedirectURL(response.url())) {
             auto firstPartyDomain = RegistrableDomain(response.url());
-            if (auto loginDomains = NetworkStorageSession::subResourceDomainsInNeedOfStorageAccessForFirstParty(firstPartyDomain)) {
+            if (auto loginDomains = subResourceDomainsInNeedOfStorageAccessForFirstParty(firstPartyDomain)) {
                 if (!Quirks::hasStorageAccessForAllLoginDomains(*loginDomains, firstPartyDomain)) {
                     protect(frame->navigationScheduler())->scheduleRedirect(document, 0, microsoftTeamsRedirectURL(), IsMetaRefresh::No);
                     completionHandler();
@@ -1024,6 +1024,13 @@ void DocumentLoader::responseReceived(ResourceResponse&& response, CompletionHan
         m_isLoadingMultipartContent = true;
 
     m_response = WTF::move(response);
+
+    // blob: is a local scheme, so HTML's "determine navigation params policy container" takes the
+    // initiator's address space for it rather than the response's.
+    if (m_response.url().protocolIsBlob()) {
+        if (auto& requester = triggeringAction().requester())
+            m_response.setIPAddressSpace(requester->policyContainer.ipAddressSpace);
+    }
 
     if (m_identifierForLoadWithoutResourceLoader) {
         RefPtr frameLoader = this->frameLoader();
@@ -1494,7 +1501,7 @@ void DocumentLoader::checkLoadComplete()
         return;
 
     ASSERT(this == frameLoader()->activeDocumentLoader());
-    protect(*m_frame)->document()->window()->finishedLoading();
+    protect(protect(*m_frame)->document()->window())->finishedLoading();
 }
 
 void DocumentLoader::applyPoliciesToSettings()
@@ -2137,7 +2144,7 @@ void DocumentLoader::loadErrorDocument()
         return;
 
     commitData(SharedBuffer::create());
-    m_frame->document()->enforceSandboxFlags(SandboxFlag::Origin);
+    protect(protect(m_frame)->document())->enforceSandboxFlags(SandboxFlag::Origin);
     m_writer.end();
 }
 
@@ -2541,6 +2548,14 @@ ShouldOpenExternalURLsPolicy DocumentLoader::shouldOpenExternalURLsPolicyToPropa
     return ShouldOpenExternalURLsPolicy::ShouldNotAllow;
 }
 
+bool DocumentLoader::hasCrossOriginRedirect() const
+{
+    if (m_hasCrossOriginRedirect)
+        return true;
+    const auto* metrics = m_response.deprecatedNetworkLoadMetricsOrNull();
+    return metrics && metrics->crossOriginRedirect();
+}
+
 // https://www.w3.org/TR/css-view-transitions-2/#navigation-can-trigger-a-cross-document-view-transition
 CanTriggerCrossDocumentViewTransition DocumentLoader::navigationCanTriggerCrossDocumentViewTransition(Document& oldDocument, bool fromBackForwardCache)
 {
@@ -2563,10 +2578,8 @@ CanTriggerCrossDocumentViewTransition DocumentLoader::navigationCanTriggerCrossD
     if (!newOrigin->isSameOriginAs(protect(oldDocument.securityOrigin())))
         return CanTriggerCrossDocumentViewTransition::No;
 
-    if (const auto* metrics = response().deprecatedNetworkLoadMetricsOrNull(); metrics && !fromBackForwardCache) {
-        if (metrics->crossOriginRedirect())
-            return CanTriggerCrossDocumentViewTransition::No;
-    }
+    if (!fromBackForwardCache && hasCrossOriginRedirect())
+        return CanTriggerCrossDocumentViewTransition::No;
 
     if (*m_triggeringAction.navigationAPIType() == NavigationNavigationType::Traverse)
         return CanTriggerCrossDocumentViewTransition::Yes;
@@ -2623,12 +2636,12 @@ PreviewConverter* DocumentLoader::previewConverter() const
 
 void DocumentLoader::addConsoleMessage(MessageSource messageSource, MessageLevel messageLevel, const String& message, unsigned long requestIdentifier)
 {
-    protect(frame())->document()->addConsoleMessage(messageSource, messageLevel, message, requestIdentifier);
+    protect(protect(frame())->document())->addConsoleMessage(messageSource, messageLevel, message, requestIdentifier);
 }
 
 void DocumentLoader::enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&& eventInit)
 {
-    protect(frame())->document()->enqueueSecurityPolicyViolationEvent(WTF::move(eventInit));
+    protect(protect(frame())->document())->enqueueSecurityPolicyViolationEvent(WTF::move(eventInit));
 }
 
 #if ENABLE(CONTENT_FILTERING)

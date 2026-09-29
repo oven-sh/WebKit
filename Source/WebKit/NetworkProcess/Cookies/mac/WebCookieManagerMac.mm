@@ -28,8 +28,8 @@
 
 #import "NetworkProcess.h"
 #import "NetworkSession.h"
+#import "NetworkStorageSession.h"
 #import <WebCore/HTTPCookieAcceptPolicy.h>
-#import <WebCore/NetworkStorageSession.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/CallbackAggregator.h>
 #import <wtf/ProcessPrivilege.h>

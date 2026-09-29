@@ -104,6 +104,7 @@ grid-template-rows: none
 hanging-punctuation: none
 height: 100px
 hyphenate-character: auto
+hyphenate-limit-lines: no-limit
 image-rendering: auto
 justify-content: normal
 justify-items: normal
@@ -223,7 +224,6 @@ zoom: 1
 -webkit-font-smoothing: auto
 -webkit-hyphenate-limit-after: auto
 -webkit-hyphenate-limit-before: auto
--webkit-hyphenate-limit-lines: no-limit
 -webkit-line-align: none
 -webkit-line-box-contain: block inline replaced
 -webkit-line-clamp: none

@@ -284,7 +284,7 @@ void Value::deepDump(const Procedure* proc, PrintStream& out) const
     dumpMeta(comma, out);
 
     {
-        CString string = toCString(effects());
+        auto string = toUTF8CString(effects());
         if (string.length())
             out.print(comma, string);
     }

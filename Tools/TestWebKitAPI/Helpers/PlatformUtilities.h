@@ -36,6 +36,7 @@
 #include "Helpers/Utilities.h"
 #include <string>
 #include <wtf/text/ASCIILiteral.h>
+#include <wtf/text/CString.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA) && defined(__OBJC__)
@@ -50,6 +51,7 @@ typedef double NSTimeInterval;
 
 #if PLATFORM(COCOA)
 OBJC_CLASS NSImage;
+OBJC_CLASS NSURL;
 OBJC_CLASS NSWindow;
 OBJC_CLASS UIImage;
 OBJC_CLASS UIWindow;
@@ -62,7 +64,7 @@ namespace Util {
 
 std::string toSTD(const char*);
 ALWAYS_INLINE std::string toSTD(ASCIILiteral literal) { return toSTD(literal.characters()); }
-ALWAYS_INLINE std::string toSTD(const String& string) { return toSTD(string.utf8().data()); }
+ALWAYS_INLINE std::string toSTD(const String& string) { return string.utf8().toStdString(); }
 
 #if USE(FOUNDATION)
 std::string toSTD(NSString *);
@@ -95,6 +97,8 @@ NSString *toNS(WKRetainPtr<WKStringRef>);
 #endif // PLATFORM(MAC)
 
 WKRetainPtr<WKStringRef> toWK(const char* utf8String);
+WKRetainPtr<WKStringRef> toWK(const UTF8CString&);
+WKRetainPtr<WKStringRef> toWK(const String&);
 
 #endif // WK_HAVE_C_SPI
 
@@ -130,6 +134,9 @@ using PlatformWindow = UIWindow;
 
 #if PLATFORM(COCOA)
 extern NSString * const TestPlugInClassNameParameter;
+
+NSURL *testPlugInBundleURL();
+
 extern RetainPtr<CGImageRef> convertToCGImage(PlatformImage *);
 #endif
 

@@ -58,7 +58,9 @@
 #include "StylePrimitiveNumericOrKeyword+CSSValueConversion.h"
 #include "StylePrimitiveNumericTypes+CSSValueConversion.h"
 #include "StyleResolveForFont.h"
+#include "StyleResolvedColors.h"
 #include "StyleResolver.h"
+#include "StyleSizeOrKeyword+CSSValueConversion.h"
 #include "StyleTextEdge+CSSValueConversion.h"
 #include "StyleValueTypes+CSSValueConversion.h"
 #include "TextSpacing.h"
@@ -91,11 +93,9 @@ public:
     static void applyInitialLetterSpacing(BuilderState&);
     static void applyValueLetterSpacing(BuilderState&, CSSValue&);
 
-#if ENABLE(TEXT_AUTOSIZING)
     static void applyInheritLineHeight(BuilderState&);
     static void applyInitialLineHeight(BuilderState&);
     static void applyValueLineHeight(BuilderState&, CSSValue&);
-#endif
 
     static void applyInheritWordSpacing(BuilderState&);
     static void applyInitialWordSpacing(BuilderState&);
@@ -112,14 +112,10 @@ public:
     static void applyHighlightValueColor(BuilderState&, CSSValue&);
 
     // Custom handling of value setting only.
-    static void applyValueWebkitLocale(BuilderState&, CSSValue&);
     static void applyValueTextOrientation(BuilderState&, CSSValue&);
-#if ENABLE(TEXT_AUTOSIZING)
     static void applyValueWebkitTextSizeAdjust(BuilderState&, CSSValue&);
-#endif
     static void applyValueWebkitTextZoom(BuilderState&, CSSValue&);
     static void applyValueWritingMode(BuilderState&, CSSValue&);
-    static void applyValueFontSizeAdjust(BuilderState&, CSSValue&);
 
 private:
     static void resetUsedZoom(BuilderState&);
@@ -245,10 +241,10 @@ void maybeUpdateFontForLetterSpacingOrWordSpacing(BuilderState& builderState, CS
 {
     // This is unfortunate. It's related to https://github.com/w3c/csswg-drafts/issues/5498.
     //
-    // From StyleBuilder's point of view, there's a dependency cycle:
+    // From Style::Builder's point of view, there's a dependency cycle:
     // letter-spacing accepts an arbitrary <length>, which must be resolved against a font, which must
     // be selected after all the properties that affect font selection are processed, but letter-spacing
-    // itself affects font selection because it can disable font features. StyleBuilder has some (valid)
+    // itself affects font selection because it can disable font features. Style::Builder has some (valid)
     // ASSERT()s which would fire because of this cycle.
     //
     // There isn't *actually* a dependency cycle, though, as none of the font-relative units are
@@ -306,23 +302,21 @@ inline void BuilderCustom::applyValueLetterSpacing(BuilderState& builderState, C
     builderState.setFontDirty();
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
-
 inline void BuilderCustom::applyInheritLineHeight(BuilderState& builderState)
 {
+    builderState.style().setTextAutosizingAdjustedLineHeight(forwardInheritedValue(builderState.parentStyle().textAutosizingAdjustedLineHeight()));
     builderState.style().setLineHeight(forwardInheritedValue(builderState.parentStyle().lineHeight()));
-    builderState.style().setSpecifiedLineHeight(forwardInheritedValue(builderState.parentStyle().specifiedLineHeight()));
 }
 
 inline void BuilderCustom::applyInitialLineHeight(BuilderState& builderState)
 {
+    builderState.style().setTextAutosizingAdjustedLineHeight(ComputedStyle::initialLineHeight());
     builderState.style().setLineHeight(ComputedStyle::initialLineHeight());
-    builderState.style().setSpecifiedLineHeight(ComputedStyle::initialSpecifiedLineHeight());
 }
 
-static inline float computeBaseSpecifiedFontSize(const Document& document, const ComputedStyle& style)
+static inline float computeBaseComputedFontSize(const Document& document, const ComputedStyle& style)
 {
-    float result = style.specifiedFontSize();
+    float result = style.fontSize();
     auto* frame = document.frame();
     if (frame && style.textZoom() != TextZoom::Reset)
         result *= frame->textZoomFactor();
@@ -337,10 +331,10 @@ static inline float computeLineHeightMultiplierDueToFontSize(const Document& doc
     if (RefPtr primitiveValue = dynamicDowncast<CSSPrimitiveValue>(value); primitiveValue && primitiveValue->isLength()) {
         auto minimumFontSize = document.settings().minimumFontSize();
         if (minimumFontSize > 0) {
-            auto specifiedFontSize = computeBaseSpecifiedFontSize(document, style);
+            auto computedFontSize = computeBaseComputedFontSize(document, style);
             // Small font sizes cause a preposterously large (near infinity) line-height. Add a fuzz-factor of 1px which opts out of
             // boosted line-height.
-            if (specifiedFontSize < minimumFontSize && specifiedFontSize >= 1) {
+            if (computedFontSize < minimumFontSize && computedFontSize >= 1) {
                 // FIXME: There are two settings which are relevant here: minimum font size, and minimum logical font size (as
                 // well as things like the zoom property, text zoom on the page, and text autosizing). The minimum logical font
                 // size is nonzero by default, and already incorporated into the computed font size, so if we just use the ratio
@@ -351,7 +345,7 @@ static inline float computeLineHeightMultiplierDueToFontSize(const Document& doc
 
                 // This calculation matches the line-height computed size calculation in
                 // TextAutoSizing::Value::adjustTextNodeSizes().
-                auto scaleChange = minimumFontSize / specifiedFontSize;
+                auto scaleChange = minimumFontSize / computedFontSize;
                 return scaleChange;
             }
         }
@@ -371,7 +365,7 @@ inline void BuilderCustom::applyValueLineHeight(BuilderState& builderState, CSSV
 
     auto lineHeight = toStyleFromCSSValue<LineHeight>(builderState, value, 1.0f);
 
-    auto computedLineHeight = [&] -> LineHeight {
+    auto textAutosizingAdjustedLineHeight = [&] -> LineHeight {
         if (lineHeight.isNormal())
             return lineHeight;
 
@@ -382,15 +376,8 @@ inline void BuilderCustom::applyValueLineHeight(BuilderState& builderState, CSSV
         return toStyleFromCSSValue<LineHeight>(builderState, value, multiplier);
     }();
 
-    builderState.style().setLineHeight(WTF::move(computedLineHeight));
-    builderState.style().setSpecifiedLineHeight(WTF::move(lineHeight));
-}
-
-#endif
-
-inline void BuilderCustom::applyValueWebkitLocale(BuilderState& builderState, CSSValue& value)
-{
-    builderState.setFontDescriptionSpecifiedLocale(toStyleFromCSSValue<WebkitLocale>(builderState, value));
+    builderState.style().setTextAutosizingAdjustedLineHeight(WTF::move(textAutosizingAdjustedLineHeight));
+    builderState.style().setLineHeight(WTF::move(lineHeight));
 }
 
 inline void BuilderCustom::applyValueWritingMode(BuilderState& builderState, CSSValue& value)
@@ -404,13 +391,11 @@ inline void BuilderCustom::applyValueTextOrientation(BuilderState& builderState,
     builderState.setTextOrientation(fromCSSValue<TextOrientation>(value));
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 inline void BuilderCustom::applyValueWebkitTextSizeAdjust(BuilderState& builderState, CSSValue& value)
 {
     builderState.style().setTextSizeAdjust(toStyleFromCSSValue<TextSizeAdjust>(builderState, value));
     builderState.setFontDirty();
 }
-#endif
 
 inline void BuilderCustom::applyValueWebkitTextZoom(BuilderState& builderState, CSSValue& value)
 {
@@ -469,7 +454,7 @@ inline void BuilderCustom::applyInitialFontSize(BuilderState& builderState)
 inline void BuilderCustom::applyInheritFontSize(BuilderState& builderState)
 {
     const auto& parentFontDescription = builderState.parentStyle().fontDescription();
-    float size = parentFontDescription.specifiedSize();
+    float size = parentFontDescription.computedSize();
 
     if (size < 0)
         return;
@@ -579,7 +564,7 @@ inline void BuilderCustom::applyValueFontSize(BuilderState& builderState, CSSVal
     auto& fontDescription = builderState.fontDescription();
     builderState.setFontDescriptionKeywordSizeFromIdentifier(CSSValueInvalid);
 
-    float parentSize = builderState.parentStyle().fontDescription().specifiedSize();
+    float parentSize = builderState.parentStyle().fontDescription().computedSize();
     bool parentIsAbsoluteSize = builderState.parentStyle().fontDescription().isAbsoluteSize();
 
     float size = 0;
@@ -676,11 +661,11 @@ inline void BuilderCustom::applyInitialColor(BuilderState& builderState)
 
     if (builderState.applyPropertyToRegularStyle()) {
         auto styleColor = toStyle(initialColor, builderState, ForVisitedLink::No);
-        builderState.style().setColor(styleColor.resolveColor(builderState.parentStyle().color()));
+        builderState.style().setColor(styleColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle())));
     }
     if (builderState.applyPropertyToVisitedLinkStyle()) {
         auto styleColor = toStyle(initialColor, builderState, ForVisitedLink::Yes);
-        builderState.style().setVisitedLinkColor(styleColor.resolveColor(builderState.parentStyle().visitedLinkColor()));
+        builderState.style().setVisitedLinkColor(styleColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle())));
     }
 
     builderState.style().setDisallowsFastPathInheritance();
@@ -692,11 +677,11 @@ inline void BuilderCustom::applyValueColor(BuilderState& builderState, CSSValue&
 {
     if (builderState.applyPropertyToRegularStyle()) {
         auto color = toStyleFromCSSValue<Color>(builderState, value, ForVisitedLink::No);
-        builderState.style().setColor(color.resolveColor(builderState.parentStyle().color()));
+        builderState.style().setColor(color.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle())));
     }
     if (builderState.applyPropertyToVisitedLinkStyle()) {
         auto color = toStyleFromCSSValue<Color>(builderState, value, ForVisitedLink::Yes);
-        builderState.style().setVisitedLinkColor(color.resolveColor(builderState.parentStyle().visitedLinkColor()));
+        builderState.style().setVisitedLinkColor(color.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle())));
     }
 
     builderState.style().setDisallowsFastPathInheritance();
@@ -706,32 +691,35 @@ inline void BuilderCustom::applyValueColor(BuilderState& builderState, CSSValue&
 inline void BuilderCustom::applyHighlightInitialColor(BuilderState& builderState)
 {
     applyInitialColor(builderState);
-    builderState.style().setColorIsCurrentColorForHighlight(false);
+
+    if (builderState.applyPropertyToRegularStyle())
+        builderState.style().setColorForHighlight(Color { builderState.style().color() });
 }
 
 // currentcolor in a highlight pseudo-element is the originating element's color, so the chain
-// inherits the keyword rather than the color it resolved to. At the start of the chain the inherited
-// value is currentColor. https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
-// FIXME: A value that only references currentcolor, like color-mix(in oklab, teal, currentcolor),
-// still propagates as the color it resolved to. Resolving those per element needs the unresolved
-// Style::Color, which the color property doesn't store, and no engine does it today.
+// inherits the unresolved value and each level resolves it against its own originating element.
+// At the start of the chain the inherited value is the initial one, currentcolor.
+// https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
 inline void BuilderCustom::applyHighlightInheritColor(BuilderState& builderState)
 {
     CheckedPtr parentHighlightStyle = builderState.parentHighlightStyle();
-    auto isCurrentColor = !parentHighlightStyle || parentHighlightStyle->colorIsCurrentColorForHighlight();
-    auto& sourceStyle = isCurrentColor ? builderState.parentStyle() : *parentHighlightStyle;
+    auto& inheritedColor = parentHighlightStyle ? parentHighlightStyle->colorForHighlight() : Color::currentColor();
 
     if (builderState.applyPropertyToRegularStyle()) {
-        builderState.style().setColor(forwardInheritedValue(sourceStyle.color()));
-        // FIXME: visitedLinkColor needs its own bit for this.
-        builderState.style().setColorIsCurrentColorForHighlight(isCurrentColor);
+        builderState.style().setColor(inheritedColor.resolveColor(ResolvedColors::fromStyle(builderState.parentStyle())));
+        builderState.style().setColorForHighlight(Color { inheritedColor });
     }
+    // FIXME: visitedLinkColor needs its own unresolved value for this.
     if (builderState.applyPropertyToVisitedLinkStyle())
-        builderState.style().setVisitedLinkColor(forwardInheritedValue(sourceStyle.color()));
+        builderState.style().setVisitedLinkColor(inheritedColor.resolveColor(ResolvedColors::fromVisitedLinkStyle(builderState.parentStyle())));
 
     builderState.style().setDisallowsFastPathInheritance();
-    // The seeding pass has no declaration to take the origin from, so it comes from the source.
-    // FIXME: When the source is the originating element, its own color counts as one the highlight set.
+    // Builder::applyHighlightInheritance() calls this with no declaration, so the origin comes from
+    // the source style instead.
+    // FIXME: At the start of the chain the source is the originating element, so a color set on the
+    // element makes the highlight look like it set one itself. Painting uses this bit to decide whether
+    // the highlight overrides the text color of the layers below it.
+    auto& sourceStyle = parentHighlightStyle ? *parentHighlightStyle : builderState.parentStyle();
     builderState.style().setHasExplicitlySetColor(builderState.isAuthorOrigin() || sourceStyle.hasExplicitlySetColor());
 }
 
@@ -740,7 +728,7 @@ inline void BuilderCustom::applyHighlightValueColor(BuilderState& builderState, 
     applyValueColor(builderState, value);
 
     if (builderState.applyPropertyToRegularStyle())
-        builderState.style().setColorIsCurrentColorForHighlight(valueID(value) == CSSValueCurrentcolor);
+        builderState.style().setColorForHighlight(toStyleFromCSSValue<Color>(builderState, value, ForVisitedLink::No));
 }
 
 } // namespace Style

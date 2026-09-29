@@ -33,7 +33,10 @@ namespace JSC {
 
 void FunctionExecutableDump::dump(PrintStream& out) const
 {
-    out.print(m_executable->ecmaName().string(), "#");
+    if (const Identifier* ecmaName = m_executable->tryGetEcmaNameConcurrently()) // DFG graph dumps run this on compiler threads
+        out.print(ecmaName->string(), "#");
+    else
+        out.print("<name not materialized>#");
     if (m_executable->isGeneratedForCall())
         out.print(m_executable->codeBlockForCall()->hash());
     else

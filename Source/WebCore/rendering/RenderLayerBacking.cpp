@@ -41,6 +41,7 @@
 #include "CornerRadii.h"
 #include "DebugOverlayRegions.h"
 #include "DebugPageOverlays.h"
+#include "Document.h"
 #include "DocumentPage.h"
 #include "EventRegion.h"
 #include "FontCascade.h"
@@ -141,6 +142,10 @@
 
 #if ENABLE(SPATIAL_PORTAL)
 #include "SpatialPortalController.h"
+#endif
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+#include <WebKitAdditions/AXCustomColorModeController.h>
 #endif
 
 namespace WebCore {
@@ -3217,12 +3222,6 @@ bool RenderLayerBacking::updateMaskingLayer(bool hasMask, bool hasClipPath, bool
             if (!GraphicsLayer::supportsLayerType(GraphicsLayer::Type::Shape))
                 return true;
 
-#if PLATFORM(GTK) || PLATFORM(WPE)
-            Ref settings = renderer().settings();
-            if (!settings->useSkiaForComposition())
-                return true;
-#endif
-
             return false;
         };
         if (shouldAddClipPathPaintingPhase())
@@ -4246,6 +4245,12 @@ void RenderLayerBacking::setContentsNeedDisplay(GraphicsLayer::ShouldClipToLayer
 
     m_owningLayer.invalidateEventRegion(RenderLayer::EventRegionInvalidationReason::Paint);
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    // Without a controller no pass has run yet, and the first one will cover this repaint anyway.
+    if (CheckedPtr controller = renderer().document().axCustomColorModeControllerIfExists())
+        controller->setNeedsTextBackdropUpdate();
+#endif
+
     CheckedRef frameView = renderer().view().frameView();
     if (m_isMainFrameRenderViewLayer && frameView->isTrackingRepaints())
         frameView->addTrackedRepaintRect(owningLayer().absoluteBoundingBoxForPainting());
@@ -4289,6 +4294,12 @@ void RenderLayerBacking::setContentsNeedDisplayInRect(const LayoutRect& r, Graph
         m_owningLayer.setNeedsCompositingConfigurationUpdate();
 
     m_owningLayer.invalidateEventRegion(RenderLayer::EventRegionInvalidationReason::Paint);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    // Without a controller no pass has run yet, and the first one will cover this repaint anyway.
+    if (CheckedPtr controller = renderer().document().axCustomColorModeControllerIfExists())
+        controller->setNeedsTextBackdropUpdate();
+#endif
 
     FloatRect pixelSnappedRectForPainting = snapRectToDevicePixelsIfNeeded(r, renderer());
     CheckedRef frameView = renderer().view().frameView();
@@ -4473,8 +4484,8 @@ static RefPtr<Pattern> patternForDescription(PatternDescription description, Flo
 
         FontCascadeDescription fontDescription;
         fontDescription.setOneFamily("Helvetica"_s);
-        fontDescription.setSpecifiedSize(10);
         fontDescription.setComputedSize(10);
+        fontDescription.setUsedSize(10);
         fontDescription.setWeight(FontSelectionValue(500));
         FontCascade font(WTF::move(fontDescription));
         font.update(nullptr);
@@ -5269,17 +5280,6 @@ void RenderLayerBacking::notifyFlushRequired(const GraphicsLayer* layer)
 void RenderLayerBacking::notifySubsequentFlushRequired(const GraphicsLayer* layer)
 {
     compositor().notifySubsequentFlushRequired(layer);
-}
-
-// This is used for the 'freeze' API, for testing only.
-void RenderLayerBacking::suspendAnimations(MonotonicTime time)
-{
-    m_graphicsLayer->suspendAnimations(time);
-}
-
-void RenderLayerBacking::resumeAnimations()
-{
-    m_graphicsLayer->resumeAnimations();
 }
 
 LayoutRect RenderLayerBacking::compositedBounds() const

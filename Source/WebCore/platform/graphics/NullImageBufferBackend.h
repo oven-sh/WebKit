@@ -28,31 +28,36 @@
 #include <WebCore/ImageBufferBackend.h>
 #include <WebCore/NullGraphicsContext.h>
 #include <memory>
+#include <wtf/TypeCasts.h>
 
 namespace WebCore {
 
-// Used for ImageBuffers that return NullGraphicsContext as the ImageBuffer::context().
-// Solves the problem of holding NullGraphicsContext similarly to holding other
-// GraphicsContext instances, via a ImageBuffer reference.
-class WEBCORE_EXPORT NullImageBufferBackend : public ImageBufferBackend {
+// Backend for ImageBuffers that failed to allocate.
+class WEBCORE_EXPORT NullImageBufferBackend final : public ImageBufferBackend {
 public:
-    static std::unique_ptr<NullImageBufferBackend> create(const Parameters&, const ImageBufferCreationContext&);
+    static std::unique_ptr<NullImageBufferBackend> create(const ImageBufferParameters&, const ImageBufferCreationContext&);
     ~NullImageBufferBackend();
-    static size_t calculateMemoryCost(const Parameters&) { return 0; }
+    size_t memoryCost() const final;
 
-    NullGraphicsContext& context() override;
-    RefPtr<NativeImage> copyNativeImage() override;
-    RefPtr<NativeImage> createNativeImageReference() override;
-    void getPixelBuffer(const IntRect&, PixelBuffer&) override;
-    void putPixelBuffer(const PixelBufferSourceView&, const IntRect&, const IntPoint&, AlphaPremultiplication) override;
-    bool canMapBackingStore() const override;
-    String debugDescription() const override;
+    NullGraphicsContext& context() final;
+    RefPtr<NativeImage> copyNativeImage() final;
+    RefPtr<NativeImage> createNativeImageReference() final;
+    void getPixelBuffer(const IntRect&, PixelBuffer&) final;
+    void putPixelBuffer(const PixelBufferSourceView&, const IntRect&, const IntPoint&, AlphaPremultiplication) final;
+    bool canMapBackingStore() const final;
+    String debugDescription() const final;
 
-protected:
+private:
     using ImageBufferBackend::ImageBufferBackend;
-    unsigned bytesPerRow() const override;
+    unsigned bytesPerRow() const final;
+    bool isNullImageBufferBackend() const final;
 
     NullGraphicsContext m_context;
 };
 
 } // namespace WebCore
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::NullImageBufferBackend)
+    static bool isType(const WebCore::ImageBufferBackend& backend) { return backend.isNullImageBufferBackend(); }
+SPECIALIZE_TYPE_TRAITS_END()
+

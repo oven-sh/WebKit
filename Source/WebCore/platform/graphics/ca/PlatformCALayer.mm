@@ -87,8 +87,8 @@ void PlatformCALayer::drawRepaintIndicator(GraphicsContext& graphicsContext, Pla
 
     FontCascadeDescription fontDescription;
     fontDescription.setOneFamily("Helvetica"_s);
-    fontDescription.setSpecifiedSize(fontSize);
     fontDescription.setComputedSize(fontSize);
+    fontDescription.setUsedSize(fontSize);
 
     FontCascade cascade(WTF::move(fontDescription));
     cascade.update(nullptr);
@@ -165,6 +165,7 @@ void PlatformCALayer::drawTextAtPoint(CGContextRef context, CGFloat x, CGFloat y
     auto string = adoptCF(CFStringCreateWithBytesNoCopy(kCFAllocatorDefault, byteCast<UInt8>(text.data()), text.size(), kCFStringEncodingUTF8, false, kCFAllocatorNull));
     auto attributedString = adoptCF(CFAttributedStringCreate(kCFAllocatorDefault, string.get(), attributes.get()));
     auto line = adoptCF(CTLineCreateWithAttributedString(attributedString.get()));
+    CGContextSetTextMatrix(context, CGAffineTransformIdentity);
     CGContextSetTextPosition(context, x, y);
     CTLineDraw(line.get(), context);
 }

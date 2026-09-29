@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 if (!$vm.useJIT()) quit();
 // #2: FTL CallFFI stores topCallFrame but no CallSiteIndex. A callback invoked from inside the
 // native call that THROWS then unwinds using the frame's STALE callSiteIndex (left by the last

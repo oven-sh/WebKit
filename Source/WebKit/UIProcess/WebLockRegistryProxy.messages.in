@@ -26,9 +26,9 @@
     EnabledBy=WebLocksAPIEnabled
 ]
 messages -> WebLockRegistryProxy {
-    RequestLock(struct WebCore::ClientOrigin clientOrigin, WebCore::WebLockIdentifier identifier, WebCore::ScriptExecutionContextIdentifier clientID, String name, enum:bool WebCore::WebLockMode mode, bool steal, bool ifAvailable)
-    ReleaseLock(struct WebCore::ClientOrigin clientOrigin, WebCore::WebLockIdentifier identifier, WebCore::ScriptExecutionContextIdentifier clientID, String name)
-    AbortLockRequest(struct WebCore::ClientOrigin clientOrigin, WebCore::WebLockIdentifier identifier, WebCore::ScriptExecutionContextIdentifier clientID, String name) -> (bool wasAborted)
-    Snapshot(struct WebCore::ClientOrigin clientOrigin) -> (struct WebCore::WebLockManagerSnapshot snapshot)
-    ClientIsGoingAway(struct WebCore::ClientOrigin clientOrigin, WebCore::ScriptExecutionContextIdentifier clientId)
+    RequestLock(struct IPC::Untrusted<WebCore::ClientOrigin> clientOrigin, WebCore::WebLockIdentifier identifier, WebCore::ScriptExecutionContextIdentifier clientID, String name, enum:bool WebCore::WebLockMode mode, bool steal, bool ifAvailable)
+    ReleaseLock(struct IPC::Untrusted<WebCore::ClientOrigin> clientOrigin, WebCore::WebLockIdentifier identifier, WebCore::ScriptExecutionContextIdentifier clientID, String name)
+    AbortLockRequest(struct IPC::Untrusted<WebCore::ClientOrigin> clientOrigin, WebCore::WebLockIdentifier identifier, WebCore::ScriptExecutionContextIdentifier clientID, String name) -> (bool wasAborted)
+    Snapshot(struct IPC::Untrusted<WebCore::ClientOrigin> clientOrigin) -> (struct WebCore::WebLockManagerSnapshot snapshot)
+    ClientIsGoingAway(struct IPC::Untrusted<WebCore::ClientOrigin> clientOrigin, WebCore::ScriptExecutionContextIdentifier clientId)
 }

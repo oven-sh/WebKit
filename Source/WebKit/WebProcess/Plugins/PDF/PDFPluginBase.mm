@@ -1454,7 +1454,7 @@ SelectionWasFlipped PDFPluginBase::moveSelectionEndpoint(FloatPoint, SelectionEn
     return SelectionWasFlipped::No;
 }
 
-SelectionEndpoint PDFPluginBase::extendInitialSelection(FloatPoint pointInRootView, TextGranularity)
+SelectionEndpoint PDFPluginBase::extendInitialSelection(FloatPoint pointInRootView, TextGranularity, SelectionExtentAnchor)
 {
     return SelectionEndpoint::Start;
 }
@@ -1494,7 +1494,7 @@ static void verboseLog(PDFIncrementalLoader* incrementalLoader, std::optional<ui
         stream << " not";
     stream << " complete";
 
-    LOG(IncrementalPDFVerbose, "%s", stream.release().utf8().data());
+    LOG(IncrementalPDFVerbose, "%s", stream.release().utf8());
 }
 #endif
 

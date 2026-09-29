@@ -85,6 +85,7 @@
 #include <JavaScriptCore/JSGlobalObjectInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(CONTENT_EXTENSIONS)
 #include "ContentExtensionsBackend.h"
@@ -456,7 +457,7 @@ bool HTMLPlugInElement::requestObject(const String& relativeURL, const String& m
         completedURL = document->encodingParseURL(relativeURL);
 
     if (ReplacementPlugin* replacement = pluginReplacementForType(completedURL, mimeType)) {
-        LOG(Plugins, "%p - Found plug-in replacement for %s.", this, completedURL.string().utf8().data());
+        LOG_WITH_STREAM(Plugins, stream << this << " - Found plug-in replacement for "_s << completedURL.string() << "."_s);
 
         lazyInitialize(m_pluginReplacement, replacement->create(*this, paramNames, paramValues));
         setDisplayState(DisplayState::PreparingPluginReplacement);

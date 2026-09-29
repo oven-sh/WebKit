@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CodeSpecializationKind.h"
+#include "DeclaredNamesLink.h"
 #include "ConstructAbility.h"
 #include "ConstructorKind.h"
 #include "ExecutableInfo.h"
@@ -51,6 +52,7 @@ class FunctionMetadataNode;
 class ParserError;
 class ScriptExecutable;
 class SourceProvider;
+class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
 
 enum UnlinkedFunctionKind {
@@ -84,9 +86,33 @@ public:
     ~UnlinkedFunctionExecutable();
 
     const Identifier& name() const;
-    const Identifier& ecmaName() const { return m_ecmaName; }
+    const Identifier& ecmaName() const
+    {
+        if (m_nameIsDeferred) [[unlikely]]
+            materializeDeferredNameSlow();
+        return m_ecmaName;
+    }
+    // Like JSFunction::nameWithoutGC(): also for the stack traces the collector's end phase builds
+    // (ErrorInstance::computeErrorInfo), where nothing may be atomized, so there a name still in the bytecode cache is
+    // copied out of it instead of being materialized.
+    String ecmaNameWithoutGC() const
+    {
+        if (m_nameIsDeferred) [[unlikely]]
+            return ecmaNameWithoutGCSlow();
+        return m_ecmaName.string();
+    }
+    String nameWithoutGC() const { return m_hasName ? ecmaNameWithoutGC() : String(); }
+    // For threads other than the mutator (compiler-thread dumps): null while the name is still only in the bytecode cache.
+    const Identifier* tryGetEcmaNameConcurrently() const
+    {
+        if (WTF::atomicLoad(const_cast<bool*>(&m_nameIsDeferred), std::memory_order_acquire))
+            return nullptr;
+        return &m_ecmaName;
+    }
     void setEcmaName(const Identifier& name)
     {
+        if (m_nameIsDeferred) [[unlikely]]
+            materializeDeferredNameSlow();
         ASSERT(!m_hasName || name == m_ecmaName);
         m_ecmaName = name;
     }
@@ -95,13 +121,33 @@ public:
 
     SourceCode classSource() const
     {
-        if (m_rareData)
-            return m_rareData->m_classSource;
+        materializeDeferredMembersIfNeeded();
+        if (m_members.live().rareData)
+            return m_members.live().rareData->m_classSource;
         return SourceCode();
     }
     void setClassSource(const SourceCode& source)
     {
         ensureRareData().m_classSource = source;
+        m_isClass = !source.isNull();
+    }
+
+    // An executable decoded from a bytecode cache leaves its ecmaName, parent scope
+    // TDZ variables and rare data in the cache until something asks for them (name reflection, generating bytecode for
+    // it, toString of a class, re-encoding). Only the mutator materializes; calling the function does not, so compiler
+    // and GC threads use tryGetEcmaNameConcurrently() (FunctionExecutable::inferredNameForTools()).
+    void materializeDeferredMembersIfNeeded() const
+    {
+        if (m_membersAreDeferred) [[unlikely]]
+            materializeDeferredMembersSlow();
+    }
+    // Likewise for the source positions only introspection reads (toString, debugger, profilers, FunctionExecutable
+    // rare data): line count, parameters start, function end, body end column -- CachedFunctionExecutable's cold tail.
+    // Calling the function does not need them either.
+    void materializeDeferredScalarsIfNeeded() const
+    {
+        if (m_scalarsAreDeferred) [[unlikely]]
+            materializeDeferredScalarsSlow();
     }
 
     bool isInStrictContext() const { return m_lexicallyScopedFeatures & StrictModeLexicallyScopedFeature; }
@@ -109,21 +155,15 @@ public:
     ConstructorKind constructorKind() const { return static_cast<ConstructorKind>(m_constructorKind); }
     SuperBinding superBinding() const { return static_cast<SuperBinding>(m_superBinding); }
 
-    unsigned lineCount() const { return m_lineCount; }
-    unsigned linkedStartColumn(unsigned parentStartColumn) const { return m_unlinkedBodyStartColumn + (!m_firstLineOffset ? parentStartColumn : 1); }
-    unsigned linkedEndColumn(unsigned startColumn) const { return m_unlinkedBodyEndColumn + (!m_lineCount ? startColumn : 1); }
-
     unsigned unlinkedFunctionStart() const { return m_unlinkedFunctionStart; }
-    unsigned unlinkedFunctionEnd() const { return m_unlinkedFunctionEnd; }
-    unsigned unlinkedBodyStartColumn() const { return m_unlinkedBodyStartColumn; }
-    unsigned unlinkedBodyEndColumn() const { return m_unlinkedBodyEndColumn; }
+    unsigned unlinkedFunctionEnd() const { materializeDeferredScalarsIfNeeded(); return m_unlinkedFunctionEnd; }
     unsigned startOffset() const { return m_startOffset; }
     unsigned sourceLength() { return m_sourceLength; }
-    unsigned parametersStartOffset() const { return m_parametersStartOffset; }
+    unsigned parametersStartOffset() const { materializeDeferredScalarsIfNeeded(); return m_parametersStartOffset; }
 
     UnlinkedFunctionCodeBlock* unlinkedCodeBlockFor(
         VM&, const SourceCode&, CodeSpecializationKind, OptionSet<CodeGenerationMode>,
-        ParserError&, SourceParseMode);
+        ParserError&, SourceParseMode, OptimizeBytecode = OptimizeBytecode::No);
 
     static UnlinkedFunctionExecutable* fromGlobalCode(
         const Identifier&, JSGlobalObject*, const SourceCode&, LexicallyScopedFeatures, JSObject*& exception,
@@ -134,11 +174,18 @@ public:
 
     void clearCode(VM& vm)
     {
+        ASSERT(!m_isCached);
         m_unlinkedCodeBlockForCall.clear();
         m_unlinkedCodeBlockForConstruct.clear();
         // FIXME GlobalGC: Need syncrhonization here for accessing the Heap server.
         vm.heap.unlinkedFunctionExecutableSpaceAndSet.set.remove(this);
     }
+
+    // If every code block this holds was decoded from a persistent bytecode cache payload, lets go of them and goes
+    // back to naming their records in that payload, as before the first call; the next unlinkedCodeBlockFor() decodes
+    // them again. Only with no collection and no compiler thread running (Heap::deleteAllUnlinkedCodeBlocks).
+    // (Not if one of them is in `linkedAgainst`.)
+    bool returnCodeToCache(VM&, const UncheckedKeyHashSet<UnlinkedCodeBlock*>& linkedAgainst);
 
     void recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables)
     {
@@ -158,6 +205,13 @@ public:
 
     ImplementationVisibility implementationVisibility() const { return static_cast<ImplementationVisibility>(m_implementationVisibility); }
     bool isBuiltinFunction() const { return m_isBuiltinFunction; }
+    // The code blocks are still (or again) in the bytecode cache this was decoded from.
+    bool isCached() const { return m_isCached; }
+#if USE(BUN_JSC_ADDITIONS)
+    // The code blocks for call and construct as they are once whatever the bytecode cache holds for this function is
+    // decoded; never generates one (unlinkedCodeBlockFor does).
+    JS_EXPORT_PRIVATE std::pair<UnlinkedFunctionCodeBlock*, UnlinkedFunctionCodeBlock*> codeBlocksDecodingCached(VM&);
+#endif
     ConstructAbility constructAbility() const { return static_cast<ConstructAbility>(m_constructAbility); }
     JSParserScriptMode scriptMode() const { return static_cast<JSParserScriptMode>(m_scriptMode); }
     bool isClassConstructorFunction() const
@@ -172,28 +226,48 @@ public:
         }
         return false;
     }
-    bool isClass() const
-    {
-        if (!m_rareData)
-            return false;
-        return !m_rareData->m_classSource.isNull();
-    }
+    bool isClass() const { return m_isClass; }
     bool isBuiltinDefaultClassConstructor() const { return m_isBuiltinDefaultClassConstructor; }
+#if USE(BUN_JSC_ADDITIONS)
+    // Where classSource() starts and where the first of classElementDefinitions() is, for orderFunctionKey: read out
+    // of the cached record as they lie, so that nothing of a function that was decoded from a cache is materialized.
+    std::optional<uint32_t> classSourceStartWithoutMaterializing() const;
+    std::optional<uint32_t> firstClassElementOffsetWithoutMaterializing() const;
+#endif
 
-    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const { return m_parentScopeTDZVariables; }
+    RefPtr<TDZEnvironmentLink> parentScopeTDZVariables() const
+    {
+        materializeDeferredMembersIfNeeded();
+        return m_members.live().parentScopeTDZVariables;
+    }
+    void setParentDeclaredNames(RefPtr<DeclaredNamesLink>&& names) { materializeDeferredMembersIfNeeded(); ensureRareData().m_parentDeclaredNames = WTF::move(names); }
+    // Taken by the first code block generated for this executable (call or construct); a second specialization of
+    // the same function is generated without static scope information.
+    RefPtr<DeclaredNamesLink> takeParentDeclaredNames()
+    {
+        materializeDeferredMembersIfNeeded();
+        if (!m_members.live().rareData || !m_members.live().rareData->m_parentDeclaredNames)
+            return nullptr;
+        RefPtr<DeclaredNamesLink> result = std::exchange(m_members.live().rareData->m_parentDeclaredNames, nullptr);
+        if (m_members.live().rareData->isEmpty())
+            m_members.live().rareData = nullptr;
+        return result;
+    }
 
     const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames() const
     {
-        if (!m_rareData)
+        materializeDeferredMembersIfNeeded();
+        if (!m_members.live().rareData)
             return nullptr;
-        return &m_rareData->m_generatorOrAsyncWrapperFunctionParameterNames;
+        return &m_members.live().rareData->m_generatorOrAsyncWrapperFunctionParameterNames;
     }
 
     const PrivateNameEnvironment* parentPrivateNameEnvironment() const
     {
-        if (!m_rareData)
+        materializeDeferredMembersIfNeeded();
+        if (!m_members.live().rareData)
             return nullptr;
-        return &m_rareData->m_parentPrivateNameEnvironment;
+        return &m_members.live().rareData->m_parentPrivateNameEnvironment;
     }
     
     bool isArrowFunction() const { return isArrowFunctionParseMode(parseMode()); }
@@ -208,14 +282,16 @@ public:
 
     String sourceURLDirective() const
     {
-        if (m_rareData)
-            return m_rareData->m_sourceURLDirective;
+        materializeDeferredMembersIfNeeded();
+        if (m_members.live().rareData)
+            return m_members.live().rareData->m_sourceURLDirective;
         return String();
     }
     String sourceMappingURLDirective() const
     {
-        if (m_rareData)
-            return m_rareData->m_sourceMappingURLDirective;
+        materializeDeferredMembersIfNeeded();
+        if (m_members.live().rareData)
+            return m_members.live().rareData->m_sourceMappingURLDirective;
         return String();
     }
     void setSourceURLDirective(const String& sourceURL)
@@ -254,14 +330,25 @@ public:
         FixedVector<Identifier> m_generatorOrAsyncWrapperFunctionParameterNames;
         FixedVector<ClassElementDefinition> m_classElementDefinitions;
         PrivateNameEnvironment m_parentPrivateNameEnvironment;
+        // Only while generating with OptimizeBytecode::Yes and only until this executable's code is generated: the
+        // enclosing scopes at the creation site. Never encoded into a bytecode cache.
+        RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
+
+        bool isEmpty() const
+        {
+            return m_classSource.isNull() && m_sourceURLDirective.isNull() && m_sourceMappingURLDirective.isNull()
+                && m_generatorOrAsyncWrapperFunctionParameterNames.isEmpty() && m_classElementDefinitions.isEmpty()
+                && m_parentPrivateNameEnvironment.isEmpty() && !m_parentDeclaredNames;
+        }
     };
 
     NeedsClassFieldInitializer needsClassFieldInitializer() const { return static_cast<NeedsClassFieldInitializer>(m_needsClassFieldInitializer); }
 
     const FixedVector<ClassElementDefinition>* classElementDefinitions() const
     {
-        if (m_rareData)
-            return &m_rareData->m_classElementDefinitions;
+        materializeDeferredMembersIfNeeded();
+        if (m_members.live().rareData)
+            return &m_members.live().rareData->m_classElementDefinitions;
         return nullptr;
     }
 
@@ -279,6 +366,10 @@ private:
     DECLARE_VISIT_CHILDREN;
 
     void decodeCachedCodeBlocks(VM&);
+    JS_EXPORT_PRIVATE void materializeDeferredNameSlow() const;
+    JS_EXPORT_PRIVATE String ecmaNameWithoutGCSlow() const;
+    JS_EXPORT_PRIVATE void materializeDeferredMembersSlow() const;
+    JS_EXPORT_PRIVATE void materializeDeferredScalarsSlow() const;
 
     bool codeBlockEdgeMayBeWeak() const
     {
@@ -287,26 +378,24 @@ private:
         return VM::useUnlinkedCodeBlockJettisoning() && !m_isGeneratedFromCache;
     }
 
-    unsigned m_firstLineOffset : 31;
-    unsigned m_isGeneratedFromCache : 1;
-    unsigned m_lineCount : 31;
     unsigned m_hasCapturedVariables : 1;
     unsigned m_unlinkedFunctionStart: 31;
-    unsigned m_isBuiltinFunction : 1;
-    unsigned m_unlinkedBodyStartColumn : 31;
-    unsigned m_isBuiltinDefaultClassConstructor : 1;
-    unsigned m_unlinkedBodyEndColumn : 31;
-    unsigned m_constructAbility: 1;
     unsigned m_startOffset : 31;
-    unsigned m_scriptMode: 1; // JSParserScriptMode
-    unsigned m_sourceLength : 31;
-    unsigned m_superBinding : 1;
-    unsigned m_parametersStartOffset : 31;
     unsigned m_isCached : 1;
+    unsigned m_sourceLength : 31;
+    unsigned m_constructAbility: 1;
+    // m_parametersStartOffset and m_unlinkedFunctionEnd may be written late (m_scalarsAreDeferred); the bit each
+    // shares its word with is one only the mutator reads.
+    unsigned m_parametersStartOffset : 31;
+    unsigned m_scriptMode: 1; // JSParserScriptMode
     unsigned m_unlinkedFunctionEnd : 31;
     unsigned m_needsClassFieldInitializer : 1;
     unsigned m_parameterCount : 30;
     unsigned m_singletonHasBeenInvalidated : 1;
+    unsigned m_isGeneratedFromCache : 1;
+    unsigned m_isBuiltinFunction : 1;
+    unsigned m_isBuiltinDefaultClassConstructor : 1;
+    unsigned m_superBinding : 1;
     unsigned m_privateBrandRequirement : 1;
     CodeFeatures m_features : bitWidthOfCodeFeatures;
     uint16_t m_constructorKind : 2;
@@ -318,12 +407,19 @@ private:
     uint8_t m_inlineAttribute : 1;
     uint8_t m_evalContextType : 2;
     uint8_t m_hasName : 1;
+    uint8_t m_isClass : 1;
+    // Own bytes, not bits of the group above: the mutator clears these late, while compiler threads read that group.
+    bool m_nameIsDeferred { false }; // m_ecmaName is still in the cache record; implies m_membersAreDeferred
+    bool m_membersAreDeferred { false }; // TDZ variables + rare data are still in the cache record; the m_deferredMembers* union members are live
+    bool m_scalarsAreDeferred { false }; // the record's cold tail was not read yet (those two members are 0); implies m_membersAreDeferred (that state holds the record)
 
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForCall;
         RefPtr<Decoder> m_decoder;
     };
 
+    // While m_isCached, where each code block is in m_decoder's payload: > 0 is the offset of this executable's slot
+    // for it in its own record (as decoded), < 0 the negated offset of the code block's record (returnCodeToCache()).
     union {
         WriteBarrier<UnlinkedFunctionCodeBlock> m_unlinkedCodeBlockForConstruct;
         struct {
@@ -333,23 +429,80 @@ private:
     };
 
     Identifier m_ecmaName;
-    RefPtr<TDZEnvironmentLink> m_parentScopeTDZVariables;
+
+    // parentScopeTDZVariables and rareData, or, while m_membersAreDeferred, the cache record they still live in.
+    class DeferredMembers {
+    public:
+        struct Live {
+            RefPtr<TDZEnvironmentLink> parentScopeTDZVariables;
+            std::unique_ptr<RareData> rareData;
+        };
+        struct Pending {
+            RefPtr<Decoder> decoder;
+            const CachedFunctionExecutable* record; // in decoder's payload
+        };
+        explicit DeferredMembers(RefPtr<TDZEnvironmentLink>&& parentScopeTDZVariables) { new (&m_live) Live { WTF::move(parentScopeTDZVariables), nullptr }; }
+        ~DeferredMembers();
+        bool isPending() const;
+        Live& live() { ASSERT(!isPending()); return m_live; }
+        const Live& live() const { ASSERT(!isPending()); return m_live; }
+        const Pending& pending() const { ASSERT(isPending()); return m_pending; }
+        void defer(Decoder&, const CachedFunctionExecutable&); // empty Live -> Pending
+        void settle(Live&&); // Pending -> Live, then clears the owner's flag
+    private:
+        UnlinkedFunctionExecutable& owner() const;
+        union {
+            Live m_live;
+            Pending m_pending;
+        };
+    };
+    DeferredMembers m_members;
 
     RareData& ensureRareData()
     {
-        if (m_rareData) [[likely]]
-            return *m_rareData;
+        materializeDeferredMembersIfNeeded();
+        if (m_members.live().rareData) [[likely]]
+            return *m_members.live().rareData;
         return ensureRareDataSlow();
     }
     RareData& ensureRareDataSlow();
-
-    std::unique_ptr<RareData> m_rareData;
 
 public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     DECLARE_EXPORT_INFO;
 };
+
+inline UnlinkedFunctionExecutable& UnlinkedFunctionExecutable::DeferredMembers::owner() const
+{
+    return *std::bit_cast<UnlinkedFunctionExecutable*>(std::bit_cast<uintptr_t>(this) - OBJECT_OFFSETOF(UnlinkedFunctionExecutable, m_members));
+}
+
+inline bool UnlinkedFunctionExecutable::DeferredMembers::isPending() const { return owner().m_membersAreDeferred; }
+
+inline UnlinkedFunctionExecutable::DeferredMembers::~DeferredMembers()
+{
+    if (isPending())
+        m_pending.~Pending();
+    else
+        m_live.~Live();
+}
+
+inline void UnlinkedFunctionExecutable::DeferredMembers::defer(Decoder& decoder, const CachedFunctionExecutable& record)
+{
+    ASSERT(!isPending() && !m_live.parentScopeTDZVariables && !m_live.rareData);
+    m_live.~Live();
+    new (&m_pending) Pending { &decoder, &record };
+    owner().m_membersAreDeferred = true;
+}
+
+inline void UnlinkedFunctionExecutable::DeferredMembers::settle(Live&& live)
+{
+    ASSERT(isPending());
+    m_pending.~Pending();
+    new (&m_live) Live(WTF::move(live));
+    owner().m_membersAreDeferred = false;
+}
 
 #if !ASSERT_ENABLED
 static_assert(sizeof(UnlinkedFunctionExecutable) <= 96, "UnlinkedFunctionExecutable needs to be small");

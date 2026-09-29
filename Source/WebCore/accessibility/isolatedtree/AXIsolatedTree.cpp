@@ -133,7 +133,7 @@ Ref<AXIsolatedTree> AXIsolatedTree::createEmpty(AXObjectCache& axObjectCache)
     auto tree = adoptRef(*new AXIsolatedTree(axObjectCache));
     axObjectCache.initializeIsolatedTreeGeometry();
 
-    if (RefPtr axRoot = axObjectCache.document() ? axObjectCache.getOrCreate(axObjectCache.document()->view()) : nullptr) {
+    if (RefPtr axRoot = axObjectCache.document() ? axObjectCache.getOrCreate(protect(protect(axObjectCache.document())->view())) : nullptr) {
         tree->updatingSubtree(axRoot.get());
         tree->createEmptyContent(*axRoot);
     }
@@ -208,18 +208,18 @@ RefPtr<AXIsolatedTree> AXIsolatedTree::create(AXObjectCache& axObjectCache)
         return nullptr;
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", axObjectCache.debugDescription().utf8().data(), document->isTopDocument());
+        WTFBeginSignpostAlways(tree.ptr(), InitialAccessibilityIsolatedTreeBuild, "building isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING ", is the top-document: %d", axObjectCache.debugDescription().utf8(), document->isTopDocument());
 
     if (!Accessibility::inRenderTreeOrStyleUpdate(*document))
         document->updateLayoutIgnorePendingStylesheets();
 
     // Generate the nodes of the tree and set its root and focused objects.
     // For this, we need the root and focused objects of the AXObject tree.
-    RefPtr axRoot = axObjectCache.getOrCreate(document->view());
+    RefPtr axRoot = axObjectCache.getOrCreate(protect(document->view()));
     if (axRoot)
         tree->generateSubtree(*axRoot);
 
-    if (RefPtr axFocus = axObjectCache.focusedObjectForPage(document->page()))
+    if (RefPtr axFocus = axObjectCache.focusedObjectForPage(protect(document->page())))
         tree->setFocusedNodeID(axFocus->objectID());
     tree->setSelectedTextMarkerRange(document->selection().selection());
     tree->setInitialSortedLiveRegions(axIDs(axObjectCache.sortedLiveRegions()));
@@ -419,8 +419,8 @@ void AXIsolatedTree::queueChange(NodeChange&& nodeChange)
         pending.childrenUpdates.append({ *parentID, WTF::move(siblingsIDs) });
     }
 
-    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", objectID.loggingString().utf8().data());
-    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", objectID.loggingString().utf8().data());
+    ASSERT_WITH_MESSAGE(objectID != parentID, "object ID was the same as its parent ID (%s) when queueing a node change", objectID.loggingString().utf8());
+    ASSERT_WITH_MESSAGE(m_nodeMap.contains(objectID), "node map should've contained objectID: %s", objectID.loggingString().utf8());
     auto childrenIDs = m_nodeMap.get(objectID).childrenIDs;
     pending.childrenUpdates.append({ objectID, WTF::move(childrenIDs) });
 }
@@ -496,11 +496,12 @@ Vector<AXIsolatedTree::NodeChange> AXIsolatedTree::resolveAppends()
     // The process of resolving appends can add more IDs to m_unresolvedPendingAppends as we iterate over it, so
     // iterate over an exchanged map instead. Any late-appended IDs will get picked up in the next cycle.
     auto unresolvedPendingAppends = std::exchange(m_unresolvedPendingAppends, { });
+    RefPtr replacingTree = m_replacingTree;
     for (const auto& [axID, sequence] : unresolvedPendingAppends) {
-        if (m_replacingTree) {
+        if (replacingTree) {
             ++counter;
             if (MonotonicTime::now() - lastFeedbackTime > CreationFeedbackInterval) {
-                m_replacingTree->reportLoadingProgress(counter / unresolvedPendingAppends.size());
+                replacingTree->reportLoadingProgress(counter / unresolvedPendingAppends.size());
                 lastFeedbackTime = MonotonicTime::now();
             }
         }
@@ -516,8 +517,8 @@ Vector<AXIsolatedTree::NodeChange> AXIsolatedTree::resolveAppends()
     }
     resolvedAppends.shrinkToFit();
 
-    if (m_replacingTree)
-        m_replacingTree->reportLoadingProgress(1);
+    if (replacingTree)
+        replacingTree->reportLoadingProgress(1);
     return resolvedAppends;
 }
 
@@ -530,7 +531,7 @@ void AXIsolatedTree::queueAppendsAndRemovals(Vector<NodeChange>&& appends, Vecto
         queueChange(WTF::move(append));
 
     for (const auto& axID : parentUpdateIDs) {
-        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", axID.loggingString().utf8().data());
+        ASSERT_WITH_MESSAGE(m_nodeMap.contains(axID), "An object marked as needing a parent update should've had an entry in the node map by now. ID was %s", axID.loggingString().utf8());
         markDirtyAndGetWorkingChanges().parentUpdates.set(axID, *m_nodeMap.get(axID).parentID);
     }
 
@@ -770,6 +771,9 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
                 properties.append({ AXProperty::ExplicitOrientation, *orientation });
             break;
         }
+        case AXProperty::Description:
+            properties.append({ AXProperty::Description, axObject.description().isolatedCopy() });
+            break;
         case AXProperty::ExtendedDescription:
             properties.append({ AXProperty::ExtendedDescription, axObject.extendedDescription().isolatedCopy() });
             break;
@@ -1019,6 +1023,19 @@ void AXIsolatedTree::updateDependentProperties(AccessibilityObject& axObject)
     };
     updateRelatedObjects(axObject);
 
+    // An <img> with neither alt nor title takes its accessible name from an ancestor <figure>'s <figcaption>.
+    // If this is a <figure>, update image text underneath.
+    auto updateFigureCaptionedImages = [this] (AccessibilityObject& object) {
+        if (!object.isFigureElement())
+            return;
+
+        Accessibility::enumerateDescendantsIncludingIgnored<AXCoreObject>(object, false, [this, protectedThis = Ref { *this }] (auto& descendant) {
+            if (descendant.isImage())
+                queueNodeUpdate(descendant.objectID(), { { AXProperty::AccessibilityText, AXProperty::Description } });
+        });
+    };
+    updateFigureCaptionedImages(axObject);
+
     // When a row gains or loses cells, or a table changes rows in a row group, the column count of the table can change.
     bool updateTableAncestorColumns = axObject.isExposedTableRow() || isRowGroup(axObject.node());
     for (RefPtr ancestor = axObject.parentObject(); ancestor; ancestor = ancestor->parentObject()) {
@@ -1032,6 +1049,7 @@ void AXIsolatedTree::updateDependentProperties(AccessibilityObject& axObject)
         }
 
         updateRelatedObjects(*ancestor);
+        updateFigureCaptionedImages(*ancestor);
     }
 }
 
@@ -1311,7 +1329,7 @@ void AXIsolatedTree::updateFrameGeometryAndScrollPositionIfNeeded(AXObjectCache&
 {
     if (std::optional geometry = cache.getAndUpdateFrameGeometry()) {
         IntPoint viewOriginScrollPosition;
-        if (CheckedPtr view = cache.document()->view())
+        if (CheckedPtr view = protect(cache.document())->view())
             viewOriginScrollPosition = IntPoint(view->documentScrollPositionRelativeToViewOrigin());
         setFrameGeometry(AXFrameGeometry { *geometry }, viewOriginScrollPosition);
     }
@@ -1358,7 +1376,7 @@ void AXIsolatedTree::updateRootScreenRelativePosition()
     AX_ASSERT(isMainThread());
 
     CheckedPtr cache = m_axObjectCache;
-    if (RefPtr axRoot = cache && cache->document() ? dynamicDowncast<AccessibilityScrollView>(cache->getOrCreate(cache->document()->view())) : nullptr) {
+    if (RefPtr axRoot = cache && cache->document() ? dynamicDowncast<AccessibilityScrollView>(cache->getOrCreate(protect(protect(cache->document())->view()))) : nullptr) {
         queueNodeUpdate(axRoot->objectID(), { AXProperty::ScreenRelativePosition });
 
 #if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
@@ -1471,17 +1489,21 @@ DidTearDown AXIsolatedTree::applyPendingChangesOrTearDown()
 {
     AX_ASSERT(!isMainThread());
 
-    if (!hasPendingChanges())
-        return DidTearDown::No;
-
     PendingChanges committedChanges;
     {
         Locker locker { m_changeLogLock };
 
+        // Check for destruction before consulting m_hasPendingChanges. Any other thread can consume
+        // that flag via applyPendingChanges() between queueForDestruction() and this sweep, and if it
+        // does, the tree would never be torn down: the sweep clears s_anyTreeNeedsTearDown afterwards,
+        // so the teardown signal is lost for good and the stale tree keeps serving clients forever.
         if (m_queuedForDestruction) [[unlikely]] {
             clearTreeContentsLocked();
             return DidTearDown::Yes;
         }
+
+        if (!hasPendingChanges())
+            return DidTearDown::No;
 
         committedChanges = takeCommittedChangesLocked();
     }
@@ -1841,7 +1863,7 @@ void AXIsolatedTree::applyCommittedChanges(PendingChanges&& committedChanges)
     AX_ASSERT(!isMainThread());
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().data());
+        WTFBeginSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8());
 
     // Any structural change can affect some ancestor's stitchedUnignoredChildren result.
     // Property changes that could affect the unignored-children result (IsIgnored, StitchGroups, etc.)
@@ -1992,7 +2014,7 @@ void AXIsolatedTree::applyCommittedChanges(PendingChanges&& committedChanges)
     }
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8().data());
+        WTFEndSignpostAlways(this, AccessibilityIsolatedTreeApplyCommittedChanges, "tree ID: %" PRIVATE_LOG_STRING "", treeID().loggingString().utf8());
 }
 
 void AXIsolatedTree::sortedLiveRegionsDidChange(Vector<AXID> liveRegionIDs)
@@ -2111,7 +2133,7 @@ void AXIsolatedTree::processQueuedNodeUpdates()
     SetForScope processingScope(m_isProcessingQueuedNodeUpdates, true);
 
     if (AXObjectCache::isAppleInternalInstall()) [[unlikely]]
-        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? CheckedPtr { cache }->debugDescription().utf8().data() : "null");
+        WTFBeginSignpostAlways(this, UpdateAccessibilityIsolatedTree, "updating isolated tree for AXObjectCache: %" PRIVATE_LOG_STRING "", cache ? CheckedPtr { cache }->debugDescription().utf8() : "null"_s);
 
     for (const auto& nodeIDs : m_needsNodeRemoval)
         removeNode(nodeIDs.key, nodeIDs.value);
@@ -2283,6 +2305,7 @@ static bool NODELETE shouldCacheElementName(ElementName name)
     case ElementName::HTML_acronym:
     case ElementName::HTML_body:
     case ElementName::HTML_del:
+    case ElementName::HTML_fieldset:
     case ElementName::HTML_h1:
     case ElementName::HTML_h2:
     case ElementName::HTML_h3:
@@ -2384,16 +2407,18 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         case TextEmissionBehavior::None:
             break;
         }
-        if (object.role() == AccessibilityRole::ListMarker) {
+        if (object.role() == AccessibilityRole::ListMarker)
             setProperty(AXProperty::ListMarkerText, object.listMarkerText().isolatedCopy());
-            setProperty(AXProperty::ListMarkerLineID, object.listMarkerLineID());
-        }
 
         String language = object.language();
         if (!language.isEmpty())
             setProperty(AXProperty::Language, WTF::move(language).isolatedCopy());
         setProperty(AXProperty::IsEnabled, object.isEnabled());
         setProperty(AXProperty::IsHiddenUntilFoundContainer, object.isHiddenUntilFoundContainer());
+        // AXCoreObject::hierarchicalLevel() walks the ancestor chain of a tree item looking for
+        // authored role="group" containers, and those containers are often ignored, so this has to
+        // be cached for ignored objects too.
+        setProperty(AXProperty::HasExplicitGroupRole, object.hasExplicitGroupRole());
         if (object.isBlockFlow()) {
             setProperty(AXProperty::IsBlockFlow, true);
             setProperty(AXProperty::StitchGroups, object.stitchGroups());
@@ -2443,7 +2468,6 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         setProperty(AXProperty::IsAttachment, object.isAttachment());
         setProperty(AXProperty::IsBusy, object.isBusy());
         setProperty(AXProperty::IsExpanded, object.isExpanded());
-        setProperty(AXProperty::HasExplicitGroupRole, object.hasExplicitGroupRole());
 
         // FIXME: Caching isSecureField would require caching an additional property (on top of input type), so for now, let's still cache this.
         setProperty(AXProperty::IsSecureField, object.isSecureField());
@@ -2517,9 +2541,12 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         std::optional frame = geometryManager ? geometryManager->cachedRectForID(object.objectID()) : std::nullopt;
         if (frame)
             setProperty(AXProperty::RelativeFrame, WTF::move(*frame));
-        else if (isScrollArea || isWebArea || object.isScrollbar()) {
+        else if (isScrollArea || isWebArea || object.isScrollbar() || object.role() == AccessibilityRole::FrameHost) {
             // The GeometryManager does not have a relative frame for ScrollViews, WebAreas, or scrollbars yet. We need to get it from the
             // live object so that we don't need to hit the main thread in the case a request comes in while the whole isolated tree is being built.
+            //
+            // FrameHosts (the AccessibilityScrollView standing in for a cross-process iframe) are included
+            // because the remote frame is never painted in this process, so GeometryManager will never receive a rect for one.
             setProperty(AXProperty::RelativeFrame, enclosingIntRect(object.relativeFrame()));
         } else if (!object.renderer() && object.node() && is<AccessibilityNodeObject>(object) && !object.isImageMapLink()) {
             // The frame of node-only AX objects is made up of their children.
@@ -2737,7 +2764,6 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
             setProperty(AXProperty::IsVisible, object.isVisible());
 
         setProperty(AXProperty::ActionVerb, object.actionVerb().isolatedCopy());
-        setProperty(AXProperty::IsFieldset, object.isFieldset());
         setProperty(AXProperty::IsPressed, object.isPressed());
         setProperty(AXProperty::IsSelectedOptionActive, object.isSelectedOptionActive());
         setProperty(AXProperty::LocalizedActionVerb, object.localizedActionVerb().isolatedCopy());

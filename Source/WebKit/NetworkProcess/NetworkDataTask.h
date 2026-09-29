@@ -84,6 +84,10 @@ public:
 
     virtual void didNegotiateModernTLS(const URL&) { }
 
+#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
+    virtual void emulatedConditionsDidChange() { }
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
+
     void didCompleteWithError(const WebCore::ResourceError& error)
     {
         WebCore::NetworkLoadMetrics emptyMetrics;
@@ -141,14 +145,14 @@ public:
     bool isInitiatedByDedicatedWorker() const { return m_isInitiatedByDedicatedWorker; }
 
     virtual String description() const;
-    virtual void setH2PingCallback(const URL&, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
+    virtual void setH2PingCallback(const URL&, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&);
 
     virtual void setPriority(WebCore::ResourceLoadPriority) { }
     String attributedBundleIdentifier(WebPageProxyIdentifier);
 
 #if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    virtual void setEmulatedConditions(const std::optional<int64_t>& /* bytesPerSecondLimit */) { }
-#endif
+    void notifyEmulatedConditionsChanged();
+#endif // ENABLE(INSPECTOR_NETWORK_THROTTLING)
 
     PAL::SessionID sessionID() const { return m_session->sessionID(); }
     const NetworkSession* networkSession() const { return m_session.get(); }

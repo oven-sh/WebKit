@@ -25,7 +25,6 @@
 
 #pragma once
 
-#include <wtf/Expected.h>
 #include <wtf/Noncopyable.h>
 
 namespace JSC {
@@ -49,8 +48,8 @@ public:
     // Returns null if the callFrame doesn't actually correspond to any active VM.
     JS_EXPORT_PRIVATE static VM* vmForCallFrame(CallFrame*);
 
-    JS_EXPORT_PRIVATE static Expected<bool, Error> isValidExecutableMemory(void*);
-    JS_EXPORT_PRIVATE static Expected<CodeBlock*, Error> codeBlockForMachinePC(void*);
+    JS_EXPORT_PRIVATE static std::expected<bool, Error> isValidExecutableMemory(void*);
+    JS_EXPORT_PRIVATE static std::expected<CodeBlock*, Error> codeBlockForMachinePC(void*);
 
     JS_EXPORT_PRIVATE static bool currentThreadOwnsJSLock(VM*);
     JS_EXPORT_PRIVATE static void gc(VM*);
@@ -66,6 +65,7 @@ public:
     JS_EXPORT_PRIVATE static void dumpCellMemory(JSCell*);
     JS_EXPORT_PRIVATE static void dumpCellMemoryToStream(JSCell*, PrintStream&);
     JS_EXPORT_PRIVATE static void dumpSubspaceHashes(VM*);
+    JS_EXPORT_PRIVATE static JSObject* codeBlockCensus(JSGlobalObject*);
 
     static bool verifyCell(VM&, JSCell*);
 };

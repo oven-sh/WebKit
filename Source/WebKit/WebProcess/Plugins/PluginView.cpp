@@ -70,7 +70,6 @@
 #include <WebCore/MouseEvent.h>
 #include <WebCore/MouseEventTypes.h>
 #include <WebCore/NetscapePlugInStreamLoader.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/NodeDocument.h>
 #include <WebCore/OriginAccessPatterns.h>
 #include <WebCore/PageInlines.h>
@@ -552,7 +551,7 @@ void PluginView::paint(GraphicsContext& context, const IntRect& dirtyRect, Widge
             RefPtr image = transientPaintingSnapshot->createImage();
             if (!image)
                 return;
-            context.drawImage(*image, frameRect());
+            context.drawBitmapImage(*image, frameRect());
         } else {
             auto deviceScaleFactor = 1;
             if (auto* page = m_pluginElement->document().page())
@@ -1159,6 +1158,11 @@ void PluginView::setPDFTextAnnotationValueForTesting(unsigned pageIndex, unsigne
     return m_plugin->setTextAnnotationValueForTesting(pageIndex, annotationIndex, value);
 }
 
+Vector<String> PluginView::pdfContextMenuItemTitlesForTesting(const WebCore::IntPoint& pointInRootView) const
+{
+    return m_plugin->contextMenuItemTitlesForTesting(pointInRootView);
+}
+
 void PluginView::registerPDFTestCallback(RefPtr<VoidCallback>&& callback)
 {
     m_plugin->registerPDFTest(WTF::move(callback));
@@ -1223,9 +1227,9 @@ SelectionWasFlipped PluginView::moveSelectionEndpoint(FloatPoint pointInRootView
     return m_plugin->moveSelectionEndpoint(pointInRootView, endpoint);
 }
 
-SelectionEndpoint PluginView::extendInitialSelection(FloatPoint pointInRootView, TextGranularity granularity)
+SelectionEndpoint PluginView::extendInitialSelection(FloatPoint pointInRootView, TextGranularity granularity, SelectionExtentAnchor anchor)
 {
-    return m_plugin->extendInitialSelection(pointInRootView, granularity);
+    return m_plugin->extendInitialSelection(pointInRootView, granularity, anchor);
 }
 
 #if PLATFORM(IOS_FAMILY)

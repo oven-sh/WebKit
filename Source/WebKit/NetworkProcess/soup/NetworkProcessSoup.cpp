@@ -35,7 +35,6 @@
 #include "WebKitCachedResolver.h"
 #include "WebKitOverridingResolver.h"
 #include <WebCore/CertificateInfo.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/NotImplemented.h>
 #include <WebCore/SoupNetworkSession.h>
 #include <libsoup/soup.h>
@@ -50,7 +49,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-static CString buildAcceptLanguages(const Vector<String>& languages)
+static UTF8CString buildAcceptLanguages(const Vector<String>& languages)
 {
     size_t languagesCount = languages.size();
 
@@ -61,7 +60,7 @@ static CString buildAcceptLanguages(const Vector<String>& languages)
 
     // Fallback to "en" if the list is empty.
     if (!languagesCount)
-        return "en";
+        return "en"_s;
 
     // Calculate deltas for the quality values.
     int delta;

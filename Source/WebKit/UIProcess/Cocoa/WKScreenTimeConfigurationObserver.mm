@@ -64,7 +64,7 @@ static dispatch_queue_t screenTimeUpdateQueueSingleton()
 {
     if (context == &screenTimeConfigurationObserverKVOContext) {
         ensureOnMainRunLoop([webView = _webView] {
-            [webView _updateScreenTimeBasedOnWindowVisibility];
+            [webView.get() _updateScreenTimeBasedOnWindowVisibility];
         });
         return;
     }

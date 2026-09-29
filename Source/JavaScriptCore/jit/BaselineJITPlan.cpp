@@ -37,12 +37,12 @@ BaselineJITPlan::BaselineJITPlan(CodeBlock* codeBlock)
     : JITPlan(JITCompilationMode::Baseline, codeBlock)
 {
     JIT::doMainThreadPreparationBeforeCompile(codeBlock->vm());
+    codeBlock->unlinkedCodeBlock()->ensureValueAndArrayProfiles();
 }
 
 auto BaselineJITPlan::compileInThreadImpl(JITCompilationEffort effort) -> CompilationPath
 {
-    m_codeBlock->updateAllNonLazyValueProfilePredictions();
-    m_codeBlock->updateAllLazyValueProfilePredictions();
+    m_codeBlock->updatePredictionsConcurrently();
 
     // BaselineJITPlan can keep underlying CodeBlock alive while running.
     // So we do not need to suspend this compilation thread while running GC.

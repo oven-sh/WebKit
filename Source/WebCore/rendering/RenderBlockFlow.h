@@ -57,11 +57,9 @@ namespace Style {
 enum class MarginTrimSide : uint8_t;
 }
 
-#if ENABLE(TEXT_AUTOSIZING)
 enum LineCount {
     NOT_SET = 0, NO_LINE = 1, ONE_LINE = 2, MULTI_LINE = 3
 };
-#endif
 
 class MarginValues {
 public:
@@ -100,19 +98,19 @@ public:
 
     static LayoutUnit positiveMarginBeforeDefault(const RenderBlock& block)
     {
-        return std::max<LayoutUnit>(block.marginBefore(), 0);
+        return std::max<LayoutUnit>(block.marginBefore(block.writingMode()), 0);
     }
     static LayoutUnit negativeMarginBeforeDefault(const RenderBlock& block)
     {
-        return std::max<LayoutUnit>(-block.marginBefore(), 0);
+        return std::max<LayoutUnit>(-block.marginBefore(block.writingMode()), 0);
     }
     static LayoutUnit positiveMarginAfterDefault(const RenderBlock& block)
     {
-        return std::max<LayoutUnit>(block.marginAfter(), 0);
+        return std::max<LayoutUnit>(block.marginAfter(block.writingMode()), 0);
     }
     static LayoutUnit negativeMarginAfterDefault(const RenderBlock& block)
     {
-        return std::max<LayoutUnit>(-block.marginAfter(), 0);
+        return std::max<LayoutUnit>(-block.marginAfter(block.writingMode()), 0);
     }
 
     MarginValues m_margins;
@@ -316,6 +314,7 @@ public:
     inline const FloatingObjectSet* floatingObjectSet() const LIFETIME_BOUND; // Defined in RenderBlockFlowInlines.h
 
     FloatingObject& insertFloatingBox(RenderBox&);
+    void placeFloatingBox(FloatingObject&, const LayoutRect& frameRect, LayoutSize marginOffset);
 
     inline LayoutUnit logicalTopForFloat(const FloatingObject&) const; // Defined in RenderBlockFlowInlines.h
     inline LayoutUnit logicalBottomForFloat(const FloatingObject&) const; // Defined in RenderBlockFlowInlines.h
@@ -533,10 +532,9 @@ private:
 
     void dirtyForLayoutFromPercentageHeightDescendants();
 
-#if ENABLE(TEXT_AUTOSIZING)
     int m_widthForTextAutosizing;
     unsigned m_lineCountForTextAutosizing : 2;
-#endif
+
     // FIXME: This is temporary until after we remove the forced "line layout codepath" invalidation.
     std::optional<std::pair<LayoutUnit, LayoutUnit>> m_previousInlineLayoutContentTopAndBottomIncludingInkOverflow;
 
@@ -557,14 +555,12 @@ public:
     Layout::InlineContentCache& ensureInlineContentCache();
     void resetInlineContentCache();
 
-#if ENABLE(TEXT_AUTOSIZING)
-    void adjustComputedFontSizes(float size, float visibleWidth);
-    void resetComputedFontSize()
+    void adjustFontSizes(float size, float visibleWidth);
+    void resetFontSize()
     {
         m_widthForTextAutosizing = -1;
         m_lineCountForTextAutosizing = NOT_SET;
     }
-#endif
 
 protected:
     std::unique_ptr<FloatingObjects> m_floatingObjects;

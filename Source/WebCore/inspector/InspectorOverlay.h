@@ -51,7 +51,7 @@ namespace Inspector {
 using ErrorString = String;
 
 template <typename T>
-using ErrorStringOr = Expected<T, ErrorString>;
+using ErrorStringOr = std::expected<T, ErrorString>;
 }
 
 namespace WebCore {
@@ -271,6 +271,7 @@ private:
     Vector<InspectorOverlay::Grid> m_activeGridOverlays;
     Vector<InspectorOverlay::Flex> m_activeFlexOverlays;
 
+    bool m_isVisible { false };
     bool m_indicating { false };
     bool m_showPaintRects { false };
     bool m_showRulers { false };

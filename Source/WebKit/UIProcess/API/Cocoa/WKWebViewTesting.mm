@@ -54,10 +54,12 @@
 #import "WebsiteDataStore.h"
 #import "_WKFrameHandleInternal.h"
 #import "_WKInspectorInternal.h"
+#import <WebCore/AXObjectTypes.h>
 #import <WebCore/BoxSides.h>
 #import <WebCore/Color.h>
 #import <WebCore/NowPlayingInfo.h>
 #import <WebCore/ScrollingNodeID.h>
+#import <WebCore/TextIndicator.h>
 #import <WebCore/ValidationBubble.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/RetainPtr.h>
@@ -91,6 +93,7 @@
 
 #if ENABLE(THREADED_ANIMATIONS)
 #import "RemoteAnimationStack.h"
+#import "RemoteMonotonicTimeline.h"
 #import "RemoteProgressBasedTimeline.h"
 #endif
 
@@ -263,6 +266,16 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     return _page->pageScaleFactor();
 }
 
+- (CGFloat)_minMagnification
+{
+    return _page->minPageZoomFactor();
+}
+
+- (CGFloat)_maxMagnification
+{
+    return _page->maxPageZoomFactor();
+}
+
 - (void)_setContinuousSpellCheckingEnabledForTesting:(BOOL)enabled
 {
 #if PLATFORM(IOS_FAMILY)
@@ -381,6 +394,11 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 {
     RefPtr networkProcess = _page->websiteDataStore().networkProcessIfExists();
     return networkProcess ? networkProcess->processID() : 0;
+}
+
+- (uint64_t)_webPageProxyIdentifierForTesting
+{
+    return _page->identifier().toUInt64();
 }
 
 - (void)_setScrollingUpdatesDisabledForTesting:(BOOL)disabled
@@ -565,6 +583,18 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         return playbackSessionManager->wirelessVideoPlaybackDisabled();
 #endif
     return false;
+}
+
+- (double)_maximumSeekableTime
+{
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    if (RefPtr playbackSessionManager = _page->playbackSessionManager()) {
+        auto ranges = playbackSessionManager->seekableRanges();
+        if (ranges.length())
+            return ranges.maximumBufferedTime().toDouble();
+    }
+#endif
+    return std::numeric_limits<double>::quiet_NaN();
 }
 
 - (void)_doAfterProcessingAllPendingMouseEvents:(dispatch_block_t)action
@@ -1112,6 +1142,16 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #endif
 }
 
++ (BOOL)_isAccessibilityEnabledForTesting
+{
+    return !WebCore::isAccessibilityModeOff(WebKit::WebProcessProxy::accessibilityModeForWebContent());
+}
+
++ (void)_resetAccessibilityModeForTesting
+{
+    WebKit::WebProcessProxy::resetAccessibilityModeForTesting();
+}
+
 - (void)_setMediaVolumeForTesting:(float)mediaVolume
 {
     _page->setMediaVolume(mediaVolume);
@@ -1209,6 +1249,15 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     });
 }
 
+- (CGRect)_textIndicatorBoundingRectForTesting
+{
+    RefPtr textIndicator = _page->textIndicator();
+    if (!textIndicator)
+        return CGRectNull;
+
+    return textIndicator->textBoundingRectInRootViewCoordinates();
+}
+
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
 - (void)_enableColorExtensionBehaviorForHorizontalBannerViewOverlaysForTesting
 {
@@ -1241,7 +1290,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #endif
 }
 
-- (void)_startMonitoringWheelEventsForTesting:(void(^)(void))completionHandler
+- (void)_startMonitoringWheelEventsForTestingWithCompletionHandler:(void(^)(void))completionHandler
 {
     RefPtr pageForTesting = _page->pageForTesting();
     if (!pageForTesting)
@@ -1252,13 +1301,24 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     });
 }
 
-- (void)_waitForWheelEventsToCompleteForTesting:(void(^)(void))completionHandler
+- (void)_waitForWheelEventsToCompleteForTestingWithCompletionHandler:(void(^)(void))completionHandler
 {
     RefPtr pageForTesting = _page->pageForTesting();
     if (!pageForTesting)
         return completionHandler();
 
-    pageForTesting->waitForWheelEventsToCompleteForTesting([completionHandler = makeBlockPtr(completionHandler)] {
+    pageForTesting->waitForWheelEventsToCompleteForTesting(false, [completionHandler = makeBlockPtr(completionHandler)] {
+        completionHandler();
+    });
+}
+
+- (void)_waitForWheelEventsAndMomentumToCompleteForTestingWithCompletionHandler:(void(^)(void))completionHandler
+{
+    RefPtr pageForTesting = _page->pageForTesting();
+    if (!pageForTesting)
+        return completionHandler();
+
+    pageForTesting->waitForWheelEventsToCompleteForTesting(true, [completionHandler = makeBlockPtr(completionHandler)] {
         completionHandler();
     });
 }
@@ -1371,14 +1431,26 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 }
 
 #if ENABLE(THREADED_ANIMATIONS)
-- (NSString *)_animationStackForLayerWithID:(unsigned long long)layerID
+- (NSString *)_animationStackForLayerWithIDInMainFrame:(unsigned long long)layerID
+{
+    return [self _animationStackForLayerWithID:layerID processID:_page->legacyMainFrameProcess().coreProcessIdentifier().toUInt64()];
+}
+
+- (NSString *)_animationStackForLayerWithID:(unsigned long long)layerID processID:(uint64_t)processID
 {
     auto animationStack = [&] -> RefPtr<const WebKit::RemoteAnimationStack> {
-        if (!layerID)
+        if (!ObjectIdentifier<WebCore::PlatformLayerIdentifierType>::isValidIdentifier(layerID)
+            || !ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(processID))
             return nullptr;
-        WebCore::PlatformLayerIdentifier platformLayerID { ObjectIdentifier<WebCore::PlatformLayerIdentifierType>(layerID), _page->legacyMainFrameProcess().coreProcessIdentifier() };
-        if (RefPtr nodeStack = downcast<WebKit::RemoteLayerTreeDrawingAreaProxy>(protect(_page->drawingArea()))->animationStackForNodeWithIDForTesting(platformLayerID))
-            return nodeStack;
+
+        WebCore::PlatformLayerIdentifier platformLayerID {
+            ObjectIdentifier<WebCore::PlatformLayerIdentifierType>(layerID),
+            ObjectIdentifier<WebCore::ProcessIdentifierType>(processID)
+        };
+        if (RefPtr drawingAreaProxy = dynamicDowncast<WebKit::RemoteLayerTreeDrawingAreaProxy>(_page->drawingArea())) {
+            if (RefPtr nodeStack = drawingAreaProxy->animationStackForNodeWithIDForTesting(platformLayerID))
+                return nodeStack;
+        }
         if (CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy())
             return scrollingCoordinator->animationStackForNodeWithIDForTesting(platformLayerID);
         return nullptr;
@@ -1403,6 +1475,28 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
             ObjectIdentifier<WebCore::ScrollingNodeIDType>(scrollingNodeID),
             ObjectIdentifier<WebCore::ProcessIdentifierType>(processID)
         });
+    }();
+
+    Ref convertedTimelines = JSON::Array::create();
+    for (auto& timeline : timelines)
+        convertedTimelines->pushObject(timeline->toJSONForTesting());
+
+    Ref object = JSON::Object::create();
+    object->setArray("timelines"_s, WTF::move(convertedTimelines));
+    return object->toJSONString().createNSString().autorelease();
+}
+
+- (NSString *)_monotonicTimelinesForProcessID:(uint64_t)processID
+{
+    auto timelines = [&] -> HashSet<Ref<WebKit::RemoteMonotonicTimeline>> {
+        if (!ObjectIdentifier<WebCore::ProcessIdentifierType>::isValidIdentifier(processID))
+            return { };
+
+        CheckedPtr scrollingCoordinator = _page->scrollingCoordinatorProxy();
+        if (!scrollingCoordinator)
+            return { };
+
+        return scrollingCoordinator->monotonicTimelinesForProcessForTesting(ObjectIdentifier<WebCore::ProcessIdentifierType>(processID));
     }();
 
     Ref convertedTimelines = JSON::Array::create();

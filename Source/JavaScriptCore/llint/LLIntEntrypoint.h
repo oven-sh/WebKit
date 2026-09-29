@@ -43,6 +43,7 @@ void setEntrypoint(CodeBlock*);
 unsigned NODELETE frameRegisterCountFor(CodeBlock*);
 
 MacroAssemblerCodeRef<JSEntryPtrTag> defaultCall();
+MacroAssemblerCodeRef<JSEntryPtrTag> unlinkedCall();
 MacroAssemblerCodeRef<JSEntryPtrTag> getHostCallReturnValueEntrypoint();
 MacroAssemblerCodeRef<JSEntryPtrTag> fuzzerReturnEarlyFromLoopHintEntrypoint();
 MacroAssemblerCodeRef<JSEntryPtrTag> genericReturnPointEntrypoint(OpcodeSize);

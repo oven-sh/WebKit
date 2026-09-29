@@ -31,6 +31,7 @@
 #include <cstdlib>
 #include <wtf/DataLog.h>
 #include <wtf/FileSystem.h>
+#include <wtf/StdLibExtras.h>
 #include <wtf/WTFProcess.h>
 
 [[noreturn]] static void printUsageStatement(bool help = false)
@@ -199,7 +200,7 @@ static int runWGSL(const CommandLine& options)
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunsafe-buffer-usage"
     if (options.dumpGeneratedCode())
-        printf("%s", msl.utf8().data());
+        SAFE_PRINTF("%s", msl.utf8());
 #pragma clang diagnostic pop
 
     return EXIT_SUCCESS;

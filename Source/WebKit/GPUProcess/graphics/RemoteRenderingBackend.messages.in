@@ -28,7 +28,8 @@
     DispatchedTo=GPU
 ]
 messages -> RemoteRenderingBackend Stream {
-    CreateImageBuffer(WebCore::FloatSize logicalSize, WebCore::RenderingMode renderingMode, WebCore::RenderingPurpose renderingPurpose, float resolutionScale, WebCore::DestinationColorSpace colorSpace, struct WebCore::ImageBufferFormat bufferFormat, WebCore::RenderingResourceIdentifier identifier, WebKit::RemoteGraphicsContextIdentifier contextIdentifier)
+    CreateImageBuffer(WebCore::FloatSize logicalSize, WebCore::RenderingMode renderingMode, WebCore::RenderingPurpose renderingPurpose, float resolutionScale, WebCore::ColorSpace colorSpace, struct WebCore::ImageBufferFormat bufferFormat, WebCore::RenderingResourceIdentifier identifier, WebKit::RemoteGraphicsContextIdentifier contextIdentifier)
+    CreateMappableImageBuffer(WebCore::FloatSize logicalSize, WebCore::RenderingMode renderingMode, WebCore::RenderingPurpose renderingPurpose, float resolutionScale, WebCore::ColorSpace colorSpace, struct WebCore::ImageBufferFormat bufferFormat, WebKit::ImageBufferBackendHandle backingStore, WebCore::RenderingResourceIdentifier identifier, WebKit::RemoteGraphicsContextIdentifier contextIdentifier) NotStreamEncodable
     ReleaseImageBuffer(WebCore::RenderingResourceIdentifier identifier)
     CreateDisplayListRecorder(WebKit::RemoteDisplayListRecorderIdentifier identifier)
     SinkDisplayListRecorderIntoDisplayList(WebKit::RemoteDisplayListRecorderIdentifier identifier, WebKit::RemoteDisplayListIdentifier displayListIdentifier)
@@ -67,6 +68,9 @@ messages -> RemoteRenderingBackend Stream {
 
     MoveToSerializedBuffer(WebCore::RenderingResourceIdentifier identifier, WebKit::RemoteSerializedImageBufferIdentifier serializedIdentifier)
     MoveToImageBuffer(WebKit::RemoteSerializedImageBufferIdentifier identifier, WebCore::RenderingResourceIdentifier imageBufferIdentifier, WebKit::RemoteGraphicsContextIdentifier contextIdentifier)
+
+    MoveSerializedBufferToTransferHeap(WebKit::RemoteSerializedImageBufferIdentifier serializedIdentifier, WebCore::ImageBufferTransferIdentifier transferIdentifier)
+    TakeTransferredBuffer(WebCore::ImageBufferTransferIdentifier transferIdentifier, WebCore::RenderingResourceIdentifier imageBufferIdentifier, WebKit::RemoteGraphicsContextIdentifier contextIdentifier)
 
     CreateSnapshotRecorder(WebKit::RemoteSnapshotRecorderIdentifier identifier, WebKit::RemoteSnapshotIdentifier snapshotIdentifier)
     SinkSnapshotRecorderIntoSnapshotFrame(WebKit::RemoteSnapshotRecorderIdentifier identifier, WebCore::FrameIdentifier frameIdentifer) -> (bool success)

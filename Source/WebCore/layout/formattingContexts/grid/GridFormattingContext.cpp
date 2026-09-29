@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GridFormattingContext.h"
 
+#include "GridItemPlacer.h"
 #include "GridItemRect.h"
 #include "GridLayout.h"
 #include "GridLayoutState.h"
@@ -99,43 +100,6 @@ static LeadingImplicitTracks computeLeadingImplicitTracks(const ElementBox& grid
     };
 }
 
-UnplacedGridItems GridFormattingContext::constructUnplacedGridItems(const LogicalGridItems& logicalGridItems, LeadingImplicitTracks leadingImplicitTracks) const
-{
-    auto explicitColumnCount = m_gridBox->style().gridTemplateColumns().sizes.size();
-    auto explicitRowCount = m_gridBox->style().gridTemplateRows().sizes.size();
-
-    UnplacedGridItems unplacedGridItems;
-    for (auto& gridItem : logicalGridItems) {
-        CheckedRef gridItemStyle = gridItem->style();
-
-        auto gridItemColumnStart = gridItemStyle->gridItemColumnStart();
-        auto gridItemColumnEnd = gridItemStyle->gridItemColumnEnd();
-        auto gridItemRowStart = gridItemStyle->gridItemRowStart();
-        auto gridItemRowEnd = gridItemStyle->gridItemRowEnd();
-
-        UnplacedGridItem unplacedGridItem {
-            gridItem,
-            gridItemColumnStart,
-            gridItemColumnEnd,
-            gridItemRowStart,
-            gridItemRowEnd,
-            explicitColumnCount,
-            explicitRowCount,
-            leadingImplicitTracks.columnsCount,
-            leadingImplicitTracks.rowsCount
-        };
-
-        // https://drafts.csswg.org/css-grid-1/#auto-placement-algo
-        if (unplacedGridItem.hasDefiniteColumnPosition() && unplacedGridItem.hasDefiniteRowPosition())
-            unplacedGridItems.nonAutoPositionedItems.append(unplacedGridItem);
-        else if (unplacedGridItem.hasDefiniteRowPosition())
-            unplacedGridItems.definiteRowPositionedItems.append(unplacedGridItem);
-        else
-            unplacedGridItems.autoPositionedItems.append(unplacedGridItem);
-    }
-    return unplacedGridItems;
-}
-
 static Style::GridTrackSize trackSizeWithPercentagesConvertedToAuto(const Style::GridTrackSize& trackSize)
 {
     return WTF::switchOn(trackSize,
@@ -204,7 +168,6 @@ GridLayoutResult GridFormattingContext::layout(GridLayoutConstraints layoutConst
 {
     auto logicalGridItems = constructLogicalGridItems(root());
     auto leadingImplicitTracks = computeLeadingImplicitTracks(root(), logicalGridItems);
-    auto unplacedGridItems = constructUnplacedGridItems(logicalGridItems, leadingImplicitTracks);
     CheckedRef gridStyle = root().style();
 
     GridAutoFlowOptions autoFlowOptions {
@@ -234,7 +197,11 @@ GridLayoutResult GridFormattingContext::layout(GridLayoutConstraints layoutConst
 
     GridLayoutState layoutState { layoutConstraints, gridDefinition, usedJustifyContent, usedAlignContent, usedGapValue(gridStyle->columnGap(), gridStyle), usedGapValue(gridStyle->rowGap(), gridStyle) };
 
-    auto [ usedTrackSizes, gridItemRects ] = GridLayout { *this }.layout(unplacedGridItems, leadingImplicitTracks, layoutState);
+    // https://drafts.csswg.org/css-grid-1/#layout-algorithm
+    // 1. Run the Grid Item Placement Algorithm to resolve the placement of all grid items in the grid.
+    auto gridItemPlacementResult = GridItemPlacer { autoFlowOptions }.placeItems(logicalGridItems, leadingImplicitTracks, gridTemplateColumns.sizes.size(), gridTemplateRows.sizes.size());
+
+    auto [ usedTrackSizes, gridItemRects ] = GridLayout { *this }.layout(gridItemPlacementResult, leadingImplicitTracks, layoutState);
 
     // Grid layout positions each item within its containing block which is the grid area.
     // Here we translate it to the coordinate space of the grid.
@@ -258,7 +225,7 @@ PlacedGridItems GridFormattingContext::constructPlacedGridItems(const GridAreas&
     PlacedGridItems placedGridItems;
     placedGridItems.reserveInitialCapacity(gridAreas.size());
     CheckedRef formattingContextStyle = root().style();
-    for (auto [ unplacedGridItem, gridAreaLines ] : gridAreas) {
+    for (auto& [ unplacedGridItem, gridAreaLines ] : gridAreas) {
         CheckedRef gridItem = unplacedGridItem.m_layoutBox;
         CheckedRef gridContainerStyle = this->gridContainerStyle();
         placedGridItems.constructAndAppend(gridItem, gridAreaLines, gridContainerStyle);
@@ -346,7 +313,11 @@ GridFormattingContext::IntrinsicWidths GridFormattingContext::computeIntrinsicWi
 
     auto logicalGridItems = constructLogicalGridItems(root());
     auto leadingImplicitTracks = computeLeadingImplicitTracks(root(), logicalGridItems);
-    auto unplacedGridItems = constructUnplacedGridItems(logicalGridItems, leadingImplicitTracks);
+
+    // https://drafts.csswg.org/css-grid-1/#layout-algorithm
+    // 1. Run the Grid Item Placement Algorithm to resolve the placement of all grid items in the grid.
+    // The placement does not depend on the axis constraints, so it is shared by both intrinsic sizing scenarios.
+    auto gridItemPlacementResult = GridItemPlacer { autoFlowOptions }.placeItems(logicalGridItems, leadingImplicitTracks, gridDefinition.gridTemplateColumns.sizes.size(), gridDefinition.gridTemplateRows.sizes.size());
 
     auto columnSizesForConstraint = [&](AxisConstraint intrinsicConstraint) -> TrackSizes {
         GridLayoutConstraints layoutConstraints {
@@ -361,7 +332,7 @@ GridFormattingContext::IntrinsicWidths GridFormattingContext::computeIntrinsicWi
             ? GridLayoutScope::ColumnSizingOnly
             : GridLayoutScope::Full;
 
-        return GridLayout { *this }.layout(unplacedGridItems, leadingImplicitTracks, layoutState, scope).usedTrackSizes.columnSizes;
+        return GridLayout { *this }.layout(gridItemPlacementResult, leadingImplicitTracks, layoutState, scope).usedTrackSizes.columnSizes;
     };
 
     TrackSizes minContentColumnSizes = columnSizesForConstraint(AxisConstraint::minContent());

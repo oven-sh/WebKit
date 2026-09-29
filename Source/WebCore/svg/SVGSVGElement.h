@@ -75,7 +75,6 @@ public: // DOM
     void unpauseAnimations();
     bool resumePausedAnimationsIfNeeded(const IntRect&);
     bool NODELETE animationsPaused() const;
-    bool NODELETE hasActiveAnimation() const;
     float getCurrentTime() const;
     void setCurrentTime(float);
     
@@ -142,6 +141,7 @@ private:
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
+    void collectExtraStyleForPresentationalHints(MutableStyleProperties&) final;
     bool selfHasRelativeLengths() const override;
     bool isValid() const override;
 

@@ -33,6 +33,7 @@
 #include "TestController.h"
 #include "UIScriptController.h"
 #include "WebCoreTestSupport.h"
+#include <WebKit/WKCast.h>
 #include <WebKit/WKContextPrivate.h>
 #include <WebKit/WKData.h>
 #include <WebKit/WKDictionary.h>
@@ -284,6 +285,36 @@ void TestInvocation::forceRepaintDoneCallback(WKErrorRef error, void* context)
     TestController::singleton().notifyDone();
 }
 
+#if PLATFORM(GTK) || PLATFORM(WPE)
+void TestInvocation::presentationUpdateDoneCallback(WKErrorRef error, void* context)
+{
+    if (error)
+        return;
+
+    auto* testInvocation = static_cast<TestInvocation*>(context);
+    RELEASE_ASSERT(TestController::singleton().isCurrentInvocation(testInvocation));
+
+    testInvocation->m_gotPresentationUpdate = true;
+    TestController::singleton().notifyDone();
+}
+
+void TestInvocation::waitForPresentationUpdate()
+{
+    // Tests that use testRunner.dontForceRepaint(), still need the frame reflecting the last
+    // rendering update to reach the view before capturing. Since the coordinated graphics ports
+    // composite/hand-over buffers asynchronously, we need an explicit wait here to capture
+    // the correct frame.
+    m_gotPresentationUpdate = false;
+    WKPageCallAfterNextPresentationUpdate(TestController::singleton().mainWebView()->page(), this, TestInvocation::presentationUpdateDoneCallback);
+    TestController::singleton().runUntil(m_gotPresentationUpdate, m_timeout);
+}
+#else
+void TestInvocation::waitForPresentationUpdate()
+{
+    // Cocoa ports synchronize with the window server in PlatformWebView::windowSnapshotImage().
+}
+#endif
+
 void TestInvocation::dumpResourceLoadStatisticsIfNecessary()
 {
     if (m_shouldDumpResourceLoadStatistics)
@@ -313,7 +344,7 @@ void TestInvocation::dumpResults()
     if (m_textOutput.hasOverflowed())
         dump("text output overflowed");
     else if (m_textOutput.length() || !m_audioResult)
-        dump(m_textOutput.toString().utf8().data());
+        dump(m_textOutput.toString().utf8().legacyCStringPointer());
     else
         dumpAudio(m_audioResult.get());
 
@@ -325,7 +356,8 @@ void TestInvocation::dumpResults()
                 m_gotRepaint = false;
                 WKPageForceRepaint(TestController::singleton().mainWebView()->page(), this, TestInvocation::forceRepaintDoneCallback);
                 TestController::singleton().runUntil(m_gotRepaint, TestController::noTimeout);
-            }
+            } else
+                waitForPresentationUpdate();
             dumpPixelsAndCompareWithExpected(SnapshotResultType::WebView, m_repaintRects.get());
         }
     }
@@ -638,6 +670,11 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetWindowIsKey")) {
         TestController::singleton().mainWebView()->setWindowIsKey(booleanValue(messageBody));
+        return nullptr;
+    }
+
+    if (WKStringIsEqualToUTF8CString(messageName, "DisconnectFrameInspectorTarget")) {
+        WKPageDisconnectInspectorFrameTargetForTesting(TestController::singleton().mainWebView()->page(), dynamic_wk_cast<WKFrameHandleRef>(messageBody));
         return nullptr;
     }
 
@@ -1280,8 +1317,8 @@ WKRetainPtr<WKTypeRef> TestInvocation::didReceiveSynchronousMessageFromInjectedB
 
     if (WKStringIsEqualToUTF8CString(messageName, "SetPrivateClickMeasurementAttributionReportURLsForTesting")) {
         auto testDictionary = dictionaryValue(messageBody);
-        auto sourceURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "SourceURLString")).utf8().data()));
-        auto destinationURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "AttributeOnURLString")).utf8().data()));
+        auto sourceURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "SourceURLString")).utf8().legacyCStringPointer()));
+        auto destinationURL = adoptWK(WKURLCreateWithUTF8CString(toWTFString(stringValue(testDictionary, "AttributeOnURLString")).utf8().legacyCStringPointer()));
         TestController::singleton().setPrivateClickMeasurementAttributionReportURLsForTesting(sourceURL.get(), destinationURL.get());
         return nullptr;
     }

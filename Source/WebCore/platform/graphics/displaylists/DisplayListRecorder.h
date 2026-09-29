@@ -66,7 +66,7 @@ public:
 #endif
     };
 
-    Recorder(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& transform, const DestinationColorSpace& colorSpace, DrawGlyphsMode drawGlyphsMode = DrawGlyphsMode::Normal)
+    Recorder(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& transform, const ColorSpace& colorSpace, DrawGlyphsMode drawGlyphsMode = DrawGlyphsMode::Normal)
         : Recorder(IsDeferred::Yes, state, initialClip, transform, colorSpace, drawGlyphsMode)
     {
     }
@@ -74,8 +74,10 @@ public:
 
     WEBCORE_EXPORT void appendDisplayList(const DisplayList&);
 
+    WEBCORE_EXPORT FloatRect initialClip() const;
+
 protected:
-    WEBCORE_EXPORT Recorder(IsDeferred, const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const DestinationColorSpace&, DrawGlyphsMode);
+    WEBCORE_EXPORT Recorder(IsDeferred, const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const ColorSpace&, DrawGlyphsMode);
 
     struct ContextState {
         AffineTransform ctm;
@@ -116,7 +118,6 @@ protected:
     WEBCORE_EXPORT void updateStateForClipToImageBuffer(const FloatRect&);
     WEBCORE_EXPORT void updateStateForApplyDeviceScaleFactor(float);
     WEBCORE_EXPORT bool decomposeDrawGlyphsIfNeeded(const Font&, std::span<const GlyphBufferGlyph>, std::span<const GlyphBufferAdvance>, const FloatPoint& anchorPoint, FontSmoothingMode);
-    WEBCORE_EXPORT FloatRect initialClip() const;
     DrawGlyphsMode drawGlyphsMode() const { return m_drawGlyphsMode; }
 
     // The state difference between set GraphicsContext state and
@@ -124,7 +125,7 @@ protected:
     WEBCORE_EXPORT GraphicsContextState::ChangeFlags computeStateChanges();
     WEBCORE_EXPORT void commitStateChanges(GraphicsContextState::ChangeFlags);
 
-    const DestinationColorSpace& colorSpace() const LIFETIME_BOUND final { return m_colorSpace; }
+    const ColorSpace& colorSpace() const LIFETIME_BOUND final { return m_colorSpace; }
 
 private:
     bool hasPlatformContext() const final { return false; }
@@ -151,7 +152,7 @@ private:
     Vector<ContextState, 4> m_stateStack;
     // The state the committed to the recording.
     GraphicsContextState m_committedState;
-    DestinationColorSpace m_colorSpace;
+    ColorSpace m_colorSpace;
     const FloatRect m_initialClip;
     const DrawGlyphsMode m_drawGlyphsMode { DrawGlyphsMode::Normal };
 #if USE(CORE_TEXT)

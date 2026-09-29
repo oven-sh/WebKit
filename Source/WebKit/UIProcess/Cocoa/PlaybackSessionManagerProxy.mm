@@ -64,8 +64,20 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(PlaybackSessionModelContext);
 PlaybackSessionModelContext::PlaybackSessionModelContext(PlaybackSessionManagerProxy& manager, PlaybackSessionContextIdentifier contextId)
     : m_manager(manager)
     , m_contextId(contextId)
-    , m_prefersAutoDimming([[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitPrefersFullScreenDimming"])
 {
+}
+
+bool PlaybackSessionModelContext::persistedPrefersAutoDimming()
+{
+    return [[NSUserDefaults standardUserDefaults] boolForKey:@"WebKitPrefersFullScreenDimming"];
+}
+
+void PlaybackSessionModelContext::setPersistedPrefersAutoDimming(bool value)
+{
+    if (persistedPrefersAutoDimming() == value)
+        return;
+
+    [[NSUserDefaults standardUserDefaults] setBool:value forKey:@"WebKitPrefersFullScreenDimming"];
 }
 
 PlaybackSessionModelContext::~PlaybackSessionModelContext()
@@ -338,10 +350,7 @@ void PlaybackSessionModelContext::setPlayingOnSecondScreen(bool value)
 
 void PlaybackSessionModelContext::setPrefersAutoDimming(bool value)
 {
-    if (m_prefersAutoDimming != value) {
-        m_prefersAutoDimming = value;
-        [[NSUserDefaults standardUserDefaults] setBool:value forKey:@"WebKitPrefersFullScreenDimming"];
-    }
+    setPersistedPrefersAutoDimming(value);
 }
 
 void PlaybackSessionModelContext::playbackStartedTimeChanged(double playbackStartedTime)
@@ -439,14 +448,15 @@ void PlaybackSessionModelContext::legibleMediaSelectionIndexChanged(uint64_t sel
         client->legibleMediaSelectionIndexChanged(selectedIndex);
 }
 
-void PlaybackSessionModelContext::externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType type, const String& localizedName)
+void PlaybackSessionModelContext::externalPlaybackChanged(bool enabled, PlaybackSessionModel::ExternalPlaybackTargetType type, const String& localizedDeviceName, const String& localizedRouteName)
 {
     m_externalPlaybackEnabled = enabled;
     m_externalPlaybackTargetType = type;
-    m_externalPlaybackLocalizedDeviceName = localizedName;
+    m_externalPlaybackLocalizedDeviceName = localizedDeviceName;
+    m_externalPlaybackLocalizedRouteName = localizedRouteName;
 
     for (CheckedRef client : m_clients)
-        client->externalPlaybackChanged(enabled, type, localizedName);
+        client->externalPlaybackChanged(enabled, type, localizedDeviceName, localizedRouteName);
 }
 
 void PlaybackSessionModelContext::wirelessVideoPlaybackDisabledChanged(bool wirelessVideoPlaybackDisabled)
@@ -786,9 +796,9 @@ void PlaybackSessionManagerProxy::legibleMediaSelectionIndexChanged(IPC::Connect
     ensureModel(connection, identifier)->legibleMediaSelectionIndexChanged(selectedIndex);
 }
 
-void PlaybackSessionManagerProxy::externalPlaybackPropertiesChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool enabled, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType targetType, String localizedDeviceName)
+void PlaybackSessionManagerProxy::externalPlaybackPropertiesChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool enabled, WebCore::PlaybackSessionModel::ExternalPlaybackTargetType targetType, String localizedDeviceName, String localizedRouteName)
 {
-    ensureModel(connection, identifier)->externalPlaybackChanged(enabled, targetType, localizedDeviceName);
+    ensureModel(connection, identifier)->externalPlaybackChanged(enabled, targetType, localizedDeviceName, localizedRouteName);
 }
 
 void PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabledChanged(IPC::Connection& connection, HTMLMediaElementIdentifier identifier, bool disabled)
@@ -1121,32 +1131,6 @@ void PlaybackSessionManagerProxy::setSoundStageSize(PlaybackSessionContextIdenti
     sendToWebProcess(contextId, Messages::PlaybackSessionManager::SetSoundStageSize(contextId.object(), size));
 }
 
-bool PlaybackSessionManagerProxy::prefersAutoDimming() const
-{
-    if (!m_controlsManagerContextId)
-        return false;
-
-    auto it = m_contextMap.find(*m_controlsManagerContextId);
-    if (it == m_contextMap.end())
-        return false;
-
-    Ref model = std::get<0>(it->value);
-    return model->prefersAutoDimming();
-}
-
-void PlaybackSessionManagerProxy::setPrefersAutoDimming(bool prefersAutoDimming)
-{
-    if (!m_controlsManagerContextId)
-        return;
-
-    auto it = m_contextMap.find(*m_controlsManagerContextId);
-    if (it == m_contextMap.end())
-        return;
-
-    Ref model = std::get<0>(it->value);
-    model->setPrefersAutoDimming(prefersAutoDimming);
-}
-
 bool PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabled()
 {
     if (!m_controlsManagerContextId)
@@ -1157,6 +1141,18 @@ bool PlaybackSessionManagerProxy::wirelessVideoPlaybackDisabled()
         return true;
 
     return protect(std::get<0>(it->value))->wirelessVideoPlaybackDisabled();
+}
+
+WebCore::PlatformTimeRanges PlaybackSessionManagerProxy::seekableRanges()
+{
+    if (!m_controlsManagerContextId)
+        return { };
+
+    auto it = m_contextMap.find(*m_controlsManagerContextId);
+    if (it == m_contextMap.end())
+        return { };
+
+    return protect(std::get<0>(it->value))->seekableRanges();
 }
 
 void PlaybackSessionManagerProxy::requestControlledElementID()

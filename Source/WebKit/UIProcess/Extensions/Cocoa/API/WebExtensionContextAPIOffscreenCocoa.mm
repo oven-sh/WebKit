@@ -37,6 +37,7 @@
 #import "WKWebViewInternal.h"
 #import "WebExtensionContextProxyMessages.h"
 #import "WebExtensionOffscreenDocumentParameters.h"
+#import "WebExtensionPermission.h"
 #import "WebPageProxy.h"
 
 namespace WebKit {
@@ -60,7 +61,7 @@ static UIWindowScene *windowScene()
 }
 #endif
 
-void WebExtensionContext::offscreenCreateDocument(const WebExtensionOffscreenDocumentParameters& parameters, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::offscreenCreateDocument(const WebExtensionOffscreenDocumentParameters& parameters, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler)
 {
     static constexpr auto apiName = "offscreen.createDocument()"_s;
 
@@ -112,7 +113,7 @@ void WebExtensionContext::offscreenCreateDocument(const WebExtensionOffscreenDoc
     m_offscreenDocumentLoadCompletionHandlers.append(WTF::move(completionHandler));
 }
 
-void WebExtensionContext::offscreenCloseDocument(CompletionHandler<void(Expected<void, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::offscreenCloseDocument(CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler)
 {
     static constexpr auto apiName = "offscreen.closeDocument()"_s;
 
@@ -126,7 +127,7 @@ void WebExtensionContext::offscreenCloseDocument(CompletionHandler<void(Expected
     completionHandler({ });
 }
 
-void WebExtensionContext::offscreenHasDocument(CompletionHandler<void(Expected<bool, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::offscreenHasDocument(CompletionHandler<void(std::expected<bool, WebExtensionError>&&)>&& completionHandler)
 {
     completionHandler(!!m_offscreenWebView);
 }

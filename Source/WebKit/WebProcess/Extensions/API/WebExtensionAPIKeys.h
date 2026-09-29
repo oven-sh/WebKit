@@ -52,6 +52,7 @@ static NSString * const audioKey = @"audio";
 static NSString * const authorValue = @"author";
 static NSString * const basicSchemeKey = @"basic";
 static NSString * const bookmarkKey = @"bookmark";
+static NSString * const buttonsKey = @"buttons";
 static NSString * const bypassCacheKey = @"bypassCache";
 static NSString * const bytesKey = @"bytes";
 static NSString * const challengerKey = @"challenger";
@@ -62,6 +63,7 @@ static NSString * const codeKey = @"code";
 static NSString * const colorSchemesKey = @"colorSchemes";
 static NSString * const commandKey = @"command";
 static NSString * const completeKey = @"complete";
+static NSString * const contextMessageKey = @"contextMessage";
 static NSString * const contextsKey = @"contexts";
 static NSString * const cssKey = @"css";
 static NSString * const cssOriginKey = @"cssOrigin";
@@ -117,6 +119,7 @@ static NSString * const highlightedKey = @"highlighted";
 static NSString * const hostKey = @"host";
 static NSString * const hostOnlyKey = @"hostOnly";
 static NSString * const httpOnlyKey = @"httpOnly";
+static NSString * const iconURLKey = @"iconUrl";
 static NSString * const iconsKey = @"icons";
 static NSString * const iconVariantsKey = @"iconVariants";
 static NSString * const idKey = @"id";
@@ -148,6 +151,7 @@ static NSString * const matchOriginAsFallbackKey = @"matchOriginAsFallback";
 static NSString * const maximizedKey = @"maximized";
 static NSString * const mediaTypeKey = @"mediaType";
 static NSString * const menuItemIDKey = @"menuItemId";
+static NSString * const messageKey = @"message";
 static NSString * const methodKey = @"method";
 static NSString * const minimizedKey = @"minimized";
 static NSString * const mutedInfoKey = @"mutedInfo";
@@ -182,13 +186,11 @@ static NSString * const populateKey = @"populate";
 static NSString * const popupKey = @"popup";
 static NSString * const portKey = @"port";
 static NSString * const previousTabIdKey = @"previousTabId";
-static NSString * const previousVersionKey = @"previousVersion";
 static NSString * const qualityKey = @"quality";
 static NSString * const queryKey = @"query";
 static NSString * const radioKey = @"radio";
 static NSString * const rawKey = @"raw";
 static NSString * const realmKey = @"realm";
-static NSString * const reasonKey = @"reason";
 static NSString * const redirectURLKey = @"redirectUrl";
 static NSString * const regexIsCaseSensitiveKey = @"isCaseSensitive";
 static NSString * const regexKey = @"regex";
@@ -236,7 +238,6 @@ static NSString * const urlKey = @"url";
 static NSString * const userValue = @"user";
 static NSString * const valueKey = @"value";
 static NSString * const variantsKey = @"variants";
-static NSString * const versionKey = @"version";
 static NSString * const videoKey = @"video";
 static NSString * const visibleKey = @"visible";
 static NSString * const wasCheckedKey = @"wasChecked";
@@ -251,6 +252,10 @@ static NSString * const justificationKey = @"justification";
 static NSString * const reasonsKey = @"reasons";
 #endif
 
+#else
+
+static constexpr auto nameKey = "name"_s;
+
 #endif
 
 static constexpr auto delayInMinutesKey = "delayInMinutes"_s;
@@ -258,3 +263,6 @@ static constexpr auto emptyAlarmName = ""_s;
 static constexpr auto periodInMinutesKey = "periodInMinutes"_s;
 static constexpr auto scheduledTimeKey = "scheduledTime"_s;
 static constexpr auto whenKey = "when"_s;
+static constexpr auto versionKey = "version"_s;
+static constexpr auto reasonKey = "reason"_s;
+static constexpr auto previousVersionKey = "previousVersion"_s;

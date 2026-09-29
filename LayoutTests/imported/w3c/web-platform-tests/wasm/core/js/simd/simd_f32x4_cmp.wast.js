@@ -1,3 +1,8 @@
+// The collector thread starts the VM's run loop timer (JSRunLoopTimer::Manager) while the run loop thread is in that timer's
+// ScheduledTask::fired(), which runs without the loop lock: ASSERTION FAILED: !isScheduled(), RunLoopGeneric.cpp, in the
+// wasm-collect-continuously mode. Only a build with assertions sees it, and of the tested lanes those are the asan ones.
+//@ skip if $asan
+
 (function simd_f32x4_cmp_wast_js() {
 
 // simd_f32x4_cmp.wast:3

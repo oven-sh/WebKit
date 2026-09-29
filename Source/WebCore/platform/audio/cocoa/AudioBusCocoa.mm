@@ -39,11 +39,11 @@
 
 namespace WebCore {
 
-RefPtr<AudioBus> AudioBus::loadPlatformResource(const char* name, float sampleRate)
+RefPtr<AudioBus> AudioBus::loadPlatformResource(StringView name, float sampleRate)
 {
     @autoreleasepool {
         RetainPtr<NSBundle> bundle = [NSBundle bundleForClass:[WebCoreAudioBundleClass class]];
-        RetainPtr<NSURL> audioFileURL = [bundle URLForResource:[NSString stringWithUTF8String:name] withExtension:@"wav" subdirectory:@"audio"];
+        RetainPtr<NSURL> audioFileURL = [bundle URLForResource:name.createNSString().get() withExtension:@"wav" subdirectory:@"audio"];
         if (NSData *audioData = [NSData dataWithContentsOfURL:audioFileURL.get() options:NSDataReadingMappedIfSafe error:nil])
             return createBusFromInMemoryAudioFile(span(audioData), false, sampleRate);
     }

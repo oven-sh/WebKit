@@ -20,6 +20,7 @@ list(APPEND PAL_PUBLIC_HEADERS
     cocoa/AVKitSoftLink.h
     cocoa/AccessibilitySoftLink.h
     cocoa/AppSSOSoftLink.h
+    cocoa/CompositorServicesSoftLink.h
     cocoa/ContactsSoftLink.h
     cocoa/CoreMLSoftLink.h
     cocoa/CoreMaterialSoftLink.h
@@ -41,6 +42,7 @@ list(APPEND PAL_PUBLIC_HEADERS
     cocoa/UsageTrackingSoftLink.h
     cocoa/VisionKitCoreSoftLink.h
     cocoa/VisionSoftLink.h
+    cocoa/WebContentAnalysisSoftLink.h
     cocoa/WebContentRestrictionsSoftLink.h
     cocoa/WebPrivacySoftLink.h
     cocoa/WritingToolsUISoftLink.h

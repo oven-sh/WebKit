@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include <WebCore/FloatRect.h>
+#include <WebCore/IntRect.h>
 #include <WebCore/LayoutRect.h>
 #include <WebCore/TransformationMatrix.h>
 #include <wtf/RefCounted.h>
@@ -50,51 +52,48 @@ class RemoteFrameLayoutInfo : public RefCounted<RemoteFrameLayoutInfo> {
 public:
     template<typename... Args> static Ref<RemoteFrameLayoutInfo> create(Args&&... args) { return adoptRef(*new RemoteFrameLayoutInfo(std::forward<Args>(args)...)); }
 
-    LayoutRect windowClipRectInParent() const { return m_windowClipRectInParent; }
     std::optional<LayoutRect> visibleRectInParent() const { return m_visibleRectInParent; }
+    IntRect onScreenRectInChildView() const { return m_onScreenRectInChildView; }
 #if PLATFORM(IOS_FAMILY)
-    std::optional<LayoutRect> exposedContentRectInParent() const { return m_exposedContentRectInParent; }
+    FloatRect exposedContentRectInChildView() const { return m_exposedContentRectInChildView; }
 #endif
     bool ownerHasRenderer() const { return m_ownerHasRenderer; }
     const TransformationMatrix& childFrameOwnerToRootContentTransform() const { return m_childFrameOwnerToRootContentTransform; }
     const TransformationMatrix& absoluteToChildFrameOwnerLocalTransform() const { return m_absoluteToChildFrameOwnerLocalTransform; }
-    float usedZoom() const { return m_usedZoom; }
+    float frameScaleFactor() const { return m_frameScaleFactor; }
     LayoutPoint contentBoxLocation() const { return m_contentBoxLocation; }
     OptionSet<FrameOwnerElementAppearance> ownerElementAppearance() const { return m_ownerElementAppearance; }
 
-    // This maps a rect from the parent frame's content coordinate space into this frame's
-    // window space. This may fail and return std::nullopt for non-affine transforms.
-    WEBCORE_EXPORT std::optional<FloatRect> mapParentContentsToChildWindow(const LayoutRect&) const;
+    WEBCORE_EXPORT friend bool operator==(const RemoteFrameLayoutInfo&, const RemoteFrameLayoutInfo&);
 
 private:
     WEBCORE_EXPORT RemoteFrameLayoutInfo(
-        LayoutRect windowClipRectInParent,
         std::optional<LayoutRect> visibleRectInParent,
+        IntRect onScreenRectInChildView,
 #if PLATFORM(IOS_FAMILY)
-        std::optional<LayoutRect> exposedContentRectInParent,
+        FloatRect exposedContentRectInChildView,
 #endif
         bool ownerHasRenderer,
         TransformationMatrix childFrameOwnerToRootContentTransform,
         TransformationMatrix absoluteToChildFrameOwnerLocalTransform,
-        float usedZoom,
+        float frameScaleFactor,
         LayoutPoint contentBoxLocation,
         OptionSet<FrameOwnerElementAppearance>
     );
 
-    // The parent frame's windowClipRect in the parent's content coordinate space.
-    LayoutRect m_windowClipRectInParent;
-
     // The visible portion of this frame in the parent frame's content coordinate space. This is
     // clipped by the compositor tree but not by the viewport, because IntersectionObserver applies
     // its own viewport clip (layoutViewportRect) at each recursion step.
-    //
-    // To get the part of this frame that is on screen, intersect with windowClipRectInParent.
     std::optional<LayoutRect> m_visibleRectInParent;
 
+    // The portion of this frame that is on screen, in the frame's own view space (i.e.
+    // visibleRectOfChild intersected with windowClipRect mapped to the frame's view space).
+    IntRect m_onScreenRectInChildView;
+
 #if PLATFORM(IOS_FAMILY)
-    // Rectangle of the visible portion of the frame in its parent frame,
-    // in the coordinate space of the document of the parent frame.
-    std::optional<LayoutRect> m_exposedContentRectInParent;
+    // The portion of this frame that should be tiled, in the frame's own view space. Empty means
+    // tile nothing.
+    FloatRect m_exposedContentRectInChildView;
 #endif
 
     // Whether the frame's owner element has a renderer (e.g. not display:none).
@@ -110,8 +109,10 @@ private:
     // absolute coordinate to the child frame owner's local coordinate.
     TransformationMatrix m_absoluteToChildFrameOwnerLocalTransform;
 
-    // Style::ComputedStyle::usedZoom of the owner renderer of the frame.
-    float m_usedZoom;
+    // Scale factor of the frame with respect to its parent frame. Per
+    // Frame::frameScaleFactor, this is the accumulated CSS zoom applied
+    // to the frame element.
+    float m_frameScaleFactor;
 
     // The offset of the content box of the frame's owner element
     // from its border box.

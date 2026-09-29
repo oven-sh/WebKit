@@ -73,7 +73,7 @@ inline FontSelector* FontCascade::fontSelector() const
     return m_fontSelector.get();
 }
 
-inline float FontCascade::tabWidth(const Font& font, const TabSize& tabSize, float position, Font::SyntheticBoldInclusion syntheticBoldInclusion) const
+inline float FontCascade::tabWidth(const Font& font, const TabSize& tabSize, float position) const
 {
     float baseTabWidth = tabSize.widthInPixels(font.spaceWidth());
     float result = 0;
@@ -84,13 +84,12 @@ inline float FontCascade::tabWidth(const Font& font, const TabSize& tabSize, flo
         if (remainder < 0)
             remainder += baseTabWidth;
         result = baseTabWidth - remainder;
-        if (result < font.spaceWidth() / 2)
+        // A tab shorter than half the advance of the '0' glyph (0.5ch) is not recognizable as a tab, so it advances to the subsequent tab stop.
+        // https://drafts.csswg.org/css-text-4/#white-space-phase-2
+        if (result < zeroWidth() / 2)
             result += baseTabWidth;
     }
-    // If our caller passes in SyntheticBoldInclusion::Exclude, that means they're going to apply synthetic bold themselves later.
-    // However, regardless of that, the space characters that are fed into the width calculation need to have their correct width, including the synthetic bold.
-    // So, we've already got synthetic bold applied, so if we're supposed to exclude it, we need to subtract it out here.
-    return result - (syntheticBoldInclusion == Font::SyntheticBoldInclusion::Exclude ? font.syntheticBoldOffset() : 0);
+    return result;
 }
 
 inline float FontCascade::widthForTextUsingSimplifiedMeasuring(StringView text, TextDirection textDirection) const

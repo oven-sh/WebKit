@@ -93,8 +93,8 @@ ExceptionOr<Ref<AudioWorkletNode>> AudioWorkletNode::create(JSC::JSGlobalObject&
         return Exception { ExceptionCode::InvalidStateError, "Audio context's frame is detached"_s };
 
     auto messageChannel = MessageChannel::create(*protect(context.scriptExecutionContext()));
-    auto& nodeMessagePort = messageChannel->port1();
-    auto& processorMessagePort = messageChannel->port2();
+    Ref nodeMessagePort = messageChannel->port1();
+    Ref processorMessagePort = messageChannel->port2();
 
     RefPtr<SerializedScriptValue> serializedOptions;
     {
@@ -106,7 +106,7 @@ ExceptionOr<Ref<AudioWorkletNode>> AudioWorkletNode::create(JSC::JSGlobalObject&
     }
 
     auto parameterData = WTF::move(options.parameterData);
-    auto node = adoptRef(*new AudioWorkletNode(context, name, WTF::move(options), nodeMessagePort));
+    Ref node = adoptRef(*new AudioWorkletNode(context, name, WTF::move(options), WTF::move(nodeMessagePort)));
     node->suspendIfNeeded();
 
     auto result = node->handleAudioNodeOptions(options, { 2, ChannelCountMode::Max, ChannelInterpretation::Speakers });
@@ -120,7 +120,7 @@ ExceptionOr<Ref<AudioWorkletNode>> AudioWorkletNode::create(JSC::JSGlobalObject&
     if (node->numberOfOutputs() > 0)
         context.sourceNodeWillBeginPlayback(node);
 
-    context.audioWorklet().createProcessor(name, processorMessagePort.lenientDisentangle(), serializedOptions.releaseNonNull(), node);
+    context.audioWorklet().createProcessor(name, processorMessagePort->lenientDisentangle(), serializedOptions.releaseNonNull(), node);
 
     {
         // The node should be manually added to the automatic pull node list, even without a connect() call.
@@ -176,8 +176,9 @@ void AudioWorkletNode::initializeAudioParameters(const Vector<AudioParamDescript
 
     Locker locker { m_processLock };
 
+    Ref context = this->context();
     for (auto& descriptor : descriptors) {
-        auto parameter = AudioParam::create(context(), descriptor.name, descriptor.defaultValue, descriptor.minValue, descriptor.maxValue, descriptor.automationRate);
+        auto parameter = AudioParam::create(context, descriptor.name, descriptor.defaultValue, descriptor.minValue, descriptor.maxValue, descriptor.automationRate);
         m_parameters->add(descriptor.name, WTF::move(parameter));
     }
 
@@ -210,7 +211,7 @@ void AudioWorkletNode::process(size_t framesToProcess)
 
     auto zeroOutput = [&] {
         for (unsigned i = 0; i < numberOfOutputs(); ++i)
-            output(i)->bus().zero();
+            protect(output(i)->bus())->zero();
     };
 
     if (!m_processLock.tryLock()) {
@@ -270,7 +271,7 @@ void AudioWorkletNode::process(size_t framesToProcess)
     }
 
     std::optional<ExceptionDetails> exceptionDetails;
-    m_isActiveSource = m_processor->process(m_inputs, m_outputs, m_paramValuesMap, exceptionDetails);
+    m_isActiveSource = protect(m_processor)->process(m_inputs, m_outputs, m_paramValuesMap, exceptionDetails);
     if ((!m_isActiveSource && !hasActiveInputs) || exceptionDetails)
         didFinishProcessingOnRenderingThread(WTF::move(exceptionDetails));
 }
@@ -302,9 +303,9 @@ void AudioWorkletNode::updatePullStatus()
     // If no output is connected, add the node to the automatic pull list.
     // Otherwise, remove it out of the list.
     if (!hasConnectedOutput)
-        context().addAutomaticPullNode(*this);
+        protect(context())->addAutomaticPullNode(*this);
     else
-        context().removeAutomaticPullNode(*this);
+        protect(context())->removeAutomaticPullNode(*this);
 }
 
 void AudioWorkletNode::checkNumberOfChannelsForInput(AudioNodeInput* input)

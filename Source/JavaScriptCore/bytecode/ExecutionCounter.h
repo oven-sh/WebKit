@@ -60,7 +60,7 @@ class ExecutionCounter {
 public:
     ExecutionCounter();
     void NODELETE forceSlowPathConcurrently(); // If you use this, checkIfThresholdCrossedAndSet() may still return false.
-    bool checkIfThresholdCrossedAndSet(CodeBlock*);
+    bool checkIfThresholdCrossedAndSet(CodeBlock*, double startupDeferralScale = 1); // See VM::startupJITDeferralScale(); when != 1 the counter is re-armed to re-check after at most one unscaled period.
     void setNewThreshold(int32_t threshold, CodeBlock* = nullptr);
     void NODELETE deferIndefinitely();
     double count() const { return static_cast<double>(m_totalCount) + m_counter; }
@@ -76,8 +76,8 @@ public:
     }
 
 private:
-    bool hasCrossedThreshold(CodeBlock*) const;
-    bool setThreshold(CodeBlock*);
+    bool hasCrossedThreshold(CodeBlock*, double startupDeferralScale) const;
+    bool setThreshold(CodeBlock*, double startupDeferralScale = 1);
     void NODELETE reset();
 
 public:

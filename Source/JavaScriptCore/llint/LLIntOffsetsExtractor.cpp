@@ -67,6 +67,7 @@
 #include "PrivateFieldPutKind.h"
 #include "ProtoCallFrame.h"
 #include "PutByIdFlags.h"
+#include "RegExpObject.h"
 #include "ShadowChicken.h"
 #include "Structure.h"
 #include "StructureChain.h"

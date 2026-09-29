@@ -99,9 +99,7 @@ bool isDutchLocale(const AtomString& locale)
 }
 
 struct SameSizeAsRenderText : public RenderObject {
-#if ENABLE(TEXT_AUTOSIZING)
     float candidateTextSize;
-#endif
     float widths[4];
     String text;
     std::optional<bool> canUseSimplifiedTextMeasuring;
@@ -254,13 +252,13 @@ static size_t capitalizeWordWithLocale(StringView textContent, unsigned startOff
 
     Vector<char16_t, 32> titlecased(wordLength + 4);
     UErrorCode status = U_ZERO_ERROR;
-    auto realLength = u_strToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8.data(), &status);
+    auto realLength = u_strToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8.legacyCStringPointer(), &status);
     if (U_FAILURE(status)) {
         if (status != U_BUFFER_OVERFLOW_ERROR)
             return 0;
         titlecased.grow(realLength);
         status = U_ZERO_ERROR;
-        u_strToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8.data(), &status);
+        u_strToTitle(titlecased.mutableSpan().data(), titlecased.size(), wordData, wordLength, nullptr, localeUTF8.legacyCStringPointer(), &status);
         if (U_FAILURE(status))
             return 0;
     }
@@ -495,7 +493,7 @@ void RenderText::initiateFontLoadingByAccessingGlyphDataAndComputeCanUseSimplifi
 #endif
     auto whitespaceIsCollapsed = style.collapseWhiteSpace();
     Ref primaryFont = fontCascade.primaryFont();
-    m_canUseSimplifiedTextMeasuring = *m_canUseSimplifiedTextMeasuring && !fontCascade.wordSpacing() && !fontCascade.letterSpacing() && !primaryFont->syntheticBoldOffset() && (&firstLineStyle() == &style || &fontCascade == &firstLineStyle().fontCascade());
+    m_canUseSimplifiedTextMeasuring = *m_canUseSimplifiedTextMeasuring && !fontCascade.wordSpacing() && !fontCascade.letterSpacing() && (&firstLineStyle() == &style || &fontCascade == &firstLineStyle().fontCascade());
 
     if (*m_canUseSimplifiedTextMeasuring) {
         // Additional check on the font codepath.
@@ -550,7 +548,7 @@ void RenderText::styleDidChange(Style::Difference diff, const Style::ComputedSty
             return true;
         if (oldStyle->textSecurity() != newStyle.textSecurity())
             return true;
-        return !newStyle.textTransform().isNone() && oldStyle->computedLocale() != newStyle.computedLocale();
+        return !newStyle.textTransform().isNone() && oldStyle->usedLocale() != newStyle.usedLocale();
     };
     if (needsRenderedTextUpdateOnly())
         updateRenderedText();
@@ -1271,16 +1269,16 @@ static inline float hyphenWidth(RenderText& renderer, const FontCascade& font)
     return font.width(textRun);
 }
 
-float RenderText::maxWordFragmentWidth(const Style::ComputedStyle& style, const FontCascade& font, StringView word, unsigned minimumPrefixLength, unsigned minimumSuffixLength, bool currentCharacterIsSpace, unsigned characterIndex, float xPos, float entireWordWidth, WordTrailingSpace& wordTrailingSpace, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow& glyphOverflow)
+float RenderText::maxWordFragmentWidth(const Style::ComputedStyle& style, const FontCascade& font, StringView word, unsigned minimumPrefixLength, unsigned minimumSuffixLength, unsigned minimumWordLength, bool currentCharacterIsSpace, unsigned characterIndex, float xPos, float entireWordWidth, WordTrailingSpace& wordTrailingSpace, SingleThreadWeakHashSet<const Font>& fallbackFonts, GlyphOverflow& glyphOverflow)
 {
     unsigned suffixStart = 0;
-    if (word.length() <= minimumSuffixLength)
+    if (word.length() <= minimumSuffixLength || word.length() < minimumWordLength)
         return entireWordWidth;
 
     Vector<int, 8> hyphenLocations;
     ASSERT(word.length() >= minimumSuffixLength);
     unsigned hyphenLocation = word.length() - minimumSuffixLength;
-    while ((hyphenLocation = lastHyphenLocation(word, hyphenLocation, Style::toPlatform(style.computedLocale()))) >= std::max(minimumPrefixLength, 1U))
+    while ((hyphenLocation = lastHyphenLocation(word, hyphenLocation, Style::toPlatform(style.usedLocale()))) >= std::max(minimumPrefixLength, 1U))
         hyphenLocations.append(hyphenLocation);
 
     if (hyphenLocations.isEmpty())
@@ -1347,7 +1345,7 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
     unsigned length = string.length();
     auto iteratorMode = mapLineBreakToIteratorMode(style.lineBreak());
     auto contentAnalysis = mapWordBreakToContentAnalysis(style.wordBreak());
-    CachedLineBreakIteratorFactory lineBreakIteratorFactory(string, Style::toPlatform(style.computedLocale()), iteratorMode, contentAnalysis);
+    CachedLineBreakIteratorFactory lineBreakIteratorFactory(string, Style::toPlatform(style.usedLocale()), iteratorMode, contentAnalysis);
     bool needsWordSpacing = false;
     bool ignoringSpaces = false;
     bool isSpace = false;
@@ -1362,12 +1360,14 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
     float maxWordWidth = std::numeric_limits<float>::max();
     unsigned minimumPrefixLength = 0;
     unsigned minimumSuffixLength = 0;
-    if (style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.computedLocale()))) {
+    unsigned minimumWordLength = 0;
+    if (style.hyphens() == Hyphens::Auto && canHyphenate(Style::toPlatform(style.usedLocale()))) {
         maxWordWidth = 0;
 
-        // Map 'hyphenate-limit-{before,after}: auto;' to 2.
+        // Map 'hyphenate-limit-{before,after}: auto;' to 2, and 'hyphenate-limit-chars: auto ...' (word component) to 5.
         minimumPrefixLength = style.hyphenateLimitBefore().tryValue().value_or(2).value;
         minimumSuffixLength = style.hyphenateLimitAfter().tryValue().value_or(2).value;
+        minimumWordLength = style.internalHyphenateLimitCharsWord().tryValue().value_or(5).value;
     }
 
     std::optional<LayoutUnit> firstGlyphLeftOverflow;
@@ -1458,7 +1458,7 @@ void RenderText::computeMinMaxIntrinsicLogicalWidths(float leadingWidth, SingleT
                 currMinWidth = hyphenWidth(*this, font);
 
             if (w > maxWordWidth) {
-                auto maxFragmentWidth = maxWordFragmentWidth(style, font, StringView(string).substring(i, wordLen), minimumPrefixLength, minimumSuffixLength, isSpace, i, leadingWidth + currMaxWidth, w, wordTrailingSpace, fallbackFonts, glyphOverflow);
+                auto maxFragmentWidth = maxWordFragmentWidth(style, font, StringView(string).substring(i, wordLen), minimumPrefixLength, minimumSuffixLength, minimumWordLength, isSpace, i, leadingWidth + currMaxWidth, w, wordTrailingSpace, fallbackFonts, glyphOverflow);
                 currMinWidth += maxFragmentWidth - w; // This, when combined with "currMinWidth += w" below, has the effect of executing "currMinWidth += maxFragmentWidth" instead.
                 maxWordWidth = std::max(maxWordWidth, maxFragmentWidth);
             }
@@ -1630,7 +1630,7 @@ void RenderText::setSelectionState(HighlightState state)
 
 static inline bool NODELETE isInlineFlowOrEmptyText(const RenderObject& renderer)
 {
-    if (is<RenderInline>(renderer))
+    if (renderer.isInlineBox())
         return true;
     auto* textRenderer = dynamicDowncast<RenderText>(renderer);
     return textRenderer && textRenderer->text().isEmpty();
@@ -1770,11 +1770,11 @@ String applyTextTransform(const Style::ComputedStyle& style, const String& text,
     // https://w3c.github.io/csswg-drafts/css-text/#text-transform-order
     auto modified = text;
     if (transform.contains(Style::TextTransformValue::Capitalize))
-        modified = capitalize(modified, previousCharacter, Style::toPlatform(style.computedLocale()));
+        modified = capitalize(modified, previousCharacter, Style::toPlatform(style.usedLocale()));
     else if (transform.contains(Style::TextTransformValue::Uppercase))
-        modified = modified.convertToUppercaseWithLocale(Style::toPlatform(style.computedLocale()));
+        modified = modified.convertToUppercaseWithLocale(Style::toPlatform(style.usedLocale()));
     else if (transform.contains(Style::TextTransformValue::Lowercase))
-        modified = modified.convertToLowercaseWithLocale(Style::toPlatform(style.computedLocale()));
+        modified = modified.convertToLowercaseWithLocale(Style::toPlatform(style.usedLocale()));
 
     if (transform.contains(Style::TextTransformValue::FullWidth))
         modified = transformToFullWidth(modified);
@@ -1810,7 +1810,7 @@ void RenderText::setRenderedText(const String& newText)
         break;
 #if !PLATFORM(IOS_FAMILY)
     // We use the same characters here as for list markers.
-    // See the listMarkerText function in RenderListMarker.cpp.
+    // See the listMarkerText function in RenderListOutsideMarker.cpp.
     case TextSecurity::Circle:
         secureText(whiteBullet);
         break;

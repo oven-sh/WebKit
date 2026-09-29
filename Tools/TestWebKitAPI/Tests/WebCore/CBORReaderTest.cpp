@@ -31,6 +31,7 @@
 
 #if ENABLE(WEB_AUTHN)
 
+#include <WebCore/AuthenticationExtensionsClientOutputs.h>
 #include <WebCore/CBORReader.h>
 #include <limits>
 #include <utility>
@@ -195,13 +196,13 @@ TEST(CBORReaderTest, TestReadStringWithNUL)
         { "string_without_nul"_str,
             { 0x72, 0x73, 0x74, 0x72, 0x69, 0x6E, 0x67, 0x5F, 0x77, 0x69, 0x74, 0x68,
                 0x6F, 0x75, 0x74, 0x5F, 0x6E, 0x75, 0x6C } },
-        { String({ "nul_terminated_string\0", 22 }),
+        { String::fromLatin1({ "nul_terminated_string\0", 22 }),
             { 0x76, 0x6E, 0x75, 0x6C, 0x5F, 0x74, 0x65, 0x72, 0x6D, 0x69, 0x6E, 0x61,
                 0x74, 0x65, 0x64, 0x5F, 0x73, 0x74, 0x72, 0x69, 0x6E, 0x67, 0x00 } },
-        { String({ "embedded\0nul", 12 }),
+        { String::fromLatin1({ "embedded\0nul", 12 }),
             { 0x6C, 0x65, 0x6D, 0x62, 0x65, 0x64, 0x64, 0x65, 0x64, 0x00, 0x6E, 0x75,
                 0x6C } },
-        { String({ "trailing_nuls\0\0", 15 }),
+        { String::fromLatin1({ "trailing_nuls\0\0", 15 }),
             { 0x6F, 0x74, 0x72, 0x61, 0x69, 0x6C, 0x69, 0x6E, 0x67, 0x5F, 0x6E, 0x75,
                 0x6C, 0x73, 0x00, 0x00 } },
     };
@@ -762,6 +763,20 @@ TEST(CBORReaderTest, TestUnsupportedSimplevalue)
         EXPECT_FALSE(cbor.has_value());
         EXPECT_TRUE(errorCode == CBORReader::DecoderError::UnsupportedSimpleValue);
     }
+}
+
+TEST(CBORReaderTest, AuthExtensionsFromCBOR_CredPropsWithoutRk)
+{
+    // CBOR encoding of {"credProps": {}} — credProps map present but no "rk" key.
+    // a1                          -- map(1)
+    //    69                       -- text(9)
+    //       63726564 50726f7073   -- "credProps"
+    //    a0                       -- map(0)
+    Vector<uint8_t> cborData { 0xa1, 0x69, 0x63, 0x72, 0x65, 0x64, 0x50, 0x72, 0x6f, 0x70, 0x73, 0xa0 };
+    auto result = WebCore::AuthenticationExtensionsClientOutputs::fromCBOR(cborData);
+    ASSERT_TRUE(result.has_value());
+    ASSERT_TRUE(result->credProps.has_value());
+    EXPECT_FALSE(result->credProps->rk);
 }
 
 } // namespace TestWebKitAPI

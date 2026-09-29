@@ -37,23 +37,17 @@ constexpr double kMonolithicPipelineJobPeriod = 0.002;
 // Time interval in seconds that we should try to prune default buffer pools.
 constexpr double kTimeElapsedForPruneDefaultBufferPool = 0.25;
 
-bool ValidateIdenticalPriority(const egl::ContextMap &contexts, egl::ContextPriority sharedPriority)
+bool ValidateIdenticalPriority(const egl::SharedContextMap &contexts,
+                               egl::ContextPriority sharedPriority)
 {
     if (sharedPriority == egl::ContextPriority::InvalidEnum)
     {
         return false;
     }
 
-    for (auto context : contexts)
-    {
-        const ContextVk *contextVk = vk::GetImpl(context.second);
-        if (contextVk->getPriority() != sharedPriority)
-        {
-            return false;
-        }
-    }
-
-    return true;
+    return contexts.forEach([sharedPriority](const gl::Context *context) {
+        return vk::GetImpl(context)->getPriority() == sharedPriority;
+    });
 }
 }  // namespace
 
@@ -132,10 +126,9 @@ angle::Result ShareGroupVk::updateContextsPriority(ContextVk *contextVk,
 
     vk::ProtectionTypes protectionTypes;
     protectionTypes.set(contextVk->getProtectionType());
-    for (auto context : getContexts())
-    {
-        protectionTypes.set(vk::GetImpl(context.second)->getProtectionType());
-    }
+    getContexts().forEach([&protectionTypes](const gl::Context *context) {
+        protectionTypes.set(vk::GetImpl(context)->getProtectionType());
+    });
 
     {
         vk::ScopedQueueSerialIndex index;
@@ -144,13 +137,13 @@ angle::Result ShareGroupVk::updateContextsPriority(ContextVk *contextVk,
                                                       newPriority, index.get()));
     }
 
-    for (auto context : getContexts())
-    {
-        ContextVk *sharedContextVk = vk::GetImpl(context.second);
+    egl::ContextPriority oldPriority = mContextsPriority;
+    getContexts().forEach([oldPriority, newPriority](gl::Context *context) {
+        ContextVk *sharedContextVk = vk::GetImpl(context);
 
-        ASSERT(sharedContextVk->getPriority() == mContextsPriority);
+        ASSERT(sharedContextVk->getPriority() == oldPriority);
         sharedContextVk->setPriority(newPriority);
-    }
+    });
     mContextsPriority = newPriority;
 
     return angle::Result::Continue;
@@ -268,7 +261,7 @@ angle::Result TextureUpload::onMutableTextureUpload(ContextVk *contextVk, Textur
     // If the mutable texture is consistently specified, we initialize a full mip chain for it.
     if (mPrevUploadedMutableTexture->isMutableTextureConsistentlySpecifiedForFlush())
     {
-        ANGLE_TRY(mPrevUploadedMutableTexture->ensureImageInitialized(
+        ANGLE_TRY(mPrevUploadedMutableTexture->ensureImageAndReadViewsInitialized(
             contextVk, ImageMipLevels::EnabledLevels));
         contextVk->getPerfCounters().mutableTexturesUploaded++;
     }
@@ -405,19 +398,17 @@ void ShareGroupVk::finalizeImageLayoutInAllSharedContexts(vk::ImageHelper *image
 {
     if (image->useTileMemory())
     {
-        for (auto context : mState.getContexts())
-        {
-            ContextVk *sharedContextVk = vk::GetImpl(context.second);
+        mState.getContexts().forEach([image](gl::Context *context) {
+            ContextVk *sharedContextVk = vk::GetImpl(context);
             sharedContextVk->removeImageWithTileMemory(image);
-        }
+        });
     }
 
     vk::ImageRenderPassUsage &ImageRenderPassUsage = image->getRenderPassUsage();
     if (ImageRenderPassUsage.hasAttachmentUsage() || image->isForeignImage())
     {
-        for (auto context : mState.getContexts())
-        {
-            ContextVk *sharedContextVk = vk::GetImpl(context.second);
+        mState.getContexts().forEach([image, &ImageRenderPassUsage](gl::Context *context) {
+            ContextVk *sharedContextVk = vk::GetImpl(context);
             bool finalized             = sharedContextVk->finalizeImageLayout(image);
 
             if ((finalized && ImageRenderPassUsage.hasAttachmentUsage()) ||
@@ -445,7 +436,7 @@ void ShareGroupVk::finalizeImageLayoutInAllSharedContexts(vk::ImageHelper *image
                 }
                 ASSERT(!sharedContextVk->hasForeignImagesToTransition());
             }
-        }
+        });
     }
 }
 }  // namespace rx

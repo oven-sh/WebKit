@@ -28,6 +28,7 @@
 #if ENABLE(GPU_PROCESS)
 
 #include "RemoteGPU.h"
+#include "SharedVideoFrame.h"
 #include "StreamMessageReceiver.h"
 #include "WebGPUExtent3D.h"
 #include "WebGPUIdentifier.h"
@@ -54,8 +55,14 @@ class StreamServerConnection;
 
 namespace WebKit {
 
+class GPUConnectionToWebProcess;
+struct SharedVideoFrame;
+
 namespace WebGPU {
 struct ImageCopyExternalImage;
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+struct ImageCopyExternalImageVideoSource;
+#endif
 struct ImageCopyTexture;
 struct ImageCopyTextureTagged;
 struct ImageDataLayout;
@@ -65,9 +72,9 @@ class ObjectHeap;
 class RemoteQueue final : public IPC::StreamMessageReceiver {
     WTF_MAKE_TZONE_ALLOCATED(RemoteQueue);
 public:
-    static Ref<RemoteQueue> create(WebCore::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
+    static Ref<RemoteQueue> create(GPUConnectionToWebProcess& gpuConnectionToWebProcess, WebCore::WebGPU::Queue& queue, WebGPU::ObjectHeap& objectHeap, Ref<IPC::StreamServerConnection>&& streamConnection, RemoteGPU& gpu, WebGPUIdentifier identifier)
     {
-        return adoptRef(*new RemoteQueue(queue, objectHeap, WTF::move(streamConnection), gpu, identifier));
+        return adoptRef(*new RemoteQueue(gpuConnectionToWebProcess, queue, objectHeap, WTF::move(streamConnection), gpu, identifier));
     }
 
     virtual ~RemoteQueue();
@@ -79,7 +86,7 @@ public:
 private:
     friend class WebGPU::ObjectHeap;
 
-    RemoteQueue(WebCore::WebGPU::Queue&, WebGPU::ObjectHeap&, Ref<IPC::StreamServerConnection>&&, RemoteGPU&, WebGPUIdentifier);
+    RemoteQueue(GPUConnectionToWebProcess&, WebCore::WebGPU::Queue&, WebGPU::ObjectHeap&, Ref<IPC::StreamServerConnection>&&, RemoteGPU&, WebGPUIdentifier);
 
     RemoteQueue(const RemoteQueue&) = delete;
     RemoteQueue(RemoteQueue&&) = delete;
@@ -121,7 +128,18 @@ private:
     void copyExternalImageToTexture(
         const WebGPU::ImageCopyExternalImage& source,
         const WebGPU::ImageCopyTextureTagged& destination,
+        const WebGPU::Extent3D& copySize,
+        CompletionHandler<void()>&&);
+
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+    void setSharedVideoFrameSemaphore(IPC::Semaphore&&);
+    void setSharedVideoFrameMemory(WebCore::SharedMemoryHandle&&);
+
+    void copyExternalImageFromVideoFrameToTexture(
+        WebGPU::ImageCopyExternalImageVideoSource&&,
+        const WebGPU::ImageCopyTextureTagged& destination,
         const WebGPU::Extent3D& copySize);
+#endif
 
     void setLabel(String&&);
     void destruct();
@@ -131,6 +149,9 @@ private:
     const Ref<IPC::StreamServerConnection> m_streamConnection;
     WeakRef<RemoteGPU> m_gpu;
     WebGPUIdentifier m_identifier;
+#if PLATFORM(COCOA) && ENABLE(VIDEO)
+    SharedVideoFrameReader m_sharedVideoFrameReader;
+#endif
 };
 
 } // namespace WebKit

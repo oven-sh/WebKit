@@ -1582,7 +1582,7 @@ URLParser::URLParser(URL& result, String&& input, const URL& base, const URLText
 template<typename CharacterType>
 void URLParser::parse(std::span<const CharacterType> input, const URL& base, const URLTextEncoding* nonUTF8QueryEncoding)
 {
-    URL_PARSER_LOG("Parsing URL <%s> base <%s>", String(input).utf8().data(), base.string().utf8().data());
+    URL_PARSER_LOG("Parsing URL <%s> base <%s>", String(input).utf8(), base.string().utf8());
     ASSERT(!m_url.isValid() && m_url.m_string.isNull());
     ASSERT(m_asciiBuffer.isEmpty());
 
@@ -1639,7 +1639,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
         Fragment,
     };
 
-#define LOG_STATE(x) URL_PARSER_LOG("State %s, code point %c, parsed data <%s> size %zu", x, *c, parsedDataView(0, currentPosition(c)).utf8().data(), currentPosition(c))
+#define LOG_STATE(x) URL_PARSER_LOG("State %s, code point %c, parsed data <%s> size %zu", x, *c, parsedDataView(0, currentPosition(c)).utf8(), currentPosition(c))
 #define LOG_FINAL_STATE(x) URL_PARSER_LOG("Final State: %s", x)
 
     State state = State::SchemeStart;
@@ -2902,7 +2902,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
     } else
         m_url.m_string = String::adopt(WTF::move(m_asciiBuffer));
     m_url.m_isValid = true;
-    URL_PARSER_LOG("Parsed URL <%s>\n\n", m_url.m_string.utf8().data());
+    URL_PARSER_LOG("Parsed URL <%s>\n\n", m_url.m_string.utf8());
 }
 
 template<typename CharacterType>
@@ -3072,7 +3072,7 @@ enum class URLParser::IPv4ParsingError {
 
 // https://url.spec.whatwg.org/#concept-ipv4-parser
 template<typename CharacterTypeForSyntaxViolation, typename CharacterType>
-Expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>& iteratorForSyntaxViolationPosition, std::span<const CharacterType> host)
+std::expected<URLParser::IPv4Address, URLParser::IPv4ParsingError> URLParser::parseIPv4Host(const CodePointIterator<CharacterTypeForSyntaxViolation>& iteratorForSyntaxViolationPosition, std::span<const CharacterType> host)
 {
     auto* p = host.data();
     auto* end = p + host.size();
@@ -3887,6 +3887,12 @@ auto URLParser::parseHostAndPort(CodePointIterator<CharacterType> iterator) -> H
 
 std::optional<String> URLParser::formURLDecode(StringView input)
 {
+    // Fast path for input that decodes to itself. The general path below makes four full copies
+    // of the input, which is very expensive for long query parameter values. Restricted to ASCII
+    // because the UTF-8 round trip below is what rejects unpaired surrogates. rdar://185796614
+    if (input.containsOnlyASCII() && input.find('%') == notFound)
+        return input.toString();
+
     auto utf8 = input.utf8(StrictConversion);
     if (utf8.isNull())
         return std::nullopt;
@@ -3984,7 +3990,7 @@ bool URLParser::allValuesEqual(const URL& a, const URL& b)
         a.m_pathAfterLastSlash,
         a.m_pathEnd,
         a.m_queryEnd,
-        a.m_string.utf8().data(),
+        a.m_string.utf8(),
         b.m_isValid,
         b.m_hasOpaquePath,
         b.m_protocolIsInHTTPFamily,
@@ -3997,7 +4003,7 @@ bool URLParser::allValuesEqual(const URL& a, const URL& b)
         b.m_pathAfterLastSlash,
         b.m_pathEnd,
         b.m_queryEnd,
-        b.m_string.utf8().data());
+        b.m_string.utf8());
 
     return a.m_string == b.m_string
         && a.m_isValid == b.m_isValid

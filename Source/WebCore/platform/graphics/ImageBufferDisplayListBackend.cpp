@@ -31,22 +31,22 @@
 
 namespace WebCore {
 
-std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::create(const Parameters& parameters, const ImageBufferCreationContext&)
+std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::create(const ImageBufferParameters& parameters, const ImageBufferCreationContext&)
 {
     return std::unique_ptr<ImageBufferDisplayListBackend>(new ImageBufferDisplayListBackend(parameters, ControlFactory::singleton()));
 }
 
 
-std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::create(const FloatSize& size, float resolutionScale, const DestinationColorSpace& colorSpace, PixelFormat pixelFormat, RenderingPurpose purpose, ControlFactory& controlFactory)
+std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::create(const FloatSize& size, float resolutionScale, const ColorSpace& colorSpace, PixelFormat pixelFormat, RenderingPurpose purpose, ControlFactory& controlFactory)
 {
-    Parameters parameters { ImageBuffer::calculateBackendSize(size, resolutionScale), resolutionScale, colorSpace, { pixelFormat }, purpose };
+    ImageBufferParameters parameters { size, resolutionScale, colorSpace, { pixelFormat }, purpose };
     return std::unique_ptr<ImageBufferDisplayListBackend>(new ImageBufferDisplayListBackend(parameters, controlFactory));
 }
 
-ImageBufferDisplayListBackend::ImageBufferDisplayListBackend(const Parameters& parameters, ControlFactory& controlFactory)
+ImageBufferDisplayListBackend::ImageBufferDisplayListBackend(const ImageBufferParameters& parameters, ControlFactory& controlFactory)
     : ImageBufferBackend(parameters)
     , m_controlFactory(controlFactory)
-    , m_drawingContext(parameters.backendSize)
+    , m_drawingContext(FloatRect { { }, parameters.backendSize() })
 {
 }
 
@@ -57,7 +57,7 @@ GraphicsContext& ImageBufferDisplayListBackend::context()
 
 RefPtr<NativeImage> ImageBufferDisplayListBackend::copyNativeImage()
 {
-    RefPtr buffer = ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Snapshot, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    RefPtr buffer = ImageBuffer::create(size(), RenderingMode::Unaccelerated, RenderingPurpose::Snapshot, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!buffer)
         return nullptr;
 
@@ -69,7 +69,7 @@ RefPtr<NativeImage> ImageBufferDisplayListBackend::copyNativeImage()
 
 RefPtr<SharedBuffer> ImageBufferDisplayListBackend::sinkIntoPDFDocument()
 {
-    RefPtr buffer = ImageBuffer::create(size(), RenderingMode::PDFDocument, RenderingPurpose::Snapshot, 1, DestinationColorSpace::SRGB(), PixelFormat::BGRA8);
+    RefPtr buffer = ImageBuffer::create(size(), RenderingMode::PDFDocument, RenderingPurpose::Snapshot, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
     if (!buffer)
         return nullptr;
 
@@ -84,16 +84,6 @@ String ImageBufferDisplayListBackend::debugDescription() const
     TextStream stream;
     stream << "ImageBufferDisplayListBackend " << this;
     return stream.release();
-}
-
-void ImageBufferDisplayListBackend::replaceFontsWithRebuildData()
-{
-    m_drawingContext.replaceFontsWithRebuildData();
-}
-
-void ImageBufferDisplayListBackend::rebuildFonts()
-{
-    m_drawingContext.rebuildFonts();
 }
 
 } // namespace WebCore

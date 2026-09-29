@@ -42,6 +42,7 @@ class HTMLFormElement;
 class HTMLImageLoader;
 class HTMLMapElement;
 class Image;
+class LayoutSize;
 class SecurityOrigin;
 
 struct ImageCandidate;
@@ -136,6 +137,7 @@ public:
 #endif
 
     void loadDeferredImage();
+    void lazyLoadIntersectionCallbackInvoked(bool isIntersecting);
 
     AtomString srcsetForBindings() const;
 
@@ -241,6 +243,8 @@ private:
     ImageCandidate bestFitSourceFromPictureElement();
 
     std::optional<float> autoSizesLayoutWidth() const;
+
+    LayoutSize naturalSize() const;
 
     void copyNonAttributePropertiesFromElement(const Element&) final;
 

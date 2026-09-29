@@ -44,6 +44,7 @@
 #include <wtf/RunLoop.h>
 #include <wtf/Seconds.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/TextStream.h>
 
 namespace WebKit {
 
@@ -64,7 +65,7 @@ static void printSpeculativeLoadingDiagnosticMessageCounts()
 {
     LOG(NetworkCacheSpeculativePreloading, "-- Speculative loading statistics --");
     for (auto& [message, count] : allSpeculativeLoadingDiagnosticMessages())
-        LOG(NetworkCacheSpeculativePreloading, "%s: %u", message.utf8().data(), count);
+        LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << message << ": "_s << count);
 }
 #endif
 
@@ -243,9 +244,9 @@ private:
             return;
 
 #if !LOG_DISABLED
-        LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Saving to disk list of subresources for '%s':", m_mainResourceKey.identifier().utf8().data());
+        LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Saving to disk list of subresources for '"_s << m_mainResourceKey.identifier() << "':"_s);
         for (auto& subresourceLoad : m_subresourceLoads)
-            LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) * Subresource: '%s'.", subresourceLoad->key.identifier().utf8().data());
+            LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) * Subresource: '"_s << subresourceLoad->key.identifier() << "'."_s);
 #endif
 
         Ref storage = m_storage.get();
@@ -300,12 +301,12 @@ bool SpeculativeLoadManager::canRetrieve(const Key& storageKey, const WebCore::R
     Ref cache = m_cache.get();
     if (auto preloadedEntry = m_preloadedEntries.get(storageKey)) {
         if (!canUsePreloadedEntry(*preloadedEntry, request)) {
-            LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Retrieval: Could not use preloaded entry to satisfy request for '%s' due to HTTP headers mismatch:", storageKey.identifier().utf8().data());
+            LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Retrieval: Could not use preloaded entry to satisfy request for '"_s << storageKey.identifier() << "' due to HTTP headers mismatch:"_s);
             logSpeculativeLoadingDiagnosticMessage(cache->networkProcess(), frameID, preloadedEntry->wasRevalidated() ? DiagnosticLoggingKeys::wastedSpeculativeWarmupWithRevalidationKey() : DiagnosticLoggingKeys::wastedSpeculativeWarmupWithoutRevalidationKey());
             return false;
         }
 
-        LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Retrieval: Using preloaded entry to satisfy request for '%s':", storageKey.identifier().utf8().data());
+        LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Retrieval: Using preloaded entry to satisfy request for '"_s << storageKey.identifier() << "':"_s);
         logSpeculativeLoadingDiagnosticMessage(cache->networkProcess(), frameID, preloadedEntry->wasRevalidated() ? DiagnosticLoggingKeys::successfulSpeculativeWarmupWithRevalidationKey() : DiagnosticLoggingKeys::successfulSpeculativeWarmupWithoutRevalidationKey());
         return true;
     }
@@ -322,12 +323,12 @@ bool SpeculativeLoadManager::canRetrieve(const Key& storageKey, const WebCore::R
     }
 
     if (!canUsePendingPreload(*pendingPreload, request)) {
-        LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Retrieval: revalidation already in progress for '%s' but unusable due to HTTP headers mismatch:", storageKey.identifier().utf8().data());
+        LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Retrieval: revalidation already in progress for '"_s << storageKey.identifier() << "' but unusable due to HTTP headers mismatch:"_s);
         logSpeculativeLoadingDiagnosticMessage(cache->networkProcess(), frameID, DiagnosticLoggingKeys::wastedSpeculativeWarmupWithRevalidationKey());
         return false;
     }
 
-    LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Retrieval: revalidation already in progress for '%s':", storageKey.identifier().utf8().data());
+    LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Retrieval: revalidation already in progress for '"_s << storageKey.identifier() << "':"_s);
 
     return true;
 }
@@ -531,7 +532,7 @@ void SpeculativeLoadManager::revalidateSubresource(const SubresourceInfo& subres
 
     ResourceRequest revalidationRequest = constructRevalidationRequest(key, subresourceInfo, entry.get());
 
-    LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Speculatively revalidating '%s':", key.identifier().utf8().data());
+    LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Speculatively revalidating '"_s << key.identifier() << "':"_s);
 
     Ref revalidator = SpeculativeLoad::create(protect(m_cache), frameID, revalidationRequest, WTF::move(entry), isNavigatingToAppBoundDomain, allowPrivacyProxy, advancedPrivacyProtections, [weakThis = WeakPtr { *this }, key, revalidationRequest, frameID](std::unique_ptr<Entry> revalidatedEntry) {
         ASSERT(!revalidatedEntry || !revalidatedEntry->needsValidation());
@@ -540,7 +541,7 @@ void SpeculativeLoadManager::revalidateSubresource(const SubresourceInfo& subres
         if (!checkedThis)
             return;
         auto protectRevalidator = checkedThis->m_pendingPreloads.take(key);
-        LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Speculative revalidation completed for '%s':", key.identifier().utf8().data());
+        LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Speculative revalidation completed for '"_s << key.identifier() << "':"_s);
 
         if (checkedThis->satisfyPendingRequests(key, revalidatedEntry.get())) {
             if (revalidatedEntry)
@@ -629,7 +630,7 @@ void SpeculativeLoadManager::startSpeculativeRevalidation(const GlobalFrameID& f
         if (!subresourceInfo.isTransient())
             preloadEntry(key, subresourceInfo, frameID, isNavigatingToAppBoundDomain, allowPrivacyProxy, advancedPrivacyProtections);
         else {
-            LOG(NetworkCacheSpeculativePreloading, "(NetworkProcess) Not preloading '%s' because it is marked as transient", key.identifier().utf8().data());
+            LOG_WITH_STREAM(NetworkCacheSpeculativePreloading, stream << "(NetworkProcess) Not preloading '"_s << key.identifier() << "' because it is marked as transient"_s);
             m_notPreloadedEntries.add(key, makeUnique<ExpiringEntry>([weakThis = WeakPtr { *this }, key, frameID] {
                 CheckedPtr checkedThis = weakThis.get();
                 if (!checkedThis)

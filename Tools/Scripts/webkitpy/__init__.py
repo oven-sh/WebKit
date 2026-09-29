@@ -155,7 +155,7 @@ else:
 AutoInstall.register(Package('webkitscmpy', Version(4, 0, 0)), local=True)
 AutoInstall.register(Package('webkitbugspy', Version(0, 3, 1)), local=True)
 AutoInstall.register(Package('webkitexpectationspy', Version(1, 0, 0)), local=True)
-AutoInstall.register(Package('yaml', Version(6, 0, 3), pypi_name='PyYAML', wheel=True))
+AutoInstall.register(Package('yaml', Version(6, 0, 3), pypi_name='PyYAML', wheel=(sys.version_info < (3, 15))))
 
 import webkitscmpy
 

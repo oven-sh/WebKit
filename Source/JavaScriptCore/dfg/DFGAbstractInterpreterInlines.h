@@ -214,15 +214,15 @@ void AbstractInterpreter<AbstractStateType>::verifyEdge(Node* node, Edge edge)
     if (edge.node()->isTuple()) {
         if (edge.useKind() == UntypedUse && node->op() == ExtractFromTuple)
             return;
-        DFG_CRASH(m_graph, node, toCString("Tuple edge verification error: ", node, "->", edge, " was expected to have Untyped use kind (had ", edge.useKind(),
-            "). Has type ", SpeculationDump(m_state.forTupleNodeWithoutFastForward(edge.node(), node->extractOffset()).m_type)).data(),
+        DFG_CRASH(m_graph, node, toUTF8CString("Tuple edge verification error: ", node, "->", edge, " was expected to have Untyped use kind (had ", edge.useKind(),
+            "). Has type ", SpeculationDump(m_state.forTupleNodeWithoutFastForward(edge.node(), node->extractOffset()).m_type)).legacyCStringPointer(),
             AbstractInterpreterInvalidType, node->op(), edge->op(), edge.useKind(), m_state.forNodeWithoutFastForward(node).m_type);
     }
 
     if (!(m_state.forNodeWithoutFastForward(edge).m_type & ~typeFilterFor(edge.useKind())))
         return;
     
-    DFG_CRASH(m_graph, node, toCString("Edge verification error: ", node, "->", edge, " was expected to have type ", SpeculationDump(typeFilterFor(edge.useKind())), " but has type ", SpeculationDump(forNode(edge).m_type), " (", forNode(edge).m_type, ")").data(), AbstractInterpreterInvalidType, node->op(), edge->op(), edge.useKind(), forNode(edge).m_type);
+    DFG_CRASH(m_graph, node, toUTF8CString("Edge verification error: ", node, "->", edge, " was expected to have type ", SpeculationDump(typeFilterFor(edge.useKind())), " but has type ", SpeculationDump(forNode(edge).m_type), " (", forNode(edge).m_type, ")").legacyCStringPointer(), AbstractInterpreterInvalidType, node->op(), edge->op(), edge.useKind(), forNode(edge).m_type);
 }
 
 template<typename AbstractStateType>
@@ -2667,7 +2667,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
             setConstant(node, jsBoolean(childValue.isCell() && childValue.asCell() == node->cellOperand()->cell()));
             break;
         }
-        
+
+        // Something whose type rules the cell's type out is not that cell: an iterator object is not the sentinel cell that
+        // op_iterator_close_check compares it with, for one.
+        if (!(forNode(childNode).m_type & speculationFromCell(node->cellOperand()->cell()))) {
+            setConstant(node, jsBoolean(false));
+            break;
+        }
+
         setNonCellTypeForNode(node, SpecBoolean);
         break;
     }
@@ -3820,8 +3827,11 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
                     // Symbol.iterator, and any mutation to Set.prototype[Symbol.iterator] invalidates this code
                     // via the prototype-change watchpoints installed during compilation, so the slow path can
                     // never reach a user-defined iterator from here.
+                    //
+                    // FixupPhase arms the Set iterator protocol watchpoint on node->child1(), so child1's global
+                    // object must be used.
                     bool canFold = false;
-                    JSGlobalObject* globalObject = m_graph.globalObjectFor(node->origin.semantic);
+                    JSGlobalObject* globalObject = m_graph.globalObjectFor(node->child1()->origin.semantic);
                     if (Structure* originalSetStructure = globalObject->setStructureConcurrently()) {
                         if (forNode(node->child1()).m_structure.isSubsetOf(RegisteredStructureSet(m_graph.registerStructure(originalSetStructure))))
                             canFold = true;
@@ -4450,6 +4460,14 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case GetGlobalThis: {
         setTypeForNode(node, SpecGlobalProxy);
+        break;
+    }
+
+    case GetLazyClosureVar: {
+        if (JSValue value = m_graph.tryGetConstantClosureVar(forNode(node->child1()), node->scopeOffset()))
+            setConstant(node, *m_graph.freeze(value));
+        else
+            makeBytecodeTopForNode(node);
         break;
     }
 
@@ -5934,7 +5952,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
-    case DateGetInt32OrNaN: {
+    case DateGetStorage: {
+        clearForNode(node);
+        break;
+    }
+
+    case DateGetInt32OrNaN:
+    case DateGetMilliseconds: {
         setNonCellTypeForNode(node, SpecInt32Only | SpecDoublePureNaN);
         break;
     }

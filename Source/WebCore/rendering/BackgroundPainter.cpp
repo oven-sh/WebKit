@@ -96,6 +96,10 @@ void BackgroundPainter::paintBackground(const LayoutRect& paintRect, BleedAvoida
     auto compositeOp = document().compositeOperatorForBackgroundColor(backgroundColor, m_renderer);
 
     paintFillLayers(backgroundColor, m_renderer.style().backgroundLayers(), m_renderer.style().usedZoomForLength(), paintRect, bleedAvoidance, compositeOp);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    AXCustomColorModeController::paintSurfaceHairlineIfNecessary(m_paintInfo.context(), document(), m_renderer, paintRect);
+#endif
 }
 
 void BackgroundPainter::paintRootBoxFillLayers() const
@@ -198,7 +202,7 @@ static void applyBoxShadowForBackground(GraphicsContext& context, const Style::C
             },
             shadow.blur.resolveZoom(zoomFactor),
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-            axCustomColorModeShadowColor(colorResolver, style, shadow.color),
+            AXCustomColorModeController::shadowColor(colorResolver, style, shadow),
 #else
             colorResolver.colorResolvingCurrentColorApplyingColorFilter(shadow.color),
 #endif
@@ -552,14 +556,6 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                     return m_renderer.imageOrientation();
             }();
 
-            RefPtr imageToDraw = image;
-#if ENABLE(AX_CUSTOM_COLOR_MODE)
-            if constexpr (std::same_as<Layer, Style::BackgroundLayer>) {
-                if (RefPtr adjusted = axCustomColorModeAdjustedBackgroundImage(context, document(), bgImage->cachedImage(), *image, geometry.tileSize, orientation))
-                    imageToDraw = WTF::move(adjusted);
-            }
-#endif
-
             ImagePaintingOptions options = {
                 op == CompositeOperator::SourceOver ? layer.layer.compositeForPainting(layer.isLast) : op,
                 layerBlendMode,
@@ -573,7 +569,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                 style.dynamicRangeLimit().toPlatformDynamicRangeLimit()
             };
 
-            auto drawResult = context.drawTiledImage(*imageToDraw, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options);
+            auto drawResult = context.drawTiledImage(*image, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options);
             if (drawResult == ImageDrawResult::DidRequestDecoding) {
                 ASSERT(bgImage->hasCachedImage());
                 protect(bgImage->cachedImage())->addClientWaitingForAsyncDecoding(protect(m_renderer)->cachedImageClient());
@@ -668,6 +664,12 @@ template<typename Layer> BackgroundImageGeometry BackgroundPainter::calculateFil
         if (renderer.isDocumentElementRenderer()) {
             positioningAreaSize = downcast<RenderBox>(renderer).borderBoxSize() - LayoutSize(left + right, top + bottom);
             positioningAreaSize = LayoutSize(snapSizeToDevicePixel(positioningAreaSize, LayoutPoint(), deviceScaleFactor));
+            if (renderer.writingMode().isBlockFlipped()) {
+                LayoutRect flippedRootBorderBox = downcast<RenderBox>(renderer).borderBoxRectInContainer();
+                view.flipForWritingMode(flippedRootBorderBox);
+                left += flippedRootBorderBox.x() - borderBoxRect.x();
+                top += flippedRootBorderBox.y() - borderBoxRect.y();
+            }
             if (protect(view)->frameView().hasExtendedBackgroundRectForPainting()) {
                 LayoutRect extendedBackgroundRect = protect(view)->frameView().extendedBackgroundRectForPainting();
                 left += (renderer.marginLeft() - extendedBackgroundRect.x());
@@ -876,20 +878,24 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
             auto& layerWidth = size.width();
             auto& layerHeight = size.height();
 
-            if (auto fixed = layerWidth.tryFixed())
-                tileSize.setWidth(Style::evaluate<LayoutUnit>(*fixed, zoom));
-            else if (layerWidth.isPercentOrCalculated()) {
+            if (auto fixed = layerWidth.tryFixed()) {
+                auto resolvedWidth = Style::evaluate<LayoutUnit>(*fixed, zoom);
+                // Non-zero resolved value should always produce some content.
+                tileSize.setWidth(!resolvedWidth ? 0_lu : std::max(devicePixelSize, resolvedWidth));
+            } else if (layerWidth.isPercentOrCalculated()) {
                 auto resolvedWidth = Style::evaluate<LayoutUnit>(layerWidth, positioningAreaSize.width(), zoom);
                 // Non-zero resolved value should always produce some content.
-                tileSize.setWidth(!resolvedWidth ? resolvedWidth : std::max(devicePixelSize, resolvedWidth));
+                tileSize.setWidth(!resolvedWidth ? 0_lu : std::max(devicePixelSize, resolvedWidth));
             }
 
-            if (auto fixed = layerHeight.tryFixed())
-                tileSize.setHeight(Style::evaluate<LayoutUnit>(*fixed, zoom));
-            else if (layerHeight.isPercentOrCalculated()) {
+            if (auto fixed = layerHeight.tryFixed()) {
+                auto resolvedHeight = Style::evaluate<LayoutUnit>(*fixed, zoom);
+                // Non-zero resolved value should always produce some content.
+                tileSize.setHeight(!resolvedHeight ? 0_lu : std::max(devicePixelSize, resolvedHeight));
+            } else if (layerHeight.isPercentOrCalculated()) {
                 auto resolvedHeight = Style::evaluate<LayoutUnit>(layerHeight, positioningAreaSize.height(), zoom);
                 // Non-zero resolved value should always produce some content.
-                tileSize.setHeight(!resolvedHeight ? resolvedHeight : std::max(devicePixelSize, resolvedHeight));
+                tileSize.setHeight(!resolvedHeight ? 0_lu : std::max(devicePixelSize, resolvedHeight));
             }
 
             // If one of the values is auto we have to use the appropriate
@@ -944,7 +950,7 @@ void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Style:
 
         Style::ColorResolver colorResolver { style };
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-        auto shadowColor = axCustomColorModeShadowColor(colorResolver, style, shadow.color);
+        auto shadowColor = AXCustomColorModeController::shadowColor(colorResolver, style, shadow);
 #else
         auto shadowColor = colorResolver.colorResolvingCurrentColorApplyingColorFilter(shadow.color);
 #endif
@@ -1055,7 +1061,7 @@ void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Style:
 
             auto shapeForInnerHole = BorderShape(outerRectExpandedToObscureOpenEdges, borderWidthsWithSpread, borderShape.radii(), borderShape.cornerCurvatures());
             if (shapeForInnerHole.snappedInnerRect(deviceScaleFactor).isEmpty()) {
-                shapeForInnerHole.fillOuterShape(context, shadowColor, deviceScaleFactor);
+                borderShape.fillInnerShape(context, shadowColor, deviceScaleFactor);
                 continue;
             }
 

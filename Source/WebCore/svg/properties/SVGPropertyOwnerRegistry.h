@@ -93,10 +93,12 @@ public:
         registerProperty(attributeName, SVGAnimatedEnumerationAccessor<OwnerType, EnumType>::template singleton<property>());
     }
 
+    // initialValue has to agree with what the element passes to SVGAnimatedInteger::create(): that
+    // is what the property is born with, and this is only the way back to it.
     template<const LazyNeverDestroyed<const QualifiedName>& attributeName, const Ref<SVGAnimatedInteger> OwnerType::*property>
-    static void registerProperty()
+    static void registerProperty(int initialValue = 0)
     {
-        registerProperty(attributeName, SVGAnimatedIntegerAccessor<OwnerType>::template singleton<property>());
+        registerProperty(attributeName, SVGAnimatedIntegerAccessor<OwnerType>::template singleton<property>(initialValue));
     }
 
     template<const LazyNeverDestroyed<const QualifiedName>& attributeName, const Ref<SVGAnimatedLength> OwnerType::*property>
@@ -112,9 +114,9 @@ public:
     }
 
     template<const LazyNeverDestroyed<const QualifiedName>& attributeName, const Ref<SVGAnimatedNumber> OwnerType::*property>
-    static void registerProperty()
+    static void registerProperty(float initialValue = 0)
     {
-        registerProperty(attributeName, SVGAnimatedNumberAccessor<OwnerType>::template singleton<property>());
+        registerProperty(attributeName, SVGAnimatedNumberAccessor<OwnerType>::template singleton<property>(initialValue));
     }
 
     template<const LazyNeverDestroyed<const QualifiedName>& attributeName, const Ref<SVGAnimatedNumberList> OwnerType::*property>
@@ -166,15 +168,15 @@ public:
     }
 
     template<const LazyNeverDestroyed<const QualifiedName>& attributeName, const Ref<SVGAnimatedInteger> OwnerType::*property1, const Ref<SVGAnimatedInteger> OwnerType::*property2>
-    static void registerProperty()
+    static void registerProperty(int initialValue1 = 0, int initialValue2 = 0)
     {
-        registerProperty(attributeName, SVGAnimatedIntegerPairAccessor<OwnerType>::template singleton<property1, property2>());
+        registerProperty(attributeName, SVGAnimatedIntegerPairAccessor<OwnerType>::template singleton<property1, property2>(initialValue1, initialValue2));
     }
 
     template<const LazyNeverDestroyed<const QualifiedName>& attributeName, const Ref<SVGAnimatedNumber> OwnerType::*property1, const Ref<SVGAnimatedNumber> OwnerType::*property2>
-    static void registerProperty()
+    static void registerProperty(float initialValue1 = 0, float initialValue2 = 0)
     {
-        registerProperty(attributeName, SVGAnimatedNumberPairAccessor<OwnerType>::template singleton<property1, property2>());
+        registerProperty(attributeName, SVGAnimatedNumberPairAccessor<OwnerType>::template singleton<property1, property2>(initialValue1, initialValue2));
     }
 
     // Enumerate all the SVGMemberAccessors recursively. The functor will be called and will
@@ -248,6 +250,21 @@ public:
         lookupRecursivelyAndApply(attributeName, [&](auto& accessor) {
             accessor.setDirty(m_owner, animatedProperty);
         });
+    }
+
+    // Found by identity rather than by attribute name, so that the caller does not have to know
+    // its own name. matches() is the same pointer comparison used by
+    // animatedPropertyAttributeName() above. A pair accessor matches either half and resets both,
+    // which is what <number-optional-number> needs.
+    void resetAnimatedPropertyBaseVal(const SVGAnimatedPropertyBase& animatedProperty) const override
+    {
+        bool found = !enumerateRecursively([&](const auto& entry) -> bool {
+            if (!entry.value->matches(m_owner, animatedProperty))
+                return true;
+            entry.value->resetBaseVal(m_owner);
+            return false;
+        });
+        ASSERT_UNUSED(found, found);
     }
 
     // Detach all the properties recursively from their OwnerTypes.

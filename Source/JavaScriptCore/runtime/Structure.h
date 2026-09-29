@@ -778,7 +778,7 @@ public:
     
     void dump(PrintStream&) const;
     void dumpInContext(PrintStream&, DumpContext*) const;
-    void dumpBrief(PrintStream&, const CString&) const;
+    void dumpBrief(PrintStream&, const ASCIICString&) const;
     
     static void dumpContextHeader(PrintStream&);
     

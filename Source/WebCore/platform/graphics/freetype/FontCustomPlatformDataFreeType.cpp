@@ -100,7 +100,7 @@ FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription&
 #if ENABLE(VARIATION_FONTS)
     auto variants = buildVariationSettings(freeTypeFace, description, fontCreationContext);
     if (!variants.isEmpty())
-        FcPatternAddString(pattern.get(), FC_FONT_VARIATIONS, reinterpret_cast<const FcChar8*>(variants.utf8().data()));
+        FcPatternAddString(pattern.get(), FC_FONT_VARIATIONS, reinterpret_cast<const FcChar8*>(variants.utf8().legacyCStringPointer()));
     auto defaultValues = defaultVariationValues(freeTypeFace, ShouldLocalizeAxisNames::No);
     bool hasWeightVariationAxis = defaultValues.contains(FontVariationAxisTag::wght);
     bool hasSlopeVariationAxis = defaultValues.contains(FontVariationAxisTag::slnt) || defaultValues.contains(FontVariationAxisTag::ital);
@@ -114,7 +114,7 @@ FontPlatformData FontCustomPlatformData::fontPlatformData(const FontDescription&
     auto size = description.adjustedSizeForFontFace(fontCreationContext.sizeAdjust());
     FontPlatformData platformData(m_fontFace.get(), WTF::move(pattern), size, freeTypeFace->face_flags & FT_FACE_FLAG_FIXED_WIDTH, syntheticBold, syntheticItalic, description.orientation(), fontCreationContext.metricsOverrides());
 
-    platformData.updateSizeWithFontSizeAdjust(description.fontSizeAdjust(), description.computedSize());
+    platformData.updateSizeWithFontSizeAdjust(description.fontSizeAdjust(), description.usedSize());
     return platformData;
 }
 

@@ -39,7 +39,7 @@ Ref<WebImage> WebImage::createEmpty()
     return adoptRef(*new WebImage(nullptr));
 }
 
-Ref<WebImage> WebImage::create(const FloatSize& size, ImageOptions options, const DestinationColorSpace& colorSpace, ChromeClient* client)
+Ref<WebImage> WebImage::create(const FloatSize& size, ImageOptions options, const ColorSpace& colorSpace, ChromeClient* client)
 {
     auto pixelFormat = PixelFormat::BGRA8;
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
@@ -76,14 +76,11 @@ Ref<WebImage> WebImage::create(std::optional<ParametersAndHandle>&& parametersAn
     auto [parameters, handle] = WTF::move(*parametersAndHandle);
 
     // FIXME: These should be abstracted as a encodable image buffer handle.
-    auto backendParameters = ImageBuffer::backendParameters(parameters);
-    auto backend = ImageBufferShareableBitmapBackend::create(backendParameters, WTF::move(handle));
+    auto backend = ImageBufferShareableBitmapBackend::create(parameters, WTF::move(handle));
     if (!backend)
         return createEmpty();
-    
-    auto info = ImageBuffer::populateBackendInfo<ImageBufferShareableBitmapBackend>(backendParameters);
 
-    auto buffer = ImageBuffer::create(WTF::move(parameters), info, { }, WTF::move(backend));
+    auto buffer = ImageBuffer::create(WTF::move(parameters), { }, WTF::move(backend));
     if (!buffer)
         return createEmpty();
 

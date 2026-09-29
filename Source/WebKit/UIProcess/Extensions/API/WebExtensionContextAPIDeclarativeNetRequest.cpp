@@ -82,24 +82,24 @@ Ref<WebExtensionDeclarativeNetRequestSQLiteStore> WebExtensionContext::declarati
     return *m_declarativeNetRequestSessionRulesStore;
 }
 
-void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebExtensionDeclarativeNetRequestSQLiteStore> storage, const String& storageType, const String& apiName, Ref<JSON::Array> rulesToAdd, Vector<double> ruleIDsToRemove, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebExtensionDeclarativeNetRequestSQLiteStore> storage, const String& storageType, const String& apiName, Ref<JSON::Array> rulesToAdd, Vector<double> ruleIDsToRemove, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler)
 {
     if (storage) {
         storage->createSavepoint([this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storage, storageType, apiName, rulesToAdd, ruleIDsToRemove](Markable<WTF::UUID> savepointIdentifier, const String& errorMessage) mutable {
             if (!savepointIdentifier || !errorMessage.isEmpty()) {
-                RELEASE_LOG_ERROR(Extensions, "Unable to create %s rules savepoint for extension %s. Error: %s", storageType.utf8().data(), uniqueIdentifier().utf8().data(), errorMessage.utf8().data());
+                RELEASE_LOG_ERROR(Extensions, "Unable to create %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), errorMessage.utf8());
                 completionHandler(toWebExtensionError(apiName, nullString(), errorMessage));
                 return;
             }
 
             storage->updateRulesByRemovingIDs(ruleIDsToRemove, rulesToAdd, [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storage, storageType, apiName, savepointIdentifier = WTF::move(savepointIdentifier)](const String& errorMessage) mutable {
                 if (!errorMessage.isEmpty()) {
-                    RELEASE_LOG_ERROR(Extensions, "Unable to update %s rules for extension %s. Error: %s", storageType.utf8().data(), uniqueIdentifier().utf8().data(), errorMessage.utf8().data());
+                    RELEASE_LOG_ERROR(Extensions, "Unable to update %s rules for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), errorMessage.utf8());
 
                     // Update was unsucessful, rollback the changes to the database.
                     storage->rollbackToSavepoint(savepointIdentifier.value(), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType, apiName, errorMessage](const String& savepointErrorMessage) mutable {
                         if (!savepointErrorMessage.isEmpty())
-                            RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", storageType.utf8().data(), uniqueIdentifier().utf8().data(), savepointErrorMessage.utf8().data());
+                            RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), savepointErrorMessage.utf8());
 
                         completionHandler(toWebExtensionError(apiName, nullString(), errorMessage));
                     });
@@ -113,7 +113,7 @@ void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebEx
                         // Load was unsucessful, rollback the changes to the database.
                         storage->rollbackToSavepoint(savepointIdentifier.value(), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType, apiName, errorMessage](const String& savepointErrorMessage) mutable {
                             if (!savepointErrorMessage.isEmpty())
-                                RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", storageType.utf8().data(), uniqueIdentifier().utf8().data(), savepointErrorMessage.utf8().data());
+                                RELEASE_LOG_ERROR(Extensions, "Unable to rollback to %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), savepointErrorMessage.utf8());
 
                             // Load the declarativeNetRequest rules again after rolling back the dynamic update.
                             loadDeclarativeNetRequestRules([completionHandler = WTF::move(completionHandler), apiName](bool success) mutable {
@@ -132,7 +132,7 @@ void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebEx
                     // Load was successful, commit the changes to the database.
                     storage->commitSavepoint(savepointIdentifier.value(), [this, protectedThis = Ref { *this }, completionHandler = WTF::move(completionHandler), storageType](const String& savepointErrorMessage) mutable {
                         if (!savepointErrorMessage.isEmpty())
-                            RELEASE_LOG_ERROR(Extensions, "Unable to commit %s rules savepoint for extension %s. Error: %s", storageType.utf8().data(), uniqueIdentifier().utf8().data(), savepointErrorMessage.utf8().data());
+                            RELEASE_LOG_ERROR(Extensions, "Unable to commit %s rules savepoint for extension %s. Error: %s", storageType.utf8(), uniqueIdentifier().utf8(), savepointErrorMessage.utf8());
 
                         completionHandler({ });
                     });
@@ -142,7 +142,7 @@ void WebExtensionContext::updateDeclarativeNetRequestRulesInStorage(RefPtr<WebEx
     }
 }
 
-void WebExtensionContext::declarativeNetRequestGetDynamicRules(Vector<double>&& filter, CompletionHandler<void(Expected<String, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::declarativeNetRequestGetDynamicRules(Vector<double>&& filter, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&& completionHandler)
 {
     auto ruleIDs = compactMap(filter, [&](auto& ruleID) -> std::optional<double> {
         if (m_dynamicRulesIDs.contains(ruleID))
@@ -161,7 +161,7 @@ void WebExtensionContext::declarativeNetRequestGetDynamicRules(Vector<double>&& 
     });
 }
 
-void WebExtensionContext::declarativeNetRequestUpdateDynamicRules(String&& rulesToAddJSON, Vector<double>&& ruleIDsToDeleteVector, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::declarativeNetRequestUpdateDynamicRules(String&& rulesToAddJSON, Vector<double>&& ruleIDsToDeleteVector, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler)
 {
     static constexpr auto apiName = "declarativeNetRequest.updateDynamicRules()"_s;
 
@@ -193,7 +193,7 @@ void WebExtensionContext::declarativeNetRequestUpdateDynamicRules(String&& rules
     updateDeclarativeNetRequestRulesInStorage(declarativeNetRequestDynamicRulesStore(), "dynamic"_s, apiName, rulesToAdd, ruleIDsToDelete, WTF::move(completionHandler));
 }
 
-void WebExtensionContext::declarativeNetRequestGetSessionRules(Vector<double>&& filter, CompletionHandler<void(Expected<String, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::declarativeNetRequestGetSessionRules(Vector<double>&& filter, CompletionHandler<void(std::expected<String, WebExtensionError>&&)>&& completionHandler)
 {
     auto ruleIDs = compactMap(filter, [&](auto& ruleID) -> std::optional<double> {
         if (m_sessionRulesIDs.contains(ruleID))
@@ -212,7 +212,7 @@ void WebExtensionContext::declarativeNetRequestGetSessionRules(Vector<double>&& 
     });
 }
 
-void WebExtensionContext::declarativeNetRequestUpdateSessionRules(String&& rulesToAddJSON, Vector<double>&& ruleIDsToDeleteVector, CompletionHandler<void(Expected<void, WebExtensionError>&&)>&& completionHandler)
+void WebExtensionContext::declarativeNetRequestUpdateSessionRules(String&& rulesToAddJSON, Vector<double>&& ruleIDsToDeleteVector, CompletionHandler<void(std::expected<void, WebExtensionError>&&)>&& completionHandler)
 {
     static constexpr auto apiName = "declarativeNetRequest.updateSessionRules()"_s;
 

@@ -62,7 +62,7 @@ public:
 #define VALIDATE(condition, message) do {                               \
         if (condition)                                                  \
             break;                                                      \
-        fail(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toCString message); \
+        fail(__FILE__, __LINE__, WTF_PRETTY_FUNCTION, #condition, toUTF8CString message); \
     } while (false)
 
     void run()
@@ -479,7 +479,7 @@ public:
             case VectorExtractLane:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(value->numChildren() == 1, ("At ", *value));
-                VALIDATE(value->type() == Wasm::toB3Type(Wasm::simdScalarType(value->asSIMDValue()->simdLane())), ("At ", *value));
+                VALIDATE(value->type() == simdB3ScalarType(value->asSIMDValue()->simdLane()), ("At ", *value));
                 VALIDATE(value->child(0)->type() == V128, ("At ", *value));
                 break;
             case VectorReplaceLane:
@@ -487,7 +487,7 @@ public:
                 VALIDATE(value->numChildren() == 2, ("At ", *value));
                 VALIDATE(value->type() == V128, ("At ", *value));
                 VALIDATE(value->child(0)->type() == V128, ("At ", *value));
-                VALIDATE(value->child(1)->type() == Wasm::toB3Type(Wasm::simdScalarType(value->asSIMDValue()->simdLane())), ("At ", *value));
+                VALIDATE(value->child(1)->type() == simdB3ScalarType(value->asSIMDValue()->simdLane()), ("At ", *value));
                 break;
             case VectorDupElement:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
@@ -509,7 +509,7 @@ public:
                 VALIDATE(!value->kind().hasExtraBits(), ("At ", *value));
                 VALIDATE(value->numChildren() == 1, ("At ", *value));
                 VALIDATE(value->type() == V128, ("At ", *value));
-                VALIDATE(value->child(0)->type() == Wasm::toB3Type(Wasm::simdScalarType(value->asSIMDValue()->simdLane())), ("At ", *value));
+                VALIDATE(value->child(0)->type() == simdB3ScalarType(value->asSIMDValue()->simdLane()), ("At ", *value));
                 break;
 
             case VectorPopcnt:
@@ -1134,16 +1134,16 @@ private:
 
     NO_RETURN_DUE_TO_CRASH void fail(
         const char* filename, int lineNumber, const char* function, const char* condition,
-        CString message)
+        UTF8CString message)
     {
-        CString failureMessage;
+        UTF8CString failureMessage;
         {
             StringPrintStream out;
             out.print("B3 VALIDATION FAILURE\n");
             out.print("    ", condition, " (", filename, ":", lineNumber, ")\n");
             out.print("    ", message, "\n");
             out.print("    After ", m_procedure.lastPhaseName(), "\n");
-            failureMessage = out.toCString();
+            failureMessage = out.toUTF8CString();
         }
 
         dataLog(failureMessage);

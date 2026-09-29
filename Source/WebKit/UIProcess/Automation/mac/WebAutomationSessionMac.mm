@@ -433,25 +433,38 @@ static int keyCodeForCharKey(CharKey charKey)
     case 'm':
     case 'M':
         return kVK_ANSI_M;
+    // The shifted forms below assume a US layout, consistent with the punctuation pairs that
+    // follow. Pairing them means a character like '@' reports code "Digit2" rather than
+    // "Unidentified".
     case '1':
+    case '!':
         return kVK_ANSI_1;
     case '2':
+    case '@':
         return kVK_ANSI_2;
     case '3':
+    case '#':
         return kVK_ANSI_3;
     case '4':
+    case '$':
         return kVK_ANSI_4;
     case '5':
+    case '%':
         return kVK_ANSI_5;
     case '6':
+    case '^':
         return kVK_ANSI_6;
     case '7':
+    case '&':
         return kVK_ANSI_7;
     case '8':
+    case '*':
         return kVK_ANSI_8;
     case '9':
+    case '(':
         return kVK_ANSI_9;
     case '0':
+    case ')':
         return kVK_ANSI_0;
     case '=':
     case '+':
@@ -486,6 +499,11 @@ static int keyCodeForCharKey(CharKey charKey)
     case '`':
     case '~':
         return kVK_ANSI_Grave;
+    case ' ':
+        // A literal space must produce the same events as the 'space' virtual key (U+E00D).
+        // Without this it falls through to unknownKeyCode and the DOM reports code
+        // "Unidentified" for one and "Space" for the other.
+        return kVK_Space;
     }
 
     return unknownKeyCode;
@@ -522,7 +540,10 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
     case VirtualKey::Tab:
         return kVK_Tab;
     case VirtualKey::Clear:
-        return kVK_ANSI_KeypadClear;
+        // The WebDriver 'clear' key has no physical equivalent on Apple keyboards, and is not
+        // the keypad's Clear/NumLock key. Emit no keyCode so the DOM reports an empty 'code'
+        // and DOM_KEY_LOCATION_STANDARD; the DOM 'key' still comes from the characters.
+        return unknownKeyCode;
     case VirtualKey::Enter:
         return kVK_ANSI_KeypadEnter;
     case VirtualKey::Pause:
@@ -534,44 +555,60 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
         // According to the internet its functionality is similar to 'Escape'.
     case VirtualKey::Escape:
         return kVK_Escape;
+    // The '*Right' variants are the "right hand" keys from the WebDriver key table, which are the
+    // numeric keypad's navigation keys. They must use the keypad keyCodes so that the DOM reports
+    // code=Numpad* and location=DOM_KEY_LOCATION_NUMPAD, rather than aliasing the primary keys.
     case VirtualKey::PageUp:
-    case VirtualKey::PageUpRight:
         return kVK_PageUp;
+    case VirtualKey::PageUpRight:
+        return kVK_ANSI_Keypad9;
     case VirtualKey::PageDown:
-    case VirtualKey::PageDownRight:
         return kVK_PageDown;
+    case VirtualKey::PageDownRight:
+        return kVK_ANSI_Keypad3;
     case VirtualKey::End:
-    case VirtualKey::EndRight:
         return kVK_End;
+    case VirtualKey::EndRight:
+        return kVK_ANSI_Keypad1;
     case VirtualKey::Home:
-    case VirtualKey::HomeRight:
         return kVK_Home;
+    case VirtualKey::HomeRight:
+        return kVK_ANSI_Keypad7;
     case VirtualKey::LeftArrow:
-    case VirtualKey::LeftArrowRight:
         return kVK_LeftArrow;
+    case VirtualKey::LeftArrowRight:
+        return kVK_ANSI_Keypad4;
     case VirtualKey::UpArrow:
-    case VirtualKey::UpArrowRight:
         return kVK_UpArrow;
+    case VirtualKey::UpArrowRight:
+        return kVK_ANSI_Keypad8;
     case VirtualKey::RightArrow:
-    case VirtualKey::RightArrowRight:
         return kVK_RightArrow;
+    case VirtualKey::RightArrowRight:
+        return kVK_ANSI_Keypad6;
     case VirtualKey::DownArrow:
-    case VirtualKey::DownArrowRight:
         return kVK_DownArrow;
+    case VirtualKey::DownArrowRight:
+        return kVK_ANSI_Keypad2;
     case VirtualKey::Insert:
-    case VirtualKey::InsertRight:
         // The 'insert' key does not exist on Apple keyboards and has no keyCode.
         // The semantics are unclear so just abort and do nothing.
         return unknownKeyCode;
+    case VirtualKey::InsertRight:
+        return kVK_ANSI_Keypad0;
     case VirtualKey::Delete:
-    case VirtualKey::DeleteRight:
         return kVK_ForwardDelete;
+    case VirtualKey::DeleteRight:
+        return kVK_ANSI_KeypadDecimal;
     case VirtualKey::Space:
         return kVK_Space;
     case VirtualKey::Semicolon:
-        return kVK_ANSI_Semicolon;
+        // The WebDriver 'semicolon' key (U+E018) is not the primary keyboard's ';'. It has no
+        // physical equivalent here, so emit no keyCode and let the character supply the DOM 'key'.
+        return unknownKeyCode;
     case VirtualKey::Equals:
-        return kVK_ANSI_Equal;
+        // The WebDriver 'equals' key (U+E019) is the keypad's '=', not the primary keyboard's.
+        return kVK_ANSI_KeypadEquals;
     case VirtualKey::Return:
         return kVK_Return;
     case VirtualKey::NumberPad0:
@@ -601,12 +638,11 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
     case VirtualKey::NumberPadSubtract:
         return kVK_ANSI_KeypadMinus;
     case VirtualKey::NumberPadSeparator:
-        // The 'Separator' key is only present on a few international keyboards.
-        // It is usually mapped to the same character as Decimal ('.' or ',').
-        [[fallthrough]];
+        // The 'Separator' key is only present on a few international keyboards. It is distinct
+        // from Decimal: the WebDriver key table expects key ',' and code 'NumpadComma'.
+        return kVK_JIS_KeypadComma;
     case VirtualKey::NumberPadDecimal:
         return kVK_ANSI_KeypadDecimal;
-        // FIXME: this might be locale-dependent. See the above comment.
     case VirtualKey::NumberPadDivide:
         return kVK_ANSI_KeypadDivide;
     case VirtualKey::Function1:
@@ -672,12 +708,27 @@ static NSEventModifierFlags NODELETE eventModifierFlagsForVirtualKey(VirtualKey 
     case VirtualKey::UpArrow:
     case VirtualKey::RightArrow:
     case VirtualKey::DownArrow:
+        // Real hardware arrow keys set NSEventModifierFlagNumericPad on macOS, but WebCore's
+        // isKeypadEvent() turns that into DOM_KEY_LOCATION_NUMPAD. The primary arrows must report
+        // DOM_KEY_LOCATION_STANDARD, so only the keypad's own navigation keys set the flag below.
+        return NSEventModifierFlagFunction;
+
+    case VirtualKey::PageUpRight:
+    case VirtualKey::PageDownRight:
+    case VirtualKey::EndRight:
+    case VirtualKey::HomeRight:
+    case VirtualKey::LeftArrowRight:
+    case VirtualKey::UpArrowRight:
+    case VirtualKey::RightArrowRight:
+    case VirtualKey::DownArrowRight:
+    case VirtualKey::InsertRight:
+    case VirtualKey::DeleteRight:
         return NSEventModifierFlagNumericPad | NSEventModifierFlagFunction;
 
     case VirtualKey::Delete:
         return NSEventModifierFlagFunction;
 
-    case VirtualKey::Clear:
+    case VirtualKey::Equals:
     case VirtualKey::NumberPad0:
     case VirtualKey::NumberPad1:
     case VirtualKey::NumberPad2:

@@ -6,6 +6,8 @@
 
 // MSRTTTest: Tests of EXT_multisampled_render_to_texture extension
 
+#include <array>
+
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -329,6 +331,19 @@ TEST_P(MSRTTTest, Texture2DParameterCheck)
         assertErrorIfNotMSRTT2(GL_INVALID_ENUM);
     }
 
+    // Attachment not 2D texture
+    GLTexture cube;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, cube);
+    for (GLenum face = 0; face < 6; face++)
+    {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGBA, 64, 64, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+        ASSERT_GL_NO_ERROR();
+    }
+    glFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cube,
+                                         0, 4);
+    ASSERT_GL_ERROR(GL_INVALID_OPERATION);
+
     // Target not framebuffer
     glFramebufferTexture2DMultisampleEXT(GL_RENDERBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                          texture, 0, 4);
@@ -424,6 +439,14 @@ TEST_P(MSRTTTest, TextureCubeMapParameterCheck)
         // the next larger sample count supported by the implementation"
         EXPECT_GE(param, 4);
     }
+
+    // Attachment not cubemap texture
+    GLTexture notcube;
+    glBindTexture(GL_TEXTURE_2D, notcube);
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, 64, 64, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+    glFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                         GL_TEXTURE_CUBE_MAP_POSITIVE_X, notcube, 0, 4);
+    ASSERT_GL_ERROR(GL_INVALID_OPERATION);
 }
 
 // Checking for framebuffer completeness using extension methods.
@@ -652,9 +675,9 @@ void MSRTTTest::colorAttachmentMultisampleDrawTestCommon(bool useRenderbuffer)
                                    mTestSampleCount, &texture, &renderbuffer);
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
-    // Set viewport and clear to black
+    // Set viewport and clear to blue
     glViewport(0, 0, kSize, kSize);
-    glClearColor(0.0, 0.0, 0.0, 1.0);
+    glClearColor(0.0, 0.0, 1.0, 1.0);
     glClear(GL_COLOR_BUFFER_BIT);
 
     // Set up Green square program
@@ -671,7 +694,7 @@ void MSRTTTest::colorAttachmentMultisampleDrawTestCommon(bool useRenderbuffer)
     glDrawArrays(GL_TRIANGLES, 0, 6);
     ASSERT_GL_NO_ERROR();
 
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::black);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
     EXPECT_PIXEL_COLOR_EQ(kSize / 2, kSize / 2, GLColor::green);
 
     // Set up Red square program
@@ -687,7 +710,7 @@ void MSRTTTest::colorAttachmentMultisampleDrawTestCommon(bool useRenderbuffer)
     glDrawArrays(GL_TRIANGLES, 0, 6);
     ASSERT_GL_NO_ERROR();
 
-    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::black);
+    EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
     EXPECT_PIXEL_COLOR_EQ(kSize / 2, kSize / 2, GLColor::red);
 
     glDisableVertexAttribArray(0);
@@ -1317,7 +1340,7 @@ TEST_P(MSRTTTest, GenerateMipmapTest)
     glBindFramebuffer(GL_FRAMEBUFFER, FBO);
     glFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
                                          texture, 0, 4);
-    ASSERT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+    ASSERT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
     glClearColor(0.0f, 0.0f, 1.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
     glViewport(0, 0, kSize, kSize);
@@ -3518,7 +3541,7 @@ TEST_P(MSRTTES3Test, FramebufferCompletenessMixedMultisamplingMode)
         GLenum attach2Point;  // The attachment point of the second surface
     } AttachmentCombination;
 
-    AttachmentCombination attachmentCombinations[] = {
+    constexpr std::array<AttachmentCombination, 4> attachmentCombinations = {{
         // INVALID combinations
         {0, 1, GL_COLOR_ATTACHMENT0,
          GL_DEPTH_ATTACHMENT},  // first = Regular; second = MultisampledRenderToTexture
@@ -3528,10 +3551,9 @@ TEST_P(MSRTTES3Test, FramebufferCompletenessMixedMultisamplingMode)
          GL_DEPTH_ATTACHMENT},  // first = MultisampledRenderToTexture; second = Regular
         {1, 0, GL_COLOR_ATTACHMENT0,
          GL_STENCIL_ATTACHMENT},  // first = MultisampledRenderToTexture; second = Regular
-    };
+    }};
 
-    for (uint32_t i = 0; i < sizeof(attachmentCombinations) / sizeof((attachmentCombinations)[0]);
-         i++)
+    for (const AttachmentCombination &combination : attachmentCombinations)
     {
         GLsizei samples = 0;
         glGetIntegerv(GL_MAX_SAMPLES, &samples);
@@ -3542,7 +3564,7 @@ TEST_P(MSRTTES3Test, FramebufferCompletenessMixedMultisamplingMode)
 
         GLRenderbuffer colorRenderbuffer;
         glBindRenderbuffer(GL_RENDERBUFFER, colorRenderbuffer);
-        if (ANGLE_UNSAFE_TODO(attachmentCombinations[i]).attach1 == 0)
+        if (combination.attach1 == 0)
         {
             // Regular multisampling
             glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_RGBA4, 64, 64);
@@ -3553,18 +3575,17 @@ TEST_P(MSRTTES3Test, FramebufferCompletenessMixedMultisamplingMode)
             glRenderbufferStorageMultisampleEXT(GL_RENDERBUFFER, samples, GL_RGBA4, 64, 64);
         }
         ASSERT_GL_NO_ERROR();
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER,
-                                  ANGLE_UNSAFE_TODO(attachmentCombinations[i]).attach1Point,
-                                  GL_RENDERBUFFER, colorRenderbuffer);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, combination.attach1Point, GL_RENDERBUFFER,
+                                  colorRenderbuffer);
         EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
         // Depth/stencil renderbuffer, potentially with a different sample count.
         GLRenderbuffer dsRenderbuffer;
         glBindRenderbuffer(GL_RENDERBUFFER, dsRenderbuffer);
-        if (ANGLE_UNSAFE_TODO(attachmentCombinations[i]).attach2 == 0)
+        if (combination.attach2 == 0)
         {
             // Regular multisampling mode
-            if (ANGLE_UNSAFE_TODO(attachmentCombinations[i]).attach2Point == GL_DEPTH_ATTACHMENT)
+            if (combination.attach2Point == GL_DEPTH_ATTACHMENT)
             {
                 // GL_DEPTH_ATTACHMENT
                 glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, GL_DEPTH_COMPONENT16, 64,
@@ -3580,7 +3601,7 @@ TEST_P(MSRTTES3Test, FramebufferCompletenessMixedMultisamplingMode)
         else
         {
             // Multisampled render to texture mode
-            if (ANGLE_UNSAFE_TODO(attachmentCombinations[i]).attach2Point == GL_DEPTH_ATTACHMENT)
+            if (combination.attach2Point == GL_DEPTH_ATTACHMENT)
             {
                 // GL_DEPTH_ATTACHMENT
                 glRenderbufferStorageMultisampleEXT(GL_RENDERBUFFER, samples, GL_DEPTH_COMPONENT16,
@@ -3594,9 +3615,8 @@ TEST_P(MSRTTES3Test, FramebufferCompletenessMixedMultisamplingMode)
             }
         }
         ASSERT_GL_NO_ERROR();
-        glFramebufferRenderbuffer(GL_FRAMEBUFFER,
-                                  ANGLE_UNSAFE_TODO(attachmentCombinations[i]).attach2Point,
-                                  GL_RENDERBUFFER, dsRenderbuffer);
+        glFramebufferRenderbuffer(GL_FRAMEBUFFER, combination.attach2Point, GL_RENDERBUFFER,
+                                  dsRenderbuffer);
         EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_INCOMPLETE_MULTISAMPLE,
                          glCheckFramebufferStatus(GL_FRAMEBUFFER));
     }
@@ -4016,21 +4036,25 @@ void MSRTTES31Test::drawCopyThenBlendAllAttachmentsMixed(bool useRenderbuffer)
     // have the same sample count for all attachments.
     const GLint sampleCount = std::min(mTestSampleCount, mMaxIntegerSamples);
 
-    constexpr const char *kDecl[kImplMaxDrawBuffers] = {
+    constexpr std::array<const char *, kImplMaxDrawBuffers> kDecl = {
         "layout(location = 0) out vec4 out0;",  "layout(location = 1) out ivec4 out1;",
         "layout(location = 2) out uvec4 out2;", "layout(location = 3) out vec4 out3;",
         "layout(location = 4) out uvec4 out4;", "layout(location = 5) out ivec4 out5;",
         "layout(location = 6) out ivec4 out6;", "layout(location = 7) out vec4 out7;",
     };
 
-    constexpr GLType kGLType[kImplMaxDrawBuffers] = {
-        {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},           {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},
-        {GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT}, {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
-        {GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT}, {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},
-        {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},           {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
-    };
+    constexpr std::array<GLType, kImplMaxDrawBuffers> kGLType = {{
+        {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
+        {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},
+        {GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT},
+        {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
+        {GL_RGBA32UI, GL_RGBA_INTEGER, GL_UNSIGNED_INT},
+        {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},
+        {GL_RGBA32I, GL_RGBA_INTEGER, GL_INT},
+        {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE},
+    }};
 
-    constexpr const char *kAssign1[kImplMaxDrawBuffers] = {
+    constexpr std::array<const char *, kImplMaxDrawBuffers> kAssign1 = {
         "out0 = vec4(1.0f, 0.0f, 0.0f, 1.0f);",
         "out1 = ivec4(-19, 13, 123456, -654321);",
         "out2 = uvec4(98765, 43210, 2, 0);",
@@ -4041,7 +4065,7 @@ void MSRTTES31Test::drawCopyThenBlendAllAttachmentsMixed(bool useRenderbuffer)
         "out7 = vec4(0.0f, 0.0f, 1.0f, 1.0f);",
     };
 
-    constexpr const char *kAssign2[kImplMaxDrawBuffers] = {
+    constexpr std::array<const char *, kImplMaxDrawBuffers> kAssign2 = {
         "out0 = vec4(0.0f, 1.0f, 0.0f, 0.5f);",
         "out1 = ivec4(0, 0, 0, 0);",
         "out2 = uvec4(0, 0, 0, 0);",
@@ -4053,29 +4077,29 @@ void MSRTTES31Test::drawCopyThenBlendAllAttachmentsMixed(bool useRenderbuffer)
     };
 
     // Generate the shaders, [0] for first draw and [1] for second.
-    std::stringstream fsStr[2];
+    std::array<std::stringstream, 2> fsStr;
     for (unsigned int index = 0; index < 2; ++index)
     {
-        ANGLE_UNSAFE_TODO(fsStr[index]) << R"(#version 300 es
+        fsStr[index] << R"(#version 300 es
 precision highp float;
 )";
 
         for (GLint drawBuffer = 0; drawBuffer < maxDrawBuffers; ++drawBuffer)
         {
-            ANGLE_UNSAFE_TODO(fsStr[index] << kDecl[drawBuffer] << "\n");
+            fsStr[index] << kDecl[drawBuffer] << "\n";
         }
 
-        ANGLE_UNSAFE_TODO(fsStr[index]) << R"(void main()
+        fsStr[index] << R"(void main()
 {
 )";
 
-        const char *const *assign = index == 0 ? kAssign1 : kAssign2;
+        const auto &assign = index == 0 ? kAssign1 : kAssign2;
         for (GLint drawBuffer = 0; drawBuffer < maxDrawBuffers; ++drawBuffer)
         {
-            ANGLE_UNSAFE_TODO(fsStr[index] << assign[drawBuffer] << "\n");
+            fsStr[index] << assign[drawBuffer] << "\n";
         }
 
-        ANGLE_UNSAFE_TODO(fsStr[index]) << "}\n";
+        fsStr[index] << "}\n";
     }
 
     constexpr GLsizei kSize = 64;
@@ -4086,13 +4110,13 @@ precision highp float;
     GLFramebuffer fboMS;
     glBindFramebuffer(GL_FRAMEBUFFER, fboMS);
 
-    GLTexture textureMS[kImplMaxDrawBuffers];
-    GLRenderbuffer renderbufferMS[kImplMaxDrawBuffers];
+    std::array<GLTexture, kImplMaxDrawBuffers> textureMS;
+    std::array<GLRenderbuffer, kImplMaxDrawBuffers> renderbufferMS;
     for (GLint drawBuffer = 0; drawBuffer < maxDrawBuffers; ++drawBuffer)
     {
-        ANGLE_UNSAFE_TODO(createAndAttachColorAttachment(
-            useRenderbuffer, kSize, GL_COLOR_ATTACHMENT0 + drawBuffer, &kGLType[drawBuffer],
-            sampleCount, &textureMS[drawBuffer], &renderbufferMS[drawBuffer]));
+        createAndAttachColorAttachment(useRenderbuffer, kSize, GL_COLOR_ATTACHMENT0 + drawBuffer,
+                                       &kGLType[drawBuffer], sampleCount, &textureMS[drawBuffer],
+                                       &renderbufferMS[drawBuffer]);
     }
     EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
 
@@ -4668,6 +4692,98 @@ void main()
 
         // The result should be the average of the four colors written by the shader.
         EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(121, 118, 124, 178), 1);
+    }
+    ASSERT_GL_NO_ERROR();
+}
+
+// Test that MSRTT rendering to multiple cubemap attachments works.
+TEST_P(MSRTTES3Test, CubeMapMultipleAttachments)
+{
+    ANGLE_SKIP_TEST_IF(!EnsureGLExtensionEnabled("GL_EXT_multisampled_render_to_texture2"));
+
+    constexpr char kFS[] = R"(#version 300 es
+#extension GL_OES_sample_variables : enable
+precision mediump float;
+layout(location = 0) out vec4 color0;
+layout(location = 1) out vec4 color1;
+void main()
+{
+    switch (gl_SampleID % 4)
+    {
+    case 0:
+        color0 = vec4(1.0, 0.9, 0.8, 0.7);
+        color1 = vec4(0.7, 1.0, 0.9, 0.8);
+        break;
+    case 1:
+        color0 = vec4(0.0, 0.1, 0.2, 0.3);
+        color1 = vec4(0.3, 0.0, 0.1, 0.2);
+        break;
+    case 2:
+        color0 = vec4(0.5, 0.25, 0.75, 1.0);
+        color1 = vec4(1.0, 0.5, 0.25, 0.75);
+        break;
+    case 3:
+        color0 = vec4(0.4, 0.6, 0.2, 0.8);
+        color1 = vec4(0.8, 0.4, 0.6, 0.2);
+        break;
+    }
+})";
+    ANGLE_GL_PROGRAM(program, essl3_shaders::vs::Simple(), kFS);
+
+    constexpr GLsizei kSize = 6;
+
+    // Create multisampled framebuffer to draw into.
+    GLTexture color;
+    glBindTexture(GL_TEXTURE_CUBE_MAP, color);
+    for (GLenum face = 0; face < 6; face++)
+    {
+        glTexImage2D(GL_TEXTURE_CUBE_MAP_POSITIVE_X + face, 0, GL_RGBA, kSize, kSize, 0, GL_RGBA,
+                     GL_UNSIGNED_BYTE, nullptr);
+        ASSERT_GL_NO_ERROR();
+    }
+
+    GLFramebuffer fbo;
+    glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+    for (GLenum faceOffset = 0; faceOffset < 6; faceOffset += 2)
+    {
+        glFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                             GL_TEXTURE_CUBE_MAP_POSITIVE_X + faceOffset, color, 0,
+                                             4);
+        glFramebufferTexture2DMultisampleEXT(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1,
+                                             GL_TEXTURE_CUBE_MAP_POSITIVE_X + 1 + faceOffset, color,
+                                             0, 4);
+        ASSERT_GL_NO_ERROR();
+        EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
+
+        GLenum drawBuffers[] = {GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1};
+        glDrawBuffers(2, drawBuffers);
+
+        constexpr float kClearRed[]  = {1.0f, 0.0f, 0.0f, 1.0f};
+        constexpr float kClearBlue[] = {0.0f, 0.0f, 1.0f, 1.0f};
+        glClearBufferfv(GL_COLOR, 0, kClearRed);
+        glClearBufferfv(GL_COLOR, 1, kClearBlue);
+        // Force immediate clear so that the attachments are unresolved if MSRTT is emulated.
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::red);
+        glReadBuffer(GL_COLOR_ATTACHMENT1);
+        EXPECT_PIXEL_COLOR_EQ(0, 0, GLColor::blue);
+
+        // Draw to top left corner only
+        glEnable(GL_SCISSOR_TEST);
+        glScissor(0, 0, kSize / 2, kSize / 2);
+        drawQuad(program, essl3_shaders::PositionAttrib(), 0.5f);
+        glDisable(GL_SCISSOR_TEST);
+
+        // The result should be the average of the four colors written by the shader.
+        glReadBuffer(GL_COLOR_ATTACHMENT0);
+        ASSERT_GL_NO_ERROR();
+        EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(121, 118, 124, 178), 1);
+        EXPECT_PIXEL_COLOR_NEAR(kSize - 1, kSize - 1, GLColor::red, 1);
+
+        glReadBuffer(GL_COLOR_ATTACHMENT1);
+        ASSERT_GL_NO_ERROR();
+        EXPECT_PIXEL_COLOR_NEAR(0, 0, GLColor(178, 121, 118, 124), 1);
+        EXPECT_PIXEL_COLOR_NEAR(kSize - 1, kSize - 1, GLColor::blue, 1);
     }
     ASSERT_GL_NO_ERROR();
 }
@@ -5278,6 +5394,7 @@ ANGLE_INSTANTIATE_TEST_COMBINE_1(
         .disable(Feature::SupportsExtendedDynamicState2),
     ES3_VULKAN().disable(Feature::SupportsExtendedDynamicState2),
     ES3_VULKAN().disable(Feature::SupportsSPIRV14),
+    ES3_VULKAN().disable(Feature::SupportsShaderStencilExport),
     ES3_VULKAN_SWIFTSHADER().enable(Feature::EnableMultisampledRenderToTexture),
     ES31_VULKAN_SWIFTSHADER().enable(Feature::EnableMultisampledRenderToTexture));
 

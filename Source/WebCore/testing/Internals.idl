@@ -560,6 +560,8 @@ enum ContentsFormat {
 
     float usedOutlineOffset(Element element);
 
+    DOMString computedAppleColorFilter(Element element);
+
     Node ensureUserAgentShadowRoot(Element host);
     Node? shadowRoot(Element host);
 
@@ -639,6 +641,8 @@ enum ContentsFormat {
 
     DOMRect layoutViewportRect();
     DOMRect visualViewportRect();
+    DOMRect windowClipRect();
+    DOMRect exposedContentRect();
 
     undefined setViewIsTransparent(boolean trnasparent);
 
@@ -701,6 +705,7 @@ enum ContentsFormat {
     DOMString textFragmentDirectiveForRange(Range range);
 
     undefined setDelegatesScrolling(boolean enabled);
+    boolean delegatesScrollingToNativeView();
 
     unsigned long long lastSpellCheckRequestSequence();
     unsigned long long lastSpellCheckProcessedSequence();
@@ -1062,6 +1067,11 @@ enum ContentsFormat {
 
     [Conditional=VIDEO] undefined enterViewerMode(HTMLVideoElement element);
 
+    // Simulates the platform presenting a video outside the page, e.g. visionOS Spatial Browsing
+    // viewer mode. Does nothing unless ENABLE(LINEAR_MEDIA_PLAYER) is on, so tests that depend on
+    // the resulting state must be limited to visionOS via TestExpectations.
+    [Conditional=VIDEO] undefined setVideoInExternalPlayback(HTMLVideoElement element, boolean inExternalPlayback);
+
     undefined setIsPlayingToBluetoothOverride(optional boolean? isPlaying = null);
 
     [Conditional=LEGACY_ENCRYPTED_MEDIA] undefined initializeMockCDM();
@@ -1137,6 +1147,7 @@ enum ContentsFormat {
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerEnabled(boolean enabled);
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined setMockMediaPlaybackTargetPickerState(DOMString deviceName, DOMString deviceState);
     [Conditional=WIRELESS_PLAYBACK_TARGET] undefined mockMediaPlaybackTargetPickerDismissPopup();
+    [Conditional=WIRELESS_PLAYBACK_TARGET] Promise<DOMRect> mockMediaPlaybackTargetPickerRect();
     [Conditional=MEDIA_RECORDER] undefined setCustomPrivateRecorderCreator();
 
     readonly attribute boolean isMonitoringWirelessRoutes;
@@ -1156,6 +1167,7 @@ enum ContentsFormat {
     [Conditional=VIDEO] undefined simulateSystemWake();
     [Conditional=VIDEO] boolean elementIsBlockingDisplaySleep(HTMLMediaElement element);
     [Conditional=VIDEO] boolean isPlayerVisibleInViewport(HTMLMediaElement element);
+    [Conditional=VIDEO] boolean isMediaElementIntersectingViewport(HTMLMediaElement element);
     [Conditional=VIDEO] boolean isPlayerMuted(HTMLMediaElement element);
     [Conditional=VIDEO] boolean isPlayerPaused(HTMLMediaElement element);
     [Conditional=VIDEO] double effectiveRate(HTMLMediaElement element);
@@ -1176,6 +1188,8 @@ enum ContentsFormat {
     File? createFile(DOMString url);
     Promise<File> asyncCreateFile(DOMString url);
     DOMString createTemporaryFile(DOMString name, DOMString contents);
+
+    DOMString documentIPAddressSpace();
 
     undefined queueMicroTask(long testNumber);
     boolean testPreloaderSettingViewport();
@@ -1224,8 +1238,6 @@ enum ContentsFormat {
     boolean hasTransientActivation();
 
     boolean hasHistoryActionActivation();
-
-    GCObservation? observeGC(any observed);
 
     undefined setUserInterfaceLayoutDirection(UserInterfaceLayoutDirection userInterfaceLayoutDirection);
     undefined setBaseWritingDirection(BaseWritingDirection direction);
@@ -1550,6 +1562,7 @@ enum ContentsFormat {
     undefined setPDFDisplayModeForTesting(Element element, DOMString mode);
     undefined unlockPDFDocumentForTesting(Element element, DOMString password);
     boolean sendEditingCommandToPDFForTesting(Element element, DOMString commandName, optional DOMString argument = "");
+    sequence<DOMString> pdfContextMenuItemTitlesForTesting(Element element, long x, long y);
 
     readonly attribute DOMString defaultSpatialTrackingLabel;
 
@@ -1571,7 +1584,9 @@ enum ContentsFormat {
 
     [Conditional=SPATIAL_PORTAL] unsigned long numberOfHostedModelsInSpatialPortal(Element element);
     [Conditional=SPATIAL_PORTAL] boolean establishesSpatialPortal(Element element);
+    [Conditional=SPATIAL_PORTAL] Element? spatialPortalAnchorForModel(HTMLModelElement model);
     [Conditional=SPATIAL_PORTAL] sequence<unrestricted double>? spatialPortalResolvedTransform(Element element);
+    [Conditional=SPATIAL_PORTAL] DOMString effectiveEnvironmentMap(Element element);
 
     undefined copyImageAtLocation(long x, long y);
 

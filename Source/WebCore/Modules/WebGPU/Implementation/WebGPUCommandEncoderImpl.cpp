@@ -53,7 +53,7 @@ CommandEncoderImpl::~CommandEncoderImpl() = default;
 
 RefPtr<RenderPassEncoder> CommandEncoderImpl::beginRenderPass(const RenderPassDescriptor& descriptor)
 {
-    auto label = descriptor.label.utf8();
+    auto label = toBackingStringView(descriptor.label);
 
     Vector<WGPURenderPassColorAttachment> colorAttachments;
     Ref convertToBackingContext = m_convertToBackingContext;
@@ -105,7 +105,7 @@ RefPtr<RenderPassEncoder> CommandEncoderImpl::beginRenderPass(const RenderPassDe
         };
     }
 
-    WGPURenderPassTimestampWrites timestampWrites {
+    WGPUPassTimestampWrites timestampWrites {
         .querySet = descriptor.timestampWrites ? convertToBackingContext->convertToBacking(*protect(descriptor.timestampWrites->querySet)) : nullptr,
         .beginningOfPassWriteIndex = descriptor.timestampWrites ? descriptor.timestampWrites->beginningOfPassWriteIndex : 0,
         .endOfPassWriteIndex = descriptor.timestampWrites ? descriptor.timestampWrites->endOfPassWriteIndex : 0
@@ -113,7 +113,7 @@ RefPtr<RenderPassEncoder> CommandEncoderImpl::beginRenderPass(const RenderPassDe
 
     WGPURenderPassDescriptor backingDescriptor {
         .maxDrawCount = descriptor.maxDrawCount.value_or(UINT64_MAX),
-        .label = label.data(),
+        .label = label,
         .colorAttachmentCount = colorAttachments.size(),
         .colorAttachments = colorAttachments.size() ? colorAttachments.span().data() : nullptr,
         .depthStencilAttachment = depthStencilAttachment ? &depthStencilAttachment.value() : nullptr,
@@ -128,7 +128,7 @@ RefPtr<ComputePassEncoder> CommandEncoderImpl::beginComputePass(const std::optio
 {
     String label = descriptor ? descriptor->label : emptyString();
 
-    WGPUComputePassTimestampWrites timestampWrites {
+    WGPUPassTimestampWrites timestampWrites {
         .querySet = (descriptor && descriptor->timestampWrites && descriptor->timestampWrites->querySet) ? m_convertToBackingContext->convertToBacking(*protect(descriptor->timestampWrites->querySet)) : nullptr,
         .beginningOfPassWriteIndex = (descriptor && descriptor->timestampWrites) ? descriptor->timestampWrites->beginningOfPassWriteIndex : 0,
         .endOfPassWriteIndex = (descriptor && descriptor->timestampWrites) ? descriptor->timestampWrites->endOfPassWriteIndex : 0
@@ -245,7 +245,7 @@ void CommandEncoderImpl::clearBuffer(
 
 void CommandEncoderImpl::pushDebugGroup(String&& groupLabel)
 {
-    wgpuCommandEncoderPushDebugGroup(m_backing.get(), groupLabel.utf8().data());
+    wgpuCommandEncoderPushDebugGroup(m_backing.get(), toBackingStringView(groupLabel));
 }
 
 void CommandEncoderImpl::popDebugGroup()
@@ -255,7 +255,7 @@ void CommandEncoderImpl::popDebugGroup()
 
 void CommandEncoderImpl::insertDebugMarker(String&& markerLabel)
 {
-    wgpuCommandEncoderInsertDebugMarker(m_backing.get(), markerLabel.utf8().data());
+    wgpuCommandEncoderInsertDebugMarker(m_backing.get(), toBackingStringView(markerLabel));
 }
 
 void CommandEncoderImpl::writeTimestamp(const QuerySet& querySet, Size32 queryIndex)
@@ -285,7 +285,7 @@ RefPtr<CommandBuffer> CommandEncoderImpl::finish(const CommandBufferDescriptor& 
 
 void CommandEncoderImpl::setLabelInternal(const String& label)
 {
-    wgpuCommandEncoderSetLabel(m_backing.get(), label.utf8().data());
+    wgpuCommandEncoderSetLabel(m_backing.get(), toBackingStringView(label));
 }
 
 } // namespace WebCore::WebGPU

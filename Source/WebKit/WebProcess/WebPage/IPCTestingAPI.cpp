@@ -53,6 +53,7 @@
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/JSRetainPtr.h>
+#include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JSValueRef.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <JavaScriptCore/OpaqueJSString.h>
@@ -64,7 +65,7 @@
 #include <WebCore/ScriptController.h>
 #include <WebCore/SharedMemory.h>
 #if USE(SKIA)
-#include <WebCore/DestinationColorSpace.h>
+#include <WebCore/ColorSpace.h>
 #include <WebCore/SkiaSpanExtras.h>
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
@@ -2711,7 +2712,7 @@ JSValueRef JSIPC::serializedSRGBColorSpace(JSContextRef context, JSObjectRef, JS
     JSC::JSLockHolder lock(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
-    sk_sp<SkData> data = WebCore::DestinationColorSpace::SRGB().serializableColorSpace()->serialize();
+    sk_sp<SkData> data = WebCore::ColorSpace::SRGB().serializableColorSpace()->serialize();
     auto bytes = WebCore::span(data);
 
     JSC::JSObject* array = JSC::constructEmptyArray(globalObject, nullptr);
@@ -2869,7 +2870,7 @@ JSValueRef JSIPC::objectIdentifiers(JSContextRef context, JSObjectRef thisObject
 
     auto identifiers = IPC::serializedIdentifiers();
     for (size_t i = 0; i < identifiers.size(); i++) {
-        array->putDirectIndex(globalObject, i, toJS(globalObject, JSValueMakeString(context, adopt(JSStringCreateWithUTF8CString(identifiers[i].characters())).get())));
+        array->putDirectIndex(globalObject, i, toJS(globalObject, JSValueMakeString(context, createJSString(identifiers[i]).get())));
         RETURN_IF_EXCEPTION(scope, JSValueMakeUndefined(context));
     }
 

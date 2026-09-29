@@ -71,11 +71,17 @@ public:
 
     // Construct a string with Latin-1 data.
     WTF_EXPORT_PRIVATE String(std::span<const Latin1Character> characters);
-    WTF_EXPORT_PRIVATE String(std::span<const char> characters);
     ALWAYS_INLINE static String fromLatin1(const char* characters) { return String { characters }; }
+    ALWAYS_INLINE static String fromLatin1(std::span<const char> characters) { return String { characters }; }
 
     // Construct a string with UTF-8 data, null string if it contains invalid UTF-8 sequences.
     WTF_EXPORT_PRIVATE String(std::span<const char8_t>);
+    String(const char8_t* characters) : String(unsafeSpan(characters)) { }
+
+    // Construct a string from a CString that knows its encoding, decoding it as that encoding.
+    // Unlike CString, which would have to be decoded by the caller, and unlike fromUTF8(), which
+    // will happily reinterpret Latin-1 bytes as UTF-8, the character type picks the decoding.
+    template<OneByteCharacterType CharacterType> String(const CStringWithEncoding<CharacterType>&);
 
     // Construct a string referencing an existing StringImpl.
     String(StringImpl&);
@@ -128,15 +134,15 @@ public:
 
     unsigned sizeInBytes() const { return m_impl ? m_impl->length() * (is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)) : 0; }
 
-    WTF_EXPORT_PRIVATE CString ascii() const;
-    WTF_EXPORT_PRIVATE CString latin1() const;
+    WTF_EXPORT_PRIVATE ASCIICString ascii() const;
+    WTF_EXPORT_PRIVATE Latin1CString latin1() const;
 
-    WTF_EXPORT_PRIVATE CString utf8(ConversionMode = LenientConversion) const;
+    WTF_EXPORT_PRIVATE UTF8CString utf8(ConversionMode = LenientConversion) const;
 
     template<typename Func>
-    Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func&, ConversionMode = LenientConversion) const;
-    WTF_EXPORT_PRIVATE Expected<CString, UTF8ConversionError> tryGetUTF8(ConversionMode) const;
-    WTF_EXPORT_PRIVATE Expected<CString, UTF8ConversionError> tryGetUTF8() const;
+    std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8(NOESCAPE const Func&, ConversionMode = LenientConversion) const;
+    WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> tryGetUTF8(ConversionMode) const;
+    WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> tryGetUTF8() const;
 
     char16_t codeUnitAt(unsigned index) const;
     char16_t operator[](unsigned index) const { return codeUnitAt(index); }
@@ -176,8 +182,8 @@ public:
     size_t reverseFind(ASCIILiteral literal, unsigned start = MaxLength) const { return m_impl ? m_impl->reverseFind(literal, start) : notFound; }
     size_t reverseFind(StringView, unsigned start = MaxLength) const;
 
-    WTF_EXPORT_PRIVATE Expected<Vector<char16_t>, UTF8ConversionError> charactersWithNullTermination() const;
-    WTF_EXPORT_PRIVATE Expected<Vector<char16_t>, UTF8ConversionError> charactersWithoutNullTermination() const;
+    WTF_EXPORT_PRIVATE std::expected<Vector<char16_t>, UTF8ConversionError> charactersWithNullTermination() const;
+    WTF_EXPORT_PRIVATE std::expected<Vector<char16_t>, UTF8ConversionError> charactersWithoutNullTermination() const;
 
     WTF_EXPORT_PRIVATE char32_t NODELETE codePointAt(unsigned) const;
 
@@ -210,8 +216,10 @@ public:
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToASCIIUppercase() const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocale() const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithoutLocale() const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithoutLocaleStartingAtFailingIndex8Bit(unsigned failingIndex) const;
+    [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithoutLocaleStartingAtFailingIndex16Bit(unsigned failingIndex) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToLowercaseWithLocale(const AtomString& localeIdentifier) const;
     [[nodiscard]] WTF_EXPORT_PRIVATE String convertToUppercaseWithLocale(const AtomString& localeIdentifier) const;
 
@@ -344,8 +352,10 @@ private:
     template<bool allowEmptyEntries> Vector<String> splitInternal(char16_t separator) const;
     template<bool allowEmptyEntries> Vector<String> splitInternal(StringView separator) const;
 
-    // This is intentionally private. Use fromLatin1() / fromUTF8() / String(ASCIILiteral) instead.
+    // These are intentionally private, because `char` carries no encoding.
+    // Use fromLatin1() / fromUTF8() / String(ASCIILiteral) instead.
     WTF_EXPORT_PRIVATE explicit String(const char* characters);
+    WTF_EXPORT_PRIVATE explicit String(std::span<const char> characters);
 
     RefPtr<StringImpl> m_impl;
 } SWIFT_ESCAPABLE;
@@ -465,6 +475,11 @@ inline String::String(StaticStringImpl* string)
 {
 }
 
+template<OneByteCharacterType CharacterType> inline String::String(const CStringWithEncoding<CharacterType>& string)
+    : String(string.span())
+{
+}
+
 inline String::String(ASCIILiteral characters)
     : m_impl(characters.isNull() ? nullptr : RefPtr { StringImpl::create(characters) })
 {
@@ -551,7 +566,7 @@ inline String String::substring(unsigned position, unsigned length) const
 }
 
 template<typename Func>
-inline Expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> String::tryGetUTF8(NOESCAPE const Func& function, ConversionMode mode) const
+inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> String::tryGetUTF8(NOESCAPE const Func& function, ConversionMode mode) const
 {
     if (!m_impl)
         return function(nonNullEmptyUTF8Span());

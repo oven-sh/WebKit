@@ -162,6 +162,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#define TYPE InterpolateSize
+#define FOR_EACH(CASE) CASE(NumericOnly) CASE(AllowKeywords)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
 #define TYPE BlockStepAlign
 #define FOR_EACH(CASE) CASE(Auto) CASE(Center) CASE(Start) CASE(End)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
@@ -710,36 +716,6 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
-constexpr CSSValueID toCSSValueID(FlexWrap e)
-{
-    switch (e) {
-    case FlexWrap::NoWrap:
-        return CSSValueNowrap;
-    case FlexWrap::Wrap:
-        return CSSValueWrap;
-    case FlexWrap::Reverse:
-        return CSSValueWrapReverse;
-    }
-    ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-    return CSSValueInvalid;
-}
-
-template<> constexpr FlexWrap fromCSSValueID(CSSValueID valueID)
-{
-    switch (valueID) {
-    case CSSValueNowrap:
-        return FlexWrap::NoWrap;
-    case CSSValueWrap:
-        return FlexWrap::Wrap;
-    case CSSValueWrapReverse:
-        return FlexWrap::Reverse;
-    default:
-        break;
-    }
-    ASSERT_NOT_REACHED_UNDER_CONSTEXPR_CONTEXT();
-    return FlexWrap::NoWrap;
-}
-
 #define TYPE Float
 #define FOR_EACH(CASE) CASE(None) CASE(Left) CASE(Right) CASE(InlineStart) CASE(InlineEnd)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
@@ -1013,6 +989,12 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 
 #define TYPE PortalActionType
 #define FOR_EACH(CASE) CASE(None) CASE(Orbit)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
+#define TYPE PositionContextType
+#define FOR_EACH(CASE) CASE(Container) CASE(Anchor)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
@@ -2326,8 +2308,14 @@ DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH
 
+#define TYPE SynthesizedGlyph
+#define FOR_EACH(CASE) CASE(PickerUp) CASE(PickerDown)
+DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
+#undef TYPE
+#undef FOR_EACH
+
 #define TYPE OverflowContinue
-#define FOR_EACH(CASE) CASE(Auto) CASE(Discard)
+#define FOR_EACH(CASE) CASE(Auto) CASE(Discard) CASE(WebkitLegacy)
 DEFINE_TO_FROM_CSS_VALUE_ID_FUNCTIONS
 #undef TYPE
 #undef FOR_EACH

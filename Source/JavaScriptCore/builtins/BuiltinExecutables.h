@@ -55,10 +55,6 @@ struct BuiltinSourceMetadata {
     unsigned sourceLength { 0 };
     unsigned parametersStart { 0 };
     unsigned parameterCount { 0 };
-    unsigned lineCount { 0 };
-    unsigned endColumn { 0 };
-    unsigned offsetOfLastNewline { 0 };
-    unsigned positionBeforeLastNewlineLineStartOffset { 0 };
     int closeBraceOffsetFromEnd { 0 };
     bool isAsyncFunction { false };
     bool isInStrictContext { false };
@@ -66,6 +62,7 @@ struct BuiltinSourceMetadata {
 
 // Emitted by the builtins generator, indexed by BuiltinCodeIndex.
 extern constinit const BuiltinSourceMetadata s_JSCBuiltinSourceMetadata[numberOfBuiltinCodes];
+extern constinit const unsigned s_JSCBuiltinSourceStarts[numberOfBuiltinCodes]; // in s_JSCCombinedCode
 
 class BuiltinExecutables {
     WTF_MAKE_TZONE_ALLOCATED(BuiltinExecutables);

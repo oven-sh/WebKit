@@ -26,7 +26,7 @@
 #pragma once
 
 #include "Color.h"
-#include "DestinationColorSpace.h"
+#include "ColorSpace.h"
 #include "ImageOrientation.h"
 #include "ImageTypes.h"
 #include "IntPoint.h"
@@ -35,9 +35,9 @@
 
 namespace WebCore {
 
-class AsyncImageDecoder;
 class BitmapImageSource;
 class GraphicsContext;
+class ImageDecoder;
 class ImageFrame;
 class NativeImage;
 
@@ -57,7 +57,7 @@ public:
     unsigned primaryFrameIndex() const;
     unsigned frameCount() const;
     RepetitionCount repetitionCount() const;
-    DestinationColorSpace colorSpace() const;
+    ColorSpace colorSpace() const;
     std::optional<Color> singlePixelSolidColor() const;
     bool hasHDRGainMap() const;
     bool hasHDRColorSpace() const;
@@ -105,7 +105,7 @@ private:
     };
 
     template<typename MetadataType>
-    MetadataType imageMetadata(MetadataType& cachedValue, const MetadataType& defaultValue, CachedFlag, MetadataType (AsyncImageDecoder::*functor)() const) const;
+    MetadataType imageMetadata(MetadataType& cachedValue, const MetadataType& defaultValue, CachedFlag, MetadataType (ImageDecoder::*functor)() const) const;
 
     template<typename MetadataType>
     MetadataType primaryImageFrameMetadata(MetadataType& cachedValue, CachedFlag, MetadataType (ImageFrame::*functor)() const, const std::optional<SubsamplingLevel>& = std::nullopt) const;
@@ -123,7 +123,7 @@ private:
     mutable size_t m_primaryFrameIndex { 0 };
     mutable size_t m_frameCount { 0 };
     mutable RepetitionCount m_repetitionCount { RepetitionCountNone };
-    mutable DestinationColorSpace m_colorSpace { DestinationColorSpace::SRGB() };
+    mutable ColorSpace m_colorSpace { ColorSpace::SRGB() };
     mutable std::optional<Color> m_singlePixelSolidColor;
     mutable bool m_hasHDRGainMap { false };
 

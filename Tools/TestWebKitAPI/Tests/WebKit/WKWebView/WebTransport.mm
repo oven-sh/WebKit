@@ -38,6 +38,7 @@
 #import "Helpers/cocoa/WebTransportServer.h"
 #import <CommonCrypto/CommonDigest.h>
 #import <WebKit/WKPreferencesPrivate.h>
+#import <WebKit/WKWebViewConfigurationPrivate.h>
 #import <WebKit/WKWebsiteDataStorePrivate.h>
 #import <WebKit/_WKInternalDebugFeature.h>
 #import <pal/spi/cocoa/NetworkSPI.h>
@@ -766,6 +767,61 @@ TEST(WebTransport, CSP)
     EXPECT_WK_STREQ(runTest([NSString stringWithFormat:@"https://localhost:%d", server.port()].UTF8String), "ready");
 }
 
+TEST(WebTransport, AllowedNetworkHosts)
+{
+    WebTransportServer transportServer([](ConnectionGroup group) -> ConnectionTask {
+        co_return;
+    });
+
+    NSString *transportURL = [NSString stringWithFormat:@"https://127.0.0.1:%d/", transportServer.port()];
+
+    NSString *workerJS = [NSString stringWithFormat:@""
+        "async function test() {"
+        "  try {"
+        "    let t = new WebTransport('%@');"
+        "    await t.ready;"
+        "    self.postMessage('ready');"
+        "  } catch (e) { self.postMessage('caught ' + e.name); }"
+        "}; test();", transportURL];
+
+    NSString *mainHTML = [NSString stringWithFormat:@"<script>"
+        "async function connectFromDocument() {"
+        "  try {"
+        "    let t = new WebTransport('%@');"
+        "    await t.ready;"
+        "    return 'ready';"
+        "  } catch (e) { return 'caught ' + e.name; }"
+        "}"
+        "async function test() {"
+        "  const documentResult = await connectFromDocument();"
+        "  const worker = new Worker('worker.js');"
+        "  worker.onmessage = (event) => {"
+        "    alert('document: ' + documentResult + ', worker: ' + event.data);"
+        "  };"
+        "}; test();"
+        "</script>", transportURL];
+
+    HTTPServer loadingServer({
+        { "/"_s, { mainHTML } },
+        { "/worker.js"_s, { { { "Content-Type"_s, "text/javascript"_s } }, workerJS } }
+    });
+
+    auto runTest = [&] (NSSet<NSString *> *allowedNetworkHosts) {
+        RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
+        enableWebTransport(configuration.get());
+        configuration.get()._allowedNetworkHosts = allowedNetworkHosts;
+        RetainPtr webView = adoptNS([[WKWebView alloc] initWithFrame:CGRectZero configuration:configuration.get()]);
+        RetainPtr delegate = adoptNS([TestNavigationDelegate new]);
+        [delegate allowAnyTLSCertificate];
+        [webView setNavigationDelegate:delegate.get()];
+        [webView loadRequest:loadingServer.requestWithLocalhost()];
+        return [webView _test_waitForAlert];
+    };
+
+    EXPECT_WK_STREQ(runTest([NSSet setWithObject:@"localhost"]), "document: caught WebTransportError, worker: caught WebTransportError");
+    EXPECT_WK_STREQ(runTest(([NSSet setWithObjects:@"localhost", @"127.0.0.1", nil])), "document: ready, worker: ready");
+}
+
 TEST(WebTransport, ServerCertificateHashes)
 {
     auto runTest = [] (uint64_t certLifetime, bool matchHash = true) {
@@ -826,7 +882,7 @@ TEST(WebTransport, ServerCertificateHashes)
             "    alert('successfully read ' + new TextDecoder().decode(value));"
             "  } catch (e) { alert('caught ' + e); }"
             "}; test();"
-            "</script>", certificateBytes.toString().utf8().data(), echoServer.port()];
+            "</script>", certificateBytes.toString().utf8().legacyCStringPointer(), echoServer.port()];
 
         RetainPtr configuration = adoptNS([WKWebViewConfiguration new]);
         enableWebTransport(configuration.get());

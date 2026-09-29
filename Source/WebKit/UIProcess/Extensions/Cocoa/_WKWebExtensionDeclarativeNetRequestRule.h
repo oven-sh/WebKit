@@ -41,6 +41,7 @@ WK_EXTERN
 
 @property (nonatomic, readonly) NSInteger ruleID;
 @property (nonatomic, readonly) NSInteger priority;
+@property (nonatomic) NSUInteger declarationOrder;
 @property (nonatomic, readonly, copy) NSString *rulesetID;
 @property (nonatomic, readonly, copy) NSDictionary *action;
 @property (nonatomic, readonly, copy) NSDictionary *condition;

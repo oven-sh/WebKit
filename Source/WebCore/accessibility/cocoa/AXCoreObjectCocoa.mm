@@ -86,6 +86,44 @@ String AXCoreObject::speechHint() const
     return builder.toString();
 }
 
+static StringView platformNameForShortcutKey(StringView key)
+{
+    // aria-keyshortcuts names keys using the platform-neutral UI Events KeyboardEvent key values,
+    // but no Apple keyboard has a key labeled Meta or Alt, so substitute the labels users can see.
+    if (equalLettersIgnoringASCIICase(key, "meta"_s))
+        return "Command"_s;
+    if (equalLettersIgnoringASCIICase(key, "alt"_s))
+        return "Option"_s;
+    return key;
+}
+
+String AXCoreObject::keyShortcutsPlatformString() const
+{
+    String shortcuts = keyShortcuts();
+    if (shortcuts.isEmpty())
+        return shortcuts;
+
+    // Shortcuts are delimited by whitespace, and the keys comprising each shortcut by plus signs.
+    // Everything between those delimiters is a key name. Rather than trying to validate the author's
+    // shortcut, copy the delimiters through verbatim and rename only the keys we recognize, so a
+    // malformed value is spoken exactly as it was written.
+    auto isDelimiter = [] (char16_t character) {
+        return character == '+' || isASCIIWhitespace(character);
+    };
+
+    StringView view { shortcuts };
+    StringBuilder builder;
+    unsigned keyStart = 0;
+    for (unsigned i = 0; i < view.length(); ++i) {
+        if (!isDelimiter(view[i]))
+            continue;
+        builder.append(platformNameForShortcutKey(view.substring(keyStart, i - keyStart)), view[i]);
+        keyStart = i + 1;
+    }
+    builder.append(platformNameForShortcutKey(view.substring(keyStart)));
+    return builder.toString();
+}
+
 // When modifying attributed strings, the range can come from a source which may provide faulty information (e.g. the spell checker).
 // To protect against such cases, the range should be validated before adding or removing attributes.
 bool attributedStringContainsRange(NSAttributedString *attributedString, const NSRange& range)
@@ -698,6 +736,21 @@ PlatformRoleMap createPlatformRoleMap()
 std::optional<AXTextMarkerRange> markerRangeFrom(NSRange range, const AXCoreObject& object)
 {
     std::optional stopAtID = object.idOfNextSiblingIncludingIgnoredOrParent();
+    if (object.stitchGroupIfRepresentative()) {
+        // The range can span every member, and members may be nested in inline wrappers (e.g. <strong>),
+        // so neither the representative's nor the last member's sibling is a safe stop. A stitch group
+        // never crosses its block flow, so stop past the block-flow ancestor.
+        if (RefPtr blockFlow = object.blockFlowAncestorForStitchable())
+            stopAtID = blockFlow->idOfNextSiblingIncludingIgnoredOrParent();
+
+        // But that boundary can also include content after the group, so clamp to the stitched length
+        // (the length of the concatenated member text) to keep the walk inside the group.
+        NSUInteger stitchedLength = object.stringValue().length();
+        range.location = std::min<NSUInteger>(range.location, stitchedLength);
+        // range.location is clamped to stitchedLength above, so this unsigned subtraction never wraps.
+        range.length = std::min<NSUInteger>(range.length, stitchedLength - range.location);
+    }
+
     auto markerToLocation = AXTextMarker { object, 0 }.nextMarkerFromOffset(range.location, ForceSingleOffsetMovement::Yes, stopAtID);
     if (!markerToLocation.isValid())
         return std::nullopt;

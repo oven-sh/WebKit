@@ -67,23 +67,23 @@ static std::optional<Style::ComputedStyle> styleForFirstLetter(const RenderEleme
         // Mathematically we can't rely on font-size, since font().height() doesn't necessarily match. For reliability, the best approach is simply to
         // compare the final measured cap-heights of the two fonts in order to get to the closest possible value.
         firstLetterStyle.setLineBoxContain({ Style::WebkitLineBoxContainValue::InitialLetter });
-        int lineHeight = paragraph->style().computedLineHeight();
+        int lineHeight = paragraph->style().usedLineHeight();
 
         // Set the font to be one line too big and then ratchet back to get to a precise fit. We can't just set the desired font size based off font height metrics
         // because many fonts bake ascent into the font metrics. Therefore we have to look at actual measured cap height values in order to know when we have a good fit.
         auto newFontDescription = firstLetterStyle.fontDescription();
-        float capRatio = firstLetterStyle.metricsOfPrimaryFont().capHeight().value() / firstLetterStyle.computedFontSize();
+        float capRatio = firstLetterStyle.metricsOfPrimaryFont().capHeight().value() / firstLetterStyle.usedFontSize();
         float startingFontSize = ((firstLetterStyle.initialLetter().height() - 1) * lineHeight + paragraph->style().metricsOfPrimaryFont().intCapHeight()) / capRatio;
-        newFontDescription.setSpecifiedSize(startingFontSize);
         newFontDescription.setComputedSize(startingFontSize);
+        newFontDescription.setUsedSize(startingFontSize);
         firstLetterStyle.setFontDescription(WTF::move(newFontDescription));
 
         int desiredCapHeight = (firstLetterStyle.initialLetter().height() - 1) * lineHeight + paragraph->style().metricsOfPrimaryFont().intCapHeight();
         int actualCapHeight = firstLetterStyle.metricsOfPrimaryFont().intCapHeight();
         while (actualCapHeight > desiredCapHeight) {
             auto newFontDescription = firstLetterStyle.fontDescription();
-            newFontDescription.setSpecifiedSize(newFontDescription.specifiedSize() - 1);
-            newFontDescription.setComputedSize(newFontDescription.computedSize() -1);
+            newFontDescription.setComputedSize(newFontDescription.computedSize() - 1);
+            newFontDescription.setUsedSize(newFontDescription.usedSize() - 1);
             firstLetterStyle.setFontDescription(WTF::move(newFontDescription));
             actualCapHeight = firstLetterStyle.metricsOfPrimaryFont().intCapHeight();
         }
@@ -158,7 +158,7 @@ static bool isDutchIJDigraph(StringView text, unsigned offset)
     return (first == 'i' && second == 'j') || (first == 'I' && second == 'J');
 }
 
-static unsigned firstLetterLength(StringView text, const AtomString& specifiedLocale)
+static unsigned firstLetterLength(StringView text, const AtomString& locale)
 {
     if (text.isEmpty())
         return 0;
@@ -173,7 +173,7 @@ static unsigned firstLetterLength(StringView text, const AtomString& specifiedLo
     length += numCodeUnitsInGraphemeClusters(text.substring(length), 1);
 
     // In Dutch, "ij" is a digraph treated as a single letter for ::first-letter.
-    if (length < text.length() && isDutchLocale(specifiedLocale) && isDutchIJDigraph(text, length - 1))
+    if (length < text.length() && isDutchLocale(locale) && isDutchIJDigraph(text, length - 1))
         length += numCodeUnitsInGraphemeClusters(text.substring(length), 1);
 
     // Keep looking for following punctuation and intervening typographic space,
@@ -251,7 +251,8 @@ void RenderTreeBuilder::FirstLetter::updateAfterDescendants(RenderBlock& block)
             if (is<Text>(textNode->previousSibling()))
                 return true;
             // Length can change due to a locale change.
-            return firstLetterLength(textNode->data(), remainingText->style().fontDescription().specifiedLocale()) != remainingText->start();
+            // FIXME: This should probably be using `fontDescription().usedLocale()`, as that is what is used for shaping.
+            return firstLetterLength(textNode->data(), remainingText->style().fontDescription().computedLocale()) != remainingText->start();
         };
         if (isFirstLetterStale()) {
             ASSERT(remainingText.get());
@@ -362,7 +363,8 @@ void RenderTreeBuilder::FirstLetter::createRenderers(RenderText& currentTextChil
     ASSERT(!oldText.isNull());
 
     if (!oldText.isEmpty()) {
-        unsigned length = firstLetterLength(oldText, currentTextChild.style().fontDescription().specifiedLocale());
+        // FIXME: This should probably be using `fontDescription().usedLocale()`, as that is what is used for shaping.
+        unsigned length = firstLetterLength(oldText, currentTextChild.style().fontDescription().computedLocale());
 
         RefPtr textNode = currentTextChild.textNode();
         WeakPtr beforeChild = currentTextChild.nextSibling();

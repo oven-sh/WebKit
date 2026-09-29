@@ -62,19 +62,32 @@ template<typename T>
 void GCIncomingRefCountedSet<T>::sweep(VM& vm, CollectionScope collectionScope)
 {
     size_t preciseBytes = 0;
-    m_vector.removeAllMatching([&](T* object) {
+    size_t preciseBytesAddedSinceLastSweep = 0;
+    size_t destination = 0;
+    for (size_t source = 0; source < m_vector.size(); ++source) {
+        T* object = m_vector[source];
         size_t size = object->gcSizeEstimateInBytes();
         ASSERT(object->isDeferred());
         ASSERT(object->numberOfIncomingReferences());
-        if (!object->filterIncomingReferences([&] (JSCell* cell) { return vm.heap.isMarked(cell); })) {
-            preciseBytes += size;
-            return false;
-        }
-        return true;
-    });
-    // Update m_bytes to the precise value when Full-GC happens since Eden-GC only expects that Eden region is collected.
+        if (object->filterIncomingReferences([&] (JSCell* cell) { return vm.heap.isMarked(cell); }))
+            continue;
+        preciseBytes += size;
+        if (source >= m_sizeAfterLastSweep)
+            preciseBytesAddedSinceLastSweep += size;
+        m_vector[destination++] = object;
+    }
+    m_vector.shrink(destination);
+
+    // A full collection makes m_bytes precise. An eden collection only collects what was allocated since the last
+    // collection, and the heap expects its size not to go below what the last collection left (see
+    // Heap::updateAllocationLimits()). So an eden collection keeps the bytes the last sweep left, whatever happened to
+    // those objects since, and is precise about the objects added after it: the dead ones among them stop counting.
     if (collectionScope == CollectionScope::Full)
         m_bytes = preciseBytes;
+    else
+        m_bytes = m_bytesAfterLastSweep + preciseBytesAddedSinceLastSweep;
+    m_bytesAfterLastSweep = m_bytes;
+    m_sizeAfterLastSweep = m_vector.size();
 }
 
 } // namespace JSC

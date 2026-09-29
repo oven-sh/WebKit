@@ -2295,12 +2295,14 @@ PlatformWheelEvent UnifiedPDFPlugin::wheelEventCopyWithVelocity(const PlatformWh
 bool UnifiedPDFPlugin::handleContextMenuEvent(const WebMouseEvent& event)
 {
 #if ENABLE(CONTEXT_MENUS)
+    ASSERT(isContextMenuEvent(event));
+
     RefPtr frame = m_frame.get();
     RefPtr webPage = frame ? frame->page() : nullptr;
     if (!webPage)
         return false;
 
-    auto contextMenu = createContextMenu(event);
+    auto contextMenu = createContextMenu(flooredIntPoint(event.position()), event.inputSource());
     if (!contextMenu)
         return false;
 
@@ -2605,10 +2607,8 @@ auto UnifiedPDFPlugin::toContextMenuItemTag(int tagValue) -> ContextMenuItemTag
     return isKnownContextMenuItemTag ? static_cast<ContextMenuItemTag>(tagValue) : ContextMenuItemTag::Unknown;
 }
 
-std::optional<PDFContextMenu> UnifiedPDFPlugin::createContextMenu(const WebMouseEvent& contextMenuEvent) const
+std::optional<PDFContextMenu> UnifiedPDFPlugin::createContextMenu(const IntPoint& contextMenuEventRootViewPoint, WebEventInputSource inputSource) const
 {
-    ASSERT(isContextMenuEvent(contextMenuEvent));
-
     RefPtr frame = m_frame.get();
     if (!frame || !frame->coreLocalFrame())
         return std::nullopt;
@@ -2617,17 +2617,14 @@ std::optional<PDFContextMenu> UnifiedPDFPlugin::createContextMenu(const WebMouse
     if (!frameView)
         return std::nullopt;
 
-    auto contextMenuEventRootViewPoint = flooredIntPoint(contextMenuEvent.position());
-
     Vector<PDFContextMenuItem> menuItems;
 
     auto addSeparator = [item = separatorContextMenuItem(), &menuItems] {
         menuItems.append(item);
     };
 
-    if ([m_pdfDocument allowsCopying] && hasSelection()) {
-        bool shouldPresentLookupAndSearchOptions = !isInBaseSystem();
-        menuItems.appendVector(selectionContextMenuItems(contextMenuEventRootViewPoint, shouldPresentLookupAndSearchOptions));
+    if (hasSelection()) {
+        menuItems.appendVector(selectionContextMenuItems(contextMenuEventRootViewPoint));
         addSeparator();
     }
 
@@ -2659,8 +2656,21 @@ std::optional<PDFContextMenu> UnifiedPDFPlugin::createContextMenu(const WebMouse
         contextMenuPoint,
         WTF::move(menuItems),
         WTF::move(openInDefaultViewerTag),
-        contextMenuEvent.inputSource()
+        inputSource
     };
+}
+
+Vector<String> UnifiedPDFPlugin::contextMenuItemTitlesForTesting(const IntPoint& contextMenuEventRootViewPoint) const
+{
+    auto contextMenu = createContextMenu(contextMenuEventRootViewPoint, WebEventInputSource::UserDriven);
+    if (!contextMenu)
+        return { };
+
+    return WTF::compactMap(contextMenu->items, [](auto& item) -> std::optional<String> {
+        if (item.separator == ContextMenuItemIsSeparator::Yes)
+            return std::nullopt;
+        return item.title;
+    });
 }
 
 bool UnifiedPDFPlugin::isDisplayModeContextMenuItemTag(ContextMenuItemTag tag) const
@@ -2739,13 +2749,17 @@ PDFContextMenuItem UnifiedPDFPlugin::separatorContextMenuItem() const
     return { { }, 0, std::to_underlying(ContextMenuItemTag::Invalid), ContextMenuItemTagNoAction, ContextMenuItemEnablement::Disabled, ContextMenuItemHasAction::No, ContextMenuItemIsSeparator::Yes };
 }
 
-Vector<PDFContextMenuItem> UnifiedPDFPlugin::selectionContextMenuItems(const IntPoint& contextMenuEventRootViewPoint, bool shouldPresentLookupAndSearchOptions) const
+Vector<PDFContextMenuItem> UnifiedPDFPlugin::selectionContextMenuItems(const IntPoint& contextMenuEventRootViewPoint) const
 {
-    if (![m_pdfDocument allowsCopying] || !hasSelection())
-        return { };
+    Vector<PDFContextMenuItem> items;
+    if (!hasSelection())
+        return items;
 
-    Vector<PDFContextMenuItem> items { contextMenuItem(ContextMenuItemTag::Copy) };
+    bool allowsCopying = [m_pdfDocument allowsCopying];
+    if (allowsCopying)
+        items.append(contextMenuItem(ContextMenuItemTag::Copy));
 
+    bool shouldPresentLookupAndSearchOptions = !isInBaseSystem();
     if (shouldPresentLookupAndSearchOptions) {
         items.insertVector(0, Vector<PDFContextMenuItem> {
             contextMenuItem(ContextMenuItemTag::DictionaryLookup),
@@ -2755,7 +2769,9 @@ Vector<PDFContextMenuItem> UnifiedPDFPlugin::selectionContextMenuItems(const Int
         });
     }
 
-    if (RetainPtr annotation = annotationForRootViewPoint(contextMenuEventRootViewPoint); annotation && annotationIsExternalLink(annotation.get()))
+    RetainPtr annotation = annotationForRootViewPoint(contextMenuEventRootViewPoint);
+    bool externalLinkUnderContextMenu = annotation && annotationIsExternalLink(annotation);
+    if (allowsCopying && externalLinkUnderContextMenu)
         items.append(contextMenuItem(ContextMenuItemTag::CopyLink));
 
     return items;
@@ -2966,8 +2982,11 @@ bool UnifiedPDFPlugin::isEditingCommandEnabled(const String& commandName)
     if (equalLettersIgnoringASCIICase(commandName, "selectall"_s))
         return true;
 
-    if (equalLettersIgnoringASCIICase(commandName, "copy"_s) || equalLettersIgnoringASCIICase(commandName, "takefindstringfromselection"_s))
+    if (equalLettersIgnoringASCIICase(commandName, "takefindstringfromselection"_s))
         return hasSelection();
+
+    if (equalLettersIgnoringASCIICase(commandName, "copy"_s))
+        return hasSelection() && [m_pdfDocument allowsCopying];
 
     return false;
 }
@@ -3766,7 +3785,7 @@ RefPtr<TextIndicator> UnifiedPDFPlugin::textIndicatorForPageRect(FloatRect pageR
     auto rectInRootViewCoordinates = convertFromPluginToRootView(encloseRectToDevicePixels(rectInPluginCoordinates, deviceScaleFactor));
     auto bufferSize = rectInRootViewCoordinates.size().scaled(mainFrameScaleForTextIndicator);
 
-    auto buffer { ImageBuffer::create(bufferSize, RenderingMode::Unaccelerated, RenderingPurpose::ShareableSnapshot, deviceScaleFactor, DestinationColorSpace::SRGB(), PixelFormat::BGRA8) };
+    auto buffer { ImageBuffer::create(bufferSize, RenderingMode::Unaccelerated, RenderingPurpose::ShareableSnapshot, deviceScaleFactor, ColorSpace::SRGB(), PixelFormat::BGRA8) };
     if (!buffer)
         return { };
 
@@ -3790,7 +3809,7 @@ RefPtr<TextIndicator> UnifiedPDFPlugin::textIndicatorForPageRect(FloatRect pageR
     textIndicator->setContentImageScaleFactor(deviceScaleFactor);
     textIndicator->setContentImageWithoutSelection(protect(textIndicator->contentImage()).get());
     textIndicator->setContentImageWithoutSelectionRectInRootViewCoordinates(rectInRootViewCoordinates);
-    textIndicator->setSelectionRectInRootViewCoordinates(rectInRootViewCoordinates);
+    textIndicator->setSelectionRectInMainFrameViewCoordinates(rectInRootViewCoordinates);
     textIndicator->setTextBoundingRectInRootViewCoordinates(rectInRootViewCoordinates);
     textIndicator->setTextRectsInBoundingRectCoordinates({ { { 0, 0, }, rectInRootViewCoordinates.size() } });
 
@@ -4705,23 +4724,47 @@ void UnifiedPDFPlugin::resetInitialSelection()
     m_initialSelectionStart = { nil, { } };
 }
 
-SelectionEndpoint UnifiedPDFPlugin::extendInitialSelection(FloatPoint pointInRootView, TextGranularity granularity)
+SelectionEndpoint UnifiedPDFPlugin::extendInitialSelection(FloatPoint pointInRootView, TextGranularity granularity, SelectionExtentAnchor anchor)
 {
 #if HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)
+    // The previous gesture's initial selection must not outlive this one, even if this update bails out early.
+    if (anchor == SelectionExtentAnchor::CurrentSelection)
+        resetInitialSelection();
+
     auto [page, pointInPage] = rootViewToPage(pointInRootView);
     if (!page)
         return SelectionEndpoint::Start;
+
+    if (anchor == SelectionExtentAnchor::CurrentSelection) {
+        auto anchorEndpoint = currentSelectionEndpointToPreserveWhenExtendedTo(pointInPage, page.get());
+        m_initialSelectionStart = anchorEndpoint.first ? anchorEndpoint : PageAndPoint { page, pointInPage };
+    }
 
     auto [startPage, startPointInPage] = m_initialSelectionStart;
     if (!startPage)
         return SelectionEndpoint::Start;
 
-    RetainPtr newSelection = selectionAtPoint(pointInPage, page.get(), granularity);
-    if (isEmpty(newSelection.get()))
-        return SelectionEndpoint::Start;
+    RetainPtr extentSelection = selectionAtPoint(pointInPage, page.get(), granularity);
+    RetainPtr<PDFSelection> newSelection;
 
-    [newSelection addSelection:m_initialSelection.get()];
-    // The selection at this point only includes the initial selection, and the new hit-tested selection, and may be discontiguous.
+    if (m_initialSelection) {
+        if (isEmpty(extentSelection.get()))
+            return SelectionEndpoint::Start;
+
+        newSelection = WTF::move(extentSelection);
+        // The selection at this point only includes the initial selection, and the new hit-tested selection, and may be discontiguous.
+        [newSelection addSelection:m_initialSelection.get()];
+    } else {
+        newSelection = selectionBetweenPoints(startPointInPage, startPage.get(), pointInPage, page.get());
+
+        if (isEmpty(newSelection.get()))
+            newSelection = WTF::move(extentSelection);
+        else if (!isEmpty(extentSelection.get()))
+            [newSelection addSelection:extentSelection.get()];
+
+        if (isEmpty(newSelection.get()))
+            return SelectionEndpoint::Start;
+    }
 
     auto [newStartPage, newStartPointInPage] = selectionCaretPointInPage(newSelection.get(), SelectionEndpoint::Start);
     if (!newStartPage)
@@ -4742,6 +4785,7 @@ SelectionEndpoint UnifiedPDFPlugin::extendInitialSelection(FloatPoint pointInRoo
 #else
     UNUSED_PARAM(granularity);
     UNUSED_PARAM(pointInRootView);
+    UNUSED_PARAM(anchor);
 #endif
     return SelectionEndpoint::Start;
 }
@@ -4871,12 +4915,12 @@ bool UnifiedPDFPlugin::platformPopulateEditorStateIfNeeded(EditorState& state) c
 
     auto selectedString = String { [selection string] };
     state.postLayoutData = EditorState::PostLayoutData { };
+    state.postLayoutData->selectedTextLength = selectedString.length();
+    state.postLayoutData->canCopy = !selectedString.isEmpty() && [m_pdfDocument allowsCopying];
 #if PLATFORM(IOS_FAMILY)
     state.postLayoutData->isStableStateUpdate = true;
     state.postLayoutData->wordAtSelection = WTF::move(selectedString);
 #endif
-    state.postLayoutData->selectedTextLength = selectedString.length();
-    state.postLayoutData->canCopy = !selectedString.isEmpty();
 
     state.visualData = EditorState::VisualData { };
     state.visualData->rootFrameID = rootFrameID;
@@ -4921,6 +4965,28 @@ PDFSelection *UnifiedPDFPlugin::selectionAtPoint(FloatPoint pointInPage, PDFPage
             return PDFSelectionGranularityCharacter;
         }
     }()];
+}
+
+auto UnifiedPDFPlugin::currentSelectionEndpointToPreserveWhenExtendedTo(FloatPoint pointInPage, PDFPage *page) const -> PageAndPoint
+{
+    auto start = selectionCaretPointInPage(SelectionEndpoint::Start);
+    auto end = selectionCaretPointInPage(SelectionEndpoint::End);
+    if (!start.first || !end.first)
+        return { nil, { } };
+
+    RetainPtr pdfDocument = this->pdfDocument();
+    auto extentPageIndex = [pdfDocument indexForPage:page];
+    if (extentPageIndex < [pdfDocument indexForPage:start.first.get()])
+        return end;
+    if (extentPageIndex > [pdfDocument indexForPage:end.first.get()])
+        return start;
+
+    auto distanceInCharacters = [this](const PageAndPoint& from, const PageAndPoint& to) -> NSUInteger {
+        return [[protect(selectionBetweenPoints(from.second, from.first.get(), to.second, to.first.get())) string] length];
+    };
+
+    PageAndPoint extent { page, pointInPage };
+    return distanceInCharacters(start, extent) <= distanceInCharacters(extent, end) ? end : start;
 }
 
 #endif // HAVE(PDFDOCUMENT_SELECTION_WITH_GRANULARITY)

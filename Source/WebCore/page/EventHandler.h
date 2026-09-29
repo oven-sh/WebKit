@@ -289,7 +289,7 @@ public:
 #endif
 
 #if ENABLE(TWO_PHASE_CLICKS)
-    WEBCORE_EXPORT void dispatchSyntheticMouseOut(const PlatformMouseEvent&);
+    WEBCORE_EXPORT void dispatchSyntheticMouseOut(const PlatformMouseEvent&, Node* newHoveredNode = nullptr);
     WEBCORE_EXPORT void dispatchSyntheticMouseMove(const PlatformMouseEvent&);
 #endif
 
@@ -366,7 +366,7 @@ public:
 #endif
 
 #if ENABLE(TOUCH_EVENTS)
-    WEBCORE_EXPORT Expected<bool, RemoteFrameGeometryTransformer> handleTouchEvent(const PlatformTouchEvent&);
+    WEBCORE_EXPORT std::expected<bool, RemoteFrameGeometryTransformer> handleTouchEvent(const PlatformTouchEvent&);
 #endif
 
     bool useHandCursor(Node*, bool isOverLink, bool shiftKey);
@@ -391,7 +391,7 @@ public:
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(DRAG_SUPPORT)
-    WEBCORE_EXPORT void tryToBeginDragAtPoint(const IntPoint& clientPosition, const IntPoint& globalPosition, CompletionHandler<void(Expected<bool, RemoteFrameGeometryTransformer>)>&&);
+    WEBCORE_EXPORT void tryToBeginDragAtPoint(const IntPoint& clientPosition, const IntPoint& globalPosition, CompletionHandler<void(std::expected<bool, RemoteFrameGeometryTransformer>)>&&);
 #endif
     
 #if PLATFORM(COCOA)
@@ -610,7 +610,7 @@ private:
         }
 
         CapturesDragging(InabilityReason inabilityReason)
-            : m_state { unexpect, inabilityReason }
+            : m_state { std::unexpect, inabilityReason }
         {
         }
 
@@ -633,7 +633,7 @@ private:
         InabilityReason inabilityReason() const { return m_state.error(); }
 
     private:
-        Expected<std::monostate, InabilityReason> m_state;
+        std::expected<std::monostate, InabilityReason> m_state;
     };
 #ifndef __swift__ // FIXME: (rdar://167557269) temporary until SWIFT_COPYABLE_IF is fully supported
     CapturesDragging capturesDragging() const { return m_capturesDragging; }
@@ -743,6 +743,32 @@ private:
 #endif
 
 #if ENABLE(DRAG_SUPPORT)
+    // Click bookkeeping (`m_clickNode`, `m_clickCount`) is deliberately absent: a context menu should
+    // invalidate the pending click rather than preserve it, so the synthesized pair is left free to clear it.
+    struct PendingDragState {
+        bool mousePressed { false };
+        CapturesDragging capturesDragging;
+        bool mouseDownMayStartDrag { false };
+        bool mouseDownMayStartSelect { false };
+        bool mouseDownMayStartAutoscroll { false };
+        bool mouseDownWasInSubframe { false };
+        MonotonicTime mouseDownTimestamp;
+        IntPoint mouseDownContentsPosition;
+        PlatformMouseEvent mouseDownEvent;
+        LayoutPoint dragStartPosition;
+        RefPtr<Element> dragStateSource;
+        RefPtr<Node> mousePressNode;
+        RefPtr<Element> capturingMouseEventsElement;
+        bool eventHandlerWillResetCapturingMouseEventsElement { false };
+        bool isCapturingRootElementForMouseEvents { false };
+        SelectionInitiationState selectionInitiationState { HaveNotStartedSelection };
+        ImmediateActionStage immediateActionStage { ImmediateActionStage::None };
+    };
+
+    bool isSynthesizedContextMenuPressDuringPendingDrag(const PlatformMouseEvent&) const;
+    std::optional<PendingDragState> pendingDragStateToPreserveAcross(const PlatformMouseEvent&) const;
+    void restorePendingDragState(const PendingDragState&);
+
     LayoutPoint m_dragStartPosition;
     std::optional<WeakSimpleRange> m_dragStartSelection;
     RefPtr<Element> m_dragTarget;

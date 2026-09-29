@@ -4,12 +4,15 @@
 
 import("../../../gni/angle.gni")
 deqp_path = "../../third_party/VK-GL-CTS/src"
+deqp_support_path = "../../src/tests/deqp_support"
 
 deqp_include_dirs = [
   "$deqp_path/executor",
   "$deqp_path/execserver",
   "$deqp_path/framework/platform/lnx",
   "$deqp_path/framework/platform/lnx/X11",
+  "$deqp_path/framework/platform/lnx/wayland",
+  "$deqp_support_path/wayland",
   "$deqp_path/framework/platform/null",
   "$deqp_path/framework/platform/win32",
   "$deqp_path/framework/xexml",
@@ -1890,6 +1893,8 @@ deqp_framework_common_sources = [
   "$deqp_path/framework/common/tcuSeedBuilder.hpp",
   "$deqp_path/framework/common/tcuStringTemplate.cpp",
   "$deqp_path/framework/common/tcuStringTemplate.hpp",
+  "$deqp_path/framework/common/tcuSubprocessTestExecutor.cpp",
+  "$deqp_path/framework/common/tcuSubprocessTestExecutor.hpp",
   "$deqp_path/framework/common/tcuSurface.cpp",
   "$deqp_path/framework/common/tcuSurface.hpp",
   "$deqp_path/framework/common/tcuSurfaceAccess.cpp",
@@ -1998,6 +2003,12 @@ deqp_framework_common_sources = [
   "$deqp_path/framework/referencerenderer/rrVertexPacket.cpp",
   "$deqp_path/framework/referencerenderer/rrVertexPacket.hpp",
 ]
+
+deqp_framework_common_win_sources =
+    [ "$deqp_path/framework/common/tcuSubprocessTestExecutorWin.cpp" ]
+
+deqp_framework_common_linux_sources =
+    [ "$deqp_path/framework/common/tcuSubprocessTestExecutorLin.cpp" ]
 
 deqp_framework_qphelper_sources = [
   "$deqp_path/framework/qphelper/qpCrashHandler.c",

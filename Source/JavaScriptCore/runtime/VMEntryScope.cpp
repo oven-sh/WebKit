@@ -39,6 +39,9 @@ namespace JSC {
 void VMEntryScope::setUpSlow()
 {
     m_vm.entryScope = this;
+#if USE(BUN_JSC_ADDITIONS)
+    m_vm.didEnterFromOutside();
+#endif
 
     auto& thread = Thread::currentSingleton();
     if (!thread.isJSThread()) [[unlikely]] {

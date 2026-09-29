@@ -23,7 +23,7 @@
 #pragma once
 
 #include "RenderBlockFlow.h"
-#include "RenderListMarker.h"
+#include "RenderListOutsideMarker.h"
 
 namespace WebCore {
 
@@ -39,9 +39,9 @@ public:
     int value() const;
     void updateValue();
 
-    WEBCORE_EXPORT String markerText(RenderListMarker::IncludeSuffix = RenderListMarker::IncludeSuffix::Yes) const;
+    WEBCORE_EXPORT String markerText(ListMarkerIncludeSuffix = ListMarkerIncludeSuffix::Yes) const;
 
-    void updateListMarkerNumbers();
+    Vector<CheckedRef<RenderListItem>> updateListMarkerNumbers();
 
     static void updateItemValuesForOrderedList(const HTMLOListElement&);
     static unsigned itemCountForOrderedList(const HTMLOListElement&);
@@ -49,40 +49,47 @@ public:
 
     Style::ComputedStyle computeMarkerStyle() const;
 
-    RenderListMarker* markerRenderer() const { return m_marker.get(); }
-    void setMarkerRenderer(RenderListMarker& marker) { m_marker = marker; }
+    RenderBoxModelObject* markerRenderer() const { return m_marker.get(); }
+    void setMarkerRenderer(RenderBoxModelObject& marker) { m_marker = marker; }
+    RenderListOutsideMarker* markerBox() const;
+
+    // Fills in what the marker shows, in whichever shape it was built.
+    void updateMarkerContent();
 
     bool isInReversedOrderedList() const;
 
     struct FirstFormattedLineCandidate {
         CheckedPtr<RenderBlock> parent;
         CheckedPtr<RenderBlock> fallbackParent;
-        // FIXME: handle all block level children, not just replaced elements that got blockified.
-        bool stoppedAtTableRubyOrReplaced { false };
     };
-    static FirstFormattedLineCandidate firstFormattedLineRootFor(RenderBlock& blockContainer, const RenderListMarker&);
-    static Vector<CheckedPtr<RenderListMarker>> excludedMarkersForContainer(const RenderBlockFlow& lineContainer, const Vector<SingleThreadWeakPtr<RenderListMarker>>&);
+    static FirstFormattedLineCandidate firstFormattedLineRootFor(RenderBlock& blockContainer, const RenderBoxModelObject& marker);
+    static Vector<CheckedPtr<RenderListOutsideMarker>> excludedMarkersForContainer(const RenderBlockFlow& lineContainer, const Vector<SingleThreadWeakPtr<RenderListOutsideMarker>>&);
+    static CheckedPtr<RenderListOutsideMarker> excludedMarkerAnchoredTo(const RenderBlockFlow& firstFormattedLineRoot);
 
 private:
     ASCIILiteral renderName() const final { return "RenderListItem"_s; }
 
     void paint(PaintInfo&, const LayoutPoint&) final;
     void paintObject(PaintInfo&, const LayoutPoint&) final;
+    bool nodeAtPoint(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction) final;
+    bool hasLineIfEmpty() const final;
 
     void layoutBlock(RelayoutChildren, LayoutUnit pageLogicalHeight = 0_lu) final;
     void layoutExcludedChildren(RelayoutChildren) final;
 
-    void placeExcludedMarker(RenderListMarker&);
-    RenderListMarker* excludedMarker() const;
+    void placeExcludedMarker(RenderListOutsideMarker&);
+    RenderListOutsideMarker* excludedMarker() const;
 
     void styleDidChange(Style::Difference, const Style::ComputedStyle* oldStyle) final;
 
     void computeIntrinsicLogicalWidthContributions() final;
+    std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const final;
 
+    void updateValueAndMarkerContent();
     void updateValueNow() const;
     void usedCounterDirectivesChanged();
 
-    SingleThreadWeakPtr<RenderListMarker> m_marker;
+    SingleThreadWeakPtr<RenderBoxModelObject> m_marker;
     mutable std::optional<int> m_value;
 };
 

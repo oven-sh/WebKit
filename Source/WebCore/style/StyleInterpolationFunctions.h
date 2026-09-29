@@ -47,6 +47,7 @@
 #include "ScopedName.h"
 #include "Settings.h"
 #include "StyleComputedStyle+SettersInlines.h"
+#include "StyleFontPaletteInlines.h"
 #include "StyleDynamicRangeLimit.h"
 #include "StyleImageWrapper.h"
 #include "StyleInterpolationClient.h"
@@ -54,6 +55,7 @@
 #include "StylePrimitiveNumericOrKeyword+Blending.h"
 #include "StylePrimitiveNumericTypes+Blending.h"
 #include "StyleResolver.h"
+#include "StyleSizeOrKeyword+Blending.h"
 #include <algorithm>
 #include <wtf/MathExtras.h>
 #include <wtf/PointerComparison.h>

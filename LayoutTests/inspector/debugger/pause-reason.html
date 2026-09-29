@@ -12,7 +12,7 @@ function test()
     WI.debuggerManager.allExceptionsBreakpoint.disabled = false;
     WI.debuggerManager.assertionFailuresBreakpoint.disabled = false;
 
-    for (let script of WI.debuggerManager.dataForTarget(WI.mainTarget).scripts) {
+    for (let script of WI.debuggerManager.dataForTarget(InspectorTest.mainFrameTarget).scripts) {
         if (!/pause-reasons\.js$/.test(script.url))
             continue;
         let sourceCodeLocation = script.createSourceCodeLocation(3, 0);

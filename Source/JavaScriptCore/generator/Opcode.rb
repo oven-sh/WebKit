@@ -147,6 +147,7 @@ struct #{capitalized_name} : public #{type_prefix}Instruction {
 
 
 #{emitter}
+#{reemitter}
 #{dumper}
 #{constructors}
 #{setters}#{metadata_struct_and_accessor}
@@ -277,6 +278,86 @@ EOF
 EOF
     }}
     }
+EOF
+    end
+
+
+    def reemitter
+        return "" if @section.is_wasm?
+        mapped = (@args || []).map { |arg| "        auto __mapped_#{arg.name} = __mapper(BytecodeOperandName::#{arg.name}, #{arg.field_name});" }.join("\n")
+        mapped_args = (@args || []).map { |arg| "__mapped_#{arg.name}" }.unshift("").join(", ")
+        visited = (@args || []).map { |arg| "        __visitor(BytecodeOperandName::#{arg.name}, #{arg.field_name});" }.join("\n")
+        <<-EOF
+    template<typename Visitor>
+    void visitOperands(Visitor& __visitor) const
+    {
+        UNUSED_PARAM(__visitor);
+#{visited}
+    }
+
+    template<typename BytecodeGenerator, typename Mapper>
+    void reemit(BytecodeGenerator* gen, OpcodeSize __minimumSize, Mapper& __mapper) const
+    {
+        UNUSED_PARAM(__mapper);
+#{mapped}
+        switch (__minimumSize) {
+        case OpcodeSize::Narrow:
+            emitWithSmallestSizeRequirement<OpcodeSize::Narrow, BytecodeGenerator>(gen#{mapped_args});
+            return;
+        case OpcodeSize::Wide16:
+            emitWithSmallestSizeRequirement<OpcodeSize::Wide16, BytecodeGenerator>(gen#{mapped_args});
+            return;
+        case OpcodeSize::Wide32:
+            emitWithSmallestSizeRequirement<OpcodeSize::Wide32, BytecodeGenerator>(gen#{mapped_args});
+            return;
+        }
+    }
+EOF
+    end
+
+    def self.operand_names(opcodes)
+        names = []
+        opcodes.each { |op| (op.args || []).each { |arg| names << arg.name.to_s unless names.include?(arg.name.to_s) } }
+        <<-EOF.chomp
+enum class BytecodeOperandName : uint16_t {
+#{names.map { |n| "    #{n}," }.join("\n")}
+};
+EOF
+    end
+
+    def self.reemit_bytecode(opcodes)
+        <<-EOF.chomp
+template<typename BytecodeGenerator, typename Mapper>
+void reemitInstruction(const JSInstruction* __instruction, BytecodeGenerator* gen, OpcodeSize __minimumSize, Mapper& __mapper)
+{
+    switch (__instruction->opcodeID()) {
+#{opcodes.map { |op|
+        <<-EOF.chomp
+    case #{op.name}:
+        __instruction->as<#{op.capitalized_name}>().reemit(gen, __minimumSize, __mapper);
+        break;
+EOF
+    }.join "\n"}
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+template<typename Visitor>
+void visitInstructionOperands(const JSInstruction* __instruction, Visitor& __visitor)
+{
+    switch (__instruction->opcodeID()) {
+#{opcodes.map { |op|
+        <<-EOF.chomp
+    case #{op.name}:
+        __instruction->as<#{op.capitalized_name}>().visitOperands(__visitor);
+        break;
+EOF
+    }.join "\n"}
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
 EOF
     end
 

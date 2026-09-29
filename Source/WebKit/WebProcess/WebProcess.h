@@ -42,11 +42,11 @@
 #include <WebCore/CaptionUserPreferences.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/MediaSessionIdentifier.h>
-#include <WebCore/NetworkStorageSession.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/ProcessIdentity.h>
 #include <WebCore/RegistrableDomain.h>
 #include <WebCore/ServiceWorkerTypes.h>
+#include <WebCore/ThirdPartyCookieBlockingMode.h>
 #include <WebCore/Timer.h>
 #include <WebCore/UserGestureTokenIdentifier.h>
 #include <pal/HysteresisActivity.h>
@@ -111,6 +111,7 @@ class SecurityOriginData;
 class Site;
 class UserGestureToken;
 
+enum class AccessibilityMode : uint8_t;
 enum class EventMakesGamepadsVisible : bool;
 enum class PlatformMediaSessionRemoteControlCommandType : uint8_t;
 enum class RenderAsTextFlag : uint16_t;
@@ -542,6 +543,8 @@ public:
     void remoteAudioSessionConfigurationChanged(const RemoteAudioSessionConfiguration&);
 #endif
 
+    void registerURLSchemeAsCORSEnabled(const String&);
+
 private:
     WebProcess();
     ~WebProcess();
@@ -583,7 +586,6 @@ private:
     void registerURLSchemeAsNoAccess(const String&) const;
 #endif
     void registerURLSchemeAsDisplayIsolated(const String&) const;
-    void registerURLSchemeAsCORSEnabled(const String&);
     void registerURLSchemeAsAlwaysRevalidated(const String&) const;
     void registerURLSchemeAsCachePartitioned(const String&) const;
     void registerURLSchemeAsCanDisplayOnlyIfCanRequest(const String&) const;
@@ -608,6 +610,7 @@ private:
     void NODELETE platformSetCacheModel(CacheModel);
 
     void setEnhancedAccessibility(bool);
+    void setAccessibilityMode(WebCore::AccessibilityMode);
     void bindAccessibilityFrameWithData(WebCore::FrameIdentifier, std::span<const uint8_t>);
 
     void startMemorySampler(SandboxExtension::Handle&&, const String&, const double);

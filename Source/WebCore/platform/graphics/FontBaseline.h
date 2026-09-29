@@ -23,8 +23,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE. 
  */
 
-#ifndef FontBaseline_h
-#define FontBaseline_h
+#pragma once
 
 namespace WebCore {
 
@@ -33,5 +32,3 @@ enum class FontBaseline : uint8_t { Alphabetic, Ideographic, Central };
 enum class BaselineSynthesisEdge : uint8_t { ContentBox, BorderBox, MarginBox };
 
 } // namespace WebCore
-
-#endif // FontBaseline_h

@@ -89,8 +89,8 @@ void OfflineAudioDestinationNode::uninitialize()
     if (!isInitialized())
         return;
 
-    if (m_renderThread) {
-        m_renderThread->waitForCompletion();
+    if (RefPtr renderThread = m_renderThread) {
+        renderThread->waitForCompletion();
         m_renderThread = nullptr;
     }
 
@@ -120,22 +120,22 @@ void OfflineAudioDestinationNode::startRendering(CompletionHandler<void(std::opt
         return completionHandler(Exception { ExceptionCode::InvalidStateError, "Already started rendering"_s });
 
     m_startedRendering = true;
-    Ref protectedThis { *this };
 
-    auto offThreadRendering = [this, protectedThis = WTF::move(protectedThis)]() mutable {
+    auto offThreadRendering = [this, protectedThis = Ref { *this }]() mutable {
         auto result = renderOnAudioThread();
-        callOnMainThread([this, result, currentSampleFrame = this->currentSampleFrame(), protectedThis = WTF::move(protectedThis)]() mutable {
-            context().postTask([this, protectedThis = WTF::move(protectedThis), result, currentSampleFrame]() mutable {
+        callOnMainThread([this, protectedThis = Ref { *this }, result, currentSampleFrame = this->currentSampleFrame()]() mutable {
+            protect(context())->postTask([this, protectedThis = Ref { *this }, result, currentSampleFrame]() mutable {
                 m_startedRendering = false;
+                Ref context = this->context();
                 switch (result) {
                 case RenderResult::Failure:
-                    context().finishedRendering(false);
+                    context->finishedRendering(false);
                     break;
                 case RenderResult::Complete:
-                    context().finishedRendering(true);
+                    context->finishedRendering(true);
                     break;
                 case RenderResult::Suspended:
-                    context().didSuspendRendering(currentSampleFrame);
+                    context->didSuspendRendering(currentSampleFrame);
                     break;
                 }
             });
@@ -175,7 +175,7 @@ auto OfflineAudioDestinationNode::renderOnAudioThread() -> RenderResult
     unsigned numberOfChannels = m_renderTarget->numberOfChannels();
 
     while (m_framesToProcess > 0) {
-        if (context().shouldSuspend())
+        if (protect(context())->shouldSuspend())
             return RenderResult::Suspended;
 
         // Render one render quantum.

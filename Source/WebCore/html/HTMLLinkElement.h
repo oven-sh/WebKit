@@ -39,7 +39,7 @@ class DOMTokenList;
 class ExpectIdTargetObserver;
 class HTMLLinkElement;
 class Page;
-struct MediaQueryParserContext;
+struct CSSParserContext;
 
 enum class RequestPriority : uint8_t;
 
@@ -119,10 +119,10 @@ private:
     void postConnectionSteps() final;
     void removingSteps(RemovalType, ContainerNode&) final;
 
-    void initializeStyleSheet(Ref<StyleSheetContents>&&, const CachedCSSStyleSheet&, MediaQueryParserContext);
+    void initializeStyleSheet(Ref<StyleSheetContents>&&, const CachedCSSStyleSheet&, const CSSParserContext&);
 
     // from CachedResourceClient
-    void setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet*) final;
+    void setCSSStyleSheet(const String& href, const URL& baseURL, ASCIILiteral charset, const CachedCSSStyleSheet&) final;
     bool sheetLoaded() final;
     void notifyLoadedSheetAndAllCriticalSubresources(bool errorOccurred) final;
     void startLoadingDynamicSheet() final;

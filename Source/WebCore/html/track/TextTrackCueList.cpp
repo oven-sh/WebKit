@@ -128,22 +128,18 @@ void TextTrackCueList::clear()
 
 void TextTrackCueList::updateCueIndex(const TextTrackCue& cue)
 {
-    auto vectorSpan = m_vector.mutableSpan();
+    auto vectorSpan = m_vector.span();
     auto cueIndex = this->cueIndex(cue);
     auto valuesUntilCue = vectorSpan.first(cueIndex);
-    auto cuePosition = vectorSpan.subspan(cueIndex).begin();
+    auto& movedCue = vectorSpan[cueIndex];
     auto valuesAfterCue = vectorSpan.subspan(cueIndex + 1);
     ASSERT_SORTED(valuesUntilCue);
     ASSERT_SORTED(valuesAfterCue);
 
-    auto reinsertionPosition = std::ranges::upper_bound(valuesUntilCue, *cuePosition, cueSortsBefore);
-    if (std::to_address(reinsertionPosition) != std::to_address(cuePosition))
-        std::rotate(reinsertionPosition, cuePosition, valuesAfterCue.begin());
-    else {
-        reinsertionPosition = std::ranges::upper_bound(valuesAfterCue, *cuePosition, cueSortsBefore);
-        if (std::to_address(reinsertionPosition) != valuesAfterCue.data())
-            std::rotate(cuePosition, valuesAfterCue.begin(), reinsertionPosition);
-    }
+    if (auto earlier = std::ranges::upper_bound(valuesUntilCue, movedCue, cueSortsBefore); earlier != valuesUntilCue.end())
+        m_vector.moveTo(cueIndex, earlier - valuesUntilCue.begin());
+    else if (auto later = std::ranges::upper_bound(valuesAfterCue, movedCue, cueSortsBefore); later != valuesAfterCue.begin())
+        m_vector.moveTo(cueIndex, cueIndex + (later - valuesAfterCue.begin()));
 
     ASSERT_SORTED(m_vector);
 }

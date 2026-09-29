@@ -76,4 +76,28 @@ ALWAYS_INLINE bool JSArrayIterator::next(JSGlobalObject* globalObject, JSValue& 
     return true;
 }
 
+ALWAYS_INLINE int64_t JSArrayIterator::validatedIndexInFrame(JSValue indexValue)
+{
+    RELEASE_ASSERT(indexValue.isAnyInt());
+    int64_t index = indexValue.asAnyInt();
+    RELEASE_ASSERT(index >= doneIndex && index <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max()));
+    return index;
+}
+
+ALWAYS_INLINE bool JSArrayIterator::nextValueWithIndexInFrame(JSGlobalObject* globalObject, JSValue iterable, JSValue& indexValue, JSValue& value)
+{
+    // The steps of nextWithAdvance() and of next() for kind "value", on state that is not in an iterator object.
+    RELEASE_ASSERT(isJSArray(iterable));
+    auto* array = asArray(iterable);
+    int64_t index = validatedIndexInFrame(indexValue);
+    if (index == doneIndex || index >= array->length()) {
+        indexValue = jsNumber(doneIndex);
+        return false;
+    }
+
+    indexValue = jsNumber(index + 1);
+    value = array->getIndex(globalObject, static_cast<uint32_t>(index));
+    return true;
+}
+
 } // namespace JSC

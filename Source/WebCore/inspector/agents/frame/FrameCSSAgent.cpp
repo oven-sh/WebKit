@@ -28,11 +28,13 @@
 
 #include "CSSComputedStyleDeclaration.h"
 #include "CSSImportRule.h"
+#include "CSSNestedDeclarations.h"
 #include "CSSParserContext.h"
 #include "CSSProperty.h"
 #include "CSSPropertyNames.h"
 #include "CSSPropertyParserState.h"
 #include "CSSPropertyParsing.h"
+#include "CSSRule.h"
 #include "CSSStyleRule.h"
 #include "CSSStyleSheet.h"
 #include "CSSValueKeywords.h"
@@ -434,7 +436,7 @@ Inspector::CommandResult<Ref<Inspector::Protocol::CSS::CSSRule>> FrameCSSAgent::
     if (performResult.hasException())
         return makeUnexpected(InspectorDOMAgent::toErrorString(performResult.releaseException()));
 
-    auto rule = inspectorStyleSheet->buildObjectForRule(protect(dynamicDowncast<CSSStyleRule>(inspectorStyleSheet->ruleForId(compoundId))));
+    auto rule = inspectorStyleSheet->buildObjectForRule(protect(inspectorStyleSheet->ruleForId(compoundId)));
     if (!rule)
         return makeUnexpected("Internal error: missing style sheet"_s);
 
@@ -501,8 +503,7 @@ Inspector::CommandResult<Ref<Inspector::Protocol::CSS::CSSRule>> FrameCSSAgent::
         return makeUnexpected(InspectorDOMAgent::toErrorString(performResult.releaseException()));
 
     // FIXME <https://webkit.org/b/317684>: Reconsider whether accessing rawAction.newRuleId here is safe.
-    RefPtr styleRule = dynamicDowncast<CSSStyleRule>(inspectorStyleSheet->ruleForId(rawAction.newRuleId()));
-    auto rule = inspectorStyleSheet->buildObjectForRule(styleRule);
+    auto rule = inspectorStyleSheet->buildObjectForRule(protect(inspectorStyleSheet->ruleForId(rawAction.newRuleId())));
     if (!rule)
         return makeUnexpected("Internal error: missing style sheet"_s);
 
@@ -684,6 +685,9 @@ void FrameCSSAgent::documentDetached(Document& document)
 
 void FrameCSSAgent::mediaQueryResultChanged()
 {
+    if (documentIsReportedByPageCSSAgent())
+        return;
+
     m_frontendDispatcher->mediaQueryResultChanged();
 }
 
@@ -706,6 +710,16 @@ void FrameCSSAgent::reset()
         document->styleScope().didChangeStyleSheetEnvironment();
     m_nodeIdToForcedPseudoState.clear();
     m_documentsWithForcedPseudoStates.clear();
+}
+
+// A page-level InspectorCSSAgent reports every document in its own process, and the frontend still
+// sources same-process content from the page target, so announcing this frame's style sheets here too
+// would make the frontend track two objects per style sheet.
+//
+// FIXME: <https://webkit.org/b/320938> Remove once the frontend sources local content from frame targets.
+bool FrameCSSAgent::documentIsReportedByPageCSSAgent() const
+{
+    return !!protect(m_instrumentingAgents)->persistentCSSAgent();
 }
 
 RefPtr<Element> FrameCSSAgent::elementForId(Inspector::Protocol::ErrorString& errorString, Inspector::Protocol::DOM::NodeId nodeId)
@@ -761,10 +775,14 @@ RefPtr<Inspector::Protocol::CSS::CSSRule> FrameCSSAgent::buildObjectForRule(cons
     if (RefPtr shadowRoot = element.shadowRoot())
         styleResolver.inspectorCSSOMWrappers().collectScopeWrappers(protect(shadowRoot->styleScope()));
 
-    return buildObjectForRule(protect(styleResolver.inspectorCSSOMWrappers().getWrapperForRuleInSheets(styleRule)));
+    if (RefPtr cssomWrapper = styleResolver.inspectorCSSOMWrappers().getWrapperForRuleInSheets(styleRule))
+        return buildObjectForRule(cssomWrapper.get());
+
+    RefPtr nestedDeclarationsWrapper = styleResolver.inspectorCSSOMWrappers().getWrapperForNestedDeclarationsRuleInSheets(styleRule);
+    return buildObjectForRule(nestedDeclarationsWrapper.get());
 }
 
-RefPtr<Inspector::Protocol::CSS::CSSRule> FrameCSSAgent::buildObjectForRule(CSSStyleRule* rule)
+RefPtr<Inspector::Protocol::CSS::CSSRule> FrameCSSAgent::buildObjectForRule(CSSRule* rule)
 {
     if (!rule)
         return nullptr;
@@ -852,6 +870,8 @@ void FrameCSSAgent::collectStyleSheets(CSSStyleSheet* styleSheet, Vector<CSSStyl
 
 void FrameCSSAgent::setActiveStyleSheetsForDocument(Document& document, Vector<CSSStyleSheet*>& activeStyleSheets)
 {
+    bool shouldReport = !documentIsReportedByPageCSSAgent();
+
     HashSet<CSSStyleSheet*>& previouslyKnownActiveStyleSheets = m_documentToKnownCSSStyleSheets.add(&document, HashSet<CSSStyleSheet*>()).iterator->value;
 
     HashSet<CSSStyleSheet*> removedStyleSheets(previouslyKnownActiveStyleSheets);
@@ -870,7 +890,8 @@ void FrameCSSAgent::setActiveStyleSheetsForDocument(Document& document, Vector<C
             auto id = inspectorStyleSheet->id();
             m_idToInspectorStyleSheet.remove(id);
             m_cssStyleSheetToInspectorStyleSheet.remove(cssStyleSheet.get());
-            m_frontendDispatcher->styleSheetRemoved(id);
+            if (shouldReport)
+                m_frontendDispatcher->styleSheetRemoved(id);
         }
     }
 
@@ -878,6 +899,9 @@ void FrameCSSAgent::setActiveStyleSheetsForDocument(Document& document, Vector<C
         previouslyKnownActiveStyleSheets.add(cssStyleSheet.get());
         if (!m_cssStyleSheetToInspectorStyleSheet.contains(cssStyleSheet.get())) {
             Ref inspectorStyleSheet = bindStyleSheet(cssStyleSheet.get());
+            // Bind anyway, so the agent can still resolve this style sheet if a command arrives.
+            if (!shouldReport)
+                continue;
             if (auto header = inspectorStyleSheet->buildObjectForStyleSheetInfo())
                 m_frontendDispatcher->styleSheetAdded(header.releaseNonNull());
         }

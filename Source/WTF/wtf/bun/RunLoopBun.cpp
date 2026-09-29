@@ -24,23 +24,11 @@ extern "C" __attribute__((weak)) bool WTFTimer__isActive(const RunLoop::TimerBas
 extern "C" __attribute__((weak)) double WTFTimer__secondsUntilTimer(const RunLoop::TimerBase::Bun__WTFTimer*);
 extern "C" __attribute__((weak)) void WTFTimer__cancel(RunLoop::TimerBase::Bun__WTFTimer*);
 
-// Weak, so that Bun can override it
+// Defined by Bun alongside the WTFTimer functions above; like them it is left undefined (null) in the
+// JSC shell, which only ever takes the RunLoopGeneric path below. No fallback definition here: a weak
+// definition in this TU next to Bun's strong one is a duplicate symbol for lld-link when this file is
+// LTO bitcode and Bun's is a native object.
 extern "C" __attribute__((weak)) bool Bun__thisThreadHasVM();
-
-// Default definition for the JSC shell. Returning false will make us use a RunLoopGeneric which
-// works when Bun's event loop is not active.
-bool Bun__thisThreadHasVM()
-{
-    // Bun should override this function, so we should only reach here if we are *not* running in
-    // Bun in which case all the WTFTimer functions should not be defined
-    ASSERT(!WTFTimer__create);
-    ASSERT(!WTFTimer__update);
-    ASSERT(!WTFTimer__deinit);
-    ASSERT(!WTFTimer__isActive);
-    ASSERT(!WTFTimer__secondsUntilTimer);
-    ASSERT(!WTFTimer__cancel);
-    return false;
-}
 
 RunLoop::TimerBase::TimerBase(Ref<RunLoop>&& loop, ASCIILiteral description)
     : m_runLoop(WTF::move(loop))
@@ -146,7 +134,7 @@ RunLoop::RunLoop()
     bool useGeneric = WTFTimer__create
         // Bun function is defined, so we're in Bun, and the main Bun thread should always use the
         // Bun RunLoop even though it's created when the VM doesn't exist yet
-        ? !(isMainThread() || Bun__thisThreadHasVM())
+        ? !(isMainThread() || (Bun__thisThreadHasVM && Bun__thisThreadHasVM()))
         // We're not Bun
         : true;
     if (useGeneric) {

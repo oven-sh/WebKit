@@ -91,11 +91,8 @@ public:
 
     String description() const override;
 
-    void setH2PingCallback(const URL&, CompletionHandler<void(Expected<WTF::Seconds, WebCore::ResourceError>&&)>&&) override;
+    void setH2PingCallback(const URL&, CompletionHandler<void(std::expected<WTF::Seconds, WebCore::ResourceError>&&)>&&) override;
     void setPriority(WebCore::ResourceLoadPriority) override;
-#if ENABLE(INSPECTOR_NETWORK_THROTTLING)
-    void setEmulatedConditions(const std::optional<int64_t>& bytesPerSecondLimit) override;
-#endif
 
     void checkTAO(const WebCore::ResourceResponse&);
 

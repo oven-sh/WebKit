@@ -46,10 +46,10 @@ Instance* pluginInstance(HTMLElement& element)
     auto* pluginElement = dynamicDowncast<HTMLPlugInElement>(element);
     if (!pluginElement)
         return nullptr;
-    auto* instance = pluginElement->bindingsInstance();
-    if (!instance || !instance->rootObject())
+    // Validate under a protector; bindingsInstance() then returns the pointer the element owns.
+    if (RefPtr instance = pluginElement->bindingsInstance(); !instance || !instance->rootObject())
         return nullptr;
-    return instance;
+    return pluginElement->bindingsInstance();
 }
 
 JSObject* pluginScriptObject(JSGlobalObject* lexicalGlobalObject, JSHTMLElement* jsHTMLElement)

@@ -109,6 +109,11 @@ PASS <head></head><template>Foo</template>
 PASS <html><head></head><template></template><head>
 PASS <!DOCTYPE HTML><dummy><table><template><table><template><table><script>
 PASS <template><a><table><a>
+PASS <template><table><form></table></template>
+PASS <template><form><form><input></template>
+PASS <template><form><template></template><form></template>
+PASS <template><template><form></template><form></template>
+PASS <form><template><form></template><form>
 PASS <!DOCTYPE HTML><template><tr><td>cell</td></tr></template>
 PASS <!DOCTYPE HTML><template> <tr> <td>cell</td> </tr> </template>
 PASS <!DOCTYPE HTML><template><tr><td>cell</td></tr>a</template>

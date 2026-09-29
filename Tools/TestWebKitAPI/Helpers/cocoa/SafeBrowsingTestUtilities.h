@@ -25,10 +25,7 @@
 
 #pragma once
 
-#ifdef __cplusplus
-
 #import <Foundation/Foundation.h>
-#import <wtf/Seconds.h>
 
 @interface TestServiceLookupResult : NSObject
 + (instancetype)resultWithProvider:(NSString *)provider phishing:(BOOL)phishing malware:(BOOL)malware unwantedSoftware:(BOOL)unwantedSoftware;
@@ -43,7 +40,16 @@
 @end
 
 @interface DelayedLookupContext : NSObject
-@property (nonatomic, class) Seconds delayDuration;
+@property (nonatomic, class) NSTimeInterval delayDuration;
++ (DelayedLookupContext *)sharedLookupContext;
 @end
 
-#endif // __cplusplus
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+Class testSSBLookupContextClass(void);
+
+#ifdef __cplusplus
+}
+#endif

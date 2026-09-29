@@ -106,7 +106,7 @@ public:
         NonComposited,
     };
 
-    static Ref<AcceleratedSurface> create(WebPage&, Function<void()>&& frameCompleteHandler, RenderingPurpose, bool useSkia);
+    static Ref<AcceleratedSurface> create(WebPage&, Function<void()>&& frameCompleteHandler, RenderingPurpose);
     ~AcceleratedSurface();
 
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
@@ -116,18 +116,7 @@ public:
 
     uint64_t window();
     uint64_t surfaceID() const { return m_id; }
-    bool shouldPaintMirrored() const
-    {
-#if USE(WPE_RENDERER)
-        if (m_swapChain.type() == SwapChain::Type::WPEBackend)
-            return true;
-#endif
-#if PLATFORM(WPE) || (PLATFORM(GTK) && USE(GTK4))
-        return false;
-#else
-        return true;
-#endif
-    }
+    bool shouldPaintMirrored() const;
 
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
     bool usesGL() const { return m_renderingPurpose == RenderingPurpose::Composited || m_hardwareAccelerationEnabled; }
@@ -142,7 +131,10 @@ public:
 
     void didRenderFrame(TargetContents = TargetContents::Valid);
     void sendFrame();
+
+#if USE(TEXTURE_MAPPER)
     void clear(const OptionSet<WebCore::CompositionReason>&);
+#endif
 
     std::optional<SkColor> skiaClearColor(const OptionSet<WebCore::CompositionReason>&);
 
@@ -167,7 +159,7 @@ public:
     void backgroundColorDidChange();
 
 private:
-    AcceleratedSurface(WebPage&, Function<void()>&& frameCompleteHandler, RenderingPurpose, bool useSkia);
+    AcceleratedSurface(WebPage&, Function<void()>&& frameCompleteHandler, RenderingPurpose);
 
     RenderingPurpose renderingPurpose() const { return m_renderingPurpose; }
 #if PLATFORM(GTK) || ENABLE(WPE_PLATFORM)

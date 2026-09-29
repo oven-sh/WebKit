@@ -44,6 +44,7 @@ class WebAssemblyCompileOptions;
 namespace Wasm {
 
 struct ModuleDebugInfo;
+struct FunctionDebugInfo;
 
 struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> {
 
@@ -108,6 +109,12 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
 
     FunctionCodeIndex toCodeIndex(FunctionSpaceIndex index) const { ASSERT(importFunctionCount() <= index && index < functionIndexSpaceSize()); return FunctionCodeIndex(index - importFunctionCount()); }
     FunctionSpaceIndex toSpaceIndex(FunctionCodeIndex index) const { ASSERT(index < internalFunctionCount()); return FunctionSpaceIndex(index + importFunctionCount()); }
+
+#if ENABLE(WEBASSEMBLY_DEBUGGER)
+    FunctionDebugInfo& ensureFunctionDebugInfo(FunctionCodeIndex) const;
+    bool isInstructionStart(uint32_t moduleOffset) const;
+    JS_EXPORT_PRIVATE String declaredName() const;
+#endif
 
 
     uint32_t memoryCount() const { return memories.size(); }
@@ -228,8 +235,12 @@ struct ModuleInformation final : public ThreadSafeRefCounted<ModuleInformation> 
     Vector<CustomSection> customSections;
     BranchHints branchHints;
     std::optional<uint32_t> numberOfDataSegments;
-    using ConstantExpressionAndSourceOffset = std::pair<Vector<uint8_t>, size_t>;
-    Vector<ConstantExpressionAndSourceOffset> constantExpressions;
+    struct ConstantExpression {
+        Vector<uint8_t> bytes;
+        size_t sourceOffset { 0 };
+        uint32_t maxStackHeight { 0 };
+    };
+    Vector<ConstantExpression> constantExpressions;
     Name sourceURL;
     uint64_t requestIdentifier { 0 };
     Name sourceMappingURL;

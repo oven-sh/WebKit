@@ -27,15 +27,24 @@
 
 #if USE(COORDINATED_GRAPHICS)
 #include "DMABufBufferAttributes.h"
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
+#include <skia/core/SkColorSpace.h>
+#include <skia/core/SkImage.h>
+#include <skia/core/SkYUVAInfo.h>
+#include <skia/gpu/ganesh/GrBackendSurface.h>
+#include <skia/gpu/ganesh/GrContextThreadSafeProxy.h>
+WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_END
 #include <wtf/ThreadSafeRefCounted.h>
+#include <wtf/unix/UnixFileDescriptor.h>
 
 typedef int32_t EGLint;
 typedef void* EGLImage;
 
 namespace WebCore {
-
+class BitmapTexture;
 class CoordinatedPlatformLayerBuffer;
 class GLDisplay;
+class GLFence;
 
 class DMABufBuffer final : public ThreadSafeRefCounted<DMABufBuffer> {
 public:
@@ -63,12 +72,32 @@ public:
     std::optional<TransferFunction> transferFunction() const { return m_transferFunction; }
     void setTransferFunction(TransferFunction transferFunction) { m_transferFunction = transferFunction; }
 
+    enum class SampleRange : bool { Narrow, Full };
+    std::optional<SampleRange> sampleRange() const { return m_sampleRange; }
+    void setSampleRange(SampleRange sampleRange) { m_sampleRange = sampleRange; }
+
     EGLImage createEGLImage(GLDisplay&) const;
     static EGLImage createEGLImage(GLDisplay&, const Attributes&);
+#if USE(GSTREAMER)
+    static EGLImage createEGLImageForQualcommVideoFrame(GLDisplay&, const Attributes&, ColorSpace, SampleRange);
+#endif
+    bool isQualcommVideoFrameBuffer() const;
     static std::optional<Vector<EGLint>> buildEGLImageAttributes(const Attributes&, Attributes::EnableModifiers = Attributes::EnableModifiers::Yes);
 
+#if USE(TEXTURE_MAPPER)
     CoordinatedPlatformLayerBuffer* buffer() const LIFETIME_BOUND { return m_buffer.get(); }
     void setBuffer(std::unique_ptr<CoordinatedPlatformLayerBuffer>&&);
+#else
+    bool importIfNeeded();
+    sk_sp<SkColorSpace> skiaColorSpace() const;
+    SkYUVAInfo yuvaInfo() const;
+    const GrBackendTexture& backendTexture(size_t) const;
+
+    sk_sp<SkImage> createPromiseImage(const sk_sp<GrContextThreadSafeProxy>&, SkColorType, SkAlphaType, GrSurfaceOrigin, std::unique_ptr<GLFence>&&, WTF::UnixFileDescriptor&&);
+#if USE(GSTREAMER)
+    sk_sp<SkImage> createPromiseImageForQualcommVideoFrame(const sk_sp<GrContextThreadSafeProxy>&, SkColorType, SkAlphaType, GrSurfaceOrigin);
+#endif
+#endif
 
 private:
     explicit DMABufBuffer(Attributes&&);
@@ -78,7 +107,13 @@ private:
     Attributes m_attributes;
     std::optional<ColorSpace> m_colorSpace;
     std::optional<TransferFunction> m_transferFunction;
+    std::optional<SampleRange> m_sampleRange;
+#if USE(TEXTURE_MAPPER)
     std::unique_ptr<CoordinatedPlatformLayerBuffer> m_buffer;
+#else
+    Vector<GrBackendTexture, 4> m_importedBackendTextures;
+    Vector<RefPtr<BitmapTexture>, 4> m_importedTextures;
+#endif
 };
 
 } // namespace WebCore

@@ -107,7 +107,6 @@ enum class FillAttachment : uint8_t;
 enum class FillBox : uint8_t;
 enum class FillSizeType : uint8_t;
 enum class FlexDirection : uint8_t;
-enum class FlexWrap : uint8_t;
 enum class Float : uint8_t;
 enum class FontOpticalSizing : bool;
 enum class FontOrientation : bool;
@@ -121,6 +120,7 @@ enum class Hyphens : uint8_t;
 enum class ImageRendering : uint8_t;
 enum class InputSecurity : bool;
 enum class InsideLink : uint8_t;
+enum class InterpolateSize : bool;
 enum class Isolation : bool;
 enum class ItemPosition : uint8_t;
 enum class Kerning : uint8_t;
@@ -143,7 +143,7 @@ enum class Order : bool;
 enum class OutlineStyle : uint8_t;
 enum class Overflow : uint8_t;
 enum class OverflowAnchor : bool;
-enum class OverflowContinue : bool;
+enum class OverflowContinue : uint8_t;
 enum class OverflowWrap : uint8_t;
 enum class OverscrollBehavior : uint8_t;
 enum class PaginationMode : uint8_t;
@@ -253,9 +253,13 @@ struct CounterSet;
 struct Cursor;
 struct Display;
 struct DynamicRangeLimit;
+#if ENABLE(SPATIAL_PORTAL)
+struct EnvironmentMap;
+#endif
 struct Filter;
 struct FitTolerance;
 struct FlexBasis;
+struct FlexWrap;
 struct FontFamilies;
 struct FontFamiliesView;
 struct FontFeatureSettings;
@@ -422,6 +426,7 @@ using BackgroundLayers = CoordinatedValueList<BackgroundLayer>;
 using BorderRadiusValue = MinimallySerializingSpaceSeparatedSize<LengthPercentage<CSS::Nonnegative>>;
 using BoxShadows = Shadows<BoxShadow>;
 using FlexGrow = Number<CSS::Nonnegative, float>;
+using FlexLineCount = Integer<CSS::Positive>;
 using FlexShrink = Number<CSS::Nonnegative, float>;
 using InsetBox = MinimallySerializingSpaceSeparatedRectEdges<InsetEdge>;
 using LineWidthBox = MinimallySerializingSpaceSeparatedRectEdges<LineWidth>;
@@ -449,11 +454,6 @@ using WebkitBorderSpacing = Length<CSS::Nonnegative>;
 using WebkitBoxFlex = Number<CSS::All, float>;
 using WebkitBoxFlexGroup = Integer<CSS::Nonnegative>;
 using WebkitBoxOrdinalGroup = Integer<CSS::Positive>;
-
-constexpr auto PublicPseudoIDBits = 19;
-constexpr auto TextDecorationLineBits = 5;
-constexpr auto TextTransformBits = 6;
-constexpr auto PseudoElementTypeBits = 5;
 
 using PseudoElementStyles = HashMap<PseudoElementIdentifier, std::unique_ptr<ComputedStyle>>;
 
@@ -483,8 +483,14 @@ public:
     inline InsideLink insideLink() const;
     inline void setInsideLink(InsideLink);
 
-    inline bool colorIsCurrentColorForHighlight() const;
-    inline void setColorIsCurrentColorForHighlight(bool);
+    inline const Color& colorForHighlight() const;
+    inline void setColorForHighlight(Color&&);
+
+    inline bool usesCurrentBackgroundColorKeyword() const;
+    inline void setUsesCurrentBackgroundColorKeyword();
+
+    inline const WebCore::Color& currentBackgroundColor() const;
+    inline void setCurrentBackgroundColor(WebCore::Color);
 
     inline bool isLink() const;
     inline void setIsLink(bool);
@@ -547,6 +553,11 @@ public:
     bool NODELETE effectiveInertOutOfLine() const;
     inline void setEffectiveInert(bool);
 
+#if ENABLE(SMART_IMAGE_RESIZER)
+    inline bool isAffectedBySmartImageResizer() const;
+    inline void setIsAffectedBySmartImageResizer(bool);
+#endif
+
     inline bool isEffectivelyTransparent() const; // This or any ancestor has opacity 0.
     inline void setIsEffectivelyTransparent(bool);
 
@@ -584,17 +595,16 @@ public:
     inline void setUsedAppleVisualEffectForSubtree(AppleVisualEffect);
 #endif
 
-#if ENABLE(TEXT_AUTOSIZING)
     // MARK: - Text Autosizing
 
     AutosizeStatus NODELETE autosizeStatus() const;
     void NODELETE setAutosizeStatus(AutosizeStatus);
 
-#endif
-
     // MARK: - Pseudo element/style
 
     inline std::optional<PseudoElementType> pseudoElementType() const;
+    // True for the ::marker style itself and for the styles its content renderers inherit from it.
+    inline bool isListMarkerStyle() const;
     const AtomString& pseudoElementNameArgument() const LIFETIME_BOUND;
 
     std::optional<PseudoElementIdentifier> NODELETE pseudoElementIdentifier() const;
@@ -655,13 +665,12 @@ public:
     WEBCORE_EXPORT const Font& primaryFont() const LIFETIME_BOUND;
     WEBCORE_EXPORT const FontMetrics& metricsOfPrimaryFont() const LIFETIME_BOUND;
     std::pair<FontOrientation, NonCJKGlyphOrientation> NODELETE fontAndGlyphOrientation();
-    float NODELETE computedFontSize() const;
-    inline WebkitLocale computedLocale() const;
-    const LineHeight& NODELETE specifiedLineHeight() const;
-#if ENABLE(TEXT_AUTOSIZING)
-    void setSpecifiedLineHeight(LineHeight&&);
-#endif
-    void setSpecifiedLineHeightFromAnimation(LineHeight&&);
+    float NODELETE usedFontSize() const;
+    inline WebkitLocale usedLocale() const;
+
+    const LineHeight& NODELETE textAutosizingAdjustedLineHeight() const;
+    void setTextAutosizingAdjustedLineHeight(LineHeight&&);
+    void setLineHeightFromAnimation(LineHeight&&);
 
     void setLetterSpacingFromAnimation(LetterSpacing&&);
     void setWordSpacingFromAnimation(WordSpacing&&);
@@ -749,6 +758,11 @@ public:
     inline const PageSize& pageSize() const LIFETIME_BOUND;
     inline void setPageSize(PageSize&&);
 
+    static constexpr auto PseudoElementTypeBits = 5;
+    static constexpr auto PublicPseudoIDBits = 19;
+    static constexpr auto TextTransformBits = 6;
+    static constexpr auto TextDecorationLineBits = 5;
+
     struct NonInheritedFlags {
         bool operator==(const NonInheritedFlags&) const = default;
 
@@ -762,30 +776,31 @@ public:
         void dumpDifferences(TextStream&, const NonInheritedFlags&) const;
 #endif
 
+        // If you add more style bits here, update ComputedStyleBase::NonInheritedFlags::copyNonInheritedFrom().
         PREFERRED_TYPE(Style::DisplayType) unsigned display : 5;
         PREFERRED_TYPE(Style::DisplayType) unsigned originalDisplay : 5;
         PREFERRED_TYPE(Overflow) unsigned overflowX : 3;
         PREFERRED_TYPE(Overflow) unsigned overflowY : 3;
-        PREFERRED_TYPE(Clear) unsigned clear : 3;
         PREFERRED_TYPE(PositionType) unsigned position : 3;
-        PREFERRED_TYPE(UnicodeBidi) unsigned unicodeBidi : 3;
         PREFERRED_TYPE(Float) unsigned floating : 3;
+        PREFERRED_TYPE(Clear) unsigned clear : 3;
+        PREFERRED_TYPE(BoxSizing) unsigned boxSizing : 1;
+        PREFERRED_TYPE(UnicodeBidi) unsigned unicodeBidi : 3;
+        unsigned textDecorationLine : TextDecorationLineBits; // Text decorations defined *only* by this element. PREFERRED_TYPE elided to avoid header inclusion.
 
         PREFERRED_TYPE(bool) unsigned usesViewportUnits : 1;
         PREFERRED_TYPE(bool) unsigned isContainerDependent : 1;
         PREFERRED_TYPE(bool) unsigned useTreeCountingFunctions : 1;
+        PREFERRED_TYPE(bool) unsigned usesCurrentBackgroundColorKeyword : 1;
         PREFERRED_TYPE(bool) unsigned hasExplicitlyInheritedProperties : 1; // Explicitly inherits a non-inherited property.
         PREFERRED_TYPE(bool) unsigned disallowsFastPathInheritance : 1;
 
-        // Non-property related state bits.
+        // Non-property related state bits. These do not get copied by copyNonInheritedFrom().
         PREFERRED_TYPE(bool) unsigned firstChildState : 1;
         PREFERRED_TYPE(bool) unsigned lastChildState : 1;
         PREFERRED_TYPE(bool) unsigned isLink : 1;
         PREFERRED_TYPE(PseudoElementType) unsigned pseudoElementType : PseudoElementTypeBits;
         unsigned pseudoBits : PublicPseudoIDBits;
-        unsigned textDecorationLine : TextDecorationLineBits; // Text decorations defined *only* by this element. PREFERRED_TYPE elided to avoid header inclusion.
-
-        // If you add more style bits here, you will also need to update ComputedStyleBase::NonInheritedFlags::copyNonInheritedFrom().
     };
 
     struct InheritedFlags {
@@ -798,16 +813,21 @@ public:
         // Writing Mode = 8 bits (can be packed into 6 if needed)
         WritingMode writingMode;
 
-        // Text Formatting = 19 bits aligned onto 2 bytes + 4 trailing bits
+        // Pay attention to field alignment here to make sure this stays compact.
+        // See also static_assert in ComputedStyleBase::ComputedStyleBase(CreateDefaultStyleTag).
+
+        // Text Formatting = 21 bits
         PREFERRED_TYPE(WhiteSpaceCollapse) unsigned char whiteSpaceCollapse : 3;
         PREFERRED_TYPE(TextWrapMode) unsigned char textWrapMode : 1;
         PREFERRED_TYPE(TextAlign) unsigned char textAlign : 4;
         PREFERRED_TYPE(TextWrapStyle) unsigned char textWrapStyle : 2;
         unsigned char textTransform : TextTransformBits; // PREFERRED_TYPE elided to avoid header inclusion.
-        unsigned char : 1; // byte alignment
         unsigned char textDecorationLineInEffect : TextDecorationLineBits; // PREFERRED_TYPE elided to avoid header inclusion.
 
-        // Cursors and Visibility = 13 bits aligned onto 4 bits + 1 byte + 1 bit
+        // Zoom = 1 bit
+        PREFERRED_TYPE(bool) unsigned char isZoomed : 1;
+
+        // Cursors and Visibility = 13 bits
         PREFERRED_TYPE(PointerEvents) unsigned char pointerEvents : 4;
         PREFERRED_TYPE(Visibility) unsigned char visibility : 2;
         PREFERRED_TYPE(CursorType) unsigned char cursorType : 6;
@@ -830,12 +850,8 @@ public:
         PREFERRED_TYPE(PrintColorAdjust) unsigned char printColorAdjust : 1;
         PREFERRED_TYPE(InsideLink) unsigned char insideLink : 2;
 
-        PREFERRED_TYPE(bool) unsigned char isZoomed : 1;
-
-#if ENABLE(TEXT_AUTOSIZING)
-        unsigned autosizeStatus : 5;
-#endif
-        // Total = 63 bits (fits in 8 bytes)
+        unsigned char autosizeStatus : 5;
+        // Total = 59 bits (fits in 8 bytes)
     };
 
 protected:

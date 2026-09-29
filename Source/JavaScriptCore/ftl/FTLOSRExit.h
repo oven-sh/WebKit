@@ -96,6 +96,26 @@ private:
     unsigned m_numberOfTmps { 0 };
 };
 
+// Stores where B3 placed the exit arguments of every exit of a JITCode as one byte stream. An
+// exit's entry is a LEB128 argument count followed by one B3::ValueRep per argument, which is a
+// B3::ValueRep::Kind byte and then:
+//
+//   Register   the Reg index byte
+//   Stack      the SLEB128 offset from the frame pointer
+//   Constant   the SLEB128 value
+class OSRExitValueReps {
+    WTF_MAKE_NONCOPYABLE(OSRExitValueReps);
+public:
+    OSRExitValueReps() = default;
+
+    unsigned append(std::span<const B3::ValueRep>);
+    FixedVector<B3::ValueRep> decode(unsigned offset) const;
+    void shrinkToFit() { m_bytes.shrinkToFit(); }
+
+private:
+    Vector<uint8_t> m_bytes;
+};
+
 struct OSRExitDescriptor {
 private:
     WTF_MAKE_NONCOPYABLE(OSRExitDescriptor);
@@ -119,10 +139,10 @@ public:
 
     // Call this once we have a place to emit the OSR exit jump and we have data about how the state
     // should be recovered. This effectively emits code that does the exit, though the code is really a
-    // patchable jump and we emit the real code lazily. The description of how to emit the real code is
-    // up to the OSRExit object, which this creates. Note that it's OK to drop the OSRExitHandle object
-    // on the ground. It contains information that is mostly not useful if you use this API, since after
-    // this call, the OSRExit is simply ready to go.
+    // call to the OSR exit generation thunk and we emit the real code lazily. The description of how to
+    // emit the real code is up to the OSRExit object, which this creates. Note that it's OK to drop the
+    // OSRExitHandle object on the ground. It contains information that is mostly not useful if you use
+    // this API, since after this call, the OSRExit is simply ready to go.
     Ref<OSRExitHandle> emitOSRExit(
         State&, ExitKind, const DFG::NodeOrigin&, CCallHelpers&, const B3::StackmapGenerationParams&,
         uint32_t dfgNodeIndex, unsigned offset);
@@ -149,15 +169,15 @@ private:
 };
 
 struct OSRExit : public DFG::OSRExitBase {
-    OSRExit(OSRExitDescriptor*, ExitKind, CodeOrigin, CodeOrigin codeOriginForExitProfile, bool wasHoisted, uint32_t dfgNodeIndex, FixedVector<B3::ValueRep>&&);
+    OSRExit(OSRExitDescriptor*, ExitKind, CodeOrigin, CodeOrigin codeOriginForExitProfile, bool wasHoisted, uint32_t dfgNodeIndex, unsigned valueRepsOffset);
 
+    FixedVector<B3::ValueRep> valueReps(const JITCode&) const;
+
+    unsigned m_valueRepsOffset;
     OSRExitDescriptor* m_descriptor;
-    MacroAssemblerCodeRef<OSRExitPtrTag> m_code;
     // This tells us where to place a jump.
-    CodeLocationJump<JSInternalPtrTag> m_patchableJump;
-    FixedVector<B3::ValueRep> m_valueReps;
+    CodeLocationLabel<JSInternalPtrTag> m_entrance;
 
-    CodeLocationJump<JSInternalPtrTag> NODELETE codeLocationForRepatch(CodeBlock* ftlCodeBlock) const;
     void considerAddingAsFrequentExitSite(CodeBlock* profiledCodeBlock)
     {
         OSRExitBase::considerAddingAsFrequentExitSite(profiledCodeBlock, ExitFromFTL);

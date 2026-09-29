@@ -1,3 +1,7 @@
+// Bun: a string literal decoded from the bytecode cache is a plain StringImpl over the cache's bytes (CachedTypes.cpp,
+// DecoderStringTable::jsStringFor), not the bytecode generator's atom, so that loading a cache interns nothing; it is
+// not flagged, which this test expects of a literal. The bit stays one-sided.
+//@ $skipModes << "bytecode-cache".to_sym
 function shouldBe(actual, expected, message) {
     if (actual !== expected)
         throw new Error(`${message}: expected ${expected} but got ${actual}`);

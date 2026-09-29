@@ -50,6 +50,8 @@ public:
 
     static void signalUsedInterface(WebCore::ScriptExecutionContextIdentifier, String&&);
 
+    bool useMDNSCandidates() const { return m_useMDNSCandidates; }
+
 private:
     explicit LibWebRTCNetworkManager(WebCore::ScriptExecutionContextIdentifier);
 

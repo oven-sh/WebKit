@@ -16,6 +16,13 @@
             ]
         },
         {
+            "name": "lose_hardened_context_on_backend_error",
+            "category": "Workarounds",
+            "description": [
+                "On hardened contexts, lose context if the backend generates an error"
+            ]
+        },
+        {
             "name": "disable_program_caching_for_transform_feedback",
             "category": "Workarounds",
             "description": [
@@ -284,6 +291,14 @@
             "category": "Features",
             "description": [
                 "Set Texture's InitState to MayNeedInit inside invalidateFramebuffer or discardFramebuffer."
+            ]
+        },
+        {
+            "name": "compress_program_binary_blob",
+            "category": "Features",
+            "description": [
+                "If true, compress the blob when glGetProgramiv is used to query the binary length and",
+                "glGetProgramBinary is used to retrieve it. Also decompress the blob when glProgramBinary is called."
             ]
         }
     ]

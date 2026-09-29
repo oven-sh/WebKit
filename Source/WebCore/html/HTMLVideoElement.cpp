@@ -43,7 +43,7 @@
 #include "ImageBuffer.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSVideoFrameRequestCallback.h"
-#include "LazyLoadVideoObserver.h"
+#include "LazyLoadElementObserver.h"
 #include "LocalDOMWindow.h"
 #include "LocalFrame.h"
 #include "Logging.h"
@@ -106,7 +106,7 @@ inline HTMLVideoElement::HTMLVideoElement(const QualifiedName& tagName, Document
 
 HTMLVideoElement::~HTMLVideoElement()
 {
-    LazyLoadVideoObserver::unobserve(*this, protect(document()));
+    LazyLoadElementObserver::unobserve(*this, protect(document()));
 }
 
 Ref<HTMLVideoElement> HTMLVideoElement::create(const QualifiedName& tagName, Document& document, bool createdByParser)
@@ -117,7 +117,7 @@ Ref<HTMLVideoElement> HTMLVideoElement::create(const QualifiedName& tagName, Doc
     HTMLVideoElementPictureInPicture::providePictureInPictureTo(videoElement);
 #endif
 
-    LazyLoadVideoObserver::observe(videoElement);
+    LazyLoadElementObserver::observe(videoElement);
 
     videoElement->suspendIfNeeded();
     return videoElement;
@@ -381,7 +381,7 @@ void HTMLVideoElement::mediaPlayerFirstVideoFrameAvailable()
     }
 }
 
-std::optional<DestinationColorSpace> HTMLVideoElement::colorSpace() const
+std::optional<ColorSpace> HTMLVideoElement::colorSpace() const
 {
     RefPtr player = this->player();
     if (!player)
@@ -390,7 +390,7 @@ std::optional<DestinationColorSpace> HTMLVideoElement::colorSpace() const
     return player->colorSpace();
 }
 
-RefPtr<ImageBuffer> HTMLVideoElement::createBufferForPainting(const FloatSize& size, RenderingMode renderingMode, const DestinationColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
+RefPtr<ImageBuffer> HTMLVideoElement::createBufferForPainting(const FloatSize& size, RenderingMode renderingMode, const ColorSpace& colorSpace, ImageBufferFormat pixelFormat) const
 {
     CheckedPtr view = document().view();
     CheckedPtr root = view ? view->root() : nullptr;
@@ -514,6 +514,10 @@ void HTMLVideoElement::didMoveToNewDocument(Document& oldDocument, Document& new
 {
     if (m_imageLoader)
         m_imageLoader->elementDidMoveToNewDocument(oldDocument);
+
+    LazyLoadElementObserver::unobserve(*this, oldDocument);
+    LazyLoadElementObserver::observe(*this);
+
     HTMLMediaElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 
@@ -716,12 +720,27 @@ void HTMLVideoElement::didExitFullscreenOrPictureInPicture()
 }
 
 #if ENABLE(LINEAR_MEDIA_PLAYER)
+// External playback does not go through setFullscreenMode(), so it fires no
+// 'webkitpresentationmodechanged' and leaves webkitPresentationMode reading "inline". Sites whose
+// in-page captions we mirror need to know about it to decide when to mirror, so notify them here.
+// Quirked so the event is never dispatched anywhere else; see webkitIsInExternalPlayback in
+// HTMLVideoElement.idl.
+void HTMLVideoElement::scheduleExternalPlaybackChangedEventIfNeeded()
+{
+    if (!protect(document())->quirks().needsCaptionMirroringQuirk())
+        return;
+
+    scheduleEvent(eventNames().webkitexternalplaybackchangedEvent);
+}
+
 void HTMLVideoElement::didEnterExternalPlayback()
 {
     m_isInExternalPlayback = true;
 
     if (RefPtr player = this->player())
         player->setInFullscreenOrPictureInPicture(true);
+
+    scheduleExternalPlaybackChangedEventIfNeeded();
 }
 
 void HTMLVideoElement::didExitExternalPlayback()
@@ -730,6 +749,8 @@ void HTMLVideoElement::didExitExternalPlayback()
 
     if (RefPtr player = this->player())
         player->setInFullscreenOrPictureInPicture(false);
+
+    scheduleExternalPlaybackChangedEventIfNeeded();
 }
 #endif
 
@@ -827,7 +848,7 @@ void HTMLVideoElement::stop()
     HTMLMediaElement::stop();
 }
 
-void HTMLVideoElement::viewportIntersectionChanged(bool isIntersecting)
+void HTMLVideoElement::lazyLoadIntersectionCallbackInvoked(bool isIntersecting)
 {
     if (m_isIntersectingViewport == isIntersecting)
         return;

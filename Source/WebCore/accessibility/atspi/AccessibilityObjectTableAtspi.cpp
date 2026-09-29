@@ -60,11 +60,11 @@ GDBusInterfaceVTable AccessibilityObjectAtspi::s_tableFunctions = {
         } else if (!g_strcmp0(methodName, "GetRowDescription")) {
             int index;
             g_variant_get(parameters, "(i)", &index);
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", index >= 0 ? atspiObject->rowDescription(index).utf8().data() : ""));
+            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", index >= 0 ? atspiObject->rowDescription(index).utf8().legacyCStringPointer() : ""));
         } else if (!g_strcmp0(methodName, "GetColumnDescription")) {
             int index;
             g_variant_get(parameters, "(i)", &index);
-            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", index >= 0 ? atspiObject->columnDescription(index).utf8().data() : ""));
+            g_dbus_method_invocation_return_value(invocation, g_variant_new("(s)", index >= 0 ? atspiObject->columnDescription(index).utf8().legacyCStringPointer() : ""));
         } else if (!g_strcmp0(methodName, "GetRowExtentAt")) {
             int row, column;
             g_variant_get(parameters, "(ii)", &row, &column);

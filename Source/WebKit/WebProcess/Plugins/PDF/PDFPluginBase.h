@@ -92,6 +92,7 @@ class WebKeyboardEvent;
 class WebMouseEvent;
 class WebWheelEvent;
 enum class SelectionEndpoint : bool;
+enum class SelectionExtentAnchor : bool;
 enum class SelectionWasFlipped : bool;
 enum class PDFAccessibilityDisplayModeState : uint8_t;
 enum class PDFPluginDisplayMode : uint8_t;
@@ -314,6 +315,7 @@ public:
     virtual Vector<WebCore::FloatRect> annotationRectsForTesting() const { return { }; }
     virtual void setTextAnnotationValueForTesting(unsigned pageIndex, unsigned annotationIndex, const String& value) { }
     virtual void setPDFDisplayModeForTesting(const String&) { }
+    virtual Vector<String> contextMenuItemTitlesForTesting(const WebCore::IntPoint&) const { return { }; }
     void registerPDFTest(RefPtr<WebCore::VoidCallback>&&);
 
     void navigateToURL(const URL&, std::optional<WebCore::PlatformMouseEvent>&& = std::nullopt);
@@ -349,7 +351,7 @@ public:
     virtual CursorContext cursorContext(WebCore::FloatPoint /* pointInRootView */) const { return { }; }
     virtual void setSelectionRange(WebCore::FloatPoint /* pointInRootView */, WebCore::TextGranularity) { }
     virtual SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint /* pointInRootView */, SelectionEndpoint);
-    virtual SelectionEndpoint extendInitialSelection(WebCore::FloatPoint /* pointInRootView */, WebCore::TextGranularity);
+    virtual SelectionEndpoint extendInitialSelection(WebCore::FloatPoint /* pointInRootView */, WebCore::TextGranularity, SelectionExtentAnchor);
 #if PLATFORM(IOS_FAMILY)
     virtual DocumentEditingContext documentEditingContext(DocumentEditingContextRequest&&) const;
 #endif

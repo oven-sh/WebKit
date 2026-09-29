@@ -53,7 +53,7 @@ public:
     CodePtr<JITCompilationPtrTag> code() const { return m_codeRef.code(); }
     MacroAssemblerCodeRef<JITCompilationPtrTag> codeRef() const { return m_codeRef; }
     
-    CString disassembly() const { return m_codeRef.disassembly(); }
+    UTF8CString disassembly() const { return m_codeRef.disassembly(); }
 
 private:
     MacroAssemblerCodeRef<JITCompilationPtrTag> m_codeRef;

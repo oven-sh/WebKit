@@ -29,7 +29,9 @@
 #include <WebCore/RenderStyleConstants.h>
 #include <WebCore/StyleFlexBasis.h>
 #include <WebCore/StyleFlexGrow.h>
+#include <WebCore/StyleFlexLineCount.h>
 #include <WebCore/StyleFlexShrink.h>
+#include <WebCore/StyleFlexWrap.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
 
@@ -52,9 +54,10 @@ public:
     FlexGrow flexGrow;
     FlexShrink flexShrink;
     FlexBasis flexBasis;
+    FlexLineCount flexLineCount;
 
     PREFERRED_TYPE(FlexDirection) unsigned flexDirection : 2;
-    PREFERRED_TYPE(FlexWrap) unsigned flexWrap : 2;
+    PREFERRED_TYPE(FlexWrapType) unsigned flexWrap : 3;
 
 private:
     FlexibleBoxData();

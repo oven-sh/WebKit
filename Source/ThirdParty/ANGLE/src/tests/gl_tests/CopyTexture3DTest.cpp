@@ -6,6 +6,8 @@
 
 // CopyTexture3DTest.cpp: Tests of the GL_ANGLE_copy_texture_3d extension
 
+#include <array>
+
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 
@@ -402,12 +404,12 @@ TEST_P(Texture3DCopy, OffsetSubCopy)
 {
     ANGLE_SKIP_TEST_IF(!checkExtensions());
 
-    GLColor rgbaPixels[27];
+    std::array<GLColor, 27> rgbaPixels;
 
     // Create pixel data for a 3x3x3 red cube
     for (int i = 0; i < 27; i++)
     {
-        ANGLE_UNSAFE_TODO(rgbaPixels[i]) = GLColor(255u, 0u, 0u, 255u);
+        rgbaPixels[i] = GLColor(255u, 0u, 0u, 255u);
     }
 
     // Change a pixel to create a 1x1x1 blue cube at (0, 0, 0)
@@ -424,7 +426,8 @@ TEST_P(Texture3DCopy, OffsetSubCopy)
     rgbaPixels[26] = GLColor(0u, 255u, 0u, 255u);
 
     glBindTexture(GL_TEXTURE_3D, sourceTexture);
-    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA, 3, 3, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE, rgbaPixels);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA, 3, 3, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE,
+                 rgbaPixels.data());
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_BASE_LEVEL, 0);
@@ -1168,12 +1171,12 @@ TEST_P(Texture2DArrayCopy, OffsetSubCopy)
 {
     ANGLE_SKIP_TEST_IF(!checkExtensions());
 
-    GLColor rgbaPixels[27];
+    std::array<GLColor, 27> rgbaPixels;
 
     // Create pixel data for a 3x3x3 red cube
     for (int i = 0; i < 27; i++)
     {
-        ANGLE_UNSAFE_TODO(rgbaPixels[i]) = GLColor(255u, 0u, 0u, 255u);
+        rgbaPixels[i] = GLColor(255u, 0u, 0u, 255u);
     }
 
     // Change a pixel to create a 1x1x1 blue cube at (0, 0, 0)
@@ -1191,7 +1194,7 @@ TEST_P(Texture2DArrayCopy, OffsetSubCopy)
 
     glBindTexture(GL_TEXTURE_2D_ARRAY, sourceTexture);
     glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA, 3, 3, 3, 0, GL_RGBA, GL_UNSIGNED_BYTE,
-                 rgbaPixels);
+                 rgbaPixels.data());
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
     glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_BASE_LEVEL, 0);
@@ -1390,6 +1393,73 @@ TEST_P(Texture2DArrayCopy, UintFormats)
     glUseProgram(mProgram);
 
     testUintFormats(GL_TEXTURE_2D_ARRAY);
+}
+
+// Test copy to different slices of 3D texture with RGB9_E5 format (which sometimes has to take the
+// CPU copy path).
+TEST_P(Texture3DCopy, RGB9E5Tex3D)
+{
+    ANGLE_SKIP_TEST_IF(!checkExtensions());
+
+    constexpr char kVS[] = R"(#version 300 es
+out vec2 texcoord;
+in vec4 position;
+void main()
+{
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+    texcoord = (position.xy * 0.5) + 0.5;
+})";
+
+    constexpr char kFS[] = R"(#version 300 es
+precision highp float;
+uniform lowp sampler3D tex3D;
+uniform int slice;
+in vec2 texcoord;
+out vec4 color;
+void main()
+{
+    color = texture(tex3D, vec3(texcoord, slice));
+})";
+
+    ANGLE_GL_PROGRAM(program, kVS, kFS);
+    glUseProgram(program);
+
+    const std::array<GLColor, 4> kData = {GLColor::red, GLColor::green, GLColor::blue,
+                                          GLColor::yellow};
+
+    GLTexture source;
+    glBindTexture(GL_TEXTURE_3D, source);
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGBA8, 2, 2, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, kData.data());
+
+    GLTexture texture;
+    glBindTexture(GL_TEXTURE_3D, texture);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_3D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    glTexImage3D(GL_TEXTURE_3D, 0, GL_RGB9_E5, 2, 2, 5, 0, GL_RGB, GL_FLOAT, nullptr);
+
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    const int w = getWindowWidth();
+    const int h = getWindowHeight();
+    glViewport(0, 0, w, h);
+
+    for (uint32_t slice = 0; slice < 5; slice++)
+    {
+        glCopySubTexture3DANGLE(source, 0, GL_TEXTURE_3D, texture, 0, 0, 0, slice, 0, 0, 0, 2, 2, 1,
+                                false, false, false);
+
+        glClear(GL_COLOR_BUFFER_BIT);
+        glUniform1i(glGetUniformLocation(program, "slice"), slice);
+        drawQuad(program, "position", 0.5f);
+        EXPECT_PIXEL_COLOR_EQ(w / 4, h / 4, kData[0]);
+        EXPECT_PIXEL_COLOR_EQ(3 * w / 4, h / 4, kData[1]);
+        EXPECT_PIXEL_COLOR_EQ(w / 4, 3 * h / 4, kData[2]);
+        EXPECT_PIXEL_COLOR_EQ(3 * w / 4, 3 * h / 4, kData[3]);
+    }
+
+    ASSERT_GL_NO_ERROR();
 }
 
 GTEST_ALLOW_UNINSTANTIATED_PARAMETERIZED_TEST(Texture3DCopy);

@@ -772,7 +772,7 @@ Status WebMParser::OnTrackEntry(const ElementMetadata&, const TrackEntry& trackE
         return Status(Status::kOkCompleted);
 
     auto trackType = trackEntry.track_type.value();
-    String codecId = std::span { trackEntry.codec_id.value() };
+    String codecId = String::fromLatin1(std::span { trackEntry.codec_id.value() });
 
     ALWAYS_LOG_IF_POSSIBLE(LOGIDENTIFIER, trackType, ", codec ", codecId);
 
@@ -1693,7 +1693,7 @@ void SourceBufferParserWebM::flushPendingAudioSamples()
     m_queuedAudioDuration = { };
 }
 
-Expected<void, PlatformMediaError> SourceBufferParserWebM::appendData(Ref<const SharedBuffer>&& segment, AppendFlags appendFlags)
+std::expected<void, PlatformMediaError> SourceBufferParserWebM::appendData(Ref<const SharedBuffer>&& segment, AppendFlags appendFlags)
 {
     INFO_LOG_IF_POSSIBLE(LOGIDENTIFIER, "flags(", appendFlags == AppendFlags::Discontinuity ? "Discontinuity" : "", "), size(", segment->size(), ")");
 

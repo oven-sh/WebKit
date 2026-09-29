@@ -60,6 +60,7 @@ namespace WebCore {
 class CachedResourceRequest;
 class DOMMatrixReadOnly;
 class DOMPointReadOnly;
+class EnvironmentMapLoader;
 class Event;
 class Exception;
 class FloatPoint;
@@ -109,7 +110,7 @@ public:
     void didFailLoadingInsidePortal(const ResourceError&);
     void didUpdateEntityTransformInsidePortal(const TransformationMatrix&);
     void spatialPortalContextDidChange();
-    SpatialPortalController* lastRegisteredPortalController() const;
+    WEBCORE_EXPORT SpatialPortalController* lastRegisteredPortalController() const;
 #endif
 
     std::optional<PlatformLayerIdentifier> layerID() const;
@@ -136,7 +137,10 @@ public:
     EnvironmentMapPromise& environmentMapReady() { return m_environmentMapReadyPromise.get(); }
 
     const URL& environmentMap() const;
-    void setEnvironmentMap(const URL&);
+#if ENABLE(SPATIAL_PORTAL)
+    void environmentMapStyleDidChange();
+#endif
+    WEBCORE_EXPORT String effectiveEnvironmentMapForTesting() const;
 #endif
 
     void enterFullscreen();
@@ -170,7 +174,7 @@ public:
     WEBCORE_EXPORT bool supportsDragging() const;
     bool isDraggableIgnoringAttributes() const final;
 
-    bool NODELETE isInteractive() const;
+    WEBCORE_EXPORT bool NODELETE isInteractive() const;
 
 #if ENABLE(MODEL_ELEMENT_ANIMATIONS_CONTROL)
     double playbackRate() const { return m_playbackRate; }
@@ -206,6 +210,7 @@ public:
 #if ENABLE(SPATIAL_PORTAL)
     bool isInsidePortal() const;
     void updateEntityTransformFromCSS();
+    void updateAnchorFromCSS();
 #endif
 
     void paintCurrentFrameInContext(GraphicsContext&, const FloatRect&);
@@ -216,7 +221,7 @@ public:
 #endif
 
     bool isIntersectingViewport() const { return m_isIntersectingViewport; }
-    void viewportIntersectionChanged(bool isIntersecting);
+    void lazyLoadIntersectionCallbackInvoked(bool isIntersecting);
 
 #if HAVE(SUPPORT_HDR_DISPLAY) && ENABLE(PIXEL_FORMAT_RGBA16F)
     void dynamicRangeLimitDidChange(PlatformDynamicRangeLimit);
@@ -333,9 +338,10 @@ private:
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
     void updateEnvironmentMap();
     URL selectEnvironmentMapURL() const;
+    void setEffectiveEnvironmentMap(EnvironmentMapKind, const URL&);
     void environmentMapRequestResource();
     void environmentMapResetAndReject(Exception&&);
-    void environmentMapResourceFinished();
+    void environmentMapDidLoad(const URL&, RefPtr<SharedBuffer>&&);
 #endif
 
 #if ENABLE(MODEL_ELEMENT_PORTAL)
@@ -405,10 +411,12 @@ private:
 
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
     URL m_environmentMapURL;
-    SharedBufferBuilder m_environmentMapData;
+    RefPtr<SharedBuffer> m_environmentMapData;
     mutable std::atomic<size_t> m_environmentMapDataMemoryCost { 0 };
+    EnvironmentMapKind m_environmentMapKind { EnvironmentMapKind::Default };
+    bool m_environmentMapFailed { false };
 
-    CachedResourceHandle<CachedRawResource> m_environmentMapResource;
+    RefPtr<EnvironmentMapLoader> m_environmentMapLoader;
     UniqueRef<EnvironmentMapPromise> m_environmentMapReadyPromise;
 #endif
 

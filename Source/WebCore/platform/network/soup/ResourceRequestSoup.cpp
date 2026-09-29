@@ -60,7 +60,11 @@ GRefPtr<SoupMessage> ResourceRequest::createSoupMessage(BlobRegistryImpl& blobRe
     if (!uri)
         return nullptr;
 
-    GRefPtr soupMessage = adoptGRef(soup_message_new_from_uri(httpMethod().ascii().data(), uri.get()));
+    auto method = httpMethod().isEmpty() ? "GET"_s : httpMethod();
+    if (!isValidHTTPToken(method))
+        return nullptr;
+
+    GRefPtr soupMessage = adoptGRef(soup_message_new_from_uri(method.ascii().data(), uri.get()));
 
     soup_message_set_priority(soupMessage.get(), toSoupMessagePriority(priority()));
 
@@ -141,7 +145,7 @@ void ResourceRequest::updateSoupMessageHeaders(SoupMessageHeaders* soupHeaders) 
     if (!headers.isEmpty()) {
         HTTPHeaderMap::const_iterator end = headers.end();
         for (HTTPHeaderMap::const_iterator it = headers.begin(); it != end; ++it)
-            soup_message_headers_append(soupHeaders, it->key.utf8().data(), it->value.utf8().data());
+            soup_message_headers_append(soupHeaders, it->key.utf8().legacyCStringPointer(), it->value.utf8().legacyCStringPointer());
     }
 }
 

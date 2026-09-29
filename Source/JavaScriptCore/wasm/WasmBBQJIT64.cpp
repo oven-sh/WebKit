@@ -78,7 +78,7 @@ Location Location::fromArgumentLocation(ArgumentLocation argLocation, TypeKind)
 {
     switch (argLocation.location.kind()) {
     case ValueLocation::Kind::GPRRegister:
-        return Location::fromGPR(argLocation.location.jsr().gpr());
+        return Location::fromGPR(argLocation.location.gpr());
     case ValueLocation::Kind::FPRRegister:
         return Location::fromFPR(argLocation.location.fpr());
     case ValueLocation::Kind::StackArgument:
@@ -161,24 +161,6 @@ Value BBQJIT::instanceValue()
     TypeKind returnType = table.wasmType().kind();
     ASSERT(typeKindSizeInBytes(returnType) == 8);
 
-    if (table.type() == TableElementType::Funcref) {
-        emitZeroExtendAddressOperand(table.addressType().is64Bit(), index);
-
-        Vector<Value, 8> arguments = {
-            instanceValue(),
-            Value::fromI32(tableIndex),
-            index
-        };
-        result = topValue(returnType);
-        emitCCall(&operationGetWasmTableElement, arguments, result);
-        Location resultLocation = loadIfNecessary(result);
-
-        LOG_INSTRUCTION("TableGet", tableIndex, index, RESULT(result));
-
-        recordJumpToThrowException(ExceptionType::OutOfBoundsTableAccess, m_jit.branchTest64(ResultCondition::Zero, resultLocation.asGPR()));
-        return { };
-    }
-
     emitZeroExtendAddressOperand(table.addressType().is64Bit(), index);
 
     {
@@ -201,9 +183,30 @@ Value BBQJIT::instanceValue()
             recordJumpToThrowException(ExceptionType::OutOfBoundsTableAccess, m_jit.branch64(RelationalCondition::AboveOrEqual, indexGPR, scratchGPR));
         }
 
-        m_jit.loadPtr(Address(tableGPR, ExternOrAnyRefTable::offsetOfJSValues()), tableGPR);
-        static_assert(sizeof(WriteBarrier<Unknown>) == 8);
-        m_jit.load64(MacroAssembler::BaseIndex(tableGPR, indexGPR, MacroAssembler::TimesEight), valueGPR);
+        if (table.type() == TableElementType::Funcref) {
+            m_jit.loadPtr(Address(tableGPR, FuncRefTable::offsetOfWrappers()), tableGPR);
+            static_assert(sizeof(WriteBarrier<WebAssemblyFunctionBase>) == 8);
+            m_jit.load64(MacroAssembler::BaseIndex(tableGPR, indexGPR, MacroAssembler::TimesEight), valueGPR);
+
+            JumpList slowPath = m_jit.branchTest64(ResultCondition::Zero, valueGPR);
+            MacroAssembler::Label done(m_jit);
+            uint64_t constIndex = index.isConst()
+                ? (table.addressType().is64Bit() ? static_cast<uint64_t>(index.asI64()) : static_cast<uint32_t>(index.asI32()))
+                : 0;
+            m_slowPaths.append({ origin(), WTF::move(slowPath), WTF::move(done), copyBindings(), [tableIndex, indexIsConst = index.isConst(), constIndex, indexGPR, valueGPR](BBQJIT&, CCallHelpers& jit) {
+                jit.prepareWasmCallOperation(GPRInfo::wasmContextInstancePointer);
+                if (indexIsConst)
+                    jit.setupArguments<decltype(operationGetWasmTableElement)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(tableIndex), TrustedImm64(constIndex));
+                else
+                    jit.setupArguments<decltype(operationGetWasmTableElement)>(GPRInfo::wasmContextInstancePointer, TrustedImm32(tableIndex), indexGPR);
+                jit.callOperation<OperationPtrTag>(operationGetWasmTableElement);
+                jit.move(GPRInfo::returnValueGPR, valueGPR);
+            } });
+        } else {
+            m_jit.loadPtr(Address(tableGPR, ExternOrAnyRefTable::offsetOfJSValues()), tableGPR);
+            static_assert(sizeof(WriteBarrier<Unknown>) == 8);
+            m_jit.load64(MacroAssembler::BaseIndex(tableGPR, indexGPR, MacroAssembler::TimesEight), valueGPR);
+        }
 
         consume(index);
         result = topValue(returnType);
@@ -1872,9 +1875,15 @@ void BBQJIT::emitArraySetUnchecked(TypeSignatureIndex typeIndex, Value arrayref,
         m_jit.zeroExtend32ToWord(indexLocation.asGPR(), indexLocation.asGPR());
     }
 
+    bool needsWriteBarrier = isRefType(getArrayElementType(typeIndex).unpacked());
+    if (needsWriteBarrier && value.isConst()) {
+        ASSERT(!JSValue::decode(value.asI64()).isCell());
+        needsWriteBarrier = false;
+    }
+
     emitArraySetUnchecked(typeIndex, arrayref, index, value);
 
-    if (isRefType(getArrayElementType(typeIndex).unpacked()))
+    if (needsWriteBarrier)
         emitWriteBarrier(arrayLocation.asGPR());
     consume(arrayref);
 
@@ -4167,30 +4176,7 @@ void BBQJIT::materializeVectorConstant(v128_t value, Location result)
             return { };
         }
 
-        {
-            v128_t towerOfPower { };
-            switch (info.lane) {
-            case SIMDLane::i32x4:
-                for (unsigned i = 0; i < 4; ++i)
-                    towerOfPower.u32x4[i] = 1 << i;
-                break;
-            case SIMDLane::i16x8:
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u16x8[i] = 1 << i;
-                break;
-            case SIMDLane::i8x16:
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u8x16[i] = 1 << i;
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u8x16[i + 8] = 1 << i;
-                break;
-            default:
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-
-            // FIXME: this is bad, we should load
-            materializeVectorConstant(towerOfPower, Location::fromFPR(wasmScratchFPR));
-        }
+        m_jit.loadVector(TrustedImmPtr(vectorBitmaskTower(info.lane)), wasmScratchFPR);
 
         {
             ScratchScope<0, 1> scratches(*this, valueLocation, resultLocation);

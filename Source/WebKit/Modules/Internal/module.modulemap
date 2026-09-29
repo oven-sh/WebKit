@@ -59,6 +59,18 @@ module WebKit_Internal [system] {
         export *
     }
 
+    module JavaScriptEvaluationResultCxxInteropSupport {
+        requires cplusplus23
+        header "../../Shared/JavaScriptEvaluationResultCxxInteropSupport.h"
+        export *
+    }
+
+    module RunJavaScriptParameters {
+        requires cplusplus23
+        header "../../Shared/RunJavaScriptParameters.h"
+        export *
+    }
+
     module RunJavaScriptResult {
         requires cplusplus20
         header "../../Shared/RunJavaScriptResult.h"
@@ -262,12 +274,6 @@ module WebKit_Internal [system] {
         export *
     }
 
-    module SwiftDemoLogoConfirmation {
-        requires cplusplus20
-        header "../../UIProcess/SwiftDemoLogoConfirmation.h"
-        export *
-    }
-
     module WebBackForwardCacheEntry {
         requires cplusplus20
         header "../../UIProcess/WebBackForwardCacheEntry.h"
@@ -313,6 +319,12 @@ module WebKit_Internal [system] {
     module ModelTypes {
         header "../../GPUProcess/graphics/Model/ModelTypes.h"
         requires objc
+    }
+
+    module TransferString {
+        requires cplusplus23
+        header "../../Platform/IPC/TransferString.h"
+        export *
     }
 
     module WKDeferringGestureRecognizer {
@@ -408,6 +420,18 @@ module WebKit_Internal [system] {
     module WKAppKitGestureController {
         requires cplusplus20,objc
         header "../../UIProcess/mac/AppKitGestures/WKAppKitGestureController.h"
+        export *
+    }
+
+    module WKMouseTrackingGestureRecognizer {
+        requires objc
+        header "../../UIProcess/mac/AppKitGestures/WKMouseTrackingGestureRecognizer.h"
+        export *
+    }
+
+    module WKPressGestureRecognizer {
+        requires objc
+        header "../../UIProcess/mac/AppKitGestures/WKPressGestureRecognizer.h"
         export *
     }
 

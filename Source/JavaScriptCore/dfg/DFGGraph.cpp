@@ -49,6 +49,7 @@
 #include "GetterSetter.h"
 #include "JIT.h"
 #include "JSLexicalEnvironment.h"
+#include "JSModuleEnvironment.h"
 #include "LinkBuffer.h"
 #include "MaxFrameExtentForSlowPathCall.h"
 #include "OperandsInlines.h"
@@ -242,7 +243,7 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
         });
     }
 
-    if (toCString(NodeFlagsDump(node->flags())) != "<empty>"_s)
+    if (toUTF8CString(NodeFlagsDump(node->flags())) != "<empty>"_s)
         out.print(comma, NodeFlagsDump(node->flags()));
     if (node->prediction())
         out.print(comma, SpeculationDump(node->prediction()));
@@ -568,7 +569,7 @@ void Graph::dumpBlockHeader(PrintStream& out, const char* prefixStr, BasicBlock*
                 continue;
 
             out.print(" D@", phiNode->index(), "<", phiNode->operand(), ",", phiNode->refCount());
-            if (toCString(NodeFlagsDump(phiNode->flags())) != "<empty>"_s)
+            if (toUTF8CString(NodeFlagsDump(phiNode->flags())) != "<empty>"_s)
                 out.print(", ", NodeFlagsDump(phiNode->flags()));
             out.print(">->(");
             if (phiNode->child1()) {
@@ -693,7 +694,7 @@ void Graph::dump(PrintStream& out, DumpContext* context)
     if (!myContext.isEmpty()) {
         StringPrintStream prefixStr;
         prefixStr.print(prefix);
-        myContext.dump(out, prefixStr.toCString().data());
+        myContext.dump(out, prefixStr.toUTF8CString().legacyCStringPointer());
         out.print("\n");
     }
 }
@@ -1453,6 +1454,15 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
         return JSValue();
     
     SymbolTable* symbolTable = activation->symbolTable();
+
+    // A module environment's import slot is written once (empty until then), so a
+    // filled slot is a constant without a watchpoint.
+    if (auto* moduleEnvironment = dynamicDowncast<JSModuleEnvironment>(activation)) {
+        unsigned firstImportSlot = JSModuleEnvironment::importSlotScopeOffset(symbolTable, 0).offset();
+        if (offset.offset() >= firstImportSlot && offset.offset() - firstImportSlot < moduleEnvironment->importSlotCount())
+            return moduleEnvironment->importSlot(offset.offset() - firstImportSlot).get();
+    }
+
     JSValue value;
     InlineWatchpointSet* set;
     {
@@ -1582,19 +1592,24 @@ ObjectPropertyConditionSet Graph::tryEnsureAbsence(JSGlobalObject* globalObject,
     return result;
 }
 
+static RegExp* constantRegExpFor(Graph& graph, Node* node, JSGlobalObject*& globalObject)
+{
+    if (RegExpObject* regExpObject = node->dynamicCastConstant<RegExpObject*>()) {
+        globalObject = regExpObject->realm();
+        return regExpObject->regExp();
+    }
+    if (node->op() == NewRegExp) {
+        globalObject = graph.globalObjectFor(node->origin.semantic);
+        return node->castOperand<RegExp*>();
+    }
+    return nullptr;
+}
+
 const WTF::BitSet<256>* Graph::tryGetConstantRegExpFirstCharacterBitmap(Node* node, FirstCharacterFilterPosition position)
 {
     JSGlobalObject* globalObject = nullptr;
-    RegExp* regExp = nullptr;
-    if (RegExpObject* regExpObject = node->dynamicCastConstant<RegExpObject*>()) {
-        globalObject = regExpObject->realm();
-        regExp = regExpObject->regExp();
-    } else if (node->op() == NewRegExp) {
-        globalObject = globalObjectFor(node->origin.semantic);
-        regExp = node->castOperand<RegExp*>();
-    }
-
-    if (!globalObject || !regExp)
+    RegExp* regExp = constantRegExpFor(*this, node, globalObject);
+    if (!regExp)
         return nullptr;
 
     // The filter reads one fixed position, so the flags must guarantee a match can only begin there.
@@ -1621,6 +1636,29 @@ const WTF::BitSet<256>* Graph::tryGetConstantRegExpFirstCharacterBitmap(Node* no
     // realm jettison code that baked no bitmap at all.
     watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
     return bitmap;
+}
+
+// nullopt: not a constant or not compiled yet, read RegExp::m_minimumSize at runtime. 0: constant, but no input length can be rejected.
+std::optional<unsigned> Graph::tryGetConstantRegExpTestMinimumSize(Node* node)
+{
+    JSGlobalObject* globalObject = nullptr;
+    RegExp* regExp = constantRegExpFor(*this, node, globalObject);
+    if (!regExp || globalObject->isRegExpRecompiled())
+        return std::nullopt;
+
+    unsigned minimumSize = 0;
+    {
+        Locker locker { regExp->cellLock() };
+        if (!regExp->hasCode())
+            return std::nullopt;
+        minimumSize = regExp->minimumSize();
+    }
+
+    if (regExp->globalOrSticky() || !minimumSize)
+        return 0;
+
+    watchpoints().addLazily(globalObject->regExpRecompiledWatchpointSet());
+    return minimumSize;
 }
 
 const WTF::BitSet<256>* Graph::regExpFirstCharacterBitmap(RegExp* regExp, FirstCharacterFilterPosition position)
@@ -1798,11 +1836,11 @@ void Graph::assertIsRegistered(Structure* structure)
     if (m_plan.watchpoints().isRegisteredNotWatched(structure))
         return;
 
-    DFG_CRASH(*this, nullptr, toCString("Structure ", pointerDump(structure), " is watchable but isn't being watched.").data());
+    DFG_CRASH(*this, nullptr, toUTF8CString("Structure ", pointerDump(structure), " is watchable but isn't being watched.").legacyCStringPointer());
 }
 
 static void logDFGAssertionFailure(
-    Graph& graph, const CString& whileText, const char* file, int line, const char* function,
+    Graph& graph, const UTF8CString& whileText, const char* file, int line, const char* function,
     const char* assertion)
 {
     startCrashing();
@@ -1829,13 +1867,13 @@ void Graph::logAssertionFailure(
 void Graph::logAssertionFailure(
     Node* node, const char* file, int line, const char* function, const char* assertion)
 {
-    logDFGAssertionFailure(*this, toCString("While handling node ", node, "\n\n"), file, line, function, assertion);
+    logDFGAssertionFailure(*this, toUTF8CString("While handling node ", node, "\n\n"), file, line, function, assertion);
 }
 
 void Graph::logAssertionFailure(
     BasicBlock* block, const char* file, int line, const char* function, const char* assertion)
 {
-    logDFGAssertionFailure(*this, toCString("While handling block ", pointerDump(block), "\n\n"), file, line, function, assertion);
+    logDFGAssertionFailure(*this, toUTF8CString("While handling block ", pointerDump(block), "\n\n"), file, line, function, assertion);
 }
 
 CPSCFG& Graph::ensureCPSCFG()
@@ -1945,8 +1983,7 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
                         return { };
 
                     CodeBlock* callerBlock = baselineCodeBlockFor(*codeOrigin);
-                    auto* valueProfile = callerBlock->tryGetValueProfileForBytecodeIndex(codeOrigin->bytecodeIndex());
-                    if (!valueProfile)
+                    if (!callerBlock->tryGetValueProfileForBytecodeIndex(codeOrigin->bytecodeIndex()))
                         return { };
 
                     return MethodOfGettingAValueProfile::bytecodeValueProfile(*codeOrigin);
@@ -1954,8 +1991,7 @@ MethodOfGettingAValueProfile Graph::methodOfGettingAValueProfileFor(Node* curren
                 case op_call_ignore_result:
                     return { };
                 default: {
-                    auto* valueProfile = profiledBlock->tryGetValueProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex());
-                    if (!valueProfile)
+                    if (!profiledBlock->tryGetValueProfileForBytecodeIndex(node->origin.semantic.bytecodeIndex()))
                         return { };
 
                     return MethodOfGettingAValueProfile::bytecodeValueProfile(node->origin.semantic);

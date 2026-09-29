@@ -79,6 +79,7 @@ struct InteractionDescription {
     String description;
     Vector<String> stringsToValidate;
     bool didFindTargetNode { true };
+    bool describesInteractionTarget { true };
 };
 
 enum class EventListenerCategory : uint8_t {
@@ -230,6 +231,7 @@ struct Item {
     unsigned visualBlockContainerNumber { 0 };
     bool hasLineThrough { false };
     bool isVisuallyClickable { false };
+    bool isDisabled { false };
 
     template<typename T> bool hasData() const
     {

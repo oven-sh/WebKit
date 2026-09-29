@@ -26,13 +26,14 @@
 #include "config.h"
 #include "SkiaBackingStore.h"
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
 #include "BitmapTexturePool.h"
 #include "CoordinatedTileBuffer.h"
 #include "FontRenderOptions.h"
 #include "PlatformDisplay.h"
 #include "SkiaDamageRegion.h"
 #include "SkiaPaintingEngine.h"
+#include "SkiaUtilities.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 #include <skia/core/SkColorSpace.h>
 #include <skia/gpu/ganesh/GrBackendSurface.h>
@@ -80,8 +81,11 @@ void SkiaBackingStore::processPendingTileUpdates()
     if (!m_hasPendingTileUpdates)
         return;
 
-    for (auto& tile : m_tiles.values())
+    m_hasPaddedTiles = false;
+    for (auto& tile : m_tiles.values()) {
         tile.processPendingUpdateIfNeeded();
+        m_hasPaddedTiles |= tile.isPadded();
+    }
 
     m_hasPendingTileUpdates = false;
 }
@@ -89,6 +93,38 @@ void SkiaBackingStore::processPendingTileUpdates()
 static inline bool allTileEdgesExposed(const FloatRect& totalRect, const FloatRect& tileRect)
 {
     return !tileRect.x() && !tileRect.y() && tileRect.width() + tileRect.x() >= totalRect.width() && tileRect.height() + tileRect.y() >= totalRect.height();
+}
+
+static bool clipTileToBounds(const SkRect& clipBounds, SkRect& tileRect, SkRect& sourceRect)
+{
+    // One pixel wider than the clip, so the new edge falls outside the visible part.
+    auto clip = clipBounds.makeOutset(1, 1);
+    auto cropped = tileRect;
+    if (!cropped.intersect(clip))
+        return false;
+
+    if (cropped == tileRect)
+        return true;
+
+    const float widthScale = sourceRect.width() / tileRect.width();
+    const float heightScale = sourceRect.height() / tileRect.height();
+    sourceRect = SkRect::MakeLTRB(sourceRect.fLeft + (cropped.fLeft - tileRect.fLeft) * widthScale,
+        sourceRect.fTop + (cropped.fTop - tileRect.fTop) * heightScale,
+        sourceRect.fLeft + (cropped.fRight - tileRect.fLeft) * widthScale,
+        sourceRect.fTop + (cropped.fBottom - tileRect.fTop) * heightScale);
+    tileRect = cropped;
+    return true;
+}
+
+SkSamplingOptions SkiaBackingStore::samplingOptionsForMatrix(const SkMatrix& deviceMatrix) const
+{
+    if (!deviceMatrix.isScaleTranslate())
+        return SkSamplingOptions(SkFilterMode::kLinear, SkMipmapMode::kNone);
+
+    // Tiles are painted at m_scale device pixels per layer pixel, remove that scale before determining the sampling options.
+    auto matrix = deviceMatrix;
+    matrix.preScale(1 / m_scale, 1 / m_scale);
+    return SkiaUtilities::samplingOptionsForMatrix(matrix);
 }
 
 void SkiaBackingStore::paintToCanvas(SkCanvas& canvas, const SkPaint& paint, const SkiaDamageRegion* damageRegion)
@@ -103,7 +139,9 @@ void SkiaBackingStore::paintToCanvas(SkCanvas& canvas, const SkPaint& paint, con
     FloatRect layerRect = { { }, m_size };
 
     const auto ctm = canvas.getLocalToDeviceAs3x3();
-    const auto sampling = SkSamplingOptions(SkFilterMode::kNearest, SkMipmapMode::kNone);
+    const auto sampling = samplingOptionsForMatrix(ctm);
+    const auto constraint = requiresStrictSourceConstraint(sampling) ? SkCanvas::kStrict_SrcRectConstraint : SkCanvas::kFast_SrcRectConstraint;
+    const auto localClipBounds = canvas.getLocalClipBounds();
     auto tilePaint = paint;
     for (auto& tile : m_tiles.values()) {
         if (canvas.quickReject(tile.rect()))
@@ -119,8 +157,13 @@ void SkiaBackingStore::paintToCanvas(SkCanvas& canvas, const SkPaint& paint, con
         if (!image)
             continue;
 
+        SkRect tileRect = tile.rect();
+        SkRect sourceRect = tile.imageSourceRect();
+        if (!clipTileToBounds(localClipBounds, tileRect, sourceRect))
+            continue;
+
         tilePaint.setAntiAlias(paint.isAntiAlias() && allTileEdgesExposed(layerRect, tile.rect()));
-        canvas.drawImageRect(image, tile.imageSourceRect(), tile.rect(), sampling, &tilePaint, SkCanvas::kFast_SrcRectConstraint);
+        canvas.drawImageRect(image, sourceRect, tileRect, sampling, &tilePaint, constraint);
     }
 }
 
@@ -147,6 +190,7 @@ void SkiaBackingStore::appendImageSetEntries(SkCanvas& canvas, const SkMatrix& c
     SkAutoCanvasRestore autoRestore(&canvas, true);
     canvas.concat(ctm);
 
+    const auto localClipBounds = canvas.getLocalClipBounds();
     for (auto& tile : m_tiles.values()) {
         if (canvas.quickReject(tile.rect()))
             continue;
@@ -157,8 +201,10 @@ void SkiaBackingStore::appendImageSetEntries(SkCanvas& canvas, const SkMatrix& c
 
         // FIXME: implement per edge antialiasing.
         const unsigned aaFlags = enableAntialias && allTileEdgesExposed(layerRect, tile.rect()) ? SkCanvas::kAll_QuadAAFlags : SkCanvas::kNone_QuadAAFlags;
-        const SkRect srcRectFull = tile.imageSourceRect();
-        const SkRect dstRectFull = tile.rect();
+        SkRect srcRectFull = tile.imageSourceRect();
+        SkRect dstRectFull = tile.rect();
+        if (!clipTileToBounds(localClipBounds, dstRectFull, srcRectFull))
+            continue;
 
         if (!damageRegion) {
             images.append(SkCanvas::ImageSetEntry(image, srcRectFull, dstRectFull, matrixIndex, opacity, aaFlags, false));
@@ -235,9 +281,7 @@ void SkiaBackingStore::Tile::update(const IntRect& dirtyRect, const IntRect& til
 
     if (buffer.isBackedByOpenGL()) {
         auto& acceleratedBuffer = static_cast<CoordinatedAcceleratedTileBuffer&>(buffer);
-        acceleratedBuffer.serverWait();
-
-        if (auto displayList = acceleratedBuffer.displayList()) {
+        if (auto displayList = acceleratedBuffer.takeDisplayList()) {
             ASSERT(!m_texture);
             ASSERT(!m_cachedImage);
 
@@ -309,6 +353,12 @@ SkRect SkiaBackingStore::Tile::imageSourceRect() const
     return SkRect::MakeEmpty();
 }
 
+bool SkiaBackingStore::Tile::isPadded() const
+{
+    // A surface snapshot is sized to the tile, so only a texture can be padded.
+    return m_texture && m_texture->size() != m_texture->allocatedSize();
+}
+
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)

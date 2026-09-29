@@ -148,7 +148,7 @@ bool CDMFactoryThunder::supportsKeySystem(const String& keySystem)
 
 CDMPrivateThunder::CDMPrivateThunder(const String& keySystem)
     : m_keySystem(keySystem)
-    , m_thunderSystem(opencdm_create_system(keySystem.utf8().data()))
+    , m_thunderSystem(opencdm_create_system(keySystem.utf8().legacyCStringPointer()))
 {
 };
 
@@ -165,11 +165,11 @@ Vector<String> CDMPrivateThunder::supportedInitDataTypes() const
 bool CDMPrivateThunder::supportsConfiguration(const CDMKeySystemConfiguration& configuration) const
 {
     for (auto& audioCapability : configuration.audioCapabilities) {
-        if (opencdm_is_type_supported(m_keySystem.utf8().data(), audioCapability.contentType.utf8().data()))
+        if (opencdm_is_type_supported(m_keySystem.utf8().legacyCStringPointer(), audioCapability.contentType.utf8().legacyCStringPointer()))
             return false;
     }
     for (auto& videoCapability : configuration.videoCapabilities) {
-        if (opencdm_is_type_supported(m_keySystem.utf8().data(), videoCapability.contentType.utf8().data()))
+        if (opencdm_is_type_supported(m_keySystem.utf8().legacyCStringPointer(), videoCapability.contentType.utf8().legacyCStringPointer()))
             return false;
     }
     return true;
@@ -285,7 +285,7 @@ std::optional<String> CDMPrivateThunder::sanitizeSessionId(const String& session
 
 CDMInstanceThunder::CDMInstanceThunder(const String& keySystem)
     : CDMInstanceProxy(keySystem)
-    , m_thunderSystem(opencdm_create_system(keySystem.utf8().data()))
+    , m_thunderSystem(opencdm_create_system(keySystem.utf8().legacyCStringPointer()))
     , m_keySystem(keySystem)
 {
 }
@@ -557,7 +557,7 @@ void CDMInstanceSessionThunder::requestLicense(LicenseType licenseType, KeyGroup
     GST_MEMDUMP("init data", payloadData.span().data(), payloadData.size());
 
     OpenCDMSession* session = nullptr;
-    opencdm_construct_session(&instance->thunderSystem(), thunderLicenseType(licenseType), initDataType.utf8().data(),
+    opencdm_construct_session(&instance->thunderSystem(), thunderLicenseType(licenseType), initDataType.utf8().legacyCStringPointer(),
         payloadData.span().data(), payloadData.size(), nullptr, 0, &m_thunderSessionCallbacks, this, &session);
     if (!session) {
         GST_ERROR("Could not create session");
@@ -578,12 +578,12 @@ void CDMInstanceSessionThunder::requestLicense(LicenseType licenseType, KeyGroup
         }
 
         if (!isValid()) {
-            GST_WARNING("created invalid session %s", m_sessionID.utf8().data());
+            GST_WARNING("created invalid session %s", m_sessionID.utf8().legacyCStringPointer());
             callback(initData.releaseNonNull(), m_sessionID, false, Failed);
             return;
         }
 
-        GST_DEBUG("created valid session %s", m_sessionID.utf8().data());
+        GST_DEBUG("created valid session %s", m_sessionID.utf8().legacyCStringPointer());
         callback(m_message.copyRef().releaseNonNull(), m_sessionID, m_needsIndividualization, Succeeded);
     };
 
@@ -604,7 +604,7 @@ void CDMInstanceSessionThunder::updateLicense(const String& sessionID, LicenseTy
 {
     ASSERT_UNUSED(sessionID, sessionID == m_sessionID);
 
-    GST_TRACE("Updating session %s", sessionID.utf8().data());
+    GST_TRACE("Updating session %s", sessionID.utf8().legacyCStringPointer());
 
     m_sessionChangedCallbacks.append([this, callback = WTF::move(callback)](bool success, RefPtr<SharedBuffer>&& responseMessage) mutable {
         ASSERT(isMainThread());
@@ -659,7 +659,7 @@ void CDMInstanceSessionThunder::loadSession(LicenseType licenseType, const Strin
     auto instance = cdmInstanceThunder();
     ASSERT(instance);
 
-    GST_TRACE("Going to load session for session id %s", sessionID.utf8().data());
+    GST_TRACE("Going to load session for session id %s", sessionID.utf8().legacyCStringPointer());
 
     OpenCDMSession* session = nullptr;
     auto sessionIDUtf8 = sessionID.utf8();
@@ -698,7 +698,7 @@ void CDMInstanceSessionThunder::loadSession(LicenseType licenseType, const Strin
     m_session = adoptInBoxPtr(session);
     m_sessionID = String::fromUTF8(opencdm_session_id(m_session->get()));
 
-    GST_TRACE("Session created with id %s", m_sessionID.utf8().data());
+    GST_TRACE("Session created with id %s", m_sessionID.utf8().legacyCStringPointer());
 
     ASSERT(sessionID == m_sessionID);
 
@@ -728,13 +728,13 @@ void CDMInstanceSessionThunder::loadSession(LicenseType licenseType, const Strin
                 }
             }
         } else {
-            GST_ERROR("session %s not loaded", m_sessionID.utf8().data());
+            GST_ERROR("session %s not loaded", m_sessionID.utf8().legacyCStringPointer());
             if (!responseMessage || responseMessage->isEmpty())
                 callback(std::nullopt, std::nullopt, std::nullopt, SuccessValue::Failed, sessionLoadFailureFromThunder({ }));
             else {
                 auto responseData = responseMessage->extractData();
                 auto response = String(byteCast<char8_t>(responseData.span()));
-                GST_DEBUG("Error message: %s", response.utf8().data());
+                GST_DEBUG("Error message: %s", response.utf8().legacyCStringPointer());
                 callback(std::nullopt, std::nullopt, std::nullopt, SuccessValue::Failed, sessionLoadFailureFromThunder(response));
             }
         }
@@ -743,12 +743,12 @@ void CDMInstanceSessionThunder::loadSession(LicenseType licenseType, const Strin
     result = OpenCDMError::ERROR_NONE;
     if (!m_session || m_sessionID.isEmpty() || (result = opencdm_session_load(m_session->get()))) {
         GST_DEBUG("loading failed for session %s (%p). OpenCDMError: %" PRIu32,
-            m_sessionID.utf8().data(), m_session.get(), static_cast<uint32_t>(result));
+            m_sessionID.utf8().legacyCStringPointer(), m_session.get(), static_cast<uint32_t>(result));
         sessionChanged(SessionChangedResult::Failure);
         return;
     }
 
-    GST_TRACE("session %s loaded. OpenCDMError: %" PRIu32, m_sessionID.utf8().data(), static_cast<uint32_t>(result));
+    GST_TRACE("session %s loaded. OpenCDMError: %" PRIu32, m_sessionID.utf8().legacyCStringPointer(), static_cast<uint32_t>(result));
 }
 
 void CDMInstanceSessionThunder::closeSession(const String& sessionID, CloseSessionCallback&& callback)
@@ -781,16 +781,16 @@ void CDMInstanceSessionThunder::removeSessionData(const String& sessionID, Licen
                 ASSERT(parsedResponseMessage);
                 if (parsedResponseMessage.hasPayload()) {
                     Ref<SharedBuffer> message = WTF::move(parsedResponseMessage.payload());
-                    GST_DEBUG("session %s removed, message length %zu", m_sessionID.utf8().data(), message->size());
+                    GST_DEBUG("session %s removed, message length %zu", m_sessionID.utf8().legacyCStringPointer(), message->size());
                     callback(m_keyStore.allKeysAs(MediaKeyStatus::Released), WTF::move(message), SuccessValue::Succeeded);
                 } else {
                     GST_WARNING("message of size %zu incorrectly formatted as session %s removal answer", buffer ? buffer->size() : 0,
-                        m_sessionID.utf8().data());
+                        m_sessionID.utf8().legacyCStringPointer());
                     callback(m_keyStore.allKeysAs(MediaKeyStatus::InternalError), nullptr, SuccessValue::Failed);
                 }
             }
         } else {
-            GST_WARNING("could not remove session %s", m_sessionID.utf8().data());
+            GST_WARNING("could not remove session %s", m_sessionID.utf8().legacyCStringPointer());
             callback(m_keyStore.allKeysAs(MediaKeyStatus::InternalError), nullptr, SuccessValue::Failed);
         }
     });

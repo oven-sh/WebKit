@@ -19,6 +19,7 @@ Connection handshake:
   so no unexpected "Process 1 stopped" events pollute the test command flow.
 """
 
+import collections
 import os
 import queue
 import re
@@ -29,6 +30,30 @@ from pathlib import Path
 
 # Root directory of the debugger test suite (contains test-wasm-debugger.py)
 _TESTS_ROOT = Path(__file__).parent.parent
+
+# This checkout, and the path fragment that locates the suite inside any checkout.
+_CHECKOUT_ROOT = _TESTS_ROOT.parents[2]
+_SUITE_FRAGMENT = b"/JSTests/wasm/debugger/"
+
+
+def _source_map_command(resource_dir):
+    """LLDB command remapping a .wasm's build-time checkout onto this one.
+
+    The .wasm resources are checked in prebuilt, so their DWARF records absolute
+    source paths from whichever checkout produced them. Without the remap LLDB
+    resolves line numbers but prints no source.
+    """
+    for wasm in sorted(Path(resource_dir).glob("*.wasm")):
+        data = wasm.read_bytes()
+        end = data.find(_SUITE_FRAGMENT)
+        if end == -1:
+            continue
+        # DWARF strings are NUL-terminated and NUL-separated.
+        build_root = data[data.rfind(b"\0", 0, end) + 1:end].decode()
+        if build_root != str(_CHECKOUT_ROOT):
+            return f"settings set target.source-map {build_root} {_CHECKOUT_ROOT}"
+    return None
+
 
 # Default wait patterns for commands that change process state.
 # Tests that need different patterns pass them explicitly.
@@ -70,6 +95,7 @@ class DebugSession:
         self._verbose = verbose
         self._name = name
         self._jsc_ready = threading.Event()
+        self._jsc_error = None
         self._jsc = None  # initialized before try so close() is always safe to call
         self._lldb = None
 
@@ -100,17 +126,37 @@ class DebugSession:
                                ready_event=self._jsc_ready)
             self._start_reader(self._jsc.stderr, "JSC", "stderr", to_queue=False)
 
-            # Step 2 — wait for JS to finish loading all modules.
-            if not self._jsc_ready.wait(timeout=60.0):
-                raise TimeoutError(
-                    f"[{self._name}] JSC did not print DEBUGGER_READY within 60 s"
-                )
+            # Step 2 — wait for the modules to load. JSC exits when the server cannot bind and
+            # only says why under --verbose-wasm-debugger, so the exit code is the signal.
+            deadline = time.monotonic() + 60.0
+            while not self._jsc_ready.wait(timeout=0.1):
+                status = self._jsc.poll()
+                if status is not None:
+                    reason = self._jsc_error or "no reason given, re-run with --verbose-wasm-debugger"
+                    raise RuntimeError(
+                        f"[{self._name}] JSC exited with code {status} before printing "
+                        f"DEBUGGER_READY ({reason})"
+                    )
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(
+                        f"[{self._name}] JSC did not print DEBUGGER_READY within 60 s"
+                    )
+
+            # DEBUGGER_READY comes from the JS fixture, so a bind that failed without taking the
+            # process down is only visible here.
+            if self._jsc_error:
+                raise RuntimeError(f"[{self._name}] {self._jsc_error}")
 
             # Step 3 — all modules are loaded; connect LLDB now. Any module-load
             # notifications that fired before this point are irrelevant to LLDB.
             connect_cmd = f"process connect --plugin wasm connect://localhost:{port}"
+            lldb_cmd = [str(lldb_path)]
+            source_map_cmd = _source_map_command(cwd)
+            if source_map_cmd:
+                lldb_cmd += ["-o", source_map_cmd]
+            lldb_cmd += ["-o", connect_cmd]
             self._lldb = subprocess.Popen(
-                [str(lldb_path), "-o", connect_cmd],
+                lldb_cmd,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, bufsize=1,
             )
@@ -153,8 +199,7 @@ class DebugSession:
                 "see cmd() source for details."
             )
 
-        if self._verbose:
-            print(f"[{self._name}][LLDB]> {command}")
+        # No echo: LLDB prints "(lldb) <command>" itself, reported by the reader as [LLDB][stdout].
         self._lldb.stdin.write(f"{command}\n")
         self._lldb.stdin.flush()
 
@@ -194,18 +239,22 @@ class DebugSession:
         compiled = [re.compile(re.escape(p)) for p in patterns]
         matched = set()
         deadline = time.monotonic() + timeout
+        # On timeout, what LLDB actually said distinguishes a wrong-reason stop from no stop.
+        seen = collections.deque(maxlen=20)
 
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 unmatched = [patterns[i] for i in range(len(patterns)) if i not in matched]
+                tail = "\n      ".join(seen) if seen else "(LLDB produced no output at all)"
                 raise TimeoutError(
-                    f"[{self._name}] Timed out waiting for: {unmatched}"
+                    f"[{self._name}] Timed out waiting for: {unmatched}\n"
+                    f"    last {len(seen)} line(s) from LLDB:\n      {tail}"
                 )
             try:
                 line = self._q.get(timeout=min(remaining, 0.1))
-                if self._verbose:
-                    print(f"[{self._name}][LLDB] {line}")
+                seen.append(line)
+                # No echo: the reader already printed this line; echoing here doubled the log.
                 for i, pat in enumerate(compiled):
                     if i not in matched and pat.search(line):
                         matched.add(i)
@@ -225,6 +274,9 @@ class DebugSession:
                     continue
                 if self._verbose:
                     print(f"[{self._name}][{proc_name}][{kind}] {line}")
+                # Verbose-gated in JSC, so a normal run relies on the exit-code poll above.
+                if "[Debugger] Failed to " in line or "failed to start the WebAssembly debug server" in line:
+                    self._jsc_error = line
                 if ready_event and "DEBUGGER_READY" in line:
                     ready_event.set()
                 if to_queue:

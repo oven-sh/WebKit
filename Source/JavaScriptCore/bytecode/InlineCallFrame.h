@@ -230,7 +230,7 @@ struct InlineCallFrame {
     // Get the callee given a machine call frame to which this InlineCallFrame belongs.
     JSFunction* calleeForCallFrame(CallFrame*) const;
     
-    CString inferredName() const;
+    UTF8CString inferredName() const;
     String inferredNameWithHash() const;
     CodeBlockHash hash() const;
     

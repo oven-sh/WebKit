@@ -58,6 +58,30 @@ static void testCompilation(const String& wgsl, Checks&&... checks)
     performChecks(std::get<String>(generationResult), std::forward<Checks>(checks)...);
 }
 
+template<typename... Checks>
+static void testCompilationForAppleGPUFamily(unsigned appleGPUFamily, const String& wgsl, Checks&&... checks)
+{
+    auto staticCheckResult = staticCheck(wgsl);
+    EXPECT_TRUE(std::holds_alternative<WGSL::SuccessfulCheck>(staticCheckResult));
+    auto& successfulCheck = std::get<WGSL::SuccessfulCheck>(staticCheckResult);
+
+    auto maybePrepareResult = prepare(successfulCheck);
+    EXPECT_TRUE(std::holds_alternative<WGSL::PrepareResult>(maybePrepareResult));
+    auto& prepareResult = std::get<WGSL::PrepareResult>(maybePrepareResult);
+
+    auto generationResult = generate(successfulCheck, prepareResult, WGSL::DeviceState { .appleGPUFamily = appleGPUFamily });
+    EXPECT_TRUE(std::holds_alternative<String>(generationResult));
+    auto msl = std::get<String>(generationResult);
+
+    auto metalCompilationResult = metalCompile(msl, appleGPUFamily);
+    EXPECT_TRUE(std::holds_alternative<id<MTLLibrary>>(metalCompilationResult));
+
+    auto library = std::get<id<MTLLibrary>>(metalCompilationResult);
+    EXPECT_TRUE(library != nil);
+
+    performChecks(std::get<String>(generationResult), std::forward<Checks>(checks)...);
+}
+
 static void expectPrepareError(const String& wgsl, const String& errorMessage)
 {
     auto staticCheckResult = staticCheck(wgsl);
@@ -85,6 +109,20 @@ static void expectGenerateError(const String& wgsl, const String& errorMessage)
 
     auto error = std::get<WGSL::Error>(generationResult);
     EXPECT_EQ(error.message(), errorMessage);
+}
+
+static void expectNoGenerateError(const String& wgsl)
+{
+    auto staticCheckResult = staticCheck(wgsl);
+    EXPECT_TRUE(std::holds_alternative<WGSL::SuccessfulCheck>(staticCheckResult));
+    auto& successfulCheck = std::get<WGSL::SuccessfulCheck>(staticCheckResult);
+
+    auto maybePrepareResult = prepare(successfulCheck);
+    EXPECT_TRUE(std::holds_alternative<WGSL::PrepareResult>(maybePrepareResult));
+    auto& prepareResult = std::get<WGSL::PrepareResult>(maybePrepareResult);
+
+    auto generationResult = generate(successfulCheck, prepareResult);
+    EXPECT_TRUE(std::holds_alternative<String>(generationResult));
 }
 
 class WGSLMetalCompilationTests : public testing::Test {
@@ -383,6 +421,31 @@ TEST_F(WGSLMetalCompilationTests, GlobalSameBinding)
     testCompilation(file("global-same-binding.wgsl"_s));
 }
 
+TEST_F(WGSLMetalCompilationTests, InlineLargeAggregateReturns)
+{
+    auto shader = makeString(
+        "struct Big { v : array<vec4<u32>, 8> }"
+        "struct Small { v : array<vec4<u32>, 2> }"
+        "@group(0) @binding(0) var<storage, read> input : array<Big>;"
+        "@group(0) @binding(1) var<storage, read_write> output : array<Big>;"
+        "fn combineBig(a : Big, b : Big) -> Big { var r = a; for (var i = 0u; i < 8u; i++) { r.v[i] += b.v[i]; } return r; }"
+        "fn combineSmall(a : Small, b : Small) -> Small { var r = a; for (var i = 0u; i < 2u; i++) { r.v[i] += b.v[i]; } return r; }"
+        "fn sumBig(a : Big) -> u32 { var r = 0u; for (var i = 0u; i < 8u; i++) { r += a.v[i].x; } return r; }"_s,
+        fn("var acc = input[0];"
+            "var small = Small(array<vec4<u32>, 2>(input[0].v[0], input[0].v[1]));"
+            "for (var i = 1u; i < 4u; i++) { acc = combineBig(acc, input[i]); small = combineSmall(small, small); }"
+            "acc.v[0].x += sumBig(acc) + small.v[0].x;"
+            "output[0] = acc;"_s));
+
+    testCompilationForAppleGPUFamily(8, shader,
+        checkNotLiteral("__attribute__((always_inline)) type0 function0"_s));
+
+    testCompilationForAppleGPUFamily(9, shader,
+        checkLiteral("__attribute__((always_inline)) type0 function0"_s),
+        checkNotLiteral("__attribute__((always_inline)) type1 function1"_s),
+        checkNotLiteral("__attribute__((always_inline)) unsigned function2"_s));
+}
+
 TEST_F(WGSLMetalCompilationTests, GlobalUsedByCallee)
 {
     testCompilation(makeString(
@@ -517,6 +580,47 @@ TEST_F(WGSLMetalCompilationTests, Override)
 TEST_F(WGSLMetalCompilationTests, OverrideComplexExpression)
 {
     testCompilation(file("override-complex-expression.wgsl"_s));
+}
+
+TEST_F(WGSLMetalCompilationTests, OverrideShortCircuit)
+{
+    auto shader = [](ASCIILiteral condition, ASCIILiteral operation) {
+        return makeString(
+            "override cond = "_s, condition, ";"
+            "override shift = 32u;"
+            "@compute @workgroup_size(1) "
+            "fn main(@builtin(local_invocation_index) tid: u32) {"
+            "    var r = 0u;"
+            "    if (cond "_s, operation, " ((tid << shift) == 0u)) { r = 1u; }"
+            "    _ = r;"
+            "}"_s);
+    };
+    auto shiftError = "shift left value must be less than the bit width of the shifted value, which is 32"_s;
+
+    expectGenerateError(shader("true"_s, "&&"_s), shiftError);
+    expectGenerateError(shader("false"_s, "||"_s), shiftError);
+
+    expectNoGenerateError(shader("false"_s, "&&"_s));
+    expectNoGenerateError(shader("true"_s, "||"_s));
+
+    expectNoGenerateError(
+        "override shift = 32u;"
+        "@compute @workgroup_size(1) "
+        "fn main(@builtin(local_invocation_index) tid: u32) {"
+        "    var r = 0u;"
+        "    if (false && ((tid << shift) == 0u)) { r = 1u; }"
+        "    _ = r;"
+        "}"_s);
+
+    expectGenerateError(
+        "override cond = true;"
+        "override shift = 32u;"
+        "@compute @workgroup_size(1) "
+        "fn main(@builtin(local_invocation_index) tid: u32) {"
+        "    var r = 0u;"
+        "    if (cond && (cond && ((tid << shift) == 0u))) { r = 1u; }"
+        "    _ = r;"
+        "}"_s, shiftError);
 }
 
 TEST_F(WGSLMetalCompilationTests, PackUnpack)

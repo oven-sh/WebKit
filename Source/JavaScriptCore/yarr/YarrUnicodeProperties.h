@@ -39,7 +39,7 @@ enum class CompileMode : uint8_t;
 JS_EXPORT_PRIVATE std::optional<BuiltInCharacterClassID> unicodeMatchPropertyValue(WTF::String, WTF::String);
 JS_EXPORT_PRIVATE std::optional<BuiltInCharacterClassID> unicodeMatchProperty(WTF::String, CompileMode);
 
-std::unique_ptr<CharacterClass> createUnicodeCharacterClassFor(BuiltInCharacterClassID);
+CharacterClass* sharedUnicodeCharacterClassFor(BuiltInCharacterClassID); // immutable, process-wide, never destroyed
 JS_EXPORT_PRIVATE bool NODELETE characterClassMayContainStrings(BuiltInCharacterClassID unicodeClassID);
 
 } } // namespace JSC::Yarr

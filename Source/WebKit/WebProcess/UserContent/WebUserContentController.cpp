@@ -305,7 +305,7 @@ public:
 
 private:
     WebUserMessageHandlerDescriptorProxy(WebUserContentController& controller, const AtomString& name, InjectedBundleScriptWorld& world, ScriptMessageHandlerIdentifier identifier)
-        : WebCore::UserMessageHandlerDescriptor(name, world.coreWorld())
+        : WebCore::UserMessageHandlerDescriptor(name, protect(world.coreWorld()))
         , m_controller(controller)
         , m_identifier(identifier)
     {
@@ -345,7 +345,7 @@ private:
 
         auto frameInfo = frameInfoWithDocumentID(*webFrame, globalObject);
 
-        protect(WebProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::WebProcessProxy::DidPostMessage(webPage->webPageProxyIdentifier(), m_controller->identifier(), WTF::move(frameInfo), m_identifier, *message), [completionHandler = WTF::move(completionHandler), context](Expected<WebKit::JavaScriptEvaluationResult, String>&& result) {
+        protect(WebProcess::singleton().parentProcessConnection())->sendWithAsyncReply(Messages::WebProcessProxy::DidPostMessage(webPage->webPageProxyIdentifier(), m_controller->identifier(), WTF::move(frameInfo), m_identifier, *message), [completionHandler = WTF::move(completionHandler), context](std::expected<WebKit::JavaScriptEvaluationResult, String>&& result) {
             JSC::JSLockHolder lock(toJS(context.get()));
             if (!result)
                 return completionHandler(JSC::jsUndefined(), result.error());
@@ -697,7 +697,7 @@ void WebUserContentController::forEachUserMessageHandler(NOESCAPE const Function
 {
     for (auto& userMessageHandlerVector : m_userMessageHandlers.values()) {
         for (auto& pair : userMessageHandlerVector)
-            functor(pair.second.get());
+            functor(protect(pair.second.get()));
     }
 }
 #endif

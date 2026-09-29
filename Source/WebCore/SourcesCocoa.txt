@@ -637,7 +637,7 @@ platform/mac/PlatformEventFactoryMac.mm @nonARC
 platform/mac/PlatformPasteboardMac.mm @nonARC
 platform/mac/PlatformScreenMac.mm @nonARC
 platform/mac/PlaybackSessionInterfaceMac.mm @nonARC @no-unify-when(bundle<=8)
-platform/mac/PowerObserverMac.cpp
+platform/mac/PowerObserverMac.mm @nonARC
 platform/mac/RevealUtilities.mm @nonARC
 platform/mac/ScrollAnimatorMac.mm @nonARC @no-unify-when(bundle<=8) @cost:3
 platform/mac/ScrollAnimationRubberBand.mm @nonARC
@@ -698,21 +698,19 @@ platform/mock/MediaPlaybackTargetMock.cpp
 platform/mock/MediaPlaybackTargetPickerMock.cpp
 platform/mock/MockAudioDestinationCocoa.cpp
 platform/network/cf/CertificateInfoCFNet.cpp
+platform/network/cf/CookieStorageSessionCFNet.cpp
 platform/network/cf/DNSResolveQueueCFNet.cpp
 platform/network/cf/FormDataStreamCFNet.mm @nonARC
-platform/network/cf/NetworkStorageSessionCFNet.cpp
 platform/network/cf/ResourceRequestCFNet.cpp
 platform/network/cocoa/AuthenticationCocoa.mm @nonARC
 platform/network/cocoa/BlobDataFileReferenceCocoa.mm @nonARC
 platform/network/cocoa/CertificateInfoCocoa.mm @nonARC
 platform/network/cocoa/CookieCocoa.mm @nonARC
-platform/network/cocoa/CookieStorageCocoa.mm @nonARC
-platform/network/cocoa/CookieStorageObserver.mm @nonARC
+platform/network/cocoa/CookieStorageSessionCocoa.mm @nonARC
 platform/network/cocoa/CredentialCocoa.mm @nonARC
 platform/network/cocoa/CredentialStorageCocoa.mm @nonARC
 platform/network/cocoa/FormDataStreamCocoa.mm @nonARC
 platform/network/cocoa/NetworkLoadMetrics.mm @nonARC
-platform/network/cocoa/NetworkStorageSessionCocoa.mm @nonARC
 platform/network/cocoa/ProtectionSpaceCocoa.mm @nonARC
 platform/network/cocoa/RangeResponseGenerator.mm @nonARC
 platform/network/cocoa/ResourceRequestCocoa.mm @nonARC
@@ -731,14 +729,19 @@ platform/text/cocoa/LocaleCocoa.mm @nonARC
 platform/text/cocoa/LocalizedDateCache.mm @nonARC
 platform/text/cocoa/TextBoundaries.mm @nonARC
 platform/text/mac/TextCheckingMac.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoDecoderVTBH265.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoEncoder.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoEncoderVTB.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoEncoderVTBH264.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoEncoderVTBH265.mm @nonARC
 platform/video-codecs/cocoa/VideoDecoderVTB.mm @nonARC
+platform/video-codecs/cocoa/VideoEncoderVTBSession.mm @nonARC
 platform/video-codecs/cocoa/WebRTCVideoDecoder.mm @nonARC
 platform/video-codecs/cocoa/WebRTCVideoDecoderVTB.mm @nonARC
 platform/video-codecs/cocoa/WebRTCVideoDecoderVTBAV1.mm @nonARC
 platform/video-codecs/cocoa/WebRTCVideoDecoderVTBVP9.mm @nonARC
 platform/xr/cocoa/PlatformXRPose.cpp
 rendering/AttachmentLayout.mm @nonARC
-rendering/TextAutoSizing.cpp @header:RenderStyleGetters
 rendering/cocoa/RenderThemeCocoa.mm @nonARC
 rendering/ios/RenderThemeIOS.mm @nonARC
 rendering/mac/RenderThemeMac.mm @nonARC

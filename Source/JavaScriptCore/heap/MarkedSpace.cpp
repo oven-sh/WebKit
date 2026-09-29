@@ -28,7 +28,6 @@
 #include "MarkedSpaceInlines.h"
 #include "WeakSetInlines.h"
 #include <wtf/ListDump.h>
-#include <wtf/SimpleStats.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -365,21 +364,6 @@ void MarkedSpace::resumeAllocating()
             return IterationStatus::Continue;
         });
     // Nothing to do for PreciseAllocations.
-}
-
-bool MarkedSpace::isPagedOut()
-{
-    SimpleStats pagedOutPagesStats;
-
-    forEachDirectory(
-        [&] (BlockDirectory& directory) -> IterationStatus {
-            directory.updatePercentageOfPagedOutPages(pagedOutPagesStats);
-            return IterationStatus::Continue;
-        });
-    // FIXME: Consider taking PreciseAllocations into account here.
-    double maxHeapGrowthFactor = VM::isInMiniMode() ? Options::miniVMHeapGrowthFactor() : Options::largeHeapGrowthFactor();
-    double bailoutPercentage = Options::customFullGCCallbackBailThreshold() == -1.0 ? maxHeapGrowthFactor - 1 : Options::customFullGCCallbackBailThreshold();
-    return pagedOutPagesStats.mean() > pagedOutPagesStats.count() * bailoutPercentage;
 }
 
 // FIXME: rdar://139998916

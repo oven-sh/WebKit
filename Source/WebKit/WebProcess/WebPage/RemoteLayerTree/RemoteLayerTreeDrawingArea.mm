@@ -550,7 +550,28 @@ void RemoteLayerTreeDrawingArea::dispatchAfterEnsuringDrawing(IPC::AsyncReplyID 
 
 void RemoteLayerTreeDrawingArea::adoptLayersFromDrawingArea(DrawingArea& oldDrawingArea)
 {
-    m_remoteLayerTreeContext->adoptLayersFromContext(downcast<RemoteLayerTreeDrawingArea>(oldDrawingArea).m_remoteLayerTreeContext);
+    Ref oldArea = downcast<RemoteLayerTreeDrawingArea>(oldDrawingArea);
+    m_remoteLayerTreeContext->adoptLayersFromContext(oldArea->m_remoteLayerTreeContext);
+
+    // RenderLayerCompositor::setIsInWindow() bails out while m_rootLayerAttachment is set, so a page that already
+    // attached to the old drawing area never attaches to the new one; take the attachment over here.
+    for (auto& oldRootLayer : oldArea->m_rootLayers) {
+        auto* rootLayerInfo = rootLayerInfoWithFrameIdentifier(oldRootLayer.frameID);
+        if (!rootLayerInfo)
+            continue;
+        ASSERT(!rootLayerInfo->contentLayer);
+        rootLayerInfo->contentLayer = std::exchange(oldRootLayer.contentLayer, nullptr);
+
+        // Unlike the root layer, a view overlay can already be attached here: updatePreferences() runs
+        // first and DebugPageOverlays::settingsChanged() reaches the chrome client synchronously.
+        if (RefPtr viewOverlayRootLayer = std::exchange(oldRootLayer.viewOverlayRootLayer, nullptr))
+            rootLayerInfo->viewOverlayRootLayer = WTF::move(viewOverlayRootLayer);
+        // The size comes from mainFrameContentSizeChanged(), which a restore need not produce again.
+        rootLayerInfo->layer->setSize(oldRootLayer.layer->size());
+    }
+
+    updateRootLayers();
+    triggerRenderingUpdate();
 }
 
 void RemoteLayerTreeDrawingArea::scheduleRenderingUpdateTimerFired()

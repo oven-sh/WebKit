@@ -209,6 +209,7 @@ const aliases = {
     'int': 'uint32_t',
     'unsigned': 'uint32_t',
     'char': 'uint8_t',
+    'char8_t': 'uint8_t',
     'pid_t': 'uint32_t',
     'unsigned short': 'uint16_t',
     'unsigned long': 'uint64_t',
@@ -583,6 +584,7 @@ class ArgumentSerializer {
                     return ArgumentSerializer.serializeHashMap(innerType, argument);
                 case 'Ref':
                 case 'UniqueRef':
+                case 'IPC::Untrusted':
                     return ArgumentSerializer.serializeArgument({type: innerType, name: argumentDefinition.name}, argument);
                 default:
                     throw new SerializationError(`Don't know how to serialize template '${ templateType }'`);
@@ -1100,7 +1102,8 @@ class ArgumentParser {
                     return [newPosition, {parsedType: argumentDefinition.type, parsedValue: value}]
                 }
                 case 'Ref':
-                case 'UniqueRef': {
+                case 'UniqueRef':
+                case 'IPC::Untrusted': {
                     return ArgumentParser.parseArgument(buffer, position, {type: innerType, name: argumentDefinition.name});
                 }
                 case 'HashMap':

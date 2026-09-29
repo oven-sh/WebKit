@@ -81,6 +81,7 @@ public:
     bool isStartingStyleRule() const { return type() == StyleRuleType::StartingStyle; }
     bool isViewTransitionRule() const { return type() == StyleRuleType::ViewTransition; }
     bool isPositionTryRule() const { return type() == StyleRuleType::PositionTry; }
+    bool isEnvironmentMapRule() const { return type() == StyleRuleType::EnvironmentMap; }
 
     Ref<StyleRuleBase> copy() const;
 
@@ -104,8 +105,9 @@ protected:
     void invalidateResolvedSelectorListRecursively();
 
 private:
-    template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&);
-    template<typename Visitor> constexpr decltype(auto) visitDerived(Visitor&&) const;
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&);
+    template<typename Visitor> constexpr decltype(auto) visitDerived(NOESCAPE Visitor&&) const;
+    template<typename... F> requires (sizeof...(F) > 1) constexpr decltype(auto) visitDerived(NOESCAPE F&&...);
 
     Ref<CSSRule> createCSSOMWrapper(CSSStyleSheet* parentSheet, CSSRule* parentRule) const;
 

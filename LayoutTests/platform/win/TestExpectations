@@ -1198,7 +1198,6 @@ webkit.org/b/290371 [ Debug ] compositing/repaint/inline-repaint-container.html 
 animations/no-style-recalc-during-accelerated-animation.html [ Pass Failure ]
 
 fast/css/view-transitions-nested-transparency-layers.html [ ImageOnlyFailure Pass ]
-http/wpt/css/css-view-transitions/navigation/old_vt_promises_bfcache.html [ Failure ]
 
 compositing/shared-backing/top-layer/backing-sharing-split-by-fullscreen-variant.html [ Skip ] # Timeout
 compositing/shared-backing/top-layer/backing-sharing-split-by-fullscreen.html [ Skip ] # Timeout
@@ -1814,6 +1813,7 @@ fast/canvas/webgl/texImage2D-video-flipY-true.html [ Skip ]
 webgl/1.0.x/conformance/extensions/oes-texture-float-with-video.html [ Skip ]
 webgl/1.0.x/conformance/extensions/oes-texture-half-float-with-video.html [ Skip ]
 webgl/1.0.x/conformance/textures/image_bitmap_from_video [ Skip ]
+webkit.org/b/292182 webgl/1.0.x/conformance/textures/misc/tex-video-using-tex-unit-non-zero.html [ Failure Pass ]
 webgl/1.0.x/conformance/textures/misc/texture-npot-video.html [ Skip ]
 webgl/1.0.x/conformance/textures/misc/texture-upload-size.html [ Skip ]
 webgl/1.0.x/conformance/textures/misc/video-rotation.html [ Skip ]
@@ -2033,8 +2033,6 @@ webkit.org/b/271223 fast/events/wheel/wheel-event-listeners-on-window-made-passi
 webkit.org/b/271223 fast/events/wheel/wheel-events-become-non-cancelable.html [ Skip ] # Timeout
 
 webkit.org/b/277612 fast/html/request-video-frame-callback-does-not-leak.html [ Pass Failure ]
-
-webkit.org/b/230413 fast/canvas/canvas-drawImage-detached-leak.html [ Pass Failure ]
 
 webkit.org/b/208022 http/tests/history/back-to-post.py [ Pass Failure Timeout ]
 
@@ -2272,11 +2270,10 @@ imported/w3c/web-platform-tests/css/css-properties-values-api [ Skip ]
 imported/w3c/web-platform-tests/css/css-pseudo [ Skip ]
 imported/w3c/web-platform-tests/css/css-rhythm [ Skip ]
 imported/w3c/web-platform-tests/css/css-ruby [ Skip ]
-imported/w3c/web-platform-tests/css/css-scoping [ Skip ]
+imported/w3c/web-platform-tests/css/css-shadow [ Skip ]
 imported/w3c/web-platform-tests/css/css-scroll-anchoring [ Skip ]
 imported/w3c/web-platform-tests/css/css-scrollbars [ Skip ]
 imported/w3c/web-platform-tests/css/css-scroll-snap [ Skip ]
-imported/w3c/web-platform-tests/css/css-shadow-parts [ Skip ]
 imported/w3c/web-platform-tests/css/css-shapes [ Skip ]
 imported/w3c/web-platform-tests/css/css-size-adjust [ Skip ]
 imported/w3c/web-platform-tests/css/css-sizing [ Skip ]
@@ -4682,7 +4679,7 @@ imported/w3c/web-platform-tests/trusted-types/TrustedTypePolicyFactory-getAttrib
 imported/w3c/web-platform-tests/trusted-types/set-event-handlers-content-attributes.tentative.html [ Failure ]
 
 # Expected localhost URLs but got web-platform.test URLs
-imported/w3c/web-platform-tests/css/css-mixins/function-attr.html [ Failure ]
+imported/w3c/web-platform-tests/css/css-mixins/functions/function-attr.html [ Failure ]
 
 # Flaky crash due to running out of commit space due to 4GB wasm memory
 webgl/2.0.y/conformance2/wasm/teximage2d-2gb-in-4gb-wasm-memory.html [ Skip ]

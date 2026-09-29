@@ -45,7 +45,7 @@ namespace DisplayList {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RecorderImpl);
 
-RecorderImpl::RecorderImpl(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& initialCTM, const DestinationColorSpace& colorSpace, DrawGlyphsMode drawGlyphsMode)
+RecorderImpl::RecorderImpl(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& initialCTM, const ColorSpace& colorSpace, DrawGlyphsMode drawGlyphsMode)
     : Recorder(state, initialClip, initialCTM, colorSpace, drawGlyphsMode)
 {
     LOG_WITH_STREAM(DisplayLists, stream << "\nRecording with clip " << initialClip);
@@ -67,53 +67,6 @@ Ref<const DisplayList> RecorderImpl::copyDisplayList()
 {
     appendStateChangeItemIfNecessary();
     return DisplayList::create(Vector(m_items));
-}
-
-static void replaceFontsWithRebuildDataInItems(std::span<Item>);
-static void rebuildFontsInItems(std::span<Item>);
-
-static Ref<const DisplayList> displayListWithFontsReplacedByRebuildData(const DisplayList& displayList)
-{
-    Vector<Item> items(displayList.items());
-    replaceFontsWithRebuildDataInItems(items.mutableSpan());
-    return DisplayList::create(WTF::move(items));
-}
-
-static Ref<const DisplayList> displayListWithFontsRebuilt(const DisplayList& displayList)
-{
-    Vector<Item> items(displayList.items());
-    rebuildFontsInItems(items.mutableSpan());
-    return DisplayList::create(WTF::move(items));
-}
-
-static void replaceFontsWithRebuildDataInItems(std::span<Item> items)
-{
-    for (auto& item : items) {
-        if (auto* drawGlyphs = std::get_if<DrawGlyphs>(&item))
-            drawGlyphs->replaceFontWithRebuildData();
-        else if (auto* drawDisplayList = std::get_if<DrawDisplayList>(&item))
-            drawDisplayList->setDisplayList(displayListWithFontsReplacedByRebuildData(drawDisplayList->displayList()));
-    }
-}
-
-static void rebuildFontsInItems(std::span<Item> items)
-{
-    for (auto& item : items) {
-        if (auto* drawGlyphs = std::get_if<DrawGlyphs>(&item))
-            drawGlyphs->rebuildFont();
-        else if (auto* drawDisplayList = std::get_if<DrawDisplayList>(&item))
-            drawDisplayList->setDisplayList(displayListWithFontsRebuilt(drawDisplayList->displayList()));
-    }
-}
-
-void RecorderImpl::replaceFontsWithRebuildData()
-{
-    replaceFontsWithRebuildDataInItems(m_items.mutableSpan());
-}
-
-void RecorderImpl::rebuildFonts()
-{
-    rebuildFontsInItems(m_items.mutableSpan());
 }
 
 void RecorderImpl::save(GraphicsContextState::Purpose purpose)
@@ -258,7 +211,7 @@ void RecorderImpl::drawGlyphs(const Font& font, std::span<const GlyphBufferGlyph
     drawGlyphsImmediate(font, glyphs, advances, localAnchor, smoothingMode);
 }
 
-void RecorderImpl::drawGlyphsImmediate(const Font& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
+void RecorderImpl::drawGlyphsImmediate(const FontBase& font, std::span<const GlyphBufferGlyph> glyphs, std::span<const GlyphBufferAdvance> advances, const FloatPoint& localAnchor, FontSmoothingMode smoothingMode)
 {
     appendStateChangeItemIfNecessary();
     m_items.append(DrawGlyphs(Ref { font }, Vector(glyphs), Vector(advances), localAnchor, smoothingMode));
@@ -421,7 +374,7 @@ void RecorderImpl::fillEllipse(const FloatRect& rect)
 }
 
 #if ENABLE(VIDEO)
-void RecorderImpl::drawVideoFrame(const VideoFrame&, const FloatRect&, ImageOrientation, bool)
+void RecorderImpl::drawVideoFrame(const VideoFrame&, const FloatRect&, ShouldDiscardAlpha, ImagePaintingOptions)
 {
     appendStateChangeItemIfNecessary();
     // FIXME: TODO

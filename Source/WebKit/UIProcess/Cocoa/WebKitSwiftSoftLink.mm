@@ -46,7 +46,7 @@ void* WebKitSwiftLibrary(bool isOptional)
                 return library;
             auto webkitFrameworkDirectory = WTF::FileSystemImpl::parentPath(dliPath);
             auto dylibPath = WTF::FileSystemImpl::pathByAppendingComponent(webkitFrameworkDirectory, "Frameworks/libWebKitSwift.dylib"_s);
-            if ((library = dlopen(dylibPath.utf8().data(), RTLD_NOW)))
+            if ((library = dlopen(dylibPath.utf8().legacyCStringPointer(), RTLD_NOW)))
                 return library;
         }
 

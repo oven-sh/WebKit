@@ -10,28 +10,7 @@ PASS :placement:stmt="continuing_for"
 PASS :placement:stmt="continuing_for_break"
 PASS :placement:stmt="continuing_while"
 PASS :placement:stmt="continuing_while_break"
-FAIL :placement:stmt="continuing_semicolon" assert_unreached:
-  - VALIDATION FAILED: Unexpected compilationInfo 'error' message.
-    9:44: error: Not a valid statement
-
-    ---- shader ----
-
-    fn b() -> i32 {
-      return 1;
-    }
-
-    @fragment
-    fn frag() -> @location(0) vec4f {
-      var a = 0;
-      loop { if a == 4 { break; } continuing { ; } }
-      return vec4f(1);
-    }
-
-      at (elided: below max severity)
-  - EXCEPTION: Error: Unexpected validation error occurred: 1 error generated while compiling the shader:
-    9:43: Not a valid statement
-    attemptEndTestScope@http://127.0.0.1:8000/webgpu/webgpu/util/device_pool.js:466:44
- Reached unreachable code
+PASS :placement:stmt="continuing_semicolon"
 PASS :placement:stmt="continuing_functionn_call"
 PASS :placement:stmt="continuing_let"
 PASS :placement:stmt="continuing_var"
@@ -59,26 +38,5 @@ PASS :placement:stmt="no_body"
 PASS :placement:stmt="return_in_continue"
 PASS :placement:stmt="return_if_nested_in_continue"
 PASS :placement:stmt="return_for_nested_in_continue"
-FAIL :placement:stmt="continuing_semicolon_break_if" assert_unreached:
-  - VALIDATION FAILED: Unexpected compilationInfo 'error' message.
-    9:23: error: Not a valid statement
-
-    ---- shader ----
-
-    fn b() -> i32 {
-      return 1;
-    }
-
-    @fragment
-    fn frag() -> @location(0) vec4f {
-      var a = 0;
-      loop { continuing { ; break if (true); } }
-      return vec4f(1);
-    }
-
-      at (elided: below max severity)
-  - EXCEPTION: Error: Unexpected validation error occurred: 1 error generated while compiling the shader:
-    9:22: Not a valid statement
-    attemptEndTestScope@http://127.0.0.1:8000/webgpu/webgpu/util/device_pool.js:466:44
- Reached unreachable code
+PASS :placement:stmt="continuing_semicolon_break_if"
 

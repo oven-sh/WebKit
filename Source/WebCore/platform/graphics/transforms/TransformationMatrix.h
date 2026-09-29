@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <WebCore/AffineTransform.h>
 #include <WebCore/CompositeOperation.h>
 #include <WebCore/FloatPoint.h>
 #include <WebCore/FloatPoint3D.h>
@@ -35,6 +36,7 @@
 #include <wtf/Forward.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/Variant.h>
 
 #if USE(CA)
 typedef struct CATransform3D CATransform3D;
@@ -206,9 +208,9 @@ public:
     FloatPoint NODELETE projectPoint(const FloatPoint&, bool* clamped = nullptr) const;
     // Projects the four corners of the quad.
     FloatQuad NODELETE projectQuad(const FloatQuad&,  bool* clamped = nullptr) const;
-    // Projects the four corners of the quad and takes a bounding box,
-    // while sanitizing values created when the w component is negative.
-    LayoutRect clampedBoundsOfProjectedQuad(const FloatQuad&) const;
+    // Projects the four corners of the quad and takes a bounding box, clipping the
+    // quad to the part in front of the eye first. Empty when nothing is in front.
+    WEBCORE_EXPORT LayoutRect clampedBoundsOfProjectedQuad(const FloatQuad&) const;
 
     double m11() const { return m_matrix[0][0]; }
     void setM11(double f) { m_matrix[0][0] = f; }
@@ -297,7 +299,7 @@ public:
     TransformationMatrix& skewX(double angle) { return skew(angle, 0); }
     TransformationMatrix& skewY(double angle) { return skew(0, angle); }
 
-    TransformationMatrix& applyPerspective(double p);
+    WEBCORE_EXPORT TransformationMatrix& applyPerspective(double p);
     bool hasPerspective() const { return m_matrix[0][3] != 0.0f || m_matrix[1][3] != 0.0f || m_matrix[2][3] != 0.0f || m_matrix[3][3] != 1.0f; }
 
     // Returns a transformation that maps a rect to a rect.
@@ -363,24 +365,26 @@ public:
 
     WEBCORE_EXPORT AffineTransform NODELETE toAffineTransform() const;
 
+    struct Translation2DIPCData {
+        double m41 { 0 };
+        double m42 { 0 };
+    };
+    struct Translation3DIPCData {
+        double m41 { 0 };
+        double m42 { 0 };
+        double m43 { 0 };
+    };
+    struct FullIPCData {
+        std::array<double, 16> values { };
+    };
+    using IPCData = Variant<std::monostate /* identity */, Translation2DIPCData, Translation3DIPCData, AffineTransform, FullIPCData>;
+
+    WEBCORE_EXPORT IPCData ipcData() const;
+    WEBCORE_EXPORT static TransformationMatrix fromIPCData(IPCData&&);
+
     bool operator==(const TransformationMatrix& m2) const
     {
-        return (m_matrix[0][0] == m2.m_matrix[0][0] &&
-                m_matrix[0][1] == m2.m_matrix[0][1] &&
-                m_matrix[0][2] == m2.m_matrix[0][2] &&
-                m_matrix[0][3] == m2.m_matrix[0][3] &&
-                m_matrix[1][0] == m2.m_matrix[1][0] &&
-                m_matrix[1][1] == m2.m_matrix[1][1] &&
-                m_matrix[1][2] == m2.m_matrix[1][2] &&
-                m_matrix[1][3] == m2.m_matrix[1][3] &&
-                m_matrix[2][0] == m2.m_matrix[2][0] &&
-                m_matrix[2][1] == m2.m_matrix[2][1] &&
-                m_matrix[2][2] == m2.m_matrix[2][2] &&
-                m_matrix[2][3] == m2.m_matrix[2][3] &&
-                m_matrix[3][0] == m2.m_matrix[3][0] &&
-                m_matrix[3][1] == m2.m_matrix[3][1] &&
-                m_matrix[3][2] == m2.m_matrix[3][2] &&
-                m_matrix[3][3] == m2.m_matrix[3][3]);
+        return m_matrix == m2.m_matrix;
     }
 
     // *this = *this * t

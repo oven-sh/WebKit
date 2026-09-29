@@ -62,7 +62,7 @@ IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue:
     switch (type) {
     case Type::Create:
         // We don't want to truncate any existing file (with O_TRUNC) as another thread might be mapping it.
-        unlink(path.data());
+        unlink(path.legacyCStringPointer());
         oflag = O_RDWR | O_CREAT | O_NONBLOCK;
         mode = S_IRUSR | S_IWUSR;
         dispatchQOS = qos.value_or(WorkQueue::QOS::Background);
@@ -78,7 +78,7 @@ IOChannel::IOChannel(const String& filePath, Type type, std::optional<WorkQueue:
         dispatchQOS = qos.value_or(WorkQueue::QOS::Default);
     }
 
-    int fd = ::open(path.data(), oflag, mode);
+    int fd = ::open(path.legacyCStringPointer(), oflag, mode);
     m_dispatchIO = adoptOSObject(dispatch_io_create(DISPATCH_IO_RANDOM, fd, globalDispatchQueueSingleton(dispatchQueueIdentifier(dispatchQOS), 0), [fd](int) {
         close(fd);
     }));

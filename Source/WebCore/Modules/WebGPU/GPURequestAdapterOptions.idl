@@ -28,6 +28,9 @@
 [
     EnabledBySetting=WebGPUEnabled,
 ] dictionary GPURequestAdapterOptions {
+    // Deliberately a DOMString rather than an enum: an unrecognized feature level has to resolve
+    // requestAdapter() with null rather than throw. https://gpuweb.github.io/gpuweb/#dom-gpu-requestadapter
+    DOMString featureLevel;
     GPUPowerPreference powerPreference;
     boolean forceFallbackAdapter = false;
     boolean xrCompatible = false;

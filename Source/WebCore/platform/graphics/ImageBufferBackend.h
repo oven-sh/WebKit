@@ -25,13 +25,13 @@
 
 #pragma once
 
+#include <WebCore/ColorSpace.h>
 #include <WebCore/CopyImageOptions.h>
-#include <WebCore/DestinationColorSpace.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/GraphicsLayerContentsDisplayDelegate.h>
 #include <WebCore/GraphicsTypesGL.h>
 #include <WebCore/ImageBufferAllocator.h>
-#include <WebCore/ImageBufferBackendParameters.h>
+#include <WebCore/ImageBufferParameters.h>
 #include <WebCore/ImagePaintingOptions.h>
 #include <WebCore/IntRect.h>
 #include <WebCore/PixelBufferFormat.h>
@@ -105,33 +105,26 @@ public:
 
 class ImageBufferBackend {
 public:
-    using Parameters = ImageBufferBackendParameters;
-
-    struct Info {
-        RenderingMode renderingMode;
-        AffineTransform baseTransform;
-        size_t memoryCost;
-    };
-
     WEBCORE_EXPORT virtual ~ImageBufferBackend();
 
-    WEBCORE_EXPORT static IntSize NODELETE calculateSafeBackendSize(const Parameters&);
+    WEBCORE_EXPORT static IntSize calculateSafeBackendSize(const ImageBufferParameters&);
     WEBCORE_EXPORT static size_t NODELETE calculateMemoryCost(const IntSize& backendSize, unsigned bytesPerRow);
-    WEBCORE_EXPORT static AffineTransform calculateBaseTransform(const Parameters&);
+    WEBCORE_EXPORT static AffineTransform calculateBaseTransform(const ImageBufferParameters&);
+
+    virtual RenderingMode renderingMode() const { return RenderingMode::Unaccelerated; }
+    virtual size_t memoryCost() const { return calculateMemoryCost(m_backendSize, bytesPerRow()); }
+    WEBCORE_EXPORT AffineTransform baseTransform() const;
 
     virtual GraphicsContext& context() = 0;
     virtual void flushContext() { }
     virtual void submitDrawingCommands() { }
-
-    virtual void replaceFontsWithRebuildData() { }
-    virtual void rebuildFonts() { }
 
     virtual RefPtr<NativeImage> copyNativeImage() = 0;
     virtual RefPtr<NativeImage> createNativeImageReference() = 0;
     WEBCORE_EXPORT virtual RefPtr<NativeImage> sinkIntoNativeImage();
 
     WEBCORE_EXPORT void convertToLuminanceMask();
-    virtual void transformToColorSpace(const DestinationColorSpace&) { }
+    virtual void transformToColorSpace(const ColorSpace&) { }
 
     virtual void getPixelBuffer(const IntRect& srcRect, PixelBuffer& destination) = 0;
     virtual void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat) = 0;
@@ -151,7 +144,7 @@ public:
 #endif
 
     virtual bool isInUse() const { return false; }
-    virtual void releaseGraphicsContext() { ASSERT_NOT_REACHED(); }
+    virtual void releaseGraphicsContext() { }
 
     virtual void transferToNewContext(const ImageBufferCreationContext&) { }
 
@@ -163,30 +156,30 @@ public:
 
     virtual std::unique_ptr<ThreadSafeImageBufferFlusher> createFlusher() { return nullptr; }
 
-    static constexpr RenderingMode renderingMode = RenderingMode::Unaccelerated;
-
     virtual bool canMapBackingStore() const = 0;
     virtual void ensureNativeImagesHaveCopiedBackingStore() { }
 
     virtual ImageBufferBackendSharing* toBackendSharing() { return nullptr; }
 
+    virtual bool isNullImageBufferBackend() const { return false; }
+
     virtual RefPtr<GraphicsLayerContentsDisplayDelegate> layerContentsDisplayDelegate() const { return nullptr; }
 
     virtual void prepareForDisplay() { }
 
-    const Parameters& parameters() const LIFETIME_BOUND { return m_parameters; }
-
     WEBCORE_EXPORT virtual String debugDescription() const = 0;
 
 protected:
-    WEBCORE_EXPORT ImageBufferBackend(const Parameters&);
+    WEBCORE_EXPORT ImageBufferBackend(const ImageBufferParameters&);
 
     virtual unsigned bytesPerRow() const = 0;
 
-    IntSize size() const { return m_parameters.backendSize; };
-    float resolutionScale() const { return m_parameters.resolutionScale; }
-    const DestinationColorSpace& colorSpace() const LIFETIME_BOUND { return m_parameters.colorSpace; }
-    PixelFormat pixelFormat() const { return m_parameters.bufferFormat.pixelFormat; }
+    IntSize size() const { return m_backendSize; }
+    float resolutionScale() const { return m_resolutionScale; }
+    const ColorSpace& colorSpace() const LIFETIME_BOUND { return m_colorSpace; }
+    ImageBufferFormat bufferFormat() const { return m_bufferFormat; }
+    PixelFormat pixelFormat() const { return m_bufferFormat.pixelFormat; }
+    RenderingPurpose purpose() const { return m_purpose; }
 
 #if ENABLE(PIXEL_FORMAT_RGBA16F)
     void NODELETE convertToLuminanceMaskFloat16();
@@ -196,7 +189,11 @@ protected:
     WEBCORE_EXPORT void getPixelBuffer(const IntRect& srcRect, std::span<const uint8_t> data, PixelBuffer& destination);
     WEBCORE_EXPORT void putPixelBuffer(const PixelBufferSourceView&, const IntRect& srcRect, const IntPoint& destPoint, AlphaPremultiplication destFormat, std::span<uint8_t> destination);
 
-    Parameters m_parameters;
+    const IntSize m_backendSize;
+    const float m_resolutionScale;
+    ColorSpace m_colorSpace;
+    const ImageBufferFormat m_bufferFormat;
+    const RenderingPurpose m_purpose;
 };
 
 WEBCORE_EXPORT TextStream& operator<<(TextStream&, VolatilityState);

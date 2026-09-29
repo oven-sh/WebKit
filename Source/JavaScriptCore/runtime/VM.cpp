@@ -33,17 +33,21 @@
 #include "AccessCase.h"
 #include "AggregateError.h"
 #include "ArgList.h"
+#include "AsyncContextSwapScope.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeIntrinsicRegistry.h"
+#include "CachedBytecode.h"
 #include "CallMode.h"
 #include "CheckpointOSRExitSideState.h"
 #include "CodeBlock.h"
+#include "CallLinkInfo.h"
 #include "CodeCache.h"
 #include "CommonIdentifiers.h"
 #include "ControlFlowProfiler.h"
 #include "CrossTaskToken.h"
 #include "CustomGetterSetterInlines.h"
 #include "DOMAttributeGetterSetterInlines.h"
+#include "DateInstance.h"
 #include "Debugger.h"
 #include "DeferredWorkTimer.h"
 #include "Disassembler.h"
@@ -60,6 +64,7 @@
 #include "GigacageAlignedMemoryAllocator.h"
 #include "HasOwnPropertyCache.h"
 #include "Heap.h"
+#include "HeapIterationScope.h"
 #include "HeapProfiler.h"
 #include "IncrementalSweeper.h"
 #include "Interpreter.h"
@@ -284,6 +289,10 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     if (vmCreationShouldCrash || g_jscConfig.vmCreationDisallowed) [[unlikely]]
         CRASH_WITH_EXTRA_SECURITY_IMPLICATION_AND_INFO(VMCreationDisallowed, "VM creation disallowed"_s, 0x4242424220202020, 0xbadbeef0badbeef, 0x1234123412341234, 0x1337133713371337);
 
+    m_neverExecutedCallSiteData = CallSiteData::createShared(false);
+    m_executedOnceCallSiteData = CallSiteData::createShared(true);
+    m_notExecutedTailCallSiteData = CallSiteData::createSharedForTailCalls();
+
     // Set up lazy initializers.
     {
         m_hasOwnPropertyCache.initLater([](VM&, auto& ref) {
@@ -332,7 +341,15 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     // it is still empty, so a thread that already has atoms keeps whatever it has grown to.
     if (m_atomStringTable->table().isEmpty()) {
         m_atomStringTable->table().clear();
+#if USE(BUN_JSC_ADDITIONS)
+        // Bun's VM holds about 1250 atoms when it has started. HashTable sizes a reservation for
+        // 2048 keys at 8192 slots and shrinks any table that is less than a sixth full, so at 1250
+        // the first atom that a parser frees halved the table again: a rehash of every atom (70 us)
+        // on each start. A reservation for 1024 keys gets 4096 slots, which hold 1250 with no shrink.
+        m_atomStringTable->table().reserveInitialCapacity(1024);
+#else
         m_atomStringTable->table().reserveInitialCapacity(2048);
+#endif
     }
 
     AtomStringTable* existingEntryAtomStringTable = Thread::currentSingleton().setCurrentAtomStringTable(m_atomStringTable);
@@ -410,6 +427,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         m_fastArrayValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastArrayKeysSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastArrayEntriesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
+        m_fastArrayUnboxedSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastMapKeysSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastMapValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastMapEntriesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
@@ -452,6 +470,9 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     Gigacage::addPrimitiveDisableCallback(primitiveGigacageDisabledCallback, this);
 
     heap.notifyIsSafeToCollect();
+
+    if (Options::startupJITDeferralScale() > 1) [[unlikely]]
+        m_startupJITDeferralScale = Options::startupJITDeferralScale();
     
     if (Options::useProfiler()) [[unlikely]] {
         m_perBytecodeProfiler = makeUnique<Profiler::Database>(*this);
@@ -463,7 +484,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         else
             pathOut.print("/tmp/");
         pathOut.print("JSCProfile-", getCurrentProcessID(), "-", m_perBytecodeProfiler->databaseID(), ".json");
-        static NeverDestroyed<CString> pathOutString = pathOut.toCString();
+        static NeverDestroyed<UTF8CString> pathOutString = pathOut.toUTF8CString();
 
 #if PLATFORM(COCOA)
         static std::once_flag registerFlag;
@@ -476,7 +497,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             int token;
             notify_register_dispatch(key, &token, mainDispatchQueueSingleton(), ^(int) {
                 dataLogLn("<BYTECODE.STAT><", pid, "> Dumping");
-                if (!m_perBytecodeProfiler->save(pathOutString->data()))
+                if (!m_perBytecodeProfiler->save(pathOutString->legacyCStringPointer()))
                     dataLogLn("<BYTECODE.STAT><", pid, "> Failed to dump to ", pathOutString.get(), ". Do you need to add a sandbox extension? ((allow file-write* (subpath \"/private/tmp/\")) in WebProcess.sb.in");
                 else
                     dataLogLn("<BYTECODE.STAT><", pid, "> Dumped to ", pathOutString.get());
@@ -486,7 +507,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
         if (Options::dumpProfilerDataAtExit()) [[unlikely]]
-            m_perBytecodeProfiler->registerToSaveAtExit(pathOutString->data());
+            m_perBytecodeProfiler->registerToSaveAtExit(pathOutString->legacyCStringPointer());
     }
 
     // Initialize this last, as a free way of asserting that VM initialization itself
@@ -656,6 +677,8 @@ VM::~VM()
     ASSERT(currentThreadIsHoldingAPILock());
     m_apiLock->willDestroyVM(this);
     smallStrings.setIsInitialized(false);
+    if (m_persistentBytecodePayloads)
+        m_persistentBytecodePayloads->clearChildExecutables();
     heap.lastChanceToFinalize();
 
     while (!m_microtaskQueues.isEmpty())
@@ -663,6 +686,9 @@ VM::~VM()
 
     JSRunLoopTimer::Manager::singleton().unregisterVM(*this);
 
+    delete m_neverExecutedCallSiteData;
+    delete m_executedOnceCallSiteData;
+    delete m_notExecutedTailCallSiteData;
     delete emptyList;
 
     if (m_cachedBytecodeTwoCharacterAtoms) {
@@ -671,6 +697,13 @@ VM::~VM()
                 atom->deref();
         }
         m_cachedBytecodeTwoCharacterAtoms = nullptr;
+    }
+    if (m_cachedBytecodeThreeCharacterAtoms) {
+        for (AtomStringImpl* atom : *m_cachedBytecodeThreeCharacterAtoms) {
+            if (atom)
+                atom->deref();
+        }
+        m_cachedBytecodeThreeCharacterAtoms = nullptr;
     }
 
     delete propertyNames;
@@ -692,7 +725,7 @@ VM::~VM()
 #if ENABLE(WEBASSEMBLY_DEBUGGER)
     if (Options::enableWasmDebugger()) [[unlikely]] {
         auto& debugServer = Wasm::DebugServer::singleton();
-        if (debugServer.hasDebugger())
+        if (debugServer.isConnected())
             debugServer.execution().notifyVMDestruction(this);
     }
 #endif
@@ -713,6 +746,20 @@ void VM::primitiveGigacageDisabled()
     // This is totally racy, and that's OK. The point is, it's up to the user to ensure that they pass the
     // uncaged buffer in a nicely synchronized manner.
     requestEntryScopeService(EntryScopeService::FirePrimitiveGigacageEnabled);
+}
+
+void VM::setStartupJITDeferralScale(double scale)
+{
+    if (!(scale > 1)) {
+        // No CodeBlock walk: counters armed under the scale were clipped to re-check within one normal
+        // threshold period (ExecutionCounter::setThreshold), so they pick up scale 1 on their next visit.
+        if (m_startupJITDeferralScale != 1)
+            dataLogLnIf(Options::verboseOSR(), "Ending startup JIT deferral window: embedder (scale was ", String::number(m_startupJITDeferralScale), ")");
+        m_startupJITDeferralScale = 1;
+        return;
+    }
+    dataLogLnIf(Options::verboseOSR(), "Startup JIT deferral scale set to ", String::number(scale));
+    m_startupJITDeferralScale = scale;
 }
 
 void VM::setLastStackTop(const Thread& thread)
@@ -1042,6 +1089,13 @@ MacroAssemblerCodeRef<JITStubRoutinePtrTag> VM::getCTIVirtualCall(CallMode callM
     return LLInt::getCodeRef<JITStubRoutinePtrTag>(llint_virtual_call_trampoline);
 }
 
+PersistentBytecodePayloads& VM::persistentBytecodePayloads()
+{
+    if (!m_persistentBytecodePayloads)
+        m_persistentBytecodePayloads = makeUnique<PersistentBytecodePayloads>(*this);
+    return *m_persistentBytecodePayloads;
+}
+
 void VM::whenIdle(Function<void()>&& callback)
 {
     if (!entryScope) {
@@ -1059,34 +1113,95 @@ void VM::deleteAllLinkedCode(DeleteAllCodeEffort effort)
     });
 }
 
+void VM::deleteAllRegExpCode()
+{
+    m_regExpCache->deleteAllCode();
+    // The RegExp interpreter's backtracking pools past its first page are only a cache
+    // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
+    // compiler threads that interpret take this lock.
+    Locker locker { m_regExpAllocatorLock };
+    m_regExpAllocator.releaseRetainedPools();
+}
+
 void VM::deleteAllCode(DeleteAllCodeEffort effort)
 {
     whenIdle([=, this] () {
-        m_codeCache->clear();
+        if (keepsUnlinkedCode())
+            m_codeCache->write(); // what clear() does first
+        else
+            m_codeCache->clear();
         m_builtinExecutables->clear();
-        m_regExpCache->deleteAllCode();
-        {
-            // The RegExp interpreter's backtracking pools past its first page are only a cache
-            // between matches (see Yarr::Interpreter); nothing is matching while idle here, and
-            // compiler threads that interpret take this lock.
-            Locker locker { m_regExpAllocatorLock };
-            m_regExpAllocator.releaseRetainedPools();
-        }
+        deleteAllRegExpCode();
         heap.deleteAllCodeBlocks(effort);
-        heap.deleteAllUnlinkedCodeBlocks(effort);
+        // All of it: also what could be decoded again from a bytecode cache.
+        heap.deleteAllUnlinkedCodeBlocks(effort, { UnlinkedCodeToDelete::Generated, UnlinkedCodeToDelete::RecoverableFromCache });
         heap.reportAbandonedObjectGraph();
     });
 }
 
-void VM::shrinkFootprintWhenIdle()
+void VM::deleteAllCodeToGenerateItAgain(DeleteAllCodeEffort effort)
 {
     whenIdle([=, this] () {
-        sanitizeStackForVM(*this);
+        SetForScope generatingAgain(m_isDeletingAllCodeToGenerateItAgain, true);
+        deleteAllCode(effort); // runs now: the VM is idle
+    });
+}
+
+bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
+{
+    // Not under JS, and not from inside the collector (a finalizer, a heap observer): deleting code waits for a
+    // collection that is under way to finish.
+    if (entryScope || heap.currentThreadIsDoingGCWork())
+        return false;
+
+    MonotonicTime before;
+    if (Options::logGC()) [[unlikely]]
+        before = MonotonicTime::now();
+    auto logTime = makeScopeExit([&] {
+        dataLogLnIf(Options::logGC(), "[shrinkFootprint: ", (MonotonicTime::now() - before).milliseconds(), " ms]");
+    });
+    sanitizeStackForVM(*this);
+    // The last exception thrown keeps the code on its captured stack alive (linked code, and through it the unlinked code
+    // that is about to be dropped and would then exist twice). No JS is running, so nobody is looking at it.
+    clearLastException();
+    bool keepCodeInUse = mode.contains(ShrinkFootprint::KeepCodeInUse);
+    if (keepCodeInUse || mode.contains(ShrinkFootprint::KeepCodeThatNeedsParsing)) {
+        // Linked code first: that finishes the compiler threads' plans, and optimized code may call RegExp code directly.
+        if (!keepCodeInUse)
+            heap.deleteAllCodeBlocks(PreventCollectionAndDeleteAllCode, true);
+        OptionSet<UnlinkedCodeToDelete> unlinkedCode { UnlinkedCodeToDelete::RecoverableFromCache };
+        if (keepCodeInUse)
+            unlinkedCode.add(UnlinkedCodeToDelete::OnlyWithoutLinkedCode);
+        heap.deleteAllUnlinkedCodeBlocks(PreventCollectionAndDeleteAllCode, unlinkedCode);
+        if (!keepsUnlinkedCode())
+            m_codeCache->clearCodeDecodedFromPersistentPayloads();
+        if (!keepCodeInUse)
+            deleteAllRegExpCode();
+        else if (Options::releaseIdleRegExpCodeWhenShrinkingFootprint() && !numberOfActiveJITPlans()) {
+            // (A compiler thread may be inlining a RegExp's code, see DFG::SpeculativeJIT::compileRegExpTestInline.)
+            m_regExpCache->deleteCodeNotUsedInCurrentFullCollectionCycle(*this);
+        }
+        heap.reportAbandonedObjectGraph();
+    } else {
+        // This mode does not wait for a collection: if one is under way the code stays and the caller is told so.
+        if (heap.collectionScope())
+            return false;
         deleteAllCode(DeleteAllCodeIfNotCollecting);
-        heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
-        // FIXME: Consider stopping various automatic threads here.
-        // https://bugs.webkit.org/show_bug.cgi?id=185447
-        WTF::releaseFastMallocFreeMemory();
+    }
+    clearSourceProviderCaches();
+    if (mode.contains(ShrinkFootprint::LeaveCollectionToCaller))
+        return true;
+    heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
+    // FIXME: Consider stopping various automatic threads here.
+    // https://bugs.webkit.org/show_bug.cgi?id=185447
+    WTF::releaseFastMallocFreeMemory();
+    return true;
+}
+
+void VM::shrinkFootprintWhenIdle(OptionSet<ShrinkFootprint> mode)
+{
+    whenIdle([=, this] () {
+        shrinkFootprintNow(mode);
     });
 }
 
@@ -1210,6 +1325,13 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
 
     interpreter.notifyDebuggerOfExceptionToBeThrown(*this, globalObject, throwOriginFrame, exceptionToThrow);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // An embedder reports an exception nobody caught after the async context it was thrown in has
+    // been restored. Rethrowing keeps the context of the first throw.
+    if (isAsyncContextTrackingEnabled() && !exceptionToThrow->asyncContext())
+        exceptionToThrow->setAsyncContext(*this, AsyncContextSwapScope::current(*this, globalObject));
+#endif
+
     setException(exceptionToThrow);
 
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
@@ -1326,16 +1448,34 @@ void VM::updateStackLimits()
 #if ENABLE(DFG_JIT)
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
-void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
+void VM::forEachActiveScratchBuffer(const ScopedLambda<void(void* begin, void* end)>& func)
 {
     Locker locker { m_scratchBufferLock };
     for (auto* scratchBuffer : m_scratchBuffers) {
         if (scratchBuffer->activeLength()) {
             void* bufferStart = scratchBuffer->dataBuffer();
-            conservativeRoots.add(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
+            func(bufferStart, static_cast<void*>(static_cast<char*>(bufferStart) + scratchBuffer->activeLength()));
         }
     }
 }
+
+void VM::gatherScratchBufferRoots(ConservativeRoots& conservativeRoots)
+{
+    auto add = [&](void* begin, void* end) {
+        conservativeRoots.add(begin, end);
+    };
+    forEachActiveScratchBuffer(add);
+}
+
+#if USE(BUN_JSC_ADDITIONS)
+// What Heap::gatherVMRoots scans conservatively.
+void VM::forEachConservativelyScannedBuffer(const ScopedLambda<void(void* begin, void* end)>& func)
+{
+    forEachActiveScratchBuffer(func);
+    for (const auto& sideState : m_checkpointSideState)
+        func(sideState->tmps, sideState->tmps + maxNumCheckpointTmps);
+}
+#endif
 
 void VM::scanSideState(ConservativeRoots& roots) const
 {
@@ -1618,6 +1758,21 @@ void sanitizeStackForVM(VM& vm)
     RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa20, vm.lastStackTop(), stack.origin(), stack.end());
 }
 
+// For the slow paths of calls: they run in the middle of JS, on the thread that holds the API lock, so that thread's stack
+// bounds come from the lock rather than from the two thread-local lookups sanitizeStackForVM() makes. Same checks.
+void sanitizeStackForVMInCallSlowPath(VM& vm)
+{
+    logSanitizeStack(vm);
+#if ENABLE(C_LOOP)
+    vm.cloopStack().sanitizeStack();
+#else
+    auto& stack = vm.apiLock().ownerThreadWhileHoldingLock().stack();
+    RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa30, vm.lastStackTop(), stack.origin(), stack.end());
+    sanitizeStackForVMImpl(&vm);
+    RELEASE_ASSERT(stack.contains(vm.lastStackTop()), 0xaa40, vm.lastStackTop(), stack.origin(), stack.end());
+#endif
+}
+
 size_t VM::committedStackByteCount()
 {
 #if !ENABLE(C_LOOP)
@@ -1659,7 +1814,7 @@ void VM::verifyExceptionCheckNeedIsSatisfied(unsigned recursionDepth, ExceptionE
         out.println("Unchecked exception detected at:");
         out.println(StackTracePrinter { *currentTrace, "    " });
 
-        dataLog(out.toCString());
+        dataLog(out.toUTF8CString());
         RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("exception check validation failed");
     }
 }
@@ -1875,6 +2030,13 @@ void VM::executeEntryScopeServicesOnEntry()
     if (dateCache.hasTimeZoneChange()) [[unlikely]] {
         intlCache().clearForTimeZoneChange();
         dateCache.clearForTimeZoneChange();
+        if (dateCache.takeMayHaveCachedLocalGregorianDateTime()) {
+            HeapIterationScope iterationScope(heap);
+            heap.dateInstanceSpace.forEachLiveCell([](HeapCell* cell, HeapCell::Kind) {
+                SUPPRESS_MEMORY_UNSAFE_CAST auto* date = static_cast<DateInstance*>(cell);
+                date->invalidateCachedLocalGregorianDateTime();
+            });
+        }
     }
 
     if (intlCache().hasLanguageChange()) [[unlikely]]
@@ -2081,6 +2243,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_fastArrayValuesSentinel);
     visitor.append(m_fastArrayKeysSentinel);
     visitor.append(m_fastArrayEntriesSentinel);
+    visitor.append(m_fastArrayUnboxedSentinel);
     visitor.append(m_fastMapKeysSentinel);
     visitor.append(m_fastMapValuesSentinel);
     visitor.append(m_fastMapEntriesSentinel);
@@ -2252,8 +2415,15 @@ Wasm::DebugState* VM::debugState()
 AtomStringImpl** VM::ensureCachedBytecodeTwoCharacterAtoms()
 {
     if (!m_cachedBytecodeTwoCharacterAtoms) [[unlikely]]
-        m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 65536>>();
+        m_cachedBytecodeTwoCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, cachedBytecodeTwoCharacterAtomsSize>>();
     return m_cachedBytecodeTwoCharacterAtoms->data();
+}
+
+AtomStringImpl** VM::ensureCachedBytecodeThreeCharacterAtoms()
+{
+    if (!m_cachedBytecodeThreeCharacterAtoms) [[unlikely]]
+        m_cachedBytecodeThreeCharacterAtoms = makeUniqueWithoutFastMallocCheck<std::array<AtomStringImpl*, 1u << cachedBytecodeThreeCharacterAtomsLog2Size>>();
+    return m_cachedBytecodeThreeCharacterAtoms->data();
 }
 
 } // namespace JSC

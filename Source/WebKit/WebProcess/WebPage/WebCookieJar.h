@@ -53,7 +53,7 @@ public:
     void setCookies(WebCore::Document&, const URL&, const String& cookieString) final;
     bool cookiesEnabled(WebCore::Document&) final;
     void remoteCookiesEnabled(const WebCore::Document&, CompletionHandler<void(bool)>&&) const final;
-    std::pair<String, WebCore::SecureCookiesAccessed> cookieRequestHeaderFieldValue(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, WebCore::IncludeSecureCookies) const final;
+    std::pair<String, WebCore::SecureCookiesAccessed> cookieRequestHeaderFieldValue(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::IncludeSecureCookies) const final;
     std::optional<SHA1::Digest> cookieRequestHeaderFieldValueDigest(const URL& firstParty, const WebCore::SameSiteInfo&, const URL&, WebCore::IncludeSecureCookies) const final;
     bool getRawCookies(WebCore::Document&, const URL&, Vector<WebCore::Cookie>&) const final;
     void setRawCookie(const WebCore::Document&, const WebCore::Cookie&, WebCore::ShouldPartitionCookie) final;
@@ -63,7 +63,7 @@ public:
     void setCookieAsync(WebCore::Document&, const URL&, const WebCore::Cookie&, CompletionHandler<void(bool)>&&) const final;
 
 #if HAVE(COOKIE_CHANGE_LISTENER_API)
-    void addChangeListenerWithAccess(const URL&, const URL& firstParty, WebCore::FrameIdentifier, WebCore::PageIdentifier, WebPageProxyIdentifier, const WebCore::CookieChangeListener&);
+    void addChangeListenerWithAccess(const URL&, const URL& firstParty, WebCore::FrameIdentifier, WebPageProxyIdentifier, const WebCore::CookieChangeListener&);
     void addChangeListener(const WebCore::Document&, const WebCore::CookieChangeListener&) final;
     void removeChangeListener(const String& host, const WebCore::CookieChangeListener&) final;
 #endif

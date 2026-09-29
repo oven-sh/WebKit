@@ -65,6 +65,7 @@ class BuiltinsCombinedImplementationGenerator(BuiltinsGenerator):
             data = self.generate_embedded_code_data_for_function(function)
             combinedCode += data['originalSource']
             data['embeddedSource'] = "s_%sCombinedCode + %d" % (args['namespace'], combinedCodeOffset)
+            data['combinedCodeOffset'] = combinedCodeOffset
             combinedCodeOffset += data['embeddedSourceLength']
             function_data.append(data)
 
@@ -94,9 +95,11 @@ class BuiltinsCombinedImplementationGenerator(BuiltinsGenerator):
         lines.append("constinit const JSC::BuiltinSourceMetadata s_JSCBuiltinSourceMetadata[JSC::numberOfBuiltinCodes] = {")
         for data in function_data:
             entry = dict(compute_builtin_source_metadata(data['originalSource']), codeName=data['codeName'])
-            lines.append("    /* %(codeName)s */ { %(sourceLength)d, %(parametersStart)d, %(parameterCount)d, %(lineCount)d, %(endColumn)d, %(offsetOfLastNewline)d, %(positionBeforeLastNewlineLineStartOffset)d, %(closeBraceOffsetFromEnd)d, %(isAsyncFunction)s, %(isInStrictContext)s }," % entry)
+            lines.append("    /* %(codeName)s */ { %(sourceLength)d, %(parametersStart)d, %(parameterCount)d, %(closeBraceOffsetFromEnd)d, %(isAsyncFunction)s, %(isInStrictContext)s }," % entry)
         lines.append("};")
         lines.append("static_assert(%d == JSC::numberOfBuiltinCodes);" % len(function_data))
+        lines.append("")
+        lines.append("constinit const unsigned s_JSCBuiltinSourceStarts[JSC::numberOfBuiltinCodes] = { %s };" % ", ".join(str(data['combinedCodeOffset']) for data in function_data))
         return '\n'.join(lines)
 
     def generate_secondary_header_includes(self):

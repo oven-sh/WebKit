@@ -62,6 +62,7 @@ class WebFrame;
 class WebPage;
 enum class PDFPluginDisplayMode : uint8_t;
 enum class SelectionEndpoint : bool;
+enum class SelectionExtentAnchor : bool;
 enum class SelectionWasFlipped : bool;
 struct DocumentEditingContextRequest;
 struct DocumentEditingContext;
@@ -112,7 +113,7 @@ public:
     void clearSelection();
     void setSelectionRange(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
     SelectionWasFlipped moveSelectionEndpoint(WebCore::FloatPoint pointInRootView, SelectionEndpoint);
-    SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity);
+    SelectionEndpoint extendInitialSelection(WebCore::FloatPoint pointInRootView, WebCore::TextGranularity, SelectionExtentAnchor);
 #if PLATFORM(IOS_FAMILY)
     DocumentEditingContext documentEditingContext(DocumentEditingContextRequest&&) const;
 #endif
@@ -273,6 +274,7 @@ private:
     Vector<WebCore::FloatRect> pdfAnnotationRectsForTesting() const override;
     void unlockPDFDocumentForTesting(const String& password) final;
     void setPDFTextAnnotationValueForTesting(unsigned pageIndex, unsigned annotationIndex, const String& value) final;
+    Vector<String> pdfContextMenuItemTitlesForTesting(const WebCore::IntPoint&) const final;
     void registerPDFTestCallback(RefPtr<WebCore::VoidCallback>&&) final;
 };
 

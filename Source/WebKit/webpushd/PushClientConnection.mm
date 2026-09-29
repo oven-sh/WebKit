@@ -195,7 +195,7 @@ RefPtr<PushClientConnection> PushClientConnection::create(xpc_connection_t conne
     }
 
     if (!hasValidPushPartition) {
-        RELEASE_LOG_ERROR(Push, "PushClientConnection::create failed: invalid push partition %{public}s", pushPartition.utf8().data());
+        RELEASE_LOG_ERROR(Push, "PushClientConnection::create failed: invalid push partition %{public}s", pushPartition.utf8());
         return nullptr;
     }
 
@@ -289,17 +289,17 @@ void PushClientConnection::getPendingPushMessages(CompletionHandler<void(const V
     WebPushDaemon::singleton().getPendingPushMessages(*this, WTF::move(replySender));
 }
 
-void PushClientConnection::subscribeToPushService(URL&& scopeURL, const Vector<uint8_t>& applicationServerKey, CompletionHandler<void(const Expected<WebCore::PushSubscriptionData, WebCore::ExceptionData>&)>&& replySender)
+void PushClientConnection::subscribeToPushService(URL&& scopeURL, const Vector<uint8_t>& applicationServerKey, CompletionHandler<void(const std::expected<WebCore::PushSubscriptionData, WebCore::ExceptionData>&)>&& replySender)
 {
     WebPushDaemon::singleton().subscribeToPushService(*this, WTF::move(scopeURL), applicationServerKey, WTF::move(replySender));
 }
 
-void PushClientConnection::unsubscribeFromPushService(URL&& scopeURL, std::optional<WebCore::PushSubscriptionIdentifier> identifier, CompletionHandler<void(const Expected<bool, WebCore::ExceptionData>&)>&& replySender)
+void PushClientConnection::unsubscribeFromPushService(URL&& scopeURL, std::optional<WebCore::PushSubscriptionIdentifier> identifier, CompletionHandler<void(const std::expected<bool, WebCore::ExceptionData>&)>&& replySender)
 {
     WebPushDaemon::singleton().unsubscribeFromPushService(*this, WTF::move(scopeURL), WTF::move(identifier), WTF::move(replySender));
 }
 
-void PushClientConnection::getPushSubscription(URL&& scopeURL, CompletionHandler<void(const Expected<std::optional<WebCore::PushSubscriptionData>, WebCore::ExceptionData>&)>&& replySender)
+void PushClientConnection::getPushSubscription(URL&& scopeURL, CompletionHandler<void(const std::expected<std::optional<WebCore::PushSubscriptionData>, WebCore::ExceptionData>&)>&& replySender)
 {
     WebPushDaemon::singleton().getPushSubscription(*this, WTF::move(scopeURL), WTF::move(replySender));
 }
@@ -360,7 +360,7 @@ void PushClientConnection::showNotification(const WebCore::NotificationData& not
 #endif
 }
 
-void PushClientConnection::getNotifications(const URL& registrationURL, const String& tag, CompletionHandler<void(Expected<Vector<WebCore::NotificationData>, WebCore::ExceptionData>&&)>&& completionHandler)
+void PushClientConnection::getNotifications(const URL& registrationURL, const String& tag, CompletionHandler<void(std::expected<Vector<WebCore::NotificationData>, WebCore::ExceptionData>&&)>&& completionHandler)
 {
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
     WebPushDaemon::singleton().getNotifications(*this, registrationURL, tag, WTF::move(completionHandler));

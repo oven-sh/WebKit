@@ -7,6 +7,8 @@
 //   Tests for the EXT_multisample_compatibility extension.
 //
 
+#include <array>
+
 #include "common/unsafe_buffers.h"
 #include "test_utils/ANGLETest.h"
 #include "test_utils/gl_raii.h"
@@ -181,7 +183,7 @@ TEST_P(EXTMultisampleCompatibilityTest, DrawAndResolve)
     // values. These might be due to different MSAA sample counts causing
     // different samples to hit.  Other option is driver bugs. Just test that
     // disabling multisample causes a difference.
-    std::unique_ptr<uint8_t[]> results[3];
+    std::array<std::unique_ptr<uint8_t[]>, 3> results;
     const GLint kResultSize = kWidth * kHeight * 4;
     for (int pass = 0; pass < 3; pass++)
     {
@@ -206,10 +208,9 @@ TEST_P(EXTMultisampleCompatibilityTest, DrawAndResolve)
             glEnable(GL_MULTISAMPLE_EXT);
         }
         prepareForVerify();
-        ANGLE_UNSAFE_TODO(results[pass]).reset(new uint8_t[kResultSize]);
+        results[pass].reset(new uint8_t[kResultSize]);
         ANGLE_UNSAFE_TODO(memset(results[pass].get(), 123u, kResultSize));
-        glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE,
-                     ANGLE_UNSAFE_TODO(results[pass]).get());
+        glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE, results[pass].get());
 
         cleanup();
     }
@@ -238,7 +239,7 @@ TEST_P(EXTMultisampleCompatibilityTest, DrawAlphaOneAndResolve)
     // even approximate sample values is not that easy.  Thus, just test
     // representative positions which have fractional pixels, inspecting that
     // normal rendering is different to SAMPLE_ALPHA_TO_ONE rendering.
-    std::unique_ptr<uint8_t[]> results[3];
+    std::array<std::unique_ptr<uint8_t[]>, 3> results;
     const GLint kResultSize = kWidth * kHeight * 4;
 
     for (int pass = 0; pass < 3; ++pass)
@@ -260,10 +261,9 @@ TEST_P(EXTMultisampleCompatibilityTest, DrawAlphaOneAndResolve)
         glDrawArrays(GL_TRIANGLES, 6, 3);
 
         prepareForVerify();
-        ANGLE_UNSAFE_TODO(results[pass]).reset(new uint8_t[kResultSize]);
+        results[pass].reset(new uint8_t[kResultSize]);
         ANGLE_UNSAFE_TODO(memset(results[pass].get(), 123u, kResultSize));
-        glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE,
-                     ANGLE_UNSAFE_TODO(results[pass]).get());
+        glReadPixels(0, 0, kWidth, kHeight, GL_RGBA, GL_UNSIGNED_BYTE, results[pass].get());
         if (pass == 1)
         {
             glDisable(GL_SAMPLE_ALPHA_TO_ONE_EXT);
@@ -305,7 +305,7 @@ class MultisampleCompatibilityTest : public ANGLETest<>
         glGenFramebuffers(1, &mSampleFBO);
         glBindFramebuffer(GL_FRAMEBUFFER, mSampleFBO);
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, mSampleRB);
-        EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
         // Create another FBO to resolve the multisample buffer into.
         glGenTextures(1, &mResolveTex);
@@ -319,7 +319,7 @@ class MultisampleCompatibilityTest : public ANGLETest<>
         glGenFramebuffers(1, &mResolveFBO);
         glBindFramebuffer(GL_FRAMEBUFFER, mResolveFBO);
         glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mResolveTex, 0);
-        EXPECT_GLENUM_EQ(GL_FRAMEBUFFER_COMPLETE, glCheckFramebufferStatus(GL_FRAMEBUFFER));
+        EXPECT_GL_FRAMEBUFFER_COMPLETE(GL_FRAMEBUFFER);
         glViewport(0, 0, kWidth, kHeight);
         glBindFramebuffer(GL_FRAMEBUFFER, mSampleFBO);
         glClearColor(0.0f, 0.0f, 0.0f, 1.0f);

@@ -226,8 +226,7 @@ void RemoteScrollingCoordinatorProxy::handleWheelEvent(Ref<WebWheelEvent>&& whee
 
     // Replicate the hack in EventDispatcher::internalWheelEvent(). We could pass rubberBandableEdges all the way through the
     // WebProcess and back via the ScrollingTree, but we only ever need to consult it here.
-    if (platformWheelEvent.phase() == PlatformWheelEventPhase::Began)
-        m_scrollingTree->setClientAllowedMainFrameRubberBandableEdges(rubberBandableEdges);
+    m_scrollingTree->setClientAllowedMainFrameRubberBandableEdges(rubberBandableEdges);
 
     auto processingSteps = m_scrollingTree->determineWheelEventProcessing(platformWheelEvent);
     if (!processingSteps.contains(WheelEventProcessingSteps::AsyncScrolling)) {
@@ -575,6 +574,11 @@ bool RemoteScrollingCoordinatorProxy::scrollingPerformanceTestingEnabled() const
 void RemoteScrollingCoordinatorProxy::scrollingTreeNodeScrollbarVisibilityDidChange(WebCore::ScrollingNodeID nodeID, ScrollbarOrientation orientation, bool isVisible)
 {
     protect(webPageProxy())->sendToProcessContainingFrame(m_scrollingTree->frameIDForScrollingNodeID(nodeID), Messages::RemoteScrollingCoordinator::ScrollingTreeNodeScrollbarVisibilityDidChange(nodeID, orientation, isVisible));
+}
+
+void RemoteScrollingCoordinatorProxy::requestFullScrollingTreeCommitForFrame(WebCore::FrameIdentifier frameID)
+{
+    protect(webPageProxy())->sendToProcessContainingFrame(frameID, Messages::RemoteScrollingCoordinator::RequestFullScrollingTreeCommit(frameID));
 }
 
 void RemoteScrollingCoordinatorProxy::scrollingTreeNodeScrollbarMinimumThumbLengthDidChange(WebCore::ScrollingNodeID nodeID, ScrollbarOrientation orientation, int minimumThumbLength)

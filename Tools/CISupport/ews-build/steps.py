@@ -25,19 +25,22 @@ from buildbot.process import buildstep, logobserver, properties, remotecommand
 from buildbot.process.results import Results, SUCCESS, FAILURE, CANCELLED, WARNINGS, SKIPPED, EXCEPTION, RETRY
 from buildbot.steps import master, shell, transfer, trigger
 from buildbot.steps.source import git
+from dataclasses import replace
 from datetime import date
 from shlex import quote
+from typing import Any, Generator
 from unittest import mock
 
 from twisted.internet import defer, reactor, task
 
 from .layout_test_failures import LayoutTestFailures
 from .send_email import send_email_to_patch_author, send_email_to_bot_watchers, send_email_to_github_admin, FROM_EMAIL
-from .results_db import FlakyVerdict, ResultsDatabase
+from .results_db import EWSPayload, EWSRowDetails, FlakyVerdict, ResultsDatabase
 from .twisted_additions import TwistedAdditions
 from .utils import load_password, get_custom_suffix
 
 import abc
+import collections
 import json
 import os
 import re
@@ -45,7 +48,7 @@ import socket
 import sys
 import time
 
-from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR
+from Shared.steps import ShellMixin, SetBuildSummary, SetO3OptimizationLevel, WaitForDuration, InstallSwiftToolchain, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, SWIFT_DIR, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
 from Shared import generate_s3_url
 
 if sys.version_info < (3, 9):  # noqa: UP036
@@ -79,7 +82,6 @@ QUEUES_WITH_PUSH_ACCESS = ('merge-queue', 'unsafe-merge-queue')
 THRESHOLD_FOR_EXCESSIVE_LOGS_DEFAULT = 1000000
 MSG_FOR_EXCESSIVE_LOGS = f'Stopped due to excessive logging, limit: {THRESHOLD_FOR_EXCESSIVE_LOGS_DEFAULT}'
 SCAN_BUILD_OUTPUT_DIR = 'scan-build-output'
-LLVM_DIR = 'llvm-project'
 STATIC_ANALYSIS_ARCHIVE_PATH = '/tmp/static-analysis.zip'
 SHOULD_FILTER_LOGS = load_password('SHOULD_FILTER_LOGS', default=True)
 SHOULD_LOAD_CONTRIBUTORS_FROM_NETWORK = load_password('SHOULD_LOAD_CONTRIBUTORS_FROM_NETWORK', default=True)
@@ -568,6 +570,14 @@ class ResultsDBReportMixin(abc.ABC):
     """
     results_db_log_name = 'results-db'
     reports_to_results_db = True
+    INCLUDED_FLAKY_VERDICTS = frozenset({
+        ResultsDatabase.CLEAN_TREE_VERDICT,
+        ResultsDatabase.DIRTY_TREE_VERDICT,
+        ResultsDatabase.BETWEEN_BUILDS_VERDICT,
+    })
+    MAX_FAILURES_TO_CHECK_RESULTS_DB = 50
+    NUM_FAILURES_TO_DISPLAY = 10
+    prefix = ''
 
     # From Tools/Scripts/libraries/resultsdbpy/resultsdbpy/controller/configuration.py
     RESULTS_REQUIRED_CONFIG = ['platform', 'is_simulator', 'version', 'architecture']
@@ -598,18 +608,29 @@ class ResultsDBReportMixin(abc.ABC):
             'is_simulator': 'simulator' in (self.getProperty('fullPlatform', '') or ''),
         }
 
-    def results_db_details(self):
+    def results_db_details(self) -> EWSRowDetails:
         """Extra build metadata folded into each row's `details` blob, non-queryable."""
         authors = self.getProperty('owners', [])
-        return {
-            'worker': self.getProperty('workername', None),
-            'remote': self.getProperty('remote', None),
-            'pr_number': self.getProperty('github.number', None),
-            'commit_hash': self.getProperty('github.head.sha', None),
-            'retry_count': self.getProperty('retry_count', 0),
-            'authors': [author for author in authors if author],
-            'build_url': f'{self.master.config.buildbotURL}#/builders/{self.build._builderid}/builds/{self.build.number}',
-        }
+        return EWSRowDetails(
+            worker=self.getProperty('workername', None),
+            remote=self.getProperty('remote', None),
+            pr_number=self.getProperty('github.number', None),
+            commit_hash=self.getProperty('github.head.sha', None),
+            retry_count=self.getProperty('retry_count', 0),
+            authors=[author for author in authors if author],
+            build_url=f'{self.master.config.buildbotURL}#/builders/{self.build._builderid}/builds/{self.build.number}',
+        )
+
+    @defer.inlineCallbacks
+    def resolve_identifier_for_results_db(self, configuration: dict, has_failures: bool) -> Generator[Any, Any, tuple]:
+        identifier = self.getProperty('identifier', None)
+        yield self._addToLog(self.results_db_log_name, f'Checking Results database for failing tests. Identifier: {identifier}, configuration: {configuration}\n')
+        has_commit = False
+        if has_failures and identifier:
+            has_commit = yield ResultsDatabase.has_commit(commit=identifier)
+            if not has_commit:
+                yield self._addToLog(self.results_db_log_name, f"'{identifier}' could not be found on the results database, falling back to tip-of-tree\n")
+        defer.returnValue((identifier, has_commit))
 
     def merged_results(self, test_filter, runs):
         """
@@ -674,19 +695,91 @@ class ResultsDBReportMixin(abc.ABC):
 
         try:
             reported = yield ResultsDatabase.report_ews(
-                configuration=config,
-                suite=self.suite,
-                commits=[commit],
-                flaky_type=flaky_type,
-                results=results,
-                timestamp=getattr(self, 'run_started_at', None) or int(time.time()),
-                details={**self.results_db_details(), 'stage': stage},
+                EWSPayload(
+                    configuration=config,
+                    suite=self.suite,
+                    commits=[commit],
+                    flaky_type=flaky_type,
+                    results=results,
+                    timestamp=getattr(self, 'run_started_at', None) or int(time.time()),
+                    details=replace(self.results_db_details(), stage=stage),
+                ),
                 logger=lambda log: self._addToLog(self.results_db_log_name, log),
             )
         except Exception as error:
             yield self._addToLog(self.results_db_log_name, f'Failed to report to the results database: {error}\n')
             return False
         return reported
+
+    def results_db_ignore_message(self) -> str:
+        parts = []
+        if self.pre_existing_failures_in_results_db:
+            parts.append(f"Ignored pre-existing failures: {', '.join(self.pre_existing_failures_in_results_db)}")
+        if self.pre_existing_flakes_in_results_db:
+            parts.append(f"Ignored pre-existing flakes: {', '.join(sorted(self.pre_existing_flakes_in_results_db))}")
+        return '\n'.join(parts)
+
+    def results_db_ignore_counts_message(self) -> str:
+        counts = []
+        if self.pre_existing_failures_in_results_db:
+            counts.append(f'{len(self.pre_existing_failures_in_results_db)} pre-existing')
+        if self.pre_existing_flakes_in_results_db:
+            counts.append(f'{len(self.pre_existing_flakes_in_results_db)} flaky')
+        return f"Ignored {' and '.join(counts)} failure(s)"
+
+    @defer.inlineCallbacks
+    def pre_existing_flakes_using_results_db(self, new_failures: set[str]) -> Generator[Any, Any, set[str]]:
+        """
+        The subset of `new_failures` whose results-database verdict is in INCLUDED_FLAKY_VERDICTS.
+        Only the first MAX_FAILURES_TO_CHECK_RESULTS_DB names, sorted, are queried; the rest are
+        absent from the result rather than reported as unexcused. Every verdict seen is recorded on
+        the step and in the results-db_<prefix>flaky, _flaky_unsupported and _flaky_unknown properties.
+        """
+        tests = sorted(new_failures)[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]
+        configuration = self.results_db_query_configuration()
+        yield self._addToLog(self.results_db_log_name, f'Checking Results database for flakiness of {len(tests)} new failure(s). Configuration: {configuration}\n')
+
+        flakes, flake_logs = yield ResultsDatabase.flaky_verdicts_for(
+            tests, configuration=configuration, suite=self.suite,
+            authors=self.getProperty('owners', []),
+            pr_number=self.getProperty('github.number', None),
+        )
+        if flake_logs:
+            yield self._addToLog(self.results_db_log_name, flake_logs)
+
+        flaky, unsupported, unknown, ignored, shadowed = {}, [], [], [], []
+        for test in tests:
+            flake = flakes.get(test, FlakyVerdict(request_failed=True))
+            flake_summary = 'False'
+            if flake.is_flaky:
+                flaky[test] = flake.flaky_type
+                if flake.flaky_type == ResultsDatabase.BETWEEN_BUILDS_VERDICT and not flake.intra_build_evidence:
+                    unsupported.append(test)
+                flake_summary = f'{flake.flaky_type}: {flake.evidence}'
+                if flake.flaky_type in self.INCLUDED_FLAKY_VERDICTS and test not in unsupported:
+                    ignored.append(test)
+                else:
+                    shadowed.append(test)
+            elif flake.request_failed:
+                unknown.append(test)
+                flake_summary = 'Unknown'
+
+            yield self._addToLog(self.results_db_log_name, f'\n{test}: pre-existing-flake={flake_summary}\n')
+
+        self.pre_existing_flakes_in_results_db = flaky
+        self.unsupported_flakes_in_results_db = unsupported
+        self.unknown_flakes_in_results_db = unknown
+        self.setProperty('results-db_' + self.prefix + 'flaky', flaky)
+        self.setProperty('results-db_' + self.prefix + 'flaky_unsupported', sorted(unsupported))
+        self.setProperty('results-db_' + self.prefix + 'flaky_unknown', sorted(unknown))
+
+        for action, acted_on in (('Ignored', ignored), ('Would have ignored', shadowed)):
+            if acted_on:
+                yield self._addToLog(
+                    self.results_db_log_name,
+                    f"\n{action} {len(acted_on)} flaky test(s): {', '.join(sorted(acted_on))}\n",
+                )
+        defer.returnValue(set(ignored))
 
 
 class Contributors(object):
@@ -785,6 +878,7 @@ class ConfigureBuild(buildstep.BuildStep, AddToLogMixin):
     name = 'configure-build'
     description = ['configuring build']
     descriptionDone = ['Configured build']
+    haltOnFailure = True
 
     def __init__(self, platform, configuration, architectures, buildOnly, triggers, remotes, additionalArguments, triggered_by=None, rebuild_without_change_on_builder=False, deployment_target=None):
         super().__init__()
@@ -830,6 +924,11 @@ class ConfigureBuild(buildstep.BuildStep, AddToLogMixin):
 
         yield self.add_pr_details()
 
+        if self.getProperty('github.number') and not self.getProperty('change_id'):
+            yield self._addToLog('stdio', 'Unable to determine change_id for this pull request.\n')
+            self.descriptionDone = 'Failed to determine change_id'
+            return defer.returnValue(FAILURE)
+
         defer.returnValue(SUCCESS)
 
     @defer.inlineCallbacks
@@ -853,7 +952,8 @@ class ConfigureBuild(buildstep.BuildStep, AddToLogMixin):
         else:
             self.setProperty('sensitive', True)
 
-        self.setProperty('change_id', revision[:HASH_LENGTH_TO_DISPLAY], 'ConfigureBuild')
+        if revision:
+            self.setProperty('change_id', revision[:HASH_LENGTH_TO_DISPLAY], 'ConfigureBuild')
 
         title = f': {title}' if title else ''
         self.addURL(f'PR {pr_number}{title}', GitHub.pr_url(pr_number, repository_url))
@@ -1968,8 +2068,8 @@ class ValidateCommitterAndReviewer(buildstep.BuildStep, GitHubMixin, AddToLogMix
     name = 'validate-committer-and-reviewer'
     descriptionDone = ['Validated committer and reviewer']
     VALIDATORS_FOR = {
-        # FIXME: Remove manual validators once bot is finished
-        'apple': ['webkit-bug-bridge'],
+        # Allow Ops folks to manually approve to bypass bots
+        'apple': ['webkit-bug-bridge', 'rjepstein', 'JonWBedard', 'ryanhaddad', 'mogey', 'ik128484'],
     }
 
     def __init__(self, *args, **kwargs):
@@ -2860,8 +2960,8 @@ class RunWebKitPerlTests(shell.ShellCommand):
     name = 'webkitperl-tests'
     description = ['webkitperl-tests running']
     descriptionDone = ['webkitperl-tests']
-    flunkOnFailure = False
-    haltOnFailure = False
+    flunkOnFailure = True
+    haltOnFailure = True
     command = ['perl', 'Tools/Scripts/test-webkitperl']
 
     def __init__(self, **kwargs):
@@ -2873,21 +2973,6 @@ class RunWebKitPerlTests(shell.ShellCommand):
             self.build.buildFinished([message], SUCCESS)
             return {'step': message}
         return {'step': 'Failed webkitperl tests'}
-
-    def evaluateCommand(self, cmd):
-        rc = super().evaluateCommand(self, cmd)
-        if rc == FAILURE:
-            self.build.addStepsAfterCurrentStep([KillOldProcesses(), ReRunWebKitPerlTests()])
-        return rc
-
-
-class ReRunWebKitPerlTests(RunWebKitPerlTests):
-    name = 're-run-webkitperl-tests'
-    flunkOnFailure = True
-    haltOnFailure = True
-
-    def evaluateCommand(self, cmd):
-        return shell.ShellCommand.evaluateCommand(self, cmd)
 
 
 class RunBuildWebKitOrgUnitTests(shell.ShellCommand):
@@ -3129,10 +3214,12 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
     filter_command = ['perl', 'Tools/Scripts/filter-build-webkit', '-logfile', 'build-log.txt']
     VALID_ADDITIONAL_ARGUMENTS_LIST = []  # If additionalArguments is added to config.json for CompileWebKit step, it should be added here as well.
     APPLE_PLATFORMS = ('mac', 'ios', 'visionos', 'tvos', 'watchos')
+    MAX_ERROR_LINES = 1000
 
     def __init__(self, skipUpload=False, **kwargs):
         self.skipUpload = skipUpload
         self.cancelled_due_to_huge_logs = False
+        self.error_lines = collections.deque(maxlen=self.MAX_ERROR_LINES)
         super().__init__(timeout=60 * 60, logEnviron=False, **kwargs)
 
     @defer.inlineCallbacks
@@ -3187,11 +3274,12 @@ class CompileWebKit(shell.Compile, AddToLogMixin, ShellMixin):
             self.command = build_command
 
         rc = yield super().run()
+        if self.error_lines:
+            yield self._addToLog('errors', '\n'.join(self.error_lines) + '\n')
         defer.returnValue(rc)
 
     def errorReceived(self, error):
-        # FIXME: Re-enable error filtering from logs.
-        pass
+        self.error_lines.append(error)
 
     def handleExcessiveLogging(self):
         build_url = f'{self.master.config.buildbotURL}#/builders/{self.build._builderid}/builds/{self.build.number}'
@@ -3502,14 +3590,13 @@ class CompileJSCWithoutChange(CompileJSC):
         return shell.Compile.evaluateCommand(self, cmd)
 
 
-class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
+class RunJavaScriptCoreTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
     name = 'jscore-test'
     description = ['jscore-tests running']
     descriptionDone = ['jscore-tests']
     flunkOnFailure = True
     jsonFileName = 'jsc_results.json'
     logfiles = {'json': jsonFileName}
-    results_db_log_name = 'results-db'
     command = ['perl', 'Tools/Scripts/run-javascriptcore-tests', '--no-build', '--no-fail-fast', f'--json-output={jsonFileName}', WithProperties('--%(configuration)s')]
     # We rely on run-jsc-stress-tests to weed out any flaky tests. We also cap
     # the effective timeout to avoid the dreaded "command timed out: 1200
@@ -3521,6 +3608,9 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
     # results before printing out the summary).
     command_extra = ['--treat-failing-as-flaky=0.6,10,200', '--max-timeout', '800']
     prefix = 'jsc_'
+    suite = 'javascriptcore-tests'
+    results_db_flaky_type = 'WithinStepDirtyTree'
+    results_db_stage = 'with-change'
     NUM_FAILURES_TO_DISPLAY_IN_STATUS = 5
     FAILURE_THRESHOLD = 1000
 
@@ -3531,7 +3621,10 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
         self.flaky = {}
         self.stressTestFailures_filtered = []
         self.binaryFailures_filtered = []
-        self.preexisting_failures_in_results_db = []
+        self.pre_existing_failures_in_results_db = []
+        self.pre_existing_flakes_in_results_db = {}
+        self.unsupported_flakes_in_results_db = []
+        self.unknown_flakes_in_results_db = []
 
     @defer.inlineCallbacks
     def run(self):
@@ -3565,6 +3658,7 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
 
     @defer.inlineCallbacks
     def runCommand(self, command):
+        self.run_started_at = int(time.time())
         yield super().runCommand(command)
 
         yield self._addToLog('json', '\n')
@@ -3588,9 +3682,17 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
             self.binaryFailures.append('testapi')
         if jsc_results.get('allLibJSCToolsTestsPassed') is False:
             self.binaryFailures.append('testLibJSCTools')
-        self.flaky = jsc_results.get('flakyAndPassed')
+        flaky = jsc_results.get('flaky') or {}
+        # run-javascriptcore-tests builds this from jsc-stress-results/flaky, where 'S' is that file's successful
+        # int: nonzero means the retries ended in a pass, zero a test retried to the threshold and still failing.
+        self.flaky = {test: info for test, info in flaky.items() if info.get('S')}
         if self.flaky:
             self.setProperty(self.prefix + 'flaky_and_passed', self.flaky)
+        results = jsc_results.get('results') or {}
+        yield self.report_to_results_db(
+            {test: results[test] for test in self.flaky if test in results},
+            flaky_type=self.results_db_flaky_type, stage=self.results_db_stage,
+        )
         if self.binaryFailures:
             self.setProperty(self.prefix + 'binary_failures', self.binaryFailures)
 
@@ -3601,12 +3703,14 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
             return
 
         self.setProperty(self.prefix + 'stress_test_failures', self.stressTestFailures)
+        if results:
+            self.setProperty(self.prefix + 'results', results)
         is_main = self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH
         if is_main and (self.stressTestFailures or self.binaryFailures):
             yield self.filter_failures_using_results_db(self.stressTestFailures, self.binaryFailures)
-            self.setProperty('jsc_stress_test_failures_filtered', sorted(self.stressTestFailures_filtered))
-            self.setProperty('jsc_binary_failures_filtered', sorted(self.binaryFailures_filtered))
-            self.setProperty('results-db_jsc_pre_existing', sorted(self.preexisting_failures_in_results_db))
+            self.setProperty(self.prefix + 'stress_test_failures_filtered', sorted(self.stressTestFailures_filtered))
+            self.setProperty(self.prefix + 'binary_failures_filtered', sorted(self.binaryFailures_filtered))
+            self.setProperty('results-db_' + self.prefix + 'pre_existing', sorted(self.pre_existing_failures_in_results_db))
 
     def evaluateCommand(self, cmd):
         platform = self.getProperty('platform')
@@ -3631,9 +3735,8 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
             message = 'Passed JSC tests'
             self.descriptionDone = message
             self.build.results = SUCCESS
-        elif (self.preexisting_failures_in_results_db and not self.stressTestFailures_filtered and not self.binaryFailures_filtered):
-            # This means all the tests which failed in this run were also failing or flaky in results database
-            message = f"Ignored pre-existing failure: {', '.join(self.preexisting_failures_in_results_db)}"
+        elif ((self.pre_existing_failures_in_results_db or self.pre_existing_flakes_in_results_db) and not self.stressTestFailures_filtered and not self.binaryFailures_filtered):
+            message = self.results_db_ignore_message()
             self.descriptionDone = message
             self.build.results = SUCCESS
             self.setProperty('build_summary', message)
@@ -3666,8 +3769,8 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
         return rc
 
     @defer.inlineCallbacks
-    def _check_for_preexisting_failures(self, tests, filtered_tests, configuration, identifier, has_commit):
-        for test in tests:
+    def _check_for_pre_existing_failures(self, tests, filtered_tests, configuration, identifier, has_commit):
+        for test in tests[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]:
             data = yield ResultsDatabase.is_test_pre_existing_failure(
                 test, configuration=configuration,
                 commit=identifier if has_commit else None,
@@ -3675,40 +3778,36 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
             )
             yield self._addToLog(self.results_db_log_name, f"\n{test}: pass_rate: {data['pass_rate']}, pre-existing-failure={data['is_existing_failure']}\nResponse from results-db: {data['raw_data']}\n{data['logs']}")
             if data['is_existing_failure']:
-                self.preexisting_failures_in_results_db.append(test)
+                self.pre_existing_failures_in_results_db.append(test)
                 filtered_tests.remove(test)
             else:
                 yield self._addToLog(self.results_db_log_name, f'{test} is not a pre-existing failure, continuing with retry...')
-                # Optimization to skip consulting results-db for every failure if we encounter any new failure,
-                # since until there is atleast one failure which is not pre-existing, we will anayways have to continue with retry logic.
-                break
 
     @defer.inlineCallbacks
     def filter_failures_using_results_db(self, stress_test_failures, binary_failures):
         self.stressTestFailures_filtered = stress_test_failures.copy()
         self.binaryFailures_filtered = binary_failures.copy()
 
-        identifier = self.getProperty('identifier', None)
-        platform = self.getProperty('platform', None)
-        configuration = {}
-        if platform:
-            configuration['platform'] = ResultsDatabase.platform_for_query(platform)
-        style = self.getProperty('configuration', None)
-        if style and style in ['debug', 'release']:
-            configuration['style'] = style
+        configuration = self.results_db_query_configuration()
 
-        yield self._addToLog(self.results_db_log_name, f'Checking Results database for failing JSC tests. Identifier: {identifier}, configuration: {configuration}')
-        has_commit = False
-        if (stress_test_failures or binary_failures) and identifier:
-            has_commit = yield ResultsDatabase.has_commit(commit=identifier)
-            if not has_commit:
-                yield self._addToLog(self.results_db_log_name, f"'{identifier}' could not be found on the results database, falling back to tip-of-tree\n")
+        identifier, has_commit = yield self.resolve_identifier_for_results_db(configuration, bool(stress_test_failures or binary_failures))
 
-        yield self._check_for_preexisting_failures(stress_test_failures, self.stressTestFailures_filtered, configuration, identifier, has_commit)
-        yield self._check_for_preexisting_failures(binary_failures, self.binaryFailures_filtered, configuration, identifier, has_commit)
+        yield self._check_for_pre_existing_failures(stress_test_failures, self.stressTestFailures_filtered, configuration, identifier, has_commit)
+        yield self._check_for_pre_existing_failures(binary_failures, self.binaryFailures_filtered, configuration, identifier, has_commit)
+
+        # TODO: Ask for a verdict on binary failures too. AnalyzeJSCTestsResults.report_failure reports
+        # only stress failures, so the database holds no binary-test row to match one against.
+        checked = stress_test_failures[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]
+        unexplained = {test for test in checked if test in self.stressTestFailures_filtered}
+        excused = yield self.pre_existing_flakes_using_results_db(unexplained)
+        for test in excused:
+            if test in self.stressTestFailures_filtered:
+                self.stressTestFailures_filtered.remove(test)
 
     def getResultSummary(self):
-        if self.results != SUCCESS and (self.stressTestFailures or self.binaryFailures):
+        if self.results != SUCCESS and not self.stressTestFailures_filtered and not self.binaryFailures_filtered and (self.pre_existing_failures_in_results_db or self.pre_existing_flakes_in_results_db):
+            return {'step': self.results_db_ignore_message()}
+        elif self.results != SUCCESS and (self.stressTestFailures or self.binaryFailures):
             status = ''
             if self.stressTestFailures:
                 num_failures = len(self.stressTestFailures)
@@ -3749,8 +3848,11 @@ class RunJavaScriptCoreTests(shell.Test, AddToLogMixin, ShellMixin):
 
 
 class RunJSCTestsWithoutChange(RunJavaScriptCoreTests):
+    results_db_flaky_type = 'WithinStepCleanTree'
+    results_db_stage = 'clean-tree'
     name = 'jscore-test-without-change'
     prefix = 'jsc_clean_tree_'
+    INCLUDED_FLAKY_VERDICTS = ()
 
     def evaluateCommand(self, cmd):
         rc = shell.Test.evaluateCommand(self, cmd)
@@ -3758,11 +3860,11 @@ class RunJSCTestsWithoutChange(RunJavaScriptCoreTests):
         return rc
 
 
-class AnalyzeJSCTestsResults(buildstep.BuildStep, AddToLogMixin):
+class AnalyzeJSCTestsResults(ResultsDBReportMixin, buildstep.BuildStep, AddToLogMixin):
     name = 'analyze-jsc-tests-results'
+    suite = 'javascriptcore-tests'
     description = ['analyze-jsc-test-results']
     descriptionDone = ['analyze-jsc-tests-results']
-    NUM_FAILURES_TO_DISPLAY = 10
 
     @defer.inlineCallbacks
     def run(self):
@@ -3778,11 +3880,6 @@ class AnalyzeJSCTestsResults(buildstep.BuildStep, AddToLogMixin):
         flaky_stress_failures = sorted(list(flaky_stress_failures_with_change) + list(clean_tree_flaky_stress_failures))[:self.NUM_FAILURES_TO_DISPLAY]
         flaky_failures_string = ', '.join(flaky_stress_failures)
 
-        new_stress_failures = stress_failures_with_change - clean_tree_stress_failures
-        new_binary_failures = binary_failures_with_change - clean_tree_binary_failures
-        self.new_stress_failures_to_display = ', '.join(sorted(list(new_stress_failures))[:self.NUM_FAILURES_TO_DISPLAY])
-        self.new_binary_failures_to_display = ', '.join(sorted(list(new_binary_failures))[:self.NUM_FAILURES_TO_DISPLAY])
-
         yield self._addToLog('stderr', '\nFailures with change: {}'.format(list(binary_failures_with_change) + list(stress_failures_with_change))[:self.NUM_FAILURES_TO_DISPLAY])
         yield self._addToLog('stderr', '\nFlaky Tests with change: {}'.format(', '.join(flaky_stress_failures_with_change)))
         yield self._addToLog('stderr', '\nFailures on clean tree: {}'.format(clean_tree_failures_string))
@@ -3793,15 +3890,29 @@ class AnalyzeJSCTestsResults(buildstep.BuildStep, AddToLogMixin):
             # there should have been some test failures. Otherwise there is some unexpected issue.
             clean_tree_run_status = self.getProperty('clean_tree_run_status', FAILURE)
             if clean_tree_run_status in [SUCCESS, WARNINGS]:
-                self.report_failure(set(), set())
+                yield self.report_failure(set(), set())
                 defer.returnValue(FAILURE)
             # TODO: email EWS admins
             self.retry_build('Unexpected infrastructure issue, retrying build')
             defer.returnValue(RETRY)
 
+        # Only set for builds against the default branch, hence the fallback. After the empty-check
+        # above, which needs the raw lists to tell an infrastructure issue from a filtered-away run.
+        stress_failures_filtered = self.getProperty('jsc_stress_test_failures_filtered', None)
+        if stress_failures_filtered is not None:
+            stress_failures_with_change = set(stress_failures_filtered)
+        binary_failures_filtered = self.getProperty('jsc_binary_failures_filtered', None)
+        if binary_failures_filtered is not None:
+            binary_failures_with_change = set(binary_failures_filtered)
+
+        new_stress_failures = stress_failures_with_change - clean_tree_stress_failures
+        new_binary_failures = binary_failures_with_change - clean_tree_binary_failures
+        self.new_stress_failures_to_display = ', '.join(sorted(list(new_stress_failures))[:self.NUM_FAILURES_TO_DISPLAY])
+        self.new_binary_failures_to_display = ', '.join(sorted(list(new_binary_failures))[:self.NUM_FAILURES_TO_DISPLAY])
+
         if new_stress_failures or new_binary_failures:
             yield self._addToLog('stderr', '\nNew binary failures: {}.\nNew stress test failures: {}\n'.format(self.new_binary_failures_to_display, self.new_stress_failures_to_display))
-            self.report_failure(new_binary_failures, new_stress_failures)
+            yield self.report_failure(new_binary_failures, new_stress_failures)
             defer.returnValue(FAILURE)
         else:
             yield self._addToLog('stderr', '\nNo new failures\n')
@@ -3826,7 +3937,12 @@ class AnalyzeJSCTestsResults(buildstep.BuildStep, AddToLogMixin):
         self.descriptionDone = message
         self.build.buildFinished([message], RETRY)
 
+    @defer.inlineCallbacks
     def report_failure(self, new_binary_failures, new_stress_failures):
+        # TODO: Include new_binary_failures, run-javascriptcore-tests:838-839 runs testapi twice under
+        # the one 'testapi' key in %reportData, so the second run's result overwrites the first's failure.
+        results = self.getProperty('jsc_results', None) or {}
+        yield self.report_to_results_db({test: results[test] for test in new_stress_failures if test in results})
         message = ''
         if (not new_binary_failures) and (not new_stress_failures):
             message = 'Found unexpected failure with change'
@@ -3942,18 +4058,13 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
     jsonFileName = 'layout-test-results/full_results.json'
     logfiles = {'json': jsonFileName}
     test_failures_log_name = 'test-failures'
-    results_db_log_name = 'results-db'
     results_db_flavor = 'wk2'
     suite = 'layout-tests'
+    prefix = 'first_run_'
     ENABLE_GUARD_MALLOC = False
     ENABLE_ADDITIONAL_ARGUMENTS = True
     EXIT_AFTER_FAILURES = '60'
     MAX_FAILURES_TO_CHECK_RESULTS_DB = 60
-    INCLUDED_FLAKY_VERDICTS = frozenset({
-        ResultsDatabase.CLEAN_TREE_VERDICT,
-        ResultsDatabase.DIRTY_TREE_VERDICT,
-        ResultsDatabase.BETWEEN_BUILDS_VERDICT,
-    })
     STRESS_MODE = False
     command = ['python3', 'Tools/Scripts/run-webkit-tests',
                '--no-build',
@@ -3966,8 +4077,8 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
         super().__init__(logEnviron=False, timeout=5.5 * 60 * 60, **kwargs)
         self.incorrectLayoutLines = []
         self.failing_tests_filtered = []
-        self.preexisting_failures_in_results_db = []
-        self.flaky_failures_in_results_db = {}
+        self.pre_existing_failures_in_results_db = []
+        self.pre_existing_flakes_in_results_db = {}
         self.unsupported_flakes_in_results_db = []
         self.unknown_flakes_in_results_db = []
         self.layout_test_driver = None
@@ -4093,10 +4204,7 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
             if is_main and first_results.failing_tests and not first_results.did_exceed_test_failure_limit:
                 yield self.filter_failures_using_results_db(first_results.failing_tests)
                 self.setProperty('first_run_failures_filtered', sorted(self.failing_tests_filtered))
-                self.setProperty('results-db_first_run_pre_existing', sorted(self.preexisting_failures_in_results_db))
-                self.setProperty('results-db_first_run_flaky', self.flaky_failures_in_results_db)
-                self.setProperty('results-db_first_run_flaky_unsupported', sorted(self.unsupported_flakes_in_results_db))
-                self.setProperty('results-db_first_run_flaky_unknown', sorted(self.unknown_flakes_in_results_db))
+                self.setProperty('results-db_' + self.prefix + 'pre_existing', sorted(self.pre_existing_failures_in_results_db))
 
             yield self.report_to_results_db(first_results.flaky_results, flaky_type='WithinStepDirtyTree', stage='first-run')
 
@@ -4105,74 +4213,33 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
     @defer.inlineCallbacks
     def filter_failures_using_results_db(self, failing_tests):
         self.failing_tests_filtered = failing_tests.copy()
-        identifier = self.getProperty('identifier', None)
         configuration = self.results_db_query_configuration()
 
-        yield self._addToLog(self.results_db_log_name, f'Checking Results database for failing tests. Identifier: {identifier}, configuration: {configuration}\n')
-        has_commit = False
-        if failing_tests and identifier:
-            has_commit = yield ResultsDatabase.has_commit(commit=identifier)
-            if not has_commit:
-                yield self._addToLog(self.results_db_log_name, f"'{identifier}' could not be found on the results database, falling back to tip-of-tree\n")
+        identifier, has_commit = yield self.resolve_identifier_for_results_db(configuration, bool(failing_tests))
 
         tests = failing_tests[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]
-        pre_existing = {}
+        unexplained = set()
         for test in tests:
-            pre_existing[test] = yield ResultsDatabase.is_test_pre_existing_failure(
+            data = yield ResultsDatabase.is_test_pre_existing_failure(
                 test, configuration=configuration,
                 commit=identifier if has_commit else None,
             )
-
-        # Only tests the database does not already expect to fail need a flakiness verdict
-        unexplained = [test for test in tests if not pre_existing[test]['is_existing_failure']]
-        flakes, flake_logs = yield ResultsDatabase.flaky_verdicts_for(unexplained, configuration=configuration, suite=self.suite)
-        if flake_logs:
-            yield self._addToLog(self.results_db_log_name, flake_logs)
-
-        ignored, shadowed = [], []
-        for test in tests:
-            data = pre_existing[test]
-            flake = flakes.get(test, FlakyVerdict(request_failed=True))
-            flake_summary = 'False'
             if data['is_existing_failure']:
-                self.preexisting_failures_in_results_db.append(test)
+                self.pre_existing_failures_in_results_db.append(test)
                 self.failing_tests_filtered.remove(test)
-            elif flake.is_flaky:
-                self.flaky_failures_in_results_db[test] = flake.flaky_type
-                if flake.flaky_type == ResultsDatabase.BETWEEN_BUILDS_VERDICT and not flake.intra_build_evidence:
-                    self.unsupported_flakes_in_results_db.append(test)
-                flake_summary = f'{flake.flaky_type}: {flake.evidence}'
-                if flake.flaky_type in self.INCLUDED_FLAKY_VERDICTS:
-                    ignored.append(test)
-                    self.failing_tests_filtered.remove(test)
-                else:
-                    shadowed.append(test)
-            elif flake.request_failed:
-                self.unknown_flakes_in_results_db.append(test)
-                flake_summary = 'Unknown'
+            else:
+                unexplained.add(test)
 
             yield self._addToLog(
                 self.results_db_log_name,
                 f"\n{test}: pass_rate: {data['pass_rate']}, pre-existing-failure={data['is_existing_failure']}\n"
                 f"Response from results-db: {data['raw_data']}\n"
                 f"{data['logs']}"
-                f"pre-existing-flake={flake_summary}\n"
             )
 
-        for action, acted_on in (('Ignored', ignored), ('Would have ignored', shadowed)):
-            if acted_on:
-                yield self._addToLog(
-                    self.results_db_log_name,
-                    f"\n{action} {len(acted_on)} flaky test(s): {', '.join(sorted(acted_on))}\n",
-                )
-
-    def results_db_ignore_message(self) -> str:
-        parts = []
-        if self.preexisting_failures_in_results_db:
-            parts.append(f"pre-existing failures: {', '.join(self.preexisting_failures_in_results_db)}")
-        if self.flaky_failures_in_results_db:
-            parts.append(f"flaky tests: {', '.join(sorted(self.flaky_failures_in_results_db))}")
-        return f"Ignored {'; '.join(parts)} based on results-db"
+        excused = yield self.pre_existing_flakes_using_results_db(unexplained)
+        for test in excused:
+            self.failing_tests_filtered.remove(test)
 
     def evaluateResult(self, cmd):
         result = SUCCESS
@@ -4225,7 +4292,7 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
             self.build.results = SUCCESS
             if RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE not in previous_build_summary:
                 self.setProperty('build_summary', message)
-        elif ((self.preexisting_failures_in_results_db or self.flaky_failures_in_results_db) and len(self.failing_tests_filtered) == 0):
+        elif ((self.pre_existing_failures_in_results_db or self.pre_existing_flakes_in_results_db) and len(self.failing_tests_filtered) == 0):
             # All tests that failed this run were pre-existing failures or known flaky in the results database
             message = self.results_db_ignore_message()
             self.descriptionDone = message
@@ -4272,13 +4339,8 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
         status = self.name
 
         if self.results != SUCCESS:
-            if ((self.preexisting_failures_in_results_db or self.flaky_failures_in_results_db) and len(self.failing_tests_filtered) == 0):
-                counts = []
-                if self.preexisting_failures_in_results_db:
-                    counts.append(f"{len(self.preexisting_failures_in_results_db)} pre-existing")
-                if self.flaky_failures_in_results_db:
-                    counts.append(f"{len(self.flaky_failures_in_results_db)} flaky")
-                return {'step': f"Ignored {' and '.join(counts)} failure(s) based on results-db"}
+            if ((self.pre_existing_failures_in_results_db or self.pre_existing_flakes_in_results_db) and len(self.failing_tests_filtered) == 0):
+                return {'step': self.results_db_ignore_counts_message()}
             if self.incorrectLayoutLines:
                 status = ' '.join(self.incorrectLayoutLines)
                 return {'step': status}
@@ -4387,7 +4449,7 @@ class RunWebKitTestsInSiteIsolationMode(RunWebKitTestsInStressMode):
 class ReRunWebKitTests(RunWebKitTests):
     name = 're-run-layout-tests'
     results_db_flavor = None
-    NUM_FAILURES_TO_DISPLAY = 10
+    prefix = 'second_run_'
 
     def evaluateCommand(self, cmd):
         rc = self.evaluateResult(cmd)
@@ -4431,7 +4493,7 @@ class ReRunWebKitTests(RunWebKitTests):
             if RunWebKitTestsInStressMode.FAILURE_MSG_IN_STRESS_MODE not in previous_build_summary:
                 self.setProperty('build_summary', message)
             self.build.addStepsAfterCurrentStep(steps_to_add)
-        elif ((self.preexisting_failures_in_results_db or self.flaky_failures_in_results_db) and len(self.failing_tests_filtered) == 0):
+        elif ((self.pre_existing_failures_in_results_db or self.pre_existing_flakes_in_results_db) and len(self.failing_tests_filtered) == 0):
             # All tests that failed this run were pre-existing failures or known flaky in the results database
             message = self.results_db_ignore_message()
             self.descriptionDone = message
@@ -4506,10 +4568,7 @@ class ReRunWebKitTests(RunWebKitTests):
             if is_main and second_results.failing_tests and not second_results.did_exceed_test_failure_limit:
                 yield self.filter_failures_using_results_db(second_results.failing_tests)
                 self.setProperty('second_run_failures_filtered', sorted(self.failing_tests_filtered))
-                self.setProperty('results-db_second_run_pre_existing', sorted(self.preexisting_failures_in_results_db))
-                self.setProperty('results-db_second_run_flaky', self.flaky_failures_in_results_db)
-                self.setProperty('results-db_second_run_flaky_unsupported', sorted(self.unsupported_flakes_in_results_db))
-                self.setProperty('results-db_second_run_flaky_unknown', sorted(self.unknown_flakes_in_results_db))
+                self.setProperty('results-db_' + self.prefix + 'pre_existing', sorted(self.pre_existing_failures_in_results_db))
 
             yield self.report_to_results_db(second_results.flaky_results, flaky_type='WithinStepDirtyTree', stage='second-run')
 
@@ -4672,7 +4731,6 @@ class AnalyzeLayoutTestsResults(ResultsDBReportMixin, buildstep.BuildStep, Bugzi
     suite = 'layout-tests'
     description = ['analyze-layout-test-results']
     descriptionDone = ['analyze-layout-tests-results']
-    NUM_FAILURES_TO_DISPLAY = 10
 
     @defer.inlineCallbacks
     def report_failure(self, new_failures=None, exceed_failure_limit=False, failure_message=''):
@@ -5726,16 +5784,17 @@ class ExtractBuiltProduct(shell.ShellCommand):
         super().__init__(logEnviron=False, **kwargs)
 
 
-class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
+class RunAPITests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin):
     name = 'run-api-tests'
+    suite = 'api-tests'
     description = ['api tests running']
     descriptionDone = ['api-tests']
     jsonFileName = 'api_test_results.json'
     logfiles = {'json': jsonFileName}
     test_failures_log_name = 'test-failures'
-    results_db_log_name = 'results-db'
-    suffix = 'first_run'
-    MAX_FAILURES_TO_CHECK_RESULTS_DB = 50
+    suffix = 'api_first_run'
+    prefix = 'api_'
+    MAX_FAILURES_TO_CHECK_RESULTS_DB = 60
     command = ['python3', 'Tools/Scripts/run-api-tests', '--timestamps', '--no-build',
                WithProperties('--%(configuration)s'), '--verbose', '--json-output={0}'.format(jsonFileName)]
     failedTestsFormatString = '%d api test%s failed or timed out'
@@ -5744,11 +5803,13 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
     line_count = 0
     THRESHOLD_FOR_EXCESSIVE_LOGS_API_TESTS = 100000
     MSG_FOR_EXCESSIVE_LOGS_API_TEST = f'Stopped due to excessive logging, limit: {THRESHOLD_FOR_EXCESSIVE_LOGS_API_TESTS}'
+    EXIT_AFTER_FAILURES = '60'
 
     def __init__(self, **kwargs):
         super().__init__(logEnviron=False, timeout=20 * 60, **kwargs)
         self.failing_tests_filtered = []
-        self.preexisting_failures_in_results_db = []
+        self.pre_existing_failures_in_results_db = []
+        self.pre_existing_flakes_in_results_db = {}
         self.steps_to_add = []
 
     @defer.inlineCallbacks
@@ -5766,14 +5827,16 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
                            '--json-output={0}'.format(self.jsonFileName)]
         else:
             self.command = self.command + customBuildFlag(platform, self.getProperty('fullPlatform'))
+            if self.EXIT_AFTER_FAILURES is not None:
+                self.command += ['--exit-after-n-failures', f'{self.EXIT_AFTER_FAILURES}']
 
         additionalArguments = self.getProperty('additionalArguments')
         if additionalArguments:
             self.command += additionalArguments
 
         if self.name == RunAPITestsWithoutChange.name:
-            first_results_failing_tests = set(self.getProperty('first_run_failures', set()))
-            second_results_failing_tests = set(self.getProperty('second_run_failures', set()))
+            first_results_failing_tests = set(self.getProperty('api_first_run_failures', set()))
+            second_results_failing_tests = set(self.getProperty('api_second_run_failures', set()))
             list_failed_tests_with_change = sorted(first_results_failing_tests.union(second_results_failing_tests))
             if list_failed_tests_with_change:
                 self.command = self.command + [quote(t) for t in list_failed_tests_with_change]
@@ -5784,6 +5847,10 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
 
         if self.failedTestCount:
             rc = FAILURE
+
+        if (self.EXIT_AFTER_FAILURES is not None
+                and self.failedTestCount >= int(self.EXIT_AFTER_FAILURES)):
+            self.setProperty(f'{self.suffix}_exceeded_failure_limit', True)
 
         failures = yield self.parse_and_set_failures()
         yield self.analyze_failures_using_results_db(failures)
@@ -5805,7 +5872,7 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
         if rc in [SUCCESS, WARNINGS]:
             message = 'Passed API tests'
             if self.name == ReRunAPITests.name:
-                first_results_failing_tests = self.getProperty('first_run_failures', [])
+                first_results_failing_tests = self.getProperty('api_first_run_failures', [])
                 flaky_failures_string = ', '.join(first_results_failing_tests)
                 pluralSuffix = 's' if len(first_results_failing_tests) > 1 else ''
                 message = f'Found flaky test{pluralSuffix}: {flaky_failures_string}'
@@ -5821,14 +5888,14 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
                         FilterAPITestsForPlatform(),
                         RunAPITestsParallelSafety(),
                     ]
-        elif (self.name != RunAPITestsWithoutChange.name and self.preexisting_failures_in_results_db and len(self.failing_tests_filtered) == 0):
+        elif (self.name != RunAPITestsWithoutChange.name and self.pre_existing_failures_in_results_db and len(self.failing_tests_filtered) == 0):
             # This means all the tests which failed in this run were also failing or flaky in results database
-            message = f"Ignored pre-existing failure: {', '.join(self.preexisting_failures_in_results_db)}"
+            message = self.results_db_ignore_message()
             self.descriptionDone = message
             self.build.results = SUCCESS
             self.setProperty('build_summary', message)
         else:
-            self.doOnFailure()
+            yield self.doOnFailure()
 
         self.build.addStepsAfterCurrentStep(self.steps_to_add)
         defer.returnValue(rc)
@@ -5868,7 +5935,10 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
     @defer.inlineCallbacks
     def parse_and_set_failures(self):
         yield self._addToLog('json', '\n')
-        failures = self.parse_api_failures_from_string(self.log_observer_json.getStdout().rstrip())
+        results = self.parse_api_test_json(self.log_observer_json.getStdout().rstrip())
+        failures = self.api_failures_from_json(results)
+        if results.get('results'):
+            self.setProperty(f'{self.suffix}_results', results['results'])
         self.setProperty(f'{self.suffix}_failures', sorted(failures))
         defer.returnValue(failures)
 
@@ -5878,7 +5948,7 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
             yield self._addToLog(self.test_failures_log_name, '\n'.join(failures))
             yield self.filter_api_test_failures_using_results_db(failures)
             self.setProperty(f'{self.suffix}_failures_filtered', sorted(self.failing_tests_filtered))
-            self.setProperty(f'results-db_{self.suffix}_pre_existing', sorted(self.preexisting_failures_in_results_db))
+            self.setProperty(f'results-db_{self.suffix}_pre_existing', sorted(self.pre_existing_failures_in_results_db))
 
     def doOnFailure(self):
         self.steps_to_add += [
@@ -5888,8 +5958,17 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
         ]
 
     def parse_api_failures_from_string(self, string):
+        return self.api_failures_from_json(self.parse_api_test_json(string))
+
+    @staticmethod
+    def api_failures_from_json(result):
+        return ([failure.get('name') for failure in result.get('Timedout', [])] +
+                [failure.get('name') for failure in result.get('Crashed', [])] +
+                [failure.get('name') for failure in result.get('Failed', [])])
+
+    def parse_api_test_json(self, string):
         if not string:
-            return []
+            return {}
         try:
             # Workaround for https://github.com/buildbot/buildbot/issues/4906
             string = ''.join(string.splitlines())
@@ -5903,34 +5982,19 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
                 result = json.loads(string)
             except Exception as e:
                 print(f'ERROR: unable to parse data, exception: {e}')
-                return []
+                return {}
         except Exception as e:
             print(f'ERROR: unexcepted error while parsing data: {e}')
-            return []
+            return {}
 
-        failures = ([failure.get('name') for failure in result.get('Timedout', [])] +
-                    [failure.get('name') for failure in result.get('Crashed', [])] +
-                    [failure.get('name') for failure in result.get('Failed', [])])
-        return failures
+        return result
 
     @defer.inlineCallbacks
     def filter_api_test_failures_using_results_db(self, failing_tests):
         self.failing_tests_filtered = failing_tests.copy()
-        identifier = self.getProperty('identifier', None)
-        platform = self.getProperty('platform', None)
-        configuration = {}
-        if platform:
-            configuration['platform'] = ResultsDatabase.platform_for_query(platform)
-        style = self.getProperty('configuration', None)
-        if style and style in ['debug', 'release']:
-            configuration['style'] = style
+        configuration = self.results_db_query_configuration()
 
-        yield self._addToLog(self.results_db_log_name, f'Checking Results database for failing tests. Identifier: {identifier}, configuration: {configuration}')
-        has_commit = False
-        if failing_tests and identifier:
-            has_commit = yield ResultsDatabase.has_commit(commit=identifier)
-            if not has_commit:
-                yield self._addToLog(self.results_db_log_name, f"'{identifier}' could not be found on the results database, falling back to tip-of-tree\n")
+        identifier, has_commit = yield self.resolve_identifier_for_results_db(configuration, bool(failing_tests))
 
         for test in failing_tests[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]:
             data = yield ResultsDatabase.is_test_pre_existing_failure(
@@ -5940,15 +6004,65 @@ class RunAPITests(shell.Test, AddToLogMixin, ShellMixin):
             )
             yield self._addToLog(self.results_db_log_name, f"\n{test}: pass_rate: {data['pass_rate']}, pre-existing-failure={data['is_existing_failure']}\nResponse from results-db: {data['raw_data']}\n{data['logs']}")
             if data['is_existing_failure']:
-                self.preexisting_failures_in_results_db.append(test)
+                self.pre_existing_failures_in_results_db.append(test)
                 self.failing_tests_filtered.remove(test)
 
 
 class ReRunAPITests(RunAPITests):
     name = 're-run-api-tests'
-    suffix = 'second_run'
+    suffix = 'api_second_run'
 
-    def doOnFailure(self):
+    @defer.inlineCallbacks
+    def parse_and_set_failures(self):
+        failures = yield super().parse_and_set_failures()
+
+        # A test failing one of the two runs and passing the other flaked across the steps.
+        if (first_run_failures := self.getProperty('api_first_run_failures', None)) is not None:
+            results = self.merged_results(set(first_run_failures) ^ set(failures), {
+                'first-run': 'api_first_run_results',
+                'second-run': 'api_second_run_results',
+            })
+            yield self.report_to_results_db(results, flaky_type='BetweenStepsDirtyTree')
+        defer.returnValue(failures)
+
+    def failures_in_both_dirty_runs(self) -> set[str]:
+        """
+        The failures AnalyzeAPITestsResults would attribute to the change, before the clean-tree run
+        subtracts its own from them.
+        """
+        first_run_failures = self.getProperty('api_first_run_failures_filtered', None)
+        if first_run_failures is None:
+            first_run_failures = self.getProperty('api_first_run_failures', [])
+        second_run_failures = self.getProperty('api_second_run_failures_filtered', None)
+        if second_run_failures is None:
+            second_run_failures = self.getProperty('api_second_run_failures', [])
+        return set(first_run_failures) & set(second_run_failures)
+
+    @defer.inlineCallbacks
+    def doOnFailure(self) -> Generator[Any, Any, None]:
+        is_main = self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH
+        if is_main and (candidates := self.failures_in_both_dirty_runs()):
+            # parse_and_set_failures has already reported this build's BetweenStepsDirtyTree
+            # evidence, the only evidence the revert and clean-tree run would have added.
+            excused = yield self.pre_existing_flakes_using_results_db(candidates)
+            if excused == candidates:
+                flaky = self.getProperty('results-db_api_flaky', {})
+                self.pre_existing_flakes_in_results_db = {test: flaky.get(test) for test in excused}
+                message = self.results_db_ignore_message()
+                self.descriptionDone = message
+                self.build.results = SUCCESS
+                self.setProperty('force_build_success', True)
+                self.setProperty('build_summary', message)
+
+                # AnalyzeAPITestsResults never runs on this path, so nothing else reports these
+                # candidates.
+                results = self.merged_results(candidates, {
+                    'first-run': 'api_first_run_results',
+                    'second-run': 'api_second_run_results',
+                })
+                yield self.report_to_results_db(results)
+                return
+
         self.steps_to_add += [RevertAppliedChanges(), CleanWorkingDirectory(), ValidateChange(verifyBugClosed=False, addURLs=False)]
         platform = self.getProperty('platform')
         if platform == 'wpe':
@@ -5969,7 +6083,8 @@ class ReRunAPITests(RunAPITests):
 
 class RunAPITestsWithoutChange(RunAPITests):
     name = 'run-api-tests-without-change'
-    suffix = 'clean_tree_run'
+    suffix = 'api_clean_tree_run'
+    EXIT_AFTER_FAILURES = None
 
     def doOnFailure(self):
         pass
@@ -5978,16 +6093,17 @@ class RunAPITestsWithoutChange(RunAPITests):
         pass
 
 
-class AnalyzeAPITestsResults(buildstep.BuildStep, AddToLogMixin):
+class AnalyzeAPITestsResults(ResultsDBReportMixin, buildstep.BuildStep, AddToLogMixin):
     name = 'analyze-api-tests-results'
+    suite = 'api-tests'
     description = ['analyze-api-test-results']
     descriptionDone = ['analyze-api-tests-results']
-    NUM_FAILURES_TO_DISPLAY = 10
+    prefix = 'api_'
 
     @defer.inlineCallbacks
     def run(self):
-        first_run_failures = set(self.getProperty('first_run_failures', []))
-        second_run_failures = set(self.getProperty('second_run_failures', []))
+        first_run_failures = set(self.getProperty('api_first_run_failures', []))
+        second_run_failures = set(self.getProperty('api_second_run_failures', []))
 
         # This step runs only after both runs failed, so a missing or empty failure list means a run
         # failed without producing parseable results: an infrastructure issue that should retry.
@@ -5999,22 +6115,47 @@ class AnalyzeAPITestsResults(buildstep.BuildStep, AddToLogMixin):
 
         # Prefer the results-db-filtered lists (pre-existing failures already removed) so a known
         # pre-existing flaky failure is not reported as new even if it passed on the clean tree.
-        first_run_failures_filtered = self.getProperty('first_run_failures_filtered', None)
+        first_run_failures_filtered = self.getProperty('api_first_run_failures_filtered', None)
         if first_run_failures_filtered is not None:
             first_run_failures = set(first_run_failures_filtered)
-        second_run_failures_filtered = self.getProperty('second_run_failures_filtered', None)
+        second_run_failures_filtered = self.getProperty('api_second_run_failures_filtered', None)
         if second_run_failures_filtered is not None:
             second_run_failures = set(second_run_failures_filtered)
 
-        clean_tree_failures = set(self.getProperty('clean_tree_run_failures', []))
+        clean_tree_failures = set(self.getProperty('api_clean_tree_run_failures', []))
         clean_tree_failures_to_display = list(clean_tree_failures)[:self.NUM_FAILURES_TO_DISPLAY]
         clean_tree_failures_string = ', '.join(clean_tree_failures_to_display)
 
-        failures_with_patch = first_run_failures.intersection(second_run_failures)
-        flaky_failures = first_run_failures.union(second_run_failures) - first_run_failures.intersection(second_run_failures)
-        flaky_failures = list(flaky_failures)[:self.NUM_FAILURES_TO_DISPLAY]
-        flaky_failures_string = ', '.join(flaky_failures)
-        new_failures = failures_with_patch - clean_tree_failures
+        first_run_exceeded = self.getProperty('api_first_run_exceeded_failure_limit', False)
+        second_run_exceeded = self.getProperty('api_second_run_exceeded_failure_limit', False)
+
+        ignored_flaky_failures = set()
+        if first_run_exceeded or second_run_exceeded:
+            # When either run hit --exit-after-n-failures, first_run_failures and
+            # second_run_failures are nondeterministic truncated subsets; the intersection
+            # can drop real regressions and misclassify them as flaky. Fall back to the
+            # union of the two runs, relying on the clean-tree run (which re-ran their
+            # union) to separate pre-existing from new failures.
+            new_failures = (first_run_failures | second_run_failures) - clean_tree_failures
+            flaky_failures = []
+            flaky_failures_string = ''
+            exceed_note = ' (failure limit exceeded)'
+        else:
+            failures_with_patch = first_run_failures.intersection(second_run_failures)
+            flaky_failures = first_run_failures.union(second_run_failures) - failures_with_patch
+            flaky_failures = list(flaky_failures)[:self.NUM_FAILURES_TO_DISPLAY]
+            flaky_failures_string = ', '.join(flaky_failures)
+            new_failures = failures_with_patch - clean_tree_failures
+            exceed_note = ''
+
+        if new_failures:
+            ignored_flaky_failures = yield self.pre_existing_flakes_using_results_db(new_failures)
+            results = self.merged_results(new_failures, {
+                'first-run': 'api_first_run_results',
+                'second-run': 'api_second_run_results',
+            })
+            yield self.report_to_results_db(results)
+            new_failures = new_failures - ignored_flaky_failures
         new_failures_to_display = list(new_failures)[:self.NUM_FAILURES_TO_DISPLAY]
         new_failures_string = ', '.join(new_failures_to_display)
 
@@ -6025,9 +6166,10 @@ class AnalyzeAPITestsResults(buildstep.BuildStep, AddToLogMixin):
 
         if new_failures:
             yield self._addToLog('stderr', '\nNew failures: {}\n'.format(new_failures_string))
+            self.setProperty('new_api_failures_introduced_by_patch', sorted(new_failures))
             self.build.results = FAILURE
             pluralSuffix = 's' if len(new_failures) > 1 else ''
-            message = 'Found {} new API test failure{}: {}'.format(len(new_failures), pluralSuffix, new_failures_string)
+            message = 'Found {} new API test failure{}{}: {}'.format(len(new_failures), pluralSuffix, exceed_note, new_failures_string)
             if len(new_failures) > self.NUM_FAILURES_TO_DISPLAY:
                 message += ' ...'
             self.descriptionDone = message
@@ -6049,6 +6191,9 @@ class AnalyzeAPITestsResults(buildstep.BuildStep, AddToLogMixin):
                 message += ' Found flaky tests: {}'.format(flaky_failures_string)
                 for flaky_failure in flaky_failures:
                     self.send_email_for_flaky_failure(flaky_failure)
+            if ignored_flaky_failures:
+                message += f" Ignored pre-existing flakes: {', '.join(sorted(ignored_flaky_failures))}"
+                self.setProperty('build_summary', message.strip())
             self.build.buildFinished([message], SUCCESS)
             defer.returnValue(SUCCESS)
 
@@ -7789,7 +7934,7 @@ class BuildSwift(steps.ShellSequence, ShellMixin):
         return {'step': 'Successfully built Swift'}
 
     def doStepIf(self, step):
-        return self.getProperty('canonical_swift_tag') and self.getProperty('current_swift_tag', '') != self.getProperty('canonical_swift_tag')
+        return needs_swift_toolchain_setup(self)
 
 
 # FIXME: Share static analyzer steps with build-webkit-org since they have a lot of similarities
@@ -7812,7 +7957,7 @@ class ScanBuild(steps.ShellSequence, ShellMixin):
         build_command = f"Tools/Scripts/build-and-analyze --output-dir {os.path.join(self.getProperty('builddir'), f'build/{self.output_directory}')} --configuration {self.build.getProperty('configuration')} --only-smart-pointers "
         sdkroot = 'iphonesimulator' if self.getProperty('platform', '').lower() == 'ios' else 'macosx'
         build_command += f'--toolchains={SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER} --swift-conditions=SWIFT_WEBKIT_TOOLCHAIN '
-        build_command += f'--scan-build-path=../llvm-project/clang/tools/scan-build/bin/scan-build --sdkroot={sdkroot} '
+        build_command += f'--scan-build-path={SCAN_BUILD_PATH} --sdkroot={sdkroot} '
         if SHOULD_FILTER_LOGS is True:
             build_command += '2>&1 | python3 Tools/Scripts/filter-test-logs scan-build --output build-log.txt'
 
@@ -8044,7 +8189,7 @@ class FindModifiedSaferCPPExpectations(shell.ShellCommand, AddToLogMixin):
             return {'step': f'Unable to find modified expectations'}
 
 
-class FindUnexpectedStaticAnalyzerResults(shell.ShellCommand, AnalyzeChange, AddToLogMixin):
+class FindUnexpectedStaticAnalyzerResults(shell.ShellCommand, ResultsDBReportMixin, AnalyzeChange, AddToLogMixin):
     name = 'find-unexpected-static-analyzer-results'
     description = ['finding unexpected static analyzer results']
     descriptionDone = ['found unexpected static analyzer results']
@@ -8179,13 +8324,7 @@ class FindUnexpectedStaticAnalyzerResults(shell.ShellCommand, AnalyzeChange, Add
     def filter_results_using_results_db(self, results_json):
         self.unexpected_results_filtered = results_json
         identifier = self.getProperty('identifier', None) or self.getProperty('got_revision', None)
-        platform = self.getProperty('platform', None)
-        configuration = {}
-        if platform:
-            configuration['platform'] = ResultsDatabase.platform_for_query(platform)
-        style = self.getProperty('configuration', None)
-        if style and style in ['debug', 'release']:
-            configuration['style'] = style
+        configuration = self.results_db_query_configuration()
 
         yield self._addToLog(self.results_db_log_name, f'Checking Results database for unexpected results. Identifier: {identifier}, configuration: {configuration}\n')
         has_commit = False
@@ -8311,7 +8450,7 @@ class FindUnexpectedStaticAnalyzerResultsWithoutChange(FindUnexpectedStaticAnaly
 
         self.command = ['python3', 'Tools/Scripts/compare-static-analysis-results', os.path.join(self.getProperty('builddir'), 'build/new')]
         self.command += ['--build-output', SCAN_BUILD_OUTPUT_DIR, '--archived-dir', os.path.join(self.getProperty('builddir'), 'build/baseline')]
-        self.command += ['--scan-build-path', '../llvm-project/clang/tools/scan-build/bin/scan-build']  # Only generate results page on the second comparison
+        self.command += ['--scan-build-path', SCAN_BUILD_PATH]  # Only generate results page on the second comparison
         if CURRENT_HOSTNAME in EWS_BUILD_HOSTNAMES + TESTING_ENVIRONMENT_HOSTNAMES and self.getProperty('github.base.ref', DEFAULT_BRANCH) == DEFAULT_BRANCH:
             self.command += [
                 '--builder-name', self.getProperty('buildername', ''),
@@ -8466,7 +8605,7 @@ class GenerateSaferCPPResultsIndex(shell.ShellCommand):
     def run(self):
         self.command = ['python3', 'Tools/Scripts/compare-static-analysis-results', os.path.join(self.getProperty('builddir'), 'build/new')]
         self.command += ['--build-output', SCAN_BUILD_OUTPUT_DIR]
-        self.command += ['--scan-build-path', '../llvm-project/clang/tools/scan-build/bin/scan-build']
+        self.command += ['--scan-build-path', SCAN_BUILD_PATH]
         self.command += ['--generate-results-only']
 
         self.log_observer = logobserver.BufferLogObserver()

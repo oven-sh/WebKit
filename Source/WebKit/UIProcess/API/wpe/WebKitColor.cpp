@@ -30,7 +30,7 @@
  * @blue: Blue channel, between 0.0 and 1.0 inclusive
  * @alpha: Alpha channel, between 0.0 and 1.0 inclusive
  *
- * Boxed type representing a RGBA color.
+ * Boxed type representing an RGBA color.
  *
  * Since: 2.24
  */
@@ -95,7 +95,7 @@ void webkitColorFillFromWebCoreColor(const WebCore::Color& webCoreColor, WebKitC
  * @color: a #WebKitColor to fill in
  * @color_string: color representation as color nickname or HEX string
  *
- * Create a new #WebKitColor for the given @color_string
+ * Fill in @color with the value parsed from the given @color_string
  * representation. There are two valid representation types: standard color
  * names (see https://htmlcolorcodes.com/color-names/ for instance) or HEX
  * values.
@@ -109,7 +109,7 @@ gboolean webkit_color_parse(WebKitColor* color, const gchar* colorString)
     g_return_val_if_fail(color, FALSE);
     g_return_val_if_fail(colorString, FALSE);
 
-    auto webCoreColor = WebCore::CSSPropertyParserHelpers::deprecatedParseColorRawWithoutContext(String::fromLatin1(colorString));
+    auto webCoreColor = WebCore::CSSPropertyParserHelpers::deprecatedParseColorRawWithoutContext(StringView::fromLatin1(colorString));
     if (!webCoreColor.isValid())
         return FALSE;
 

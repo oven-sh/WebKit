@@ -145,8 +145,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> materializeBaselineDataGenerator(const Abs
 
     const unsigned extraPaddingBytes = 0;
     RegisterSet builder;
-    for (auto regs : wasmCallingConvention().jsrArgs)
-        builder.add(regs, IgnoreVectors);
+    for (auto gpr : wasmCallingConvention().gprArgs)
+        builder.add(gpr, IgnoreVectors);
     for (auto reg : wasmCallingConvention().fprArgs)
         builder.add(reg, Options::useWasmSIMD() ? Width128 : Width64);
 
@@ -206,8 +206,8 @@ MacroAssemblerCodeRef<JITThunkPtrTag> callPolymorphicCalleeGenerator(const Abstr
     jit.emitFunctionPrologue();
     const unsigned extraPaddingBytes = 0;
     RegisterSet builder;
-    for (auto regs : wasmCallingConvention().jsrArgs)
-        builder.add(regs, IgnoreVectors);
+    for (auto gpr : wasmCallingConvention().gprArgs)
+        builder.add(gpr, IgnoreVectors);
     for (auto reg : wasmCallingConvention().fprArgs)
         builder.add(reg, Options::useWasmSIMD() ? Width128 : Width64);
 
@@ -344,6 +344,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> Thunks::stub(ThunkGenerator generator)
 
 MacroAssemblerCodeRef<JITThunkPtrTag> Thunks::stub(const AbstractLocker& locker, ThunkGenerator generator)
 {
+    assertIsHeld(m_lock);
     ASSERT(!!generator);
     {
         auto addResult = m_stubs.add(generator, MacroAssemblerCodeRef<JITThunkPtrTag>());

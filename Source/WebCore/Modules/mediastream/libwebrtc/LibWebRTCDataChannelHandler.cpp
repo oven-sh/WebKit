@@ -53,7 +53,7 @@ webrtc::DataChannelInit LibWebRTCDataChannelHandler::fromRTCDataChannelInit(cons
         init.maxRetransmitTime = *options.maxPacketLifeTime;
     if (options.maxRetransmits)
         init.maxRetransmits = *options.maxRetransmits;
-    init.protocol = options.protocol.utf8().data();
+    init.protocol = options.protocol.utf8().legacyCStringPointer();
     init.negotiated = options.negotiated;
     if (options.id)
         init.id = *options.id;
@@ -122,9 +122,10 @@ void LibWebRTCDataChannelHandler::setClient(RTCDataChannelHandlerClient& client,
     m_bufferedMessages.clear();
 }
 
-bool LibWebRTCDataChannelHandler::sendStringData(const CString& utf8Text)
+bool LibWebRTCDataChannelHandler::sendStringData(const UTF8CString& utf8Text)
 {
-    return m_channel->Send({ webrtc::CopyOnWriteBuffer(utf8Text.data(), utf8Text.length()), false });
+    auto bytes = asByteSpan(utf8Text.span());
+    return m_channel->Send({ webrtc::CopyOnWriteBuffer(bytes.data(), bytes.size()), false });
 }
 
 bool LibWebRTCDataChannelHandler::sendRawData(std::span<const uint8_t> data)

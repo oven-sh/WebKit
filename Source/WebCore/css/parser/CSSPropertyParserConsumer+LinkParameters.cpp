@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CSSPropertyParserConsumer+LinkParameters.h"
 
+#include "CSSCustomPropertySyntax.h"
 #include "CSSLinkParameter.h"
 #include "CSSParamValue.h"
 #include "CSSParserTokenRange.h"
@@ -39,31 +40,67 @@
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
 
-// <param()> = param( <dashed-ident> , <declaration-value>? )
+// <param()>    = param( <param-spec> , <declaration-value>? )
+// <param-spec> = color | accent-color | [ <dashed-ident> <css-type>? ]
 // https://drafts.csswg.org/css-link-params/#funcdef-param
-RefPtr<CSSValue> consumeParamFunction(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+static std::optional<CSS::ParamSpec> consumeParamSpec(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    switch (range.peek().id()) {
+    case CSSValueColor:
+        range.consumeIncludingWhitespace();
+        return CSS::ParamSpec { CSS::Keyword::Color { } };
+    case CSSValueAccentColor:
+        range.consumeIncludingWhitespace();
+        return CSS::ParamSpec { CSS::Keyword::AccentColor { } };
+    default:
+        break;
+    }
+
+    auto name = consumeUnresolvedDashedIdent(range, state);
+    if (!name)
+        return { };
+
+    std::optional<CSS::TypeSpecifier> type;
+    if (!range.atEnd() && range.peek().type() != CommaToken) {
+        auto syntax = CSSCustomPropertySyntax::consumeType(range);
+        if (!syntax)
+            return { };
+        type = CSS::TypeSpecifier { WTF::move(*syntax) };
+    }
+
+    return CSS::ParamSpec { CSS::ParamSpec::Custom { WTF::move(*name), WTF::move(type) } };
+}
+
+std::optional<CSS::ParamFunction> consumeParamFunctionRaw(CSSParserTokenRange& range, CSS::PropertyParserState& state)
 {
     if (range.peek().functionId() != CSSValueParam)
-        return nullptr;
+        return { };
 
     auto arguments = consumeFunction(range);
 
-    auto name = consumeUnresolvedDashedIdent(arguments, state);
-    if (!name)
-        return nullptr;
+    auto spec = consumeParamSpec(arguments, state);
+    if (!spec)
+        return { };
 
     // The value may be empty but the comma is required.
     // https://github.com/w3c/csswg-drafts/issues/13767
     if (!consumeCommaIncludingWhitespace(arguments))
-        return nullptr;
+        return { };
 
     // A value containing substitutions cannot be resolved until computed-value time, so
     // fail here and let the declaration be stored unresolved instead. The longhand parser
     // runs before the substitution path, so succeeding would swallow the substitution.
     if (CSSSubstitutionParser::containsSubstitutionFunctions(arguments, state.context))
-        return nullptr;
+        return { };
 
-    return CSSParamValue::create(CSS::ParamFunction { CSS::LinkParameter { WTF::move(*name), CSS::DeclarationValue { CSSVariableData::create(arguments) } } });
+    return CSS::ParamFunction { CSS::LinkParameter { WTF::move(*spec), CSS::DeclarationValue { CSSVariableData::create(arguments) } } };
+}
+
+RefPtr<CSSValue> consumeParamFunction(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    if (auto parameter = consumeParamFunctionRaw(range, state))
+        return CSSParamValue::create(WTF::move(*parameter));
+    return nullptr;
 }
 
 } // namespace CSSPropertyParserHelpers

@@ -26,7 +26,6 @@
 #include "config.h"
 #include "CredentialStorage.h"
 
-#include "NetworkStorageSession.h"
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
 
@@ -91,9 +90,9 @@ void CredentialStorage::removeCredentialsWithOrigin(const SecurityOriginData& or
 {
     m_protectionSpaceToCredentialMap.removeIf([&](auto& keyValuePair) {
         auto& protectionSpace = keyValuePair.key.second;
+        auto expectedPort = origin.port() ? origin.port() : WTF::defaultPortForProtocol(origin.protocol());
         return protectionSpace.host() == origin.host()
-            && ((origin.port() && protectionSpace.port() == *origin.port())
-                || (!origin.port() && protectionSpace.port() == 80))
+            && expectedPort && protectionSpace.port() == *expectedPort
             && ((protectionSpace.serverType() == ProtectionSpace::ServerType::HTTP && origin.protocol() == "http"_s)
                 || (protectionSpace.serverType() == ProtectionSpace::ServerType::HTTPS && origin.protocol() == "https"_s));
     });

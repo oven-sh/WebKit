@@ -28,6 +28,7 @@
 #if ENABLE(WEBDRIVER_BIDI)
 #include "BidiDigitalCredentialsAgent.h"
 #endif
+#include "Connection.h"
 #include "ContextMenuContextData.h"
 #include "EditorState.h"
 #include "EnhancedSecurityTracking.h"
@@ -67,6 +68,10 @@
 #include "WebPaymentCoordinatorProxy.h"
 #endif
 
+#if __has_include(<WebKitAdditions/WebPageProxyAdditionsIncludes.h>)
+#include <WebKitAdditions/WebPageProxyAdditionsIncludes.h>
+#endif
+
 #if ENABLE(DRAG_SUPPORT)
 #include <WebCore/DragActions.h>
 #endif
@@ -103,6 +108,7 @@
 
 #if PLATFORM(COCOA)
 #include "CocoaWindow.h"
+#include "InteractionInformationRequest.h"
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
@@ -111,6 +117,11 @@
 
 #if ENABLE(IMAGE_ANALYSIS)
 #include <WebCore/ImageAnalysisQueue.h>
+#endif
+
+#if USE(GLIB)
+#include "WebKitWebView.h"
+#include <wtf/glib/GWeakPtr.h>
 #endif
 
 namespace WebKit {
@@ -193,7 +204,7 @@ public:
 
 #if ENABLE(WEB_AUTHN) && ENABLE(WEBDRIVER_BIDI)
     std::optional<VirtualWalletBehavior> testingVirtualWalletBehavior;
-    CompletionHandler<void(Expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)> testingPendingDigitalCredentialHandler;
+    CompletionHandler<void(std::expected<WebCore::DigitalCredentialsResponseData, WebCore::ExceptionData>&&)> testingPendingDigitalCredentialHandler;
 #endif
 
     uint32_t checkedPtrCount() const { return WebPopupMenuProxy::Client::checkedPtrCount(); }
@@ -266,6 +277,9 @@ public:
     bool alwaysBounceVertical { true };
     bool alwaysBounceHorizontal { true };
     WebCore::Color sampledPageTopColor;
+#if __has_include(<WebKitAdditions/WebPageProxyInternalsAdditions.h>)
+#include <WebKitAdditions/WebPageProxyInternalsAdditions.h>
+#endif
     WebCore::ScrollPinningBehavior scrollPinningBehavior { WebCore::ScrollPinningBehavior::DoNotPin };
     WebCore::IntSize sizeToContentAutoSizeMaximumSize;
     WebCore::Color themeColor;
@@ -308,6 +322,19 @@ public:
 #if PLATFORM(COCOA)
     WeakObjCPtr<WKWebView> cocoaView;
     std::optional<TransactionID> firstLayerTreeTransactionIdAfterDidCommitLoad;
+
+    struct OutstandingPositionInformationRequest {
+        InteractionInformationRequest request;
+        IPC::AsyncReplyID replyID;
+        Ref<IPC::Connection> connection;
+    };
+    std::optional<OutstandingPositionInformationRequest> outstandingPositionInformationRequest;
+
+    Markable<WebCore::FrameIdentifier> interactionFrameID;
+#endif
+
+#if USE(GLIB)
+    GWeakPtr<WebKitWebView> platformView;
 #endif
 
 #if ENABLE(CONTEXT_MENUS)

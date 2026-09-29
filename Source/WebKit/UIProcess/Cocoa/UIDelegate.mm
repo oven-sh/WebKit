@@ -71,6 +71,7 @@
 #import <WebCore/DataDetection.h>
 #import <WebCore/FontAttributes.h>
 #import <WebCore/SecurityOrigin.h>
+#import <WebCore/StorageAccessQuirks.h>
 #import <WebCore/XRGPUProjectionLayerInit.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/TZoneMallocInlines.h>
@@ -226,6 +227,9 @@ void UIDelegate::setDelegate(id<WKUIDelegate> delegate)
     m_delegateMethods.webViewRequestWebAuthenticationConditionalMediationRegistrationForUserRelatedOriginsCompletionHandler = [delegate respondsToSelector:@selector(_webView:requestWebAuthenticationConditionalMediationRegistrationForUser:relatedOrigins:completionHandler:)];
 #endif
     
+#if ENABLE(APPLE_PAY)
+    m_delegateMethods.webViewDidCompleteApplePayPayment = [delegate respondsToSelector:@selector(_webViewDidCompleteApplePayPayment:)];
+#endif
     m_delegateMethods.webViewDidEnableInspectorBrowserDomain = [delegate respondsToSelector:@selector(_webViewDidEnableInspectorBrowserDomain:)];
     m_delegateMethods.webViewDidDisableInspectorBrowserDomain = [delegate respondsToSelector:@selector(_webViewDidDisableInspectorBrowserDomain:)];
 
@@ -516,7 +520,7 @@ void UIDelegate::UIClient::requestStorageAccessConfirm(WebPageProxy& webPageProx
     }
 
     // Some sites have quirks where multiple login domains require storage access.
-    auto additionalLoginDomain = WebCore::NetworkStorageSession::findAdditionalLoginDomain(currentDomain, requestingDomain);
+    auto additionalLoginDomain = WebCore::findAdditionalLoginDomain(currentDomain, requestingDomain);
 
     if (organizationStorageAccessPromptQuirk || additionalLoginDomain) {
         if (uiDelegate->m_delegateMethods.webViewRequestStorageAccessPanelForDomainUnderCurrentDomainForQuirkDomainsCompletionHandler) {
@@ -587,7 +591,7 @@ void UIDelegate::UIClient::decidePolicyForGeolocationPermissionRequest(WebKit::W
 
     if (uiDelegate->m_delegateMethods.webViewRequestGeolocationPermissionForOriginDecisionHandlerSPI
         || uiDelegate->m_delegateMethods.webViewRequestGeolocationPermissionForOriginDecisionHandler) {
-        Ref securityOrigin = WebCore::SecurityOrigin::create(page.pageLoadState().activeURL());
+        Ref securityOrigin = frameInfo.topOrigin.securityOrigin();
         auto checker = CompletionHandlerCallChecker::create(delegate.get(), @selector(_webView:requestGeolocationPermissionForOrigin:initiatedByFrame:decisionHandler:));
         auto decisionHandler = makeBlockPtr([completionHandler = std::exchange(completionHandler, nullptr), securityOrigin = securityOrigin->data(), checker = WTF::move(checker), weakPage = WeakPtr { page }] (WKPermissionDecision decision) mutable {
             if (checker->completionHandlerHasBeenCalled())
@@ -1110,24 +1114,24 @@ void UIDelegate::UIClient::setWindowFrame(WebKit::WebPageProxy&, const WebCore::
     [delegate _webView:uiDelegate->m_webView.get().get() setWindowFrame:frame];
 }
 
-void UIDelegate::UIClient::windowFrame(WebKit::WebPageProxy&, Function<void(WebCore::FloatRect)>&& completionHandler)
+void UIDelegate::UIClient::windowFrame(WebKit::WebPageProxy&, Function<void(std::optional<WebCore::FloatRect>)>&& completionHandler)
 {
     RefPtr uiDelegate = m_uiDelegate.get();
     if (!uiDelegate)
-        return completionHandler({ });
+        return completionHandler(std::nullopt);
 
     if (!uiDelegate->m_delegateMethods.webViewGetWindowFrameWithCompletionHandler)
-        return completionHandler({ });
+        return completionHandler(std::nullopt);
     
     RetainPtr delegate = uiDelegatePrivate();
     if (!delegate)
-        return completionHandler({ });
+        return completionHandler(std::nullopt);
     
     [delegate _webView:uiDelegate->m_webView.get().get() getWindowFrameWithCompletionHandler:makeBlockPtr([completionHandler = WTF::move(completionHandler), checker = CompletionHandlerCallChecker::create(delegate.get(), @selector(_webView:getWindowFrameWithCompletionHandler:))](CGRect frame) {
         if (checker->completionHandlerHasBeenCalled())
             return;
         checker->didCallCompletionHandler();
-        completionHandler(frame);
+        completionHandler(WebCore::FloatRect { frame });
     }).get()];
 }
 
@@ -1954,6 +1958,26 @@ void UIDelegate::UIClient::queryPermission(const String& permissionName, API::Se
         }
     }).get()];
 }
+
+#if ENABLE(APPLE_PAY)
+
+void UIDelegate::UIClient::didCompleteApplePayPayment(WebPageProxy&)
+{
+    RefPtr uiDelegate = m_uiDelegate.get();
+    if (!uiDelegate)
+        return;
+
+    if (!uiDelegate->m_delegateMethods.webViewDidCompleteApplePayPayment)
+        return;
+
+    RetainPtr delegate = uiDelegatePrivate();
+    if (!delegate)
+        return;
+
+    [delegate _webViewDidCompleteApplePayPayment:uiDelegate->m_webView.get()];
+}
+
+#endif // ENABLE(APPLE_PAY)
 
 void UIDelegate::UIClient::didEnableInspectorBrowserDomain(WebPageProxy&)
 {

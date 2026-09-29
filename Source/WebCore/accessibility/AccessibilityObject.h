@@ -445,7 +445,6 @@ public:
     bool isReplacedElementForTextEmission() const final;
     bool isInUserAgentShadowTree() const final;
     bool isInsideNativeTextControl() const final;
-    AXTextRunLineID listMarkerLineID() const override { return { }; }
     String listMarkerText() const override { return { }; }
     FontOrientation fontOrientation() const final;
 #endif
@@ -709,7 +708,7 @@ public:
     String doAXStringForRange(const CharacterRange&) const override { return { }; }
     IntRect doAXBoundsForRange(const CharacterRange&) const override { return { }; }
     IntRect doAXBoundsForRangeUsingCharacterOffset(const CharacterRange&) const override { return { }; }
-    static StringView listMarkerTextForNodeAndPosition(Node*, Position&&);
+    static String listMarkerTextForNodeAndPosition(Node*, Position&&);
 
     unsigned doAXLineForIndex(unsigned) final;
 
@@ -852,6 +851,7 @@ public:
 
     void clearIsIgnoredFromParentData() { m_isIgnoredFromParentData = { }; }
     void setIsIgnoredFromParentDataForChild(AccessibilityObject&);
+    AccessibilityIsIgnoredFromParentData computeIsIgnoredFromParentData();
 
     AccessibilityChildrenVector documentLinks() override { return AccessibilityChildrenVector(); }
 
@@ -917,7 +917,7 @@ public:
         // Prefix increment operator (++iterator).
         iterator& operator++()
         {
-            m_current = m_current->nextSibling();
+            m_current = protect(m_current)->nextSibling();
             ensureContentsParentValidity();
             return *this;
         }
@@ -933,7 +933,7 @@ public:
         // --iterator
         iterator& operator--()
         {
-            m_current = m_current->previousSibling();
+            m_current = protect(m_current)->previousSibling();
             ensureContentsParentValidity();
             return *this;
         }
@@ -952,7 +952,7 @@ public:
                 return;
             // The objects after a display: contents element's last child are its own siblings, since a
             // display:contents element has no box for them to hang off. Stop rather than walking into them.
-            if (m_current->parentObject() != m_displayContentsParent.get())
+            if (protect(m_current)->parentObject() != m_displayContentsParent.get())
                 m_current = nullptr;
         }
 
@@ -974,7 +974,7 @@ protected:
     void markPlatformWrapperIgnoredStateDirty() const { };
 #endif
 
-    void setIsIgnoredFromParentData(AccessibilityIsIgnoredFromParentData& data) { m_isIgnoredFromParentData = data; }
+    void setIsIgnoredFromParentData(const AccessibilityIsIgnoredFromParentData& data) { m_isIgnoredFromParentData = data; }
     bool ignoredFromPresentationalRole() const;
 
     bool isAccessibilityObject() const override { return true; }

@@ -49,84 +49,60 @@ namespace Wasm {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ModuleManager);
 
-uint32_t ModuleManager::registerModule(Module& module)
+void ModuleManager::registerInstance(JSWebAssemblyInstance* jsInstance)
 {
     Locker locker { m_lock };
-    uint32_t moduleId = m_nextModuleId++;
-    m_moduleIdToModule.set(moduleId, &module);
-    const auto& moduleInfo = module.moduleInformation();
-    moduleInfo.debugInfo->id = moduleId;
-    m_unnotifiedModuleIds.add(moduleId);
-    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][registerModule] - registered module with ID: ", moduleId, " size: ", moduleInfo.debugInfo->source.size(), " bytes");
-    return moduleId;
-}
-
-void ModuleManager::unregisterModule(Module& module)
-{
-    Locker locker { m_lock };
-    uint32_t moduleId = module.debugId();
-    m_moduleIdToModule.remove(moduleId);
-    m_unnotifiedModuleIds.remove(moduleId);
-    m_hasPendingModuleRemovals = true;
-    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][unregisterModule] - unregistered module with debug ID: ", moduleId);
-}
-
-uint32_t ModuleManager::registerInstance(JSWebAssemblyInstance* jsInstance)
-{
-    Locker locker { m_lock };
+    // IDs are never reused, so the address space bounds how many instances one session may
+    // create. Fail here rather than deep inside VirtualAddress::encode().
+    RELEASE_ASSERT(m_nextInstanceId <= VirtualAddress::MAX_ID, "Wasm debugger ran out of instance IDs");
     uint32_t instanceId = m_nextInstanceId++;
 
     RefPtr<InstanceAnchor> anchor = jsInstance->anchor();
     RELEASE_ASSERT(anchor, "Instance must have an anchor");
 
+    const auto& moduleInfo = jsInstance->moduleInformation();
+    RELEASE_ASSERT(moduleInfo.debugInfo && !moduleInfo.debugInfo->source.isEmpty(), "Instance must have module source");
+
     amortizedCleanupIfNeeded();
     m_instanceIdToInstance.set(instanceId, ThreadSafeWeakPtr { *anchor });
-
     jsInstance->setDebugId(instanceId);
-    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][registerInstance] - registered instance with ID: ", instanceId, " for module ID: ", jsInstance->module().debugId());
-    return instanceId;
+    m_unnotifiedInstanceIds.add(instanceId);
+
+    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][registerInstance] - registered instance with ID: ", instanceId, " of module: ", RawPointer(&jsInstance->module()));
 }
 
-bool ModuleManager::needsNewModuleNotification(JSWebAssemblyInstance* jsInstance)
+bool ModuleManager::needsLibraryRequery()
 {
     Locker locker { m_lock };
-    uint32_t moduleId = jsInstance->module().debugId();
-    return m_unnotifiedModuleIds.contains(moduleId);
-}
-
-bool ModuleManager::needsLibraryRequery() const
-{
-    Locker locker { m_lock };
-    return !m_unnotifiedModuleIds.isEmpty() || m_hasPendingModuleRemovals;
+    // Sweep here rather than leaving it to the amortized cleanup, which only runs on unrelated
+    // traffic and may never run at all: a collected instance would then keep its library in
+    // LLDB's list forever. This runs once per stop reply, over the live instances.
+    sweepDeadInstances();
+    return !m_unnotifiedInstanceIds.isEmpty() || m_hasPendingLibraryRemovals;
 }
 
 void ModuleManager::notifyLibraryRequeryComplete()
 {
     Locker locker { m_lock };
-    m_unnotifiedModuleIds.clear();
-    m_hasPendingModuleRemovals = false;
+    m_unnotifiedInstanceIds.clear();
+    m_hasPendingLibraryRemovals = false;
 }
 
-Vector<uint32_t> ModuleManager::unnotifiedModuleIds() const
+Vector<uint32_t> ModuleManager::unnotifiedInstanceIds() const
 {
     Locker locker { m_lock };
     Vector<uint32_t> result;
-    result.reserveInitialCapacity(m_unnotifiedModuleIds.size());
-    for (uint32_t id : m_unnotifiedModuleIds)
+    result.reserveInitialCapacity(m_unnotifiedInstanceIds.size());
+    for (uint32_t id : m_unnotifiedInstanceIds)
         result.append(id);
     std::sort(result.begin(), result.end());
     return result;
 }
 
-Module* ModuleManager::module(uint32_t moduleId) const
+Vector<uint32_t> ModuleManager::takeCollectedInstanceIds()
 {
     Locker locker { m_lock };
-    auto itr = m_moduleIdToModule.find(moduleId);
-    if (itr == m_moduleIdToModule.end()) {
-        dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][module] - module not found for ID: ", moduleId);
-        return nullptr;
-    }
-    return itr->value;
+    return std::exchange(m_collectedInstanceIds, { });
 }
 
 JSWebAssemblyInstance* ModuleManager::jsInstance(uint32_t instanceId)
@@ -194,33 +170,55 @@ String ModuleManager::generateLibrariesXML() const
         }
     };
 
-    for (const auto& pair : m_moduleIdToModule) {
-        uint32_t moduleId = pair.key;
-        RefPtr module = pair.value;
-        if (!module)
+    // Report libraries in instance-id order so the list LLDB sees is stable across requeries.
+    Vector<std::pair<uint32_t, RefPtr<InstanceAnchor>>> liveInstances;
+    liveInstances.reserveInitialCapacity(m_instanceIdToInstance.size());
+    for (const auto& pair : m_instanceIdToInstance) {
+        if (RefPtr<InstanceAnchor> anchor = pair.value.get())
+            liveInstances.append({ pair.key, WTF::move(anchor) });
+    }
+    std::sort(liveInstances.begin(), liveInstances.end(), [](const auto& a, const auto& b) {
+        return a.first < b.first;
+    });
+
+    unsigned libraryCount = 0;
+    for (const auto& [instanceId, anchor] : liveInstances) {
+        Locker anchorLocker { anchor->m_lock };
+        JSWebAssemblyInstance* instance = anchor->instance();
+        if (!instance)
             continue;
 
-        const auto& debugInfo = module->moduleInformation().debugInfo;
-        if (debugInfo->source.isEmpty())
-            continue;
+        const auto& moduleInfo = instance->moduleInformation();
+        const auto& debugInfo = moduleInfo.debugInfo;
+        VirtualAddress moduleBaseAddress = VirtualAddress::createModule(instanceId);
+        // Instance IDs are unique across every module, so suffixing with one is enough to keep
+        // library names distinct even when two modules declare the same name. Both halves are
+        // fixed for the life of the instance, so a library is never renamed.
+        // FIXME: The name carries no module identity, so two modules declaring the same name look
+        // like two instances of one. Fold in a hash of the module's bytes or its build_id section
+        // — `<name>#<hash>@<instance>` — cached on ModuleDebugInfo, since this runs per qXfer chunk.
+        String libraryName = moduleInfo.declaredName();
+        if (libraryName.isEmpty()) {
+            // No name to qualify: the base address already names the instance uniquely.
+            libraryName = makeString("0x"_s, moduleBaseAddress.hex(), ".wasm"_s);
+        } else
+            libraryName = makeString(libraryName, '@', instanceId);
 
-        ASSERT(moduleId == debugInfo->id);
-        VirtualAddress moduleBaseAddress = VirtualAddress::createModule(moduleId);
-        String moduleName = debugInfo->debugName();
         xml.append("  <library name=\""_s);
-        appendXMLEscaped(xml, moduleName);
+        appendXMLEscaped(xml, libraryName);
         xml.append("\">\n"_s);
         xml.append("    <section address=\"0x"_s);
         xml.append(moduleBaseAddress.hex());
         xml.append("\"/>\n"_s);
         xml.append("  </library>\n"_s);
-        dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][generateLibrariesXML] - added module '", moduleName, "' ID: ", moduleId, " at ", moduleBaseAddress, " size: 0x", hex(debugInfo->source.size(), Lowercase));
+        libraryCount++;
+        dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][generateLibrariesXML] - added instance '", libraryName, "' ID: ", instanceId, " at ", moduleBaseAddress, " size: 0x", hex(debugInfo->source.size(), Lowercase));
     }
 
     xml.append("</library-list>\n"_s);
 
     String result = xml.toString();
-    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][generateLibrariesXML] - generated library list XML: ", m_moduleIdToModule.size(), " modules, ", result.length(), " characters");
+    dataLogLnIf(Options::verboseWasmDebugger(), "[ModuleManager][generateLibrariesXML] - generated library list XML: ", libraryCount, " instances, ", result.length(), " characters");
     return result;
 }
 
@@ -230,20 +228,33 @@ uint32_t ModuleManager::nextInstanceId() const
     return m_nextInstanceId;
 }
 
-void ModuleManager::amortizedCleanupIfNeeded()
+void ModuleManager::sweepDeadInstances()
 {
-    if (++m_operationCountSinceLastCleanup > m_maxOperationCountWithoutCleanup) {
-        m_instanceIdToInstance.removeIf([](auto& entry) {
-            return !entry.value.get(); // Remove entries with dead anchors
-        });
-        cleanupHappened();
+    Vector<uint32_t> deadIds;
+    for (const auto& pair : m_instanceIdToInstance) {
+        if (!pair.value.get())
+            deadIds.append(pair.key);
     }
-}
 
-void ModuleManager::cleanupHappened()
-{
+    for (uint32_t instanceId : deadIds) {
+        m_instanceIdToInstance.remove(instanceId);
+        m_collectedInstanceIds.append(instanceId);
+        // A collected instance drops a library from the list, so LLDB has to requery — unless it
+        // was never told the instance existed, in which case there is nothing for it to drop.
+        if (!m_unnotifiedInstanceIds.remove(instanceId))
+            m_hasPendingLibraryRemovals = true;
+    }
+
+    // The budget is sized off the surviving instance count, so it belongs with the sweep and has
+    // to follow the removals above.
     m_operationCountSinceLastCleanup = 0;
     m_maxOperationCountWithoutCleanup = std::min(std::numeric_limits<unsigned>::max() / 2, static_cast<unsigned>(m_instanceIdToInstance.size())) * 2;
+}
+
+void ModuleManager::amortizedCleanupIfNeeded()
+{
+    if (++m_operationCountSinceLastCleanup > m_maxOperationCountWithoutCleanup)
+        sweepDeadInstances();
 }
 
 }

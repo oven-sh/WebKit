@@ -87,9 +87,12 @@ public:
     bool layoutSubtree() const;
 
     void requestPaint();
+    void dispatchPaintEvent();
 
     ExceptionOr<Ref<DOMMatrix>> getElementTransform(const CanvasElementImageSource&, DOMMatrix& drawTransform);
     ExceptionOr<Ref<CanvasElementImage>> captureElementImage(Element&);
+
+    std::optional<CanvasElementSnapshot> drawableElementSnapshot(Element&) const;
 
     CanvasRenderingContext* renderingContext() const final { return m_context.get(); }
     ExceptionOr<std::optional<RenderingContext>> getContext(JSC::JSGlobalObject&, const String& contextId, FixedVector<JSC::Strong<JSC::Unknown>>&& arguments);
@@ -137,8 +140,7 @@ public:
 
     std::unique_ptr<CSSParserContext> createCSSParserContext() const final;
 
-    Image* copiedImage() const final;
-    void clearCopiedImage() const final;
+    Image* copiedImage() const;
     RefPtr<ImageData> getImageData();
 
     SecurityOrigin* securityOrigin() const final;
@@ -202,7 +204,7 @@ private:
 
     std::unique_ptr<CanvasRenderingContext> m_context;
     PlatformDynamicRangeLimit m_dynamicRangeLimit { PlatformDynamicRangeLimit::initialValue() };
-    mutable RefPtr<Image> m_copiedImage; // FIXME: This is temporary for platforms that have to copy the image buffer to render (and for CSSCanvasValue).
+    mutable RefPtr<Image> m_copiedImage; // For CSSCanvasValue.
 };
 
 WebCoreOpaqueRoot root(HTMLCanvasElement*);

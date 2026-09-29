@@ -96,7 +96,7 @@ static bool defaultStateForRemoteInspectionEnabledByDefault(void)
         auto developerProvisioningEntitlement = "get-task-allow"_s;
 #endif
         if (mainProcessHasEntitlement(developerProvisioningEntitlement, parentProcessAuditToken)) {
-            WTFLogAlways("Inspection is enabled by default for process or parent application with '%s' entitlement linked against old SDK. Use `inspectable` API to enable inspection on newer SDKs.", developerProvisioningEntitlement.characters());
+            SAFE_WTFLOGALWAYS("Inspection is enabled by default for process or parent application with '%s' entitlement linked against old SDK. Use `inspectable` API to enable inspection on newer SDKs.", developerProvisioningEntitlement);
             return true;
         }
     }
@@ -107,7 +107,7 @@ static bool defaultStateForRemoteInspectionEnabledByDefault(void)
     auto deprecatedWebInspectorAllowEntitlement = "com.apple.private.webinspector.allow-remote-inspection"_s;
 #endif
     if (mainProcessHasEntitlement(deprecatedWebInspectorAllowEntitlement, parentProcessAuditToken)) {
-        WTFLogAlways("Inspection is enabled by default for process or parent application with deprecated '%s' entitlement. Use `inspectable` API to enable inspection instead.", deprecatedWebInspectorAllowEntitlement.characters());
+        SAFE_WTFLOGALWAYS("Inspection is enabled by default for process or parent application with deprecated '%s' entitlement. Use `inspectable` API to enable inspection instead.", deprecatedWebInspectorAllowEntitlement);
         return true;
     }
 

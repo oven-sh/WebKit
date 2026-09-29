@@ -72,12 +72,22 @@ void ScriptExecutable::destroy(JSCell* cell)
     static_cast<ScriptExecutable*>(cell)->ScriptExecutable::~ScriptExecutable();
 }
 
-void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
+void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
 {
     m_jitCodeForCall = nullptr;
     m_jitCodeForConstruct = nullptr;
     m_jitCodeForCallWithArityCheck = CodePtr<JSEntryPtrTag>();
     m_jitCodeForConstructWithArityCheck = CodePtr<JSEntryPtrTag>();
+
+    bool keepsUnlinkedCode = vm().keepsUnlinkedCode();
+    auto clearGlobalCode = [&](GlobalExecutable* executable, bool canDecodeAgain) {
+        executable->m_codeBlock.clear();
+        if (keepsUnlinkedCode) [[unlikely]]
+            return;
+        UnlinkedCodeBlock* unlinkedCodeBlock = executable->m_unlinkedCodeBlock.get();
+        if (mode == ClearCode::All || (canDecodeAgain && unlinkedCodeBlock && unlinkedCodeBlock->cachedPayloadIndex()))
+            executable->m_unlinkedCodeBlock.clear();
+    };
 
     switch (type()) {
     case FunctionExecutableType: {
@@ -86,23 +96,26 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
         executable->m_codeBlockForConstruct.clear();
         break;
     }
-    case EvalExecutableType: {
-        EvalExecutable* executable = static_cast<EvalExecutable*>(this);
-        executable->m_codeBlock.clear();
-        executable->m_unlinkedCodeBlock.clear();
+    case EvalExecutableType:
+        // newCodeBlockFor() does not fetch an eval's unlinked code again.
+        clearGlobalCode(static_cast<EvalExecutable*>(this), false);
         break;
-    }
-    case ProgramExecutableType: {
-        ProgramExecutable* executable = static_cast<ProgramExecutable*>(this);
-        executable->m_codeBlock.clear();
-        executable->m_unlinkedCodeBlock.clear();
+    case ProgramExecutableType:
+        clearGlobalCode(static_cast<ProgramExecutable*>(this), true);
         break;
-    }
     case ModuleProgramExecutableType: {
         ModuleProgramExecutable* executable = static_cast<ModuleProgramExecutable*>(this);
-        executable->m_codeBlock.clear();
-        executable->m_unlinkedCodeBlock.clear();
-        executable->m_moduleEnvironmentSymbolTable.clear();
+        if (mode == ClearCode::All) {
+            // The environment's symbol table and the function declarations' executables stay
+            // (ModuleProgramExecutable::getUnlinkedCodeBlock). What goes is the offer to later records:
+            // JSModuleRecord::getOrMakeExecutable does not adopt an executable whose code was deleted.
+            clearGlobalCode(executable, true);
+            executable->m_hasReleasedUnlinkedCode = false;
+        } else {
+            executable->m_codeBlock.clear();
+            if (!keepsUnlinkedCode)
+                executable->releaseUnlinkedCodeIfRecoverable(vm());
+        }
         break;
     }
     default:
@@ -111,7 +124,8 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet)
     }
 
     ASSERT(&Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()) == &clearableCodeSet);
-    clearableCodeSet.remove(this);
+    if (!hasClearableCode())
+        clearableCodeSet.remove(this);
 }
 
 void ScriptExecutable::installCode(CodeBlock* codeBlock)
@@ -241,9 +255,8 @@ bool ScriptExecutable::hasClearableCode() const
 
     } else if (structure()->classInfoForCells() == ModuleProgramExecutable::info()) {
         auto* executable = static_cast<const ModuleProgramExecutable*>(this);
-        if (executable->m_codeBlock
-            || executable->m_unlinkedCodeBlock
-            || executable->m_moduleEnvironmentSymbolTable)
+        // (Or unlinked code that a later record would have decoded again: clearCode() withdraws that.)
+        if (executable->m_codeBlock || executable->m_unlinkedCodeBlock || executable->m_hasReleasedUnlinkedCode)
             return true;
     }
     return false;
@@ -255,7 +268,9 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(vm.heap.isDeferred());
-    ASSERT(endColumn() != UINT_MAX);
+    // Compiling needs source text. Asking for a position would build the provider's
+    // line-start table for every executable whenever assertions are on.
+    ASSERT(hasSourceText());
 
     JSGlobalObject* globalObject = scope->realm();
 
@@ -301,21 +316,19 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     // We continue using the same CodeGenerationMode for Generators because live generator objects can
     // keep the state which is only valid with the CodeBlock compiled with the same CodeGenerationMode.
     if (isGeneratorOrAsyncFunctionBodyParseMode(executable->parseMode())) {
-        if (!m_codeForGeneratorBodyWasGenerated) {
-            m_codeGenerationModeForGeneratorBody = codeGenerationMode;
-            m_codeForGeneratorBodyWasGenerated = true;
-        } else
-            codeGenerationMode = m_codeGenerationModeForGeneratorBody;
+        codeGenerationMode = codeGenerationModeForResumableBody(codeGenerationMode);
+        pinCodeGenerationModeForResumableBody();
     }
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = 
         executable->m_unlinkedExecutable->unlinkedCodeBlockFor(
             vm, executable->source(), kind, codeGenerationMode, error, 
             executable->parseMode());
-    recordParse(
-        executable->m_unlinkedExecutable->features(), 
+    // The (lastLine, endColumn) overload drops those two for a FunctionExecutable; computing them would pull the
+    // function's end position out of the bytecode cache (UnlinkedFunctionExecutable::materializeDeferredScalarsIfNeeded).
+    executable->recordParse(
+        executable->m_unlinkedExecutable->features(),
         executable->m_unlinkedExecutable->lexicallyScopedFeatures(),
-        executable->m_unlinkedExecutable->hasCapturedVariables(),
-        lastLine(), endColumn());
+        executable->m_unlinkedExecutable->hasCapturedVariables());
     if (!unlinkedCodeBlock) {
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;
@@ -509,18 +522,6 @@ unsigned ScriptExecutable::typeProfilingEndOffset() const
     return source().length() - 1;
 }
 
-void ScriptExecutable::recordParse(CodeFeatures features, LexicallyScopedFeatures lexicallyScopedFeatures, bool hasCapturedVariables, int lastLine, unsigned endColumn)
-{
-    switch (type()) {
-    case FunctionExecutableType:
-        // Since UnlinkedFunctionExecutable holds the information to calculate lastLine and endColumn, we do not need to remember them in ScriptExecutable's fields.
-        uncheckedDowncast<FunctionExecutable>(this)->recordParse(features, lexicallyScopedFeatures, hasCapturedVariables);
-        return;
-    default:
-        uncheckedDowncast<GlobalExecutable>(this)->recordParse(features, lexicallyScopedFeatures, hasCapturedVariables, lastLine, endColumn);
-        return;
-    }
-}
 
 int ScriptExecutable::lastLine() const
 {

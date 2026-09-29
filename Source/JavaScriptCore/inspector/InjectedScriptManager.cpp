@@ -136,7 +136,7 @@ void InjectedScriptManager::clearExceptionValue()
         injectedScript.clearExceptionValue();
 }
 
-Expected<JSObject*, NakedPtr<Exception>> InjectedScriptManager::createInjectedScript(JSGlobalObject* globalObject, int id)
+std::expected<JSObject*, NakedPtr<Exception>> InjectedScriptManager::createInjectedScript(JSGlobalObject* globalObject, int id)
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
@@ -189,7 +189,7 @@ InjectedScript InjectedScriptManager::injectedScriptFor(JSGlobalObject* globalOb
         auto& stack = error->stack();
         if (stack.size() > 0)
             lineColumn = stack[0].computeLineAndColumn();
-        WTFLogAlways("Error when creating injected script: %s (%d:%d)\n", error->value().toWTFString(globalObject).utf8().data(), lineColumn.line, lineColumn.column);
+        SAFE_WTFLOGALWAYS("Error when creating injected script: %s (%d:%d)\n", error->value().toWTFString(globalObject).utf8(), lineColumn.line, lineColumn.column);
         RELEASE_ASSERT_NOT_REACHED();
     }
     if (!createResult.value()) {

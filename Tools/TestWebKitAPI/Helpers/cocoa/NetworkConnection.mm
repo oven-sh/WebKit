@@ -124,13 +124,23 @@ void Connection::receiveHTTPMessagingRequest(CompletionHandler<void(HTTPRequestD
                             if (path)
                                 blockPartial.path = String::fromUTF8(path);
                         });
+                        nw_http_request_access_authority(request.get(), ^(const char* authority) {
+                            if (authority)
+                                blockPartial.authority = String::fromUTF8(authority);
+                        });
                         if (RetainPtr fields = adoptNS(nw_http_request_copy_header_fields(request.get()))) {
                             nw_http_fields_enumerate(fields.get(), ^bool(const char* name, size_t nameLength, const char* value, size_t valueLength) {
+                                String fieldName = String::fromUTF8(std::span(name, nameLength));
                                 String fieldValue = String::fromUTF8(std::span(value, valueLength));
-                                auto addResult = blockPartial.headerFields.add(String::fromUTF8(std::span(name, nameLength)), fieldValue);
-                                // RFC 7230 3.2.2: repeated fields with the same name are combined by joining with a comma.
-                                if (!addResult.isNewEntry)
-                                    addResult.iterator->value = makeString(addResult.iterator->value, ", "_s, fieldValue);
+                                auto addResult = blockPartial.headerFields.add(fieldName, fieldValue);
+                                if (!addResult.isNewEntry) {
+                                    // RFC 7540 8.1.2.5: cookie crumbling splits a single Cookie header into multiple
+                                    // header fields on the wire, which must be rejoined with "; " to reconstruct the
+                                    // original Cookie header value. All other repeated fields are combined per RFC
+                                    // 7230 3.2.2 by joining with a comma.
+                                    ASCIILiteral separator = fieldName == "cookie"_s ? "; "_s : ", "_s;
+                                    addResult.iterator->value = makeString(addResult.iterator->value, separator, fieldValue);
+                                }
                                 return true;
                             });
                         }
@@ -154,7 +164,7 @@ void Connection::sendHTTPMessagingResponse(const HTTPResponse& response, Complet
     RetainPtr httpResponse = adoptNS(nw_http_response_create(response.statusCode, nullptr));
     RetainPtr fields = adoptNS(nw_http_fields_create());
     for (auto& pair : response.headerFields)
-        nw_http_fields_append(fields.get(), pair.key.utf8().data(), pair.value.utf8().data());
+        nw_http_fields_append(fields.get(), pair.key.utf8().legacyCStringPointer(), pair.value.utf8().legacyCStringPointer());
     nw_http_response_set_header_fields(httpResponse.get(), fields.get());
 
     RetainPtr metadata = adoptNS(nw_http_create_metadata_for_response(httpResponse.get()));
@@ -248,8 +258,8 @@ void Connection::webSocketHandshake(CompletionHandler<void()>&& connectionHandle
 
             constexpr auto webSocketKeyGUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"_s;
             SHA1 sha1;
-            sha1.addBytes(byteCast<uint8_t>(keySpan.first(keyEnd)));
-            sha1.addBytes(webSocketKeyGUID.span());
+            sha1.addBytes(std::as_bytes(keySpan.first(keyEnd)));
+            sha1.addBytes(std::as_bytes(webSocketKeyGUID.span()));
             SHA1::Digest hash;
             sha1.computeHash(hash);
             return base64EncodeToString(hash);
@@ -265,8 +275,10 @@ void Connection::webSocketHandshake(CompletionHandler<void()>&& connectionHandle
 
 void Connection::terminate(CompletionHandler<void()>&& completionHandler)
 {
-    nw_connection_set_state_changed_handler(m_connection.get(), makeBlockPtr([completionHandler = WTF::move(completionHandler)] (nw_connection_state_t state, nw_error_t error) mutable {
-        ASSERT_UNUSED(error, !error);
+    nw_connection_set_state_changed_handler(m_connection.get(), makeBlockPtr([completionHandler = WTF::move(completionHandler)] (nw_connection_state_t state, nw_error_t) mutable {
+        // The error reported here describes the connection, not the cancellation: a connection that
+        // failed its TLS handshake still reports "bad certificate" once cancelled. Cancelling
+        // cannot itself fail, so there is nothing to check.
         if (state == nw_connection_state_cancelled && completionHandler)
             completionHandler();
     }).get());

@@ -32,18 +32,12 @@
 #include <wtf/StdLibExtras.h>
 #include <wtf/text/WTFString.h>
 
-#define TEXT_MARKER_ASSERT(assertion) do { \
-    std::string debugString = "Text marker origin: " + originToString(origin()).utf8().toStdString(); \
-    ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
-} while (0)
-#define TEXT_MARKER_ASSERT_SINGLE(assertion, marker) do { \
-    std::string debugString = "Text marker origin: " + originToString(marker.origin()).utf8().toStdString(); \
-    ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
-} while (0)
-#define TEXT_MARKER_ASSERT_DOUBLE(assertion, marker1, marker2) do { \
-    std::string debugString = "Text marker origins: " + originToString(marker1.origin()).utf8().toStdString() + ", " + originToString(marker2.origin()).utf8().data(); \
-    ASSERT_WITH_MESSAGE(assertion, "%s", debugString.c_str()); \
-} while (0)
+#define TEXT_MARKER_ASSERT(assertion) \
+    ASSERT_WITH_MESSAGE(assertion, "Text marker origin: %s", originToString(origin()).utf8())
+#define TEXT_MARKER_ASSERT_SINGLE(assertion, marker) \
+    ASSERT_WITH_MESSAGE(assertion, "Text marker origin: %s", originToString(marker.origin()).utf8())
+#define TEXT_MARKER_ASSERT_DOUBLE(assertion, marker1, marker2) \
+    ASSERT_WITH_MESSAGE(assertion, "Text marker origins: %s, %s", originToString(marker1.origin()).utf8(), originToString(marker2.origin()).utf8())
 
 namespace WebCore {
 
@@ -342,8 +336,10 @@ public:
     AXTextMarker findLastBefore(std::optional<AXID>) const;
     AXTextMarker findLast() const { return findLastBefore(std::nullopt); }
     // The index of the line this text marker is on relative to the nearest editable ancestor (or start of the page if there are no editable ancestors).
+    // Pass |rootID| to count from the start of that object's text instead. This is required for computing
+    // the correct line index for nested text controls (e.g. a textarea inside a contenteditable).
     // Returns -1 if the line couldn't be computed (i.e. because `this` is invalid).
-    int lineIndex() const;
+    int lineIndex(std::optional<AXID> rootID = std::nullopt) const;
     // After resolving this marker to a text-run marker, what line does the offset point to?
     AXTextRunLineID lineID() const;
     // Returns the line number for the character index within the descendants of this marker's object.

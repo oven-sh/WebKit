@@ -42,7 +42,7 @@ public:
     {
     }
     
-    Event(WallTime time, Bytecodes* bytecodes, Compilation* compilation, const char* summary, const CString& detail)
+    Event(WallTime time, Bytecodes* bytecodes, Compilation* compilation, const char* summary, const UTF8CString& detail)
         : m_time(time)
         , m_bytecodes(bytecodes)
         , m_compilation(compilation)
@@ -60,7 +60,7 @@ public:
     Bytecodes* bytecodes() const { return m_bytecodes; }
     Compilation* compilation() const { return m_compilation; }
     const char* summary() const { return m_summary; }
-    const CString& detail() const LIFETIME_BOUND { return m_detail; }
+    const UTF8CString& detail() const LIFETIME_BOUND { return m_detail; }
     
     void dump(PrintStream&) const;
     Ref<JSON::Value> toJSON(Dumper&) const;
@@ -70,7 +70,7 @@ private:
     Bytecodes* m_bytecodes { nullptr };
     Compilation* m_compilation { nullptr };
     const char* m_summary { nullptr };
-    CString m_detail;
+    UTF8CString m_detail;
 };
 
 } } // namespace JSC::Profiler

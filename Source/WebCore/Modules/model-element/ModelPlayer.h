@@ -66,9 +66,13 @@ class ModelPlayerTransformState;
 class SharedBuffer;
 class TransformationMatrix;
 
-class DestinationColorSpace;
+class ColorSpace;
 class FloatSize;
 struct ModelPlayerGraphicsLayerConfiguration;
+
+#if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
+enum class EnvironmentMapKind : uint8_t { None, Default, Custom };
+#endif
 
 class WEBCORE_EXPORT ModelPlayer : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<ModelPlayer, WTF::DestructionThread::Main> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(ModelPlayer, WEBCORE_EXPORT);
@@ -88,7 +92,7 @@ public:
     virtual void configureGraphicsLayer(GraphicsLayer&, ModelPlayerGraphicsLayerConfiguration&&) = 0;
     virtual void NODELETE adoptContentsDisplayDelegateFrom(ModelPlayer&);
 
-    virtual RefPtr<ImageBuffer> snapshotCurrentFrame(const FloatSize& deviceSize, const DestinationColorSpace&);
+    virtual RefPtr<ImageBuffer> snapshotCurrentFrame(const FloatSize& deviceSize, const ColorSpace&);
 
     // State changes.
     virtual void NODELETE visibilityStateDidChange();
@@ -153,7 +157,10 @@ public:
 #endif
 
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
-    virtual void setEnvironmentMap(Ref<SharedBuffer>&& data);
+    virtual void setEnvironmentMap(Ref<SharedBuffer>&& data, const URL& sourceURL);
+    virtual void disableEnvironmentMap();
+    virtual void enableSystemEnvironmentMap();
+    virtual String environmentMapForTesting() const;
 #endif
 
 #if ENABLE(MODEL_ELEMENT_PORTAL)
@@ -161,8 +168,9 @@ public:
 #endif
 
 #if ENABLE(SPATIAL_PORTAL)
-    virtual void setPortalTransform(PortalTransformKind);
+    virtual void setPortalTransform(const UsedPortalTransform&);
     virtual void setPortalAction(PortalActionKind);
+    virtual void setAnchor(NodeIdentifier, std::optional<NodeIdentifier> anchorNode, const String& placement);
 #endif
 
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE)

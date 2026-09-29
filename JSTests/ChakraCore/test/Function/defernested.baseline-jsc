@@ -58,11 +58,11 @@ call self from with
 foo 0
 
 parent is catch scope
-ReferenceError: Can't find variable: no_such_var
+ReferenceError: no_such_var is not defined
 parent func contains catch scope
-ReferenceError: Can't find variable: no_such_var
+ReferenceError: no_such_var is not defined
 parent func contains catch scope and eval
-ReferenceError: Can't find variable: no_such_var
+ReferenceError: no_such_var is not defined
 
 Win8 540999: arguments identifier used as parameter
 TypeError: undefined is not an object (evaluating 'arguments.length')

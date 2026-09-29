@@ -119,8 +119,8 @@
 [Legacy] AliasParam WebKit::SharedVideoFrame::Buffer Variant<std::nullptr_t, WebKit::RemoteVideoFrameReadReference, MachSendRight, WebCore::IntSize>
 
 # [UnsafeWrapper] in single line format as they are all unique types
-[Legacy] MessageParamReply WebPageProxy.ModelElementSizeDidChange result Expected<MachSendRight, WebCore::ResourceError>
-[Legacy] MessageParamReply UserMediaCaptureManagerProxy.TakePhoto result Expected<std::pair<Vector<uint8_t>, String>, String>
+[Legacy] MessageParamReply WebPageProxy.ModelElementSizeDidChange result std::expected<MachSendRight, WebCore::ResourceError>
+[Legacy] MessageParamReply UserMediaCaptureManagerProxy.TakePhoto result std::expected<std::pair<Vector<uint8_t>, String>, String>
 [Legacy] MessageParam NetworkProcess.SetProxyConfigData proxyConfigurations Vector<std::pair<Vector<uint8_t>, std::optional<WTF::UUID>>>
 [Legacy] StructureParam WebKit::HTTPBody::Element.data Variant<Vector<uint8_t>, WebKit::HTTPBody::Element::FileData, String>
 [Legacy] StructureParam WebCore::SerializedPlatformDataCueValue::Data.value Variant<std::nullptr_t, RetainPtr<NSString>, RetainPtr<NSDate>, RetainPtr<NSNumber>, RetainPtr<NSData>>
@@ -146,10 +146,6 @@
     [Legacy] MessageParam LibWebRTCCodecs.SetEncodingConfiguration description
     [Legacy] MessageParam LibWebRTCCodecsProxy.DecodeFrame data
     [Legacy] MessageParam LibWebRTCCodecsProxy.SetDecoderFormatDescription description
-
-    [Legacy] MessageParam LogStream.LogOnBehalfOfWebContent logCategory
-    [Legacy] MessageParam LogStream.LogOnBehalfOfWebContent logChannel
-    [Legacy] MessageParam LogStream.LogOnBehalfOfWebContent logString
 
     [Legacy] MessageParam NetworkRTCProvider.SendToSocket data
     [Legacy] MessageParam NetworkSocketChannel.SendData data
@@ -183,7 +179,6 @@
     [Legacy] StructureParam WebKit::CoreIPCSecKeychainItem.dataReference()
     [Legacy] StructureParam WebKit::CoreIPCSecTrust.dataReference()
     [Legacy] StructureParam WebKit::CoreIPCCFCharacterSet.dataReference()
-    [Legacy] StructureParam WebKit::SandboxExtensionImpl.getSerializedFormat()
     [Legacy] StructureParam WebCore::BufferSource.span()
     [Legacy] StructureParam WebCore::PixelBufferSourceView.bytes()
     [Legacy] StructureParam JSC::ArrayBufferContents.span()
@@ -264,8 +259,6 @@
     [Legacy] StructureParam WebCore::PushSubscriptionData.sharedAuthenticationSecret
     [Legacy] StructureParam WebCore::SerializedScriptValueInternals.data
     [Legacy] StructureParam WebCore::ThreadSafeDataBufferImpl.m_data
-    [Legacy] StructureParam WebCore::WebCodecsEncodedAudioChunkData.buffer
-    [Legacy] StructureParam WebCore::WebCodecsEncodedVideoChunkData.buffer
     [Legacy] StructureParam WebCore::WrappedCryptoKey.encryptedKey
     [Legacy] StructureParam JSC::ArrayBuffer.toVector()
     [Legacy] StructureParam WebCore::MockWebAuthenticationConfiguration::HidConfiguration.pinProtocols
@@ -278,6 +271,11 @@
     [NotSentFromWebContent] MessageParamReply WebPageProxy.BindRemoteAccessibilityFrames token
     [NotSentFromWebContent] MessageParamReply WebPageProxy.LoadSynchronousURLSchemeTask data
     [NotSentFromWebContent] MessageParamReply NetworkConnectionToWebProcess.PerformSynchronousLoad data
+}
+
+[UnsafeWrapper] Ref<WebCore::SharedBuffer> {
+    [Legacy] StructureParam WebCore::WebCodecsEncodedAudioChunkData.buffer
+    [Legacy] StructureParam WebCore::WebCodecsEncodedVideoChunkData.buffer
 }
 
 [UnsafeWrapper] Vector<unsigned char> {
@@ -342,6 +340,8 @@
 
     [NotSentFromWebContent] MessageParam WebPage.SetObscuredContentInsetsFenced machSendRight
     [NotSentFromWebContent] MessageParamReply RemoteGraphicsContextGL.PrepareForDisplay displayBuffer
+
+    [NeedsReview] MessageParam WebProcessProxy.SetTaskNamePort taskNamePort
 }
 
 [UnsafeWrapper] Vector<MachSendRight> {
@@ -392,7 +392,6 @@
 
 [UnsafeWrapper] std::span<const char> {
     [Legacy] StructureParam WebKit::RTCPacketOptions::SerializableData.srtpAuthKey
-    [Legacy] StructureParam WTF::CString.span()
 }
 
 # Shared Memory
@@ -480,6 +479,10 @@
     [Legacy] MessageParam RemoteAudioDestinationManager.CreateAudioDestination frameCount
     [Legacy] MessageParam RemoteVideoFrameObjectHeap.SetSharedVideoFrameMemory storageHandle
 
+    # The same shared video frame memory RemoteDevice.SetSharedVideoFrameMemory above carries, for the
+    # frames copyExternalImageToTexture copies from a video element or a WebCodecs frame.
+    [Legacy] MessageParam RemoteQueue.SetSharedVideoFrameMemory storageHandle
+
     [NotSentFromWebContent] MessageParam VisitedLinkTableController.SetVisitedLinkTable handle
     [NotSentFromWebContent] MessageParam WebSWClientConnection.SetSWOriginTableSharedMemory handle
     [NotSentFromWebContent] MessageParam RemoteVideoFrameObjectHeapProxyProcessor.SetSharedVideoFrameMemory storageHandle
@@ -510,8 +513,12 @@
     [Legacy] StructureParam WebKit::CoreIPCCFType.object()
 }
 
+[UnsafeWrapper] WebKit::ImageBufferBackendHandle {
+    [Legacy] MessageParam RemoteRenderingBackend.CreateMappableImageBuffer backingStore
+}
+
 [UnsafeWrapper] std::optional<WebKit::ImageBufferBackendHandle> {
-    [Legacy] MessageParam RemoteImageBufferProxy.DidCreateBackend handle
+    [Legacy] MessageParamReply RemoteImageBuffer.GetBackendHandle handle
     [Legacy] MessageParamReply WebPage.TakeSnapshot image
     [Legacy] StructureParam WebKit::RemoteLayerBackingStoreProperties.m_bufferHandle
     [Legacy] StructureParam WebKit::BufferSetBackendHandle.bufferHandle

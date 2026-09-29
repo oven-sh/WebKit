@@ -227,7 +227,7 @@ public:
     void setFontDescriptionFontSynthesisWeight(FontSynthesisLonghandValue);
     void setFontDescriptionKerning(Kerning);
     void setFontDescriptionOpticalSizing(FontOpticalSizing);
-    void setFontDescriptionSpecifiedLocale(WebkitLocale&&);
+    void setFontDescriptionLocale(WebkitLocale&&);
     void setFontDescriptionTextAutospace(TextAutospace);
     void setFontDescriptionTextRenderingMode(TextRenderingMode);
     void setFontDescriptionTextSpacingTrim(TextSpacingTrim);
@@ -269,9 +269,7 @@ private:
     void NODELETE adjustStyleForInterCharacterRuby();
 
     void updateFont();
-#if ENABLE(TEXT_AUTOSIZING)
     void updateFontForTextSizeAdjust();
-#endif
     void updateFontForZoomChange();
     void updateFontForGenericFamilyChange();
     void updateFontForOrientationChange();

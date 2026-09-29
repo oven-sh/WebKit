@@ -5,19 +5,19 @@
 //
 // CLPlatformVk.cpp: Implements the class methods for CLPlatformVk.
 
-#include "libANGLE/renderer/vulkan/CLPlatformVk.h"
+#include "anglebase/no_destructor.h"
+#include "common/angle_version_info.h"
 #include "common/vulkan/vulkan_icd.h"
-#include "libANGLE/angletypes.h"
+
 #include "libANGLE/renderer/vulkan/CLContextVk.h"
 #include "libANGLE/renderer/vulkan/CLDeviceVk.h"
+#include "libANGLE/renderer/vulkan/CLPlatformVk.h"
 #include "libANGLE/renderer/vulkan/vk_renderer.h"
+#include "libANGLE/renderer/vulkan/vk_utils.h"
 
 #include "libANGLE/CLPlatform.h"
 #include "libANGLE/cl_utils.h"
 
-#include "anglebase/no_destructor.h"
-#include "common/angle_version_info.h"
-#include "libANGLE/renderer/vulkan/vk_utils.h"
 #include "vulkan/vulkan_core.h"
 
 namespace rx
@@ -31,11 +31,6 @@ constexpr vk::UseDebugLayers kUseDebugLayers = vk::UseDebugLayers::YesIfAvailabl
 constexpr vk::UseDebugLayers kUseDebugLayers = vk::UseDebugLayers::No;
 #endif
 
-#if defined(ANGLE_OPENCL_COMPUTE_ONLY_PIPE)
-constexpr bool kUseComputeOnlyQueue = true;
-#else
-constexpr bool kUseComputeOnlyQueue = false;
-#endif
 }  // namespace
 
 angle::Result CLPlatformVk::initBackendRenderer()
@@ -263,14 +258,8 @@ void CLPlatformVk::handleError(VkResult result,
 
 angle::NativeWindowSystem CLPlatformVk::getWindowSystem()
 {
-    if (kUseComputeOnlyQueue)
-    {
-        return angle::NativeWindowSystem::NullCompute;
-    }
-    else
-    {
-        return angle::NativeWindowSystem::Other;
-    }
+    // This is an indicator that renderer will be used for OpenCL
+    return angle::NativeWindowSystem::NullCompute;
 }
 
 const char *CLPlatformVk::getWSIExtension()

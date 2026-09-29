@@ -85,9 +85,7 @@ void Image::invalidateAdapter()
 
 Image& Image::nullImage()
 {
-    ASSERT(isMainThread());
-    static NeverDestroyed<Ref<BitmapImage>> nullImage = BitmapImage::create();
-    return nullImage->get();
+    return BitmapImage::nullImage();
 }
 
 static bool isPDFResource(const String& mimeType, const URL& url)
@@ -191,7 +189,7 @@ void Image::fillWithSolidColor(GraphicsContext& ctxt, const FloatRect& dstRect, 
     ctxt.setCompositeOperation(previousOperator);
 }
 
-RefPtr<NativeImage> Image::nativeImage(const DestinationColorSpace&)
+RefPtr<NativeImage> Image::nativeImage(const ColorSpace&)
 {
     return nullptr;
 }
@@ -424,9 +422,9 @@ void Image::startAnimationAsynchronously()
     m_animationStartTimer->startOneShot(0_s);
 }
 
-DestinationColorSpace Image::colorSpace()
+ColorSpace Image::colorSpace()
 {
-    return DestinationColorSpace::SRGB();
+    return ColorSpace::SRGB();
 }
 
 RefPtr<ShareableBitmap> Image::toShareableBitmap() const

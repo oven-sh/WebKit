@@ -1,2 +1,2 @@
-ReferenceError: Can't find variable: x
+ReferenceError: x is not defined
 SyntaxError: Unexpected number '0'

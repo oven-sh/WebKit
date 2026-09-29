@@ -58,9 +58,9 @@ ReportingScope::~ReportingScope() = default;
 
 void ReportingScope::registerReportingObserver(ReportingObserver& observer)
 {
-    if (m_reportingObservers.containsIf([&observer](const auto& item) { return item.ptr() == &observer; }))
+    if (containsObserver(observer))
         return;
-    
+
     m_reportingObservers.append(observer);
 }
 
@@ -93,8 +93,6 @@ void ReportingScope::notifyReportObservers(Ref<Report>&& report)
 {
     // https://www.w3.org/TR/reporting-1/#notify-observers
     // Step 4.2: Notify reporting observers on scope with report
-    size_t reportingObservers = m_reportingObservers.size();
-    UNUSED_VARIABLE(reportingObservers);
 
     // Step 4.2.1
     auto possibleReportObservers = copyToVector(m_reportingObservers);

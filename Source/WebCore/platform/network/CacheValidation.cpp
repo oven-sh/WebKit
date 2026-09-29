@@ -28,7 +28,6 @@
 
 #include "CookieJar.h"
 #include "HTTPHeaderMap.h"
-#include "NetworkStorageSession.h"
 #include "ResourceLoaderOptions.h"
 #include "ResourceRequest.h"
 #include "ResourceResponse.h"
@@ -385,18 +384,11 @@ std::optional<SHA1::Digest> computeCookieHeaderDigestForVary(const String& cooki
 }
 
 // Varying header values are stored and compared as strings.
-static String encodeCookieHeaderDigestForVary(const std::optional<SHA1::Digest>& digest)
+String encodeCookieHeaderDigestForVary(const std::optional<SHA1::Digest>& digest)
 {
     if (!digest)
         return { };
     return base64EncodeToString(*digest);
-}
-
-// Each helper is used on both sides of its own collect/verify pair, so the two need not agree.
-static String cookieRequestHeaderFieldValueForVary(const NetworkStorageSession& session, const ResourceRequest& request)
-{
-    auto cookieHeader = session.cookieRequestHeaderFieldValue(request.firstPartyForCookies(), SameSiteInfo::create(request), request.url(), std::nullopt, std::nullopt, CookieJar::shouldIncludeSecureCookies(request.url()), ApplyTrackingPrevention::Yes, ShouldRelaxThirdPartyCookieBlocking::No, IsKnownCrossSiteTracker::No).first;
-    return encodeCookieHeaderDigestForVary(computeCookieHeaderDigestForVary(cookieHeader));
 }
 
 static String cookieRequestHeaderFieldValueForVary(const CookieJar* cookieJar, const ResourceRequest& request)
@@ -407,7 +399,7 @@ static String cookieRequestHeaderFieldValueForVary(const CookieJar* cookieJar, c
     return encodeCookieHeaderDigestForVary(cookieJar->cookieRequestHeaderFieldValueDigest(request.firstPartyForCookies(), SameSiteInfo::create(request), request.url(), CookieJar::shouldIncludeSecureCookies(request.url())));
 }
 
-static String headerValueForVary(const ResourceRequest& request, StringView headerName, NOESCAPE const Function<String()>& cookieRequestHeaderFieldValueFunction)
+String headerValueForVary(const ResourceRequest& request, StringView headerName, NOESCAPE const Function<String()>& cookieRequestHeaderFieldValueFunction)
 {
     // Explicit handling for cookies is needed because they are added magically by the networking layer.
     // FIXME: The value might have changed between making the request and retrieving the cookie here.
@@ -418,7 +410,7 @@ static String headerValueForVary(const ResourceRequest& request, StringView head
     return request.httpHeaderField(headerName);
 }
 
-static Vector<std::pair<String, String>> collectVaryingRequestHeadersInternal(const ResourceResponse& response, NOESCAPE const Function<String(StringView headerName)>& headerValueForVaryFunction)
+Vector<std::pair<String, String>> collectVaryingRequestHeaders(const ResourceResponse& response, NOESCAPE const Function<String(StringView headerName)>& headerValueForVaryFunction)
 {
     auto varyValue = response.httpHeaderField(HTTPHeaderName::Vary);
     if (varyValue.isEmpty())
@@ -432,27 +424,16 @@ static Vector<std::pair<String, String>> collectVaryingRequestHeadersInternal(co
     return headers;
 }
 
-Vector<std::pair<String, String>> collectVaryingRequestHeaders(NetworkStorageSession* storageSession, const ResourceRequest& request, const ResourceResponse& response)
-{
-    if (!storageSession)
-        return { };
-    return collectVaryingRequestHeadersInternal(response, [&] (StringView headerName) {
-        return headerValueForVary(request, headerName, [&] {
-            return cookieRequestHeaderFieldValueForVary(*storageSession, request);
-        });
-    });
-}
-
 Vector<std::pair<String, String>> collectVaryingRequestHeaders(const CookieJar* cookieJar, const ResourceRequest& request, const ResourceResponse& response)
 {
-    return collectVaryingRequestHeadersInternal(response, [&] (StringView headerName) {
+    return collectVaryingRequestHeaders(response, [&] (StringView headerName) {
         return headerValueForVary(request, headerName, [&] {
             return cookieRequestHeaderFieldValueForVary(cookieJar, request);
         });
     });
 }
 
-static bool verifyVaryingRequestHeadersInternal(const Vector<std::pair<String, String>>& varyingRequestHeaders, NOESCAPE const Function<String(const String&)>& headerValueForVary)
+bool verifyVaryingRequestHeaders(const Vector<std::pair<String, String>>& varyingRequestHeaders, NOESCAPE const Function<String(const String&)>& headerValueForVary)
 {
     for (auto& varyingRequestHeader : varyingRequestHeaders) {
         // FIXME: Vary: * in response would ideally trigger a cache delete instead of a store.
@@ -464,20 +445,9 @@ static bool verifyVaryingRequestHeadersInternal(const Vector<std::pair<String, S
     return true;
 }
 
-bool verifyVaryingRequestHeaders(NetworkStorageSession* storageSession, const Vector<std::pair<String, String>>& varyingRequestHeaders, const ResourceRequest& request)
-{
-    if (!storageSession)
-        return false;
-    return verifyVaryingRequestHeadersInternal(varyingRequestHeaders, [&] (const String& headerName) {
-        return headerValueForVary(request, headerName, [&] {
-            return cookieRequestHeaderFieldValueForVary(*storageSession, request);
-        });
-    });
-}
-
 bool verifyVaryingRequestHeaders(const CookieJar* cookieJar, const Vector<std::pair<String, String>>& varyingRequestHeaders, const ResourceRequest& request)
 {
-    return verifyVaryingRequestHeadersInternal(varyingRequestHeaders, [&] (const String& headerName) {
+    return verifyVaryingRequestHeaders(varyingRequestHeaders, [&] (const String& headerName) {
         return headerValueForVary(request, headerName, [&] {
             return cookieRequestHeaderFieldValueForVary(cookieJar, request);
         });

@@ -180,7 +180,7 @@ RefPtr<GraphicsContextGLCocoa> GraphicsContextGLCocoa::create(GraphicsContextGLA
 GraphicsContextGLCocoa::GraphicsContextGLCocoa(GraphicsContextGLAttributes&& creationAttributes, ProcessIdentity&& resourceOwner)
     : GraphicsContextGLANGLE(WTF::move(creationAttributes))
     , m_resourceOwner(WTF::move(resourceOwner))
-    , m_drawingBufferColorSpace(DestinationColorSpace::SRGB())
+    , m_drawingBufferColorSpace(ColorSpace::SRGB())
 {
 }
 
@@ -449,7 +449,7 @@ RetainPtr<IOSurfaceRef> GraphicsContextGLCocoa::copySurfaceBuffer(SurfaceBuffer 
     return destination.surface()->surface();
 }
 
-void GraphicsContextGLCocoa::setDrawingBufferColorSpace(const DestinationColorSpace& colorSpace)
+void GraphicsContextGLCocoa::setDrawingBufferColorSpace(const ColorSpace& colorSpace)
 {
     if (!makeContextCurrent())
         return;
@@ -487,7 +487,12 @@ IOSurfacePbuffer& GraphicsContextGLCocoa::surfaceBuffer(SurfaceBuffer buffer)
 IOSurfacePbuffer GraphicsContextGLCocoa::createDrawingBuffer()
 {
     const auto size = getInternalFramebufferSize();
-    auto surface = IOSurface::create(nullptr, size, m_drawingBufferColorSpace, IOSurface::Name::GraphicsContextGL);
+    IOSurface::IOSurfaceOptions options;
+#if HAVE(IOSURFACE_ALPHA_CHANNEL_MODE)
+    if (contextAttributes().alpha)
+        options.alphaPremultiplication = contextAttributes().premultipliedAlpha ? AlphaPremultiplication::Premultiplied : AlphaPremultiplication::Unpremultiplied;
+#endif
+    auto surface = IOSurface::create(nullptr, size, m_drawingBufferColorSpace, IOSurface::Name::GraphicsContextGL, IOSurface::Format::BGRA, UseLosslessCompression::No, options);
     if (!surface)
         return { };
     if (m_resourceOwner)
@@ -750,11 +755,12 @@ bool GraphicsContextGLCocoa::enableRequiredWebXRExtensions()
 
 bool GraphicsContextGLCocoa::enableRequiredWebXRExtensionsImpl()
 {
+    if (!m_isForWebGL2 && !enableExtensionsImpl({ "GL_EXT_sRGB"_s }))
+        return false;
     return enableExtensionsImpl({
         "GL_ANGLE_framebuffer_multisample"_s,
         "GL_ANGLE_framebuffer_blit"_s,
         "GL_EXT_discard_framebuffer"_s,
-        "GL_EXT_sRGB"_s,
         "GL_OES_EGL_image"_s,
         "GL_OES_rgb8_rgba8"_s,
 #if !PLATFORM(IOS_FAMILY_SIMULATOR)

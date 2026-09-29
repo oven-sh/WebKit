@@ -66,7 +66,7 @@ public:
     CheckedPtr<LibWebRTCResolver> resolver(LibWebRTCResolverIdentifier identifier) { return m_resolvers.get(identifier); }
     void removeResolver(LibWebRTCResolverIdentifier identifier) { m_resolvers.remove(identifier); }
 
-    std::unique_ptr<LibWebRTCResolver> createAsyncDnsResolver();
+    std::unique_ptr<LibWebRTCResolver> createAsyncDnsResolver(WebCore::ScriptExecutionContextIdentifier);
 
     void disableNonLocalhostConnections() { m_disableNonLocalhostConnections = true; }
 

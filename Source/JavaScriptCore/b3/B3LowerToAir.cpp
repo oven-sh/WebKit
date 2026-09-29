@@ -64,6 +64,7 @@
 #include "SIMDShuffle.h"
 #include <wtf/IndexMap.h>
 #include <wtf/IndexSet.h>
+#include <wtf/Scope.h>
 #include <wtf/StdLibExtras.h>
 
 // On Windows, there's macros for these which interfere with the opcodes. The
@@ -650,18 +651,18 @@ private:
         case WasmAddress: {
             WasmAddressValue* wasmAddress = address->as<WasmAddressValue>();
             Value* pointer = wasmAddress->child(0);
-            // Why don't we need to check m_locked here? WasmAddressValue is purely used for address computation,
+            // Why don't we need to check m_locked for the WasmAddressValue itself? It is purely used for address computation,
             // which is different from the other operations. And we already know that numUses(address) is below the threshold.
             // If we ensure that all use of WasmAddress gets indexArg form, we do not need to have WasmAddressValue's instruction actually.
             if (!Arg::isValidIndexForm(1, offset, width))
                 return fallback();
 
-            // FIXME: We should support ARM64 LDR 32-bit addressing, which will
-            // allow us to fuse a Shl ptr, 2 into the address. Additionally, and
-            // perhaps more importantly, it would allow us to avoid a truncating
-            // move. See: https://bugs.webkit.org/show_bug.cgi?id=163465
+            Tmp base = Tmp(wasmAddress->pinnedGPR());
+            std::optional<unsigned> scale = scaleForShl(pointer, offset, width);
+            if (scale && !m_locked.contains(pointer->child(0)))
+                return indexArg(base, pointer->child(0), *scale, offset);
 
-            return indexArg(Tmp(wasmAddress->pinnedGPR()), pointer, 1, offset);
+            return indexArg(base, pointer, 1, offset);
         }
 
         default:
@@ -1673,35 +1674,9 @@ private:
         }
 
         Tmp maskTmp = m_code.newTmp(FP);
-
-        {
-            v128_t towerOfPower { };
-            switch (simdInfo.lane) {
-            case SIMDLane::i32x4:
-                for (unsigned i = 0; i < 4; ++i)
-                    towerOfPower.u32x4[i] = 1 << i;
-                break;
-            case SIMDLane::i16x8:
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u16x8[i] = 1 << i;
-                break;
-            case SIMDLane::i8x16:
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u8x16[i] = 1 << i;
-                for (unsigned i = 0; i < 8; ++i)
-                    towerOfPower.u8x16[i + 8] = 1 << i;
-                break;
-            default:
-                RELEASE_ASSERT_NOT_REACHED();
-            }
-
-            // FIXME: this is bad, we should load
-            auto gpTmp = m_code.newTmp(GP);
-            append(Air::Move, Arg::bigImm(towerOfPower.u64x2[0]), gpTmp);
-            append(Air::VectorSplatInt64, gpTmp, maskTmp);
-            append(Air::Move, Arg::bigImm(towerOfPower.u64x2[1]), gpTmp);
-            append(Air::VectorReplaceLaneInt64, Arg::imm(1), gpTmp, maskTmp);
-        }
+        auto gpTmp = m_code.newTmp(GP);
+        append(Air::Move, Arg::immPtr(vectorBitmaskTower(simdInfo.lane)), gpTmp);
+        append(Air::MoveVector, Arg::addr(gpTmp), maskTmp);
 
         Tmp vectorTmp = m_code.newTmp(FP);
 
@@ -1845,6 +1820,11 @@ private:
                 break;
             }
             case ValueRep::LateRegister:
+                // A LateRegister input becomes an Arg::LateUse, whose live range covers both the
+                // early and the late point, so it interferes with either clobber set. Register
+                // becomes an early Arg::Use, which only reaches the early one.
+                stackmap->lateClobbered().remove(value.rep().reg());
+                [[fallthrough]];
             case ValueRep::Register: {
                 stackmap->earlyClobbered().remove(value.rep().reg());
                 Tmp dstTmp = Tmp(value.rep().reg());
@@ -2443,6 +2423,7 @@ private:
     };
 
 #if CPU(ARM64)
+
     static bool NODELETE isComparisonOpcode(B3::Opcode opcode)
     {
         switch (opcode) {
@@ -2560,11 +2541,19 @@ private:
         }
     }
 
-    CompareChainNode* findCompareChain(Value* value, SegmentedVector<CompareChainNode>& nodes, Vector<CompareChainNode*, 16>& logicalNodes, Vector<Value*, 16> usedValues)
+    CompareChainNode* findCompareChain(Value* value, SegmentedVector<CompareChainNode>& nodes, Vector<CompareChainNode*, 16>& logicalNodes, Vector<Value*, 16>& usedValues)
     {
         dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: nodes.size()=", nodes.size(), ", value=", pointerDump(value));
         if (!value)
             return nullptr;
+
+        // Roll back logicalNodes/usedValues unless rollback.release() is reached.
+        size_t savedLogicalSize = logicalNodes.size();
+        size_t savedUsedSize = usedValues.size();
+        auto rollback = makeScopeExit([&] {
+            logicalNodes.shrink(savedLogicalSize);
+            usedValues.shrink(savedUsedSize);
+        });
 
         B3::Opcode opcode = value->opcode();
         dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: opcode=", opcode);
@@ -2605,6 +2594,7 @@ private:
                     dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: applying negation to chain");
                     negatedChain->markRequiresNegation();
                     usedValues.append(value);
+                    rollback.release();
                     return negatedChain;
                 }
             }
@@ -2617,6 +2607,7 @@ private:
                 : relationalConditionForOpcode(opcode);
             dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: created comparison node");
             usedValues.append(value);
+            rollback.release();
             return node;
         }
 
@@ -2634,6 +2625,9 @@ private:
 
             // Negation handling: detect (chain) == 0 pattern
             // This optimizes patterns like !(a && b) which become (a && b) == 0
+            //
+            // FIXME: is this guard reachable? value's children must have the same type, child(0) must be integral,
+            // unclear whether the recursive call to findCompareChain can return int64
             if (value->type() != Int32 && value->child(1)->isInt(1)) {
                 dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: detected == 0 pattern, checking for negation");
                 CompareChainNode* negatedChain = findCompareChain(value->child(0), nodes, logicalNodes, usedValues);
@@ -2641,9 +2635,11 @@ private:
                     dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: applying negation to chain");
                     negatedChain->markRequiresNegation();
                     usedValues.append(value);
+                    rollback.release();
                     return negatedChain;
                 }
             }
+            return nullptr;
         }
 
         // Check if this is a BitAnd or BitOr
@@ -2677,7 +2673,6 @@ private:
             // We don't allow combining two logic operations
             if (!leftNode->isComparison() && !rightNode->isComparison()) {
                 dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: both children are logic ops, rejecting");
-                logicalNodes.clear();
                 return nullptr;
             }
 
@@ -2697,6 +2692,7 @@ private:
             logicalNodes.append(node);
             usedValues.append(value);
             dataLogLnIf(B3LowerToAirInternal::verbose, "    findCompareChain: created logic op node (", (opcode == BitAnd ? "AND" : "OR"), ")");
+            rollback.release();
             return node;
         }
 
@@ -4093,6 +4089,35 @@ private:
             if (tryAppendMultiplyWithExtend())
                 return;
 
+            auto tryAppendMultiplyNegOperand = [&] () -> bool {
+                // MNEG/FNMUL : d = (-n) * m or d = n * (-m).
+                Air::Opcode airOpcode = tryOpcodeForType(MultiplyNeg32, MultiplyNeg64, MultiplyNegDouble, MultiplyNegFloat, m_value->type());
+                if (!isValidForm(airOpcode, Arg::Tmp, Arg::Tmp, Arg::Tmp))
+                    return false;
+
+                Value* negated = nullptr;
+                Value* other = nullptr;
+                if (left->opcode() == Neg && canBeInternal(left)) {
+                    negated = left;
+                    other = right;
+                } else if (right->opcode() == Neg && canBeInternal(right)) {
+                    negated = right;
+                    other = left;
+                } else
+                    return false;
+
+                Value* negatedInput = negated->child(0);
+                if (m_locked.contains(negatedInput) || m_locked.contains(other))
+                    return false;
+
+                append(airOpcode, tmp(negatedInput), tmp(other), tmp(m_value));
+                commitInternal(negated);
+                return true;
+            };
+
+            if (tryAppendMultiplyNegOperand())
+                return;
+
             appendBinOp<Mul32, Mul64, MulDouble, MulFloat, Commutative>(left, right);
             return;
         }
@@ -4460,7 +4485,7 @@ private:
             // This pattern is super useful on both x86 and ARM64, since the inversion of the CAS result
             // can be done with zero cost on x86 (just flip the set from E to NE) and it's a progression
             // on ARM64 (since STX returns 0 on success, so ordinarily we have to flip it).
-            if (right->isInt(1) && left->opcode() == AtomicWeakCAS && canBeInternal(left)) {
+            if (right->isInt(1) && left->opcode() == AtomicWeakCAS && canBeInternal(left) && !crossesInterference(left)) {
                 commitInternal(left);
                 appendCAS(left, true);
                 return;
@@ -5932,10 +5957,11 @@ private:
             if (m_value->child(0)->opcode() == AtomicStrongCAS
                 && m_value->child(0)->as<AtomicValue>()->isCanonicalWidth()
                 && m_value->child(0)->child(0) == m_value->child(1)
-                && canBeInternal(m_value->child(0))) {
+                && canBeInternal(m_value->child(0))
+                && !crossesInterference(m_value->child(0))) {
                 ASSERT(!m_locked.contains(m_value->child(0)->child(1)));
                 ASSERT(!m_locked.contains(m_value->child(1)));
-                
+
                 commitInternal(m_value->child(0));
                 appendCAS(m_value->child(0), m_value->opcode() == NotEqual);
                 return;
@@ -6575,22 +6601,26 @@ private:
                     break;
                 }
                 case AtomicWeakCAS:
-                    commitInternal(branchChild);
-                    appendCAS(branchChild, false);
-                    return;
-                    
+                    if (!crossesInterference(branchChild)) {
+                        commitInternal(branchChild);
+                        appendCAS(branchChild, false);
+                        return;
+                    }
+                    break;
+
                 case AtomicStrongCAS:
                     // A branch is a comparison to zero.
                     // FIXME: Teach this to match patterns that arise from subwidth CAS.
                     // https://bugs.webkit.org/show_bug.cgi?id=169250
                     if (branchChild->child(0)->isInt(0)
-                        && branchChild->as<AtomicValue>()->isCanonicalWidth()) {
+                        && branchChild->as<AtomicValue>()->isCanonicalWidth()
+                        && !crossesInterference(branchChild)) {
                         commitInternal(branchChild);
                         appendCAS(branchChild, true);
                         return;
                     }
                     break;
-                    
+
                 case Equal:
                 case NotEqual:
                     // FIXME: Teach this to match patterns that arise from subwidth CAS.
@@ -6598,7 +6628,8 @@ private:
                     if (branchChild->child(0)->opcode() == AtomicStrongCAS
                         && branchChild->child(0)->as<AtomicValue>()->isCanonicalWidth()
                         && canBeInternal(branchChild->child(0))
-                        && branchChild->child(0)->child(0) == branchChild->child(1)) {
+                        && branchChild->child(0)->child(0) == branchChild->child(1)
+                        && !crossesInterference(branchChild->child(0))) {
                         commitInternal(branchChild);
                         commitInternal(branchChild->child(0));
                         appendCAS(branchChild->child(0), branchChild->opcode() == NotEqual);

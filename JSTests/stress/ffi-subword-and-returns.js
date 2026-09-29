@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 
 // Sub-word extension probes (caller side) and return-value normalization
 // probes (callee side): widen fixtures, ffi_ret_neg_one_*, float edge

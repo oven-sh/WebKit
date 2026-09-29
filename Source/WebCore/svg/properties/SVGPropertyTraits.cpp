@@ -69,7 +69,7 @@ Color SVGPropertyTraits<Color>::fromString(SVGElement& targetElement, const Stri
     Ref document = targetElement.document();
     auto& cssParserContext = document->cssParserContext();
 
-    auto trimmedString = string.trim(deprecatedIsSpaceOrNewline);
+    auto trimmedString = StringView { string }.trim(deprecatedIsSpaceOrNewline);
 
     auto color = parseColorRawSimple(trimmedString, cssParserContext);
     if (color.isValid())

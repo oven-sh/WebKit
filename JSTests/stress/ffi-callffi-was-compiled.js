@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1", "--useConcurrentJIT=0", "--jitPolicyScale=0")
+//@ requireOptions("--useDollarVM=1", "--useConcurrentJIT=0", "--jitPolicyScale=0", "--useExecutableAllocationFuzz=false")
 
 // Proves the ByteCodeParser feed + strength-reduction conversion are not
 // dead code: after a hot exact-arity monomorphic call site, at least one

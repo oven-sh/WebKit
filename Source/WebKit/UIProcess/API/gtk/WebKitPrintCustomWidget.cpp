@@ -31,9 +31,9 @@
  * WebKitPrintCustomWidget:
  * @See_also: #WebKitPrintOperation
  *
- * Allows to embed a custom widget in print dialog.
+ * Allows embedding a custom widget in the print dialog.
  *
- * A WebKitPrintCustomWidget allows to embed a custom widget in the print
+ * A WebKitPrintCustomWidget allows embedding a custom widget in the print
  * dialog by connecting to the #WebKitPrintOperation::create-custom-widget
  * signal, creating a new WebKitPrintCustomWidget with
  * webkit_print_custom_widget_new() and returning it from there. You can later
@@ -68,7 +68,7 @@ enum {
 };
 
 struct _WebKitPrintCustomWidgetPrivate {
-    CString title;
+    UTF8CString title;
     GRefPtr<GtkWidget> widget;
 };
 
@@ -101,7 +101,7 @@ static void webkitPrintCustomWidgetSetProperty(GObject* object, guint propId, co
         printCustomWidget->priv->widget = GTK_WIDGET(g_value_get_object(value));
         break;
     case PROP_TITLE:
-        printCustomWidget->priv->title = g_value_get_string(value);
+        printCustomWidget->priv->title = UTF8CString { byteCast<char8_t>(g_value_get_string(value)) };
         break;
     default:
         G_OBJECT_WARN_INVALID_PROPERTY_ID(object, propId, paramSpec);
@@ -157,7 +157,7 @@ static void webkit_print_custom_widget_class_init(WebKitPrintCustomWidgetClass* 
      * @print_settings: actual print settings
      *
      * Emitted after change of selected printer in the dialog. The actual page setup
-     * and print settings are available and the custom widget can actualize itself
+     * and print settings are available and the custom widget can update itself
      * according to their values.
      *
      * Since: 2.16
@@ -210,7 +210,7 @@ static void webkit_print_custom_widget_class_init(WebKitPrintCustomWidgetClass* 
  * object could still be alive at that point. You typically want to pass a container
  * widget with multiple widgets in it.
  *
- * Returns: (transfer full): a new #WebKitPrintOperation.
+ * Returns: (transfer full): a new #WebKitPrintCustomWidget.
  *
  * Since: 2.16
  *
@@ -268,7 +268,7 @@ const gchar* webkit_print_custom_widget_get_title(WebKitPrintCustomWidget* print
 {
     g_return_val_if_fail(WEBKIT_IS_PRINT_CUSTOM_WIDGET(printCustomWidget), nullptr);
 
-    return printCustomWidget->priv->title.data();
+    return printCustomWidget->priv->title.legacyCStringPointer();
 }
 
 void webkitPrintCustomWidgetEmitCustomWidgetApplySignal(WebKitPrintCustomWidget* printCustomWidget)

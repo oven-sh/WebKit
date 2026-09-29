@@ -47,6 +47,7 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/AtomStringHash.h>
 #include <wtf/text/StringHash.h>
+#include <wtf/text/TextStream.h>
 
 #if ENABLE(OPENTYPE_VERTICAL)
 #include "OpenTypeVerticalData.h"
@@ -298,7 +299,7 @@ void FontCache::purgeInactiveFontData(unsigned purgeCount)
     while (purgeCount) {
         Vector<Ref<Font>, 20> fontsToDelete;
         for (auto& font : m_fontDataCaches->data.values()) {
-            LOG(Fonts, " trying to purge font %s (has one ref %d)", font->platformData().description().utf8().data(), font->hasOneRef());
+            LOG_WITH_STREAM(Fonts, stream << " trying to purge font "_s << font->platformData().description() << " (has one ref "_s << font->hasOneRef() << ")"_s);
             if (!font->hasOneRef())
                 continue;
             fontsToDelete.append(font.copyRef());

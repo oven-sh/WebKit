@@ -108,7 +108,7 @@ void MessageReceiverMap::invalidate()
         if (messageReceiver)
             messageReceiver->willBeRemovedFromMessageReceiverMap();
         else {
-            RELEASE_LOG_FAULT(IPC, "MessageReceiverMap::invalidate(): %s failed to remove itself from the map before its destruction", WTF::String(WTF::enumName(name)).utf8().data());
+            RELEASE_LOG_FAULT(IPC, "MessageReceiverMap::invalidate(): %s failed to remove itself from the map before its destruction", WTF::enumName(name).characters());
             ASSERT_NOT_REACHED();
         }
     }
@@ -118,7 +118,7 @@ void MessageReceiverMap::invalidate()
         if (messageReceiver)
             messageReceiver->willBeRemovedFromMessageReceiverMap();
         else {
-            RELEASE_LOG_FAULT(IPC, "MessageReceiverMap::invalidate(): %s (destinationID=%" PRIu64 ") failed to remove itself from the map before its destruction", WTF::String(WTF::enumName(nameAndDestinationID.first)).utf8().data(), nameAndDestinationID.second);
+            RELEASE_LOG_FAULT(IPC, "MessageReceiverMap::invalidate(): %s (destinationID=%" PRIu64 ") failed to remove itself from the map before its destruction", WTF::enumName(nameAndDestinationID.first).characters(), nameAndDestinationID.second);
             ASSERT_NOT_REACHED();
         }
     }

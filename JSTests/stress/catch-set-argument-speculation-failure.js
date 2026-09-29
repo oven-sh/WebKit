@@ -1,3 +1,4 @@
+//@ defaultRun; run("eager-catch-liveness", "--useLazyCatchLiveness=false")
 "use strict";
 
 let flag = true;

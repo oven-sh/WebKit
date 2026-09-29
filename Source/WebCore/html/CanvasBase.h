@@ -76,6 +76,7 @@ public:
     virtual void setSizeForControllingContext(IntSize) = 0;
 
     WEBCORE_EXPORT RefPtr<ImageBuffer> makeRenderingResultsAvailable(ShouldApplyPostProcessingToDirtyRect = ShouldApplyPostProcessingToDirtyRect::Yes);
+    RefPtr<ImageBuffer> createTransparentBlackImageBuffer() const;
 
     WEBCORE_EXPORT RefPtr<NativeImage> copyNativeImage() const;
 
@@ -108,9 +109,6 @@ public:
     // !rect means caller knows the full canvas is invalidated previously.
     void willUpdateContents(const std::optional<FloatRect>& rect) { return willUpdateContents(rect, ShouldApplyPostProcessingToDirtyRect::Yes); }
     virtual void willUpdateContents(const std::optional<FloatRect>&, ShouldApplyPostProcessingToDirtyRect);
-
-    virtual Image* copiedImage() const = 0;
-    virtual void clearCopiedImage() const = 0;
 
     bool hasActiveInspectorCanvasCallTracer() const;
 

@@ -538,7 +538,7 @@ bool FlexFormattingUtils::isColumnOrRowReverse() const
 
 bool FlexFormattingUtils::isWrapReverse(const RenderFlexibleBox& flexBox)
 {
-    return flexBox.style().flexWrap() == FlexWrap::Reverse;
+    return flexBox.style().flexWrap().isReverse();
 }
 
 bool FlexFormattingUtils::hasDefiniteLogicalWidthForAspectRatioCrossSize(const RenderFlexibleBox& flexBox)
@@ -645,7 +645,19 @@ bool FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(const RenderBox& flexItem
 
 bool FlexFormattingUtils::isMultiline(const RenderFlexibleBox& flexBox)
 {
-    return flexBox.style().flexWrap() != FlexWrap::NoWrap;
+    return flexBox.style().flexWrap().isMultiline();
+}
+
+bool FlexFormattingUtils::isBalance(const RenderFlexibleBox& flexBox)
+{
+    return flexBox.style().flexWrap().isBalance();
+}
+
+size_t FlexFormattingUtils::minimumLineCount(const RenderFlexibleBox& flexBox)
+{
+    if (!isBalance(flexBox))
+        return 1;
+    return flexBox.style().flexLineCount().value;
 }
 
 Style::FlexBasis FlexFormattingUtils::flexBasisForFlexItem(const RenderBox& flexItem)

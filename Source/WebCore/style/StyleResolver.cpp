@@ -36,6 +36,7 @@
 #include "CSSKeywordValueInlines.h"
 #include "CSSKeyframeRule.h"
 #include "CSSKeyframesRule.h"
+#include "CSSNestedDeclarations.h"
 #include "CSSPropertyNames.h"
 #include "CSSSelector.h"
 #include "CSSStyleRule.h"
@@ -373,29 +374,55 @@ UnadjustedStyle Resolver::unadjustedStyleForCachedMatchResult(Element& element, 
     };
 }
 
-std::unique_ptr<Style::ComputedStyle> Resolver::styleForKeyframe(Element& element, const Style::ComputedStyle& elementStyle, const ResolutionContext& context, const StyleRuleKeyframe& keyframe, BlendingKeyframe& blendingKeyframe) const
+// animation-timing-function and animation-composition in a keyframe describe the composite operation
+// and timing function between this keyframe and the next. interpolate-size is not animatable.
+static bool isAnimatedInKeyframe(CSSPropertyID property)
 {
-    // Add all the animating properties to the keyframe.
-    bool hasRevert = false;
+    switch (property) {
+    case CSSPropertyAnimationTimingFunction:
+    case CSSPropertyAnimationComposition:
+    case CSSPropertyInterpolateSize:
+        return false;
+    default:
+        return true;
+    }
+}
+
+static void addAnimatedProperties(BlendingKeyframe& blendingKeyframe, const StyleRuleKeyframe& keyframe, WritingMode writingMode)
+{
     for (auto propertyReference : keyframe.properties()) {
         auto unresolvedProperty = propertyReference.id();
-        // The animation-composition and animation-timing-function within keyframes are special
-        // because they are not animated; they just describe the composite operation and timing
-        // function between this keyframe and the next.
         if (CSSProperty::isDirectionAwareProperty(unresolvedProperty))
             blendingKeyframe.setContainsDirectionAwareProperty(true);
-        if (RefPtr value = propertyReference.value()) {
-            auto resolvedProperty = CSSProperty::resolveDirectionAwareProperty(unresolvedProperty, elementStyle.writingMode());
-            if (resolvedProperty != CSSPropertyAnimationTimingFunction && resolvedProperty != CSSPropertyAnimationComposition) {
-                if (RefPtr customValue = dynamicDowncast<CSSCustomPropertyValue>(*value))
-                    blendingKeyframe.addProperty(customValue->name());
-                else
-                    blendingKeyframe.addProperty(resolvedProperty);
-            }
-            if (isValueID(*value, CSSValueRevert))
-                hasRevert = true;
-        }
+
+        RefPtr value = propertyReference.value();
+        if (!value)
+            continue;
+
+        auto resolvedProperty = CSSProperty::resolveDirectionAwareProperty(unresolvedProperty, writingMode);
+        if (!isAnimatedInKeyframe(resolvedProperty))
+            continue;
+
+        if (RefPtr customValue = dynamicDowncast<CSSCustomPropertyValue>(*value))
+            blendingKeyframe.addProperty(customValue->name());
+        else
+            blendingKeyframe.addProperty(resolvedProperty);
     }
+}
+
+static bool hasRevertValue(const StyleRuleKeyframe& keyframe)
+{
+    for (auto propertyReference : keyframe.properties()) {
+        RefPtr value = propertyReference.value();
+        if (value && isValueID(*value, CSSValueRevert))
+            return true;
+    }
+    return false;
+}
+
+std::unique_ptr<Style::ComputedStyle> Resolver::styleForKeyframe(Element& element, const Style::ComputedStyle& elementStyle, const ResolutionContext& context, const StyleRuleKeyframe& keyframe, BlendingKeyframe& blendingKeyframe) const
+{
+    addAnimatedProperties(blendingKeyframe, keyframe, elementStyle.writingMode());
 
     auto state = State(element, nullptr, context.documentElementStyle, context.treeResolutionState.get());
 
@@ -408,7 +435,7 @@ std::unique_ptr<Style::ComputedStyle> Resolver::styleForKeyframe(Element& elemen
     if (pseudoElementIdentifier)
         collector.setPseudoElementRequest(*pseudoElementIdentifier);
 
-    if (hasRevert) {
+    if (hasRevertValue(keyframe)) {
         // In the animation origin, 'revert' rolls back the cascaded value to the user level.
         // Therefore, we need to collect UA and user rules.
         collector.setMedium(m_mediaQueryEvaluator);
@@ -419,6 +446,10 @@ std::unique_ptr<Style::ComputedStyle> Resolver::styleForKeyframe(Element& elemen
     Builder builder(*state.style(), builderContext(state), collector.matchResult());
     builder.state().setIsBuildingKeyframeStyle();
     builder.applyAllProperties();
+
+    // Ignore interpolate-size in keyframes. The element's computed value applies.
+    // https://drafts.csswg.org/css-values-5/#interpolate-size
+    state.style()->setInterpolateSize(elementStyle.interpolateSize());
 
     if (state.style()->usesViewportUnits())
         element.document().setHasStyleWithViewportUnits();
@@ -674,9 +705,9 @@ std::unique_ptr<Style::ComputedStyle> Resolver::defaultStyleForElement(const Ele
     fontDescription.setKeywordSizeFromIdentifier(CSSValueMedium);
 
     auto size = fontSizeForKeyword(CSSValueMedium, false, protect(document()));
-    fontDescription.setSpecifiedSize(size);
-    auto computedFontSize = computedFontSizeFromSpecifiedSize(size, fontDescription.isAbsoluteSize(), is<SVGElement>(element), *style, protect(document()));
-    fontDescription.setComputedSize(computedFontSize.size, computedFontSize.usedZoomFactor);
+    fontDescription.setComputedSize(size);
+    auto usedFontSize = usedFontSizeFromComputedSize(size, fontDescription.isAbsoluteSize(), is<SVGElement>(element), *style, protect(document()));
+    fontDescription.setUsedSize(usedFontSize.size, usedFontSize.zoomFactor);
 
     fontDescription.setShouldAllowUserInstalledFonts(settings().shouldAllowUserInstalledFonts() ? AllowUserInstalledFonts::Yes : AllowUserInstalledFonts::No);
     style->setFontDescription(WTF::move(fontDescription));
@@ -804,15 +835,18 @@ void Resolver::setGlobalStateAfterApplyingProperties(const BuilderState& builder
     // FIXME: This stuff should be somewhere else.
     auto* currentScope = builderState.element() ? &Scope::forNode(*builderState.element()) : nullptr;
     for (auto& entry : builderState.registeredSubstitutionAttributes()) {
-        ruleSets().mutableFeatures().registerSubstitutionAttribute(entry.name);
-        // For attr() applied to a pseudo-element, the originating element's scope may be
-        // different from this resolver's (e.g. ::placeholder styled in a UA shadow scope, with
-        // the originating <input> in the document scope). Register there too so attribute
-        // changes on the originating element trigger AttributeChangeInvalidation; mark the entry
-        // as shadow-tree-affecting on the originating scope so we only invalidate the host's
-        // shadow subtree when a shadow-piercing rule is the source of the dependency.
-        if (CheckedPtr targetScope = entry.targetScope.get(); targetScope && targetScope.get() != currentScope)
-            const_cast<Scope&>(*targetScope).resolver().ruleSets().mutableFeatures().registerSubstitutionAttribute(entry.name, RuleFeatureSet::AffectsShadowTree::Yes);
+        // Register on the scope of the element the attribute is read from, which is where
+        // AttributeChangeInvalidation looks when that attribute changes. For attr() applied to a
+        // pseudo-element that may differ from the scope being styled (e.g. ::placeholder styled in
+        // a UA shadow scope, with the originating <input> in the document scope); remember that so
+        // we only invalidate the host's shadow subtree when a shadow-piercing rule is the source of
+        // the dependency.
+        CheckedPtr targetScope = entry.targetScope.get();
+        auto* scope = targetScope ? targetScope.get() : currentScope;
+        if (!scope)
+            continue;
+        auto affectsShadowTree = scope != currentScope ? AttributeAffectsShadowTree::Yes : AttributeAffectsShadowTree::No;
+        scope->registerSubstitutionAttribute(entry.name, affectsShadowTree);
     }
     if (builderState.style().usesViewportUnits())
         document().setHasStyleWithViewportUnits();

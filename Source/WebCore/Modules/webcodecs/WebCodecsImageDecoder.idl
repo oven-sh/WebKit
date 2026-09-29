@@ -50,7 +50,6 @@
     [CallWith=CurrentScriptExecutionContext] static Promise<boolean> isTypeSupported(DOMString type);
 };
 
-typedef (ArrayBuffer or [AllowShared] ArrayBufferView) AllowSharedBufferSource;
 typedef (AllowSharedBufferSource or ReadableStream) ImageBufferSource;
 enum ColorSpaceConversion { "none", "default" };
 
@@ -63,6 +62,7 @@ enum ColorSpaceConversion { "none", "default" };
     [EnforceRange] unsigned long desiredWidth;
     [EnforceRange] unsigned long desiredHeight;
     boolean preferAnimation;
+    sequence<ArrayBuffer> transfer = [];
 };
 
 [

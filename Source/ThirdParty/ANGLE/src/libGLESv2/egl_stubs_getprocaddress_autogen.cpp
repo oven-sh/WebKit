@@ -19,7 +19,9 @@
 #include "libGLESv2/entry_points_gles_3_1_autogen.h"
 #include "libGLESv2/entry_points_gles_3_2_autogen.h"
 #include "libGLESv2/entry_points_gles_ext_autogen.h"
-#include "libGLESv2/entry_points_gles_ext_explicit_context_autogen.h"
+#if defined(ANGLE_ENABLE_EXPLICIT_CONTEXT)
+#    include "libGLESv2/entry_points_gles_ext_explicit_context_autogen.h"
+#endif  // defined(ANGLE_ENABLE_EXPLICIT_CONTEXT)
 #include "platform/PlatformMethods.h"
 
 #include <iterator>
@@ -596,10 +598,6 @@ const ProcEntry g_procTable[] = {
     {"glCopyTextureCHROMIUM", P(GL_CopyTextureCHROMIUM)},
 #if defined(ANGLE_ENABLE_EXPLICIT_CONTEXT)
     {"glCopyTextureCHROMIUMContextANGLE", P(GL_CopyTextureCHROMIUMContextANGLE)},
-#endif // defined(ANGLE_ENABLE_EXPLICIT_CONTEXT)
-    {"glCoverageModulationCHROMIUM", P(GL_CoverageModulationCHROMIUM)},
-#if defined(ANGLE_ENABLE_EXPLICIT_CONTEXT)
-    {"glCoverageModulationCHROMIUMContextANGLE", P(GL_CoverageModulationCHROMIUMContextANGLE)},
 #endif // defined(ANGLE_ENABLE_EXPLICIT_CONTEXT)
     {"glCreateMemoryObjectsEXT", P(GL_CreateMemoryObjectsEXT)},
 #if defined(ANGLE_ENABLE_EXPLICIT_CONTEXT)

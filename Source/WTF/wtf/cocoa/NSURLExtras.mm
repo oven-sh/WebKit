@@ -26,6 +26,10 @@
  * THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+#if !__has_feature(objc_arc)
+#error This file requires ARC. Add the "-fobjc-arc" compiler flag for this file.
+#endif
+
 #import "config.h"
 #import "NSURLExtras.h"
 
@@ -321,7 +325,7 @@ NSData *originalURLData(NSURL *URL)
 
 NSString *userVisibleString(NSURL *URL)
 {
-    return URLHelpers::userVisibleURL(byteCast<Latin1Character>(span(originalURLData(URL)))).createNSString().autorelease();
+    return URLHelpers::userVisibleURL(byteCast<char8_t>(span(originalURLData(URL)))).createNSString().autorelease();
 }
 
 BOOL isUserVisibleURL(NSString *string)

@@ -1086,6 +1086,7 @@ private:
         case GetGlobalVar:
         case GetGlobalLexicalVariable:
         case GetClosureVar:
+        case GetLazyClosureVar:
         case GetInternalField:
         case GetFromArguments:
         case LoadMapValue:
@@ -1103,7 +1104,8 @@ private:
         case ExtractValueFromWeakMapGet: 
         case DataViewGetInt:
         case DataViewGetFloat:
-        case DateGetInt32OrNaN: {
+        case DateGetInt32OrNaN:
+        case DateGetMilliseconds: {
             setPrediction(m_currentNode->getHeapPrediction());
             break;
         }
@@ -1362,6 +1364,7 @@ private:
             break;
         }
         case MapGet:
+        case DateGetStorage:
         case GetButterfly:
         case GetIndexedPropertyStorage:
         case AllocatePropertyStorage:

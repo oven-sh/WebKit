@@ -25,7 +25,7 @@
 
 #pragma once
 
-#if USE(COORDINATED_GRAPHICS) && USE(SKIA)
+#if USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)
 
 #include "SkiaDamageRegion.h"
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
@@ -96,13 +96,9 @@ private:
         switch (damageRegion.planDraw(ctm, deviceRect, inverse)) {
         case SkiaDamageRegion::DrawDamageStrategy::Skip:
             return RestrictedDraw::Done;
-        case SkiaDamageRegion::DrawDamageStrategy::ClipToDamage: {
-            ScopedFlush autoFlush(canvas, *this, ScopedFlush::Mode::FlushBefore);
-            canvas.concat(transform);
-            damageRegion.clipCanvasInDeviceSpace(canvas);
-            fallbackDraw(canvas);
+        case SkiaDamageRegion::DrawDamageStrategy::ClipToDamage:
+            drawOutsideBatch(canvas, transform, &damageRegion, fallbackDraw);
             return RestrictedDraw::Done;
-        }
         case SkiaDamageRegion::DrawDamageStrategy::SplitByRect:
             break;
         }
@@ -110,9 +106,20 @@ private:
         return RestrictedDraw::Split;
     }
 
+    // Ends the batch and draws one layer on its own, under the layer transform and the damage clip.
+    template<typename FallbackDrawFunction>
+    void drawOutsideBatch(SkCanvas& canvas, const SkM44& transform, const SkiaDamageRegion* damageRegion, NOESCAPE const FallbackDrawFunction& fallbackDraw)
+    {
+        ScopedFlush autoFlush(canvas, *this, ScopedFlush::Mode::FlushBefore);
+        canvas.concat(transform);
+        if (damageRegion)
+            damageRegion->clipCanvasInDeviceSpace(canvas);
+        fallbackDraw(canvas);
+    }
+
     void updateSamplingOptions(SkCanvas&, SkSamplingOptions);
-    bool imageRequiresLinearSampling(const SkCanvas&, const sk_sp<SkImage>&, const FloatRect&, const SkMatrix&) const;
     SkSamplingOptions samplingOptionsForImage(const SkCanvas&, const sk_sp<SkImage>&, const FloatRect&, const SkMatrix&) const;
+    SkSamplingOptions samplingOptionsForBackingStore(const SkCanvas&, const SkiaBackingStore&, const SkMatrix&) const;
     size_t matrixIndexForDraw(const SkMatrix& ctm);
 
     Vector<SkCanvas::ImageSetEntry> m_imageSet;
@@ -124,4 +131,4 @@ private:
 
 } // namespace WebCore
 
-#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA)
+#endif // USE(COORDINATED_GRAPHICS) && USE(SKIA) && !USE(TEXTURE_MAPPER)

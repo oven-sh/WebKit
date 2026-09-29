@@ -6,6 +6,7 @@
 
 use super::instruction;
 use super::reflection;
+use super::util;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
@@ -75,7 +76,7 @@ pub const TYPE_ID_MAT3X4: TypeId = TypeId { id: 24 };
 pub const TYPE_ID_MAT4X2: TypeId = TypeId { id: 25 };
 pub const TYPE_ID_MAT4X3: TypeId = TypeId { id: 26 };
 pub const TYPE_ID_MAT4: TypeId = TypeId { id: 27 };
-const MAX_PREDEFINED_TYPE_ID: u32 = TYPE_ID_MAT4.id;
+pub const MAX_PREDEFINED_TYPE_ID: u32 = TYPE_ID_MAT4.id;
 
 // Fixed enums for bool constants to avoid tracking whether they are defined or not, plus other
 // constants for convenience.
@@ -96,30 +97,40 @@ const MAX_PREDEFINED_CONSTANT_ID: u32 = CONSTANT_ID_YUV_CSC_ITU709.id;
 
 // Typed variant of the above constants.
 pub const TYPED_CONSTANT_ID_FALSE: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_FALSE, TYPE_ID_BOOL);
+    TypedId::from_constant_id(CONSTANT_ID_FALSE, TYPE_ID_BOOL, Precision::NotApplicable);
 pub const TYPED_CONSTANT_ID_TRUE: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_TRUE, TYPE_ID_BOOL);
+    TypedId::from_constant_id(CONSTANT_ID_TRUE, TYPE_ID_BOOL, Precision::NotApplicable);
 pub const TYPED_CONSTANT_ID_FLOAT_ZERO: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_FLOAT_ZERO, TYPE_ID_FLOAT);
+    TypedId::from_constant_id(CONSTANT_ID_FLOAT_ZERO, TYPE_ID_FLOAT, Precision::Low);
 pub const TYPED_CONSTANT_ID_FLOAT_ONE: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_FLOAT_ONE, TYPE_ID_FLOAT);
+    TypedId::from_constant_id(CONSTANT_ID_FLOAT_ONE, TYPE_ID_FLOAT, Precision::Low);
 pub const TYPED_CONSTANT_ID_INT_ZERO: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_INT_ZERO, TYPE_ID_INT);
+    TypedId::from_constant_id(CONSTANT_ID_INT_ZERO, TYPE_ID_INT, Precision::Low);
 pub const TYPED_CONSTANT_ID_INT_ONE: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_INT_ONE, TYPE_ID_INT);
+    TypedId::from_constant_id(CONSTANT_ID_INT_ONE, TYPE_ID_INT, Precision::Low);
 pub const TYPED_CONSTANT_ID_UINT_ZERO: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_UINT_ZERO, TYPE_ID_UINT);
+    TypedId::from_constant_id(CONSTANT_ID_UINT_ZERO, TYPE_ID_UINT, Precision::Low);
 pub const TYPED_CONSTANT_ID_UINT_ONE: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_UINT_ONE, TYPE_ID_UINT);
-pub const TYPED_CONSTANT_ID_YUV_CSC_ITU601: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_YUV_CSC_ITU601, TYPE_ID_YUV_CSC_STANDARD);
-pub const TYPED_CONSTANT_ID_YUV_CSC_ITU601_FULL_RANGE: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_YUV_CSC_ITU601_FULL_RANGE, TYPE_ID_YUV_CSC_STANDARD);
-pub const TYPED_CONSTANT_ID_YUV_CSC_ITU709: TypedId =
-    TypedId::from_constant_id(CONSTANT_ID_YUV_CSC_ITU709, TYPE_ID_YUV_CSC_STANDARD);
+    TypedId::from_constant_id(CONSTANT_ID_UINT_ONE, TYPE_ID_UINT, Precision::Low);
+pub const TYPED_CONSTANT_ID_YUV_CSC_ITU601: TypedId = TypedId::from_constant_id(
+    CONSTANT_ID_YUV_CSC_ITU601,
+    TYPE_ID_YUV_CSC_STANDARD,
+    Precision::NotApplicable,
+);
+pub const TYPED_CONSTANT_ID_YUV_CSC_ITU601_FULL_RANGE: TypedId = TypedId::from_constant_id(
+    CONSTANT_ID_YUV_CSC_ITU601_FULL_RANGE,
+    TYPE_ID_YUV_CSC_STANDARD,
+    Precision::NotApplicable,
+);
+pub const TYPED_CONSTANT_ID_YUV_CSC_ITU709: TypedId = TypedId::from_constant_id(
+    CONSTANT_ID_YUV_CSC_ITU709,
+    TYPE_ID_YUV_CSC_STANDARD,
+    Precision::NotApplicable,
+);
 
 // Prefixes used for symbols.
-pub const USER_SYMBOL_PREFIX: &str = "_"; // followed by CompileOptions::user_variable_name_prefix
+pub const USER_VARIABLE_PREFIX: &str = "_u";
+pub const USER_BLOCK_PREFIX: &str = "_b";
 pub const TEMP_VARIABLE_PREFIX: &str = "t";
 pub const TEMP_FUNCTION_PREFIX: &str = "f";
 pub const TEMP_STRUCT_PREFIX: &str = "s";
@@ -203,8 +214,12 @@ impl TypedId {
         TypedId { id, type_id, precision }
     }
 
-    pub const fn from_constant_id(id: ConstantId, type_id: TypeId) -> TypedId {
-        TypedId { id: Id::new_constant(id), type_id, precision: Precision::NotApplicable }
+    pub const fn from_constant_id(
+        id: ConstantId,
+        type_id: TypeId,
+        precision: Precision,
+    ) -> TypedId {
+        TypedId { id: Id::new_constant(id), type_id, precision }
     }
     pub const fn from_typed_constant_id(constant_id: TypedConstantId) -> TypedId {
         TypedId {
@@ -1499,6 +1514,10 @@ pub struct Name {
     // should never really access this, and having Unicode in the mix will either cause trouble or
     // add binary size for no good reason.
     pub name: &'static str,
+    // A suffix used for generated shader interface names, for example extracted samplers.  Having
+    // this be separate allows `name` to continue to be a `&'static` string instead of one that's
+    // built.
+    pub suffix: Option<u32>,
     // Whether the name has any significance other than being debug info.  For example, it may be a
     // name that needs to be output exactly in text because the backend/driver looks for it.
     pub source: NameSource,
@@ -1509,17 +1528,20 @@ impl Name {
     // example, it's a temporary helper variable etc).  Duplicate names are allowed, and will be
     // made distinguishable if generating text.  Temp names are optional, and might as well be "".
     pub fn new_temp(name: &'static str) -> Name {
-        Name { name, source: NameSource::Temporary }
+        Name { name, suffix: None, source: NameSource::Temporary }
     }
     // A name that must be preserved in some predictable form in the output.  This is useful for
     // backends that reference this name directly, such as with OpenGL.
     pub fn new_interface(name: &'static str) -> Name {
-        Name { name, source: NameSource::ShaderInterface }
+        Name { name, suffix: None, source: NameSource::ShaderInterface }
     }
     // A name that must be preserved exactly in the output, for example `main`, or ANGLE internal
     // interface variables.
     pub fn new_exact(name: &'static str) -> Name {
-        Name { name, source: NameSource::Internal }
+        Name { name, suffix: None, source: NameSource::Internal }
+    }
+    pub fn new_exact_with_suffix(name: &'static str, suffix: u32) -> Name {
+        Name { name, suffix: Some(suffix), source: NameSource::Internal }
     }
 }
 
@@ -1538,6 +1560,7 @@ pub struct Variable {
     pub name: Name,
     pub type_id: TypeId,
     pub precision: Precision,
+    pub precise: bool,
     pub decorations: Decorations,
     pub built_in: Option<BuiltIn>,
     pub initializer: Option<ConstantId>,
@@ -1553,6 +1576,7 @@ impl Variable {
         name: Name,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
         built_in: Option<BuiltIn>,
         initializer: Option<ConstantId>,
@@ -1562,6 +1586,7 @@ impl Variable {
             name,
             type_id,
             precision,
+            precise,
             decorations,
             built_in,
             initializer,
@@ -1575,11 +1600,12 @@ impl Variable {
     // Const variables are only created during parse.  They are replaced by constants and never
     // referenced, and only serve the purpose of holding the assigned precision to the constant.
     // That precision affects the precision of operations they are involved in.
-    pub fn new_const(name: Name, type_id: TypeId, precision: Precision) -> Variable {
+    pub fn new_const(name: Name, type_id: TypeId, precision: Precision, precise: bool) -> Variable {
         Variable {
             name,
             type_id,
             precision,
+            precise,
             decorations: Decorations::new_none(),
             built_in: None,
             initializer: None,
@@ -1593,10 +1619,10 @@ impl Variable {
     pub fn is_built_in(&self) -> bool {
         self.built_in.is_some()
     }
+
     pub fn is_interface_variable(&self) -> bool {
-        let is_interface_variable = self.is_built_in() || !self.decorations.decorations.is_empty();
-        debug_assert!(!is_interface_variable || self.scope == VariableScope::Global);
-        is_interface_variable
+        self.scope == VariableScope::Global
+            && (self.is_built_in() || !self.decorations.decorations.is_empty())
     }
 }
 
@@ -1689,6 +1715,7 @@ pub struct Function {
     pub params: Vec<FunctionParam>,
     pub return_type_id: TypeId,
     pub return_precision: Precision,
+    pub return_precise: bool,
     pub return_decorations: Decorations,
 }
 
@@ -1698,6 +1725,7 @@ impl Function {
         params: Vec<FunctionParam>,
         return_type_id: TypeId,
         return_precision: Precision,
+        return_precise: bool,
         return_decorations: Decorations,
     ) -> Function {
         Function {
@@ -1706,6 +1734,7 @@ impl Function {
             params,
             return_type_id,
             return_precision,
+            return_precise,
             return_decorations,
         }
     }
@@ -1726,9 +1755,16 @@ pub enum ShaderType {
 #[cfg_attr(debug_assertions, derive(Debug))]
 pub enum Precision {
     NotApplicable,
+    Unassigned,
     Low,
     Medium,
     High,
+}
+
+impl Precision {
+    pub fn is_assigned(&self) -> bool {
+        *self != Precision::NotApplicable && *self != Precision::Unassigned
+    }
 }
 
 #[derive(Copy, Clone, PartialEq)]
@@ -1826,7 +1862,6 @@ pub enum EmulatedMultiDraw {
 pub enum Decoration {
     // Corresponding to GLSL qualifiers with the same name
     Invariant,
-    Precise,
     Smooth,
     Flat,
     NoPerspective,
@@ -1903,12 +1938,6 @@ impl Decorations {
             self.decorations.push(Decoration::Invariant);
         }
     }
-    pub fn add_precise(&mut self) {
-        if !self.has(Decoration::Precise) {
-            self.decorations.push(Decoration::Precise);
-        }
-    }
-
     pub fn has(&self, query: Decoration) -> bool {
         self.decorations.contains(&query)
     }
@@ -2008,6 +2037,7 @@ pub struct Field {
     pub name: Name,
     pub type_id: TypeId,
     pub precision: Precision,
+    pub precise: bool,
     pub decorations: Decorations,
     // Reflection info.  Tracking is only needed for fields of nameless interface blocks.
     pub is_static_use: bool,
@@ -2018,9 +2048,10 @@ impl Field {
         name: Name,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
     ) -> Field {
-        Field { name, type_id, precision, decorations, is_static_use: false }
+        Field { name, type_id, precision, precise, decorations, is_static_use: false }
     }
 }
 
@@ -2250,6 +2281,20 @@ impl Type {
     }
     pub fn is_struct_containing_samplers(&self, ir_meta: &IRMeta) -> bool {
         self.is_struct() && self.is_struct_containing_samplers_helper(ir_meta)
+    }
+
+    pub fn is_matrix_packing_applicable(&self, ir_meta: &IRMeta) -> bool {
+        // Matrix can be nested within structs or arrays.
+        match self {
+            &Type::Array(element_type_id, _) | &Type::UnsizedArray(element_type_id) => {
+                ir_meta.get_type(element_type_id).is_matrix_packing_applicable(ir_meta)
+            }
+            &Type::Struct(_, ref fields, StructSpecialization::Struct) => fields
+                .iter()
+                .any(|field| ir_meta.get_type(field.type_id).is_matrix_packing_applicable(ir_meta)),
+            &Type::Matrix(..) => true,
+            _ => false,
+        }
     }
 
     pub fn is_pointer(&self) -> bool {
@@ -2914,8 +2959,10 @@ impl IRMeta {
             Self::add_constant_and_get_id(&mut self.constants, Constant::new_float(value))
         })
     }
-    pub fn get_constant_float_typed(&mut self, value: f32) -> TypedId {
-        TypedId::from_constant_id(self.get_constant_float(value), TYPE_ID_FLOAT)
+    pub fn get_constant_float_typed(&mut self, value: f32, precision: Precision) -> TypedId {
+        // `float` needs a precision
+        debug_assert!(precision != Precision::NotApplicable);
+        TypedId::from_constant_id(self.get_constant_float(value), TYPE_ID_FLOAT, precision)
     }
 
     pub fn get_constant_int(&mut self, value: i32) -> ConstantId {
@@ -2924,15 +2971,26 @@ impl IRMeta {
             Self::add_constant_and_get_id(&mut self.constants, Constant::new_int(value))
         })
     }
-    pub fn get_constant_int_typed(&mut self, value: i32) -> TypedId {
-        TypedId::from_constant_id(self.get_constant_int(value), TYPE_ID_INT)
+    pub fn get_constant_int_typed(&mut self, value: i32, precision: Precision) -> TypedId {
+        // `int` needs a precision
+        debug_assert!(precision != Precision::NotApplicable);
+        TypedId::from_constant_id(self.get_constant_int(value), TYPE_ID_INT, precision)
     }
-    pub fn get_constant_ivec4_typed(&mut self, r: i32, g: i32, b: i32, a: i32) -> TypedId {
+    pub fn get_constant_ivec4_typed(
+        &mut self,
+        r: i32,
+        g: i32,
+        b: i32,
+        a: i32,
+        precision: Precision,
+    ) -> TypedId {
+        // `ivec4` needs a precision
+        debug_assert!(precision != Precision::NotApplicable);
         let r = self.get_constant_int(r);
         let g = self.get_constant_int(g);
         let b = self.get_constant_int(b);
         let a = self.get_constant_int(a);
-        self.get_constant_composite_typed(TYPE_ID_IVEC4, vec![r, g, b, a])
+        self.get_constant_composite_typed(TYPE_ID_IVEC4, vec![r, g, b, a], precision)
     }
 
     pub fn get_constant_uint(&mut self, value: u32) -> ConstantId {
@@ -2941,15 +2999,26 @@ impl IRMeta {
             Self::add_constant_and_get_id(&mut self.constants, Constant::new_uint(value))
         })
     }
-    pub fn get_constant_uint_typed(&mut self, value: u32) -> TypedId {
-        TypedId::from_constant_id(self.get_constant_uint(value), TYPE_ID_UINT)
+    pub fn get_constant_uint_typed(&mut self, value: u32, precision: Precision) -> TypedId {
+        // `uint` needs a precision
+        debug_assert!(precision != Precision::NotApplicable);
+        TypedId::from_constant_id(self.get_constant_uint(value), TYPE_ID_UINT, precision)
     }
-    pub fn get_constant_uvec4_typed(&mut self, r: u32, g: u32, b: u32, a: u32) -> TypedId {
+    pub fn get_constant_uvec4_typed(
+        &mut self,
+        r: u32,
+        g: u32,
+        b: u32,
+        a: u32,
+        precision: Precision,
+    ) -> TypedId {
+        // `uvec4` needs a precision
+        debug_assert!(precision != Precision::NotApplicable);
         let r = self.get_constant_uint(r);
         let g = self.get_constant_uint(g);
         let b = self.get_constant_uint(b);
         let a = self.get_constant_uint(a);
-        self.get_constant_composite_typed(TYPE_ID_UVEC4, vec![r, g, b, a])
+        self.get_constant_composite_typed(TYPE_ID_UVEC4, vec![r, g, b, a], precision)
     }
 
     pub fn get_constant_yuv_csc_standard(&mut self, value: YuvCscStandard) -> ConstantId {
@@ -2959,10 +3028,17 @@ impl IRMeta {
             YuvCscStandard::Itu709 => CONSTANT_ID_YUV_CSC_ITU709,
         }
     }
-    pub fn get_constant_yuv_csc_standard_typed(&mut self, value: YuvCscStandard) -> TypedId {
+    pub fn get_constant_yuv_csc_standard_typed(
+        &mut self,
+        value: YuvCscStandard,
+        precision: Precision,
+    ) -> TypedId {
+        // `yuv_csc_standard` does not need a precision
+        debug_assert!(precision == Precision::NotApplicable);
         TypedId::from_constant_id(
             self.get_constant_yuv_csc_standard(value),
             TYPE_ID_YUV_CSC_STANDARD,
+            precision,
         )
     }
 
@@ -2970,8 +3046,11 @@ impl IRMeta {
         // Bool constants are predefined
         if value { CONSTANT_ID_TRUE } else { CONSTANT_ID_FALSE }
     }
-    pub fn get_constant_bool_typed(&mut self, value: bool) -> TypedId {
-        TypedId::from_constant_id(self.get_constant_bool(value), TYPE_ID_BOOL)
+    pub fn get_constant_bool_typed(&mut self, value: bool, precision: Precision) -> TypedId {
+        // `bool` does not need a precision
+        debug_assert!(precision == Precision::NotApplicable);
+
+        TypedId::from_constant_id(self.get_constant_bool(value), TYPE_ID_BOOL, precision)
     }
 
     pub fn get_constant_composite(
@@ -2991,8 +3070,19 @@ impl IRMeta {
         &mut self,
         type_id: TypeId,
         components: Vec<ConstantId>,
+        precision: Precision,
     ) -> TypedId {
-        TypedId::from_constant_id(self.get_constant_composite(type_id, components), type_id)
+        if util::is_precision_applicable_to_type(self, type_id) {
+            debug_assert!(precision != Precision::NotApplicable)
+        } else {
+            debug_assert!(precision == Precision::NotApplicable);
+        }
+
+        TypedId::from_constant_id(
+            self.get_constant_composite(type_id, components),
+            type_id,
+            precision,
+        )
     }
 
     pub fn dead_code_eliminate_variable(&mut self, id: VariableId) {
@@ -3114,8 +3204,13 @@ impl IRMeta {
             }
         }
     }
-    pub fn get_constant_null_typed(&mut self, type_id: TypeId) -> TypedId {
-        TypedId::from_constant_id(self.get_constant_null(type_id), type_id)
+    pub fn get_constant_null_typed(&mut self, type_id: TypeId, precision: Precision) -> TypedId {
+        if util::is_precision_applicable_to_type(self, type_id) {
+            debug_assert!(precision != Precision::NotApplicable)
+        } else {
+            debug_assert!(precision == Precision::NotApplicable);
+        }
+        TypedId::from_constant_id(self.get_constant_null(type_id), type_id, precision)
     }
 
     pub fn add_variable(&mut self, variable: Variable) -> VariableId {
@@ -3126,6 +3221,7 @@ impl IRMeta {
         name: Name,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
         decorations: Decorations,
         built_in: Option<BuiltIn>,
         initializer: Option<ConstantId>,
@@ -3139,8 +3235,16 @@ impl IRMeta {
         } else {
             self.get_pointer_type_id(type_id)
         };
-        let var =
-            Variable::new(name, type_id, precision, decorations, built_in, initializer, scope);
+        let var = Variable::new(
+            name,
+            type_id,
+            precision,
+            precise,
+            decorations,
+            built_in,
+            initializer,
+            scope,
+        );
         let variable_id = self.add_variable(var);
 
         if scope == VariableScope::Global {
@@ -3156,11 +3260,12 @@ impl IRMeta {
         name: Name,
         type_id: TypeId,
         precision: Precision,
+        precise: bool,
     ) -> VariableId {
         // Automatically turn the type into a pointer
         debug_assert!(!self.get_type(type_id).is_pointer());
         let type_id = self.get_pointer_type_id(type_id);
-        let var = Variable::new_const(name, type_id, precision);
+        let var = Variable::new_const(name, type_id, precision, precise);
         // No need to add the variable to any scope, because they are always replaced by their
         // constant value in the IR.
         self.add_variable(var)
@@ -3178,6 +3283,7 @@ impl IRMeta {
             name,
             type_id,
             precision,
+            false,
             Decorations::new_none(),
             None,
             initializer,
@@ -3200,6 +3306,7 @@ impl IRMeta {
             Name::new_exact(""),
             type_id,
             precision,
+            false,
             Decorations::new_none(),
             Some(built_in),
             None,
@@ -3244,6 +3351,7 @@ impl IRMeta {
         let original_name = std::mem::replace(&mut variable.name, Name::new_temp(cache_name));
         let type_id = variable.type_id;
         let precision = variable.precision;
+        let precise = variable.precise;
         let original_decorations =
             std::mem::replace(&mut variable.decorations, Decorations::new_none());
         let original_built_in = std::mem::take(&mut variable.built_in);
@@ -3258,6 +3366,7 @@ impl IRMeta {
             original_name,
             type_id,
             precision,
+            precise,
             original_decorations,
             original_built_in,
             None,
@@ -3408,6 +3517,18 @@ impl IRMeta {
         let type_info = self.get_type(type_id);
         debug_assert!(type_info.is_pointer());
         type_info.get_element_type_id().unwrap()
+    }
+
+    // Given an array type, retrieves its base element.
+    pub fn get_base_element_type(&self, type_id: TypeId) -> TypeId {
+        debug_assert!(!self.get_type(type_id).is_pointer());
+
+        let mut type_id = type_id;
+        while let Type::Array(element_id, _) = self.get_type(type_id) {
+            type_id = *element_id;
+        }
+
+        type_id
     }
 
     // For some transformations, it matters if some built-in is statically used, even if it's

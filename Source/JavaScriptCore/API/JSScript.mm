@@ -101,7 +101,7 @@ static bool validateBytecodeCachePath(NSURL* cachePath, NSError** error)
     }
 
 #if USE(APPLE_INTERNAL_SDK)
-    if (rootless_check_datavault_flag(FileSystem::fileSystemRepresentation(directory).data(), nullptr)) {
+    if (rootless_check_datavault_flag(FileSystem::fileSystemRepresentation(directory).legacyCStringPointer(), nullptr)) {
         createError([NSString stringWithFormat:@"Cache directory `%@` is not a data vault", directory.createNSString().get()], error);
         return false;
     }
@@ -268,7 +268,7 @@ static bool validateBytecodeCachePath(NSURL* cachePath, NSError** error)
     auto type = m_type == kJSScriptTypeModule ? JSC::SourceProviderSourceType::Module : JSC::SourceProviderSourceType::Program;
     JSC::SourceOrigin origin(url);
     Ref<JSScriptSourceProvider> sourceProvider = JSScriptSourceProvider::create(self, origin, WTF::move(filename), String(), JSC::SourceTaintedOrigin::Untainted, startPosition, type);
-    JSC::SourceCode sourceCode(WTF::move(sourceProvider), startPosition.m_line.oneBasedInt(), startPosition.m_column.oneBasedInt());
+    JSC::SourceCode sourceCode(WTF::move(sourceProvider));
     return sourceCode;
 }
 
@@ -301,13 +301,13 @@ static bool validateBytecodeCachePath(NSURL* cachePath, NSError** error)
     const char* tempFileName = [cachePathString stringByAppendingString:@".tmp"].UTF8String;
     auto fileHandle = FileSystem::FileHandle::adopt(open(cacheFileName, O_CREAT | O_WRONLY | O_EXLOCK | O_NONBLOCK, 0600));
     if (!fileHandle) {
-        error = makeString("Could not open or lock the bytecode cache file. It's likely another VM or process is already using it. Error: "_s, safeStrerror(errno).span());
+        error = makeString("Could not open or lock the bytecode cache file. It's likely another VM or process is already using it. Error: "_s, safeStrerror(errno));
         return NO;
     }
 
     auto tempFileHandle = FileSystem::FileHandle::adopt(open(tempFileName, O_CREAT | O_RDWR | O_EXLOCK | O_NONBLOCK, 0600));
     if (!tempFileHandle) {
-        error = makeString("Could not open or lock the bytecode cache temp file. Error: "_s, safeStrerror(errno).span());
+        error = makeString("Could not open or lock the bytecode cache temp file. Error: "_s, safeStrerror(errno));
         return NO;
     }
 

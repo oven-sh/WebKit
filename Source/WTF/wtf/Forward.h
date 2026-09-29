@@ -23,6 +23,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <wtf/Platform.h>
+#include <wtf/text/Latin1Character.h>
 
 #if defined(__has_feature)
 #if __has_feature(objc_arc)
@@ -121,6 +122,7 @@ template<typename> struct DefaultRefDerefTraits;
 
 template<typename> class Awaitable;
 template<typename> class Borrow;
+template<typename> class CStringWithEncoding;
 template<typename> class CompactPtr;
 template<typename> class CompletionHandler;
 template<typename, size_t = 0> class Deque;
@@ -169,6 +171,10 @@ template<typename T> class InlineWeakPtr;
 template<typename T> struct NoTaggingTraits;
 template<typename T> class ThreadSafeWeakPtr;
 template<typename T> class ThreadSafeWeakRef;
+
+using UTF8CString = CStringWithEncoding<char8_t>;
+using Latin1CString = CStringWithEncoding<Latin1Character>;
+using ASCIICString = CStringWithEncoding<char>;
 
 template <typename T>
 using SaSegmentedVector = SegmentedVector<T, 8, 0, SegmentedVectorGrowthPolicy::Constant, SequesteredArenaMalloc>;
@@ -250,6 +256,7 @@ using WTF::SaSegmentedVector;
 using WTF::SaFixedVector;
 using WTF::SaVector;
 
+using WTF::ASCIICString;
 using WTF::ASCIILiteral;
 using WTF::AbstractLocker;
 using WTF::AtomString;
@@ -259,6 +266,7 @@ using WTF::Awaitable;
 using WTF::Borrow;
 using WTF::BinarySemaphore;
 using WTF::CString;
+using WTF::CStringWithEncoding;
 using WTF::CompletionHandler;
 using WTF::ConcurrencyTag;
 using WTF::ConcurrentWorkQueue;
@@ -278,6 +286,7 @@ using WTF::Hasher;
 using WTF::InlineWeakKeyHashMap;
 using WTF::InlineWeakKeyHashSet;
 using WTF::InlineWeakKeyListHashSet;
+using WTF::Latin1CString;
 using WTF::LazyNeverDestroyed;
 using WTF::LazyUniqueRef;
 using WTF::ListHashSet;
@@ -324,6 +333,7 @@ using WTF::SuspendableWorkQueue;
 using WTF::TextPosition;
 using WTF::TextStream;
 using WTF::URL;
+using WTF::UTF8CString;
 using WTF::UncheckedKeyHashMap;
 using WTF::UncheckedKeyHashSet;
 using WTF::UniqueRef;

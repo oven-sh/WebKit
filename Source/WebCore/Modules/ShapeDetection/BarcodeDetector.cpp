@@ -102,8 +102,7 @@ void BarcodeDetector::detect(ScriptExecutionContext& scriptExecutionContext, Ima
             return;
         }
 
-        // FIXME: This is a safer cpp false positive (rdar://160082559).
-        SUPPRESS_UNCOUNTED_ARG RefPtr imageBuffer = imageBitmap.releaseReturnValue()->takeImageBuffer();
+        RefPtr imageBuffer = protect(imageBitmap.returnValue())->takeImageBuffer();
         if (!imageBuffer) {
             promise.resolve({ });
             return;
@@ -115,8 +114,8 @@ void BarcodeDetector::detect(ScriptExecutionContext& scriptExecutionContext, Ima
         }
 
         backing->detect(image.releaseNonNull(), [promise = WTF::move(promise)](Vector<ShapeDetection::DetectedBarcode>&& detectedBarcodes) mutable {
-            promise.resolve(detectedBarcodes.map([](const auto& detectedBarcode) {
-                return convertFromBacking(detectedBarcode);
+            promise.resolve(WTF::map(WTF::move(detectedBarcodes), [](ShapeDetection::DetectedBarcode&& detectedBarcode) {
+                return convertFromBacking(WTF::move(detectedBarcode));
             }));
         });
     });

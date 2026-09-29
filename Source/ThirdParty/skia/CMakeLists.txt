@@ -54,7 +54,6 @@ add_library(Skia STATIC
     src/core/SkAutoPixmapStorage.cpp
     src/core/SkBBHFactory.cpp
     src/core/SkBezierCurves.cpp
-    src/core/SkBigPicture.cpp
     src/core/SkBitmap.cpp
     src/core/SkBitmapCache.cpp
     src/core/SkBitmapDevice.cpp
@@ -1154,6 +1153,7 @@ endif ()
 target_compile_definitions(Skia PRIVATE
     SK_GL
     SK_GANESH
+    SK_GANESH_SMALL_PATH_DISTANCE_FIELD_ALWAYS
 )
 
 #

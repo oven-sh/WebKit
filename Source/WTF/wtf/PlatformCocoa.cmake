@@ -42,7 +42,7 @@ list(APPEND WTF_SOURCES
     cocoa/TimeZoneCocoa.cpp
     cocoa/URLCocoa.mm
     cocoa/UUIDCocoa.mm
-    cocoa/WorkQueueCocoa.cpp
+    cocoa/WorkQueueCocoa.mm
 
     darwin/LibraryPathDiagnostics.mm
 
@@ -70,7 +70,6 @@ list(APPEND WTF_SOURCES
 
 list(APPEND WTF_PUBLIC_HEADERS
     PlatformEnableCocoa.h
-    module.modulemap
 
     cf/CFTypeTraits.h
     cf/CFURLExtras.h
@@ -144,6 +143,11 @@ if (CMAKE_SYSTEM_NAME STREQUAL "Darwin" OR USE_APPLE_INTERNAL_SDK)
         ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
         ${WTF_DERIVED_SOURCES_DIR}/mach_excUser.c
     )
+    # MIG emits unchecked indexing into the subsystem routine table, which
+    # cannot be annotated because the generator owns the output.
+    WEBKIT_ADD_COMPILER_FLAGS(C SOURCE
+        ${WTF_DERIVED_SOURCES_DIR}/mach_excServer.c
+        -Wno-unsafe-buffer-usage)
 endif ()
 
 
@@ -170,5 +174,9 @@ else ()
         ios/WebCoreThread.h
     )
 endif ()
+
+# Matches CLANG_ENABLE_OBJC_ARC in the Xcode build. Set before the prefix header below so the
+# OBJCXX precompiled header is built with the same flag as the sources that use it.
+target_compile_options(WTF PRIVATE $<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-fobjc-arc>)
 
 WEBKIT_ADD_PREFIX_HEADER(WTF WTFPrefix.h PREFIX_LANGUAGES CXX OBJCXX PREFIX_NO_CODEGEN)

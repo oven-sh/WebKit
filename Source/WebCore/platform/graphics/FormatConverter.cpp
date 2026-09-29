@@ -189,7 +189,7 @@ static constexpr std::array<uint8_t, 512> shiftTable {
 
 inline uint16_t NODELETE convertFloatToHalfFloat(float f)
 {
-    unsigned temp = *(reinterpret_cast<unsigned *>(&f));
+    uint32_t temp = std::bit_cast<uint32_t>(f);
     unsigned signexp = (temp >> 23) & 0x1ff;
     return baseTable[signexp] + ((temp & 0x007fffff) >> shiftTable[signexp]);
 }

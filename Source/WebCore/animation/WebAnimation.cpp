@@ -524,13 +524,14 @@ std::optional<WebAnimationTime> WebAnimation::currentTime(RespectHoldTime respec
     //     2. the associated timeline is inactive, or
     //     3. the animation's start time is unresolved.
     // The current time is an unresolved time value.
-    if (!m_timeline || !m_timeline->currentTime(useCachedCurrentTime) || !m_startTime)
+    RefPtr timeline = m_timeline;
+    if (!timeline || !timeline->currentTime(useCachedCurrentTime) || !m_startTime)
         return std::nullopt;
 
     // Otherwise, current time = (timeline time - start time) * playback rate
-    auto result = (*m_timeline->currentTime(useCachedCurrentTime) - *m_startTime) * m_playbackRate;
+    auto result = (*timeline->currentTime(useCachedCurrentTime) - *m_startTime) * m_playbackRate;
 
-    if (RefPtr viewTimeline = dynamicDowncast<ViewTimeline>(m_timeline)) {
+    if (RefPtr viewTimeline = dynamicDowncast<ViewTimeline>(timeline)) {
         auto epsilon = viewTimeline->epsilon();
         auto zeroPercent = WebAnimationTime::fromPercentage(0);
         if (result < zeroPercent && result + epsilon >= zeroPercent)
@@ -1258,8 +1259,12 @@ ExceptionOr<void> WebAnimation::play(AutoRewind autoRewind)
     }
 
     // 8. If animation’s hold time is resolved, let its start time be unresolved.
-    if (m_holdTime)
+    if (m_holdTime) {
         m_startTime = std::nullopt;
+        // We also reset the pending start time since a previous call to pause() would
+        // have recorded one which is now stale.
+        m_pendingStartTime = std::nullopt;
+    }
 
     // 9. If animation has a pending play task or a pending pause task,
     //     - Cancel that task.

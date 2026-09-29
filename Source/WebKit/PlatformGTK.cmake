@@ -197,6 +197,7 @@ set(WebKitGTK_HEADER_TEMPLATES
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURISchemeRequest.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURISchemeResponse.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitURIUtilities.h.in
+    ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserAgent.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContent.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContentFilterStore.h.in
     ${WEBKIT_DIR}/UIProcess/API/glib/WebKitUserContentManager.h.in
@@ -375,6 +376,10 @@ endif ()
 
 if (USE_OPENXR)
    list(APPEND WebKit_LIBRARIES OpenXR::openxr_loader)
+endif ()
+
+if (USE_LIBSECRET)
+    list(APPEND WebKit_PRIVATE_LIBRARIES Secret::Secret)
 endif ()
 
 if (USE_LIBWEBRTC)

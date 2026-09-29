@@ -1,9 +1,11 @@
-function compareArray(a, b) {
-    if (a.length !== b.length)
-        throw new Error(`Expected length ${b.length} but got ${a.length}`);
-    for (let i = 0; i < a.length; i++) {
-        if (a[i] !== b[i])
-            throw new Error(`${i}: Expected ${b[i]} but got ${a[i]}`);
+function compareArray(actual, expected) {
+    if (actual.length !== expected.length)
+        throw new Error(`Expected length ${expected.length} but got ${actual.length}`);
+    for (let i = 0, l = actual.length; i < l; ++i) {
+        if (Object.hasOwn(actual, i) !== Object.hasOwn(expected, i))
+            throw new Error(`${i}: Mismatch the owner of the property`);
+        if (actual[i] !== expected[i])
+            throw new Error(`${i}: Expected ${expected[i]} but got ${actual[i]}`);
     }
 }
 
@@ -28,4 +30,42 @@ function compareArray(a, b) {
     let arr = [null, obj, "aaa", 42];
     arr.copyWithin(1, 2, 2); 
     compareArray(arr, [null, obj, "aaa", 42]);
+}
+
+{
+    // Have a hole on array by literal.
+    const obj = { test: 123 };
+    const arr = [null, , obj, , "aaa", , 42];
+    arr.copyWithin(2, 3);
+    compareArray(arr, [null, , , "aaa", , 42, 42]);
+}
+
+{
+    // Have a hole by array constructor.
+    const obj = { test: 123 };
+    const arr = new Array(7);
+    arr[0] = null;
+    arr[2] = obj;
+    arr[4] = "aaa";
+    arr[6] = 42;
+    arr.copyWithin(2, 3);
+    compareArray(arr, [null, , , "aaa", , 42, 42]);
+}
+
+{
+    // Have a hole by chainging Array#length
+    const arr = new Array(0);
+    arr.length = 5;
+    arr[2] = 2;
+    arr.copyWithin(2, 0);
+    compareArray(arr, [, , , , 2]);
+}
+
+{
+    // Have a hole by delete indexed prop
+    const obj = { test: 123 };
+    const arr = [null, obj, "aaa", 42];
+    delete arr[1];
+    arr.copyWithin(0, 1, 2);
+    compareArray(arr, [, , "aaa", 42]);
 }

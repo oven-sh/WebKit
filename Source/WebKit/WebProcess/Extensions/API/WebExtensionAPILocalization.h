@@ -37,7 +37,7 @@ class WebExtensionAPILocalization : public WebExtensionAPIObject, public JSWebEx
 
 public:
 #if PLATFORM(COCOA)
-    NSString *getMessage(NSString* messageName, id substitutions);
+    NSString *getMessage(NSString* messageName, JSValue *substitutions);
     NSString *getUILanguage();
 #endif
     void getAcceptLanguages(Ref<WebExtensionCallbackHandler>&&);

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2010-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2010-2026 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -401,6 +401,7 @@ static LayerDisplayListHashMap& NODELETE layerDisplayListMap()
 
 GraphicsLayerCA::GraphicsLayerCA(Type layerType, GraphicsLayerClient& client)
     : GraphicsLayer(layerType, client)
+    , m_tileCoverage(TiledBacking::CoverageForVisibleArea)
     , m_needsFullRepaint(false)
     , m_allowsBackingStoreDetaching(true)
     , m_intersectsCoverageRect(false)
@@ -2090,7 +2091,7 @@ void GraphicsLayerCA::recursiveCommitChanges(CommitState& commitState, const Tra
         TraceScope tracingScope(DisplayListRecordStart, DisplayListRecordEnd);
         m_displayList = nullptr;
         FloatRect initialClip(boundsOrigin(), size());
-        DisplayList::RecorderImpl context(GraphicsContextState(), initialClip, AffineTransform());
+        DisplayList::RecorderImpl context(initialClip);
         paintGraphicsLayerContents(context, FloatRect(FloatPoint(), size()));
         m_displayList = context.takeDisplayList();
     }
@@ -3149,9 +3150,9 @@ void GraphicsLayerCA::updateDebugIndicators()
     if (showDebugBorders)
         getDebugBorderInfo(borderColor, width);
 
-    // Paint repaint counter.
     RefPtr layer = m_layer;
-    layer->setNeedsDisplay();
+    if (isShowingRepaintCounter())
+        layer->setNeedsDisplay();
 
     setLayerDebugBorder(*layer, borderColor, width);
     if (RefPtr contentsLayer = m_contentsLayer)
@@ -4359,37 +4360,6 @@ bool GraphicsLayerCA::setFilterAnimationKeyframes(const GraphicsLayerKeyframeVal
     return true;
 }
 
-void GraphicsLayerCA::suspendAnimations(MonotonicTime time)
-{
-    double t = PlatformCALayer::currentTimeToMediaTime(time ? time : MonotonicTime::now());
-    RefPtr primaryLayer = this->primaryLayer();
-    primaryLayer->setSpeed(0);
-    primaryLayer->setTimeOffset(t);
-
-    // Suspend the animations on the clones too.
-    if (LayerMap* layerCloneMap = primaryLayerClones()) {
-        for (auto& layer : layerCloneMap->values()) {
-            layer->setSpeed(0);
-            layer->setTimeOffset(t);
-        }
-    }
-}
-
-void GraphicsLayerCA::resumeAnimations()
-{
-    RefPtr primaryLayer = this->primaryLayer();
-    primaryLayer->setSpeed(1);
-    primaryLayer->setTimeOffset(0);
-
-    // Resume the animations on the clones too.
-    if (LayerMap* layerCloneMap = primaryLayerClones()) {
-        for (auto& layer : layerCloneMap->values()) {
-            layer->setSpeed(1);
-            layer->setTimeOffset(0);
-        }
-    }
-}
-
 PlatformCALayer* GraphicsLayerCA::hostLayerForSublayers() const
 {
     if (contentsRectClipsDescendants() && m_contentsClippingLayer)
@@ -4521,6 +4491,10 @@ void GraphicsLayerCA::setShowRepaintCounter(bool showCounter)
         return;
 
     GraphicsLayer::setShowRepaintCounter(showCounter);
+
+    if (RefPtr layer = m_layer)
+        layer->setNeedsDisplay();
+
     noteLayerPropertyChanged(DebugIndicatorsChanged);
 }
 

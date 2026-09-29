@@ -162,6 +162,59 @@ TEST(URLMatchTest, PathStartsWithIsAnchored)
     EXPECT_FALSE(matchesURL(match, "https://docs.google.com/a/spreadsheets/d/abc"_s));
 }
 
+TEST(URLMatchTest, PathIsMatchesTheWholePath)
+{
+    auto match = URLMatch::host("shopee.sg"_s).when(pathIs("/payment/account-linking/landing"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://shopee.sg/payment/account-linking/landing"_s));
+    EXPECT_TRUE(matchesURL(match, "https://shopee.sg/payment/account-linking/landing?token=abc#top"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://shopee.sg/payment/account-linking/landing/"_s));
+    EXPECT_FALSE(matchesURL(match, "https://shopee.sg/payment/account-linking/landing/step2"_s));
+    EXPECT_FALSE(matchesURL(match, "https://shopee.sg/payment/account-linking"_s));
+    EXPECT_FALSE(matchesURL(match, "https://shopee.sg/"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://shopee.sg/Payment/Account-Linking/Landing"_s));
+}
+
+TEST(URLMatchTest, LastPathComponentIsMatchesOnlyTheFinalSegment)
+{
+    auto match = URLMatch::anyURL().when(lastPathComponentIs("CheckBrowserClose.js"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://ceac.state.gov/CheckBrowserClose.js"_s));
+    EXPECT_TRUE(matchesURL(match, "https://ceac.state.gov/js/vendor/CheckBrowserClose.js?v=3"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/js/NotCheckBrowserClose.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/CheckBrowserClose.js/inner.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/checkbrowserclose.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/"_s));
+}
+
+TEST(URLMatchTest, LastPathComponentStartsWithIgnoresEarlierSegments)
+{
+    auto match = URLMatch::anyURL().when(lastPathComponentStartsWith("pushdownload."_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://webex.com/pushdownload.js"_s));
+    EXPECT_TRUE(matchesURL(match, "https://webex.com/static/pushdownload.1a2b3c.js"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://webex.com/pushdownload/main.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://webex.com/vendor-pushdownload.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://webex.com/"_s));
+}
+
+TEST(URLMatchTest, LastPathComponentEndsWithIgnoresTheQuery)
+{
+    auto match = URLMatch::host("player.anyclip.com"_s).when(lastPathComponentEndsWith("lre.js"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://player.anyclip.com/lre.js"_s));
+    EXPECT_TRUE(matchesURL(match, "https://player.anyclip.com/player/lre.js?pubname=abc"_s));
+    EXPECT_TRUE(matchesURL(match, "https://player.anyclip.com/anyclip-widget-lre.js"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://player.anyclip.com/lre.js/wrapper.min.js"_s));
+    EXPECT_FALSE(matchesURL(match, "https://player.anyclip.com/lre.json"_s));
+    EXPECT_FALSE(matchesURL(match, "https://cdn.anyclip.com/lre.js"_s));
+}
+
 TEST(URLMatchTest, PathOrFragmentContainsSearchesBoth)
 {
     auto match = URLMatch::domain("icloud.com"_s).when(pathOrFragmentContains("mail"_s));
@@ -173,6 +226,28 @@ TEST(URLMatchTest, PathOrFragmentContainsSearchesBoth)
     EXPECT_FALSE(matchesURL(match, "https://www.icloud.com/notes/"_s));
 
     EXPECT_FALSE(matchesURL(match, "https://www.icloud.com/?app=mail"_s));
+}
+
+TEST(URLMatchTest, QueryContainsSearchesOnlyTheQuery)
+{
+    auto match = URLMatch::host("teams.microsoft.com"_s).when(queryContains("Retried+3+times+without+success"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://teams.microsoft.com/?error=Retried+3+times+without+success"_s));
+    EXPECT_TRUE(matchesURL(match, "https://teams.microsoft.com/v2/?a=1&msg=Retried+3+times+without+success&b=2"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://teams.microsoft.com/"_s));
+    EXPECT_FALSE(matchesURL(match, "https://teams.microsoft.com/Retried+3+times+without+success"_s));
+    EXPECT_FALSE(matchesURL(match, "https://teams.microsoft.com/#Retried+3+times+without+success"_s));
+}
+
+TEST(URLMatchTest, QueryContainsStacksWithAPathRefinement)
+{
+    auto match = URLMatch::host("example.com"_s).when(pathStartsWith("/app/"_s), queryContains("retry"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://example.com/app/home?retry=1"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://example.com/app/home"_s));
+    EXPECT_FALSE(matchesURL(match, "https://example.com/other?retry=1"_s));
 }
 
 TEST(URLMatchTest, EnvironmentIsANDedWithTheSiteMatch)

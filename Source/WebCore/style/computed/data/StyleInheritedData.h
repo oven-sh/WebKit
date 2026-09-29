@@ -27,7 +27,6 @@
 
 #include <WebCore/StyleColor.h>
 #include <WebCore/StyleLineHeight.h>
-#include <WebCore/StyleWebKitBorderSpacing.h>
 #include <wtf/DataRef.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -55,25 +54,13 @@ public:
     bool nonFastPathInheritedEqual(const InheritedData&) const;
     void NODELETE fastPathInheritFrom(const InheritedData&);
 
-    WebkitBorderSpacing borderHorizontalSpacing;
-    WebkitBorderSpacing borderVerticalSpacing;
-
     LineHeight lineHeight;
-#if ENABLE(TEXT_AUTOSIZING)
-    LineHeight specifiedLineHeight;
-#endif
+    LineHeight textAutosizingAdjustedLineHeight;
 
     DataRef<FontData> fontData;
     WebCore::Color color;
     WebCore::Color visitedLinkColor;
-
-    // Whether color came from the currentcolor keyword. A highlight pseudo-element resolves
-    // currentcolor against its originating element, so the chain inherits the keyword rather than
-    // the color it resolved to. Highlight styles always set this, so it doesn't depend on being
-    // inherited with the color. https://drafts.csswg.org/css-pseudo-4/#highlight-cascade
-    // FIXME: A value that merely references currentcolor, like color-mix(in oklab, teal,
-    // currentcolor), is not covered. See BuilderCustom::applyHighlightInheritColor().
-    bool colorIsCurrentColorForHighlight;
+    WebCore::Color currentBackgroundColor;
 
 private:
     InheritedData();

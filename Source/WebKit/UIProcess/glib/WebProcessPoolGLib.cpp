@@ -319,7 +319,7 @@ void WebProcessPool::setSandboxEnabled(bool enabled)
     m_sandboxEnabled = true;
 #if USE(ATSPI)
     if (shouldUseBubblewrap())
-        m_sandboxedAccessibilityBusAddress = makeString("unix:path="_s, FileSystem::pathByAppendingComponent(FileSystem::stringFromFileSystemRepresentation(sandboxedUserRuntimeDirectory().data()), "at-spi-bus"_s));
+        m_sandboxedAccessibilityBusAddress = makeString("unix:path="_s, FileSystem::pathByAppendingComponent(String { sandboxedUserRuntimeDirectory() }, "at-spi-bus"_s));
 #endif
 }
 
@@ -382,8 +382,8 @@ const String& WebProcessPool::sandboxedAccessibilityBusAddress() const
 const String& WebProcessPool::generateNextAccessibilityBusName()
 {
     m_accessibilityBusName = makeString(String::fromUTF8(WTF::applicationID().span()), ".Sandboxed.WebProcess-"_s, WTF::UUID::createVersion4());
-    RELEASE_ASSERT(g_dbus_is_name(m_accessibilityBusName.value().utf8().data()));
-    RELEASE_ASSERT(!g_dbus_is_unique_name(m_accessibilityBusName.value().utf8().data()));
+    RELEASE_ASSERT(g_dbus_is_name(m_accessibilityBusName.value().utf8().legacyCStringPointer()));
+    RELEASE_ASSERT(!g_dbus_is_unique_name(m_accessibilityBusName.value().utf8().legacyCStringPointer()));
 
     return accessibilityBusName();
 }

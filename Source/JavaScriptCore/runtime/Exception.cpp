@@ -64,6 +64,9 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     visitor.append(thisObject->m_value);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_asyncContext);
+#endif
     for (StackFrame& frame : thisObject->m_stack)
         frame.visitAggregate(visitor);
     visitor.reportExtraMemoryVisited(thisObject->m_stack.sizeInBytes());

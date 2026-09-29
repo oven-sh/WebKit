@@ -60,6 +60,7 @@ public:
     void unpauseAnimations();
     void dispatchLoadEventToOutermostSVGElements();
     bool areAnimationsPaused() const { return m_areAnimationsPaused; }
+    bool hasActiveSMILAnimations() const;
 
     void reportWarning(const String&);
     void reportError(const String&);

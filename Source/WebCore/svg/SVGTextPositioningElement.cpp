@@ -59,19 +59,19 @@ void SVGTextPositioningElement::attributeChanged(const QualifiedName& name, cons
 {
     switch (name.nodeName()) {
     case AttributeNames::xAttr:
-        protect(m_x)->baseVal()->parse(newValue);
+        protect(protect(m_x)->baseVal())->parse(newValue);
         break;
     case AttributeNames::yAttr:
-        protect(m_y)->baseVal()->parse(newValue);
+        protect(protect(m_y)->baseVal())->parse(newValue);
         break;
     case AttributeNames::dxAttr:
-        protect(m_dx)->baseVal()->parse(newValue);
+        protect(protect(m_dx)->baseVal())->parse(newValue);
         break;
     case AttributeNames::dyAttr:
-        protect(m_dy)->baseVal()->parse(newValue);
+        protect(protect(m_dy)->baseVal())->parse(newValue);
         break;
     case AttributeNames::rotateAttr:
-        protect(m_rotate)->baseVal()->parse(newValue);
+        protect(protect(m_rotate)->baseVal())->parse(newValue);
         break;
     default:
         break;
@@ -105,8 +105,10 @@ RefPtr<SVGTextPositioningElement> SVGTextPositioningElement::elementFromRenderer
     if (!is<RenderSVGText>(renderer) && !is<RenderSVGInline>(renderer))
         return nullptr;
 
-    ASSERT(renderer.element());
-    RefPtr element = downcast<SVGElement>(renderer.element());
+    RefPtr element = dynamicDowncast<SVGElement>(renderer.element());
+    if (!element)
+        return nullptr;
+
     return dynamicDowncast<SVGTextPositioningElement>(WTF::move(element));
 }
 

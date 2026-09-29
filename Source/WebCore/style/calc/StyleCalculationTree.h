@@ -114,6 +114,14 @@ struct Dimension {
     bool operator==(const Dimension&) const = default;
 };
 
+// The `size` keyword of calc-size(). Carries no value because it stands for the used value of the
+// calc-size basis, which is not known until layout resolves it.
+struct Size {
+    static constexpr bool isLeaf = true;
+
+    bool operator==(const Size&) const = default;
+};
+
 template<typename Op> struct IndirectNode {
     UniqueRef<Op> op;
 
@@ -132,6 +140,7 @@ using Node = Variant<
     Number,
     Percentage,
     Dimension,
+    Size,
     IndirectNode<Sum>,
     IndirectNode<Product>,
     IndirectNode<Negate>,
@@ -233,6 +242,11 @@ struct Tree {
 };
 
 size_t computeDepth(const Tree&);
+
+// Distinct from computeDepth(): substitution multiplies a tree rather than deepening it, so the two
+// bound different things.
+size_t computeNodeCount(const Tree&);
+size_t computeNodeCount(const Child&);
 
 // Math Operators.
 

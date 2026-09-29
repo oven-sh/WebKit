@@ -48,6 +48,7 @@
 #include "RenderCombineText.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderElementInlines.h"
+#include "RenderGlyph.h"
 #include "RenderObjectInlines.h"
 #include "RenderText.h"
 #include "RenderTheme.h"
@@ -202,7 +203,12 @@ TextBoxPainter::TextBoxPainter(const LayoutIntegration::InlineContent& inlineCon
     , m_isPrinting(m_document->printing())
     , m_haveSelection(computeHaveSelection())
 {
-    ASSERT(paintInfo.phase == PaintPhase::Foreground || paintInfo.phase == PaintPhase::Selection || paintInfo.phase == PaintPhase::TextClip || paintInfo.phase == PaintPhase::EventRegion || paintInfo.phase == PaintPhase::Accessibility);
+    ASSERT(paintInfo.phase == PaintPhase::Foreground || paintInfo.phase == PaintPhase::Selection || paintInfo.phase == PaintPhase::TextClip || paintInfo.phase == PaintPhase::EventRegion || paintInfo.phase == PaintPhase::Accessibility
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+        || paintInfo.phase == PaintPhase::AXCustomColorComputeBackdrops
+        || paintInfo.phase == PaintPhase::AXCustomColorCollectBackgrounds
+#endif
+    );
 
     SUPPRESS_UNCOUNTED_LOCAL auto& editor = m_renderer->frame().editor();
     m_containsComposition = m_renderer->textNode() && editor.compositionNode() == m_renderer->textNode();
@@ -231,6 +237,16 @@ void TextBoxPainter::paint()
             m_paintInfo.eventRegionContext()->unite(FloatRoundedRect(m_paintRect), m_renderer, m_style);
         return;
     }
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    if (m_paintInfo.phase == PaintPhase::AXCustomColorCollectBackgrounds)
+        return;
+
+    if (m_paintInfo.phase == PaintPhase::AXCustomColorComputeBackdrops) {
+        m_paintInfo.axCustomColorBackdropContext()->updateTextBackdrop(m_renderer, m_paintRect);
+        return;
+    }
+#endif
 
     std::optional<RotationDirection> glyphRotation;
     if (!textBox().isHorizontal() && !m_isCombinedText) {
@@ -686,23 +702,53 @@ void TextBoxPainter::paintSynthesizedGlyph()
     auto& fontMetrics = m_style->metricsOfPrimaryFont();
     auto ascent = fontMetrics.ascent();
     auto bulletWidth = (ascent * 2 / 3 + 1) / 2;
-    auto markerRect = FloatRect { 1, 3 * (ascent - ascent * 2 / 3) / 2, bulletWidth, bulletWidth };
-    markerRect.moveBy(m_paintRect.location());
 
     auto& context = m_paintInfo.context();
     auto color = m_style->visitedDependentTextFillColorApplyingColorFilter();
+    context.setFillColor(color);
     context.setStrokeColor(color);
     context.setStrokeStyle(StrokeStyle::SolidStroke);
-    context.setStrokeThickness(1.0f);
-    context.setFillColor(color);
+
+    // Check 'content' before 'list-style-type'.
+    if (CheckedPtr glyphRenderer = dynamicDowncast<RenderGlyph>(m_renderer.get())) {
+        auto fontSize = m_style->fontCascade().size();
+        auto size = fontSize / 4;
+        FloatPoint center { glyphRenderer->advanceRatio() * fontSize / 2, fontMetrics.ascent(FontBaseline::Central) };
+        center.moveBy(m_paintRect.location());
+
+        bool shouldFlip = (glyphRenderer->glyph() == SynthesizedGlyph::PickerDown) == textBox().writingMode().isLineInverted();
+        GraphicsContextStateSaver stateSaver(context);
+        if (shouldFlip) {
+            // A flipped chevron reads optically low, so lift it by a quarter of the glyph size.
+            context.concatCTM(AffineTransform { }.translate(center.x(), center.y() - size / 4).rotate(180).translate(-center.x(), -center.y()));
+        }
+
+        context.setLineCap(LineCap::Butt);
+        context.setLineJoin(LineJoin::Miter);
+        context.setStrokeThickness(std::max(1.0f, fontSize * 0.05f));
+
+        // Draw chevron pointing down.
+        Path chevron;
+        chevron.moveTo({ center.x() - size, center.y() - size / 2 });
+        chevron.addLineTo({ center.x(), center.y() + size / 2 });
+        chevron.addLineTo({ center.x() + size, center.y() - size / 2 });
+        context.strokePath(chevron);
+        return;
+    }
+
+    auto markerRect = FloatRect { 1, 3 * (ascent - ascent * 2 / 3) / 2, bulletWidth, bulletWidth };
+    markerRect.moveBy(m_paintRect.location());
 
     auto listStyleType = m_style->listStyleType();
     if (listStyleType.isDisc())
         context.fillEllipse(markerRect);
-    else if (listStyleType.isCircle())
-        context.strokeEllipse(markerRect);
-    else
+    else if (listStyleType.isSquare())
         context.fillRect(markerRect);
+    else if (listStyleType.isCircle()) {
+        context.setStrokeThickness(1.0f);
+        context.strokeEllipse(markerRect);
+    } else
+        ASSERT_NOT_REACHED();
 }
 
 void TextBoxPainter::paintForeground(const StyledMarkedText& markedText)
@@ -991,7 +1037,7 @@ static float autoTextDecorationInset(const Style::ComputedStyle& style)
     // A small UA-chosen inset (relative to font size) so that two adjacent identical underlined
     // elements do not appear to share a single continuous underline (important for e.g. Chinese,
     // where underlining is a form of punctuation).
-    return style.computedFontSize() / 8;
+    return style.usedFontSize() / 8;
 }
 
 struct DecoratingBoxFragmentInlineSizes {
@@ -1133,7 +1179,7 @@ void TextBoxPainter::paintBackgroundDecorations(TextDecorationPainter& decoratio
                 overlineOffset(),
                 computedLinethroughCenter(decoratingBox.style.get(), textDecorationThickness, autoTextDecorationThickness),
                 decoratingBox.style->metricsOfPrimaryFont().ascent() + 2.f,
-                wavyStrokeParameters(decoratingBox.style->computedFontSize())
+                wavyStrokeParameters(decoratingBox.style->usedFontSize())
             };
         };
 
@@ -1219,7 +1265,7 @@ void TextBoxPainter::paintForegroundDecorations(TextDecorationPainter& decoratio
             , insetWidth
             , textDecorationThickness
             , linethroughCenter
-            , wavyStrokeParameters(decoratingBox.style->computedFontSize()) }, decoratingBox.textDecorationStyles);
+            , wavyStrokeParameters(decoratingBox.style->usedFontSize()) }, decoratingBox.textDecorationStyles);
     }
 
     if (m_isCombinedText)

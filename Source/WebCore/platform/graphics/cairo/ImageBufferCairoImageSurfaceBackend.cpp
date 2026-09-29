@@ -42,9 +42,9 @@ namespace WebCore {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ImageBufferCairoImageSurfaceBackend);
 
-IntSize ImageBufferCairoImageSurfaceBackend::calculateSafeBackendSize(const Parameters& parameters)
+IntSize ImageBufferCairoImageSurfaceBackend::calculateSafeBackendSize(const ImageBufferParameters& parameters)
 {
-    IntSize backendSize = parameters.backendSize;
+    IntSize backendSize = parameters.backendSize();
     if (backendSize.isEmpty())
         return { };
 
@@ -68,12 +68,7 @@ unsigned ImageBufferCairoImageSurfaceBackend::calculateBytesPerRow(const IntSize
     return cairo_format_stride_for_width(CAIRO_FORMAT_ARGB32, backendSize.width());
 }
 
-size_t ImageBufferCairoImageSurfaceBackend::calculateMemoryCost(const Parameters& parameters)
-{
-    return ImageBufferBackend::calculateMemoryCost(parameters.backendSize, calculateBytesPerRow(parameters.backendSize));
-}
-
-std::unique_ptr<ImageBufferCairoImageSurfaceBackend> ImageBufferCairoImageSurfaceBackend::create(const Parameters& parameters, const ImageBufferCreationContext&)
+std::unique_ptr<ImageBufferCairoImageSurfaceBackend> ImageBufferCairoImageSurfaceBackend::create(const ImageBufferParameters& parameters, const ImageBufferCreationContext&)
 {
     ASSERT(parameters.bufferFormat.pixelFormat == PixelFormat::BGRA8);
 
@@ -98,12 +93,12 @@ std::unique_ptr<ImageBufferCairoImageSurfaceBackend> ImageBufferCairoImageSurfac
     return std::unique_ptr<ImageBufferCairoImageSurfaceBackend>(new ImageBufferCairoImageSurfaceBackend(parameters, WTF::move(surface)));
 }
 
-std::unique_ptr<ImageBufferCairoImageSurfaceBackend> ImageBufferCairoImageSurfaceBackend::create(const Parameters& parameters, const GraphicsContext&)
+std::unique_ptr<ImageBufferCairoImageSurfaceBackend> ImageBufferCairoImageSurfaceBackend::create(const ImageBufferParameters& parameters, const GraphicsContext&)
 {
     return ImageBufferCairoImageSurfaceBackend::create(parameters, ImageBufferCreationContext { });
 }
 
-ImageBufferCairoImageSurfaceBackend::ImageBufferCairoImageSurfaceBackend(const Parameters& parameters, RefPtr<cairo_surface_t>&& surface)
+ImageBufferCairoImageSurfaceBackend::ImageBufferCairoImageSurfaceBackend(const ImageBufferParameters& parameters, RefPtr<cairo_surface_t>&& surface)
     : ImageBufferCairoSurfaceBackend(parameters, WTF::move(surface))
 {
     ASSERT(cairo_surface_get_type(m_surface.get()) == CAIRO_SURFACE_TYPE_IMAGE);
@@ -111,7 +106,7 @@ ImageBufferCairoImageSurfaceBackend::ImageBufferCairoImageSurfaceBackend(const P
 
 unsigned ImageBufferCairoImageSurfaceBackend::bytesPerRow() const
 {
-    return calculateBytesPerRow(m_parameters.backendSize);
+    return calculateBytesPerRow(size());
 }
 
 void ImageBufferCairoImageSurfaceBackend::platformTransformColorSpace(const std::array<uint8_t, 256>& lookUpTable)

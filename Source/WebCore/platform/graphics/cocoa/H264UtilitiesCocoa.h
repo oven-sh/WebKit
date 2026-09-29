@@ -27,10 +27,13 @@
 
 #include <wtf/Forward.h>
 
+typedef struct opaqueCMSampleBuffer *CMSampleBufferRef;
+
 namespace WebCore {
 
 class VideoInfo;
 
 WEBCORE_EXPORT RefPtr<VideoInfo> createVideoInfoFromAVCC(std::span<const uint8_t>);
+WEBCORE_EXPORT Vector<uint8_t> convertAVCCMSampleBufferToAnnexB(CMSampleBufferRef, bool isKeyframe);
 
 } // namespace WebCore

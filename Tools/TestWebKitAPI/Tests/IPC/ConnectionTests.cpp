@@ -27,6 +27,7 @@
 
 #include "IPCTestUtilities.h"
 #include "Helpers/Test.h"
+#include "WorkQueueMessageReceiver.h"
 #include <wtf/Threading.h>
 #include <wtf/threads/BinarySemaphore.h>
 
@@ -244,6 +245,11 @@ TEST_P(ConnectionTestABBA, AAndBInvalidateDoesNotDeliverDidClose)
     EXPECT_FALSE(bClient().waitForDidClose(kWaitForAbsenceTimeout));
 }
 
+#if PLATFORM(COCOA)
+
+// Invalidating an unopened connection closes its socket, so a peer using Unix domain sockets sees
+// the end of file and reports didClose. A Mach based peer is never told.
+
 TEST_P(ConnectionTestABBA, UnopenedAAndInvalidateDoesNotDeliverBDidClose)
 {
     ASSERT_TRUE(openB());
@@ -251,6 +257,8 @@ TEST_P(ConnectionTestABBA, UnopenedAAndInvalidateDoesNotDeliverBDidClose)
     deleteA();
     EXPECT_FALSE(bClient().waitForDidClose(kWaitForAbsenceTimeout));
 }
+
+#endif // PLATFORM(COCOA)
 
 TEST_P(ConnectionTestABBA, IncomingMessageThrottlingWorks)
 {
@@ -567,7 +575,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendAsync)
         for (uint64_t i = 100u; i < 160u; ++i) {
             b()->sendWithAsyncReply(MockTestMessageWithAsyncReply1 { }, [&, j = i] (uint64_t value) {
                 if (!value)
-                    WTFLogAlways("GOT: %llu", j);
+                    WTFLogAlways("GOT: %" PRIu64, j);
                 EXPECT_GE(value, 100u);
                 replies.add(value);
             }, i);
@@ -788,7 +796,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendAsyncOnTarget)
                 b()->sendWithAsyncReplyOnDispatcher(MockTestMessageWithAsyncReply1 { }, awq.queue(), [&, j = i, queue = awq.queue()] (uint64_t value) {
                     assertIsCurrent(queue);
                     if (!value)
-                        WTFLogAlways("GOT: %llu", j);
+                        WTFLogAlways("GOT: %" PRIu64, j);
                     EXPECT_GE(value, 100u);
                     replies.add(value);
                 }, i);
@@ -823,7 +831,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendWithPromisedReply)
             b()->sendWithPromisedReply(MockTestMessageWithAsyncReply1 { }, i)->then(runLoop,
                 [&, j = i] (uint64_t value) {
                     if (!value)
-                        WTFLogAlways("GOT: %llu", j);
+                        WTFLogAlways("GOT: %" PRIu64, j);
                     EXPECT_GE(value, 100u);
                     replies.add(value);
                 },
@@ -902,7 +910,7 @@ TEST_P(ConnectionRunLoopTest, RunLoopSendWithPromisedReplyOnMixAndMatchDispatche
                     EXPECT_TRUE(result);
                     auto value = *result;
                     if (!value)
-                        WTFLogAlways("GOT: %llu", j);
+                        WTFLogAlways("GOT: %" PRIu64, j);
                     EXPECT_GE(value, 100u);
                     replies.add(value);
                 });
@@ -1363,6 +1371,41 @@ TEST_P(ConnectionRunLoopTest, SyncMessageDecodeFailureIsCancelled)
 #undef RUN_LOOP_NAME
 #undef LOCAL_STRINGIFY
 
+// A message check failing in a receiver that is dispatched on a work queue rather than on the
+// connection's client run loop must still be reported to the client, so that the sender can be
+// terminated.
+class MockMessageCheckingWorkQueueMessageReceiver final : public IPC::WorkQueueMessageReceiver<WTF::DestructionThread::Any> {
+public:
+    static Ref<MockMessageCheckingWorkQueueMessageReceiver> create() { return adoptRef(*new MockMessageCheckingWorkQueueMessageReceiver); }
+
+private:
+    MockMessageCheckingWorkQueueMessageReceiver() = default;
+
+    void didReceiveMessage(IPC::Connection& connection, IPC::Decoder&) final
+    {
+        connection.markCurrentlyDispatchedMessageAsInvalid("work queue message check"_s);
+    }
+};
+
+TEST_F(ConnectionTest, WorkQueueMessageReceiverMessageCheckIsReported)
+{
+    ASSERT_TRUE(openBoth());
+
+    auto receiverName = IPC::receiverName(MockTestMessage1::name());
+    Ref workQueue = WorkQueue::create("MockMessageCheckingWorkQueueMessageReceiver"_s);
+    Ref receiver = MockMessageCheckingWorkQueueMessageReceiver::create();
+    server()->addWorkQueueMessageReceiver(receiverName, workQueue, receiver);
+
+    for (uint64_t i = 100u; i < 160u; ++i)
+        client()->send(MockTestMessage1 { }, i);
+
+    for (uint64_t i = 100u; i < 160u; ++i) {
+        auto invalidMessage = serverClient().waitForInvalidMessage(kDefaultWaitForTimeout);
+        EXPECT_EQ(invalidMessage, MockTestMessage1::name());
+    }
+
+    server()->removeWorkQueueMessageReceiver(receiverName);
+}
 
 class ConnectionDidReceiveInvalidMessageTest : public testing::TestWithParam<std::tuple<ConnectionTestDirection, InvalidMessageTestType>>, protected ConnectionTestBase {
 public:

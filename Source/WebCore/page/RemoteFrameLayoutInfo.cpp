@@ -35,48 +35,45 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteFrameLayoutInfo);
 
 RemoteFrameLayoutInfo::RemoteFrameLayoutInfo(
-    LayoutRect windowClipRectInParent,
     std::optional<LayoutRect> visibleRectInParent,
+    IntRect onScreenRectInChildView,
 #if PLATFORM(IOS_FAMILY)
-    std::optional<LayoutRect> exposedContentRectInParent,
+    FloatRect exposedContentRectInChildView,
 #endif
     bool ownerHasRenderer,
     TransformationMatrix childFrameOwnerToRootContentTransform,
     TransformationMatrix absoluteToChildFrameOwnerLocalTransform,
-    float usedZoom,
+    float frameScaleFactor,
     LayoutPoint contentBoxLocation,
     OptionSet<FrameOwnerElementAppearance> ownerElementAppearance
 )
-    : m_windowClipRectInParent(windowClipRectInParent)
-    , m_visibleRectInParent(visibleRectInParent)
+    : m_visibleRectInParent(visibleRectInParent)
+    , m_onScreenRectInChildView(onScreenRectInChildView)
 #if PLATFORM(IOS_FAMILY)
-    , m_exposedContentRectInParent(exposedContentRectInParent)
+    , m_exposedContentRectInChildView(exposedContentRectInChildView)
 #endif
     , m_ownerHasRenderer(ownerHasRenderer)
     , m_childFrameOwnerToRootContentTransform(WTF::move(childFrameOwnerToRootContentTransform))
     , m_absoluteToChildFrameOwnerLocalTransform(WTF::move(absoluteToChildFrameOwnerLocalTransform))
-    , m_usedZoom(usedZoom)
+    , m_frameScaleFactor(frameScaleFactor)
     , m_contentBoxLocation(contentBoxLocation)
     , m_ownerElementAppearance(ownerElementAppearance)
 {
 }
 
-std::optional<FloatRect> RemoteFrameLayoutInfo::mapParentContentsToChildWindow(const LayoutRect& rectInParent) const
+bool operator==(const RemoteFrameLayoutInfo& a, const RemoteFrameLayoutInfo& b)
 {
-    // A non-affine owner transform (a 3D transform, say) has no meaningful rect inverse, so report
-    // that the rect is unknown.
-    if (!m_absoluteToChildFrameOwnerLocalTransform.isAffine())
-        return std::nullopt;
-
-    // Inverse of LocalFrameView::visibleRectOfChild(): visibleRectInParent is in the parent document's
-    // coordinates. Map it into the iframe owner element's local space, subtract the owner content-box
-    // offset so the rect is relative to the iframe content origin, and undo the owner's used CSS zoom so
-    // the result is in the child frame's unzoomed root-content coordinates (its RenderView space).
-    auto ownerLocal = m_absoluteToChildFrameOwnerLocalTransform.mapRect(FloatRect { rectInParent });
-    ownerLocal.moveBy(-FloatPoint { m_contentBoxLocation });
-    if (m_usedZoom > 0)
-        ownerLocal.scale(1.0f / m_usedZoom);
-    return ownerLocal;
+    return a.m_visibleRectInParent == b.m_visibleRectInParent
+        && a.m_onScreenRectInChildView == b.m_onScreenRectInChildView
+#if PLATFORM(IOS_FAMILY)
+        && a.m_exposedContentRectInChildView == b.m_exposedContentRectInChildView
+#endif
+        && a.m_ownerHasRenderer == b.m_ownerHasRenderer
+        && a.m_childFrameOwnerToRootContentTransform == b.m_childFrameOwnerToRootContentTransform
+        && a.m_absoluteToChildFrameOwnerLocalTransform == b.m_absoluteToChildFrameOwnerLocalTransform
+        && a.m_frameScaleFactor == b.m_frameScaleFactor
+        && a.m_contentBoxLocation == b.m_contentBoxLocation
+        && a.m_ownerElementAppearance == b.m_ownerElementAppearance;
 }
 
 WTF::TextStream& operator<<(WTF::TextStream& ts, FrameOwnerElementAppearance appearance)
@@ -96,15 +93,15 @@ WTF::TextStream& operator<<(WTF::TextStream& ts, const RemoteFrameLayoutInfo& in
 {
     WTF::TextStream::GroupScope scope(ts);
     ts << "RemoteFrameLayoutInfo"_s;
-    ts.dumpProperty("windowClipRectInParent"_s, info.windowClipRectInParent());
     ts.dumpProperty("visibleRectInParent"_s, info.visibleRectInParent());
+    ts.dumpProperty("onScreenRectInChildView"_s, info.onScreenRectInChildView());
 #if PLATFORM(IOS_FAMILY)
-    ts.dumpProperty("exposedContentRectInParent"_s, info.exposedContentRectInParent());
+    ts.dumpProperty("exposedContentRectInChildView"_s, info.exposedContentRectInChildView());
 #endif
     ts.dumpProperty("ownerHasRenderer"_s, info.ownerHasRenderer());
     ts.dumpProperty("childFrameOwnerToRootContentTransform"_s, info.childFrameOwnerToRootContentTransform());
     ts.dumpProperty("absoluteToChildFrameOwnerLocalTransform"_s, info.absoluteToChildFrameOwnerLocalTransform());
-    ts.dumpProperty("usedZoom"_s, info.usedZoom());
+    ts.dumpProperty("frameScaleFactor"_s, info.frameScaleFactor());
     ts.dumpProperty("contentBoxLocation"_s, info.contentBoxLocation());
     ts.dumpProperty("ownerElementAppearance"_s, info.ownerElementAppearance());
     return ts;

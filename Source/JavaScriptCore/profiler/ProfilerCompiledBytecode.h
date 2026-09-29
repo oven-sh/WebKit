@@ -35,17 +35,17 @@ class CompiledBytecode {
 public:
     // It's valid to have an empty OriginStack, which indicates that this is some
     // sort of non-bytecode-related machine code.
-    CompiledBytecode(const OriginStack&, const CString& description);
+    CompiledBytecode(const OriginStack&, const UTF8CString& description);
     ~CompiledBytecode();
     
     const OriginStack& originStack() const LIFETIME_BOUND { return m_origin; }
-    const CString& description() const LIFETIME_BOUND { return m_description; }
+    const UTF8CString& description() const LIFETIME_BOUND { return m_description; }
 
     Ref<JSON::Value> toJSON(Dumper&) const;
 
 private:
     OriginStack m_origin;
-    CString m_description;
+    UTF8CString m_description;
 };
 
 } } // namespace JSC::Profiler

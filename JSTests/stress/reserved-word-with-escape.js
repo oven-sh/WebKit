@@ -143,9 +143,9 @@ testSyntaxError(String.raw`{for(o i\u006E {}){}}`, String.raw`SyntaxError: Unexp
 testSyntaxError(String.raw`{for(o i\u{006E} {}){}}`, String.raw`SyntaxError: Unexpected escaped characters in keyword token: 'i\u{006E}'`);
 
 
-testSyntaxError(String.raw`implements`, String.raw`ReferenceError: Can't find variable: implements`);
-testSyntaxError(String.raw`impleme\u006Ets`, String.raw`ReferenceError: Can't find variable: implements`);
-testSyntaxError(String.raw`impleme\u{006E}ts`, String.raw`ReferenceError: Can't find variable: implements`);
+testSyntaxError(String.raw`implements`, String.raw`ReferenceError: implements is not defined`);
+testSyntaxError(String.raw`impleme\u006Ets`, String.raw`ReferenceError: implements is not defined`);
+testSyntaxError(String.raw`impleme\u{006E}ts`, String.raw`ReferenceError: implements is not defined`);
 
 testSyntaxError(String.raw`'use strict'; implements`, String.raw`SyntaxError: Unexpected use of reserved word 'implements' in strict mode`);
 testSyntaxError(String.raw`'use strict'; impleme\u006Ets`, String.raw`SyntaxError: Unexpected escaped characters in keyword token: 'impleme\u006Ets'`);

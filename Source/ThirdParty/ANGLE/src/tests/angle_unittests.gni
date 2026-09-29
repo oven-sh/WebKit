@@ -126,14 +126,11 @@ angle_unittests_compiler_tests_sources = [
 angle_unittests_glsl_mac_sources =
     [ "compiler_tests/UnfoldShortCircuitAST_test.cpp" ]
 
-# TODO(jmadill): should probably call this windows sources
-angle_unittests_hlsl_sources = [
-  "compiler_tests/HLSLOutput_test.cpp",
-  "compiler_tests/UnrollFlatten_test.cpp",
-]
+angle_unittests_hlsl_sources = [ "compiler_tests/UnrollFlatten_test.cpp" ]
 
 angle_unittests_gl_sources = [
   "../libANGLE/renderer/gl/DisplayGL_unittest.cpp",
+  "../libANGLE/renderer/gl/StateManagerGL_unittest.cpp",
   "../libANGLE/renderer/gl/renderergl_utils_unittest.cpp",
 ]
 
@@ -150,4 +147,8 @@ angle_unittests_sources += [ "compiler_tests/ImmutableString_test_autogen.cpp" ]
 
 if (!is_android && !is_fuchsia && !is_ios) {
   angle_unittests_sources += [ "test_utils/runner/TestSuite_unittest.cpp" ]
+}
+
+if (is_linux || is_chromeos) {
+  angle_unittests_sources += [ "../common/linux/window_system_unittest.cpp" ]
 }

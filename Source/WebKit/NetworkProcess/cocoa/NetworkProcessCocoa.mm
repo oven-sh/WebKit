@@ -35,9 +35,9 @@
 #import "NetworkResourceLoader.h"
 #import "NetworkSessionCocoa.h"
 #import "NetworkStorageManager.h"
+#import "NetworkStorageSession.h"
 #import "SandboxExtension.h"
 #import "WebCookieManager.h"
-#import <WebCore/NetworkStorageSession.h>
 #import <WebCore/PublicSuffixStore.h>
 #import <WebCore/ResourceRequestCFNet.h>
 #import <WebCore/SecurityOrigin.h>
@@ -100,7 +100,7 @@ static void blockNetworkAccessIfNeeded(IPC::Connection* parentProcessConnection)
     OSObjectPtr xpcConnection = protect(parentProcessConnection)->xpcConnection();
     auto [signingIdentifier, isPlatformBinary] = codeSigningIdentifierAndPlatformBinaryStatus(xpcConnection.get());
     if (isPlatformBinary && signingIdentifier != "com.apple.textkit.nsattributedstringagent"_s) {
-        RELEASE_LOG(Process, "Not blocking network access since parent process %s is a platform binary", signingIdentifier.utf8().data());
+        RELEASE_LOG(Process, "Not blocking network access since parent process %s is a platform binary", signingIdentifier.utf8());
         return;
     }
 

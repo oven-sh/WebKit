@@ -69,7 +69,7 @@ FunctionAllowlist& BBQPlan::ensureGlobalBBQAllowlist()
     static LazyNeverDestroyed<FunctionAllowlist> bbqAllowlist;
     static std::once_flag initializeAllowlistFlag;
     std::call_once(initializeAllowlistFlag, [] {
-        const char* functionAllowlistFile = Options::bbqAllowlist();
+        const char8_t* functionAllowlistFile = Options::bbqAllowlist();
         bbqAllowlist.construct(functionAllowlistFile);
     });
     return bbqAllowlist;
@@ -159,7 +159,7 @@ std::unique_ptr<InternalFunction> BBQPlan::compileFunction(FunctionCodeIndex fun
     const RTT& signature = m_moduleInformation->rtt(typeSignatureIndex);
     FunctionSpaceIndex functionIndexSpace = m_moduleInformation->toSpaceIndex(functionIndex);
     ASSERT_UNUSED(functionIndexSpace, &m_moduleInformation->rtt(functionIndexSpace) == &m_moduleInformation->rtt(typeSignatureIndex));
-    Expected<std::unique_ptr<InternalFunction>, String> parseAndCompileResult;
+    std::expected<std::unique_ptr<InternalFunction>, String> parseAndCompileResult;
 
     beginCompilerSignpost(callee);
     RELEASE_ASSERT(mode() == m_calleeGroup->mode());

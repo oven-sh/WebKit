@@ -57,7 +57,6 @@ WEBKIT_ROOT = find_webkit_root()
 
 from webkitpy.safer_cpp.checkers import Checker, PROJECTS  # noqa: E402
 
-# Keep in sync with Tools/Scripts/build-and-analyze WEBKIT_CHECKERS.
 WEBKIT_CHECKERS = [
     'alpha.webkit.ForwardDeclChecker',
     'alpha.webkit.MemoryUnsafeCastChecker',
@@ -65,6 +64,9 @@ WEBKIT_CHECKERS = [
     'alpha.webkit.NoUncheckedPtrMemberChecker',
     'alpha.webkit.NoUnretainedMemberChecker',
     'alpha.webkit.RetainPtrCtorAdoptChecker',
+    'alpha.webkit.UnborrowedCallArgsChecker',
+    'alpha.webkit.UnborrowedLambdaCapturesChecker',
+    'alpha.webkit.UnborrowedLocalVarsChecker',
     'alpha.webkit.UncheckedCallArgsChecker',
     'alpha.webkit.UncheckedLocalVarsChecker',
     'alpha.webkit.UncountedCallArgsChecker',
@@ -97,13 +99,14 @@ PROJECT_ROOTS = [
     ('WTF', os.path.join(WEBKIT_ROOT, 'Source', 'WTF')),
 ] + [(p, os.path.join(WEBKIT_ROOT, 'Source', p)) for p in PROJECTS if p not in ('PAL', 'WTF')]
 
+CHECKER_HELP_RE = re.compile(r'^ {2}(\S+)')
 DIAG_RE = re.compile(
     r'^(?P<path>[^:]+):(?P<line>\d+):(?P<col>\d+): '
     r'(?P<kind>warning|error|note): '
     r'(?P<msg>.*?)(?: \[(?P<checker>[\w.]+)\])?$'
 )
-SUMMARY_RE = re.compile(r'^\d+ warnings?( and \d+ errors?)? generated\.$')
 INCLUDE_RE = re.compile(r'^\s*#\s*include\s+"([^"]+)"')
+SUMMARY_RE = re.compile(r'^\d+ warnings?( and \d+ errors?)? generated\.$')
 
 
 def project_for_path(absPath):
@@ -217,16 +220,44 @@ def resolve_preset_build_dir(presetName):
     return binaryDir
 
 
-def rewrite_argv(entry, absSrc, clang, checkers, header_only=False):
+def is_cmake_pch(path):
+    return 'cmake_pch' in os.path.basename(path)
+
+# We include prefix header #includes directly instead of including the prefix
+# header itself because clang substitutes the precompiled .pcm for a prefix .h
+# automatically, which triggers version mismatch when you use a new toolchain
+# to run analysis on an existing build.
+def prefix_header_includes(pchHeaderPath):
+    headers = []
+    try:
+        with open(pchHeaderPath) as f:
+            for line in f:
+                m = INCLUDE_RE.match(line)
+                if m:
+                    headers.append(m.group(1))
+    except OSError:
+        pass
+    return headers
+
+
+def rewrite_argv(entry, absSrc, clang, checkers):
     tokens = shlex.split(entry['command'])
     out = [clang]
+    prefixHeaderIncludes = []
     i = 1
     n = len(tokens)
     entryFile = entry['file']
     entryFileReal = os.path.realpath(entryFile)
     while i < n:
         t = tokens[i]
-        if t == '-o' or t == '-MT' or t == '-MF' or t == '-MQ' or t == '-include':
+        if t == '-o' or t == '-MT' or t == '-MF' or t == '-MQ':
+            i += 2
+            continue
+        if t == '-include' and i + 1 < n:
+            if is_cmake_pch(tokens[i + 1]):
+                prefixHeaderIncludes += prefix_header_includes(tokens[i + 1])
+            else:
+                out += [t, tokens[i + 1]]
             i += 2
             continue
         if t == '-x' and i + 1 < n:
@@ -242,6 +273,8 @@ def rewrite_argv(entry, absSrc, clang, checkers, header_only=False):
         if t == '-Xclang' and i + 1 < n:
             nxt = tokens[i + 1]
             if nxt in ('-include-pch', '-include'):
+                if nxt == '-include' and i + 3 < n and is_cmake_pch(tokens[i + 3]):
+                    prefixHeaderIncludes += prefix_header_includes(tokens[i + 3])
                 i += 4
                 continue
             if nxt == '-fno-pch-timestamp':
@@ -253,8 +286,8 @@ def rewrite_argv(entry, absSrc, clang, checkers, header_only=False):
         out.append(t)
         i += 1
 
-    if header_only:
-        out += ['-x', 'c++-header']
+    for prefixHeaderInclude in prefixHeaderIncludes:
+        out += ['-include', prefixHeaderInclude]
     out += [
         absSrc,
         '--analyze',
@@ -264,6 +297,10 @@ def rewrite_argv(entry, absSrc, clang, checkers, header_only=False):
         # Debug compile_commands.json produces the same checker results.
         '-UASSERT_ENABLED', '-DASSERT_ENABLED=0', '-DNDEBUG=1',
         '-DRELEASE_WITHOUT_OPTIMIZATIONS=1',
+        '-DENABLE_IPC_TESTING_API=1',
+        # Define these for compatibility when using open source clang.
+        '-D__ptrauth_swift_value_witness_function_pointer(x)=',
+        '-D__ptrauth_swift_class_method_pointer(x)=',
         '-Xclang', '-analyzer-output=text',
         '-Xclang', '-analyzer-disable-checker', '-Xclang', DISABLE_CATEGORIES,
         '-Xclang', '-analyzer-checker', '-Xclang', ','.join(checkers),
@@ -369,11 +406,21 @@ def find_flags_entry(headerPath, db):
     for path, entry in db.byFile.items():
         if '/unified-sources/UnifiedSource' in path:
             continue
+        if os.path.splitext(path)[1] not in SOURCE_EXT:
+            continue
         if os.path.dirname(path) == headerDir:
             return entry
         if fallback is None and projectRoot and path.startswith(projectRoot + os.sep):
             fallback = entry
     return fallback
+
+
+def write_header_shim(headerPath, entry, tmpDir):
+    ext = '.mm' if os.path.splitext(entry['file'])[1] in ('.m', '.mm') else '.cpp'
+    shim = os.path.join(tmpDir, 'analyze-header' + ext)
+    with open(shim, 'w') as f:
+        f.write('#include "{}"\n'.format(headerPath))
+    return shim
 
 
 def normalize_checkers(values, parser):
@@ -390,6 +437,38 @@ def normalize_checkers(values, parser):
             parser.error("unknown checker '{}'; valid names: {}".format(
                 v, ', '.join(sorted(shortNames))))
     return result
+
+
+def available_checkers(clang):
+    proc = subprocess.run(
+        [clang, '-cc1', '-analyzer-checker-help', '-analyzer-checker-help-alpha'],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        return None
+    names = set()
+    for line in proc.stdout.splitlines():
+        m = CHECKER_HELP_RE.match(line)
+        if m:
+            names.add(m.group(1))
+    return names or None
+
+
+def drop_unavailable_checkers(checkers, clang, explicit):
+    available = available_checkers(clang)
+    if available is None:
+        return checkers
+    missing = [c for c in checkers if c not in available]
+    if not missing:
+        return checkers
+    if explicit:
+        sys.exit('error: this analyzer does not implement {}'.format(', '.join(missing)))
+    remaining = [c for c in checkers if c in available]
+    if not remaining:
+        sys.exit('error: this analyzer implements none of the SaferCPP checkers; '
+                 'pass --clang PATH or --download-toolchain for a newer one.')
+    print('Skipping checkers this analyzer does not implement: {}'.format(
+        ', '.join(c.rsplit('.', 1)[-1] for c in missing)), file=sys.stderr)
+    return remaining
 
 
 def read_plist_key(plist, key):
@@ -528,6 +607,7 @@ def parse_args():
         parser.error('specify FILE... or --changed-files, not both')
     if not args.files and not args.changed_files:
         parser.error('specify FILE... or --changed-files')
+    args.explicit_checkers = bool(args.checkers)
     args.checkers = normalize_checkers(args.checkers, parser)
     return args
 
@@ -535,6 +615,7 @@ def parse_args():
 def main():
     args = parse_args()
     clang = resolve_analyzer_clang(args)
+    args.checkers = drop_unavailable_checkers(args.checkers, clang, args.explicit_checkers)
 
     if args.compile_commands:
         compileCommandsPath = os.path.abspath(args.compile_commands)
@@ -594,10 +675,12 @@ def main():
 
     def runOne(item):
         tu, entry, header_only = item
-        argv, cwd = rewrite_argv(entry, tu, clang, args.checkers, header_only)
-        if args.verbose:
-            sys.stderr.write(' '.join(shlex.quote(a) for a in argv) + '\n')
-        proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+        with tempfile.TemporaryDirectory() as tmpDir:
+            src = write_header_shim(tu, entry, tmpDir) if header_only else tu
+            argv, cwd = rewrite_argv(entry, src, clang, args.checkers)
+            if args.verbose:
+                sys.stderr.write(' '.join(shlex.quote(a) for a in argv) + '\n')
+            proc = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
         return tu, proc.returncode, proc.stderr, header_only
 
     totalUnexpected = 0

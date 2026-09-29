@@ -67,6 +67,31 @@
 
 namespace angle
 {
+// Thread specific record suspension flag to prevent re-recording cmds from the fixture
+static thread_local bool g_skipCapture = false;
+
+// Check if we've found a fixture injection marker and set the skip flag
+// so that neither suppression markers or marked calls are recorded
+static bool MaybeSkipCapture(const CallCapture &call)
+{
+    if (call.entryPoint != EntryPoint::GLDebugMessageInsert &&
+        call.entryPoint != EntryPoint::GLDebugMessageInsertKHR)
+    {
+        return false;
+    }
+    const GLuint markerId = call.params.getParam("id", ParamType::TGLuint, 2).value.GLuintVal;
+    if (markerId == kFixtureInjectedCommandsBeginId)
+    {
+        g_skipCapture = true;
+        return true;
+    }
+    if (markerId == kFixtureInjectedCommandsEndId)
+    {
+        g_skipCapture = false;
+        return true;
+    }
+    return false;
+}
 
 struct FramebufferCaptureFuncs
 {
@@ -3286,6 +3311,16 @@ void CaptureCustomFenceSync(CallCapture &call, std::vector<CallCapture> &callsOu
     callsOut.emplace_back(std::move(call));
 }
 
+void CaptureCustomClientWaitSync(CallCapture &call, std::vector<CallCapture> &callsOut)
+{
+    ParamBuffer &&params = std::move(call.params);
+    GLenum returnValue   = params.getReturnValue().value.GLenumVal;
+    params.addValueParam("capturedReturnValue", ParamType::TGLenum, returnValue);
+    call.customFunctionName = "ClientWaitSync";
+    call.params             = std::move(params);
+    callsOut.emplace_back(std::move(call));
+}
+
 const egl::Image *GetImageFromParam(const gl::Context *context, const ParamCapture &param)
 {
     const egl::ImageID eglImageID = egl::PackParam<egl::ImageID>(param.value.EGLImageVal);
@@ -4752,11 +4787,11 @@ void CaptureShareGroupMidExecutionSetup(
     }
 
     // Capture EGL Sync Objects
-    const egl::SyncMap &eglSyncMap = context->getDisplay()->getSyncsForCapture();
+    const egl::ScopedSyncMap eglSyncMap = context->getDisplay()->getSyncsForCapture();
     for (const auto &eglSyncIter : eglSyncMap)
     {
         egl::SyncID eglSyncID    = {eglSyncIter.first};
-        const egl::Sync *eglSync = eglSyncIter.second.get();
+        const egl::Sync *eglSync = eglSyncIter.second;
         EGLSync eglSyncObject    = gl::unsafe_int_to_pointer_cast<EGLSync>(eglSyncID.value);
 
         if (!eglSync)
@@ -5175,6 +5210,11 @@ void CaptureMidExecutionSetup(const gl::Context *context,
         ASSERT(apiState.getReadFramebuffer());
         gl::FramebufferID stateReadFramebuffer = apiState.getReadFramebuffer()->id();
         gl::FramebufferID stateDrawFramebuffer = apiState.getDrawFramebuffer()->id();
+
+        // For reset, always restore framebuffer bindings since they may change
+        std::vector<CallCapture> *resetBindFramebufferCalls =
+            &resetHelper.getResetCalls()[angle::EntryPoint::GLBindFramebuffer];
+
         if (stateDrawFramebuffer == stateReadFramebuffer)
         {
             if (currentDrawFramebuffer != stateDrawFramebuffer ||
@@ -5184,6 +5224,8 @@ void CaptureMidExecutionSetup(const gl::Context *context,
                                                  GL_FRAMEBUFFER, stateDrawFramebuffer);
                 currentDrawFramebuffer = currentReadFramebuffer = stateDrawFramebuffer;
             }
+            CaptureBindFramebufferForContext(context, resetBindFramebufferCalls, framebufferFuncs,
+                                             replayState, GL_FRAMEBUFFER, stateDrawFramebuffer);
         }
         else
         {
@@ -5193,6 +5235,9 @@ void CaptureMidExecutionSetup(const gl::Context *context,
                                                  GL_DRAW_FRAMEBUFFER, stateDrawFramebuffer);
                 currentDrawFramebuffer = stateDrawFramebuffer;
             }
+            CaptureBindFramebufferForContext(context, resetBindFramebufferCalls, framebufferFuncs,
+                                             replayState, GL_DRAW_FRAMEBUFFER,
+                                             stateDrawFramebuffer);
 
             if (currentReadFramebuffer != stateReadFramebuffer)
             {
@@ -5200,6 +5245,9 @@ void CaptureMidExecutionSetup(const gl::Context *context,
                                                  GL_READ_FRAMEBUFFER, stateReadFramebuffer);
                 currentReadFramebuffer = stateReadFramebuffer;
             }
+            CaptureBindFramebufferForContext(context, resetBindFramebufferCalls, framebufferFuncs,
+                                             replayState, GL_READ_FRAMEBUFFER,
+                                             stateReadFramebuffer);
         }
     }
 
@@ -5981,9 +6029,15 @@ void CaptureMidExecutionSetup(const gl::Context *context,
     }
 }
 
-bool SkipCall(EntryPoint entryPoint)
+bool SkipCall(const CallCapture &call)
 {
-    switch (entryPoint)
+    // Skip capture of fixture-injected calls to keep retraces clean
+    if (MaybeSkipCapture(call) || g_skipCapture)
+    {
+        return true;
+    }
+
+    switch (call.entryPoint)
     {
         case EntryPoint::GLDebugMessageCallback:
         case EntryPoint::GLDebugMessageCallbackKHR:
@@ -6333,87 +6387,7 @@ void CoherentBuffer::removeProtection(PageSharingType sharingType)
 
 bool CoherentBufferTracker::canProtectDirectly(gl::Context *context)
 {
-    gl::BufferID bufferId;
-    if (!context->createBuffer(&bufferId))
-    {
-        ERR() << "Failed to allocate buffer ID.";
-    }
-
-    gl::BufferBinding targetPacked = gl::BufferBinding::Array;
-    context->bindBuffer(targetPacked, bufferId);
-
-    // Allocate 2 pages so we will always have a full aligned page to protect
-    GLsizei size = static_cast<GLsizei>(mPageSize * 2);
-
-    context->bufferStorage(targetPacked, size, nullptr,
-                           GL_DYNAMIC_STORAGE_BIT_EXT | GL_MAP_WRITE_BIT |
-                               GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT);
-
-    gl::Buffer *buffer = context->getBuffer(bufferId);
-
-    angle::Result result = buffer->mapRange(
-        context, 0, size, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT_EXT | GL_MAP_COHERENT_BIT_EXT);
-    if (result != angle::Result::Continue)
-    {
-        ERR() << "Failed to mapRange of buffer.";
-    }
-
-    void *map = buffer->getMapPointer();
-    if (map == nullptr)
-    {
-        ERR() << "Failed to getMapPointer of buffer.";
-    }
-
-    // Test mprotect
-    auto start = reinterpret_cast<uintptr_t>(map);
-
-    // Only protect a whole page inside the allocated memory
-    uintptr_t protectionStart = rx::roundUpPow2(start, mPageSize);
-    uintptr_t protectionEnd   = protectionStart + mPageSize;
-
-    ASSERT(protectionStart < protectionEnd);
-
-    angle::PageFaultCallback callback = [](uintptr_t address) {
-        return angle::PageFaultHandlerRangeType::InRange;
-    };
-
-    std::unique_ptr<angle::PageFaultHandler> handler(CreatePageFaultHandler(callback));
-
-    if (!handler->enable())
-    {
-        GLboolean unmapResult;
-        if (buffer->unmap(context, &unmapResult) != angle::Result::Continue)
-        {
-            ERR() << "Could not unmap buffer.";
-        }
-        context->bindBuffer(targetPacked, {0});
-
-        // Page fault handler could not be enabled, memory can't be protected directly.
-        return false;
-    }
-
-    size_t protectionSize = protectionEnd - protectionStart;
-
-    ASSERT(protectionSize == mPageSize);
-
-    bool canProtect = angle::ProtectMemory(protectionStart, protectionSize);
-    if (canProtect)
-    {
-        angle::UnprotectMemory(protectionStart, protectionSize);
-    }
-
-    // Clean up
-    handler->disable();
-
-    GLboolean unmapResult;
-    if (buffer->unmap(context, &unmapResult) != angle::Result::Continue)
-    {
-        ERR() << "Could not unmap buffer.";
-    }
-    context->bindBuffer(targetPacked, {0});
-    context->deleteBuffer(buffer->id());
-
-    return canProtect;
+    return context->canProtectCoherentMemoryDirectly();
 }
 
 PageFaultHandlerRangeType CoherentBufferTracker::handleWrite(uintptr_t address)
@@ -7337,7 +7311,6 @@ void FrameCaptureShared::maybeOverrideEntryPoint(const gl::Context *context,
             break;
         }
         case EntryPoint::GLWaitSync:
-        case EntryPoint::GLClientWaitSync:
         case EntryPoint::GLDeleteSync:
         {
             gl::SyncID syncID =
@@ -7346,6 +7319,17 @@ void FrameCaptureShared::maybeOverrideEntryPoint(const gl::Context *context,
                                      inCall, outCalls))
             {
                 outCalls.emplace_back(std::move(inCall));
+            }
+            break;
+        }
+        case EntryPoint::GLClientWaitSync:
+        {
+            gl::SyncID syncID =
+                inCall.params.getParam("syncPacked", ParamType::TSyncID, 0).value.SyncIDVal;
+            if (!FilterImportedSyncs(isCaptureActive(), syncID.value, isGLSyncEmitted(syncID), "GL",
+                                     inCall, outCalls))
+            {
+                CaptureCustomClientWaitSync(inCall, outCalls);
             }
             break;
         }
@@ -7404,6 +7388,18 @@ void FrameCaptureShared::maybeSetSyncPoint(CallCapture &inCall)
         case EntryPoint::GLDeleteShader:
         case EntryPoint::GLDeleteProgram:
         case EntryPoint::GLLinkProgram:
+        case EntryPoint::GLWaitSync:
+        case EntryPoint::GLClientWaitSync:
+        case EntryPoint::GLDeleteSync:
+        case EntryPoint::EGLCreateSync:
+        case EntryPoint::EGLCreateSyncKHR:
+        case EntryPoint::EGLWaitSync:
+        case EntryPoint::EGLWaitSyncKHR:
+        case EntryPoint::EGLClientWaitSync:
+        case EntryPoint::EGLClientWaitSyncKHR:
+        case EntryPoint::EGLDestroySync:
+        case EntryPoint::EGLDestroySyncKHR:
+        case EntryPoint::GLEGLImageTargetTexture2DOES:
         {
             inCall.isSyncPoint = true;
             break;
@@ -7587,6 +7583,11 @@ void FrameCaptureShared::maybeCapturePreCallUpdates(
         case EntryPoint::GLBindFramebuffer:
         case EntryPoint::GLBindFramebufferOES:
             maybeGenResourceOnBind<gl::FramebufferID>(context, call);
+            if (isCaptureActive())
+            {
+                context->getFrameCapture()->getStateResetHelper().setEntryPointDirty(
+                    EntryPoint::GLBindFramebuffer);
+            }
             break;
 
         case EntryPoint::GLGenRenderbuffers:
@@ -8423,7 +8424,7 @@ void FrameCaptureShared::updateResourceCountsFromCallCapture(const CallCapture &
 
 void FrameCaptureShared::captureCall(gl::Context *context, CallCapture &&inCall, bool isCallValid)
 {
-    if (SkipCall(inCall.entryPoint))
+    if (SkipCall(inCall))
     {
         return;
     }
@@ -8962,9 +8963,9 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
 
     const gl::State &contextState = mainContext->getState();
     gl::State mainContextReplayState(
-        nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, contextState.getClientVersion(),
-        false, true, true, true, false, EGL_CONTEXT_PRIORITY_MEDIUM_IMG,
-        contextState.hasRobustAccess(), contextState.hasProtectedContent(), false, false);
+        nullptr, nullptr, nullptr, nullptr, nullptr, contextState.getClientVersion(), false, true,
+        true, true, false, EGL_CONTEXT_PRIORITY_MEDIUM_IMG, contextState.hasRobustAccess(),
+        contextState.hasProtectedContent(), false, false);
     mainContextReplayState.initializeForCapture(mainContext);
 
     CaptureShareGroupMidExecutionSetup(mainContext, &mShareGroupSetupCalls, &mResourceTracker,
@@ -8976,14 +8977,13 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
     egl::Surface *draw    = mainContext->getCurrentDrawSurface();
     egl::Surface *read    = mainContext->getCurrentReadSurface();
 
-    for (auto shareContext : shareGroup->getContexts())
-    {
-        FrameCapture *frameCapture = shareContext.second->getFrameCapture();
+    shareGroup->getContexts().forEach([&](gl::Context *shareContext) {
+        FrameCapture *frameCapture = shareContext->getFrameCapture();
         ASSERT(frameCapture->getSetupCalls().empty());
 
-        if (shareContext.second->id() == mainContext->id())
+        if (shareContext->id() == mainContext->id())
         {
-            CaptureMidExecutionSetup(shareContext.second, &frameCapture->getSetupCalls(),
+            CaptureMidExecutionSetup(shareContext, &frameCapture->getSetupCalls(),
                                      frameCapture->getStateResetHelper(), &mShareGroupSetupCalls,
                                      &mResourceIDToSetupCalls, &mResourceTracker,
                                      mainContextReplayState, mValidateSerializedState);
@@ -9005,21 +9005,21 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
         }
         else
         {
-            const gl::State &shareContextState = shareContext.second->getState();
-            gl::State auxContextReplayState(nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            const gl::State &shareContextState = shareContext->getState();
+            gl::State auxContextReplayState(nullptr, nullptr, nullptr, nullptr, nullptr,
                                             shareContextState.getClientVersion(), false, true, true,
                                             true, false, EGL_CONTEXT_PRIORITY_MEDIUM_IMG,
                                             shareContextState.hasRobustAccess(),
                                             shareContextState.hasProtectedContent(), false, false);
-            auxContextReplayState.initializeForCapture(shareContext.second);
+            auxContextReplayState.initializeForCapture(shareContext);
 
-            egl::Error error = shareContext.second->makeCurrent(display, draw, read);
+            egl::Error error = shareContext->makeCurrent(display, draw, read);
             if (error.isError())
             {
                 INFO() << "MEC unable to make secondary context current";
             }
 
-            CaptureMidExecutionSetup(shareContext.second, &frameCapture->getSetupCalls(),
+            CaptureMidExecutionSetup(shareContext, &frameCapture->getSetupCalls(),
                                      frameCapture->getStateResetHelper(), &mShareGroupSetupCalls,
                                      &mResourceIDToSetupCalls, &mResourceTracker,
                                      auxContextReplayState, mValidateSerializedState);
@@ -9027,13 +9027,24 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
             scanSetupCalls(frameCapture->getSetupCalls());
 
             WriteAuxiliaryContextCppSetupReplay(
-                mReplayWriter, mCompression, mOutDirectory, shareContext.second, mCaptureLabel, 1,
+                mReplayWriter, mCompression, mOutDirectory, shareContext, mCaptureLabel, 1,
                 frameCapture->getSetupCalls(), &mBinaryData, mSerializeStateEnabled, *this,
                 &mResourceIDBufferSize);
+
+            // Release the previously-bound window surface so the side context does not keep a
+            // reference. Otherwise surface's isReferenced() stays true and the app's other thread
+            // gets EGL_BAD_ACCESS "Surface can only be current on one thread" when trying to get
+            // the surface on capture start, leading to lost context/bad glBindFramebuffer calls
+            egl::Error unmakeError = shareContext->unMakeCurrent(display);
+            if (unmakeError.isError())
+            {
+                INFO() << "MEC unMakeCurrent failed on secondary context "
+                       << shareContext->id().value;
+            }
         }
         // Track that this context was created before MEC started
-        mActiveContexts.insert(shareContext.first);
-    }
+        mActiveContexts.insert(shareContext->id().value);
+    });
 
     egl::Error error = mainContext->makeCurrent(display, draw, read);
     if (error.isError())
@@ -9044,6 +9055,9 @@ void FrameCaptureShared::runMidExecutionCapture(gl::Context *mainContext)
 
 void FrameCaptureShared::onEndFrame(gl::Context *context)
 {
+    // Grab the frame-capture mutex to avoid GL/EGL capture races
+    std::lock_guard<angle::SimpleMutex> lock(mFrameCaptureMutex);
+
     if (!enabled() || mFrameIndex > mCaptureEndFrame)
     {
         setCaptureInactive();
@@ -9200,9 +9214,11 @@ void FrameCaptureShared::onMakeCurrent(const gl::Context *context,
         return;
     }
 
-    // Track the width, height and color space of the draw surface as provided to makeCurrent
+    // Track the width, height, type and color space of the draw surface as provided to
+    // makeCurrent.
     SurfaceParams &params = mDrawSurfaceParams[context->id()];
     params.extents        = gl::Extents(surfaceWidth, surfaceHeight, 1);
+    params.type           = drawSurface->getType();
     params.colorSpace     = egl::FromEGLenum<egl::ColorSpace>(drawSurface->getGLColorspace());
 }
 
@@ -9281,6 +9297,14 @@ void StateResetHelper::setDefaultResetCalls(const gl::Context *context,
         {
             Capture(&mResetCalls[angle::EntryPoint::GLBlendColor],
                     CaptureBlendColor(context->getState(), true, 0, 0, 0, 0));
+            break;
+        }
+        case angle::EntryPoint::GLBindFramebuffer:
+        {
+            FramebufferCaptureFuncs framebufferFuncs(context->isGLES1());
+            Capture(
+                &mResetCalls[angle::EntryPoint::GLBindFramebuffer],
+                framebufferFuncs.bindFramebuffer(context->getState(), true, GL_FRAMEBUFFER, {0}));
             break;
         }
         default:
@@ -9725,11 +9749,10 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
             }
 
             // Setup each of the auxiliary contexts.
-            egl::ShareGroup *shareGroup            = context->getShareGroup();
-            const egl::ContextMap &shareContextMap = shareGroup->getContexts();
-            for (auto shareContext : shareContextMap)
-            {
-                if (shareContext.first == context->id().value)
+            egl::ShareGroup *shareGroup                  = context->getShareGroup();
+            const egl::SharedContextMap &shareContextMap = shareGroup->getContexts();
+            shareContextMap.forEach([&](gl::Context *shareContext) {
+                if (shareContext->id() == context->id())
                 {
                     if (usesMidExecutionCapture())
                     {
@@ -9740,7 +9763,7 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                         outMainContextSetupCall << "\n";
                     }
 
-                    continue;
+                    return;
                 }
 
                 // The SetupReplayContextXX() calls only exist if this is a mid-execution capture
@@ -9750,20 +9773,19 @@ void FrameCaptureShared::writeMainContextCppReplay(const gl::Context *context,
                 {
                     // Only call SetupReplayContext for secondary contexts that were current before
                     // MEC started
-                    if (mActiveContexts.find(shareContext.first) != mActiveContexts.end())
+                    if (mActiveContexts.find(shareContext->id().value) != mActiveContexts.end())
                     {
                         // TODO(http://anglebug.com/42264418): Support capture/replay of
                         // eglCreateContext() so this block can be moved into SetupReplayContextXX()
                         // by injecting them into the beginning of the setup call stream.
-                        out << "    CreateContext(" << shareContext.first << ");\n";
+                        out << "    CreateContext(" << shareContext->id().value << ");\n";
 
                         out << "    "
-                            << FmtSetupFunction(kNoPartId, shareContext.second->id(),
-                                                FuncUsage::Call)
+                            << FmtSetupFunction(kNoPartId, shareContext->id(), FuncUsage::Call)
                             << ";\n";
                     }
                 }
-            }
+            });
             out << outMainContextSetupCall.str();
 
             // If there are other contexts that were initialized, we need to make the main context

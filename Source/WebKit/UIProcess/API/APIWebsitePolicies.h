@@ -162,11 +162,13 @@ public:
 
     void setOverrideShouldReportViewportSizeAsScreenSize(bool value) { m_data.overrideShouldReportViewportSizeAsScreenSize = value; }
 
+    void setOverrideShouldReportDesktopClassPointingDevice(bool value) { m_data.overrideShouldReportDesktopClassPointingDevice = value; }
+
     WebKit::WebsiteInlineMediaPlaybackPolicy inlineMediaPlaybackPolicy() const { return m_data.inlineMediaPlaybackPolicy; }
     void setInlineMediaPlaybackPolicy(WebKit::WebsiteInlineMediaPlaybackPolicy policy) { m_data.inlineMediaPlaybackPolicy = policy; }
 
-    bool allowSharedProcess() const { return m_data.allowSharedProcess; }
-    void setAllowSharedProcess(bool allowSharedProcess) { m_data.allowSharedProcess = allowSharedProcess; }
+    bool prefersIsolatedProcess() const { return m_data.prefersIsolatedProcess; }
+    void setPrefersIsolatedProcess(bool prefersIsolatedProcess) { m_data.prefersIsolatedProcess = prefersIsolatedProcess; }
 
     const WebCore::ResourceRequest& NODELETE alternateRequest() const LIFETIME_BOUND;
     void setAlternateRequest(WebCore::ResourceRequest&&);

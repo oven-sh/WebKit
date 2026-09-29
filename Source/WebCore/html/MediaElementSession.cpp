@@ -60,6 +60,7 @@
 #include "SourceBuffer.h"
 #include "TextTrack.h"
 #include "TextTrackList.h"
+#include "UserGestureIndicator.h"
 #include "VideoTrack.h"
 #include "VideoTrackConfiguration.h"
 #include "VideoTrackList.h"
@@ -198,10 +199,6 @@ MediaElementSession::MediaElementSession(HTMLMediaElement& element)
     , m_mainContentCheckTimer(*this, &MediaElementSession::mainContentCheckTimerFired)
     , m_clientDataBufferingTimer(*this, &MediaElementSession::clientDataBufferingTimerFired)
 {
-#if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)
-    if (RefPtr manager = sessionManager())
-        manager->ensureMediaDeviceRouteControllerMonitoring();
-#endif
 }
 
 MediaElementSession::~MediaElementSession()
@@ -462,7 +459,7 @@ static ASCIILiteral mediaGestureReasonString(Document::MediaGestureReason reason
 
 #endif
 
-Expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStateChangePermitted(MediaPlaybackState state) const
+std::expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStateChangePermitted(MediaPlaybackState state) const
 {
     RefPtr element = m_element.get();
     auto makeUnexpectedDenial = [](MediaPlaybackDenialReason reason, const String& explanation) {
@@ -522,6 +519,15 @@ Expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbackStat
         && !element->paused() && state == MediaPlaybackState::Paused
         && !document->processingUserGestureForMedia())
         return makeUnexpectedDenial(MediaPlaybackDenialReason::UserGestureRequired, "Quirk requires user gesture to pause in Picture-in-Picture"_s);
+
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    if (document->quirks().requiresUserGestureToPauseInFullscreenAfterOrientationChange()
+        && element->fullscreenMode() & HTMLMediaElementEnums::VideoFullscreenModeStandard
+        && !element->paused() && state == MediaPlaybackState::Paused
+        && !UserGestureIndicator::processingUserGestureForMedia()
+        && (MonotonicTime::now() - page->lastOrientationChangeTime()) < 500_ms)
+        return makeUnexpectedDenial(MediaPlaybackDenialReason::UserGestureRequired, "Quirk requires user gesture to pause in fullscreen after an orientation change"_s);
+#endif
 
 #if ENABLE(FULLSCREEN_API)
     if (mainFrameDocument && mainFrameDocument->quirks().requiresUserGestureToPlayInFullscreen() && document->fullscreen().fullscreenElement() && state == MediaPlaybackState::Playing && element->paused()) {

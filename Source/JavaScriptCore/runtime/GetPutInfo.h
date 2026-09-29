@@ -49,6 +49,8 @@ enum ResolveMode {
     v(ClosureVar) \
     v(ResolvedClosureVar) \
     v(ModuleVar) \
+    v(LazyClosureVar) \
+    v(ResolvedLazyClosureVar) \
     v(GlobalPropertyWithVarInjectionChecks) \
     v(GlobalVarWithVarInjectionChecks) \
     v(GlobalLexicalVarWithVarInjectionChecks) \
@@ -66,6 +68,13 @@ enum ResolveType : unsigned {
     ResolvedClosureVar,
     ModuleVar,
 
+    // ClosureVar whose slot may still hold the empty value because it belongs to a module's function declaration that
+    // has not been instantiated yet (Options::useLazyModuleFunctionDeclarations()), or because it is an import, whose
+    // exporter may be such a slot. get_from_scope fills the slot in on the slow path. ResolvedLazyClosureVar is the
+    // ResolvedClosureVar flavor: only in unlinked bytecode, linked as LazyClosureVar.
+    LazyClosureVar,
+    ResolvedLazyClosureVar,
+
     // Ditto, but at least one intervening scope used non-strict eval, which
     // can inject an intercepting var delcaration at runtime.
     GlobalPropertyWithVarInjectionChecks,
@@ -82,6 +91,21 @@ enum ResolveType : unsigned {
     // Lexical scope didn't prove anything -- probably because of a 'with' scope.
     Dynamic
 };
+
+static_assert(Dynamic <= 0xff && GlobalProperty < GlobalVar && GlobalVar < GlobalLexicalVar && GlobalLexicalVar < ClosureVar, "The LLInt's op_get_from_scope reads the resolve type as the low byte of a GetPutInfo and tells the global types from the others with one compare");
+
+// Only in the resolveType operand of an *unlinked* op_resolve_scope emitted by the bytecode optimizer: the variable
+// lives in the environment record staticClosureVarHops(type) hops out from the function's own scope (plus the
+// instruction's localScopeDepth). CodeBlock linking turns it into ordinary ClosureVar metadata without name lookups;
+// no other consumer sees these values.
+static constexpr unsigned firstStaticClosureVarResolveType = 32;
+inline bool isStaticClosureVarResolveType(ResolveType type) { return static_cast<unsigned>(type) >= firstStaticClosureVarResolveType; }
+inline unsigned staticClosureVarHops(ResolveType type)
+{
+    ASSERT(isStaticClosureVarResolveType(type));
+    return static_cast<unsigned>(type) - firstStaticClosureVarResolveType;
+}
+inline ResolveType staticClosureVarResolveType(unsigned hops) { return static_cast<ResolveType>(firstStaticClosureVarResolveType + hops); }
 
 enum class InitializationMode : unsigned {
     Initialization,      // "let x = 20;"
@@ -108,6 +132,8 @@ ALWAYS_INLINE const char* resolveTypeName(ResolveType type)
         "ClosureVar",
         "ResolvedClosureVar",
         "ModuleVar",
+        "LazyClosureVar",
+        "ResolvedLazyClosureVar",
         "GlobalPropertyWithVarInjectionChecks",
         "GlobalVarWithVarInjectionChecks",
         "GlobalLexicalVarWithVarInjectionChecks",
@@ -116,6 +142,8 @@ ALWAYS_INLINE const char* resolveTypeName(ResolveType type)
         "UnresolvedPropertyWithVarInjectionChecks",
         "Dynamic"
     });
+    if (isStaticClosureVarResolveType(type))
+        return "StaticClosureVar";
     return names[type];
 }
 
@@ -161,6 +189,9 @@ ALWAYS_INLINE ResolveType makeType(ResolveType type, bool needsVarInjectionCheck
         return ClosureVarWithVarInjectionChecks;
     case UnresolvedProperty:
         return UnresolvedPropertyWithVarInjectionChecks;
+    case LazyClosureVar:
+    case ResolvedLazyClosureVar:
+        return Dynamic;
     case ModuleVar:
     case GlobalPropertyWithVarInjectionChecks:
     case GlobalVarWithVarInjectionChecks:
@@ -184,6 +215,8 @@ ALWAYS_INLINE bool needsVarInjectionChecks(ResolveType type)
     case ClosureVar:
     case ResolvedClosureVar:
     case ModuleVar:
+    case LazyClosureVar:
+    case ResolvedLazyClosureVar:
     case UnresolvedProperty:
         return false;
     case GlobalPropertyWithVarInjectionChecks:
@@ -200,7 +233,7 @@ ALWAYS_INLINE bool needsVarInjectionChecks(ResolveType type)
 }
 
 struct ResolveOp {
-    ResolveOp(ResolveType type, size_t depth, Structure* structure, JSLexicalEnvironment* lexicalEnvironment, InlineWatchpointSet* watchpointSet, uintptr_t operand, UniquedStringImpl* importedName = nullptr)
+    ResolveOp(ResolveType type, size_t depth, Structure* structure, JSLexicalEnvironment* lexicalEnvironment, InlineWatchpointSet* watchpointSet, uintptr_t operand, UniquedStringImpl* importedName = nullptr, unsigned moduleImportSlot = 0)
         : type(type)
         , depth(depth)
         , structure(structure)
@@ -208,6 +241,7 @@ struct ResolveOp {
         , watchpointSet(watchpointSet)
         , operand(operand)
         , importedName(importedName)
+        , moduleImportSlot(moduleImportSlot)
     {
     }
 
@@ -218,6 +252,7 @@ struct ResolveOp {
     InlineWatchpointSet* watchpointSet;
     uintptr_t operand;
     RefPtr<UniquedStringImpl> importedName;
+    unsigned moduleImportSlot; // ModuleVar: where the importing module environment keeps lexicalEnvironment (JSModuleEnvironment::importSlot)
 };
 
 class GetPutInfo {

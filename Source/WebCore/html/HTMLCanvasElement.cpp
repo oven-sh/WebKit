@@ -32,6 +32,7 @@
 #include "Blob.h"
 #include "BlobCallback.h"
 #include "CanvasGradient.h"
+#include "CanvasPaintEvent.h"
 #include "CanvasPattern.h"
 #include "CanvasRenderingContext2D.h"
 #include "CanvasRenderingContext2DSettings.h"
@@ -113,8 +114,8 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(HTMLCanvasElement);
 using namespace HTMLNames;
 
 // These values come from the WhatWG/W3C HTML spec.
-const int defaultWidth = 300;
-const int defaultHeight = 150;
+constexpr int defaultWidth = 300;
+constexpr int defaultHeight = 150;
 
 HTMLCanvasElement::HTMLCanvasElement(const QualifiedName& tagName, Document& document)
     : HTMLElement(tagName, document, TypeFlag::HasDidMoveToNewDocument)
@@ -145,6 +146,7 @@ HTMLCanvasElement::~HTMLCanvasElement()
     // avoided in destructors, but works as long as it's done before HTMLCanvasElement destructs completely.
     notifyObserversCanvasDestroyed();
     removeCanvasNeedingPreparationForDisplayOrFlush();
+    protect(document())->cancelCanvasPaintEvent(*this);
 }
 
 bool HTMLCanvasElement::hasPresentationalHintsForAttribute(const QualifiedName& name) const
@@ -170,6 +172,10 @@ void HTMLCanvasElement::attributeChanged(const QualifiedName& name, const AtomSt
         if (!isControlledByOffscreen())
             didUpdateSizeProperties();
     }
+
+    if (name == layoutsubtreeAttr)
+        invalidateStyleAndRenderersForSubtree();
+
     HTMLElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
 }
 
@@ -194,7 +200,7 @@ bool HTMLCanvasElement::canContainRangeEndPoint() const
 
 bool HTMLCanvasElement::canStartSelection() const
 {
-    return false;
+    return layoutSubtree() && HTMLElement::canStartSelection();
 }
 
 ExceptionOr<void> HTMLCanvasElement::setHeight(unsigned value)
@@ -225,6 +231,13 @@ bool HTMLCanvasElement::layoutSubtree() const
 
 void HTMLCanvasElement::requestPaint()
 {
+    protect(document())->requestCanvasPaintEvent(*this);
+}
+
+void HTMLCanvasElement::dispatchPaintEvent()
+{
+    // FIXME: Populate changedElements.
+    dispatchEvent(CanvasPaintEvent::create(eventNames().paintEvent, { }, Event::IsTrusted::Yes));
 }
 
 ExceptionOr<Ref<DOMMatrix>> HTMLCanvasElement::getElementTransform(const CanvasElementImageSource&, DOMMatrix&)
@@ -232,9 +245,25 @@ ExceptionOr<Ref<DOMMatrix>> HTMLCanvasElement::getElementTransform(const CanvasE
     return Exception { ExceptionCode::InvalidStateError };
 }
 
-ExceptionOr<Ref<CanvasElementImage>> HTMLCanvasElement::captureElementImage(Element&)
+ExceptionOr<Ref<CanvasElementImage>> HTMLCanvasElement::captureElementImage(Element& drawableElement)
 {
+    if (auto snapshot = drawableElementSnapshot(drawableElement))
+        return CanvasElementImage::create(WTF::move(*snapshot));
+
     return Exception { ExceptionCode::InvalidStateError };
+}
+
+std::optional<CanvasElementSnapshot> HTMLCanvasElement::drawableElementSnapshot(Element& drawableElement) const
+{
+    CheckedPtr drawableRenderer = drawableElement.renderer();
+    if (!drawableRenderer)
+        return std::nullopt;
+
+    CheckedPtr canvasRenderer = dynamicDowncast<RenderHTMLCanvas>(renderer());
+    if (!canvasRenderer)
+        return std::nullopt;
+
+    return canvasRenderer->drawableRendererSnapshot(*drawableRenderer);
 }
 
 void HTMLCanvasElement::setSizeForControllingContext(IntSize newSize)
@@ -597,7 +626,7 @@ std::optional<FloatRect> HTMLCanvasElement::computeDirtyRectangleIfNeeded(const 
 
 void HTMLCanvasElement::willUpdateContents(const std::optional<FloatRect>& rect, ShouldApplyPostProcessingToDirtyRect shouldApplyPostProcessingToDirtyRect)
 {
-    clearCopiedImage();
+    m_copiedImage = nullptr;
     if (CheckedPtr renderer = renderBox()) {
         const std::optional<FloatRect> dirtyRect = computeDirtyRectangleIfNeeded(rect);
         if (usesContentsAsLayerContents())
@@ -620,7 +649,7 @@ void HTMLCanvasElement::didUpdateSizeProperties()
     IntSize newSize(w, h);
     bool sizeChanged = oldSize != newSize;
     CanvasBase::setSize(newSize);
-    clearCopiedImage();
+    m_copiedImage = nullptr;
     if (m_context)
         m_context->didUpdateCanvasSizeProperties(sizeChanged);
     if (CheckedPtr canvasRenderer = dynamicDowncast<RenderHTMLCanvas>(renderer())) {
@@ -820,7 +849,7 @@ RefPtr<VideoFrame> HTMLCanvasElement::toVideoFrame()
     // FIXME: This can likely be optimized quite a bit, especially in the cases where
     // the ImageBuffer is backed by GPU memory already and/or is in the GPU process by
     // specializing toVideoFrame() in ImageBufferBackend to not use getPixelBuffer().
-    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::BGRA8, DestinationColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
+    auto pixelBuffer = imageBuffer->getPixelBuffer({ AlphaPremultiplication::Unpremultiplied, PixelFormat::BGRA8, ColorSpace::SRGB() }, { { }, imageBuffer->truncatedLogicalSize() });
     if (!pixelBuffer)
         return nullptr;
 
@@ -867,11 +896,6 @@ Image* HTMLCanvasElement::copiedImage() const
     return m_copiedImage.get();
 }
 
-void HTMLCanvasElement::clearCopiedImage() const
-{
-    m_copiedImage = nullptr;
-}
-
 bool HTMLCanvasElement::virtualHasPendingActivity() const
 {
 #if ENABLE(WEBGL)
@@ -902,6 +926,7 @@ void HTMLCanvasElement::didMoveToNewDocument(Document& oldDocument, Document& ne
         oldDocument.removeCanvasNeedingPreparationForDisplayOrFlush(*context);
         newDocument.addCanvasNeedingPreparationForDisplayOrFlush(*context);
     }
+    oldDocument.cancelCanvasPaintEvent(*this);
     HTMLElement::didMoveToNewDocument(oldDocument, newDocument);
 }
 

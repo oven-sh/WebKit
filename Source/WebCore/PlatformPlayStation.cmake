@@ -10,6 +10,10 @@ elseif (USE_SKIA)
     include(platform/Skia.cmake)
 endif ()
 
+if (USE_COORDINATED_GRAPHICS)
+    include(platform/CoordinatedGraphics.cmake)
+endif ()
+
 list(APPEND WebCore_PRIVATE_INCLUDE_DIRECTORIES
     ${WEBCORE_DIR}/platform
     ${WEBCORE_DIR}/platform/generic
@@ -44,6 +48,7 @@ list(APPEND WebCore_SOURCES
     platform/graphics/egl/GLContextLibWPE.cpp
     platform/graphics/egl/GLContextWrapper.cpp
     platform/graphics/egl/GLDisplay.cpp
+    platform/graphics/egl/GraphicsContextGLEGL.cpp
 
     platform/graphics/libwpe/PlatformDisplayLibWPE.cpp
 

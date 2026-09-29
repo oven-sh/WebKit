@@ -41,8 +41,9 @@ FlexibleBoxData::FlexibleBoxData()
     : flexGrow(ComputedStyle::initialFlexGrow())
     , flexShrink(ComputedStyle::initialFlexShrink())
     , flexBasis(ComputedStyle::initialFlexBasis())
+    , flexLineCount(ComputedStyle::initialFlexLineCount())
     , flexDirection(static_cast<unsigned>(ComputedStyle::initialFlexDirection()))
-    , flexWrap(static_cast<unsigned>(ComputedStyle::initialFlexWrap()))
+    , flexWrap(ComputedStyle::initialFlexWrap().toRaw())
 {
 }
 
@@ -51,6 +52,7 @@ inline FlexibleBoxData::FlexibleBoxData(const FlexibleBoxData& other)
     , flexGrow(other.flexGrow)
     , flexShrink(other.flexShrink)
     , flexBasis(other.flexBasis)
+    , flexLineCount(other.flexLineCount)
     , flexDirection(other.flexDirection)
     , flexWrap(other.flexWrap)
 {
@@ -66,6 +68,7 @@ bool FlexibleBoxData::operator==(const FlexibleBoxData& other) const
     return flexGrow == other.flexGrow
         && flexShrink == other.flexShrink
         && flexBasis == other.flexBasis
+        && flexLineCount == other.flexLineCount
         && flexDirection == other.flexDirection
         && flexWrap == other.flexWrap;
 }
@@ -76,9 +79,10 @@ void FlexibleBoxData::dumpDifferences(TextStream& ts, const FlexibleBoxData& oth
     LOG_IF_DIFFERENT(flexGrow);
     LOG_IF_DIFFERENT(flexShrink);
     LOG_IF_DIFFERENT(flexBasis);
+    LOG_IF_DIFFERENT(flexLineCount);
 
     LOG_IF_DIFFERENT_WITH_CAST(FlexDirection, flexDirection);
-    LOG_IF_DIFFERENT_WITH_CAST(FlexWrap, flexWrap);
+    LOG_IF_DIFFERENT_WITH_FROM_RAW(FlexWrap, flexWrap);
 }
 #endif // !LOG_DISABLED
 

@@ -29,6 +29,7 @@
 #if ENABLE(WEBASSEMBLY)
 
 #include "JSCInlines.h"
+#include "JSModuleLoader.h"
 #include "JSWebAssemblyInstance.h"
 #include "JSWebAssemblyModule.h"
 #include "WebAssemblyInstancePrototype.h"
@@ -66,7 +67,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSWebAssemblyInstance, (JSGlobalObject* global
     Structure* instanceStructure = JSC_GET_DERIVED_STRUCTURE(vm, webAssemblyInstanceStructure, newTarget, callFrame->jsCallee());
     RETURN_IF_EXCEPTION(scope, { });
 
-    JSWebAssemblyInstance* instance = JSWebAssemblyInstance::tryCreate(vm, instanceStructure, globalObject, JSWebAssemblyInstance::createPrivateModuleKey(), module, importObject, Wasm::CreationMode::FromJS, WTF::move(provider));
+    JSWebAssemblyInstance* instance = JSWebAssemblyInstance::tryCreate(vm, instanceStructure, globalObject, globalObject->moduleLoader(), JSWebAssemblyInstance::createPrivateModuleKey(), module, importObject, Wasm::CreationMode::FromJS, WTF::move(provider));
     RETURN_IF_EXCEPTION(scope, { });
 
     instance->initializeImports(globalObject, importObject, Wasm::CreationMode::FromJS);

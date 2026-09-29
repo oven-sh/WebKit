@@ -46,7 +46,7 @@ NetworkLoadMetrics::NetworkLoadMetrics(MonotonicTime&& redirectStart, MonotonicT
     , responseEnd(WTF::move(responseEnd))
     , workerStart(WTF::move(workerStart))
     , firstInterimResponseStart(WTF::move(firstInterimResponseStart))
-    , protocol(protocol)
+    , protocol(WTF::move(protocol))
     , redirectCount(redirectCount)
     , complete(complete)
     , cellular(cellular)

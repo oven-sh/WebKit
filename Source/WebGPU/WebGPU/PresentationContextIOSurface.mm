@@ -380,14 +380,19 @@ void PresentationContextIOSurface::configure(Device& device, const WGPUSwapChain
         id<MTLDevice> device = m_device->device();
         /* NOLINT */ id<MTLLibrary> library = [device newLibraryWithSource:@R"(
     using namespace metal;
+    // A float3x3 is built from its columns, so each float3 below is one column of the BT.709
+    // matrix: the luma coefficients run down the first column, not across the first row. Writing
+    // these as rows transposes both matrices, and while a transposed pair still round trips
+    // exactly, the value clamped in between is then no longer luma, so any color whose first
+    // component goes negative comes back a different color.
     constant float3x3 rgbToYCbCr = float3x3(
-        float3(0.2126, 0.7152, 0.0722),
-        float3(-0.1146, -0.3854, 0.5),
-        float3(0.5, -0.4542, -0.0458));
+        float3(0.2126, -0.1146, 0.5),
+        float3(0.7152, -0.3854, -0.4542),
+        float3(0.0722, 0.5, -0.0458));
     constant float3x3 yCbCrToRGB = float3x3(
-        float3(1, 0, 1.5748),
-        float3(1, -0.1873, -0.4681),
-        float3(1, 1.8556, 0));
+        float3(1, 1, 1),
+        float3(0, -0.1873, 1.8556),
+        float3(1.5748, -0.4681, 0));
     kernel void luminanceClamp(texture2d<float, access::read>  inTexture  [[texture(0)]],
         texture2d<float, access::write> outTexture [[texture(1)]],
         uint2 gid [[thread_position_in_grid]])
@@ -399,7 +404,10 @@ void PresentationContextIOSurface::configure(Device& device, const WGPUSwapChain
         float3 yCbCr = rgbToYCbCr * inColor.rgb;
         yCbCr.x = clamp(yCbCr.x, 0., 1.);
         float3 outColor = yCbCrToRGB * yCbCr;
-        outTexture.write(float4(outColor, 1), gid);
+        // Clamping luminance says nothing about how opaque the frame is, so the alpha the canvas
+        // was drawn with has to survive. An opaque canvas is presented through a surface with no
+        // alpha channel at all, which is what makes it opaque.
+        outTexture.write(float4(outColor, inColor.a), gid);
     })" /* NOLINT */ options:options error:&error];
         if (error) {
             WTFLogAlways("%@", error);
@@ -487,7 +495,6 @@ Texture* PresentationContextIOSurface::getCurrentTexture(uint32_t currentIndex)
     }
     auto& texture = m_renderBuffers[currentIndex].texture;
     texture->recreateIfNeeded();
-    texture->setPreviouslyCleared(0, 0, false);
     texture->resetGPUFrameCost();
     return texture.ptr();
 }

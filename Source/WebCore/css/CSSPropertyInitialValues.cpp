@@ -45,6 +45,7 @@
 #include "CSSUnits.h"
 #include "CSSValueKeywords.h"
 #include "CSSValuePair.h"
+#include "CSSValuePool.h"
 #include <wtf/Variant.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -239,6 +240,18 @@ CSSValueID initialValueIDForLonghand(CSSPropertyID longhand)
         },
         [](CSSPrimitiveValue::Raw) {
             return CSSValueInvalid;
+        }
+    );
+}
+
+Ref<CSSValue> initialCSSValueForLonghand(CSSPropertyID longhand)
+{
+    return WTF::switchOn(initialValueForLonghand(longhand),
+        [](CSSValueID value) -> Ref<CSSValue> {
+            return CSSKeywordValue::create(value);
+        },
+        [](CSSPrimitiveValue::Raw value) -> Ref<CSSValue> {
+            return CSSPrimitiveValue::create(value.value, value.unit);
         }
     );
 }

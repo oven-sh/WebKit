@@ -80,6 +80,7 @@ static std::optional<ClassifyBlockResult> classifyBlock(CSSParserTokenRange rang
     struct ClassifyBlockState {
         CSSParserTokenRange range;
         bool isTopLevelBlock = true;
+        bool isInsideTopLevelBraceBlock = false;
         bool hasOtherValues = false;
         unsigned topLevelBraceBlocks = 0;
         bool doneWithThisRange = false;
@@ -181,6 +182,10 @@ static std::optional<ClassifyBlockResult> classifyBlock(CSSParserTokenRange rang
             stack.push(ClassifyBlockState {
                 .range = block,
                 .isTopLevelBlock = false, // Nested block, not top-level
+                // A top-level brace block only wraps the value so that it can contain commas, so '!'
+                // inside it is still at the top level of the value.
+                // https://drafts.csswg.org/css-values-5/#component-function-commas
+                .isInsideTopLevelBraceBlock = token.type() == LeftBraceToken && current.isTopLevelBlock,
             });
             continue;
         }
@@ -192,7 +197,7 @@ static std::optional<ClassifyBlockResult> classifyBlock(CSSParserTokenRange rang
         case AtKeywordToken:
             break;
         case DelimiterToken: {
-            if (token.delimiter() == '!' && current.isTopLevelBlock)
+            if (token.delimiter() == '!' && (current.isTopLevelBlock || current.isInsideTopLevelBraceBlock))
                 return { };
             break;
         }
@@ -270,6 +275,18 @@ bool isValidEnvReference(CSSParserTokenRange range, const CSSParserContext& pars
     return !!classifyBlock(range, parserContext);
 }
 
+// An argument may not begin with <dashed-ident> <colon>, which is reserved for named arguments.
+// A brace block starts with a brace rather than the ident, so wrapping the value in {} allows it.
+// https://github.com/w3c/csswg-drafts/issues/11749
+static bool startsWithReservedNamedArgument(CSSParserTokenRange range)
+{
+    range.consumeWhitespace();
+    if (!CSSSubstitutionParser::isValidCustomPropertyName(range.peek()))
+        return false;
+    range.consumeIncludingWhitespace();
+    return range.peek().type() == ColonToken;
+}
+
 bool isValidDashedFunction(CSSParserTokenRange range, const CSSParserContext& parserContext)
 {
     // <dashed-function> --*( <declaration-value>#? )
@@ -277,6 +294,8 @@ bool isValidDashedFunction(CSSParserTokenRange range, const CSSParserContext& pa
 
     unsigned index = 0;
     while (auto argumentRange = CSSPropertyParserHelpers::consumeArgument(range, index)) {
+        if (startsWithReservedNamedArgument(*argumentRange))
+            return false;
         if (!isValidDeclarationValueArgument(*argumentRange, parserContext, /* allowEmpty */ false))
             return false;
         ++index;

@@ -200,6 +200,12 @@ void RemoteScrollingTree::stickyScrollingTreeNodeBeganSticking(ScrollingNodeID n
         scrollingCoordinatorProxy->stickyScrollingTreeNodeBeganSticking(nodeID);
 }
 
+void RemoteScrollingTree::hostedSubtreeNeedsFullCommit(WebCore::FrameIdentifier frameID)
+{
+    if (CheckedPtr scrollingCoordinatorProxy = m_scrollingCoordinatorProxy.get())
+        scrollingCoordinatorProxy->requestFullScrollingTreeCommitForFrame(frameID);
+}
+
 #if ENABLE(OVERLAY_REGIONS_REMOTE_EFFECT)
 void RemoteScrollingTree::stickyScrollingTreeNodeEndedSticking(ScrollingNodeID nodeID)
 {
@@ -330,6 +336,17 @@ void RemoteScrollingTree::updateTimelinesRegistration(WebCore::ProcessIdentifier
     if (!m_progressBasedTimelineRegistry)
         m_progressBasedTimelineRegistry = makeUnique<RemoteProgressBasedTimelineRegistry>();
     m_progressBasedTimelineRegistry->update(*this, processIdentifier, timelinesUpdate);
+    if (m_progressBasedTimelineRegistry->isEmpty())
+        m_progressBasedTimelineRegistry = nullptr;
+}
+
+void RemoteScrollingTree::removeTimelines(WebCore::ProcessIdentifier processIdentifier)
+{
+    ASSERT(isMainRunLoop());
+    Locker locker { m_progressBasedTimelineRegistryLock };
+    if (!m_progressBasedTimelineRegistry)
+        return;
+    m_progressBasedTimelineRegistry->remove(processIdentifier);
     if (m_progressBasedTimelineRegistry->isEmpty())
         m_progressBasedTimelineRegistry = nullptr;
 }

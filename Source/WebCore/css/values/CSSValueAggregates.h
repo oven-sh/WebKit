@@ -351,7 +351,7 @@ struct CommaSeparatedEnumSet {
     static CommaSeparatedEnumSet map(SizedRange&& range, NOESCAPE Mapper&& mapper)
     {
         Container result;
-        for (auto&& value : range)
+        for (Ref value : range)
             result.add(mapper(value));
         return result;
     }
@@ -434,7 +434,7 @@ struct SpaceSeparatedOrderedHashSet {
     static SpaceSeparatedOrderedHashSet map(SizedRange&& range, NOESCAPE Mapper&& mapper)
     {
         Container result;
-        for (auto&& value : range)
+        for (Ref value : range)
             result.add(mapper(value));
         return result;
     }
@@ -477,8 +477,8 @@ struct CommaSeparatedOrderedHashSet {
     static CommaSeparatedOrderedHashSet map(SizedRange&& range, NOESCAPE Mapper&& mapper)
     {
         Container result;
-        for (auto&& value : range)
-            result.add(mapper(value));
+        for (Ref value : range)
+            result.add(mapper(value.get()));
         return result;
     }
 
@@ -595,7 +595,7 @@ template<typename T, size_t inlineCapacity = 0> struct CommaSeparatedVector {
     bool contains(const auto& x) const { return value.contains(x); }
     bool containsIf(NOESCAPE const Invocable<bool(const value_type&)> auto& f) const { return value.containsIf(f); }
 
-    template<typename F> decltype(auto) map(F&& functor) const { return value.map(std::forward<F>(functor)); }
+    template<typename F> decltype(auto) map(NOESCAPE const F& functor) const { return value.map(functor); }
 
     bool operator==(const CommaSeparatedVector&) const = default;
 

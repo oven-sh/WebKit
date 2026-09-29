@@ -59,7 +59,7 @@ TEST(MediaLoading, UserAgentStringCRABS)
     HTTPServer server([&](Connection connection) mutable {
         connection.receiveHTTPRequest([&] (auto&& request) {
             auto userAgent = parseUserAgent(request);
-            EXPECT_STREQ("User-Agent: TestWebKitAPI", userAgent.utf8().data());
+            EXPECT_EQ("User-Agent: TestWebKitAPI"_s, userAgent);
 
             receivedMediaRequest = true;
         });
@@ -83,7 +83,7 @@ TEST(MediaLoading, UserAgentStringHLS)
     HTTPServer mediaServer([&](Connection connection) mutable {
         connection.receiveHTTPRequest([connection, &receivedMediaRequest] (Vector<char>&& request) {
             auto userAgent = parseUserAgent(request);
-            EXPECT_STREQ("User-Agent: TestWebKitAPI", userAgent.utf8().data());
+            EXPECT_EQ("User-Agent: TestWebKitAPI"_s, userAgent);
             receivedMediaRequest = true;
         });
     });
@@ -92,7 +92,7 @@ TEST(MediaLoading, UserAgentStringHLS)
     HTTPServer manifestServer([&](Connection connection) mutable {
         connection.receiveHTTPRequest([connection, mediaServerPort, &receivedManifestRequest] (Vector<char>&& request) {
             auto userAgent = parseUserAgent(request);
-            EXPECT_STREQ("User-Agent: TestWebKitAPI", userAgent.utf8().data());
+            EXPECT_EQ("User-Agent: TestWebKitAPI"_s, userAgent);
 
             auto payload = makeString(
                 "#EXTM3U\n"

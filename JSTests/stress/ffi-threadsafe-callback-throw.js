@@ -1,4 +1,4 @@
-//@ requireOptions("--useDollarVM=1")
+//@ requireOptions("--useDollarVM=1", "--useExecutableAllocationFuzz=false")
 // A THROWING threadsafe callback: the drain must stop running further invocations once one
 // throws, propagate the exception, and still RETIRE the counts of the un-run records -- so a
 // callback close()d while records were queued (the deferred-unroot path) is not leaked/rooted

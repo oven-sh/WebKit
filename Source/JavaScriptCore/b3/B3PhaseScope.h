@@ -45,7 +45,7 @@ private:
     Procedure& m_procedure;
     ASCIILiteral m_name;
     CompilerTimingScope m_timingScope;
-    CString m_dumpBefore;
+    UTF8CString m_dumpBefore;
 };
 
 } } // namespace JSC::B3

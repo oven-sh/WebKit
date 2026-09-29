@@ -26,6 +26,7 @@
 #include "config.h"
 #include "WebPreferencesDefaultValues.h"
 
+#include <WebCore/SettingsBase.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
@@ -283,6 +284,16 @@ SUPPRESS_NODELETE bool defaultShouldEnableScreenOrientationAPI()
 #endif
 }
 
+SUPPRESS_NODELETE unsigned defaultMaximumNestedInlineFormattingContextCount()
+{
+#if PLATFORM(IOS)
+    // Mail renders messages from clients that nest markup pathologically, in processes with small stacks.
+    if (WTF::IOSApplication::isMaild() || WTF::IOSApplication::isMobileMail())
+        return 100;
+#endif
+    return WebCore::SettingsBase::defaultMaximumRenderTreeDepth;
+}
+
 #if USE(LIBWEBRTC)
 bool defaultPeerConnectionEnabledAvailable()
 {
@@ -313,12 +324,7 @@ bool defaultPopoverAttributeEnabled()
 bool defaultUseGPUProcessForDOMRenderingEnabled()
 {
 #if ENABLE(GPU_PROCESS_BY_DEFAULT) && ENABLE(GPU_PROCESS_DOM_RENDERING_BY_DEFAULT)
-#if PLATFORM(MAC)
-    static bool haveSufficientCores = WTF::numberOfPhysicalProcessorCores() >= 4;
-    return haveSufficientCores;
-#else
     return true;
-#endif
 #endif
 
 #if USE(GRAPHICS_LAYER_WC)
@@ -539,8 +545,39 @@ bool defaultShouldEnableScreenCapture()
 
 bool defaultWebTransportEnabled()
 {
-#if HAVE(WEBTRANSPORT)
+#if HAVE(WEBTRANSPORT_WITHOUT_SOFT_LINKING)
     return true;
+#elif HAVE(WEBTRANSPORT)
+    // WebTransport implementations before the availability of all these
+    // functions were experimental and so incomplete that we shouldn't expose
+    // them to the web. This makes it so TahoeE+ has WebTransport, even if a
+    // TahoeA SDK was used to build WebKit.
+    static bool hasEverythingNeeded =
+        canLoad_Network_nw_parameters_create_webtransport_http()
+        && canLoad_Network_nw_protocol_copy_webtransport_definition()
+        && canLoad_Network_nw_webtransport_create_options()
+        && canLoad_Network_nw_webtransport_options_set_is_unidirectional()
+        && canLoad_Network_nw_webtransport_options_set_is_datagram()
+        && canLoad_Network_nw_webtransport_options_add_connect_request_header()
+        && canLoad_Network_nw_webtransport_options_set_allow_joining_before_ready()
+        && canLoad_Network_nw_webtransport_options_set_initial_max_streams_uni()
+        && canLoad_Network_nw_webtransport_options_set_initial_max_streams_bidi()
+        && canLoad_Network_nw_webtransport_metadata_get_is_peer_initiated()
+        && canLoad_Network_nw_webtransport_metadata_get_is_unidirectional()
+        && canLoad_Network_nw_webtransport_metadata_get_session_error_code()
+        && canLoad_Network_nw_webtransport_metadata_set_session_error_code()
+        && canLoad_Network_nw_webtransport_metadata_get_session_error_message()
+        && canLoad_Network_nw_webtransport_metadata_set_session_error_message()
+        && canLoad_Network_nw_webtransport_metadata_get_session_closed()
+        && canLoad_Network_nw_webtransport_metadata_set_remote_drain_handler()
+        && canLoad_Network_nw_webtransport_metadata_copy_connect_response()
+        && canLoad_Network_nw_webtransport_metadata_get_transport_mode()
+        && canLoad_Network_nw_webtransport_metadata_set_remote_receive_error_handler()
+        && canLoad_Network_nw_webtransport_metadata_set_remote_send_error_handler()
+        && canLoad_Network_nw_connection_abort_reads()
+        && canLoad_Network_nw_connection_abort_writes()
+        && canLoad_Network_nw_http_fields_access_value_by_name();
+    return hasEverythingNeeded;
 #else
     return false;
 #endif

@@ -354,7 +354,7 @@ void RenderMultiColumnSet::prepareForLayout(bool initial)
 {
     // Guess box logical top. This might eliminate the need for another layout pass.
     if (RenderBox* previous = RenderMultiColumnFlow::previousColumnSetOrSpannerSiblingOf(this))
-        setLogicalTop(previous->logicalBottom() + previous->marginAfter());
+        setLogicalTop(previous->logicalBottom() + previous->marginAfter(previous->writingMode()));
     else
         setLogicalTop(multiColumnBlockFlow()->borderAndPaddingBefore());
 
@@ -448,7 +448,7 @@ LayoutUnit RenderMultiColumnSet::columnGap() const
     auto& parentBlock = downcast<RenderBlockFlow>(*parent());
     auto& parentBlockGap = parentBlock.style().columnGap();
     if (parentBlockGap.isNormal())
-        return LayoutUnit(parentBlock.style().fontDescription().computedSize()); // "1em" is recommended as the normal gap setting. Matches <p> margins.
+        return LayoutUnit(parentBlock.style().fontDescription().usedSize()); // "1em" is recommended as the normal gap setting. Matches <p> margins.
     return Style::evaluate<LayoutUnit>(parentBlockGap, parentBlock.contentBoxLogicalWidth(), parentBlock.style().usedZoomForLength());
 }
 
