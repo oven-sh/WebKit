@@ -307,6 +307,10 @@ has the same signature, as data, and **its arguments are checked against that be
 are required. It gets any of them by its position however it was given (`args.at(i)`). It does not count them. What is said when they are
 wrong is said in one place, in CPython's words. That every one has a signature is asserted when it is made.
 
+A `__new__` can rely on more: that the class it is given is made as its own is. `int.__new__(bool)` is refused, as `tp_new_wrapper()` refuses it in CPython, and for the reason that it does: what came of it would be laid out as one
+thing and taken for another. The nearest class to the one given whose `__new__` is not a program's has to have the same function for it. The constructor of a class of JavaScript's counts as a program's.
+`programs/new-of-another-class.py` tries every class that is written in C++ with every class that is derived from it.
+
 The signatures, the docstrings, what kind of thing each attribute of a built-in class is, and how each built-in class is laid out are CPython's
 own. `lib/dump-builtin-descriptions.py`, run by CPython, writes them to `lib/builtin-descriptions.json`, which is put into a header when this is
 built. A module that is written in C++ is added to the list in that script. What CPython does not have gives its signature where it is
@@ -1000,6 +1004,8 @@ of it, and it has a `stack` with the frames of both languages in it in order.
 Each is an instance of the other's class, whichever language made it. `name`, `message`, `cause` and `stack` are to JavaScript what they are for any
 `Error`, being not enumerable, and `AttributeError.name` is Python's. What JavaScript throws that is no `Error` passes through `except`, though not
 through a bare one or `finally`.
+
+An `Error` of a kind that is not in the table is a `JSError` to Python, which is derived from `Exception`. Calling `JSError` makes an `Error`, and it is JavaScript that makes it, as it is for any class of JavaScript's.
 
 ### JavaScript cannot make one kind of cell pass for another
 

@@ -106,7 +106,8 @@ show("metadata", lambda: (lambda e: (setattr(e, "_metadata", 5), e._metadata, de
 show("incomplete input", lambda: (_IncompleteInputError.__mro__[1].__name__, _IncompleteInputError.__name__, _IncompleteInputError.__module__, _IncompleteInputError.__doc__, str(_IncompleteInputError("m", ("f", 1, 2, "t"))), "_IncompleteInputError" in vars(builtins)))
 
 # ---- __new__
-classes = sorted((n for n, c in vars(builtins).items() if isinstance(c, type) and issubclass(c, BaseException)))
+# All but the class of an Error of JavaScript's, which CPython has not
+classes = sorted((n for n, c in vars(builtins).items() if isinstance(c, type) and issubclass(c, BaseException) and n != "JSError"))
 show("which have a __new__ of their own", lambda: [n for n in classes if "__new__" in vars(getattr(builtins, n))])
 show("which have an __init__ of their own", lambda: [n for n in classes if "__init__" in vars(getattr(builtins, n))])
 show("new of another", lambda: (type(ValueError.__new__(TypeError)).__name__, type(BaseException.__new__(KeyError, 1)).__name__, BaseException.__new__(KeyError, 1).args))

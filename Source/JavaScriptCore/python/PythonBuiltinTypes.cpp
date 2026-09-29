@@ -88,6 +88,38 @@ JSValue boxIfDerived(JSGlobalObject* globalObject, PyType* type, PyType* builtin
     return PyBoxedValue::create(globalObject->vm(), type->instanceStructure(), value);
 }
 
+// The last thing that tp_new_wrapper() looks at: that T.__new__(S) is not int.__new__(bool), which would make what is laid out as an int and call it a bool. The nearest class to S that is not a program's has to be made
+// as T is. False if it raised.
+static bool checkIsSafeToMake(JSGlobalObject* globalObject, PyNativeFunction* function, PyType* owner, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // It is only what is written in C that this is asked of.
+    if (function->nativeFunction() == javaScriptClassNew)
+        return true;
+    // tp_new, but for slot_tp_new, which is what a class has whose __new__() is a program's: null for that. The constructor of a class of JavaScript's is a program's as well.
+    auto nativeNew = [&] (PyType* candidate) -> PyNativeFunction* {
+        auto* found = dynamicDowncast<PyNativeFunction>(candidate->lookup(vm, vm.pythonNames().dunder_new));
+        return found && found->kind() == PyNativeFunction::Kind::New && found->nativeFunction() != javaScriptClassNew ? found : nullptr;
+    };
+    PyType* builtin = type;
+    PyNativeFunction* made = nativeNew(builtin);
+    while (!made && builtin->base()) {
+        builtin = builtin->base();
+        made = nativeNew(builtin);
+    }
+    // What there is no making has no tp_new at all, whatever it would come by from what it is derived from.
+    bool cannotBeMade = !builtin->hasFlag(PyType::IsJavaScript) && builtin->cannotBeInstantiated(vm);
+    // Several classes can have the one function in C, each with a __new__ of its own to call it by, as the exceptions have.
+    if (!cannotBeMade && (!made || made == function || made->nativeFunction() == function->nativeFunction())) [[likely]]
+        return true;
+    if (cannotBeMade)
+        raiseTypeError(globalObject, scope, concatenate("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
+    else
+        raiseTypeError(globalObject, scope, concatenate(owner->nameString(globalObject), ".__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, builtin->nameString(globalObject), ".__new__()"_s));
+    return false;
+}
+
 bool checkArguments(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     auto* function = uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee());
@@ -112,8 +144,11 @@ bool checkArguments(JSGlobalObject* globalObject, CallFrame* callFrame)
             if (owner == globalObject->pyRealm()->typeJSFunction() && first.isCell() && isJavaScriptClass(first.asCell()))
                 return checkAgainstSignature();
         }
-    } else if (first && isClass(first) && asType(first)->isSubtypeOf(owner))
-        return checkAgainstSignature();
+    } else if (first && isClass(first) && asType(first)->isSubtypeOf(owner)) {
+        if (kind != PyNativeFunction::Kind::New || asType(first) == owner) [[likely]]
+            return checkAgainstSignature();
+        return checkIsSafeToMake(globalObject, function, owner, asType(first)) && checkAgainstSignature();
+    }
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

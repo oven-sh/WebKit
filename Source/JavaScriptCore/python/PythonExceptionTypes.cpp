@@ -61,6 +61,21 @@ PYTHON_NATIVE(exceptionNew)
     return JSValue::encode(exception);
 }
 
+// MemoryError_new(). CPython keeps some by for when there is no room to make one. What shows of that is that it is a function of its own, so that BaseException.__new__(MemoryError) is not allowed.
+PYTHON_NATIVE(memoryErrorNew)
+{
+    return exceptionNew(globalObject, callFrame);
+}
+
+// JSError(message): an Error of JavaScript's, which JavaScript makes, as js.Error(message) does.
+PYTHON_NATIVE(jsErrorNew)
+{
+    NATIVE_PROLOGUE();
+    if (!args.checkNoKeywords(globalObject, scope, "JSError"_s))
+        return { };
+    RELEASE_AND_RETURN(scope, JSValue::encode(ErrorInstance::create(globalObject, globalObject->errorStructure(), args.size() > 1 ? args[1] : jsUndefined(), jsUndefined(), nullptr, TypeNothing, ErrorType::Error, false)));
+}
+
 PYTHON_NATIVE(exceptionInit)
 {
     NATIVE_PROLOGUE();
@@ -843,6 +858,9 @@ void initializeExceptionTypes(JSGlobalObject* globalObject)
         }
         asObject(self)->putDirect(vm, field, intFromInt64(globalObject, *written));
     });
+
+    addMethods(globalObject, realm->typeMemoryError(), { { "__new__"_s, memoryErrorNew, Kind::New } });
+    addMethods(globalObject, realm->typeJSError(), { { "__new__"_s, jsErrorNew, Kind::New, 0, "($type, /, *args, **kwargs)"_s, PyNativeFunction::Arguments::AreNotChecked } });
 
     // Most of them have a __new__ of their own, which is BaseException's.
 #define ADD_NEW(name, pythonName, base, layout, flags) \

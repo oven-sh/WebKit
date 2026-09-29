@@ -135,6 +135,7 @@ void addIteratorProtocol(JSGlobalObject*, PyType*); // __length_hint__(), __redu
 JSValue getBuiltin(JSGlobalObject*, ASCIILiteral name); // builtins.iter, or whatever a program has put there
 bool sortValues(JSGlobalObject*, MarkedArgumentBuffer& values, JSValue keyFunction, bool reverse, MarkedArgumentBuffer& sorted);
 JSC_DECLARE_HOST_FUNCTION(typeOr); // __or__ and __ror__ of what there can be a union of
+JSC_DECLARE_HOST_FUNCTION(javaScriptClassNew); // __new__ of a class of JavaScript's, which has JavaScript construct it
 void addGetSet(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 void addMember(JSGlobalObject*, PyType*, ASCIILiteral name, PyGetSetDescriptor::Getter, PyGetSetDescriptor::Setter = nullptr);
 PyNativeFunction* addFunction(JSGlobalObject*, JSObject* module, ASCIILiteral name, NativeFunction, unsigned data = 0, ASCIILiteral signature = { }, PyNativeFunction::Arguments = PyNativeFunction::Arguments::AreChecked);

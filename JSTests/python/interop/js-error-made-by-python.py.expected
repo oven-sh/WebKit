@@ -1,0 +1,18 @@
+JSError() => JSError JSError()  () '' True True str
+JSError('boom') => JSError JSError('boom') boom ('boom',) 'boom' True True str
+JSError.__new__(JSError, 'boom') => JSError JSError('boom') boom ('boom',) 'boom' True True str
+js.Error('boom') => JSError JSError('boom') boom ('boom',) 'boom' True True str
+JSError(5) => JSError JSError(5) 5 (5,) '5' True True str
+JSError(None) => JSError JSError(None) None (None,) '' True True str
+JSError('a', 'b') => JSError JSError('a', 'b') ('a', 'b') ('a', 'b') 'a' True True str
+caught JSError('raised') True
+true,thrown
+TypeError: BaseException.__new__(JSError) is not safe, use JSError.__new__()
+TypeError: Exception.__new__(JSError) is not safe, use JSError.__new__()
+TypeError: object.__new__(JSError) is not safe, use JSError.__new__()
+TypeError: JSError.__new__(Exception): Exception is not a subtype of JSError
+TypeError: JSError.__new__(): not enough arguments
+TypeError: JSError.__new__(X): X is not a type object (int)
+TypeError: JSError() takes no keyword arguments
+TypeError: type 'JSError' is not an acceptable base type
+['__doc__', '__new__'] (<class 'JSError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>)

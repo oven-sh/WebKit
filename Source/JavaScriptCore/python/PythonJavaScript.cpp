@@ -727,7 +727,7 @@ static JSObject* prototypeOfConstructor(JSGlobalObject* globalObject, JSObject* 
 }
 
 // C.__new__(cls, ...) for a class of JavaScript's is Reflect.construct(C, [...], cls).
-PYTHON_NATIVE(javaScriptClassNew)
+PYTHON_SHARED_NATIVE(javaScriptClassNew)
 {
     NATIVE_PROLOGUE();
     JSObject* constructor = asType(uncheckedDowncast<PyNativeFunction>(callFrame->jsCallee())->owner())->javaScriptConstructor();
