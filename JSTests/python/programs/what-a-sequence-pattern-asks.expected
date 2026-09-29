@@ -1,0 +1,7 @@
+m [('star wildcard', []), ('star wildcard', []), ('star wildcard', []), ('star wildcard', [])]
+m2 [(('star', []), ['iter']), (('star', [0]), ['iter']), (('star', [0, 1]), ['iter']), (('star', [0, 1, 2]), ['iter'])]
+m3 [('no', ['len']), ('one and star', ['len']), ('one and star', ['len']), ('one and star', ['len'])]
+m4 [('none', ['len']), ('one', ['len', 'len']), ('two', ['len', 'len', 'len']), (('ends', 0, 2), ['len', 'len', 'len', 'len', 'get 0', 'len', 'get 2'])]
+m5 [('no', ['len']), (('first', 0), ['len', 'get 0']), (('first', 0), ['len', 'get 0']), (('first', 0), ['len', 'get 0'])]
+m6 [('no', ['len']), (('last', 0), ['len', 'len', 'get 0']), (('last', 1), ['len', 'len', 'get 1']), (('last', 2), ['len', 'len', 'get 2'])]
+[('star wildcard', []), 'TypeError: cannot unpack non-iterable NoLen object', "TypeError: object of type 'NoLen' has no len()", "TypeError: object of type 'NoLen' has no len()", "TypeError: object of type 'NoLen' has no len()", "TypeError: object of type 'NoLen' has no len()"]

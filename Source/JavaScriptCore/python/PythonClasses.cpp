@@ -150,9 +150,16 @@ static PyTuple* computeOrder(JSGlobalObject* globalObject, PyType* type)
     if (type->metatype() == globalObject->pyRealm()->typeType())
         RELEASE_AND_RETURN(scope, defaultOrder(globalObject, type));
 
-    JSValue method = getAttribute(globalObject, type, Identifier::fromString(vm, "mro"_s));
+    // call_method_noarg(): what the metaclass has, and not what the class has, which if it is itself derived from type is type.mro with nothing to be a method of.
+    Identifier name = Identifier::fromString(vm, "mro"_s);
+    JSValue self;
+    JSValue method = lookupSpecial(globalObject, type, name, self);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSValue result = call(globalObject, method);
+    if (!method) {
+        raise(globalObject, scope, BuiltinType::AttributeError, jsString(vm, String(name.string())));
+        return nullptr;
+    }
+    JSValue result = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, nullptr);
     PyTuple* order = tupleFromIterable(globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);

@@ -976,9 +976,12 @@ PYTHON_RUNTIME_FUNCTION(matchSequence)
     PROLOGUE();
     if (!typeOf(globalObject, argument(0))->hasFlag(PyType::IsSequence))
         return JSValue::encode(jsBoolean(false));
+    int64_t count = argument(1).asInt32();
+    // [*rest] matches however many there are, and it is not asked how many that is.
+    if (argument(2).asBoolean() && !count)
+        return JSValue::encode(jsBoolean(true));
     int64_t size = length(globalObject, argument(0));
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t count = argument(1).asInt32();
     return JSValue::encode(jsBoolean(argument(2).asBoolean() ? size >= count : size == count));
 }
 

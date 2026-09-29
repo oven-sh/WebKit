@@ -1420,6 +1420,16 @@ PYTHON_NATIVE(nativeObjectNew)
     RELEASE_AND_RETURN(scope, JSValue::encode(allocateNativeObject(globalObject, scope, args.at(0))));
 }
 
+// cm_new() and sm_new(): until it is given something to wrap, it wraps None.
+PYTHON_NATIVE(wrapperNew)
+{
+    NATIVE_PROLOGUE();
+    JSValue object = allocateNativeObject(globalObject, scope, args.at(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    asNativeObject(object)->setField(vm, 0, jsUndefined());
+    return JSValue::encode(object);
+}
+
 template<unsigned field>
 static JSValue getField(JSGlobalObject*, JSValue self)
 {
@@ -1435,8 +1445,22 @@ PYTHON_NATIVE(descriptorGet)
         return { };
     JSValue instance = args.at(1);
     JSValue owner = args.at(2);
-    if (owner && !isNone(owner) && !isClass(owner) && typeOf(globalObject, args[0])->isSubtypeOf(realm->typeClassMethod()))
-        return JSValue::encode(PyBoundMethod::createMethod(globalObject, asNativeObject(args[0])->field(0), owner));
+    // What these two do is done here, and not by asking what is to be done with such a thing: of an instance of a class derived from either, the answer to that is to call this.
+    PyType* selfType = typeOf(globalObject, args[0]);
+    // sm_descr_get()
+    if (selfType->isSubtypeOf(realm->typeStaticMethod())) {
+        JSValue function = asNativeObject(args[0])->field(0);
+        if (!function)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "uninitialized staticmethod object"_s));
+        return JSValue::encode(function);
+    }
+    // cm_descr_get()
+    if (selfType->isSubtypeOf(realm->typeClassMethod())) {
+        JSValue function = asNativeObject(args[0])->field(0);
+        if (!function)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "uninitialized classmethod object"_s));
+        return JSValue::encode(PyBoundMethod::createMethod(globalObject, function, owner && !isNone(owner) ? owner : JSValue(typeOf(globalObject, instance)->object())));
+    }
     PyType* type = owner && isClass(owner) ? asType(owner) : typeOf(globalObject, instance ? instance : jsUndefined());
     RELEASE_AND_RETURN(scope, JSValue::encode(bindDescriptor(globalObject, args.at(0), !instance || isNone(instance) ? JSValue() : instance, type)));
 }
@@ -1968,7 +1992,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
 
     for (PyType* type : { realm->typeStaticMethod(), realm->typeClassMethod() }) {
         addMethods(globalObject, type, {
-            { "__new__"_s, nativeObjectNew, Kind::New },
+            { "__new__"_s, wrapperNew, Kind::New },
             { "__init__"_s, wrapperInit, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreThoseOfTheClass },
             { "__get__"_s, descriptorGet },
         });
