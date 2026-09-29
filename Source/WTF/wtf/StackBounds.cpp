@@ -149,9 +149,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // OS(OPENBSD)
 
 #if OS(LINUX)
-// The end of the main thread's stack mapping. The kernel copies the executable's path to the top of the
-// stack, below one null pointer (fs/exec.c), and AT_EXECFN points to that copy. Returns nullptr if the
-// path is not there, for example in a 32-bit process on a 64-bit kernel.
+// The end of the main thread's stack mapping, or nullptr when the stack does not show it. The kernel copies the
+// executable's path to the top of the stack, below one null pointer (fs/exec.c), and AT_EXECFN points to that
+// copy. It points elsewhere when glibc's loader was the executable (ld.so ./program): the loader redirects it to
+// argv[0], below the environment strings. A 32-bit process on a 64-bit kernel has 8 bytes above the path, not 4.
 static void* mainThreadStackTop(size_t pageSize, size_t maxSize)
 {
     auto* path = reinterpret_cast<const char*>(getauxval(AT_EXECFN));
@@ -163,18 +164,38 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     uintptr_t here = reinterpret_cast<uintptr_t>(currentStackPointer());
     if (top % pageSize || top <= here || top - here > maxSize)
         return nullptr;
+    // The null pointer is on the page that holds the end of the path, so this reads mapped memory.
+    if (*reinterpret_cast<void**>(top - sizeof(void*)))
+        return nullptr;
     return reinterpret_cast<void*>(top);
+}
+
+// glibc and bionic measure the main thread's stack from the end of its mapping, so the bound they report is the
+// kernel's. musl reports what is mapped now, which grows with the stack.
+#if defined(__GLIBC__) || defined(__BIONIC__)
+static constexpr bool libcReportsKernelBound = true;
+#else
+static constexpr bool libcReportsKernelBound = false;
+#endif
+
+// For the main thread, glibc and bionic read /proc/self/maps to answer.
+static bool currentThreadStackFromLibc(void*& end, size_t& size)
+{
+    pthread_attr_t attributes;
+    if (pthread_getattr_np(pthread_self(), &attributes))
+        return false;
+    int error = pthread_attr_getstack(&attributes, &end, &size);
+    pthread_attr_destroy(&attributes);
+    return !error;
 }
 #endif
 
 StackBounds StackBounds::currentThreadStackBoundsInternal()
 {
 #if OS(LINUX)
-    // on glibc, pthread_attr_getstack will generally return the limit size (minus a guard page)
-    // for the main thread; this is however not necessarily always true on every libc - for example
-    // on musl, it will return the currently reserved size - since the stack bounds are expected to
-    // be constant (and they are for every thread except main, which is allowed to grow), check
-    // resource limits and use that as the boundary instead (and prevent stack overflows in JSC)
+    // The main thread's stack grows on demand, so what is mapped now says nothing about its bound. The kernel
+    // lets the mapping reach RLIMIT_STACK, measured from its end, which is above the argument and environment
+    // strings. The bound is that far below the end, less a guard page.
     if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
         rlimit limit;
         getrlimit(RLIMIT_STACK, &limit);
@@ -182,17 +203,28 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
         if (size == RLIM_INFINITY)
             size = 8 * MB;
         size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
-        // The kernel counts the whole mapping against RLIMIT_STACK, so measure from its end. The origin that
-        // pthread_getattr_np gives is lower: glibc reads /proc/self/maps and returns the page above
-        // __libc_stack_end, which is below the argument and environment strings.
         void* origin = mainThreadStackTop(pageSize, static_cast<size_t>(size));
-        if (!origin)
-            origin = newThreadStackBounds(pthread_self()).origin();
+        void* libcBound = nullptr;
+        if (!origin) {
+            // libc's origin is below the strings (glibc: the page above __libc_stack_end, musl: the page above the
+            // auxiliary vector), so RLIMIT_STACK below it is under the kernel's bound by their size.
+            void* libcEnd = nullptr;
+            size_t libcSize = 0;
+            bool libcAnswered = currentThreadStackFromLibc(libcEnd, libcSize);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+            origin = static_cast<char*>(libcEnd) + libcSize;
+            if (libcAnswered && libcReportsKernelBound)
+                libcBound = static_cast<char*>(libcEnd) + pageSize;
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        }
         // account for a guard page
         size -= static_cast<rlim_t>(pageSize);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         void* bound = static_cast<char*>(origin) - size;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        // Only raise: with RLIMIT_STACK unlimited, libc's bound is the next mapping below, far under the size assumed here.
+        if (bound < libcBound)
+            bound = libcBound;
 
         static char** oldestEnviron = environ;
 
