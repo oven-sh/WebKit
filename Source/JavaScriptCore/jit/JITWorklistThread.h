@@ -71,6 +71,10 @@ private:
     Lock m_rightToRun;
     JITWorklist& m_worklist;
     RefPtr<JITPlan> m_plan { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+    // The VM whose collector holds m_rightToRun. Written under the worklist lock.
+    VM* m_suspendedByVM { nullptr };
+#endif
     unsigned m_planLoad { 0 };
     Safepoint* m_safepoint { nullptr };
 };

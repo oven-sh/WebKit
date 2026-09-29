@@ -96,6 +96,15 @@ ASCIILiteral JITWorklistThread::name() const
 
 auto JITWorklistThread::poll(const AbstractLocker& locker) -> PollResult
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // A collector holds m_rightToRun. A plan taken now would wait for it in work(), and that plan's
+    // own collector would then wait behind this one. Stay idle; resumeThreadsForVM wakes the pool.
+    if (m_suspendedByVM) {
+        RELEASE_ASSERT(m_worklist.m_numberOfActiveThreads);
+        m_worklist.m_numberOfActiveThreads--;
+        return PollResult::Wait;
+    }
+#endif
     for (unsigned i = 0; i < static_cast<unsigned>(JITPlan::Tier::Count); ++i) {
         auto& queue = m_worklist.m_queues[i];
         if (queue.isEmpty())
@@ -104,7 +113,18 @@ auto JITWorklistThread::poll(const AbstractLocker& locker) -> PollResult
         if (m_worklist.m_ongoingCompilationsPerTier[i] >= m_worklist.m_maximumNumberOfConcurrentCompilationsPerTier[i])
             continue;
 
+#if USE(BUN_JSC_ADDITIONS)
+        // A plan of a VM whose collector has stopped the world waits there until the resume.
+        auto it = queue.findIf([&](RefPtr<JITPlan>& plan) {
+            return !plan || !m_worklist.m_suspendedVMs.contains(plan->vm());
+        });
+        if (it == queue.end())
+            continue;
+        m_plan = WTF::move(*it);
+        queue.remove(it);
+#else
         m_plan = queue.takeFirst();
+#endif
         if (!m_plan) [[unlikely]] {
             if (Options::verboseCompilationQueue()) {
                 m_worklist.dump(locker, WTF::dataFile());
@@ -127,9 +147,16 @@ auto JITWorklistThread::poll(const AbstractLocker& locker) -> PollResult
 
 auto JITWorklistThread::work() -> WorkResult
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // m_plan is cleared (by WorkScope, under the worklist lock) before m_rightToRun is released, on
+    // every path: a collector that finds a plan of its VM here parks this thread by taking the lock.
+    Locker locker { m_rightToRun };
+    WorkScope workScope(*this);
+#else
     WorkScope workScope(*this);
 
     Locker locker { m_rightToRun };
+#endif
     {
         Locker locker { *m_worklist.m_lock };
         if (m_plan->stage() == JITPlanStage::Canceled)

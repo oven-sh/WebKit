@@ -30,6 +30,7 @@
 #include "JITPlan.h"
 #include "JITWorklistThread.h"
 #include <wtf/Deque.h>
+#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
@@ -56,8 +57,14 @@ public:
     CompilationResult enqueue(Ref<JITPlan>);
     size_t queueLength() const;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A collector parks the compiler threads that compile for its VM, and no other.
+    void suspendThreadsForVM(VM&);
+    void resumeThreadsForVM(VM&);
+#else
     void suspendAllThreads();
     void resumeAllThreads();
+#endif
 
     enum State { NotKnown, Compiling, Compiled };
     State compilationState(VM&, JITCompilationKey);
@@ -76,7 +83,7 @@ public:
     unsigned NODELETE setMaximumNumberOfConcurrentDFGCompilations(unsigned);
     unsigned NODELETE setMaximumNumberOfConcurrentFTLCompilations(unsigned);
 
-    // Only called on the main thread after suspending all threads.
+    // Only called on the main thread after suspending the threads that compile for the visitor's VM.
     template<typename Visitor>
     void visitWeakReferences(Visitor&);
 
@@ -126,7 +133,12 @@ private:
     // be completed.
     Vector<Ref<JITPlan>, 16> m_readyPlans;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The VMs whose collector has stopped the world. poll() leaves their plans in the queues.
+    UncheckedKeyHashSet<VM*> m_suspendedVMs;
+#else
     Lock m_suspensionLock;
+#endif
     Box<Lock> m_lock;
 
     const Ref<AutomaticThreadCondition> m_planEnqueued;

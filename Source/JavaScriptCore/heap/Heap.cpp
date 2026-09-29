@@ -3020,7 +3020,11 @@ bool Heap::suspendCompilerThreads()
         return false;
     if (!vm().numberOfActiveJITPlans())
         return false;
+#if USE(BUN_JSC_ADDITIONS)
+    JITWorklist::ensureGlobalWorklist().suspendThreadsForVM(vm());
+#else
     JITWorklist::ensureGlobalWorklist().suspendAllThreads();
+#endif
     return true;
 #else
     return false;
@@ -3252,7 +3256,11 @@ void Heap::didFinishCollection()
 void Heap::resumeCompilerThreads()
 {
 #if ENABLE(JIT)
+#if USE(BUN_JSC_ADDITIONS)
+    JITWorklist::ensureGlobalWorklist().resumeThreadsForVM(vm());
+#else
     JITWorklist::ensureGlobalWorklist().resumeAllThreads();
+#endif
 #endif
 }
 
