@@ -187,6 +187,7 @@ JSObject* createMarshalModule(JSGlobalObject*);
 JSObject* createErrnoModule(JSGlobalObject*);
 JSObject* createCollectionsModule(JSGlobalObject*);
 JSObject* createImpModule(JSGlobalObject*);
+JSObject* createOpcodeModule(JSGlobalObject*);
 JSObject* createSREModule(JSGlobalObject*);
 JSObject* createTokenizeModule(JSGlobalObject*);
 JSValue getObjectState(JSGlobalObject*, JSValue); // _PyObject_GetState()

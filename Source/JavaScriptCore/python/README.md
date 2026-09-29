@@ -704,6 +704,12 @@ A regular expression is compiled by Python, in the package `re`, to a list of nu
 
 `programs/sre-at-random.py` makes regular expressions at random and tries them on strings made at random, of each width and of bytes. Both this and CPython are given the same numbers to go by, so what differs is the engine's doing.
 
+### `_opcode`, `opcode` and `dis`
+
+`co_code` is not made of CPython's instructions: see *Code objects*. So `dis.dis()` has nothing to take apart. But `opcode.py` and `dis.py` are imported by a good deal of the library that never comes to use them, `inspect` and
+`traceback` among it, and `_opcode_metadata.py`, which is Python and is as it is, has the numbers of the instructions. `_opcode` says about those numbers what CPython says: `PythonOpcodeMetadata.h`, which
+`lib/convert-opcode-metadata.py` makes from CPython's headers.
+
 ### `tokenize`
 
 CPython has one tokenizer. Its parser asks it for tokens, and so does the module `_tokenize`, which `tokenize` is written in Python over. It is the same here: `TokenStream`, in `PythonLexer.h`, is the scanner that the compiler
