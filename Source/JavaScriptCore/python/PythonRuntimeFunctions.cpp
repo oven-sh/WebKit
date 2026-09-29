@@ -477,6 +477,8 @@ PYTHON_RUNTIME_FUNCTION(callSpread)
     MarkedArgumentBuffer arguments;
     for (unsigned i = 0; i < positional->length(); ++i)
         arguments.append(positional->getIndexQuickly(i));
+    if (arguments.hasOverflowed()) [[unlikely]]
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
     if (isNone(argument(2)))
         RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, argument(0), arguments, nullptr, callFrame->thisValue())));
 

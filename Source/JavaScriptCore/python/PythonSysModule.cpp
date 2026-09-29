@@ -363,9 +363,7 @@ PYTHON_NATIVE(sysBreakpointHook)
             return ignore();
         return { };
     }
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    ArgList arguments = args.allFrom(0);
     RELEASE_AND_RETURN(scope, JSValue::encode(args.keywordNames() ? callWithKeywords(globalObject, hook, arguments, args.keywordNames()) : call(globalObject, hook, arguments)));
 }
 
@@ -378,9 +376,7 @@ PYTHON_NATIVE(builtinBreakpoint)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "lost sys.breakpointhook"_s));
     audit(globalObject, "builtins.breakpoint"_s, hook);
     RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    ArgList arguments = args.allFrom(0);
     RELEASE_AND_RETURN(scope, JSValue::encode(args.keywordNames() ? callWithKeywords(globalObject, hook, arguments, args.keywordNames()) : call(globalObject, hook, arguments)));
 }
 

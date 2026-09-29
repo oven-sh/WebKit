@@ -233,6 +233,20 @@ other's functions with no adapter.
 - A function written in C++ gets keywords as extra arguments, and their names for `this`.
 - Given keywords, a JavaScript function gets them as an object, as its last argument.
 
+**`f(*values)` can be given any number of them.** What is given to a call goes on the stack, of which there is only so much, and a call is not to fail for that, nor to leave what it calls nothing to run in, nor to
+go less deep when it calls itself. Most of what can be called does not need them there, and `callWithKeywords()`, which is where every such call comes to, does not put them there:
+
+- What a function of Python's is given beyond what it has names for is on its way to a tuple, or to an exception. It goes straight there, by the way in that keywords use. So what goes on the stack is never more than
+  the function has parameters.
+- A class, an instance that has `__call__()`, and a method of a function of Python's only pass on what they are given. They are called from C++ with the arguments where they are: `PyType::call()`,
+  `callInstance()`, `PyBoundMethod::call()`.
+- A function written in C++ looks for them on the stack, and is done with them when it returns. So they go there if they take no more of the stack than they leave, which is asked of what there is at the time. If
+  they would take more, they are put in a `JSCellButterfly`, like the names of the keywords, and that is the one argument, with the names for `this` even if there are none. `NativeArguments` is what looks at
+  the arguments and knows of both. It costs a call without keywords nothing, since it is only when `this` is names that there is anything to ask.
+- A function of JavaScript's has them on the stack, because that is what its `arguments` are. If there is no room it is a `RangeError`, as when JavaScript gives it too many, which is a `RecursionError` to Python.
+
+`programs/a-great-many-arguments.py` gives up to 1,200,000 to everything that can be called, and 3,000 at each of 900 calls deep. `interop/a-great-many-arguments.mjs` gives them from each language to the other.
+
 ### What is written in C++ has a signature
 
 In CPython what is built in has a signature, `__text_signature__`, and the code that takes its arguments apart is generated from it. Here it
@@ -684,15 +698,14 @@ There is nothing that is per process, nothing that is set after something is mad
   moment the last reference to it goes. Here it would stay locked until the next collection, and programs that are right would fail. A view
   holds no pointer, only where it is looking, and checks each time. For the same reason the `__release_buffer__()` of a class that has one is called when
   the last `memoryview` of it is released, by `release()` or by `with`, and not when it is merely let go of.
-- **A set is in the order in which it was added to**, and not in the order of a hash table's slots.
+- **A set is in the order in which it was added to**, and not in the order of a hash table's slots. What sets do with one another is CPython's `Objects/setobject.c`, function for function: how long each takes, which of two keys that are equal
+  is kept, and what is asked of the keys and how often (`programs/sets-with-one-another.py`). The one thing that is otherwise is for the sake of the order: `a ^ b` has what is only in `a` first.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
 - **In a `__dict__`, keys that are strings come before those that are not**, and before those that JavaScript would take for an index.
 - **There is less room.** An int can be no larger than a `BigInt`, which is 2\*\*30 bits, a `str` no longer than a JavaScript string, which is 2\*\*31 - 1 code units, a `bytes` no longer than a typed array,
   which is 2\*\*32, and a list no longer than what a JavaScript array keeps side by side, which is 2\*\*28 elements. Past that it is a `MemoryError`, where CPython makes it if there is room. And what says that it
   will come to more, as `range(2 ** 40)` does when `list()` asks it, is taken at its word, where CPython goes by whether it can have that much memory set aside, which depends on the machine. What has to be gone
   back and forth in on the way to being made, as a `str` that is not ASCII is when it is encoded, can be refused sooner than that.
-  And what is given to a call by position is put on the stack, so `f(*values)` is a `RecursionError` if there are more of them than there is stack for, which is some hundreds of thousands. That one is not meant
-  to stay: with a keyword as well, a function of Python's is given them without their going on the stack, and it should be so without.
 - **The first half of a surrogate pair followed by the second half is the pair.** `'\ud83d' + '\ude00'` is one character here and two in CPython. In code units of 16 bits there is no telling them apart, and a `str`
   is to be the same string to both languages. Nothing but a program that puts halves together by hand can tell.
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a

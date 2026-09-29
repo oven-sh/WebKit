@@ -478,9 +478,7 @@ PYTHON_NATIVE(genericAliasCall)
 {
     NATIVE_PROLOGUE();
     auto* alias = asNativeObject(args[0]);
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 1; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    ArgList arguments = args.allFrom(1);
     JSValue object = callWithKeywords(globalObject, alias->field(AliasField::Origin), arguments, args.keywordNames());
     RETURN_IF_EXCEPTION(scope, { });
     setAttribute(globalObject, object, names.dunder_orig_class, alias);

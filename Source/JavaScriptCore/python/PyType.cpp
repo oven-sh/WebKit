@@ -527,30 +527,29 @@ bool PyType::cannotBeInstantiated(VM& vm) const
 static JSC_DECLARE_HOST_FUNCTION(callType);
 
 // C(...) is type(C).__call__(C, ...), which for nearly every class is type.__call__.
-JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSValue PyType::call(JSGlobalObject* globalObject, const ArgList& arguments, Python::KeywordNames* keywordNames)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
-    auto* type = uncheckedDowncast<PyType>(callFrame->jsCallee());
-    Python::NativeArguments given(callFrame);
-
-    MarkedArgumentBuffer arguments;
+    PyType* type = this;
     PyType* metatype = type->metatype();
     if (metatype != realm->typeType()) {
         JSValue function = metatype->lookup(vm, vm.pythonNames().dunder_call);
         if (function && function.asCell() != realm->function(PyRealm::WellKnownFunction::TypeCall)) {
             JSValue bound = Python::bindDescriptor(globalObject, function, type, metatype);
             RETURN_IF_EXCEPTION(scope, { });
-            for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-                arguments.append(callFrame->uncheckedArgument(i));
-            RELEASE_AND_RETURN(scope, JSValue::encode(Python::callWithKeywords(globalObject, bound, arguments, given.keywordNames())));
+            RELEASE_AND_RETURN(scope, Python::callWithKeywords(globalObject, bound, arguments, keywordNames));
         }
     }
 
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
-    RELEASE_AND_RETURN(scope, JSValue::encode(Python::instantiate(globalObject, type, arguments, given.keywordNames())));
+    RELEASE_AND_RETURN(scope, Python::instantiate(globalObject, type, arguments, keywordNames));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callType, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    Python::NativeArguments given(callFrame);
+    return JSValue::encode(uncheckedDowncast<PyType>(callFrame->jsCallee())->call(globalObject, given.allFrom(0), given.keywordNames()));
 }
 
 static JSC_DECLARE_HOST_FUNCTION(constructType);
@@ -566,10 +565,7 @@ JSC_DEFINE_HOST_FUNCTION(constructType, (JSGlobalObject* globalObject, CallFrame
     PyType* wanted = asType(newTarget);
     if (!wanted->isSubtypeOf(type))
         return callType(globalObject, callFrame);
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
-    return JSValue::encode(Python::instantiateFrom(globalObject, wanted, type, arguments, nullptr));
+    return JSValue::encode(Python::instantiateFrom(globalObject, wanted, type, ArgList(callFrame), nullptr));
 }
 
 bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName name, PropertySlot& slot)

@@ -1115,10 +1115,22 @@ static JSValue raiseNotCallable(JSGlobalObject* globalObject, ThrowScope& scope,
     return { };
 }
 
+// f(*values) can be given any number of them, and a call is not to fail, or to leave what is called nothing to run in, because they were put on the stack. Most of what can be called does not need them there: see
+// callWithKeywords(). A function that is written in C++ finds them there, and is done with them when it returns, so for that they go there if they take no more of it than they leave.
+static bool areBetterKeptOffStack(VM& vm, const ArgList& arguments)
+{
+    auto* stackPointer = static_cast<uint8_t*>(currentStackPointer());
+    auto* limit = static_cast<uint8_t*>(vm.softStackLimit());
+    size_t left = stackPointer > limit ? stackPointer - limit : 0;
+    return arguments.size() * sizeof(Register) > left / 2;
+}
+
 JSValue call(JSGlobalObject* globalObject, JSValue callable, const ArgList& arguments)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (areBetterKeptOffStack(vm, arguments)) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, callable, arguments, nullptr));
     auto callData = JSC::getCallData(callable);
     if (callData.type == CallData::Type::None) [[unlikely]]
         return raiseNotCallable(globalObject, scope, callable);
@@ -1204,7 +1216,8 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
     unsigned given = arguments.size() - keywordCount;
     unsigned positionalCount = info.positionalCount;
     unsigned namedCount = positionalCount + info.keywordOnlyCount;
-    String functionName = nameOfFunction(globalObject, function, true);
+    // Which is wanted only if something is wrong.
+    auto functionName = [&] { return nameOfFunction(globalObject, function, true); };
 
     // Everything that goes in here is also in `arguments`, in the function's defaults, or in a local variable.
     Vector<JSValue, 16> bound(info.parameterCount());
@@ -1219,7 +1232,8 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
     for (unsigned i = 0; i < taken; ++i)
         bound[i] = arguments.at(i);
     if (info.hasVariadic) {
-        PyTuple* rest = PyTuple::create(globalObject, given - taken);
+        PyTuple* rest = PyTuple::tryCreate(globalObject, given - taken);
+        RETURN_IF_EXCEPTION(scope, false);
         for (unsigned i = taken; i < given; ++i)
             rest->initializeAt(vm, i - taken, arguments.at(i));
         bound[info.variadicIndex()] = rest;
@@ -1235,7 +1249,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
             if (info.parameterNames[i].string() != keywordString)
                 continue;
             if (bound[i]) {
-                raiseTypeError(globalObject, scope, concatenate(functionName, "() got multiple values for argument '"_s, keywordString, '\''));
+                raiseTypeError(globalObject, scope, concatenate(functionName(), "() got multiple values for argument '"_s, keywordString, '\''));
                 return false;
             }
             bound[i] = value;
@@ -1256,14 +1270,14 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
             positionalOnlyGivenByKeyword.append(keywordString);
             continue;
         }
-        raiseTypeError(globalObject, scope, concatenate(functionName, "() got an unexpected keyword argument '"_s, keywordString, '\''));
+        raiseTypeError(globalObject, scope, concatenate(functionName(), "() got an unexpected keyword argument '"_s, keywordString, '\''));
         return false;
     }
     if (!positionalOnlyGivenByKeyword.isEmpty()) {
         TextBuilder list;
         for (size_t i = 0; i < positionalOnlyGivenByKeyword.size(); ++i)
             list.append(i ? ", "_s : ""_s, positionalOnlyGivenByKeyword[i]);
-        raiseTypeError(globalObject, scope, concatenate(functionName, "() got some positional-only arguments passed as keyword arguments: '"_s, list.tryFinish(), '\''));
+        raiseTypeError(globalObject, scope, concatenate(functionName(), "() got some positional-only arguments passed as keyword arguments: '"_s, list.tryFinish(), '\''));
         return false;
     }
 
@@ -1276,7 +1290,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
         for (unsigned i = positionalCount; i < namedCount; ++i)
             keywordOnlyGiven += !!bound[i];
         TextBuilder message;
-        message.append(functionName, "() takes "_s);
+        message.append(functionName(), "() takes "_s);
         if (defaultCount)
             message.append("from "_s, positionalCount - defaultCount, " to "_s, positionalCount, " positional arguments"_s);
         else
@@ -1300,7 +1314,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
             missing.append(info.parameterNames[i].string());
     }
     if (!missing.isEmpty()) {
-        raiseTypeError(globalObject, scope, concatenate(functionName, "() missing "_s, missing.size(), " required positional argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
+        raiseTypeError(globalObject, scope, concatenate(functionName(), "() missing "_s, missing.size(), " required positional argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
         return false;
     }
 
@@ -1317,7 +1331,7 @@ bool bindArguments(JSGlobalObject* globalObject, JSFunction* function, const Fun
                 missing.append(info.parameterNames[i].string());
         }
         if (!missing.isEmpty()) {
-            raiseTypeError(globalObject, scope, concatenate(functionName, "() missing "_s, missing.size(), " required keyword-only argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
+            raiseTypeError(globalObject, scope, concatenate(functionName(), "() missing "_s, missing.size(), " required keyword-only argument"_s, missing.size() == 1 ? ""_s : "s"_s, ": "_s, joinNames(missing)));
             return false;
         }
     }
@@ -1333,10 +1347,14 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     auto callData = JSC::getCallData(callable);
     if (callData.type == CallData::Type::None) [[unlikely]]
         return raiseNotCallable(globalObject, scope, callable);
-    if (!keywordNames || !keywordNames->length())
-        RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, arguments));
+    unsigned keywordCount = keywordNames ? keywordNames->length() : 0;
 
-    if (const FunctionInfo* info = pythonInfoOf(callable)) {
+    // A function of Python's can be given a value for each of its parameters, in place of the arguments. What is more than it has names for is on its way to a tuple, or to an exception, and goes straight there.
+    // So what goes on the stack is no more than the function has room for in any case, and a function that calls itself with a great many goes as deep as one that does with few.
+    const FunctionInfo* info = pythonInfoOf(callable);
+    if (info && !keywordCount && arguments.size() <= info->positionalCount) [[likely]]
+        RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, arguments));
+    if (info) {
         MarkedArgumentBuffer bound;
         bool ok = bindArguments(globalObject, uncheckedDowncast<JSFunction>(callable.asCell()), *info, arguments, keywordNames, bound);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1344,10 +1362,45 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
         RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, globalObject->pyRealm()->boundArgumentsMarker(), bound));
     }
 
+    // These pass on what they are given, so there is nothing to put it on the stack for. But a method of a function that is written in C++ is called as that is. What that says when it is given the wrong arguments
+    // has in it the class that the method was got by way of, which it finds by looking at what called it: see functionString().
     JSCell* cell = callable.asCell();
-    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyTypeType || cell->type() == PyBoundMethodType || cell->type() == PyInstanceType || cell->type() == PyNativeObjectType;
+    auto* boundMethod = cell->type() == PyBoundMethodType ? uncheckedDowncast<PyBoundMethod>(cell) : nullptr;
+    if (boundMethod && boundMethod->function().inherits<PyNativeFunction>())
+        boundMethod = nullptr;
+    if (boundMethod || cell->type() == PyTypeType || cell->type() == PyInstanceType) {
+        if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+            raiseRecursionError(globalObject);
+            return { };
+        }
+        if (boundMethod)
+            RELEASE_AND_RETURN(scope, boundMethod->call(globalObject, arguments, keywordNames));
+        if (cell->type() == PyTypeType)
+            RELEASE_AND_RETURN(scope, uncheckedDowncast<PyType>(cell)->call(globalObject, arguments, keywordNames));
+        RELEASE_AND_RETURN(scope, callInstance(globalObject, asObject(cell), arguments, keywordNames));
+    }
+
+    bool keepsOffStack = areBetterKeptOffStack(vm, arguments);
+    if (!keywordCount && !keepsOffStack) [[likely]]
+        RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, arguments));
+
+    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyBoundMethodType || cell->type() == PyNativeObjectType;
+    if (understandsKeywords && keepsOffStack) [[unlikely]] {
+        // See NativeArguments.
+        JSCellButterfly* values = JSCellButterfly::tryCreateFromArgList(vm, arguments);
+        if (!keywordNames)
+            keywordNames = KeywordNames::tryCreate(vm, CopyOnWriteArrayWithContiguous, 0);
+        if (!values || !keywordNames)
+            return raiseMemoryError(globalObject, scope);
+        MarkedArgumentBuffer packed;
+        packed.append(values);
+        RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, keywordNames, packed));
+    }
     if (understandsKeywords)
         RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, keywordNames, arguments));
+    // A function of JavaScript's has them on the stack, and if there is no room for them it is as it would be in JavaScript.
+    if (!keywordCount)
+        RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, arguments));
 
     // A JavaScript function gets them as an object, after the rest.
     unsigned positional = arguments.size() - keywordNames->length();

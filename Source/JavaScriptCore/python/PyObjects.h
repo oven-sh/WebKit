@@ -60,6 +60,8 @@ public:
     JSValue function() const { return m_function.get(); }
     JSValue self() const { return m_self.get(); }
     static CallData getCallData(JSCell*);
+    // What calling it does, for what has the arguments somewhere other than on the stack.
+    JSValue call(JSGlobalObject*, const ArgList&, JSCellButterfly* keywordNames);
 
 private:
     PyBoundMethod(VM& vm, Structure* structure, JSValue function, JSValue self)

@@ -68,23 +68,30 @@ Structure* PyInstance::createStructure(VM& vm, JSGlobalObject* globalObject, JSV
 static JSC_DECLARE_HOST_FUNCTION(callInstance);
 
 // instance(...) is type(instance).__call__(instance, ...)
-JSC_DEFINE_HOST_FUNCTION(callInstance, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSValue Python::callInstance(JSGlobalObject* globalObject, JSObject* instance, const ArgList& all, KeywordNames* keywordNames)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue instance = callFrame->jsCallee();
     JSValue self;
     JSValue function = Python::lookupSpecial(globalObject, instance, vm.pythonNames().dunder_call, self);
     RETURN_IF_EXCEPTION(scope, { });
     if (!function)
-        return JSValue::encode(Python::raiseTypeError(globalObject, scope, concatenate('\'', Python::typeName(globalObject, instance), "' object is not callable"_s)));
+        return Python::raiseTypeError(globalObject, scope, concatenate('\'', Python::typeName(globalObject, instance), "' object is not callable"_s));
+    if (!self)
+        RELEASE_AND_RETURN(scope, Python::callWithKeywords(globalObject, function, all, keywordNames));
     MarkedArgumentBuffer arguments;
-    if (self)
-        arguments.append(self);
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    arguments.append(self);
+    for (unsigned i = 0; i < all.size(); ++i)
+        arguments.append(all.at(i));
+    if (arguments.hasOverflowed()) [[unlikely]]
+        return Python::raiseMemoryError(globalObject, scope);
+    RELEASE_AND_RETURN(scope, Python::callWithKeywords(globalObject, function, arguments, keywordNames));
+}
+
+JSC_DEFINE_HOST_FUNCTION(callInstance, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
     Python::NativeArguments given(callFrame);
-    RELEASE_AND_RETURN(scope, JSValue::encode(Python::callWithKeywords(globalObject, function, arguments, given.keywordNames())));
+    return JSValue::encode(Python::callInstance(globalObject, callFrame->jsCallee(), given.allFrom(0), given.keywordNames()));
 }
 
 static bool nothingIsOrdinary(VM&, PropertyName) { return false; }
@@ -521,15 +528,22 @@ PyBoundMethod* PyBoundMethod::create(JSGlobalObject* globalObject, JSValue funct
 
 static JSC_DECLARE_HOST_FUNCTION(callBoundMethod);
 
+JSValue PyBoundMethod::call(JSGlobalObject* globalObject, const ArgList& all, Python::KeywordNames* keywordNames)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    MarkedArgumentBuffer arguments;
+    arguments.append(self());
+    for (unsigned i = 0; i < all.size(); ++i)
+        arguments.append(all.at(i));
+    if (arguments.hasOverflowed()) [[unlikely]]
+        return Python::raiseMemoryError(globalObject, scope);
+    RELEASE_AND_RETURN(scope, Python::callWithKeywords(globalObject, function(), arguments, keywordNames));
+}
+
 JSC_DEFINE_HOST_FUNCTION(callBoundMethod, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
-    auto* method = uncheckedDowncast<PyBoundMethod>(callFrame->jsCallee());
-    MarkedArgumentBuffer arguments;
-    arguments.append(method->self());
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
     Python::NativeArguments given(callFrame);
-    return JSValue::encode(Python::callWithKeywords(globalObject, method->function(), arguments, given.keywordNames()));
+    return JSValue::encode(uncheckedDowncast<PyBoundMethod>(callFrame->jsCallee())->call(globalObject, given.allFrom(0), given.keywordNames()));
 }
 
 CallData PyBoundMethod::getCallData(JSCell*)

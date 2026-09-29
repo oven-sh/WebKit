@@ -603,9 +603,7 @@ static JSValue callTypingWithClass(JSGlobalObject* globalObject, CallFrame* call
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue function = fromTyping(globalObject, name);
     RETURN_IF_EXCEPTION(scope, { });
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    ArgList arguments = args.allFrom(0);
     RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, function, arguments, args.keywordNames()));
 }
 

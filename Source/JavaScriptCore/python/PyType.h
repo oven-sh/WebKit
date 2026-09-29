@@ -195,6 +195,8 @@ public:
     static Structure* createInstanceStructure(VM&, JSGlobalObject*, PyType* base, JSObject* prototype);
 
     static CallData getCallData(JSCell*);
+    // What calling it does, for what has the arguments somewhere other than on the stack.
+    JSValue call(JSGlobalObject*, const ArgList&, JSCellButterfly* keywordNames);
     // What JavaScript finds when it looks for a property of an instance and comes to the class, or looks for one of the class. See
     // "What JavaScript sees" in README.md.
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);

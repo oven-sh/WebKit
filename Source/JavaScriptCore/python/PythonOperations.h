@@ -248,6 +248,8 @@ JSValue call(JSGlobalObject*, JSValue callable, JSValue, JSValue, JSValue);
 // The values of the keywords are the last of the arguments. `keywordNames` may be null.
 // `thisValue` is for a function of JavaScript's: what it was got from, in base.function(...). Python's own make nothing of it.
 JSValue callWithKeywords(JSGlobalObject*, JSValue callable, const ArgList&, KeywordNames* keywordNames, JSValue thisValue = jsUndefined());
+// instance(...), of an instance of a class that has __call__().
+JSValue callInstance(JSGlobalObject*, JSObject* instance, const ArgList&, KeywordNames*);
 // callable(*arguments, **keywords). The values of the keywords are added to the arguments. `keywords` may be null.
 JSValue callWithKeywordDict(JSGlobalObject*, JSValue callable, MarkedArgumentBuffer& arguments, PyDict* keywords);
 // The value of each parameter of a function written in Python. False if it raised.
@@ -536,13 +538,17 @@ String reprOfComplex(double real, double imaginary);
 
 // ---- The arguments of a function written in C++
 
+// They are on the stack, those that were given by position and then those that were given by name, whose names are `this`. If there are so many that they are better kept off the stack, they are in something
+// like what the names are in, which is all that is on the stack, and `this` is the names even if there are none: see callWithKeywords(). Neither is anything that a program can get hold of.
 class NativeArguments {
 public:
     explicit NativeArguments(CallFrame* callFrame)
         : m_callFrame(callFrame)
-        , m_keywordNames(isKeywordNames(callFrame->thisValue()) ? uncheckedDowncast<KeywordNames>(callFrame->thisValue().asCell()) : nullptr)
-        , m_positionalCount(callFrame->argumentCount() - (m_keywordNames ? m_keywordNames->length() : 0))
+        , m_values(std::bit_cast<EncodedJSValue*>(callFrame->addressOfArgumentsStart()))
+        , m_positionalCount(callFrame->argumentCount())
     {
+        if (isKeywordNames(callFrame->thisValue())) [[unlikely]]
+            takeNames(uncheckedDowncast<KeywordNames>(callFrame->thisValue().asCell()));
     }
 
     // How many were given by position.
@@ -551,19 +557,25 @@ public:
     JSValue at(unsigned index) const
     {
         if (index < m_positionalCount) [[likely]]
-            return m_callFrame->uncheckedArgument(index);
+            return JSValue::decode(m_values[index]);
         return m_keywordNames ? givenByName(index) : JSValue();
     }
     // One that is known to have been given by position.
     JSValue operator[](unsigned index) const
     {
         ASSERT(index < m_positionalCount);
-        return m_callFrame->uncheckedArgument(index);
+        return JSValue::decode(m_values[index]);
+    }
+    // All of them but the first so many, to pass on: what was given by position, and then what was given by name.
+    ArgList allFrom(unsigned index) const
+    {
+        ASSERT(index <= m_positionalCount);
+        return ArgList(m_values + index, m_positionalCount + keywordCount() - index);
     }
 
     unsigned keywordCount() const { return m_keywordNames ? m_keywordNames->length() : 0; }
     JSString* keywordName(unsigned index) const { return asString(m_keywordNames->get(index)); }
-    JSValue keywordValue(unsigned index) const { return m_callFrame->uncheckedArgument(m_positionalCount + index); }
+    JSValue keywordValue(unsigned index) const { return JSValue::decode(m_values[m_positionalCount + index]); }
     // Empty if it was not given.
     JSValue keyword(JSGlobalObject*, ASCIILiteral name) const;
     KeywordNames* keywordNames() const { return m_keywordNames; }
@@ -577,8 +589,21 @@ public:
 private:
     JSValue givenByName(unsigned index) const;
 
+    void takeNames(KeywordNames* names)
+    {
+        if (m_positionalCount == 1 && isKeywordNames(JSValue::decode(m_values[0]))) {
+            auto* values = uncheckedDowncast<JSCellButterfly>(JSValue::decode(m_values[0]).asCell());
+            m_values = std::bit_cast<EncodedJSValue*>(values->toButterfly()->contiguous().data());
+            m_positionalCount = values->length();
+        }
+        m_positionalCount -= names->length();
+        if (names->length())
+            m_keywordNames = names;
+    }
+
     CallFrame* m_callFrame;
-    KeywordNames* m_keywordNames;
+    EncodedJSValue* m_values;
+    KeywordNames* m_keywordNames { nullptr };
     unsigned m_positionalCount;
 };
 

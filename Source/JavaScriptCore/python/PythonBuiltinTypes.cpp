@@ -855,9 +855,7 @@ PYTHON_NATIVE(typeCall)
     NATIVE_PROLOGUE();
     if (!args.size() || !isClass(args[0]))
         return JSValue::encode(raiseTypeError(globalObject, scope, "descriptor '__call__' requires a 'type' object"_s));
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 1; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    ArgList arguments = args.allFrom(1);
     RELEASE_AND_RETURN(scope, JSValue::encode(instantiate(globalObject, asType(args[0]), arguments, args.keywordNames())));
 }
 
@@ -1041,9 +1039,7 @@ PYTHON_NATIVE(functionGet)
 PYTHON_NATIVE(callableCall)
 {
     NATIVE_PROLOGUE();
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 1; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    ArgList arguments = args.allFrom(1);
     RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, args.at(0), arguments, args.keywordNames())));
 }
 
@@ -1318,9 +1314,7 @@ PYTHON_NATIVE(wrapperInit)
 PYTHON_NATIVE(staticMethodCall)
 {
     NATIVE_PROLOGUE();
-    MarkedArgumentBuffer arguments;
-    for (unsigned i = 1; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
+    ArgList arguments = args.allFrom(1);
     RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, asNativeObject(args.at(0))->field(0), arguments, args.keywordNames())));
 }
 
