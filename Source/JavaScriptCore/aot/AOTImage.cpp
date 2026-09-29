@@ -658,7 +658,8 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         std::ranges::sort(all);
         callSitesOfFunction.append(safeCast<uint32_t>(callSites.size()));
-        appendVarint(callSites, all.size());
+        auto& sitesOfSpreads = function.code.info.sitesOfSpreads;
+        appendVarint(callSites, all.size() << 1 | !sitesOfSpreads.isEmpty());
         uint32_t previousOffset = 0;
         int64_t previousSite = 0;
         for (auto& [offset, site] : all) {
@@ -667,6 +668,14 @@ Vector<uint8_t> ImageBuilder::finish()
             appendVarint(callSites, static_cast<uint64_t>(step << 1) ^ static_cast<uint64_t>(step >> 63));
             previousOffset = offset;
             previousSite = site;
+        }
+        if (!sitesOfSpreads.isEmpty()) {
+            appendVarint(callSites, sitesOfSpreads.size());
+            for (auto& entry : sitesOfSpreads) {
+                appendVarint(callSites, entry.callSite);
+                appendVarint(callSites, entry.item);
+                appendVarint(callSites, entry.site);
+            }
         }
     }
 
@@ -1213,13 +1222,26 @@ Image* Image::withCode()
     return nullptr;
 }
 
+// What whatIsAt() goes by, where it takes no finding. There is one image with code in it, for good.
+static const ImageHeader* s_headerOfImageWithCode;
+static uintptr_t s_codeOfImageWithCode;
+static const uint32_t* s_startsOfFunctions;
+static const uint32_t* s_granulesOfCode;
+
 WhatIsAt whatIsAt(const void* address)
 {
-    Image* image = Image::withCode();
-    if (!image)
-        return { };
-    auto& header = image->header();
-    uintptr_t offset = std::bit_cast<uintptr_t>(address) - std::bit_cast<uintptr_t>(image->code());
+    if (!s_headerOfImageWithCode) [[unlikely]] {
+        Image* image = Image::withCode();
+        if (!image)
+            return { };
+        s_codeOfImageWithCode = std::bit_cast<uintptr_t>(image->code());
+        s_startsOfFunctions = image->at<uint32_t>(image->header().startsOfFunctionsOffset);
+        s_granulesOfCode = image->at<uint32_t>(image->header().granulesOfCodeOffset);
+        WTF::storeStoreFence();
+        s_headerOfImageWithCode = &image->header();
+    }
+    auto& header = *s_headerOfImageWithCode;
+    uintptr_t offset = std::bit_cast<uintptr_t>(address) - s_codeOfImageWithCode;
     if (offset >= header.endOfFunctions)
         return { };
     for (unsigned i = 0; i < header.numberOfCopiesOfStubs; ++i) {
@@ -1232,8 +1254,8 @@ WhatIsAt whatIsAt(const void* address)
         }
         return { WhatIsAt::Stub, 0, 0 };
     }
-    const uint32_t* starts = image->at<uint32_t>(header.startsOfFunctionsOffset);
-    uint32_t index = image->at<uint32_t>(header.granulesOfCodeOffset)[offset >> shiftOfGranuleOfCode];
+    const uint32_t* starts = s_startsOfFunctions;
+    uint32_t index = s_granulesOfCode[offset >> shiftOfGranuleOfCode];
     while (starts[index + 1] <= offset)
         ++index;
     return { WhatIsAt::Function, index, static_cast<uint32_t>(offset - starts[index]) };
@@ -1241,7 +1263,7 @@ WhatIsAt whatIsAt(const void* address)
 
 bool hasCode()
 {
-    return !!Image::withCode();
+    return s_headerOfImageWithCode || Image::withCode();
 }
 
 std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t offsetOfReturnAddress)
@@ -1252,11 +1274,37 @@ std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t of
     const uint8_t* at = image.at<uint8_t>(image.header().callSitesOffset) + function.callSites;
     uint32_t offset = 0;
     int64_t site = 0;
-    for (uint64_t count = readVarint(at); count--;) {
+    for (uint64_t count = readVarint(at) >> 1; count--;) {
         offset += readVarint(at) * sizeof(uint32_t);
         uint64_t step = readVarint(at);
         site += static_cast<int64_t>(step >> 1) ^ -static_cast<int64_t>(step & 1);
-        if (offset == offsetOfReturnAddress)
+        if (offset >= offsetOfReturnAddress) {
+            if (offset == offsetOfReturnAddress)
+                return static_cast<uint32_t>(site);
+            break;
+        }
+    }
+    return std::nullopt;
+}
+
+std::optional<uint32_t> siteOfSpread(const ImageFunction& function, uint32_t callSite, unsigned item)
+{
+    if (!function.callSites)
+        return std::nullopt;
+    Image& image = Image::of(function);
+    const uint8_t* at = image.at<uint8_t>(image.header().callSitesOffset) + function.callSites;
+    uint64_t first = readVarint(at);
+    if (!(first & 1))
+        return std::nullopt;
+    for (uint64_t count = first >> 1; count--;) {
+        readVarint(at);
+        readVarint(at);
+    }
+    for (uint64_t count = readVarint(at); count--;) {
+        uint64_t itsCallSite = readVarint(at);
+        uint64_t itsItem = readVarint(at);
+        uint64_t site = readVarint(at);
+        if (itsCallSite == callSite && itsItem == item)
             return static_cast<uint32_t>(site);
     }
     return std::nullopt;

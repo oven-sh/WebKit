@@ -1047,6 +1047,94 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
     }
 }
 
+Node* Graph::listOfArgumentsOf(const Node* node)
+{
+    if (node->kind != NodeKind::Bytecode)
+        return nullptr;
+    auto ofAll = [&](auto bytecode) -> Node* {
+        return bytecode.m_firstVarArg || !bytecode.m_arguments.isValid() ? nullptr : node->use(bytecode.m_arguments);
+    };
+    switch (node->opcode) {
+    case op_call_varargs:
+        return ofAll(node->as<OpCallVarargs>());
+    case op_tail_call_varargs:
+        return ofAll(node->as<OpTailCallVarargs>());
+    case op_construct_varargs:
+        return ofAll(node->as<OpConstructVarargs>());
+    case op_super_construct_varargs:
+        return ofAll(node->as<OpSuperConstructVarargs>());
+    default:
+        return nullptr;
+    }
+}
+
+void Graph::findListsOfArguments()
+{
+    UncheckedKeyHashMap<Node*, unsigned> numberOfUses;
+    auto note = [&](Node* user) {
+        for (auto& use : user->uses) {
+            if (use.node->isBytecode(op_spread) || use.node->isBytecode(op_new_array_with_spread) || use.node->isBytecode(op_create_rest) || use.node->isBytecode(op_create_cloned_arguments))
+                ++numberOfUses.add(use.node, 0).iterator->value;
+        }
+    };
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes)
+            note(node);
+        for (Node* phi : block->phis)
+            note(phi);
+    }
+    if (numberOfUses.isEmpty())
+        return;
+
+    // Of an array of the rest of the arguments or an arguments object: by calls that do not need there to be one.
+    UncheckedKeyHashMap<Node*, unsigned> numberOfUsesThatPassItOn;
+    for (BasicBlock* block : m_rpo) {
+        for (unsigned index = 0; index < block->nodes.size(); ++index) {
+            Node* list = listOfArgumentsOf(block->nodes[index]);
+            if (!list)
+                continue;
+            if (list->isBytecode(op_create_cloned_arguments)) {
+                ++numberOfUsesThatPassItOn.add(list, 0).iterator->value;
+                continue;
+            }
+            // The last first. Nothing is between them and the call, so nobody can tell when they are done.
+            Vector<Node*, 4> parts;
+            if (list->isBytecode(op_spread))
+                parts.append(list);
+            else if (list->isBytecode(op_new_array_with_spread)) {
+                auto bytecode = list->as<OpNewArrayWithSpread>();
+                if (bytecode.m_argc > mostItemsInList)
+                    continue;
+                parts.append(list);
+                for (unsigned i = bytecode.m_argc; i--;) {
+                    Node* element = list->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)));
+                    if (element->isBytecode(op_spread))
+                        parts.append(element);
+                }
+            } else
+                continue;
+            bool areRightBeforeTheCall = parts.size() <= index;
+            for (unsigned i = 0; areRightBeforeTheCall && i < parts.size(); ++i)
+                areRightBeforeTheCall = block->nodes[index - 1 - i] == parts[i] && numberOfUses.get(parts[i]) == 1;
+            if (!areRightBeforeTheCall)
+                continue;
+            for (Node* part : parts) {
+                part->isElided = true;
+                if (!part->isBytecode(op_spread))
+                    continue;
+                Node* spread = part->use(part->as<OpSpread>().m_argument);
+                // (Iterating over an array comes to what is in it for as long as nobody has said otherwise.)
+                if (spread->isBytecode(op_create_rest) && Options::useImmutableIntrinsics())
+                    ++numberOfUsesThatPassItOn.add(spread, 0).iterator->value;
+            }
+        }
+    }
+
+    // (What this function was passed is its caller's, and nobody writes to it.)
+    for (auto& [node, uses] : numberOfUsesThatPassItOn)
+        node->isElided = uses == numberOfUses.get(node);
+}
+
 void Graph::noteSelectorOfSite(unsigned slot, UniquedStringImpl* name)
 {
     size_t index = selectors.find(name);
@@ -2297,6 +2385,8 @@ private:
         while (m_constantCells.size() <= index)
             m_constantCells.append(nullptr);
         if (m_codeBlock->constantSourceCodeRepresentation(reg) == SourceCodeRepresentation::LinkTimeConstant) {
+            if (auto number = intrinsicForLinkTimeConstant(m_codeBlock->getConstant(reg)))
+                return m_graph.intrinsic(*number);
             if (!m_constantCells[index]) {
                 Node* node = m_graph.addNode(NodeKind::ConstantCell);
                 node->range = IntegerRange::unknown();

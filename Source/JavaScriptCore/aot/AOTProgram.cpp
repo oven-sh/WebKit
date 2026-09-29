@@ -8,6 +8,8 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "LinkTimeConstant.h"
+#include "ImmutableIntrinsics.h"
 #include "AOTImage.h"
 #include "AOTType.h"
 #include "BytecodeStructs.h"
@@ -288,6 +290,29 @@ unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
     size_t size = JSFinalObject::allocationSize(capacity);
     capacity += (MarkedSpace::optimalSizeFor(size) - size) / sizeof(WriteBarrier<Unknown>);
     return std::min(capacity, JSFinalObject::maxInlineCapacity);
+}
+
+std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
+{
+    if (static_cast<LinkTimeConstant>(constant.asInt32AsAnyInt()) != LinkTimeConstant::arrayProtoValues || !Options::useImmutableIntrinsics())
+        return std::nullopt;
+    const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
+    if (!intrinsics)
+        return std::nullopt;
+    static unsigned number;
+    static std::once_flag once;
+    std::call_once(once, [&] {
+        unsigned holder = ImmutableIntrinsics::globalObject;
+        for (ASCIILiteral name : { "Array"_s, "prototype"_s, "values"_s }) {
+            String string { name };
+            unsigned found = intrinsics->find(holder, *string.impl());
+            if (!found)
+                return;
+            holder = intrinsics->at(found).canonical;
+        }
+        number = holder;
+    });
+    return number ? std::optional { number } : std::nullopt;
 }
 
 Convention conventionOf(UnlinkedCodeBlock* codeBlock)

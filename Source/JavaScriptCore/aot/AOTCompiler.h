@@ -33,6 +33,8 @@ JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, c
 
 // What a function does before it returns, for what leaves it some other way.
 void emitEpilogueBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
+// All of that but for letting go of the frame, for Stub::TailCallVarargs.
+void emitRestoreBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 
 void reportStatistics();
 JS_EXPORT_PRIVATE void setOriginForStatistics(ASCIILiteral); // TEMPORARY-PROVABILITY-STATS

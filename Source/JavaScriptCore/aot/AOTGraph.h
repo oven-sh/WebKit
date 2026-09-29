@@ -396,6 +396,13 @@ public:
     void elideReadsOfCalleesNotPassed();
     // See ProgramFacts.
     void noteUsesOfProvenFunctions(const FactsOfExecutables&);
+    // f(a, ...b), f.apply(o, arguments): what the callee is passed is put together from where it is (Stub::CallVarargs, Stub::CallList).
+    // What would have been made only to be copied from, right before the call, is not (Node::isElided). Nor is an array of the rest of
+    // the arguments, or an arguments object, that nothing is done with but that: it says nothing that what this function was passed
+    // does not say.
+    void findListsOfArguments();
+    // The list, if the node is a call that takes one and takes all of it.
+    static Node* listOfArgumentsOf(const Node*);
     // An op_get_from_scope or an op_put_to_scope: how far below the Instance the environment is that has the variable, if it is
     // one of a module, whose place is known (ImageEnvironment::distance). Then the scope that the instruction names is not needed.
     std::optional<uint32_t> distanceOfEnvironmentAccessed(const Node*);
@@ -512,6 +519,7 @@ public:
     void noteShapeOfSite(unsigned slot, KnownShape&&);
     Vector<uint32_t> quotableSites; // CompiledFunctionInfo::quotableSites
     Vector<uint32_t> callSites; // CompiledFunctionInfo::callSites
+    Vector<SiteOfSpread> sitesOfSpreads; // CompiledFunctionInfo::sitesOfSpreads
     Vector<uint32_t> plans;
     void notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words); // AllocationPlan
     // An op_new_object that is made whole (Node::numberOfLiteralProperties): what with. Nothing, if it is not a shape to be known by.

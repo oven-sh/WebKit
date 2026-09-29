@@ -122,6 +122,16 @@ static unsigned scratchWordsFor(Node* node)
         return node->as<OpNewArray>().m_argc;
     case op_new_array_with_spread:
         return node->as<OpNewArrayWithSpread>().m_argc;
+    // The items of a list that is not made: at most two words each (Lowering::lowerCallWithItems()).
+    case op_call_varargs:
+    case op_tail_call_varargs:
+    case op_construct_varargs:
+    case op_super_construct_varargs: {
+        Node* list = Graph::listOfArgumentsOf(node);
+        if (!list || !list->isElided)
+            return 0;
+        return 2 * (list->isBytecode(op_new_array_with_spread) ? list->as<OpNewArrayWithSpread>().m_argc : 1);
+    }
     // Arguments that there are no registers for, or that the function called wants in memory.
     case op_call:
         return node->as<OpCall>().m_argc;

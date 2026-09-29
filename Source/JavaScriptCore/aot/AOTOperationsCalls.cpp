@@ -198,23 +198,131 @@ JSC_DEFINE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (JSGl
 
 // ---- Calls
 
-// Stub::CallVarargs: how many there are, and then all of them, one after the other.
-JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* globalObject, EncodedJSValue arguments, uint32_t firstVarArgOffset))
+// What iterating over it comes to is what is in it, and nobody can tell whether it was iterated over.
+static bool canBeCopiedFrom(JSValue value)
+{
+    if (!value.isCell())
+        return false;
+    if (value.asCell()->type() == JSCellButterflyType)
+        return true;
+    auto* array = dynamicDowncast<JSArray>(value.asCell());
+    return array && array->isIteratorProtocolFastAndNonObservable();
+}
+
+static unsigned lengthOfWhatCanBeCopiedFrom(JSValue value)
+{
+    if (auto* butterfly = dynamicDowncast<JSCellButterfly>(value.asCell()))
+        return butterfly->length();
+    return uncheckedDowncast<JSArray>(value.asCell())->length();
+}
+
+// Stub::CallVarargs: how many there are, and then all of them, one after the other. See ListDescriptor.
+JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* globalObject, EncodedJSValue listOrItems, uint32_t descriptorBits))
 {
     AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject);
-    unsigned length = sizeOfVarargs(globalObject, JSValue::decode(arguments), firstVarArgOffset);
-    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    ListDescriptor descriptor { descriptorBits };
+    uint64_t length = 0;
+    if (!descriptor.isOfItems()) {
+        length = sizeOfVarargs(globalObject, JSValue::decode(listOrItems), descriptor.firstVarArg());
+        OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    } else {
+        auto* items = std::bit_cast<EncodedJSValue*>(listOrItems);
+        bool allCanBeCopiedFrom = true;
+        auto forEachSpread = [&](const auto& functor) {
+            unsigned word = 0;
+            for (unsigned i = 0; i < descriptor.numberOfItems(); ++i) {
+                if (descriptor.kindOf(i) == ListDescriptor::Spread)
+                    functor(items[word], i);
+                word += descriptor.kindOf(i) == ListDescriptor::Passed ? 2 : 1;
+            }
+        };
+        forEachSpread([&](EncodedJSValue& item, unsigned) {
+            allCanBeCopiedFrom &= canBeCopiedFrom(JSValue::decode(item));
+        });
+        if (!allCanBeCopiedFrom) [[unlikely]] {
+            // Then code runs, which may do anything to the others: each is gone through when it is its turn, and what it came to is kept.
+            bool threw = false;
+            const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
+            FunctionRef function = caller(globalObject, callFrame);
+            uint32_t callSite = CallSiteIndex(function.bytecodeIndexAt(returnAddress)).bits();
+            forEachSpread([&](EncodedJSValue& item, unsigned index) {
+                if (threw)
+                    return;
+                std::optional<SiteInPlaceOfCallSite> where;
+                if (auto site = siteOfSpread(*function.info().function(), callSite, index))
+                    where.emplace(returnAddress, *site);
+                JSCell* result = spread(globalObject, JSValue::decode(item));
+                if (scope.exception()) [[unlikely]] {
+                    threw = true;
+                    return;
+                }
+                item = JSValue::encode(result);
+            });
+            OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+        }
+        unsigned word = 0;
+        for (unsigned i = 0; i < descriptor.numberOfItems(); ++i) {
+            switch (descriptor.kindOf(i)) {
+            case ListDescriptor::Value:
+                ++length;
+                ++word;
+                break;
+            case ListDescriptor::Spread:
+                length += lengthOfWhatCanBeCopiedFrom(JSValue::decode(items[word++]));
+                break;
+            case ListDescriptor::Passed:
+                length += static_cast<uint64_t>(items[word]);
+                word += 2;
+                break;
+            }
+        }
+    }
     if (length > maxArguments) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         OPERATION_RETURN(scope, 0);
     }
-    OPERATION_RETURN(scope, length);
+    OPERATION_RETURN(scope, static_cast<size_t>(length));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject* globalObject, EncodedJSValue* where, EncodedJSValue arguments, uint32_t firstVarArgOffset, uint32_t length))
+JSC_DEFINE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject* globalObject, EncodedJSValue* where, EncodedJSValue listOrItems, uint32_t descriptorBits, uint32_t length))
 {
     AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject);
-    loadVarargs(globalObject, std::bit_cast<JSValue*>(where), JSValue::decode(arguments), firstVarArgOffset, length);
+    ListDescriptor descriptor { descriptorBits };
+    if (!descriptor.isOfItems()) {
+        loadVarargs(globalObject, std::bit_cast<JSValue*>(where), JSValue::decode(listOrItems), descriptor.firstVarArg(), length);
+        OPERATION_RETURN(scope);
+    }
+    // (Nothing has run since they were counted.)
+    auto* items = std::bit_cast<EncodedJSValue*>(listOrItems);
+    unsigned word = 0;
+    for (unsigned i = 0; i < descriptor.numberOfItems(); ++i) {
+        switch (descriptor.kindOf(i)) {
+        case ListDescriptor::Value:
+            *where++ = items[word++];
+            break;
+        case ListDescriptor::Spread: {
+            JSCell* cell = JSValue::decode(items[word++]).asCell();
+            if (auto* butterfly = dynamicDowncast<JSCellButterfly>(cell)) {
+                for (unsigned index = 0; index < butterfly->length(); ++index)
+                    *where++ = JSValue::encode(butterfly->get(index));
+                break;
+            }
+            auto* array = uncheckedDowncast<JSArray>(cell);
+            for (unsigned index = 0, count = array->length(); index < count; ++index) {
+                JSValue element = array->tryGetIndexQuickly(index);
+                *where++ = JSValue::encode(element ? element : jsUndefined());
+            }
+            break;
+        }
+        case ListDescriptor::Passed: {
+            size_t count = static_cast<size_t>(items[word]);
+            memcpy(where, std::bit_cast<const EncodedJSValue*>(items[word + 1]), count * sizeof(EncodedJSValue));
+            where += count;
+            word += 2;
+            break;
+        }
+        }
+    }
     OPERATION_RETURN(scope);
 }
 

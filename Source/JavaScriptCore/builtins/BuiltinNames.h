@@ -207,6 +207,7 @@ namespace JSC {
     macro(createRemoteFunction) \
     macro(isRemoteFunction) \
     macro(arrayFromFastWithoutMapFn) \
+    macro(arrayProtoValues) \
     macro(jsonParse) \
     macro(jsonStringify) \
     macro(String) \

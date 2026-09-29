@@ -158,6 +158,10 @@ struct KnownFunction {
     }
 };
 
+// A constant that is whatever the realm has for it (SourceCodeRepresentation::LinkTimeConstant): the number of that among what cannot be
+// changed (ImmutableIntrinsics), if it is one of those. Then code gets it from there, and has no use for the constant.
+JS_EXPORT_PRIVATE std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant);
+
 // Whether code can tell which object it was called as, other than by way of the scope that has, if that is the environment of the
 // module: which is where it is (ModuleLinkage::distanceOfEnvironment). From the bytecode alone, so that the function and whoever
 // calls it come to the same answer.

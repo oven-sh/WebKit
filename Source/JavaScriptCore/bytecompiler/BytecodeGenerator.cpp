@@ -5204,6 +5204,57 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
         return;
     }
 
+    // What has been checked to be an array. An iterator of arrays asks for the length, and for the element at the index it has got to, each
+    // time it is asked for the next: so does this. There is nothing to be done when the loop is left early, so nothing has to be caught.
+    // Which iterator an array has, and what its `next` is, is asked once, before the loop: it is what it is for any array unless the array,
+    // or a class of its own that it belongs to, says otherwise, and what any array says cannot be changed (useImmutableIntrinsics).
+    if (forLoopNode && subjectNode->isSoundTypeCheckNode() && static_cast<SoundTypeCheckNode*>(subjectNode)->mask() == SoundTypeArray
+        && Options::iterateCheckedArraysByIndex() && Options::useImmutableIntrinsics()) {
+        RefPtr<RegisterID> array = newTemporary();
+        emitNode(array.get(), subjectNode);
+        {
+            emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
+            RefPtr<RegisterID> iteratorSymbol = emitGetById(newTemporary(), array.get(), propertyNames().iteratorSymbol);
+            RefPtr<RegisterID> ofAnyArray = moveLinkTimeConstant(nullptr, LinkTimeConstant::arrayProtoValues);
+            Ref<Label> isOfAnyArray = newLabel();
+            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), iteratorSymbol.get(), ofAnyArray.get()), isOfAnyArray.get());
+            emitThrowTypeError("Type check failed: expected an array that is iterated over like any other"_s);
+            emitLabel(isOfAnyArray.get());
+        }
+        RefPtr<RegisterID> index = newTemporary();
+        emitLoad(index.get(), jsNumber(0));
+
+        Ref<Label> loopDone = newLabel();
+        {
+            Ref<LabelScope> scope = newLabelScope(LabelScope::Loop);
+            RefPtr<RegisterID> value = newTemporary();
+
+            Ref<Label> loopStart = newLabel();
+            emitLabel(loopStart.get());
+            emitLabel(*scope->continueTarget());
+            emitLoopHint();
+
+            RELEASE_ASSERT(forLoopNode->isForOfNode());
+            prepareLexicalScopeForNextForLoopIteration(forLoopNode, forLoopSymbolTable);
+            emitDebugHook(forLoopNode->lexpr());
+
+            {
+                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
+                emitJumpIfFalse(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopDone.get());
+            }
+            emitGetByVal(value.get(), array.get(), index.get());
+            emitInc(index.get());
+
+            callBack(*this, value.get());
+            emitJump(loopStart.get());
+
+            if (scope->breakTargetMayBeBound())
+                emitLabel(scope->breakTarget());
+        }
+        emitLabel(loopDone.get());
+        return;
+    }
+
     RefPtr<RegisterID> iterable = newTemporary();
     emitNode(iterable.get(), subjectNode);
 

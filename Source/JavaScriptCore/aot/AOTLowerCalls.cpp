@@ -217,20 +217,14 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
         mode = CallMode::Call;
     LValue callee = lowJSValue(node->use(calleeRegister));
     LValue thisValue = lowJSValue(node->use(thisRegister));
+    if (Node* listNode = Graph::listOfArgumentsOf(node); listNode && listNode->isElided) {
+        lowerCallWithItems(node, node->use(calleeRegister), callee, thisValue, listNode, mode);
+        return;
+    }
     LValue list = lowJSValue(node->use(argumentsRegister));
     LBasicBlock otherwise = mode == CallMode::TailCall ? leaveIfFunction(node->use(calleeRegister), callee) : nullptr;
-    if (otherwise) {
-        // Likewise what there is to say about what is no list.
-        LBasicBlock isCellCase = m_out.newBlock();
-        LBasicBlock isNotObject = m_out.newBlock();
-        LBasicBlock isList = m_out.newBlock();
-        m_out.branch(isCell(list), usually(isCellCase), rarely(otherwise));
-        m_out.appendTo(isCellCase);
-        m_out.branch(isObjectCell(list), usually(isList), rarely(isNotObject));
-        m_out.appendTo(isNotObject);
-        m_out.branch(isCellOfType(list, JSCellButterflyType), usually(isList), rarely(otherwise));
-        m_out.appendTo(isList);
-    }
+    // (Stub::TailCallVarargs is called.)
+    m_graph.emitsCalls = true;
 
     for (;;) {
     PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
@@ -238,16 +232,17 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
     patchpoint->append(ConstrainedValue(thisValue, ValueRep::reg(thisGPR)));
     patchpoint->append(ConstrainedValue(list, ValueRep::reg(argumentGPR(0))));
     finishCall(patchpoint, mode);
-    CallSite site { mode == CallMode::TailCall ? StubCall::noCallSite : callSiteBitsOf(node) };
+    CallSite site { callSiteBitsOf(node) };
     patchpoint->setGenerator([graph = &m_graph, firstVarArg, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        jit.move(CCallHelpers::TrustedImm32(firstVarArg), argumentGPR(1));
+        jit.move(CCallHelpers::TrustedImm32(ListDescriptor::ofList(firstVarArg)), argumentGPR(1));
         if (mode != CallMode::TailCall) {
             graph->stubCalls.call(jit, mode == CallMode::Construct ? Stub::ConstructVarargs : Stub::CallVarargs, site);
             return;
         }
-        emitEpilogueBeforeLeaving(jit, *graph, params.code());
-        graph->stubCalls.tailCall(jit, Stub::CallVarargs);
+        emitRestoreBeforeLeaving(jit, *graph, params.code());
+        graph->stubCalls.call(jit, Stub::TailCallVarargs, site);
+        jit.breakpoint();
     });
     if (mode == CallMode::TailCall) {
         m_out.appendTo(otherwise);
@@ -256,6 +251,107 @@ void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, Virt
     }
     setJSValue(node, patchpoint);
     return;
+    }
+}
+
+// The list was not made (Graph::findListsOfArguments()).
+void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, LValue thisValue, Node* list, CallMode mode)
+{
+    struct Item {
+        ListDescriptor::Kind kind;
+        Node* node;
+        Node* spread; // The op_spread.
+    };
+    Vector<Item, 4> items;
+    auto addSpreadOf = [&](Node* spread) {
+        Node* source = spread->use(spread->as<OpSpread>().m_argument);
+        items.append({ source->isElided ? ListDescriptor::Passed : ListDescriptor::Spread, source, spread });
+    };
+    if (list->isBytecode(op_create_cloned_arguments))
+        items.append({ ListDescriptor::Passed, list, nullptr });
+    else if (list->isBytecode(op_spread))
+        addSpreadOf(list);
+    else {
+        auto bytecode = list->as<OpNewArrayWithSpread>();
+        for (unsigned i = 0; i < bytecode.m_argc; ++i) {
+            Node* element = list->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)));
+            if (element->isElided)
+                addSpreadOf(element);
+            else
+                items.append({ ListDescriptor::Value, element, nullptr });
+        }
+    }
+    // How many of what this function was passed, and where they are.
+    auto passed = [&](Node* item) -> std::pair<LValue, LValue> {
+        unsigned skipped = item->isBytecode(op_create_rest) ? item->as<OpCreateRest>().m_numParametersToSkip : 0;
+        LValue count = m_out.zeroExtPtr(numberOfArgumentsPassed());
+        if (!skipped)
+            return { count, argumentsPassed() };
+        LValue left = m_out.sub(count, m_out.constIntPtr(skipped));
+        return { m_out.select(m_out.above(count, m_out.constIntPtr(skipped)), left, m_out.intPtrZero), m_out.add(argumentsPassed(), m_out.constIntPtr(skipped * sizeof(EncodedJSValue))) };
+    };
+
+    bool isJustWhatWasPassed = items.size() == 1 && items[0].kind == ListDescriptor::Passed;
+    m_graph.emitsCalls = true;
+    LValue first;
+    LValue second = nullptr;
+    uint32_t descriptor = ListDescriptor::ofItems(items.size());
+    if (isJustWhatWasPassed)
+        std::tie(first, second) = passed(items[0].node);
+    else {
+        unsigned word = 0;
+        for (unsigned i = 0; i < items.size(); ++i) {
+            descriptor |= ListDescriptor::kindOfItem(i, items[i].kind);
+            if (items[i].kind == ListDescriptor::Spread)
+                m_graph.sitesOfSpreads.append({ CallSiteIndex(node->bytecodeIndex).bits(), i, callSiteBitsOf(items[i].spread) });
+            if (items[i].kind == ListDescriptor::Passed) {
+                auto [count, where] = passed(items[i].node);
+                m_out.store64(count, scratchWord(word++));
+                m_out.store64(where, scratchWord(word++));
+            } else
+                m_out.store64(lowJSValue(items[i].node), scratchWord(word++));
+        }
+        first = m_scratch;
+    }
+    // (Both ways on from here go by what has been put there.)
+    LBasicBlock otherwise = mode == CallMode::TailCall ? leaveIfFunction(calleeNode, callee) : nullptr;
+
+    for (;;) {
+        PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
+        patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
+        patchpoint->append(ConstrainedValue(thisValue, ValueRep::reg(thisGPR)));
+        patchpoint->append(ConstrainedValue(first, ValueRep::reg(argumentGPR(0))));
+        if (second)
+            patchpoint->append(ConstrainedValue(second, ValueRep::reg(argumentGPR(1))));
+        finishCall(patchpoint, mode);
+        CallSite site { mode == CallMode::TailCall && isJustWhatWasPassed ? StubCall::noCallSite : callSiteBitsOf(node) };
+        patchpoint->setGenerator([graph = &m_graph, descriptor, isJustWhatWasPassed, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            bool isConstruct = mode == CallMode::Construct;
+            Stub stub = isJustWhatWasPassed ? (isConstruct ? Stub::ConstructList : Stub::CallList) : (isConstruct ? Stub::ConstructVarargs : Stub::CallVarargs);
+            if (!isJustWhatWasPassed)
+                jit.move(CCallHelpers::TrustedImm32(descriptor), argumentGPR(1));
+            if (mode != CallMode::TailCall) {
+                graph->stubCalls.call(jit, stub, site);
+                return;
+            }
+            // (What this function was passed is not in its frame. The items are.)
+            if (isJustWhatWasPassed) {
+                emitEpilogueBeforeLeaving(jit, *graph, params.code());
+                graph->stubCalls.tailCall(jit, stub);
+                return;
+            }
+            emitRestoreBeforeLeaving(jit, *graph, params.code());
+            graph->stubCalls.call(jit, Stub::TailCallVarargs, site);
+            jit.breakpoint();
+        });
+        if (mode == CallMode::TailCall) {
+            m_out.appendTo(otherwise);
+            mode = CallMode::Call;
+            continue;
+        }
+        setJSValue(node, patchpoint);
+        return;
     }
 }
 

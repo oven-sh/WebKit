@@ -20,11 +20,15 @@ ALWAYS_INLINE FunctionRef caller(JSGlobalObject* globalObject, CallFrame* callFr
 ALWAYS_INLINE BytecodeIndex bytecodeIndexOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).bytecodeIndexAt(removeCodePtrTag(callFrame->rawReturnPC())); }
 
 // Whatever a function that has no Data of its own comes to an operation for, it may well be for want of one. See Instance::misses.
+// (One in so many is looked at, and counts for as many: finding out whose it is takes longer than some operations do.)
 ALWAYS_INLINE void countOperationOnBehalfOf(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
+    constexpr uint32_t oneIn = 8;
+    if (++globalObject->aotInstance()->operationsNotCounted % oneIn) [[likely]]
+        return;
     FunctionRef function = caller(globalObject, callFrame);
     if (Data* data = function.instance->data[function.index]; !data || data == function.instance->sharedData) [[unlikely]]
-        function.instance->countMiss(function.index);
+        function.instance->countMisses(function.index, oneIn);
 }
 
 #define AOT_OPERATION_BEGIN(globalObject) \

@@ -450,6 +450,13 @@ void emitEpilogueBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::C
     jit.emitFunctionEpilogue();
 }
 
+void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Code& code)
+{
+    RELEASE_ASSERT(!hasNoFrame(graph, code));
+    AllowMacroScratchRegisterUsage allowScratch(jit);
+    jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
+}
+
 static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const ProgramFacts* facts, VariableFacts* variableFacts)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
@@ -474,6 +481,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
+    graph.findListsOfArguments();
     if (Options::aotDumpGraph()) [[unlikely]] {
         dataLogLn("AOT graph:");
         graph.dump(WTF::dataFile());
@@ -583,6 +591,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.quotableSites = WTF::move(graph.quotableSites);
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
+    info.sitesOfSpreads = WTF::move(graph.sitesOfSpreads);
     info.callSites = WTF::move(graph.callSites);
     std::ranges::sort(info.callSites);
     info.callSites.shrink(std::ranges::unique(info.callSites).begin() - info.callSites.begin());

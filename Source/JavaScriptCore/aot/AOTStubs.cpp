@@ -39,6 +39,15 @@ using TrustedImm32 = CCallHelpers::TrustedImm32;
 static CCallHelpers::Label s_labels[numberOfStubs];
 static Vector<std::pair<CCallHelpers::Call, Stub>>* s_callsBetweenStubs;
 static Vector<CCallHelpers::Label>* s_returnsIntoAdapters;
+// Where the address of a place in the stubs is wanted in a register.
+struct AddressOfLabel {
+    CCallHelpers::Label instruction;
+    GPRReg reg;
+    CCallHelpers::Label target;
+};
+static Vector<AddressOfLabel>* s_addressesOfLabels;
+static CCallHelpers::Label s_whereCallVarargsMakesTheCall;
+static CCallHelpers::Label s_whereCallVarargsIsReturnedTo;
 
 static void callStubFromStub(CCallHelpers& jit, Stub stub)
 {
@@ -1929,7 +1938,7 @@ static void generateCallListTo(CCallHelpers& jit, CodeSpecializationKind kind)
 }
 
 // See Stub::CallVarargs.
-static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind)
+static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind, bool inTailPosition = false)
 {
     constexpr ptrdiff_t offsetOfCallee = -8;
     constexpr ptrdiff_t offsetOfThis = -16;
@@ -1981,9 +1990,49 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
     jit.load64(local(offsetOfThis), thisGPR);
     jit.load64(local(offsetOfLength), argumentGPR(0));
     jit.move(CCallHelpers::stackPointerRegister, argumentGPR(1));
-    callStubFromStub(jit, kind == CodeSpecializationKind::CodeForCall ? Stub::CallList : Stub::ConstructList);
-    jit.emitFunctionEpilogue();
-    jit.ret();
+    if (inTailPosition) {
+        // The list goes to where the frame of the function is that called this, right below what that begins with: which is what a frame
+        // of this stub's would begin with there. If that function was itself called from such a frame, that one goes too.
+        constexpr GPRReg length = A0;
+        constexpr GPRReg to = A1;
+        constexpr GPRReg from = A2;
+        constexpr GPRReg frame = A3;
+        static_assert(length == argumentGPR(0) && to == argumentGPR(1));
+        jit.move(argumentGPR(1), from);
+        jit.loadPtr(Address(GPRInfo::callFrameRegister), frame);
+        s_addressesOfLabels->append({ jit.label(), T11, s_whereCallVarargsIsReturnedTo });
+        jit.m_assembler.adr(T11, 0);
+        CCallHelpers::Label again = jit.label();
+        jit.loadPtr(Address(frame, sizeof(void*)), T12);
+        Jump isNotOfThisStub = jit.branchPtr(CCallHelpers::NotEqual, T12, T11);
+        jit.loadPtr(Address(frame), frame);
+        jit.jump().linkTo(again, &jit);
+        isNotOfThisStub.link(&jit);
+        jit.add64(TrustedImm32(1), length, T12);
+        jit.and64(TrustedImm32(~1), T12);
+        jit.lshift64(TrustedImm32(3), T12);
+        jit.subPtr(frame, T12, to);
+        // (Upwards, so the last first.)
+        jit.move(length, T12);
+        Jump none = jit.branchTest64(CCallHelpers::Zero, T12);
+        CCallHelpers::Label next = jit.label();
+        jit.sub64(TrustedImm32(1), T12);
+        jit.load64(CCallHelpers::BaseIndex(from, T12, CCallHelpers::TimesEight), T13);
+        jit.store64(T13, CCallHelpers::BaseIndex(to, T12, CCallHelpers::TimesEight));
+        jit.branchTest64(CCallHelpers::NonZero, T12).linkTo(next, &jit);
+        none.link(&jit);
+        jit.move(frame, GPRInfo::callFrameRegister);
+        jit.move(to, CCallHelpers::stackPointerRegister);
+        jit.jump().linkTo(s_whereCallVarargsMakesTheCall, &jit);
+    } else {
+        if (kind == CodeSpecializationKind::CodeForCall)
+            s_whereCallVarargsMakesTheCall = jit.label();
+        callStubFromStub(jit, kind == CodeSpecializationKind::CodeForCall ? Stub::CallList : Stub::ConstructList);
+        if (kind == CodeSpecializationKind::CodeForCall)
+            s_whereCallVarargsIsReturnedTo = jit.label();
+        jit.emitFunctionEpilogue();
+        jit.ret();
+    }
 
     exception.link(&jit);
     jit.emitFunctionEpilogue();
@@ -1997,6 +2046,7 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
 
 static void generateCallVarargs(CCallHelpers& jit) { generateCallVarargsTo(jit, CodeSpecializationKind::CodeForCall); }
 static void generateConstructVarargs(CCallHelpers& jit) { generateCallVarargsTo(jit, CodeSpecializationKind::CodeForConstruct); }
+static void generateTailCallVarargs(CCallHelpers& jit) { generateCallVarargsTo(jit, CodeSpecializationKind::CodeForCall, true); }
 static void generateCallList(CCallHelpers& jit) { generateCallListTo(jit, CodeSpecializationKind::CodeForCall); }
 static void generateConstructList(CCallHelpers& jit) { generateCallListTo(jit, CodeSpecializationKind::CodeForConstruct); }
 
@@ -2530,6 +2580,8 @@ const StubBlob& stubBlob()
         s_callsBetweenStubs = &callsBetweenStubs;
         Vector<CCallHelpers::Label> returnsIntoAdapters;
         s_returnsIntoAdapters = &returnsIntoAdapters;
+        Vector<AddressOfLabel> addressesOfLabels;
+        s_addressesOfLabels = &addressesOfLabels;
 #else
         Vector<CCallHelpers::Label> returnsIntoAdapters;
         CCallHelpers::Label labels[numberOfStubs];
@@ -2586,6 +2638,16 @@ const StubBlob& stubBlob()
         LinkBuffer linkBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::Thunk);
         for (auto& [call, stub] : callsBetweenStubs)
             linkBuffer.link<JITThunkPtrTag>(call, linkBuffer.locationOf<JITThunkPtrTag>(labels[static_cast<unsigned>(stub)]));
+#if CPU(ARM64)
+        for (auto& address : addressesOfLabels) {
+            auto* instruction = static_cast<uint8_t*>(linkBuffer.locationOf<JITThunkPtrTag>(address.instruction).untaggedPtr());
+            int64_t delta = static_cast<uint8_t*>(linkBuffer.locationOf<JITThunkPtrTag>(address.target).untaggedPtr()) - instruction;
+            RELEASE_ASSERT(delta >= -(1 << 20) && delta < (1 << 20));
+            // adr reg, target
+            uint32_t encoded = 0x10000000u | (static_cast<uint32_t>(delta) & 3) << 29 | (static_cast<uint32_t>(delta >> 2) & 0x7ffff) << 5 | static_cast<uint32_t>(address.reg);
+            performJITMemcpy<jitMemcpyRepatch>(instruction, &encoded, sizeof(encoded));
+        }
+#endif
         auto* start = static_cast<uint8_t*>(linkBuffer.entrypoint<JITThunkPtrTag>().untaggedPtr());
         for (unsigned i = 0; i < numberOfStubs; ++i)
             blob->offsets[i] = static_cast<uint8_t*>(linkBuffer.locationOf<JITThunkPtrTag>(labels[i]).untaggedPtr()) - start;
@@ -2606,6 +2668,21 @@ const StubBlob& stubBlob()
             };
             for (unsigned i = 0; i < numberOfStubs; ++i)
                 dataLogLn("AOT: stub ", names[i], " ", blob->offsets[i]);
+            // (In the order they are made in, above.)
+            unsigned thunk = 0;
+            for (Stub stub : stubsThatCallOperations) {
+                dataLogLn("AOT: stub ThunksOf", names[static_cast<unsigned>(stub)], " ", blob->thunkOffsets[thunk]);
+                thunk += numberOfEntries;
+            }
+            for (Stub stub : stubsThatCallFunctions) {
+                for (unsigned count = 0; count < numberOfCountsWithThunk; ++count)
+                    dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], count, " ", blob->thunkOffsets[thunk++]);
+            }
+            for (unsigned frameSize = unitOfFrameSize; frameSize <= biggestFrameWithThunk; frameSize += unitOfFrameSize)
+                dataLogLn("AOT: stub Prologue", frameSize, " ", blob->thunkOffsets[thunk++]);
+            for (unsigned i = 1; i <= numberOfStubIntrinsics; ++i)
+                dataLogLn("AOT: stub Intrinsic", i, " ", blob->thunkOffsets[thunk++]);
+            dataLogLn("AOT: stub End ", size);
         }
     });
     return blob.get();

@@ -134,6 +134,7 @@ class JSGlobalObject;
     v(createRemoteFunction, nullptr) \
     v(isRemoteFunction, nullptr) \
     v(arrayFromFastWithoutMapFn, nullptr) \
+    v(arrayProtoValues, nullptr) \
     v(jsonParse, nullptr) \
     v(jsonStringify, nullptr) \
     v(String, nullptr) \

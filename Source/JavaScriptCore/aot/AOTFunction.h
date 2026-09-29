@@ -145,6 +145,14 @@ JS_EXPORT_PRIVATE const RegisterAtOffsetList& registersThatAdapterSaves();
 JS_EXPORT_PRIVATE bool hasCode(); // There is an image with code in it: otherwise none of this comes to anything.
 // Nothing: nobody was to ask about what is called from there, or it is not where anything is going to return to.
 JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
+std::optional<uint32_t> siteOfSpread(const ImageFunction&, uint32_t callSite, unsigned item); // See SiteOfSpread.
+// For as long as there is one of these, the function that is going to be returned to there is somewhere else as far as anybody can tell.
+class SiteInPlaceOfCallSite {
+    WTF_MAKE_NONCOPYABLE(SiteInPlaceOfCallSite);
+public:
+    SiteInPlaceOfCallSite(const void* returnAddress, uint32_t site);
+    ~SiteInPlaceOfCallSite();
+};
 // Of a frame of code from the static compiler, or of a stub that such code called: whose realm's. The adapter that let the code in says.
 JS_EXPORT_PRIVATE Instance* instanceOfFrame(const void* frame);
 // frame: the last that the VM was told of (VM::topCallFrame). Whether it is a stub's, or such code's: then there is nothing in it of what a

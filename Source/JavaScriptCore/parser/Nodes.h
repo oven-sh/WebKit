@@ -207,6 +207,7 @@ namespace JSC {
         virtual bool isBoolean() const { return false; }
         virtual bool isThisNode() const { return false; }
         virtual bool isSpreadExpression() const { return false; }
+        virtual bool isSoundTypeCheckNode() const { return false; }
         virtual bool isSuperNode() const { return false; }
         virtual bool isRegExpNode() const { return false; }
         virtual bool isImportNode() const { return false; }
@@ -1226,7 +1227,10 @@ namespace JSC {
     public:
         SoundTypeCheckNode(const JSTokenLocation&, ExpressionNode*, unsigned mask, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
 
+        unsigned mask() const { return m_mask; }
+
     private:
+        bool isSoundTypeCheckNode() const final { return true; }
         // The SyntaxChecker sees a call, and sloppy mode code may have a call where an assignment target goes.
         bool isFunctionCall() const final { return true; }
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;

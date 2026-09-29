@@ -21,6 +21,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTProgram.h"
 #include "AOTImage.h"
 #include "StaticHeap.h"
 #include "AOTOperations.h"
@@ -377,8 +378,11 @@ bool constantsAreOfNoRealm(UnlinkedCodeBlock* unlinkedCodeBlock, SymbolTablesWil
     auto& constants = unlinkedCodeBlock->constantRegisters();
     auto& representations = unlinkedCodeBlock->constantsSourceCodeRepresentation();
     for (unsigned i = 0; i < constants.size(); ++i) {
-        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant)
+        if (representations[i] == SourceCodeRepresentation::LinkTimeConstant) {
+            if (intrinsicForLinkTimeConstant(constants[i].get()))
+                continue;
             return false;
+        }
         JSValue constant = constants[i].get();
         if (!constant || !constant.isCell())
             continue;
@@ -544,13 +548,34 @@ Data* Instance::ensureData(uint32_t index)
 
 FunctionRef FunctionRef::at(Instance* instance, const void* address)
 {
+    if (instance->addressLastAskedAbout == address) [[likely]]
+        return { instance, instance->functionLastAskedAbout };
     WhatIsAt what = whatIsAt(address);
     RELEASE_ASSERT(what.kind == WhatIsAt::Function);
+    instance->addressLastAskedAbout = address;
+    instance->functionLastAskedAbout = what.index;
     return { instance, what.index };
+}
+
+static thread_local const void* s_returnAddressWithSiteInPlace;
+static thread_local uint32_t s_siteInPlace;
+
+SiteInPlaceOfCallSite::SiteInPlaceOfCallSite(const void* returnAddress, uint32_t site)
+{
+    RELEASE_ASSERT(!s_returnAddressWithSiteInPlace);
+    s_returnAddressWithSiteInPlace = returnAddress;
+    s_siteInPlace = site;
+}
+
+SiteInPlaceOfCallSite::~SiteInPlaceOfCallSite()
+{
+    s_returnAddressWithSiteInPlace = nullptr;
 }
 
 BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
 {
+    if (returnAddress == s_returnAddressWithSiteInPlace) [[unlikely]]
+        return CallSiteIndex(s_siteInPlace).bytecodeIndex();
     WhatIsAt what = whatIsAt(returnAddress);
     RELEASE_ASSERT(what.kind == WhatIsAt::Function && what.index == index);
     return CallSiteIndex(callSiteAt(*info().function(), what.offset)).bytecodeIndex();

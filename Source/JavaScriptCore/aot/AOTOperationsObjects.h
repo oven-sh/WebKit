@@ -145,6 +145,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayBuffer, JSObject*, (JSGlobalObject
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpread, JSObject*, (JSGlobalObject*, const EncodedJSValue* values, uint32_t count));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (JSGlobalObject*, EncodedJSValue length, JSObject* array));
 JSC_DECLARE_JIT_OPERATION(operationAOTSpread, JSCell*, (JSGlobalObject*, EncodedJSValue iterable));
+JSCell* spread(JSGlobalObject*, JSValue iterable); // What op_spread makes.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject*, JSCell* regExp));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject*, JSScope*, uint32_t index, uint32_t isExpression, uint32_t functionKind, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (JSGlobalObject*, JSObject* function, EncodedJSValue name));
@@ -225,8 +226,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTMaterializeArrayIterator, JSObject*, (JSGl
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (JSGlobalObject*));
 
 // Calls.
-JSC_DECLARE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject*, EncodedJSValue arguments, uint32_t firstVarArgOffset));
-JSC_DECLARE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject*, EncodedJSValue* where, EncodedJSValue arguments, uint32_t firstVarArgOffset, uint32_t length));
+JSC_DECLARE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject*, EncodedJSValue listOrItems, uint32_t descriptor));
+JSC_DECLARE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject*, EncodedJSValue* where, EncodedJSValue listOrItems, uint32_t descriptor, uint32_t length));
 
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (CallFrame*));

@@ -271,6 +271,7 @@ private:
     void lowerCall(Node*, VirtualRegister callee, unsigned argc, unsigned argv, CallMode, bool hasResult);
     bool lowerCallToKnownFunction(Node*, VirtualRegister callee, const Arguments&, CallMode, bool hasResult);
     void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, CallMode);
+    void lowerCallWithItems(Node*, Node* calleeNode, LValue callee, LValue thisValue, Node* list, CallMode);
     void lowerCallDirectEval(Node*);
     LValue storeArgumentsToScratch(const Arguments&); // But for the first. Where they are.
     void finishCall(B3::PatchpointValue*, CallMode);

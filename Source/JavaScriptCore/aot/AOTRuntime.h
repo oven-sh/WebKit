@@ -295,9 +295,13 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfStartsOfFunctionsAfterFirst() { return OBJECT_OFFSETOF(Instance, startsOfFunctionsAfterFirst); }
     // The function's own Data, which it gets now if it has been doing without (SharedData). It has been linked.
     JS_EXPORT_PRIVATE Data* ensureData(uint32_t index);
-    void countMiss(uint32_t index)
+    void countMisses(uint32_t index, uint32_t count)
     {
-        if (++misses[index] == static_cast<uint16_t>(missesToPutUpWithFor(infos[index].flags >> FunctionInfo::numberOfFlagBits)))
+        uint32_t before = misses[index];
+        uint32_t after = std::min<uint32_t>(before + count, std::numeric_limits<uint16_t>::max());
+        misses[index] = static_cast<uint16_t>(after);
+        uint32_t limit = static_cast<uint16_t>(missesToPutUpWithFor(infos[index].flags >> FunctionInfo::numberOfFlagBits));
+        if (before < limit && after >= limit)
             ensureData(index);
     }
     // How often a slot may fail a function that has that many before it gets a Data.
@@ -347,6 +351,10 @@ struct Instance {
     const uint8_t* code;
     const uint32_t* granulesOfCode;
     const uint32_t* startsOfFunctionsAfterFirst;
+    // The last address that was asked about (FunctionRef::at()), and the answer: one operation asks several times.
+    const void* addressLastAskedAbout { nullptr };
+    uint32_t functionLastAskedAbout { 0 };
+    uint32_t operationsNotCounted { 0 }; // See countOperationOnBehalfOf().
     const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
     uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
     uint32_t missesToSpare;
@@ -496,6 +504,7 @@ struct CompiledFunctionInfo {
     unsigned codeSize { 0 }; // The way in is where it starts.
     Convention convention;
     Vector<IndexReference> indexReferences;
+    Vector<SiteOfSpread> sitesOfSpreads;
     unsigned frameSizeInBytes { 0 };
     unsigned numSlots { 0 };
     bool usesStaticImports { false };

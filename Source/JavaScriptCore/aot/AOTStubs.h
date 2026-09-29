@@ -99,6 +99,9 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     /* of the first to leave out. */ \
     v(CallVarargs) \
     v(ConstructVarargs) \
+    /* The same as CallVarargs, in tail position. It is called, by a function that has put back the registers it saved and still has */ \
+    /* its frame, and does not come back: what the callee returns goes to whoever called that function, whose frame is gone by then. */ \
+    v(TailCallVarargs) \
     /* A call, as Call is, of what may be the function that a StubIntrinsic is for: T9 = which. There is one for each, and */ \
     /* no other way of getting here. */ \
     v(CallIntrinsic) \
@@ -316,6 +319,37 @@ private:
         uint32_t scale;
     };
     Vector<Reference, 2> m_references;
+};
+
+// What Stub::CallVarargs is told in argumentGPR(1). Either argumentGPR(0) is a list as op_call_varargs has it, and this is how many of the
+// first to leave out; or it is where a number of items are, in memory of the caller's, one after the other, and this says what each is.
+struct ListDescriptor {
+    enum Kind : uint32_t {
+        Value, // One argument.
+        Spread, // Something to iterate over: as many arguments as that comes to.
+        Passed, // Two words: how many, and where they are.
+    };
+    static constexpr unsigned mostItems = 13;
+    static constexpr uint32_t ofList(uint32_t firstVarArg) { return firstVarArg << 1; }
+    static constexpr uint32_t ofItems(uint32_t count) { return 1 | count << 1; }
+    static constexpr uint32_t kindOfItem(unsigned index, Kind kind) { return static_cast<uint32_t>(kind) << (5 + 2 * index); }
+    static_assert(5 + 2 * mostItems <= 32 && mostItems < 16);
+
+    bool isOfItems() const { return bits & 1; }
+    uint32_t firstVarArg() const { return bits >> 1; }
+    unsigned numberOfItems() const { return bits >> 1 & 15; }
+    Kind kindOf(unsigned index) const { return static_cast<Kind>(bits >> (5 + 2 * index) & 3); }
+
+    uint32_t bits;
+};
+static constexpr unsigned mostItemsInList = ListDescriptor::mostItems;
+
+// A call that is passed items (ListDescriptor) is where all of them are gone through, as far as its frame says. This says where in the
+// bytecode each would have been, for whoever asks while that one is being gone through.
+struct SiteOfSpread {
+    uint32_t callSite;
+    uint32_t item;
+    uint32_t site;
 };
 
 struct CallSite {

@@ -404,23 +404,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (JSGlobalOb
     OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr, static_cast<unsigned>(length)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSpread, JSCell*, (JSGlobalObject* globalObject, EncodedJSValue encodedIterable))
+JSCell* spread(JSGlobalObject* globalObject, JSValue iterable)
 {
-    AOT_OPERATION_BEGIN(globalObject);
-    JSValue iterable = JSValue::decode(encodedIterable);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (iterable.isCell()) {
         auto* result = CommonSlowPaths::trySpreadFast(globalObject, iterable.asCell());
-        OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSCell*>(nullptr));
+        RETURN_IF_EXCEPTION(scope, nullptr);
         if (result)
-            OPERATION_RETURN(scope, result);
+            return result;
     }
 
     JSFunction* iterationFunction = globalObject->iteratorProtocolFunction();
     auto callData = JSC::getCallData(iterationFunction);
-    auto arguments = WTF::toArray<EncodedJSValue>({ encodedIterable });
+    auto arguments = WTF::toArray<EncodedJSValue>({ JSValue::encode(iterable) });
     JSValue arrayResult = call(globalObject, iterationFunction, callData, jsNull(), ArgList { arguments.data(), arguments.size() });
-    OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSCell*>(nullptr));
-    OPERATION_RETURN(scope, JSCellButterfly::createFromArray(globalObject, vm, uncheckedDowncast<JSArray>(arrayResult)));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_AND_RETURN(scope, JSCellButterfly::createFromArray(globalObject, vm, uncheckedDowncast<JSArray>(arrayResult)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTSpread, JSCell*, (JSGlobalObject* globalObject, EncodedJSValue encodedIterable))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    OPERATION_RETURN(scope, spread(globalObject, JSValue::decode(encodedIterable)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject* globalObject, JSCell* regExp))
