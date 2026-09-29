@@ -158,21 +158,7 @@ struct PollState final : NativeState {
 template<typename Visitor> void PollState::visit(Visitor& visitor) { visitor.append(registered); }
 
 // _PyLong_UnsignedShort_Converter(). Nothing if it raised.
-std::optional<unsigned short> toUnsignedShort(JSGlobalObject* globalObject, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue integer = toInt(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    if (compareInts(integer, jsNumber(0)) < 0) {
-        raiseValueError(globalObject, scope, "Cannot convert negative int"_s);
-        return std::nullopt;
-    }
-    if (compareInts(integer, jsNumber(USHRT_MAX)) > 0) {
-        raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large for C unsigned short"_s);
-        return std::nullopt;
-    }
-    return static_cast<unsigned short>(*tryInt64(integer));
-}
+std::optional<unsigned short> toUnsignedShort(JSGlobalObject* globalObject, JSValue value) { return toUnsigned<unsigned short>(globalObject, value, "unsigned short"_s); }
 
 #if PYTHON_HAVE_KQUEUE
 
@@ -454,14 +440,9 @@ PYTHON_NATIVE(keventInit)
     JSValue identifier = args[1];
     if (hasIndex(identifier)) {
         // PyLong_AsNativeBytes(), of what is not to be less than nothing
-        JSValue integer = toInt(globalObject, identifier);
+        auto value = toUnsigned<uintptr_t>(globalObject, identifier, "kqueue event identifier"_s);
         RETURN_IF_EXCEPTION(scope, { });
-        if (compareInts(integer, jsNumber(0)) < 0)
-            return JSValue::encode(raiseValueError(globalObject, scope, "Cannot convert negative int"_s));
-        uint64_t value = lowBitsOfInt(integer);
-        if (compareInts(integer, intFromUInt64(globalObject, value)))
-            return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large for C kqueue event identifier"_s));
-        event.ident = static_cast<uintptr_t>(value);
+        event.ident = *value;
     } else {
         // It is stored before it is looked at, and what says that it went wrong is -1.
         event.ident = static_cast<uintptr_t>(-1);

@@ -43,5 +43,6 @@ JS_EXPORT_PRIVATE JSObject* createPosixSubprocessModule(JSGlobalObject*);
 // The module select, likewise.
 JS_EXPORT_PRIVATE JSObject* createSelectModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* createResourceModule(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createSocketModule(JSGlobalObject*);
 
 } } // namespace JSC::Python

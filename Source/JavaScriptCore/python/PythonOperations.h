@@ -541,6 +541,17 @@ std::optional<int64_t> toSsizeOfInt(JSGlobalObject*, JSValue); // PyLong_AsSsize
 std::optional<int> toCIntOfFormat(JSGlobalObject*, JSValue);
 // PyLong_AsUnsignedLongLongMask(): what an int has in its low 64 bits, whatever else it has.
 uint64_t lowBitsOfInt(JSValue);
+// UNSIGNED_INT_CONVERTER() of CPython's Objects/longobject.c, which is _PyLong_UInt16_Converter() and the like: an int, or what has __index__(), that is not negative and is no more than `maximum`. `typeName` is what C calls
+// what it is to fit in. Nothing if it raised.
+std::optional<uint64_t> toUnsignedNoMoreThan(JSGlobalObject*, JSValue, uint64_t maximum, ASCIILiteral typeName);
+template<typename Type>
+std::optional<Type> toUnsigned(JSGlobalObject* globalObject, JSValue value, ASCIILiteral typeName)
+{
+    auto converted = toUnsignedNoMoreThan(globalObject, value, std::numeric_limits<Type>::max(), typeName);
+    if (!converted)
+        return std::nullopt;
+    return static_cast<Type>(*converted);
+}
 JSValue parseInt(JSGlobalObject*, StringView, unsigned base); // The int that a string spells, in the base. Empty if it spells none.
 JSValue intFromDouble(JSGlobalObject*, double); // Truncated.
 JSValue floatFromDouble(double);

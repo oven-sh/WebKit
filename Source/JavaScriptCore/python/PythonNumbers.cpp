@@ -79,6 +79,23 @@ JSValue intFromUInt64(JSGlobalObject* globalObject, uint64_t value)
     return JSBigInt::createFrom(globalObject, value);
 }
 
+std::optional<uint64_t> toUnsignedNoMoreThan(JSGlobalObject* globalObject, JSValue value, uint64_t maximum, ASCIILiteral typeName)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue integer = toInt(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (compareInts(integer, jsNumber(0)) < 0) {
+        raiseValueError(globalObject, scope, "Cannot convert negative int"_s);
+        return std::nullopt;
+    }
+    uint64_t result = lowBitsOfInt(integer);
+    if (result > maximum || compareInts(integer, intFromUInt64(globalObject, result))) {
+        raise(globalObject, scope, BuiltinType::OverflowError, concatenate("Python int too large for C "_s, typeName));
+        return std::nullopt;
+    }
+    return result;
+}
+
 // PyNumber_Check()
 bool isNumber(JSGlobalObject* globalObject, JSValue value)
 {

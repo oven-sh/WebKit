@@ -338,13 +338,9 @@ PYTHON_NATIVE(randomGetRandBits)
     NATIVE_PROLOGUE();
     auto& self = stateOf<RandomState>(args[0]);
     // _PyLong_UInt64_Converter()
-    JSValue integer = toInt(globalObject, args[1]);
+    auto bits = toUnsigned<uint64_t>(globalObject, args[1], "uint64_t"_s);
     RETURN_IF_EXCEPTION(scope, { });
-    if (compareInts(integer, jsNumber(0)) < 0)
-        return JSValue::encode(raiseValueError(globalObject, scope, "Cannot convert negative int"_s));
-    uint64_t k = lowBitsOfInt(integer);
-    if (compareInts(integer, intFromUInt64(globalObject, k)))
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large for C uint64_t"_s));
+    uint64_t k = *bits;
     if (!k)
         return JSValue::encode(jsNumber(0));
     if (k <= 32)

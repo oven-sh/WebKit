@@ -832,6 +832,9 @@ python/PythonStrings.cpp
 python/PythonStructMember.cpp
 python/PythonStructModule.cpp
 python/PythonStructSequence.cpp
+python/PythonSocketAddresses.cpp
+python/PythonSocketModule.cpp @no-unify
+python/PythonSocketObject.cpp
 python/PythonSymbolTable.cpp
 python/PythonSymtableModule.cpp
 python/PythonSysModule.cpp

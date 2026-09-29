@@ -320,6 +320,7 @@ void PyNativeFunction::setSignature(const Python::NativeSignature* signature, Ar
     m_signature = signature;
     m_takesArgumentsOfTheClass = arguments == Arguments::AreThoseOfTheClass || arguments == Arguments::AreThoseOfTheClassButNotChecked;
     m_takesDefiningClass = arguments == Arguments::AreCheckedAsWithDefiningClass;
+    m_takesArgumentsByParseTuple = arguments == Arguments::AreCheckedAsByParseTuple;
     // Any number will do for one that sees to them itself.
     if (signature->family() == Python::NativeSignature::Family::Unchecked || arguments == Arguments::AreNotChecked || arguments == Arguments::AreThoseOfTheClassButNotChecked)
         return;

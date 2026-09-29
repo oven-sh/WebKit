@@ -66,6 +66,9 @@ public:
         // A method that in CPython is told which class it was defined in (`cls: defining_class`, to Argument Clinic) has its arguments taken apart as if they could be given by name, even if none of them can,
         // and what is said of them when they are wrong is said accordingly. There is nothing in its signature to tell that by.
         AreCheckedAsWithDefiningClass,
+        // One that in CPython is written by hand, is given a tuple, and takes it apart with PyArg_ParseTuple(), which has its own way of saying that there are too many or too few. There is nothing in its signature to tell that
+        // by either, and most such have none, so that one is written for them here.
+        AreCheckedAsByParseTuple,
     };
 
     template<typename CellType, SubspaceAccess mode>
@@ -96,6 +99,7 @@ public:
     bool checksArguments() const { return m_checksArguments; }
     bool takesArgumentsOfTheClass() const { return m_takesArgumentsOfTheClass; }
     bool takesDefiningClass() const { return m_takesDefiningClass; }
+    bool takesArgumentsByParseTuple() const { return m_takesArgumentsByParseTuple; }
     // Null if CPython has no such function.
     const Python::BuiltinDescription* description() const { return m_description; }
     // Whether so many arguments, none of them given by name, are as many as it takes. They include the instance or the class that comes first.
@@ -116,6 +120,7 @@ private:
     bool m_checksArguments { false };
     bool m_takesArgumentsOfTheClass { false };
     bool m_takesDefiningClass { false };
+    bool m_takesArgumentsByParseTuple { false };
     unsigned m_data;
     unsigned m_minimumArguments { 0 };
     unsigned m_maximumArguments { std::numeric_limits<unsigned>::max() };

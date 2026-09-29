@@ -223,7 +223,10 @@ static String functionString(JSGlobalObject* globalObject, CallFrame* callFrame)
         auto* method = tryBoundMethod(caller->jsCallee());
         return method && method->function() == JSValue(function) ? method : nullptr;
     };
-    if (function->signature() && !function->signature()->functionName().isNull()) {
+    if (function->takesArgumentsByParseTuple()) {
+        if (!isType(owner) || function->kind() != PyNativeFunction::Kind::Method || boundMethodThatCalled())
+            return concatenate(name, "()"_s);
+    } else if (function->signature() && !function->signature()->functionName().isNull()) {
         // A method that says what it is called is one that CPython gives its arguments in a tuple. That goes by its name alone if it is the method that is called, and as any other does if it is called where it is got.
         if (!isType(owner) || function->kind() != PyNativeFunction::Kind::Method || boundMethodThatCalled())
             return concatenate(function->signature()->functionName(), "()"_s);
@@ -312,6 +315,16 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
         if (family == NativeSignature::Family::NoArguments)
             return !given && !keywordCount ? true : fail(concatenate(name, "() takes no arguments"_s));
         family = NativeSignature::Family::Keywords;
+    }
+    // vgetargs1() of CPython's Python/getargs.c
+    if (function->takesArgumentsByParseTuple() && family != NativeSignature::Family::Keywords) {
+        if (keywordCount)
+            return fail(concatenate(functionString(globalObject, callFrame), " takes no keyword arguments"_s));
+        // One that takes them apart in more ways than one says for itself how many it takes.
+        if (signature.hasVarPositional() || (given >= minimum && given <= maximum))
+            return true;
+        unsigned bound = given < minimum ? minimum : maximum;
+        return fail(concatenate(name, "() takes "_s, minimum == maximum ? "exactly "_s : given < minimum ? "at least "_s : "at most "_s, bound, " argument"_s, plural(bound), " ("_s, given, " given)"_s));
     }
     switch (family) {
     case NativeSignature::Family::Unchecked:

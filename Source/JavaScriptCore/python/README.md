@@ -834,6 +834,30 @@ out that it was to be.
 
 `Dialect()` takes its arguments apart by something that does not say what it is called, so what is wrong with them is said of "function", or of "this function". A signature says so with `?` for the name.
 
+### `_socket`
+
+`Modules/socketmodule.c`, which `socket` is written over, in three files and a header. `PythonSocketAddresses.cpp` has what raises, what waits, and addresses both ways. `PythonSocketObject.cpp` is the class. `PythonSocketModule.cpp`
+is the functions and what is in the module. It has to do with the world outside, so like `posix` it is one that the host lists.
+
+**Everything that can wait goes through `callSocket()`**, which is `sock_call_ex()`: it waits with `poll()` if there is a time to wait no longer than, calls what makes the system call, and goes round again if that was interrupted
+or turned out to have nothing to do. The time is counted from when it began, and not from when it was last interrupted. What sees to a signal runs between one try and the next, and can do anything, so what makes the system
+call asks where the bytes are each time.
+
+**The numbers are CPython's own lines.** `lib/convert-socket-constants.py` takes them out of `socket_exec()` with the conditions they are on, into `PythonSocketConstants.h`, and checks that it understood every line and lost
+none. Most of the conditions are whether the system's headers define the thing, so each system gets what it has. On macOS what RFC 3542 added for IPv6 is only there if `__APPLE_USE_RFC_3542` is defined before any header is
+read, so that file is compiled by itself.
+
+**A function that takes its arguments apart with `PyArg_ParseTuple()`** has its own way of saying that there are too many or too few, and goes by its bare name or by its class's as well depending on how it was called.
+`Arguments::AreCheckedAsByParseTuple` is that. Nearly all of this module is such, and few of them say what they take in a way that anything but a person can read, so a signature is written for each here.
+
+What CPython does to find out whether `SOCK_CLOEXEC` and `accept4()` work is for Linux before 2.6.28. Where they are defined they are used.
+
+- **Only `AF_INET`, `AF_INET6` and `AF_UNIX` addresses can be read and written, and `PF_SYSTEM` on macOS.** The kinds that Linux has besides (`AF_NETLINK`, `AF_PACKET`, `AF_CAN`, `AF_VSOCK`, `AF_TIPC`, `AF_ALG`, `AF_QIPCRTR`,
+  `AF_RDS`, Bluetooth) are not written, and their names are left out of the module, as they are from a CPython that was built without their headers. What is for Linux alone has not been compiled.
+- **`bind()`, `listen()`, `_accept()` and `connect()` have only been seen to fail.** Where this was written nothing is allowed to bind a name or a port, in CPython either. All that can be tried between the two ends of a
+  `socketpair()` has been, and everything that is said of an address that will not do. `programs/socket-module.py` is that.
+- Nothing is done in another thread, so looking up a name stops everything until it is done.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see
@@ -1153,6 +1177,7 @@ There is nothing that is per process, nothing that is set after something is mad
   is kept, and what is asked of the keys and how often (`programs/sets-with-one-another.py`). The one thing that is otherwise is for the sake of the order: `a ^ b` has what is only in `a` first.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
 - **An `array` can be resized while there is a `memoryview` of it**, as a `bytearray` can, where CPython raises `BufferError`. And one that is made shorter and then longer again has zeros where CPython has whatever was left there.
+- **What a socket is receiving into or sending from can be resized meanwhile**, by what sees to a signal. No more is put there than there is then room for, and no more is sent than is then there.
 - **What `struct` is packing into or unpacking from can be resized meanwhile**, as what a regular expression is going through can. If it has been made too short by the time that there is something to write or to read, that is
   `BufferError`.
 - **A NaN has 50 bits to be told from another by, and not 51.** The engine has other uses for some of what would be NaNs, and JavaScript never sees those, because every number that it reads out of memory is made the one NaN
@@ -1232,4 +1257,5 @@ What follows from the second:
 - **A file that is let go of without being closed is not closed, and what has been written to it and not yet sent on is lost.** `open(p, "w").write(s)` is written a great deal, and in CPython it works, because the
   file is finalized as the statement ends. `__del__()` is there to be called, and does what it does in CPython. Nothing calls it.
 - What a weak reference refers to is gone when the collector finds that it is, and not when the last reference to it goes, and the callback is called some time after that.
+- A socket that is let go of without being closed is not closed either.
 - What is warned of when something is let go of while it is open (`ResourceWarning`) is not.
