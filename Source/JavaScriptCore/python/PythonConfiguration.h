@@ -98,6 +98,10 @@ struct Configuration {
     // Python's waits, `asyncio`'s among them, for what it is watching or until it has something to do. What it watches with is a descriptor that can itself be watched. So a host that has an event loop of its own
     // watches that, and goes on with its own meanwhile, and the two are one. It may throw. Null is to wait in the system, with nothing else going on.
     void (*waitForDescriptor)(JSGlobalObject*, int descriptor, std::optional<Seconds> timeout) { nullptr };
+    // A coroutine that JavaScript is waiting for may use asyncio with nothing in Python running an event loop. The host then turns one: it is to call Python::turnEventLoop() when `descriptor` can be read from, or
+    // after so long if a time is given, whichever is first, and not from inside this. Each call replaces the last. `hasSomethingToWatch` is whether the loop is watching for anything but its own being woken, and so
+    // whether there is something to stay for though no time is given. A descriptor of -1 is to say that there is nothing to watch any longer, and what was being watched is about to be closed. Without this there is no such loop.
+    void (*watchEventLoop)(JSGlobalObject*, int descriptor, std::optional<Seconds> wakeAfter, bool hasSomethingToWatch) { nullptr };
     // Finds the module of JavaScript's that `import name` means, the name being the whole of it, dots and all. It is asked when nothing of Python's has been found by that name. `directories` is where Python looked:
     // sys.path, or the __path__ of what the module is below, which is what the host gave for it if that is JavaScript's too. Nothing if there is none, or if it threw. Null if none can be imported.
     std::optional<JavaScriptModule> (*findJavaScriptModule)(JSGlobalObject*, const String& name, std::span<const String> directories) { nullptr };

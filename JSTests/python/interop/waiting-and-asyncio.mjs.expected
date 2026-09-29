@@ -1,0 +1,15 @@
+which loop => "RuntimeError: no running event loop"
+C: a coroutine awaits one that is pending => "RuntimeError: no running event loop"
+C: a coroutine awaits one that is done => "the result"
+C: JavaScript awaits one, result => "the result"
+C: JavaScript awaits one, exception !! KeyError: 'k'
+C: JavaScript awaits one, cancelled !! CancelledError: why
+Python: a coroutine awaits one that is pending => "RuntimeError: no running event loop"
+Python: a coroutine awaits one that is done => "the result"
+Python: JavaScript awaits one, result => "the result"
+Python: JavaScript awaits one, exception !! KeyError: 'k'
+Python: JavaScript awaits one, cancelled !! CancelledError: why
+JavaScript awaits one that is settled later => "later"
+the one promise => true
+what is no coroutine => "the result"
+with a loop running => [[true,true,true,"child"],["it was begun at once, and this is still the task that is running",true],"went on, run by the loop",["Task",true,"the child's"]]

@@ -2074,6 +2074,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonAST.h
     python/PythonASTModule.h
     python/PythonASTValidator.h
+    python/PythonAsyncio.h
     python/PythonBuiltins.h
     python/PythonBytes.h
     python/PythonCodecRegistryState.h
@@ -2195,6 +2196,7 @@ add_custom_command(
 # GENERATOR: "PythonLibrarySources.h": the parts of Python's library that are written in Python
 set(JavaScriptCore_PYTHON_LIBRARY
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_framelocals.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_javascript_awaiting.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_javascript_importer.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_sysconfigdata.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/getpath.py

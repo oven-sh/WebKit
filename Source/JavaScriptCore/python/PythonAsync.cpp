@@ -30,8 +30,10 @@
 #include "IteratorOperations.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSPromise.h"
+#include "PythonAsyncio.h"
 #include "PythonContextVars.h"
 #include "PythonGenerators.h"
+#include "PythonImport.h"
 #include "TopExceptionScope.h"
 
 // Coroutines, asynchronous generators, and what is awaited to drive them. The state machines are CPython's, Objects/genobject.c.
@@ -273,6 +275,24 @@ JSPromise* promiseOfAwaitable(VM& vm, JSCell* iterator)
     return promise ? uncheckedDowncast<JSPromise>(promise.asCell()) : nullptr;
 }
 
+void settleAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue returned, JSValue thrown)
+{
+    VM& vm = globalObject->vm();
+    JSPromise* promise = promiseOfAwaitable(vm, iterator);
+    // Empty: it comes to what it comes to. True: to { value, done }. An object: to that.
+    JSValue settlement = iterator->getDirect(vm, vm.pythonNames().private_settlement);
+    if (thrown) {
+        if (settlement && isInstance(globalObject, thrown, globalObject->pyRealm()->typeStopAsyncIteration()))
+            promise->resolve(globalObject, vm, createIteratorResultObject(globalObject, jsUndefined(), true));
+        else
+            promise->reject(vm, thrown);
+        return;
+    }
+    if (settlement)
+        returned = settlement.isObject() ? settlement : JSValue(createIteratorResultObject(globalObject, returned, false));
+    promise->resolve(globalObject, vm, returned);
+}
+
 // Runs what is being awaited until it has to wait for something, and arranges to go on when that is settled. This is what a Task of asyncio's does, and
 // what the engine does for an async function of JavaScript's.
 void resumeAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue received, bool wasThrown)
@@ -281,8 +301,6 @@ void resumeAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue r
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto& names = vm.pythonNames();
     JSPromise* promise = promiseOfAwaitable(vm, iterator);
-    // Empty: it comes to what it comes to. True: to { value, done }. An object: to that.
-    JSValue settlement = iterator->getDirect(vm, names.private_settlement);
 
     // It runs in a context of its own, which began as a copy of that of what first waited for it. What it sets is there each time that it goes on, and is not seen by anything else.
     JSValue taskContext = iterator->getDirect(vm, names.private_taskContext);
@@ -298,27 +316,43 @@ void resumeAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue r
             exitContext(globalObject, context);
     });
 
+    JavaScriptStep step(globalObject, iterator);
     while (true) {
         JSValue returned;
         JSValue yielded = stepIterator(globalObject, iterator, received, wasThrown, returned);
+        if (step.isTask()) [[unlikely]] {
+            step.conclude(yielded, returned);
+            // Whatever it is, the promise has been rejected with it.
+            (void)scope.clearExceptionExceptTermination();
+            return;
+        }
         bool waits = false;
         if (!scope.exception() && yielded) {
+            // A future of asyncio's is for a task to wait for. To JavaScript it is a thenable, as whatever can be awaited is, but what its `then` does is to await it, which is what is being done.
+            if (!isNone(yielded) && !typeOf(globalObject, yielded)->hasFlag(PyType::IsJavaScript) && step.becomeTask(yielded)) {
+                step.conclude(yielded, { });
+                (void)scope.clearExceptionExceptTermination();
+                return;
+            }
+            // There is no loop for it to be a task of, or the like, which is for the coroutine to hear of.
+            if (Exception* exception = scope.exception()) [[unlikely]] {
+                if (!scope.clearExceptionExceptTermination())
+                    return;
+                received = exception->value();
+                wasThrown = true;
+                continue;
+            }
             // A bare `yield` gives everything else a turn.
             waits = isNone(yielded) || isThenable(globalObject, yielded);
         }
         if (Exception* exception = scope.exception()) [[unlikely]] {
             if (!scope.clearExceptionExceptTermination())
                 return;
-            if (settlement && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopAsyncIteration()))
-                promise->resolve(globalObject, vm, createIteratorResultObject(globalObject, jsUndefined(), true));
-            else
-                promise->reject(vm, exception);
+            settleAwaitable(globalObject, iterator, { }, exception->value());
             return;
         }
         if (!yielded) {
-            if (settlement)
-                returned = settlement.isObject() ? settlement : JSValue(createIteratorResultObject(globalObject, returned, false));
-            promise->resolve(globalObject, vm, returned);
+            settleAwaitable(globalObject, iterator, returned, { });
             return;
         }
         if (waits) {
@@ -342,8 +376,16 @@ JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue se
         if (JSPromise* known = promiseOfAwaitable(vm, awaitable.asCell()))
             return known;
     }
+    if (JSPromise* ofFuture = promiseOfFuture(globalObject, awaitable))
+        return ofFuture;
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
-    JSValue iterator = getAwaitable(globalObject, awaitable, 0);
+    // What goes on by itself is a coroutine, or is awaited by one: lib/_javascript_awaiting.py
+    if (!settlement && typeOf(globalObject, awaitable) != globalObject->pyRealm()->typeCoroutine()) {
+        JSValue wrap = importModuleAttribute(globalObject, "_javascript_awaiting"_s, "_wrap_awaitable"_s);
+        if (!scope.exception())
+            awaitable = call(globalObject, wrap, awaitable);
+    }
+    JSValue iterator = scope.exception() ? JSValue() : getAwaitable(globalObject, awaitable, 0);
     if (Exception* exception = scope.exception()) [[unlikely]] {
         if (scope.clearExceptionExceptTermination())
             promise->reject(vm, exception);

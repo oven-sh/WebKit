@@ -384,6 +384,11 @@ public:
     void setOuterHandledException(VM& vm, Exception* exception) { m_outerHandledException.setMayBeNull(vm, this, exception); }
 
     // What the iterator that a `yield from` was going through returned, on its way from the runtime to the code that wants it.
+    // What JavaScript is waiting for and is running now, if it is: Python::JavaScriptStep, which has it on the stack.
+    JSObject* awaitableBeingRun() const { return m_awaitableBeingRun; }
+    void setAwaitableBeingRun(JSObject* awaitable) { m_awaitableBeingRun = awaitable; }
+    bool hasAsyncio() const { return m_hasAsyncio; }
+    void setHasAsyncio() { m_hasAsyncio = true; }
     JSValue takeReturnValue() { return std::exchange(m_returnValue, WriteBarrier<Unknown>()).get(); }
     void setReturnValue(VM& vm, JSValue value) { m_returnValue.set(vm, this, value); }
 
@@ -435,6 +440,8 @@ private:
     WriteBarrier<Exception> m_handledException;
     WriteBarrier<Exception> m_outerHandledException;
     WriteBarrier<Unknown> m_returnValue;
+    JSObject* m_awaitableBeingRun { nullptr };
+    bool m_hasAsyncio { false };
 };
 
 } // namespace JSC

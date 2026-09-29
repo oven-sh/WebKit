@@ -80,6 +80,8 @@ bool warnOfThrowSignature(JSGlobalObject*, const NativeArguments&, ASCIILiteral 
 // for that, whatever the awaiting comes to.
 JS_EXPORT_PRIVATE JSPromise* toPromise(JSGlobalObject*, JSValue awaitable, JSValue settlement = JSValue());
 // What toPromise() began goes on: what it was waiting for has come to `settled`, or was rejected with it.
+// It has come to an end, and the promise that JavaScript has for it is settled: with what it returned, or with what it threw if that is not empty.
+void settleAwaitable(JSGlobalObject*, JSObject* iterator, JSValue returned, JSValue thrown);
 void resumeAwaitable(JSGlobalObject*, JSObject* iterator, JSValue settled, bool wasRejected);
 // The promise that toPromise() made for what is being iterated. Null if it is not such a thing.
 JSPromise* promiseOfAwaitable(VM&, JSCell* iterator);

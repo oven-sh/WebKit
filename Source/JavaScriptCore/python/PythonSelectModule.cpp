@@ -32,6 +32,7 @@
 #include "PyRealm.h"
 #include "PyStateObject.h"
 #include "PyTuple.h"
+#include "PythonAsyncio.h"
 #include "PythonBuiltins.h"
 #include "PythonIO.h"
 #include "PythonOperations.h"
@@ -522,8 +523,10 @@ PYTHON_NATIVE(kqueueClose)
 {
     NATIVE_PROLOGUE();
     // What goes wrong with closing it is not said: an errno is never less than nothing, which is what CPython looks for.
-    if (int descriptor = std::exchange(stateOf<KqueueState>(args[0]).descriptor, -1); descriptor >= 0)
+    if (int descriptor = std::exchange(stateOf<KqueueState>(args[0]).descriptor, -1); descriptor >= 0) {
+        noteClosingOfDescriptor(globalObject, descriptor);
         close(descriptor);
+    }
     RETURN_NONE();
 }
 
@@ -578,6 +581,14 @@ PYTHON_NATIVE(kqueueControl)
     Vector<struct kevent, 8> events;
     if (!events.tryGrow(static_cast<size_t>(*maximum)))
         return JSValue::encode(raiseMemoryError(globalObject, scope));
+    // An event loop that the host turns does not wait. It says how long it would have, and it is the host that waits, with nothing of Python's on the stack: turnEventLoop().
+    bool isBeingTurned = *maximum && isEventLoopBeingTurned(globalObject);
+    std::optional<Seconds> wouldHaveWaited = timePointer ? std::optional { Seconds::fromNanoseconds(static_cast<double>(timeout)) } : std::nullopt;
+    if (isBeingTurned) {
+        timeout = 0;
+        time = { 0, 0 };
+        timePointer = &time;
+    }
     int64_t deadline = timePointer ? deadlineAfter(timeout) : 0;
     int count;
     // With a host that has things of its own to do, it is the host that waits: Configuration::waitForDescriptor. This looks, without waiting, before and after.
@@ -625,6 +636,11 @@ PYTHON_NATIVE(kqueueControl)
     }
     if (count == -1)
         return JSValue::encode(raiseOSError(globalObject, scope, errno));
+    if (isBeingTurned) {
+        // A selector asks to be told of as many things as it is watching for.
+        noteWaitOfEventLoop(globalObject, self.descriptor, *maximum, wouldHaveWaited, count);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     MarkedArgumentBuffer result;
     Structure* structure = selectState(globalObject).kevent->instanceStructure();
     for (int i = 0; i < count; ++i) {

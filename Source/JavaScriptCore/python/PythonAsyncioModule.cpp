@@ -34,6 +34,7 @@
 #include "PyRealm.h"
 #include "PyStateObject.h"
 #include "PyTuple.h"
+#include "PythonAsyncio.h"
 #include "PythonContextVars.h"
 #include "PythonGenerators.h"
 #include "PythonIO.h"
@@ -80,6 +81,19 @@ struct AsyncioState final : NativeState {
     WriteBarrier<Unknown> runningLoop;
     WriteBarrier<Unknown> runningTask;
     uint64_t taskNameCounter { 0 };
+
+    // The loop that the host turns: see hostedLoop().
+    WriteBarrier<Unknown> hostedLoop;
+    bool isMakingHostedLoop { false };
+    bool isBeingTurned { false };
+    // What it said when it came to where it would wait, this time round.
+    bool hasNotedWait { false };
+    bool hadEvents { false };
+    int descriptor { -1 };
+    int watched { 0 };
+    std::optional<Seconds> wouldHaveWaited;
+    // How much it watches for with nothing asked of it, which is its own being woken.
+    int watchedForItself { 0 };
 };
 
 template<typename Visitor>
@@ -109,6 +123,7 @@ void AsyncioState::visit(Visitor& visitor)
     visitor.append(extractStack);
     visitor.append(runningLoop);
     visitor.append(runningTask);
+    visitor.append(hostedLoop);
 }
 
 AsyncioState& asyncioState(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<AsyncioState>(); }
@@ -137,6 +152,10 @@ struct Future final : NativeState {
     bool standsForPromise { false };
     bool promiseWasRejected { false };
     WriteBarrier<Unknown> promiseOutcome;
+    // The promise that JavaScript has for it, if it has been given one.
+    WriteBarrier<Unknown> promise;
+    // It is a task that has taken over what JavaScript was running, and has that one's promise to settle.
+    bool settlesAwaitable { false };
 
     bool mustCancel { false };
     bool logsDestroyPending { false };
@@ -164,6 +183,7 @@ void Future::visit(Visitor& visitor)
     visitor.append(cancelledException);
     visitor.append(awaitedBy);
     visitor.append(promiseOutcome);
+    visitor.append(promise);
     visitor.append(waiter);
     visitor.append(coroutine);
     visitor.append(name);
@@ -183,6 +203,13 @@ bool isFutureOrTask(JSGlobalObject* globalObject, JSValue value) { return isInst
 bool isTask(JSGlobalObject* globalObject, JSValue value) { return isInstance(globalObject, value, asyncioState(globalObject).taskType.get()); }
 
 Identifier named(VM& vm, ASCIILiteral name) { return Identifier::fromString(vm, name); }
+void setOrClear(VM& vm, JSCell* owner, WriteBarrier<Unknown>& slot, JSValue value)
+{
+    if (value)
+        slot.set(vm, owner, value);
+    else
+        slot.clear();
+}
 JSValue orNone(JSValue value) { return value ? value : jsUndefined(); }
 
 // PyErr_SetString(), of a class that is written in Python.
@@ -238,13 +265,105 @@ JSValue loopOfFuture(JSGlobalObject* globalObject, JSValue future)
     RELEASE_AND_RETURN(scope, getAttribute(globalObject, future, named(vm, "_loop"_s)));
 }
 
+// ---- The loop that the host turns
+
+// Once round: what is ready is run, and what has happened to what it is watching is seen to. run_forever() goes round until it is stopped, and it is stopped where it would wait: noteWaitOfEventLoop().
+void turnHostedLoop(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    auto& state = asyncioState(globalObject);
+    // Whatever else is going on is as it might be in another thread.
+    JSValue outerLoop = state.runningLoop.get();
+    JSValue outerTask = state.runningTask.get();
+    JSObject* outerAwaitable = realm->awaitableBeingRun();
+    state.runningLoop.clear();
+    state.runningTask.clear();
+    realm->setAwaitableBeingRun(nullptr);
+    state.isBeingTurned = true;
+    state.hasNotedWait = false;
+    callMethodNamed(globalObject, state.hostedLoop.get(), named(vm, "run_forever"_s));
+    state.isBeingTurned = false;
+    realm->setAwaitableBeingRun(outerAwaitable);
+    setOrClear(vm, realm, state.runningLoop, outerLoop);
+    setOrClear(vm, realm, state.runningTask, outerTask);
+}
+
+// asyncio's own, as asyncio.run() would make. Nothing in Python runs it. Empty if it raised.
+JSValue hostedLoop(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    auto& state = asyncioState(globalObject);
+    if (JSValue loop = state.hostedLoop.get()) {
+        JSValue closed = callMethodNamed(globalObject, loop, named(vm, "is_closed"_s));
+        RETURN_IF_EXCEPTION(scope, { });
+        bool isClosed = isTrue(globalObject, closed);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!isClosed)
+            return loop;
+        state.hostedLoop.clear();
+    }
+    SetForScope isMaking(state.isMakingHostedLoop, true);
+    JSValue make = importModuleAttribute(globalObject, "asyncio.events"_s, "new_event_loop"_s);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue loop = call(globalObject, make);
+    RETURN_IF_EXCEPTION(scope, { });
+    state.hostedLoop.set(vm, realm, loop);
+    // It has nothing to do yet. This is to find out what the host is to watch.
+    turnHostedLoop(globalObject);
+    if (scope.exception() || !state.hasNotedWait) [[unlikely]] {
+        state.hostedLoop.clear();
+        if (!scope.exception())
+            raise(globalObject, scope, BuiltinType::RuntimeError, "the event loop has no selector that can be watched"_s);
+        return { };
+    }
+    state.watchedForItself = state.watched;
+    return loop;
+}
+
+PyStateObject* adopt(JSGlobalObject*, JSObject* iterator, JSValue loop);
+JSValue runningLoopOrRaise(JSGlobalObject*);
+
+// The loop that is running. Empty if there is none, or if it raised.
+//
+// What JavaScript is waiting for and is running is in a loop, though nothing in Python may be running one: then it is the one that the host turns. And what is running in a loop is a task. So it is one from when it
+// first asks, and is there in all_tasks() and for current_task().
+JSValue runningLoop(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    auto& state = asyncioState(globalObject);
+    JSValue loop = state.runningLoop.get();
+    JSObject* awaitable = realm->awaitableBeingRun();
+    if (!awaitable || state.isMakingHostedLoop)
+        return loop;
+    if (!loop) {
+        if (!realm->configuration().watchEventLoop)
+            return { };
+        loop = hostedLoop(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        // Until JavaScriptStep is over
+        state.runningLoop.set(vm, realm, loop);
+    }
+    if (!state.runningTask) {
+        adopt(globalObject, awaitable, loop);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return loop;
+}
+
 JSValue getEventLoop(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = asyncioState(globalObject);
-    if (JSValue loop = state.runningLoop.get())
-        return loop;
+    JSValue running = runningLoop(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (running)
+        return running;
     JSValue policy = call(globalObject, state.getEventLoopPolicy.get());
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, callMethodNamed(globalObject, policy, named(vm, "get_event_loop"_s)));
@@ -282,12 +401,40 @@ void unregisterTask(JSGlobalObject* globalObject, JSValue task)
 
 // ---- Future
 
+JSValue createCancelledError(JSGlobalObject*, PyStateObject*);
+
+// It is done, and JavaScript is told at once, not when the loop next comes round.
+void settleForJavaScript(JSGlobalObject* globalObject, PyStateObject* cell)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Future& future = futureIn(cell);
+    if (!future.promise && !future.settlesAwaitable) [[likely]]
+        return;
+    JSValue thrown = future.exception.get();
+    if (future.status == Status::Cancelled) {
+        thrown = createCancelledError(globalObject, cell);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    JSValue result = thrown ? JSValue() : future.result.get();
+    if (std::exchange(future.settlesAwaitable, false))
+        settleAwaitable(globalObject, asObject(future.coroutine.get()), result, thrown);
+    if (JSValue promise = future.promise.get()) {
+        if (thrown)
+            uncheckedDowncast<JSPromise>(promise.asCell())->reject(vm, thrown);
+        else
+            uncheckedDowncast<JSPromise>(promise.asCell())->resolve(globalObject, vm, result);
+    }
+}
+
 void scheduleCallbacks(JSGlobalObject* globalObject, PyStateObject* cell)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     Future& future = futureIn(cell);
     ASSERT(future.status != Status::Pending);
+    settleForJavaScript(globalObject, cell);
+    RETURN_IF_EXCEPTION(scope, void());
     // It is done, so it is no longer among those that are to be.
     if (isTask(globalObject, cell)) {
         unregisterTask(globalObject, cell);
@@ -444,9 +591,11 @@ void setFutureException(JSGlobalObject* globalObject, PyStateObject* cell, JSVal
     if (JSValue traceback = asObject(exception)->getDirect(vm, names.private_traceback); traceback && !isNone(traceback))
         future.exceptionTraceback.set(vm, cell, traceback);
     future.status = Status::Finished;
+    // JavaScript says for itself when nothing has dealt with a rejection.
+    bool isForJavaScript = future.promise || future.settlesAwaitable;
     scheduleCallbacks(globalObject, cell);
     RETURN_IF_EXCEPTION(scope, void());
-    future.logsTraceback = true;
+    future.logsTraceback = !isForJavaScript;
 }
 
 JSValue createCancelledError(JSGlobalObject* globalObject, PyStateObject* cell)
@@ -1228,6 +1377,8 @@ void handleYielded(JSGlobalObject* globalObject, PyStateObject* task, JSValue yi
     complain("Task got bad yield: "_s, false, ""_s, true);
 }
 
+void concludeStep(JSGlobalObject*, PyStateObject* task, JSValue yielded, JSValue returned);
+
 // What a promise came to, for the coroutine that was waiting for it.
 struct Outcome {
     JSValue value { jsUndefined() };
@@ -1285,6 +1436,18 @@ void stepTaskEntered(JSGlobalObject* globalObject, PyStateObject* task, JSValue 
         if (scope.exception())
             returned = catchStopIteration(globalObject);
     }
+
+    RELEASE_AND_RETURN(scope, concludeStep(globalObject, task, yielded, returned));
+}
+
+// The rest of task_step_impl(): the coroutine has yielded, or returned, or else it has raised.
+void concludeStep(JSGlobalObject* globalObject, PyStateObject* task, JSValue yielded, JSValue returned)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    auto& module = asyncioState(globalObject);
+    Future& state = futureIn(task);
 
     if (returned) {
         if (state.mustCancel) {
@@ -1378,7 +1541,179 @@ void startTaskEagerly(JSGlobalObject* globalObject, PyStateObject* task)
         chainRaisedExceptions(globalObject, raised);
 }
 
+// What JavaScript is waiting for, and has been running, is a task from now on. It has got as far as it has got, so there is no first step to arrange for. Null if it raised.
+PyStateObject* adopt(JSGlobalObject* globalObject, JSObject* iterator, JSValue loop)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    auto& module = asyncioState(globalObject);
+    auto* task = PyStateObject::create(vm, module.taskType->instanceStructure(), makeUnique<Future>());
+    initializeFuture(globalObject, task, loop);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    Future& state = futureIn(task);
+    // It goes on in the context that it has been running in.
+    JSValue context = iterator->getDirect(vm, vm.pythonNames().private_taskContext);
+    state.context.set(vm, task, context ? context : JSValue(copyCurrentContext(globalObject)));
+    state.logsDestroyPending = true;
+    state.coroutine.set(vm, task, iterator);
+    state.name.set(vm, task, intFromInt64(globalObject, static_cast<int64_t>(++module.taskNameCounter)));
+    state.settlesAwaitable = true;
+    registerTask(globalObject, task);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    iterator->putDirect(vm, vm.pythonNames().private_task, task);
+    module.runningTask.set(vm, realm, task);
+    return task;
+}
+
 } // anonymous namespace
+
+JavaScriptStep::JavaScriptStep(JSGlobalObject* globalObject, JSObject* iterator)
+    : m_globalObject(globalObject)
+    , m_iterator(iterator)
+{
+    PyRealm* realm = globalObject->pyRealm();
+    m_outerIterator = realm->awaitableBeingRun();
+    realm->setAwaitableBeingRun(iterator);
+    if (!realm->hasAsyncio()) [[likely]]
+        return;
+    // If this is inside a step of some task, it is no part of that task.
+    auto& state = asyncioState(globalObject);
+    m_outerTask = state.runningTask.get();
+    state.runningTask.clear();
+    m_hadRunningLoop = !!state.runningLoop;
+}
+
+JavaScriptStep::~JavaScriptStep()
+{
+    VM& vm = m_globalObject->vm();
+    PyRealm* realm = m_globalObject->pyRealm();
+    realm->setAwaitableBeingRun(m_outerIterator);
+    if (!realm->hasAsyncio()) [[likely]]
+        return;
+    auto& state = asyncioState(m_globalObject);
+    setOrClear(vm, realm, state.runningTask, m_outerTask);
+    if (m_hadRunningLoop || !state.runningLoop)
+        return;
+    // It has been at the loop that the host turns, and may have given it something to do. Or it may have closed it.
+    state.runningLoop.clear();
+    if (state.hostedLoop)
+        realm->configuration().watchEventLoop(m_globalObject, state.descriptor, 0_s, false);
+}
+
+bool JavaScriptStep::isTask() const
+{
+    VM& vm = m_globalObject->vm();
+    return m_globalObject->pyRealm()->hasAsyncio() && m_iterator->getDirect(vm, vm.pythonNames().private_task);
+}
+
+bool JavaScriptStep::becomeTask(JSValue yielded)
+{
+    VM& vm = m_globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!m_globalObject->pyRealm()->hasAsyncio())
+        return false;
+    // asyncio.isfuture()
+    JSValue blocking = getAttributeIfPresent(m_globalObject, yielded, named(vm, "_asyncio_future_blocking"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!blocking || isNone(blocking))
+        return false;
+    runningLoopOrRaise(m_globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    return true;
+}
+
+void JavaScriptStep::conclude(JSValue yielded, JSValue returned)
+{
+    VM& vm = m_globalObject->vm();
+    concludeStep(m_globalObject, asFutureCell(m_iterator->getDirect(vm, vm.pythonNames().private_task)), yielded, returned);
+}
+
+JSPromise* promiseOfFuture(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    if (!globalObject->pyRealm()->hasAsyncio() || !isFutureOrTask(globalObject, value))
+        return nullptr;
+    PyStateObject* cell = asFutureCell(value);
+    Future& future = futureIn(cell);
+    if (!future.isAlive())
+        return nullptr;
+    if (JSValue known = future.promise.get())
+        return uncheckedDowncast<JSPromise>(known.asCell());
+    JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    future.promise.set(vm, cell, promise);
+    future.logsTraceback = false;
+    if (future.status != Status::Pending) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        settleForJavaScript(globalObject, cell);
+        if (Exception* exception = scope.exception(); exception && scope.clearExceptionExceptTermination())
+            promise->reject(vm, exception);
+    }
+    return promise;
+}
+
+bool isEventLoopBeingTurned(JSGlobalObject* globalObject)
+{
+    if (!globalObject->pyRealm()->hasAsyncio())
+        return false;
+    // It looks before it runs anything, so the first to look is the loop.
+    auto& state = asyncioState(globalObject);
+    return state.isBeingTurned && !state.hasNotedWait;
+}
+
+void noteWaitOfEventLoop(JSGlobalObject* globalObject, int descriptor, int watched, std::optional<Seconds> timeout, bool hasEvents)
+{
+    auto& state = asyncioState(globalObject);
+    state.hasNotedWait = true;
+    state.descriptor = descriptor;
+    state.watched = watched;
+    state.wouldHaveWaited = timeout;
+    state.hadEvents = hasEvents;
+    callMethodNamed(globalObject, state.hostedLoop.get(), named(globalObject->vm(), "stop"_s));
+}
+
+void noteClosingOfDescriptor(JSGlobalObject* globalObject, int descriptor)
+{
+    PyRealm* realm = globalObject->pyRealm();
+    if (!realm->hasAsyncio())
+        return;
+    auto& state = asyncioState(globalObject);
+    if (state.descriptor != descriptor)
+        return;
+    state.descriptor = -1;
+    state.hostedLoop.clear();
+    realm->configuration().watchEventLoop(globalObject, -1, std::nullopt, false);
+}
+
+void turnEventLoop(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    auto& state = asyncioState(globalObject);
+    // If it is being turned already, and something that it ran is waiting for the host, it will ask again when it has been round.
+    if (!state.hostedLoop || state.isBeingTurned)
+        return;
+    // A program can get hold of it and run it for itself, with run_until_complete(). It is the program's for as long as that lasts: see asyncioSetRunningLoop().
+    if (state.runningLoop && isIdentical(state.runningLoop.get(), state.hostedLoop.get()))
+        return;
+    JSValue closed = callMethodNamed(globalObject, state.hostedLoop.get(), named(vm, "is_closed"_s));
+    RETURN_IF_EXCEPTION(scope, void());
+    bool isClosed = isTrue(globalObject, closed);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (isClosed) {
+        state.hostedLoop.clear();
+        return;
+    }
+    turnHostedLoop(globalObject);
+    // Whatever got out of it, it goes on, unless something that it ran closed it.
+    if (!state.hasNotedWait || !state.hostedLoop)
+        return;
+    // How long it would have waited was worked out before it ran anything. If it ran something, that may have given it more to do at once. It ran something only if there was something ready, and then it would not
+    // have waited at all, or if something had happened to what it is watching.
+    bool hasMoreToDo = state.hadEvents || (state.wouldHaveWaited && *state.wouldHaveWaited <= 0_s);
+    realm->configuration().watchEventLoop(globalObject, state.descriptor, hasMoreToDo ? std::optional { 0_s } : state.wouldHaveWaited, state.watched > state.watchedForItself);
+}
 
 // task_wakeup(): what the task was waiting for is done.
 PYTHON_NATIVE(taskWakeup)
@@ -1661,7 +1996,10 @@ PYTHON_NATIVE(taskDelete)
 PYTHON_NATIVE(asyncioGetRunningLoopOrNone)
 {
     UNUSED_PARAM(callFrame);
-    return JSValue::encode(orNone(asyncioState(globalObject).runningLoop.get()));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue loop = runningLoop(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(orNone(loop));
 }
 
 PYTHON_NATIVE(asyncioSetRunningLoop)
@@ -1669,10 +2007,15 @@ PYTHON_NATIVE(asyncioSetRunningLoop)
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
     auto& state = asyncioState(globalObject);
-    if (isNone(args[0]))
-        state.runningLoop.clear();
-    else
+    if (!isNone(args[0])) {
         state.runningLoop.set(vm, realm, args[0]);
+        RETURN_NONE();
+    }
+    // If it is the loop that the host turns, and it is the program that has been running it, it is the host's again, with whatever it has been left to do.
+    bool isHostsAgain = !state.isBeingTurned && state.hostedLoop && state.runningLoop && isIdentical(state.runningLoop.get(), state.hostedLoop.get());
+    state.runningLoop.clear();
+    if (isHostsAgain)
+        realm->configuration().watchEventLoop(globalObject, state.descriptor, 0_s, false);
     RETURN_NONE();
 }
 
@@ -1687,7 +2030,9 @@ namespace {
 JSValue runningLoopOrRaise(JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (JSValue loop = asyncioState(globalObject).runningLoop.get())
+    JSValue loop = runningLoop(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (loop)
         return loop;
     return raise(globalObject, scope, BuiltinType::RuntimeError, "no running event loop"_s);
 }
@@ -1755,8 +2100,12 @@ PYTHON_NATIVE(asyncioCurrentTask)
         loop = runningLoopOrRaise(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
     }
+    runningLoop(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     // There is the one thread.
-    return JSValue::encode(isIdentical(orNone(state.runningLoop.get()), loop) ? orNone(state.runningTask.get()) : jsUndefined());
+    if (!isIdentical(orNone(state.runningLoop.get()), loop))
+        RETURN_NONE();
+    return JSValue::encode(orNone(state.runningTask.get()));
 }
 
 PYTHON_NATIVE(asyncioAllTasks)
@@ -1978,6 +2327,7 @@ void executeAsyncioModule(JSGlobalObject* globalObject, JSObject*)
         RETURN_IF_EXCEPTION(scope, void());
         slot->set(vm, realm, set);
     }
+    realm->setHasAsyncio();
 }
 
 } } // namespace JSC::Python

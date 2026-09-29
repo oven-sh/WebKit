@@ -792,6 +792,30 @@ are destroyed, or with threads.
 - **A promise can be rejected with anything.** What is no exception is not caught by `except`, and comes all the way out of the coroutine. It is then what the task ended with, as it is: `result()` throws it, and it is thrown into whatever
   awaits the task. Left pending, the task would keep whatever was waiting for it waiting for ever.
 
+### What JavaScript waits for, and asyncio
+
+**JavaScript can wait for a coroutine that uses asyncio, with no `asyncio.run()` anywhere.** `await app.main()` in JavaScript, where `main()` sleeps, gathers, makes tasks and times out. `PythonAsyncio.h`.
+
+- **What JavaScript is running is in a loop.** `get_running_loop()` and the like, asked from inside a coroutine that JavaScript is waiting for (`JavaScriptStep`, in `resumeAwaitable()`), give the loop that is running. If none is, they give
+  one of asyncio's own, made as `asyncio.run()` would make it, that nothing in Python runs (`hostedLoop()`). At the top of a program nothing is being waited for, so there is no loop, and `asyncio.run()` is as it ever was.
+- **And what is running in a loop is a task.** It is a `Task` from when it first asks which loop it is in, or first yields a future (`adopt()`). It has got as far as it has got, so there is no first step to arrange. From then on it is
+  the task that goes on with it, in the context that it has been running in, and the task settles JavaScript's promise as soon as it is done. Until then it is run as it always was, and one that has nothing to do with asyncio always is.
+- A future is asked after before a thenable is. To JavaScript whatever can be awaited is a thenable, a future among them, but what its `then` does is to await it, which is what is being done already.
+- **JavaScript is given a promise for a `Future`** that is settled when the future is done, with nothing to run (`promiseOfFuture()`).
+- **A task is of a coroutine**, and `repr()` of one insists on it. So what JavaScript waits for that is not a coroutine is awaited by one from the start, `lib/_javascript_awaiting.py`, which is what `ensure_future()` does with it.
+- **The host turns the loop, once round at a time** (`turnEventLoop()`), from its own event loop and with nothing of Python's on the stack. A turn is `run_forever()`. Where the loop would wait, in `kqueue.control()`, it does not: it looks
+  without waiting, notes how long it would have waited and how much it is watching for, and calls `stop()`, so that `run_forever()` returns when what is ready has been run. The host is then told what to watch for
+  (`Configuration::watchEventLoop`): the descriptor, and that long. So all of asyncio is as it is, and nothing of it that is not public is used.
+- How long it would have waited was worked out before it ran anything, and what it ran may have given it more to do. It ran something only if something was ready, when it would not have waited at all, or if something had
+  happened to what it is watching. In either case it is turned again at once.
+- The loop is given something to do from outside a turn in two ways. By what JavaScript is running, and it is turned when that step is over. Or with `call_soon_threadsafe()`, which makes the descriptor readable.
+- **The process stays** for a time that the loop is waiting for, and for the descriptor if the loop is watching for more than its own being woken, which is how much it watched for when it was made. Not for a future that
+  nothing will ever settle, as it does not for such a promise.
+- `kqueue.close()` tells the host to leave off first. The next descriptor to be opened may well have the same number.
+- If a loop that Python is running is waiting, and so the host is going on with its own, the hosted loop is turned from there as it might be from another thread.
+- A program can get hold of the loop and run it for itself, with `run_until_complete()`. The host leaves it alone for as long as that lasts, and is asked to turn it again when `_set_running_loop(None)` says that it is over.
+- With no `watchEventLoop` there is no such loop, and a future that is yielded with no loop running is `RuntimeError: no running event loop`.
+
 ### Signals
 
 `PythonSignals.cpp` is `Modules/signalmodule.c`. As in CPython, what the system calls when a signal comes does next to nothing, and what the program has for the signal is called later, by Python code, between one thing and
