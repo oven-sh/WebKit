@@ -265,6 +265,7 @@ static void removeModule(JSGlobalObject* globalObject, JSValue name)
 // `_PyImport_Inittab`. One that has nothing to make it with was made with the realm, and cannot be made again.
 static constexpr BuiltinModule s_builtinModules[] = {
     { "_ast"_s, createASTModule },
+    { "_asyncio"_s, createAsyncioModule, executeAsyncioModule },
     { "atexit"_s, createAtExitModule },
     { "_codecs"_s, createCodecsModule },
     { "_collections"_s, createCollectionsModule },
@@ -345,6 +346,23 @@ JSValue createBuiltinModule(JSGlobalObject* globalObject, JSValue name)
     if (!module->create)
         RELEASE_AND_RETURN(scope, addModule(globalObject, name));
     RELEASE_AND_RETURN(scope, module->create(globalObject));
+}
+
+void executeBuiltinModule(JSGlobalObject* globalObject, JSValue module)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // PyModule_Check(), and then it is by its definition that CPython knows what to run. Here it is by its name.
+    JSObject* object = tryModule(globalObject, module);
+    if (!object)
+        return;
+    JSValue name = getStoredAttribute(vm, object, vm.pythonNames().dunder_name);
+    if (!name || !stringIn(name))
+        return;
+    String text = stringIn(name)->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (auto* definition = findBuiltinModule(globalObject, text); definition && definition->execute)
+        RELEASE_AND_RETURN(scope, definition->execute(globalObject, object));
 }
 
 JSValue builtinModuleNames(JSGlobalObject* globalObject)

@@ -1,0 +1,291 @@
+---- what there is
+the module => ('_asyncio', 'Accelerator module for asyncio', ['Future', 'Task', '_enter_task', '_get_running_loop', '_leave_task', '_register_eager_task', '_register_task', '_set_running_loop', '_swap_current_task', '_unregister_eager_task', '_unregister_task', 'all_tasks', 'current_task', 'future_add_to_awaited_by', 'future_discard_from_awaited_by', 'get_event_loop', 'get_running_loop'])
+the classes => [('Future', 'Future', '_asyncio', (<class '_asyncio.Future'>, <class 'object'>), 'This class is *almost* compatible with c', 1792), ('Task', 'Task', '_asyncio', (<class '_asyncio.Task'>, <class '_asyncio.Future'>, <class 'object'>), 'A coroutine wrapped in a Future.', 1792)]
+asyncio has them => (True, True, True, True, True)
+generic => (_asyncio.Future[int], _asyncio.Task[str])
+---- one that has not been initialized
+Future.result => InvalidStateError: Future object is not initialized.
+Future.exception => InvalidStateError: Future object is not initialized.
+Future.cancelled => False
+Future.done => False
+Future.get_loop => RuntimeError: Future object is not initialized.
+Future.cancel => RuntimeError: Future object is not initialized.
+Future._make_cancelled_error => CancelledError()
+Future.__iter__ => RuntimeError: Future object is not initialized.
+Future.__await__ => RuntimeError: Future object is not initialized.
+Future.__repr__ => RuntimeError: Future object is not initialized.
+Future.__del__ => None
+Future.set_result => RuntimeError: Future object is not initialized.
+Future.set_exception => RuntimeError: Future object is not initialized.
+Future.add_done_callback => RuntimeError: uninitialized Future object
+Future.remove_done_callback => RuntimeError: Future object is not initialized.
+Future.__class__ => <class '_asyncio.Future'>
+Future._asyncio_awaited_by => None
+Future._asyncio_future_blocking => False
+Future._callbacks => RuntimeError: Future object is not initialized.
+Future._cancel_message => None
+Future._exception => RuntimeError: Future object is not initialized.
+Future._log_traceback => RuntimeError: Future object is not initialized.
+Future._loop => None
+Future._result => RuntimeError: Future object is not initialized.
+Future._source_traceback => None
+Future._state => RuntimeError: Future object is not initialized.
+Future set blocking => RuntimeError: Future object is not initialized.
+Task.result => InvalidStateError: Future object is not initialized.
+Task.exception => InvalidStateError: Future object is not initialized.
+Task.cancelled => False
+Task.done => False
+Task.get_loop => RuntimeError: Future object is not initialized.
+Task.cancel => True
+Task._make_cancelled_error => CancelledError()
+Task.__iter__ => RuntimeError: Future object is not initialized.
+Task.__await__ => RuntimeError: Future object is not initialized.
+Task.__repr__ => RuntimeError: Future object is not initialized.
+Task.__del__ => None
+Task.set_result => RuntimeError: Task does not support set_result operation
+Task.set_exception => RuntimeError: Task does not support set_exception operation
+Task.add_done_callback => RuntimeError: uninitialized Future object
+Task.remove_done_callback => RuntimeError: Future object is not initialized.
+Task.__class__ => <class '_asyncio.Task'>
+Task._asyncio_awaited_by => None
+Task._asyncio_future_blocking => False
+Task._callbacks => RuntimeError: Future object is not initialized.
+Task._cancel_message => None
+Task._coro => None
+Task._exception => RuntimeError: Future object is not initialized.
+Task._fut_waiter => None
+Task._log_destroy_pending => False
+Task._log_traceback => RuntimeError: Future object is not initialized.
+Task._loop => None
+Task._must_cancel => True
+Task._result => RuntimeError: Future object is not initialized.
+Task._source_traceback => None
+Task._state => RuntimeError: Future object is not initialized.
+Task set blocking => RuntimeError: Future object is not initialized.
+Task.get_name => None
+Task.get_coro => None
+Task.cancelling => 0
+Task.uncancel => 0
+Task.get_stack => RuntimeError: Future object is not initialized.
+---- how they are made
+Future() => [<Future pending>]
+Future(<Loop>,)[] => TypeError: Future() takes no positional arguments
+Future()['loop', 'x'] => TypeError: Future() takes at most 1 keyword argument (2 given)
+Future()['loop'] => AttributeError: 'int' object has no attribute 'get_debug'
+Future()['loop'] => RuntimeError: There is no current event loop in thread 'MainThread'.
+Task0 => TypeError: Task() missing required argument 'coro' (pos 1)
+Task1 => TypeError: a coroutine was expected, got 5
+Task1 => TypeError: a coroutine was expected, got None
+Task1 => TypeError: a coroutine was expected, got <function <lambda> at 0x>
+Task1 => TypeError: a coroutine was expected, got <generator object <genexpr> at 0x>
+Task2 => TypeError: Task() takes exactly 1 positional argument (2 given)
+---- a future
+new => (<Future pending>, 'PENDING', <Loop>, <Loop>, None, None, None, False, None, None, False, None, False, False)
+not done => InvalidStateError: Result is not set.
+not done => InvalidStateError: Exception is not set.
+attributes => (None, 1, False, True)
+set_result => (None, <Future finished result=5>, 'FINISHED', 5, None, True, 5)
+twice => InvalidStateError: invalid state
+twice => InvalidStateError: invalid state
+cancel when done => False
+how they are called => []
+set_result(){} => TypeError: set_result() takes exactly 1 positional argument (0 given)
+set_result(1, 2){} => TypeError: set_result() takes at most 1 argument (2 given)
+set_result(){'result': 1} => TypeError: set_result() takes exactly 1 positional argument (0 given)
+set_exception(){} => TypeError: set_exception() takes exactly 1 positional argument (0 given)
+result(1,){} => TypeError: Future.result() takes no arguments (1 given)
+exception(1,){} => TypeError: exception() takes no arguments
+exception(){'x': 1} => TypeError: exception() takes no arguments
+cancel(1, 2){} => TypeError: cancel() takes at most 1 argument (2 given)
+cancel(){'msg': 'm'} => True
+cancel(){'x': 1} => TypeError: cancel() got an unexpected keyword argument 'x'
+add_done_callback(){} => TypeError: add_done_callback() takes exactly 1 positional argument (0 given)
+add_done_callback(1, 2){} => TypeError: add_done_callback() takes exactly 1 positional argument (2 given)
+add_done_callback(){'fn': 1} => TypeError: add_done_callback() takes exactly 1 positional argument (0 given)
+remove_done_callback(){} => TypeError: remove_done_callback() takes exactly 1 positional argument (0 given)
+get_loop(1,){} => TypeError: get_loop() takes no arguments
+done(1,){} => TypeError: Future.done() takes no arguments (1 given)
+---- exceptions
+an instance => (<Future finished exception=ValueError('v')>, ValueError('v'), True, ValueError('v'), False)
+a class => (<Future finished exception=KeyError()>, KeyError())
+raised => ValueError: v
+not one => TypeError: invalid exception object
+not one => TypeError: invalid exception object
+StopIteration => (RuntimeError('StopIteration interacts badly with generators and cannot be raised into a Future'), StopIteration(1), StopIteration(1), True)
+StopIteration, the class => RuntimeError('StopIteration interacts badly with generators and cannot be raised into a Future')
+a class that settles it as it is made => InvalidStateError: invalid state
+its traceback is put back => (True, True)
+_log_traceback => [(None, False)]
+_log_traceback = True => ValueError: _log_traceback can only be set to False
+del _log_traceback => AttributeError: cannot delete attribute
+__del__ with one that nobody looked at => ([['exception', 'future', 'message']], True, False)
+__del__ otherwise => ([], True, False)
+---- cancelling
+cancel => (True, <Future cancelled>, 'CANCELLED', True, True, None, False)
+with a message => ('why', ('why',))
+result => CancelledError: why
+exception => CancelledError: why
+set_result => InvalidStateError: invalid state
+_cancel_message => [(None, 'other', ('other',))]
+del _cancel_message => AttributeError: cannot delete attribute
+each is another => False
+---- callbacks
+kept => [('a', 'Context'), ('b', 'Context'), ('a', 'Context')]
+called, each in its context => (None, None, 3, 3, [('a', 'when a was added'), ('b', 'when b was added'), ('a', 'given')])
+called when cancelled => (None, True, 3, [('a', 'when a was added'), ('b', 'when b was added'), ('a', 'given')])
+gone when done => [(None, None, None)]
+added when done => [(None, None, 1, None, None)]
+removed => [(2, ['b'], 0, 1, None, 0)]
+removed, of many => [([None, None, None, None, None, None], 3, ['a', 'a', 'a'], 3, None)]
+what is compared raises => ZeroDivisionError: division by zero
+what is compared cancels it => [([None, None, None], 0, None, None)]
+what is compared removes the rest => RecursionError: maximum recursion depth exceeded
+    it says => OSError: no room
+call_soon raises => [(None, None, None, 'FINISHED', None)]
+---- awaiting one
+the iterator => ('FutureIter', '_asyncio', True, True, ['close', 'send', 'throw'])
+it cannot be made => <_asyncio.FutureIter object at 0x>
+first => (True, True)
+again, with nobody having taken it up => RuntimeError: await wasn't used with future
+send => (None, True)
+done => StopIteration: the result
+what it stops with => (('StopIteration', 'the result'), ('StopIteration', 'the result'), ('StopIteration', 'the result'))
+a tuple => [(None, ('StopIteration', (1, 2)))]
+an exception => KeyError: 'k'
+cancelled => CancelledError: m
+set blocking => [(None, True), (None, False), (None, True), (None, False), (None, False)]
+del blocking => AttributeError: cannot delete attribute
+throw() => TypeError: throw expected at least 1 argument, got 0
+throw(<class 'ValueError'>,) => ValueError: 
+throw(ValueError('v'),) => ValueError: v
+throw(<class 'ValueError'>, 'v') => ValueError: v
+throw(<class 'ValueError'>, ValueError('w')) => ValueError: w
+throw(<class 'ValueError'>, None, None) => ValueError: 
+throw(ValueError('v'), 'x') => TypeError: instance exception may not have a separate value
+throw(ValueError('v'), None) => ValueError: v
+throw(5,) => TypeError: exceptions must be classes deriving BaseException or instances of such a class
+throw(<class 'int'>,) => TypeError: exceptions must be classes deriving BaseException or instances of such a class
+throw(<class 'ValueError'>, 'v', 5) => TypeError: throw() third argument must be a traceback
+throw(1, 2, 3, 4) => TypeError: throw expected at most 3 arguments, got 4
+what was warned of => [('DeprecationWarning', 'the (type, exc, tb) signature of throw() is deprecated, use the single-arg signature instead.')]
+close => None
+how they are called => None
+send() => TypeError: FutureIter.send() takes exactly one argument (0 given)
+send(1, 2) => TypeError: FutureIter.send() takes exactly one argument (2 given)
+close(1,) => TypeError: FutureIter.close() takes no arguments (1 given)
+---- a task
+new => (<Task pending name='Task-1' coro=<returns() running at asyncio-module:194>>, 'PENDING', <Loop>, False, False, None, True, 0, 'Context', True, 'returns')
+what is ready => [('TaskStepMethWrapper', '_asyncio', True, (), True, [])]
+the wrapper is called with nothing => TypeError: function takes no positional arguments
+the wrapper is called with nothing => TypeError: function takes no keyword arguments
+outside the loop => RuntimeError: loop <Loop> is not the running loop
+run => (1, <Task finished name='Task-1' coro=<returns() done, defined at asyncio-module:194> result='returned'>, 'returned', <coroutine object returns at 0x>, <coroutine object returns at 0x>)
+stepped when done => InvalidStateError: __step(): already done: <Task finished name='Task-1' coro=<returns() done, defined at asyncio-module:194> result='returned'> None
+one can be made => None
+by name => 'by name'
+names => [('given', None, '5', None, 's'), ('7', None, '5', None, 's')]
+names that are made => [1]
+a name of a class derived from str => ['str']
+a context => [True]
+what is no context is taken => 5
+set_result => RuntimeError: Task does not support set_result operation
+set_exception => RuntimeError: Task does not support set_exception operation
+it raises => [(1, <Task finished name='Task-8' coro=<raises() done, defined at asyncio-module:196> exception=ValueError('v')>, ValueError('v'), False)]
+    which gets out => SystemExit: 3
+it raises SystemExit => [(None, <Task finished name='Task-9' coro=<raises() done, defined at asyncio-module:196> exception=SystemExit(3)>, None)]
+    which gets out => KeyboardInterrupt: 
+it raises KeyboardInterrupt => [(None, KeyboardInterrupt())]
+it raises CancelledError => [(1, <Task cancelled name='Task-11' coro=<raises() done, defined at asyncio-module:196>>, True)]
+it raises StopIteration => [(1, RuntimeError('coroutine raised StopIteration'), StopIteration(1))]
+cancel(1, 2){} => TypeError: cancel() takes at most 1 argument (2 given)
+cancel(){'msg': 1} => True
+cancel(){'x': 1} => TypeError: cancel() got an unexpected keyword argument 'x'
+get_stack(1,){} => TypeError: get_stack() takes no positional arguments
+get_stack(){'limit': 1} => []
+print_stack(1,){} => TypeError: print_stack() takes no positional arguments
+set_name(){} => TypeError: Task.set_name() takes exactly one argument (0 given)
+get_name(1,){} => TypeError: Task.get_name() takes no arguments (1 given)
+uncancel(1,){} => TypeError: Task.uncancel() takes no arguments (1 given)
+set_result(){} => TypeError: Task.set_result() takes exactly one argument (0 given)
+---- what it waits for
+a future => (True, False, True, [('<built-in method task_wakeup of _asyncio.Task object at 0x>', True, 'task_wakeup', 'builtin_function_or_method', True)])
+which is done => (None, 1, ('got', 1), None, None)
+which raises => [(None, 1, KeyError('k'))]
+which is cancelled => [(True, 1, True, ('m',))]
+two wait for one => [(2, 'frozenset', None, 2, frozenset(), ('got', 1), ('got', 1))]
+of another loop => RuntimeError("Task <Task pending name='Task-28' coro=<awaits() running at asyncio-module:199>> got Future <Future pending> attached to a different loop")
+nothing => [(True, ('got', None))]
+a future that was not awaited => RuntimeError("yield was used instead of yield from in task <Task pending name='Task-30' coro=<awaits() running at asyncio-module:199>> with <Future pending>")
+a number => RuntimeError('Task got bad yield: 5')
+a generator => RuntimeError("yield was used instead of yield from for generator in task <Task pending name='Task-32' coro=<awaits() running at asyncio-module:199>> with <generator object <lambda>.<locals>.<genexpr> at 0x>")
+itself => (None, 2, RuntimeError("Task cannot await on itself: <Task pending name='Task-33' coro=<itself() running at asyncio-module:254>>"))
+what will do for one => RuntimeError: loop <Loop> is not the running loop
+with get_loop() => [(None, False, None, None)]
+of another loop => RuntimeError("Task <Task pending name='Task-36' coro=<awaits() running at asyncio-module:199>> got Future <__main__.Like object at 0x> attached to a different loop")
+that was not awaited => RuntimeError("yield was used instead of yield from in task <Task pending name='Task-37' coro=<awaits() running at asyncio-module:199>> with <__main__.NotBlocking object at 0x>")
+that says None => RuntimeError('Task got bad yield: <__main__.NoneBlocking object at 0x>')
+of a class derived from Future => [(True, True, None, 1, ('got', 2), None)]
+what is taken for a coroutine => [(1, 'sent', [('send', None)])]
+and cancelled => [(True, 1, False, [('throw', ['CancelledError'])])]
+---- cancelling a task
+before it has begun => [(True, True, 1, 'early', 1, True, False, ('early',))]
+while it waits => [(True, False, True, 'why', 1, True, 1)]
+when it is done => [(1, False, 0)]
+more than once => [(True, True, 2, 1, True, 0, False, 0, 1, 'returned')]
+it will not have it => [(1, True, 1, 'refused', False, 1)]
+what it waits for will not => RuntimeError: loop <Loop> is not the running loop
+__del__ while pending => [(None, None, [['message', 'task']], None, 1)]
+_log_destroy_pending => [(None, True), (None, False), (None, True)]
+del _log_destroy_pending => AttributeError: cannot delete attribute
+_must_cancel cannot be set => AttributeError: attribute '_must_cancel' of '_asyncio.Task' objects is not writable
+---- in debug mode
+where it was made => [('StackSummary', '<lambda>', True)]
+__del__ => [(None, None, [['exception', 'future', 'message', 'source_traceback']])]
+---- which is running
+no loop => (None, True)
+no loop => RuntimeError: no running event loop
+no loop => RuntimeError: no running event loop
+no loop => RuntimeError: no running event loop
+set => (None, <Loop>, <Loop>, <Loop>, None, None, None)
+a future finds it => <Loop>
+enter => (None, 'a task', 'a task')
+enter another => RuntimeError: Cannot enter into task 'another' while another task 'a task' is being executed.
+enter for another loop => RuntimeError: loop <Loop> is not the running loop
+leave another => RuntimeError: Invalid attempt to leave task 'another' while task 'a task' is entered.
+leave for another loop => RuntimeError: loop <Loop> is not the running loop
+swap => ('a task', 'swapped in', 'swapped in', None, None)
+swap for another loop => RuntimeError: loop <Loop> is not the running loop
+leave => (None, None)
+leave when there is none => RuntimeError: Invalid attempt to leave task 'a task' while task None is entered.
+as it runs => [(1, True)]
+all_tasks => ['pending']
+those of others => ([None, None, None], ['<Other>', "<Task pending name='pending' coro=<returns() running at asyncio-module:194>>"], 'set', {<Other>}, [None, None, None, None], 1)
+those that are eager => (None, 2, None, None, 1)
+its own, taken off and put back => (None, 0, None, None, 1, None, 0, None, 1)
+one that is done is not among them => (1, None, [])
+awaited by => [(None, True, None, True, None, True, None, None, None, None, 1)]
+current_task(1, 2)[] => TypeError: current_task() takes at most 1 argument (2 given)
+current_task()['x'] => TypeError: current_task() got an unexpected keyword argument 'x'
+all_tasks(1, 2)[] => TypeError: all_tasks() takes at most 1 argument (2 given)
+_enter_task(1,)[] => TypeError: _enter_task() missing required argument 'task' (pos 2)
+_enter_task()['loop', 'task'] => None
+_leave_task()['loop', 'task'] => None
+_set_running_loop()[] => TypeError: _asyncio._set_running_loop() takes exactly one argument (0 given)
+_set_running_loop()['loop'] => TypeError: _asyncio._set_running_loop() takes no keyword arguments
+_register_task()[] => TypeError: _register_task() missing required argument 'task' (pos 1)
+_get_running_loop(1,)[] => TypeError: _asyncio._get_running_loop() takes no arguments (1 given)
+future_add_to_awaited_by(1,)[] => TypeError: future_add_to_awaited_by expected 2 arguments, got 1
+future_add_to_awaited_by()['fut', 'waiter'] => TypeError: _asyncio.future_add_to_awaited_by() takes no keyword arguments
+_swap_current_task(1,)[] => TypeError: _swap_current_task() missing required argument 'task' (pos 2)
+---- begun at once
+to its end => [(True, 'done', [], [], None, None, [])]
+until it waits => [(False, True, 1, None, 1, 'done')]
+it raises => [(True, ValueError('v'))]
+inside another => (None, 'done', 'outer', None)
+in what is no context => TypeError: an instance of Context was expected
+with the loop not running => [(False, 1, None)]
+eager_start is true or false => [False, False, False, False]
+---- derived classes
+a task => RuntimeError: Cannot enter into task <MyTask pending name='my' coro=<returns() running at asyncio-module:194>> while another task <Task pending name='Task-54' coro=<returns() running at asyncio-module:194>> is being executed.
+a future, whose methods are used => RuntimeError: Cannot enter into task <Task pending name='Task-60' coro=<awaits() running at asyncio-module:198>> while another task <Task pending name='Task-54' coro=<returns() running at asyncio-module:194>> is being executed.
+initialized twice => [(None, None, 'PENDING', None)]

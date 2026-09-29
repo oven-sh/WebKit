@@ -240,6 +240,8 @@ JSObject* createASTModule(JSGlobalObject*);
 void initializeTracebackTypes(JSGlobalObject*);
 JSObject* createFrameModule(JSGlobalObject*);
 JSObject* createJavaScriptModule(JSGlobalObject*);
+JSObject* createAsyncioModule(JSGlobalObject*);
+void executeAsyncioModule(JSGlobalObject*, JSObject* module);
 
 void initializeRangeType(JSGlobalObject*);
 // What the __dict__ and __weakref__ of a class whose instances have such things get and set.

@@ -45,6 +45,8 @@ namespace Python {
 struct BuiltinModule {
     ASCIILiteral name;
     JSObject* (*create)(JSGlobalObject*); // Null if it raised.
+    // What is left to do once the module is in sys.modules, if anything is: Py_mod_exec. It is for one that imports what imports it. It may raise.
+    void (*execute)(JSGlobalObject*, JSObject* module) { nullptr };
 };
 
 // A module that is written in Python and is not in a file: `struct _frozen` of CPython, but that it is the source that there is here, and not what comes of compiling it.

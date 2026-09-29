@@ -88,6 +88,7 @@ std::optional<bool> isShadowingStandardLibrary(JSGlobalObject*, JSValue moduleNa
 
 int isBuiltinModule(JSGlobalObject*, const String& name); // is_builtin(): -1 if it is one that cannot be made again.
 JSValue createBuiltinModule(JSGlobalObject*, JSValue name); // create_builtin(): None if there is none of that name. Empty if it raised.
+void executeBuiltinModule(JSGlobalObject*, JSValue module); // exec_builtin_or_dynamic()
 JSValue builtinModuleNames(JSGlobalObject*); // sys.builtin_module_names
 // PyImport_ImportFrozenModuleObject(): false if there is none of that name. Nothing if it raised.
 std::optional<bool> importFrozenModule(JSGlobalObject*, JSValue name);

@@ -756,6 +756,7 @@ python/PythonASTValidator.cpp
 python/PythonAnnotations.cpp
 python/PythonArrayModule.cpp
 python/PythonAsync.cpp
+python/PythonAsyncioModule.cpp
 python/PythonAtExitModule.cpp
 python/PythonBuiltinFunctions.cpp
 python/PythonBuiltinTypes.cpp

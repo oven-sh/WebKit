@@ -774,6 +774,24 @@ what they run is inside the loop, as any callback is. `control()` looks without 
 
 Nothing else that waits does this. What calls `time.sleep()` means nothing to happen meanwhile.
 
+### `Future` and `Task`
+
+`_asyncio` is `Modules/_asynciomodule.c`, function for function: `PythonAsyncioModule.cpp`. `programs/asyncio-module.py` puts every method, getter and function of it to a loop that is a list, so that nothing depends on when
+anything happens, and CPython's own `test_asyncio` runs each of its tests of futures and tasks against these and against the ones that are written in Python. What fails there fails for both, and is to do with when things
+are destroyed, or with threads.
+
+- CPython has the tasks that are its own on a list that does not keep them alive. Here they are in a `WeakSet`, where it has those that are not its own.
+- `asyncio` imports `_asyncio`, which imports `asyncio`. So a module that is built in can have something left to do once it is in `sys.modules`, `BuiltinModule::execute`, which is `Py_mod_exec`. Without it there were two of the module.
+- `__del__()` is there to be called, and says what CPython's says. Nothing calls it yet.
+
+**A task waits for a promise.** `await promise` yields the promise to whatever is running the coroutine, and where CPython's `Task` says `Task got bad yield`, this one waits for it (`waitForPromise()`).
+
+- It waits for a `Future` that stands for the promise, as it would for any. So `task.cancel()`, `wait_for()` and `timeout()` work, though a promise cannot be cancelled: the future is, and what the promise comes to is then nobody's business.
+- JavaScript settles a promise when it settles it, which is likely to be while the loop is waiting for something to do. So the loop is told with `call_soon_threadsafe()`, which wakes it.
+- What the promise came to is sent to the coroutine, and what it was rejected with is thrown in.
+- **A promise can be rejected with anything.** What is no exception is not caught by `except`, and comes all the way out of the coroutine. It is then what the task ended with, as it is: `result()` throws it, and it is thrown into whatever
+  awaits the task. Left pending, the task would keep whatever was waiting for it waiting for ever.
+
 ### Signals
 
 `PythonSignals.cpp` is `Modules/signalmodule.c`. As in CPython, what the system calls when a signal comes does next to nothing, and what the program has for the signal is called later, by Python code, between one thing and

@@ -96,9 +96,12 @@ PYTHON_NATIVE(impCreateBuiltin)
     RELEASE_AND_RETURN(scope, JSValue::encode(createBuiltinModule(globalObject, name)));
 }
 
-// All that there is to making one has been done by the time that it has been made.
+// For most, all that there is to making one has been done by the time that it has been made.
 PYTHON_NATIVE(impExecBuiltin)
 {
+    NATIVE_PROLOGUE();
+    executeBuiltinModule(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsNumber(0));
 }
 
