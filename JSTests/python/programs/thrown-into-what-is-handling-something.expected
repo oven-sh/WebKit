@@ -1,0 +1,7 @@
+thrown while handling ValueError('a') context: KeyError(3) cause: None
+thrown while handling nothing ValueError('b') context: None cause: None
+thrown while handling ValueError('c') context: KeyError(3) cause: None
+thrown while handling ValueError('d') context: KeyError(3) cause: None
+itself KeyError(4) context: None cause: None
+thrown while handling ValueError() context: KeyError(3) cause: None
+coroutine ValueError('e') context: KeyError(5) cause: None

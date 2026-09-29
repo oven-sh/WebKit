@@ -46,6 +46,8 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     auto field = [&] (JSGenerator::Field field) { return generator->internalField(static_cast<unsigned>(field)).get(); };
     auto setState = [&] (int32_t state) { generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).set(vm, generator, jsNumber(state)); };
 
+    // What is about to be raised in it, if anything is.
+    JSValue raisedInIt;
     int32_t state = field(JSGenerator::Field::State).asInt32();
     bool isSuspended = state != static_cast<int32_t>(JSGenerator::State::Executing) && state != static_cast<int32_t>(JSGenerator::State::Completed) && state != static_cast<int32_t>(JSGenerator::State::Init);
     if (mode == JSGenerator::ResumeMode::ThrowMode) {
@@ -79,6 +81,8 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
             auto* outcome = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, 2);
             outcome->setIndex(vm, 0, jsBoolean(raised || thrownHere));
             outcome->setIndex(vm, 1, raised ? raised->value() : thrownHere ? thrownHere : returnedToIt ? returnedToIt : jsUndefined());
+            if (raised || thrownHere)
+                raisedInIt = outcome->get(1);
             if (raised && !scope.tryClearException())
                 return { };
             sent = outcome;
@@ -124,6 +128,11 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     JSValue generatorsOwn = generator->getDirect(vm, handledName);
     realm->setOuterHandledException(vm, realm->handledThrown());
     realm->setOwnHandledException(vm, generatorsOwn && !isNone(generatorsOwn) ? uncheckedDowncast<Exception>(generatorsOwn.asCell()) : nullptr);
+    // _PyErr_ChainStackItem(): what is thrown into it is raised while it is handling that, and has that for its __context__, whatever it had. It goes no further out than the generator.
+    if (mode == JSGenerator::ResumeMode::ThrowMode)
+        raisedInIt = sent;
+    if (raisedInIt && raisedInIt.isObject() && realm->ownHandledException())
+        setContext(globalObject, asObject(raisedInIt));
 
     JSValue value = JSC::call(globalObject, next, JSC::getCallData(next), field(JSGenerator::Field::This), arguments);
 
