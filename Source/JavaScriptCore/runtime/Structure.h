@@ -850,6 +850,7 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+    DEFINE_BITFIELD(bool, transitionPropertyNameIsSymbol, TransitionPropertyNameIsSymbol, 1, 31);
 
     enum class StructureVariant : uint8_t {
         Normal,
@@ -983,7 +984,16 @@ private:
     // Keep them inlined function since they are used in the critical path of Dictionary JSObject modification.
     void pin(const AbstractLocker&, VM&, PropertyTable*);
     void pinForCaching(const AbstractLocker&, VM&, PropertyTable*);
-    
+
+    void setTransitionPropertyName(UniquedStringImpl* name)
+    {
+        m_transitionPropertyName = name;
+        setTransitionPropertyNameIsSymbol(name && name->isSymbol());
+    }
+
+    // A symbol has just become a key of this structure's property table.
+    JS_EXPORT_PRIVATE void didAddSymbolKey(VM&, SymbolImpl&);
+
     static bool isRareData(JSCell* cell)
     {
         return cell && cell->type() != StructureType;

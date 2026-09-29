@@ -1096,6 +1096,7 @@ runtime/SuppressedErrorPrototype.cpp
 runtime/Symbol.cpp
 runtime/SymbolConstructor.cpp
 runtime/SymbolObject.cpp
+runtime/SymbolPropertyKeys.cpp
 runtime/SymbolPrototype.cpp
 runtime/SymbolTable.cpp
 runtime/SyntheticModuleRecord.cpp

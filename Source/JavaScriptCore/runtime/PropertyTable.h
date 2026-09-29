@@ -154,6 +154,10 @@ public:
     
     PropertyOffset nextOffset(PropertyOffset inlineCapacity);
 
+    // Whether a symbol has ever been a key of this table. Structure::visitChildren roots the symbol
+    // keys of the table it keeps (see SymbolPropertyKeys.h) and skips the walk when there are none.
+    bool hasSymbolKeys() const { return m_hasSymbolKeys; }
+
     // Copy this PropertyTable, ensuring the copy has at least the capacity provided.
     PropertyTable* copy(VM&, unsigned newCapacity);
 
@@ -291,6 +295,7 @@ private:
     unsigned m_keyCount;
     unsigned m_deletedCount;
     std::unique_ptr<Vector<PropertyOffset>> m_deletedOffsets;
+    bool m_hasSymbolKeys { false };
 
     static constexpr unsigned MinimumTableSize = 16;
     static_assert(MinimumTableSize >= 16, "compact index is uint8_t and we should keep 16 byte aligned entries after this array");
@@ -373,6 +378,8 @@ ALWAYS_INLINE std::tuple<PropertyOffset, unsigned, bool> PropertyTable::addAfter
 
     // Ref the key
     entry.key()->ref();
+    if (entry.key()->isSymbol()) [[unlikely]]
+        m_hasSymbolKeys = true;
 
     // ensure capacity is available.
     if (!canInsert(entry)) {
