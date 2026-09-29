@@ -2294,17 +2294,15 @@ static bool packItem(JSGlobalObject* globalObject, char format, std::span<uint8_
         memcpy(bytes.data(), &number, sizeof(number));
         return true;
     };
-    if (format == 'f' || format == 'd' || format == 'e') {
-        if (!classify(value))
+    // fix_error_int(): what has gone wrong is put in this one's own words.
+    auto fixError = [&] {
+        if (catchException(globalObject, BuiltinType::TypeError))
             return invalidType();
-        // fix_error_int(): what has gone wrong is put in this one's own words.
-        auto fixError = [&] {
-            if (catchException(globalObject, BuiltinType::TypeError))
-                return invalidType();
-            if (catchException(globalObject, BuiltinType::OverflowError) || catchException(globalObject, BuiltinType::ValueError))
-                return invalidValue();
-            return false;
-        };
+        if (catchException(globalObject, BuiltinType::OverflowError) || catchException(globalObject, BuiltinType::ValueError))
+            return invalidValue();
+        return false;
+    };
+    if (format == 'f' || format == 'd' || format == 'e') {
         auto real = toDouble(globalObject, value);
         if (scope.exception()) [[unlikely]]
             return fixError();
@@ -2328,9 +2326,19 @@ static bool packItem(JSGlobalObject* globalObject, char format, std::span<uint8_
         RETURN_IF_EXCEPTION(scope, false);
         return store(static_cast<uint8_t>(truth));
     }
-    Number number = classify(value);
-    if (!number.isInt())
+    // PyLong_AsVoidPtr() takes an int and nothing that could be made one.
+    if (format == 'P' && !classify(value).isInt())
         return invalidType();
+    // pylong_as_ld() and the rest: an int, or what has __index__()
+    JSValue integer = toInt(globalObject, value);
+    if (scope.exception()) [[unlikely]]
+        return fixError();
+    // One that is negative is taken for a long.
+    if (format == 'P' && compareInts(integer, jsNumber(0)) < 0) {
+        auto pointer = tryInt64(integer);
+        return pointer ? store(*pointer) : invalidValue();
+    }
+    Number number = classify(integer);
     if (number.kind == Number::Kind::Big) {
         // Only the widest have room for one.
         bool isUnsigned = format == 'Q' || format == 'L' || format == 'N' || format == 'P';
