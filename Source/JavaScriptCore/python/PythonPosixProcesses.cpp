@@ -454,12 +454,9 @@ PYTHON_NATIVE(posixSpawn)
 
 // ---- Waiting
 
-// wait_helper()
-static JSValue waitResult(JSGlobalObject* globalObject, pid_t process, int status, struct rusage& usage)
+// A resource.struct_rusage
+JSValue newResourceUsage(JSGlobalObject* globalObject, const struct rusage& usage)
 {
-    // If nothing was ready to be told of, nothing has been put in it.
-    if (!process)
-        zeroBytes(usage);
     auto seconds = [] (const struct timeval& time) { return floatFromDouble(multiplyAdd(static_cast<double>(time.tv_usec), 0.000001, static_cast<double>(time.tv_sec))); };
     MarkedArgumentBuffer values;
     values.append(seconds(usage.ru_utime));
@@ -467,8 +464,16 @@ static JSValue waitResult(JSGlobalObject* globalObject, pid_t process, int statu
     for (long value : { usage.ru_maxrss, usage.ru_ixrss, usage.ru_idrss, usage.ru_isrss, usage.ru_minflt, usage.ru_majflt, usage.ru_nswap, usage.ru_inblock, usage.ru_oublock, usage.ru_msgsnd, usage.ru_msgrcv,
              usage.ru_nsignals, usage.ru_nvcsw, usage.ru_nivcsw })
         values.append(intFromInt64(globalObject, value));
-    JSValue result = newStructSequence(globalObject, posixState(globalObject).resourceUsage.get(), values);
-    return PyTuple::create(globalObject, { jsNumber(process), jsNumber(status), result });
+    return newStructSequence(globalObject, posixState(globalObject).resourceUsage.get(), values);
+}
+
+// wait_helper()
+static JSValue waitResult(JSGlobalObject* globalObject, pid_t process, int status, struct rusage& usage)
+{
+    // If nothing was ready to be told of, nothing has been put in it.
+    if (!process)
+        zeroBytes(usage);
+    return PyTuple::create(globalObject, { jsNumber(process), jsNumber(status), newResourceUsage(globalObject, usage) });
 }
 
 enum class Wait : uint8_t { Wait, Waitpid, Wait3, Wait4 };

@@ -31,6 +31,7 @@
 #if OS(UNIX)
 
 #include <fcntl.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -43,6 +44,7 @@ void addPosixFileFunctions(JSGlobalObject*, JSObject* module);
 void addPosixProcessFunctions(JSGlobalObject*, JSObject* module);
 void initializePosixFileTypes(JSGlobalObject*, PosixModuleState&);
 void initializePosixProcessTypes(JSGlobalObject*, PosixModuleState&);
+JSValue newResourceUsage(JSGlobalObject*, const struct rusage&); // A resource.struct_rusage
 
 static constexpr int defaultDirectoryDescriptor = AT_FDCWD; // DEFAULT_DIR_FD
 

@@ -810,6 +810,11 @@ compared by asking the class outright, until it has nothing to say. The two kind
 `PythonCMathKernels.h`, which `lib/convert-cmath-kernels.py` makes. `PythonCMathModule.cpp` is what has to do with objects. It is compiled with `#pragma STDC FP_CONTRACT ON` too: without that, ten of the functions differ from
 CPython's in the last bit somewhere among the numbers that `cmath-module.py` tries. It is not compiled together with anything else, since the kernels have names of one letter for things.
 
+### `resource`
+
+`PythonResourceModule.cpp` is `Modules/resource.c`. Like `posix`, it is there if the host lists it: `createResourceModule()`. `resource.struct_rusage` is the class that `os.wait3()` and `os.wait4()` give one of, as in CPython, where
+they import this to get it.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see

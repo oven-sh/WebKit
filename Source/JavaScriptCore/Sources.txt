@@ -819,6 +819,7 @@ python/PythonRange.cpp
 python/PythonRandomModule.cpp
 python/PythonReduce.cpp
 python/PythonRepr.cpp
+python/PythonResourceModule.cpp
 python/PythonSRE.cpp
 python/PythonRuntimeFunctions.cpp
 python/PythonSelectModule.cpp
