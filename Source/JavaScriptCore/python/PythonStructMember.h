@@ -26,21 +26,21 @@
 
 #pragma once
 
-#include "JSExportMacros.h"
+#include "JSCJSValue.h"
 
 namespace JSC {
 
 class JSGlobalObject;
-class JSObject;
 
 namespace Python {
 
-// The module posix, which is what `os` is made from. It is written here so that it is written once, but it is what a program reaches the system with, so whether there is such a module is up to whoever embeds the
-// engine: it is there if this is among Configuration::builtinModules. Null where it is not written.
-JS_EXPORT_PRIVATE JSObject* createPosixModule(JSGlobalObject*);
-// The module _posixsubprocess, which is what `subprocess` starts a program with. It goes with that one.
-JS_EXPORT_PRIVATE JSObject* createPosixSubprocessModule(JSGlobalObject*);
-// The module select, likewise.
-JS_EXPORT_PRIVATE JSObject* createSelectModule(JSGlobalObject*);
+// A field of a C struct that a program can set: PyMember_SetOne() of CPython's Python/structmember.c, for the kinds of number. What does not fit is cut down to fit, with a warning, as it has always been.
+// `value` is empty if the attribute is being deleted, which it cannot be. False if it raised.
+bool setMember(JSGlobalObject*, JSValue value, short&); // Py_T_SHORT
+bool setMember(JSGlobalObject*, JSValue value, unsigned short&); // Py_T_USHORT
+bool setMember(JSGlobalObject*, JSValue value, int&); // Py_T_INT
+bool setMember(JSGlobalObject*, JSValue value, unsigned&); // Py_T_UINT
+bool setMember(JSGlobalObject*, JSValue value, long long&); // Py_T_LONGLONG
+bool setMember(JSGlobalObject*, JSValue value, unsigned long long&); // Py_T_ULONGLONG
 
 } } // namespace JSC::Python

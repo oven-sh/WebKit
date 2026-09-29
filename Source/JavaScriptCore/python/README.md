@@ -723,6 +723,14 @@ What CPython has only on Linux is not written, and what is written for Linux has
 thread and none of the engine's others. Here that is `child_exec()`, which CPython wrote to be run in the middle of anything: it asks for no memory, locks nothing, and runs none of the engine, and then the process is another
 program. All that it goes by is worked out beforehand. The one thing that it cannot be asked to do is call `preexec_fn`, which is Python: see *Where it differs*.
 
+### `select`
+
+`PythonSelectModule.cpp` is `Modules/selectmodule.c`: `select()`, `poll`, and `kevent` and `kqueue` where there are those. `epoll`, which is Linux's, is not written, and `selectors` makes do with `poll`. Each of them begins again when
+a signal has interrupted it and been seen to, for as long as is left. The fields of a `kevent` can be set, and are fields of a C struct, so what is stored is cut down to fit as C would, with a warning: `PythonStructMember.cpp` is
+`PyMember_SetOne()`, for whatever else has such fields.
+
+They stop the thread, as `time.sleep()` does. What waits for descriptors without stopping it is the host's event loop.
+
 ### `time`
 
 `PythonTimeModule.cpp` is `Modules/timemodule.c`, and `PythonTime.cpp` what it wants of `Python/pytime.c`: a time is a number of nanoseconds, and how a float or an int is made one, rounded which way, and what is said if

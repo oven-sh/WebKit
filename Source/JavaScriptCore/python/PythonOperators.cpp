@@ -1314,7 +1314,7 @@ std::optional<int64_t> tryInt64(JSValue value)
 }
 
 // What is done about an int that is too large.
-enum class IfTooLarge : uint8_t { Clamp, IndexError, OverflowError, TooLargeForSsize, TooLargeForLong, TooLargeForInt };
+enum class IfTooLarge : uint8_t { Clamp, IndexError, OverflowError, TooLargeForSsize, TooLargeForLong, TooLargeForLongLong, TooLargeForInt };
 
 static std::optional<int64_t> toInt64(JSGlobalObject* globalObject, JSValue value, IfTooLarge ifTooLarge)
 {
@@ -1345,6 +1345,9 @@ static std::optional<int64_t> toInt64(JSGlobalObject* globalObject, JSValue valu
     case IfTooLarge::TooLargeForLong:
         raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C long"_s);
         break;
+    case IfTooLarge::TooLargeForLongLong:
+        raise(globalObject, scope, BuiltinType::OverflowError, "int too big to convert"_s);
+        break;
     case IfTooLarge::TooLargeForInt:
         raise(globalObject, scope, BuiltinType::OverflowError, "Python int too large to convert to C int"_s);
         break;
@@ -1370,6 +1373,12 @@ std::optional<int64_t> toSsize(JSGlobalObject* globalObject, JSValue value)
 std::optional<int64_t> toCLong(JSGlobalObject* globalObject, JSValue value)
 {
     return toInt64(globalObject, value, IfTooLarge::TooLargeForLong);
+}
+
+std::optional<long long> toCLongLong(JSGlobalObject* globalObject, JSValue value)
+{
+    auto result = toInt64(globalObject, value, IfTooLarge::TooLargeForLongLong);
+    return result ? std::optional<long long>(*result) : std::nullopt;
 }
 
 std::optional<int> toCInt(JSGlobalObject* globalObject, JSValue value)

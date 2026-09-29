@@ -1,0 +1,426 @@
+---- what there is
+the module => ('select', '', 'BuiltinImporter', 'This module supports asynchronous I/O on multiple file descriptors.\n\n*** IMPORTANT NOTICE ***\nOn Windows, only sockets are supported; on Unix, all file descriptors.', ['KQ_EV_ADD', 'KQ_EV_CLEAR', 'KQ_EV_DELETE', 'KQ_EV_DISABLE', 'KQ_EV_ENABLE', 'KQ_EV_EOF', 'KQ_EV_ERROR', 'KQ_EV_FLAG1', 'KQ_EV_ONESHOT', 'KQ_EV_SYSFLAGS', 'KQ_FILTER_AIO', 'KQ_FILTER_PROC', 'KQ_FILTER_READ', 'KQ_FILTER_SIGNAL', 'KQ_FILTER_TIMER', 'KQ_FILTER_VNODE', 'KQ_FILTER_WRITE', 'KQ_NOTE_ATTRIB', 'KQ_NOTE_CHILD', 'KQ_NOTE_DELETE', 'KQ_NOTE_EXEC', 'KQ_NOTE_EXIT', 'KQ_NOTE_EXTEND', 'KQ_NOTE_FORK', 'KQ_NOTE_LINK', 'KQ_NOTE_LOWAT', 'KQ_NOTE_PCTRLMASK', 'KQ_NOTE_PDATAMASK', 'KQ_NOTE_RENAME', 'KQ_NOTE_REVOKE', 'KQ_NOTE_TRACK', 'KQ_NOTE_TRACKERR', 'KQ_NOTE_WRITE', 'PIPE_BUF', 'POLLERR', 'POLLHUP', 'POLLIN', 'POLLNVAL', 'POLLOUT', 'POLLPRI', 'POLLRDBAND', 'POLLRDNORM', 'POLLWRBAND', 'POLLWRNORM', 'error', 'kevent', 'kqueue', 'poll', 'select'])
+KQ_EV_ADD => 1
+KQ_EV_CLEAR => 32
+KQ_EV_DELETE => 2
+KQ_EV_DISABLE => 8
+KQ_EV_ENABLE => 4
+KQ_EV_EOF => 32768
+KQ_EV_ERROR => 16384
+KQ_EV_FLAG1 => 8192
+KQ_EV_ONESHOT => 16
+KQ_EV_SYSFLAGS => 61440
+KQ_FILTER_AIO => -3
+KQ_FILTER_PROC => -5
+KQ_FILTER_READ => -1
+KQ_FILTER_SIGNAL => -6
+KQ_FILTER_TIMER => -7
+KQ_FILTER_VNODE => -4
+KQ_FILTER_WRITE => -2
+KQ_NOTE_ATTRIB => 8
+KQ_NOTE_CHILD => 4
+KQ_NOTE_DELETE => 1
+KQ_NOTE_EXEC => 536870912
+KQ_NOTE_EXIT => 2147483648
+KQ_NOTE_EXTEND => 4
+KQ_NOTE_FORK => 1073741824
+KQ_NOTE_LINK => 16
+KQ_NOTE_LOWAT => 1
+KQ_NOTE_PCTRLMASK => -1048576
+KQ_NOTE_PDATAMASK => 1048575
+KQ_NOTE_RENAME => 32
+KQ_NOTE_REVOKE => 64
+KQ_NOTE_TRACK => 1
+KQ_NOTE_TRACKERR => 2
+KQ_NOTE_WRITE => 2
+PIPE_BUF => 512
+POLLERR => 8
+POLLHUP => 16
+POLLIN => 1
+POLLNVAL => 32
+POLLOUT => 4
+POLLPRI => 2
+POLLRDBAND => 128
+POLLRDNORM => 64
+POLLWRBAND => 256
+POLLWRNORM => 4
+poll => ('builtin_function_or_method', '($module, /)', 'Returns a polling object.\n\nThis object supports registering and unregistering file descriptors, and\nthen polling them for I/O events.', 'select')
+select => ('builtin_function_or_method', '($module, rlist, wlist, xlist, timeout=None, /)', 'Wait until one or more file descriptors are ready for some kind of I/O.\n\nThe first three arguments are iterables of file descriptors to be waited\nfor:\nrlist -- wait until ready for reading\nwlist -- wait until ready for writing\nxlist -- wait for an "exceptional condition"\nIf only one kind of condition is required, pass [] for the other lists.\n\nA file descriptor is either a socket or file object, or a small integer\ngotten from a fileno() method call on one of those.\n\nThe optional 4th argument specifies a timeout in seconds; it may be\na floating-point number to specify fractions of seconds.  If it is absent\nor None, the call will never time out.\n\nThe return value is a tuple of three lists corresponding to the first\nthree arguments; each contains the subset of the corresponding file\ndescriptors that are ready.\n\n*** IMPORTANT NOTICE ***\nOn Windows, only sockets are supported; on Unix, all file\ndescriptors can be used.', 'select')
+error => True
+poll => ('select', 'poll', ['poll', 'object'], ['__doc__', '__module__', 'modify', 'poll', 'register', 'unregister'], None, None, 48, 4736, "<class 'select.poll'>", "TypeError: type 'select.poll' is not an acceptable base type", None)
+poll.__doc__ => ('NoneType', None, 'The type of the None singleton.')
+poll.__module__ => ('str', None, None)
+poll.modify => ('method_descriptor', '($self, fd, eventmask, /)', 'Modify an already registered file descriptor.\n\n  fd\n    either an integer, or an object with a fileno() method returning\n    an int\n  eventmask\n    a bitmask describing the type of events to check for')
+poll.poll => ('method_descriptor', '($self, timeout=None, /)', 'Polls the set of registered file descriptors.\n\n  timeout\n    The maximum time to wait in milliseconds, or else None (or a negative\n    value) to wait indefinitely.\n\nReturns a list containing any descriptors that have events or errors\nto report, as a list of (fd, event) 2-tuples.')
+poll.register => ('method_descriptor', '($self, fd,\n         eventmask=select.POLLIN | select.POLLPRI | select.POLLOUT, /)', 'Register a file descriptor with the polling object.\n\n  fd\n    either an integer, or an object with a fileno() method returning an int\n  eventmask\n    an optional bitmask describing the type of events to check for')
+poll.unregister => ('method_descriptor', '($self, fd, /)', 'Remove a file descriptor being tracked by the polling object.')
+poll.x => ('int', None, "int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4")
+kevent => ('select', 'kevent', ['kevent', 'object'], ['__doc__', '__eq__', '__ge__', '__gt__', '__hash__', '__init__', '__le__', '__lt__', '__module__', '__ne__', '__new__', '__repr__', 'data', 'fflags', 'filter', 'flags', 'ident', 'udata'], "kevent(ident, filter=KQ_FILTER_READ, flags=KQ_EV_ADD, fflags=0, data=0, udata=0)\n\nThis object is the equivalent of the struct kevent for the C API.\n\nSee the kqueue manpage for more detailed information about the meaning\nof the arguments.\n\nOne minor note: while you might hope that udata could store a\nreference to a python object, it cannot, because it is impossible to\nkeep a proper reference count of the object once it's passed into the\nkernel. Therefore, I have restricted it to only storing an integer.  I\nrecommend ignoring it and simply using the 'ident' field to key off\nof. You could also set up a dictionary on the python side to store a\nudata->object mapping.", None, 48, 4608, "<class 'select.kevent'>", "TypeError: type 'select.kevent' is not an acceptable base type", None)
+kevent.__doc__ => ('str', None, None)
+kevent.__eq__ => ('wrapper_descriptor', '($self, value, /)', 'Return self==value.')
+kevent.__ge__ => ('wrapper_descriptor', '($self, value, /)', 'Return self>=value.')
+kevent.__gt__ => ('wrapper_descriptor', '($self, value, /)', 'Return self>value.')
+kevent.__hash__ => ('NoneType', None, 'The type of the None singleton.')
+kevent.__init__ => ('wrapper_descriptor', '($self, /, *args, **kwargs)', 'Initialize self.  See help(type(self)) for accurate signature.')
+kevent.__le__ => ('wrapper_descriptor', '($self, value, /)', 'Return self<=value.')
+kevent.__lt__ => ('wrapper_descriptor', '($self, value, /)', 'Return self<value.')
+kevent.__module__ => ('str', None, None)
+kevent.__ne__ => ('wrapper_descriptor', '($self, value, /)', 'Return self!=value.')
+kevent.__new__ => ('builtin_function_or_method', '($type, *args, **kwargs)', 'Create and return a new object.  See help(type) for accurate signature.')
+kevent.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+kevent.data => ('member_descriptor', None, None)
+kevent.fflags => ('member_descriptor', None, None)
+kevent.filter => ('member_descriptor', None, None)
+kevent.flags => ('member_descriptor', None, None)
+kevent.ident => ('member_descriptor', None, None)
+kevent.udata => ('member_descriptor', None, None)
+kevent.x => ('int', None, "int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4")
+kqueue => ('select', 'kqueue', ['kqueue', 'object'], ['__del__', '__doc__', '__module__', '__new__', 'close', 'closed', 'control', 'fileno', 'fromfd'], 'Kqueue syscall wrapper.\n\nFor example, to start watching a socket for input:\n>>> kq = kqueue()\n>>> sock = socket()\n>>> sock.connect((host, port))\n>>> kq.control([kevent(sock, KQ_FILTER_WRITE, KQ_EV_ADD)], 0)\n\nTo wait one second for it to become writeable:\n>>> kq.control(None, 1, 1000)\n\nTo stop listening:\n>>> kq.control([kevent(sock, KQ_FILTER_WRITE, KQ_EV_DELETE)], 0)', '()', 24, 4608, "<class 'select.kqueue'>", "TypeError: type 'select.kqueue' is not an acceptable base type", None)
+kqueue.__del__ => ('wrapper_descriptor', '($self, /)', 'Called when the instance is about to be destroyed.')
+kqueue.__doc__ => ('str', None, None)
+kqueue.__module__ => ('str', None, None)
+kqueue.__new__ => ('builtin_function_or_method', '($type, *args, **kwargs)', 'Create and return a new object.  See help(type) for accurate signature.')
+kqueue.close => ('method_descriptor', '($self, /)', 'Close the kqueue control file descriptor.\n\nFurther operations on the kqueue object will raise an exception.')
+kqueue.closed => ('getset_descriptor', None, 'True if the kqueue handler is closed')
+kqueue.control => ('method_descriptor', '($self, changelist, maxevents, timeout=None, /)', "Calls the kernel kevent function.\n\n  changelist\n    Must be an iterable of kevent objects describing the changes to be made\n    to the kernel's watch list or None.\n  maxevents\n    The maximum number of events that the kernel will return.\n  timeout\n    The maximum time to wait in seconds, or else None to wait forever.\n    This accepts floats for smaller timeouts, too.")
+kqueue.fileno => ('method_descriptor', '($self, /)', 'Return the kqueue control file descriptor.')
+kqueue.fromfd => ('classmethod_descriptor', '($type, fd, /)', 'Create a kqueue object from a given control fd.')
+kqueue.x => ('int', None, "int([x]) -> integer\nint(x, base=10) -> integer\n\nConvert a number or string to an integer, or return 0 if no arguments\nare given.  If x is a number, return x.__int__().  For floating-point\nnumbers, this truncates towards zero.\n\nIf x is not a number or if base is given, then x must be a string,\nbytes, or bytearray instance representing an integer literal in the\ngiven base.  The literal can be preceded by '+' or '-' and be surrounded\nby whitespace.  The base defaults to 10.  Valid bases are 0 and 2-36.\nBase 0 means to interpret the base from the string as an integer\niteral.\n>>> int('0b100', base=0)\n4")
+poll is not made by calling its class => TypeError: cannot create 'select.poll' instances
+---- select()
+nothing to read => ([], [], [])
+room to write => ([], ['w'], [])
+something to read => (['r'], ['w', 'w2'], [])
+with no timeout => (['r'], [], [])
+None is no timeout => (['r'], [], [])
+what has fileno() comes back as it is => [True]
+anything that can be gone through => [['r'], ['r'], ['r'], ['r'], ['r'], ['r']]
+the same one twice => (['r', 'r'], [], [])
+what they are => ['tuple', 'list', 'list', 'list']
+it waits => [(([], [], []), True)]
+select() => TypeError: select expected at least 3 arguments, got 0
+select([],) => TypeError: select expected at least 3 arguments, got 1
+select([], []) => TypeError: select expected at least 3 arguments, got 2
+select([], [], [], 0, 1) => TypeError: select expected at most 4 arguments, got 5
+select(5, [], []) => TypeError: arguments 1-3 must be sequences
+select([], 5, []) => TypeError: arguments 1-3 must be sequences
+select([], [], 5) => TypeError: arguments 1-3 must be sequences
+select(None, [], []) => TypeError: arguments 1-3 must be sequences
+select([], [], [], 'a') => TypeError: timeout must be a float or None
+select([], [], [], []) => TypeError: timeout must be a float or None
+select([], [], [], -1) => ValueError: timeout must be non-negative
+select([], [], [], -0.001) => ValueError: timeout must be non-negative
+select([], [], [], -1e-10) => ValueError: timeout must be non-negative
+select([], [], [], nan) => ValueError: Invalid value NaN (not a number)
+select([], [], [], inf) => OverflowError: timestamp out of range for C PyTime_t
+select([], [], [], 1e+300) => OverflowError: timestamp out of range for C PyTime_t
+select([], [], [], 18446744073709551616) => OverflowError: timestamp out of range for C PyTime_t
+select([], [], [], 1j) => TypeError: timeout must be a float or None
+select(['a'], [], []) => TypeError: argument must be an int, or have a fileno() method.
+select([None], [], []) => TypeError: argument must be an int, or have a fileno() method.
+select([1.5], [], []) => TypeError: argument must be an int, or have a fileno() method.
+select([-1], [], []) => ValueError: file descriptor cannot be a negative integer (-1)
+select([-5], [], []) => ValueError: file descriptor cannot be a negative integer (-5)
+select([2147483648], [], []) => OverflowError: Python int too large to convert to C int
+select([1267650600228229401496703205376], [], []) => OverflowError: Python int too large to convert to C int
+select([1024], [], []) => ValueError: filedescriptor out of range in select()
+select([1023], [], [], 0) => ([1023], [], [])
+select([File], [], []) => TypeError: fileno() returned a non-integer
+select([File], [], []) => ValueError: file descriptor cannot be a negative integer (-1)
+select([File], [], []) => TypeError: fileno() returned a non-integer
+select([File], [], []) => OverflowError: Python int too large to convert to C int
+select([Nothing], [], []) => TypeError: argument must be an int, or have a fileno() method.
+select([Index], [], [], 0) => TypeError: argument must be an int, or have a fileno() method.
+select([9999], [], []) => ValueError: filedescriptor out of range in select()
+by name => TypeError: select.select() takes no keyword arguments
+one that is closed => OSError: Bad file descriptor
+too many => ValueError: too many file descriptors in select()
+as many as there can be => 1024
+a list that changes while it is gone through => []
+---- poll
+with nothing => ([], [], [], 'list')
+register => (None, [('r', 3)], None, [('r', 3), ('w', 4)], None, [('r', 3), ('w', 4)])
+again is to say otherwise => (None, [('w', 4)], None, [('w', 4)], None, [('r', 3), ('w', 4)])
+modify => (None, [('w', 4)], None, [('r', 1), ('w', 4)], 'FileNotFoundError: [Errno 2] No such file or directory', 'FileNotFoundError: [Errno 2] No such file or directory')
+unregister => (None, [('r', 1)], 'KeyError: w', None, 'KeyError: 9999', [('r', 1)])
+it waits => [(None, [], True, None)]
+less than nothing is for ever, and there is something => [[('r', 1)], [('r', 1)], [('r', 1)], [('r', 1)], [('r', 1)]]
+register => ['TypeError: register expected at least 1 argument, got 0', 'TypeError: argument must be an int, or have a fileno() method.', 'TypeError: argument must be an int, or have a fileno() method.', 'TypeError: argument must be an int, or have a fileno() method.', 'ValueError: file descriptor cannot be a negative integer (-1)', 'OverflowError: Python int too large to convert to C int', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'ValueError: Cannot convert negative int', 'OverflowError: Python int too large for C unsigned short', None, 'OverflowError: Python int too large for C unsigned short', 'ValueError: Cannot convert negative int', 'TypeError: register expected at most 2 arguments, got 3', 'TypeError: fileno() returned a non-integer', 'ValueError: file descriptor cannot be a negative integer (-1)', None, None, 'TypeError: argument must be an int, or have a fileno() method.', 'TypeError: poll.register() takes no keyword arguments']
+modify => ['TypeError: modify expected 2 arguments, got 0', 'TypeError: modify expected 2 arguments, got 1', "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: Cannot convert negative int', 'OverflowError: Python int too large for C unsigned short', 'TypeError: argument must be an int, or have a fileno() method.', 'TypeError: modify expected 2 arguments, got 3', 'ValueError: file descriptor cannot be a negative integer (-1)', 'TypeError: poll.modify() takes no keyword arguments']
+unregister => ['TypeError: poll.unregister() takes exactly one argument (0 given)', 'TypeError: argument must be an int, or have a fileno() method.', 'ValueError: file descriptor cannot be a negative integer (-1)', 'TypeError: poll.unregister() takes exactly one argument (2 given)', 'TypeError: argument must be an int, or have a fileno() method.', 'TypeError: argument must be an int, or have a fileno() method.', 'TypeError: poll.unregister() takes no keyword arguments']
+poll => ['TypeError: timeout must be an integer or None', 'TypeError: timeout must be an integer or None', 'TypeError: poll expected at most 1 argument, got 2', 'ValueError: Invalid value NaN (not a number)', 'OverflowError: timestamp out of range for C PyTime_t', 'OverflowError: timestamp out of range for C PyTime_t', 'OverflowError: timeout is too large', 'OverflowError: timeout is too large', 'OverflowError: timeout is too large', 'OverflowError: timestamp out of range for C PyTime_t', 'TypeError: timeout must be an integer or None', 'TypeError: timeout must be an integer or None', 'TypeError: poll.poll() takes no keyword arguments']
+one that is closed => [(None, None, None, True)]
+the other end has gone => [(None, None, False, None)]
+in the order that they were registered => [(None, None, None, ['w2', 'r', 'w'], None, None, ['w2', 'w', 'r'])]
+what it has => ("AttributeError: 'select.poll' object attribute 'x' is read-only", "AttributeError: 'select.poll' object has no attribute '__dict__'", '<select.poll object', True, True, True, "TypeError: '<' not supported between instances of 'select.poll' and 'select.poll'", "TypeError: 'select.poll' object is not iterable", "TypeError: object of type 'select.poll' has no len()", True)
+---- kevent
+as it is by default => ((5, -1, 1, 0, 0, 0), '<select.kevent ident=5 filter=-1 flags=0x1 fflags=0x0 data=0x0 udata=0x0>', (0, 0, 0, 0, 0, 0), '<select.kevent ident=0 filter=0 flags=0x0 fflags=0x0 data=0x0 udata=0x0>')
+all given => ((1, 2, 3, 4, 5, 6), '<select.kevent ident=1 filter=2 flags=0x3 fflags=0x4 data=0x5 udata=0x6>', (1, 2, 3, 4, 5, 6), (1, -1, 3, 0, 0, 6), (7, -1, 1, 0, 0, 0), (8, -1, 1, 0, 0, 0), (1, -1, 1, 0, 0, 0))
+shown => ['<select.kevent ident=0 filter=-1 flags=0x1 fflags=0x0 data=0x0 udata=0x0>', '<select.kevent ident=18446744073709551615 filter=-1 flags=0x1 fflags=0x0 data=0x0 udata=0x0>', '<select.kevent ident=1 filter=-1 flags=0x1 fflags=0x0 data=0x0 udata=0x0>', '<select.kevent ident=1 filter=-32768 flags=0x1 fflags=0x0 data=0x0 udata=0x0>', '<select.kevent ident=1 filter=32767 flags=0x1 fflags=0x0 data=0x0 udata=0x0>', '<select.kevent ident=1 filter=0 flags=0xffff fflags=0x0 data=0x0 udata=0x0>', '<select.kevent ident=1 filter=0 flags=0x0 fflags=0xffffffff data=0x0 udata=0x0>', '<select.kevent ident=1 filter=0 flags=0x0 fflags=0x0 data=0xffffffffffffffff udata=0x0>', '<select.kevent ident=1 filter=0 flags=0x0 fflags=0x0 data=0x7fffffffffffffff udata=0x0>', '<select.kevent ident=1 filter=0 flags=0x0 fflags=0x0 data=0x8000000000000000 udata=0x0>', '<select.kevent ident=1 filter=0 flags=0x0 fflags=0x0 data=0x0 udata=0xffffffffffffffff>', '<select.kevent ident=1 filter=0 flags=0x0 fflags=0x0 data=0x0 udata=0xff>']
+what is cut down without a word => [(1, 0, 0, 0, 0, 0), (1, 0, 1, 0, 0, 0), (1, 0, 65535, 0, 0, 0), (1, 0, 5, 0, 0, 0), (1, 0, 0, 0, 0, 0), (1, 0, 0, 4294967295, 0, 0), (1, 0, 0, 5, 0, 0), (1, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 18446744073709551615), (1, 0, 0, 0, 0, 5)]
+kevent() => TypeError: kevent() missing required argument 'ident' (pos 1)
+kevent('a') => TypeError: argument must be an int, or have a fileno() method.
+kevent(None) => TypeError: argument must be an int, or have a fileno() method.
+kevent(1.5) => TypeError: argument must be an int, or have a fileno() method.
+kevent(-1) => ValueError: Cannot convert negative int
+kevent(-1267650600228229401496703205376) => ValueError: Cannot convert negative int
+kevent(18446744073709551616) => OverflowError: Python int too large for C kqueue event identifier
+kevent(1267650600228229401496703205376) => OverflowError: Python int too large for C kqueue event identifier
+kevent(File) => ValueError: file descriptor cannot be a negative integer (-1)
+kevent(File) => TypeError: fileno() returned a non-integer
+kevent(object) => TypeError: argument must be an int, or have a fileno() method.
+kevent(1, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+kevent(1, None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+kevent(1, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+kevent(1, 32768) => OverflowError: signed short integer is greater than maximum
+kevent(1, -32769) => OverflowError: signed short integer is less than minimum
+kevent(1, 1267650600228229401496703205376) => OverflowError: Python int too large to convert to C long
+kevent(1, 0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+kevent(1, 0, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+kevent(1, 0, None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+kevent(1, 0, 0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+kevent(1, 0, 0, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+kevent(1, 0, 0, 0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+kevent(1, 0, 0, 0, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+kevent(1, 0, 0, 0, 9223372036854775808) => OverflowError: int too big to convert
+kevent(1, 0, 0, 0, -9223372036854775809) => OverflowError: int too big to convert
+kevent(1, 0, 0, 0, 0, 'a') => TypeError: kevent() argument 6 must be int, not str
+kevent(1, 0, 0, 0, 0, 1.5) => TypeError: kevent() argument 6 must be int, not float
+kevent(1, 0, 0, 0, 0, None) => TypeError: kevent() argument 6 must be int, not None
+kevent(1, 2, 3, 4, 5, 6, 7) => TypeError: kevent() takes at most 6 arguments (7 given)
+kevent(1, ident=2) => TypeError: argument for kevent() given by name ('ident') and position (1)
+kevent(1, other=2) => TypeError: kevent() got an unexpected keyword argument 'other'
+kevent(filter=1) => TypeError: kevent() missing required argument 'ident' (pos 1)
+kevent(1, Index, Index, Index, Index, Index) => (1, 2, 3, 4, 5, 6)
+ident = 0 => (None, 0)
+ident = 1 => (None, 1)
+ident = -1 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709551615)
+ident = 255 => (None, 255)
+ident = 32767 => (None, 32767)
+ident = 32768 => (None, 32768)
+ident = -32768 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709518848)
+ident = -32769 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709518847)
+ident = 65535 => (None, 65535)
+ident = 65536 => (None, 65536)
+ident = 2147483648 => (None, 2147483648)
+ident = 4294967295 => (None, 4294967295)
+ident = 4294967296 => (None, 4294967296)
+ident = -2147483649 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744071562067967)
+ident = 9223372036854775807 => (None, 9223372036854775807)
+ident = 9223372036854775808 => (None, 9223372036854775808)
+ident = -9223372036854775808 => ('RuntimeWarning: Writing negative value into unsigned field', 9223372036854775808)
+ident = -9223372036854775809 => ('OverflowError: Python int too large to convert to C long', 1)
+ident = 18446744073709551615 => (None, 18446744073709551615)
+ident = 18446744073709551616 => ('OverflowError: int too big to convert', 1)
+ident = 1267650600228229401496703205376 => ('OverflowError: int too big to convert', 1)
+ident = -1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C long', 1)
+ident = 'a' => ("TypeError: 'str' object cannot be interpreted as an integer", 1)
+ident = None => ("TypeError: 'NoneType' object cannot be interpreted as an integer", 1)
+ident = 1.5 => ("TypeError: 'float' object cannot be interpreted as an integer", 1)
+ident = True => (None, 1)
+ident = Index(7) => (None, 7)
+ident = Index(-7) => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709551609)
+del ident => TypeError: can't delete numeric/char attribute
+filter = 0 => (None, 0)
+filter = 1 => (None, 1)
+filter = -1 => (None, -1)
+filter = 255 => (None, 255)
+filter = 32767 => (None, 32767)
+filter = 32768 => ('RuntimeWarning: Truncation of value to short', -32768)
+filter = -32768 => (None, -32768)
+filter = -32769 => ('RuntimeWarning: Truncation of value to short', 32767)
+filter = 65535 => ('RuntimeWarning: Truncation of value to short', -1)
+filter = 65536 => ('RuntimeWarning: Truncation of value to short', 0)
+filter = 2147483648 => ('RuntimeWarning: Truncation of value to short', 0)
+filter = 4294967295 => ('RuntimeWarning: Truncation of value to short', -1)
+filter = 4294967296 => ('RuntimeWarning: Truncation of value to short', 0)
+filter = -2147483649 => ('RuntimeWarning: Truncation of value to short', -1)
+filter = 9223372036854775807 => ('RuntimeWarning: Truncation of value to short', -1)
+filter = 9223372036854775808 => ('OverflowError: Python int too large to convert to C long', 2)
+filter = -9223372036854775808 => ('RuntimeWarning: Truncation of value to short', 0)
+filter = -9223372036854775809 => ('OverflowError: Python int too large to convert to C long', 2)
+filter = 18446744073709551615 => ('OverflowError: Python int too large to convert to C long', 2)
+filter = 18446744073709551616 => ('OverflowError: Python int too large to convert to C long', 2)
+filter = 1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C long', 2)
+filter = -1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C long', 2)
+filter = 'a' => ("TypeError: 'str' object cannot be interpreted as an integer", 2)
+filter = None => ("TypeError: 'NoneType' object cannot be interpreted as an integer", 2)
+filter = 1.5 => ("TypeError: 'float' object cannot be interpreted as an integer", 2)
+filter = True => (None, 1)
+filter = Index(7) => (None, 7)
+filter = Index(-7) => (None, -7)
+del filter => TypeError: can't delete numeric/char attribute
+flags = 0 => (None, 0)
+flags = 1 => (None, 1)
+flags = -1 => ('RuntimeWarning: Truncation of value to unsigned short', 65535)
+flags = 255 => (None, 255)
+flags = 32767 => (None, 32767)
+flags = 32768 => (None, 32768)
+flags = -32768 => ('RuntimeWarning: Truncation of value to unsigned short', 32768)
+flags = -32769 => ('RuntimeWarning: Truncation of value to unsigned short', 32767)
+flags = 65535 => (None, 65535)
+flags = 65536 => ('RuntimeWarning: Truncation of value to unsigned short', 0)
+flags = 2147483648 => ('RuntimeWarning: Truncation of value to unsigned short', 0)
+flags = 4294967295 => ('RuntimeWarning: Truncation of value to unsigned short', 65535)
+flags = 4294967296 => ('RuntimeWarning: Truncation of value to unsigned short', 0)
+flags = -2147483649 => ('RuntimeWarning: Truncation of value to unsigned short', 65535)
+flags = 9223372036854775807 => ('RuntimeWarning: Truncation of value to unsigned short', 65535)
+flags = 9223372036854775808 => ('OverflowError: Python int too large to convert to C long', 3)
+flags = -9223372036854775808 => ('RuntimeWarning: Truncation of value to unsigned short', 0)
+flags = -9223372036854775809 => ('OverflowError: Python int too large to convert to C long', 3)
+flags = 18446744073709551615 => ('OverflowError: Python int too large to convert to C long', 3)
+flags = 18446744073709551616 => ('OverflowError: Python int too large to convert to C long', 3)
+flags = 1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C long', 3)
+flags = -1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C long', 3)
+flags = 'a' => ("TypeError: 'str' object cannot be interpreted as an integer", 3)
+flags = None => ("TypeError: 'NoneType' object cannot be interpreted as an integer", 3)
+flags = 1.5 => ("TypeError: 'float' object cannot be interpreted as an integer", 3)
+flags = True => (None, 1)
+flags = Index(7) => (None, 7)
+flags = Index(-7) => ('RuntimeWarning: Truncation of value to unsigned short', 65529)
+del flags => TypeError: can't delete numeric/char attribute
+fflags = 0 => (None, 0)
+fflags = 1 => (None, 1)
+fflags = -1 => ('RuntimeWarning: Writing negative value into unsigned field', 4294967295)
+fflags = 255 => (None, 255)
+fflags = 32767 => (None, 32767)
+fflags = 32768 => (None, 32768)
+fflags = -32768 => ('RuntimeWarning: Writing negative value into unsigned field', 4294934528)
+fflags = -32769 => ('RuntimeWarning: Writing negative value into unsigned field', 4294934527)
+fflags = 65535 => (None, 65535)
+fflags = 65536 => (None, 65536)
+fflags = 2147483648 => (None, 2147483648)
+fflags = 4294967295 => (None, 4294967295)
+fflags = 4294967296 => ('RuntimeWarning: Truncation of value to unsigned int', 0)
+fflags = -2147483649 => ('RuntimeWarning: Writing negative value into unsigned field', 2147483647)
+fflags = 9223372036854775807 => ('RuntimeWarning: Truncation of value to unsigned int', 4294967295)
+fflags = 9223372036854775808 => ('RuntimeWarning: Truncation of value to unsigned int', 0)
+fflags = -9223372036854775808 => ('RuntimeWarning: Writing negative value into unsigned field', 0)
+fflags = -9223372036854775809 => ('OverflowError: Python int too large to convert to C long', 4)
+fflags = 18446744073709551615 => ('RuntimeWarning: Truncation of value to unsigned int', 4294967295)
+fflags = 18446744073709551616 => ('OverflowError: Python int too large to convert to C unsigned long', 4)
+fflags = 1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C unsigned long', 4)
+fflags = -1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C long', 4)
+fflags = 'a' => ("TypeError: 'str' object cannot be interpreted as an integer", 4)
+fflags = None => ("TypeError: 'NoneType' object cannot be interpreted as an integer", 4)
+fflags = 1.5 => ("TypeError: 'float' object cannot be interpreted as an integer", 4)
+fflags = True => (None, 1)
+fflags = Index(7) => (None, 7)
+fflags = Index(-7) => ('RuntimeWarning: Writing negative value into unsigned field', 4294967289)
+del fflags => TypeError: can't delete numeric/char attribute
+data = 0 => (None, 0)
+data = 1 => (None, 1)
+data = -1 => (None, -1)
+data = 255 => (None, 255)
+data = 32767 => (None, 32767)
+data = 32768 => (None, 32768)
+data = -32768 => (None, -32768)
+data = -32769 => (None, -32769)
+data = 65535 => (None, 65535)
+data = 65536 => (None, 65536)
+data = 2147483648 => (None, 2147483648)
+data = 4294967295 => (None, 4294967295)
+data = 4294967296 => (None, 4294967296)
+data = -2147483649 => (None, -2147483649)
+data = 9223372036854775807 => (None, 9223372036854775807)
+data = 9223372036854775808 => ('OverflowError: int too big to convert', 5)
+data = -9223372036854775808 => (None, -9223372036854775808)
+data = -9223372036854775809 => ('OverflowError: int too big to convert', 5)
+data = 18446744073709551615 => ('OverflowError: int too big to convert', 5)
+data = 18446744073709551616 => ('OverflowError: int too big to convert', 5)
+data = 1267650600228229401496703205376 => ('OverflowError: int too big to convert', 5)
+data = -1267650600228229401496703205376 => ('OverflowError: int too big to convert', 5)
+data = 'a' => ("TypeError: 'str' object cannot be interpreted as an integer", 5)
+data = None => ("TypeError: 'NoneType' object cannot be interpreted as an integer", 5)
+data = 1.5 => ("TypeError: 'float' object cannot be interpreted as an integer", 5)
+data = True => (None, 1)
+data = Index(7) => (None, 7)
+data = Index(-7) => (None, -7)
+del data => TypeError: can't delete numeric/char attribute
+udata = 0 => (None, 0)
+udata = 1 => (None, 1)
+udata = -1 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709551615)
+udata = 255 => (None, 255)
+udata = 32767 => (None, 32767)
+udata = 32768 => (None, 32768)
+udata = -32768 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709518848)
+udata = -32769 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709518847)
+udata = 65535 => (None, 65535)
+udata = 65536 => (None, 65536)
+udata = 2147483648 => (None, 2147483648)
+udata = 4294967295 => (None, 4294967295)
+udata = 4294967296 => (None, 4294967296)
+udata = -2147483649 => ('RuntimeWarning: Writing negative value into unsigned field', 18446744071562067967)
+udata = 9223372036854775807 => (None, 9223372036854775807)
+udata = 9223372036854775808 => (None, 9223372036854775808)
+udata = -9223372036854775808 => ('RuntimeWarning: Writing negative value into unsigned field', 9223372036854775808)
+udata = -9223372036854775809 => ('OverflowError: Python int too large to convert to C long', 6)
+udata = 18446744073709551615 => (None, 18446744073709551615)
+udata = 18446744073709551616 => ('OverflowError: int too big to convert', 6)
+udata = 1267650600228229401496703205376 => ('OverflowError: int too big to convert', 6)
+udata = -1267650600228229401496703205376 => ('OverflowError: Python int too large to convert to C long', 6)
+udata = 'a' => ("TypeError: 'str' object cannot be interpreted as an integer", 6)
+udata = None => ("TypeError: 'NoneType' object cannot be interpreted as an integer", 6)
+udata = 1.5 => ("TypeError: 'float' object cannot be interpreted as an integer", 6)
+udata = True => (None, 1)
+udata = Index(7) => (None, 7)
+udata = Index(-7) => ('RuntimeWarning: Writing negative value into unsigned field', 18446744073709551609)
+del udata => TypeError: can't delete numeric/char attribute
+with the warning let pass => [-32768, 1, 0, 65535, 5, 4294967295, 18446744073709551615, 18446744073709551611, 9223372036854775808]
+compared => [['=lg', '<!l', '<!l', '>!g', '<!l', '<!l', '<!l', '>!g', '<!l', '>!g', '=lg'], ['>!g', '=lg', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g'], ['>!g', '<!l', '=lg', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g'], ['<!l', '<!l', '<!l', '=lg', '<!l', '<!l', '<!l', '<!l', '<!l', '<!l', '<!l'], ['>!g', '<!l', '<!l', '>!g', '=lg', '>!g', '>!g', '>!g', '>!g', '>!g', '>!g'], ['>!g', '<!l', '<!l', '>!g', '<!l', '=lg', '>!g', '>!g', '>!g', '>!g', '>!g'], ['>!g', '<!l', '<!l', '>!g', '<!l', '<!l', '=lg', '>!g', '>!g', '>!g', '>!g'], ['<!l', '<!l', '<!l', '>!g', '<!l', '<!l', '<!l', '=lg', '<!l', '<!l', '<!l'], ['>!g', '<!l', '<!l', '>!g', '<!l', '<!l', '<!l', '>!g', '=lg', '>!g', '>!g'], ['<!l', '<!l', '<!l', '>!g', '<!l', '<!l', '<!l', '>!g', '<!l', '=lg', '<!l'], ['=lg', '<!l', '<!l', '>!g', '<!l', '<!l', '<!l', '>!g', '<!l', '>!g', '=lg']]
+with something else => (False, True, "TypeError: '<' not supported between instances of 'select.kevent' and 'int'", "TypeError: '<' not supported between instances of 'int' and 'select.kevent'", False, NotImplemented, NotImplemented, "TypeError: unhashable type: 'select.kevent'")
+made again => [(None, (9, -1, 1, 0, 0, 0), 'TypeError: argument must be an int, or have a fileno() method.', (18446744073709551615, -1, 1, 0, 0, 0), "TypeError: 'str' object cannot be interpreted as an integer", (0, 2, 3, 0, 0, 0))]
+what it has => ("AttributeError: 'select.kevent' object attribute 'x' is read-only", "AttributeError: 'select.kevent' object has no attribute '__dict__'", 'TypeError: select.kevent.__new__(int): int is not a subtype of select.kevent', 'TypeError: select.kevent.__new__(): not enough arguments', (0, 0, 0, 0, 0, 0))
+---- kqueue
+as it is => (False, 'int', True, False, '<select.kqueue object')
+nothing yet => ([], [], [], [], 'list')
+watching => ([], [('r', -1, 1, 0, 1, 0, 'kevent')])
+more than one => ([], [('r', -1, 0), ('w', -2, 77)], 1, 0)
+both at once => [('r', -1), ('w', -2), ('w2', -2)]
+no longer => ([], [])
+what is not there => ('FileNotFoundError: [Errno 2] No such file or directory', [('w', True, 2)])
+it waits => [([], True)]
+a timer => ([], [(1, -7, 1)], [])
+anything that can be gone through => [[], [], [], [], [], []]
+control() => TypeError: control expected at least 2 arguments, got 0
+control(None,) => TypeError: control expected at least 2 arguments, got 1
+control(None, 1, 0, 1) => TypeError: control expected at most 3 arguments, got 4
+control(5, 0) => TypeError: changelist is not iterable
+control('a', 0) => TypeError: changelist must be an iterable of select.kevent objects
+control([1], 0) => TypeError: changelist must be an iterable of select.kevent objects
+control([None], 0) => TypeError: changelist must be an iterable of select.kevent objects
+control('kevent', 0) => TypeError: changelist must be an iterable of select.kevent objects
+control(None, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+control(None, None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+control(None, 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+control(None, -1) => ValueError: Length of eventlist must be 0 or positive, got -1
+control(None, -5) => ValueError: Length of eventlist must be 0 or positive, got -5
+control(None, 2147483648) => OverflowError: Python int too large to convert to C int
+control(None, 0, 'a') => TypeError: timeout argument must be a number or None, got str
+control(None, 0, []) => TypeError: timeout argument must be a number or None, got list
+control(None, 0, -1) => ValueError: timeout must be positive or None
+control(None, 0, -0.001) => ValueError: timeout must be positive or None
+control(None, 0, nan) => TypeError: timeout argument must be a number or None, got float
+control(None, 0, inf) => TypeError: timeout argument must be a number or None, got float
+control(None, 0, 1e+300) => TypeError: timeout argument must be a number or None, got float
+control(None, 0, 18446744073709551616) => TypeError: timeout argument must be a number or None, got int
+control(None, 0, 1j) => TypeError: timeout argument must be a number or None, got complex
+control('object', 0) => TypeError: changelist is not iterable
+by name => TypeError: kqueue.control() takes no keyword arguments
+fromfd => [('kqueue', True, False, [], None, 'OSError: [Errno 9] Bad file descriptor'), 'TypeError: kqueue.fromfd() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", 'OSError: [Errno 9] Bad file descriptor', "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'TypeError: kqueue.fromfd() takes exactly one argument (2 given)', ('kqueue', True, None), ('OSError: [Errno 9] Bad file descriptor', None)]
+how it is made => ['TypeError: kqueue() takes no positional arguments', 'TypeError: kqueue() takes no keyword arguments']
+close => (None, True, None, 'ValueError: I/O operation on closed kqueue object', 'ValueError: I/O operation on closed kqueue object', "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: I/O operation on closed kqueue object')
+what it has => ("AttributeError: 'select.kqueue' object attribute 'x' is read-only", "AttributeError: attribute 'closed' of 'select.kqueue' objects is not writable", 'TypeError: kqueue.close() takes no arguments (1 given)', 'TypeError: kqueue.fileno() takes no arguments (1 given)', "TypeError: 'select.kqueue' object is not iterable", 'no with')
+---- signals
+select goes on afterwards => [((0.0, 0.0), ([], [], []), True, [14], None)]
+poll goes on afterwards => [((0.0, 0.0), [], True, [14], None)]
+kqueue goes on afterwards => [((0.0, 0.0), [], True, [14], None)]
+select, unless the function raises => [((0.0, 0.0), 'ValueError: from the handler', True)]
+poll, unless the function raises => [((0.0, 0.0), 'ValueError: from the handler', True)]
+kqueue, unless the function raises => [((0.0, 0.0), 'ValueError: from the handler', True)]
+and it can be used again => [(None, (0.0, 0.0), 'ValueError: from the handler', [])]
+---- selectors
+which there are => ('KqueueSelector', ['SelectSelector', 'PollSelector', 'KqueueSelector'])
+SelectSelector => ((1, 'reading'), (2, 'writing'), [('reading', 1), ('writing', 2)], 'reading', [('writing', 2)], (1, None), [], 1, "KeyError: 'r is not registered'")
+PollSelector => ((1, 'reading'), (2, 'writing'), [('reading', 1), ('writing', 2)], 'reading', [('writing', 2)], (1, None), [], 1, "KeyError: 'r is not registered'")
+KqueueSelector => ((1, 'reading'), (2, 'writing'), [('reading', 1), ('writing', 2)], 'reading', [('writing', 2)], (1, None), [], 1, "KeyError: 'r is not registered'")

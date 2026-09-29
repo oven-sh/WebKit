@@ -1,0 +1,65 @@
+the module => ('_posixsubprocess', '', 'BuiltinImporter', 'A POSIX helper for the subprocess module.', ['fork_exec'])
+fork_exec => ('builtin_function_or_method', '($module, args, executable_list, close_fds, pass_fds, cwd,\n          env, p2cread, p2cwrite, c2pread, c2pwrite, errread, errwrite,\n          errpipe_read, errpipe_write, restore_signals, call_setsid,\n          pgid_to_set, gid, extra_groups, uid, child_umask, preexec_fn,\n          /)', "Spawn a fresh new child process.\n\nFork a child process, close parent file descriptors as appropriate in\nthe child and duplicate the few that are needed before calling exec() in\nthe child process.\n\nIf close_fds is True, close file descriptors 3 and higher, except those\nlisted in the sorted tuple pass_fds.\n\nThe preexec_fn, if supplied, will be called immediately before closing\nfile descriptors and exec.\n\nWARNING: preexec_fn is NOT SAFE if your application uses threads.\n         It may trigger infrequent, difficult to debug deadlocks.\n\nIf an error occurs in the child process before the exec, it is\nserialized and written to the errpipe_write fd per subprocess.py.\n\nReturns: the child process's PID.\n\nRaises: Only on an error in the parent process.", '_posixsubprocess')
+---- what will not do
+how many => ['TypeError: fork_exec expected 22 arguments, got 0', 'TypeError: fork_exec expected 22 arguments, got 1', 'TypeError: fork_exec expected 22 arguments, got 21', 'TypeError: fork_exec expected 22 arguments, got 23', 'TypeError: _posixsubprocess.fork_exec() takes no keyword arguments']
+args => ['TypeError: argv must be a tuple', 'TypeError: expected str, bytes or os.PathLike object, not int', 'TypeError: expected str, bytes or os.PathLike object, not NoneType', 'ValueError: embedded null byte', 'ValueError: embedded null byte', 'TypeError: expected Path.__fspath__() to return str or bytes, not int', 'TypeError: argv must be a tuple']
+executable_list => ["TypeError: object of type 'int' has no len()", "TypeError: object of type 'NoneType' has no len()", 'TypeError: expected bytes, str found', 'TypeError: expected bytes, int found', 'ValueError: embedded null byte', 'TypeError: expected bytes, bytearray found', "TypeError: object of type 'object' has no len()", 'TypeError: expected bytes, str found']
+close_fds => ['ValueError: no truth in it']
+pass_fds => ['TypeError: fork_exec() argument 4 must be tuple, not int', 'TypeError: fork_exec() argument 4 must be tuple, not None', 'TypeError: fork_exec() argument 4 must be tuple, not list', 'TypeError: fork_exec() argument 4 must be tuple, not list', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep', 'ValueError: bad value(s) in fds_to_keep']
+cwd => ['TypeError: expected str, bytes or os.PathLike object, not int', 'ValueError: embedded null byte', 'ValueError: embedded null byte', 'TypeError: expected str, bytes or os.PathLike object, not list', 'TypeError: expected Path.__fspath__() to return str or bytes, not int']
+env => ["TypeError: object of type 'int' has no len()", 'TypeError: expected bytes, str found', 'TypeError: expected bytes, int found', 'ValueError: embedded null byte', "TypeError: object of type 'object' has no len()"]
+p2cread => ["TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int']
+errpipe_write => ["TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'ValueError: errpipe_write must be >= 3', 'ValueError: errpipe_write must be >= 3', 'ValueError: errpipe_write must be >= 3']
+restore_signals => ['ValueError: no truth in it']
+call_setsid => ['ValueError: no truth in it']
+pgid_to_set => ["TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int']
+gid => ['TypeError: gid should be integer, not str', 'TypeError: gid should be integer, not float', 'OverflowError: gid is less than minimum', 'OverflowError: gid is less than minimum', 'OverflowError: gid is greater than maximum', 'TypeError: gid should be integer, not list']
+extra_groups => ['TypeError: setgroups argument must be a list', 'TypeError: setgroups argument must be a list', 'TypeError: setgroups argument must be a list', 'TypeError: extra_groups must be integers', 'TypeError: extra_groups must be integers', 'TypeError: extra_groups must be integers', 'ValueError: invalid group id', 'ValueError: invalid group id', 'ValueError: invalid group id', 'ValueError: too many extra_groups']
+uid => ['TypeError: uid should be integer, not str', 'TypeError: uid should be integer, not float', 'OverflowError: uid is less than minimum', 'OverflowError: uid is less than minimum', 'OverflowError: uid is greater than maximum', 'TypeError: uid should be integer, not list']
+child_umask => ["TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int']
+errpipe_write may be anything if nothing is to be closed => None
+args that change while they are gone through => ['RuntimeError: args changed during iteration']
+---- starting something
+echo => ('int', b'a b c d\n', 0, b'')
+a tuple, and anything that can be gone through => [b'a\n', b'b\n', b'c\n', b'd\n']
+what it is called need not be what it is => ('int', b'something else\n', 0, b'')
+the first that there is => ('int', b'found\n', 0, b'')
+none of them => ('int', b'', 255, b'OSError:2:')
+one that cannot be run => (('int', b'', 255, b'OSError:d:'), ('int', b'', 255, b'OSError:d:'), ('int', b'', 255, b'OSError:d:'), ('int', b'', 255, b'OSError:14:'))
+no executables at all => ('int', b'', 255, b'OSError:2:')
+how it ends => [(b'', 0), (b'', 1), (b'', 255), (b'', -15), (b'', -9), (b'out\n', 3)]
+stdin => ('int', b'through it', 0, b'')
+env => (b'A=1\nB=two words\n', b'', b'C=3\n', b'D=4\n', True)
+cwd => (b'/usr\n', b'/usr/bin\n', b'/usr/lib\n', (b'', 255, b'OSError:2:noexec:chdir'), (b'', 255, b'OSError:14:noexec:chdir'))
+umask => [b'0000\n', b'0022\n', b'0077\n', b'0777\n']
+a session and a group of its own => left out: ps is not always allowed
+---- what is left open
+nothing, if it is all to be closed => b'open open '
+what is asked for => (b'', 0, b'kept\n')
+though it was not to be inherited => (None, (b'', 0), b'kept\n', False)
+and not otherwise => (None, True)
+what can be inherited, if nothing is to be closed => ((b'', 0), b'kept\n')
+---- signals
+what Python ignores is not ignored there => (<Handlers.SIG_IGN: 1>, (b'', -13), (b'survived\n', 0))
+what a program has a function for is as it is by default => (<Handlers.SIG_DFL: 0>, (b'', -30), None)
+what it ignores is ignored => (<Handlers.SIG_DFL: 0>, (b'survived\n', 0), <Handlers.SIG_IGN: 1>)
+---- what is told of
+fork_exec => (0, [], None)
+not if it is not got as far as => ('TypeError: uid should be integer, not str', [])
+---- subprocess
+run => (CompletedProcess(args=['/bin/echo', 'hello'], returncode=0, stdout=b'hello\n', stderr=b''), CompletedProcess(args='echo $((1 + 2)); echo err >&2; exit 3', returncode=3, stdout='3\n', stderr='err\n'))
+check_output => (b'SHOUT', "CalledProcessError: Command '['/usr/bin/false']' returned non-zero exit status 1.", "CalledProcessError: Command '['/bin/sh', '-c', 'exit 7']' returned non-zero exit status 7.")
+what there is none of => ("FileNotFoundError: [Errno 2] No such file or directory: '/no/such/program'", "FileNotFoundError: [Errno 2] No such file or directory: 'no-such-program-anywhere'", "FileNotFoundError: [Errno 2] No such file or directory: '/no/such/directory'", "PermissionError: [Errno 13] Permission denied: '/etc/hosts'", 'IndexError: list index out of range')
+communicate => [((b'through cat', b''), 0, 0, 0)]
+a good deal, both ways at once => [0, 1, 65536, 1000000]
+stderr to stdout => b'out\nerr\n'
+to nowhere => CompletedProcess(args='echo out; echo err >&2', returncode=0)
+one into another => [(b'a\nb\nc\n', 0)]
+env and cwd => (b'ONLY=this\n', b'/usr\n')
+signals => (-15, [(None, -15)], [(None, -9)], [(None, -2)])
+timeout => ("TimeoutExpired: Command '['/bin/sleep', '30']' timed out after 0.1 seconds", [("TimeoutExpired: Command '['/bin/sleep', '30']' timed out after 0.05 seconds", None, -9)])
+with => None
+text => ('\xe9\u4e2d\n', 'a\nb\n', 'got', (4, ''))
+pass_fds => [(0, b'through\n', None, None)]
+start_new_session, process_group and umask => (0, 0, b'0027\n')
+os.popen and os.system => ('popen\n', 3)

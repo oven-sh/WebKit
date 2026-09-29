@@ -54,6 +54,8 @@ static constexpr int64_t nanosecondsPerMicrosecond = 1000;
 
 // _PyTime_FromSecondsObject(): from an int or a float that is a number of seconds. Nothing if it raised.
 std::optional<int64_t> timeFromSecondsObject(JSGlobalObject*, JSValue, TimeRounding);
+// _PyTime_FromMillisecondsObject()
+std::optional<int64_t> timeFromMillisecondsObject(JSGlobalObject*, JSValue, TimeRounding);
 // _PyTime_AsMicroseconds() and the like.
 int64_t divideTime(int64_t time, int64_t divisor, TimeRounding);
 // PyTime_AsSecondsDouble()
@@ -69,6 +71,10 @@ bool timeAsTimespec(JSGlobalObject*, int64_t, struct timespec&);
 bool timeAsTimeval(JSGlobalObject*, int64_t, struct timeval&, TimeRounding);
 // tv_sec + tv_nsec * 1e-9
 double timespecAsSeconds(const struct timespec&);
+
+// _PyDeadline_Init() and _PyDeadline_Get(): when a time from now is, by the clock that only goes forward, and how long it is until then. Neither raises.
+int64_t deadlineAfter(int64_t timeout);
+int64_t timeUntil(int64_t deadline);
 
 // _Py_clock_info_t
 struct ClockInfo {

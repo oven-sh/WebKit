@@ -567,6 +567,7 @@ std::optional<int64_t> toIndexOrOverflow(JSGlobalObject*, JSValue); // PyNumber_
 // The same, for an argument that in CPython is a Py_ssize_t, a long or an int of C's. It raises OverflowError if it does not fit in one, and says which.
 std::optional<int64_t> toSsize(JSGlobalObject*, JSValue);
 std::optional<int64_t> toCLong(JSGlobalObject*, JSValue);
+std::optional<long long> toCLongLong(JSGlobalObject*, JSValue);
 std::optional<int> toCInt(JSGlobalObject*, JSValue);
 // _PyEval_SliceIndex(), and _PyEval_SliceIndexNotNone(): where something begins or ends, clamped. Whether it is None is for the caller to have seen to: `mayBeNone` is only for what is said.
 std::optional<int64_t> toSliceIndex(JSGlobalObject*, JSValue, bool mayBeNone);

@@ -64,7 +64,8 @@ static double roundTime(double value, TimeRounding rounding)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-std::optional<int64_t> timeFromSecondsObject(JSGlobalObject* globalObject, JSValue value, TimeRounding rounding)
+// pytime_from_object()
+static std::optional<int64_t> timeFromObject(JSGlobalObject* globalObject, JSValue value, TimeRounding rounding, int64_t nanosecondsPerUnit)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -75,7 +76,7 @@ std::optional<int64_t> timeFromSecondsObject(JSGlobalObject* globalObject, JSVal
             raiseValueError(globalObject, scope, "Invalid value NaN (not a number)"_s);
             return std::nullopt;
         }
-        double nanoseconds = roundTime(*seconds * static_cast<double>(nanosecondsPerSecond), rounding);
+        double nanoseconds = roundTime(*seconds * static_cast<double>(nanosecondsPerUnit), rounding);
         // The least there can be is a double exactly, and the most is not.
         constexpr double least = static_cast<double>(std::numeric_limits<int64_t>::min());
         if (!(least <= nanoseconds && nanoseconds < -least)) {
@@ -95,13 +96,16 @@ std::optional<int64_t> timeFromSecondsObject(JSGlobalObject* globalObject, JSVal
     }
     auto seconds = tryInt64(integer);
     CheckedInt64 nanoseconds = seconds.value_or(0);
-    nanoseconds *= nanosecondsPerSecond;
+    nanoseconds *= nanosecondsPerUnit;
     if (!seconds || nanoseconds.hasOverflowed()) {
         raiseTimeOverflow(globalObject, scope);
         return std::nullopt;
     }
     return nanoseconds.value();
 }
+
+std::optional<int64_t> timeFromSecondsObject(JSGlobalObject* globalObject, JSValue value, TimeRounding rounding) { return timeFromObject(globalObject, value, rounding, nanosecondsPerSecond); }
+std::optional<int64_t> timeFromMillisecondsObject(JSGlobalObject* globalObject, JSValue value, TimeRounding rounding) { return timeFromObject(globalObject, value, rounding, nanosecondsPerMillisecond); }
 
 // pytime_divide_round_up()
 static int64_t divideAwayFromZero(int64_t time, int64_t divisor)
@@ -244,10 +248,10 @@ std::optional<int64_t> systemClock(JSGlobalObject* globalObject, ClockInfo* info
     RELEASE_AND_RETURN(scope, timeFromTimespec(globalObject, now));
 }
 
-// py_get_monotonic_clock()
-std::optional<int64_t> monotonicClock(JSGlobalObject* globalObject, ClockInfo* info)
+// py_get_monotonic_clock(), which does not itself raise. What went wrong, if anything did: an errno, or -1 for there being no room for the answer.
+static int readMonotonicClock(int64_t& time, ClockInfo* info)
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    time = 0;
 #if OS(DARWIN)
     // py_mach_timebase_info(), _PyTimeFraction_Set() and _PyTimeFraction_Mul()
     mach_timebase_info_data_t timebase;
@@ -258,10 +262,8 @@ std::optional<int64_t> monotonicClock(JSGlobalObject* globalObject, ClockInfo* i
     if (info)
         *info = { "mach_absolute_time()"_s, true, false, static_cast<double>(numerator) / static_cast<double>(denominator) / 1e9 };
     uint64_t ticks = mach_absolute_time();
-    if (ticks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
-        raiseTimeOverflow(globalObject, scope);
-        return std::nullopt;
-    }
+    if (ticks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+        return -1;
     auto multiply = [] (int64_t a, int64_t b) {
         CheckedInt64 product = a;
         product *= b;
@@ -271,23 +273,59 @@ std::optional<int64_t> monotonicClock(JSGlobalObject* globalObject, ClockInfo* i
     int64_t rest = multiply(static_cast<int64_t>(ticks) % denominator, numerator) / denominator;
     CheckedInt64 result = multiply(whole, numerator);
     result += rest;
-    return result.hasOverflowed() ? std::numeric_limits<int64_t>::max() : result.value();
+    time = result.hasOverflowed() ? std::numeric_limits<int64_t>::max() : result.value();
+    return 0;
 #else
     struct timespec now;
-    if (clock_gettime(CLOCK_MONOTONIC, &now)) {
-        raiseOSError(globalObject, scope, errno);
-        return std::nullopt;
-    }
+    if (clock_gettime(CLOCK_MONOTONIC, &now))
+        return errno;
     if (info) {
         struct timespec resolution;
-        if (clock_getres(CLOCK_MONOTONIC, &resolution)) {
-            raiseOSError(globalObject, scope, errno);
-            return std::nullopt;
-        }
+        if (clock_getres(CLOCK_MONOTONIC, &resolution))
+            return errno;
         *info = { "clock_gettime(CLOCK_MONOTONIC)"_s, true, false, timespecAsSeconds(resolution) };
     }
-    RELEASE_AND_RETURN(scope, timeFromTimespec(globalObject, now));
+    CheckedInt64 result = static_cast<int64_t>(now.tv_sec);
+    result *= nanosecondsPerSecond;
+    result += static_cast<int64_t>(now.tv_nsec);
+    if (result.hasOverflowed())
+        return -1;
+    time = result.value();
+    return 0;
 #endif
+}
+
+std::optional<int64_t> monotonicClock(JSGlobalObject* globalObject, ClockInfo* info)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    int64_t time;
+    int error = readMonotonicClock(time, info);
+    if (!error)
+        return time;
+    if (error < 0)
+        raiseTimeOverflow(globalObject, scope);
+    else
+        raiseOSError(globalObject, scope, error);
+    return std::nullopt;
+}
+
+int64_t deadlineAfter(int64_t timeout)
+{
+    int64_t now;
+    readMonotonicClock(now, nullptr);
+    // _PyTime_Add(), which stops at the most and the least that there can be.
+    CheckedInt64 deadline = now;
+    deadline += timeout;
+    if (deadline.hasOverflowed())
+        return timeout > 0 ? std::numeric_limits<int64_t>::max() : std::numeric_limits<int64_t>::min();
+    return deadline.value();
+}
+
+int64_t timeUntil(int64_t deadline)
+{
+    int64_t now;
+    readMonotonicClock(now, nullptr);
+    return deadline - now;
 }
 
 double timeAsSeconds(int64_t time)

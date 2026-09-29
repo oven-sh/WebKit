@@ -4523,6 +4523,7 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
         configuration.builtinModules.append({ "posix"_s, Python::createPosixModule });
         configuration.builtinModules.append({ "_posixsubprocess"_s, Python::createPosixSubprocessModule });
         configuration.builtinModules.append({ "_signal"_s, Python::createSignalModule });
+        configuration.builtinModules.append({ "select"_s, Python::createSelectModule });
         configuration.installsSignalHandlers = true;
         // Where the library is, as CPython is told: it does not come with the engine.
         if (const char* searchPath = getenv("PYTHONPATH")) {

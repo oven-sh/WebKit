@@ -809,11 +809,13 @@ python/PythonReduce.cpp
 python/PythonRepr.cpp
 python/PythonSRE.cpp
 python/PythonRuntimeFunctions.cpp
+python/PythonSelectModule.cpp
 python/PythonSequences.cpp
 python/PythonSignals.cpp
 python/PythonSignatures.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp
+python/PythonStructMember.cpp
 python/PythonStructSequence.cpp
 python/PythonSymbolTable.cpp
 python/PythonSysModule.cpp
