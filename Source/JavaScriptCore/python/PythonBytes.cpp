@@ -2226,6 +2226,7 @@ static char formatOf(TypedArrayType type)
 template<typename T>
 static T load(std::span<const uint8_t> bytes)
 {
+    RELEASE_ASSERT(bytes.size() >= sizeof(T));
     T value;
     memcpy(&value, bytes.data(), sizeof(T));
     return value;
@@ -2250,6 +2251,8 @@ static JSValue unpackItem(JSGlobalObject* globalObject, char format, std::span<c
         return jsNumber(load<int32_t>(bytes));
     case 'I':
         return intFromInt64(globalObject, load<uint32_t>(bytes));
+    case 'e':
+        return floatFromDouble(unpackFloat2(bytes.first<2>(), true));
     case 'f':
         return floatFromDouble(load<float>(bytes));
     case 'd':
@@ -2284,12 +2287,26 @@ static bool packItem(JSGlobalObject* globalObject, char format, std::span<uint8_
         memcpy(bytes.data(), &number, sizeof(number));
         return true;
     };
-    if (format == 'f' || format == 'd') {
+    if (format == 'f' || format == 'd' || format == 'e') {
         if (!classify(value))
             return invalidType();
+        // fix_error_int(): what has gone wrong is put in this one's own words.
+        auto fixError = [&] {
+            if (catchException(globalObject, BuiltinType::TypeError))
+                return invalidType();
+            if (catchException(globalObject, BuiltinType::OverflowError) || catchException(globalObject, BuiltinType::ValueError))
+                return invalidValue();
+            return false;
+        };
         auto real = toDouble(globalObject, value);
-        RETURN_IF_EXCEPTION(scope, false);
-        return format == 'f' ? store(static_cast<float>(*real)) : store(*real);
+        if (scope.exception()) [[unlikely]]
+            return fixError();
+        if (format != 'e')
+            return format == 'f' ? store(static_cast<float>(*real)) : store(*real);
+        packFloat2(globalObject, *real, bytes.first<2>(), true);
+        if (scope.exception()) [[unlikely]]
+            return fixError();
+        return true;
     }
     if (format == 'c') {
         auto buffer = isBytes(value) ? builtinBufferOf(value) : std::nullopt;

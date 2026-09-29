@@ -70,6 +70,14 @@ int64_t bitLengthOfInt(const Number&); // int.bit_length()
 JSValue intFromDigits(JSGlobalObject*, std::span<const uint64_t>, bool isNegative = false);
 Vector<uint64_t, 4> digitsOfInt(const Number&);
 double toDouble(JSGlobalObject*, ThrowScope&, const Number&); // Raises OverflowError if it is an int too large.
+// PyFloat_Pack2(), PyFloat_Pack4() and PyFloat_Pack8() of CPython's Objects/floatobject.c: a float as two, four or eight bytes, the least first or the most. The first two are false, having raised OverflowError, if there is
+// no room for it. And the other way about, which cannot go wrong.
+bool packFloat2(JSGlobalObject*, double, std::span<uint8_t, 2>, bool isLittleEndian);
+bool packFloat4(JSGlobalObject*, double, std::span<uint8_t, 4>, bool isLittleEndian);
+void packFloat8(double, std::span<uint8_t, 8>, bool isLittleEndian);
+double unpackFloat2(std::span<const uint8_t, 2>, bool isLittleEndian);
+double unpackFloat4(std::span<const uint8_t, 4>, bool isLittleEndian);
+double unpackFloat8(std::span<const uint8_t, 8>, bool isLittleEndian);
 int64_t hashOfNumber(JSGlobalObject*, const Number&);
 int64_t hashOfDouble(double);
 // A negative number to a power that is not whole: a complex number.

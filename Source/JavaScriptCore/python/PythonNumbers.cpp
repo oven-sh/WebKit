@@ -172,6 +172,155 @@ Vector<uint64_t, 4> digitsOfInt(const Number& number)
     return digits;
 }
 
+// ---- Floats as bytes
+
+// The bytes of something, the least first or the most.
+template<typename T, size_t size>
+static void storeBytes(T value, std::span<uint8_t, size> bytes, bool isLittleEndian)
+{
+    static_assert(sizeof(T) == size);
+    static_assert(std::endian::native == std::endian::little);
+    memcpySpan(bytes, asByteSpan(value));
+    if (!isLittleEndian)
+        std::ranges::reverse(bytes);
+}
+
+template<typename T, size_t size>
+static T loadBytes(std::span<const uint8_t, size> bytes, bool isLittleEndian)
+{
+    static_assert(sizeof(T) == size);
+    std::array<uint8_t, size> ordered;
+    memcpySpan(std::span(ordered), bytes);
+    if (!isLittleEndian)
+        std::ranges::reverse(ordered);
+    return std::bit_cast<T>(ordered);
+}
+
+bool packFloat2(JSGlobalObject* globalObject, double x, std::span<uint8_t, 2> bytes, bool isLittleEndian)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto overflow = [&] {
+        raise(globalObject, scope, BuiltinType::OverflowError, "float too large to pack with e format"_s);
+        return false;
+    };
+    unsigned sign;
+    int e;
+    unsigned short bits;
+    if (x == 0.0) {
+        sign = std::signbit(x);
+        e = 0;
+        bits = 0;
+    } else if (std::isinf(x)) {
+        sign = x < 0.0;
+        e = 0x1f;
+        bits = 0;
+    } else if (std::isnan(x)) {
+        sign = std::signbit(x);
+        e = 0x1f;
+        // What kind of NaN it is, and what else it has in it
+        bits = static_cast<unsigned short>((std::bit_cast<uint64_t>(x) & 0xffc0000000000ULL) >> 42);
+        if (!bits)
+            bits |= 1 << 9;
+    } else {
+        sign = x < 0.0;
+        if (sign)
+            x = -x;
+        double f = std::frexp(x, &e);
+        // So that f is at least 1 and less than 2
+        f *= 2.0;
+        e--;
+        if (e >= 16)
+            return overflow();
+        if (e < -25) {
+            // It comes to nothing.
+            f = 0.0;
+            e = 0;
+        } else if (e < -14) {
+            // It is on its way to nothing.
+            f = std::ldexp(f, 14 + e);
+            e = 0;
+        } else {
+            e += 15;
+            f -= 1.0; // The 1 that it begins with goes without saying.
+        }
+        f *= 1024.0;
+        // To the nearest, and to the even one of two that are as near
+        bits = static_cast<unsigned short>(f);
+        if ((f - bits > 0.5) || ((f - bits == 0.5) && (bits % 2 == 1))) {
+            ++bits;
+            if (bits == 1024) {
+                bits = 0;
+                ++e;
+                if (e == 31)
+                    return overflow();
+            }
+        }
+    }
+    bits |= (e << 10) | (sign << 15);
+    storeBytes(bits, bytes, isLittleEndian);
+    return true;
+}
+
+bool packFloat4(JSGlobalObject* globalObject, double x, std::span<uint8_t, 4> bytes, bool isLittleEndian)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    float y = static_cast<float>(x);
+    if (std::isinf(y) && !std::isinf(x)) {
+        raise(globalObject, scope, BuiltinType::OverflowError, "float too large to pack with f format"_s);
+        return false;
+    }
+    // A signalling NaN has been made a quiet one on the way, and is made a signalling one again if there is anything else in it to tell it from an infinity by.
+    if (std::isnan(x) && !(std::bit_cast<uint64_t>(x) & (1ULL << 51))) {
+        uint32_t bits = std::bit_cast<uint32_t>(y);
+        if (bits & 0x3fffff)
+            bits &= ~(1u << 22);
+        y = std::bit_cast<float>(bits);
+    }
+    storeBytes(y, bytes, isLittleEndian);
+    return true;
+}
+
+void packFloat8(double x, std::span<uint8_t, 8> bytes, bool isLittleEndian)
+{
+    storeBytes(x, bytes, isLittleEndian);
+}
+
+double unpackFloat2(std::span<const uint8_t, 2> bytes, bool isLittleEndian)
+{
+    unsigned short bits = loadBytes<unsigned short>(bytes, isLittleEndian);
+    bool sign = bits >> 15;
+    int e = (bits >> 10) & 0x1f;
+    unsigned f = bits & 0x3ff;
+    if (e == 0x1f) {
+        if (!f)
+            return sign ? -std::numeric_limits<double>::infinity() : std::numeric_limits<double>::infinity();
+        return std::bit_cast<double>((sign ? 0xfff0000000000000ULL : 0x7ff0000000000000ULL) + (static_cast<uint64_t>(f) << 42));
+    }
+    double x = static_cast<double>(f) / 1024.0;
+    if (!e)
+        e = -14;
+    else {
+        x += 1.0;
+        e -= 15;
+    }
+    x = std::ldexp(x, e);
+    return sign ? -x : x;
+}
+
+double unpackFloat4(std::span<const uint8_t, 4> bytes, bool isLittleEndian)
+{
+    float x = loadBytes<float>(bytes, isLittleEndian);
+    // A signalling NaN stays one.
+    if (std::isnan(x) && !(std::bit_cast<uint32_t>(x) & (1u << 22)))
+        return std::bit_cast<double>(std::bit_cast<uint64_t>(static_cast<double>(x)) & ~(1ULL << 51));
+    return x;
+}
+
+double unpackFloat8(std::span<const uint8_t, 8> bytes, bool isLittleEndian)
+{
+    return loadBytes<double>(bytes, isLittleEndian);
+}
+
 // An int that fits an int32 is never a BigInt.
 JSValue normalizeBigInt(JSValue value)
 {

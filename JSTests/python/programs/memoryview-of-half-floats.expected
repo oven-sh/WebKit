@@ -1,0 +1,15 @@
+[0.0, -0.0, 1.0, -1.0, 2.0, 0.333251953125, 65504.0, -65504.0, 5.960464477539063e-08, -5.960464477539063e-08, 6.097555160522461e-05, 6.103515625e-05, inf, -inf, nan, nan, nan, nan]
+{'float'}
+65536 2133849376647365572 2046 [1.0, -1.0, 1.0, -1.0]
+there and back: True
+a NaN there and back: ['0x7e00', '0xfe00', '0x7e01', '0x7eff', '0xfeff', '0x7c01', '0x7cff', '0xfc01', '0x7c80'] True
+all at once: [1.52587890625e-05, 4.589557647705078e-05, 7.653236389160156e-05, 0.00010716915130615234, 0.00015354156494140625, 0.0002148151397705078, 0.00030803680419921875, 0.0004305839538574219] 8 2 e
+rounded to the nearest, and to the even one of two: ['0x3c00', '0x3c00', '0x3c01', '0x3c01', '0x3c02', '0x3c01', '0x4000', '0x4000', '0x3fff', '0x2e66', '0xae66', '0x3555', '0x7bff', '0x7bff', '0x7bff']
+too large: ["ValueError: memoryview: invalid value for format 'e'", "ValueError: memoryview: invalid value for format 'e'", "ValueError: memoryview: invalid value for format 'e'", "ValueError: memoryview: invalid value for format 'e'", "ValueError: memoryview: invalid value for format 'e'", "ValueError: memoryview: invalid value for format 'e'"]
+on the way to nothing: ['0x400', '0x400', '0x200', '0x1', '0x0', '0x1', '0x0', '0x2', '0x0', '0x0', '0x8000', '0x8001', '0x0', '0x8000']
+what is not finite: ['0x7c00', '0xfc00', '0x7e00', '0xfe00']
+what is not a float: [15360, 15360, 49152, "ValueError: memoryview: invalid value for format 'e'", "ValueError: memoryview: invalid value for format 'e'", "TypeError: memoryview: invalid type for format 'e'", "TypeError: memoryview: invalid type for format 'e'", "TypeError: memoryview: invalid type for format 'e'", "TypeError: memoryview: invalid type for format 'e'", "TypeError: memoryview: invalid type for format 'e'"]
+and the same of four bytes and of eight: [[None, "ValueError: memoryview: invalid value for format 'f'", "ValueError: memoryview: invalid value for format 'f'", None, "TypeError: memoryview: invalid type for format 'f'", "TypeError: memoryview: invalid type for format 'f'"], [None, "ValueError: memoryview: invalid value for format 'd'", "ValueError: memoryview: invalid value for format 'd'", None, "TypeError: memoryview: invalid type for format 'd'", "TypeError: memoryview: invalid type for format 'd'"]]
+at random: 1448042889782934097
+compared: True False False True True True True 1 1
+at the very end of what there is: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
