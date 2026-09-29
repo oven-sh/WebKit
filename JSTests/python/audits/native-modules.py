@@ -30,7 +30,9 @@ SKIP = {
     # 2 ** 70 to the power of itself, or moved along by itself, is not to be waited for.
     "_operator": {"pow", "ipow", "__pow__", "__ipow__", "lshift", "ilshift", "__lshift__", "__ilshift__"},
 }
-SKIPPED_METHODS = {"__init_subclass__", "__subclasshook__", "__class__", "__doc__", "__del__", "acquire", "acquire_lock", "__enter__", "_acquire_restore", "poll", "control", "__sizeof__", "__reduce_ex__", "__reduce__", "__getstate__", "__dir__", "__format__", "_at_fork_reinit", "join", "_recursion_count", "buffer_info", "__hash__", "__repr__", "__str__", "fileno", "seed", "random", "getrandbits", "getstate"}
+SKIPPED_METHODS = {"__init_subclass__", "__subclasshook__", "__class__", "__doc__", "__del__", "acquire", "acquire_lock", "__enter__", "_acquire_restore", "poll", "control", "__sizeof__", "__reduce_ex__", "__reduce__", "__getstate__", "__dir__", "__format__", "_at_fork_reinit", "join", "_recursion_count", "buffer_info", "__hash__", "__repr__", "__str__", "fileno", "seed", "random", "getrandbits", "getstate",
+                   # Of an int, given 2 ** 70, these are not to be waited for.
+                   "__round__", "__pow__", "__rpow__", "__lshift__", "__rlshift__"}
 
 
 class C:
@@ -139,10 +141,14 @@ for name in MODULES:
         finish(label)
 
 
+# What CPython 3.14.7 itself crashes on, so that there is nothing to compare with: super.__new__(super).__get__(x) looks for the class of x among the bases of no class at all.
+CRASHES_CPYTHON = {("raw builtins.super", "__get__")}
+
+
 def exercise(label, make, initialized):
     t = type(make())
     for name in sorted(dir(t)):
-        if name in SKIPPED_METHODS:
+        if name in SKIPPED_METHODS or (label, name) in CRASHES_CPYTHON:
             continue
         try:
             if not callable(getattr(make(), name)) or isinstance(getattr(make(), name), type):
@@ -170,15 +176,17 @@ for i, make in enumerate(samples()):
     n = seen[t] = seen.get(t, 0) + 1
     exercise("%s.%s#%d" % (t.__module__, t.__qualname__, n), make, True)
 
-# What has been made and not initialized
-for name in MODULES:
+# What has been made and not initialized. Here what is in builtins is looked at as well, and what is built in and is in no module, which types has names for.
+for name in MODULES + ("builtins", "types"):
     try:
         module = __import__(name)
     except ImportError:
         continue
     for attribute in sorted(vars(module)):
         t = getattr(module, attribute)
-        if not isinstance(t, type) or issubclass(t, BaseException) or name == "_ast" and attribute not in ("AST", "Constant", "Module", "Name"):
+        if not isinstance(t, type) or name == "_ast" and attribute not in ("AST", "Constant", "Module", "Name"):
+            continue
+        if issubclass(t, BaseException) and name != "builtins" or t.__module__ == "types" or attribute == "JSError":
             continue
         try:
             t.__new__(t)
@@ -189,3 +197,14 @@ for name in MODULES:
         for what in ("repr", "str", "hash", "iter", "len", "bool"):
             attempt("raw %s.%s %s()" % (name, attribute, what), getattr(__builtins__, what) if not isinstance(__builtins__, dict) else __builtins__[what], t.__new__(t))
         finish("raw %s.%s by what is built in" % (name, attribute))
+        if ("raw %s.%s" % (name, attribute), "__get__") in CRASHES_CPYTHON:
+            continue
+        # As an attribute of a class, where it is asked whether it is a descriptor, and taken for one if it says so
+        holder = type("Holder", (), {"a": t.__new__(t)})
+        attempt("raw %s.%s got from a class" % (name, attribute), getattr, holder, "a")
+        attempt("raw %s.%s got from an instance" % (name, attribute), getattr, holder(), "a")
+        attempt("raw %s.%s called from an instance" % (name, attribute), lambda: holder().a())
+        attempt("raw %s.%s set" % (name, attribute), setattr, holder(), "a", 1)
+        attempt("raw %s.%s deleted" % (name, attribute), delattr, holder(), "a")
+        attempt("raw %s.%s got by super()" % (name, attribute), lambda: getattr(super(type("Sub", (holder,), {}), type("Sub", (holder,), {})), "a", None))
+        finish("raw %s.%s as an attribute of a class" % (name, attribute))

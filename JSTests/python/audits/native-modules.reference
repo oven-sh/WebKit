@@ -2295,6 +2295,7 @@ raw _abc.__loader__ get_source | 23 853001156
 raw _abc.__loader__ is_package | 23 109596760
 raw _abc.__loader__ load_module | 23 503630638
 raw _abc.__loader__ by what is built in | 6 2566193893
+raw _abc.__loader__ as an attribute of a class | 6 4114422409
 raw _ast.AST __delattr__ | 23 2701411403
 raw _ast.AST __eq__ | 23 4185327652
 raw _ast.AST __ge__ | 23 81718143
@@ -2308,6 +2309,7 @@ raw _ast.AST __new__ | 23 1808124570
 raw _ast.AST __replace__ | 23 3739316063
 raw _ast.AST __setattr__ | 23 3164489861
 raw _ast.AST by what is built in | 6 1303487744
+raw _ast.AST as an attribute of a class | 6 1314954440
 raw _ast.Constant __delattr__ | 23 3477856925
 raw _ast.Constant __eq__ | 23 2616226382
 raw _ast.Constant __ge__ | 23 4104509958
@@ -2321,6 +2323,7 @@ raw _ast.Constant __new__ | 23 786581247
 raw _ast.Constant __replace__ | 23 3514457123
 raw _ast.Constant __setattr__ | 23 2032939110
 raw _ast.Constant by what is built in | 6 533037077
+raw _ast.Constant as an attribute of a class | 6 1912297970
 raw _ast.Module __delattr__ | 23 405173717
 raw _ast.Module __eq__ | 23 2279135073
 raw _ast.Module __ge__ | 23 1499333224
@@ -2334,6 +2337,7 @@ raw _ast.Module __new__ | 23 3342762984
 raw _ast.Module __replace__ | 23 615331565
 raw _ast.Module __setattr__ | 23 3700174315
 raw _ast.Module by what is built in | 6 26938128
+raw _ast.Module as an attribute of a class | 6 3564770646
 raw _ast.Name __delattr__ | 23 3651257737
 raw _ast.Name __eq__ | 23 3554834105
 raw _ast.Name __ge__ | 23 1025131053
@@ -2347,6 +2351,7 @@ raw _ast.Name __new__ | 23 3141056734
 raw _ast.Name __replace__ | 23 984554892
 raw _ast.Name __setattr__ | 23 3904719305
 raw _ast.Name by what is built in | 6 1031706935
+raw _ast.Name as an attribute of a class | 6 2078201849
 raw _codecs.__loader__ __delattr__ | 23 3599652743
 raw _codecs.__loader__ __eq__ | 23 877899095
 raw _codecs.__loader__ __ge__ | 23 777619365
@@ -2366,6 +2371,7 @@ raw _codecs.__loader__ get_source | 23 333649971
 raw _codecs.__loader__ is_package | 23 1611522195
 raw _codecs.__loader__ load_module | 23 1308855031
 raw _codecs.__loader__ by what is built in | 6 3966092516
+raw _codecs.__loader__ as an attribute of a class | 6 2712335060
 raw _collections.OrderedDict __class_getitem__ | 23 3774167043
 raw _collections.OrderedDict __contains__ | 23 1855541169
 raw _collections.OrderedDict __delattr__ | 23 881630307
@@ -2401,6 +2407,7 @@ raw _collections.OrderedDict setdefault | 23 4290657020
 raw _collections.OrderedDict update | 23 2481070032
 raw _collections.OrderedDict values | 23 1378369652
 raw _collections.OrderedDict by what is built in | 6 4240200841
+raw _collections.OrderedDict as an attribute of a class | 6 2774347421
 raw _collections.__loader__ __delattr__ | 23 3546377665
 raw _collections.__loader__ __eq__ | 23 3410671839
 raw _collections.__loader__ __ge__ | 23 1507173127
@@ -2420,6 +2427,7 @@ raw _collections.__loader__ get_source | 23 1606869738
 raw _collections.__loader__ is_package | 23 3067063016
 raw _collections.__loader__ load_module | 23 2259902798
 raw _collections.__loader__ by what is built in | 6 1281264124
+raw _collections.__loader__ as an attribute of a class | 6 934208833
 raw _collections._deque_iterator | 1 TypeError 'function takes at least 1 argument (0 given)'
 raw _collections._deque_reverse_iterator | 1 TypeError 'function takes at least 1 argument (0 given)'
 raw _collections._tuplegetter | 1 TypeError '_tuplegetter expected 2 arguments, got 0'
@@ -2459,6 +2467,7 @@ raw _collections.defaultdict setdefault | 23 400210149
 raw _collections.defaultdict update | 23 2913083266
 raw _collections.defaultdict values | 23 4092992708
 raw _collections.defaultdict by what is built in | 6 2774422754
+raw _collections.defaultdict as an attribute of a class | 6 2701131566
 raw _collections.deque __add__ | 23 2702946841
 raw _collections.deque __class_getitem__ | 23 1324098057
 raw _collections.deque __contains__ | 23 3481056432
@@ -2499,6 +2508,7 @@ raw _collections.deque remove | 23 2401852658
 raw _collections.deque reverse | 23 2347851892
 raw _collections.deque rotate | 23 204607215
 raw _collections.deque by what is built in | 6 1916630107
+raw _collections.deque as an attribute of a class | 6 1609039401
 raw _contextvars.Context __contains__ | 23 3427578862
 raw _contextvars.Context __delattr__ | 23 76722826
 raw _contextvars.Context __eq__ | 23 1789061112
@@ -2521,6 +2531,7 @@ raw _contextvars.Context keys | 23 121487102
 raw _contextvars.Context run | 23 1218854969
 raw _contextvars.Context values | 23 2048694596
 raw _contextvars.Context by what is built in | 6 1057086336
+raw _contextvars.Context as an attribute of a class | 6 4243720287
 raw _contextvars.ContextVar | 1 TypeError 'ContextVar() takes exactly 1 positional argument (0 given)'
 raw _contextvars.Token | 1 RuntimeError 'Tokens can only be created by ContextVars'
 raw _contextvars.__loader__ __delattr__ | 23 2630990499
@@ -2542,6 +2553,7 @@ raw _contextvars.__loader__ get_source | 23 199965841
 raw _contextvars.__loader__ is_package | 23 3806491795
 raw _contextvars.__loader__ load_module | 23 4185685353
 raw _contextvars.__loader__ by what is built in | 6 1436553871
+raw _contextvars.__loader__ as an attribute of a class | 6 2405209818
 raw _functools._PlaceholderType __delattr__ | 23 1320393205
 raw _functools._PlaceholderType __eq__ | 23 3935110107
 raw _functools._PlaceholderType __ge__ | 23 3377451236
@@ -2554,6 +2566,7 @@ raw _functools._PlaceholderType __ne__ | 23 1743753909
 raw _functools._PlaceholderType __new__ | 23 1157515450
 raw _functools._PlaceholderType __setattr__ | 23 1128337099
 raw _functools._PlaceholderType by what is built in | 6 789955573
+raw _functools._PlaceholderType as an attribute of a class | 6 3710815034
 raw _functools.__loader__ __delattr__ | 23 3988813387
 raw _functools.__loader__ __eq__ | 23 627432968
 raw _functools.__loader__ __ge__ | 23 4197852787
@@ -2573,6 +2586,7 @@ raw _functools.__loader__ get_source | 23 1395241391
 raw _functools.__loader__ is_package | 23 407860810
 raw _functools.__loader__ load_module | 23 4061050061
 raw _functools.__loader__ by what is built in | 6 4235466220
+raw _functools.__loader__ as an attribute of a class | 6 1255727371
 raw _functools._lru_cache_wrapper | 1 TypeError "lru_cache() missing required argument 'user_function' (pos 1)"
 raw _functools.partial | 1 TypeError "type 'partial' takes at least one argument"
 raw _imp.__loader__ __delattr__ | 23 4010198127
@@ -2594,6 +2608,7 @@ raw _imp.__loader__ get_source | 23 1590768203
 raw _imp.__loader__ is_package | 23 1787732439
 raw _imp.__loader__ load_module | 23 2785752396
 raw _imp.__loader__ by what is built in | 6 3978831466
+raw _imp.__loader__ as an attribute of a class | 6 1413698774
 raw _io.BufferedRWPair __delattr__ | 23 2828947842
 raw _io.BufferedRWPair __eq__ | 23 3468043563
 raw _io.BufferedRWPair __exit__ | 23 3135156524
@@ -2632,6 +2647,7 @@ raw _io.BufferedRWPair writable | 23 3376313671
 raw _io.BufferedRWPair write | 23 3340866347
 raw _io.BufferedRWPair writelines | 23 269576701
 raw _io.BufferedRWPair by what is built in | 6 530144255
+raw _io.BufferedRWPair as an attribute of a class | 6 3434367193
 raw _io.BufferedRandom __delattr__ | 23 3502793211
 raw _io.BufferedRandom __eq__ | 23 3272605417
 raw _io.BufferedRandom __exit__ | 23 2851901773
@@ -2671,6 +2687,7 @@ raw _io.BufferedRandom writable | 23 7425258
 raw _io.BufferedRandom write | 23 2283935941
 raw _io.BufferedRandom writelines | 23 171600580
 raw _io.BufferedRandom by what is built in | 6 3489817405
+raw _io.BufferedRandom as an attribute of a class | 6 2756766
 raw _io.BufferedReader __delattr__ | 23 2389787864
 raw _io.BufferedReader __eq__ | 23 4110353030
 raw _io.BufferedReader __exit__ | 23 3858200033
@@ -2710,6 +2727,7 @@ raw _io.BufferedReader writable | 23 407405985
 raw _io.BufferedReader write | 23 2670761816
 raw _io.BufferedReader writelines | 23 3735783963
 raw _io.BufferedReader by what is built in | 6 4102978031
+raw _io.BufferedReader as an attribute of a class | 6 1773568123
 raw _io.BufferedWriter __delattr__ | 23 1612141979
 raw _io.BufferedWriter __eq__ | 23 1989684790
 raw _io.BufferedWriter __exit__ | 23 2447253014
@@ -2748,6 +2766,7 @@ raw _io.BufferedWriter writable | 23 3342634555
 raw _io.BufferedWriter write | 23 2903814751
 raw _io.BufferedWriter writelines | 23 1519524647
 raw _io.BufferedWriter by what is built in | 6 2093587123
+raw _io.BufferedWriter as an attribute of a class | 6 1991234709
 raw _io.BytesIO __delattr__ | 23 1878453012
 raw _io.BytesIO __eq__ | 23 3595186437
 raw _io.BytesIO __exit__ | 23 1345253044
@@ -2788,6 +2807,7 @@ raw _io.BytesIO writable | 23 2350189190
 raw _io.BytesIO write | 23 2011013940
 raw _io.BytesIO writelines | 23 3544214889
 raw _io.BytesIO by what is built in | 6 283877151
+raw _io.BytesIO as an attribute of a class | 6 122999141
 raw _io.FileIO __delattr__ | 23 3970571878
 raw _io.FileIO __eq__ | 23 1638063214
 raw _io.FileIO __exit__ | 23 3750569928
@@ -2825,6 +2845,7 @@ raw _io.FileIO writable | 23 3096633813
 raw _io.FileIO write | 23 1323645853
 raw _io.FileIO writelines | 23 966371982
 raw _io.FileIO by what is built in | 6 731880692
+raw _io.FileIO as an attribute of a class | 6 433763069
 raw _io.IncrementalNewlineDecoder __delattr__ | 23 238964123
 raw _io.IncrementalNewlineDecoder __eq__ | 23 829168299
 raw _io.IncrementalNewlineDecoder __ge__ | 23 770742849
@@ -2840,6 +2861,7 @@ raw _io.IncrementalNewlineDecoder decode | 23 1210894981
 raw _io.IncrementalNewlineDecoder reset | 23 2891411840
 raw _io.IncrementalNewlineDecoder setstate | 23 545395892
 raw _io.IncrementalNewlineDecoder by what is built in | 6 3192778128
+raw _io.IncrementalNewlineDecoder as an attribute of a class | 6 3236560501
 raw _io.StringIO __delattr__ | 23 3961859445
 raw _io.StringIO __eq__ | 23 3394770086
 raw _io.StringIO __exit__ | 23 1769739969
@@ -2876,6 +2898,7 @@ raw _io.StringIO writable | 23 928893518
 raw _io.StringIO write | 23 903956110
 raw _io.StringIO writelines | 23 754838410
 raw _io.StringIO by what is built in | 6 562462521
+raw _io.StringIO as an attribute of a class | 6 1499368618
 raw _io.TextIOWrapper __delattr__ | 23 3944059900
 raw _io.TextIOWrapper __eq__ | 23 465843405
 raw _io.TextIOWrapper __exit__ | 23 2973754712
@@ -2911,6 +2934,7 @@ raw _io.TextIOWrapper writable | 23 1678229839
 raw _io.TextIOWrapper write | 23 754349526
 raw _io.TextIOWrapper writelines | 23 3967232925
 raw _io.TextIOWrapper by what is built in | 6 2238569317
+raw _io.TextIOWrapper as an attribute of a class | 6 3866190485
 raw _io._BufferedIOBase __delattr__ | 23 2335490029
 raw _io._BufferedIOBase __eq__ | 23 2916922037
 raw _io._BufferedIOBase __exit__ | 23 301347194
@@ -2948,6 +2972,7 @@ raw _io._BufferedIOBase writable | 23 4232783542
 raw _io._BufferedIOBase write | 23 2993639722
 raw _io._BufferedIOBase writelines | 23 392143982
 raw _io._BufferedIOBase by what is built in | 6 1793198372
+raw _io._BufferedIOBase as an attribute of a class | 6 640395381
 raw _io._BytesIOBuffer | 1 TypeError "cannot create '_io._BytesIOBuffer' instances"
 raw _io._IOBase __delattr__ | 23 2475890719
 raw _io._IOBase __eq__ | 23 662701340
@@ -2980,6 +3005,7 @@ raw _io._IOBase truncate | 23 3973221016
 raw _io._IOBase writable | 23 697186675
 raw _io._IOBase writelines | 23 828656661
 raw _io._IOBase by what is built in | 6 4259163867
+raw _io._IOBase as an attribute of a class | 6 265391819
 raw _io._RawIOBase __delattr__ | 23 3308150833
 raw _io._RawIOBase __eq__ | 23 1154468805
 raw _io._RawIOBase __exit__ | 23 2462963857
@@ -3015,6 +3041,7 @@ raw _io._RawIOBase writable | 23 4230104345
 raw _io._RawIOBase write | 23 2408510268
 raw _io._RawIOBase writelines | 23 3173704535
 raw _io._RawIOBase by what is built in | 6 1685268279
+raw _io._RawIOBase as an attribute of a class | 6 2327021749
 raw _io._TextIOBase __delattr__ | 23 2224831192
 raw _io._TextIOBase __eq__ | 23 633748074
 raw _io._TextIOBase __exit__ | 23 1920123263
@@ -3049,6 +3076,7 @@ raw _io._TextIOBase writable | 23 293660118
 raw _io._TextIOBase write | 23 706952044
 raw _io._TextIOBase writelines | 23 2620911433
 raw _io._TextIOBase by what is built in | 6 1212876636
+raw _io._TextIOBase as an attribute of a class | 6 2368746612
 raw _io.__loader__ __delattr__ | 23 4265322892
 raw _io.__loader__ __eq__ | 23 2354301476
 raw _io.__loader__ __ge__ | 23 3803905250
@@ -3068,6 +3096,7 @@ raw _io.__loader__ get_source | 23 2377345072
 raw _io.__loader__ is_package | 23 3959735218
 raw _io.__loader__ load_module | 23 54588018
 raw _io.__loader__ by what is built in | 6 299206905
+raw _io.__loader__ as an attribute of a class | 6 2672003218
 raw _opcode.__loader__ __delattr__ | 23 944245594
 raw _opcode.__loader__ __eq__ | 23 203996211
 raw _opcode.__loader__ __ge__ | 23 371365569
@@ -3087,6 +3116,7 @@ raw _opcode.__loader__ get_source | 23 1745833367
 raw _opcode.__loader__ is_package | 23 467776823
 raw _opcode.__loader__ load_module | 23 2265976161
 raw _opcode.__loader__ by what is built in | 6 127032799
+raw _opcode.__loader__ as an attribute of a class | 6 3619473035
 raw _operator.__loader__ __delattr__ | 23 2816207261
 raw _operator.__loader__ __eq__ | 23 3140422962
 raw _operator.__loader__ __ge__ | 23 18527108
@@ -3106,6 +3136,7 @@ raw _operator.__loader__ get_source | 23 3987424472
 raw _operator.__loader__ is_package | 23 2087653090
 raw _operator.__loader__ load_module | 23 67537303
 raw _operator.__loader__ by what is built in | 6 3603404556
+raw _operator.__loader__ as an attribute of a class | 6 1570848704
 raw _operator.attrgetter | 1 TypeError 'attrgetter expected 1 argument, got 0'
 raw _operator.itemgetter | 1 TypeError 'itemgetter expected 1 argument, got 0'
 raw _operator.methodcaller | 1 TypeError 'methodcaller needs at least one argument, the method name'
@@ -3128,6 +3159,7 @@ raw _posixsubprocess.__loader__ get_source | 23 3325769554
 raw _posixsubprocess.__loader__ is_package | 23 4232478189
 raw _posixsubprocess.__loader__ load_module | 23 1234361912
 raw _posixsubprocess.__loader__ by what is built in | 6 914669251
+raw _posixsubprocess.__loader__ as an attribute of a class | 6 4226919131
 raw _random.Random __delattr__ | 23 1421675854
 raw _random.Random __eq__ | 23 388483762
 raw _random.Random __ge__ | 23 2043608180
@@ -3141,6 +3173,7 @@ raw _random.Random __new__ | 23 2471130503
 raw _random.Random __setattr__ | 23 2752780078
 raw _random.Random setstate | 23 4276484505
 raw _random.Random by what is built in | 6 758471441
+raw _random.Random as an attribute of a class | 6 1086786222
 raw _random.__loader__ __delattr__ | 23 1276748879
 raw _random.__loader__ __eq__ | 23 3034076900
 raw _random.__loader__ __ge__ | 23 2933029910
@@ -3160,6 +3193,7 @@ raw _random.__loader__ get_source | 23 3432927007
 raw _random.__loader__ is_package | 23 3211835327
 raw _random.__loader__ load_module | 23 3003232199
 raw _random.__loader__ by what is built in | 6 29019633
+raw _random.__loader__ as an attribute of a class | 6 681050468
 raw _signal.__loader__ __delattr__ | 23 4152186807
 raw _signal.__loader__ __eq__ | 23 630718111
 raw _signal.__loader__ __ge__ | 23 1067308141
@@ -3179,6 +3213,7 @@ raw _signal.__loader__ get_source | 23 315499498
 raw _signal.__loader__ is_package | 23 1629543242
 raw _signal.__loader__ load_module | 23 368386228
 raw _signal.__loader__ by what is built in | 6 4135217373
+raw _signal.__loader__ as an attribute of a class | 6 1767892800
 raw _sre.__loader__ __delattr__ | 23 167532981
 raw _sre.__loader__ __eq__ | 23 1810401534
 raw _sre.__loader__ __ge__ | 23 4221780558
@@ -3198,6 +3233,7 @@ raw _sre.__loader__ get_source | 23 3546044278
 raw _sre.__loader__ is_package | 23 3875783914
 raw _sre.__loader__ load_module | 23 1324879144
 raw _sre.__loader__ by what is built in | 6 787161222
+raw _sre.__loader__ as an attribute of a class | 6 2423373495
 raw _stat.__loader__ __delattr__ | 23 2999261091
 raw _stat.__loader__ __eq__ | 23 2842489980
 raw _stat.__loader__ __ge__ | 23 1348760741
@@ -3217,6 +3253,7 @@ raw _stat.__loader__ get_source | 23 1673772423
 raw _stat.__loader__ is_package | 23 468800492
 raw _stat.__loader__ load_module | 23 777677179
 raw _stat.__loader__ by what is built in | 6 857320961
+raw _stat.__loader__ as an attribute of a class | 6 1476123269
 raw _string.__loader__ __delattr__ | 23 1760882282
 raw _string.__loader__ __eq__ | 23 2540936332
 raw _string.__loader__ __ge__ | 23 2373564030
@@ -3236,6 +3273,7 @@ raw _string.__loader__ get_source | 23 2929899912
 raw _string.__loader__ is_package | 23 3712762152
 raw _string.__loader__ load_module | 23 287673303
 raw _string.__loader__ by what is built in | 6 3898241912
+raw _string.__loader__ as an attribute of a class | 6 351594746
 raw _struct.Struct __delattr__ | 23 2734361473
 raw _struct.Struct __eq__ | 23 1452411617
 raw _struct.Struct __ge__ | 23 947600423
@@ -3253,6 +3291,7 @@ raw _struct.Struct pack_into | 23 2134913650
 raw _struct.Struct unpack | 23 972186266
 raw _struct.Struct unpack_from | 23 805415188
 raw _struct.Struct by what is built in | 6 1044504125
+raw _struct.Struct as an attribute of a class | 6 1518516349
 raw _struct.__loader__ __delattr__ | 23 3828996087
 raw _struct.__loader__ __eq__ | 23 386929929
 raw _struct.__loader__ __ge__ | 23 219824123
@@ -3272,6 +3311,7 @@ raw _struct.__loader__ get_source | 23 1884017518
 raw _struct.__loader__ is_package | 23 61156302
 raw _struct.__loader__ load_module | 23 4113844131
 raw _struct.__loader__ by what is built in | 6 3533495251
+raw _struct.__loader__ as an attribute of a class | 6 2302093030
 raw _thread.LockType __delattr__ | 23 1942269076
 raw _thread.LockType __eq__ | 23 130926732
 raw _thread.LockType __exit__ | 23 1022882524
@@ -3289,6 +3329,7 @@ raw _thread.LockType locked_lock | 23 3630026820
 raw _thread.LockType release | 23 2493511089
 raw _thread.LockType release_lock | 23 1332460822
 raw _thread.LockType by what is built in | 6 347304728
+raw _thread.LockType as an attribute of a class | 6 2490648425
 raw _thread.RLock __delattr__ | 23 325580647
 raw _thread.RLock __eq__ | 23 2544175137
 raw _thread.RLock __exit__ | 23 1872486617
@@ -3306,6 +3347,7 @@ raw _thread.RLock _release_save | 23 3052687349
 raw _thread.RLock locked | 23 144332960
 raw _thread.RLock release | 23 3915942306
 raw _thread.RLock by what is built in | 6 129674885
+raw _thread.RLock as an attribute of a class | 6 3220447783
 raw _thread._ExceptHookArgs | 1 TypeError "structseq() missing required argument 'sequence' (pos 1)"
 raw _thread._ThreadHandle __delattr__ | 23 1294813445
 raw _thread._ThreadHandle __eq__ | 23 3592149244
@@ -3321,6 +3363,7 @@ raw _thread._ThreadHandle __setattr__ | 23 1982788555
 raw _thread._ThreadHandle _set_done | 23 2733106974
 raw _thread._ThreadHandle is_done | 23 940002744
 raw _thread._ThreadHandle by what is built in | 6 2994814396
+raw _thread._ThreadHandle as an attribute of a class | 6 4002191510
 raw _thread.__loader__ __delattr__ | 23 1193644098
 raw _thread.__loader__ __eq__ | 23 1135996674
 raw _thread.__loader__ __ge__ | 23 1505740272
@@ -3340,6 +3383,7 @@ raw _thread.__loader__ get_source | 23 3521251766
 raw _thread.__loader__ is_package | 23 2718757142
 raw _thread.__loader__ load_module | 23 1059801277
 raw _thread.__loader__ by what is built in | 6 3768265217
+raw _thread.__loader__ as an attribute of a class | 6 2037616325
 raw _thread._local __delattr__ | 23 2321501372
 raw _thread._local __eq__ | 23 3157249629
 raw _thread._local __ge__ | 23 3536255131
@@ -3352,6 +3396,7 @@ raw _thread._local __ne__ | 23 4136817050
 raw _thread._local __new__ | 23 2171066307
 raw _thread._local __setattr__ | 23 2882679358
 raw _thread._local by what is built in | 6 1883871856
+raw _thread._local as an attribute of a class | 6 582932399
 raw _thread.lock __delattr__ | 23 73676980
 raw _thread.lock __eq__ | 23 1327034377
 raw _thread.lock __exit__ | 23 4137031926
@@ -3369,6 +3414,7 @@ raw _thread.lock locked_lock | 23 1207187183
 raw _thread.lock release | 23 1509234592
 raw _thread.lock release_lock | 23 178963240
 raw _thread.lock by what is built in | 6 2931198348
+raw _thread.lock as an attribute of a class | 6 4221293837
 raw _tokenize.TokenizerIter | 1 TypeError 'tokenizeriter() takes exactly 1 positional argument (0 given)'
 raw _tokenize.__loader__ __delattr__ | 23 3660663059
 raw _tokenize.__loader__ __eq__ | 23 1171958423
@@ -3389,6 +3435,7 @@ raw _tokenize.__loader__ get_source | 23 3587695975
 raw _tokenize.__loader__ is_package | 23 1142140765
 raw _tokenize.__loader__ load_module | 23 3296131340
 raw _tokenize.__loader__ by what is built in | 6 2691580206
+raw _tokenize.__loader__ as an attribute of a class | 6 2011741243
 raw _typing.Generic __class_getitem__ | 23 1550683907
 raw _typing.Generic __delattr__ | 23 2826659114
 raw _typing.Generic __eq__ | 23 4034883667
@@ -3402,6 +3449,7 @@ raw _typing.Generic __ne__ | 23 1963868335
 raw _typing.Generic __new__ | 23 2089345720
 raw _typing.Generic __setattr__ | 23 1329791370
 raw _typing.Generic by what is built in | 6 2670752418
+raw _typing.Generic as an attribute of a class | 6 2249504298
 raw _typing.ParamSpec | 1 TypeError "paramspec() missing required argument 'name' (pos 1)"
 raw _typing.ParamSpecArgs | 1 TypeError "paramspecargs() missing required argument 'origin' (pos 1)"
 raw _typing.ParamSpecKwargs | 1 TypeError "paramspeckwargs() missing required argument 'origin' (pos 1)"
@@ -3428,6 +3476,7 @@ raw _typing.__loader__ get_source | 23 3908301110
 raw _typing.__loader__ is_package | 23 2602371478
 raw _typing.__loader__ load_module | 23 3290259858
 raw _typing.__loader__ by what is built in | 6 2084759531
+raw _typing.__loader__ as an attribute of a class | 6 3528247559
 raw _warnings.__loader__ __delattr__ | 23 131506130
 raw _warnings.__loader__ __eq__ | 23 604935932
 raw _warnings.__loader__ __ge__ | 23 2654677066
@@ -3447,6 +3496,7 @@ raw _warnings.__loader__ get_source | 23 1501185495
 raw _warnings.__loader__ is_package | 23 3367899117
 raw _warnings.__loader__ load_module | 23 1703965954
 raw _warnings.__loader__ by what is built in | 6 590169412
+raw _warnings.__loader__ as an attribute of a class | 6 3949204467
 raw _weakref.CallableProxyType | 1 TypeError "cannot create 'weakref.CallableProxyType' instances"
 raw _weakref.ProxyType | 1 TypeError "cannot create 'weakref.ProxyType' instances"
 raw _weakref.ReferenceType | 1 TypeError '__new__ expected at least 1 argument, got 0'
@@ -3469,6 +3519,7 @@ raw _weakref.__loader__ get_source | 23 2169941302
 raw _weakref.__loader__ is_package | 23 394033271
 raw _weakref.__loader__ load_module | 23 3487951435
 raw _weakref.__loader__ by what is built in | 6 1969735073
+raw _weakref.__loader__ as an attribute of a class | 6 835658810
 raw _weakref.ref | 1 TypeError '__new__ expected at least 1 argument, got 0'
 raw array.ArrayType | 1 TypeError 'array() takes at least 1 argument (0 given)'
 raw array.__loader__ __delattr__ | 23 2483900992
@@ -3490,6 +3541,7 @@ raw array.__loader__ get_source | 23 3643176189
 raw array.__loader__ is_package | 23 2702482070
 raw array.__loader__ load_module | 23 1936271496
 raw array.__loader__ by what is built in | 6 2396745887
+raw array.__loader__ as an attribute of a class | 6 3151553404
 raw array.array | 1 TypeError 'array() takes at least 1 argument (0 given)'
 raw atexit.__loader__ __delattr__ | 23 3870564854
 raw atexit.__loader__ __eq__ | 23 73002458
@@ -3510,6 +3562,7 @@ raw atexit.__loader__ get_source | 23 530472180
 raw atexit.__loader__ is_package | 23 976506004
 raw atexit.__loader__ load_module | 23 1923450739
 raw atexit.__loader__ by what is built in | 6 906438687
+raw atexit.__loader__ as an attribute of a class | 6 2422015900
 raw binascii.__loader__ __delattr__ | 23 2336500419
 raw binascii.__loader__ __eq__ | 23 1915199498
 raw binascii.__loader__ __ge__ | 23 2767883143
@@ -3529,6 +3582,7 @@ raw binascii.__loader__ get_source | 23 232502613
 raw binascii.__loader__ is_package | 23 2616287252
 raw binascii.__loader__ load_module | 23 1145666692
 raw binascii.__loader__ by what is built in | 6 3709654018
+raw binascii.__loader__ as an attribute of a class | 6 2371671359
 raw errno.__loader__ __delattr__ | 23 1791931547
 raw errno.__loader__ __eq__ | 23 643651966
 raw errno.__loader__ __ge__ | 23 3746945447
@@ -3548,6 +3602,7 @@ raw errno.__loader__ get_source | 23 1877511417
 raw errno.__loader__ is_package | 23 400188050
 raw errno.__loader__ load_module | 23 1520730578
 raw errno.__loader__ by what is built in | 6 181100995
+raw errno.__loader__ as an attribute of a class | 6 803437297
 raw itertools.__loader__ __delattr__ | 23 1576627652
 raw itertools.__loader__ __eq__ | 23 32487335
 raw itertools.__loader__ __ge__ | 23 3151628561
@@ -3567,6 +3622,7 @@ raw itertools.__loader__ get_source | 23 2379424186
 raw itertools.__loader__ is_package | 23 471296896
 raw itertools.__loader__ load_module | 23 2002658154
 raw itertools.__loader__ by what is built in | 6 75297906
+raw itertools.__loader__ as an attribute of a class | 6 3390113541
 raw itertools._grouper | 1 TypeError '_grouper expected 2 arguments, got 0'
 raw itertools._tee | 1 TypeError '_tee expected 1 argument, got 0'
 raw itertools._tee_dataobject | 1 TypeError 'teedataobject expected 3 arguments, got 0'
@@ -3588,6 +3644,7 @@ raw itertools.chain __next__ | 23 313457141
 raw itertools.chain __setattr__ | 23 1353580021
 raw itertools.chain from_iterable | 23 2651620686
 raw itertools.chain by what is built in | 6 668559685
+raw itertools.chain as an attribute of a class | 6 2459217048
 raw itertools.combinations | 1 TypeError "combinations() missing required argument 'iterable' (pos 1)"
 raw itertools.combinations_with_replacement | 1 TypeError "combinations_with_replacement() missing required argument 'iterable' (pos 1)"
 raw itertools.compress | 1 TypeError "compress() missing required argument 'data' (pos 1)"
@@ -3605,6 +3662,7 @@ raw itertools.count __new__ | 23 104071113
 raw itertools.count __next__ | 23 3007587170
 raw itertools.count __setattr__ | 23 2294127988
 raw itertools.count by what is built in | 6 2495430735
+raw itertools.count as an attribute of a class | 6 2886264151
 raw itertools.cycle | 1 TypeError 'cycle expected 1 argument, got 0'
 raw itertools.dropwhile | 1 TypeError 'dropwhile expected 2 arguments, got 0'
 raw itertools.filterfalse | 1 TypeError 'filterfalse expected 2 arguments, got 0'
@@ -3626,6 +3684,7 @@ raw itertools.product __new__ | 23 1612946977
 raw itertools.product __next__ | 23 1939373680
 raw itertools.product __setattr__ | 23 608915223
 raw itertools.product by what is built in | 6 1478054904
+raw itertools.product as an attribute of a class | 6 3008266262
 raw itertools.repeat | 1 TypeError "repeat() missing required argument 'object' (pos 1)"
 raw itertools.starmap | 1 TypeError 'starmap expected 2 arguments, got 0'
 raw itertools.takewhile | 1 TypeError 'takewhile expected 2 arguments, got 0'
@@ -3643,6 +3702,7 @@ raw itertools.zip_longest __new__ | 23 637300950
 raw itertools.zip_longest __next__ | 23 1077028166
 raw itertools.zip_longest __setattr__ | 23 2305105112
 raw itertools.zip_longest by what is built in | 6 4288503999
+raw itertools.zip_longest as an attribute of a class | 6 2774838755
 raw marshal.__loader__ __delattr__ | 23 1916252987
 raw marshal.__loader__ __eq__ | 23 3678496339
 raw marshal.__loader__ __ge__ | 23 3242937505
@@ -3662,6 +3722,7 @@ raw marshal.__loader__ get_source | 23 1806635821
 raw marshal.__loader__ is_package | 23 406973325
 raw marshal.__loader__ load_module | 23 933571225
 raw marshal.__loader__ by what is built in | 6 4237437905
+raw marshal.__loader__ as an attribute of a class | 6 3163896484
 raw math.__loader__ __delattr__ | 23 2607150007
 raw math.__loader__ __eq__ | 23 3294832952
 raw math.__loader__ __ge__ | 23 1411965832
@@ -3681,6 +3742,7 @@ raw math.__loader__ get_source | 23 1813250288
 raw math.__loader__ is_package | 23 1481347948
 raw math.__loader__ load_module | 23 1932946804
 raw math.__loader__ by what is built in | 6 166704230
+raw math.__loader__ as an attribute of a class | 6 1047227524
 raw posix.DirEntry | 1 TypeError "cannot create 'posix.DirEntry' instances"
 raw posix.__loader__ __delattr__ | 23 3850221483
 raw posix.__loader__ __eq__ | 23 4128415174
@@ -3701,6 +3763,7 @@ raw posix.__loader__ get_source | 23 3139051580
 raw posix.__loader__ is_package | 23 3274231383
 raw posix.__loader__ load_module | 23 3566345529
 raw posix.__loader__ by what is built in | 6 3842962001
+raw posix.__loader__ as an attribute of a class | 6 772530042
 raw posix.stat_result | 1 TypeError "structseq() missing required argument 'sequence' (pos 1)"
 raw posix.statvfs_result | 1 TypeError "structseq() missing required argument 'sequence' (pos 1)"
 raw posix.terminal_size | 1 TypeError "structseq() missing required argument 'sequence' (pos 1)"
@@ -3726,6 +3789,7 @@ raw select.__loader__ get_source | 23 2320709043
 raw select.__loader__ is_package | 23 2952340947
 raw select.__loader__ load_module | 23 778722700
 raw select.__loader__ by what is built in | 6 2139890239
+raw select.__loader__ as an attribute of a class | 6 2839649077
 raw select.kevent __delattr__ | 23 2794730255
 raw select.kevent __eq__ | 23 1628265736
 raw select.kevent __ge__ | 23 240710976
@@ -3738,6 +3802,7 @@ raw select.kevent __ne__ | 23 2811278399
 raw select.kevent __new__ | 23 614547089
 raw select.kevent __setattr__ | 23 4073627577
 raw select.kevent by what is built in | 6 212244011
+raw select.kevent as an attribute of a class | 6 449086033
 raw select.kqueue __delattr__ | 23 679983497
 raw select.kqueue __eq__ | 23 819022582
 raw select.kqueue __ge__ | 23 1602544318
@@ -3752,6 +3817,7 @@ raw select.kqueue __setattr__ | 23 85222132
 raw select.kqueue close | 23 3035704100
 raw select.kqueue fromfd | 23 3936016075
 raw select.kqueue by what is built in | 6 468615735
+raw select.kqueue as an attribute of a class | 6 1879180441
 raw time.__loader__ __delattr__ | 23 648084553
 raw time.__loader__ __eq__ | 23 3949563965
 raw time.__loader__ __ge__ | 23 2065848973
@@ -3771,6 +3837,7 @@ raw time.__loader__ get_source | 23 3405824869
 raw time.__loader__ is_package | 23 4284436729
 raw time.__loader__ load_module | 23 3763684841
 raw time.__loader__ by what is built in | 6 3564537186
+raw time.__loader__ as an attribute of a class | 6 4256629737
 raw time.struct_time | 1 TypeError "structseq() missing required argument 'sequence' (pos 1)"
 raw unicodedata.UCD | 1 TypeError "cannot create 'unicodedata.UCD' instances"
 raw unicodedata.__loader__ __delattr__ | 23 1411861261
@@ -3792,3 +3859,1909 @@ raw unicodedata.__loader__ get_source | 23 2327309977
 raw unicodedata.__loader__ is_package | 23 454842949
 raw unicodedata.__loader__ load_module | 23 2031877719
 raw unicodedata.__loader__ by what is built in | 6 1240568864
+raw unicodedata.__loader__ as an attribute of a class | 6 3086148762
+raw builtins.ArithmeticError __delattr__ | 23 121127767
+raw builtins.ArithmeticError __eq__ | 23 1966195411
+raw builtins.ArithmeticError __ge__ | 23 1146159002
+raw builtins.ArithmeticError __getattribute__ | 23 1153667090
+raw builtins.ArithmeticError __gt__ | 23 4034118628
+raw builtins.ArithmeticError __init__ | 23 3970048205
+raw builtins.ArithmeticError __le__ | 23 1809238702
+raw builtins.ArithmeticError __lt__ | 23 3757438672
+raw builtins.ArithmeticError __ne__ | 23 2804860522
+raw builtins.ArithmeticError __new__ | 23 858084223
+raw builtins.ArithmeticError __setattr__ | 23 4120498235
+raw builtins.ArithmeticError __setstate__ | 23 3828176544
+raw builtins.ArithmeticError add_note | 23 1781274313
+raw builtins.ArithmeticError with_traceback | 23 1521825464
+raw builtins.ArithmeticError by what is built in | 6 87078774
+raw builtins.ArithmeticError as an attribute of a class | 6 2218423465
+raw builtins.AssertionError __delattr__ | 23 1374704657
+raw builtins.AssertionError __eq__ | 23 3386163033
+raw builtins.AssertionError __ge__ | 23 1531683969
+raw builtins.AssertionError __getattribute__ | 23 2271748389
+raw builtins.AssertionError __gt__ | 23 2461089279
+raw builtins.AssertionError __init__ | 23 3221909657
+raw builtins.AssertionError __le__ | 23 4207450527
+raw builtins.AssertionError __lt__ | 23 858915041
+raw builtins.AssertionError __ne__ | 23 709872608
+raw builtins.AssertionError __new__ | 23 3240091541
+raw builtins.AssertionError __setattr__ | 23 4133746645
+raw builtins.AssertionError __setstate__ | 23 676807495
+raw builtins.AssertionError add_note | 23 244026213
+raw builtins.AssertionError with_traceback | 23 2456056682
+raw builtins.AssertionError by what is built in | 6 3918529211
+raw builtins.AssertionError as an attribute of a class | 6 392952739
+raw builtins.AttributeError __delattr__ | 23 2415570814
+raw builtins.AttributeError __eq__ | 23 4067863406
+raw builtins.AttributeError __ge__ | 23 1625927862
+raw builtins.AttributeError __getattribute__ | 23 4192128504
+raw builtins.AttributeError __gt__ | 23 2836605384
+raw builtins.AttributeError __init__ | 23 4132459828
+raw builtins.AttributeError __le__ | 23 3244985768
+raw builtins.AttributeError __lt__ | 23 143660246
+raw builtins.AttributeError __ne__ | 23 300802007
+raw builtins.AttributeError __new__ | 23 414706529
+raw builtins.AttributeError __setattr__ | 23 3565565747
+raw builtins.AttributeError __setstate__ | 23 4181797822
+raw builtins.AttributeError add_note | 23 568484197
+raw builtins.AttributeError with_traceback | 23 1998432603
+raw builtins.AttributeError by what is built in | 6 4226417507
+raw builtins.AttributeError as an attribute of a class | 6 3405685191
+raw builtins.BaseException __delattr__ | 23 22939640
+raw builtins.BaseException __eq__ | 23 2434466010
+raw builtins.BaseException __ge__ | 23 4026596685
+raw builtins.BaseException __getattribute__ | 23 2332932278
+raw builtins.BaseException __gt__ | 23 1131801952
+raw builtins.BaseException __init__ | 23 261228993
+raw builtins.BaseException __le__ | 23 2510657884
+raw builtins.BaseException __lt__ | 23 651200881
+raw builtins.BaseException __ne__ | 23 3105544389
+raw builtins.BaseException __new__ | 23 1261472105
+raw builtins.BaseException __setattr__ | 23 3217262921
+raw builtins.BaseException __setstate__ | 23 1513555650
+raw builtins.BaseException add_note | 23 4194439263
+raw builtins.BaseException with_traceback | 23 4127514397
+raw builtins.BaseException by what is built in | 6 3558281938
+raw builtins.BaseException as an attribute of a class | 6 1786391762
+raw builtins.BaseExceptionGroup | 1 TypeError 'BaseExceptionGroup.__new__() takes exactly 2 arguments (0 given)'
+raw builtins.BlockingIOError __delattr__ | 23 1454854801
+raw builtins.BlockingIOError __eq__ | 23 3155662613
+raw builtins.BlockingIOError __ge__ | 23 2373364316
+raw builtins.BlockingIOError __getattribute__ | 23 3105102235
+raw builtins.BlockingIOError __gt__ | 23 961910306
+raw builtins.BlockingIOError __init__ | 23 1841268317
+raw builtins.BlockingIOError __le__ | 23 2733678440
+raw builtins.BlockingIOError __lt__ | 23 382968598
+raw builtins.BlockingIOError __ne__ | 23 1846055852
+raw builtins.BlockingIOError __new__ | 23 2039822196
+raw builtins.BlockingIOError __setattr__ | 23 2272405517
+raw builtins.BlockingIOError __setstate__ | 23 3258742225
+raw builtins.BlockingIOError add_note | 23 4184638200
+raw builtins.BlockingIOError with_traceback | 23 4167646028
+raw builtins.BlockingIOError by what is built in | 6 1275580438
+raw builtins.BlockingIOError as an attribute of a class | 6 2927927673
+raw builtins.BrokenPipeError __delattr__ | 23 2798446324
+raw builtins.BrokenPipeError __eq__ | 23 2876126832
+raw builtins.BrokenPipeError __ge__ | 23 2584677177
+raw builtins.BrokenPipeError __getattribute__ | 23 4231892821
+raw builtins.BrokenPipeError __gt__ | 23 774649671
+raw builtins.BrokenPipeError __init__ | 23 1392624065
+raw builtins.BrokenPipeError __le__ | 23 3045670413
+raw builtins.BrokenPipeError __lt__ | 23 27918963
+raw builtins.BrokenPipeError __ne__ | 23 2037461705
+raw builtins.BrokenPipeError __new__ | 23 1333401927
+raw builtins.BrokenPipeError __setattr__ | 23 3962002352
+raw builtins.BrokenPipeError __setstate__ | 23 1856198720
+raw builtins.BrokenPipeError add_note | 23 3581286021
+raw builtins.BrokenPipeError with_traceback | 23 2651941911
+raw builtins.BrokenPipeError by what is built in | 6 3471275880
+raw builtins.BrokenPipeError as an attribute of a class | 6 2112204595
+raw builtins.BufferError __delattr__ | 23 2511563287
+raw builtins.BufferError __eq__ | 23 1185207053
+raw builtins.BufferError __ge__ | 23 4237389243
+raw builtins.BufferError __getattribute__ | 23 1898439848
+raw builtins.BufferError __gt__ | 23 3416541486
+raw builtins.BufferError __init__ | 23 285074646
+raw builtins.BufferError __le__ | 23 2247656849
+raw builtins.BufferError __lt__ | 23 2999820548
+raw builtins.BufferError __ne__ | 23 1796467318
+raw builtins.BufferError __new__ | 23 3391340521
+raw builtins.BufferError __setattr__ | 23 398930657
+raw builtins.BufferError __setstate__ | 23 1581384435
+raw builtins.BufferError add_note | 23 1660097908
+raw builtins.BufferError with_traceback | 23 3670869110
+raw builtins.BufferError by what is built in | 6 3919153632
+raw builtins.BufferError as an attribute of a class | 6 3709643123
+raw builtins.BytesWarning __delattr__ | 23 3202143140
+raw builtins.BytesWarning __eq__ | 23 2375838722
+raw builtins.BytesWarning __ge__ | 23 1389335673
+raw builtins.BytesWarning __getattribute__ | 23 1351978755
+raw builtins.BytesWarning __gt__ | 23 869205184
+raw builtins.BytesWarning __init__ | 23 2924188279
+raw builtins.BytesWarning __le__ | 23 316034545
+raw builtins.BytesWarning __lt__ | 23 1943461192
+raw builtins.BytesWarning __ne__ | 23 100621697
+raw builtins.BytesWarning __new__ | 23 2384084669
+raw builtins.BytesWarning __setattr__ | 23 2082682906
+raw builtins.BytesWarning __setstate__ | 23 2333550330
+raw builtins.BytesWarning add_note | 23 3109365307
+raw builtins.BytesWarning with_traceback | 23 2727217609
+raw builtins.BytesWarning by what is built in | 6 2725490214
+raw builtins.BytesWarning as an attribute of a class | 6 2880939973
+raw builtins.ChildProcessError __delattr__ | 23 3488812163
+raw builtins.ChildProcessError __eq__ | 23 2504841099
+raw builtins.ChildProcessError __ge__ | 23 1494774679
+raw builtins.ChildProcessError __getattribute__ | 23 3880263615
+raw builtins.ChildProcessError __gt__ | 23 2947299116
+raw builtins.ChildProcessError __init__ | 23 4130111967
+raw builtins.ChildProcessError __le__ | 23 3447860584
+raw builtins.ChildProcessError __lt__ | 23 993421779
+raw builtins.ChildProcessError __ne__ | 23 1885985751
+raw builtins.ChildProcessError __new__ | 23 917165438
+raw builtins.ChildProcessError __setattr__ | 23 2594884845
+raw builtins.ChildProcessError __setstate__ | 23 29072997
+raw builtins.ChildProcessError add_note | 23 1583065948
+raw builtins.ChildProcessError with_traceback | 23 537958976
+raw builtins.ChildProcessError by what is built in | 6 2855871182
+raw builtins.ChildProcessError as an attribute of a class | 6 374053962
+raw builtins.ConnectionAbortedError __delattr__ | 23 2259830390
+raw builtins.ConnectionAbortedError __eq__ | 23 1354694212
+raw builtins.ConnectionAbortedError __ge__ | 23 896470012
+raw builtins.ConnectionAbortedError __getattribute__ | 23 3611887495
+raw builtins.ConnectionAbortedError __gt__ | 23 905691989
+raw builtins.ConnectionAbortedError __init__ | 23 4140155274
+raw builtins.ConnectionAbortedError __le__ | 23 745462055
+raw builtins.ConnectionAbortedError __lt__ | 23 754585998
+raw builtins.ConnectionAbortedError __ne__ | 23 1225094123
+raw builtins.ConnectionAbortedError __new__ | 23 1578733357
+raw builtins.ConnectionAbortedError __setattr__ | 23 2711468861
+raw builtins.ConnectionAbortedError __setstate__ | 23 575162800
+raw builtins.ConnectionAbortedError add_note | 23 3895705769
+raw builtins.ConnectionAbortedError with_traceback | 23 1802727867
+raw builtins.ConnectionAbortedError by what is built in | 6 3127043873
+raw builtins.ConnectionAbortedError as an attribute of a class | 6 2438821114
+raw builtins.ConnectionError __delattr__ | 23 3803892924
+raw builtins.ConnectionError __eq__ | 23 3241281860
+raw builtins.ConnectionError __ge__ | 23 4031984653
+raw builtins.ConnectionError __getattribute__ | 23 187230750
+raw builtins.ConnectionError __gt__ | 23 1148192883
+raw builtins.ConnectionError __init__ | 23 810976359
+raw builtins.ConnectionError __le__ | 23 3755278649
+raw builtins.ConnectionError __lt__ | 23 1811299655
+raw builtins.ConnectionError __ne__ | 23 321719805
+raw builtins.ConnectionError __new__ | 23 2198802414
+raw builtins.ConnectionError __setattr__ | 23 539945564
+raw builtins.ConnectionError __setstate__ | 23 57820463
+raw builtins.ConnectionError add_note | 23 724469287
+raw builtins.ConnectionError with_traceback | 23 2985722907
+raw builtins.ConnectionError by what is built in | 6 3199283306
+raw builtins.ConnectionError as an attribute of a class | 6 3068667304
+raw builtins.ConnectionRefusedError __delattr__ | 23 2784254907
+raw builtins.ConnectionRefusedError __eq__ | 23 563514638
+raw builtins.ConnectionRefusedError __ge__ | 23 1145534646
+raw builtins.ConnectionRefusedError __getattribute__ | 23 3989399527
+raw builtins.ConnectionRefusedError __gt__ | 23 1154723871
+raw builtins.ConnectionRefusedError __init__ | 23 3746311369
+raw builtins.ConnectionRefusedError __le__ | 23 1564912237
+raw builtins.ConnectionRefusedError __lt__ | 23 1574068932
+raw builtins.ConnectionRefusedError __ne__ | 23 942473377
+raw builtins.ConnectionRefusedError __new__ | 23 2484490751
+raw builtins.ConnectionRefusedError __setattr__ | 23 3292378412
+raw builtins.ConnectionRefusedError __setstate__ | 23 3619097683
+raw builtins.ConnectionRefusedError add_note | 23 1344380708
+raw builtins.ConnectionRefusedError with_traceback | 23 163393401
+raw builtins.ConnectionRefusedError by what is built in | 6 1068746224
+raw builtins.ConnectionRefusedError as an attribute of a class | 6 879976314
+raw builtins.ConnectionResetError __delattr__ | 23 4021066853
+raw builtins.ConnectionResetError __eq__ | 23 2329901206
+raw builtins.ConnectionResetError __ge__ | 23 2521036924
+raw builtins.ConnectionResetError __getattribute__ | 23 1729345711
+raw builtins.ConnectionResetError __gt__ | 23 1345407454
+raw builtins.ConnectionResetError __init__ | 23 329644238
+raw builtins.ConnectionResetError __le__ | 23 4271837823
+raw builtins.ConnectionResetError __lt__ | 23 955098077
+raw builtins.ConnectionResetError __ne__ | 23 2010862248
+raw builtins.ConnectionResetError __new__ | 23 3319437843
+raw builtins.ConnectionResetError __setattr__ | 23 3068675302
+raw builtins.ConnectionResetError __setstate__ | 23 3428460622
+raw builtins.ConnectionResetError add_note | 23 3648387548
+raw builtins.ConnectionResetError with_traceback | 23 415992141
+raw builtins.ConnectionResetError by what is built in | 6 1392868859
+raw builtins.ConnectionResetError as an attribute of a class | 6 1358926474
+raw builtins.DeprecationWarning __delattr__ | 23 3430767504
+raw builtins.DeprecationWarning __eq__ | 23 1976797810
+raw builtins.DeprecationWarning __ge__ | 23 1443977549
+raw builtins.DeprecationWarning __getattribute__ | 23 369653308
+raw builtins.DeprecationWarning __gt__ | 23 1796387656
+raw builtins.DeprecationWarning __init__ | 23 4027706712
+raw builtins.DeprecationWarning __le__ | 23 1559577112
+raw builtins.DeprecationWarning __lt__ | 23 1643554845
+raw builtins.DeprecationWarning __ne__ | 23 4172356380
+raw builtins.DeprecationWarning __new__ | 23 3733648092
+raw builtins.DeprecationWarning __setattr__ | 23 475378291
+raw builtins.DeprecationWarning __setstate__ | 23 1690116835
+raw builtins.DeprecationWarning add_note | 23 272087900
+raw builtins.DeprecationWarning with_traceback | 23 2453234862
+raw builtins.DeprecationWarning by what is built in | 6 187912384
+raw builtins.DeprecationWarning as an attribute of a class | 6 4038515479
+raw builtins.EOFError __delattr__ | 23 3453066282
+raw builtins.EOFError __eq__ | 23 912069199
+raw builtins.EOFError __ge__ | 23 1521709167
+raw builtins.EOFError __getattribute__ | 23 560191977
+raw builtins.EOFError __gt__ | 23 3754570581
+raw builtins.EOFError __init__ | 23 2543740223
+raw builtins.EOFError __le__ | 23 2626803323
+raw builtins.EOFError __lt__ | 23 434672961
+raw builtins.EOFError __ne__ | 23 855918982
+raw builtins.EOFError __new__ | 23 1850054907
+raw builtins.EOFError __setattr__ | 23 3060185462
+raw builtins.EOFError __setstate__ | 23 2151251288
+raw builtins.EOFError add_note | 23 1720390554
+raw builtins.EOFError with_traceback | 23 555840567
+raw builtins.EOFError by what is built in | 6 3441004879
+raw builtins.EOFError as an attribute of a class | 6 1780170627
+raw builtins.EncodingWarning __delattr__ | 23 1093538759
+raw builtins.EncodingWarning __eq__ | 23 2911992256
+raw builtins.EncodingWarning __ge__ | 23 2632991881
+raw builtins.EncodingWarning __getattribute__ | 23 794504431
+raw builtins.EncodingWarning __gt__ | 23 684947703
+raw builtins.EncodingWarning __init__ | 23 1306106625
+raw builtins.EncodingWarning __le__ | 23 3010884029
+raw builtins.EncodingWarning __lt__ | 23 123030979
+raw builtins.EncodingWarning __ne__ | 23 2140044665
+raw builtins.EncodingWarning __new__ | 23 978436828
+raw builtins.EncodingWarning __setattr__ | 23 720510775
+raw builtins.EncodingWarning __setstate__ | 23 908539342
+raw builtins.EncodingWarning add_note | 23 2754482008
+raw builtins.EncodingWarning with_traceback | 23 586876873
+raw builtins.EncodingWarning by what is built in | 6 1645472608
+raw builtins.EncodingWarning as an attribute of a class | 6 767050050
+raw builtins.EnvironmentError __delattr__ | 23 3301522125
+raw builtins.EnvironmentError __eq__ | 23 1506912158
+raw builtins.EnvironmentError __ge__ | 23 1682087733
+raw builtins.EnvironmentError __getattribute__ | 23 258935025
+raw builtins.EnvironmentError __gt__ | 23 4131756336
+raw builtins.EnvironmentError __init__ | 23 3370117732
+raw builtins.EnvironmentError __le__ | 23 667595922
+raw builtins.EnvironmentError __lt__ | 23 3050156695
+raw builtins.EnvironmentError __ne__ | 23 2802480189
+raw builtins.EnvironmentError __new__ | 23 1199772290
+raw builtins.EnvironmentError __setattr__ | 23 2449710721
+raw builtins.EnvironmentError __setstate__ | 23 351866042
+raw builtins.EnvironmentError add_note | 23 2594353136
+raw builtins.EnvironmentError with_traceback | 23 362732892
+raw builtins.EnvironmentError by what is built in | 6 2686721524
+raw builtins.EnvironmentError as an attribute of a class | 6 2376880909
+raw builtins.Exception __delattr__ | 23 2535412383
+raw builtins.Exception __eq__ | 23 2353767776
+raw builtins.Exception __ge__ | 23 2520878994
+raw builtins.Exception __getattribute__ | 23 2732955465
+raw builtins.Exception __gt__ | 23 3690068541
+raw builtins.Exception __init__ | 23 2058608515
+raw builtins.Exception __le__ | 23 694397290
+raw builtins.Exception __lt__ | 23 1691606213
+raw builtins.Exception __ne__ | 23 1745045268
+raw builtins.Exception __new__ | 23 632832888
+raw builtins.Exception __setattr__ | 23 2526313326
+raw builtins.Exception __setstate__ | 23 4053462937
+raw builtins.Exception add_note | 23 1729254676
+raw builtins.Exception with_traceback | 23 204117507
+raw builtins.Exception by what is built in | 6 2665181499
+raw builtins.Exception as an attribute of a class | 6 4068792886
+raw builtins.ExceptionGroup | 1 TypeError 'BaseExceptionGroup.__new__() takes exactly 2 arguments (0 given)'
+raw builtins.FileExistsError __delattr__ | 23 3793020608
+raw builtins.FileExistsError __eq__ | 23 3116954893
+raw builtins.FileExistsError __ge__ | 23 2292828228
+raw builtins.FileExistsError __getattribute__ | 23 2174602153
+raw builtins.FileExistsError __gt__ | 23 1015739450
+raw builtins.FileExistsError __init__ | 23 1777980837
+raw builtins.FileExistsError __le__ | 23 2804940144
+raw builtins.FileExistsError __lt__ | 23 319602958
+raw builtins.FileExistsError __ne__ | 23 1809314228
+raw builtins.FileExistsError __new__ | 23 4225087281
+raw builtins.FileExistsError __setattr__ | 23 874779879
+raw builtins.FileExistsError __setstate__ | 23 2902769518
+raw builtins.FileExistsError add_note | 23 1116719383
+raw builtins.FileExistsError with_traceback | 23 3392458446
+raw builtins.FileExistsError by what is built in | 6 2340530823
+raw builtins.FileExistsError as an attribute of a class | 6 948748015
+raw builtins.FileNotFoundError __delattr__ | 23 1925669508
+raw builtins.FileNotFoundError __eq__ | 23 307607092
+raw builtins.FileNotFoundError __ge__ | 23 3724612136
+raw builtins.FileNotFoundError __getattribute__ | 23 754585142
+raw builtins.FileNotFoundError __gt__ | 23 682972819
+raw builtins.FileNotFoundError __init__ | 23 1350796277
+raw builtins.FileNotFoundError __le__ | 23 1251691735
+raw builtins.FileNotFoundError __lt__ | 23 3157198956
+raw builtins.FileNotFoundError __ne__ | 23 4151360104
+raw builtins.FileNotFoundError __new__ | 23 3653980254
+raw builtins.FileNotFoundError __setattr__ | 23 3206333980
+raw builtins.FileNotFoundError __setstate__ | 23 3015810978
+raw builtins.FileNotFoundError add_note | 23 2238114364
+raw builtins.FileNotFoundError with_traceback | 23 1011432898
+raw builtins.FileNotFoundError by what is built in | 6 4164463779
+raw builtins.FileNotFoundError as an attribute of a class | 6 7670240
+raw builtins.FloatingPointError __delattr__ | 23 3056456655
+raw builtins.FloatingPointError __eq__ | 23 646216110
+raw builtins.FloatingPointError __ge__ | 23 88517265
+raw builtins.FloatingPointError __getattribute__ | 23 4139711722
+raw builtins.FloatingPointError __gt__ | 23 944062612
+raw builtins.FloatingPointError __init__ | 23 2695701687
+raw builtins.FloatingPointError __le__ | 23 262320580
+raw builtins.FloatingPointError __lt__ | 23 849435585
+raw builtins.FloatingPointError __ne__ | 23 2884036800
+raw builtins.FloatingPointError __new__ | 23 1769953108
+raw builtins.FloatingPointError __setattr__ | 23 1891674658
+raw builtins.FloatingPointError __setstate__ | 23 4081659507
+raw builtins.FloatingPointError add_note | 23 58073050
+raw builtins.FloatingPointError with_traceback | 23 1790951585
+raw builtins.FloatingPointError by what is built in | 6 3665652393
+raw builtins.FloatingPointError as an attribute of a class | 6 2221369362
+raw builtins.FutureWarning __delattr__ | 23 4011105792
+raw builtins.FutureWarning __eq__ | 23 2399344196
+raw builtins.FutureWarning __ge__ | 23 3994610643
+raw builtins.FutureWarning __getattribute__ | 23 2601411161
+raw builtins.FutureWarning __gt__ | 23 1567489022
+raw builtins.FutureWarning __init__ | 23 1909204890
+raw builtins.FutureWarning __le__ | 23 2344456130
+raw builtins.FutureWarning __lt__ | 23 952672239
+raw builtins.FutureWarning __ne__ | 23 2801978971
+raw builtins.FutureWarning __new__ | 23 1722916260
+raw builtins.FutureWarning __setattr__ | 23 3048640594
+raw builtins.FutureWarning __setstate__ | 23 2747447919
+raw builtins.FutureWarning add_note | 23 379615409
+raw builtins.FutureWarning with_traceback | 23 57316723
+raw builtins.FutureWarning by what is built in | 6 4137330000
+raw builtins.FutureWarning as an attribute of a class | 6 869800905
+raw builtins.GeneratorExit __delattr__ | 23 156678528
+raw builtins.GeneratorExit __eq__ | 23 1002008206
+raw builtins.GeneratorExit __ge__ | 23 1520603929
+raw builtins.GeneratorExit __getattribute__ | 23 1162414846
+raw builtins.GeneratorExit __gt__ | 23 3923215156
+raw builtins.GeneratorExit __init__ | 23 3715661991
+raw builtins.GeneratorExit __le__ | 23 1057486600
+raw builtins.GeneratorExit __lt__ | 23 2356340517
+raw builtins.GeneratorExit __ne__ | 23 330872465
+raw builtins.GeneratorExit __new__ | 23 3538810052
+raw builtins.GeneratorExit __setattr__ | 23 943127628
+raw builtins.GeneratorExit __setstate__ | 23 3076744623
+raw builtins.GeneratorExit add_note | 23 1847653133
+raw builtins.GeneratorExit with_traceback | 23 585096385
+raw builtins.GeneratorExit by what is built in | 6 2949216293
+raw builtins.GeneratorExit as an attribute of a class | 6 1298130603
+raw builtins.IOError __delattr__ | 23 1487797156
+raw builtins.IOError __eq__ | 23 2473767097
+raw builtins.IOError __ge__ | 23 1786392672
+raw builtins.IOError __getattribute__ | 23 212282914
+raw builtins.IOError __gt__ | 23 1146605276
+raw builtins.IOError __init__ | 23 595360888
+raw builtins.IOError __le__ | 23 4224983035
+raw builtins.IOError __lt__ | 23 3589923143
+raw builtins.IOError __ne__ | 23 621260050
+raw builtins.IOError __new__ | 23 1119482345
+raw builtins.IOError __setattr__ | 23 4115671790
+raw builtins.IOError __setstate__ | 23 1160486276
+raw builtins.IOError add_note | 23 3797915594
+raw builtins.IOError with_traceback | 23 612289868
+raw builtins.IOError by what is built in | 6 2134651834
+raw builtins.IOError as an attribute of a class | 6 3437408253
+raw builtins.ImportError __delattr__ | 23 3775974397
+raw builtins.ImportError __eq__ | 23 1960699860
+raw builtins.ImportError __ge__ | 23 3471333730
+raw builtins.ImportError __getattribute__ | 23 2542045554
+raw builtins.ImportError __gt__ | 23 4192042487
+raw builtins.ImportError __init__ | 23 3534763555
+raw builtins.ImportError __le__ | 23 3078730056
+raw builtins.ImportError __lt__ | 23 2159318493
+raw builtins.ImportError __ne__ | 23 1500176047
+raw builtins.ImportError __new__ | 23 3086820021
+raw builtins.ImportError __setattr__ | 23 518236111
+raw builtins.ImportError __setstate__ | 23 186819594
+raw builtins.ImportError add_note | 23 1301206243
+raw builtins.ImportError with_traceback | 23 2624746137
+raw builtins.ImportError by what is built in | 6 379987370
+raw builtins.ImportError as an attribute of a class | 6 2779514804
+raw builtins.ImportWarning __delattr__ | 23 1882982752
+raw builtins.ImportWarning __eq__ | 23 1194169038
+raw builtins.ImportWarning __ge__ | 23 641101657
+raw builtins.ImportWarning __getattribute__ | 23 1507719107
+raw builtins.ImportWarning __gt__ | 23 2504228724
+raw builtins.ImportWarning __init__ | 23 4177224382
+raw builtins.ImportWarning __le__ | 23 1133710152
+raw builtins.ImportWarning __lt__ | 23 4041612133
+raw builtins.ImportWarning __ne__ | 23 1865173713
+raw builtins.ImportWarning __new__ | 23 3016751178
+raw builtins.ImportWarning __setattr__ | 23 1294552204
+raw builtins.ImportWarning __setstate__ | 23 3928409000
+raw builtins.ImportWarning add_note | 23 1507469624
+raw builtins.ImportWarning with_traceback | 23 3668159653
+raw builtins.ImportWarning by what is built in | 6 2275671837
+raw builtins.ImportWarning as an attribute of a class | 6 4266476662
+raw builtins.IndentationError __delattr__ | 23 3920171220
+raw builtins.IndentationError __eq__ | 23 3130385846
+raw builtins.IndentationError __ge__ | 23 2265373981
+raw builtins.IndentationError __getattribute__ | 23 2964494839
+raw builtins.IndentationError __gt__ | 23 352443160
+raw builtins.IndentationError __init__ | 23 2747825076
+raw builtins.IndentationError __le__ | 23 3297703610
+raw builtins.IndentationError __lt__ | 23 1451880639
+raw builtins.IndentationError __ne__ | 23 1145976341
+raw builtins.IndentationError __new__ | 23 2659273294
+raw builtins.IndentationError __setattr__ | 23 1676303653
+raw builtins.IndentationError __setstate__ | 23 3165223737
+raw builtins.IndentationError add_note | 23 1972173898
+raw builtins.IndentationError with_traceback | 23 2278641126
+raw builtins.IndentationError by what is built in | 6 2633239844
+raw builtins.IndentationError as an attribute of a class | 6 2491946102
+raw builtins.IndexError __delattr__ | 23 1115577820
+raw builtins.IndexError __eq__ | 23 2008901025
+raw builtins.IndexError __ge__ | 23 2707443244
+raw builtins.IndexError __getattribute__ | 23 1251682870
+raw builtins.IndexError __gt__ | 23 3619214204
+raw builtins.IndexError __init__ | 23 277731905
+raw builtins.IndexError __le__ | 23 708071632
+raw builtins.IndexError __lt__ | 23 1559022976
+raw builtins.IndexError __ne__ | 23 2438766365
+raw builtins.IndexError __new__ | 23 1206188717
+raw builtins.IndexError __setattr__ | 23 1206911945
+raw builtins.IndexError __setstate__ | 23 2185190777
+raw builtins.IndexError add_note | 23 1215573847
+raw builtins.IndexError with_traceback | 23 1801966673
+raw builtins.IndexError by what is built in | 6 3029130943
+raw builtins.IndexError as an attribute of a class | 6 467306672
+raw builtins.InterruptedError __delattr__ | 23 4007951022
+raw builtins.InterruptedError __eq__ | 23 4020259366
+raw builtins.InterruptedError __ge__ | 23 3526587021
+raw builtins.InterruptedError __getattribute__ | 23 2101146082
+raw builtins.InterruptedError __gt__ | 23 1077179528
+raw builtins.InterruptedError __init__ | 23 1318704000
+raw builtins.InterruptedError __le__ | 23 2444974378
+raw builtins.InterruptedError __lt__ | 23 62676783
+raw builtins.InterruptedError __ne__ | 23 293312901
+raw builtins.InterruptedError __new__ | 23 2407065007
+raw builtins.InterruptedError __setattr__ | 23 1719563868
+raw builtins.InterruptedError __setstate__ | 23 1974584026
+raw builtins.InterruptedError add_note | 23 1656419455
+raw builtins.InterruptedError with_traceback | 23 79908002
+raw builtins.InterruptedError by what is built in | 6 1954469588
+raw builtins.InterruptedError as an attribute of a class | 6 3181194719
+raw builtins.IsADirectoryError __delattr__ | 23 4103040117
+raw builtins.IsADirectoryError __eq__ | 23 2789949935
+raw builtins.IsADirectoryError __ge__ | 23 1780475379
+raw builtins.IsADirectoryError __getattribute__ | 23 748570214
+raw builtins.IsADirectoryError __gt__ | 23 2628493640
+raw builtins.IsADirectoryError __init__ | 23 2893845120
+raw builtins.IsADirectoryError __le__ | 23 4270177036
+raw builtins.IsADirectoryError __lt__ | 23 137494455
+raw builtins.IsADirectoryError __ne__ | 23 1131302323
+raw builtins.IsADirectoryError __new__ | 23 3236385765
+raw builtins.IsADirectoryError __setattr__ | 23 3952778020
+raw builtins.IsADirectoryError __setstate__ | 23 1002188189
+raw builtins.IsADirectoryError add_note | 23 896879444
+raw builtins.IsADirectoryError with_traceback | 23 2645352854
+raw builtins.IsADirectoryError by what is built in | 6 170675503
+raw builtins.IsADirectoryError as an attribute of a class | 6 3424025369
+raw builtins.KeyError __delattr__ | 23 3078158159
+raw builtins.KeyError __eq__ | 23 1584051300
+raw builtins.KeyError __ge__ | 23 847566404
+raw builtins.KeyError __getattribute__ | 23 1668102667
+raw builtins.KeyError __gt__ | 23 3086849406
+raw builtins.KeyError __init__ | 23 1652904274
+raw builtins.KeyError __le__ | 23 4104548432
+raw builtins.KeyError __lt__ | 23 1910453098
+raw builtins.KeyError __ne__ | 23 1530130349
+raw builtins.KeyError __new__ | 23 3688157856
+raw builtins.KeyError __setattr__ | 23 526138344
+raw builtins.KeyError __setstate__ | 23 3518973398
+raw builtins.KeyError add_note | 23 182557495
+raw builtins.KeyError with_traceback | 23 2361328438
+raw builtins.KeyError by what is built in | 6 1099066312
+raw builtins.KeyError as an attribute of a class | 6 1288417919
+raw builtins.KeyboardInterrupt __delattr__ | 23 2196442969
+raw builtins.KeyboardInterrupt __eq__ | 23 540716738
+raw builtins.KeyboardInterrupt __ge__ | 23 3966634718
+raw builtins.KeyboardInterrupt __getattribute__ | 23 1717685001
+raw builtins.KeyboardInterrupt __gt__ | 23 450514533
+raw builtins.KeyboardInterrupt __init__ | 23 3272877907
+raw builtins.KeyboardInterrupt __le__ | 23 2029278241
+raw builtins.KeyboardInterrupt __lt__ | 23 2386563226
+raw builtins.KeyboardInterrupt __ne__ | 23 3307184798
+raw builtins.KeyboardInterrupt __new__ | 23 1545027569
+raw builtins.KeyboardInterrupt __setattr__ | 23 300866691
+raw builtins.KeyboardInterrupt __setstate__ | 23 1966211195
+raw builtins.KeyboardInterrupt add_note | 23 473960234
+raw builtins.KeyboardInterrupt with_traceback | 23 3544219082
+raw builtins.KeyboardInterrupt by what is built in | 6 3363444974
+raw builtins.KeyboardInterrupt as an attribute of a class | 6 1899175596
+raw builtins.LookupError __delattr__ | 23 1555501558
+raw builtins.LookupError __eq__ | 23 4004097250
+raw builtins.LookupError __ge__ | 23 1419514452
+raw builtins.LookupError __getattribute__ | 23 1341524749
+raw builtins.LookupError __gt__ | 23 1672033985
+raw builtins.LookupError __init__ | 23 74808248
+raw builtins.LookupError __le__ | 23 771095166
+raw builtins.LookupError __lt__ | 23 448847595
+raw builtins.LookupError __ne__ | 23 3273561497
+raw builtins.LookupError __new__ | 23 263105229
+raw builtins.LookupError __setattr__ | 23 2685483863
+raw builtins.LookupError __setstate__ | 23 1497721828
+raw builtins.LookupError add_note | 23 2814497619
+raw builtins.LookupError with_traceback | 23 3095139427
+raw builtins.LookupError by what is built in | 6 213364574
+raw builtins.LookupError as an attribute of a class | 6 1235986109
+raw builtins.MemoryError __delattr__ | 23 3672357016
+raw builtins.MemoryError __eq__ | 23 1035762023
+raw builtins.MemoryError __ge__ | 23 2273953745
+raw builtins.MemoryError __getattribute__ | 23 494107793
+raw builtins.MemoryError __gt__ | 23 2965168964
+raw builtins.MemoryError __init__ | 23 1222442390
+raw builtins.MemoryError __le__ | 23 4276105211
+raw builtins.MemoryError __lt__ | 23 3386182510
+raw builtins.MemoryError __ne__ | 23 269172764
+raw builtins.MemoryError __new__ | 23 411806304
+raw builtins.MemoryError __setattr__ | 23 4280296275
+raw builtins.MemoryError __setstate__ | 23 3083857183
+raw builtins.MemoryError add_note | 23 4112743706
+raw builtins.MemoryError with_traceback | 23 2454925803
+raw builtins.MemoryError by what is built in | 6 2244158796
+raw builtins.MemoryError as an attribute of a class | 6 1474600877
+raw builtins.ModuleNotFoundError __delattr__ | 23 3842003022
+raw builtins.ModuleNotFoundError __eq__ | 23 464357697
+raw builtins.ModuleNotFoundError __ge__ | 23 4235795340
+raw builtins.ModuleNotFoundError __getattribute__ | 23 3018211719
+raw builtins.ModuleNotFoundError __gt__ | 23 1603549038
+raw builtins.ModuleNotFoundError __init__ | 23 2768758967
+raw builtins.ModuleNotFoundError __le__ | 23 3566863940
+raw builtins.ModuleNotFoundError __lt__ | 23 2004298406
+raw builtins.ModuleNotFoundError __ne__ | 23 3722110388
+raw builtins.ModuleNotFoundError __new__ | 23 1485202973
+raw builtins.ModuleNotFoundError __setattr__ | 23 2410032039
+raw builtins.ModuleNotFoundError __setstate__ | 23 2720752852
+raw builtins.ModuleNotFoundError add_note | 23 583005023
+raw builtins.ModuleNotFoundError with_traceback | 23 3601560312
+raw builtins.ModuleNotFoundError by what is built in | 6 747593771
+raw builtins.ModuleNotFoundError as an attribute of a class | 6 2089877081
+raw builtins.NameError __delattr__ | 23 3252292352
+raw builtins.NameError __eq__ | 23 388759361
+raw builtins.NameError __ge__ | 23 220321203
+raw builtins.NameError __getattribute__ | 23 3808849519
+raw builtins.NameError __gt__ | 23 1083285532
+raw builtins.NameError __init__ | 23 3929839647
+raw builtins.NameError __le__ | 23 2986603339
+raw builtins.NameError __lt__ | 23 4289955556
+raw builtins.NameError __ne__ | 23 4083359029
+raw builtins.NameError __new__ | 23 737384751
+raw builtins.NameError __setattr__ | 23 1614524971
+raw builtins.NameError __setstate__ | 23 2319294965
+raw builtins.NameError add_note | 23 916077322
+raw builtins.NameError with_traceback | 23 996085605
+raw builtins.NameError by what is built in | 6 1336063577
+raw builtins.NameError as an attribute of a class | 6 4231416148
+raw builtins.NotADirectoryError __delattr__ | 23 484724459
+raw builtins.NotADirectoryError __eq__ | 23 3615172671
+raw builtins.NotADirectoryError __ge__ | 23 4105829120
+raw builtins.NotADirectoryError __getattribute__ | 23 3480469331
+raw builtins.NotADirectoryError __gt__ | 23 3384414469
+raw builtins.NotADirectoryError __init__ | 23 4080219173
+raw builtins.NotADirectoryError __le__ | 23 4267565141
+raw builtins.NotADirectoryError __lt__ | 23 3277720144
+raw builtins.NotADirectoryError __ne__ | 23 1511635281
+raw builtins.NotADirectoryError __new__ | 23 2558173838
+raw builtins.NotADirectoryError __setattr__ | 23 3156671276
+raw builtins.NotADirectoryError __setstate__ | 23 1506687752
+raw builtins.NotADirectoryError add_note | 23 1772806081
+raw builtins.NotADirectoryError with_traceback | 23 2101786296
+raw builtins.NotADirectoryError by what is built in | 6 3787263912
+raw builtins.NotADirectoryError as an attribute of a class | 6 3950326011
+raw builtins.NotImplementedError __delattr__ | 23 1199473533
+raw builtins.NotImplementedError __eq__ | 23 1396024142
+raw builtins.NotImplementedError __ge__ | 23 3034657155
+raw builtins.NotImplementedError __getattribute__ | 23 3774554470
+raw builtins.NotImplementedError __gt__ | 23 386669921
+raw builtins.NotImplementedError __init__ | 23 2372544206
+raw builtins.NotImplementedError __le__ | 23 2617388107
+raw builtins.NotImplementedError __lt__ | 23 1072627881
+raw builtins.NotImplementedError __ne__ | 23 2504183739
+raw builtins.NotImplementedError __new__ | 23 1174167796
+raw builtins.NotImplementedError __setattr__ | 23 3961530418
+raw builtins.NotImplementedError __setstate__ | 23 3172698833
+raw builtins.NotImplementedError add_note | 23 2904886945
+raw builtins.NotImplementedError with_traceback | 23 277547277
+raw builtins.NotImplementedError by what is built in | 6 3011535515
+raw builtins.NotImplementedError as an attribute of a class | 6 3029553835
+raw builtins.OSError __delattr__ | 23 2609272243
+raw builtins.OSError __eq__ | 23 3081218421
+raw builtins.OSError __ge__ | 23 1320102316
+raw builtins.OSError __getattribute__ | 23 2603736842
+raw builtins.OSError __gt__ | 23 1619187472
+raw builtins.OSError __init__ | 23 2558683091
+raw builtins.OSError __le__ | 23 3741386295
+raw builtins.OSError __lt__ | 23 4046256267
+raw builtins.OSError __ne__ | 23 30586078
+raw builtins.OSError __new__ | 23 401364241
+raw builtins.OSError __setattr__ | 23 3517318353
+raw builtins.OSError __setstate__ | 23 277374788
+raw builtins.OSError add_note | 23 2717565106
+raw builtins.OSError with_traceback | 23 781835898
+raw builtins.OSError by what is built in | 6 380099498
+raw builtins.OSError as an attribute of a class | 6 1340871395
+raw builtins.OverflowError __delattr__ | 23 3309005656
+raw builtins.OverflowError __eq__ | 23 764651995
+raw builtins.OverflowError __ge__ | 23 1284002892
+raw builtins.OverflowError __getattribute__ | 23 881196386
+raw builtins.OverflowError __gt__ | 23 4294788193
+raw builtins.OverflowError __init__ | 23 1585569583
+raw builtins.OverflowError __le__ | 23 690827357
+raw builtins.OverflowError __lt__ | 23 2589466736
+raw builtins.OverflowError __ne__ | 23 93483460
+raw builtins.OverflowError __new__ | 23 2885782888
+raw builtins.OverflowError __setattr__ | 23 2220389338
+raw builtins.OverflowError __setstate__ | 23 2251834039
+raw builtins.OverflowError add_note | 23 2500970411
+raw builtins.OverflowError with_traceback | 23 3164569544
+raw builtins.OverflowError by what is built in | 6 53367611
+raw builtins.OverflowError as an attribute of a class | 6 234044950
+raw builtins.PendingDeprecationWarning __delattr__ | 23 4246090968
+raw builtins.PendingDeprecationWarning __eq__ | 23 2068154966
+raw builtins.PendingDeprecationWarning __ge__ | 23 1789986004
+raw builtins.PendingDeprecationWarning __getattribute__ | 23 1926922965
+raw builtins.PendingDeprecationWarning __gt__ | 23 2081162503
+raw builtins.PendingDeprecationWarning __init__ | 23 2305009945
+raw builtins.PendingDeprecationWarning __le__ | 23 170987160
+raw builtins.PendingDeprecationWarning __lt__ | 23 478941003
+raw builtins.PendingDeprecationWarning __ne__ | 23 3532946828
+raw builtins.PendingDeprecationWarning __new__ | 23 1099329639
+raw builtins.PendingDeprecationWarning __setattr__ | 23 3843414802
+raw builtins.PendingDeprecationWarning __setstate__ | 23 936584782
+raw builtins.PendingDeprecationWarning add_note | 23 2405852313
+raw builtins.PendingDeprecationWarning with_traceback | 23 3014778642
+raw builtins.PendingDeprecationWarning by what is built in | 6 1567310733
+raw builtins.PendingDeprecationWarning as an attribute of a class | 6 4151042048
+raw builtins.PermissionError __delattr__ | 23 469226374
+raw builtins.PermissionError __eq__ | 23 904962004
+raw builtins.PermissionError __ge__ | 23 76653213
+raw builtins.PermissionError __getattribute__ | 23 2259905456
+raw builtins.PermissionError __gt__ | 23 2964496099
+raw builtins.PermissionError __init__ | 23 316552788
+raw builtins.PermissionError __le__ | 23 722966441
+raw builtins.PermissionError __lt__ | 23 2671029207
+raw builtins.PermissionError __ne__ | 23 3891239789
+raw builtins.PermissionError __new__ | 23 1067646762
+raw builtins.PermissionError __setattr__ | 23 3424821273
+raw builtins.PermissionError __setstate__ | 23 3550365802
+raw builtins.PermissionError add_note | 23 1313197059
+raw builtins.PermissionError with_traceback | 23 3420139072
+raw builtins.PermissionError by what is built in | 6 3511460572
+raw builtins.PermissionError as an attribute of a class | 6 2246193038
+raw builtins.ProcessLookupError __delattr__ | 23 2169451590
+raw builtins.ProcessLookupError __eq__ | 23 1861631241
+raw builtins.ProcessLookupError __ge__ | 23 1295314486
+raw builtins.ProcessLookupError __getattribute__ | 23 2771385162
+raw builtins.ProcessLookupError __gt__ | 23 1882653747
+raw builtins.ProcessLookupError __init__ | 23 2997745044
+raw builtins.ProcessLookupError __le__ | 23 1204876643
+raw builtins.ProcessLookupError __lt__ | 23 2060656486
+raw builtins.ProcessLookupError __ne__ | 23 3818171495
+raw builtins.ProcessLookupError __new__ | 23 2780382181
+raw builtins.ProcessLookupError __setattr__ | 23 3923061881
+raw builtins.ProcessLookupError __setstate__ | 23 2447698235
+raw builtins.ProcessLookupError add_note | 23 3820854164
+raw builtins.ProcessLookupError with_traceback | 23 398500789
+raw builtins.ProcessLookupError by what is built in | 6 604511725
+raw builtins.ProcessLookupError as an attribute of a class | 6 1605778642
+raw builtins.PythonFinalizationError __delattr__ | 23 233761018
+raw builtins.PythonFinalizationError __eq__ | 23 1874494785
+raw builtins.PythonFinalizationError __ge__ | 23 3473225897
+raw builtins.PythonFinalizationError __getattribute__ | 23 3131330203
+raw builtins.PythonFinalizationError __gt__ | 23 3008200245
+raw builtins.PythonFinalizationError __init__ | 23 2871171693
+raw builtins.PythonFinalizationError __le__ | 23 3361588927
+raw builtins.PythonFinalizationError __lt__ | 23 3021307939
+raw builtins.PythonFinalizationError __ne__ | 23 233341927
+raw builtins.PythonFinalizationError __new__ | 23 444294019
+raw builtins.PythonFinalizationError __setattr__ | 23 3755104819
+raw builtins.PythonFinalizationError __setstate__ | 23 1316504283
+raw builtins.PythonFinalizationError add_note | 23 1286169011
+raw builtins.PythonFinalizationError with_traceback | 23 1321811769
+raw builtins.PythonFinalizationError by what is built in | 6 935915276
+raw builtins.PythonFinalizationError as an attribute of a class | 6 3016918472
+raw builtins.RecursionError __delattr__ | 23 825951802
+raw builtins.RecursionError __eq__ | 23 349856314
+raw builtins.RecursionError __ge__ | 23 2252700130
+raw builtins.RecursionError __getattribute__ | 23 358988519
+raw builtins.RecursionError __gt__ | 23 1337974940
+raw builtins.RecursionError __init__ | 23 2667672119
+raw builtins.RecursionError __le__ | 23 667305212
+raw builtins.RecursionError __lt__ | 23 3996966274
+raw builtins.RecursionError __ne__ | 23 4148237955
+raw builtins.RecursionError __new__ | 23 3074729007
+raw builtins.RecursionError __setattr__ | 23 3962035601
+raw builtins.RecursionError __setstate__ | 23 1921543529
+raw builtins.RecursionError add_note | 23 54591060
+raw builtins.RecursionError with_traceback | 23 2963812254
+raw builtins.RecursionError by what is built in | 6 3234346202
+raw builtins.RecursionError as an attribute of a class | 6 2656840971
+raw builtins.ReferenceError __delattr__ | 23 3760996117
+raw builtins.ReferenceError __eq__ | 23 4239233130
+raw builtins.ReferenceError __ge__ | 23 1848806322
+raw builtins.ReferenceError __getattribute__ | 23 561568050
+raw builtins.ReferenceError __gt__ | 23 2814907084
+raw builtins.ReferenceError __init__ | 23 1228734086
+raw builtins.ReferenceError __le__ | 23 3484530348
+raw builtins.ReferenceError __lt__ | 23 105590738
+raw builtins.ReferenceError __ne__ | 23 523691219
+raw builtins.ReferenceError __new__ | 23 544186963
+raw builtins.ReferenceError __setattr__ | 23 750377655
+raw builtins.ReferenceError __setstate__ | 23 2887711438
+raw builtins.ReferenceError add_note | 23 67678429
+raw builtins.ReferenceError with_traceback | 23 2854519024
+raw builtins.ReferenceError by what is built in | 6 1638353777
+raw builtins.ReferenceError as an attribute of a class | 6 3231507736
+raw builtins.ResourceWarning __delattr__ | 23 3795147148
+raw builtins.ResourceWarning __eq__ | 23 4177922147
+raw builtins.ResourceWarning __ge__ | 23 3362207018
+raw builtins.ResourceWarning __getattribute__ | 23 4186759099
+raw builtins.ResourceWarning __gt__ | 23 2084833620
+raw builtins.ResourceWarning __init__ | 23 875426531
+raw builtins.ResourceWarning __le__ | 23 3890282526
+raw builtins.ResourceWarning __lt__ | 23 1405238368
+raw builtins.ResourceWarning __ne__ | 23 723061978
+raw builtins.ResourceWarning __new__ | 23 1447136654
+raw builtins.ResourceWarning __setattr__ | 23 381807732
+raw builtins.ResourceWarning __setstate__ | 23 1987387437
+raw builtins.ResourceWarning add_note | 23 126221542
+raw builtins.ResourceWarning with_traceback | 23 1695215293
+raw builtins.ResourceWarning by what is built in | 6 295077316
+raw builtins.ResourceWarning as an attribute of a class | 6 2766537054
+raw builtins.RuntimeError __delattr__ | 23 3312867212
+raw builtins.RuntimeError __eq__ | 23 280313208
+raw builtins.RuntimeError __ge__ | 23 3488007427
+raw builtins.RuntimeError __getattribute__ | 23 757628829
+raw builtins.RuntimeError __gt__ | 23 2934330810
+raw builtins.RuntimeError __init__ | 23 4275536807
+raw builtins.RuntimeError __le__ | 23 2415860875
+raw builtins.RuntimeError __lt__ | 23 4009724978
+raw builtins.RuntimeError __ne__ | 23 2564164859
+raw builtins.RuntimeError __new__ | 23 2629760534
+raw builtins.RuntimeError __setattr__ | 23 1458521037
+raw builtins.RuntimeError __setstate__ | 23 201622672
+raw builtins.RuntimeError add_note | 23 1533144400
+raw builtins.RuntimeError with_traceback | 23 2584047109
+raw builtins.RuntimeError by what is built in | 6 165211051
+raw builtins.RuntimeError as an attribute of a class | 6 2286743529
+raw builtins.RuntimeWarning __delattr__ | 23 939805805
+raw builtins.RuntimeWarning __eq__ | 23 1699192210
+raw builtins.RuntimeWarning __ge__ | 23 4158162506
+raw builtins.RuntimeWarning __getattribute__ | 23 2350832374
+raw builtins.RuntimeWarning __gt__ | 23 1042423604
+raw builtins.RuntimeWarning __init__ | 23 4007761329
+raw builtins.RuntimeWarning __le__ | 23 1448852308
+raw builtins.RuntimeWarning __lt__ | 23 2678137386
+raw builtins.RuntimeWarning __ne__ | 23 2262624555
+raw builtins.RuntimeWarning __new__ | 23 830198069
+raw builtins.RuntimeWarning __setattr__ | 23 2479549939
+raw builtins.RuntimeWarning __setstate__ | 23 3292873498
+raw builtins.RuntimeWarning add_note | 23 1908349126
+raw builtins.RuntimeWarning with_traceback | 23 580994762
+raw builtins.RuntimeWarning by what is built in | 6 4234926418
+raw builtins.RuntimeWarning as an attribute of a class | 6 2220677330
+raw builtins.StopAsyncIteration __delattr__ | 23 3643326141
+raw builtins.StopAsyncIteration __eq__ | 23 1352361107
+raw builtins.StopAsyncIteration __ge__ | 23 1935259564
+raw builtins.StopAsyncIteration __getattribute__ | 23 3085891590
+raw builtins.StopAsyncIteration __gt__ | 23 1314545065
+raw builtins.StopAsyncIteration __init__ | 23 4274478462
+raw builtins.StopAsyncIteration __le__ | 23 2042473721
+raw builtins.StopAsyncIteration __lt__ | 23 1153320700
+raw builtins.StopAsyncIteration __ne__ | 23 3724146173
+raw builtins.StopAsyncIteration __new__ | 23 1806526246
+raw builtins.StopAsyncIteration __setattr__ | 23 4063591878
+raw builtins.StopAsyncIteration __setstate__ | 23 3623332788
+raw builtins.StopAsyncIteration add_note | 23 3089533992
+raw builtins.StopAsyncIteration with_traceback | 23 970621491
+raw builtins.StopAsyncIteration by what is built in | 6 1022513832
+raw builtins.StopAsyncIteration as an attribute of a class | 6 309422411
+raw builtins.StopIteration __delattr__ | 23 3794002062
+raw builtins.StopIteration __eq__ | 23 3269840725
+raw builtins.StopIteration __ge__ | 23 2751345346
+raw builtins.StopIteration __getattribute__ | 23 786400735
+raw builtins.StopIteration __gt__ | 23 277553903
+raw builtins.StopIteration __init__ | 23 1572734244
+raw builtins.StopIteration __le__ | 23 3327874771
+raw builtins.StopIteration __lt__ | 23 1965967102
+raw builtins.StopIteration __ne__ | 23 3940816714
+raw builtins.StopIteration __new__ | 23 2169775121
+raw builtins.StopIteration __setattr__ | 23 3373060508
+raw builtins.StopIteration __setstate__ | 23 671775024
+raw builtins.StopIteration add_note | 23 2043307546
+raw builtins.StopIteration with_traceback | 23 2128500793
+raw builtins.StopIteration by what is built in | 6 2818491492
+raw builtins.StopIteration as an attribute of a class | 6 3280906056
+raw builtins.SyntaxError __delattr__ | 23 53541501
+raw builtins.SyntaxError __eq__ | 23 4080492834
+raw builtins.SyntaxError __ge__ | 23 1224925076
+raw builtins.SyntaxError __getattribute__ | 23 2820898497
+raw builtins.SyntaxError __gt__ | 23 2117597953
+raw builtins.SyntaxError __init__ | 23 612020801
+raw builtins.SyntaxError __le__ | 23 812332990
+raw builtins.SyntaxError __lt__ | 23 123605803
+raw builtins.SyntaxError __ne__ | 23 3732953177
+raw builtins.SyntaxError __new__ | 23 3729167037
+raw builtins.SyntaxError __setattr__ | 23 155737203
+raw builtins.SyntaxError __setstate__ | 23 2026786718
+raw builtins.SyntaxError add_note | 23 3541878020
+raw builtins.SyntaxError with_traceback | 23 3063950585
+raw builtins.SyntaxError by what is built in | 6 2843964184
+raw builtins.SyntaxError as an attribute of a class | 6 2626615420
+raw builtins.SyntaxWarning __delattr__ | 23 3832608543
+raw builtins.SyntaxWarning __eq__ | 23 3254431728
+raw builtins.SyntaxWarning __ge__ | 23 2699121255
+raw builtins.SyntaxWarning __getattribute__ | 23 230866366
+raw builtins.SyntaxWarning __gt__ | 23 328483402
+raw builtins.SyntaxWarning __init__ | 23 2779752154
+raw builtins.SyntaxWarning __le__ | 23 3309581942
+raw builtins.SyntaxWarning __lt__ | 23 1982932571
+raw builtins.SyntaxWarning __ne__ | 23 3925571567
+raw builtins.SyntaxWarning __new__ | 23 3099213588
+raw builtins.SyntaxWarning __setattr__ | 23 4132695618
+raw builtins.SyntaxWarning __setstate__ | 23 2194422980
+raw builtins.SyntaxWarning add_note | 23 765517859
+raw builtins.SyntaxWarning with_traceback | 23 3917644143
+raw builtins.SyntaxWarning by what is built in | 6 1644664630
+raw builtins.SyntaxWarning as an attribute of a class | 6 3081870967
+raw builtins.SystemError __delattr__ | 23 4228190404
+raw builtins.SystemError __eq__ | 23 1195557763
+raw builtins.SystemError __ge__ | 23 4252466485
+raw builtins.SystemError __getattribute__ | 23 2692987083
+raw builtins.SystemError __gt__ | 23 3393345952
+raw builtins.SystemError __init__ | 23 2730632582
+raw builtins.SystemError __le__ | 23 2216596767
+raw builtins.SystemError __lt__ | 23 3005985162
+raw builtins.SystemError __ne__ | 23 1794505464
+raw builtins.SystemError __new__ | 23 2706917315
+raw builtins.SystemError __setattr__ | 23 3485231534
+raw builtins.SystemError __setstate__ | 23 1199283325
+raw builtins.SystemError add_note | 23 4181055495
+raw builtins.SystemError with_traceback | 23 164664006
+raw builtins.SystemError by what is built in | 6 260169081
+raw builtins.SystemError as an attribute of a class | 6 2808079582
+raw builtins.SystemExit __delattr__ | 23 266734350
+raw builtins.SystemExit __eq__ | 23 1836702114
+raw builtins.SystemExit __ge__ | 23 3148149295
+raw builtins.SystemExit __getattribute__ | 23 2904574230
+raw builtins.SystemExit __gt__ | 23 3447484287
+raw builtins.SystemExit __init__ | 23 2943792713
+raw builtins.SystemExit __le__ | 23 821095635
+raw builtins.SystemExit __lt__ | 23 1177055619
+raw builtins.SystemExit __ne__ | 23 2342003486
+raw builtins.SystemExit __new__ | 23 3111890847
+raw builtins.SystemExit __setattr__ | 23 1883972630
+raw builtins.SystemExit __setstate__ | 23 2285957594
+raw builtins.SystemExit add_note | 23 3024082991
+raw builtins.SystemExit with_traceback | 23 26028594
+raw builtins.SystemExit by what is built in | 6 1528590796
+raw builtins.SystemExit as an attribute of a class | 6 4218073623
+raw builtins.TabError __delattr__ | 23 2413814459
+raw builtins.TabError __eq__ | 23 3624048002
+raw builtins.TabError __ge__ | 23 3035428770
+raw builtins.TabError __getattribute__ | 23 1461625344
+raw builtins.TabError __gt__ | 23 831894680
+raw builtins.TabError __init__ | 23 2391714801
+raw builtins.TabError __le__ | 23 1926123958
+raw builtins.TabError __lt__ | 23 4155970188
+raw builtins.TabError __ne__ | 23 3713781323
+raw builtins.TabError __new__ | 23 2743327397
+raw builtins.TabError __setattr__ | 23 420077525
+raw builtins.TabError __setstate__ | 23 4235581036
+raw builtins.TabError add_note | 23 313972205
+raw builtins.TabError with_traceback | 23 2705084001
+raw builtins.TabError by what is built in | 6 4040623471
+raw builtins.TabError as an attribute of a class | 6 2809889703
+raw builtins.TimeoutError __delattr__ | 23 770691541
+raw builtins.TimeoutError __eq__ | 23 286348790
+raw builtins.TimeoutError __ge__ | 23 3460476301
+raw builtins.TimeoutError __getattribute__ | 23 2835662703
+raw builtins.TimeoutError __gt__ | 23 2940353844
+raw builtins.TimeoutError __init__ | 23 3129101387
+raw builtins.TimeoutError __le__ | 23 2388358149
+raw builtins.TimeoutError __lt__ | 23 4015776956
+raw builtins.TimeoutError __ne__ | 23 2574410869
+raw builtins.TimeoutError __new__ | 23 1398659689
+raw builtins.TimeoutError __setattr__ | 23 3047687250
+raw builtins.TimeoutError __setstate__ | 23 2013815470
+raw builtins.TimeoutError add_note | 23 4006849190
+raw builtins.TimeoutError with_traceback | 23 2488814327
+raw builtins.TimeoutError by what is built in | 6 3637665626
+raw builtins.TimeoutError as an attribute of a class | 6 1872039023
+raw builtins.TypeError __delattr__ | 23 3568941392
+raw builtins.TypeError __eq__ | 23 3251215324
+raw builtins.TypeError __ge__ | 23 3687035182
+raw builtins.TypeError __getattribute__ | 23 2878148224
+raw builtins.TypeError __gt__ | 23 2524169345
+raw builtins.TypeError __init__ | 23 83575984
+raw builtins.TypeError __le__ | 23 1692506070
+raw builtins.TypeError __lt__ | 23 693232249
+raw builtins.TypeError __ne__ | 23 629242280
+raw builtins.TypeError __new__ | 23 3360794662
+raw builtins.TypeError __setattr__ | 23 1470052932
+raw builtins.TypeError __setstate__ | 23 2283773792
+raw builtins.TypeError add_note | 23 2407114588
+raw builtins.TypeError with_traceback | 23 818279055
+raw builtins.TypeError by what is built in | 6 3260489347
+raw builtins.TypeError as an attribute of a class | 6 2508590412
+raw builtins.UnboundLocalError __delattr__ | 23 275050004
+raw builtins.UnboundLocalError __eq__ | 23 505687252
+raw builtins.UnboundLocalError __ge__ | 23 3530590408
+raw builtins.UnboundLocalError __getattribute__ | 23 3467736023
+raw builtins.UnboundLocalError __gt__ | 23 616877171
+raw builtins.UnboundLocalError __init__ | 23 1764337559
+raw builtins.UnboundLocalError __le__ | 23 1189795383
+raw builtins.UnboundLocalError __lt__ | 23 2958987916
+raw builtins.UnboundLocalError __ne__ | 23 4211155080
+raw builtins.UnboundLocalError __new__ | 23 3864011190
+raw builtins.UnboundLocalError __setattr__ | 23 13777083
+raw builtins.UnboundLocalError __setstate__ | 23 714076764
+raw builtins.UnboundLocalError add_note | 23 2382590851
+raw builtins.UnboundLocalError with_traceback | 23 3359553100
+raw builtins.UnboundLocalError by what is built in | 6 1308096614
+raw builtins.UnboundLocalError as an attribute of a class | 6 2905298249
+raw builtins.UnicodeDecodeError __delattr__ | 23 1522344820
+raw builtins.UnicodeDecodeError __eq__ | 23 1615788510
+raw builtins.UnicodeDecodeError __ge__ | 23 1133259489
+raw builtins.UnicodeDecodeError __getattribute__ | 23 769161217
+raw builtins.UnicodeDecodeError __gt__ | 23 2123350244
+raw builtins.UnicodeDecodeError __init__ | 23 528097513
+raw builtins.UnicodeDecodeError __le__ | 23 1231565236
+raw builtins.UnicodeDecodeError __lt__ | 23 1953225649
+raw builtins.UnicodeDecodeError __ne__ | 23 3979110576
+raw builtins.UnicodeDecodeError __new__ | 23 589067189
+raw builtins.UnicodeDecodeError __setattr__ | 23 4192198538
+raw builtins.UnicodeDecodeError __setstate__ | 23 3458970465
+raw builtins.UnicodeDecodeError add_note | 23 1325298008
+raw builtins.UnicodeDecodeError with_traceback | 23 152033977
+raw builtins.UnicodeDecodeError by what is built in | 6 3772952598
+raw builtins.UnicodeDecodeError as an attribute of a class | 6 1671707568
+raw builtins.UnicodeEncodeError __delattr__ | 23 2902325565
+raw builtins.UnicodeEncodeError __eq__ | 23 2373734199
+raw builtins.UnicodeEncodeError __ge__ | 23 2931727368
+raw builtins.UnicodeEncodeError __getattribute__ | 23 3211339484
+raw builtins.UnicodeEncodeError __gt__ | 23 2478667277
+raw builtins.UnicodeEncodeError __init__ | 23 840644890
+raw builtins.UnicodeEncodeError __le__ | 23 2757396317
+raw builtins.UnicodeEncodeError __lt__ | 23 2572774744
+raw builtins.UnicodeEncodeError __ne__ | 23 2023001
+raw builtins.UnicodeEncodeError __new__ | 23 3527941358
+raw builtins.UnicodeEncodeError __setattr__ | 23 3555901732
+raw builtins.UnicodeEncodeError __setstate__ | 23 3024601162
+raw builtins.UnicodeEncodeError add_note | 23 1767804973
+raw builtins.UnicodeEncodeError with_traceback | 23 588930121
+raw builtins.UnicodeEncodeError by what is built in | 6 1744318199
+raw builtins.UnicodeEncodeError as an attribute of a class | 6 3764504394
+raw builtins.UnicodeError __delattr__ | 23 1036140901
+raw builtins.UnicodeError __eq__ | 23 3727326493
+raw builtins.UnicodeError __ge__ | 23 24741222
+raw builtins.UnicodeError __getattribute__ | 23 397079531
+raw builtins.UnicodeError __gt__ | 23 1618548191
+raw builtins.UnicodeError __init__ | 23 4187857397
+raw builtins.UnicodeError __le__ | 23 1096834286
+raw builtins.UnicodeError __lt__ | 23 543214679
+raw builtins.UnicodeError __ne__ | 23 1447644318
+raw builtins.UnicodeError __new__ | 23 499536287
+raw builtins.UnicodeError __setattr__ | 23 3089831915
+raw builtins.UnicodeError __setstate__ | 23 2395358329
+raw builtins.UnicodeError add_note | 23 326895709
+raw builtins.UnicodeError with_traceback | 23 111856185
+raw builtins.UnicodeError by what is built in | 6 2876050310
+raw builtins.UnicodeError as an attribute of a class | 6 1993346357
+raw builtins.UnicodeTranslateError __delattr__ | 23 2607400134
+raw builtins.UnicodeTranslateError __eq__ | 23 4199625808
+raw builtins.UnicodeTranslateError __ge__ | 23 3943494910
+raw builtins.UnicodeTranslateError __getattribute__ | 23 2634507483
+raw builtins.UnicodeTranslateError __gt__ | 23 2475482559
+raw builtins.UnicodeTranslateError __init__ | 23 667595419
+raw builtins.UnicodeTranslateError __le__ | 23 142396911
+raw builtins.UnicodeTranslateError __lt__ | 23 1895621806
+raw builtins.UnicodeTranslateError __ne__ | 23 3478879018
+raw builtins.UnicodeTranslateError __new__ | 23 1517762332
+raw builtins.UnicodeTranslateError __setattr__ | 23 2342313565
+raw builtins.UnicodeTranslateError __setstate__ | 23 1679045533
+raw builtins.UnicodeTranslateError add_note | 23 2706002005
+raw builtins.UnicodeTranslateError with_traceback | 23 2424411586
+raw builtins.UnicodeTranslateError by what is built in | 6 2454289487
+raw builtins.UnicodeTranslateError as an attribute of a class | 6 591627724
+raw builtins.UnicodeWarning __delattr__ | 23 2571031786
+raw builtins.UnicodeWarning __eq__ | 23 581180978
+raw builtins.UnicodeWarning __ge__ | 23 2956658154
+raw builtins.UnicodeWarning __getattribute__ | 23 145527127
+raw builtins.UnicodeWarning __gt__ | 23 2042731668
+raw builtins.UnicodeWarning __init__ | 23 3513580532
+raw builtins.UnicodeWarning __le__ | 23 297285876
+raw builtins.UnicodeWarning __lt__ | 23 3628245386
+raw builtins.UnicodeWarning __ne__ | 23 3242158731
+raw builtins.UnicodeWarning __new__ | 23 4208654310
+raw builtins.UnicodeWarning __setattr__ | 23 1393832829
+raw builtins.UnicodeWarning __setstate__ | 23 1729630227
+raw builtins.UnicodeWarning add_note | 23 2891098245
+raw builtins.UnicodeWarning with_traceback | 23 3459826992
+raw builtins.UnicodeWarning by what is built in | 6 3269851628
+raw builtins.UnicodeWarning as an attribute of a class | 6 1271319332
+raw builtins.UserWarning __delattr__ | 23 3233483532
+raw builtins.UserWarning __eq__ | 23 3947158705
+raw builtins.UserWarning __ge__ | 23 1366385159
+raw builtins.UserWarning __getattribute__ | 23 3493217765
+raw builtins.UserWarning __gt__ | 23 1715750546
+raw builtins.UserWarning __init__ | 23 1664379899
+raw builtins.UserWarning __le__ | 23 672696877
+raw builtins.UserWarning __lt__ | 23 523087544
+raw builtins.UserWarning __ne__ | 23 3337872842
+raw builtins.UserWarning __new__ | 23 598449386
+raw builtins.UserWarning __setattr__ | 23 882525155
+raw builtins.UserWarning __setstate__ | 23 3811883908
+raw builtins.UserWarning add_note | 23 112802365
+raw builtins.UserWarning with_traceback | 23 1528961435
+raw builtins.UserWarning by what is built in | 6 1783680775
+raw builtins.UserWarning as an attribute of a class | 6 3540468401
+raw builtins.ValueError __delattr__ | 23 2735933712
+raw builtins.ValueError __eq__ | 23 4168518017
+raw builtins.ValueError __ge__ | 23 783000076
+raw builtins.ValueError __getattribute__ | 23 3186840007
+raw builtins.ValueError __gt__ | 23 1483947868
+raw builtins.ValueError __init__ | 23 755434462
+raw builtins.ValueError __le__ | 23 2785000688
+raw builtins.ValueError __lt__ | 23 3542557088
+raw builtins.ValueError __ne__ | 23 513241917
+raw builtins.ValueError __new__ | 23 1341201272
+raw builtins.ValueError __setattr__ | 23 583969675
+raw builtins.ValueError __setstate__ | 23 1388657493
+raw builtins.ValueError add_note | 23 2853712296
+raw builtins.ValueError with_traceback | 23 1387654397
+raw builtins.ValueError by what is built in | 6 2140378265
+raw builtins.ValueError as an attribute of a class | 6 3934296702
+raw builtins.Warning __delattr__ | 23 2671545466
+raw builtins.Warning __eq__ | 23 738978330
+raw builtins.Warning __ge__ | 23 3573770947
+raw builtins.Warning __getattribute__ | 23 1500824354
+raw builtins.Warning __gt__ | 23 4214133887
+raw builtins.Warning __init__ | 23 2829994969
+raw builtins.Warning __le__ | 23 1152206168
+raw builtins.Warning __lt__ | 23 1786821604
+raw builtins.Warning __ne__ | 23 2592012209
+raw builtins.Warning __new__ | 23 2921766191
+raw builtins.Warning __setattr__ | 23 2570497362
+raw builtins.Warning __setstate__ | 23 2774697505
+raw builtins.Warning add_note | 23 2472064707
+raw builtins.Warning with_traceback | 23 4172168556
+raw builtins.Warning by what is built in | 6 206125673
+raw builtins.Warning as an attribute of a class | 6 4222700422
+raw builtins.ZeroDivisionError __delattr__ | 23 1755996520
+raw builtins.ZeroDivisionError __eq__ | 23 1862148161
+raw builtins.ZeroDivisionError __ge__ | 23 2729083997
+raw builtins.ZeroDivisionError __getattribute__ | 23 1791062384
+raw builtins.ZeroDivisionError __gt__ | 23 1411301606
+raw builtins.ZeroDivisionError __init__ | 23 1909575546
+raw builtins.ZeroDivisionError __le__ | 23 909171362
+raw builtins.ZeroDivisionError __lt__ | 23 3229916697
+raw builtins.ZeroDivisionError __ne__ | 23 2346396701
+raw builtins.ZeroDivisionError __new__ | 23 1575491712
+raw builtins.ZeroDivisionError __setattr__ | 23 401108200
+raw builtins.ZeroDivisionError __setstate__ | 23 3835311098
+raw builtins.ZeroDivisionError add_note | 23 3350135256
+raw builtins.ZeroDivisionError with_traceback | 23 1433335330
+raw builtins.ZeroDivisionError by what is built in | 6 4204131678
+raw builtins.ZeroDivisionError as an attribute of a class | 6 852958902
+raw builtins._IncompleteInputError __delattr__ | 23 284768867
+raw builtins._IncompleteInputError __eq__ | 23 3150293437
+raw builtins._IncompleteInputError __ge__ | 23 2862115091
+raw builtins._IncompleteInputError __getattribute__ | 23 1073117186
+raw builtins._IncompleteInputError __gt__ | 23 3524804690
+raw builtins._IncompleteInputError __init__ | 23 3587695492
+raw builtins._IncompleteInputError __le__ | 23 1239961602
+raw builtins._IncompleteInputError __lt__ | 23 828930371
+raw builtins._IncompleteInputError __ne__ | 23 2395989703
+raw builtins._IncompleteInputError __new__ | 23 3057196180
+raw builtins._IncompleteInputError __setattr__ | 23 681286412
+raw builtins._IncompleteInputError __setstate__ | 23 1794565273
+raw builtins._IncompleteInputError add_note | 23 3757809430
+raw builtins._IncompleteInputError with_traceback | 23 423501820
+raw builtins._IncompleteInputError by what is built in | 6 2971016544
+raw builtins._IncompleteInputError as an attribute of a class | 6 2503417002
+raw builtins.__loader__ __delattr__ | 23 1889422242
+raw builtins.__loader__ __eq__ | 23 1560873509
+raw builtins.__loader__ __ge__ | 23 2345935272
+raw builtins.__loader__ __getattribute__ | 23 563351198
+raw builtins.__loader__ __gt__ | 23 4245470456
+raw builtins.__loader__ __init__ | 23 3686751689
+raw builtins.__loader__ __le__ | 23 8404820
+raw builtins.__loader__ __lt__ | 23 1985520132
+raw builtins.__loader__ __ne__ | 23 3152605337
+raw builtins.__loader__ __new__ | 23 833959035
+raw builtins.__loader__ __setattr__ | 23 2290365591
+raw builtins.__loader__ create_module | 23 1766690809
+raw builtins.__loader__ exec_module | 23 343577064
+raw builtins.__loader__ find_spec | 23 1391025068
+raw builtins.__loader__ get_code | 23 1425907315
+raw builtins.__loader__ get_source | 23 2062613691
+raw builtins.__loader__ is_package | 23 3973720570
+raw builtins.__loader__ load_module | 23 3589747634
+raw builtins.__loader__ by what is built in | 6 967729635
+raw builtins.__loader__ as an attribute of a class | 6 2367333701
+raw builtins.bool __abs__ | 23 3624117081
+raw builtins.bool __add__ | 23 170716210
+raw builtins.bool __and__ | 23 955418221
+raw builtins.bool __bool__ | 23 2811339542
+raw builtins.bool __ceil__ | 23 439406972
+raw builtins.bool __delattr__ | 23 1953395640
+raw builtins.bool __divmod__ | 23 1877843517
+raw builtins.bool __eq__ | 23 1327891584
+raw builtins.bool __float__ | 23 3299588690
+raw builtins.bool __floor__ | 23 1753451222
+raw builtins.bool __floordiv__ | 23 3231894345
+raw builtins.bool __ge__ | 23 544451784
+raw builtins.bool __getattribute__ | 23 2999392994
+raw builtins.bool __getnewargs__ | 23 2134141721
+raw builtins.bool __gt__ | 23 3627633796
+raw builtins.bool __index__ | 23 1970459001
+raw builtins.bool __init__ | 23 3702125130
+raw builtins.bool __int__ | 23 3523152366
+raw builtins.bool __invert__ | 23 3729933198
+raw builtins.bool __le__ | 23 739864335
+raw builtins.bool __lt__ | 23 3562245955
+raw builtins.bool __mod__ | 23 2765624420
+raw builtins.bool __mul__ | 23 838596601
+raw builtins.bool __ne__ | 23 2310794679
+raw builtins.bool __neg__ | 23 1090303628
+raw builtins.bool __new__ | 23 356541249
+raw builtins.bool __or__ | 23 606095
+raw builtins.bool __pos__ | 23 1081868160
+raw builtins.bool __radd__ | 23 2541634968
+raw builtins.bool __rand__ | 23 1118229131
+raw builtins.bool __rdivmod__ | 23 3158841478
+raw builtins.bool __rfloordiv__ | 23 3316714471
+raw builtins.bool __rmod__ | 23 2024459845
+raw builtins.bool __rmul__ | 23 129358064
+raw builtins.bool __ror__ | 23 3880371460
+raw builtins.bool __rrshift__ | 23 415778900
+raw builtins.bool __rshift__ | 23 2215806809
+raw builtins.bool __rsub__ | 23 2804397148
+raw builtins.bool __rtruediv__ | 23 2719439930
+raw builtins.bool __rxor__ | 23 923620346
+raw builtins.bool __setattr__ | 23 3154736612
+raw builtins.bool __sub__ | 23 1435192066
+raw builtins.bool __truediv__ | 23 433623579
+raw builtins.bool __trunc__ | 23 1566099205
+raw builtins.bool __xor__ | 23 481253131
+raw builtins.bool as_integer_ratio | 23 2625628239
+raw builtins.bool bit_count | 23 2820535397
+raw builtins.bool bit_length | 23 101479354
+raw builtins.bool conjugate | 23 4196527851
+raw builtins.bool from_bytes | 23 3207153698
+raw builtins.bool is_integer | 23 2698919421
+raw builtins.bool to_bytes | 23 593282603
+raw builtins.bool by what is built in | 6 2098478249
+raw builtins.bool as an attribute of a class | 6 597267154
+raw builtins.bytearray __add__ | 23 2524556591
+raw builtins.bytearray __alloc__ | 23 3390150221
+raw builtins.bytearray __buffer__ | 23 2591877375
+raw builtins.bytearray __contains__ | 23 1265279368
+raw builtins.bytearray __delattr__ | 23 150286818
+raw builtins.bytearray __delitem__ | 23 2435136270
+raw builtins.bytearray __eq__ | 23 2501038665
+raw builtins.bytearray __ge__ | 23 2400778427
+raw builtins.bytearray __getattribute__ | 23 1803122797
+raw builtins.bytearray __getitem__ | 23 2558557925
+raw builtins.bytearray __gt__ | 23 3265826068
+raw builtins.bytearray __iadd__ | 23 3246124460
+raw builtins.bytearray __imul__ | 23 1014525280
+raw builtins.bytearray __init__ | 23 629506342
+raw builtins.bytearray __iter__ | 23 1191976450
+raw builtins.bytearray __le__ | 23 809164355
+raw builtins.bytearray __len__ | 23 1336262752
+raw builtins.bytearray __lt__ | 23 2106239980
+raw builtins.bytearray __mod__ | 23 2051476131
+raw builtins.bytearray __mul__ | 23 599422230
+raw builtins.bytearray __ne__ | 23 1901735997
+raw builtins.bytearray __new__ | 23 1048550605
+raw builtins.bytearray __release_buffer__ | 23 2799585205
+raw builtins.bytearray __rmod__ | 23 2671625380
+raw builtins.bytearray __rmul__ | 23 4052001340
+raw builtins.bytearray __setattr__ | 23 691620418
+raw builtins.bytearray __setitem__ | 23 1001083258
+raw builtins.bytearray append | 23 3616415294
+raw builtins.bytearray capitalize | 23 1450197654
+raw builtins.bytearray center | 23 522646637
+raw builtins.bytearray clear | 23 2920084015
+raw builtins.bytearray copy | 23 4065508298
+raw builtins.bytearray count | 23 3346813417
+raw builtins.bytearray decode | 23 3505622972
+raw builtins.bytearray endswith | 23 759935206
+raw builtins.bytearray expandtabs | 23 1336291720
+raw builtins.bytearray extend | 23 2515686482
+raw builtins.bytearray find | 23 3446193164
+raw builtins.bytearray fromhex | 23 285385594
+raw builtins.bytearray hex | 23 4009049871
+raw builtins.bytearray index | 23 2741819951
+raw builtins.bytearray insert | 23 438814713
+raw builtins.bytearray isalnum | 23 3557455993
+raw builtins.bytearray isalpha | 23 846428884
+raw builtins.bytearray isascii | 23 2003012804
+raw builtins.bytearray isdigit | 23 911205947
+raw builtins.bytearray islower | 23 3265966717
+raw builtins.bytearray isspace | 23 2046775032
+raw builtins.bytearray istitle | 23 859024686
+raw builtins.bytearray isupper | 23 3605428898
+raw builtins.bytearray ljust | 23 2660738755
+raw builtins.bytearray lower | 23 295369009
+raw builtins.bytearray lstrip | 23 3598411785
+raw builtins.bytearray maketrans | 23 3172025558
+raw builtins.bytearray partition | 23 1694346557
+raw builtins.bytearray pop | 23 4043641727
+raw builtins.bytearray remove | 23 4051583700
+raw builtins.bytearray removeprefix | 23 774388222
+raw builtins.bytearray removesuffix | 23 3391302212
+raw builtins.bytearray replace | 23 415634015
+raw builtins.bytearray resize | 23 809542098
+raw builtins.bytearray reverse | 23 3794960713
+raw builtins.bytearray rfind | 23 3366024668
+raw builtins.bytearray rindex | 23 1582302801
+raw builtins.bytearray rjust | 23 496604015
+raw builtins.bytearray rpartition | 23 4160056366
+raw builtins.bytearray rsplit | 23 1611943851
+raw builtins.bytearray rstrip | 23 2217476083
+raw builtins.bytearray split | 23 3886413393
+raw builtins.bytearray splitlines | 23 3046848408
+raw builtins.bytearray startswith | 23 3565188634
+raw builtins.bytearray strip | 23 2192039501
+raw builtins.bytearray swapcase | 23 3056857893
+raw builtins.bytearray title | 23 1020867269
+raw builtins.bytearray translate | 23 2162505238
+raw builtins.bytearray upper | 23 4004959794
+raw builtins.bytearray zfill | 23 4008763847
+raw builtins.bytearray by what is built in | 6 332738842
+raw builtins.bytearray as an attribute of a class | 6 3828152968
+raw builtins.bytes __add__ | 23 3451220501
+raw builtins.bytes __buffer__ | 23 4093500120
+raw builtins.bytes __bytes__ | 23 4023386823
+raw builtins.bytes __contains__ | 23 4172404395
+raw builtins.bytes __delattr__ | 23 4129958972
+raw builtins.bytes __eq__ | 23 2996111223
+raw builtins.bytes __ge__ | 23 3699126705
+raw builtins.bytes __getattribute__ | 23 2205352816
+raw builtins.bytes __getitem__ | 23 1802097967
+raw builtins.bytes __getnewargs__ | 23 3329925296
+raw builtins.bytes __gt__ | 23 3861721067
+raw builtins.bytes __init__ | 23 168123634
+raw builtins.bytes __iter__ | 23 1642054960
+raw builtins.bytes __le__ | 23 3436169259
+raw builtins.bytes __len__ | 23 1411882347
+raw builtins.bytes __lt__ | 23 4137604721
+raw builtins.bytes __mod__ | 23 218378952
+raw builtins.bytes __mul__ | 23 460278927
+raw builtins.bytes __ne__ | 23 4163377328
+raw builtins.bytes __new__ | 23 4198806824
+raw builtins.bytes __rmod__ | 23 2252447783
+raw builtins.bytes __rmul__ | 23 2899862088
+raw builtins.bytes __setattr__ | 23 4246424990
+raw builtins.bytes capitalize | 23 3161882489
+raw builtins.bytes center | 23 2055145129
+raw builtins.bytes count | 23 4011835369
+raw builtins.bytes decode | 23 2420879235
+raw builtins.bytes endswith | 23 4176349041
+raw builtins.bytes expandtabs | 23 3581081622
+raw builtins.bytes find | 23 288826509
+raw builtins.bytes fromhex | 23 2883788979
+raw builtins.bytes hex | 23 120608402
+raw builtins.bytes index | 23 2316034424
+raw builtins.bytes isalnum | 23 2015045767
+raw builtins.bytes isalpha | 23 3028070162
+raw builtins.bytes isascii | 23 596424762
+raw builtins.bytes isdigit | 23 2498282850
+raw builtins.bytes islower | 23 771545895
+raw builtins.bytes isspace | 23 3766860339
+raw builtins.bytes istitle | 23 446315816
+raw builtins.bytes isupper | 23 736265016
+raw builtins.bytes ljust | 23 190492542
+raw builtins.bytes lower | 23 4001289713
+raw builtins.bytes lstrip | 23 2717686986
+raw builtins.bytes maketrans | 23 4031664987
+raw builtins.bytes partition | 23 134725708
+raw builtins.bytes removeprefix | 23 1061597023
+raw builtins.bytes removesuffix | 23 26318712
+raw builtins.bytes replace | 23 1060203231
+raw builtins.bytes rfind | 23 386493216
+raw builtins.bytes rindex | 23 2027181906
+raw builtins.bytes rjust | 23 3856490889
+raw builtins.bytes rpartition | 23 595830009
+raw builtins.bytes rsplit | 23 608690628
+raw builtins.bytes rstrip | 23 3411076348
+raw builtins.bytes split | 23 1572765666
+raw builtins.bytes splitlines | 23 2275042254
+raw builtins.bytes startswith | 23 3192580040
+raw builtins.bytes strip | 23 581622934
+raw builtins.bytes swapcase | 23 2165553207
+raw builtins.bytes title | 23 3937873192
+raw builtins.bytes translate | 23 578097710
+raw builtins.bytes upper | 23 485307995
+raw builtins.bytes zfill | 23 4041867488
+raw builtins.bytes by what is built in | 6 699227780
+raw builtins.bytes as an attribute of a class | 6 2754613659
+raw builtins.classmethod __class_getitem__ | 23 2876250832
+raw builtins.classmethod __delattr__ | 23 3122586442
+raw builtins.classmethod __eq__ | 23 3765617888
+raw builtins.classmethod __ge__ | 23 1514633814
+raw builtins.classmethod __get__ | 23 3830364578
+raw builtins.classmethod __getattribute__ | 23 403027110
+raw builtins.classmethod __gt__ | 23 1836211907
+raw builtins.classmethod __init__ | 23 4289813541
+raw builtins.classmethod __le__ | 23 590254716
+raw builtins.classmethod __lt__ | 23 337360617
+raw builtins.classmethod __ne__ | 23 3452304795
+raw builtins.classmethod __new__ | 23 682888981
+raw builtins.classmethod __setattr__ | 23 132269586
+raw builtins.classmethod by what is built in | 6 1478654520
+raw builtins.classmethod as an attribute of a class | 6 2563089160
+raw builtins.complex __abs__ | 23 2162815061
+raw builtins.complex __add__ | 23 3217194217
+raw builtins.complex __bool__ | 23 478608126
+raw builtins.complex __complex__ | 23 2547487289
+raw builtins.complex __delattr__ | 23 303367854
+raw builtins.complex __eq__ | 23 325059356
+raw builtins.complex __ge__ | 23 3932718021
+raw builtins.complex __getattribute__ | 23 3201801073
+raw builtins.complex __getnewargs__ | 23 4277193021
+raw builtins.complex __gt__ | 23 3292888441
+raw builtins.complex __init__ | 23 747374556
+raw builtins.complex __le__ | 23 2076617822
+raw builtins.complex __lt__ | 23 1441485538
+raw builtins.complex __mul__ | 23 2103048020
+raw builtins.complex __ne__ | 23 2769624759
+raw builtins.complex __neg__ | 23 4268372256
+raw builtins.complex __new__ | 23 2440748960
+raw builtins.complex __pos__ | 23 804886127
+raw builtins.complex __radd__ | 23 1590655460
+raw builtins.complex __rmul__ | 23 1369951282
+raw builtins.complex __rsub__ | 23 3007663574
+raw builtins.complex __rtruediv__ | 23 4146369644
+raw builtins.complex __setattr__ | 23 3275943909
+raw builtins.complex __sub__ | 23 2778200078
+raw builtins.complex __truediv__ | 23 3937915677
+raw builtins.complex conjugate | 23 636811402
+raw builtins.complex from_number | 23 1959233087
+raw builtins.complex by what is built in | 6 3353428244
+raw builtins.complex as an attribute of a class | 6 1628499405
+raw builtins.dict __class_getitem__ | 23 3095497399
+raw builtins.dict __contains__ | 23 1139519432
+raw builtins.dict __delattr__ | 23 4260013015
+raw builtins.dict __delitem__ | 23 1904596608
+raw builtins.dict __eq__ | 23 1376845336
+raw builtins.dict __ge__ | 23 1027954256
+raw builtins.dict __getattribute__ | 23 28367016
+raw builtins.dict __getitem__ | 23 3027135827
+raw builtins.dict __gt__ | 23 3306141212
+raw builtins.dict __init__ | 23 1605571882
+raw builtins.dict __ior__ | 23 2628700349
+raw builtins.dict __iter__ | 23 3838168481
+raw builtins.dict __le__ | 23 825202071
+raw builtins.dict __len__ | 23 1678671279
+raw builtins.dict __lt__ | 23 3378869723
+raw builtins.dict __ne__ | 23 2492274479
+raw builtins.dict __new__ | 23 2862262354
+raw builtins.dict __or__ | 23 490718487
+raw builtins.dict __reversed__ | 23 3768566427
+raw builtins.dict __ror__ | 23 4139055376
+raw builtins.dict __setattr__ | 23 171147004
+raw builtins.dict __setitem__ | 23 2721432151
+raw builtins.dict clear | 23 2313175680
+raw builtins.dict copy | 23 1035614148
+raw builtins.dict fromkeys | 23 4170271335
+raw builtins.dict get | 23 3604898705
+raw builtins.dict items | 23 432222671
+raw builtins.dict keys | 23 3808749843
+raw builtins.dict pop | 23 1192709073
+raw builtins.dict popitem | 23 4088275242
+raw builtins.dict setdefault | 23 3815715961
+raw builtins.dict update | 23 468907365
+raw builtins.dict values | 23 2476875517
+raw builtins.dict by what is built in | 6 2724710403
+raw builtins.dict as an attribute of a class | 6 3802617372
+raw builtins.enumerate | 1 TypeError "enumerate() missing required argument 'iterable' (pos 1)"
+raw builtins.filter | 1 TypeError 'filter expected 2 arguments, got 0'
+raw builtins.float __abs__ | 23 889176228
+raw builtins.float __add__ | 23 2518598278
+raw builtins.float __bool__ | 23 505817800
+raw builtins.float __ceil__ | 23 582581783
+raw builtins.float __delattr__ | 23 2915052070
+raw builtins.float __divmod__ | 23 67127108
+raw builtins.float __eq__ | 23 3815466308
+raw builtins.float __float__ | 23 3218748063
+raw builtins.float __floor__ | 23 2859816218
+raw builtins.float __floordiv__ | 23 1258771976
+raw builtins.float __ge__ | 23 2374128514
+raw builtins.float __getattribute__ | 23 1756618648
+raw builtins.float __getformat__ | 23 634363927
+raw builtins.float __getnewargs__ | 23 2897333822
+raw builtins.float __gt__ | 23 3084078552
+raw builtins.float __init__ | 23 725234842
+raw builtins.float __int__ | 23 1534343661
+raw builtins.float __le__ | 23 2637277720
+raw builtins.float __lt__ | 23 2808132674
+raw builtins.float __mod__ | 23 1862898734
+raw builtins.float __mul__ | 23 1473972649
+raw builtins.float __ne__ | 23 2849405571
+raw builtins.float __neg__ | 23 3327830545
+raw builtins.float __new__ | 23 3672984401
+raw builtins.float __pos__ | 23 91582221
+raw builtins.float __radd__ | 23 1753269496
+raw builtins.float __rdivmod__ | 23 1811463629
+raw builtins.float __rfloordiv__ | 23 2436079703
+raw builtins.float __rmod__ | 23 1866357981
+raw builtins.float __rmul__ | 23 363540345
+raw builtins.float __rsub__ | 23 2093596278
+raw builtins.float __rtruediv__ | 23 1193532213
+raw builtins.float __setattr__ | 23 3857730447
+raw builtins.float __sub__ | 23 4119774994
+raw builtins.float __truediv__ | 23 1385584802
+raw builtins.float __trunc__ | 23 1482644627
+raw builtins.float as_integer_ratio | 23 3449679223
+raw builtins.float conjugate | 23 4045211996
+raw builtins.float from_number | 23 2652518950
+raw builtins.float fromhex | 23 2269563696
+raw builtins.float hex | 23 919018140
+raw builtins.float is_integer | 23 380326667
+raw builtins.float by what is built in | 6 2014507368
+raw builtins.float as an attribute of a class | 6 1260584217
+raw builtins.frozenset __and__ | 23 84913583
+raw builtins.frozenset __class_getitem__ | 23 872133677
+raw builtins.frozenset __contains__ | 23 1929077534
+raw builtins.frozenset __delattr__ | 23 791064417
+raw builtins.frozenset __eq__ | 23 1360475356
+raw builtins.frozenset __ge__ | 23 1260199470
+raw builtins.frozenset __getattribute__ | 23 1920188626
+raw builtins.frozenset __gt__ | 23 112028545
+raw builtins.frozenset __init__ | 23 3403066918
+raw builtins.frozenset __iter__ | 23 2549678840
+raw builtins.frozenset __le__ | 23 4097784022
+raw builtins.frozenset __len__ | 23 907228931
+raw builtins.frozenset __lt__ | 23 3113176441
+raw builtins.frozenset __ne__ | 23 3042956968
+raw builtins.frozenset __new__ | 23 988914896
+raw builtins.frozenset __or__ | 23 1977874373
+raw builtins.frozenset __rand__ | 23 2429687134
+raw builtins.frozenset __ror__ | 23 2247812751
+raw builtins.frozenset __rsub__ | 23 138945134
+raw builtins.frozenset __rxor__ | 23 3293312139
+raw builtins.frozenset __setattr__ | 23 4020127177
+raw builtins.frozenset __sub__ | 23 2255073086
+raw builtins.frozenset __xor__ | 23 288345111
+raw builtins.frozenset copy | 23 2955981924
+raw builtins.frozenset difference | 23 1798294373
+raw builtins.frozenset intersection | 23 578385083
+raw builtins.frozenset isdisjoint | 23 2922107632
+raw builtins.frozenset issubset | 23 2272226716
+raw builtins.frozenset issuperset | 23 1959546344
+raw builtins.frozenset symmetric_difference | 23 3212237075
+raw builtins.frozenset union | 23 305335462
+raw builtins.frozenset by what is built in | 6 779372542
+raw builtins.frozenset as an attribute of a class | 6 2304926645
+raw builtins.int __abs__ | 23 1483373906
+raw builtins.int __add__ | 23 2102232042
+raw builtins.int __and__ | 23 1372752621
+raw builtins.int __bool__ | 23 2153074169
+raw builtins.int __ceil__ | 23 380945613
+raw builtins.int __delattr__ | 23 336279817
+raw builtins.int __divmod__ | 23 247055596
+raw builtins.int __eq__ | 23 1712365452
+raw builtins.int __float__ | 23 4043876324
+raw builtins.int __floor__ | 23 730000895
+raw builtins.int __floordiv__ | 23 1298011232
+raw builtins.int __ge__ | 23 2942819906
+raw builtins.int __getattribute__ | 23 2526059243
+raw builtins.int __getnewargs__ | 23 172574022
+raw builtins.int __gt__ | 23 72946210
+raw builtins.int __index__ | 23 2332559305
+raw builtins.int __init__ | 23 2740051715
+raw builtins.int __int__ | 23 1329768730
+raw builtins.int __invert__ | 23 1528507903
+raw builtins.int __le__ | 23 340756562
+raw builtins.int __lt__ | 23 3211871282
+raw builtins.int __mod__ | 23 1398353620
+raw builtins.int __mul__ | 23 3178796601
+raw builtins.int __ne__ | 23 1415562780
+raw builtins.int __neg__ | 23 3674725895
+raw builtins.int __new__ | 23 4262955244
+raw builtins.int __or__ | 23 1440174628
+raw builtins.int __pos__ | 23 2797814896
+raw builtins.int __radd__ | 23 1916422908
+raw builtins.int __rand__ | 23 2554113409
+raw builtins.int __rdivmod__ | 23 3812724212
+raw builtins.int __rfloordiv__ | 23 2127824691
+raw builtins.int __rmod__ | 23 1929364067
+raw builtins.int __rmul__ | 23 1442042328
+raw builtins.int __ror__ | 23 2768589600
+raw builtins.int __rrshift__ | 23 2750142212
+raw builtins.int __rshift__ | 23 3468725606
+raw builtins.int __rsub__ | 23 1530635124
+raw builtins.int __rtruediv__ | 23 2442458245
+raw builtins.int __rxor__ | 23 4070302344
+raw builtins.int __setattr__ | 23 941141159
+raw builtins.int __sub__ | 23 1882130270
+raw builtins.int __truediv__ | 23 1253552960
+raw builtins.int __trunc__ | 23 2047422976
+raw builtins.int __xor__ | 23 994924938
+raw builtins.int as_integer_ratio | 23 4175073011
+raw builtins.int bit_count | 23 950599431
+raw builtins.int bit_length | 23 2256170205
+raw builtins.int conjugate | 23 3992546168
+raw builtins.int from_bytes | 23 242731704
+raw builtins.int is_integer | 23 2724103494
+raw builtins.int to_bytes | 23 3735463227
+raw builtins.int by what is built in | 6 1129408508
+raw builtins.int as an attribute of a class | 6 2398572896
+raw builtins.list __add__ | 23 3307363702
+raw builtins.list __class_getitem__ | 23 3563652234
+raw builtins.list __contains__ | 23 979040502
+raw builtins.list __delattr__ | 23 3326070376
+raw builtins.list __delitem__ | 23 405052162
+raw builtins.list __eq__ | 23 1226819961
+raw builtins.list __ge__ | 23 642408753
+raw builtins.list __getattribute__ | 23 3856777168
+raw builtins.list __getitem__ | 23 2675485813
+raw builtins.list __gt__ | 23 3724575101
+raw builtins.list __iadd__ | 23 4077775284
+raw builtins.list __imul__ | 23 875501526
+raw builtins.list __init__ | 23 2082434629
+raw builtins.list __iter__ | 23 216336582
+raw builtins.list __le__ | 23 706781942
+raw builtins.list __len__ | 23 601989870
+raw builtins.list __lt__ | 23 3530179258
+raw builtins.list __mul__ | 23 4010346937
+raw builtins.list __ne__ | 23 2407669838
+raw builtins.list __new__ | 23 2939125508
+raw builtins.list __reversed__ | 23 622347481
+raw builtins.list __rmul__ | 23 465681429
+raw builtins.list __setattr__ | 23 2301131504
+raw builtins.list __setitem__ | 23 556713563
+raw builtins.list append | 23 1659167789
+raw builtins.list clear | 23 1326314268
+raw builtins.list copy | 23 74555193
+raw builtins.list count | 23 1560248267
+raw builtins.list extend | 23 3250321647
+raw builtins.list index | 23 3818542315
+raw builtins.list insert | 23 3035380363
+raw builtins.list pop | 23 407013611
+raw builtins.list remove | 23 1756331027
+raw builtins.list reverse | 23 176373482
+raw builtins.list sort | 23 332099326
+raw builtins.list by what is built in | 6 3386914973
+raw builtins.list as an attribute of a class | 6 2632983460
+raw builtins.map | 1 TypeError 'map() must have at least two arguments.'
+raw builtins.memoryview | 1 TypeError "memoryview() missing required argument 'object' (pos 1)"
+raw builtins.object __delattr__ | 23 345132691
+raw builtins.object __eq__ | 23 3745905064
+raw builtins.object __ge__ | 23 1326330648
+raw builtins.object __getattribute__ | 23 2233389615
+raw builtins.object __gt__ | 23 3133925073
+raw builtins.object __init__ | 23 2029340640
+raw builtins.object __le__ | 23 3588537146
+raw builtins.object __lt__ | 23 539062003
+raw builtins.object __ne__ | 23 1513408852
+raw builtins.object __new__ | 23 2773977996
+raw builtins.object __setattr__ | 23 689152760
+raw builtins.object by what is built in | 6 1484446068
+raw builtins.object as an attribute of a class | 6 4071906131
+raw builtins.property __delattr__ | 23 888678834
+raw builtins.property __delete__ | 23 3497098782
+raw builtins.property __eq__ | 23 3275779262
+raw builtins.property __ge__ | 23 2947419806
+raw builtins.property __get__ | 23 4093538977
+raw builtins.property __getattribute__ | 23 2284537632
+raw builtins.property __gt__ | 23 718753188
+raw builtins.property __init__ | 23 4155709619
+raw builtins.property __le__ | 23 1770825866
+raw builtins.property __lt__ | 23 3975539632
+raw builtins.property __ne__ | 23 3323541367
+raw builtins.property __new__ | 23 3150053296
+raw builtins.property __set__ | 23 1489659898
+raw builtins.property __set_name__ | 23 1736361204
+raw builtins.property __setattr__ | 23 3942069624
+raw builtins.property deleter | 23 228495416
+raw builtins.property getter | 23 838374958
+raw builtins.property setter | 23 2563533238
+raw builtins.property by what is built in | 6 3280847884
+raw builtins.property as an attribute of a class | 6 422084625
+raw builtins.range | 1 TypeError 'range expected at least 1 argument, got 0'
+raw builtins.reversed | 1 TypeError 'reversed expected 1 argument, got 0'
+raw builtins.set __and__ | 23 1764355278
+raw builtins.set __class_getitem__ | 23 1775133829
+raw builtins.set __contains__ | 23 4188603095
+raw builtins.set __delattr__ | 23 1127091300
+raw builtins.set __eq__ | 23 2007228003
+raw builtins.set __ge__ | 23 3201605549
+raw builtins.set __getattribute__ | 23 1429878149
+raw builtins.set __gt__ | 23 367678413
+raw builtins.set __iand__ | 23 1349541868
+raw builtins.set __init__ | 23 1147742650
+raw builtins.set __ior__ | 23 2876451305
+raw builtins.set __isub__ | 23 2474070297
+raw builtins.set __iter__ | 23 1812076078
+raw builtins.set __ixor__ | 23 987173093
+raw builtins.set __le__ | 23 100452797
+raw builtins.set __len__ | 23 2176690692
+raw builtins.set __lt__ | 23 2931951069
+raw builtins.set __ne__ | 23 1173129203
+raw builtins.set __new__ | 23 3920554608
+raw builtins.set __or__ | 23 1147409355
+raw builtins.set __rand__ | 23 880687668
+raw builtins.set __ror__ | 23 2650682627
+raw builtins.set __rsub__ | 23 4151915713
+raw builtins.set __rxor__ | 23 1591309629
+raw builtins.set __setattr__ | 23 4288776339
+raw builtins.set __sub__ | 23 1221878141
+raw builtins.set __xor__ | 23 62275497
+raw builtins.set add | 23 2059865248
+raw builtins.set clear | 23 493324314
+raw builtins.set copy | 23 2254272876
+raw builtins.set difference | 23 152369935
+raw builtins.set difference_update | 23 1660269119
+raw builtins.set discard | 23 3712244043
+raw builtins.set intersection | 23 1267079649
+raw builtins.set intersection_update | 23 260612654
+raw builtins.set isdisjoint | 23 1929623345
+raw builtins.set issubset | 23 3826016330
+raw builtins.set issuperset | 23 4114062142
+raw builtins.set pop | 23 3836605681
+raw builtins.set remove | 23 1383603048
+raw builtins.set symmetric_difference | 23 2507112159
+raw builtins.set symmetric_difference_update | 23 3114998157
+raw builtins.set union | 23 3255983118
+raw builtins.set update | 23 1472899272
+raw builtins.set by what is built in | 6 2104037421
+raw builtins.set as an attribute of a class | 6 3651203546
+raw builtins.slice | 1 TypeError 'slice expected at least 1 argument, got 0'
+raw builtins.staticmethod __call__ | 23 3177281883
+raw builtins.staticmethod __class_getitem__ | 23 1201653968
+raw builtins.staticmethod __delattr__ | 23 2816161519
+raw builtins.staticmethod __eq__ | 23 1973163842
+raw builtins.staticmethod __ge__ | 23 2865753913
+raw builtins.staticmethod __get__ | 23 943442340
+raw builtins.staticmethod __getattribute__ | 23 2079804202
+raw builtins.staticmethod __gt__ | 23 3419373440
+raw builtins.staticmethod __init__ | 23 1917867169
+raw builtins.staticmethod __le__ | 23 3939907249
+raw builtins.staticmethod __lt__ | 23 2346100232
+raw builtins.staticmethod __ne__ | 23 4261357249
+raw builtins.staticmethod __new__ | 23 1087776216
+raw builtins.staticmethod __setattr__ | 23 1635589515
+raw builtins.staticmethod by what is built in | 6 3657298486
+raw builtins.staticmethod as an attribute of a class | 6 3522460184
+raw builtins.str __add__ | 23 3978896400
+raw builtins.str __contains__ | 23 2630443648
+raw builtins.str __delattr__ | 23 1511548693
+raw builtins.str __eq__ | 23 554805246
+raw builtins.str __ge__ | 23 3899057712
+raw builtins.str __getattribute__ | 23 4054075974
+raw builtins.str __getitem__ | 23 3686569956
+raw builtins.str __getnewargs__ | 23 1519769021
+raw builtins.str __gt__ | 23 1129851472
+raw builtins.str __init__ | 23 2301178322
+raw builtins.str __iter__ | 23 1241056368
+raw builtins.str __le__ | 23 1397665824
+raw builtins.str __len__ | 23 3965572582
+raw builtins.str __lt__ | 23 4168121408
+raw builtins.str __mod__ | 23 3009469431
+raw builtins.str __mul__ | 23 3468016502
+raw builtins.str __ne__ | 23 324992622
+raw builtins.str __new__ | 23 2803712095
+raw builtins.str __rmod__ | 23 4132137745
+raw builtins.str __rmul__ | 23 2896095433
+raw builtins.str __setattr__ | 23 3450685677
+raw builtins.str capitalize | 23 3160497921
+raw builtins.str casefold | 23 749624445
+raw builtins.str center | 23 298993674
+raw builtins.str count | 23 80519125
+raw builtins.str encode | 23 2577186842
+raw builtins.str endswith | 23 4186450185
+raw builtins.str expandtabs | 23 3351829244
+raw builtins.str find | 23 3781147735
+raw builtins.str format | 23 1605097708
+raw builtins.str format_map | 23 729458792
+raw builtins.str index | 23 215595306
+raw builtins.str isalnum | 23 368159057
+raw builtins.str isalpha | 23 3018826223
+raw builtins.str isascii | 23 3325046030
+raw builtins.str isdecimal | 23 183314682
+raw builtins.str isdigit | 23 1063964343
+raw builtins.str isidentifier | 23 2591081273
+raw builtins.str islower | 23 2168566368
+raw builtins.str isnumeric | 23 4111725356
+raw builtins.str isprintable | 23 3174920522
+raw builtins.str isspace | 23 521236076
+raw builtins.str istitle | 23 2240301753
+raw builtins.str isupper | 23 1943163338
+raw builtins.str ljust | 23 2568449819
+raw builtins.str lower | 23 1377612490
+raw builtins.str lstrip | 23 3471193233
+raw builtins.str maketrans | 23 1198179739
+raw builtins.str partition | 23 250047639
+raw builtins.str removeprefix | 23 1035518320
+raw builtins.str removesuffix | 23 3681295804
+raw builtins.str replace | 23 959121406
+raw builtins.str rfind | 23 532927012
+raw builtins.str rindex | 23 2917787410
+raw builtins.str rjust | 23 1101924751
+raw builtins.str rpartition | 23 2330076294
+raw builtins.str rsplit | 23 3898605459
+raw builtins.str rstrip | 23 2171340954
+raw builtins.str split | 23 1713056795
+raw builtins.str splitlines | 23 4264680520
+raw builtins.str startswith | 23 2985530827
+raw builtins.str strip | 23 2152564670
+raw builtins.str swapcase | 23 204958110
+raw builtins.str title | 23 2802112525
+raw builtins.str translate | 23 1585007933
+raw builtins.str upper | 23 2475747885
+raw builtins.str zfill | 23 2263491683
+raw builtins.str by what is built in | 6 1811997781
+raw builtins.str as an attribute of a class | 6 2275892542
+raw builtins.super __delattr__ | 23 808096079
+raw builtins.super __eq__ | 23 4211993287
+raw builtins.super __ge__ | 23 2514803713
+raw builtins.super __getattribute__ | 23 37260002
+raw builtins.super __gt__ | 23 2947924571
+raw builtins.super __init__ | 23 4236743455
+raw builtins.super __le__ | 23 2237080987
+raw builtins.super __lt__ | 23 3204856769
+raw builtins.super __ne__ | 23 2981164288
+raw builtins.super __new__ | 23 202640408
+raw builtins.super __setattr__ | 23 1492604736
+raw builtins.super by what is built in | 6 1510257764
+raw builtins.tuple __add__ | 23 1208199480
+raw builtins.tuple __class_getitem__ | 23 2928699445
+raw builtins.tuple __contains__ | 23 3005328634
+raw builtins.tuple __delattr__ | 23 3313185406
+raw builtins.tuple __eq__ | 23 2337564070
+raw builtins.tuple __ge__ | 23 3854390112
+raw builtins.tuple __getattribute__ | 23 3251671781
+raw builtins.tuple __getitem__ | 23 1194301
+raw builtins.tuple __getnewargs__ | 23 3901506751
+raw builtins.tuple __gt__ | 23 3756805434
+raw builtins.tuple __init__ | 23 3158271161
+raw builtins.tuple __iter__ | 23 3005195585
+raw builtins.tuple __le__ | 23 4111379194
+raw builtins.tuple __len__ | 23 2307841012
+raw builtins.tuple __lt__ | 23 3479155872
+raw builtins.tuple __mul__ | 23 459489331
+raw builtins.tuple __ne__ | 23 3253303905
+raw builtins.tuple __new__ | 23 2847467633
+raw builtins.tuple __rmul__ | 23 1247109053
+raw builtins.tuple __setattr__ | 23 1997933346
+raw builtins.tuple count | 23 1936046847
+raw builtins.tuple index | 23 3132561078
+raw builtins.tuple by what is built in | 6 1520939039
+raw builtins.tuple as an attribute of a class | 6 3032173214
+raw builtins.type | 1 TypeError 'type.__new__() takes exactly 3 arguments (0 given)'
+raw builtins.zip __delattr__ | 23 3402453442
+raw builtins.zip __eq__ | 23 1417170574
+raw builtins.zip __ge__ | 23 2635009856
+raw builtins.zip __getattribute__ | 23 2642172004
+raw builtins.zip __gt__ | 23 909230880
+raw builtins.zip __init__ | 23 4093095266
+raw builtins.zip __iter__ | 23 2951605045
+raw builtins.zip __le__ | 23 640112976
+raw builtins.zip __lt__ | 23 2367264048
+raw builtins.zip __ne__ | 23 1714886430
+raw builtins.zip __new__ | 23 3092808624
+raw builtins.zip __next__ | 23 3784197328
+raw builtins.zip __setattr__ | 23 4265057867
+raw builtins.zip __setstate__ | 23 2239449515
+raw builtins.zip by what is built in | 6 1065332177
+raw builtins.zip as an attribute of a class | 6 3382905334
+raw types.AsyncGeneratorType | 1 TypeError "cannot create 'async_generator' instances"
+raw types.BuiltinFunctionType | 1 TypeError "cannot create 'builtin_function_or_method' instances"
+raw types.BuiltinMethodType | 1 TypeError "cannot create 'builtin_function_or_method' instances"
+raw types.CapsuleType | 1 TypeError "cannot create 'PyCapsule' instances"
+raw types.CellType __delattr__ | 23 1149271879
+raw types.CellType __eq__ | 23 2114177160
+raw types.CellType __ge__ | 23 283835982
+raw types.CellType __getattribute__ | 23 1452913094
+raw types.CellType __gt__ | 23 716955668
+raw types.CellType __init__ | 23 4079265679
+raw types.CellType __le__ | 23 5834708
+raw types.CellType __lt__ | 23 973609358
+raw types.CellType __ne__ | 23 884922191
+raw types.CellType __new__ | 23 3507745539
+raw types.CellType __setattr__ | 23 4046342123
+raw types.CellType by what is built in | 6 2712874951
+raw types.CellType as an attribute of a class | 6 653049627
+raw types.ClassMethodDescriptorType | 1 TypeError "cannot create 'classmethod_descriptor' instances"
+raw types.CodeType | 1 TypeError 'code expected at least 16 arguments, got 0'
+raw types.CoroutineType | 1 TypeError "cannot create 'coroutine' instances"
+raw types.EllipsisType __delattr__ | 23 3348228498
+raw types.EllipsisType __eq__ | 23 3795145321
+raw types.EllipsisType __ge__ | 23 4164909211
+raw types.EllipsisType __getattribute__ | 23 2967443810
+raw types.EllipsisType __gt__ | 23 3046051124
+raw types.EllipsisType __init__ | 23 1876958112
+raw types.EllipsisType __le__ | 23 1193107043
+raw types.EllipsisType __lt__ | 23 179121100
+raw types.EllipsisType __ne__ | 23 108900381
+raw types.EllipsisType __new__ | 23 436366453
+raw types.EllipsisType __setattr__ | 23 3674665735
+raw types.EllipsisType by what is built in | 6 3996625905
+raw types.EllipsisType as an attribute of a class | 6 956984402
+raw types.FrameType | 1 TypeError "cannot create 'frame' instances"
+raw types.FunctionType | 1 TypeError "function() missing required argument 'code' (pos 1)"
+raw types.GeneratorType | 1 TypeError "cannot create 'generator' instances"
+raw types.GetSetDescriptorType | 1 TypeError "cannot create 'getset_descriptor' instances"
+raw types.LambdaType | 1 TypeError "function() missing required argument 'code' (pos 1)"
+raw types.MappingProxyType | 1 TypeError "mappingproxy() missing required argument 'mapping' (pos 1)"
+raw types.MemberDescriptorType | 1 TypeError "cannot create 'member_descriptor' instances"
+raw types.MethodDescriptorType | 1 TypeError "cannot create 'method_descriptor' instances"
+raw types.MethodType | 1 TypeError 'method expected 2 arguments, got 0'
+raw types.MethodWrapperType | 1 TypeError "cannot create 'method-wrapper' instances"
+raw types.ModuleType __delattr__ | 23 3982578230
+raw types.ModuleType __eq__ | 23 2245674572
+raw types.ModuleType __ge__ | 23 2094188181
+raw types.ModuleType __getattribute__ | 23 3186529650
+raw types.ModuleType __gt__ | 23 1392457769
+raw types.ModuleType __init__ | 23 452074423
+raw types.ModuleType __le__ | 23 3984386318
+raw types.ModuleType __lt__ | 23 3276871602
+raw types.ModuleType __ne__ | 23 867130343
+raw types.ModuleType __new__ | 23 2541976240
+raw types.ModuleType __setattr__ | 23 3396088477
+raw types.ModuleType by what is built in | 6 4093280877
+raw types.ModuleType as an attribute of a class | 6 3391547823
+raw types.NoneType __bool__ | 23 3055151065
+raw types.NoneType __delattr__ | 23 657114994
+raw types.NoneType __eq__ | 23 1337279158
+raw types.NoneType __ge__ | 23 559707248
+raw types.NoneType __getattribute__ | 23 1852322112
+raw types.NoneType __gt__ | 23 453863978
+raw types.NoneType __init__ | 23 1931530302
+raw types.NoneType __le__ | 23 837783018
+raw types.NoneType __lt__ | 23 197039024
+raw types.NoneType __ne__ | 23 84434289
+raw types.NoneType __new__ | 23 2422871140
+raw types.NoneType __setattr__ | 23 420038818
+raw types.NoneType by what is built in | 6 1547183190
+raw types.NoneType as an attribute of a class | 6 3916416223
+raw types.NotImplementedType __bool__ | 23 3696985039
+raw types.NotImplementedType __delattr__ | 23 340531828
+raw types.NotImplementedType __eq__ | 23 1496994406
+raw types.NotImplementedType __ge__ | 23 1750822703
+raw types.NotImplementedType __getattribute__ | 23 3986409982
+raw types.NotImplementedType __gt__ | 23 3698873169
+raw types.NotImplementedType __init__ | 23 3106199892
+raw types.NotImplementedType __le__ | 23 1205688859
+raw types.NotImplementedType __lt__ | 23 4093535845
+raw types.NotImplementedType __ne__ | 23 2334480095
+raw types.NotImplementedType __new__ | 23 2900552754
+raw types.NotImplementedType __setattr__ | 23 836266270
+raw types.NotImplementedType by what is built in | 6 638220005
+raw types.NotImplementedType as an attribute of a class | 6 2440498722
+raw types.TracebackType | 1 TypeError "traceback() missing required argument 'tb_next' (pos 1)"
+raw types.UnionType | 1 TypeError "cannot create 'typing.Union' instances"
+raw types.WrapperDescriptorType | 1 TypeError "cannot create 'wrapper_descriptor' instances"
+raw types.__loader__ __delattr__ | 23 3927799481
+raw types.__loader__ __eq__ | 23 3964060927
+raw types.__loader__ __ge__ | 23 357450790
+raw types.__loader__ __getattribute__ | 23 2213000905
+raw types.__loader__ __gt__ | 23 996391578
+raw types.__loader__ __init__ | 23 2035774579
+raw types.__loader__ __le__ | 23 2229300157
+raw types.__loader__ __lt__ | 23 2865599745
+raw types.__loader__ __ne__ | 23 1513347412
+raw types.__loader__ __new__ | 23 2014395241
+raw types.__loader__ __setattr__ | 23 2455465563
+raw types.__loader__ _fix_up_module | 23 2050622888
+raw types.__loader__ _resolve_filename | 23 3402216240
+raw types.__loader__ create_module | 23 201264422
+raw types.__loader__ exec_module | 23 4241898788
+raw types.__loader__ find_spec | 23 3929471991
+raw types.__loader__ get_code | 23 3108525832
+raw types.__loader__ get_source | 23 1625471549
+raw types.__loader__ is_package | 23 2362343715
+raw types.__loader__ load_module | 23 527120928
+raw types.__loader__ by what is built in | 6 1117242675
+raw types.__loader__ as an attribute of a class | 6 3284157168
