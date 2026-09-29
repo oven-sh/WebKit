@@ -630,9 +630,30 @@ is to be written in C++.
 
 ### What is put off
 
-Some things come up when nothing can be run, and are to be run as soon as something can: the callback of a weak reference, which comes up in the middle of a collection, and `KeyboardInterrupt`. CPython has its
+Some things come up when nothing can be run, and are to be run as soon as something can: the callback of a weak reference, which comes up in the middle of a collection, and what a program has for a signal. CPython has its
 "eval breaker" for that, a word that running code looks at now and then. Here the word is the one that it looks at anyway, `VM::m_pythonLimitUnlessWatched`, which is 0 while there is something to see to, so
 that being able to be asked costs code that is running nothing. `op_py_enter` and `op_py_line` then go the slow way, which is `doPendingWork()`.
+
+### Signals
+
+`PythonSignals.cpp` is `Modules/signalmodule.c`. As in CPython, what the system calls when a signal comes does next to nothing, and what the program has for the signal is called later, by Python code, between one thing and
+another.
+
+**What the system calls** is given the number of the signal and nothing else, on whatever thread the system likes, in the middle of whatever that thread is doing. So what it is to find is the process's, which nothing else here
+is, and all that it does to it is load and store: which signals have come, the descriptor of `set_wakeup_fd()`, and which `VM` is to be told. What the program has for each signal is the realm's, where the collector finds it.
+
+**Telling the `VM`** is `VM::notePythonSignal()`: it says that a signal has come, and then stores 0 in the word above. The thread that runs Python stores in that word too, whenever something that it goes by changes, and neither
+waits for the other. So whoever stores there for any other reason looks afterwards whether a signal has come, and if so stores 0. A signal that had not said so by then has yet to store, and stores last. The 0 can also
+be stored after the signal has been seen to, if something was looking already, and then what goes the slow way finds nothing to do and puts the word right. `signals-are-not-lost.py` goes round for ever if any of that is wrong.
+
+**Whose the signals are.** In CPython it is the main interpreter that can say what is done about a signal. Here it is the first realm that is started, in whichever `VM`. In any other, `signal.signal()` raises what it raises in
+CPython outside the main thread. When that realm goes, what it had set is set back, and it waits for any thread that is still in the middle of being told.
+
+**What is up to the host.** Like `posix`, `_signal` is there if the host lists it. `Configuration::installsSignalHandlers` is `PyConfig.install_signal_handlers`: whether `SIGINT` raises `KeyboardInterrupt` from the start. That is for a
+program that is Python's. One that is JavaScript's, and imports something, would find that it could no longer be interrupted, since it may never run Python again. `finalizeMain()` is the end of `Py_RunMain()`: if what
+ended the program was a `KeyboardInterrupt` that nothing caught, the process is ended by `SIGINT`, so that a shell that started it knows.
+
+What a program has for a signal can be a function of either language, and what it throws goes to whoever is next out, in either.
 
 ### Weak references
 
@@ -1043,6 +1064,13 @@ which takes no time.
 ## What is not decided
 
 Threads, when objects are finalized (`__del__`, and `with`-less file handles), and extension modules written for CPython's C API.
+
+What a host does about signals:
+
+- **It is Python code that looks whether a signal has come.** JavaScript that is going round does not, and neither does an event loop that is waiting. So what a program has for a signal is not called until Python is next run.
+  `asyncio` has `set_wakeup_fd()` for that. A host with a loop of its own wants to be woken as well, and then to call `checkSignals()`.
+- **What is done about a signal is set with `sigaction()`, over whatever the host had set.** A host that lets JavaScript listen for signals wants the two to know of each other.
+- **On Linux the engine stops threads for the collector with a signal**, which a program could set something else for.
 
 What follows from the second:
 

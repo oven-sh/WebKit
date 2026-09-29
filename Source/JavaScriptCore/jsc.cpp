@@ -81,6 +81,7 @@
 #include "PythonLifecycle.h"
 #include "PythonOperations.h"
 #include "PythonPosixModule.h"
+#include "PythonSignals.h"
 #include "ReleaseHeapAccessScope.h"
 #include "SamplingProfiler.h"
 #include "SideDataRepository.h"
@@ -4482,6 +4483,9 @@ void GlobalObject::configurePython(JSGlobalObject*, Python::Configuration& confi
     configuration = pythonConfiguration();
 }
 
+// What a program that is Python's ends with is what the process ends with.
+static std::optional<int> pythonExitStatus;
+
 // jsc file.py, as `python file.py` would run it.
 static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
 {
@@ -4492,7 +4496,8 @@ static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
     }
     // The program knows where it is from wherever the process goes: config_run_filename_abspath() of CPython.
     URL url = absoluteFileURL(fileName);
-    return !Python::runMain(globalObject, byteCast<uint8_t>(buffer.span()), SourceOrigin { url }, url.fileSystemPath());
+    pythonExitStatus = Python::runMain(globalObject, byteCast<uint8_t>(buffer.span()), SourceOrigin { url }, url.fileSystemPath());
+    return !*pythonExitStatus;
 }
 
 static void runWithOptions(GlobalObject* globalObject, CommandLine& options, bool& success)
@@ -4516,6 +4521,8 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
         String path = absoluteFileURL(program).fileSystemPath();
         configuration.firstSearchPath = path.left(path.reverseFind('/'));
         configuration.builtinModules.append({ "posix"_s, Python::createPosixModule });
+        configuration.builtinModules.append({ "_signal"_s, Python::createSignalModule });
+        configuration.installsSignalHandlers = true;
         // Where the library is, as CPython is told: it does not come with the engine.
         if (const char* searchPath = getenv("PYTHONPATH")) {
             for (auto directory : StringView::fromLatin1(searchPath).split(':'))
@@ -5159,12 +5166,16 @@ int runJSC(const CommandLine& options, bool isWorker, const Func& func)
 
                 if (!options.m_reprl && options.m_interactive && success)
                     runInteractive(globalObject);
-                if (!Python::finalizePython(globalObject))
+                if (pythonExitStatus)
+                    pythonExitStatus = Python::finalizeMain(globalObject, *pythonExitStatus);
+                else if (!Python::finalizePython(globalObject))
                     success = false;
             }
         }
 
         result = success && (asyncTestExpectedPasses == asyncTestPasses) ? 0 : 3;
+        if (pythonExitStatus)
+            result = *pythonExitStatus;
 
         if (options.m_exitCode) {
             printf("jsc exiting %d", result);

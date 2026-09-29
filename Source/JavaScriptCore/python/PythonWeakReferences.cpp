@@ -28,6 +28,7 @@
 #include "PythonBuiltins.h"
 
 #include "PyWeakReference.h"
+#include "PythonSignals.h"
 #include "TopExceptionScope.h"
 
 // Weak references: Objects/weakrefobject.c and Modules/_weakref.c of CPython. What they are made of is in PyWeakReference.h.
@@ -595,8 +596,12 @@ void doPendingWork(JSGlobalObject* globalObject)
         }
     }
 
-    if (vm.takePythonInterrupt())
-        raise(globalObject, scope, BuiltinType::KeyboardInterrupt, JSValue());
+    // It says that there are none before it looks, so that one that comes meanwhile is not lost.
+    if (vm.takePythonSignal()) {
+        handleSignals(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    RELEASE_AND_RETURN(scope, reportSignalWakeupErrors(globalObject));
 }
 
 } } // namespace JSC::Python

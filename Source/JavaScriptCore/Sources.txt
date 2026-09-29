@@ -810,6 +810,7 @@ python/PythonRepr.cpp
 python/PythonSRE.cpp
 python/PythonRuntimeFunctions.cpp
 python/PythonSequences.cpp
+python/PythonSignals.cpp
 python/PythonSignatures.cpp
 python/PythonStrType.cpp
 python/PythonStrings.cpp

@@ -2094,6 +2094,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonPosixModule.h
     python/PythonPosixState.h
     python/PythonSequences.h
+    python/PythonSignals.h
     python/PythonSignatures.h
     python/PythonStrings.h
     python/PythonSyntaxError.h

@@ -28,6 +28,7 @@
 
 #include "JSCJSValue.h"
 #include <optional>
+#include <sys/time.h>
 #include <time.h>
 #include <wtf/text/ASCIILiteral.h>
 
@@ -64,6 +65,8 @@ std::optional<time_t> objectToTimeT(JSGlobalObject*, JSValue, TimeRounding);
 // _PyTime_FromTimespec() and _PyTime_AsTimespec(). Nothing, or false, if it raised.
 std::optional<int64_t> timeFromTimespec(JSGlobalObject*, const struct timespec&);
 bool timeAsTimespec(JSGlobalObject*, int64_t, struct timespec&);
+// _PyTime_AsTimeval(). False if it raised.
+bool timeAsTimeval(JSGlobalObject*, int64_t, struct timeval&, TimeRounding);
 // tv_sec + tv_nsec * 1e-9
 double timespecAsSeconds(const struct timespec&);
 

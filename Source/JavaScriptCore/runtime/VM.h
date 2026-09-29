@@ -1520,7 +1520,7 @@ private:
     unsigned m_pythonWatcherCount { 0 };
     // What Python code is to see to when it next looks at m_pythonLimitUnlessWatched. See Python::doPendingWork().
     bool m_hasPythonWork { false };
-    bool m_isPythonInterrupted { false };
+    std::atomic<bool> m_hasPythonSignal { false };
     PyWeakReference* m_pythonReferencesToCall { nullptr };
     uint64_t m_pythonWeakReferenceOrder { 0 };
     bool m_executionForbidden { false };
@@ -1563,7 +1563,13 @@ public:
         m_pythonLimit = limit;
         updatePythonLimitUnlessWatched();
     }
-    void updatePythonLimitUnlessWatched() { m_pythonLimitUnlessWatched = m_pythonWatcherCount || m_hasPythonWork ? 0 : m_pythonLimit; }
+    void updatePythonLimitUnlessWatched()
+    {
+        WTF::atomicStore(&m_pythonLimitUnlessWatched, m_pythonWatcherCount || hasPythonWork() ? 0 : m_pythonLimit);
+        // A signal may have come since that was worked out, and what it stored been stored over. It says that it has come before it stores, so if it has not said so by now, it stores after this.
+        if (m_hasPythonSignal.load()) [[unlikely]]
+            WTF::atomicStore(&m_pythonLimitUnlessWatched, 0u);
+    }
     // Whether anything is being told of what Python code does. Each realm that has something to tell counts for one.
     bool isPythonWatched() const { return m_pythonWatcherCount; }
     void addPythonWatcher()
@@ -1578,7 +1584,7 @@ public:
     }
     // There is something for Python code to see to as soon as it is somewhere that anything can be run: what CPython has its "eval breaker" for. It costs code that is running nothing to be able to be asked, since
     // it looks at the one word anyway.
-    bool hasPythonWork() const { return m_hasPythonWork; }
+    bool hasPythonWork() const { return m_hasPythonWork || m_hasPythonSignal.load(); }
     void setHasPythonWork(bool hasWork)
     {
         m_hasPythonWork = hasWork;
@@ -1594,13 +1600,20 @@ public:
     }
     PyWeakReference* takePythonReferencesToCall() { return std::exchange(m_pythonReferencesToCall, nullptr); }
     uint64_t nextPythonWeakReferenceOrder() { return ++m_pythonWeakReferenceOrder; }
-    // KeyboardInterrupt is to be raised.
-    void interruptPython()
+    // A signal has come that a program has a function for: _PyEval_SignalReceived() of CPython. This is called by what the system calls when the signal comes, on whatever thread that is and whatever the
+    // thread is in the middle of, so it does nothing but store.
+    void notePythonSignal()
     {
-        m_isPythonInterrupted = true;
-        setHasPythonWork(true);
+        m_hasPythonSignal.store(true);
+        // The signal may have been seen to by the time that this is stored, if something was looking already. Then what comes of it finds nothing to do, and puts it right.
+        WTF::atomicStore(&m_pythonLimitUnlessWatched, 0u);
     }
-    bool takePythonInterrupt() { return std::exchange(m_isPythonInterrupted, false); }
+    bool takePythonSignal()
+    {
+        bool had = m_hasPythonSignal.exchange(false);
+        updatePythonLimitUnlessWatched();
+        return had;
+    }
     uint32_t* addressOfPythonDepth() { return &m_pythonDepth; }
     uint32_t* addressOfPythonLimitUnlessWatched() { return &m_pythonLimitUnlessWatched; }
 

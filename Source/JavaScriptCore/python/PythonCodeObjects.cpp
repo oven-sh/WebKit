@@ -379,6 +379,14 @@ CallFrame* callerOf(CallFrame* callFrame)
     return nullptr;
 }
 
+CallFrame* innermostPythonFrame(VM& vm)
+{
+    CallFrame* top = vm.topCallFrame;
+    if (!top)
+        return nullptr;
+    return isFrameToPython(top, top->bytecodeIndex()) ? top : callerOf(top);
+}
+
 JSObject* globalsOfFrame(JSGlobalObject* globalObject, CallFrame* frame)
 {
     if (!pythonInfoOfFrame(frame))

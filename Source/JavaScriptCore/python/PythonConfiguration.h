@@ -75,6 +75,9 @@ struct Configuration {
     // Whether sys.stdout and sys.stderr keep what is written to them until there is a good deal of it: not -u. They do not, unless it is asked for, so that what Python writes and what JavaScript writes come out in
     // the order in which they were written. What is to be kept back, so as not to ask the system so often, is for `files` to keep back, which can keep both.
     bool buffersStandardStreams { false };
+    // Whether, from when Python starts, SIGINT raises KeyboardInterrupt and SIGPIPE and SIGXFSZ are ignored: PyConfig.install_signal_handlers. That is for a program that is Python's. It is not done to one that is
+    // JavaScript's and imports something, which would find that it could no longer be interrupted. A program that imports `signal` has the first of them done to it whatever this says, as in CPython.
+    bool installsSignalHandlers { false };
     // What io.open_code() is: given the name of a file whose contents are to be run, a str, it returns a file that is open for reading bytes, or nothing, having thrown. It is for what wants a say in what is
     // run, or has it somewhere other than in a file. Null is open(path, "rb"). PyFile_SetOpenCodeHook() of CPython.
     JSValue (*openCode)(JSGlobalObject*, JSValue path) { nullptr };

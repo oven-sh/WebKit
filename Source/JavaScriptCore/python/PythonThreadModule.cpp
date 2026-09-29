@@ -30,6 +30,7 @@
 #include "PyLock.h"
 #include "PythonBytes.h"
 #include "PythonCodecs.h"
+#include "PythonSignals.h"
 #include "PythonTime.h"
 #include <signal.h>
 
@@ -540,13 +541,8 @@ PYTHON_NATIVE(threadInterruptMain)
         RETURN_IF_EXCEPTION(scope, { });
         signal = *given;
     }
-    // PyErr_SetInterruptEx()
-    if (signal < 1 || signal >= NSIG)
+    if (!simulateSignal(globalObject, signal))
         return JSValue::encode(raiseValueError(globalObject, scope, "signal number out of range"_s));
-    // FIXME: What a program has set with signal.signal(), when there is that. Until then only this one has anything set for it, which raises KeyboardInterrupt.
-    if (signal != SIGINT)
-        RETURN_NONE();
-    vm.interruptPython();
     // CPython looks whether there is anything of the kind to be done when a call returns, and so when this one does.
     scope.release();
     doPendingWork(globalObject);

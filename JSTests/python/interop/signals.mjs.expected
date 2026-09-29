@@ -1,0 +1,15 @@
+raised from JavaScript, with no Python on the stack: there is no frame => [(30, None)]
+with Python further out, it is that frame => [(30, 'call')]
+a function of JavaScript's => true
+is what there is for it => true
+and is called => [[30,"no frame"],[30,"call"]]
+when the signal comes to Python that is going round => [30]
+what it throws, JavaScript catches => JavaScript caught RangeError: from JavaScript's function
+or Python does => Python caught ValueError: from JavaScript's function
+what Python's raises, JavaScript catches => JavaScript caught ValueError: from Python's function
+KeyboardInterrupt too => JavaScript caught KeyboardInterrupt
+or Python does => Python caught KeyboardInterrupt: 
+while JavaScript is going round nothing is done => 0
+what will not do => JavaScript caught TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object
+nor this => JavaScript caught TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object
+an arrow function, a bound function and a class will => true,true,true

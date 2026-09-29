@@ -37,6 +37,7 @@
 #include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonOperations.h"
+#include "PythonSignals.h"
 #include "TopExceptionScope.h"
 
 // What is done before a program is run, running one, and what is done afterwards: of CPython's Python/pylifecycle.c, Python/pythonrun.c and Modules/main.c, what is not to do with there being one interpreter to a
@@ -191,6 +192,9 @@ void startPython(JSGlobalObject* globalObject)
     String streamEncoding = codecNameOf(globalObject, configuration.standardStreamEncoding);
     RETURN_IF_EXCEPTION(scope, void());
 
+    initializeSignals(globalObject, configuration.installsSignalHandlers);
+    RETURN_IF_EXCEPTION(scope, void());
+
     initializeStandardStreams(globalObject, streamEncoding);
     RETURN_IF_EXCEPTION(scope, void());
 
@@ -252,6 +256,10 @@ static bool handleSystemExit(JSGlobalObject* globalObject, JSValue exception, in
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
+    if (isInstance(globalObject, exception, realm->type(BuiltinType::KeyboardInterrupt))) {
+        importState(globalObject).hasUnhandledKeyboardInterrupt = true;
+        return false;
+    }
     if (!isInstance(globalObject, exception, realm->typeSystemExit()))
         return false;
     JSValue toPrint = exception;
@@ -349,6 +357,7 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    importState(globalObject).hasUnhandledKeyboardInterrupt = false;
     startPython(globalObject);
     if (scope.exception()) {
         // What CPython says of this it says of a process that it is about to end.
@@ -415,6 +424,15 @@ bool finalizePython(JSGlobalObject* globalObject)
             scope.clearException();
     }
     return succeeded;
+}
+
+int finalizeMain(JSGlobalObject* globalObject, int status)
+{
+    if (!finalizePython(globalObject))
+        status = 120;
+    if (importState(globalObject).hasUnhandledKeyboardInterrupt)
+        status = exitByInterrupt();
+    return status;
 }
 
 } } // namespace JSC::Python

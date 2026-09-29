@@ -41,6 +41,7 @@ struct ImportState {
     unsigned lockDepth { 0 }; // How many times the import lock has been taken. There is one thread.
     int overrideOfFrozenModules { 0 };
     bool isStarted { false }; // Whether all that is done before a program is run has been done.
+    bool hasUnhandledKeyboardInterrupt { false }; // _PyRuntime.signals.unhandled_keyboard_interrupt
 
     template<typename Visitor>
     void visit(Visitor& visitor)

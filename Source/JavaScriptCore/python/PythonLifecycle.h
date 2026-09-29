@@ -46,6 +46,9 @@ JS_EXPORT_PRIVATE int runMain(JSGlobalObject*, std::span<const uint8_t>, const S
 // What is done when there is no more to run, of what Py_FinalizeEx() does: what has been written and not sent on is sent on. It is for the host to say when that is, since a program in two languages is not over when
 // the Python that began it is. False if it could not all be, for which CPython ends the process with the status 120. It does nothing if Python was never started.
 JS_EXPORT_PRIVATE bool finalizePython(JSGlobalObject*);
+// The end of Py_RunMain(), for a program that runMain() ran: that, and then the status that the process is to end with, given the one that runMain() returned. If what ended the program was a KeyboardInterrupt that nothing
+// caught, it ends the process itself, by SIGINT, as CPython does, so that a shell that started it knows to stop.
+JS_EXPORT_PRIVATE int finalizeMain(JSGlobalObject*, int status);
 // _PyAtExit_Call(): what a program has registered with atexit, the last first. It raises nothing.
 void callAtExitFunctions(JSGlobalObject*);
 

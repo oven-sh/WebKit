@@ -210,6 +210,22 @@ bool timeAsTimespec(JSGlobalObject*, int64_t time, struct timespec& result)
     return true;
 }
 
+bool timeAsTimeval(JSGlobalObject*, int64_t time, struct timeval& result, TimeRounding rounding)
+{
+    // pytime_divmod(), as above. There are too few microseconds in an int64 of nanoseconds for any of it to go wrong.
+    constexpr int64_t microsecondsPerSecond = 1000 * 1000;
+    int64_t microseconds = divideTime(time, nanosecondsPerMicrosecond, rounding);
+    int64_t seconds = microseconds / microsecondsPerSecond;
+    int64_t rest = microseconds % microsecondsPerSecond;
+    if (rest < 0) {
+        rest += microsecondsPerSecond;
+        --seconds;
+    }
+    result.tv_sec = static_cast<time_t>(seconds);
+    result.tv_usec = static_cast<suseconds_t>(rest);
+    return true;
+}
+
 double timespecAsSeconds(const struct timespec& time) { return multiplyAdd(static_cast<double>(time.tv_nsec), 1e-9, static_cast<double>(time.tv_sec)); }
 
 // py_get_system_clock()

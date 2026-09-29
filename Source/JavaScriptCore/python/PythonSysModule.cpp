@@ -305,6 +305,13 @@ void reportUnraisable(JSGlobalObject* globalObject, const String& givenMessage, 
     JSValue type;
     JSValue traceback;
     partsOf(exception, type, traceback);
+    // What was raised by nothing that is written in Python is said to be from wherever Python has got to.
+    if (isNone(traceback) && exception.isObject()) {
+        if (CallFrame* frame = innermostPythonFrame(vm)) {
+            addTracebackEntry(globalObject, exception, frame, frame->bytecodeIndex());
+            partsOf(exception, type, traceback);
+        }
+    }
     JSValue message = givenMessage.isNull() ? jsUndefined() : JSValue(jsString(vm, givenMessage));
     if (!object)
         object = jsUndefined();

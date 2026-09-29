@@ -482,7 +482,7 @@ PYTHON_NATIVE(osErrorStr)
     return JSValue::encode(jsString(vm, plain));
 }
 
-JSValue raiseOSError(JSGlobalObject* globalObject, ThrowScope& scope, int errorNumber, JSValue filename)
+JSValue raiseOSError(JSGlobalObject* globalObject, ThrowScope& scope, int errorNumber, JSValue filename, PyType* type)
 {
     VM& vm = globalObject->vm();
     MarkedArgumentBuffer arguments;
@@ -490,7 +490,7 @@ JSValue raiseOSError(JSGlobalObject* globalObject, ThrowScope& scope, int errorN
     arguments.append(jsString(vm, String::fromUTF8(safeStrerror(errorNumber).span())));
     if (filename)
         arguments.append(filename);
-    JSValue exception = call(globalObject, globalObject->pyRealm()->typeOSError(), arguments);
+    JSValue exception = call(globalObject, type ? type : globalObject->pyRealm()->typeOSError(), arguments);
     RETURN_IF_EXCEPTION(scope, { });
     setContext(globalObject, asObject(exception));
     throwException(globalObject, scope, exception);

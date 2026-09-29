@@ -339,7 +339,7 @@ void exportModule(JSGlobalObject*, const SourceCode&, Vector<Identifier, 4>& exp
 // exception.args
 PyTuple* exceptionArguments(JSGlobalObject*, JSValue exception);
 // OSError(errno, strerror(errno)[, filename]), or the class derived from it that is for that error.
-JS_EXPORT_PRIVATE JSValue raiseOSError(JSGlobalObject*, ThrowScope&, int errorNumber, JSValue filename = JSValue());
+JS_EXPORT_PRIVATE JSValue raiseOSError(JSGlobalObject*, ThrowScope&, int errorNumber, JSValue filename = JSValue(), PyType* derivedFromOSError = nullptr);
 // What is given for the name of a file, as the system wants it: a str, bytes, or what has __fspath__. Nothing if it raised.
 // It cannot have a zero in it, and what is said if it has depends on who is asking: PyUnicode_FSDecoder() unless it is given, and "embedded null byte" is PyUnicode_FSConverter().
 JSValue fileSystemPathOf(JSGlobalObject*, JSValue); // PyOS_FSPath(). Empty if it raised.
@@ -356,6 +356,8 @@ JSValue localsOfFrame(JSGlobalObject*, CallFrame*);
 JSValue localsOfFrame(JSGlobalObject*, PyFrame*);
 // The frame of the Python code that called a function written in C++.
 CallFrame* callerOf(CallFrame*);
+// _PyThreadState_GetFrame(): the innermost frame that is Python's, whatever is being run. Null if there is none.
+CallFrame* innermostPythonFrame(VM&);
 // What is in a cell, which is empty if nothing is.
 JSValue contentsOfCell(JSValue cell);
 // The cell for __class__, from what the body of a class returned. None if there is none.
