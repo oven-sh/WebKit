@@ -166,6 +166,7 @@ private:
     std::optional<TypeTable::Field> fieldAccessedBy(Node*, unsigned identifier);
     // Which layout the cell is of (Structure::knownShape()), and whether that is one of first to last.
     LValue layoutOf(LValue cell);
+    LValue layoutBornAs(LValue cell); // Structure::bornAs()
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
     struct OwnData {

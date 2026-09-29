@@ -86,6 +86,11 @@ LValue Lowering::layoutOf(LValue cell)
     return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfKnownShape()));
 }
 
+LValue Lowering::layoutBornAs(LValue cell)
+{
+    return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfBornAs()));
+}
+
 LValue Lowering::isOneOf(LValue layout, uint16_t first, uint16_t last)
 {
     if (first == last)
@@ -113,19 +118,25 @@ void Lowering::lowerGetById(Node* node)
         else
             m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
         m_out.appendTo(cellCase, has);
-        LValue layout = layoutOf(base);
+        // What it was born as, whatever has become of it since: the property is where it was then, or nothing is (Structure::bornAs()).
+        LValue layout = layoutBornAs(base);
         bool testsForLack = field->firstWithout && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics();
         if (testsForLack)
             noteShapeSite(Instance::ReadLacks);
         m_out.branch(isOneOf(layout, field->first, field->last), usually(has), rarely(testsForLack ? mayLack : otherwise));
         m_out.appendTo(has, mayLack);
+        LValue whatIsThere = m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
+        LBasicBlock isThere = m_out.newBlock();
+        m_out.branch(m_out.notZero64(whatIsThere), usually(isThere), rarely(otherwise));
+        m_out.appendTo(isThere);
         countShape(Instance::ReadHas);
-        ValueFromBlock found = m_out.anchor(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue))));
+        ValueFromBlock found = m_out.anchor(whatIsThere);
         m_out.jump(continuation);
         // (Such an object inherits from Object.prototype, which has what it had to begin with: TypeTable::fieldOf() has seen to that.)
         m_out.appendTo(mayLack, hasNot);
         if (testsForLack)
-            m_out.branch(isOneOf(layout, field->firstWithout, field->lastWithout), unsure(hasNot), unsure(otherwise));
+            // (That it has no such property, and inherits none, goes for what it is now.)
+            m_out.branch(isOneOf(layoutOf(base), field->firstWithout, field->lastWithout), unsure(hasNot), unsure(otherwise));
         else
             m_out.unreachable();
         m_out.appendTo(hasNot, otherwise);

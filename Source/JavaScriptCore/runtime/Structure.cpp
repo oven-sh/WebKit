@@ -332,6 +332,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     , m_inlineCapacity(previous->m_inlineCapacity)
     , m_bitField(0)
     , m_structureVariant(variant)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_bornAs(previous->m_bornAs)
+#endif
     , m_propertyHash(previous->m_propertyHash)
     , m_seenProperties(previous->m_seenProperties)
     , m_prototype(previous->m_prototype.get(), WriteBarrierEarlyInit)
@@ -538,7 +541,7 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
         switch (structure->transitionKind()) {
         case TransitionKind::PropertyAddition: {
             PropertyTableEntry entry(structure->m_transitionPropertyName.get(), structure->transitionOffset(), structure->transitionPropertyAttributes());
-            auto nextOffset = table->nextOffset(structure->inlineCapacity());
+            auto nextOffset = table->nextOffset(structure->inlineCapacity(), !structure->bornAs());
             ASSERT_UNUSED(nextOffset, nextOffset == structure->transitionOffset());
             auto [offset, attribute, result] = table->add(vm, entry);
             ASSERT_UNUSED(result, result);
@@ -1101,7 +1104,9 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     PropertyTable* table = nullptr;
     size_t beforeOutOfLineCapacity = this->outOfLineCapacity();
     size_t afterOutOfLineCapacity = beforeOutOfLineCapacity;
-    if (isUncacheableDictionary()) {
+    // (What an object was born with stays where it was born: see bornAs().)
+    bool movesProperties = isUncacheableDictionary() && !bornAs();
+    if (movesProperties) {
         table = propertyTableOrNull();
         ASSERT(table);
         PropertyOffset maxOffset = invalidOffset;
@@ -1119,7 +1124,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     object->setStructureIDDirectly(id().nuke());
     WTF::storeStoreFence();
 
-    if (isUncacheableDictionary()) {
+    if (movesProperties) {
         size_t propertyCount = table->size();
 
         // Holds our values compacted by insertion order. This is OK since GC is deferred.
@@ -1228,6 +1233,7 @@ void Structure::setKnownShape(VM& vm, uint16_t shape)
         return;
     RELEASE_ASSERT(!m_knownShape);
     m_knownShape = shape;
+    m_bornAs = shape;
     if (!isWatchingReplacement())
         return;
     Vector<PropertyOffset, 8> offsets;

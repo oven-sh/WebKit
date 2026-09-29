@@ -500,6 +500,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
     ASSERT(!parseIndex(propertyName));
 
+#if USE(BUN_JSC_ADDITIONS)
+    if constexpr (mode == PutModeDefineOwnProperty) {
+        if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && this->structure()->bornAs()) [[unlikely]]
+            takeOutOfTheSlotItWasBornIn(vm, propertyName);
+    }
+#endif
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     if (structure->isDictionary()) {

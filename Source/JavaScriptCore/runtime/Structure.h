@@ -353,6 +353,18 @@ public:
     uint16_t knownShape() const { return m_knownShape; }
     JS_EXPORT_PRIVATE void setKnownShape(VM&, uint16_t);
     static constexpr ptrdiff_t offsetOfKnownShape() { return OBJECT_OFFSETOF(Structure, m_knownShape); }
+    // The number of the layout that objects of this structure were BORN with, whatever has become of them since. Unlike knownShape() it is for
+    // life: every structure that an object goes on to has it. What it promises is that each property the object was born with is
+    // still in the slot it was born in, or else that there is nothing in that slot:
+    //   - a slot in the object itself that a property has been taken out of is never given to another (PropertyTable::nextOffset());
+    //   - a property that is made into an accessor is taken out and put back (JSObject::takeOutOfTheSlotItWasBornIn());
+    //   - nothing is moved when a dictionary is flattened.
+    // So code that has once seen what an object was born as can go by that for as long as it has the object.
+    uint16_t bornAs() const { return m_bornAs; }
+    void setBornAs(uint16_t layout) { m_bornAs = layout; }
+    // Of an uncacheable dictionary: the property, which is in the object itself, is out of it from now on. func: as for adding one, with where it is to be.
+    template<typename Func> void movePropertyOutOfObjectWithoutTransition(VM&, PropertyName, const Func&);
+    static constexpr ptrdiff_t offsetOfBornAs() { return OBJECT_OFFSETOF(Structure, m_bornAs); }
 
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
@@ -1068,6 +1080,7 @@ private:
     uint16_t m_maxOffset;
 #if USE(BUN_JSC_ADDITIONS)
     uint16_t m_knownShape { 0 }; // See knownShape(). (There was nothing here.)
+    uint16_t m_bornAs { 0 }; // See bornAs(). (Nor here.)
 #endif
 
     uint32_t m_propertyHash;

@@ -269,7 +269,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
 
     auto rep = propertyName.uid();
 
-    PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
+    PropertyOffset newOffset = table->nextOffset(m_inlineCapacity, !m_bornAs);
 
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));
@@ -383,6 +383,23 @@ inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyNa
     return add<ShouldPin::Yes>(vm, propertyName, attributes, func);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+template<typename Func>
+inline void Structure::movePropertyOutOfObjectWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
+{
+    RELEASE_ASSERT(isUncacheableDictionary() && isPinnedPropertyTable() && m_bornAs);
+    PropertyTable* table = ensurePropertyTable(vm);
+    GCSafeConcurrentJSLocker locker(m_lock, vm);
+    checkConsistency();
+    PropertyOffset newOffset = table->nextOffset(m_inlineCapacity, false);
+    RELEASE_ASSERT(JSC::isValidOffset(newOffset));
+    table->moveToOffset(vm, propertyName.uid(), newOffset);
+    setIsQuickPropertyAccessAllowedForEnumeration(false);
+    func(locker, newOffset, std::max(newOffset, maxOffset()));
+    checkConsistency();
+}
+#endif
+
 template<typename Func>
 inline PropertyOffset Structure::removePropertyWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
 {
@@ -427,7 +444,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     else if (propertyName == vm.propertyNames->then)
         setHasSpecialProperties(true);
 
-    PropertyOffset newOffset = table->nextOffset(m_inlineCapacity);
+    PropertyOffset newOffset = table->nextOffset(m_inlineCapacity, !m_bornAs);
 
     m_propertyHash = m_propertyHash ^ rep->existingSymbolAwareHash();
     m_seenProperties.add(CompactPtr<UniquedStringImpl>::encode(rep));

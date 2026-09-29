@@ -360,6 +360,10 @@ public:
     bool hasOwnProperty(JSGlobalObject*, unsigned) const;
 
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+#if USE(BUN_JSC_ADDITIONS)
+    // Before a property is made into something that is not a plain value: see Structure::bornAs().
+    JS_EXPORT_PRIVATE void takeOutOfTheSlotItWasBornIn(VM&, PropertyName);
+#endif
     JS_EXPORT_PRIVATE static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     bool deleteProperty(JSGlobalObject*, PropertyName);
     bool deleteProperty(JSGlobalObject*, uint32_t propertyName);

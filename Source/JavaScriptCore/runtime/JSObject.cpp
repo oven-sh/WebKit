@@ -2420,6 +2420,43 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
     return true;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void JSObject::takeOutOfTheSlotItWasBornIn(VM& vm, PropertyName propertyName)
+{
+    Structure* structure = this->structure();
+    unsigned attributes;
+    PropertyOffset offset = structure->get(vm, propertyName, attributes);
+    if (!isValidOffset(offset) || !isInlineOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return;
+    // It keeps its place among the others, so it is not a matter of taking it out and putting it back. That there is no transition for.
+    if (!structure->isUncacheableDictionary()) {
+        DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
+        structure = Structure::toUncacheableDictionaryTransition(vm, structure, &deferredWatchpointFire);
+        setStructure(vm, structure);
+    }
+    JSValue value = getDirect(offset);
+    StructureID structureID = this->structureID();
+    PropertyOffset movedTo = invalidOffset;
+    structure->movePropertyOutOfObjectWithoutTransition(vm, propertyName, [&](const GCSafeConcurrentJSLocker&, PropertyOffset newOffset, PropertyOffset newMaxOffset) {
+        unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
+        unsigned newOutOfLineCapacity = Structure::outOfLineCapacity(newMaxOffset);
+        if (newOutOfLineCapacity != oldOutOfLineCapacity) {
+            Butterfly* butterfly = allocateMoreOutOfLineStorage(vm, oldOutOfLineCapacity, newOutOfLineCapacity);
+            nukeStructureAndSetButterfly(vm, structureID, butterfly);
+            structure->setMaxOffset(vm, newMaxOffset);
+            WTF::storeStoreFence();
+            setStructureIDDirectly(structureID);
+        } else
+            structure->setMaxOffset(vm, newMaxOffset);
+        movedTo = newOffset;
+    });
+    putDirectOffset(vm, movedTo, value);
+    locationForOffset(offset)->clear();
+    if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+}
+#endif
+
 bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned i)
 {
     VM& vm = globalObject->vm();
