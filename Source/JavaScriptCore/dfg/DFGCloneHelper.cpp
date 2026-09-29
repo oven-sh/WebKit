@@ -188,6 +188,14 @@ Node* CloneHelper::cloneNodeImpl(BasicBlock* into, Node* node)
             clone->setOpInfo(OpInfo(&cloneData));
             return cloneEdges(node, clone);
         }
+        case CheckTraps: {
+            // Loop unrolling keeps the original loop header, so its CheckTraps still polls once per
+            // unrolled iteration (once in all once the loop is fully unrolled). A copy in each cloned
+            // body would only add a poll per iteration, so the clone is a no-op.
+            Node* clone = into->cloneAndAppend(m_graph, node);
+            clone->removeWithoutChecks();
+            return clone;
+        }
         default:
             RELEASE_ASSERT_NOT_REACHED();
             return nullptr;

@@ -1,8 +1,8 @@
 //@ runDefault("--usePollingTraps=1", "--validateDFGClobberize=1", "--jitPolicyScale=0.0001")
 // With polling traps every loop header carries a CheckTraps node. The loop
 // unrolling phase clones the loop body, so CheckTraps must be cloneable, or
-// no loop in a polled build is ever unrolled. sum4 is fully unrolled and
-// xorSum partially.
+// no loop in a polled build is ever unrolled. Its clones are no-ops: the
+// original header keeps the poll. sum4 is fully unrolled and xorSum partially.
 
 function sum4(a) {
     let s = 0;
