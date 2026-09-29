@@ -378,6 +378,10 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     size = instructions().size();
     if (!m_codeBlock->finalize(m_writer.finalize())) [[unlikely]]
         return ParserError(ParserError::OutOfMemory);
+#if ENABLE(FTL_JIT)
+    if (!m_functionsPutInVariables.isEmpty()) [[unlikely]]
+        AOT::noteFunctionsPutInVariables(m_codeBlock->codeBlock(), WTF::move(m_functionsPutInVariables));
+#endif
 
     // We limit total bytecode sequence size to int32_t so that we can use int32_t jump offsets.
     // Also, this allows us to use one bit of bytecode for some flag, including "ignore-result-flag".
@@ -3680,6 +3684,8 @@ RegisterID* BytecodeGenerator::emitNewRegExp(RegisterID* dst, RegExp* regExp)
 void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, FunctionMetadataNode* function)
 {
     unsigned index = m_codeBlock->addFunctionExpr(makeFunction(function));
+    if (Options::resolveAllScopeSlotsStatically()) [[unlikely]]
+        m_indicesOfFunctionExprs.set(function, index);
 
     switch (function->parseMode()) {
     case SourceParseMode::GeneratorWrapperFunctionMode:
@@ -3699,6 +3705,30 @@ void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, Functio
         OpNewFuncExp::emit(this, dst, scopeRegister(), index);
         break;
     }
+}
+
+void BytecodeGenerator::noteFunctionPutInVariable(const Identifier& ident, const Variable& var, ExpressionNode* right)
+{
+    if (!Options::resolveAllScopeSlotsStatically()) [[likely]]
+        return;
+    if (right->isClassExprNode())
+        right = static_cast<ClassExprNode*>(right)->constructorExpression();
+    if (!right || !right->isBaseFuncExprNode())
+        return;
+    auto it = m_indicesOfFunctionExprs.find(static_cast<BaseFuncExprNode*>(right)->metadata());
+    if (it == m_indicesOfFunctionExprs.end())
+        return;
+    FunctionPutInVariable note;
+    note.identifier = addConstant(ident);
+    note.functionExpr = it->value;
+    if (var.isResolved()) {
+        if (!var.offset().isScope())
+            return;
+        note.isOwn = true;
+        note.symbolTableConstantIndex = var.symbolTableConstantIndex();
+        note.scopeOffset = var.offset().scopeOffset().offset();
+    }
+    m_functionsPutInVariables.append(note);
 }
 
 RegisterID* BytecodeGenerator::emitNewFunctionExpression(RegisterID* dst, FuncExprNode* func)

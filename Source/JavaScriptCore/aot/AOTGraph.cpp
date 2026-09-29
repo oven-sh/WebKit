@@ -611,14 +611,16 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProv
     UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
     ResolveType type = bytecode.m_getPutInfo.resolveType();
     if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
+        // Is it the module's variable? Not one of the function's own, and not one of a scope in between.
+        const void* scope = const_cast<Graph*>(this)->identityOfScope(callee->use(bytecode.m_scope));
+        // If there is no telling which scope it is read from, it may be: which is no proof of anything, but is not to be overlooked.
+        if (!scope)
+            return probablyFunctionInVariableOfModule(bytecode.m_var, bytecode.m_offset);
+        if (scope != m_hints->scopeOfVariables())
+            return nullptr;
         const KnownFunction* known = m_hints->find(name, bytecode.m_offset);
-        if (known && known->isProven && isProven && m_declaredNames) {
-            // The hint goes by the name and the offset. Is it the module's variable? Not one of the function's own, which is read from
-            // a scope that the function has at hand, without looking for it; and not one of a scope in between.
-            auto resolution = m_declaredNames->resolve(name);
-            *isProven = resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment && resolution.offset == bytecode.m_offset
-                && isThatManyScopesOut(callee->use(bytecode.m_scope), resolution.hops);
-        }
+        if (known && isProven)
+            *isProven = known->isProven;
         return known;
     }
     if (type == Dynamic)
@@ -641,11 +643,9 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProv
             if (!resolution.isInOutermostEnvironment)
                 return nullptr;
             const KnownFunction* known = m_hints->find(name, resolution.offset);
-            // It is read from the scope that was found for the name, which is that of the module.
-            if (known && known->isProven && isProven && Options::aotResolvesScopesItself()) {
-                const Node* scope = callee->use(bytecode.m_scope);
-                *isProven = scope->isBytecode(op_resolve_scope) && scope->as<OpResolveScope>().m_var == bytecode.m_var;
-            }
+            // Is the scope that it is read from the one that the name is found in?
+            if (known && known->isProven && isProven && Options::aotResolvesScopesItself())
+                *isProven = const_cast<Graph*>(this)->identityOfScope(callee->use(bytecode.m_scope)) == m_hints->scopeOfVariables();
             return known;
         }
         case DeclaredNamesLink::Resolution::Stable:
@@ -655,9 +655,18 @@ const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProv
             break;
         }
     }
-    if (const KnownFunction* known = m_hints->findWhateverHasTheName(name))
-        return known;
     return m_hints->find(name, std::nullopt);
+}
+
+const KnownFunction* Graph::probablyFunctionInVariableOfModule(unsigned identifier, unsigned scopeOffset) const
+{
+    if (!m_hints || !m_declaredNames)
+        return nullptr;
+    UniquedStringImpl* name = m_codeBlock->identifier(identifier).impl();
+    auto resolution = m_declaredNames->resolve(name);
+    if (resolution.kind != DeclaredNamesLink::Resolution::Slot || !resolution.isInOutermostEnvironment || resolution.offset != scopeOffset)
+        return nullptr;
+    return m_hints->find(name, scopeOffset);
 }
 
 bool Graph::passesNoFunctionObject(const Node* node)
@@ -819,6 +828,7 @@ Variable Graph::variableAccessedBy(const Node* node)
     unsigned identifier;
     unsigned offset;
     unsigned localScopeDepth = 0;
+    VirtualRegister tableOfScope;
     ResolveType type;
     if (node->isBytecode(op_get_from_scope)) {
         auto bytecode = node->as<OpGetFromScope>();
@@ -835,10 +845,17 @@ Variable Graph::variableAccessedBy(const Node* node)
         type = bytecode.m_getPutInfo.resolveType();
         if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar)
             localScopeDepth = bytecode.m_symbolTableOrScopeDepth.scopeDepth();
+        else
+            tableOfScope = bytecode.m_symbolTableOrScopeDepth.symbolTable();
     }
     switch (type) {
     case ResolvedClosureVar:
     case ResolvedLazyClosureVar:
+        // A store says which scope it is to: the constant that has the symbol table, which is what a scope goes by here.
+        if (tableOfScope.isValid() && tableOfScope.isConstant()) {
+            if (JSValue table = m_codeBlock->getConstant(tableOfScope); table && table.isCell())
+                return { table.asCell(), offset };
+        }
         return { identityOfScope(node->use(scope)), offset };
     case Dynamic:
         return { };
@@ -925,11 +942,16 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
             return nullptr;
         }
     };
+    auto valueIsUsed = [&](ProgramFacts* facts, ProgramFacts::WhyValueIsUsed why, Node* user) {
+        facts->valueIsUsed.store(true, std::memory_order_relaxed);
+        uint32_t nothing = 0;
+        facts->whyValueIsUsed.compare_exchange_strong(nothing, why | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8, std::memory_order_relaxed);
+    };
     auto note = [&](Node* user, const Use& use) {
         // Where it is made, it is on its way to the variable. Anywhere else it goes, it has got out before it got there.
         if (auto* executable = executableMadeBy(use.node)) {
             if (auto* facts = factsOfExecutables.get(executable); facts && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
-                facts->valueIsUsed.store(true, std::memory_order_relaxed);
+                valueIsUsed(facts, ProgramFacts::WhereItIsMade, user);
             return;
         }
         if (!use.node->isBytecode(op_get_from_scope))
@@ -938,7 +960,8 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
         const KnownFunction* known = knownFunctionReadBy(use.node, &readIsProven);
         if (!known || !known->facts)
             return;
-        if (user->isBytecode(op_check_tdz))
+        // (`f?.()` asks whether there is anything to call.)
+        if (user->isBytecode(op_check_tdz) || user->isBytecode(op_jundefined_or_null) || user->isBytecode(op_jnundefined_or_null))
             return;
         bool isCallee = false;
         if (user->isBytecode(op_call))
@@ -952,7 +975,7 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
             known->facts->directCalls.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        known->facts->valueIsUsed.store(true, std::memory_order_relaxed);
+        valueIsUsed(known->facts, !isCallee ? ProgramFacts::Operand : !readIsProven ? ProgramFacts::CalleeButReadIsNotProven : ProgramFacts::CalleeButCallIsNotProven, user);
     };
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
@@ -1840,7 +1863,7 @@ private:
                     m_recentProperties.removeAllMatching([&](auto& entry) { return entry.first == bytecode.m_dst; });
                     ResolveType type = bytecode.m_getPutInfo.resolveType();
                     if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
-                        if (auto* known = m_graph.calleeHints()->find(m_codeBlock->identifier(bytecode.m_var).impl(), bytecode.m_offset))
+                        if (auto* known = m_graph.probablyFunctionInVariableOfModule(bytecode.m_var, bytecode.m_offset))
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     } else if (type != Dynamic) {
                         const KnownFunction* known;

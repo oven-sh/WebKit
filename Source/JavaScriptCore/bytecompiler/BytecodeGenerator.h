@@ -1113,6 +1113,8 @@ namespace JSC {
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
+        // See FunctionPutInVariable. `right` is what was just put there.
+        void noteFunctionPutInVariable(const Identifier&, const Variable&, ExpressionNode* right);
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
         void setUsesCheckpoints() { m_codeBlock->setHasCheckpoints(); }
@@ -1350,6 +1352,8 @@ namespace JSC {
     private:
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
         bool m_optimizeBytecode;
+        UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_indicesOfFunctionExprs;
+        Vector<FunctionPutInVariable> m_functionsPutInVariables;
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
         // currentDeclaredNames() state: one shared Frame per m_lexicalScopeStack entry (built lazily, dropped when the
         // entry is popped), the module's import names, and the last link handed out.

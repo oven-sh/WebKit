@@ -728,14 +728,28 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
 {
     // What a lowering makes may be less specific than what the node is known to be, never the other way around.
     // (Is it what it is known to be? As it comes: once it has been made into what a value of that type is held as, it looks the part.)
-    if (Options::aotVerifiesFacts() && rep == Rep::JSValue && node->type && !isSubtype(TAll, node->type)) [[unlikely]] {
+    // (What was taken never to be reached added nothing to what is known of anything else: so it had better not be.)
+    if (Options::aotVerifiesFacts() && rep == Rep::JSValue && (node->wasTakenNeverToBeReached || (node->type && !isSubtype(TAll, node->type)))) [[unlikely]] {
+        Type expected = node->wasTakenNeverToBeReached ? TNone : node->type;
         unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
         if (node->kind == NodeKind::Argument)
             which += 100 * node->reg.toArgument();
         unsigned identifierPlusOne = 0;
-        if (node->isBytecode(op_get_from_scope))
-            identifierPlusOne = numberOf(node->as<OpGetFromScope>().m_var) + 1;
-        else if (node->isBytecode(op_get_by_id))
+        // Where it came from, if that is a variable: as Options::aotLogsFacts() has it, to look up what was seen to be put there.
+        const Node* origin = node;
+        for (unsigned depth = 0; depth < 4; ++depth) {
+            if (origin->isBytecode(op_check_type))
+                origin = origin->use(origin->as<OpCheckType>().m_value);
+            else if (origin->kind == NodeKind::Narrow || (origin->kind == NodeKind::Phi && origin->uses.size() == 1))
+                origin = origin->uses[0].node;
+            else
+                break;
+        }
+        Variable variable;
+        if (origin->isBytecode(op_get_from_scope)) {
+            identifierPlusOne = numberOf(origin->as<OpGetFromScope>().m_var) + 1;
+            variable = m_graph.variableAccessedBy(origin);
+        } else if (node->isBytecode(op_get_by_id))
             identifierPlusOne = numberOf(node->as<OpGetById>().m_property) + 1;
         // (Something that has a place in the source, for the frame to be reported at.)
         Node* place = node;
@@ -743,8 +757,11 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
             place = m_block->nodes[i];
         if (place->kind == NodeKind::Bytecode)
             m_out.store32(m_out.constInt32(callSiteBitsOf(place)), addressFor(VirtualRegister(CallFrameSlot::argumentCountIncludingThis), HighWordOffset));
-        m_graph.wideIntegerConstants.add(static_cast<int64_t>(node->type)); // (It is no address.)
-        plainCall(Void, Entry::operationAOTVerifyFact, m_globalObject, m_callFrame, value, m_out.constInt64(node->type), m_out.constInt32(which), m_out.constInt32(identifierPlusOne));
+        // (Neither is an address of anything, by the time the program runs.)
+        m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
+        m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
+        plainCall(Void, Entry::operationAOTVerifyFact, m_globalObject, m_callFrame, value, m_out.constInt64(expected), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
+            m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
     }
     node->lowered = convert(value, rep, node->type, node->rep());
 }

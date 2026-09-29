@@ -5903,22 +5903,31 @@ struct BytecodeLinkEncoder::Impl {
             writeHead(index);
     }
 
+    // Functions that whoever compiles the program never gets to see: with no code, that were not placed, with nothing to go by.
+    std::array<unsigned, 3> functionsLeftOut { };
+
     // Every function of the module that has code: keeps the code, and says where it goes.
     void placeCodeOf(UnlinkedFunctionExecutable& executable, unsigned module, const SourceCode& around, Encoder::LinkClass aroundGoes)
     {
         auto [forCall, forConstruct] = executable.codeBlocksDecodingCached(vm);
         // All the code it is going to have has been generated (see generateUnlinkedFunctionCodeBlock()).
         executable.takeParentDeclaredNames();
-        if (!forCall && !forConstruct)
+        if (!forCall && !forConstruct) {
+            functionsLeftOut[0]++;
             return;
+        }
         SourceCode source = executable.linkedSourceCode(around);
         auto goes = encoder.placeLinkedFunction(executable, source, module, aroundGoes, forCall, forConstruct);
-        if (!goes)
+        if (!goes) {
+            functionsLeftOut[1]++;
             return;
+        }
 #if ENABLE(FTL_JIT)
         if (compilesAheadOfTime) {
             if (auto key = orderFunctionKey(executable, source))
                 functionsToCompile.append({ module, *key, &executable, forCall, forConstruct });
+            else
+                functionsLeftOut[2]++;
         }
 #endif
         for (UnlinkedFunctionCodeBlock* codeBlock : { forCall, forConstruct }) {
@@ -6009,99 +6018,112 @@ struct BytecodeLinkEncoder::Impl {
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: ", namesOfLinkage.size(), " of ", graphImports.size(), " imports are variables of other modules, of ", graphModules.size());
 
-        // Who can get at what a module exports other than by an import that has been resolved above to the variable itself.
+        // The bundler has seen to who can get at what a module exports. But what it took for an import of a variable is only that here
+        // if it has been resolved, above, to the variable itself. Anything else is read some other way, as a value like any other.
         auto graphExports = arrayAt(header.exportsOffset, header.exportCount, static_cast<const Graph::Export*>(nullptr));
         auto graphRequests = arrayAt(header.requestsOffset, header.requestCount, static_cast<const Graph::Request*>(nullptr));
         auto graphStarExports = arrayAt(header.starExportsOffset, header.starExportCount, static_cast<const uint32_t*>(nullptr));
-        exportsOfLinkAreExposed.fill(ExposedNot, graphModules.size());
-        exposureOfLinkSpreadsTo.fill(Vector<uint32_t>(), graphModules.size());
-        auto expose = [&](uint32_t graphModule, uint8_t how) {
-            if (graphModule < exportsOfLinkAreExposed.size())
-                exportsOfLinkAreExposed[graphModule] |= how;
+        auto variableEscapes = [&](uint32_t graphModule, uint32_t sid) {
+            if (graphModule >= linked.size() || !linked[graphModule].codeBlock || !hints[linked[graphModule].index])
+                return;
+            Identifier name = nameOf(sid);
+            if (name.isNull())
+                return;
+            SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(name.impl());
+            if (!entry.isNull() && entry.varOffset().isScope())
+                hints[linked[graphModule].index]->noteEscape(entry.scopeOffset().offset());
         };
+        BitVector allExportsEscape(graphModules.size());
+        Vector<uint32_t> toDo;
+        auto everyExportEscapes = [&](uint32_t graphModule) {
+            if (graphModule < graphModules.size() && !allExportsEscape.set(graphModule))
+                toDo.append(graphModule);
+        };
+        unsigned importsReadSomeOtherWay = 0;
         for (unsigned graphModule = 0; graphModule < graphModules.size(); ++graphModule) {
             auto& module = graphModules[graphModule];
-            if (module.flags & Graph::Module::NamespaceMayBeRequested)
-                expose(graphModule, ExposedByRequest);
-            auto requested = [&](uint32_t request) {
-                return request < module.requestCount ? graphRequests[module.firstRequest + request].moduleIndex : Graph::noModule;
-            };
             bool isLinked = graphModule < linked.size() && linked[graphModule].codeBlock && result[linked[graphModule].index];
             for (unsigned slot = 0; slot < module.importCount; ++slot) {
                 auto& import = graphImports[module.firstImport + slot];
+                uint32_t requested = import.request() < module.requestCount ? graphRequests[module.firstRequest + import.request()].moduleIndex : Graph::noModule;
                 if (import.isNamespace()) {
-                    expose(requested(import.request()), ExposedByNamespaceImport);
-                    // (A variable of the module that imports it, which whatever links the modules puts the namespace in.)
-                    namesOfNamespaceImportsOfLink.append(nameOf(import.localSid));
+                    everyExportEscapes(requested);
+                    // A variable of the module that imports it, which whatever links the modules puts the namespace in.
+                    if (Identifier localName = nameOf(import.localSid); !localName.isNull() && graphModule < linked.size() && linked[graphModule].codeBlock) {
+                        SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(localName.impl());
+                        if (!entry.isNull() && entry.varOffset().isScope())
+                            variablesWrittenNativelyOfLink.append({ linked[graphModule].symbolTable, entry.scopeOffset().offset() });
+                    }
                     continue;
                 }
                 Identifier localName = nameOf(import.localSid);
                 if (isLinked && !localName.isNull() && result[linked[graphModule].index]->findImport(localName.impl()))
                     continue;
-                expose(requested(import.request()), ExposedByOtherImport);
+                importsReadSomeOtherWay += requested != Graph::noModule;
                 if (import.resolution() == Graph::ResolutionKind::Binding)
-                    expose(import.resolvedModule, ExposedByOtherImport);
+                    variableEscapes(import.resolvedModule, import.resolvedLocalSid);
+                else
+                    everyExportEscapes(requested);
             }
+        }
+        while (!toDo.isEmpty()) {
+            uint32_t graphModule = toDo.takeLast();
+            auto& module = graphModules[graphModule];
+            auto requested = [&](uint32_t request) {
+                return request < module.requestCount ? graphRequests[module.firstRequest + request].moduleIndex : Graph::noModule;
+            };
             for (unsigned i = 0; i < module.exportCount; ++i) {
                 auto& entry = graphExports[module.firstExport + i];
-                if (entry.isNamespaceReexport()) {
-                    // Whoever has this module's namespace has that one's.
-                    exposureOfLinkSpreadsTo[graphModule].append(requested(entry.request()));
-                    continue;
-                }
-                // The variable that it is, in whichever module has it.
-                uint32_t owner = graphModule;
-                uint32_t sid = entry.localOrImportSid;
-                if (entry.kind() == Graph::ExportKind::Indirect) {
-                    if (entry.resolution() != Graph::ResolutionKind::Binding) {
-                        exposureOfLinkSpreadsTo[graphModule].append(requested(entry.request()));
-                        continue;
-                    }
-                    owner = entry.resolvedModule;
-                    sid = entry.resolvedLocalSid;
-                }
-                if (owner >= linked.size() || !linked[owner].codeBlock)
-                    continue;
-                Identifier name = nameOf(sid);
-                if (name.isNull()) {
-                    exposureOfLinkSpreadsTo[graphModule].append(owner);
-                    continue;
-                }
-                SymbolTableEntry::Fast inTable = linked[owner].symbolTable->get(name.impl());
-                if (inTable.isNull() || !inTable.varOffset().isScope() || !hints[linked[owner].index])
-                    continue;
-                if (auto* function = hints[linked[owner].index]->find(name.impl(), inTable.scopeOffset().offset()); function && function->isProven)
-                    exportedFunctionsOfLink.append({ function, graphModule });
+                if (entry.isNamespaceReexport())
+                    everyExportEscapes(requested(entry.request()));
+                else if (entry.kind() == Graph::ExportKind::Local)
+                    variableEscapes(graphModule, entry.localOrImportSid);
+                else if (entry.resolution() == Graph::ResolutionKind::Binding)
+                    variableEscapes(entry.resolvedModule, entry.resolvedLocalSid);
+                else
+                    everyExportEscapes(requested(entry.request()));
             }
-            // export * from
             for (unsigned i = 0; i < module.starExportCount; ++i)
-                exposureOfLinkSpreadsTo[graphModule].append(requested(graphStarExports[module.firstStarExport + i]));
+                everyExportEscapes(requested(graphStarExports[module.firstStarExport + i]));
         }
-        spreadExposureOfLink();
+        if (Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: ", importsReadSomeOtherWay, " imports from modules of the program are read some other way than as the variable");
         return result;
     }
-    enum : uint8_t { ExposedNot = 0, ExposedByNamespaceImport = 1, ExposedByOtherImport = 2, ExposedByRequest = 4 };
-    Vector<Identifier> namesOfNamespaceImportsOfLink;
-    Vector<uint8_t> exportsOfLinkAreExposed; // By module of the graph.
-    Vector<Vector<uint32_t>> exposureOfLinkSpreadsTo; // Whoever can get at all that the one exports can get at all that these do.
-    void spreadExposureOfLink()
+    Vector<AOT::Variable> variablesWrittenNativelyOfLink;
+
+    // What the bundler says of the variables at the top of a module, by where each is in the environment of the module.
+    Vector<AOT::ModuleHints::Binding> bindingsOfModule(unsigned index)
     {
-        for (bool changed = true; changed;) {
-            changed = false;
-            for (unsigned graphModule = 0; graphModule < exportsOfLinkAreExposed.size(); ++graphModule) {
-                uint8_t how = exportsOfLinkAreExposed[graphModule];
-                if (!how)
-                    continue;
-                for (uint32_t target : exposureOfLinkSpreadsTo[graphModule]) {
-                    if (target < exportsOfLinkAreExposed.size() && (exportsOfLinkAreExposed[target] | how) != exportsOfLinkAreExposed[target]) {
-                        exportsOfLinkAreExposed[target] |= how;
-                        changed = true;
-                    }
-                }
-            }
+        using Graph = PrelinkedModuleGraph;
+        Vector<AOT::ModuleHints::Binding> result;
+        auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
+        if (!codeBlock || index >= graphModuleOfEachAdd.size() || prelinkedGraph.size() < sizeof(Graph::Header))
+            return result;
+        auto& header = *reinterpret_cast<const Graph::Header*>(prelinkedGraph.data());
+        RELEASE_ASSERT(header.magic == Graph::magic && header.version == Graph::currentVersion);
+        uint32_t graphModule = graphModuleOfEachAdd[index];
+        if (graphModule >= header.moduleCount)
+            return result;
+        RELEASE_ASSERT(header.modulesOffset <= prelinkedGraph.size() && header.moduleCount <= (prelinkedGraph.size() - header.modulesOffset) / sizeof(Graph::Module));
+        RELEASE_ASSERT(header.bindingsOffset <= prelinkedGraph.size() && header.bindingCount <= (prelinkedGraph.size() - header.bindingsOffset) / sizeof(Graph::Binding));
+        auto& module = reinterpret_cast<const Graph::Module*>(prelinkedGraph.data() + header.modulesOffset)[graphModule];
+        RELEASE_ASSERT(module.firstBinding <= header.bindingCount && module.bindingCount <= header.bindingCount - module.firstBinding);
+        auto* bindings = reinterpret_cast<const Graph::Binding*>(prelinkedGraph.data() + header.bindingsOffset) + module.firstBinding;
+        auto* symbolTable = uncheckedDowncast<SymbolTable>(codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell());
+        for (unsigned i = 0; i < module.bindingCount; ++i) {
+            if (bindings[i].nameSid >= prelinkedGraphStringSlots.size())
+                continue;
+            String string = strings->stringForSlot(prelinkedGraphStringSlots[bindings[i].nameSid]);
+            if (string.isNull())
+                continue;
+            SymbolTableEntry::Fast entry = symbolTable->get(Identifier::fromString(vm, string).impl());
+            if (entry.isNull() || !entry.varOffset().isScope())
+                continue;
+            result.append({ entry.scopeOffset().offset(), bindings[i].holdsWhatItWasDeclaredWith(), !!(bindings[i].flags & Graph::Binding::Escapes) });
         }
+        return result;
     }
-    Vector<std::pair<const AOT::KnownFunction*, unsigned>> exportedFunctionsOfLink; // And the module that exports it, which need not be the one that has it.
     Vector<Identifier> namesOfLinkage; // Keeps what the linkages are keyed on.
     Vector<AOT::ImageEnvironment> environmentsOfLink;
     size_t environmentsSizeOfLink { 0 };
@@ -6110,6 +6132,11 @@ struct BytecodeLinkEncoder::Impl {
     Vector<uint8_t> compileImage()
     {
         ImmutableIntrinsics::ensureShared(vm);
+        // What a variable can hold, and what a function can be passed, is worked out from every store and every call there is.
+        if (functionsLeftOut[0] || functionsLeftOut[1] || functionsLeftOut[2]) {
+            dataLogLn("AOT: not all of the program's code is here: ", functionsLeftOut[0], " functions have no code (was a limit put on how deep to generate it?), ", functionsLeftOut[1], " were not placed, ", functionsLeftOut[2], " have no key");
+            RELEASE_ASSERT_NOT_REACHED();
+        }
         struct Job {
             AOT::ImageKey key;
             uint64_t rank;
@@ -6129,22 +6156,24 @@ struct BytecodeLinkEncoder::Impl {
         for (unsigned i = 0; i < functionsToCompile.size(); ++i)
             indexOfFunction.add(functionsToCompile[i].executable, i);
         Vector<std::unique_ptr<AOT::ModuleHints>> hints(modules.size());
+        AOT::ModuleHints::Describe describe = [&](UnlinkedFunctionExecutable* executable, AOT::KnownFunction& known) {
+            auto it = indexOfFunction.find(executable);
+            if (it == indexOfFunction.end())
+                return false;
+            auto& function = functionsToCompile[it->value];
+            known.forCall = function.forCall;
+            known.forConstruct = function.forConstruct;
+            known.key.module = modules[function.module].entryOffset + 1;
+            known.key.start = function.key.start;
+            known.key.kind = static_cast<uint32_t>(function.key.kind) << 1;
+            return true;
+        };
         for (unsigned index = 0; index < modules.size(); ++index) {
             auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get());
             if (!codeBlock)
                 continue;
-            hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, [&](UnlinkedFunctionExecutable* executable, AOT::KnownFunction& known) {
-                auto it = indexOfFunction.find(executable);
-                if (it == indexOfFunction.end())
-                    return false;
-                auto& function = functionsToCompile[it->value];
-                known.forCall = function.forCall;
-                known.forConstruct = function.forConstruct;
-                known.key.module = modules[function.module].entryOffset + 1;
-                known.key.start = function.key.start;
-                known.key.kind = static_cast<uint32_t>(function.key.kind) << 1;
-                return true;
-            });
+            hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, bindingsOfModule(index).span(), describe);
+            hints[index]->noteFunctionsPutInVariablesBy(codeBlock, describe);
         }
         // (What is inside a function that has code both for a call and for `new` is there twice, and is the same both times.)
         std::set<std::tuple<uint32_t, uint32_t, uint32_t>> keys;
@@ -6164,14 +6193,12 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
 
-        // Every store there is to a variable of a module is in the module.
         for (auto& function : functionsToCompile) {
             if (!hints[function.module])
                 continue;
-            if (function.forCall)
-                hints[function.module]->noteStoresIn(function.forCall);
-            if (function.forConstruct)
-                hints[function.module]->noteStoresIn(function.forConstruct);
+            // (The two are made from the one syntax tree.)
+            if (auto* codeBlock = function.forCall ? function.forCall : function.forConstruct)
+                hints[function.module]->noteFunctionsPutInVariablesBy(codeBlock, describe);
         }
         unsigned variables = 0;
         unsigned proven = 0;
@@ -6194,7 +6221,7 @@ struct BytecodeLinkEncoder::Impl {
             });
         }
         if (Options::aotReportStats()) [[unlikely]]
-            dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that hold one or are stored to");
+            dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that the bundler tells of or that are given one");
 
         auto linkages = linkModules(hints);
         unsigned numberOfThreads = Options::aotThreads() ? Options::aotThreads() : WTF::numberOfProcessorCores();
@@ -6237,15 +6264,15 @@ struct BytecodeLinkEncoder::Impl {
                         variableFacts->join({ scope, slots->at(i).offset() }, AOT::TFunction);
                 } else if (codeBlock->numberOfFunctionDecls())
                     variableFacts->giveUpOnScope(scope);
+                // AbstractModuleRecord::putWellKnownVariable(), and import.meta.
+                for (auto* name : { vm.propertyNames->starNamespacePrivateName.impl(), vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), vm.propertyNames->builtinNames().metaPrivateName().impl() }) {
+                    SymbolTableEntry::Fast entry = uncheckedDowncast<SymbolTable>(scope)->get(name);
+                    if (!entry.isNull() && entry.varOffset().isScope())
+                        variableFacts->join({ scope, entry.scopeOffset().offset() }, AOT::TAll);
+                }
             }
-            for (auto& name : namesOfNamespaceImportsOfLink) {
-                if (!name.isNull())
-                    variableFacts->giveUpOnName(name.impl());
-            }
-            // AbstractModuleRecord::putWellKnownVariable(), and import.meta.
-            variableFacts->giveUpOnName(vm.propertyNames->starNamespacePrivateName.impl());
-            variableFacts->giveUpOnName(vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl());
-            variableFacts->giveUpOnName(vm.propertyNames->builtinNames().metaPrivateName().impl());
+            for (auto& variable : variablesWrittenNativelyOfLink)
+                variableFacts->join(variable, AOT::TAll);
         }
         {
             MonotonicTime before = MonotonicTime::now();
@@ -6269,31 +6296,38 @@ struct BytecodeLinkEncoder::Impl {
                     unreadable++;
             });
             if (Options::aotReportStats()) [[unlikely]] {
-                UncheckedKeyHashMap<const AOT::KnownFunction*, uint8_t> exposure;
-                for (auto& [function, graphModule] : exportedFunctionsOfLink)
-                    exposure.add(function, 0).iterator->value |= 0x80 | exportsOfLinkAreExposed[graphModule];
-                std::array<unsigned, 8> functions { };
-                std::array<uint64_t, 8> calls { };
+                std::array<unsigned, 4> functions { };
+                std::array<uint64_t, 4> calls { };
                 for (auto& hintsOfModule : hints) {
                     if (!hintsOfModule)
                         continue;
                     hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
-                        uint8_t how = exposure.get(&function);
-                        unsigned bucket = !function.forCall ? 0 : function.facts->valueIsUsed.load() ? 1 : !how ? 2 : how == 0x80 ? 3
-                            : (how & ExposedByOtherImport) ? 4 : (how & ExposedByNamespaceImport) ? 5 : 6;
+                        unsigned bucket = !function.forCall ? 0 : function.escapes ? 1 : function.facts->valueIsUsed.load() ? 2 : 3;
                         functions[bucket]++;
                         calls[bucket] += function.facts->directCalls.load();
                     });
                 }
-                static constexpr ASCIILiteral names[] = { "has no code for a call"_s, "its value is used"_s, "CLOSED: not exported"_s, "CLOSED: exported, and only ever imported as the variable"_s,
-                    "exported, and imported in a way that is not resolved"_s, "exported by a module whose namespace is imported"_s, "exported by an entry point, or by what import() or require() asks for"_s };
+                static constexpr ASCIILiteral names[] = { "has no code for a call"_s, "escapes"_s, "does not escape, but some code that is compiled names it other than to call it"_s, "CLOSED"_s };
                 dataLogLn("AOT: what becomes of ", factsOfFunctions.size(), " proven functions, from ", jobs.size(), " pieces of code (", unreadable.load(), " unreadable), ", (MonotonicTime::now() - before).milliseconds(), " ms");
-                for (unsigned i = 0; i < 7; ++i)
+                for (unsigned i = 0; i < 4; ++i)
                     dataLogLn("  FACTS ", functions[i], " functions, ", calls[i], " direct calls: ", names[i]);
-            }
-            for (auto& [function, graphModule] : exportedFunctionsOfLink) {
-                if (exportsOfLinkAreExposed[graphModule])
-                    function->facts->valueIsUsed.store(true);
+                UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reasons;
+                for (auto& hintsOfModule : hints) {
+                    if (!hintsOfModule)
+                        continue;
+                    hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
+                        if (function.forCall && !function.escapes && function.facts->valueIsUsed.load())
+                            reasons.add(function.facts->whyValueIsUsed.load(), 0).iterator->value++;
+                    });
+                }
+                static constexpr ASCIILiteral whys[] = { "?"_s, "where it is made, it goes to"_s, "the callee, but the read is not proven, of"_s, "the callee, but the call is not proven, of"_s, "an operand of"_s };
+                for (auto& entry : reasons) {
+                    uint32_t user = entry.key >> 8;
+                    if (user < 1000)
+                        dataLogLn("  NAMED ", entry.value, " ", whys[entry.key & 0xff], " ", opcodeNames[user]);
+                    else
+                        dataLogLn("  NAMED ", entry.value, " ", whys[entry.key & 0xff], " a node of kind ", user - 1000);
+                }
             }
             RELEASE_ASSERT(!unreadable.load());
             if (Options::aotTypesParametersOfClosedFunctions()) {
@@ -6302,7 +6336,7 @@ struct BytecodeLinkEncoder::Impl {
                         continue;
                     hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
                         // (One that can tell which object it was called as has that in hand, to call or to give away.)
-                        function.facts->isClosed = function.forCall && !function.facts->valueIsUsed.load() && !AOT::needsFunctionObject(function.forCall);
+                        function.facts->isClosed = function.forCall && !function.escapes && !function.facts->valueIsUsed.load() && !AOT::needsFunctionObject(function.forCall);
                     });
                 }
             }

@@ -43,6 +43,10 @@ public:
                     changed |= update(node);
             }
             changed |= std::exchange(m_elementTypesChanged, false);
+            // An array that the function is not seen to put anything in has been given what it holds by somebody else. (Not until now:
+            // what is put in an array may go by what is taken from it.)
+            if (!changed && !std::exchange(m_arraysNothingIsPutInHoldAnything, true))
+                changed = true;
         }
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
@@ -74,8 +78,10 @@ public:
                     phi->type = TAll;
             }
             for (Node* node : block->nodes) {
-                if (!node->type)
+                if (!node->type) {
                     node->type = TAll;
+                    node->wasTakenNeverToBeReached = true;
+                }
             }
         }
     }
@@ -599,9 +605,9 @@ private:
                             for (auto& use : array->uses)
                                 elements |= use.node->type;
                         }
-                        if (!elements)
+                        if (!elements && !m_arraysNothingIsPutInHoldAnything)
                             return TNone;
-                        if (isSubtype(elements, TNumber))
+                        if (elements && isSubtype(elements, TNumber))
                             return TNumber;
                     }
                     if (node->expectedMask && isSubtype(typeAdmittedByMask(node->expectedMask), TNumber | TOther) && (node->expectedMask & MaskNumber))
@@ -677,6 +683,7 @@ private:
     Type m_returnType { TNone };
     UncheckedKeyHashMap<Node*, Type> m_elementTypes; // Of the arrays that the function makes: everything it puts in them.
     bool m_elementTypesChanged { false };
+    bool m_arraysNothingIsPutInHoldAnything { false };
 };
 
 } // anonymous namespace

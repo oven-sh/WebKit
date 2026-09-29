@@ -626,7 +626,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
 
 // Options::aotVerifiesFacts()
 // That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject* globalObject, CallFrame* callFrame, EncodedJSValue encodedValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject* globalObject, CallFrame* callFrame, EncodedJSValue encodedValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
 {
     Type actual = typeOfValue(JSValue::decode(encodedValue));
     if (isSubtype(actual, type)) [[likely]]
@@ -644,8 +644,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, void, (JSGlobalObject*
         dataLog("a node of kind ", which);
     if (identifierIndexPlusOne)
         dataLog(" of `", identifierAt(callFrame, identifierIndexPlusOne - 1).impl(), "`");
+    if (scopeWhenCompiled)
+        dataLog(" (scope ", RawPointer(std::bit_cast<void*>(static_cast<uintptr_t>(scopeWhenCompiled))), " offset ", scopeOffset, ")");
     dataLog(" gives was found to be ");
-    dumpType(WTF::dataFile(), type);
+    if (!type)
+        dataLog("never reached");
+    else
+        dumpType(WTF::dataFile(), type);
     dataLog(" and is ");
     dumpType(WTF::dataFile(), actual);
     dataLogLn();

@@ -209,8 +209,12 @@ void Lowering::emitGuard(Node* guard)
         return;
     case GuardKind::KnownCallee: {
         const KnownFunction* known = m_graph.knownCallee(guard);
-        if (m_graph.calleeIsProven(guard))
+        if (m_graph.calleeIsProven(guard)) {
+            // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
+            if (!known->isDeclaration)
+                exitUnless(isCell(lowJSValue(guard->uses[0].node)));
             return;
+        }
         unsigned slot = siteOfKnownCall(guard, m_graph.indexOfKnownCallee(known->keyFor(false)), false);
         exitUnless(m_out.equal(loadSlotWord(slot, 1), lowJSValue(guard->uses[0].node)));
         return;

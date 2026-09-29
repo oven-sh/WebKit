@@ -140,6 +140,7 @@ struct Node {
     bool structureIsChecked { false }; // A guard of a property access: another guard has seen to the base's structure.
     bool slotIsPlain { false }; // Likewise: another guard has seen to that.
     bool calleeIsChecked { false };
+    bool wasTakenNeverToBeReached { false }; // inferTypes(): nothing was found that it could give. For Options::aotVerifiesFacts().
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
     bool isMadeWhenWanted { false }; // See Graph::findListsOfArguments().
     Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
@@ -337,6 +338,8 @@ public:
     bool isSiblingCall(const Node*) const;
     static constexpr unsigned mostArgumentsOfSiblingCall = 12; // They are all in registers at once.
     bool calleeIsProven(const Node*) const; // See KnownFunction::isProven.
+    // Before there is a graph to tell which scope a read is from: unless the code has a variable of its own of that name, there.
+    const KnownFunction* probablyFunctionInVariableOfModule(unsigned identifier, unsigned scopeOffset) const;
     const KnownFunction* knownFunctionReadBy(const Node* getFromScope, bool* isProven = nullptr) const;
     // A call of a function that wants nothing of the object it is called as (KnownFunction::needsNoFunctionObject). None is passed.
     bool passesNoFunctionObject(const Node* call);

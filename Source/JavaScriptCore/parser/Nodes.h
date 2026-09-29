@@ -2517,6 +2517,7 @@ namespace JSC {
 
         bool hasStaticProperty(const Identifier& propName) { return m_classElements && m_classElements->hasStaticallyNamedProperty(propName); }
         bool hasInstanceFields() const { return m_classElements && m_classElements->hasInstanceFields(); }
+        ExpressionNode* constructorExpression() const { return m_constructorExpression; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;

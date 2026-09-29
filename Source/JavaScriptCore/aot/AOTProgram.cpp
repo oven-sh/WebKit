@@ -52,6 +52,24 @@ const DeclaredNamesLink* declaredNamesFor(UnlinkedCodeBlock* codeBlock)
     return it == declaredNames().end() ? nullptr : it->value.get();
 }
 
+static UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionPutInVariable>>& functionsPutInVariables() WTF_REQUIRES_LOCK(s_declaredNamesLock)
+{
+    static NeverDestroyed<UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionPutInVariable>>> map;
+    return map;
+}
+
+void noteFunctionsPutInVariables(UnlinkedCodeBlock* codeBlock, Vector<FunctionPutInVariable>&& functions)
+{
+    Locker locker { s_declaredNamesLock };
+    functionsPutInVariables().set(codeBlock, WTF::move(functions));
+}
+
+Vector<FunctionPutInVariable> functionsPutInVariablesBy(UnlinkedCodeBlock* codeBlock)
+{
+    Locker locker { s_declaredNamesLock };
+    return functionsPutInVariables().get(codeBlock);
+}
+
 static const NumbersOfIdentifiers* s_numbersOfIdentifiersOfProgram;
 
 void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers* numbers)
@@ -83,6 +101,7 @@ void forgetDeclaredNames()
 {
     Locker locker { s_declaredNamesLock };
     declaredNames().clear();
+    functionsPutInVariables().clear();
 }
 
 void VariableFacts::giveUpOnName(UniquedStringImpl* name)
@@ -176,160 +195,73 @@ CalleeHints::~CalleeHints() = default;
 ModuleHints::~ModuleHints() = default;
 LiveHints::~LiveHints() = default;
 
-void ModuleHints::add(UniquedStringImpl* name, unsigned scopeOffset, UnlinkedFunctionExecutable* executable, const Describe& describe)
+void ModuleHints::add(unsigned scopeOffset, UnlinkedFunctionExecutable* executable, const Describe& describe)
 {
-    auto result = m_variables.add(name, Variable { });
-    Variable& variable = result.iterator->value;
-    if (!result.isNewEntry) {
-        // Two variables of the same name, in scopes that cannot be told apart from here, or one that is given two functions.
-        if (variable.function.executable != executable || variable.scopeOffset != scopeOffset)
-            variable.isAmbiguous = true;
+    Variable& variable = m_variables.add(scopeOffset, Variable { }).iterator->value;
+    if (variable.numberOfFunctions++)
         return;
-    }
-    variable.scopeOffset = scopeOffset;
     variable.function.executable = executable;
-    if (!describe(executable, variable.function))
-        variable.isAmbiguous = true;
+    variable.isDescribed = describe(executable, variable.function);
 }
 
-ModuleHints::ModuleHints(UnlinkedCodeBlock* codeBlock, const Describe& describe)
+ModuleHints::ModuleHints(UnlinkedCodeBlock* codeBlock, std::span<const Binding> bindings, const Describe& describe)
+    : m_module(dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock))
 {
-    if (auto* module = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock)) {
-        m_isModule = true;
-        if (auto* slots = module->heapAllocatedFunctionDeclSlots(); slots && !slots->hasDecodeSource()) {
-            for (unsigned i = 0; i < slots->size() && i < module->numberOfFunctionDecls(); ++i) {
-                UnlinkedFunctionExecutable* executable = module->functionDecl(i);
-                add(executable->name().impl(), slots->at(i).offset(), executable, describe);
-                Variable& variable = m_variables.find(executable->name().impl())->value;
-                variable.isInitializedInPlainSight = true;
-                variable.function.isDeclaration = true;
-            }
+    if (!m_module)
+        return;
+    for (auto& binding : bindings)
+        m_variables.add(binding.scopeOffset, Variable { }).iterator->value.binding = binding;
+    if (auto* slots = m_module->heapAllocatedFunctionDeclSlots(); slots && !slots->hasDecodeSource()) {
+        for (unsigned i = 0; i < slots->size() && i < m_module->numberOfFunctionDecls(); ++i) {
+            add(slots->at(i).offset(), m_module->functionDecl(i), describe);
+            m_variables.find(slots->at(i).offset())->value.function.isDeclaration = true;
         }
-    }
-
-    // const f = function () { }, const g = () => { }, class C { }: a function is made and, sooner or later, put in a variable.
-    using Registers = UncheckedKeyHashMap<int, unsigned, WTF::IntHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>>;
-    Registers functionInRegister; // Probably.
-    Registers functionCertainlyInRegister; // Nothing else has been written there since, and there is no other way to get here.
-    Vector<JSInstructionStream::Offset, 32> jumpTargets;
-    computePreciseJumpTargets(codeBlock, jumpTargets);
-    unsigned nextJumpTarget = 0;
-    for (const auto& instruction : codeBlock->instructions()) {
-        while (nextJumpTarget < jumpTargets.size() && jumpTargets[nextJumpTarget] < instruction.offset())
-            ++nextJumpTarget;
-        if (nextJumpTarget < jumpTargets.size() && jumpTargets[nextJumpTarget] == instruction.offset())
-            functionCertainlyInRegister.clear();
-
-        OpcodeID opcode = instruction->opcodeID();
-        if (opcode == op_call_direct_eval)
-            m_hasEval = true;
-        std::optional<std::pair<int, unsigned>> certain;
-        switch (opcode) {
-        case op_new_func_exp: {
-            auto bytecode = instruction->as<OpNewFuncExp>();
-            functionInRegister.set(bytecode.m_dst.offset(), bytecode.m_functionDecl);
-            certain = { bytecode.m_dst.offset(), bytecode.m_functionDecl };
-            break;
-        }
-        case op_mov: {
-            auto bytecode = instruction->as<OpMov>();
-            auto it = functionInRegister.find(bytecode.m_src.offset());
-            if (it != functionInRegister.end()) {
-                unsigned function = it->value;
-                functionInRegister.set(bytecode.m_dst.offset(), function);
-            } else
-                functionInRegister.remove(bytecode.m_dst.offset());
-            if (auto known = functionCertainlyInRegister.find(bytecode.m_src.offset()); known != functionCertainlyInRegister.end())
-                certain = { bytecode.m_dst.offset(), known->value };
-            break;
-        }
-        case op_put_to_scope: {
-            auto bytecode = instruction->as<OpPutToScope>();
-            UniquedStringImpl* name = codeBlock->identifier(bytecode.m_var).impl();
-            if (bytecode.m_getPutInfo.resolveType() != ResolvedClosureVar) {
-                noteStore(name);
-                break;
-            }
-            auto it = functionInRegister.find(bytecode.m_value.offset());
-            bool isNew = !m_variables.contains(name);
-            if (it != functionInRegister.end() && it->value < codeBlock->numberOfFunctionExprs()) {
-                add(name, bytecode.m_offset, codeBlock->functionExpr(it->value), describe);
-                auto known = functionCertainlyInRegister.find(bytecode.m_value.offset());
-                if (isNew && known != functionCertainlyInRegister.end() && known->value == it->value)
-                    m_variables.find(name)->value.isInitializedInPlainSight = true;
-                else
-                    noteStore(name);
-            } else {
-                if (auto variable = m_variables.find(name); variable != m_variables.end() && variable->value.scopeOffset == bytecode.m_offset)
-                    variable->value.isAmbiguous = true;
-                noteStore(name);
-            }
-            break;
-        }
-        default:
-            break;
-        }
-
-        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
-            computeDefsForBytecodeIndexImpl(codeBlock->numVars(), instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
-                functionCertainlyInRegister.remove(reg.offset());
-            });
-        }
-        if (certain)
-            functionCertainlyInRegister.set(certain->first, certain->second);
-        if (isBranch(opcode) || isTerminal(opcode) || isThrow(opcode))
-            functionCertainlyInRegister.clear();
     }
 }
 
-// A store that comes before the variable is known to be one of these is remembered all the same.
-void ModuleHints::noteStore(UniquedStringImpl* name)
+void ModuleHints::noteFunctionsPutInVariablesBy(UnlinkedCodeBlock* codeBlock, const Describe& describe)
 {
-    auto result = m_variables.add(name, Variable { });
-    if (result.isNewEntry)
-        result.iterator->value.isAmbiguous = true;
-    result.iterator->value.isStoredToOtherwise = true;
-}
-
-void ModuleHints::noteStoresIn(UnlinkedCodeBlock* codeBlock)
-{
-    const DeclaredNamesLink* declaredNames = declaredNamesFor(codeBlock);
-    for (const auto& instruction : codeBlock->instructions()) {
-        if (instruction->opcodeID() == op_call_direct_eval)
-            m_hasEval = true;
-        if (instruction->opcodeID() != op_put_to_scope)
+    if (!m_module)
+        return;
+    const DeclaredNamesLink* declaredNames = nullptr;
+    for (auto& note : functionsPutInVariablesBy(codeBlock)) {
+        if (note.functionExpr >= codeBlock->numberOfFunctionExprs())
             continue;
-        auto bytecode = instruction->as<OpPutToScope>();
-        // (It may be a variable of the function's own that has the same name. Then this errs on the safe side.)
-        UniquedStringImpl* name = codeBlock->identifier(bytecode.m_var).impl();
-        if (declaredNames) {
-            auto resolution = declaredNames->resolve(name);
-            switch (resolution.kind) {
-            case DeclaredNamesLink::Resolution::Slot:
-                if (!resolution.isInOutermostEnvironment)
-                    continue; // Something nearer has the name.
-                break;
-            case DeclaredNamesLink::Resolution::Stable: // Storing to an import throws.
-            case DeclaredNamesLink::Resolution::Global:
-                continue;
-            case DeclaredNamesLink::Resolution::Dynamic:
-                break;
-            }
+        if (note.isOwn) {
+            if (codeBlock == m_module && note.symbolTableConstantIndex == m_module->moduleEnvironmentSymbolTableConstantRegisterOffset())
+                add(note.scopeOffset, codeBlock->functionExpr(note.functionExpr), describe);
+            continue;
         }
-        noteStore(name);
+        if (!declaredNames)
+            declaredNames = declaredNamesFor(codeBlock);
+        if (!declaredNames)
+            return;
+        auto resolution = declaredNames->resolve(codeBlock->identifier(note.identifier).impl());
+        if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.isInOutermostEnvironment)
+            add(resolution.offset, codeBlock->functionExpr(note.functionExpr), describe);
     }
 }
 
 void ModuleHints::prove()
 {
-    if (m_hasEval)
-        return;
     for (auto& entry : m_variables) {
         Variable& variable = entry.value;
-        variable.function.isProven = !variable.isAmbiguous && variable.isInitializedInPlainSight && !variable.isStoredToOtherwise;
-        // (Of a module: then it is strict code, which nobody can ask what it was called as. Function.prototype.caller can ask the other kind.)
-        variable.function.needsNoFunctionObject = m_isModule && variable.function.isProven && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
+        variable.function.isProven = variable.binding.holdsWhatItWasDeclaredWith && variable.numberOfFunctions == 1 && variable.isDescribed;
+        variable.function.escapes = variable.binding.escapes;
+        // (It is strict code, which nobody can ask what it was called as. Function.prototype.caller can ask the other kind.)
+        variable.function.needsNoFunctionObject = variable.function.isProven && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
     }
+}
+
+const void* ModuleHints::scopeOfVariables() const
+{
+    return m_module ? m_module->getConstant(VirtualRegister(m_module->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell() : nullptr;
+}
+
+void ModuleHints::noteEscape(unsigned scopeOffset)
+{
+    if (auto it = m_variables.find(scopeOffset); it != m_variables.end())
+        it->value.function.escapes = true;
 }
 
 unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
@@ -378,20 +310,14 @@ unsigned ModuleHints::numberProven() const
     return result;
 }
 
-const KnownFunction* ModuleHints::find(UniquedStringImpl* name, std::optional<unsigned> scopeOffset) const
+const KnownFunction* ModuleHints::find(UniquedStringImpl*, std::optional<unsigned> scopeOffset) const
 {
     if (!scopeOffset)
         return nullptr;
-    auto it = m_variables.find(name);
-    if (it == m_variables.end() || it->value.isAmbiguous || it->value.scopeOffset != *scopeOffset)
+    auto it = m_variables.find(*scopeOffset);
+    if (it == m_variables.end() || it->value.numberOfFunctions != 1 || !it->value.isDescribed)
         return nullptr;
     return &it->value.function;
-}
-
-const KnownFunction* ModuleHints::findWhateverHasTheName(UniquedStringImpl* name) const
-{
-    auto it = m_variables.find(name);
-    return it == m_variables.end() || it->value.isAmbiguous ? nullptr : &it->value.function;
 }
 
 LiveHints::LiveHints(JSGlobalObject* globalObject)

@@ -35,6 +35,17 @@ namespace JSC {
 // scope chain right then. Only built while generating with OptimizeBytecode::Yes; the bytecode optimizer uses it to
 // locate free variables statically and to tell environment-record bindings (stable for the lifetime of an
 // activation) from names that fall through to the global object.
+// `const f = function () { }`, `g = () => { }`, `class C { }`: what the statement puts in the variable is the function that it makes.
+// As whoever generated the bytecode saw in the syntax tree.
+struct FunctionPutInVariable {
+    unsigned identifier { 0 }; // Of the variable: UnlinkedCodeBlock::identifier().
+    unsigned functionExpr { 0 }; // UnlinkedCodeBlock::functionExpr(). Of a class, its constructor.
+    // If it is a variable of the code's own: the constant that has the symbol table of its scope, and where it is in that.
+    bool isOwn { false };
+    int symbolTableConstantIndex { 0 };
+    unsigned scopeOffset { 0 };
+};
+
 class DeclaredNamesLink : public RefCounted<DeclaredNamesLink> {
 public:
     // Names an enclosing module binds stably without giving them an environment slot of its own (imports). Every

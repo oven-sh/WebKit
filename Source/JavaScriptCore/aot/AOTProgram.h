@@ -19,6 +19,7 @@ class JSGlobalObject;
 class UnlinkedCodeBlock;
 class UnlinkedFunctionCodeBlock;
 class UnlinkedFunctionExecutable;
+class UnlinkedModuleProgramCodeBlock;
 class VM;
 
 namespace AOT {
@@ -31,6 +32,9 @@ struct ProgramFacts {
     // The function gets somewhere as a value: it is stored, passed, compared, constructed with, asked for a property; or it is called
     // in a way that is not a call of this function and no other. If not, whoever calls it is known, all of them.
     std::atomic<bool> valueIsUsed { false };
+    // For Options::aotReportStats(): the first thing that was seen to make that so. See Graph::noteUsesOfProvenFunctions().
+    enum WhyValueIsUsed : uint32_t { NotSaid, WhereItIsMade, CalleeButReadIsNotProven, CalleeButCallIsNotProven, Operand };
+    std::atomic<uint32_t> whyValueIsUsed { 0 }; // WhyValueIsUsed | what uses it (an opcode, or 1000 + a kind of node) << 8
     std::atomic<uint32_t> directCalls { 0 };
 
     // Once that is settled. Nobody gets to call it but the calls that are calls of this function and no other.
@@ -110,11 +114,13 @@ struct KnownFunction {
     UnlinkedFunctionCodeBlock* forCall { nullptr }; // Either may be missing.
     UnlinkedFunctionCodeBlock* forConstruct { nullptr };
     ImageKey key; // Of the code for a call. That for construction is the same but for the bit that says so.
-    // The variable it was found in holds a closure of it from when it is initialized, and never anything else: see
-    // ModuleHints::prove(). Then a call of what is read from that variable needs no check that this is the callee, once it is seen
+    // The variable it was found in holds a closure of it from when it is initialized, and never anything else: the bundler, which
+    // has seen every use there is of the variable, says so (ModuleHints::prove()). Then a call of what is read from that variable needs no check that this is the callee, once it is seen
     // to have been initialized.
     bool isProven { false };
     bool isDeclaration { false }; // The variable is initialized before any code of the module runs.
+    // What the variable holds can get somewhere other than into a call of it: PrelinkedModuleGraph::Binding::Escapes.
+    bool escapes { true };
     // If proven: the code for a call makes no use of the object it is called as (needsFunctionObject()), and a call passes none.
     // (Whoever compiles the program takes it back if it turns out that there is no code to call: BytecodeLinkEncoder.)
     mutable std::atomic<bool> needsNoFunctionObject { false };
@@ -133,6 +139,7 @@ struct KnownFunction {
         key = other.key;
         isProven = other.isProven;
         isDeclaration = other.isDeclaration;
+        escapes = other.escapes;
         needsNoFunctionObject = other.needsNoFunctionObject.load(std::memory_order_relaxed);
         returnType = other.returnType.load(std::memory_order_relaxed);
         facts = other.facts;
@@ -152,9 +159,8 @@ struct KnownFunction {
 // calls it come to the same answer.
 bool needsFunctionObject(UnlinkedCodeBlock*);
 
-// What a variable that is called probably holds. A program's functions are nearly all declared once, at the top of a module, and
-// never assigned to; but that takes the whole program to prove, and a debugger or an eval to undo. So nothing rests on it. It is a
-// reason to compile a call for that callee, behind a check that it is the callee (see Lowering::lowerCallToKnownFunction()).
+// What a variable that is called holds, or probably holds. If it is not proven, it is a reason to compile a call for that callee,
+// behind a check that it is the callee (see Lowering::lowerCallToKnownFunction()).
 class CalleeHints {
     WTF_MAKE_TZONE_ALLOCATED(CalleeHints);
     WTF_MAKE_NONCOPYABLE(CalleeHints);
@@ -162,27 +168,35 @@ public:
     CalleeHints() = default;
     virtual ~CalleeHints();
 
-    // scopeOffset: where the variable is in the scope it was resolved to. None: it was not resolved, so it may be a global.
+    // scopeOffset: where the variable is in scopeOfVariables(), which whoever asks has seen to that it is a variable of. None: it was
+    // not resolved, so it may be a global.
     virtual const KnownFunction* find(UniquedStringImpl* name, std::optional<unsigned> scopeOffset) const = 0;
-    // For a read of who knows which variable of that name.
-    virtual const KnownFunction* findWhateverHasTheName(UniquedStringImpl*) const { return nullptr; }
+    virtual const void* scopeOfVariables() const { return nullptr; } // As Variable::scope.
 };
 
-// From the code of a module: its function declarations, and the variables it initializes with a function or a class.
+// The variables at the top of a module that a declaration gives a function or a class. Which those are is in the syntax tree
+// (function declarations, FunctionPutInVariable). What becomes of them after that takes the whole program to know: which is what the
+// bundler had in hand.
 class ModuleHints final : public CalleeHints {
     WTF_MAKE_TZONE_ALLOCATED(ModuleHints);
 public:
     // What there is to know about a function of the module. False: nothing.
     using Describe = Function<bool(UnlinkedFunctionExecutable*, KnownFunction&)>;
-    ModuleHints(UnlinkedCodeBlock* codeOfModule, const Describe&);
+    // PrelinkedModuleGraph::Binding, of the variable that is at scopeOffset in the environment of the module.
+    struct Binding {
+        unsigned scopeOffset { 0 };
+        bool holdsWhatItWasDeclaredWith { false };
+        bool escapes { true };
+    };
+    ModuleHints(UnlinkedCodeBlock* codeOfModule, std::span<const Binding>, const Describe&);
     ~ModuleHints() final;
 
     const KnownFunction* find(UniquedStringImpl*, std::optional<unsigned> scopeOffset) const final;
-    const KnownFunction* findWhateverHasTheName(UniquedStringImpl*) const final;
+    const void* scopeOfVariables() const final;
 
-    // What is a hint until the whole of the module has been looked at. Nobody but the module's own code can store to its variables.
-    void noteStoresIn(UnlinkedCodeBlock* functionOfModule); // Every function there is in the module, however deep.
+    void noteFunctionsPutInVariablesBy(UnlinkedCodeBlock*, const Describe&); // The code of the module, and every function there is in it, however deep.
     void prove(); // After that.
+    void noteEscape(unsigned scopeOffset); // After that.
     unsigned numberOfVariables() const { return m_variables.size(); }
     unsigned numberProven() const;
     template<typename Functor> void forEachProven(const Functor& functor) const
@@ -195,18 +209,15 @@ public:
 
 private:
     struct Variable {
-        unsigned scopeOffset { 0 };
-        bool isAmbiguous { false };
-        bool isInitializedInPlainSight { false }; // Declared as a function, or stored once, with a function made just before, in a straight line.
-        bool isStoredToOtherwise { false };
-        KnownFunction function;
+        Binding binding;
+        unsigned numberOfFunctions { 0 }; // That some declaration or statement gives it.
+        bool isDescribed { false };
+        KnownFunction function; // The first of them.
     };
-    void noteStore(UniquedStringImpl*);
-    bool m_hasEval { false };
-    bool m_isModule { false };
-    void add(UniquedStringImpl*, unsigned scopeOffset, UnlinkedFunctionExecutable*, const Describe&);
+    void add(unsigned scopeOffset, UnlinkedFunctionExecutable*, const Describe&);
 
-    UncheckedKeyHashMap<UniquedStringImpl*, Variable> m_variables;
+    UnlinkedModuleProgramCodeBlock* m_module { nullptr };
+    UncheckedKeyHashMap<unsigned, Variable, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_variables;
 };
 
 // An import that whoever linked the program's modules resolved to a variable of another of them.
@@ -243,6 +254,8 @@ private:
 // Options::resolveAllScopeSlotsStatically(): what the code around a function declares, kept from when the function's bytecode was
 // generated until it is compiled. For the code of a module itself: as its own functions see it.
 void noteDeclaredNames(UnlinkedCodeBlock*, RefPtr<DeclaredNamesLink>&&);
+void noteFunctionsPutInVariables(UnlinkedCodeBlock*, Vector<FunctionPutInVariable>&&);
+Vector<FunctionPutInVariable> functionsPutInVariablesBy(UnlinkedCodeBlock*); // Any thread.
 const DeclaredNamesLink* declaredNamesFor(UnlinkedCodeBlock*); // Any thread. Good until forgetDeclaredNames().
 void forgetDeclaredNames();
 

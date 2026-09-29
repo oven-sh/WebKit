@@ -4025,6 +4025,7 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
     if (!isReadOnly) {
         returnResult = generator.emitPutToScope(scope.get(), var, result.get(), generator.ecmaMode().isStrict() ? ThrowIfNotFound : DoNotThrowIfNotFound, initializationModeForAssignmentContext(m_assignmentContext));
         generator.emitProfileType(result.get(), var, divotStart(), divotEnd());
+        generator.noteFunctionPutInVariable(m_ident, var, m_right);
     }
 
     if (isUsingOrAwaitUsingAssignmentContext(m_assignmentContext))

@@ -56,13 +56,15 @@ RefPtr<PrelinkedModuleGraph> PrelinkedModuleGraph::tryCreate(VM& vm, DecoderStri
     auto imports = arrayAt<Import>(blob, header.importsOffset, header.importCount);
     auto exports = arrayAt<Export>(blob, header.exportsOffset, header.exportCount);
     auto starExports = arrayAt<uint32_t>(blob, header.starExportsOffset, header.starExportCount);
-    if (!modules || !requests || !imports || !exports || !starExports)
+    auto bindings = arrayAt<Binding>(blob, header.bindingsOffset, header.bindingCount);
+    if (!modules || !requests || !imports || !exports || !starExports || !bindings)
         return nullptr;
     auto within = [](uint32_t first, uint32_t count, size_t size) { return first <= size && count <= size - first; };
     for (const Module& m : *modules) {
         if (m.keySid >= header.stringCount || m.requestCount > std::numeric_limits<uint16_t>::max()
             || !within(m.firstRequest, m.requestCount, requests->size()) || !within(m.firstImport, m.importCount, imports->size())
-            || !within(m.firstExport, m.exportCount, exports->size()) || !within(m.firstStarExport, m.starExportCount, starExports->size()))
+            || !within(m.firstExport, m.exportCount, exports->size()) || !within(m.firstStarExport, m.starExportCount, starExports->size())
+            || !within(m.firstBinding, m.bindingCount, bindings->size()))
             return nullptr;
     }
     return adoptRef(*new PrelinkedModuleGraph(vm, strings, blob, header, stringSlots));
