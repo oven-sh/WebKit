@@ -50,6 +50,8 @@ void handleSignals(JSGlobalObject*);
 void reportSignalWakeupErrors(JSGlobalObject*);
 // PyErr_SetInterruptEx(): as if the signal had come. False if there is no such signal.
 bool simulateSignal(JSGlobalObject*, int signal);
+// _Py_RestoreSignals(): what Python ignores from the start is no longer ignored. It is for a process that is about to become another program, and does nothing that cannot be done between fork() and exec().
+void restoreSignals();
 // exit_sigint() of CPython's Modules/main.c: ends the process as SIGINT ends one that does nothing about it, so that whatever started it can tell. If it comes back, this is the status to end with.
 int exitByInterrupt();
 

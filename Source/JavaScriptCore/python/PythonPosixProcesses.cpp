@@ -58,26 +58,6 @@ namespace JSC { namespace Python {
         RETURN_IF_EXCEPTION(scope, { }); \
     }
 
-// Strings as a program is given them: each ended by a zero, and after the last of them, null.
-class StringArray {
-public:
-    void append(CString&& string) { m_strings.append(WTF::move(string)); }
-    size_t size() const { return m_strings.size(); }
-    const CString& at(size_t i) const { return m_strings[i]; }
-    char** pointers()
-    {
-        m_pointers.shrink(0);
-        for (auto& string : m_strings)
-            m_pointers.append(const_cast<char*>(string.data()));
-        m_pointers.append(nullptr);
-        return m_pointers.mutableSpan().data();
-    }
-
-private:
-    Vector<CString> m_strings;
-    Vector<char*> m_pointers;
-};
-
 static bool isListOrTuple(JSGlobalObject* globalObject, JSValue value)
 {
     PyRealm* realm = globalObject->pyRealm();

@@ -38,5 +38,7 @@ namespace Python {
 // The module posix, which is what `os` is made from. It is written here so that it is written once, but it is what a program reaches the system with, so whether there is such a module is up to whoever embeds the
 // engine: it is there if this is among Configuration::builtinModules. Null where it is not written.
 JS_EXPORT_PRIVATE JSObject* createPosixModule(JSGlobalObject*);
+// The module _posixsubprocess, which is what `subprocess` starts a program with. It goes with that one.
+JS_EXPORT_PRIVATE JSObject* createPosixSubprocessModule(JSGlobalObject*);
 
 } } // namespace JSC::Python

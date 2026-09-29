@@ -93,6 +93,26 @@ std::optional<int> toFileDescriptorOrFile(JSGlobalObject*, JSValue); // `fildes`
 std::optional<uid_t> toUserID(JSGlobalObject*, JSValue); // _Py_Uid_Converter()
 std::optional<gid_t> toGroupID(JSGlobalObject*, JSValue); // _Py_Gid_Converter()
 std::optional<CString> toFileSystemEncoded(JSGlobalObject*, JSValue); // `unicode_fs_encoded`: PyUnicode_FSConverter()
+
+// Strings as a program is given them: each ended by a zero, and after the last of them, null.
+class StringArray {
+public:
+    void append(CString&& string) { m_strings.append(WTF::move(string)); }
+    size_t size() const { return m_strings.size(); }
+    const CString& at(size_t i) const { return m_strings[i]; }
+    char** pointers()
+    {
+        m_pointers.shrink(0);
+        for (auto& string : m_strings)
+            m_pointers.append(const_cast<char*>(string.data()));
+        m_pointers.append(nullptr);
+        return m_pointers.mutableSpan().data();
+    }
+
+private:
+    Vector<CString> m_strings;
+    Vector<char*> m_pointers;
+};
 inline std::optional<int64_t> toFileOffset(JSGlobalObject* globalObject, JSValue value) { return toCLong(globalObject, value); } // Py_off_t_converter()
 JSValue intFromUserID(JSGlobalObject*, uid_t); // _PyLong_FromUid(), and _PyLong_FromGid()
 

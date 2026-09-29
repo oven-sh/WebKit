@@ -832,6 +832,7 @@ python/PythonPosixModule.cpp
 python/PythonPosixPaths.cpp
 python/PythonPosixProcesses.cpp
 python/PythonPosixShared.cpp
+python/PythonPosixSubprocess.cpp
 python/PythonStringIO.cpp
 python/PythonTextIO.cpp
 python/PythonTokenizeModule.cpp

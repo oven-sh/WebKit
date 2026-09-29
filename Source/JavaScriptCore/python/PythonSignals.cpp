@@ -316,6 +316,14 @@ bool simulateSignal(JSGlobalObject* globalObject, int signal)
     return true;
 }
 
+void restoreSignals()
+{
+    setSystemHandler(SIGPIPE, SIG_DFL);
+#ifdef SIGXFSZ
+    setSystemHandler(SIGXFSZ, SIG_DFL);
+#endif
+}
+
 int exitByInterrupt()
 {
     if (setSystemHandler(SIGINT, SIG_DFL) != SIG_ERR)

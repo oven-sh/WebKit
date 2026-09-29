@@ -719,6 +719,10 @@ What `io.open_code()` does is the host's to say, if it wants to: `Configuration:
 functions; `Constants` has the constants, and the names that `sysconf()` and the like go by. It has everything that CPython's has on macOS but `fork()`, `forkpty()` and `register_at_fork()`: see *Where it differs*.
 What CPython has only on Linux is not written, and what is written for Linux has not been compiled.
 
+**`_posixsubprocess`** (`PythonPosixSubprocess.cpp`), which is what `subprocess` starts a program with, does fork, though there is no `os.fork()`. What is wrong with forking is what is run afterwards, in a process that has this
+thread and none of the engine's others. Here that is `child_exec()`, which CPython wrote to be run in the middle of anything: it asks for no memory, locks nothing, and runs none of the engine, and then the process is another
+program. All that it goes by is worked out beforehand. The one thing that it cannot be asked to do is call `preexec_fn`, which is Python: see *Where it differs*.
+
 ### `time`
 
 `PythonTimeModule.cpp` is `Modules/timemodule.c`, and `PythonTime.cpp` what it wants of `Python/pytime.c`: a time is a number of nanoseconds, and how a float or an int is made one, rounded which way, and what is said if
@@ -1020,6 +1024,8 @@ There is nothing that is per process, nothing that is set after something is mad
 - **A `BytesIO` can be written to while there is a view of it** from `getbuffer()`, where CPython raises `BufferError`. It is as it is for a `bytearray`, and for the same reason.
 - **There is no `os.fork()`.** What it would leave in the new process is the one thread, and the collector and the compilers have threads of their own, which would be waited for and never answer. `os` has none on the
   systems where it cannot be had, so a program that can do without looks first, as the library does. `posix_spawn()`, `exec*()` and `system()` are there.
+- **`subprocess` does not take `preexec_fn`**, for the same reason: it would be called in the new process. It raises `RuntimeError`. `start_new_session`, `process_group`, `user`, `group`, `extra_groups` and `umask` are there for most of
+  what it was used for.
 - **`os.closerange()` closes what is open**, which it finds out, where CPython on macOS tries every number in the range.
 - **What is written to `sys.stdout` is sent on at once**, as it is by CPython with `-u`, whether or not it is a terminal. Otherwise what Python writes would come out after what JavaScript wrote later. So `sys.stdout.buffer`
   is a `FileIO`, and `write_through` is true. If it is to be kept back so as not to ask the system so often, it is for the host to keep back, in `FileOperations::write`, along with what JavaScript writes.
