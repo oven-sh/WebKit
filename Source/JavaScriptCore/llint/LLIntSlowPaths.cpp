@@ -1028,6 +1028,16 @@ static bool tryToSetUpGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm
     return true;
 }
 
+// A variable of a later script is a property of the global object with no new structure, and the inline cache of the
+// JIT keeps "no such property" for a global object. Such a result does not count toward the JIT.
+static ALWAYS_INLINE bool isAbsenceOnGlobalObject(JSValue baseValue, const PropertySlot& slot)
+{
+    if (!slot.isUnset() || !baseValue.isCell())
+        return false;
+    JSType type = baseValue.asCell()->type();
+    return type == GlobalObjectType || type == GlobalProxyType;
+}
+
 // Counts one result that a prototype load or unset cache can be for. The site tries to cache the result that
 // ends its countdown.
 static ALWAYS_INLINE void countDownToGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm, CodeBlock* codeBlock, BytecodeIndex bytecodeIndex, GetByIdModeMetadata& metadata, CodeBlock::LLIntGetByIdGuards* guardsInProtoLoadMode, JSCell* baseCell, PropertySlot& slot, const Identifier& ident)
@@ -1071,10 +1081,14 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     // The call counts also when the read throws. From here to the end nothing runs that can change the watchpoint
     // map, but for the try to make a cache.
     CodeBlock::LLIntGetByIdGuards* guardsInProtoLoadMode = nullptr;
-    if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
-        codeBlock->noteLLIntInlineCacheMiss(metadata.missCount);
-    else if ((guardsInProtoLoadMode = guardsOfSiteInProtoLoadMode(codeBlock, bytecodeIndex)))
-        codeBlock->noteLLIntInlineCacheMiss(guardsInProtoLoadMode->counts.missCount);
+    if (metadata.mode == GetByIdMode::ProtoLoad) [[unlikely]]
+        guardsInProtoLoadMode = guardsOfSiteInProtoLoadMode(codeBlock, bytecodeIndex);
+    if (!isAbsenceOnGlobalObject(baseValue, slot)) [[likely]] {
+        if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
+            codeBlock->noteLLIntInlineCacheMiss(metadata.missCount);
+        else if (guardsInProtoLoadMode)
+            codeBlock->noteLLIntInlineCacheMiss(guardsInProtoLoadMode->counts.missCount);
+    }
     RETURN_IF_EXCEPTION(throwScope, { });
 
     if (!Options::useLLIntICs() || !baseValue.isCell())

@@ -637,7 +637,7 @@ public:
     {
         // The startup deferral keeps code in the LLInt for as long as an execution there costs what it usually costs.
         // It costs more in a CodeBlock that noteLLIntInlineCacheMiss() lowered the threshold of.
-        bool isDeferred = jitType() != JITType::BaselineJIT && !m_isExemptFromStartupJITDeferral;
+        bool isDeferred = jitType() != JITType::BaselineJIT && !m_unlinkedCode->isExemptFromStartupJITDeferral();
         return m_unlinkedCode->llintExecuteCounter().checkIfThresholdCrossedAndSet(this, isDeferred ? vm().startupJITDeferralScale() : 1);
     }
 
@@ -653,15 +653,11 @@ public:
     // to thresholdForJITSoon: the inline cache of the LLInt has one entry, and that of the Baseline JIT has more.
     ALWAYS_INLINE void noteLLIntInlineCacheMiss(uint8_t& siteCount)
     {
-#if ENABLE(JIT)
         // True for a count of 0 too, which is the option off.
         if (siteCount >= Options::missCountForLLIntTierUp())
             return;
         if (++siteCount == Options::missCountForLLIntTierUp()) [[unlikely]]
             lowerJITThresholdForLLIntInlineCacheMisses();
-#else
-        UNUSED_PARAM(siteCount);
-#endif
     }
 
     const BaselineExecutionCounter& llintExecuteCounter() const
@@ -1135,7 +1131,6 @@ private:
     // Mutator-written bits; kept out of the flag byte above, which a Baseline compile thread RMWs (m_capabilityLevelState).
     uint8_t m_isLazyStatePreparedForConcurrentCompilation : 1 { false }; // read by compiler threads; see prepareLazyStateForConcurrentCompilation()
     uint8_t m_hasCatchThatExecutedWithoutBuffer : 1 { false }; // Options::useLazyCatchLiveness()
-    uint8_t m_isExemptFromStartupJITDeferral : 1 { false }; // Options::missCountForLLIntTierUp()
     void lowerJITThresholdForLLIntInlineCacheMisses();
     GetByIdSiteCounts llintGetByIdSiteCountsInProtoLoadMode(BytecodeIndex);
     // The guards are those of the site. They are the entry of the site if the site has a cache with guards.

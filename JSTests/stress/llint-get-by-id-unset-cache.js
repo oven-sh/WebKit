@@ -416,21 +416,26 @@ if (typeof $vm.createRuntimeArray === "function") {
     shouldBe(get(), undefined);
 }
 // A variable of a later script is a property of the global object, and makes no new structure.
-// (With the JIT, the inline cache of the Baseline JIT keeps "absent" for it. That is not what this test is about.)
-if (!options.useJIT) {
+// The inline cache of the Baseline JIT keeps "absent" for a global object. The reads of the global object do not
+// count toward the JIT, so the function is in the LLInt here. The reads through the chain count.
+{
     const get = new Function("return this.missingVariable;");
     const getThroughChain = new Function("o", "return o.missingFunction;");
     const o = Object.create(globalThis);
     o.a = 1;
     for (let i = 0; i < warmUp; ++i) {
         shouldBe(get(), undefined);
-        shouldBe(getThroughChain(o), undefined);
+        if (!options.useJIT)
+            shouldBe(getThroughChain(o), undefined);
     }
     expectCache(get, "empty", "global object");
-    expectCache(getThroughChain, "empty", "global object on the chain");
+    shouldBe($vm.llintGetByIdMissCounts(get)[0], 0, "the count of a read of the global object");
+    if (!options.useJIT)
+        expectCache(getThroughChain, "empty", "global object on the chain");
     loadString("var missingVariable = 'variable'; function missingFunction() { }");
     shouldBe(get(), "variable", "variable of a later script");
-    shouldBe(typeof getThroughChain(o), "function", "function of a later script");
+    if (!options.useJIT)
+        shouldBe(typeof getThroughChain(o), "function", "function of a later script");
 }
 
 // Objects of another realm, and primitives read by code of another realm.

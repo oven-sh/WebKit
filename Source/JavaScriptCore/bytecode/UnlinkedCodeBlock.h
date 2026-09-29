@@ -197,6 +197,10 @@ public:
     bool isQuickFTLTierUp() const { return m_quickFTLTierUp; }
     void setQuickFTLTierUp(bool value) { m_quickFTLTierUp = value; }
 
+    // VM::startupJITDeferralScale() does not apply to llintExecuteCounter(). See CodeBlock::noteLLIntInlineCacheMiss().
+    bool isExemptFromStartupJITDeferral() const { return m_isExemptFromStartupJITDeferral; }
+    void setIsExemptFromStartupJITDeferral(bool value) { m_isExemptFromStartupJITDeferral = value; }
+
     // Special registers
     void setThisRegister(VirtualRegister thisRegister) { m_thisRegister = thisRegister; }
     void setScopeRegister(VirtualRegister scopeRegister) { m_scopeRegister = scopeRegister; }
@@ -454,6 +458,7 @@ private:
     bool m_hasCheckpoints : 1;
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
+    bool m_isExemptFromStartupJITDeferral : 1 { false };
     unsigned m_numberOfArrayProfiles { 0 };
 
 public:

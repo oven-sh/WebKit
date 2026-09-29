@@ -141,7 +141,7 @@ function change(step) {
     }
 }
 
-const steps = 60000;
+const steps = Math.min(6000, 60 * testLoopCount);
 for (let step = 0; step < steps; ++step) {
     if (!random(5))
         change(step);

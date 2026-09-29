@@ -244,6 +244,25 @@ if (options.useLLIntICs && (missCount > 8 || !missCount)) {
     shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 4 : 0, "the count of replaced() after one more miss");
 }
 
+// A read of a global object that finds nothing does not count: the inline cache of the JIT keeps "no such property"
+// for a global object after a later script declares the variable. The same read of other objects counts.
+{
+    function absentOnGlobalObject(o) {
+        const missing = o.notAPropertyOfAnyObjectHere;
+        return $vm.llintTrue();
+    }
+    shouldBe(firstCallOutOfLLInt(absentOnGlobalObject, i => globalThis), 0, "absentOnGlobalObject must stay in the LLInt");
+    if (options.useLLIntICs)
+        shouldBe($vm.llintGetByIdMissCounts(absentOnGlobalObject)[0], 0, "the count of absentOnGlobalObject");
+
+    function absentOnObjects(o) {
+        const missing = o.notAPropertyOfAnyObjectHere;
+        return $vm.llintTrue();
+    }
+    const objects = makeObjects(16);
+    expectEarly("absentOnObjects", firstCallOutOfLLInt(absentOnObjects, i => objects[i % objects.length]));
+}
+
 // One call with a long loop: the loop enters the Baseline JIT code.
 {
     function loop(objects, turns) {
@@ -300,4 +319,30 @@ if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && opti
     const expected = Math.ceil(options.thresholdForJITSoon * scale / 15);
     if (call < Math.max(missCount, expected - 1) || call > Math.max(missCount, expected) + 2)
         throw new Error("scaledPolymorphicGet left the LLInt in call " + call + ", expected call " + expected);
+}
+
+// The same code in two realms is two CodeBlocks with one counter. The function of one realm has the misses. The
+// function of the other realm brings the counter to the threshold, and its check does not put the deferral back.
+if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && !options.useStartupJITDeferralAfterLLIntMisses && options.thresholdForJITSoon > 100) {
+    const source = "(function inTwoRealms(objects) { for (let i = 0; i < objects.length; ++i) { const tag = objects[i].tag; } return $vm.llintTrue(); })";
+    const here = (0, eval)(source);
+    const there = createGlobalObject().eval(source);
+    const objects = makeObjects(16);
+    $vm.setStartupJITDeferralScale(50);
+    // One call with 16 structures: the site has its misses, and the counter is below thresholdForJITSoon.
+    shouldBe(here(objects), true, "the first call in this realm");
+    let callsThere = 0;
+    while (callsThere < calls && there([objects[0]]))
+        callsThere++;
+    let callsHere = 0;
+    while (callsHere < calls && here(objects))
+        callsHere++;
+    $vm.setStartupJITDeferralScale(1);
+    // After the compile for the other realm, the counter waits for thresholdForJITSoon again. Then this realm gets
+    // the code that the other realm has.
+    const latest = Math.ceil(options.thresholdForJITSoon / 15) + 2;
+    if (callsThere > latest)
+        throw new Error("the function of the other realm left the LLInt after " + callsThere + " calls, expected " + latest + " or fewer");
+    if (callsHere > latest)
+        throw new Error("the function of this realm left the LLInt after " + callsHere + " more calls, expected " + latest + " or fewer");
 }

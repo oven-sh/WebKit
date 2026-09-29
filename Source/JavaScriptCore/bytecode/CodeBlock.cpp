@@ -4281,7 +4281,8 @@ void CodeBlock::lowerJITThresholdForLLIntInlineCacheMisses()
         return;
     if (!m_unlinkedCode->llintExecuteCounter().lowerThreshold(m_unlinkedCode->thresholdForJIT(Options::thresholdForJITSoon()), this))
         return; // dontJITAnytimeSoon()
-    m_isExemptFromStartupJITDeferral = !Options::useStartupJITDeferralAfterLLIntMisses();
+    // The counter is that of the UnlinkedCodeBlock, and each CodeBlock of it checks it. So the exemption is there too.
+    m_unlinkedCode->setIsExemptFromStartupJITDeferral(!Options::useStartupJITDeferralAfterLLIntMisses());
     CodeBlock* codeBlock = this; // Placate GCC for use in CODEBLOCK_LOG_EVENT  (does not like this).
     CODEBLOCK_LOG_EVENT(codeBlock, "lowerJITThreshold", ("LLInt inline cache misses"));
     dataLogLnIf(Options::verboseOSR(), *this, ": a get_by_id or put_by_id site keeps missing in the LLInt, so the threshold of the Baseline JIT is that of jitSoon().");
