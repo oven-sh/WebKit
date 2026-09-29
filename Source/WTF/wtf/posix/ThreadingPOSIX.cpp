@@ -200,10 +200,18 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
     PlatformRegisters* registersOfOwnStack = nullptr;
     if (!thread->m_stack.contains(approximateStackPointer)) {
 #if USE(BUN_JSC_ADDITIONS) && HAVE(MACHINE_CONTEXT)
-        // The signal handler of WTF runs on the alternate signal stack (SA_ONSTACK), and it can wait
-        // there for a lock that the thread that suspends holds (SamplingProfiler::takeSample()): no
-        // retry would succeed. It publishes the registers that it interrupted.
-        registersOfOwnStack = registersInterruptedBySignalHandler(thread->m_stack);
+        // This handler runs on the alternate signal stack. In two cases no retry would succeed, and
+        // the registers of the thread's own stack exist.
+        // A runtime that loads later (Go) adds SA_ONSTACK to this handler. The signal interrupted the
+        // thread's own stack then, and the registers are the ones of this invocation.
+        // The signal handler of WTF has SA_ONSTACK, and it can wait on the alternate stack for a lock
+        // that the thread that suspends holds (SamplingProfiler::takeSample()). It publishes the
+        // registers that it interrupted.
+        PlatformRegisters& interruptedRegisters = registersFromUContext(static_cast<ucontext_t*>(ucontext));
+        if (isOnStack(interruptedRegisters, thread->m_stack))
+            registersOfOwnStack = &interruptedRegisters;
+        else
+            registersOfOwnStack = registersInterruptedBySignalHandler(thread->m_stack);
 #endif
         if (!registersOfOwnStack) {
             // This happens if we use an alternative signal stack.
