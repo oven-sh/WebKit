@@ -186,6 +186,9 @@ JSObject* createThreadModule(JSGlobalObject*);
 JSObject* createMarshalModule(JSGlobalObject*);
 JSObject* createErrnoModule(JSGlobalObject*);
 JSObject* createImpModule(JSGlobalObject*);
+// {Py_tp_getattro, PyObject_GenericGetAttr}: the class has a __getattribute__ in its own name, which does what object's does.
+void addGenericGetAttribute(JSGlobalObject*, PyType*);
+JSObject* createItertoolsModule(JSGlobalObject*);
 JSObject* createMathModule(JSGlobalObject*);
 JSObject* createTimeModule(JSGlobalObject*);
 JSObject* createCodecsModule(JSGlobalObject*);

@@ -1,0 +1,902 @@
+---- what there is
+the module => ('itertools', '', 'BuiltinImporter', 'built-in', ['_grouper', '_tee', '_tee_dataobject', 'accumulate', 'batched', 'chain', 'combinations', 'combinations_with_replacement', 'compress', 'count', 'cycle', 'dropwhile', 'filterfalse', 'groupby', 'islice', 'pairwise', 'permutations', 'product', 'repeat', 'starmap', 'takewhile', 'tee', 'zip_longest'], 'Functional tools for creating and using iterators.\n\nInfinite iterators:\ncount(start=0, step=1) --> start, start+step, start+2*step, ...\ncycle(p) --> p0, p1, ... plast, p0, p1, ...\nrepeat(elem [,n]) --> elem, elem, elem, ... endlessly or up to n times\n\nIterators terminating on the shortest input sequence:\naccumulate(p[, func]) --> p0, p0+p1, p0+p1+p2\nbatched(p, n) --> [p0, p1, ..., p_n-1], [p_n, p_n+1, ..., p_2n-1], ...\nchain(p, q, ...) --> p0, p1, ... plast, q0, q1, ...\nchain.from_iterable([p, q, ...]) --> p0, p1, ... plast, q0, q1, ...\ncompress(data, selectors) --> (d[0] if s[0]), (d[1] if s[1]), ...\ndropwhile(predicate, seq) --> seq[n], seq[n+1], starting when predicate fails\ngroupby(iterable[, keyfunc]) --> sub-iterators grouped by value of keyfunc(v)\nfilterfalse(predicate, seq) --> elements of seq where predicate(elem) is False\nislice(seq, [start,] stop [, step]) --> elements from\n       seq[start:stop:step]\npairwise(s) --> (s[0],s[1]), (s[1],s[2]), (s[2], s[3]), ...\nstarmap(fun, seq) --> fun(*seq[0]), fun(*seq[1]), ...\ntee(it, n=2) --> (it1, it2 , ... itn) splits one iterator into n\ntakewhile(predicate, seq) --> seq[0], seq[1], until predicate fails\nzip_longest(p, q, ...) --> (p[0], q[0]), (p[1], q[1]), ...\n\nCombinatoric generators:\nproduct(p, q, ... [repeat=1]) --> cartesian product\npermutations(p[, r])\ncombinations(p, r)\ncombinations_with_replacement(p, r)\n')
+accumulate => ('itertools', 'accumulate', ['accumulate', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(iterable, func=None, *, initial=None)', 56, 0, 0, 0, True, True, 'type', "<class 'itertools.accumulate'>")
+its doc => Return series of accumulated sums (or other binary function results).
+accumulate.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+accumulate.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+accumulate.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+accumulate.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+batched => ('itertools', 'batched', ['batched', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(iterable, n, *, strict=False)', 40, 0, 0, 0, True, True, 'type', "<class 'itertools.batched'>")
+its doc => Batch data into tuples of length n. The last batch may be shorter than n.
+
+Loops over the input iterable and accumulates data into tuples
+up to size n.  The input is consumed lazily, just enough to
+fill a batch.  The result is yielded as soon as a batch is full
+or when the input iterable is exhausted.
+
+    >>> for batch in batched('ABCDEFG', 3):
+    ...     print(batch)
+    ...
+    ('A', 'B', 'C')
+    ('D', 'E', 'F')
+    ('G',)
+
+If "strict" is True, raises a ValueError if the final batch is shorter
+than n.
+batched.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+batched.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+batched.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+batched.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+chain => ('itertools', 'chain', ['chain', 'object'], ['__class_getitem__', '__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__', 'from_iterable'], '(*iterables)', 32, 0, 0, 0, True, True, 'type', "<class 'itertools.chain'>")
+its doc => Return a chain object whose .__next__() method returns elements from the
+first iterable until it is exhausted, then elements from the next
+iterable, until all of the iterables are exhausted.
+chain.__class_getitem__ => ('classmethod_descriptor', '($type, object, /)', 'chain is generic over the type of its contents.\nThis is the union of the types of the input iterable contents.')
+chain.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+chain.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+chain.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+chain.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+chain.from_iterable => ('classmethod_descriptor', '($type, iterable, /)', 'Alternative chain() constructor taking a single iterable argument that evaluates lazily.')
+combinations => ('itertools', 'combinations', ['combinations', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__', '__sizeof__'], '(iterable, r)', 56, 0, 0, 0, True, True, 'type', "<class 'itertools.combinations'>")
+its doc => Return successive r-length combinations of elements in the iterable.
+
+combinations(range(4), 3) --> (0,1,2), (0,1,3), (0,2,3), (1,2,3)
+combinations.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+combinations.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+combinations.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+combinations.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+combinations.__sizeof__ => ('method_descriptor', '($self, /)', 'Returns size in memory, in bytes.')
+combinations_with_replacement => ('itertools', 'combinations_with_replacement', ['combinations_with_replacement', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__', '__sizeof__'], '(iterable, r)', 56, 0, 0, 0, True, True, 'type', "<class 'itertools.combinations_with_replacement'>")
+its doc => Return successive r-length combinations of elements in the iterable allowing individual elements to have successive repeats.
+
+combinations_with_replacement('ABC', 2) --> ('A','A'), ('A','B'), ('A','C'), ('B','B'), ('B','C'), ('C','C')
+combinations_with_replacement.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+combinations_with_replacement.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+combinations_with_replacement.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+combinations_with_replacement.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+combinations_with_replacement.__sizeof__ => ('method_descriptor', '($self, /)', 'Returns size in memory, in bytes.')
+compress => ('itertools', 'compress', ['compress', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(data, selectors)', 32, 0, 0, 0, True, True, 'type', "<class 'itertools.compress'>")
+its doc => Return data elements corresponding to true selector elements.
+
+Forms a shorter iterator from selected data elements using the selectors
+to choose the data elements.
+compress.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+compress.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+compress.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+compress.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+count => ('itertools', 'count', ['count', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__', '__repr__'], '(start=0, step=1)', 40, 0, 0, 0, True, True, 'type', "<class 'itertools.count'>")
+its doc => Return a count object whose .__next__() method returns consecutive values.
+
+Equivalent to:
+    def count(firstval=0, step=1):
+        x = firstval
+        while 1:
+            yield x
+            x += step
+count.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+count.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+count.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+count.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+count.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+cycle => ('itertools', 'cycle', ['cycle', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(iterable, /)', 40, 0, 0, 0, True, True, 'type', "<class 'itertools.cycle'>")
+its doc => Return elements from the iterable until it is exhausted. Then repeat the sequence indefinitely.
+cycle.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+cycle.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+cycle.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+cycle.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+dropwhile => ('itertools', 'dropwhile', ['dropwhile', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(predicate, iterable, /)', 40, 0, 0, 0, True, True, 'type', "<class 'itertools.dropwhile'>")
+its doc => Drop items from the iterable while predicate(item) is true.
+
+Afterwards, return every element until the iterable is exhausted.
+dropwhile.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+dropwhile.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+dropwhile.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+dropwhile.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+filterfalse => ('itertools', 'filterfalse', ['filterfalse', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(function, iterable, /)', 32, 0, 0, 0, True, True, 'type', "<class 'itertools.filterfalse'>")
+its doc => Return those items of iterable for which function(item) is false.
+
+If function is None, return the items that are false.
+filterfalse.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+filterfalse.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+filterfalse.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+filterfalse.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+groupby => ('itertools', 'groupby', ['groupby', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(iterable, key=None)', 72, 0, 0, 0, True, True, 'type', "<class 'itertools.groupby'>")
+its doc => make an iterator that returns consecutive keys and groups from the iterable
+
+  iterable
+    Elements to divide into groups according to the key function.
+  key
+    A function for computing the group category for each element.
+    If the key function is not specified or is None, the element itself
+    is used for grouping.
+groupby.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+groupby.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+groupby.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+groupby.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+islice => ('itertools', 'islice', ['islice', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], None, 56, 0, 0, 0, True, True, 'type', "<class 'itertools.islice'>")
+its doc => islice(iterable, stop) --> islice object
+islice(iterable, start, stop[, step]) --> islice object
+
+Return an iterator whose next() method returns selected values from an
+iterable.  If start is specified, will skip all preceding elements;
+otherwise, start defaults to zero.  Step defaults to one.  If
+specified as another value, step determines how many values are
+skipped between successive calls.  Works like a slice() on a list
+but returns an iterator.
+islice.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+islice.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+islice.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+islice.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+pairwise => ('itertools', 'pairwise', ['pairwise', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(iterable, /)', 40, 0, 0, 0, True, True, 'type', "<class 'itertools.pairwise'>")
+its doc => Return an iterator of overlapping pairs taken from the input iterator.
+
+    s -> (s0,s1), (s1,s2), (s2, s3), ...
+pairwise.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+pairwise.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+pairwise.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+pairwise.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+permutations => ('itertools', 'permutations', ['permutations', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__', '__sizeof__'], '(iterable, r=None)', 64, 0, 0, 0, True, True, 'type', "<class 'itertools.permutations'>")
+its doc => Return successive r-length permutations of elements in the iterable.
+
+permutations(range(3), 2) --> (0,1), (0,2), (1,0), (1,2), (2,0), (2,1)
+permutations.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+permutations.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+permutations.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+permutations.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+permutations.__sizeof__ => ('method_descriptor', '($self, /)', 'Returns size in memory, in bytes.')
+product => ('itertools', 'product', ['product', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__', '__sizeof__'], '(*iterables, repeat=1)', 48, 0, 0, 0, True, True, 'type', "<class 'itertools.product'>")
+its doc => Cartesian product of input iterables.  Equivalent to nested for-loops.
+
+For example, product(A, B) returns the same as:  ((x,y) for x in A for y in B).
+The leftmost iterators are in the outermost for-loop, so the output tuples
+cycle in a manner similar to an odometer (with the rightmost element changing
+on every iteration).
+
+To compute the product of an iterable with itself, specify the number
+of repetitions with the optional repeat keyword argument. For example,
+product(A, repeat=4) means the same as product(A, A, A, A).
+
+product('ab', range(3)) --> ('a',0) ('a',1) ('a',2) ('b',0) ('b',1) ('b',2)
+product((0,1), (0,1), (0,1)) --> (0,0,0) (0,0,1) (0,1,0) (0,1,1) (1,0,0) ...
+product.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+product.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+product.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+product.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+product.__sizeof__ => ('method_descriptor', '($self, /)', 'Returns size in memory, in bytes.')
+repeat => ('itertools', 'repeat', ['repeat', 'object'], ['__doc__', '__getattribute__', '__iter__', '__length_hint__', '__module__', '__new__', '__next__', '__repr__'], None, 32, 0, 0, 0, True, True, 'type', "<class 'itertools.repeat'>")
+its doc => repeat(object [,times]) -> create an iterator which returns the object
+for the specified number of times.  If not specified, returns the object
+endlessly.
+repeat.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+repeat.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+repeat.__length_hint__ => ('method_descriptor', '($self, /)', 'Private method returning an estimate of len(list(it)).')
+repeat.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+repeat.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+repeat.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+starmap => ('itertools', 'starmap', ['starmap', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(function, iterable, /)', 32, 0, 0, 0, True, True, 'type', "<class 'itertools.starmap'>")
+its doc => Return an iterator whose values are returned from the function evaluated with an argument tuple taken from the given sequence.
+starmap.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+starmap.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+starmap.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+starmap.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+takewhile => ('itertools', 'takewhile', ['takewhile', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(predicate, iterable, /)', 40, 0, 0, 0, True, True, 'type', "<class 'itertools.takewhile'>")
+its doc => Return successive entries from an iterable as long as the predicate evaluates to true for each entry.
+takewhile.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+takewhile.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+takewhile.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+takewhile.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+zip_longest => ('itertools', 'zip_longest', ['zip_longest', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], '(*iterables, fillvalue=None)', 56, 0, 0, 0, True, True, 'type', "<class 'itertools.zip_longest'>")
+its doc => Return a zip_longest object whose .__next__() method returns a tuple where
+the i-th element comes from the i-th iterable argument.  The .__next__()
+method continues until the longest iterable in the argument sequence
+is exhausted and then it raises StopIteration.  When the shorter iterables
+are exhausted, the fillvalue is substituted in their place.  The fillvalue
+defaults to None or can be specified by a keyword argument.
+
+zip_longest.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+zip_longest.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+zip_longest.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+zip_longest.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+_grouper => ('itertools', '_grouper', ['_grouper', 'object'], ['__doc__', '__getattribute__', '__iter__', '__module__', '__new__', '__next__'], None, 32, 0, 0, 0, False, True, 'type', "<class 'itertools._grouper'>")
+its doc => None
+_grouper.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+_grouper.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+_grouper.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+_grouper.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+_tee => ('itertools', '_tee', ['_tee', 'object'], ['__copy__', '__doc__', '__iter__', '__module__', '__new__', '__next__'], '(iterable, /)', 48, 0, 0, 32, False, True, 'type', "<class 'itertools._tee'>")
+its doc => Iterator wrapped to make it copyable.
+_tee.__copy__ => ('method_descriptor', '($self, /)', 'Returns an independent iterator.')
+_tee.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+_tee.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+_tee.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+_tee_dataobject => ('itertools', '_tee_dataobject', ['_tee_dataobject', 'object'], ['__doc__', '__getattribute__', '__module__', '__new__'], None, 496, 0, 0, 0, False, True, 'type', "<class 'itertools._tee_dataobject'>")
+its doc => teedataobject(iterable, values, next, /)
+--
+
+Data container common to multiple tee objects.
+_tee_dataobject.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+_tee_dataobject.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+tee => ('builtin_function_or_method', 'itertools', 'tee', '($module, iterable, n=2, /)', 'Returns a tuple of n independent iterators.', True)
+---- accumulate
+sums => ([1, 3, 6, 10, 'StopIteration: '], ['StopIteration: '], [5, 'StopIteration: '], ['a', 'ab', 'abc', 'StopIteration: '], [[1], [1, 2], 'StopIteration: '], [1.5, 3.5, 'StopIteration: '], [1, 3, 'StopIteration: '])
+another function => ([1, 2, 6, 24, 'StopIteration: '], [3, 3, 4, 'StopIteration: '], [1, 1, 'StopIteration: '], [1, 3, 'StopIteration: '])
+initial => ([10, 11, 13, 'StopIteration: '], [10, 'StopIteration: '], [1, 3, 'StopIteration: '], [0, 1, 'StopIteration: '], [(), ((), 1), 'StopIteration: '], [[1], [1, 2], 'StopIteration: '])
+what cannot be added => ([1, "TypeError: unsupported operand type(s) for +: 'int' and 'str'"], [1, "TypeError: 'int' object is not callable"], [1, 'TypeError: <lambda>.<locals>.<lambda>() takes 1 positional argument but 2 were given'])
+it goes on after that => [([1, "TypeError: unsupported operand type(s) for +: 'int' and 'str'"], [3, 6, 'StopIteration: '])]
+---- batched
+batches => ([('A', 'B', 'C'), ('D', 'E', 'F'), ('G',), 'StopIteration: '], [('A', 'B', 'C'), ('D', 'E', 'F'), 'StopIteration: '], ['StopIteration: '], [('A', 'B'), 'StopIteration: '], [('A',), ('B',), ('C',), 'StopIteration: '], [(0, 1), (2, 3), (4,), 'StopIteration: '], [('a', 'b'), ('c',), 'StopIteration: '])
+strict => ([('A', 'B', 'C'), ('D', 'E', 'F'), 'ValueError: batched(): incomplete batch'], [('A', 'B', 'C'), ('D', 'E', 'F'), 'StopIteration: '], ['StopIteration: '], [('A', 'B', 'C'), ('D',), 'StopIteration: '], [('A', 'B', 'C'), 'ValueError: batched(): incomplete batch'])
+after the end => [([('A', 'B', 'C'), 'ValueError: batched(): incomplete batch'], ['StopIteration: '])]
+batched('ab', 0) => ValueError: n must be at least one
+batched('ab', -1) => ValueError: n must be at least one
+batched('ab', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+batched('ab', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+batched('ab', None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+batched('ab', True) => [('a',), ('b',), 'StopIteration: ']
+batched('ab', 9223372036854775808) => OverflowError: Python int too large to convert to C ssize_t
+batched('ab', 9223372036854775807) => ['MemoryError: ']
+---- chain
+chains => (['StopIteration: '], ['a', 'b', 'StopIteration: '], ['a', 'b', 1, 2, 'StopIteration: '], ['StopIteration: '], ['a', 'b', 'c', 'StopIteration: '], ['StopIteration: '], ['a', 'b', 'StopIteration: '], ['a', 'b', 'StopIteration: '])
+what cannot be gone through => (['a', "TypeError: 'int' object is not iterable"], ["TypeError: 'int' object is not iterable"], [1, "TypeError: 'int' object is not iterable"], "TypeError: 'int' object is not iterable", ["TypeError: 'int' object is not iterable"])
+it is over after that => [(['a', "TypeError: 'int' object is not iterable"], ['StopIteration: '])]
+lazily => [([0, 0, 1], [0, 1])]
+chain[int] => ('itertools.chain[int]', True, (<class 'int'>, <class 'str'>), 'TypeError: chain.__class_getitem__() takes exactly one argument (0 given)', 'TypeError: chain.__class_getitem__() takes exactly one argument (2 given)')
+---- combinations and the like
+combinations('', 0) => [(), 'StopIteration: ']
+combinations('', 1) => ['StopIteration: ']
+combinations('', 2) => ['StopIteration: ']
+combinations('', 3) => ['StopIteration: ']
+combinations('', 4) => ['StopIteration: ']
+combinations('', 5) => ['StopIteration: ']
+combinations('A', 0) => [(), 'StopIteration: ']
+combinations('A', 1) => [('A',), 'StopIteration: ']
+combinations('A', 2) => ['StopIteration: ']
+combinations('A', 3) => ['StopIteration: ']
+combinations('A', 4) => ['StopIteration: ']
+combinations('A', 5) => ['StopIteration: ']
+combinations('AB', 0) => [(), 'StopIteration: ']
+combinations('AB', 1) => [('A',), ('B',), 'StopIteration: ']
+combinations('AB', 2) => [('A', 'B'), 'StopIteration: ']
+combinations('AB', 3) => ['StopIteration: ']
+combinations('AB', 4) => ['StopIteration: ']
+combinations('AB', 5) => ['StopIteration: ']
+combinations('ABC', 0) => [(), 'StopIteration: ']
+combinations('ABC', 1) => [('A',), ('B',), ('C',), 'StopIteration: ']
+combinations('ABC', 2) => [('A', 'B'), ('A', 'C'), ('B', 'C'), 'StopIteration: ']
+combinations('ABC', 3) => [('A', 'B', 'C'), 'StopIteration: ']
+combinations('ABC', 4) => ['StopIteration: ']
+combinations('ABC', 5) => ['StopIteration: ']
+combinations('ABCD', 0) => [(), 'StopIteration: ']
+combinations('ABCD', 1) => [('A',), ('B',), ('C',), ('D',), 'StopIteration: ']
+combinations('ABCD', 2) => [('A', 'B'), ('A', 'C'), ('A', 'D'), ('B', 'C'), ('B', 'D'), ('C', 'D'), 'StopIteration: ']
+combinations('ABCD', 3) => [('A', 'B', 'C'), ('A', 'B', 'D'), ('A', 'C', 'D'), ('B', 'C', 'D'), 'StopIteration: ']
+combinations('ABCD', 4) => [('A', 'B', 'C', 'D'), 'StopIteration: ']
+combinations('ABCD', 5) => ['StopIteration: ']
+combinations(range(0, 4), 0) => [(), 'StopIteration: ']
+combinations(range(0, 4), 1) => [(0,), (1,), (2,), (3,), 'StopIteration: ']
+combinations(range(0, 4), 2) => [(0, 1), (0, 2), (0, 3), (1, 2), (1, 3), (2, 3), 'StopIteration: ']
+combinations(range(0, 4), 3) => [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3), 'StopIteration: ']
+combinations(range(0, 4), 4) => [(0, 1, 2, 3), 'StopIteration: ']
+combinations(range(0, 4), 5) => ['StopIteration: ']
+by name => ([('A',), ('B',), 'StopIteration: '], [('A', 'B'), 'StopIteration: '])
+combinations('AB', -1) => ValueError: r must be non-negative
+combinations('AB', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+combinations('AB', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+combinations('AB', None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+combinations('AB', True) => [('A',), ('B',), 'StopIteration: ']
+combinations('AB', 9223372036854775808) => OverflowError: Python int too large to convert to C ssize_t
+combinations('AB', 9223372036854775807) => MemoryError: 
+__sizeof__ => [0, 8, 16, 40, 56]
+after the end => [(4, ['StopIteration: '], ['StopIteration: '])]
+each is another tuple => [(('A', 'B'), ('A', 'C'), False)]
+combinations_with_replacement('', 0) => [(), 'StopIteration: ']
+combinations_with_replacement('', 1) => ['StopIteration: ']
+combinations_with_replacement('', 2) => ['StopIteration: ']
+combinations_with_replacement('', 3) => ['StopIteration: ']
+combinations_with_replacement('', 4) => ['StopIteration: ']
+combinations_with_replacement('', 5) => ['StopIteration: ']
+combinations_with_replacement('A', 0) => [(), 'StopIteration: ']
+combinations_with_replacement('A', 1) => [('A',), 'StopIteration: ']
+combinations_with_replacement('A', 2) => [('A', 'A'), 'StopIteration: ']
+combinations_with_replacement('A', 3) => [('A', 'A', 'A'), 'StopIteration: ']
+combinations_with_replacement('A', 4) => [('A', 'A', 'A', 'A'), 'StopIteration: ']
+combinations_with_replacement('A', 5) => [('A', 'A', 'A', 'A', 'A'), 'StopIteration: ']
+combinations_with_replacement('AB', 0) => [(), 'StopIteration: ']
+combinations_with_replacement('AB', 1) => [('A',), ('B',), 'StopIteration: ']
+combinations_with_replacement('AB', 2) => [('A', 'A'), ('A', 'B'), ('B', 'B'), 'StopIteration: ']
+combinations_with_replacement('AB', 3) => [('A', 'A', 'A'), ('A', 'A', 'B'), ('A', 'B', 'B'), ('B', 'B', 'B'), 'StopIteration: ']
+combinations_with_replacement('AB', 4) => [('A', 'A', 'A', 'A'), ('A', 'A', 'A', 'B'), ('A', 'A', 'B', 'B'), ('A', 'B', 'B', 'B'), ('B', 'B', 'B', 'B'), 'StopIteration: ']
+combinations_with_replacement('AB', 5) => [('A', 'A', 'A', 'A', 'A'), ('A', 'A', 'A', 'A', 'B'), ('A', 'A', 'A', 'B', 'B'), ('A', 'A', 'B', 'B', 'B'), ('A', 'B', 'B', 'B', 'B'), ('B', 'B', 'B', 'B', 'B'), 'StopIteration: ']
+combinations_with_replacement('ABC', 0) => [(), 'StopIteration: ']
+combinations_with_replacement('ABC', 1) => [('A',), ('B',), ('C',), 'StopIteration: ']
+combinations_with_replacement('ABC', 2) => [('A', 'A'), ('A', 'B'), ('A', 'C'), ('B', 'B'), ('B', 'C'), ('C', 'C'), 'StopIteration: ']
+combinations_with_replacement('ABC', 3) => [('A', 'A', 'A'), ('A', 'A', 'B'), ('A', 'A', 'C'), ('A', 'B', 'B'), ('A', 'B', 'C'), ('A', 'C', 'C'), ('B', 'B', 'B'), ('B', 'B', 'C'), ('B', 'C', 'C'), ('C', 'C', 'C'), 'StopIteration: ']
+combinations_with_replacement('ABC', 4) => [('A', 'A', 'A', 'A'), ('A', 'A', 'A', 'B'), ('A', 'A', 'A', 'C'), ('A', 'A', 'B', 'B'), ('A', 'A', 'B', 'C'), ('A', 'A', 'C', 'C'), ('A', 'B', 'B', 'B'), ('A', 'B', 'B', 'C'), ('A', 'B', 'C', 'C'), ('A', 'C', 'C', 'C'), ('B', 'B', 'B', 'B'), ('B', 'B', 'B', 'C'), ('B', 'B', 'C', 'C'), ('B', 'C', 'C', 'C'), ('C', 'C', 'C', 'C'), 'StopIteration: ']
+combinations_with_replacement('ABC', 5) => [('A', 'A', 'A', 'A', 'A'), ('A', 'A', 'A', 'A', 'B'), ('A', 'A', 'A', 'A', 'C'), ('A', 'A', 'A', 'B', 'B'), ('A', 'A', 'A', 'B', 'C'), ('A', 'A', 'A', 'C', 'C'), ('A', 'A', 'B', 'B', 'B'), ('A', 'A', 'B', 'B', 'C'), ('A', 'A', 'B', 'C', 'C'), ('A', 'A', 'C', 'C', 'C'), ('A', 'B', 'B', 'B', 'B'), ('A', 'B', 'B', 'B', 'C'), ('A', 'B', 'B', 'C', 'C'), ('A', 'B', 'C', 'C', 'C'), ('A', 'C', 'C', 'C', 'C'), ('B', 'B', 'B', 'B', 'B'), ('B', 'B', 'B', 'B', 'C'), ('B', 'B', 'B', 'C', 'C'), ('B', 'B', 'C', 'C', 'C'), ('B', 'C', 'C', 'C', 'C'), ('C', 'C', 'C', 'C', 'C'), 'StopIteration: ']
+combinations_with_replacement('ABCD', 0) => [(), 'StopIteration: ']
+combinations_with_replacement('ABCD', 1) => [('A',), ('B',), ('C',), ('D',), 'StopIteration: ']
+combinations_with_replacement('ABCD', 2) => [('A', 'A'), ('A', 'B'), ('A', 'C'), ('A', 'D'), ('B', 'B'), ('B', 'C'), ('B', 'D'), ('C', 'C'), ('C', 'D'), ('D', 'D'), 'StopIteration: ']
+combinations_with_replacement('ABCD', 3) => [('A', 'A', 'A'), ('A', 'A', 'B'), ('A', 'A', 'C'), ('A', 'A', 'D'), ('A', 'B', 'B'), ('A', 'B', 'C'), ('A', 'B', 'D'), ('A', 'C', 'C'), ('A', 'C', 'D'), ('A', 'D', 'D'), ('B', 'B', 'B'), ('B', 'B', 'C'), ('B', 'B', 'D'), ('B', 'C', 'C'), ('B', 'C', 'D'), ('B', 'D', 'D'), ('C', 'C', 'C'), ('C', 'C', 'D'), ('C', 'D', 'D'), ('D', 'D', 'D'), 'StopIteration: ']
+combinations_with_replacement('ABCD', 4) => [('A', 'A', 'A', 'A'), ('A', 'A', 'A', 'B'), ('A', 'A', 'A', 'C'), ('A', 'A', 'A', 'D'), ('A', 'A', 'B', 'B'), ('A', 'A', 'B', 'C'), ('A', 'A', 'B', 'D'), ('A', 'A', 'C', 'C'), ('A', 'A', 'C', 'D'), ('A', 'A', 'D', 'D'), ('A', 'B', 'B', 'B'), ('A', 'B', 'B', 'C'), ('A', 'B', 'B', 'D'), ('A', 'B', 'C', 'C'), ('A', 'B', 'C', 'D'), ('A', 'B', 'D', 'D'), ('A', 'C', 'C', 'C'), ('A', 'C', 'C', 'D'), ('A', 'C', 'D', 'D'), ('A', 'D', 'D', 'D'), ('B', 'B', 'B', 'B'), ('B', 'B', 'B', 'C'), ('B', 'B', 'B', 'D'), ('B', 'B', 'C', 'C'), ('B', 'B', 'C', 'D'), ('B', 'B', 'D', 'D'), ('B', 'C', 'C', 'C'), ('B', 'C', 'C', 'D'), ('B', 'C', 'D', 'D'), ('B', 'D', 'D', 'D'), ('C', 'C', 'C', 'C'), ('C', 'C', 'C', 'D'), ('C', 'C', 'D', 'D'), ('C', 'D', 'D', 'D'), ('D', 'D', 'D', 'D'), 'StopIteration: ']
+combinations_with_replacement('ABCD', 5) => [('A', 'A', 'A', 'A', 'A'), ('A', 'A', 'A', 'A', 'B'), ('A', 'A', 'A', 'A', 'C'), ('A', 'A', 'A', 'A', 'D'), ('A', 'A', 'A', 'B', 'B'), ('A', 'A', 'A', 'B', 'C'), ('A', 'A', 'A', 'B', 'D'), ('A', 'A', 'A', 'C', 'C'), ('A', 'A', 'A', 'C', 'D'), ('A', 'A', 'A', 'D', 'D'), ('A', 'A', 'B', 'B', 'B'), ('A', 'A', 'B', 'B', 'C'), ('A', 'A', 'B', 'B', 'D'), ('A', 'A', 'B', 'C', 'C'), ('A', 'A', 'B', 'C', 'D'), ('A', 'A', 'B', 'D', 'D'), ('A', 'A', 'C', 'C', 'C'), ('A', 'A', 'C', 'C', 'D'), ('A', 'A', 'C', 'D', 'D'), ('A', 'A', 'D', 'D', 'D'), ('A', 'B', 'B', 'B', 'B'), ('A', 'B', 'B', 'B', 'C'), ('A', 'B', 'B', 'B', 'D'), ('A', 'B', 'B', 'C', 'C'), ('A', 'B', 'B', 'C', 'D'), ('A', 'B', 'B', 'D', 'D'), ('A', 'B', 'C', 'C', 'C'), ('A', 'B', 'C', 'C', 'D'), ('A', 'B', 'C', 'D', 'D'), ('A', 'B', 'D', 'D', 'D'), ('A', 'C', 'C', 'C', 'C'), ('A', 'C', 'C', 'C', 'D'), ('A', 'C', 'C', 'D', 'D'), ('A', 'C', 'D', 'D', 'D'), ('A', 'D', 'D', 'D', 'D'), ('B', 'B', 'B', 'B', 'B'), ('B', 'B', 'B', 'B', 'C'), ('B', 'B', 'B', 'B', 'D'), ('B', 'B', 'B', 'C', 'C'), ('B', 'B', 'B', 'C', 'D'), ('B', 'B', 'B', 'D', 'D'), ('B', 'B', 'C', 'C', 'C'), ('B', 'B', 'C', 'C', 'D'), ('B', 'B', 'C', 'D', 'D'), ('B', 'B', 'D', 'D', 'D'), ('B', 'C', 'C', 'C', 'C'), ('B', 'C', 'C', 'C', 'D'), ('B', 'C', 'C', 'D', 'D'), ('B', 'C', 'D', 'D', 'D'), ('B', 'D', 'D', 'D', 'D'), ('C', 'C', 'C', 'C', 'C'), ('C', 'C', 'C', 'C', 'D'), ('C', 'C', 'C', 'D', 'D'), ('C', 'C', 'D', 'D', 'D'), ('C', 'D', 'D', 'D', 'D'), ('D', 'D', 'D', 'D', 'D'), 'StopIteration: ']
+combinations_with_replacement(range(0, 4), 0) => [(), 'StopIteration: ']
+combinations_with_replacement(range(0, 4), 1) => [(0,), (1,), (2,), (3,), 'StopIteration: ']
+combinations_with_replacement(range(0, 4), 2) => [(0, 0), (0, 1), (0, 2), (0, 3), (1, 1), (1, 2), (1, 3), (2, 2), (2, 3), (3, 3), 'StopIteration: ']
+combinations_with_replacement(range(0, 4), 3) => [(0, 0, 0), (0, 0, 1), (0, 0, 2), (0, 0, 3), (0, 1, 1), (0, 1, 2), (0, 1, 3), (0, 2, 2), (0, 2, 3), (0, 3, 3), (1, 1, 1), (1, 1, 2), (1, 1, 3), (1, 2, 2), (1, 2, 3), (1, 3, 3), (2, 2, 2), (2, 2, 3), (2, 3, 3), (3, 3, 3), 'StopIteration: ']
+combinations_with_replacement(range(0, 4), 4) => [(0, 0, 0, 0), (0, 0, 0, 1), (0, 0, 0, 2), (0, 0, 0, 3), (0, 0, 1, 1), (0, 0, 1, 2), (0, 0, 1, 3), (0, 0, 2, 2), (0, 0, 2, 3), (0, 0, 3, 3), (0, 1, 1, 1), (0, 1, 1, 2), (0, 1, 1, 3), (0, 1, 2, 2), (0, 1, 2, 3), (0, 1, 3, 3), (0, 2, 2, 2), (0, 2, 2, 3), (0, 2, 3, 3), (0, 3, 3, 3), (1, 1, 1, 1), (1, 1, 1, 2), (1, 1, 1, 3), (1, 1, 2, 2), (1, 1, 2, 3), (1, 1, 3, 3), (1, 2, 2, 2), (1, 2, 2, 3), (1, 2, 3, 3), (1, 3, 3, 3), (2, 2, 2, 2), (2, 2, 2, 3), (2, 2, 3, 3), (2, 3, 3, 3), (3, 3, 3, 3), 'StopIteration: ']
+combinations_with_replacement(range(0, 4), 5) => [(0, 0, 0, 0, 0), (0, 0, 0, 0, 1), (0, 0, 0, 0, 2), (0, 0, 0, 0, 3), (0, 0, 0, 1, 1), (0, 0, 0, 1, 2), (0, 0, 0, 1, 3), (0, 0, 0, 2, 2), (0, 0, 0, 2, 3), (0, 0, 0, 3, 3), (0, 0, 1, 1, 1), (0, 0, 1, 1, 2), (0, 0, 1, 1, 3), (0, 0, 1, 2, 2), (0, 0, 1, 2, 3), (0, 0, 1, 3, 3), (0, 0, 2, 2, 2), (0, 0, 2, 2, 3), (0, 0, 2, 3, 3), (0, 0, 3, 3, 3), (0, 1, 1, 1, 1), (0, 1, 1, 1, 2), (0, 1, 1, 1, 3), (0, 1, 1, 2, 2), (0, 1, 1, 2, 3), (0, 1, 1, 3, 3), (0, 1, 2, 2, 2), (0, 1, 2, 2, 3), (0, 1, 2, 3, 3), (0, 1, 3, 3, 3), (0, 2, 2, 2, 2), (0, 2, 2, 2, 3), (0, 2, 2, 3, 3), (0, 2, 3, 3, 3), (0, 3, 3, 3, 3), (1, 1, 1, 1, 1), (1, 1, 1, 1, 2), (1, 1, 1, 1, 3), (1, 1, 1, 2, 2), (1, 1, 1, 2, 3), (1, 1, 1, 3, 3), (1, 1, 2, 2, 2), (1, 1, 2, 2, 3), (1, 1, 2, 3, 3), (1, 1, 3, 3, 3), (1, 2, 2, 2, 2), (1, 2, 2, 2, 3), (1, 2, 2, 3, 3), (1, 2, 3, 3, 3), (1, 3, 3, 3, 3), (2, 2, 2, 2, 2), (2, 2, 2, 2, 3), (2, 2, 2, 3, 3), (2, 2, 3, 3, 3), (2, 3, 3, 3, 3), (3, 3, 3, 3, 3), 'StopIteration: ']
+by name => ([('A',), ('B',), 'StopIteration: '], [('A', 'A'), ('A', 'B'), ('B', 'B'), 'StopIteration: '])
+combinations_with_replacement('AB', -1) => ValueError: r must be non-negative
+combinations_with_replacement('AB', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+combinations_with_replacement('AB', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+combinations_with_replacement('AB', None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+combinations_with_replacement('AB', True) => [('A',), ('B',), 'StopIteration: ']
+combinations_with_replacement('AB', 9223372036854775808) => OverflowError: Python int too large to convert to C ssize_t
+combinations_with_replacement('AB', 9223372036854775807) => MemoryError: 
+__sizeof__ => [0, 8, 16, 40, 56]
+after the end => [(7, ['StopIteration: '], ['StopIteration: '])]
+each is another tuple => [(('A', 'A'), ('A', 'B'), False)]
+permutations('', 0) => [(), 'StopIteration: ']
+permutations('', 1) => ['StopIteration: ']
+permutations('', 2) => ['StopIteration: ']
+permutations('', 3) => ['StopIteration: ']
+permutations('', 4) => ['StopIteration: ']
+permutations('', 5) => ['StopIteration: ']
+permutations('A', 0) => [(), 'StopIteration: ']
+permutations('A', 1) => [('A',), 'StopIteration: ']
+permutations('A', 2) => ['StopIteration: ']
+permutations('A', 3) => ['StopIteration: ']
+permutations('A', 4) => ['StopIteration: ']
+permutations('A', 5) => ['StopIteration: ']
+permutations('AB', 0) => [(), 'StopIteration: ']
+permutations('AB', 1) => [('A',), ('B',), 'StopIteration: ']
+permutations('AB', 2) => [('A', 'B'), ('B', 'A'), 'StopIteration: ']
+permutations('AB', 3) => ['StopIteration: ']
+permutations('AB', 4) => ['StopIteration: ']
+permutations('AB', 5) => ['StopIteration: ']
+permutations('ABC', 0) => [(), 'StopIteration: ']
+permutations('ABC', 1) => [('A',), ('B',), ('C',), 'StopIteration: ']
+permutations('ABC', 2) => [('A', 'B'), ('A', 'C'), ('B', 'A'), ('B', 'C'), ('C', 'A'), ('C', 'B'), 'StopIteration: ']
+permutations('ABC', 3) => [('A', 'B', 'C'), ('A', 'C', 'B'), ('B', 'A', 'C'), ('B', 'C', 'A'), ('C', 'A', 'B'), ('C', 'B', 'A'), 'StopIteration: ']
+permutations('ABC', 4) => ['StopIteration: ']
+permutations('ABC', 5) => ['StopIteration: ']
+permutations('ABCD', 0) => [(), 'StopIteration: ']
+permutations('ABCD', 1) => [('A',), ('B',), ('C',), ('D',), 'StopIteration: ']
+permutations('ABCD', 2) => [('A', 'B'), ('A', 'C'), ('A', 'D'), ('B', 'A'), ('B', 'C'), ('B', 'D'), ('C', 'A'), ('C', 'B'), ('C', 'D'), ('D', 'A'), ('D', 'B'), ('D', 'C'), 'StopIteration: ']
+permutations('ABCD', 3) => [('A', 'B', 'C'), ('A', 'B', 'D'), ('A', 'C', 'B'), ('A', 'C', 'D'), ('A', 'D', 'B'), ('A', 'D', 'C'), ('B', 'A', 'C'), ('B', 'A', 'D'), ('B', 'C', 'A'), ('B', 'C', 'D'), ('B', 'D', 'A'), ('B', 'D', 'C'), ('C', 'A', 'B'), ('C', 'A', 'D'), ('C', 'B', 'A'), ('C', 'B', 'D'), ('C', 'D', 'A'), ('C', 'D', 'B'), ('D', 'A', 'B'), ('D', 'A', 'C'), ('D', 'B', 'A'), ('D', 'B', 'C'), ('D', 'C', 'A'), ('D', 'C', 'B'), 'StopIteration: ']
+permutations('ABCD', 4) => [('A', 'B', 'C', 'D'), ('A', 'B', 'D', 'C'), ('A', 'C', 'B', 'D'), ('A', 'C', 'D', 'B'), ('A', 'D', 'B', 'C'), ('A', 'D', 'C', 'B'), ('B', 'A', 'C', 'D'), ('B', 'A', 'D', 'C'), ('B', 'C', 'A', 'D'), ('B', 'C', 'D', 'A'), ('B', 'D', 'A', 'C'), ('B', 'D', 'C', 'A'), ('C', 'A', 'B', 'D'), ('C', 'A', 'D', 'B'), ('C', 'B', 'A', 'D'), ('C', 'B', 'D', 'A'), ('C', 'D', 'A', 'B'), ('C', 'D', 'B', 'A'), ('D', 'A', 'B', 'C'), ('D', 'A', 'C', 'B'), ('D', 'B', 'A', 'C'), ('D', 'B', 'C', 'A'), ('D', 'C', 'A', 'B'), ('D', 'C', 'B', 'A'), 'StopIteration: ']
+permutations('ABCD', 5) => ['StopIteration: ']
+permutations(range(0, 4), 0) => [(), 'StopIteration: ']
+permutations(range(0, 4), 1) => [(0,), (1,), (2,), (3,), 'StopIteration: ']
+permutations(range(0, 4), 2) => [(0, 1), (0, 2), (0, 3), (1, 0), (1, 2), (1, 3), (2, 0), (2, 1), (2, 3), (3, 0), (3, 1), (3, 2), 'StopIteration: ']
+permutations(range(0, 4), 3) => [(0, 1, 2), (0, 1, 3), (0, 2, 1), (0, 2, 3), (0, 3, 1), (0, 3, 2), (1, 0, 2), (1, 0, 3), (1, 2, 0), (1, 2, 3), (1, 3, 0), (1, 3, 2), (2, 0, 1), (2, 0, 3), (2, 1, 0), (2, 1, 3), (2, 3, 0), (2, 3, 1), (3, 0, 1), (3, 0, 2), (3, 1, 0), (3, 1, 2), (3, 2, 0), (3, 2, 1), 'StopIteration: ']
+permutations(range(0, 4), 4) => [(0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 2, 3, 1), (0, 3, 1, 2), (0, 3, 2, 1), (1, 0, 2, 3), (1, 0, 3, 2), (1, 2, 0, 3), (1, 2, 3, 0), (1, 3, 0, 2), (1, 3, 2, 0), (2, 0, 1, 3), (2, 0, 3, 1), (2, 1, 0, 3), (2, 1, 3, 0), (2, 3, 0, 1), (2, 3, 1, 0), (3, 0, 1, 2), (3, 0, 2, 1), (3, 1, 0, 2), (3, 1, 2, 0), (3, 2, 0, 1), (3, 2, 1, 0), 'StopIteration: ']
+permutations(range(0, 4), 5) => ['StopIteration: ']
+by name => ([('A',), ('B',), 'StopIteration: '], [('A', 'B'), ('B', 'A'), 'StopIteration: '])
+permutations('AB', -1) => ValueError: r must be non-negative
+permutations('AB', 1.5) => TypeError: Expected int as r
+permutations('AB', 'a') => TypeError: Expected int as r
+permutations('AB', None) => [('A', 'B'), ('B', 'A'), 'StopIteration: ']
+permutations('AB', True) => [('A',), ('B',), 'StopIteration: ']
+permutations('AB', 9223372036854775808) => OverflowError: Python int too large to convert to C ssize_t
+permutations('AB', 9223372036854775807) => MemoryError: 
+__sizeof__ => [0, 24, 40, 80, 72]
+after the end => [(7, ['StopIteration: '], ['StopIteration: '])]
+each is another tuple => [(('A', 'B'), ('A', 'C'), False)]
+permutations(x) => ([('A', 'B', 'C'), ('A', 'C', 'B'), ('B', 'A', 'C'), ('B', 'C', 'A'), ('C', 'A', 'B'), ('C', 'B', 'A'), 'StopIteration: '], [(), 'StopIteration: '], [('A', 'B'), ('B', 'A'), 'StopIteration: '], [(1,), 'StopIteration: '])
+what cannot be gone through => ["TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable"]
+---- product
+products => ([(), 'StopIteration: '], [('A',), ('B',), 'StopIteration: '], [('A', 'x'), ('A', 'y'), ('B', 'x'), ('B', 'y'), 'StopIteration: '], ['StopIteration: '], [('A', 'B', 'C'), 'StopIteration: '], [(0, 0, 0), (0, 0, 1), (0, 1, 0), (0, 1, 1), (1, 0, 0), (1, 0, 1), (1, 1, 0), (1, 1, 1), 'StopIteration: '], [('A', 'x', 'A', 'x'), ('A', 'x', 'B', 'x'), ('B', 'x', 'A', 'x'), ('B', 'x', 'B', 'x'), 'StopIteration: '], [(), 'StopIteration: '], [(), 'StopIteration: '], [(), 'StopIteration: '], [('A',), ('B',), 'StopIteration: '], ['StopIteration: '])
+product('AB', repeat=-1) => ValueError: repeat argument cannot be negative
+product('AB', repeat=1.5) => TypeError: 'float' object cannot be interpreted as an integer
+product('AB', repeat='a') => TypeError: 'str' object cannot be interpreted as an integer
+product('AB', repeat=None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+product('AB', repeat=True) => 3
+product('AB', repeat=9223372036854775808) => OverflowError: Python int too large to convert to C ssize_t
+product('AB', repeat=4611686018427387904) => OverflowError: repeat argument too large
+product('AB', repeat=9223372036854775807) => OverflowError: repeat argument too large
+other keywords => ("TypeError: product() got an unexpected keyword argument 'other'", 'TypeError: product() takes at most 1 keyword argument (2 given)', 'TypeError: product() takes at most 1 keyword argument (2 given)', 'TypeError: product() takes at most 1 keyword argument (2 given)')
+__sizeof__ => [0, 8, 16, 40, 0]
+what cannot be gone through => ("TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", [(), 'StopIteration: '])
+all of it is read at once => NameError: name 'iter_logging' is not defined
+all of it is read at once => [(None, ['a', 'b', 'c'])]
+after the end => [(5, ['StopIteration: '])]
+---- compress
+compress => (['A', 'C', 'E', 'F', 'StopIteration: '], ['StopIteration: '], ['StopIteration: '], ['A', 'StopIteration: '], ['A', 'StopIteration: '], ['B', 'StopIteration: '], ['B', 'StopIteration: '], ['B', 'C', 'StopIteration: '])
+which is asked first => [(['b', 'StopIteration: '], ['a', 0, 'b', 1])]
+what cannot be gone through => ("TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable")
+a selector that cannot be told => [(["KeyError: 'from __bool__'"], ['C', 'StopIteration: '])]
+---- count
+counts => ([0, 1, 2], [5, 6, 7], [5, 7, 9], [0, -1, -2], [1.5, 2.5, 3.5], [1, 1.5, 2.0], [0, 3, 6], [2, 3, 4], [0, 0, 0], [1, 2, 3], [1, 2, 3], [1j, (1+1j), (2+1j)], [-3, -2, -1])
+large => ([9223372036854775806, 9223372036854775807, 9223372036854775808], [9223372036854775808, 9223372036854775809, 9223372036854775810], [-9223372036854775808, -9223372036854775807, -9223372036854775806], [1267650600228229401496703205376, 2535301200456458802993406410752, 3802951800684688204490109616128], [9223372036854775807, 9223372036854775808, 9223372036854775809], [0, 9223372036854775808], [-9223372036854775809, -9223372036854775808, -9223372036854775807])
+repr => ('count(0)', 0, 'count(1)')
+repr => ('count(5)', 5, 'count(6)')
+repr => ('count(5)', 5, 'count(6)')
+repr => ('count(5, 2)', 5, 'count(7, 2)')
+repr => ('count(1.5)', 1.5, 'count(2.5)')
+repr => ('count(1, 1.0)', 1, 'count(2.0, 1.0)')
+repr => ('count(1.0)', 1.0, 'count(2.0)')
+repr => ('count(9223372036854775808)', 9223372036854775808, 'count(9223372036854775809)')
+repr => ('count(9223372036854775807)', 9223372036854775807, 'count(9223372036854775808)')
+repr => ('count(0, 0)', 0, 'count(0, 0)')
+repr => ('count(1)', 1, 'count(2)')
+repr => ('count(1)', 1, 'count(2)')
+repr => ('count(0, -1)', 0, 'count(-1, -1)')
+repr => ('count(1267650600228229401496703205376, 1267650600228229401496703205376)', 1267650600228229401496703205376, 'count(2535301200456458802993406410752, 1267650600228229401496703205376)')
+repr => ('count(-1)', -1, 'count(0)')
+repr as it gets there => [('count(9223372036854775805)', 9223372036854775805, 'count(9223372036854775806)', 9223372036854775806, 'count(9223372036854775807)', 9223372036854775807, 'count(9223372036854775808)')]
+of other kinds of number => ([Num(1), Num(2), Num(3)], [1, Num(3), Num(5)], 'count(Num(1), Num(2))', [5, 6, 7], 'count(5)', [I(5), 'TypeError: can only concatenate str (not "int") to str'], [0, 1, 2], 'count(0)', 'count(0, I(2))')
+count('a',) => TypeError: a number is required
+count(None,) => TypeError: a number is required
+count([],) => TypeError: a number is required
+count(1, 'a') => TypeError: a number is required
+count(1, None) => TypeError: a number is required
+count('a', 'b') => TypeError: a number is required
+count(b'1',) => TypeError: a number is required
+---- cycle
+cycles => (['a', 'b', 'c', 'a', 'b', 'c', 'a'], ['StopIteration: '], ['a', 'a', 'a'], ['a', 'b', 'a', 'b', 'a'], [0, 1, 0, 1])
+what is kept is what it gave => [(['a', 'b', 'a', 'b', 'a'], ['a', 'b'])]
+what fails part of the way => [(['a', 'b', 'ValueError: from the iterable'], ['a', 'b', 'a', 'b'])]
+---- dropwhile, takewhile and filterfalse
+dropwhile => ([3, 1, 5, 'StopIteration: '], ['StopIteration: '], ['StopIteration: '], [5, 1, 'StopIteration: '], [0, 1, 'StopIteration: '], ['a', 'b', 'StopIteration: '])
+takewhile => ([1, 2, 'StopIteration: '], ['StopIteration: '], [1, 2, 'StopIteration: '], ['StopIteration: '], [1, 'StopIteration: '])
+filterfalse => ([3, 5, 'StopIteration: '], [0, '', None, 'StopIteration: '], [0, '', 'StopIteration: '], ['StopIteration: '], ['a', 'b', 'StopIteration: '])
+what it is asked of => [([[2, 1, 3, 'StopIteration: '], [1, 'StopIteration: '], [2, 3, 'StopIteration: ']], [1, 2, 1, 2, 1, 2, 1, 3])]
+takewhile has taken one too many => [([1, 'StopIteration: '], [2, 6, 'StopIteration: '])]
+takewhile is over => [([1, 'StopIteration: '], ['StopIteration: '], [2, 6, 'StopIteration: '])]
+dropwhile with what fails => ([(['ZeroDivisionError: division by zero'], ['StopIteration: '])], [(["KeyError: 'from __bool__'"], ["KeyError: 'from __bool__'"])], ["TypeError: 'int' object is not callable"], [5, 'ValueError: from the iterable'], "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable")
+takewhile with what fails => ([([1, 'ZeroDivisionError: division by zero'], [2, 3, 'StopIteration: '])], [(["KeyError: 'from __bool__'"], ["KeyError: 'from __bool__'"])], ["TypeError: 'int' object is not callable"], [1, 'StopIteration: '], "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable")
+filterfalse with what fails => ([(['ZeroDivisionError: division by zero'], ['StopIteration: '])], [(["KeyError: 'from __bool__'"], ["KeyError: 'from __bool__'"])], ["TypeError: 'int' object is not callable"], [5, 'ValueError: from the iterable'], "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable")
+None is only for filterfalse => (["TypeError: 'NoneType' object is not callable"], ["TypeError: 'NoneType' object is not callable"])
+---- groupby
+groups => ([('A', ['A', 'A', 'A', 'A']), ('B', ['B', 'B', 'B']), ('C', ['C', 'C']), ('D', ['D']), ('A', ['A', 'A'])], [], [('A', ['A'])], [(1, [1, 1.0, True]), (2, [2])], [('a', ['a', 'A']), ('b', ['b', 'B'])], [(0, [0, 1]), (1, [2, 3]), (2, [4, 5])], [('a', ['a']), ('b', ['b'])], [('a', ['a']), ('b', ['b'])], [(97, ['a', 'a']), (98, ['b'])])
+a group is over when the next is asked for => [('A', 'B', [], ['B', 'B'])]
+part of a group => [('A', 'A', [('B', ['B', 'B']), ('C', ['C'])], [])]
+groups that are not gone through => ['A', 'B', 'C']
+what a group is => [('_grouper', True, 'groupby', True)]
+with what fails => ('ZeroDivisionError: division by zero', 'ValueError: from the iterable', "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not callable", [(None, [0.5])])
+keys that cannot be compared => ("KeyError: 'from __eq__'", [(Eq(1), [Eq(1), "KeyError: 'from __eq__'"])])
+the same key is not compared => [(Eq(1), [Eq(1), Eq(1), Eq(1)])]
+_grouper => [(['A', 'A', 'StopIteration: '], ['B', 'B', 'StopIteration: '], ['StopIteration: '], None)]
+_grouper() => TypeError: _grouper expected 2 arguments, got 0
+_grouper(1,) => TypeError: _grouper expected 2 arguments, got 1
+_grouper(1, 2) => TypeError: _grouper() argument 1 must be itertools.groupby, not int
+_grouper('groupby',) => TypeError: _grouper expected 2 arguments, got 1
+_grouper('groupby', 1, 2) => TypeError: _grouper expected 2 arguments, got 3
+_grouper('a', 'a') => TypeError: _grouper() argument 1 must be itertools.groupby, not str
+_grouper(None, None) => TypeError: _grouper() argument 1 must be itertools.groupby, not None
+---- islice
+islice('ABCDEFG', *(0,)) => ['StopIteration: ']
+islice('ABCDEFG', *(2,)) => ['A', 'B', 'StopIteration: ']
+islice('ABCDEFG', *(5,)) => ['A', 'B', 'C', 'D', 'E', 'StopIteration: ']
+islice('ABCDEFG', *(100,)) => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(None,)) => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(0, 0)) => ['StopIteration: ']
+islice('ABCDEFG', *(1, 3)) => ['B', 'C', 'StopIteration: ']
+islice('ABCDEFG', *(1, None)) => ['B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(None, 3)) => ['A', 'B', 'C', 'StopIteration: ']
+islice('ABCDEFG', *(None, None)) => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(3, 1)) => ['StopIteration: ']
+islice('ABCDEFG', *(2, 2)) => ['StopIteration: ']
+islice('ABCDEFG', *(0, 10, 2)) => ['A', 'C', 'E', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(1, 10, 3)) => ['B', 'E', 'StopIteration: ']
+islice('ABCDEFG', *(None, None, 2)) => ['A', 'C', 'E', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(None, None, None)) => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(0, None, 1)) => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(1, 2, 100)) => ['B', 'StopIteration: ']
+islice('ABCDEFG', *(10, 20)) => ['StopIteration: ']
+islice('ABCDEFG', *(0, 5, 9223372036854775807)) => ['A', 'StopIteration: ']
+islice('ABCDEFG', *(9223372036854775807,)) => ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']
+islice('ABCDEFG', *(0, 9223372036854775807, 9223372036854775807)) => ['A', 'StopIteration: ']
+islice('ABCDEFG', *(True, 3)) => ['B', 'C', 'StopIteration: ']
+islice('ABCDEFG', *(1, 6, True)) => ['B', 'C', 'D', 'E', 'F', 'StopIteration: ']
+islice('AB', *(-1,)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(1.5,)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *('a',)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(9223372036854775808,)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(-1, 2)) => ValueError: Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, -1)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, -2)) => ValueError: Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(1.5, 2)) => ValueError: Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *('a', 2)) => ValueError: Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, 'a')) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, 1.5)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, 5, 0)) => ValueError: Step for islice() must be a positive integer or None.
+islice('AB', *(0, 5, -1)) => ValueError: Step for islice() must be a positive integer or None.
+islice('AB', *(0, 5, 1.5)) => ValueError: Step for islice() must be a positive integer or None.
+islice('AB', *(0, 5, 'a')) => ValueError: Step for islice() must be a positive integer or None.
+islice('AB', *(9223372036854775808, 5)) => ValueError: Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, 9223372036854775808)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, 5, 9223372036854775808)) => ValueError: Step for islice() must be a positive integer or None.
+islice('AB', *(-9223372036854775808,)) => ValueError: Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(None, -1)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(-1, None)) => ValueError: Indices for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *([],)) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice('AB', *(0, [])) => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+how much it takes => [(['A', 'B', 'StopIteration: '], ['C', 'D', 'E', 'F', 'G', 'StopIteration: ']), (['StopIteration: '], ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: ']), (['B', 'C', 'StopIteration: '], ['D', 'E', 'F', 'G', 'StopIteration: ']), (['A', 'C', 'StopIteration: '], ['E', 'F', 'G', 'StopIteration: ']), (['A', 'C', 'E', 'StopIteration: '], ['F', 'G', 'StopIteration: ']), (['StopIteration: '], ['C', 'D', 'E', 'F', 'G', 'StopIteration: ']), (['StopIteration: '], ['D', 'E', 'F', 'G', 'StopIteration: ']), (['B', 'E', 'StopIteration: '], ['StopIteration: ']), (['A', 'B', 'C', 'D', 'E', 'F', 'G', 'StopIteration: '], ['StopIteration: ']), (['F', 'G', 'StopIteration: '], ['StopIteration: '])]
+after the end => [(['A', 'B', 'StopIteration: '], ['StopIteration: '], ['C', 'D', 'E', 'F', 'G', 'StopIteration: '])]
+with __index__ => (['A', 'B', 'StopIteration: '], ['B', 'D', 'StopIteration: '])
+what fails => ("TypeError: 'int' object is not iterable", ['a', 'b', 'ValueError: from the iterable'], [(['a', 'b', 'ValueError: from the iterable'], ['StopIteration: '])])
+---- pairwise
+pairs => ([('A', 'B'), ('B', 'C'), ('C', 'D'), 'StopIteration: '], ['StopIteration: '], ['StopIteration: '], [('A', 'B'), 'StopIteration: '], [(0, 1), (1, 2), (2, 3), 'StopIteration: '], [(('A', 'B'), ('B', 'C')), 'StopIteration: '])
+after the end => [([('A', 'B'), ('B', 'C'), 'StopIteration: '], ['StopIteration: '], ['StopIteration: '])]
+what fails => ("TypeError: 'int' object is not iterable", [([('a', 'b'), 'ValueError: from the iterable'], ['StopIteration: '])], [(['ValueError: from the iterable'], ['StopIteration: '])], [(['ValueError: from the iterable'], ['StopIteration: '])])
+---- repeat
+repeats => (['a', 'a', 'a'], ['a', 'a', 'a', 'StopIteration: '], ['StopIteration: '], ['StopIteration: '], ['StopIteration: '], ['a', 'a', 'StopIteration: '], ['a', 'StopIteration: '], ['a', 'a'], [None, None, 'StopIteration: '], ['a', 'StopIteration: '], ['a', 'a', 'StopIteration: '])
+repr => ("repeat('a')", 'TypeError: len() of unsized object', ['a'], "repeat('a')", 'TypeError: len() of unsized object')
+repr => ("repeat('a', 3)", 3, ['a'], "repeat('a', 2)", 2)
+repr => ("repeat('a', 0)", 0, ['StopIteration: '], "repeat('a', 0)", 0)
+repr => ("repeat('a', 0)", 0, ['StopIteration: '], "repeat('a', 0)", 0)
+repr => ('repeat([1], 2)', 2, [[1]], 'repeat([1], 1)', 1)
+repr => ("repeat('a', 0)", 0, ['StopIteration: '], "repeat('a', 0)", 0)
+repr => ('repeat(None)', 'TypeError: len() of unsized object', [None], 'repeat(None)', 'TypeError: len() of unsized object')
+repr => ("repeat('a', 9223372036854775807)", 9223372036854775807, ['a'], "repeat('a', 9223372036854775806)", 9223372036854775806)
+the same each time => [True]
+repeat(*(), **{}) => TypeError: repeat() missing required argument 'object' (pos 1)
+repeat(*('a', 'b'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+repeat(*('a', 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+repeat(*('a', None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+repeat(*('a', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+repeat(*('a', 1, 2), **{}) => TypeError: repeat() takes at most 2 arguments (3 given)
+repeat(*('a',), **{'other': 1}) => TypeError: repeat() got an unexpected keyword argument 'other'
+repeat(*('a',), **{'object': 'b'}) => TypeError: argument for repeat() given by name ('object') and position (1)
+repeat(*(), **{'times': 1}) => TypeError: repeat() missing required argument 'object' (pos 1)
+repeat(*('a', 1), **{'times': 1}) => TypeError: repeat() takes at most 2 arguments (3 given)
+repeat(*('a',), **{'times': 'x'}) => TypeError: 'str' object cannot be interpreted as an integer
+list() asks how long => ([1, 1, 1], 1000)
+---- starmap
+starmap => ([32, 9, 'StopIteration: '], ['StopIteration: '], [('a', 'b'), (1,), (), (1,), (0, 1), 'StopIteration: '], ['none', 'StopIteration: '], [2, 4, 'StopIteration: '])
+what fails => ([([32, "TypeError: 'int' object is not iterable"], [9, 'StopIteration: '])], ["TypeError: pow() missing required argument 'exp' (pos 2)"], ["TypeError: 'int' object is not callable"], "TypeError: 'int' object is not iterable", [1.0, 'ZeroDivisionError: division by zero'], [4, 'ValueError: from the iterable'])
+a class derived from tuple is gone through => [('from', '__iter__'), 'StopIteration: ']
+---- tee
+tee => ([['a', 'b', 'c', 'StopIteration: '], ['a', 'b', 'c', 'StopIteration: ']], [['a', 'b', 'c', 'StopIteration: '], ['a', 'b', 'c', 'StopIteration: '], ['a', 'b', 'c', 'StopIteration: ']], (), [['a', 'b', 'c', 'StopIteration: ']], [['StopIteration: '], ['StopIteration: ']], 10, ['_tee', '_tee'])
+each at its own pace => [('a', 'b', 'a', ['c', 'd', 'StopIteration: '], ['b', 'c', 'd', 'StopIteration: '])]
+it is read once => [([['a', 'b', 'c', 'StopIteration: '], ['a', 'b', 'c', 'StopIteration: '], ['a', 'b', 'c', 'StopIteration: ']], ['a', 'b', 'c'])]
+more than a link's worth => [(19900, [0, 1], 19899, ['StopIteration: '], ['StopIteration: '])]
+of a tee => [('a', [['b', 'c', 'd', 'StopIteration: '], ['b', 'c', 'd', 'StopIteration: ']], ['b', 'c', 'd', 'StopIteration: '], ['a', 'b', 'c', 'd', 'StopIteration: '])]
+__copy__ => [('a', ['b', 'c', 'd', 'StopIteration: '], ['b', 'c', 'd', 'StopIteration: '], '_tee', 'TypeError: _tee.__copy__() takes no arguments (1 given)')]
+_tee => (['a', 'b', 'c', 'StopIteration: '], [('a', ['b', 'c', 'StopIteration: '], ['b', 'c', 'StopIteration: '])], "TypeError: 'int' object is not iterable", 'TypeError: _tee expected 1 argument, got 0', 'TypeError: _tee expected 1 argument, got 2', 'TypeError: _tee() takes no keyword arguments')
+tee('ab', -1) => ValueError: n must be >= 0
+tee('ab', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+tee('ab', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+tee('ab', None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+tee('ab', True) => 1
+tee('ab', 9223372036854775808) => OverflowError: Python int too large to convert to C ssize_t
+tee('ab', 9223372036854775807) => MemoryError: 
+what fails => ("TypeError: 'int' object is not iterable", (), 'TypeError: tee expected at least 1 argument, got 0', 'TypeError: tee expected at most 2 arguments, got 3', 'TypeError: itertools.tee() takes no keyword arguments', [(['a', 'b', 'ValueError: from the iterable'], ['a', 'b', 'StopIteration: '], ['StopIteration: '])])
+come back into => [(None, 'RuntimeError: cannot re-enter the tee iterator', 'RuntimeError: cannot re-enter the tee iterator')]
+weakly referred to => [True]
+_tee_dataobject => ('_tee_dataobject', '_tee_dataobject', '_tee_dataobject', '_tee_dataobject')
+_tee_dataobject() => TypeError: teedataobject expected 3 arguments, got 0
+_tee_dataobject('a',) => TypeError: teedataobject expected 3 arguments, got 1
+_tee_dataobject('a', 0) => TypeError: teedataobject expected 3 arguments, got 2
+_tee_dataobject('a', 0, None, 1) => TypeError: teedataobject expected 3 arguments, got 4
+_tee_dataobject('a', (), None) => TypeError: teedataobject() argument 2 must be list, not tuple
+_tee_dataobject('a', 5, None) => TypeError: teedataobject() argument 2 must be list, not int
+_tee_dataobject('a', 58, None) => ValueError: Invalid arguments
+_tee_dataobject('a', 0, 5) => ValueError: Invalid arguments
+_tee_dataobject('a', 1, '_tee_dataobject') => ValueError: Invalid arguments
+_tee_dataobject('a', 57, 5) => ValueError: Invalid arguments
+_tee_dataobject('a', 57, 'x') => ValueError: Invalid arguments
+---- zip_longest
+zip_longest => (['StopIteration: '], [('a',), ('b',), 'StopIteration: '], [('a', 'x'), ('b', 'y'), (None, 'z'), 'StopIteration: '], [('a', 'x', None), ('b', None, None), ('c', None, None), 'StopIteration: '], ['StopIteration: '], [('a', 'x'), ('b', 'y'), ('-', 'z'), 'StopIteration: '], [('a', 'x'), (None, 'y'), 'StopIteration: '], ['StopIteration: '], [('a', []), ('b', []), 'StopIteration: '])
+what has run out is not asked again => [([('a', 'x'), (None, 'y'), (None, 'z'), 'StopIteration: '], ['a', 'x', 'y', 'z'])]
+other keywords => ('TypeError: zip_longest() got an unexpected keyword argument', 'TypeError: zip_longest() got an unexpected keyword argument', 'TypeError: zip_longest() got an unexpected keyword argument')
+what fails => ("TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", [([('a', 'x'), 'ValueError: from the iterable'], ['StopIteration: '])], [([('x', 'a'), 'ValueError: from the iterable'], ['StopIteration: '])])
+after the end => [([('a', 'x'), ('b', None), 'StopIteration: '], ['StopIteration: '])]
+---- the wrong arguments
+accumulate of 0 => TypeError: accumulate() missing required argument 'iterable' (pos 1)
+accumulate of 1 => accumulate
+accumulate of 2 => accumulate
+accumulate of 3 => TypeError: accumulate() takes at most 2 positional arguments (3 given)
+accumulate of 4 => TypeError: accumulate() takes at most 3 arguments (4 given)
+accumulate of 5 => TypeError: accumulate() takes at most 3 arguments (5 given)
+accumulate by a name that it has not => ("TypeError: accumulate() missing required argument 'iterable' (pos 1)", "TypeError: accumulate() got an unexpected keyword argument 'zzz'", "TypeError: accumulate() got an unexpected keyword argument 'zzz'", "TypeError: accumulate() got an unexpected keyword argument 'zzz'")
+accumulate of each kind => ['accumulate', 'accumulate', 'accumulate', 'accumulate', "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable"]
+batched of 0 => TypeError: batched() missing required argument 'iterable' (pos 1)
+batched of 1 => TypeError: batched() missing required argument 'n' (pos 2)
+batched of 2 => TypeError: 'str' object cannot be interpreted as an integer
+batched of 3 => TypeError: batched() takes exactly 2 positional arguments (3 given)
+batched of 4 => TypeError: batched() takes at most 3 arguments (4 given)
+batched of 5 => TypeError: batched() takes at most 3 arguments (5 given)
+batched by a name that it has not => ("TypeError: batched() missing required argument 'iterable' (pos 1)", "TypeError: batched() missing required argument 'n' (pos 2)", "TypeError: batched() got an unexpected keyword argument 'zzz'", "TypeError: batched() got an unexpected keyword argument 'zzz'")
+batched of each kind => ["TypeError: 'str' object cannot be interpreted as an integer", 'batched', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'function' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer"]
+chain of 0 => chain
+chain of 1 => chain
+chain of 2 => chain
+chain of 3 => chain
+chain of 4 => chain
+chain of 5 => chain
+chain by a name that it has not => ('TypeError: chain() takes no keyword arguments', 'TypeError: chain() takes no keyword arguments', 'TypeError: chain() takes no keyword arguments', 'TypeError: chain() takes no keyword arguments')
+chain of each kind => ['chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain', 'chain']
+combinations of 0 => TypeError: combinations() missing required argument 'iterable' (pos 1)
+combinations of 1 => TypeError: combinations() missing required argument 'r' (pos 2)
+combinations of 2 => TypeError: 'str' object cannot be interpreted as an integer
+combinations of 3 => TypeError: combinations() takes at most 2 arguments (3 given)
+combinations of 4 => TypeError: combinations() takes at most 2 arguments (4 given)
+combinations of 5 => TypeError: combinations() takes at most 2 arguments (5 given)
+combinations by a name that it has not => ("TypeError: combinations() missing required argument 'iterable' (pos 1)", "TypeError: combinations() missing required argument 'r' (pos 2)", 'TypeError: combinations() takes at most 2 arguments (3 given)', 'TypeError: combinations() takes at most 2 arguments (3 given)')
+combinations of each kind => ["TypeError: 'str' object cannot be interpreted as an integer", 'combinations', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'function' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer"]
+combinations_with_replacement of 0 => TypeError: combinations_with_replacement() missing required argument 'iterable' (pos 1)
+combinations_with_replacement of 1 => TypeError: combinations_with_replacement() missing required argument 'r' (pos 2)
+combinations_with_replacement of 2 => TypeError: 'str' object cannot be interpreted as an integer
+combinations_with_replacement of 3 => TypeError: combinations_with_replacement() takes at most 2 arguments (3 given)
+combinations_with_replacement of 4 => TypeError: combinations_with_replacement() takes at most 2 arguments (4 given)
+combinations_with_replacement of 5 => TypeError: combinations_with_replacement() takes at most 2 arguments (5 given)
+combinations_with_replacement by a name that it has not => ("TypeError: combinations_with_replacement() missing required argument 'iterable' (pos 1)", "TypeError: combinations_with_replacement() missing required argument 'r' (pos 2)", 'TypeError: combinations_with_replacement() takes at most 2 arguments (3 given)', 'TypeError: combinations_with_replacement() takes at most 2 arguments (3 given)')
+combinations_with_replacement of each kind => ["TypeError: 'str' object cannot be interpreted as an integer", 'combinations_with_replacement', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'function' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer"]
+compress of 0 => TypeError: compress() missing required argument 'data' (pos 1)
+compress of 1 => TypeError: compress() missing required argument 'selectors' (pos 2)
+compress of 2 => compress
+compress of 3 => TypeError: compress() takes at most 2 arguments (3 given)
+compress of 4 => TypeError: compress() takes at most 2 arguments (4 given)
+compress of 5 => TypeError: compress() takes at most 2 arguments (5 given)
+compress by a name that it has not => ("TypeError: compress() missing required argument 'data' (pos 1)", "TypeError: compress() missing required argument 'selectors' (pos 2)", 'TypeError: compress() takes at most 2 arguments (3 given)', 'TypeError: compress() takes at most 2 arguments (3 given)')
+compress of each kind => ['compress', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable"]
+count of 0 => count
+count of 1 => TypeError: a number is required
+count of 2 => TypeError: a number is required
+count of 3 => TypeError: count() takes at most 2 arguments (3 given)
+count of 4 => TypeError: count() takes at most 2 arguments (4 given)
+count of 5 => TypeError: count() takes at most 2 arguments (5 given)
+count by a name that it has not => ("TypeError: count() got an unexpected keyword argument 'zzz'", "TypeError: count() got an unexpected keyword argument 'zzz'", 'TypeError: count() takes at most 2 arguments (3 given)', 'TypeError: count() takes at most 2 arguments (3 given)')
+count of each kind => ['TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'count', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required', 'TypeError: a number is required']
+cycle of 0 => TypeError: cycle expected 1 argument, got 0
+cycle of 1 => cycle
+cycle of 2 => TypeError: cycle expected 1 argument, got 2
+cycle of 3 => TypeError: cycle expected 1 argument, got 3
+cycle of 4 => TypeError: cycle expected 1 argument, got 4
+cycle of 5 => TypeError: cycle expected 1 argument, got 5
+cycle by a name that it has not => ('TypeError: cycle() takes no keyword arguments', 'TypeError: cycle() takes no keyword arguments', 'TypeError: cycle() takes no keyword arguments', 'TypeError: cycle() takes no keyword arguments')
+cycle of each kind => ['TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2', 'TypeError: cycle expected 1 argument, got 2']
+dropwhile of 0 => TypeError: dropwhile expected 2 arguments, got 0
+dropwhile of 1 => TypeError: dropwhile expected 2 arguments, got 1
+dropwhile of 2 => dropwhile
+dropwhile of 3 => TypeError: dropwhile expected 2 arguments, got 3
+dropwhile of 4 => TypeError: dropwhile expected 2 arguments, got 4
+dropwhile of 5 => TypeError: dropwhile expected 2 arguments, got 5
+dropwhile by a name that it has not => ('TypeError: dropwhile() takes no keyword arguments', 'TypeError: dropwhile() takes no keyword arguments', 'TypeError: dropwhile() takes no keyword arguments', 'TypeError: dropwhile() takes no keyword arguments')
+dropwhile of each kind => ['dropwhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'dropwhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'dropwhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'dropwhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable"]
+filterfalse of 0 => TypeError: filterfalse expected 2 arguments, got 0
+filterfalse of 1 => TypeError: filterfalse expected 2 arguments, got 1
+filterfalse of 2 => filterfalse
+filterfalse of 3 => TypeError: filterfalse expected 2 arguments, got 3
+filterfalse of 4 => TypeError: filterfalse expected 2 arguments, got 4
+filterfalse of 5 => TypeError: filterfalse expected 2 arguments, got 5
+filterfalse by a name that it has not => ('TypeError: filterfalse() takes no keyword arguments', 'TypeError: filterfalse() takes no keyword arguments', 'TypeError: filterfalse() takes no keyword arguments', 'TypeError: filterfalse() takes no keyword arguments')
+filterfalse of each kind => ['filterfalse', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'filterfalse', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'filterfalse', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'filterfalse', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable"]
+groupby of 0 => TypeError: groupby() missing required argument 'iterable' (pos 1)
+groupby of 1 => groupby
+groupby of 2 => groupby
+groupby of 3 => TypeError: groupby() takes at most 2 arguments (3 given)
+groupby of 4 => TypeError: groupby() takes at most 2 arguments (4 given)
+groupby of 5 => TypeError: groupby() takes at most 2 arguments (5 given)
+groupby by a name that it has not => ("TypeError: groupby() missing required argument 'iterable' (pos 1)", "TypeError: groupby() got an unexpected keyword argument 'zzz'", 'TypeError: groupby() takes at most 2 arguments (3 given)', 'TypeError: groupby() takes at most 2 arguments (3 given)')
+groupby of each kind => ['groupby', 'groupby', 'groupby', 'groupby', "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable"]
+islice of 0 => TypeError: islice expected at least 2 arguments, got 0
+islice of 1 => TypeError: islice expected at least 2 arguments, got 1
+islice of 2 => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice of 3 => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice of 4 => ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.
+islice of 5 => TypeError: islice expected at most 4 arguments, got 5
+islice by a name that it has not => ('TypeError: islice() takes no keyword arguments', 'TypeError: islice() takes no keyword arguments', 'TypeError: islice() takes no keyword arguments', 'TypeError: islice() takes no keyword arguments')
+islice of each kind => ['ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.', 'islice', 'islice', 'ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.', 'ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.', "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", 'ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.', 'ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.', "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", 'ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.', 'ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.', "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", 'ValueError: Stop argument for islice() must be None or an integer: 0 <= x <= sys.maxsize.']
+pairwise of 0 => TypeError: pairwise expected 1 argument, got 0
+pairwise of 1 => pairwise
+pairwise of 2 => TypeError: pairwise expected 1 argument, got 2
+pairwise of 3 => TypeError: pairwise expected 1 argument, got 3
+pairwise of 4 => TypeError: pairwise expected 1 argument, got 4
+pairwise of 5 => TypeError: pairwise expected 1 argument, got 5
+pairwise by a name that it has not => ('TypeError: pairwise() takes no keyword arguments', 'TypeError: pairwise() takes no keyword arguments', 'TypeError: pairwise() takes no keyword arguments', 'TypeError: pairwise() takes no keyword arguments')
+pairwise of each kind => ['TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2', 'TypeError: pairwise expected 1 argument, got 2']
+permutations of 0 => TypeError: permutations() missing required argument 'iterable' (pos 1)
+permutations of 1 => permutations
+permutations of 2 => TypeError: Expected int as r
+permutations of 3 => TypeError: permutations() takes at most 2 arguments (3 given)
+permutations of 4 => TypeError: permutations() takes at most 2 arguments (4 given)
+permutations of 5 => TypeError: permutations() takes at most 2 arguments (5 given)
+permutations by a name that it has not => ("TypeError: permutations() missing required argument 'iterable' (pos 1)", "TypeError: permutations() got an unexpected keyword argument 'zzz'", 'TypeError: permutations() takes at most 2 arguments (3 given)', 'TypeError: permutations() takes at most 2 arguments (3 given)')
+permutations of each kind => ['TypeError: Expected int as r', 'permutations', 'permutations', 'TypeError: Expected int as r', "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable"]
+product of 0 => product
+product of 1 => product
+product of 2 => product
+product of 3 => product
+product of 4 => product
+product of 5 => product
+product by a name that it has not => ("TypeError: product() got an unexpected keyword argument 'zzz'", "TypeError: product() got an unexpected keyword argument 'zzz'", "TypeError: product() got an unexpected keyword argument 'zzz'", "TypeError: product() got an unexpected keyword argument 'zzz'")
+product of each kind => ['product', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable"]
+repeat of 0 => TypeError: repeat() missing required argument 'object' (pos 1)
+repeat of 1 => repeat
+repeat of 2 => TypeError: 'str' object cannot be interpreted as an integer
+repeat of 3 => TypeError: repeat() takes at most 2 arguments (3 given)
+repeat of 4 => TypeError: repeat() takes at most 2 arguments (4 given)
+repeat of 5 => TypeError: repeat() takes at most 2 arguments (5 given)
+repeat by a name that it has not => ("TypeError: repeat() missing required argument 'object' (pos 1)", "TypeError: repeat() got an unexpected keyword argument 'zzz'", 'TypeError: repeat() takes at most 2 arguments (3 given)', 'TypeError: repeat() takes at most 2 arguments (3 given)')
+repeat of each kind => ["TypeError: 'str' object cannot be interpreted as an integer", 'repeat', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", 'repeat', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", 'repeat', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", 'repeat', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer"]
+starmap of 0 => TypeError: starmap expected 2 arguments, got 0
+starmap of 1 => TypeError: starmap expected 2 arguments, got 1
+starmap of 2 => starmap
+starmap of 3 => TypeError: starmap expected 2 arguments, got 3
+starmap of 4 => TypeError: starmap expected 2 arguments, got 4
+starmap of 5 => TypeError: starmap expected 2 arguments, got 5
+starmap by a name that it has not => ('TypeError: starmap() takes no keyword arguments', 'TypeError: starmap() takes no keyword arguments', 'TypeError: starmap() takes no keyword arguments', 'TypeError: starmap() takes no keyword arguments')
+starmap of each kind => ['starmap', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'starmap', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'starmap', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'starmap', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable"]
+takewhile of 0 => TypeError: takewhile expected 2 arguments, got 0
+takewhile of 1 => TypeError: takewhile expected 2 arguments, got 1
+takewhile of 2 => takewhile
+takewhile of 3 => TypeError: takewhile expected 2 arguments, got 3
+takewhile of 4 => TypeError: takewhile expected 2 arguments, got 4
+takewhile of 5 => TypeError: takewhile expected 2 arguments, got 5
+takewhile by a name that it has not => ('TypeError: takewhile() takes no keyword arguments', 'TypeError: takewhile() takes no keyword arguments', 'TypeError: takewhile() takes no keyword arguments', 'TypeError: takewhile() takes no keyword arguments')
+takewhile of each kind => ['takewhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'takewhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'takewhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", 'takewhile', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable"]
+zip_longest of 0 => zip_longest
+zip_longest of 1 => zip_longest
+zip_longest of 2 => zip_longest
+zip_longest of 3 => zip_longest
+zip_longest of 4 => zip_longest
+zip_longest of 5 => zip_longest
+zip_longest by a name that it has not => ('TypeError: zip_longest() got an unexpected keyword argument', 'TypeError: zip_longest() got an unexpected keyword argument', 'TypeError: zip_longest() got an unexpected keyword argument', 'TypeError: zip_longest() got an unexpected keyword argument')
+zip_longest of each kind => ['zip_longest', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable", "TypeError: 'function' object is not iterable"]
+tee of 0 => TypeError: tee expected at least 1 argument, got 0
+tee of 1 => tuple
+tee of 2 => TypeError: 'str' object cannot be interpreted as an integer
+tee of 3 => TypeError: tee expected at most 2 arguments, got 3
+tee of 4 => TypeError: tee expected at most 2 arguments, got 4
+tee of 5 => TypeError: tee expected at most 2 arguments, got 5
+tee by a name that it has not => ('TypeError: itertools.tee() takes no keyword arguments', 'TypeError: itertools.tee() takes no keyword arguments', 'TypeError: itertools.tee() takes no keyword arguments', 'TypeError: itertools.tee() takes no keyword arguments')
+tee of each kind => ["TypeError: 'str' object cannot be interpreted as an integer", 'tuple', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'function' object is not iterable", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'function' object cannot be interpreted as an integer"]
+chain.from_iterable of 0 => TypeError: chain.from_iterable() takes exactly one argument (0 given)
+chain.from_iterable of 1 => chain
+chain.from_iterable of 2 => TypeError: chain.from_iterable() takes exactly one argument (2 given)
+chain.from_iterable of 3 => TypeError: chain.from_iterable() takes exactly one argument (3 given)
+chain.from_iterable of 4 => TypeError: chain.from_iterable() takes exactly one argument (4 given)
+chain.from_iterable of 5 => TypeError: chain.from_iterable() takes exactly one argument (5 given)
+chain.from_iterable by a name that it has not => ('TypeError: chain.from_iterable() takes no keyword arguments', 'TypeError: chain.from_iterable() takes no keyword arguments', 'TypeError: chain.from_iterable() takes no keyword arguments', 'TypeError: chain.from_iterable() takes no keyword arguments')
+chain.from_iterable of each kind => ['TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)', 'TypeError: chain.from_iterable() takes exactly one argument (2 given)']
+accumulate.__new__ => ('TypeError: itertools.accumulate.__new__(): not enough arguments', 'TypeError: itertools.accumulate.__new__(int): int is not a subtype of itertools.accumulate', 'TypeError: itertools.accumulate.__new__(X): X is not a type object (int)', 'TypeError: itertools.accumulate.__new__(object): object is not a subtype of itertools.accumulate', 'TypeError: object.__new__(itertools.accumulate) is not safe, use itertools.accumulate.__new__()')
+accumulate.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.accumulate' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.accumulate' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.accumulate' object but received a 'int'")
+batched.__new__ => ('TypeError: itertools.batched.__new__(): not enough arguments', 'TypeError: itertools.batched.__new__(int): int is not a subtype of itertools.batched', 'TypeError: itertools.batched.__new__(X): X is not a type object (int)', 'TypeError: itertools.batched.__new__(object): object is not a subtype of itertools.batched', 'TypeError: object.__new__(itertools.batched) is not safe, use itertools.batched.__new__()')
+batched.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.batched' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.batched' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.batched' object but received a 'int'")
+chain.__new__ => ('TypeError: itertools.chain.__new__(): not enough arguments', 'TypeError: itertools.chain.__new__(int): int is not a subtype of itertools.chain', 'TypeError: itertools.chain.__new__(X): X is not a type object (int)', 'TypeError: itertools.chain.__new__(object): object is not a subtype of itertools.chain', 'TypeError: object.__new__(itertools.chain) is not safe, use itertools.chain.__new__()')
+chain.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.chain' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.chain' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.chain' object but received a 'int'")
+combinations.__new__ => ('TypeError: itertools.combinations.__new__(): not enough arguments', 'TypeError: itertools.combinations.__new__(int): int is not a subtype of itertools.combinations', 'TypeError: itertools.combinations.__new__(X): X is not a type object (int)', 'TypeError: itertools.combinations.__new__(object): object is not a subtype of itertools.combinations', 'TypeError: object.__new__(itertools.combinations) is not safe, use itertools.combinations.__new__()')
+combinations.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.combinations' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.combinations' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.combinations' object but received a 'int'")
+combinations_with_replacement.__new__ => ('TypeError: itertools.combinations_with_replacement.__new__(): not enough arguments', 'TypeError: itertools.combinations_with_replacement.__new__(int): int is not a subtype of itertools.combinations_with_replacement', 'TypeError: itertools.combinations_with_replacement.__new__(X): X is not a type object (int)', 'TypeError: itertools.combinations_with_replacement.__new__(object): object is not a subtype of itertools.combinations_with_replacement', 'TypeError: object.__new__(itertools.combinations_with_replacement) is not safe, use itertools.combinations_with_replacement.__new__()')
+combinations_with_replacement.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.combinations_with_replacement' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.combinations_with_replacement' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.combinations_with_replacement' object but received a 'int'")
+compress.__new__ => ('TypeError: itertools.compress.__new__(): not enough arguments', 'TypeError: itertools.compress.__new__(int): int is not a subtype of itertools.compress', 'TypeError: itertools.compress.__new__(X): X is not a type object (int)', 'TypeError: itertools.compress.__new__(object): object is not a subtype of itertools.compress', 'TypeError: object.__new__(itertools.compress) is not safe, use itertools.compress.__new__()')
+compress.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.compress' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.compress' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.compress' object but received a 'int'")
+count.__new__ => ('TypeError: itertools.count.__new__(): not enough arguments', 'TypeError: itertools.count.__new__(int): int is not a subtype of itertools.count', 'TypeError: itertools.count.__new__(X): X is not a type object (int)', 'TypeError: itertools.count.__new__(object): object is not a subtype of itertools.count', 'TypeError: object.__new__(itertools.count) is not safe, use itertools.count.__new__()')
+count.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.count' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.count' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.count' object but received a 'int'")
+cycle.__new__ => ('TypeError: itertools.cycle.__new__(): not enough arguments', 'TypeError: itertools.cycle.__new__(int): int is not a subtype of itertools.cycle', 'TypeError: itertools.cycle.__new__(X): X is not a type object (int)', 'TypeError: itertools.cycle.__new__(object): object is not a subtype of itertools.cycle', 'TypeError: object.__new__(itertools.cycle) is not safe, use itertools.cycle.__new__()')
+cycle.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.cycle' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.cycle' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.cycle' object but received a 'int'")
+dropwhile.__new__ => ('TypeError: itertools.dropwhile.__new__(): not enough arguments', 'TypeError: itertools.dropwhile.__new__(int): int is not a subtype of itertools.dropwhile', 'TypeError: itertools.dropwhile.__new__(X): X is not a type object (int)', 'TypeError: itertools.dropwhile.__new__(object): object is not a subtype of itertools.dropwhile', 'TypeError: object.__new__(itertools.dropwhile) is not safe, use itertools.dropwhile.__new__()')
+dropwhile.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.dropwhile' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.dropwhile' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.dropwhile' object but received a 'int'")
+filterfalse.__new__ => ('TypeError: itertools.filterfalse.__new__(): not enough arguments', 'TypeError: itertools.filterfalse.__new__(int): int is not a subtype of itertools.filterfalse', 'TypeError: itertools.filterfalse.__new__(X): X is not a type object (int)', 'TypeError: itertools.filterfalse.__new__(object): object is not a subtype of itertools.filterfalse', 'TypeError: object.__new__(itertools.filterfalse) is not safe, use itertools.filterfalse.__new__()')
+filterfalse.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.filterfalse' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.filterfalse' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.filterfalse' object but received a 'int'")
+groupby.__new__ => ('TypeError: itertools.groupby.__new__(): not enough arguments', 'TypeError: itertools.groupby.__new__(int): int is not a subtype of itertools.groupby', 'TypeError: itertools.groupby.__new__(X): X is not a type object (int)', 'TypeError: itertools.groupby.__new__(object): object is not a subtype of itertools.groupby', 'TypeError: object.__new__(itertools.groupby) is not safe, use itertools.groupby.__new__()')
+groupby.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.groupby' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.groupby' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.groupby' object but received a 'int'")
+islice.__new__ => ('TypeError: itertools.islice.__new__(): not enough arguments', 'TypeError: itertools.islice.__new__(int): int is not a subtype of itertools.islice', 'TypeError: itertools.islice.__new__(X): X is not a type object (int)', 'TypeError: itertools.islice.__new__(object): object is not a subtype of itertools.islice', 'TypeError: object.__new__(itertools.islice) is not safe, use itertools.islice.__new__()')
+islice.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.islice' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.islice' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.islice' object but received a 'int'")
+pairwise.__new__ => ('TypeError: itertools.pairwise.__new__(): not enough arguments', 'TypeError: itertools.pairwise.__new__(int): int is not a subtype of itertools.pairwise', 'TypeError: itertools.pairwise.__new__(X): X is not a type object (int)', 'TypeError: itertools.pairwise.__new__(object): object is not a subtype of itertools.pairwise', 'TypeError: object.__new__(itertools.pairwise) is not safe, use itertools.pairwise.__new__()')
+pairwise.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.pairwise' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.pairwise' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.pairwise' object but received a 'int'")
+permutations.__new__ => ('TypeError: itertools.permutations.__new__(): not enough arguments', 'TypeError: itertools.permutations.__new__(int): int is not a subtype of itertools.permutations', 'TypeError: itertools.permutations.__new__(X): X is not a type object (int)', 'TypeError: itertools.permutations.__new__(object): object is not a subtype of itertools.permutations', 'TypeError: object.__new__(itertools.permutations) is not safe, use itertools.permutations.__new__()')
+permutations.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.permutations' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.permutations' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.permutations' object but received a 'int'")
+product.__new__ => ('TypeError: itertools.product.__new__(): not enough arguments', 'TypeError: itertools.product.__new__(int): int is not a subtype of itertools.product', 'TypeError: itertools.product.__new__(X): X is not a type object (int)', 'TypeError: itertools.product.__new__(object): object is not a subtype of itertools.product', 'TypeError: object.__new__(itertools.product) is not safe, use itertools.product.__new__()')
+product.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.product' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.product' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.product' object but received a 'int'")
+repeat.__new__ => ('TypeError: itertools.repeat.__new__(): not enough arguments', 'TypeError: itertools.repeat.__new__(int): int is not a subtype of itertools.repeat', 'TypeError: itertools.repeat.__new__(X): X is not a type object (int)', 'TypeError: itertools.repeat.__new__(object): object is not a subtype of itertools.repeat', 'TypeError: object.__new__(itertools.repeat) is not safe, use itertools.repeat.__new__()')
+repeat.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.repeat' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.repeat' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.repeat' object but received a 'int'")
+starmap.__new__ => ('TypeError: itertools.starmap.__new__(): not enough arguments', 'TypeError: itertools.starmap.__new__(int): int is not a subtype of itertools.starmap', 'TypeError: itertools.starmap.__new__(X): X is not a type object (int)', 'TypeError: itertools.starmap.__new__(object): object is not a subtype of itertools.starmap', 'TypeError: object.__new__(itertools.starmap) is not safe, use itertools.starmap.__new__()')
+starmap.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.starmap' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.starmap' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.starmap' object but received a 'int'")
+takewhile.__new__ => ('TypeError: itertools.takewhile.__new__(): not enough arguments', 'TypeError: itertools.takewhile.__new__(int): int is not a subtype of itertools.takewhile', 'TypeError: itertools.takewhile.__new__(X): X is not a type object (int)', 'TypeError: itertools.takewhile.__new__(object): object is not a subtype of itertools.takewhile', 'TypeError: object.__new__(itertools.takewhile) is not safe, use itertools.takewhile.__new__()')
+takewhile.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.takewhile' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.takewhile' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.takewhile' object but received a 'int'")
+zip_longest.__new__ => ('TypeError: itertools.zip_longest.__new__(): not enough arguments', 'TypeError: itertools.zip_longest.__new__(int): int is not a subtype of itertools.zip_longest', 'TypeError: itertools.zip_longest.__new__(X): X is not a type object (int)', 'TypeError: itertools.zip_longest.__new__(object): object is not a subtype of itertools.zip_longest', 'TypeError: object.__new__(itertools.zip_longest) is not safe, use itertools.zip_longest.__new__()')
+zip_longest.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools.zip_longest' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools.zip_longest' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools.zip_longest' object but received a 'int'")
+_grouper.__new__ => ('TypeError: itertools._grouper.__new__(): not enough arguments', 'TypeError: itertools._grouper.__new__(int): int is not a subtype of itertools._grouper', 'TypeError: itertools._grouper.__new__(X): X is not a type object (int)', 'TypeError: itertools._grouper.__new__(object): object is not a subtype of itertools._grouper', 'TypeError: object.__new__(itertools._grouper) is not safe, use itertools._grouper.__new__()')
+_grouper.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools._grouper' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools._grouper' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools._grouper' object but received a 'int'")
+_tee.__new__ => ('TypeError: itertools._tee.__new__(): not enough arguments', 'TypeError: itertools._tee.__new__(int): int is not a subtype of itertools._tee', 'TypeError: itertools._tee.__new__(X): X is not a type object (int)', 'TypeError: itertools._tee.__new__(object): object is not a subtype of itertools._tee', 'TypeError: object.__new__(itertools._tee) is not safe, use itertools._tee.__new__()')
+_tee.__next__ of something else => ("TypeError: descriptor '__next__' requires a 'itertools._tee' object but received a 'int'", "TypeError: descriptor '__next__' of 'itertools._tee' object needs an argument", "TypeError: descriptor '__iter__' requires a 'itertools._tee' object but received a 'int'")
+_tee_dataobject.__new__ => ('TypeError: itertools._tee_dataobject.__new__(): not enough arguments', 'TypeError: itertools._tee_dataobject.__new__(int): int is not a subtype of itertools._tee_dataobject', 'TypeError: itertools._tee_dataobject.__new__(X): X is not a type object (int)', 'TypeError: itertools._tee_dataobject.__new__(object): object is not a subtype of itertools._tee_dataobject', 'TypeError: object.__new__(itertools._tee_dataobject) is not safe, use itertools._tee_dataobject.__new__()')
+_tee_dataobject.__next__ of something else => None
+---- derived from
+derived from accumulate => [('D', True, True, None, 1, [1, 3, 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: accumulate() got an unexpected keyword argument 'keyword'
+without => TypeError: accumulate() got an unexpected keyword argument 'keyword'
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from batched => [('D', True, True, None, 1, [('a', 'b'), ('c',), 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: batched() got an unexpected keyword argument 'keyword'
+without => TypeError: batched() got an unexpected keyword argument 'keyword'
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from chain => [('D', True, True, None, 1, ['a', 'b', 'c'])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: chain() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from combinations => [('D', True, True, None, 1, [('a', 'b'), ('a', 'c'), ('b', 'c')])]
+with an __init__ of its own, and a keyword => TypeError: combinations() takes at most 2 arguments (3 given)
+without => TypeError: combinations() takes at most 2 arguments (3 given)
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from combinations_with_replacement => [('D', True, True, None, 1, [('a', 'a'), ('a', 'b'), ('b', 'b')])]
+with an __init__ of its own, and a keyword => TypeError: combinations_with_replacement() takes at most 2 arguments (3 given)
+without => TypeError: combinations_with_replacement() takes at most 2 arguments (3 given)
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from compress => [('D', True, True, None, 1, ['a', 'b', 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: compress() takes at most 2 arguments (3 given)
+without => TypeError: compress() takes at most 2 arguments (3 given)
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from count => [('D', True, True, None, 1, [5, 6, 7])]
+with an __init__ of its own, and a keyword => TypeError: count() got an unexpected keyword argument 'keyword'
+without => TypeError: count() got an unexpected keyword argument 'keyword'
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from cycle => [('D', True, True, None, 1, ['a', 'b', 'a'])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: cycle() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from dropwhile => [('D', True, True, None, 1, [5, 'StopIteration: '])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: dropwhile() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from filterfalse => [('D', True, True, None, 1, [5, 'StopIteration: '])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: filterfalse() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from groupby => [('D', True, True, None, 1, ['a', 'b', 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: groupby() got an unexpected keyword argument 'keyword'
+without => TypeError: groupby() got an unexpected keyword argument 'keyword'
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from islice => [('D', True, True, None, 1, ['a', 'b', 'StopIteration: '])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: islice() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from pairwise => [('D', True, True, None, 1, [('a', 'b'), ('b', 'c'), 'StopIteration: '])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: pairwise() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from permutations => [('D', True, True, None, 1, [('a', 'b'), ('b', 'a'), 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: permutations() got an unexpected keyword argument 'keyword'
+without => TypeError: permutations() got an unexpected keyword argument 'keyword'
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from product => [('D', True, True, None, 1, [('a', 'c'), ('b', 'c'), 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: product() got an unexpected keyword argument 'keyword'
+without => TypeError: product() got an unexpected keyword argument 'keyword'
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from repeat => [('D', True, True, None, 1, ['a', 'a', 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: repeat() takes at most 2 arguments (3 given)
+without => TypeError: repeat() takes at most 2 arguments (3 given)
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from starmap => [('D', True, True, None, 1, [8, 'StopIteration: '])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: starmap() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from takewhile => [('D', True, True, None, 1, [1, 'StopIteration: '])]
+with an __init__ of its own, and a keyword => K
+without => TypeError: takewhile() takes no keyword arguments
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+derived from zip_longest => [('D', True, True, None, 1, [('a', 'c'), ('b', None), 'StopIteration: '])]
+with an __init__ of its own, and a keyword => TypeError: zip_longest() got an unexpected keyword argument
+without => TypeError: zip_longest() got an unexpected keyword argument
+with a __next__ of its own => ('its own', ['its own', 'its own'], [('its own',), ('its own',)])
+_grouper cannot be => TypeError: type 'itertools._grouper' is not an acceptable base type
+_tee cannot be => TypeError: type 'itertools._tee' is not an acceptable base type
+_tee_dataobject cannot be => TypeError: type 'itertools._tee_dataobject' is not an acceptable base type
+chain.from_iterable of a derived class => D
+repr of a derived class => ('D(3)', "D('a', 2)", 'D(1.5, 2)')
+they are not to be changed => ("TypeError: cannot set 'x' attribute of immutable type 'itertools.count'", "AttributeError: 'itertools.count' object has no attribute 'x' and no __dict__ for setting new attributes", "TypeError: cannot set 'from_iterable' attribute of immutable type 'itertools.chain'")
+nor pickled or copied => ["TypeError: cannot pickle 'count' object", "TypeError: cannot pickle 'chain' object", "TypeError: cannot pickle 'repeat' object", "TypeError: cannot pickle 'cycle' object", "TypeError: cannot pickle 'islice' object"]
+---- what the one inside says as it ends
+accumulate => ('the value',)
+batched => ()
+chain => ()
+compress data => ('the value',)
+compress selectors => ('the value',)
+cycle => ()
+dropwhile => ('the value',)
+filterfalse => ('the value',)
+groupby => ()
+islice => ('the value',)
+islice from 3 => ('the value',)
+pairwise => ('the value',)
+starmap => ('the value',)
+takewhile => ('the value',)
+tee => ()
+zip_longest => ()
+---- at random, against what the documentation says that they are
+wrong []

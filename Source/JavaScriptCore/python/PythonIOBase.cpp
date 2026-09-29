@@ -743,15 +743,6 @@ IOModuleState& ioState(JSGlobalObject* globalObject)
     return state;
 }
 
-// PyNumber_Check()
-static bool isNumber(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    auto& names = vm.pythonNames();
-    PyType* type = typeOf(globalObject, value);
-    return type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || type->isSubtypeOf(globalObject->pyRealm()->typeComplex());
-}
-
 // _io_open_impl(). A null String is None.
 JSValue openFile(JSGlobalObject* globalObject, JSValue file, const String& mode, int buffering, const String& encoding, const String& errors, const String& newline, bool closesDescriptor, JSValue opener)
 {

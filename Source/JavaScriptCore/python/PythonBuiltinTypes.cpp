@@ -905,6 +905,11 @@ void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
 }
 
 // obj.__weakref__: the first of the weak references to it. There is no making one yet, so there is none.
+void addGenericGetAttribute(JSGlobalObject* globalObject, PyType* type)
+{
+    addMethods(globalObject, type, { { "__getattribute__"_s, objectGetAttribute } });
+}
+
 // ---- type
 
 PYTHON_NATIVE(typeNew)

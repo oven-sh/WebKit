@@ -79,6 +79,15 @@ JSValue intFromUInt64(JSGlobalObject* globalObject, uint64_t value)
     return JSBigInt::createFrom(globalObject, value);
 }
 
+// PyNumber_Check()
+bool isNumber(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    PyType* type = typeOf(globalObject, value);
+    return type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || type->isSubtypeOf(globalObject->pyRealm()->typeComplex());
+}
+
 std::optional<int> toCIntOfFormat(JSGlobalObject* globalObject, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

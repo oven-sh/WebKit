@@ -502,10 +502,16 @@ unsigned PyType::hooks(JSGlobalObject* globalObject)
     auto isOneOf = [&] (JSValue value, Function a, Function b) {
         return value && value.isCell() && (value.asCell() == realm->function(a) || value.asCell() == realm->function(b));
     };
+    // A class that is written in C++ can have a __getattribute__ of its own that is object's by another name, as one has in CPython if it is made when its module is and says that its tp_getattro is
+    // PyObject_GenericGetAttr(). See addGenericGetAttribute().
+    auto isObjectsOwn = [&] (JSValue value) {
+        auto* function = value && value.isCell() ? dynamicDowncast<JSFunction>(value.asCell()) : nullptr;
+        return function && function->isHostFunction() && function->nativeFunction() == uncheckedDowncast<JSFunction>(realm->function(Function::ObjectGetAttribute))->nativeFunction();
+    };
     unsigned flags = 0;
     // What module's does besides is done for a module in any case. See getAttribute().
     JSValue getAttribute = lookup(vm, names.dunder_getattribute);
-    if (!isOneOf(getAttribute, Function::ObjectGetAttribute, Function::TypeGetAttribute) && !isOneOf(getAttribute, Function::ModuleGetAttribute, Function::ModuleGetAttribute))
+    if (!isOneOf(getAttribute, Function::ObjectGetAttribute, Function::TypeGetAttribute) && !isOneOf(getAttribute, Function::ModuleGetAttribute, Function::ModuleGetAttribute) && !isObjectsOwn(getAttribute))
         flags |= HasCustomGetAttribute;
     if (lookup(vm, names.dunder_getattr))
         flags |= HasGetAttr;

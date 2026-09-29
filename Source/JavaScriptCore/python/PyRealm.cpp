@@ -60,6 +60,11 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_threadModule.visit(visitor);
     thisObject->m_codecRegistry.visit(visitor);
     thisObject->m_importState.visit(visitor);
+    {
+        Locker locker { thisObject->m_moduleStatesLock };
+        for (auto& state : thisObject->m_moduleStates.values())
+            state->visitChildren(visitor);
+    }
     thisObject->m_ioModule.visit(visitor);
     thisObject->m_posixModule.visit(visitor);
     thisObject->m_ast.visit(visitor);
@@ -158,6 +163,13 @@ static void putDocOfBuiltinType(VM& vm, JSGlobalObject* globalObject, PyType* ty
         return;
     auto* description = Python::findTypeDescription(type->nameWithoutModule(globalObject));
     type->putDirect(vm, vm.pythonNames().dunder_doc, description && !description->doc.isNull() ? JSValue(jsString(vm, String(description->doc))) : jsUndefined());
+}
+
+Python::NativeState& PyRealm::addModuleState(std::unique_ptr<Python::NativeState>&& state)
+{
+    Locker locker { m_moduleStatesLock };
+    const void* kind = state->kind();
+    return *m_moduleStates.add(kind, WTF::move(state)).iterator->value;
 }
 
 void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)

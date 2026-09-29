@@ -776,6 +776,7 @@ python/PythonExceptionTypes.cpp
 python/PythonGenerators.cpp
 python/PythonGenericAlias.cpp
 python/PythonIterators.cpp
+python/PythonItertools.cpp
 python/PythonLifecycle.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp

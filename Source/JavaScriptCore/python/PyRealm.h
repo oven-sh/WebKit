@@ -26,6 +26,7 @@
 #pragma once
 
 #include "JSObject.h"
+#include "PyStateObject.h"
 #include "PyType.h"
 #include "PythonMonitoring.h"
 #include "PythonASTModule.h"
@@ -37,6 +38,8 @@
 #include "PythonThreadModule.h"
 #include "PythonWarnings.h"
 #include "WeakGCMap.h"
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
 
 namespace JSC {
 
@@ -348,6 +351,15 @@ public:
     Python::ThreadModuleState& threadModule() { return m_threadModule; }
     Python::CodecRegistryState& codecRegistry() { return m_codecRegistry; }
     Python::ImportState& importState() { return m_importState; }
+    // What a module that is written in C++ keeps for the realm, its classes above all: what CPython has as the state of the module. It is a struct derived from NativeState, of which there is one, made when it is first
+    // asked for. What it has in a WriteBarrier is owned by the realm.
+    template<typename State>
+    State& moduleState()
+    {
+        if (auto* state = m_moduleStates.get(State::staticKind()))
+            return static_cast<State&>(*state);
+        return static_cast<State&>(addModuleState(makeUnique<State>()));
+    }
     Python::IOModuleState& ioModule() { return m_ioModule; }
     Python::PosixModuleState& posixModule() { return m_posixModule; }
     // What whoever embeds the engine had to say, which it was asked when this was made.
@@ -403,6 +415,10 @@ private:
     Python::ThreadModuleState m_threadModule;
     Python::CodecRegistryState m_codecRegistry;
     Python::ImportState m_importState;
+    JS_EXPORT_PRIVATE Python::NativeState& addModuleState(std::unique_ptr<Python::NativeState>&&);
+    // The collector goes through them while the program is running, so it is not added to while it does.
+    Lock m_moduleStatesLock;
+    UncheckedKeyHashMap<const void*, std::unique_ptr<Python::NativeState>> m_moduleStates;
     Python::IOModuleState m_ioModule;
     Python::PosixModuleState m_posixModule;
     Python::Configuration m_configuration;
