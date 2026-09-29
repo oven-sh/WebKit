@@ -235,7 +235,7 @@ mc = operator.methodcaller
 
 
 class M:
-    def m(self, *a, **k): return (a, k)
+    def m(self, /, *a, **k): return (a, k)
 
 
 t("what it calls", lambda: (mc("upper")("ab"), mc("split", "b")("abc"), mc("m")(M()), mc("m", 1, 2)(M()), mc("m", x=1)(M()), mc("m", 1, x=2, y=3)(M()), mc("m", *range(10))(M()), mc("m", *range(10), **{"k%d" % i: i for i in range(10)})(M()), mc("m", name="n", self="s")(M()), mc("encode", encoding="ascii")("a"), mc(type("S", (str,), {})("upper"))("a")))

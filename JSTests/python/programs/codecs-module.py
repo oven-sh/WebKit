@@ -70,7 +70,7 @@ for name, data in (("utf_16_ex", UTF16), ("utf_32_ex", UTF32)):
     for order in (-1, 0, 1, 7):
         for final in (False, True):
             t("%s_decode, byteorder %d, final=%s" % (name, order, final), lambda: [attempt(getattr(_codecs, name + "_decode"), s, "replace", order, final) for s in data])
-t("what is left out", lambda: (_codecs.utf_8_decode(b"\xe2\x82"), _codecs.utf_16_decode(b"a"), _codecs.utf_7_decode(b"+AG"), _codecs.unicode_escape_decode(b"\\x4"), _codecs.raw_unicode_escape_decode(b"\\u1"), _codecs.utf_16_ex_decode(b"\xff\xfea"), _codecs.utf_32_ex_decode(b"\x00\x00\xfe\xff")))
+t("what is left out", lambda: [attempt(f, b) for f, b in ((_codecs.utf_8_decode, b"\xe2\x82"), (_codecs.utf_16_decode, b"a"), (_codecs.utf_7_decode, b"+AG"), (_codecs.unicode_escape_decode, b"\\x4"), (_codecs.raw_unicode_escape_decode, b"\\u1"), (_codecs.utf_16_ex_decode, b"\xff\xfea"), (_codecs.utf_32_ex_decode, b"\x00\x00\xfe\xff"))])
 
 print("---- in pieces")
 
