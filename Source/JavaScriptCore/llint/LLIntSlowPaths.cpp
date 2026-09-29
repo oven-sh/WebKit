@@ -1028,14 +1028,29 @@ static bool tryToSetUpGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm
     return true;
 }
 
-// A variable of a later script is a property of the global object with no new structure, and the inline cache of the
-// JIT keeps "no such property" for a global object. Such a result does not count toward the JIT.
-static ALWAYS_INLINE bool isAbsenceOnGlobalObject(JSValue baseValue, const PropertySlot& slot)
+static NEVER_INLINE bool hasGlobalObjectOnChain(JSCell* cell)
 {
-    if (!slot.isUnset() || !baseValue.isCell())
+    for (;;) {
+        JSType type = cell->type();
+        if (type == GlobalObjectType || type == GlobalProxyType)
+            return true;
+        if (!cell->isObject())
+            return false;
+        JSValue prototype = asObject(cell)->getPrototypeDirect();
+        if (!prototype.isObject())
+            return false;
+        cell = prototype.asCell();
+    }
+}
+
+// A variable of a later script is a property of the global object with no new structure, and the inline cache of the
+// JIT keeps "no such property" for a global object, as receiver or on the chain. Such a result does not count toward
+// the JIT.
+static ALWAYS_INLINE bool isAbsenceThatAGlobalObjectCanEnd(JSValue baseValue, const PropertySlot& slot)
+{
+    if (!slot.isUnset() || !baseValue.isCell()) [[likely]]
         return false;
-    JSType type = baseValue.asCell()->type();
-    return type == GlobalObjectType || type == GlobalProxyType;
+    return hasGlobalObjectOnChain(baseValue.asCell());
 }
 
 // Counts one result that a prototype load or unset cache can be for. The site tries to cache the result that
@@ -1083,7 +1098,7 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     CodeBlock::LLIntGetByIdGuards* guardsInProtoLoadMode = nullptr;
     if (metadata.mode == GetByIdMode::ProtoLoad) [[unlikely]]
         guardsInProtoLoadMode = guardsOfSiteInProtoLoadMode(codeBlock, bytecodeIndex);
-    if (!isAbsenceOnGlobalObject(baseValue, slot)) [[likely]] {
+    if (!isAbsenceThatAGlobalObjectCanEnd(baseValue, slot)) [[likely]] {
         if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
             codeBlock->noteLLIntInlineCacheMiss(metadata.missCount);
         else if (guardsInProtoLoadMode)

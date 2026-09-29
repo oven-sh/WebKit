@@ -458,11 +458,14 @@ private:
     bool m_hasCheckpoints : 1;
     TriState m_quickDFGTierUp : 2 { TriState::Indeterminate };
     bool m_quickFTLTierUp : 1 { false };
-    bool m_isExemptFromStartupJITDeferral : 1 { false };
     unsigned m_numberOfArrayProfiles { 0 };
 
 public:
     ConcurrentJSLock m_lock;
+private:
+    // Not one of the bits above: the collector writes m_age while the mutator writes this.
+    bool m_isExemptFromStartupJITDeferral { false };
+public:
 #if ENABLE(JIT)
     RefPtr<BaselineJITCode> m_unlinkedBaselineCode;
 #endif

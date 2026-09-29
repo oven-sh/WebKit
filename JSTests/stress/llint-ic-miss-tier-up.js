@@ -244,8 +244,9 @@ if (options.useLLIntICs && (missCount > 8 || !missCount)) {
     shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 4 : 0, "the count of replaced() after one more miss");
 }
 
-// A read of a global object that finds nothing does not count: the inline cache of the JIT keeps "no such property"
-// for a global object after a later script declares the variable. The same read of other objects counts.
+// A read that finds nothing does not count if the receiver is a global object or has one on its chain: the inline
+// cache of the JIT keeps "no such property" for a global object after a later script declares the variable. The
+// same read of other objects counts.
 {
     function absentOnGlobalObject(o) {
         const missing = o.notAPropertyOfAnyObjectHere;
@@ -254,6 +255,15 @@ if (options.useLLIntICs && (missCount > 8 || !missCount)) {
     shouldBe(firstCallOutOfLLInt(absentOnGlobalObject, i => globalThis), 0, "absentOnGlobalObject must stay in the LLInt");
     if (options.useLLIntICs)
         shouldBe($vm.llintGetByIdMissCounts(absentOnGlobalObject)[0], 0, "the count of absentOnGlobalObject");
+
+    function absentThroughGlobalObject(o) {
+        const missing = o.notAPropertyOfAnyObjectHere;
+        return $vm.llintTrue();
+    }
+    const inheritors = makeObjects(16).map(o => Object.setPrototypeOf(o, Object.create(globalThis)));
+    shouldBe(firstCallOutOfLLInt(absentThroughGlobalObject, i => inheritors[i % inheritors.length]), 0, "absentThroughGlobalObject must stay in the LLInt");
+    if (options.useLLIntICs)
+        shouldBe($vm.llintGetByIdMissCounts(absentThroughGlobalObject)[0], 0, "the count of absentThroughGlobalObject");
 
     function absentOnObjects(o) {
         const missing = o.notAPropertyOfAnyObjectHere;
@@ -341,6 +351,8 @@ if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && !opt
     // After the compile for the other realm, the counter waits for thresholdForJITSoon again. Then this realm gets
     // the code that the other realm has.
     const latest = Math.ceil(options.thresholdForJITSoon / 15) + 2;
+    if (!callsThere)
+        throw new Error("the function of the other realm was not in the LLInt when the counter got to the threshold");
     if (callsThere > latest)
         throw new Error("the function of the other realm left the LLInt after " + callsThere + " calls, expected " + latest + " or fewer");
     if (callsHere > latest)
