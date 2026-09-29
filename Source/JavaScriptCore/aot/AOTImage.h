@@ -75,6 +75,7 @@ struct ImageHeader {
     uint32_t numberOfRegExps;
     uint32_t textOfRegExpsOffset;
     // For telling what an address is in (whatIsAt()).
+    uint32_t numbersOfFunctionsOffset; // uint32_t, by index: what the function goes by in a type (typeOfFunction()). Only Options::aotVerifiesFacts() looks.
     uint32_t startsOfFunctionsOffset; // uint32_t, by index, which is the order they are in: where each starts, in the code. And one more, which is beyond everything.
     uint32_t granulesOfCodeOffset; // uint32_t: for each 1 << shiftOfGranuleOfCode bytes of the code, the last function to start no later than they do.
     uint32_t callSitesOffset; // See callSiteAt().

@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTOperations.h"
 
+#include "AOTImage.h"
+
 #if ENABLE(FTL_JIT)
 
 #include "AOTInlineCaches.h"
@@ -630,6 +632,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
 {
     Type type = static_cast<Type>(highHalfOfType) << 64 | lowHalfOfType;
     Type actual = typeOfValue(JSValue::decode(encodedValue));
+    // Which function it is, if it is one of the program's.
+    if (actual & TFunctionTag) {
+        if (auto* function = dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()); function && !function->isHostFunction()) {
+            Image* image = Image::withCode();
+            uint32_t index = function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall);
+            if (image && function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall) && index < image->header().numberOfFunctions) {
+                if (uint32_t number = image->at<uint32_t>(image->header().numbersOfFunctionsOffset)[index])
+                    actual = (actual & ~TFunction) | typeOfFunction(number);
+            } else if (!function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)) {
+                // One that there is no code for: every call of it was made part of whoever made it. There is no telling which it is.
+                actual = (actual & ~TWhicheverFunction) | (type & TWhicheverFunction);
+            }
+        }
+    }
     // (Nothing: what a stub takes for there being no exception.)
     if (isSubtype(actual, type)) [[likely]]
         return 0;
@@ -656,6 +672,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
         dumpType(WTF::dataFile(), type);
     dataLog(" and is ");
     dumpType(WTF::dataFile(), actual);
+    if (auto* function = (actual & TFunctionTag) ? dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()) : nullptr; function && !function->isHostOrBuiltinFunction())
+        dataLog(" (index ", function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall), ", entry ", RawHex(function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)), ")");
     dataLogLn();
     // Where that is, the way anything that goes wrong in a program says where it went wrong.
     JSObject* error = createError(globalObject, "the stack:"_s);

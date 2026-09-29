@@ -32,6 +32,7 @@
 
 #include "AOTCompiler.h"
 #include "AOTTypeTable.h"
+#include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
 #include "BaselineJITCode.h"
@@ -6153,7 +6154,7 @@ struct BytecodeLinkEncoder::Impl {
             SymbolTableEntry::Fast entry = symbolTable->get(Identifier::fromString(vm, string).impl());
             if (entry.isNull() || !entry.varOffset().isScope())
                 continue;
-            result.append({ entry.scopeOffset().offset(), bindings[i].holdsWhatItWasDeclaredWith(), !!(bindings[i].flags & Graph::Binding::Escapes) });
+            result.append({ entry.scopeOffset().offset(), bindings[i].holdsWhatItWasDeclaredWith(), !!(bindings[i].flags & Graph::Binding::Escapes), !!(bindings[i].flags & Graph::Binding::IsVisibleFromOutside) });
         }
         return result;
     }
@@ -6316,6 +6317,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (!codeBlock)
                     continue;
                 JSCell* scope = codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell();
+                variableFacts->noteScopeOfModule(scope);
                 if (!linkages[index]) {
                     variableFacts->giveUpOnScope(scope);
                     continue;
@@ -6336,6 +6338,36 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& variable : variablesWrittenNativelyOfLink)
                 variableFacts->join(variable, AOT::TAll);
         }
+        // Options::aotFollowsFunctions(): every function there is has a number, and something is kept of each.
+        Vector<unsigned> modulesOfNumberedFunctions { 0 };
+        auto moduleOfFunctionNumbered = [&](uint32_t number) { return modulesOfNumberedFunctions[number]; };
+        AOT::FunctionsOfProgram functionsOfProgram;
+        bool followsFunctions = Options::aotFollowsFunctions() && variableFacts && Options::aotTypesParametersOfClosedFunctions();
+        if (followsFunctions) {
+            std::map<std::tuple<uint32_t, uint32_t, uint32_t>, uint32_t> numberOfKey;
+            for (auto& function : functionsToCompile) {
+                auto result = numberOfKey.try_emplace({ modules[function.module].entryOffset + 1, function.key.start, static_cast<uint32_t>(function.key.kind) }, 0);
+                if (result.second) {
+                    AOT::KnownFunction known;
+                    known.executable = function.executable;
+                    RELEASE_ASSERT(describe(function.executable, known));
+                    known.isProven = true;
+                    factsOfFunctions.append(makeUnique<AOT::ProgramFacts>());
+                    known.facts = factsOfFunctions.last().get();
+                    result.first->second = functionsOfProgram.add(known);
+                    known.facts->number = result.first->second;
+                    modulesOfNumberedFunctions.append(function.module);
+                }
+                uint32_t number = result.first->second;
+                functionsOfProgram.isAlso(number, function.executable);
+                AOT::ProgramFacts* facts = functionsOfProgram.function(number)->facts;
+                factsOfExecutables.add(function.executable, facts);
+                if (function.forCall)
+                    factsOfCode.add(function.forCall, facts);
+            }
+            AOT::setFunctionsOfProgram(&functionsOfProgram);
+        }
+        auto forgetFunctionsOfProgram = makeScopeExit([] { AOT::setFunctionsOfProgram(nullptr); });
         {
             MonotonicTime before = MonotonicTime::now();
             for (auto& hintsOfModule : hints) {
@@ -6392,7 +6424,69 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
             RELEASE_ASSERT(!unreadable.load());
-            if (Options::aotTypesParametersOfClosedFunctions()) {
+            if (followsFunctions) {
+                // Where a function goes is seen from where it is made: by an instruction, or when a module is set up, for a variable that whoever
+                // put the program together has kept an eye on. One that comes about in any other way is anybody's.
+                BitVector isMadeWhereItCanBeSeen(functionsOfProgram.size() + 1);
+                for (auto& job : jobs) {
+                    for (const auto& instruction : job.codeBlock->instructions()) {
+                        UnlinkedFunctionExecutable* made = nullptr;
+                        switch (instruction->opcodeID()) {
+                        case op_new_func:
+                            made = job.codeBlock->functionDecl(instruction->as<OpNewFunc>().m_functionDecl);
+                            break;
+                        case op_new_func_exp:
+                            made = job.codeBlock->functionExpr(instruction->as<OpNewFuncExp>().m_functionDecl);
+                            break;
+                        case op_new_generator_func:
+                            made = job.codeBlock->functionDecl(instruction->as<OpNewGeneratorFunc>().m_functionDecl);
+                            break;
+                        case op_new_generator_func_exp:
+                            made = job.codeBlock->functionExpr(instruction->as<OpNewGeneratorFuncExp>().m_functionDecl);
+                            break;
+                        case op_new_async_func:
+                            made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncFunc>().m_functionDecl);
+                            break;
+                        case op_new_async_func_exp:
+                            made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncFuncExp>().m_functionDecl);
+                            break;
+                        case op_new_async_generator_func:
+                            made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncGeneratorFunc>().m_functionDecl);
+                            break;
+                        case op_new_async_generator_func_exp:
+                            made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl);
+                            break;
+                        default:
+                            break;
+                        }
+                        if (made)
+                            isMadeWhereItCanBeSeen.set(functionsOfProgram.numberOf(made));
+                    }
+                }
+                for (auto& hintsOfModule : hints) {
+                    if (!hintsOfModule)
+                        continue;
+                    hintsOfModule->forEachProven([&](const AOT::KnownFunction& function) {
+                        uint32_t number = functionsOfProgram.numberOf(function.executable);
+                        if (function.isVisibleFromOutside)
+                            function.facts->expose(AOT::ProgramFacts::BundlerSaysItEscapes);
+                        else if (function.isDeclaration)
+                            isMadeWhereItCanBeSeen.set(number);
+                    });
+                }
+                for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
+                    const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                    function.facts->isClosed = !!function.forCall;
+                    if (!function.forCall)
+                        function.facts->expose(AOT::ProgramFacts::HasNoCodeForACall);
+                    else if (!isModuleOfProgram(moduleOfFunctionNumbered(number)))
+                        function.facts->expose(AOT::ProgramFacts::IsNotOfTheProgram);
+                    else if (!isMadeWhereItCanBeSeen.get(number))
+                        function.facts->expose(AOT::ProgramFacts::IsNotMadeWhereItCanBeSeen);
+                    else if (AOT::mayGetHoldOfItself(function.forCall))
+                        function.facts->expose(AOT::ProgramFacts::MayGetHoldOfItself);
+                }
+            } else if (Options::aotTypesParametersOfClosedFunctions()) {
                 for (auto& hintsOfModule : hints) {
                     if (!hintsOfModule)
                         continue;
@@ -6435,6 +6529,17 @@ struct BytecodeLinkEncoder::Impl {
                     summaries[it->value].functions.append(&function);
                     summaries[it->value].facts = function.facts;
                 });
+            }
+            for (uint32_t number = 1; followsFunctions && number <= functionsOfProgram.size(); ++number) {
+                const AOT::KnownFunction* function = functionsOfProgram.function(number);
+                if (!function->forCall)
+                    continue;
+                auto it = summaryOfCode.find(function->forCall);
+                if (it == summaryOfCode.end())
+                    continue;
+                indexOfSummary.add(function, it->value);
+                summaries[it->value].functions.append(function);
+                summaries[it->value].facts = function->facts;
             }
             Vector<unsigned> worklist;
             for (unsigned i = 0; i < summaries.size(); ++i)
@@ -6491,6 +6596,42 @@ struct BytecodeLinkEncoder::Impl {
                     }
                 }
                 worklist = copyToVector(next);
+            }
+            if (followsFunctions) {
+                unsigned withCode = 0;
+                unsigned closed = 0;
+                unsigned neverCalled = 0;
+                for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
+                    const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                    function.facts->isClosed = function.forCall && !function.facts->isExposed.load();
+                    withCode += !!function.forCall;
+                    closed += function.facts->isClosed;
+                    neverCalled += function.facts->isClosed && !function.facts->parameterTypes[0].load();
+                }
+                if (Options::aotReportStats()) [[unlikely]] {
+                    static constexpr ASCIILiteral whys[] = { "?"_s, "the bundler says it escapes"_s, "is not made where it can be seen"_s, "may get hold of itself"_s, "is not of the program"_s, "has no code for a call"_s,
+                        "used by"_s, "passed to who knows what"_s, "passed as this"_s, "passed beyond the parameters"_s, "called in some other way (a list of arguments, or the callee may be something else)"_s, "returned to who knows whom"_s,
+                        "one of several in a phi"_s, "one of several in a homed register"_s, "one of several in a variable"_s, "one of several in a parameter"_s, "one of several returned"_s, "lost by what hands it on"_s,
+                        "put in a variable of a module that can be got at"_s, "put in a variable that was given up on"_s, "put who knows where"_s, "put in a variable of a name that is read from who knows where"_s, "read in a way that is not proven"_s };
+                    UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reasons;
+                    for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
+                        if (uint32_t why = functionsOfProgram.function(number)->facts->whyExposed.load())
+                            reasons.add(why, 0).iterator->value++;
+                    }
+                    for (auto& entry : reasons) {
+                        uint32_t user = entry.key >> 8;
+                        if ((entry.key & 0xff) == AOT::ProgramFacts::LostByWhatHandsItOn)
+                            dataLogLn("  EXPOSED ", entry.value, " lost by ", opcodeNames[user]);
+                        else if ((entry.key & 0xff) != AOT::ProgramFacts::UsedBy)
+                            dataLogLn("  EXPOSED ", entry.value, " ", whys[entry.key & 0xff]);
+                        else if (user < 1000)
+                            dataLogLn("  EXPOSED ", entry.value, " used by ", opcodeNames[user]);
+                        else
+                            dataLogLn("  EXPOSED ", entry.value, " used by a node of kind ", user - 1000);
+                    }
+                }
+                if (Options::aotReportStats()) [[unlikely]]
+                    dataLogLn("AOT: of ", withCode, " functions that there is code to call, ", closed, " get nowhere that is not reckoned with (CLOSED), of which ", neverCalled, " are never seen to be called");
             }
             if (Options::aotLogsFacts()) [[unlikely]] {
                 // Once more, now that it is settled, for each to say what it goes by and what it adds.

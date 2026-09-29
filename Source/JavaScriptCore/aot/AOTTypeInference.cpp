@@ -71,6 +71,14 @@ public:
                 }
             }
         }
+        if (calleesGivenMore && Options::aotFollowsFunctions() && functionsOfProgram()) {
+            for (BasicBlock* block : m_graph.m_rpo) {
+                for (Node* phi : block->phis)
+                    noteWhereValuesGoIn(phi);
+                for (Node* node : block->nodes)
+                    noteWhereValuesGoIn(node);
+            }
+        }
         // What is still None is code that no execution reaches with a value. It gets compiled all the same.
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* phi : block->phis) {
@@ -91,6 +99,210 @@ public:
     Vector<const KnownFunction*>* calleesGivenMore { nullptr };
 
 private:
+    // ---- Options::aotFollowsFunctions(). See abi/DESIGN-types.md, for now.
+
+    // The value gets somewhere that is not reckoned with.
+    void expose(Type type, uint32_t why)
+    {
+        const KnownFunction* function = functionsOfProgram()->function(functionThatIs(type));
+        if (!function || !function->facts)
+            return;
+        if (function->facts->expose(why) && !calleesGivenMore->contains(function))
+            calleesGivenMore->append(function);
+    }
+
+    // It is now part of something of which it can no longer be told that it is there: nobody who gets it from there knows to say where it goes.
+    void noteThatItIsPartOf(Type whole, Type part, uint32_t why)
+    {
+        if (uint32_t function = functionThatIs(part); function && functionThatIs(whole) != function)
+            expose(part, why);
+    }
+    void noteJoin(Type before, Type added, uint32_t why)
+    {
+        noteThatItIsPartOf(before | added, before, why);
+        noteThatItIsPartOf(before | added, added, why);
+    }
+    static uint32_t usedBy(Node* user) { return ProgramFacts::UsedBy | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8; }
+
+    void exposeWhatIsUsedBy(Node* user)
+    {
+        for (auto& use : user->uses)
+            expose(use.node->type, usedBy(user));
+    }
+
+    void noteWhereArgumentsGo(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv)
+    {
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        bool isProven = false;
+        const KnownFunction* known = m_graph.knownCallee(node, &isProven);
+        // (What noteArgumentsOf() passes on is passed on. The rest of what is passed, nobody keeps track of.)
+        unsigned followed = known && isProven && known->forCall && known->facts && known->facts->isClosed ? std::min<unsigned>(known->forCall->numParameters(), ProgramFacts::mostParameters) : 0;
+        for (auto& use : node->uses) {
+            // Calling something is not a way of getting hold of it, for anybody but itself.
+            if (use.reg == calleeRegister && use.reg.offset() != firstArgument) {
+                if (!followed)
+                    noteCallOfWhoKnowsWhat(use.node->type);
+                continue;
+            }
+            int index = use.reg.offset() - firstArgument;
+            if (index >= 1 && static_cast<unsigned>(index) < followed && static_cast<unsigned>(index) < argc)
+                continue;
+            expose(use.node->type, !followed ? ProgramFacts::PassedToWhoKnowsWhat : !index ? ProgramFacts::PassedAsThis : ProgramFacts::PassedBeyondParameters);
+        }
+    }
+
+    // A call that is not made as a call of that function and no other: it passes what it passes.
+    void noteCallOfWhoKnowsWhat(Type callee) { expose(callee, ProgramFacts::CalledInSomeOtherWay); }
+
+    void noteWhereValuesGoIn(Node* user)
+    {
+        switch (user->kind) {
+        case NodeKind::Phi:
+        case NodeKind::Narrow:
+            for (auto& use : user->uses)
+                noteThatItIsPartOf(user->type, use.node->type, ProgramFacts::OneOfSeveralInPhi);
+            return;
+        case NodeKind::SetStack:
+            noteThatItIsPartOf(m_graph.homedTypes[m_graph.registerIndex(user->reg)], user->uses[0].node->type, ProgramFacts::OneOfSeveralInHomedRegister);
+            return;
+        // (It looks. What it stands in front of is a user in its own right.)
+        case NodeKind::Guard:
+        // (One of the things that something else makes.)
+        case NodeKind::Proj:
+            return;
+        case NodeKind::Bytecode:
+            break;
+        default:
+            exposeWhatIsUsedBy(user);
+            return;
+        }
+        auto exposeAllBut = [&](VirtualRegister harmless) {
+            for (auto& use : user->uses) {
+                if (use.reg != harmless)
+                    expose(use.node->type, usedBy(user));
+            }
+        };
+        switch (user->opcode) {
+        // ---- Looking at it.
+        case op_get_by_id:
+        case op_get_by_id_direct:
+        case op_get_length:
+        case op_in_by_id:
+        case op_del_by_id:
+        case op_get_prototype_of:
+        case op_typeof:
+        case op_typeof_is_undefined:
+        case op_typeof_is_object:
+        case op_typeof_is_function:
+        case op_is_empty:
+        case op_is_undefined_or_null:
+        case op_is_boolean:
+        case op_is_number:
+        case op_is_big_int:
+        case op_is_object:
+        case op_is_callable:
+        case op_is_constructor:
+        case op_is_cell_with_type:
+        case op_has_structure_with_flags:
+        case op_eq_null:
+        case op_neq_null:
+        case op_not:
+        case op_stricteq:
+        case op_nstricteq:
+        case op_jstricteq:
+        case op_jnstricteq:
+        case op_jtrue:
+        case op_jfalse:
+        case op_jeq_null:
+        case op_jneq_null:
+        case op_jundefined_or_null:
+        case op_jnundefined_or_null:
+        case op_jeq_ptr:
+        case op_jneq_ptr:
+        case op_get_parent_scope:
+        case op_set_function_name:
+        case op_instanceof:
+        case op_check_tdz:
+            return;
+        case op_get_from_scope: {
+            // What it may well read, for all that it cannot be told for certain: then what it gets does not say which function it is.
+            bool isProven = false;
+            if (const KnownFunction* known = m_graph.knownFunctionReadBy(user, &isProven); known && !isProven)
+                expose(typeOfClosureOf(known->executable), ProgramFacts::ReadInAWayThatIsNotProven);
+            return;
+        }
+        case op_get_by_val:
+            return exposeAllBut(user->as<OpGetByVal>().m_base);
+        case op_in_by_val:
+            return exposeAllBut(user->as<OpInByVal>().m_base);
+        case op_del_by_val:
+            return exposeAllBut(user->as<OpDelByVal>().m_base);
+        case op_put_by_id:
+            return exposeAllBut(user->as<OpPutById>().m_base);
+        case op_put_by_val:
+            return exposeAllBut(user->as<OpPutByVal>().m_base);
+        case op_put_by_val_direct:
+            return exposeAllBut(user->as<OpPutByValDirect>().m_base);
+
+        // ---- The same thing by another name, if that is what is made of it.
+        case op_check_type:
+        case op_to_this:
+        case op_to_object:
+        case op_identity_with_profile:
+        case op_resolve_scope:
+            for (auto& use : user->uses)
+                noteThatItIsPartOf(user->type, use.node->type, ProgramFacts::LostByWhatHandsItOn | static_cast<uint32_t>(user->opcode) << 8);
+            return;
+
+        // ---- Scopes are not values. (What is put in them: noteWhatIsPutInVariablesBy().)
+        case op_put_to_scope:
+        case op_create_lexical_environment:
+        case op_new_func:
+        case op_new_func_exp:
+        case op_new_generator_func:
+        case op_new_generator_func_exp:
+        case op_new_async_func:
+        case op_new_async_func_exp:
+        case op_new_async_generator_func:
+        case op_new_async_generator_func_exp:
+            return;
+
+        // ---- Handing it on.
+        case op_call:
+            return noteWhereArgumentsGo(user, user->as<OpCall>().m_callee, user->as<OpCall>().m_argc, user->as<OpCall>().m_argv);
+        case op_call_ignore_result:
+            return noteWhereArgumentsGo(user, user->as<OpCallIgnoreResult>().m_callee, user->as<OpCallIgnoreResult>().m_argc, user->as<OpCallIgnoreResult>().m_argv);
+        case op_tail_call: {
+            noteWhereArgumentsGo(user, user->as<OpTailCall>().m_callee, user->as<OpTailCall>().m_argc, user->as<OpTailCall>().m_argv);
+            noteWhatIsReturned(resultOfCall(user));
+            return;
+        }
+        case op_ret:
+            return noteWhatIsReturned(user->use(user->as<OpRet>().m_value)->type);
+        default:
+            exposeWhatIsUsedBy(user);
+            return;
+        }
+    }
+
+    void noteWhatIsReturned(Type type)
+    {
+        const ProgramFacts* facts = m_graph.facts();
+        if (!facts || !facts->isClosed || facts->isExposed.load(std::memory_order_relaxed)) {
+            expose(type, ProgramFacts::ReturnedToWhoKnowsWhom);
+            return;
+        }
+        noteJoin(facts->returnType.join(type & TTop), type, ProgramFacts::OneOfSeveralReturned);
+    }
+
+    Type typeOfClosureOf(UnlinkedFunctionExecutable* executable)
+    {
+        if (!Options::aotFollowsFunctions() || !functionsOfProgram())
+            return TFunction;
+        uint32_t number = functionsOfProgram()->numberOf(executable);
+        return number ? typeOfFunction(number) : TFunction;
+    }
+
     void noteWhatIsPutInVariablesBy(Node* node)
     {
         VariableFacts* facts = m_graph.variableFacts();
@@ -103,10 +315,28 @@ private:
         switch (node->opcode) {
         case op_put_to_scope:
             if (Variable variable = m_graph.variableAccessedBy(node)) {
-                facts->join(variable, node->use(node->as<OpPutToScope>().m_value)->type);
+                Type put = node->use(node->as<OpPutToScope>().m_value)->type;
+                Type before = facts->join(variable, put);
+                if (Options::aotFollowsFunctions() && functionsOfProgram()) {
+                    UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl();
+                    // A variable of a module can be got at from outside it, in ways that are not reads of the variable, unless whoever put the program together says not.
+                    const CalleeHints* hints = m_graph.calleeHints();
+                    const KnownFunction* known = hints && hints->scopeOfVariables() == variable.scope ? hints->find(name, variable.offset) : nullptr;
+                    bool isOfSomeModule = facts->isScopeOfModule(variable.scope);
+                    if (facts->hasGivenUpOn(variable, name))
+                        expose(put, ProgramFacts::PutInVariableGivenUpOn);
+                    else if (facts->isReadFromWhoKnowsWhere(name))
+                        expose(put, ProgramFacts::PutInVariableReadFromWhoKnowsWhere);
+                    else if (isOfSomeModule && (!known || known->isVisibleFromOutside))
+                        expose(put, ProgramFacts::PutInVariableOfModule);
+                    else
+                        noteJoin(before, put, ProgramFacts::OneOfSeveralInVariable);
+                }
                 if (!m_graph.nameForLog().isNull()) [[unlikely]]
                     dataLogLn("FACTLOG put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` scope ", RawPointer(variable.scope), " offset ", variable.offset, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), ": ", TypeDump(node->use(node->as<OpPutToScope>().m_value)->type));
-            } else if (!m_graph.nameForLog().isNull()) [[unlikely]]
+            } else if (Options::aotFollowsFunctions() && functionsOfProgram())
+                expose(node->use(node->as<OpPutToScope>().m_value)->type, ProgramFacts::PutWhoKnowsWhere);
+            if (!m_graph.variableAccessedBy(node) && !m_graph.nameForLog().isNull()) [[unlikely]]
                 dataLogLn("FACTLOG put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` WHO KNOWS WHERE in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
             return;
         case op_create_lexical_environment:
@@ -165,6 +395,8 @@ private:
             Type type = i < argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
             Type before = known->facts->parameterTypes[i].join(type);
             givesMore |= (before | type) != before;
+            if (Options::aotFollowsFunctions() && functionsOfProgram())
+                noteJoin(before, type, ProgramFacts::OneOfSeveralInParameter);
         }
         // (One with no parameters is reached all the same.)
         Type before = known->facts->parameterTypes[0].join(TTop);
@@ -584,14 +816,21 @@ private:
         case op_new_array_with_species:
             return TAnyObject;
         case op_new_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewFunc>().m_functionDecl));
         case op_new_func_exp:
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewFuncExp>().m_functionDecl));
         case op_new_generator_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewGeneratorFunc>().m_functionDecl));
         case op_new_generator_func_exp:
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewGeneratorFuncExp>().m_functionDecl));
         case op_new_async_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewAsyncFunc>().m_functionDecl));
         case op_new_async_func_exp:
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewAsyncFuncExp>().m_functionDecl));
         case op_new_async_generator_func:
+            return typeOfClosureOf(node->graph->codeBlock()->functionDecl(node->as<OpNewAsyncGeneratorFunc>().m_functionDecl));
         case op_new_async_generator_func_exp:
-            return TFunction;
+            return typeOfClosureOf(node->graph->codeBlock()->functionExpr(node->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl));
         case op_spread:
         case op_get_property_enumerator:
             return TCellOther;
@@ -678,7 +917,7 @@ private:
         case op_get_from_scope: {
             bool isProven = false;
             if (const KnownFunction* known = m_graph.knownFunctionReadBy(node, &isProven); known && isProven)
-                return known->isDeclaration ? TFunction : TFunction | TUndefined | TEmpty;
+                return known->isDeclaration ? typeOfClosureOf(known->executable) : typeOfClosureOf(known->executable) | TUndefined | TEmpty;
             if (VariableFacts* facts = m_graph.variableFacts()) {
                 if (Variable variable = m_graph.variableAccessedBy(node)) {
                     auto bytecode = node->as<OpGetFromScope>();

@@ -597,6 +597,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
     info.isOnlyCalledDirectly = facts && facts->isClosed;
+    info.numberOfFunction = facts ? facts->number : 0;
     for (auto& frame : graph.inlineFrames)
         info.inlineFrames.append({ frame.parent, frame.callSite, frame.knownCallee, frame.isTailCall });
     info.sitesOfSpreads = WTF::move(graph.sitesOfSpreads);

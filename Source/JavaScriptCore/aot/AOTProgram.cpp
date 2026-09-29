@@ -130,6 +130,12 @@ void VariableFacts::giveUpOnName(UniquedStringImpl* name)
     m_namesGivenUpOn.add(name);
 }
 
+void VariableFacts::noteThatNameIsReadFromWhoKnowsWhere(UniquedStringImpl* name)
+{
+    Locker locker { m_givenUpLock };
+    m_namesReadFromWhoKnowsWhere.add(name);
+}
+
 void VariableFacts::giveUpOnScope(const void* scope)
 {
     Locker locker { m_givenUpLock };
@@ -158,16 +164,23 @@ Type VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned re
     return type;
 }
 
-void VariableFacts::join(Variable variable, Type type)
+WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionsOfProgram);
+
+static const FunctionsOfProgram* s_functionsOfProgram;
+void setFunctionsOfProgram(const FunctionsOfProgram* functions) { s_functionsOfProgram = functions; }
+const FunctionsOfProgram* functionsOfProgram() { return s_functionsOfProgram; }
+
+Type VariableFacts::join(Variable variable, Type type)
 {
     Shard& shard = shardFor(variable);
     Locker locker { shard.lock };
     auto& cell = shard.cells.ensure({ variable.scope, variable.offset }, [] { return makeUnique<Cell>(); }).iterator->value;
     Type before = cell->type.load();
     if ((before | type) == before)
-        return;
+        return before;
     cell->type.store(before | type);
     cell->grew = true;
+    return before;
 }
 
 Vector<unsigned> VariableFacts::giveUpOnWhatIsReadAndNeverMade(unsigned& count)
@@ -267,6 +280,7 @@ void ModuleHints::prove()
         Variable& variable = entry.value;
         variable.function.isProven = variable.binding.holdsWhatItWasDeclaredWith && variable.numberOfFunctions == 1 && variable.isDescribed;
         variable.function.escapes = variable.binding.escapes;
+        variable.function.isVisibleFromOutside = variable.binding.isVisibleFromOutside;
         // (It is strict code, which nobody can ask what it was called as. Function.prototype.caller can ask the other kind.)
         variable.function.needsNoFunctionObject = variable.function.isProven && variable.function.forCall && !needsFunctionObject(variable.function.forCall);
     }
@@ -280,7 +294,7 @@ const void* ModuleHints::scopeOfVariables() const
 void ModuleHints::noteEscape(unsigned scopeOffset)
 {
     if (auto it = m_variables.find(scopeOffset); it != m_variables.end())
-        it->value.function.escapes = true;
+        it->value.function.escapes = it->value.function.isVisibleFromOutside = true;
 }
 
 unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)

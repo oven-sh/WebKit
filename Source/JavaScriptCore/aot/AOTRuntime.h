@@ -569,6 +569,7 @@ struct CompiledFunctionInfo {
     };
     Vector<InlineFrame> inlineFrames; // Graph::inlineFrames
     bool isOnlyCalledDirectly { false }; // ProgramFacts::isClosed: by a call instruction that goes to it, and in no other way.
+    uint32_t numberOfFunction { 0 }; // ProgramFacts::number
     unsigned frameSizeInBytes { 0 };
     unsigned numSlots { 0 };
     bool usesStaticImports { false };

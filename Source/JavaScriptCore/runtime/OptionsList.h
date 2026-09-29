@@ -170,6 +170,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotCountsAllocations, false, Normal, "TEMPORARY. When compiling: code counts what it makes, by what the compiler made of what becomes of it (Escape)."_s) \
     v(OptionString, aotTypeTable, nullptr, Normal, "When compiling: the types of the program (AOT::TypeTable), which its text refers to by number (useTypeTags)."_s) \
     v(Unsigned, aotShapes, 15, Normal, "What is made of the shapes in the table of types. 1: literals are laid out as it says. 2: reads go by it. 4: so do writes. 8: what a layout is known not to have is undefined."_s) \
+    v(Bool, aotFollowsFunctions, true, Normal, "When compiling: which function a value is is part of its type, and is followed wherever it goes. A function that gets nowhere that is not reckoned with is only called by calls that are known."_s) \
     v(Bool, aotInlines, true, Normal, "A call of a function that is proven to be the callee is replaced by what the function does, if that is little or if it is the only call there is."_s) \
     v(Bool, aotInlinesBuiltins, true, Normal, "aotInlines, aotCompilesBuiltins, useImmutableIntrinsics: likewise a call of a method by the name of one of Array.prototype's that is passed a closure made on the spot, after a check that it is that one."_s) \
     v(Unsigned, aotInlinesUpTo, 60, Normal, "aotInlines: how many bytes of bytecode a function may have that is called from several places."_s) \

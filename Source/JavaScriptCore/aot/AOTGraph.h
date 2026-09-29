@@ -501,6 +501,7 @@ public:
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
     // What the program says of the function that this is the code of, for a call.
     void setFacts(const ProgramFacts* facts) { m_facts = facts; }
+    const ProgramFacts* facts() const { return m_facts; }
     // reader: who is to look again if there turns out to be more to what it has read (VariableFacts::read()).
     void setVariableFacts(VariableFacts* facts, unsigned reader = VariableFacts::nobody)
     {

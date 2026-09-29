@@ -940,6 +940,10 @@ Vector<uint8_t> ImageBuilder::finish()
     header.regExpsOffset = place(imageRegExps.sizeInBytes());
     header.numberOfRegExps = imageRegExps.size();
     header.textOfRegExpsOffset = place(textOfRegExps.size());
+    Vector<uint32_t> numbersOfFunctions;
+    for (auto& function : m_functions)
+        numbersOfFunctions.append(function.code.info.numberOfFunction);
+    header.numbersOfFunctionsOffset = place(numbersOfFunctions.sizeInBytes());
     header.startsOfFunctionsOffset = place(startsOfFunctions.sizeInBytes());
     header.granulesOfCodeOffset = place(granulesOfCode.sizeInBytes());
     header.callSitesOffset = place(callSites.size());
@@ -1000,6 +1004,7 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.textOfQuotesOffset, textOfQuotes.span().data(), textOfQuotes.size());
     memcpy(base + header.regExpsOffset, imageRegExps.span().data(), imageRegExps.sizeInBytes());
     memcpy(base + header.textOfRegExpsOffset, textOfRegExps.span().data(), textOfRegExps.size());
+    memcpy(base + header.numbersOfFunctionsOffset, numbersOfFunctions.span().data(), numbersOfFunctions.sizeInBytes());
     memcpy(base + header.startsOfFunctionsOffset, startsOfFunctions.span().data(), startsOfFunctions.sizeInBytes());
     memcpy(base + header.granulesOfCodeOffset, granulesOfCode.span().data(), granulesOfCode.sizeInBytes());
     memcpy(base + header.callSitesOffset, callSites.span().data(), callSites.size());

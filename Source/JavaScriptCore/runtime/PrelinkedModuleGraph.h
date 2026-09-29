@@ -168,6 +168,9 @@ public:
             // asks for an entry point by name gets it.
             Escapes = 1 << 5,
             CallIgnoresThis = 1 << 6,
+            // What it holds can be got at by something that is not a use of the variable in the code of the program: whoever asks for an entry point
+            // by name, or what is evaluated. (Then it escapes, too.)
+            IsVisibleFromOutside = 1 << 7,
         };
         uint32_t nameSid;
         uint32_t flags;

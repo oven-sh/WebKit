@@ -610,6 +610,31 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
             proven = true;
         }
     }
+    // Whatever way it got there, if there is one function that it can be. (Whatever else it may be cannot be called: whoever makes the call
+    // sees to that.)
+    if ((!known || !proven) && Options::aotFollowsFunctions() && node->opcode != op_construct) {
+        VirtualRegister calleeRegister;
+        switch (node->opcode) {
+        case op_call:
+            calleeRegister = node->as<OpCall>().m_callee;
+            break;
+        case op_call_ignore_result:
+            calleeRegister = node->as<OpCallIgnoreResult>().m_callee;
+            break;
+        case op_tail_call:
+            calleeRegister = node->as<OpTailCall>().m_callee;
+            break;
+        default:
+            break;
+        }
+        if (calleeRegister.isValid() && functionsOfProgram()) {
+            Type type = node->use(calleeRegister)->type;
+            if (const KnownFunction* function = mayBe(type, TOtherObject) ? nullptr : functionsOfProgram()->function(functionThatIs(type)); function && function->forCall) {
+                known = function;
+                proven = true;
+            }
+        }
+    }
     if (isProven)
         *isProven = proven;
     return known;
@@ -1017,6 +1042,19 @@ void Graph::noteWhatCannotBeToldOfVariables(VariableFacts& facts)
                 }
                 if (!isElsewhere)
                     facts.giveUpOnName(name);
+                break;
+            }
+            case op_get_from_scope: {
+                if (variableAccessedBy(node))
+                    break;
+                auto bytecode = node->as<OpGetFromScope>();
+                UniquedStringImpl* name = m_codeBlock->identifier(bytecode.m_var).impl();
+                ResolveType type = bytecode.m_getPutInfo.resolveType();
+                bool isElsewhere = false;
+                if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && type != Dynamic && m_declaredNames)
+                    isElsewhere = m_declaredNames->resolve(name).kind == DeclaredNamesLink::Resolution::Global;
+                if (!isElsewhere)
+                    facts.noteThatNameIsReadFromWhoKnowsWhere(name);
                 break;
             }
             case op_create_scoped_arguments:

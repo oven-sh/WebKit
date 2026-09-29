@@ -160,8 +160,7 @@ static bool keepsItsScopeToItself(UnlinkedCodeBlock* code)
     return true;
 }
 
-// Whoever is called is told what it was called as. Most code makes nothing of that.
-static bool mayGetHoldOfItself(UnlinkedCodeBlock* code)
+bool mayGetHoldOfItself(UnlinkedCodeBlock* code)
 {
     if (readsCallee(code))
         return true;

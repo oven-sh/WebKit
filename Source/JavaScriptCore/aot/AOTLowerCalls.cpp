@@ -119,7 +119,18 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
         LBasicBlock isNotInitialized = newColdBlock();
         LBasicBlock isInitialized = m_out.newBlock();
-        m_out.branch(m_out.equal(callee, m_out.constInt64(JSValue::ValueUndefined)), rarely(isNotInitialized), usually(isInitialized));
+        // (Or, if it is known by what it is and not by where it was read from: whatever else it may be.)
+        Type typeOfCallee = node->use(calleeRegister)->type;
+        if (!Options::aotFollowsFunctions() || isSubtype(typeOfCallee, TFunction | TUndefined | TEmpty))
+            m_out.branch(m_out.equal(callee, m_out.constInt64(JSValue::ValueUndefined)), rarely(isNotInitialized), usually(isInitialized));
+        else {
+            if (!isSubtype(typeOfCallee, TCell)) {
+                LBasicBlock isCellCase = m_out.newBlock();
+                m_out.branch(isCell(callee), usually(isCellCase), rarely(isNotInitialized));
+                m_out.appendTo(isCellCase);
+            }
+            m_out.branch(isCellOfType(callee, JSFunctionType), usually(isInitialized), rarely(isNotInitialized));
+        }
         m_out.appendTo(isNotInitialized);
         vmCall(node, Void, isConstruct ? Entry::operationAOTThrowNotAConstructor : Entry::operationAOTThrowNotAFunction, m_globalObject, callee);
         m_out.unreachable();

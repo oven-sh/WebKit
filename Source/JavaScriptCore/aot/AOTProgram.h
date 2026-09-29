@@ -40,6 +40,30 @@ struct ProgramFacts {
 
     // Once that is settled. Nobody gets to call it but the calls that are calls of this function and no other.
     bool isClosed { false };
+    // Options::aotFollowsFunctions(). The function has got somewhere that is not reckoned with: from there anybody may call it, with anything, and
+    // does who knows what with what it returns. If that never happens it is closed. (While that is being worked out isClosed is
+    // set for all of them: one that turns out to be exposed is passed anything, which is as good as saying nothing.)
+    mutable std::atomic<bool> isExposed { false };
+    uint32_t number { 0 }; // FunctionsOfProgram
+    // For Options::aotReportStats(): the first thing that was seen to make that so.
+    enum WhyExposed : uint32_t {
+        NotExposed, BundlerSaysItEscapes, IsNotMadeWhereItCanBeSeen, MayGetHoldOfItself, IsNotOfTheProgram, HasNoCodeForACall,
+        UsedBy, // | an opcode << 8, or 1000 + a kind of node
+        PassedToWhoKnowsWhat, PassedAsThis, PassedBeyondParameters, CalledInSomeOtherWay, ReturnedToWhoKnowsWhom,
+        OneOfSeveralInPhi, OneOfSeveralInHomedRegister, OneOfSeveralInVariable, OneOfSeveralInParameter, OneOfSeveralReturned, LostByWhatHandsItOn,
+        PutInVariableOfModule, PutInVariableGivenUpOn, PutWhoKnowsWhere, PutInVariableReadFromWhoKnowsWhere, ReadInAWayThatIsNotProven,
+    };
+    mutable std::atomic<uint32_t> whyExposed { 0 };
+    // Whether that is news.
+    bool expose(uint32_t why)
+    {
+        if (isExposed.exchange(true, std::memory_order_relaxed))
+            return false;
+        whyExposed.store(why, std::memory_order_relaxed);
+        for (auto& type : parameterTypes)
+            type.join(TTop);
+        return true;
+    }
     // If closed: everything that is passed for each parameter, `this` being the first, from nothing up (see KnownFunction::returnType).
     // One that there are more of than this has nothing said of the rest.
     static constexpr unsigned mostParameters = 12;
@@ -76,11 +100,17 @@ public:
     // Before any of the rest: any thread.
     void giveUpOnName(UniquedStringImpl*);
     void giveUpOnScope(const void*);
+    // Something reads a variable of that name, and there is no telling which. What it gets is anything, as far as it knows: so whatever is in a
+    // variable of that name has got somewhere nobody keeps track of.
+    void noteThatNameIsReadFromWhoKnowsWhere(UniquedStringImpl*);
+    bool isReadFromWhoKnowsWhere(UniquedStringImpl* name) const { return m_namesReadFromWhoKnowsWhere.contains(name); }
+    void noteScopeOfModule(const void* scope) { m_scopesOfModules.add(scope); } // One thread.
+    bool isScopeOfModule(const void* scope) const { return m_scopesOfModules.contains(scope); }
 
     // Any thread. reader: told of by takeReadersOfWhatGrew() if there turns out to be more to it. TAll: nothing is known.
     static constexpr unsigned nobody = std::numeric_limits<unsigned>::max();
     Type read(Variable, UniquedStringImpl* name, unsigned reader);
-    void join(Variable, Type);
+    Type join(Variable, Type); // What was there before.
 
     // Not while any of that is going on.
     Vector<unsigned> takeReadersOfWhatGrew();
@@ -114,7 +144,9 @@ private:
     std::array<Shard, numberOfShards> m_shards;
     Lock m_givenUpLock;
     UncheckedKeyHashSet<UniquedStringImpl*> m_namesGivenUpOn;
+    UncheckedKeyHashSet<UniquedStringImpl*> m_namesReadFromWhoKnowsWhere;
     UncheckedKeyHashSet<const void*> m_scopesGivenUpOn;
+    UncheckedKeyHashSet<const void*> m_scopesOfModules;
 };
 
 // A function that the compiler has in front of it while it compiles a call.
@@ -132,6 +164,8 @@ struct KnownFunction {
     bool isDeclaration { false }; // The variable is initialized before any code of the module runs.
     // What the variable holds can get somewhere other than into a call of it: PrelinkedModuleGraph::Binding::Escapes.
     bool escapes { true };
+    // ...by way of something that is not a read of the variable by the code of the program: PrelinkedModuleGraph::Binding::IsVisibleFromOutside.
+    bool isVisibleFromOutside { true };
     // If proven: the code for a call makes no use of the object it is called as (needsFunctionObject()), and a call passes none.
     // (Whoever compiles the program takes it back if it turns out that there is no code to call: BytecodeLinkEncoder.)
     mutable std::atomic<bool> needsNoFunctionObject { false };
@@ -153,6 +187,7 @@ struct KnownFunction {
         isProven = other.isProven;
         isDeclaration = other.isDeclaration;
         escapes = other.escapes;
+        isVisibleFromOutside = other.isVisibleFromOutside;
         needsNoFunctionObject = other.needsNoFunctionObject.load(std::memory_order_relaxed);
         returnType = other.returnType;
         facts = other.facts;
@@ -169,6 +204,37 @@ struct KnownFunction {
 
 // Whether the code reads the object it is called as, other than to get at the scope.
 bool readsCallee(UnlinkedCodeBlock*);
+// Whoever is called is told what it was called as. Most code makes nothing of that.
+JS_EXPORT_PRIVATE bool mayGetHoldOfItself(UnlinkedCodeBlock*);
+
+// Options::aotFollowsFunctions(): every function of the program, by the number it goes by in a type (typeOfFunction()).
+class FunctionsOfProgram {
+    WTF_MAKE_TZONE_ALLOCATED(FunctionsOfProgram);
+    WTF_MAKE_NONCOPYABLE(FunctionsOfProgram);
+public:
+    FunctionsOfProgram() = default;
+
+    // While it is being put together.
+    uint32_t add(const KnownFunction& function)
+    {
+        m_functions.append(makeUniqueWithoutFastMallocCheck<KnownFunction>(function));
+        RELEASE_ASSERT(m_functions.size() < (1u << bitsOfFunctionNumber));
+        return m_functions.size();
+    }
+    // (What is inside a function that has code both for a call and for `new` is there twice.)
+    void isAlso(uint32_t number, UnlinkedFunctionExecutable* executable) { m_numbers.add(executable, number); }
+
+    // After that: any thread.
+    uint32_t numberOf(UnlinkedFunctionExecutable* executable) const { return m_numbers.get(executable); } // Zero: it is not one of them.
+    const KnownFunction* function(uint32_t number) const { return number && number <= m_functions.size() ? m_functions[number - 1].get() : nullptr; }
+    unsigned size() const { return m_functions.size(); }
+
+private:
+    Vector<std::unique_ptr<KnownFunction>> m_functions;
+    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t> m_numbers;
+};
+JS_EXPORT_PRIVATE void setFunctionsOfProgram(const FunctionsOfProgram*); // Not while anything is being compiled.
+const FunctionsOfProgram* functionsOfProgram();
 
 class CalleeHints;
 struct ModuleLinkage;
@@ -233,6 +299,7 @@ public:
         unsigned scopeOffset { 0 };
         bool holdsWhatItWasDeclaredWith { false };
         bool escapes { true };
+        bool isVisibleFromOutside { true };
     };
     ModuleHints(UnlinkedCodeBlock* codeOfModule, std::span<const Binding>, const Describe&);
     ~ModuleHints() final;
