@@ -820,6 +820,10 @@ void Options::notifyOptionsChanged()
 #if !ENABLE(YARR_JIT)
     Options::useRegExpJIT() = false;
 #endif
+    // The non-backtracking matcher is entered where the bytecode interpreter is. With no JIT
+    // code, DFG and FTL do not inline a RegExp either (RegExp::getRegExpJITCodeBlock()).
+    if (Options::useRegExpLinearEngine())
+        Options::useRegExpJIT() = false;
 #if !ENABLE(DFG_JIT)
     Options::useDFGJIT() = false;
     Options::useFTLJIT() = false;

@@ -27,7 +27,9 @@
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
 #include "SourceCharacters.h"
+#include "YarrInterpreter.h"
 #include "YarrJIT.h"
+#include "YarrMatchingContextHolder.h"
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
 #include <wtf/Assertions.h>
@@ -500,6 +502,20 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
         return false;
     return true;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+int RegExp::matchBytecodeForTesting(VM& vm, StringView s, unsigned startOffset, Yarr::InterpretStatistics& statistics)
+{
+    byteCodeCompileIfNecessary(&vm);
+    if (!m_regExpBytecode)
+        return -1;
+
+    Vector<int, 32> ovector;
+    ovector.grow(offsetVectorSize());
+    Yarr::MatchingContextHolder regExpContext(vm, this, Yarr::MatchFrom::VMThread);
+    return Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(ovector.mutableSpan().data()), statistics);
+}
+#endif
 
 bool RegExp::wasUsedInCurrentFullCollectionCycle(VM& vm) const
 {

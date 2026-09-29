@@ -74,6 +74,7 @@
 #include "Parser.h"
 #include "ProbeContext.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
+#include "RegExpObject.h"
 #include "Scribble.h"
 #include "ShadowChicken.h"
 #include "Snippet.h"
@@ -88,6 +89,7 @@
 #include "VMInspector.h"
 #include "VMTrapsInlines.h"
 #include "WasmCapabilities.h"
+#include "YarrInterpreter.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "BufferAccessorRegistry.h"
 #include "JSArrayBufferView.h"
@@ -2175,6 +2177,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionCpuRdtsc);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuCpuid);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuPause);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuClflush);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionRegExpMatchStatistics);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionLLintTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionNoInline);
@@ -2576,6 +2581,40 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // plus the second argument as a byte offset. It'll also flush on the object
 // itself so its length, etc, aren't in the cache.
 //
+#if USE(BUN_JSC_ADDITIONS)
+// Matches a RegExp on its bytecode, which is where the non-backtracking matcher runs, and
+// reports which engine that was and what the match cost.
+// Usage: $vm.regExpMatchStatistics(regExp, string[, startOffset])
+// Returns { index, engine, refusal, programSize, steps, scratchBytes }.
+JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* regExpObject = dynamicDowncast<RegExpObject>(callFrame->argument(0));
+    if (!regExpObject)
+        return throwVMTypeError(globalObject, scope, "regExpMatchStatistics expects a RegExp"_s);
+    String string = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned startOffset = callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    Yarr::InterpretStatistics statistics;
+    int index = regExpObject->regExp()->matchBytecodeForTesting(vm, string, startOffset, statistics);
+
+    bool isLinear = statistics.engine == Yarr::InterpretStatistics::Engine::Linear;
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "index"_s), jsNumber(index));
+    result->putDirect(vm, Identifier::fromString(vm, "engine"_s), jsNontrivialString(vm, isLinear ? "linear"_s : "backtracking"_s));
+    result->putDirect(vm, Identifier::fromString(vm, "refusal"_s), jsNontrivialString(vm, Yarr::linearRefusalName(statistics.refusal)));
+    result->putDirect(vm, Identifier::fromString(vm, "programSize"_s), jsNumber(statistics.programSize));
+    result->putDirect(vm, Identifier::fromString(vm, "steps"_s), jsNumber(static_cast<double>(statistics.linear.steps)));
+    result->putDirect(vm, Identifier::fromString(vm, "scratchBytes"_s), jsNumber(statistics.linear.scratchBytes));
+    return JSValue::encode(result);
+}
+#endif
+
 // If the first argument is not a JSArrayBuffer, we load the butterfly
 // and clflush at the address of the butterfly.
 JSC_DEFINE_HOST_FUNCTION(functionCpuClflush, (JSGlobalObject*, CallFrame* callFrame))
@@ -5884,6 +5923,10 @@ void JSDollarVM::finishCreation(VM& vm)
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuCpuid"_s), 0, functionCpuCpuid, ImplementationVisibility::Public, CPUCpuidIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuPause"_s), 0, functionCpuPause, ImplementationVisibility::Public, CPUPauseIntrinsic, jsDollarVMPropertyAttributes);
     addFunction(vm, alwaysAllow, "cpuClflush"_s, functionCpuClflush, 2);
+
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "regExpMatchStatistics"_s, functionRegExpMatchStatistics, 3);
+#endif
 
     addFunction(vm, alwaysAllow, "llintTrue"_s, functionLLintTrue, 0);
     addFunction(vm, alwaysAllow, "baselineJITTrue"_s, functionBaselineJITTrue, 0);

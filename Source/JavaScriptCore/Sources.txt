@@ -1308,6 +1308,7 @@ yarr/YarrErrorCode.cpp
 yarr/YarrFlags.cpp
 yarr/YarrInterpreter.cpp
 yarr/YarrJIT.cpp
+yarr/YarrLinear.cpp
 yarr/YarrPattern.cpp
 yarr/YarrSyntaxChecker.cpp
 yarr/YarrUnicodeProperties.cpp
