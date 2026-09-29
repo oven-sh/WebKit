@@ -54,6 +54,10 @@ Number classify(JSValue);
 
 // Empty if these are not both numbers, and then nothing is raised.
 JSValue numberBinaryOperation(JSGlobalObject*, BinaryOperator, JSValue, JSValue);
+// What // and % come to, of floats of which the second is not nought, and what ** comes to if that is a float. They are for the compiler as well, which works out what it can beforehand and has no realm to raise anything in.
+void floatDivmod(double left, double right, double& quotient, double& remainder);
+enum class FloatPower : uint8_t { IsFloat, IsOfZero, IsComplex, IsTooLarge };
+FloatPower powerOfFloats(double base, double exponent, double& result);
 JSValue numberUnaryOperation(JSGlobalObject*, UnaryOperator, JSValue);
 // Less than, equal to or greater than zero. Nothing if they are not both numbers, or one is a NaN (`isUnordered`).
 std::optional<int> numberCompare(const Number&, const Number&, bool& isUnordered);

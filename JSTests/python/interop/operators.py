@@ -43,7 +43,8 @@ class Odd:
     def __eq__(self, o): raise ValueError("no comparing")
     __hash__ = None
 a_set = {1, 2, 3}; b_set = {2, 3, 4}
-a_tuple = (1, 2); b_tuple = (1, 2); c_tuple = (1, 3)
+# Written out twice it would be one object.
+a_tuple = (1, 2); b_tuple = tuple([1, 2]); c_tuple = (1, 3)
 a_dict = {"a": 1}; b_dict = {"a": 1}; c_dict = {"b": 2}
 z = 1 + 2j
 r = range(3); range3 = range(0, 3, 1)

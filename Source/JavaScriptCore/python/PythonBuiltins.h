@@ -212,6 +212,8 @@ void ensureCodeDetails(VM&, FunctionExecutable*);
 UnlinkedCodeBlock* unlinkedCodeBlockOf(VM&, FunctionExecutable*);
 // function.__code__. There is one for each piece of code.
 JSObject* codeObjectFor(JSGlobalObject*, FunctionExecutable*);
+// One of the co_consts of the code that a function is compiled to. See PyCodeConstant.h.
+JSValue constantOfCode(JSGlobalObject*, FunctionExecutable*, unsigned index);
 void addFrameFunctions(JSGlobalObject*, JSObject* sysNamespace);
 void initializeStrType(JSGlobalObject*);
 void initializeContainerTypes(JSGlobalObject*);

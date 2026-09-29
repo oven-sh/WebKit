@@ -737,11 +737,13 @@ profiler/ProfilerOriginStack.cpp
 profiler/ProfilerProfiledBytecodes.cpp
 profiler/ProfilerTZoneImpls.cpp
 
+python/PyCodeConstant.cpp
 python/PyDict.cpp
 python/PyFrame.cpp
 python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp
+python/PythonConstantFolding.cpp
 python/PythonASTDumper.cpp
 python/PythonASTModule.cpp
 python/PythonASTOptimizer.cpp

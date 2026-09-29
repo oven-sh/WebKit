@@ -1,0 +1,10 @@
+bytes, written to: b'xyy' and the next: b'abc' false
+in a tuple: (b'xbc', 1) and the next: (b'abc', 1)
+given away: 0 and the next: b'abc'
+a tuple is one: true true
+written to: 1000 refused: 'tuple' object has no attribute 'length' and no __dict__ for setting new attributes undefined refused: An attribute of a Python object cannot be made read-only, hidden or permanent true (1000, 2000) (1000, 2000) refused: 'tuple' object has no attribute 'extra' and no __dict__ for setting new attributes refused: Cannot set prototype of immutable prototype object
+and the next: (1000, 2000) undefined
+a list is another each time: 5,2000,3000,4000 1000,2000,3000 false
+what is looked in: true false
+a slice of an array of JavaScript's: 2 5
+a complex is one: true refused: readonly attribute (1+2j)

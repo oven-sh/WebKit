@@ -32,6 +32,7 @@
 #include "ParserError.h"
 #include "PythonBytes.h"
 #include "PythonCompiler.h"
+#include "PythonConstantFolding.h"
 #include "PythonSignatures.h"
 #include "PythonSymbolTable.h"
 #include "PythonSyntaxTreeSource.h"
@@ -48,7 +49,7 @@ namespace JSC { namespace Python {
 
 // A code object is a PyNativeObject with the FunctionExecutable, and what has been made for it to give out, so that it gives out the same each time.
 namespace CodeField {
-enum Field : unsigned { Executable, Constants, Bytes };
+enum Field : unsigned { Executable, Constants, Bytes, ObjectConstants };
 }
 
 FunctionExecutable* executableOfCode(JSValue code)
@@ -186,7 +187,34 @@ static bool isAllOfItsSource(const FunctionInfo& info)
 
 // ---- co_consts
 
-static JSValue valueOfConstant(JSGlobalObject* globalObject, const CodeDetails::Constant& constant, FunctionExecutable* executable, const CompiledCode& compiled)
+// What has been made so far of the constants of a piece of code. CPython has one object for all that are alike, however deep in others they are.
+struct MadeConstants {
+    HashMap<unsigned, Vector<std::pair<const CodeDetails::Constant*, unsigned>, 1>, AlreadyHashed> byHash;
+    MarkedArgumentBuffer values;
+};
+
+static JSValue makeConstant(JSGlobalObject*, const CodeDetails::Constant&, FunctionExecutable*, const CompiledCode&, MadeConstants&);
+
+static JSValue valueOfConstant(JSGlobalObject* globalObject, const CodeDetails::Constant& constant, FunctionExecutable* executable, const CompiledCode& compiled, MadeConstants& made)
+{
+    if (!isObjectOfRealm(constant) || constant.kind == CodeDetails::Constant::Kind::Code)
+        return makeConstant(globalObject, constant, executable, compiled, made);
+    unsigned hash = hashOfConstant(constant);
+    unsigned key = AlreadyHashed::avoidDeletedValue(hash ? hash : 1);
+    if (auto alike = made.byHash.find(key); alike != made.byHash.end()) {
+        for (auto& [other, index] : alike->value) {
+            if (*other == constant)
+                return made.values.at(index);
+        }
+    }
+    JSValue value = makeConstant(globalObject, constant, executable, compiled, made);
+    // Making it made what is in it, so the table is not as it was.
+    made.byHash.add(key, Vector<std::pair<const CodeDetails::Constant*, unsigned>, 1>()).iterator->value.append({ &constant, static_cast<unsigned>(made.values.size()) });
+    made.values.append(value);
+    return value;
+}
+
+static JSValue makeConstant(JSGlobalObject* globalObject, const CodeDetails::Constant& constant, FunctionExecutable* executable, const CompiledCode& compiled, MadeConstants& made)
 {
     VM& vm = globalObject->vm();
     using Kind = CodeDetails::Constant::Kind;
@@ -202,10 +230,13 @@ static JSValue valueOfConstant(JSGlobalObject* globalObject, const CodeDetails::
     case Kind::Integer: {
         if (constant.bits <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
             return intFromInt64(globalObject, constant.isNegative ? -static_cast<int64_t>(constant.bits) : static_cast<int64_t>(constant.bits));
-        return JSBigInt::createFrom(globalObject, constant.bits);
+        JSBigInt* magnitude = JSBigInt::createFrom(globalObject, constant.bits);
+        return constant.isNegative ? JSBigInt::unaryMinus(globalObject, magnitude) : JSValue(magnitude);
     }
-    case Kind::BigInteger:
-        return JSBigInt::parseInt(globalObject, vm, constant.text, constant.radix, JSBigInt::ErrorParseMode::ThrowExceptions, JSBigInt::ParseIntSign::Unsigned);
+    case Kind::BigInteger: {
+        JSValue magnitude = JSBigInt::parseInt(globalObject, vm, constant.text, constant.radix, JSBigInt::ErrorParseMode::ThrowExceptions, JSBigInt::ParseIntSign::Unsigned);
+        return constant.isNegative && magnitude && magnitude.isHeapBigInt() ? JSBigInt::unaryMinus(globalObject, magnitude.asHeapBigInt()) : magnitude;
+    }
     case Kind::Float:
         return jsTaggedFloat(std::bit_cast<double>(constant.bits));
     case Kind::Imaginary:
@@ -222,14 +253,48 @@ static JSValue valueOfConstant(JSGlobalObject* globalObject, const CodeDetails::
     case Kind::FrozenSet: {
         MarkedArgumentBuffer elements;
         for (auto& element : constant.elements)
-            elements.append(valueOfConstant(globalObject, element, executable, compiled));
+            elements.append(valueOfConstant(globalObject, element, executable, compiled, made));
         PyTuple* tuple = PyTuple::createFromArguments(globalObject, elements);
         if (constant.kind == Kind::Tuple)
             return tuple;
         return setFromIterable(globalObject, globalObject->pyRealm()->typeFrozenSet()->instanceStructure(), tuple);
     }
+    case Kind::Slice: {
+        JSValue start = valueOfConstant(globalObject, constant.elements[0], executable, compiled, made);
+        JSValue stop = valueOfConstant(globalObject, constant.elements[1], executable, compiled, made);
+        JSValue step = valueOfConstant(globalObject, constant.elements[2], executable, compiled, made);
+        return PySlice::create(globalObject, start, stop, step);
+    }
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+// Those of co_consts that are objects of the realm's, each where it is in co_consts, with nothing where the others are. They are what the code loads when it is run, so they are made when it is linked: see
+// PyCodeConstant.h. The others are constants of the engine's already, and the code of what is defined in it is made when that is defined, so all that those are wanted for is co_consts.
+static JSCellButterfly* objectConstantsOf(JSGlobalObject* globalObject, PyNativeObject* code)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (JSValue made = code->field(CodeField::ObjectConstants))
+        return uncheckedDowncast<JSCellButterfly>(made.asCell());
+    FunctionExecutable* executable = executableOf(code);
+    CompiledCode compiled = compiledCodeOf(vm, executable);
+    auto& constants = compiled.info->details->constants;
+    auto* objects = JSCellButterfly::tryCreate(vm, CopyOnWriteArrayWithContiguous, constants.size());
+    if (!objects) {
+        raiseMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    MadeConstants made;
+    for (unsigned i = 0; i < constants.size(); ++i) {
+        if (!isObjectOfRealm(constants[i]) || constants[i].kind == CodeDetails::Constant::Kind::Code)
+            continue;
+        JSValue value = valueOfConstant(globalObject, constants[i], executable, compiled, made);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        objects->setIndex(vm, i, value);
+    }
+    code->setField(vm, CodeField::ObjectConstants, objects);
+    return objects;
 }
 
 static JSValue getConstants(JSGlobalObject* globalObject, JSValue self)
@@ -239,16 +304,29 @@ static JSValue getConstants(JSGlobalObject* globalObject, JSValue self)
     auto* code = uncheckedDowncast<PyNativeObject>(self.asCell());
     if (JSValue constants = code->field(CodeField::Constants))
         return constants;
+    JSCellButterfly* objects = objectConstantsOf(globalObject, code);
+    RETURN_IF_EXCEPTION(scope, { });
     FunctionExecutable* executable = executableOf(self);
     CompiledCode compiled = compiledCodeOf(vm, executable);
     MarkedArgumentBuffer values;
+    MadeConstants made;
+    unsigned i = 0;
     for (auto& constant : compiled.info->details->constants) {
-        values.append(valueOfConstant(globalObject, constant, executable, compiled));
+        JSValue object = objects->get(i++);
+        values.append(object ? object : valueOfConstant(globalObject, constant, executable, compiled, made));
         RETURN_IF_EXCEPTION(scope, { });
     }
     JSValue constants = PyTuple::createFromArguments(globalObject, values);
     code->setField(vm, CodeField::Constants, constants);
     return constants;
+}
+
+JSValue constantOfCode(JSGlobalObject* globalObject, FunctionExecutable* executable, unsigned index)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSCellButterfly* objects = objectConstantsOf(globalObject, uncheckedDowncast<PyNativeObject>(codeObjectFor(globalObject, executable)));
+    RETURN_IF_EXCEPTION(scope, { });
+    return objects->get(index);
 }
 
 // ---- Where each instruction is from

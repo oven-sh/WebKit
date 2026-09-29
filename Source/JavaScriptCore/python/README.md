@@ -134,9 +134,30 @@ that when they are wanted, and can be thrown away and made again.
   `types.coroutine()` sets. It makes another executable for the same source. All else follows from `co_code` and can be given only as what it is.
 - `co_lines()` and `co_positions()` are read out of the engine's `ExpressionInfo`, which has where in the source each instruction is from. Every statement says where it is, `pass` is a `nop`,
   and a constant that has a line to itself says so.
-- `co_consts` is what is written out in the source and the code of what is defined in it, as they are first come to. It is not CPython's to the last item: it has no tuples that
-  were folded, and has the small ints that CPython has an instruction for.
+- `co_consts` is put together as CPython puts it together: what is written out in the source and the code of what is defined in it, as they are first come to, then what was worked out from that, and then what
+  nothing loads is taken out again, but for the first. It has none of the ints from 0 to 255, which CPython has an instruction for. What is not there is what CPython's own instructions need and these do not: the
+  names of the keywords of a call, what `import` is given, the name of a class in its body, how long a sequence has to be in a `match`.
 - What is never come to, `if 0:` and `while 0:` and what `__debug__` rules out, is compiled, since that is how it is found what is wrong with it, and jumped over. It has no lines and no constants.
+
+### Constants
+
+**What is made of nothing but constants is worked out when the code is compiled**, as by CPython's `Python/flowgraph.c`, and what that will not do for being too large is not done here either: `PythonConstantFolding.cpp`.
+A tuple of constants is a constant. So is a slice, and the defaults of a function. `x in [1, 2]` looks in a tuple and `x in {1, 2}` in a frozenset, `for x in [1, 2, 3]` goes through a tuple, and a list or a set of three
+or more constants is a copy of one. CPython works things out by doing them, with the objects. Code here is compiled for no realm in particular, so there are no objects yet, and it is done with what is written down
+of them, and only where that is sure to come to what running it would: ints of up to 127 bits, floats, by the very functions that are used when it is run, `+` and `-` of complex numbers, and `str`, `bytes` and
+`tuple`. Nothing is made of the rest, nor of what would raise, and it is left to be run, which comes to the same. `programs/constants-worked-out-beforehand.py` tries 147,000 both ways.
+
+**A constant that is an object is made once.** A number or a string is a constant of the engine's. A tuple, a frozenset, a complex, a slice or `Ellipsis` is an object of a realm's, and code that has not been linked is
+any realm's. So among the constants of such code is a `PyCodeConstant`, which says which of `co_consts` it stands for, and `CodeBlock` puts the object in its place when the code is linked, which is what it does with
+the array for a `JSTemplateObjectDescriptor`. The code object has the objects, so they outlast the instructions, and what the code loads is what `co_consts` has. Those that are alike are one object, however deep in
+others they are.
+
+**A list of numbers and strings that is written out is what it is in JavaScript**, `op_new_array_buffer`: an array that has what is in it in common with every other that the same code makes, until one of them is
+written to. So it takes as long to make one of thirty as one of three. Nothing in `python/` reaches into an array but by way of `JSArray`, which sees to the copying, as it has to for the arrays that JavaScript writes
+out and hands to Python.
+
+**But not what has a `bytes` in it.** JavaScript can write to a `bytes`, and can give its buffer away, so if `b"abc"` were one object it could be made to be something else the next time. There is another each time.
+`interop/constants-and-javascript.mjs` tries to change each kind.
 
 ### A function that is made from a code object
 
@@ -519,6 +540,10 @@ frozen. `[[GetOwnProperty]]` and `[[OwnPropertyKeys]]` are ordinary: `Object.key
 - An attribute cannot be made an accessor, read-only, hidden or permanent, and the object cannot be frozen, since there is nowhere for Python
   to keep that.
 - `x instanceof C` is `isinstance(x, C)`. `C.prototype` is `C`, without being an attribute. `new C()` is `C()`.
+- `typeof C` is `"function"`, and `C.call()` and `C.bind()` are there, but `C instanceof Function` is false. That goes by what a thing is derived from, and a class is what its instances are derived from. If
+  `Function.prototype` were beyond it, every instance would be an `instanceof Function` too, which is what is asked to find out whether a thing can be called.
+- **A loop is the language's that it is written in.** `for (x of generator)` closes a generator of Python's that it leaves early, as it does one of JavaScript's. `for x in generator:` closes neither, so that to leave a
+  loop and go on with `next()` afterwards does the same with both.
 - What a class defines is not enumerable, as in JavaScript.
 - Names that JavaScript expects and Python has no use for are provided: `toString`, `Symbol.iterator`, `next`, `toJSON`, `length` or `size`, `constructor`, and those of the sections below.
 

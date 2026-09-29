@@ -85,14 +85,14 @@ struct CodeDetails {
 
     // co_consts: what is written out in the source, and the code of what is defined in it, as they are first come to.
     struct Constant {
-        enum class Kind : uint8_t { None, True, False, Ellipsis, Integer, BigInteger, Float, Imaginary, String, Bytes, Code, Complex, Tuple, FrozenSet };
+        enum class Kind : uint8_t { None, True, False, Ellipsis, Integer, BigInteger, Float, Imaginary, String, Bytes, Code, Complex, Tuple, FrozenSet, Slice };
         Kind kind { Kind::None };
         uint8_t radix { 10 };
         bool isNegative { false };
         uint64_t bits { 0 }; // The integer, the bits of the double, or which of the functions that the code makes.
         String text; // The digits, the string, or a character for each byte.
         uint64_t imaginaryBits { 0 }; // Of Complex, whose real part is in `bits`.
-        Vector<Constant> elements;
+        Vector<Constant> elements; // Of Slice, where it begins, where it ends and the step.
         friend bool operator==(const Constant&, const Constant&) = default;
     };
     Vector<Constant> constants;

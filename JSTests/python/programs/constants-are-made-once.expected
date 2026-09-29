@@ -1,0 +1,46 @@
+a tuple => (True, True, (1000, 2000))
+in another => (True, True, True)
+twice => (True, True)
+worked out => (True, True, (1000, 2000))
+complex => ([True, True, True], True, (1j, (1+2j), (-0-1j)))
+Ellipsis => (True, True)
+slices => ([True, True, True, True, True], True, (slice(1, 2, None), slice(1, 2, None), slice(None, None, 2), slice(None, None, None), slice(1000, None, None)), True)
+defaults => (True, True, (1000, (1, 2)))
+with a variable in it => (False, (1000, 1))
+nothing => (True, True)
+a list is another each time => (False, True, [1000, 2000, 3000], [1000, 2000, 3000])
+and a set => (False, True, [1000, 2000, 3000], [1000, 2000, 3000], 'set')
+what is in the list is not => (True, True, [(1, 2), (1, 2), (3, 4)])
+looked in => ((True, True, False), (False, False, True), (True, True, False), ['int', 'frozenset', 'tuple'])
+gone through => (([1000, 2000, 3000], [1000]), ['int', 'tuple', 'frozenset'])
+a generator => (True, True)
+a lambda => True
+a class => (True, (1000, 2000))
+a coroutine => True
+---- what is made afresh has constants of its own
+the same code, made twice => (True, True)
+compiled twice => False
+compiled once and run twice => (True, False, True)
+run in two places => (True, True)
+---- many
+three thousand => (3000, (2999, 2999.5, 'a2999', (3, None)), True, True, 3001)
+five thousand in one => (5000, True, 17497500, 2)
+sixty deep => (True, '((((((((((((((((((((((((((((((((((((((((((((((((((((((((((((1000,),),)')
+---- bytes
+are equal, whether or not they are one => (True, (b'abc', (b'abc', 1)))
+---- a list that is written out has what is in it in common with the next, until it is written to
+ints => [('int', 1), ('int', 2), ('int', 3)] | what came of changing them: 920395520 | what changed another: []
+one => [('int', 1)] | what came of changing them: 208031346 | what changed another: []
+two => [('int', 1), ('int', 2)] | what came of changing them: 925161150 | what changed another: []
+floats => [('float', 1.5), ('float', 2.5), ('float', 3.5)] | what came of changing them: 76777165 | what changed another: []
+whole floats => [('float', 1.0), ('float', 2.0), ('float', 3.0)] | what came of changing them: 353955368 | what changed another: []
+ints and floats => [('int', 1), ('float', 1.0), ('int', 2), ('float', 2.0), ('float', -0.0), ('int', 0)] | what came of changing them: 736314523 | what changed another: []
+strings => [('str', 'a'), ('str', 'b'), ('str', 'c')] | what came of changing them: 910414693 | what changed another: []
+of all kinds => [('int', 1), ('str', 'b'), ('float', 2.5), ('NoneType', None), ('bool', True), ('bool', False), ('int', -1), ('float', -1.5)] | what came of changing them: 814943085 | what changed another: []
+worked out => [('int', 2), ('int', 6), ('str', 'aa'), ('int', 1), ('bool', False)] | what came of changing them: 125719868 | what changed another: []
+large and small => [('int', 2147483647), ('int', -2147483648), ('int', 0), ('int', 255), ('int', 256)] | what came of changing them: 365483788 | what changed another: []
+too large to be plain => [('int', 2147483648), ('int', 1), ('int', 2)] | what came of changing them: 924428966 | what changed another: []
+with a tuple => [('tuple', (1, 2)), ('int', 3), ('int', 4)] | what came of changing them: 608525588 | what changed another: []
+forty => [('int', 1), ('int', 2), ('int', 3), ('int', 4), ('int', 5), ('int', 6), ('int', 7), ('int', 8), ('int', 9), ('int', 10), ('int', 11), ('int', 12), (' | what came of changing them: 184819707 | what changed another: []
+in another => [('list', [1, 2, 3]), ('list', [1, 2, 3])] | what came of changing them: 515507272 | what changed another: []
+they are not one another => (False, False)

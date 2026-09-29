@@ -259,6 +259,20 @@ PYTHON_RUNTIME_FUNCTION(newFrozenSet)
     return JSValue::encode(setFromIterable(globalObject, globalObject->pyRealm()->typeFrozenSet()->instanceStructure(), callFrame->uncheckedArgument(0)));
 }
 
+// [1, 2, 3] and {1, 2, 3}: what is in them is a constant, and this is the list or the set.
+PYTHON_RUNTIME_FUNCTION(listOfTuple)
+{
+    PyTuple* tuple = asTuple(callFrame->uncheckedArgument(0));
+    return JSValue::encode(newList(globalObject, ArgList(std::bit_cast<EncodedJSValue*>(tuple->span().data()), tuple->length())));
+}
+
+PYTHON_RUNTIME_FUNCTION(setOfFrozenSet)
+{
+    PySet* set = PySet::create(globalObject);
+    set->copyFrom(globalObject->vm(), globalObject, *uncheckedDowncast<PySet>(callFrame->uncheckedArgument(0).asCell()));
+    return JSValue::encode(set);
+}
+
 PYTHON_RUNTIME_FUNCTION(newSlice)
 {
     PROLOGUE();
@@ -1285,6 +1299,8 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("newBytes"_s, newBytes);
     add("newComplex"_s, newComplex);
     add("newFrozenSet"_s, newFrozenSet);
+    add("listOfTuple"_s, listOfTuple);
+    add("setOfFrozenSet"_s, setOfFrozenSet);
     add("joinStrings"_s, joinStrings);
     add("newSlice"_s, newSlice);
     add("listExtend"_s, runtimeListExtend);

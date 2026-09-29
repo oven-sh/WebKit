@@ -69,6 +69,8 @@
 #include "JSString.h"
 #include "JSSymbolTableObject.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "PyCodeConstant.h"
+#include "PythonBuiltins.h"
 #include "LLIntData.h"
 #include "LLIntEntrypoint.h"
 #include "LLIntExceptions.h"
@@ -1253,7 +1255,7 @@ bool CodeBlock::isConstantOwnedByUnlinkedCodeBlock(VirtualRegister reg) const
         if (!value || !value.isCell())
             return true;
         JSCell* cell = value.asCell();
-        if (cell->inherits<SymbolTable>() || cell->inherits<JSTemplateObjectDescriptor>())
+        if (cell->inherits<SymbolTable>() || cell->inherits<JSTemplateObjectDescriptor>() || cell->inherits<PyCodeConstant>())
             return false;
         return true;
     }
@@ -1365,7 +1367,7 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
                             clone->collectDebuggerInfo(this);
 
                         constant = clone;
-                    } else if (is<JSTemplateObjectDescriptor>(cell))
+                    } else if (is<JSTemplateObjectDescriptor>(cell) || is<PyCodeConstant>(cell))
                         templateObjectIndices.append(i);
                 }
             }
@@ -1381,6 +1383,13 @@ void CodeBlock::initializeTemplateObjects(ScriptExecutable* topLevelExecutable, 
 {
     auto scope = DECLARE_THROW_SCOPE(vm());
     for (unsigned i : templateObjectIndices) {
+        if (auto* pythonConstant = dynamicDowncast<PyCodeConstant>(m_constantRegisters[i].get())) {
+            JSValue constant = Python::constantOfCode(globalObject(), uncheckedDowncast<FunctionExecutable>(ownerExecutable()), pythonConstant->index());
+            RETURN_IF_EXCEPTION(scope, void());
+            ASSERT(constant.isCell()); // As the descriptor is, which is what the unlinked baseline JIT goes by.
+            m_constantRegisters[i].set(vm(), this, constant);
+            continue;
+        }
         auto* descriptor = uncheckedDowncast<JSTemplateObjectDescriptor>(m_constantRegisters[i].get());
         auto* templateObject = topLevelExecutable->createTemplateObject(globalObject(), descriptor);
         RETURN_IF_EXCEPTION(scope, void());

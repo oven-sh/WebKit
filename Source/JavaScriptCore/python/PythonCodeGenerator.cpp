@@ -30,7 +30,9 @@
 #include "BytecodeGeneratorBaseInlines.h"
 #include "BytecodeStructs.h"
 #include "JSBigInt.h"
+#include "PyCodeConstant.h"
 #include "PythonASTOptimizer.h"
+#include "PythonConstantFolding.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
 #include "PythonUnparse.h"
@@ -75,6 +77,7 @@ public:
                 noteVariableName(name);
         }
         generateKind(root);
+        finishConstants();
         for (Symbol& symbol : m_block.symbols) {
             if (symbol.scope == NameScope::Cell)
                 m_details->cellVariables.append(*symbol.name);
@@ -149,6 +152,7 @@ public:
             collectDeletedNames(node.body);
             generateFunction([&] {
                 emit(m_block.hasDocstring ? node.body.subspan(1) : node.body);
+                m_endIsNeverComeTo = alwaysLeave(node.body);
                 if (!m_numberOfLines)
                     mark(node);
             });
@@ -281,8 +285,12 @@ private:
     // What a condition comes to, if that is plain from the source.
     std::optional<bool> constantTruth(Expression* expression)
     {
-        if (auto* name = expression->tryAs<Name>())
-            return *name->id == m_names.dunder_debug ? std::optional { !m_info.optimizationLevel } : std::nullopt;
+        if (auto* name = expression->tryAs<Name>()) {
+            if (*name->id != m_names.dunder_debug)
+                return std::nullopt;
+            noteConstant({ m_info.optimizationLevel ? CodeDetails::Constant::Kind::False : CodeDetails::Constant::Kind::True }, ConstantUse::IsPartOfAnother);
+            return !m_info.optimizationLevel;
+        }
         if (auto* operation = expression->tryAs<UnaryOp>(); operation && operation->op == UnaryOperator::Not) {
             auto operand = constantTruth(operation->operand);
             return operand ? std::optional { !*operand } : std::nullopt;
@@ -290,6 +298,9 @@ private:
         auto* constant = expression->tryAs<Constant>();
         if (!constant)
             return std::nullopt;
+        // It was come to, though nothing is done with it.
+        if (constant->type != Constant::Type::Invalid)
+            noteConstant(describeConstant(*constant), ConstantUse::IsPartOfAnother);
         switch (constant->type) {
         case Constant::Type::None:
         case Constant::Type::False:
@@ -316,6 +327,91 @@ private:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // Whether there is a `break` that leaves the loop that these are the body of.
+    static bool hasBreak(Sequence<Statement*> statements)
+    {
+        for (Statement* statement : statements) {
+            switch (statement->kind) {
+            case Statement::Kind::Break:
+                return true;
+            case Statement::Kind::If:
+                if (hasBreak(statement->as<If>().body) || hasBreak(statement->as<If>().orElse))
+                    return true;
+                break;
+            case Statement::Kind::With:
+                if (hasBreak(statement->as<With>().body))
+                    return true;
+                break;
+            case Statement::Kind::Try: {
+                auto& node = statement->as<Try>();
+                if (hasBreak(node.body) || hasBreak(node.orElse) || hasBreak(node.finalBody))
+                    return true;
+                for (ExceptHandler* handler : node.handlers) {
+                    if (hasBreak(handler->body))
+                        return true;
+                }
+                break;
+            }
+            case Statement::Kind::Match:
+                for (MatchCase* matchCase : statement->as<Match>().cases) {
+                    if (hasBreak(matchCase->body))
+                        return true;
+                }
+                break;
+            // One that is in a loop leaves that loop, but for what the loop does when it has run its course.
+            case Statement::Kind::For:
+                if (hasBreak(statement->as<For>().orElse))
+                    return true;
+                break;
+            case Statement::Kind::While:
+                if (hasBreak(statement->as<While>().orElse))
+                    return true;
+                break;
+            default:
+                break;
+            }
+        }
+        return false;
+    }
+
+    // Whether what comes after these is never come to, as far as is plain from how they are written.
+    bool alwaysLeave(Sequence<Statement*> statements)
+    {
+        for (Statement* statement : statements) {
+            switch (statement->kind) {
+            case Statement::Kind::Return:
+            case Statement::Kind::Raise:
+                return true;
+            case Statement::Kind::If: {
+                auto& node = statement->as<If>();
+                if (alwaysLeave(node.body) && alwaysLeave(node.orElse))
+                    return true;
+                break;
+            }
+            case Statement::Kind::While: {
+                auto& node = statement->as<While>();
+                if (constantTruth(node.test) == std::optional { true } && !hasBreak(node.body))
+                    return true;
+                break;
+            }
+            case Statement::Kind::Try: {
+                auto& node = statement->as<Try>();
+                if (alwaysLeave(node.finalBody))
+                    return true;
+                bool allLeave = alwaysLeave(node.body) || alwaysLeave(node.orElse);
+                for (ExceptHandler* handler : node.handlers)
+                    allLeave = allLeave && alwaysLeave(handler->body);
+                if (allLeave)
+                    return true;
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        return false;
     }
 
     // Statements that are never come to, `if 0:` and the like. They are compiled, since that is how it is found out what is wrong with them, and jumped over. They have no
@@ -762,42 +858,88 @@ private:
 
     // ---- Constants
 
-    // For co_consts.
-    static unsigned hashOf(const CodeDetails::Constant& constant)
-    {
-        unsigned hash = computeHash(static_cast<uint8_t>(constant.kind), constant.radix, constant.isNegative, constant.bits, constant.imaginaryBits, constant.text.isNull() ? 0u : constant.text.hash());
-        for (auto& element : constant.elements)
-            hash = pairIntHash(hash, hashOf(element));
-        return hash;
-    }
-
     // As the key of a table, where nothing and all ones stand for a place that is empty and one that has been emptied.
     static unsigned keyOf(const CodeDetails::Constant& constant)
     {
-        unsigned hash = hashOf(constant);
+        unsigned hash = hashOfConstant(constant);
         return AlreadyHashed::avoidDeletedValue(hash ? hash : 1);
     }
 
-    // Each once, in the order that they were first come to. As with the names, there can be as many as there are lines.
-    void noteConstant(CodeDetails::Constant&& constant)
+    // co_consts is put together as CPython puts it together. What is written out in the source is added as it is first come to, whether or not anything comes to be made of it. What is worked out from that is added
+    // afterwards, once all of the code has been gone through. Then what nothing loads is taken out again, but for the first, which might have been a docstring. An int from 0 to 255 is not loaded from there.
+    enum class ConstantUse : uint8_t { IsPartOfAnother, IsLoaded };
+
+    using NotedConstants = HashMap<unsigned, Vector<unsigned, 1>, AlreadyHashed>; // Which of them have a hash.
+
+    static unsigned noteConstantIn(Vector<CodeDetails::Constant>& constants, Vector<bool>& isLoaded, NotedConstants& noted, CodeDetails::Constant&& constant, ConstantUse use)
+    {
+        bool loads = use == ConstantUse::IsLoaded && !isSmallInt(constant);
+        auto& alike = noted.add(keyOf(constant), Vector<unsigned, 1>()).iterator->value;
+        for (unsigned index : alike) {
+            if (constants[index] == constant) {
+                isLoaded[index] = isLoaded[index] || loads;
+                return index;
+            }
+        }
+        alike.append(constants.size());
+        constants.append(WTF::move(constant));
+        isLoaded.append(loads);
+        return constants.size() - 1;
+    }
+
+    // Each once. As with the names, there can be as many as there are lines.
+    unsigned noteConstant(CodeDetails::Constant&& constant, ConstantUse use = ConstantUse::IsLoaded)
     {
         if (m_isNeverComeTo)
-            return;
-        auto& alike = m_notedConstants.add(keyOf(constant), Vector<unsigned, 1>()).iterator->value;
-        for (unsigned index : alike) {
-            if (m_details->constants[index] == constant)
-                return;
+            return 0;
+        return noteConstantIn(m_details->constants, m_constantIsLoaded, m_notedConstants, WTF::move(constant), use);
+    }
+
+    unsigned noteWorkedOutConstant(CodeDetails::Constant&& constant, ConstantUse use)
+    {
+        if (m_isNeverComeTo || isSmallInt(constant))
+            return 0;
+        return noteConstantIn(m_workedOutConstants, m_workedOutConstantIsLoaded, m_notedWorkedOutConstants, WTF::move(constant), use);
+    }
+
+    // What stands, among the constants of the code, for one that is an object of a realm's. See PyCodeConstant.h.
+    JSValue codeConstantFor(bool isWorkedOut, unsigned index)
+    {
+        // Nought is not something that can be a key.
+        return m_codeConstants.ensure((static_cast<uint64_t>(index) + 1) << 1 | isWorkedOut, [&] {
+            return PyCodeConstant::create(m_vm);
+        }).iterator->value;
+    }
+
+    void finishConstants()
+    {
+        auto& constants = m_details->constants;
+        // What was worked out, after what was written, unless it was written as well.
+        Vector<unsigned> placeOfWorkedOut;
+        for (unsigned i = 0; i < m_workedOutConstants.size(); ++i)
+            placeOfWorkedOut.append(noteConstantIn(constants, m_constantIsLoaded, m_notedConstants, WTF::move(m_workedOutConstants[i]), m_workedOutConstantIsLoaded[i] ? ConstantUse::IsLoaded : ConstantUse::IsPartOfAnother));
+        Vector<unsigned> place(constants.size());
+        unsigned kept = 0;
+        for (unsigned i = 0; i < constants.size(); ++i) {
+            if (i && !m_constantIsLoaded[i])
+                continue;
+            place[i] = kept;
+            if (kept != i)
+                constants[kept] = WTF::move(constants[i]);
+            ++kept;
         }
-        alike.append(m_details->constants.size());
-        m_details->constants.append(WTF::move(constant));
+        constants.shrink(kept);
+        for (auto& [key, cell] : m_codeConstants)
+            cell->setIndex(place[key & 1 ? placeOfWorkedOut[(key >> 1) - 1] : (key >> 1) - 1]);
     }
 
     // What running off the end comes to. If the last thing was to return or to raise, and nothing jumps to after it, the end is not come to.
     void emitReturnAtEnd()
     {
+        // It is there whether or not it is come to, so it is among the constants if there is no other.
         OpcodeID last = g.lastOpcodeID();
-        if (last != op_py_ret && last != op_ret && last != op_throw)
-            noteConstant({ CodeDetails::Constant::Kind::None });
+        bool isComeTo = last != op_py_ret && last != op_ret && last != op_throw && !m_endIsNeverComeTo;
+        noteConstant({ CodeDetails::Constant::Kind::None }, isComeTo ? ConstantUse::IsLoaded : ConstantUse::IsPartOfAnother);
         // It is on no line of its own, and is said to be where the last thing that was written is.
         if (m_lastMarked.end)
             g.emitExpressionInfo(JSTextPosition(m_lastMarked.start), JSTextPosition(m_lastMarked.start), JSTextPosition(m_lastMarked.end));
@@ -851,69 +993,262 @@ private:
         RELEASE_ASSERT_NOT_REACHED();
     }
 
-    void noteConstant(const Constant& node, bool isNegated = false)
-    {
-        noteConstant(describeConstant(node, isNegated));
-    }
-
     RegisterID* emitConstant(RegisterID* dst, Constant& node)
     {
-        noteConstant(node);
         markIfOnAnotherLine(node);
-        return emitConstantValue(dst, node, node);
+        return emitLoadOfConstant(dst, describeConstant(node), node, false);
     }
 
-    // `location` is the constant that it is, or is part of.
-    RegisterID* emitConstantValue(RegisterID* dst, Constant& node, Constant& location)
+    // Notes it, and loads it. What is an object of a realm's is made when the code is linked, and is the same one each time.
+    RegisterID* emitLoadOfConstant(RegisterID* dst, CodeDetails::Constant&& value, const Node& location, bool isWorkedOut)
     {
-        switch (node.type) {
-        case Constant::Type::None:
+        if (isObjectOfRealm(value) && canBeShared(value) && !m_isNeverComeTo) {
+            unsigned index = isWorkedOut ? noteWorkedOutConstant(WTF::move(value), ConstantUse::IsLoaded) : noteConstant(WTF::move(value));
+            return g.emitLoad(dst, codeConstantFor(isWorkedOut, index));
+        }
+        RegisterID* result = emitValueOfConstant(dst, value, location);
+        if (isWorkedOut)
+            noteWorkedOutConstant(WTF::move(value), ConstantUse::IsLoaded);
+        else
+            noteConstant(WTF::move(value));
+        return result;
+    }
+
+    const Identifier& identifierFor(const String& text)
+    {
+        if (text.is8Bit())
+            return m_arena.identifiers().makeIdentifier(m_vm, text.span8());
+        return m_arena.identifiers().makeIdentifier(m_vm, text.span16());
+    }
+
+    // What is no object, or is one of no realm in particular, is a constant of the engine's. The rest is made here and now.
+    RegisterID* emitValueOfConstant(RegisterID* dst, const CodeDetails::Constant& value, const Node& location)
+    {
+        using Kind = CodeDetails::Constant::Kind;
+        switch (value.kind) {
+        case Kind::None:
             return g.emitLoad(dst, jsUndefined());
-        case Constant::Type::True:
+        case Kind::True:
             return g.emitLoad(dst, jsBoolean(true));
-        case Constant::Type::False:
+        case Kind::False:
             return g.emitLoad(dst, jsBoolean(false));
-        case Constant::Type::Ellipsis: {
+        case Kind::Ellipsis: {
             Reg result = destination(dst);
             return g.emitGetById(result.get(), runtime(), Identifier::fromString(m_vm, "Ellipsis"_s));
         }
-        case Constant::Type::Integer:
-            if (node.integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()))
-                return g.emitLoad(dst, jsNumber(node.isNegative ? -static_cast<int32_t>(node.integer) : static_cast<int32_t>(node.integer)));
+        case Kind::Integer:
+            if (value.bits <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + value.isNegative)
+                return g.emitLoad(dst, jsNumber(static_cast<int32_t>(value.isNegative ? -static_cast<int64_t>(value.bits) : static_cast<int64_t>(value.bits))));
             // The generator knows a constant that it has seen before by the address of its digits, so they have to outlive it.
-            return g.emitLoad(dst, g.addBigIntConstant(m_arena.identifiers().makeIdentifier(m_vm, String::number(node.integer).span8()), 10, node.isNegative));
-        case Constant::Type::BigInteger:
-            return g.emitLoad(dst, g.addBigIntConstant(*node.text, node.radix, node.isNegative));
-        case Constant::Type::Float:
-            return g.emitLoad(dst, jsTaggedFloat(node.real));
-        case Constant::Type::Imaginary:
-            // It is a cell of this realm's, so it cannot be a constant of code that any realm may run.
-            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(node.real)) }, location);
-        case Constant::Type::String:
-            return g.emitLoad(dst, *node.text);
-        case Constant::Type::Bytes:
-            return emitRuntimeCall(dst, "newBytes"_s, { stringConstant(*node.text) }, location);
-        case Constant::Type::Complex:
-            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(node.imaginary)), constant(jsDoubleNumber(node.real)) }, location);
-        case Constant::Type::Tuple:
-        case Constant::Type::FrozenSet: {
+            return g.emitLoad(dst, g.addBigIntConstant(identifierFor(String::number(value.bits)), 10, value.isNegative));
+        case Kind::BigInteger:
+            return g.emitLoad(dst, g.addBigIntConstant(identifierFor(value.text), value.radix, value.isNegative));
+        case Kind::Float:
+            return g.emitLoad(dst, jsTaggedFloat(std::bit_cast<double>(value.bits)));
+        case Kind::Imaginary:
+            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(std::bit_cast<double>(value.bits))) }, location);
+        case Kind::String:
+            return g.emitLoad(dst, identifierFor(value.text));
+        case Kind::Bytes:
+            return emitRuntimeCall(dst, "newBytes"_s, { stringConstant(identifierFor(value.text)) }, location);
+        case Kind::Complex:
+            return emitRuntimeCall(dst, "newComplex"_s, { constant(jsDoubleNumber(std::bit_cast<double>(value.imaginaryBits))), constant(jsDoubleNumber(std::bit_cast<double>(value.bits))) }, location);
+        case Kind::Tuple:
+        case Kind::FrozenSet: {
             if (!m_vm.isSafeToRecurse()) [[unlikely]] {
                 fail("maximum recursion depth exceeded during compilation"_s, location);
                 return g.emitLoad(dst, jsUndefined());
             }
             Vector<Reg, 8> elements;
-            for (Constant* element : node.elements)
-                elements.append(emitConstantValue(g.newTemporary(), *element, location));
+            for (auto& element : value.elements)
+                elements.append(emitValueOfConstant(g.newTemporary(), element, location));
             Reg result = destination(dst);
             emitNewTuple(result.get(), elements);
-            if (node.type == Constant::Type::FrozenSet)
+            if (value.kind == Kind::FrozenSet)
                 emitRuntimeCall(result.get(), "newFrozenSet"_s, { result.get() }, location);
             return result.get();
         }
-        case Constant::Type::Invalid:
+        case Kind::Slice: {
+            Reg lower = emitValueOfConstant(g.newTemporary(), value.elements[0], location);
+            Reg upper = emitValueOfConstant(g.newTemporary(), value.elements[1], location);
+            Reg step = emitValueOfConstant(g.newTemporary(), value.elements[2], location);
+            return emitRuntimeCall(dst, "newSlice"_s, { lower.get(), upper.get(), step.get() }, location);
+        }
+        case Kind::Code:
             break;
         }
         RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    // ---- What can be worked out beforehand
+
+    // What an expression comes to, if it is made of nothing but constants and that can be told now. See PythonConstantFolding.h. Each is asked about once, however deep it is in what else is asked about.
+    const CodeDetails::Constant* constantOf(Expression* expression)
+    {
+        switch (expression->kind) {
+        case Expression::Kind::Constant:
+        case Expression::Kind::UnaryOp:
+        case Expression::Kind::BinOp:
+        case Expression::Kind::Tuple:
+        case Expression::Kind::Subscript:
+        case Expression::Kind::Slice:
+            break;
+        default:
+            return nullptr;
+        }
+        if (auto known = m_constantOfExpression.find(expression); known != m_constantOfExpression.end())
+            return known->value.get();
+        std::optional<CodeDetails::Constant> value;
+        if (m_vm.isSafeToRecurse()) [[likely]]
+            value = workOutConstant(expression);
+        return m_constantOfExpression.add(expression, value ? makeUniqueWithoutFastMallocCheck<CodeDetails::Constant>(WTF::move(*value)) : nullptr).iterator->value.get();
+    }
+
+    std::optional<CodeDetails::Constant> workOutConstant(Expression* expression)
+    {
+        switch (expression->kind) {
+        case Expression::Kind::Constant:
+            if (expression->as<Constant>().type == Constant::Type::Invalid)
+                return std::nullopt;
+            return describeConstant(expression->as<Constant>());
+        case Expression::Kind::UnaryOp: {
+            auto& node = expression->as<UnaryOp>();
+            auto* operand = constantOf(node.operand);
+            return operand ? foldUnaryOperation(node.op, *operand) : std::nullopt;
+        }
+        case Expression::Kind::BinOp: {
+            auto& node = expression->as<BinOp>();
+            auto* left = constantOf(node.left);
+            auto* right = left ? constantOf(node.right) : nullptr;
+            return right ? foldBinaryOperation(node.op, *left, *right) : std::nullopt;
+        }
+        case Expression::Kind::Tuple: {
+            auto& node = expression->as<Tuple>();
+            if (node.context != ExpressionContext::Load)
+                return std::nullopt;
+            CodeDetails::Constant result { CodeDetails::Constant::Kind::Tuple };
+            for (Expression* element : node.elements) {
+                auto* value = constantOf(element);
+                if (!value)
+                    return std::nullopt;
+                result.elements.append(*value);
+            }
+            return result;
+        }
+        case Expression::Kind::Subscript: {
+            auto& node = expression->as<Subscript>();
+            if (node.context != ExpressionContext::Load)
+                return std::nullopt;
+            auto* value = constantOf(node.value);
+            auto* index = value ? constantOf(node.slice) : nullptr;
+            return index ? foldSubscript(*value, *index) : std::nullopt;
+        }
+        case Expression::Kind::Slice: {
+            auto& node = expression->as<Slice>();
+            CodeDetails::Constant result { CodeDetails::Constant::Kind::Slice };
+            for (Expression* part : { node.lower, node.upper, node.step }) {
+                auto* value = part ? constantOf(part) : nullptr;
+                if (part && !value)
+                    return std::nullopt;
+                result.elements.append(part ? *value : CodeDetails::Constant { });
+            }
+            return result;
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    // CPython makes a slice of what is written out when it first comes to it, and nothing is kept of what it was made of. Of what has itself to be worked out, as -1 has, it makes none. Here one is made all the same.
+    static bool isWrittenOut(const Slice& node)
+    {
+        return (!node.lower || node.lower->is<Constant>()) && (!node.upper || node.upper->is<Constant>()) && (!node.step || node.step->is<Constant>());
+    }
+
+    // What it was worked out from, and what was worked out on the way, in the order that CPython comes to them.
+    void notePartsOfConstant(Expression* expression, bool isWhole)
+    {
+        if (auto* leaf = expression->tryAs<Constant>()) {
+            noteConstant(describeConstant(*leaf), ConstantUse::IsPartOfAnother);
+            return;
+        }
+        if (auto* slice = expression->tryAs<Slice>(); slice && isWrittenOut(*slice)) {
+            if (!isWhole)
+                noteConstant(CodeDetails::Constant(*constantOf(expression)), ConstantUse::IsPartOfAnother);
+            return;
+        }
+        switch (expression->kind) {
+        case Expression::Kind::UnaryOp:
+            notePartsOfConstant(expression->as<UnaryOp>().operand, false);
+            break;
+        case Expression::Kind::BinOp:
+            notePartsOfConstant(expression->as<BinOp>().left, false);
+            notePartsOfConstant(expression->as<BinOp>().right, false);
+            break;
+        case Expression::Kind::Tuple:
+            for (Expression* element : expression->as<Tuple>().elements)
+                notePartsOfConstant(element, false);
+            break;
+        case Expression::Kind::Subscript:
+            notePartsOfConstant(expression->as<Subscript>().value, false);
+            notePartsOfConstant(expression->as<Subscript>().slice, false);
+            break;
+        case Expression::Kind::Slice:
+            for (Expression* part : { expression->as<Slice>().lower, expression->as<Slice>().upper, expression->as<Slice>().step }) {
+                if (part)
+                    notePartsOfConstant(part, false);
+            }
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        if (!isWhole)
+            noteWorkedOutConstant(CodeDetails::Constant(*constantOf(expression)), ConstantUse::IsPartOfAnother);
+    }
+
+    // optimize_lists_and_sets(): the tuple of what is in a list that is written out, or the frozenset of what is in a set, if those are all constants and there are no more of them than CPython would have on its stack.
+    std::optional<CodeDetails::Constant> constantOfDisplay(Expression* expression)
+    {
+        static constexpr unsigned most = 30; // _PY_STACK_USE_GUIDELINE
+        auto* list = expression->tryAs<List>();
+        auto* set = expression->tryAs<Set>();
+        if (!(list && list->context == ExpressionContext::Load) && !set)
+            return std::nullopt;
+        Sequence<Expression*> elements = list ? list->elements : set->elements;
+        if (elements.size() > most)
+            return std::nullopt;
+        CodeDetails::Constant result { list ? CodeDetails::Constant::Kind::Tuple : CodeDetails::Constant::Kind::FrozenSet };
+        for (Expression* element : elements) {
+            auto* value = constantOf(element);
+            if (!value)
+                return std::nullopt;
+            result.elements.append(*value);
+        }
+        return result;
+    }
+
+    RegisterID* emitConstantOfDisplay(RegisterID* dst, Expression* expression, CodeDetails::Constant&& value)
+    {
+        for (Expression* element : expression->is<List>() ? expression->as<List>().elements : expression->as<Set>().elements)
+            notePartsOfConstant(element, false);
+        markIfOnAnotherLine(*expression);
+        return emitLoadOfConstant(dst, WTF::move(value), *expression, true);
+    }
+
+    // What is only going to be looked in, with `in`, or gone through. A list or a set that is written out for that need not be made each time.
+    RegisterID* emitToLookInOrGoThrough(Expression* expression)
+    {
+        if (auto value = constantOfDisplay(expression))
+            return emitConstantOfDisplay(nullptr, expression, WTF::move(*value));
+        return emit(expression);
+    }
+
+    RegisterID* emitWorkedOutConstant(RegisterID* dst, Expression* expression, const CodeDetails::Constant& value)
+    {
+        notePartsOfConstant(expression, true);
+        markIfOnAnotherLine(*expression);
+        auto* slice = expression->tryAs<Slice>();
+        return emitLoadOfConstant(dst, CodeDetails::Constant(value), *expression, !(slice && isWrittenOut(*slice)));
     }
 
     // ---- Expressions
@@ -935,6 +1270,10 @@ private:
             fail("maximum recursion depth exceeded during compilation"_s, *expression);
             return g.emitLoad(dst, jsUndefined());
         }
+        if (!expression->is<Constant>() && expression != m_tupleThatIsUnpacked) {
+            if (auto* value = constantOf(expression))
+                return emitWorkedOutConstant(dst, expression, *value);
+        }
         switch (expression->kind) {
         case Expression::Kind::Constant:
             return emitConstant(dst, expression->as<Constant>());
@@ -954,17 +1293,6 @@ private:
         }
         case Expression::Kind::UnaryOp: {
             auto& node = expression->as<UnaryOp>();
-            // -1 is a constant.
-            if (auto* operand = node.operand->tryAs<Constant>(); operand && node.op == UnaryOperator::USub) {
-                if (operand->type == Constant::Type::Integer && !operand->isNegative && operand->integer <= static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + 1) {
-                    noteConstant(*operand, true);
-                    return g.emitLoad(dst, jsNumber(static_cast<int32_t>(-static_cast<int64_t>(operand->integer))));
-                }
-                if (operand->type == Constant::Type::Float) {
-                    noteConstant(*operand, true);
-                    return g.emitLoad(dst, jsTaggedFloat(-operand->real));
-                }
-            }
             Reg operand = emit(node.operand);
             Reg result = destination(dst);
             mark(node);
@@ -993,11 +1321,19 @@ private:
             Reg result = temporaryDestination(dst);
             Ref<Label> otherwise = g.newLabel();
             Ref<Label> end = g.newLabel();
+            // If it is plain which it will be, the other is compiled only to find what is wrong with it.
+            auto truth = constantTruth(node.test);
             emitBranch(node.test, otherwise.get(), false);
-            emitInto(result.get(), node.body);
+            {
+                SetForScope isNeverComeTo(m_isNeverComeTo, m_isNeverComeTo || truth == std::optional { false });
+                emitInto(result.get(), node.body);
+            }
             emitJump(end.get());
             emitLabel(otherwise.get());
-            emitInto(result.get(), node.orElse);
+            {
+                SetForScope isNeverComeTo(m_isNeverComeTo, m_isNeverComeTo || truth == std::optional { true });
+                emitInto(result.get(), node.orElse);
+            }
             emitLabel(end.get());
             return finish(dst, result.get());
         }
@@ -1105,7 +1441,8 @@ private:
                     g.emitUnaryOp<OpNot>(result.get(), result.get());
                 return result.get();
             }
-            Reg right = emit(node.comparators[0]);
+            bool looksIn = node.ops[0] == ComparisonOperator::In || node.ops[0] == ComparisonOperator::NotIn;
+            Reg right = looksIn ? emitToLookInOrGoThrough(node.comparators[0]) : emit(node.comparators[0]);
             Reg result = destination(dst);
             mark(node);
             return emitCompare(result.get(), node.ops[0], left.get(), right.get());
@@ -1114,7 +1451,9 @@ private:
         Ref<Label> end = g.newLabel();
         Reg left = emitToTemporary(node.left);
         for (size_t i = 0; i < node.ops.size(); ++i) {
-            Reg right = emitToTemporary(node.comparators[i]);
+            // The last is looked in and is done with.
+            bool looksIn = i + 1 == node.ops.size() && (node.ops[i] == ComparisonOperator::In || node.ops[i] == ComparisonOperator::NotIn);
+            Reg right = looksIn ? Reg(emitToLookInOrGoThrough(node.comparators[i])) : emitToTemporary(node.comparators[i]);
             mark(node);
             emitCompare(result.get(), node.ops[i], left.get(), right.get());
             if (i + 1 < node.ops.size())
@@ -1183,6 +1522,65 @@ private:
         return dst;
     }
 
+    // What a constant is to the engine, if it is one of the engine's: a number that is not too large, a string, None, True or False.
+    JSValue plainValueOf(const CodeDetails::Constant& value)
+    {
+        using Kind = CodeDetails::Constant::Kind;
+        switch (value.kind) {
+        case Kind::None:
+            return jsUndefined();
+        case Kind::True:
+            return jsBoolean(true);
+        case Kind::False:
+            return jsBoolean(false);
+        case Kind::Integer:
+            if (value.bits > static_cast<uint64_t>(std::numeric_limits<int32_t>::max()) + value.isNegative)
+                return { };
+            return jsNumber(static_cast<int32_t>(value.isNegative ? -static_cast<int64_t>(value.bits) : static_cast<int64_t>(value.bits)));
+        case Kind::Float:
+            return jsTaggedFloat(std::bit_cast<double>(value.bits));
+        case Kind::String:
+            return g.addStringConstant(identifierFor(value.text));
+        default:
+            return { };
+        }
+    }
+
+    // [1, 2, 3] is what it is in JavaScript: an array that has what is in it in common with every other that the same code makes, until one of them is written to. Null if there is more to it than that.
+    RegisterID* emitListOfPlainConstants(RegisterID* dst, Sequence<Expression*> elements, const Node& node)
+    {
+        if (elements.empty() || elements.size() > MAX_STORAGE_VECTOR_LENGTH)
+            return nullptr;
+        for (Expression* element : elements) {
+            auto* value = constantOf(element);
+            if (!value || isObjectOfRealm(*value) || value->kind == CodeDetails::Constant::Kind::BigInteger || (value->kind == CodeDetails::Constant::Kind::Integer && !plainValueOf(*value)))
+                return nullptr;
+        }
+        ASSERT(m_vm.heap.isDeferred());
+        auto* array = JSCellButterfly::tryCreate(m_vm, CopyOnWriteArrayWithContiguous, elements.size());
+        if (!array)
+            return nullptr;
+        unsigned index = 0;
+        for (Expression* element : elements)
+            array->setIndex(m_vm, index++, plainValueOf(*constantOf(element)));
+        // To CPython it is a copy of one constant if there are from 3 to 30 of them, and otherwise each is loaded.
+        auto* expression = const_cast<Expression*>(static_cast<const Expression*>(&node));
+        auto whole = elements.size() >= 3 ? constantOfDisplay(expression) : std::nullopt;
+        for (Expression* element : elements) {
+            notePartsOfConstant(element, !whole);
+            if (whole)
+                continue;
+            if (element->is<Constant>())
+                noteConstant(CodeDetails::Constant(*constantOf(element)));
+            else
+                noteWorkedOutConstant(CodeDetails::Constant(*constantOf(element)), ConstantUse::IsLoaded);
+        }
+        if (whole)
+            noteWorkedOutConstant(WTF::move(*whole), ConstantUse::IsLoaded);
+        markIfOnAnotherLine(node);
+        return g.emitNewArrayBuffer(destination(dst).get(), array, CopyOnWriteArrayWithContiguous);
+    }
+
     RegisterID* emitSequenceDisplay(RegisterID* dst, Sequence<Expression*> elements, Display display, const Node& node)
     {
         if (hasStarred(elements) && display == Display::Set) {
@@ -1209,6 +1607,18 @@ private:
             if (display == Display::List)
                 return finish(dst, list.get());
             return emitRuntimeCall(dst, "listToTuple"_s, { list.get() }, node);
+        }
+        if (display == Display::List && !m_isNeverComeTo) {
+            if (RegisterID* list = emitListOfPlainConstants(dst, elements, node))
+                return list;
+        }
+        // Three or more constants are one constant, of which a copy is taken.
+        if (display != Display::Tuple && elements.size() >= 3 && !m_isNeverComeTo) {
+            auto* expression = const_cast<Expression*>(static_cast<const Expression*>(&node));
+            if (auto value = constantOfDisplay(expression); value && canBeShared(*value)) {
+                Reg whole = emitConstantOfDisplay(nullptr, expression, WTF::move(*value));
+                return emitRuntimeCall(dst, display == Display::List ? "listOfTuple"_s : "setOfFrozenSet"_s, { whole.get() }, node);
+            }
         }
         Vector<Reg, 8> registers;
         {
@@ -1748,7 +2158,20 @@ private:
     Defaults emitDefaults(Arguments* arguments, const Node& node)
     {
         Reg defaults;
-        if (!arguments->defaults.empty()) {
+        std::optional<CodeDetails::Constant> constantDefaults { CodeDetails::Constant { CodeDetails::Constant::Kind::Tuple } };
+        for (Expression* value : arguments->defaults) {
+            auto* constant = constantDefaults ? constantOf(value) : nullptr;
+            if (constant)
+                constantDefaults->elements.append(*constant);
+            else
+                constantDefaults = std::nullopt;
+        }
+        if (!arguments->defaults.empty() && constantDefaults && canBeShared(*constantDefaults) && !m_isNeverComeTo) {
+            for (Expression* value : arguments->defaults)
+                notePartsOfConstant(value, false);
+            markIfOnAnotherLine(node);
+            defaults = emitLoadOfConstant(g.newTemporary(), WTF::move(*constantDefaults), node, true);
+        } else if (!arguments->defaults.empty()) {
             Vector<Reg, 8> values;
             {
                 SetForScope isInConstantDisplay(m_isInConstantDisplay, m_isInConstantDisplay || std::ranges::all_of(arguments->defaults, isConstant));
@@ -2237,7 +2660,7 @@ private:
         Reg iterator = firstIterator;
         if (!iterator) {
             iterator = g.newTemporary();
-            Reg iterable = emit(generator.iterable);
+            Reg iterable = generator.isAsync ? emit(generator.iterable) : emitToLookInOrGoThrough(generator.iterable);
             mark(*generator.iterable);
             if (generator.isAsync)
                 emitRuntimeCall(iterator.get(), "getAsyncIterator"_s, { iterable.get() }, *generator.iterable);
@@ -2287,7 +2710,7 @@ private:
         // The outermost iterable is evaluated outside.
         Reg iterator = g.newTemporary();
         {
-            Reg iterable = emit(generators[0]->iterable);
+            Reg iterable = generators[0]->isAsync ? emit(generators[0]->iterable) : emitToLookInOrGoThrough(generators[0]->iterable);
             mark(*generators[0]->iterable);
             if (generators[0]->isAsync)
                 emitRuntimeCall(iterator.get(), "getAsyncIterator"_s, { iterable.get() }, *generators[0]->iterable);
@@ -2381,7 +2804,7 @@ private:
         CallArguments call(g, nullptr, 1);
         g.emitLoad(call.thisRegister(), jsUndefined());
         {
-            Reg iterable = emit(generators[0]->iterable);
+            Reg iterable = generators[0]->isAsync ? emit(generators[0]->iterable) : emitToLookInOrGoThrough(generators[0]->iterable);
             mark(*generators[0]->iterable);
             if (generators[0]->isAsync)
                 emitRuntimeCall(call.argumentRegister(0), "getAsyncIterator"_s, { iterable.get() }, *generators[0]->iterable);
@@ -2429,7 +2852,7 @@ private:
         CallArguments call(g, nullptr, 1);
         g.emitLoad(call.thisRegister(), jsUndefined());
         {
-            Reg iterable = emit(node.generators[0]->iterable);
+            Reg iterable = node.generators[0]->isAsync ? emit(node.generators[0]->iterable) : emitToLookInOrGoThrough(node.generators[0]->iterable);
             mark(*node.generators[0]->iterable);
             if (node.generators[0]->isAsync)
                 emitRuntimeCall(call.argumentRegister(0), "getAsyncIterator"_s, { iterable.get() }, *node.generators[0]->iterable);
@@ -2694,6 +3117,8 @@ private:
             // By then CPython has gone on to the value, if it has nothing to do for it and it is on the same line.
             if (m_isInExceptStar)
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, node.value && node.value->is<Constant>() && node.value->line == node.line ? static_cast<Node&>(*node.value) : node);
+            if (!node.value)
+                noteConstant({ CodeDetails::Constant::Kind::None });
             Reg value = node.value ? Reg(emitToTemporary(node.value)) : Reg(g.emitLoad(g.newTemporary(), jsUndefined()));
             markIfOnAnotherLine(node);
             if (!g.emitReturnViaFinallyIfNeeded(value.get())) {
@@ -3363,7 +3788,7 @@ private:
             return;
         Reg iterator = g.newTemporary();
         {
-            Reg iterable = emit(node.iterable);
+            Reg iterable = node.isAsync ? emit(node.iterable) : emitToLookInOrGoThrough(node.iterable);
             mark(*node.iterable);
             if (node.isAsync)
                 emitRuntimeCall(iterator.get(), "getAsyncIterator"_s, { iterable.get() }, *node.iterable);
@@ -4393,6 +4818,7 @@ private:
             emitStoreName(m_names.dunder_doc, constant(jsString(m_vm, docstringOf(module.body))), *module.body[0]);
         }
         emit(module.body);
+        m_endIsNeverComeTo = alwaysLeave(module.body);
         if (m_functionGeneratedLast)
             noteConstant({ CodeDetails::Constant::Kind::Code, 10, false, *m_functionGeneratedLast });
         emitReturnAtEnd();
@@ -4405,7 +4831,14 @@ private:
     std::unique_ptr<CodeDetails> m_details;
     HashSet<UniquedStringImpl*> m_notedNames;
     HashSet<UniquedStringImpl*> m_notedVariableNames;
-    HashMap<unsigned, Vector<unsigned, 1>, AlreadyHashed> m_notedConstants; // Which of m_details->constants have a hash.
+    bool m_endIsNeverComeTo { false };
+    NotedConstants m_notedConstants; // Of m_details->constants.
+    Vector<bool> m_constantIsLoaded;
+    Vector<CodeDetails::Constant> m_workedOutConstants;
+    Vector<bool> m_workedOutConstantIsLoaded;
+    NotedConstants m_notedWorkedOutConstants;
+    HashMap<uint64_t, PyCodeConstant*> m_codeConstants; // By whether it was worked out, and which it is of those that were or were not.
+    HashMap<Expression*, std::unique_ptr<CodeDetails::Constant>> m_constantOfExpression;
     unsigned m_nestedBlocks { 0 };
     bool m_isInExceptStar { false };
     bool m_isInExceptStarOutsideLoop { false }; // And not in a loop that is itself in the block.

@@ -421,7 +421,7 @@ static JSValue intBinaryOperation(JSGlobalObject* globalObject, ThrowScope& scop
 // ---- float
 
 // float_divmod() of CPython's Objects/floatobject.c.
-static void floatDivmod(double left, double right, double& quotient, double& remainder)
+void floatDivmod(double left, double right, double& quotient, double& remainder)
 {
     remainder = std::fmod(left, right);
     double division = (left - remainder) / right;
@@ -440,22 +440,41 @@ static void floatDivmod(double left, double right, double& quotient, double& rem
         quotient = std::copysign(0.0, left / right);
 }
 
+FloatPower powerOfFloats(double base, double exponent, double& result)
+{
+    result = 1.0;
+    if (!exponent)
+        return FloatPower::IsFloat;
+    result = base;
+    if (std::isnan(base))
+        return FloatPower::IsFloat;
+    result = base == 1.0 ? 1.0 : exponent;
+    if (std::isnan(exponent))
+        return FloatPower::IsFloat;
+    if (!base && exponent < 0 && std::isfinite(exponent))
+        return FloatPower::IsOfZero;
+    if (base < 0 && std::isfinite(base) && std::isfinite(exponent) && exponent != std::floor(exponent))
+        return FloatPower::IsComplex;
+    result = std::pow(base, exponent);
+    if (std::isinf(result) && std::isfinite(base) && std::isfinite(exponent))
+        return FloatPower::IsTooLarge;
+    return FloatPower::IsFloat;
+}
+
 static JSValue powerOfFloats(JSGlobalObject* globalObject, ThrowScope& scope, double base, double exponent)
 {
-    if (!exponent)
-        return floatFromDouble(1.0);
-    if (std::isnan(base))
-        return floatFromDouble(base);
-    if (std::isnan(exponent))
-        return floatFromDouble(base == 1.0 ? 1.0 : exponent);
-    if (!base && exponent < 0 && std::isfinite(exponent))
+    double result;
+    switch (powerOfFloats(base, exponent, result)) {
+    case FloatPower::IsFloat:
+        return floatFromDouble(result);
+    case FloatPower::IsOfZero:
         return raise(globalObject, scope, BuiltinType::ZeroDivisionError, "zero to a negative power"_s);
-    if (base < 0 && std::isfinite(base) && std::isfinite(exponent) && exponent != std::floor(exponent))
+    case FloatPower::IsComplex:
         return powerOfNegativeFloat(globalObject, base, exponent);
-    double result = std::pow(base, exponent);
-    if (std::isinf(result) && std::isfinite(base) && std::isfinite(exponent))
+    case FloatPower::IsTooLarge:
         return raise(globalObject, scope, BuiltinType::OverflowError, PyTuple::create(globalObject, { jsNumber(34), jsNontrivialString(globalObject->vm(), "Result too large"_s) }));
-    return floatFromDouble(result);
+    }
+    RELEASE_ASSERT_NOT_REACHED();
 }
 
 static JSValue floatBinaryOperation(JSGlobalObject* globalObject, ThrowScope& scope, BinaryOperator op, double left, double right)
