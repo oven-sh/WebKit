@@ -259,6 +259,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "unicodedata"_s, createUnicodeDataModule },
     { "binascii"_s, createBinasciiModule },
     { "array"_s, createArrayModule },
+    { "_abc"_s, createABCModule },
     { "_tokenize"_s, createTokenizeModule },
     { "_io"_s, createIOModule },
     { "_thread"_s, createThreadModule },

@@ -1,0 +1,62 @@
+---- what there is
+the module => ('_abc', '', 'BuiltinImporter', 'Module contains faster C implementation of abc.ABCMeta', ['_abc_init', '_abc_instancecheck', '_abc_register', '_abc_subclasscheck', '_get_dump', '_reset_caches', '_reset_registry', 'get_cache_token'])
+_abc_init => ('builtin_function_or_method', '($module, self, /)', 'Internal ABC helper for class set-up. Should be never used outside abc module.', '_abc')
+_abc_instancecheck => ('builtin_function_or_method', '($module, self, instance, /)', 'Internal ABC helper for instance checks. Should be never used outside abc module.', '_abc')
+_abc_register => ('builtin_function_or_method', '($module, self, subclass, /)', 'Internal ABC helper for subclasss registration. Should be never used outside abc module.', '_abc')
+_abc_subclasscheck => ('builtin_function_or_method', '($module, self, subclass, /)', 'Internal ABC helper for subclasss checks. Should be never used outside abc module.', '_abc')
+_get_dump => ('builtin_function_or_method', '($module, self, /)', "Internal ABC helper for cache and registry debugging.\n\nReturn shallow copies of registry, of both caches, and\nnegative cache version. Don't call this function directly,\ninstead use ABC._dump_registry() for a nice repr.", '_abc')
+_reset_caches => ('builtin_function_or_method', '($module, self, /)', 'Internal ABC helper to reset both caches of a given class.\n\nShould be only used by refleak.py', '_abc')
+_reset_registry => ('builtin_function_or_method', '($module, self, /)', 'Internal ABC helper to reset registry of a given class.\n\nShould be only used by refleak.py', '_abc')
+get_cache_token => ('builtin_function_or_method', '($module, /)', 'Returns the current ABC cache token.\n\nThe token is an opaque object (supporting equality testing) identifying\nthe current version of the ABC cache for virtual subclasses.  The token\nchanges with every call to register() on any ABC.', '_abc')
+_abc_data => ('_abc_data', '_abc', '_abc_data', ['_abc_data', 'object'], ['__doc__', '__module__', '__new__'], 'Internal state held by ABC machinery.', 48, 20992, "<class '_abc._abc_data'>", '_abc_data', '_abc_data', None, "AttributeError: '_abc._abc_data' object attribute 'x' is read-only", "TypeError: type '_abc._abc_data' is not an acceptable base type", '<_abc._abc_data object')
+abc is written over it => ('abc', True, 'abc', 'function')
+---- what is abstract
+__abstractmethods__ => [('A', 'frozenset', ['c', 'f', 'p', 's'], "TypeError: Can't instantiate abstract class A without an implementation for abstract methods 'c', 'f', 'p', 's'"), ('B', 'frozenset', ['c', 'p', 's'], "TypeError: Can't instantiate abstract class B without an implementation for abstract methods 'c', 'p', 's'"), ('C', 'frozenset', [], 'C'), ('E', 'frozenset', ['concrete'], "TypeError: Can't instantiate abstract class E without an implementation for abstract method 'concrete'")]
+what says that it is => [['a'], ['a'], [], [], [], []]
+what raises when it is asked => ZeroDivisionError: division by zero
+update_abstractmethods => [(None, True, ['c', 'p', 's'])]
+---- registered
+register => (True, 1, True, True, False, True, True, False, False, (['X'], ['Y'], ['Z', 'int'], ['set', 'set', 'set', 'int']))
+again => (True, True, 1, True, ['X'])
+what cannot be => ['TypeError: Can only register classes', 'TypeError: Can only register classes', 'TypeError: Can only register classes', 'TypeError: Can only register classes', 'TypeError: Can only register classes', "TypeError: ABCMeta.register() missing 1 required positional argument: 'subclass'", 'TypeError: ABCMeta.register() takes 2 positional arguments but 3 were given']
+round in a circle => ('RuntimeError: Refusing to create an inheritance cycle', True, ['RuntimeError: Refusing to create an inheritance cycle'])
+what was found not to be may be, when something has been registered => [(False, ['N'], True, True, ([], []))]
+with anything at all => [(False, ['N'], True, ['N'], False, ['N'])]
+derived from what counts as derived => [(True, True, True, ['N'], ['N'])]
+_reset_registry and _reset_caches => [(<class '__main__.N'>, True, False, (['N'], [], ['int']), None, (['N'], [], []), None, ([], [], []), False)]
+---- __subclasshook__
+gives True => (True, True, True, ['int'], (['int'], []))
+gives False => (False, False, False, ['int'], ([], ['int']))
+gives NotImplemented => (False, False, False, ['int'], ([], ['int']))
+gives None => ('AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', ['int', 'int', 'int'], ([], []))
+gives 1 => ('AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', ['int', 'int', 'int'], ([], []))
+gives 0 => ('AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', ['int', 'int', 'int'], ([], []))
+gives 'yes' => ('AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', 'AssertionError: __subclasshook__ must return either False, True, or NotImplemented', ['int', 'int', 'int'], ([], []))
+gives 'raises' => ('ZeroDivisionError: division by zero', 'ZeroDivisionError: division by zero', 'ZeroDivisionError: division by zero', ['int', 'int', 'int'], ([], []))
+---- what it is asked about
+what is no class => ['TypeError: issubclass() arg 1 must be a class', 'TypeError: issubclass() arg 1 must be a class', 'TypeError: issubclass() arg 1 must be a class', 'TypeError: issubclass() arg 1 must be a class', 'TypeError: issubclass() arg 1 must be a class', 'TypeError: issubclass() arg 1 must be a class', "AttributeError: 'int' object has no attribute '_abc_impl'", "AttributeError: 'int' object has no attribute '_abc_impl'", 'TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union', <class 'int'>, "AttributeError: type object 'int' has no attribute '_abc_impl'", "AttributeError: type object 'int' has no attribute '_abc_impl'", "AttributeError: 'int' object has no attribute '_abc_impl'", "AttributeError: 'NoneType' object has no attribute '_abc_impl'"]
+what says that it is of another class => (True, False, 'ZeroDivisionError: division by zero', 'TypeError: issubclass() arg 1 must be a class', [(<class '__main__.Lies'>, True)])
+_abc_impl of the wrong kind => [(None, 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type'), (None, 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type'), (None, 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type', 'TypeError: _abc_impl is set to a wrong type'), [(None, "AttributeError: type object 'K' has no attribute '_abc_impl'")]]
+__subclasses__() gives () => TypeError: __subclasses__() must return a list
+__subclasses__() gives None => TypeError: __subclasses__() must return a list
+__subclasses__() gives 5 => TypeError: __subclasses__() must return a list
+__subclasses__() gives [5] => TypeError: issubclass() arg 2 must be a class, a tuple of classes, or a union
+__subclasses__() gives [<class 'int'>] => True
+__subclasses__() gives [<class 'str'>] => False
+__subclasses__() gives 'an iterator' => TypeError: __subclasses__() must return a list
+---- what patterns match
+the flags => [('Sequence', True, False, False), ('MutableSequence', True, False, False), ('Mapping', False, True, False), ('MutableMapping', False, True, False), ('Set', False, False, False), ('Iterable', False, False, False), ('Collection', False, False, False), ('ByteString', True, False, False), ('list', True, False, False), ('tuple', True, False, False), ('dict', False, True, False), ('str', False, False, False), ('bytes', False, False, False), ('range', True, False, False), ('memoryview', True, False, False), ('deque', True, False, False), ('UserList', True, False, False), ('UserDict', False, True, False), ('OrderedDict', False, True, False), ('defaultdict', False, True, False), ('ChainMap', False, True, False), ('Counter', False, True, False)]
+__abc_tpflags__ => [(True, False, False), (False, True, False), 'TypeError: __abc_tpflags__ cannot be both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING', (False, False, False), (False, False, False), (False, False, False), (True, False, False), 'TypeError: __abc_tpflags__ cannot be both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING', 'OverflowError: Python int too large to convert to C long', (False, False, False), (False, False, False), (False, False, False), (False, False, False), (False, False, False)]
+registered late with Sequence => (['-', '-', '-'], ['S', 'S', 'S', 'S'], ['seq', 'seq', 'seq', 'seq'])
+registered late with Mapping => (['-', '-', '-'], ['M', 'M', 'M', 'M'], ['map', 'map', 'map', 'map'])
+registered late with MutableSequence => (['-', '-', '-'], ['S', 'S', 'S', 'S'], ['seq', 'seq', 'seq', 'seq'])
+registered late with Set => (['-', '-', '-'], ['-', '-', '-', '-'], ['neither', 'neither', 'neither', 'neither'])
+with one and then the other => [(<class '__main__.K'>, 'S', 'S', <class '__main__.K'>, 'M', 'M', 'map')]
+the middle of a family => [(<class '__main__.family.<locals>.ChildPre'>, ['-', 'M', 'M'], <class '__main__.family.<locals>.Parent'>, ['S', 'S', 'S'])]
+what cannot be changed is not => (True, '-', True, 'M', 'map', 'M')
+derived from both => [('S', 'seq'), ('M', 'map'), ('S', 'seq'), ('S', 'seq'), ('S', 'seq')]
+---- protocols, which go by who is asking
+isinstance => (True, False, True, False, 'TypeError: Instance and class checks can only be used with @runtime_checkable protocols')
+issubclass => ("TypeError: Protocols with non-method members don't support issubclass(). Non-method members: 'x', 'y'.", True, False, 'TypeError: Instance and class checks can only be used with @runtime_checkable protocols', 'TypeError: issubclass() arg 1 must be a class')
+in a match statement => [(1, 2), 'method', None]
+what is in collections.abc => [('Hashable', [False, True, False, False, True, True, True, True, True, True, True, True]), ('Iterable', [True, True, True, True, True, True, True, True, True, False, True, True]), ('Iterator', [False, False, False, False, False, False, False, True, True, False, False, False]), ('Generator', [False, False, False, False, False, False, False, False, True, False, False, False]), ('Reversible', [True, True, True, False, True, True, False, False, False, False, True, True]), ('Sized', [True, True, True, True, True, True, True, False, False, False, True, True]), ('Container', [True, True, True, True, True, True, True, False, False, False, True, True]), ('Callable', [False, False, False, False, False, False, False, False, False, True, False, False]), ('Collection', [True, True, True, True, True, True, True, False, False, False, True, True]), ('Sequence', [True, True, True, False, True, True, False, False, False, False, True, True]), ('MutableSequence', [True, False, False, False, False, False, False, False, False, False, False, False]), ('Mapping', [False, False, True, False, False, False, True, False, False, False, False, False]), ('Set', [False, False, False, True, False, False, False, False, False, False, False, False]), ('Buffer', [False, False, False, False, False, True, False, False, False, False, False, True])]

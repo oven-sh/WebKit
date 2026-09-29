@@ -753,6 +753,12 @@ Floats are packed by `packFloat2()` and the rest, in `PythonNumbers.cpp`, which 
 
 Turning what is given into numbers can run anything, so `pack_into()` packs into bytes of its own and copies them afterwards, if there is still room where they were to go: see *Where the bytes are is not kept*.
 
+### `_abc`
+
+`PythonABCModule.cpp` is `Modules/_abc.c`, which `abc.ABCMeta` is written over. CPython has the same in Python, `_py_abc.py`, for where there is no `_abc`, but it is not the same to a program. It is `_abc` that makes a sequence pattern
+match what is derived from `collections.abc.Sequence`, or registered with it, and likewise for a mapping. And `typing` lets a protocol be asked about only by `abc` and `functools`, going by the name of the module that is asking, which
+with `_py_abc` is `_py_abc`: `isinstance()` of a protocol that has attributes that are not methods then raises `TypeError`.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see

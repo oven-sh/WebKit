@@ -64,12 +64,12 @@ void StructModuleState::visit(Visitor& visitor)
     visitor.append(error);
 }
 
-StructModuleState& moduleStateOf(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<StructModuleState>(); }
+StructModuleState& structModuleState(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<StructModuleState>(); }
 
 // struct.error
 JSValue raiseStructError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message)
 {
-    JSObject* exception = createException(globalObject, moduleStateOf(globalObject).error.get(), jsString(globalObject->vm(), message));
+    JSObject* exception = createException(globalObject, structModuleState(globalObject).error.get(), jsString(globalObject->vm(), message));
     RETURN_IF_EXCEPTION(scope, { });
     setContext(globalObject, exception);
     throwException(globalObject, scope, exception);
@@ -747,7 +747,7 @@ JSValue iterateUnpacking(JSGlobalObject* globalObject, JSValue structObject, JSV
     RETURN_IF_EXCEPTION(scope, { });
     if (buffer.size() % static_cast<size_t>(self.size))
         return raiseStructError(globalObject, scope, concatenate("iterative unpacking requires a buffer of a multiple of "_s, static_cast<int64_t>(self.size), " bytes"_s));
-    auto* iterator = PyStateObject::create(vm, moduleStateOf(globalObject).unpackIterator->instanceStructure(), makeUnique<UnpackIteratorState>());
+    auto* iterator = PyStateObject::create(vm, structModuleState(globalObject).unpackIterator->instanceStructure(), makeUnique<UnpackIteratorState>());
     auto& state = iterator->state<UnpackIteratorState>();
     state.structObject.set(vm, iterator, structObject);
     state.source.set(vm, iterator, buffer.object());
@@ -759,7 +759,7 @@ JSValue iterateUnpacking(JSGlobalObject* globalObject, JSValue structObject, JSV
 JSValue structFor(JSGlobalObject* globalObject, JSValue format)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto& state = moduleStateOf(globalObject);
+    auto& state = structModuleState(globalObject);
     // It is kept under a str, so that a str is never compared with bytes.
     JSValue key = format;
     if (isInstance(globalObject, format, globalObject->pyRealm()->typeBytes())) {
@@ -933,7 +933,7 @@ PYTHON_NATIVE(unpackIteratorNext)
 PYTHON_NATIVE(structClearCache)
 {
     UNUSED_PARAM(callFrame);
-    moduleStateOf(globalObject).cache->clear(globalObject);
+    structModuleState(globalObject).cache->clear(globalObject);
     RETURN_NONE();
 }
 
@@ -993,7 +993,7 @@ JSObject* createStructModule(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
-    auto& state = moduleStateOf(globalObject);
+    auto& state = structModuleState(globalObject);
     using Kind = PyNativeFunction::Kind;
     constexpr auto notChecked = PyNativeFunction::Arguments::AreNotChecked;
     constexpr auto any = "($self, /, *args)"_s;

@@ -79,7 +79,7 @@ void ArrayModuleState::visit(Visitor& visitor)
     visitor.append(reconstructor);
 }
 
-ArrayModuleState& moduleStateOf(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<ArrayModuleState>(); }
+ArrayModuleState& arrayModuleState(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<ArrayModuleState>(); }
 
 struct ArrayState final : NativeState {
     PYTHON_NATIVE_STATE(ArrayState);
@@ -111,7 +111,7 @@ template<typename Visitor> void ArrayState::visit(Visitor& visitor) { visitor.ap
 
 constexpr int64_t most = std::numeric_limits<int64_t>::max(); // PY_SSIZE_T_MAX
 
-bool isPythonArray(JSGlobalObject* globalObject, JSValue value) { return tryStateOf<ArrayState>(value) && isInstance(globalObject, value, moduleStateOf(globalObject).array.get()); }
+bool isPythonArray(JSGlobalObject* globalObject, JSValue value) { return tryStateOf<ArrayState>(value) && isInstance(globalObject, value, arrayModuleState(globalObject).array.get()); }
 
 // array_resize(). False if it raised.
 bool resize(JSGlobalObject* globalObject, ArrayState& self, int64_t newSize)
@@ -163,7 +163,7 @@ PyStateObject* newArray(JSGlobalObject* globalObject, PyType* type, int64_t size
     return object;
 }
 
-PyStateObject* newArray(JSGlobalObject* globalObject, int64_t size, const ArrayDescriptor& descriptor) { return newArray(globalObject, moduleStateOf(globalObject).array.get(), size, descriptor); }
+PyStateObject* newArray(JSGlobalObject* globalObject, int64_t size, const ArrayDescriptor& descriptor) { return newArray(globalObject, arrayModuleState(globalObject).array.get(), size, descriptor); }
 
 // ---- What is done for each kind of item
 
@@ -1394,7 +1394,7 @@ PYTHON_NATIVE(arrayReconstructor)
     int format = *code;
     JSValue items = args[3];
 
-    PyType* arrayType = moduleStateOf(globalObject).array.get();
+    PyType* arrayType = arrayModuleState(globalObject).array.get();
     if (!isClass(args[0]))
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("first argument must be a type object, not "_s, typeName(globalObject, args[0]))));
     PyType* type = asType(args[0]);
@@ -1469,7 +1469,7 @@ PYTHON_NATIVE(arrayReconstructor)
 PYTHON_NATIVE(arrayReduceEx)
 {
     ARRAY_PROLOGUE();
-    auto& state = moduleStateOf(globalObject);
+    auto& state = arrayModuleState(globalObject);
     if (!state.reconstructor) {
         JSValue reconstructor = importModuleAttribute(globalObject, "array"_s, "_array_reconstructor"_s);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1581,7 +1581,7 @@ PYTHON_NATIVE(arrayNew)
 {
     NATIVE_PROLOGUE();
     PyType* type = asType(args[0]);
-    PyType* arrayType = moduleStateOf(globalObject).array.get();
+    PyType* arrayType = arrayModuleState(globalObject).array.get();
     // A class derived from it that has an __init__() of its own may be given anything by name, for that to see.
     if ((type == arrayType || type->lookup(vm, names.dunder_init) == arrayType->lookup(vm, names.dunder_init)) && !args.checkNoKeywords(globalObject, scope, "array.array"_s))
         return { };
@@ -1610,7 +1610,7 @@ PYTHON_NATIVE(arrayNew)
 PYTHON_NATIVE(arrayIter)
 {
     VM& vm = globalObject->vm();
-    auto* iterator = PyStateObject::create(vm, moduleStateOf(globalObject).iterator->instanceStructure(), makeUnique<ArrayIteratorState>());
+    auto* iterator = PyStateObject::create(vm, arrayModuleState(globalObject).iterator->instanceStructure(), makeUnique<ArrayIteratorState>());
     iterator->state<ArrayIteratorState>().array.set(vm, iterator, callFrame->uncheckedArgument(0));
     return JSValue::encode(iterator);
 }
@@ -1663,7 +1663,7 @@ JSObject* createArrayModule(JSGlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
     auto& names = vm.pythonNames();
-    auto& state = moduleStateOf(globalObject);
+    auto& state = arrayModuleState(globalObject);
     using Kind = PyNativeFunction::Kind;
     constexpr auto withDefiningClass = PyNativeFunction::Arguments::AreCheckedAsWithDefiningClass;
     if (!state.array) {

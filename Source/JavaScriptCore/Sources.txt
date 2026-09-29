@@ -748,6 +748,7 @@ python/PyStateObject.cpp
 python/PyWeakReference.cpp
 python/PythonConstantFolding.cpp
 python/PythonFrameJump.cpp
+python/PythonABCModule.cpp
 python/PythonASTDumper.cpp
 python/PythonASTModule.cpp
 python/PythonASTOptimizer.cpp

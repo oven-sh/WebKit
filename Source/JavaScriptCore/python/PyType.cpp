@@ -164,7 +164,8 @@ void PyType::addToLayout(unsigned slots, bool addsDict, bool addsWeakReferences)
 
 unsigned long PyType::flagsForPython() const
 {
-    return m_flagsForPython | (hasFlag(IsAbstract) ? cpythonIsAbstract : 0);
+    // What kind of pattern matches it can be changed at any time, by registering it with collections.abc.Sequence or collections.abc.Mapping.
+    return (m_flagsForPython & ~(cpythonSequence | cpythonMapping)) | (hasFlag(IsSequence) ? cpythonSequence : 0) | (hasFlag(IsMapping) ? cpythonMapping : 0) | (hasFlag(IsAbstract) ? cpythonIsAbstract : 0);
 }
 
 void PyType::finishBuiltin(VM& vm, JSGlobalObject* globalObject, PyType* metatype)
