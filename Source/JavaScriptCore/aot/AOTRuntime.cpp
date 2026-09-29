@@ -32,6 +32,7 @@
 #include "JITThunks.h"
 #include "JSCInlines.h"
 #include "MathObject.h"
+#include "LLIntData.h"
 #include "LLIntEntrypoint.h"
 #include "LLIntSlowPaths.h"
 #include "LLIntThunks.h"
@@ -108,6 +109,7 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::LookupExceptionHandlerFromCallerFrame, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandlerFromCallerFrame));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
+    set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
 
     auto addCallLinkInfo = [&](Entry entry, CallLinkInfo::CallType type) {
         auto info = makeUnique<VirtualCallInfo>();
@@ -148,6 +150,10 @@ RuntimeTable::RuntimeTable(VM& vm)
     setHostFunction(Entry::HostSetAdd, setProtoFuncAdd);
 
     installOperationFrontEnds(vm, m_entries);
+
+    // (With a JIT it has boundFunctionCallGenerator()'s thunk.)
+    if (usesStubs && !Options::useJIT() && Options::aotCallsBoundFunctionsWithStub())
+        vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCodeToBeCalledWith(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::CallBoundFunction))));
 }
 
 RuntimeTable::~RuntimeTable() = default;

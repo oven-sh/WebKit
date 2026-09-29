@@ -1679,6 +1679,101 @@ static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKin
 static void generateEnterStaticFunctionForCall(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForCall, Entry::CallLinkInfoForCall); }
 static void generateEnterStaticFunctionForConstruct(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForConstruct, Entry::CallLinkInfoForConstruct); }
 
+// What the NativeExecutable of bound functions whose target is a function has for code to be called with, where there is no JIT: what
+// boundFunctionCallGenerator() makes (ThunkGenerators.cpp), but that it goes by no address. The frame is that of a native
+// function, as far as anybody who walks the stack can tell. If there is no room for the target's, or the target has no code yet, it is as
+// if this had not been here: the executable's function sees to it.
+static void generateCallBoundFunction(CCallHelpers& jit)
+{
+    constexpr GPRReg bound = GPRInfo::regT0;
+    constexpr GPRReg total = GPRInfo::regT1;
+    constexpr GPRReg scratch = GPRInfo::regT2;
+    constexpr GPRReg passed = GPRInfo::regT3;
+    constexpr GPRReg value = GPRInfo::regT4;
+    constexpr GPRReg vm = T10;
+    CCallHelpers::JumpList theLongWay;
+
+    loadCalleeOfFrameBeingMadeAndItsVM(jit, bound, vm);
+    jit.emitFunctionPrologue();
+    jit.storePtr(CCallHelpers::TrustedImmPtr(nullptr), CCallHelpers::addressFor(CallFrameSlot::codeBlock));
+    jit.store32(TrustedImm32(0), CCallHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+
+    static_assert(!(sizeof(CallerFrameAndPC) % stackAlignmentBytes()));
+    jit.load32(Address(bound, JSBoundFunction::offsetOfBoundArgsLength()), scratch);
+    jit.load32(CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis), total);
+    jit.move(total, passed);
+    jit.add32(scratch, total);
+    jit.add32(TrustedImm32(CallFrame::headerSizeInRegisters - CallerFrameAndPC::sizeInRegisters), total, scratch);
+    jit.lshift32(TrustedImm32(3), scratch);
+    jit.add32(TrustedImm32(stackAlignmentBytes() - 1), scratch);
+    jit.and32(TrustedImm32(-stackAlignmentBytes()), scratch);
+    jit.negPtr(scratch);
+    jit.addPtr(CCallHelpers::stackPointerRegister, scratch);
+    jit.loadPtr(Address(vm, VM::offsetOfSoftStackLimit()), T11);
+    theLongWay.append(jit.branchPtr(CCallHelpers::Above, T11, scratch));
+    jit.move(scratch, CCallHelpers::stackPointerRegister);
+
+    jit.store32(total, CCallHelpers::calleeFrameLowWordSlot(CallFrameSlot::argumentCountIncludingThis));
+    jit.loadValue(Address(bound, JSBoundFunction::offsetOfBoundThis()), value);
+    jit.storeValue(value, CCallHelpers::calleeArgumentSlot(0));
+
+    // What was passed comes last.
+    jit.sub32(TrustedImm32(1), passed);
+    jit.sub32(TrustedImm32(1), total);
+    Jump nonePassed = jit.branchTest32(CCallHelpers::Zero, passed);
+    CCallHelpers::Label nextPassed = jit.label();
+    jit.sub32(TrustedImm32(1), passed);
+    jit.sub32(TrustedImm32(1), total);
+    jit.loadValue(CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(1)).indexedBy(passed, CCallHelpers::TimesEight), value);
+    jit.storeValue(value, CCallHelpers::calleeArgumentSlot(1).indexedBy(total, CCallHelpers::TimesEight));
+    jit.branchTest32(CCallHelpers::NonZero, passed).linkTo(nextPassed, &jit);
+    nonePassed.link(&jit);
+
+    CCallHelpers::JumpList haveArguments;
+    haveArguments.append(jit.branchTest32(CCallHelpers::Zero, total));
+    Jump areInFunction = jit.branch32(CCallHelpers::BelowOrEqual, total, TrustedImm32(JSBoundFunction::maxEmbeddedArgs));
+    {
+        jit.loadPtr(Address(bound, JSBoundFunction::offsetOfBoundArgs()), passed);
+        CCallHelpers::Label next = jit.label();
+        jit.sub32(TrustedImm32(1), total);
+        jit.loadValue(CCallHelpers::BaseIndex(passed, total, CCallHelpers::TimesEight, JSCellButterfly::offsetOfData()), value);
+        jit.storeValue(value, CCallHelpers::calleeArgumentSlot(1).indexedBy(total, CCallHelpers::TimesEight));
+        jit.branchTest32(CCallHelpers::NonZero, total).linkTo(next, &jit);
+        haveArguments.append(jit.jump());
+    }
+    areInFunction.link(&jit);
+    {
+        CCallHelpers::Label next = jit.label();
+        jit.sub32(TrustedImm32(1), total);
+        jit.loadValue(CCallHelpers::BaseIndex(bound, total, CCallHelpers::TimesEight, JSBoundFunction::offsetOfBoundArgs()), value);
+        jit.storeValue(value, CCallHelpers::calleeArgumentSlot(1).indexedBy(total, CCallHelpers::TimesEight));
+        jit.branchTest32(CCallHelpers::NonZero, total).linkTo(next, &jit);
+    }
+    haveArguments.link(&jit);
+
+    jit.loadPtr(Address(bound, JSBoundFunction::offsetOfTargetFunction()), scratch);
+    jit.storeValue(scratch, CCallHelpers::calleeFrameSlot(CallFrameSlot::callee));
+    jit.loadPtr(Address(scratch, JSFunction::offsetOfExecutableOrRareData()), total);
+    Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, total, TrustedImm32(JSFunction::rareDataTag));
+    jit.loadPtr(Address(total, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), total);
+    hasExecutable.link(&jit);
+    jit.loadPtr(Address(total, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), scratch);
+    theLongWay.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    Jump isNative = jit.branchIfNotType(total, FunctionExecutableType);
+    jit.loadPtr(Address(total, FunctionExecutable::offsetOfCodeBlockForCall()), passed);
+    jit.storePtr(passed, CCallHelpers::calleeFrameCodeBlockBeforeCall());
+    isNative.link(&jit);
+    jit.call(scratch, JSEntryPtrTag);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    theLongWay.link(&jit);
+    jit.emitFunctionEpilogue();
+    jit.loadPtr(Address(vm, VM::offsetOfAOTRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::NativeCallTrampoline) * sizeof(void*)), T11);
+    jit.farJump(T11, JSEntryPtrTag);
+}
+
 // What a FunctionExecutable that was made when the program was built has for code to construct with, if its function was compiled
 // to be called and that is all (FunctionExecutable::constructsByCalling()). Few such functions ever see a `new`. The frame is that
 // of a native function, as far as anybody who walks the stack can tell.

@@ -50,6 +50,8 @@ public:
     CodeBlockHash NODELETE hashFor(CodeSpecializationKind) const;
 
     TaggedNativeFunction function() const { return m_function; }
+    // Something that does what function() does, given a frame like any that is made to call a function.
+    void setCodeToBeCalledWith(CodePtr<JSEntryPtrTag> code) { m_jitCodeForCallWithArityCheck = code; }
     TaggedNativeFunction constructor() const { return m_constructor; }
         
     TaggedNativeFunction nativeFunctionFor(CodeSpecializationKind kind)
