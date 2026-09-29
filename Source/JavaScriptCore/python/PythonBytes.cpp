@@ -118,6 +118,18 @@ static JSValue newLike(JSGlobalObject* globalObject, JSValue self, const ByteVec
     return isBytes(self) ? newBytes(globalObject, content) : newByteArray(globalObject, content);
 }
 
+// Whether, when what is asked of it comes to just what it is, it is itself that is given, and not another like it. It is so of a bytes, which is not to be changed, and not of one of a class derived from that, of which what is
+// given is to be a bytes. A program can tell, with `is`. return_self() of CPython's Objects/stringlib/transmogrify.h.
+static bool givesItself(JSGlobalObject* globalObject, JSValue self) { return isExactly(globalObject, self, BuiltinType::Bytes); }
+
+// A part of what is in something, of which there is so much in all.
+static JSValue partOf(JSGlobalObject* globalObject, JSValue self, size_t whole, std::span<const uint8_t> part)
+{
+    if (part.size() == whole && givesItself(globalObject, self))
+        return self;
+    return newLike(globalObject, self, part);
+}
+
 static std::optional<NativeState::ExportedBytes> exportedBytesOf(JSValue value)
 {
     auto* object = dynamicDowncast<PyStateObject>(value);
@@ -811,7 +823,7 @@ PYTHON_NATIVE(bytesGetItem)
         auto indices = slice->indices(globalObject, [&] { return content.size(); });
         RETURN_IF_EXCEPTION(scope, { });
         if (indices->step == 1)
-            RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, content.subspan(indices->start, indices->length))));
+            RELEASE_AND_RETURN(scope, JSValue::encode(partOf(globalObject, selfValue, content.size(), content.subspan(indices->start, indices->length))));
         ByteVector selected;
         for (int64_t i = 0, at = indices->start; i < indices->length; ++i, at += indices->step)
             selected.append(content[at]);
@@ -894,6 +906,12 @@ PYTHON_NATIVE(bytesAdd)
         catchException(globalObject, BuiltinType::BaseException);
     if (!other)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("can't concat "_s, typeName(globalObject, args.at(1)), " to "_s, typeName(globalObject, selfValue))));
+    if (isBytes(selfValue)) {
+        if (content.empty() && givesItself(globalObject, args[1]))
+            return JSValue::encode(args[1]);
+        if (other->empty() && givesItself(globalObject, selfValue))
+            return JSValue::encode(selfValue);
+    }
     ByteVector joined;
     joined.append(content.span());
     joined.append(*other);
@@ -931,6 +949,8 @@ PYTHON_NATIVE(bytesMultiply)
     ByteVector result;
     repeated(globalObject, scope, selfValue, content, args[1], result);
     RETURN_IF_EXCEPTION(scope, { });
+    if (result.size() == content.size() && givesItself(globalObject, selfValue))
+        return JSValue::encode(selfValue);
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
@@ -1034,7 +1054,9 @@ PYTHON_NATIVE(bytesReplace)
     if (limit < 0)
         limit = std::numeric_limits<int64_t>::max();
     ByteVector result;
+    bool hasReplaced = false;
     if (from->empty()) {
+        hasReplaced = limit && !to->empty();
         int64_t done = 0;
         for (uint8_t byte : content) {
             if (done++ < limit)
@@ -1052,9 +1074,12 @@ PYTHON_NATIVE(bytesReplace)
             result.append(content.subspan(start, found - start));
             result.append(*to);
             start = found + from->size();
+            hasReplaced = true;
         }
         result.append(content.subspan(start));
     }
+    if (!hasReplaced && givesItself(globalObject, selfValue))
+        return JSValue::encode(selfValue);
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 
@@ -1120,7 +1145,7 @@ PYTHON_NATIVE(bytesSplit)
     MarkedArgumentBuffer pieces;
     // False if it raised.
     auto add = [&] (size_t start, size_t end) {
-        pieces.append(newLike(globalObject, selfValue, spanOf(self).subspan(start, end - start)));
+        pieces.append(partOf(globalObject, selfValue, spanOf(self).size(), spanOf(self).subspan(start, end - start)));
         return !scope.exception();
     };
     auto count = [&] { return static_cast<int64_t>(pieces.size()); };
@@ -1216,7 +1241,7 @@ PYTHON_NATIVE(bytesSplitLines)
                 ++i;
             ++i;
         }
-        result.append(newLike(globalObject, selfValue, content.subspan(start, (keepEnds ? i : end) - start)));
+        result.append(partOf(globalObject, selfValue, length, content.subspan(start, (keepEnds ? i : end) - start)));
         RETURN_IF_EXCEPTION(scope, { });
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, result)));
@@ -1268,7 +1293,7 @@ PYTHON_NATIVE(bytesStrip)
         while (end > start && shouldStrip(content[end - 1]))
             --end;
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, content.subspan(start, end - start))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(partOf(globalObject, selfValue, content.size(), content.subspan(start, end - start))));
 }
 
 // ljust, rjust and center(width, fillbyte=b' ')
@@ -1292,6 +1317,8 @@ PYTHON_NATIVE(bytesJustify)
     int64_t length = content.size();
     int64_t padding = std::max<int64_t>(*width - length, 0);
     int64_t before = align == '<' ? 0 : align == '>' ? padding : padding / 2 + (padding & *width & 1);
+    if (!padding && givesItself(globalObject, selfValue))
+        return JSValue::encode(selfValue);
     ByteVector result;
     if (!reserve(globalObject, scope, result, length + padding, isBytes(selfValue)))
         return { };
@@ -1306,6 +1333,8 @@ PYTHON_NATIVE(bytesZfill)
     BYTES_PROLOGUE("zfill");
     auto width = toSsize(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
+    if (*width <= static_cast<int64_t>(content.size()) && givesItself(globalObject, selfValue))
+        return JSValue::encode(selfValue);
     ByteVector result;
     if (!reserve(globalObject, scope, result, std::max<int64_t>(*width, content.size()), isBytes(selfValue)))
         return { };
@@ -1374,7 +1403,7 @@ PYTHON_NATIVE(bytesRemoveAffix)
         else if (!isPrefix && !memcmp(content.data() + content.size() - affix->size(), affix->data(), affix->size()))
             result = content.first(content.size() - affix->size());
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(partOf(globalObject, selfValue, content.size(), result)));
 }
 
 // ---- Case, which is ASCII's
@@ -1651,6 +1680,8 @@ PYTHON_NATIVE(bytesTranslate)
         if (!isDeleted[byte])
             result.append(table ? (*table)[byte] : byte);
     }
+    if (result.size() == content.size() && !memcmp(result.span().data(), content.data(), result.size()) && givesItself(globalObject, selfValue))
+        return JSValue::encode(selfValue);
     RELEASE_AND_RETURN(scope, JSValue::encode(newLike(globalObject, selfValue, result)));
 }
 

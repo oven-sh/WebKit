@@ -92,6 +92,11 @@ static PyTuple* tupleConcatenate(JSGlobalObject* globalObject, PyTuple* left, Py
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // With nothing added to it, a tuple is itself and not another like it, which a program can tell. One of a class derived from tuple is not, since what is given is to be a tuple.
+    if (!left->length() && isExactly(globalObject, right, BuiltinType::Tuple))
+        return right;
+    if (!right->length() && isExactly(globalObject, left, BuiltinType::Tuple))
+        return left;
     if (right->length() > std::numeric_limits<unsigned>::max() - left->length()) {
         raiseMemoryError(globalObject, scope);
         return nullptr;
@@ -110,6 +115,8 @@ static JSValue tupleRepeat(JSGlobalObject* globalObject, PyTuple* tuple, int64_t
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     count = std::max<int64_t>(count, 0);
+    if ((!tuple->length() || count == 1) && isExactly(globalObject, tuple, BuiltinType::Tuple))
+        return tuple;
     if (!tuple->length() || !count)
         return PyTuple::create(globalObject, 0);
     // By dividing, since the product may be more than can be counted.
@@ -1568,6 +1575,8 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         if (auto* slice = trySlice(key)) {
             auto indices = slice->indices(globalObject, tuple->length());
             RETURN_IF_EXCEPTION(scope, { });
+            if (!indices->start && indices->step == 1 && indices->length == tuple->length() && isExactly(globalObject, tuple, BuiltinType::Tuple))
+                return tuple;
             PyTuple* result = PyTuple::create(globalObject, indices->length);
             int64_t from = indices->start;
             for (int64_t i = 0; i < indices->length; ++i, from += indices->step)

@@ -1073,6 +1073,9 @@ There is nothing that is per process, nothing that is set after something is mad
 
 ## Where it differs from CPython on purpose
 
+- **There is not one `bytes` with nothing in it**, as there is one empty tuple. `b"" is b""` is false, and so is `x[5:5] is x[6:6]`. JavaScript can give away the buffer of a `bytes`, and if it did so with that one it would have done
+  so with every empty `bytes` there is. Otherwise what CPython gives back as it is, is given back as it is: `t[:]`, `t * 1`, `t + ()`, `b.strip()` with nothing to strip, `frozenset(f)`, `format(s)`. `the-same-object-or-another.py`
+  goes through them.
 - **A `bytearray` can be resized while there is a `memoryview` of it, or while a regular expression is going through it.** CPython raises `BufferError`, and can because the view is released the
   moment the last reference to it goes. Here it would stay locked until the next collection, and programs that are right would fail. A view
   holds no pointer, only where it is looking, and checks each time. For the same reason the `__release_buffer__()` of a class that has one is called when

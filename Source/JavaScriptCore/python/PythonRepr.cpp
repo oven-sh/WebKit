@@ -428,6 +428,9 @@ JSValue builtinFormat(JSGlobalObject* globalObject, JSValue value, const String&
     if (!isString && !number)
         return { };
     if (specificationText.isEmpty()) {
+        // A str is what it is already, and it is that one that is given.
+        if (isString)
+            return value;
         String text = str(globalObject, value);
         RETURN_IF_EXCEPTION(scope, { });
         return jsString(vm, text);

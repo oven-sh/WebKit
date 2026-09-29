@@ -226,7 +226,8 @@ PYTHON_NATIVE(strSplit)
     // No more than a list has room for, and one more, which is how it is seen that there are too many.
     limit = std::min<int64_t>(limit, maxListLength);
     MarkedArgumentBuffer pieces;
-    auto add = [&] (unsigned start, unsigned end) { pieces.append(toJS(vm, view.substring(start, end - start))); };
+    // If all of it is one piece, that is the str itself, which a program can tell. Of a class derived from str it is not, since what is given is to be a str.
+    auto add = [&] (unsigned start, unsigned end) { pieces.append(end - start == length && args[0].isString() ? args[0] : toJS(vm, view.substring(start, end - start))); };
 
     if (!separatorValue || isNone(separatorValue)) {
         // Runs of white space, and none at the ends.
@@ -328,7 +329,8 @@ PYTHON_NATIVE(strSplitLines)
                 ++i;
             ++i;
         }
-        result.append(toJS(vm, view.substring(start, (keepEnds ? i : end) - start)));
+        unsigned pieceLength = (keepEnds ? i : end) - start;
+        result.append(pieceLength == length && args[0].isString() ? args[0] : toJS(vm, view.substring(start, pieceLength)));
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, result)));
 }
@@ -463,6 +465,8 @@ PYTHON_NATIVE(strExpandTabs)
         RETURN_IF_EXCEPTION(scope, { });
         tabSize = *index;
     }
+    if (!self.contains('\t'))
+        return JSValue::encode(unboxString(args[0]));
     TextBuilder builder;
     int64_t column = 0;
     for (char32_t c : StringView(self).codePoints()) {
@@ -812,6 +816,9 @@ PYTHON_NATIVE(strReplace)
     }
     if (limit < 0)
         limit = std::numeric_limits<int64_t>::max();
+    // `str1 == str2` in replace() of Objects/unicodeobject.c, which is whether they are one object and not whether they are alike. Two of one character that fits in a byte are, there and here.
+    if (!limit || args[1] == args[2])
+        return JSValue::encode(unboxString(args[0]));
 
     StringView view = self;
     TextBuilder builder;

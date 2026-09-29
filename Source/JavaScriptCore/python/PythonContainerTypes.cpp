@@ -528,6 +528,9 @@ PYTHON_NATIVE(setInit)
 PYTHON_NATIVE(frozenSetNew)
 {
     NATIVE_PROLOGUE();
+    // A frozenset of a frozenset is that one.
+    if (asType(args[0]) == realm->typeFrozenSet() && args.size() > 1 && isExactly(globalObject, args[1], BuiltinType::FrozenSet))
+        return JSValue::encode(args[1]);
     RELEASE_AND_RETURN(scope, JSValue::encode(setFromIterable(globalObject, asType(args[0])->instanceStructure(), args.at(1))));
 }
 

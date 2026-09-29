@@ -376,10 +376,11 @@ PYTHON_NATIVE(builtinSizeOf)
 PYTHON_NATIVE(getNewArguments)
 {
     NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
     JSValue self = args[0];
     JSValue copy;
-    if (isTuple(self)) {
+    if (isExactly(globalObject, self, BuiltinType::Tuple))
+        copy = self;
+    else if (isTuple(self)) {
         MarkedArgumentBuffer items;
         for (auto& item : asTuple(self)->span())
             items.append(item.get());
@@ -388,8 +389,12 @@ PYTHON_NATIVE(getNewArguments)
         copy = newBytes(globalObject, bytes->typedSpan());
     else if (auto* complex = dynamicDowncast<PyComplex>(self))
         return JSValue::encode(PyTuple::create(globalObject, { floatFromDouble(complex->real()), floatFromDouble(complex->imaginary()) }));
-    else
-        copy = stringIn(self);
+    else {
+        // _PyUnicode_Copy(): another, even of a str.
+        String text = stringIn(self)->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        copy = jsString(vm, text);
+    }
     return JSValue::encode(PyTuple::create(globalObject, { copy }));
 }
 
