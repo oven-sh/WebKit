@@ -798,8 +798,6 @@ PYTHON_NATIVE(arrayAdd)
 PYTHON_NATIVE(arrayMultiply)
 {
     ARRAY_PROLOGUE();
-    if (!typeOf(globalObject, args[1])->lookup(vm, names.dunder_index) && !classify(args[1]).isInt())
-        RETURN_NOT_IMPLEMENTED();
     auto count = toIndexOrOverflow(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t n = std::max<int64_t>(*count, 0);
@@ -831,8 +829,6 @@ PYTHON_NATIVE(arrayInPlaceAdd)
 PYTHON_NATIVE(arrayInPlaceMultiply)
 {
     ARRAY_PROLOGUE();
-    if (!typeOf(globalObject, args[1])->lookup(vm, names.dunder_index) && !classify(args[1]).isInt())
-        RETURN_NOT_IMPLEMENTED();
     auto count = toIndexOrOverflow(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     int64_t n = *count;
@@ -1187,8 +1183,9 @@ PYTHON_NATIVE(arrayGetItem)
     if (indices->length > 0 && indices->step == 1)
         memcpy(to, from + indices->start * itemSize, indices->length * itemSize);
     else {
-        int64_t current = indices->start;
-        for (int64_t i = 0; i < indices->length; ++i, current += indices->step)
+        // A step can be as large as a number can be, and one more step than there are items to take goes past that. So where it has got to is counted without a sign, as in CPython.
+        uint64_t current = static_cast<uint64_t>(indices->start);
+        for (int64_t i = 0; i < indices->length; ++i, current += static_cast<uint64_t>(indices->step))
             memcpy(to + i * itemSize, from + current * itemSize, itemSize);
     }
     return JSValue::encode(result);
@@ -1278,16 +1275,18 @@ static bool assignSubscript(JSGlobalObject* globalObject, JSValue object, JSValu
             step = -step;
         }
         uint8_t* items = self.bytes().data();
-        int64_t size = self.size();
-        int64_t current = start;
-        for (int64_t i = 0; i < sliceLength; ++i, current += step) {
-            int64_t count = current + step >= size ? size - current - 1 : step - 1;
+        // Without a sign, as in CPython: `del a[9::1 << 333]` has a step to which nothing can be added.
+        uint64_t size = static_cast<uint64_t>(self.size());
+        uint64_t stride = static_cast<uint64_t>(step);
+        uint64_t current = static_cast<uint64_t>(start);
+        for (uint64_t i = 0; i < static_cast<uint64_t>(sliceLength); ++i, current += stride) {
+            uint64_t count = current + stride >= size ? size - current - 1 : stride - 1;
             memmove(items + (current - i) * itemSize, items + (current + 1) * itemSize, count * itemSize);
         }
-        current = start + sliceLength * step;
+        current = static_cast<uint64_t>(start) + static_cast<uint64_t>(sliceLength) * stride;
         if (current < size)
-            memmove(items + (current - sliceLength) * itemSize, items + current * itemSize, (size - current) * itemSize);
-        RELEASE_AND_RETURN(scope, resize(globalObject, self, size - sliceLength));
+            memmove(items + (current - static_cast<uint64_t>(sliceLength)) * itemSize, items + current * itemSize, (size - current) * itemSize);
+        RELEASE_AND_RETURN(scope, resize(globalObject, self, static_cast<int64_t>(size) - sliceLength));
     }
     if (needed != sliceLength) {
         raiseValueError(globalObject, scope, concatenate("attempt to assign array of size "_s, needed, " to extended slice of size "_s, sliceLength));
@@ -1295,8 +1294,8 @@ static bool assignSubscript(JSGlobalObject* globalObject, JSValue object, JSValu
     }
     uint8_t* items = self.bytes().data();
     const uint8_t* from = other->bytes().data();
-    int64_t current = start;
-    for (int64_t i = 0; i < sliceLength; ++i, current += step)
+    uint64_t current = static_cast<uint64_t>(start);
+    for (int64_t i = 0; i < sliceLength; ++i, current += static_cast<uint64_t>(step))
         memcpy(items + current * itemSize, from + i * itemSize, itemSize);
     return true;
 }

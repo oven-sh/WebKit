@@ -123,6 +123,7 @@ def inplace(op, v, start=(1, 2)):
 
 
 t("+= and *=", lambda: [inplace("+", v) for v in (A("i", [3]), A("i"), [3], (3,), 3, None, "a", b"a", A("h", [3]), A("d", [3.0]), iter([3]))] + [inplace("*", v) for v in (0, 1, 2, 3, -1, True, Index(2), 1.5, "a", None, 2 ** 62, 2 ** 63, 10 ** 30, Raises())] + [inplace("*", 5, ()), [(x.__iadd__(x), x.tolist())[1] for x in [A("i", [1, 2])]]])
+t("by their names", lambda: [[attempt(getattr(A("i", [1, 2]), name), v) for v in (A("i", [3]), 2, [3], "bad", None, 1.5, A("h", [3]), Index(2), 2 ** 63, Raises())] for name in ("__add__", "__iadd__", "__mul__", "__rmul__", "__imul__", "__contains__", "__getitem__", "__delitem__", "__eq__", "__lt__", "__ne__")] + [attempt(A("i", [1]).__setitem__, k, v) for k, v in ((0, "bad"), ("bad", 0), (None, None), (slice(None), "bad"), (slice(None), None))])
 t("a derived class comes to an array", lambda: [type(f(type("D", (A,), {})("i", [1, 2, 3]))).__name__ for f in (lambda d: d[:], lambda d: d[::2], lambda d: d + d, lambda d: d * 2, lambda d: 2 * d, copy.copy, copy.deepcopy, lambda d: d.__copy__())])
 
 print("---- its methods")

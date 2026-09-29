@@ -1756,11 +1756,14 @@ PYTHON_NATIVE(byteArraySetItem)
             replaceRange(globalObject, self, indices->start, indices->length, replacement);
             RETURN_NONE();
         }
-        if (value) {
+        // To assign nothing is to delete, whatever the step, and however many there are to take the place of.
+        if (value && replacement.size()) {
             if (static_cast<int64_t>(replacement.size()) != indices->length)
                 return JSValue::encode(raiseValueError(globalObject, scope, concatenate("attempt to assign bytes of size "_s, replacement.size(), " to extended slice of size "_s, indices->length)));
             auto data = mutableSpanOf(self);
-            for (int64_t i = 0, at = indices->start; i < indices->length; ++i, at += indices->step)
+            // One more step than there are items can be further than can be counted, so it is counted without a sign.
+            uint64_t at = static_cast<uint64_t>(indices->start);
+            for (int64_t i = 0; i < indices->length; ++i, at += static_cast<uint64_t>(indices->step))
                 data[at] = replacement[i];
             RETURN_NONE();
         }

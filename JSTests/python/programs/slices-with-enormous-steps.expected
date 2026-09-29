@@ -1,0 +1,20 @@
+list read: 720 315 278751556081255445
+bytearray read: 720 315 278751556081255445
+array of one byte read: 720 315 278751556081255445
+array of eight read: 720 315 278751556081255445
+array of floats read: 720 315 830514245137586153
+memoryview read: 720 315 278751556081255445
+tuple read: 720 315 278751556081255445
+bytes read: 720 315 278751556081255445
+str read: 720 315 1559231583521999704
+range read: 720 315 278751556081255445
+list deleted and assigned to: 2880 486972807056230967
+bytearray deleted and assigned to: 2880 2248299463442912537
+array of one byte deleted and assigned to: 2880 54823271912274396
+array of eight deleted and assigned to: 2880 54823271912274396
+array of floats deleted and assigned to: 2880 1752836287639748313
+memoryview deleted and assigned to: 2880 470863307408614980
+array('b', [0, 1, 2, 3, 4, 5, 6, 7, 8])
+9 1 0 9 5 9 9 1 9
+(3,) (1,) (3,) (1,) (2,)
+b'9' b'1' b'9' b'3'
