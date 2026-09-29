@@ -272,7 +272,10 @@ void setContext(JSGlobalObject* globalObject, JSObject* exception)
     JSValue handled = globalObject->pyRealm()->handledException();
     if (!handled || !handled.isObject() || handled == JSValue(exception))
         return;
-    // If it is already somewhere in the chain of what is being handled, it is taken out, or the chain would go round.
+    // If it is already somewhere in the chain of what is being handled, it is taken out, or the chain would go round. A program can have made one that goes round already, so another goes along it at half the pace, and is
+    // caught up with if it does: _PyErr_SetObject()
+    JSObject* slow = asObject(handled);
+    bool movesSlow = false;
     for (JSObject* link = asObject(handled);;) {
         JSValue next = link->getDirect(vm, name);
         if (!next || !next.isObject())
@@ -282,6 +285,11 @@ void setContext(JSGlobalObject* globalObject, JSObject* exception)
             break;
         }
         link = asObject(next);
+        if (link == slow)
+            break;
+        if (movesSlow)
+            slow = asObject(slow->getDirect(vm, name));
+        movesSlow = !movesSlow;
     }
     exception->putDirect(vm, name, handled);
 }
