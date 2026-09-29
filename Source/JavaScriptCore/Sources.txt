@@ -835,6 +835,7 @@ python/PythonTextIO.cpp
 python/PythonTokenizeModule.cpp
 python/PythonThreadModule.cpp
 python/PythonTime.cpp
+python/PythonTimeModule.cpp
 python/PythonWarnings.cpp
 python/PythonWeakReferences.cpp
 

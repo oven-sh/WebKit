@@ -30,6 +30,11 @@
 #include "JSCInlines.h"
 #include "PyRealm.h"
 #include "PythonOperations.h"
+#include <numeric>
+
+#if OS(DARWIN)
+#include <mach/mach_time.h>
+#endif
 
 namespace JSC { namespace Python {
 
@@ -126,6 +131,147 @@ int64_t divideTime(int64_t time, int64_t divisor, TimeRounding rounding)
         return divideAwayFromZero(time, divisor);
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+std::optional<int64_t> timeFromNanosecondsObject(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!isInstance(globalObject, value, globalObject->pyRealm()->typeInt())) {
+        raiseTypeError(globalObject, scope, concatenate("expect int, got "_s, typeName(globalObject, value)));
+        return std::nullopt;
+    }
+    JSValue integer = toInt(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto nanoseconds = tryInt64(integer);
+    if (!nanoseconds)
+        raiseTimeOverflow(globalObject, scope);
+    return nanoseconds;
+}
+
+static void raiseTimeTOverflow(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    raise(globalObject, scope, BuiltinType::OverflowError, "timestamp out of range for platform time_t"_s);
+}
+
+std::optional<time_t> objectToTimeT(JSGlobalObject* globalObject, JSValue value, TimeRounding rounding)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    static_assert(sizeof(time_t) == sizeof(int64_t));
+    if (isInstance(globalObject, value, globalObject->pyRealm()->typeFloat())) {
+        auto seconds = toDouble(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (std::isnan(*seconds)) {
+            raiseValueError(globalObject, scope, "Invalid value NaN (not a number)"_s);
+            return std::nullopt;
+        }
+        double whole = std::trunc(roundTime(*seconds, rounding));
+        constexpr double least = static_cast<double>(std::numeric_limits<time_t>::min());
+        if (!(least <= whole && whole < -least)) {
+            raiseTimeTOverflow(globalObject, scope);
+            return std::nullopt;
+        }
+        return static_cast<time_t>(whole);
+    }
+    // _PyLong_AsTime_t()
+    JSValue integer = toInt(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    auto seconds = tryInt64(integer);
+    if (!seconds) {
+        raiseTimeTOverflow(globalObject, scope);
+        return std::nullopt;
+    }
+    return static_cast<time_t>(*seconds);
+}
+
+std::optional<int64_t> timeFromTimespec(JSGlobalObject* globalObject, const struct timespec& given)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    CheckedInt64 time = static_cast<int64_t>(given.tv_sec);
+    time *= nanosecondsPerSecond;
+    time += static_cast<int64_t>(given.tv_nsec);
+    if (time.hasOverflowed()) {
+        raiseTimeOverflow(globalObject, scope);
+        return std::nullopt;
+    }
+    return time.value();
+}
+
+bool timeAsTimespec(JSGlobalObject*, int64_t time, struct timespec& result)
+{
+    // pytime_divmod(): what is left over is never less than nothing. A time_t has room for as many seconds as there can be.
+    int64_t seconds = time / nanosecondsPerSecond;
+    int64_t nanoseconds = time % nanosecondsPerSecond;
+    if (nanoseconds < 0) {
+        nanoseconds += nanosecondsPerSecond;
+        --seconds;
+    }
+    result.tv_sec = static_cast<time_t>(seconds);
+    result.tv_nsec = static_cast<long>(nanoseconds);
+    return true;
+}
+
+double timespecAsSeconds(const struct timespec& time) { return multiplyAdd(static_cast<double>(time.tv_nsec), 1e-9, static_cast<double>(time.tv_sec)); }
+
+// py_get_system_clock()
+std::optional<int64_t> systemClock(JSGlobalObject* globalObject, ClockInfo* info)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    struct timespec now;
+    if (clock_gettime(CLOCK_REALTIME, &now)) {
+        raiseOSError(globalObject, scope, errno);
+        return std::nullopt;
+    }
+    if (info) {
+        struct timespec resolution;
+        *info = { "clock_gettime(CLOCK_REALTIME)"_s, false, true, clock_getres(CLOCK_REALTIME, &resolution) ? 1e-9 : timespecAsSeconds(resolution) };
+    }
+    RELEASE_AND_RETURN(scope, timeFromTimespec(globalObject, now));
+}
+
+// py_get_monotonic_clock()
+std::optional<int64_t> monotonicClock(JSGlobalObject* globalObject, ClockInfo* info)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+#if OS(DARWIN)
+    // py_mach_timebase_info(), _PyTimeFraction_Set() and _PyTimeFraction_Mul()
+    mach_timebase_info_data_t timebase;
+    mach_timebase_info(&timebase);
+    int64_t divisor = std::gcd<int64_t, int64_t>(timebase.numer, timebase.denom);
+    int64_t numerator = timebase.numer / divisor;
+    int64_t denominator = timebase.denom / divisor;
+    if (info)
+        *info = { "mach_absolute_time()"_s, true, false, static_cast<double>(numerator) / static_cast<double>(denominator) / 1e9 };
+    uint64_t ticks = mach_absolute_time();
+    if (ticks > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+        raiseTimeOverflow(globalObject, scope);
+        return std::nullopt;
+    }
+    auto multiply = [] (int64_t a, int64_t b) {
+        CheckedInt64 product = a;
+        product *= b;
+        return product.hasOverflowed() ? std::numeric_limits<int64_t>::max() : product.value();
+    };
+    int64_t whole = static_cast<int64_t>(ticks) / denominator;
+    int64_t rest = multiply(static_cast<int64_t>(ticks) % denominator, numerator) / denominator;
+    CheckedInt64 result = multiply(whole, numerator);
+    result += rest;
+    return result.hasOverflowed() ? std::numeric_limits<int64_t>::max() : result.value();
+#else
+    struct timespec now;
+    if (clock_gettime(CLOCK_MONOTONIC, &now)) {
+        raiseOSError(globalObject, scope, errno);
+        return std::nullopt;
+    }
+    if (info) {
+        struct timespec resolution;
+        if (clock_getres(CLOCK_MONOTONIC, &resolution)) {
+            raiseOSError(globalObject, scope, errno);
+            return std::nullopt;
+        }
+        *info = { "clock_gettime(CLOCK_MONOTONIC)"_s, true, false, timespecAsSeconds(resolution) };
+    }
+    RELEASE_AND_RETURN(scope, timeFromTimespec(globalObject, now));
+#endif
 }
 
 double timeAsSeconds(int64_t time)

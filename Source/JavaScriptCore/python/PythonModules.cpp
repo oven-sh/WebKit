@@ -367,40 +367,6 @@ JSObject* createMathModule(JSGlobalObject* globalObject)
     return module;
 }
 
-// ---- time
-
-PYTHON_NATIVE(timeTime)
-{
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(floatFromDouble(WallTime::now().secondsSinceEpoch().seconds()));
-}
-
-PYTHON_NATIVE(timeMonotonic)
-{
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(floatFromDouble(MonotonicTime::now().secondsSinceEpoch().seconds()));
-}
-
-PYTHON_NATIVE(timeMonotonicNanoseconds)
-{
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(intFromInt64(globalObject, static_cast<int64_t>(MonotonicTime::now().secondsSinceEpoch().nanoseconds())));
-}
-
-JSObject* createTimeModule(JSGlobalObject* globalObject)
-{
-    JSObject* module = newBuiltinModule(globalObject, "time"_s);
-    JSObject* ns = module;
-    addFunction(globalObject, ns, "time"_s, timeTime);
-    addFunction(globalObject, ns, "monotonic"_s, timeMonotonic);
-    addFunction(globalObject, ns, "perf_counter"_s, timeMonotonic);
-    addFunction(globalObject, ns, "perf_counter_ns"_s, timeMonotonicNanoseconds);
-    addFunction(globalObject, ns, "monotonic_ns"_s, timeMonotonicNanoseconds);
-    return module;
-}
-
 JSValue sysAttribute(JSGlobalObject* globalObject, ASCIILiteral name)
 {
     VM& vm = globalObject->vm();

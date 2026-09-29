@@ -28,6 +28,8 @@
 
 #include "JSCJSValue.h"
 #include <optional>
+#include <time.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
 
@@ -55,5 +57,25 @@ std::optional<int64_t> timeFromSecondsObject(JSGlobalObject*, JSValue, TimeRound
 int64_t divideTime(int64_t time, int64_t divisor, TimeRounding);
 // PyTime_AsSecondsDouble()
 double timeAsSeconds(int64_t);
+// _PyTime_FromLong(): from an int that is a number of nanoseconds. Nothing if it raised.
+std::optional<int64_t> timeFromNanosecondsObject(JSGlobalObject*, JSValue);
+// _PyTime_ObjectToTime_t(): a whole number of seconds, from an int or a float. Nothing if it raised.
+std::optional<time_t> objectToTimeT(JSGlobalObject*, JSValue, TimeRounding);
+// _PyTime_FromTimespec() and _PyTime_AsTimespec(). Nothing, or false, if it raised.
+std::optional<int64_t> timeFromTimespec(JSGlobalObject*, const struct timespec&);
+bool timeAsTimespec(JSGlobalObject*, int64_t, struct timespec&);
+// tv_sec + tv_nsec * 1e-9
+double timespecAsSeconds(const struct timespec&);
+
+// _Py_clock_info_t
+struct ClockInfo {
+    ASCIILiteral implementation { ""_s };
+    bool isMonotonic { false };
+    bool isAdjustable { false };
+    double resolution { 1.0 };
+};
+// _PyTime_TimeWithInfo() and _PyTime_MonotonicWithInfo(), which is _PyTime_PerfCounterWithInfo() too. Nothing if it raised.
+std::optional<int64_t> systemClock(JSGlobalObject*, ClockInfo* = nullptr);
+std::optional<int64_t> monotonicClock(JSGlobalObject*, ClockInfo* = nullptr);
 
 } } // namespace JSC::Python

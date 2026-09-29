@@ -691,6 +691,16 @@ What `io.open_code()` does is the host's to say, if it wants to: `Configuration:
 functions; `Constants` has the constants, and the names that `sysconf()` and the like go by. It has everything that CPython's has on macOS but `fork()`, `forkpty()` and `register_at_fork()`: see *Where it differs*.
 What CPython has only on Linux is not written, and what is written for Linux has not been compiled.
 
+### `time`
+
+`PythonTimeModule.cpp` is `Modules/timemodule.c`, and `PythonTime.cpp` what it wants of `Python/pytime.c`: a time is a number of nanoseconds, and how a float or an int is made one, rounded which way, and what is said if
+there is no room for it, are all CPython's. The clocks are the ones that CPython reads on the same system, so `get_clock_info()` says the same.
+
+`strftime()` goes by the locale of the realm and not that of the process, which is left as it is: see *Regular expressions*. `tzset()` is the C library's, and there the time zone is the process's. JavaScript's `Date` has its own
+idea of the time zone, and is not told.
+
+`sleep()` stops the thread, and so whatever else the thread would have been doing, in either language. That is what it means.
+
 ### Regular expressions
 
 A regular expression is compiled by Python, in the package `re`, to a list of numbers. `_sre` is what goes by them.
