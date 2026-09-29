@@ -18,14 +18,14 @@ PASS crypto.subtle.generateKey({name: "hmac", hash: true}, extractable, ["sign",
 PASS crypto.subtle.generateKey({name: "hmac", hash: 1}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "hmac", hash: null}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "hmac", hash: undefined}, extractable, ["sign", "verify"]) rejected promise  with TypeError: Member HmacKeyParams.hash is required and must be an instance of (object or DOMString).
-PASS crypto.subtle.generateKey({name: "hmac", hash: Symbol()}, extractable, ["sign", "verify"]) rejected promise  with TypeError: Cannot convert a symbol to a string.
+PASS crypto.subtle.generateKey({name: "hmac", hash: Symbol()}, extractable, ["sign", "verify"]) rejected promise  with TypeError: Cannot convert a Symbol value to a string.
 PASS crypto.subtle.generateKey({name: "hmac", hash: { }}, extractable, ["sign", "verify"]) rejected promise  with TypeError: Member CryptoAlgorithmParameters.name is required and must be an instance of DOMString.
 PASS crypto.subtle.generateKey({name: "hmac", hash: "foo"}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "hmac", hash: {name: true}}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "hmac", hash: {name: 1}}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "hmac", hash: {name: null}}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "hmac", hash: {name: undefined}}, extractable, ["sign", "verify"]) rejected promise  with TypeError: Member CryptoAlgorithmParameters.name is required and must be an instance of DOMString.
-PASS crypto.subtle.generateKey({name: "hmac", hash: {name: Symbol()}}, extractable, ["sign", "verify"]) rejected promise  with TypeError: Cannot convert a symbol to a string.
+PASS crypto.subtle.generateKey({name: "hmac", hash: {name: Symbol()}}, extractable, ["sign", "verify"]) rejected promise  with TypeError: Cannot convert a Symbol value to a string.
 PASS crypto.subtle.generateKey({name: "hmac", hash: {name: { }}}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "hmac", hash: {name: "foo"}}, extractable, ["sign", "verify"]) rejected promise  with NotSupportedError: The operation is not supported..
 PASS crypto.subtle.generateKey({name: "SHA-1"}, 2, 3) rejected promise  with TypeError: Value is not a sequence.

@@ -5,7 +5,7 @@ PASS number
 PASS boolean
 FAIL symbol assert_throws_dom: function "() => {
     document.evaluate("/foo:bar", document.documentElement, resolver);
-  }" threw object "TypeError: Cannot convert a symbol to a string" that is not a DOMException NAMESPACE_ERR: property "code" is equal to undefined, expected 14
+  }" threw object "TypeError: Cannot convert a Symbol value to a string" that is not a DOMException NAMESPACE_ERR: property "code" is equal to undefined, expected 14
 FAIL object coercion (abrupt completion) assert_throws_dom: function "() => {
     document.evaluate("/foo:bar", document.documentElement, resolver);
   }" threw object "[object Object]" that is not a DOMException NAMESPACE_ERR: property "code" is equal to undefined, expected 14
