@@ -29,6 +29,7 @@
 #include "JSArrayBuffer.h"
 #include "JSGenericTypedArrayViewInlines.h"
 #include "PythonBuiltins.h"
+#include "PythonNumbers.h"
 #include "TopExceptionScope.h"
 #include <wtf/text/StringBuilder.h>
 
@@ -2024,17 +2025,14 @@ PYTHON_NATIVE(intFromBytes)
             carry = sum >> 8;
         }
     }
-    String digits = textOrMemoryError(globalObject, hexOf(content.span(), std::nullopt, 0));
+    Vector<uint64_t, 4> digits;
+    if (!digits.tryGrow((content.size() + 7) / 8))
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
+    digits.fill(0);
+    for (size_t i = 0; i < content.size(); ++i)
+        digits[i / 8] |= static_cast<uint64_t>(content[content.size() - 1 - i]) << (i % 8 * 8);
+    JSValue result = intFromDigits(globalObject, digits.span(), isNegative);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue result = jsNumber(0);
-    if (!digits.isEmpty()) {
-        result = JSBigInt::parseInt(globalObject, vm, StringView(digits), 16, JSBigInt::ErrorParseMode::IgnoreExceptions, JSBigInt::ParseIntSign::Unsigned);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (isNegative && result.isHeapBigInt())
-            result = JSBigInt::unaryMinus(globalObject, result.asHeapBigInt());
-        RETURN_IF_EXCEPTION(scope, { });
-        result = normalizeBigInt(result);
-    }
     PyType* type = asType(args.at(0));
     if (type == realm->typeInt())
         return JSValue::encode(result);

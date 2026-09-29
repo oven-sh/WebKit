@@ -137,6 +137,40 @@ JSValue intFromDouble(JSGlobalObject* globalObject, double value)
     return JSBigInt::createFrom(globalObject, value);
 }
 
+JSValue intFromDigits(JSGlobalObject* globalObject, std::span<const uint64_t> digits, bool isNegative)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    static_assert(JSBigInt::digitBits == 64);
+    size_t length = digits.size();
+    while (length && !digits[length - 1])
+        --length;
+    if (!length)
+        return jsNumber(0);
+    // It says for itself if that is more than it can have.
+    JSBigInt* result = length <= std::numeric_limits<unsigned>::max() ? JSBigInt::tryCreateWithLength(vm, static_cast<unsigned>(length)) : nullptr;
+    if (!result)
+        return raiseMemoryError(globalObject, scope);
+    for (unsigned i = 0; i < length; ++i)
+        result->setDigit(i, digits[i]);
+    result->setSign(isNegative);
+    return normalizeBigInt(result);
+}
+
+Vector<uint64_t, 4> digitsOfInt(const Number& number)
+{
+    ASSERT(number.isInt());
+    Vector<uint64_t, 4> digits;
+    if (number.kind == Number::Kind::Small) {
+        if (number.small)
+            digits.append(static_cast<uint64_t>(std::abs(static_cast<int64_t>(number.small))));
+        return digits;
+    }
+    for (unsigned i = 0; i < number.big->length(); ++i)
+        digits.append(number.big->digit(i));
+    return digits;
+}
+
 // An int that fits an int32 is never a BigInt.
 JSValue normalizeBigInt(JSValue value)
 {

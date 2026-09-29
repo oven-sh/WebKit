@@ -29,6 +29,7 @@
 
 #include "PythonBytes.h"
 #include "PythonCodecs.h"
+#include "PythonNumbers.h"
 #include <wtf/Scope.h>
 
 // marshal: Python/marshal.c of CPython.
@@ -843,13 +844,7 @@ JSValue Reader::readBigInt()
             wide >>= JSBigInt::digitBits;
         }
     }
-    JSBigInt* result = JSBigInt::tryCreateWithLength(m_vm, static_cast<unsigned>(digits.size()));
-    if (!result)
-        return raiseMemoryError(m_globalObject, scope);
-    for (unsigned i = 0; i < digits.size(); ++i)
-        result->setDigit(i, digits[i]);
-    result->setSign(*given < 0);
-    return normalizeBigInt(result);
+    RELEASE_AND_RETURN(scope, intFromDigits(m_globalObject, digits.span(), *given < 0));
 }
 
 std::optional<size_t> Reader::reserveReference(bool isMarked)

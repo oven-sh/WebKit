@@ -31,6 +31,7 @@
 #include "PythonCharacters.h"
 #include "PythonCodecs.h"
 #include "PythonLocale.h"
+#include "PythonNumbers.h"
 #include "PythonText.h"
 #if OS(UNIX)
 #include <langinfo.h>
@@ -844,24 +845,12 @@ static constexpr size_t cookieSize = sizeof(int64_t) + 3 * sizeof(int32_t) + 1;
 // textiowrapper_build_cookie(): all of it as one int, with the place in the file lowest, so that where there is nothing else to say it is the place in the file.
 JSValue buildCookie(JSGlobalObject* globalObject, const Cookie& cookie)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
     std::array<uint64_t, 3> digits {
         static_cast<uint64_t>(cookie.startPosition),
         static_cast<uint64_t>(static_cast<uint32_t>(cookie.decoderFlags)) | (static_cast<uint64_t>(static_cast<uint32_t>(cookie.bytesToFeed)) << 32),
         static_cast<uint64_t>(static_cast<uint32_t>(cookie.charactersToSkip)) | (static_cast<uint64_t>(cookie.needsEnd) << 32),
     };
-    unsigned length = 3;
-    while (length && !digits[length - 1])
-        --length;
-    if (length <= 1)
-        return intFromUInt64(globalObject, digits[0]);
-    JSBigInt* result = JSBigInt::tryCreateWithLength(vm, length);
-    if (!result)
-        return raiseMemoryError(globalObject, scope);
-    for (unsigned i = 0; i < length; ++i)
-        result->setDigit(i, digits[i]);
-    return result;
+    return intFromDigits(globalObject, digits);
 }
 
 // textiowrapper_parse_cookie(). False if it raised.
