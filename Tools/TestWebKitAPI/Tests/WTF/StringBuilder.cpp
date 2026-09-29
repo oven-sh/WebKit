@@ -445,14 +445,6 @@ TEST(StringBuilderTest, ShouldShrinkToFit)
 
 #if USE(BUN_JSC_ADDITIONS)
 
-static String repeatedCharacter(Latin1Character character, unsigned length)
-{
-    std::span<Latin1Character> characters;
-    auto string = StringImpl::createUninitialized(length, characters);
-    memsetSpan(characters, character);
-    return string;
-}
-
 TEST(StringBuilderTest, TryAppend)
 {
     const char16_t nonLatin1[] = { 0x1234, 0x5678 };
@@ -686,6 +678,14 @@ public:
 };
 
 static constexpr unsigned megabyte = 1024 * 1024;
+
+static String repeatedCharacter(Latin1Character character, unsigned length)
+{
+    std::span<Latin1Character> characters;
+    auto string = StringImpl::createUninitialized(length, characters);
+    memsetSpan(characters, character);
+    return string;
+}
 
 TEST(StringBuilderTest, TryAppendKeepsTheCharactersWhenTheBufferCannotGrow)
 {
