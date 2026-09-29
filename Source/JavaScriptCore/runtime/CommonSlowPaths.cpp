@@ -30,6 +30,7 @@
 #include "ArrayPrototypeInlines.h"
 #include "BytecodeStructs.h"
 #include "ClonedArguments.h"
+#include "CodeBlockInlines.h"
 #include "CommonSlowPathsInlines.h"
 #include "DefinePropertyAttributes.h"
 #include "DirectArguments.h"
@@ -37,6 +38,7 @@
 #include "ExceptionFuzz.h"
 #include "FrameTracers.h"
 #include "IteratorOperations.h"
+#include "JITCodeMap.h"
 #include "JSArrayIterator.h"
 #include "JSArrayIteratorInlines.h"
 #include "JSAsyncFromSyncIterator.h"
@@ -1869,8 +1871,17 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_line)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyLine>();
-    Python::frameIsAtLine(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), static_cast<Python::LineKind>(bytecode.m_kind));
-    END();
+    std::optional<BytecodeIndex> next = Python::frameIsAtLine(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)), static_cast<Python::LineKind>(bytecode.m_kind));
+    CHECK_EXCEPTION();
+    // The interpreter goes on from the first of these. Compiled code goes on from the second, if there is one, and otherwise from where it is.
+    if (!next)
+        RETURN_TWO(reinterpret_cast<const JSInstruction*>(reinterpret_cast<const uint8_t*>(pc) + pc->size()), nullptr);
+    void* compiled = nullptr;
+#if ENABLE(JIT)
+    if (codeBlock->jitType() == JITType::BaselineJIT)
+        compiled = codeBlock->jitCodeMap().find(*next).taggedPtr();
+#endif
+    RETURN_TWO(codeBlock->instructions().at(*next).ptr(), compiled);
 }
 
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_call)

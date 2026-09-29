@@ -370,10 +370,11 @@ void enterFrame(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isResume);
 // Those of op_py_line, op_py_ret and op_py_leave, which are only come to if something is to be told.
 enum class LineKind : uint8_t {
     Line,
+    WhereItCanBeGoneOnFrom, // The same, and nothing but the variables and what CodeDetails::jumpBlocks tells of is made use of by what comes after: it is the beginning of a statement. frame.f_lineno = n can go to it.
     AfterBackwardJump, // Going round a loop again, which sys.settrace() is told of though it be all on one line.
     OfHandledException, // Nothing is told. The frame is back on the line that what is being handled was raised on, as it is when `with` lets an exception go on its way.
 };
-void frameIsAtLine(JSGlobalObject*, CallFrame*, BytecodeIndex, LineKind);
+std::optional<BytecodeIndex> frameIsAtLine(JSGlobalObject*, CallFrame*, BytecodeIndex, LineKind); // What to run next, if that is not what comes next.
 void setTracesOpcodes(JSGlobalObject*, PyFrame*, bool); // Whether sys.settrace() is told of each instruction of the frame's code.
 int lineOfTracebackFor(JSGlobalObject*, JSValue exception, PyFrame*); // The line that an exception came to a frame on, or -1.
 enum class ToldArgument : uint8_t { None, First, ListOfPositional };

@@ -86,6 +86,15 @@ void JIT::emit_op_py_line(const JSInstruction*)
     addSlowCase(branchTest32(Zero, AbsoluteAddress(vm().addressOfPythonLimitUnlessWatched())));
 }
 
+void JIT::emitSlow_op_py_line(const JSInstruction*, Vector<SlowCaseEntry>::iterator& iter)
+{
+    emitSlowCaseCall(iter, slow_path_py_line);
+    // frame.f_lineno = n. Where it goes to is just after another of these, where nothing is expected to be in any register.
+    Jump goesOn = branchTestPtr(Zero, returnValueGPR2);
+    farJump(returnValueGPR2, JSEntryPtrTag);
+    goesOn.link(this);
+}
+
 void JIT::emit_op_py_call(const JSInstruction* instruction)
 {
     emit_op_py_line(instruction);

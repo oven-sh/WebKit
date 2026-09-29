@@ -606,7 +606,7 @@ void JIT::privateCompileSlowCases()
         DEFINE_SLOWCASE_OP(op_async_iterator_open)
 
         DEFINE_SLOWCASE_SLOW_OP(py_enter)
-        DEFINE_SLOWCASE_SLOW_OP(py_line)
+        DEFINE_SLOWCASE_OP(op_py_line)
         DEFINE_SLOWCASE_SLOW_OP(py_call)
         DEFINE_SLOWCASE_SLOW_OP(py_branch)
         DEFINE_SLOWCASE_SLOW_OP(py_jump)

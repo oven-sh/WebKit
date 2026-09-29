@@ -1461,10 +1461,11 @@ op :py_enter,
     }
 
 # The beginning of a line, or of what there is of one before some other line is gone to. It does nothing unless VM::m_pythonLimitUnlessWatched is 0.
-# `kind` is a Python::LineKind.
+# `kind` is a Python::LineKind. `block` says which of Python::CodeDetails::jumpBlocks it is in, counting from 1, or is 0. It is for frame.f_lineno = n, which is done from here and can have what is run next be somewhere else.
 op :py_line,
     args: {
         kind: unsigned,
+        block: unsigned,
     }
 
 # What comes before a call. `argumentKind` is a Python::ToldArgument, and says what `argument` is: nothing, the first argument, or a list of those given by position.

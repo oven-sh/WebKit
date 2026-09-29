@@ -386,6 +386,9 @@ static bool fire(const Site& site, MonitoringEvent event, JSValue second, JSValu
             continue;
         Outcome outcome = Outcome::Nothing;
         ++state.callbackDepth;
+        SetForScope eventBeingTold(state.eventBeingTold, std::optional { event });
+        SetForScope frameBeingToldOf(state.frameBeingToldOf, site.callFrame);
+        SetForScope offsetBeingToldOf(state.offsetBeingToldOf, site.offset);
         if (tool == traceTool)
             outcome = tellTraceFunction(site, event, third);
         else if (tool == profileTool)
@@ -475,6 +478,9 @@ static JumpTargets jumpTargetsAfter(Block* codeBlock, unsigned offset, unsigned 
     extractStoredJumpTargetsForInstruction(codeBlock, instruction, [&] (int32_t relative) {
         result.taken = instruction.offset() + relative;
     });
+    // Where a `for` is left there is an op_py_line that is still on its line, for frame.f_lineno = n to go to. As with what CPython has there, it is what comes after that is said to be where it goes.
+    if (auto taken = codeBlock->instructions().at(result.taken); skipped && taken->template is<OpPyLine>())
+        result.taken = taken.next().offset();
     return result;
 }
 
@@ -513,43 +519,74 @@ void enterFrame(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeInde
     RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, isResume ? MonitoringEvent::PyResume : MonitoringEvent::PyStart)));
 }
 
-void frameIsAtLine(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, LineKind kind)
+std::optional<BytecodeIndex> frameIsAtLine(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, LineKind kind)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     MonitoringState& state = stateOf(globalObject);
     if (!state.isWatching)
-        return;
+        return std::nullopt;
     auto site = siteOf(globalObject, callFrame, index);
     if (!site)
-        return;
+        return std::nullopt;
     // A line is told of if what was run last was on some other.
     finishPendingCall(globalObject, callFrame);
-    RETURN_IF_EXCEPTION(scope, void());
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     PyFrame* frame = PyFrame::forCallFrame(vm, callFrame);
     if (kind == LineKind::OfHandledException) {
         if (JSValue exception = globalObject->pyRealm()->handledException())
             frame->setLastLine(lineOfTracebackFor(globalObject, exception, frame));
-        return;
+        return std::nullopt;
     }
+    // What is told can have it go on from some other line, and then it is there, and there is no more to tell of here. If what is told raises, that comes to nothing.
+    SetForScope isToldFromLine(state.isToldFromLine, true);
+    auto whereItGoesOnFrom = [&] () -> std::optional<BytecodeIndex> {
+        auto place = frame->takeWhereItGoesOnFrom();
+        if (!place || scope.exception())
+            return std::nullopt;
+        frame->setLastLine(place->line);
+        // To go back to where it begins is to begin again, which is told of.
+        if (callFrame->codeBlock()->instructions().at(place->offset)->is<OpPyEnter>()) {
+            frame->setLastLine(-1);
+            SetForScope isNotToldFromLine(state.isToldFromLine, false);
+            Site beginning = *site;
+            beginning.offset = place->offset;
+            frame->setLineOverride(place->line);
+            fireAtOffset(beginning, MonitoringEvent::PyStart);
+            frame->setLineOverride(-1);
+            frame->takeWhereItGoesOnFrom();
+            if (scope.exception())
+                return std::nullopt;
+        }
+        return BytecodeIndex(place->next);
+    };
     bool isAfterBackwardJump = kind == LineKind::AfterBackwardJump;
     int line = frame->line(vm);
     int previous = frame->lastLine();
     frame->setLastLine(line);
-    if (line != previous) {
+    if (line != previous)
         fire(*site, MonitoringEvent::Line, jsNumber(line));
-        RETURN_IF_EXCEPTION(scope, void());
-    } else if (isAfterBackwardJump && (toolsFor(*site, MonitoringEvent::Line) >> traceTool & 1)) {
+    else if (isAfterBackwardJump && (toolsFor(*site, MonitoringEvent::Line) >> traceTool & 1)) {
         // sys.settrace() is told each time round a loop, though it be all on one line.
         ++state.callbackDepth;
+        SetForScope eventBeingTold(state.eventBeingTold, std::optional { MonitoringEvent::Line });
+        SetForScope frameBeingToldOf(state.frameBeingToldOf, callFrame);
+        SetForScope offsetBeingToldOf(state.offsetBeingToldOf, site->offset);
         tellTraceFunction(*site, MonitoringEvent::Line, JSValue());
         --state.callbackDepth;
-        RETURN_IF_EXCEPTION(scope, void());
     }
+    if (auto next = whereItGoesOnFrom())
+        return next;
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     fireInstruction(*site);
-    RETURN_IF_EXCEPTION(scope, void());
-    if (isAfterBackwardJump)
-        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::Jump, jsNumber(jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken))));
+    frame->takeWhereItGoesOnFrom();
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (isAfterBackwardJump) {
+        fireAtOffset(*site, MonitoringEvent::Jump, jsNumber(jumpTargetsAfter(callFrame->codeBlock(), site->offset, 0).taken));
+        if (auto next = whereItGoesOnFrom())
+            return next;
+    }
+    return std::nullopt;
 }
 
 void frameIsCalling(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, JSValue callable, JSValue argument, ToldArgument kind)

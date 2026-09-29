@@ -744,6 +744,7 @@ python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp
 python/PythonConstantFolding.cpp
+python/PythonFrameJump.cpp
 python/PythonASTDumper.cpp
 python/PythonASTModule.cpp
 python/PythonASTOptimizer.cpp

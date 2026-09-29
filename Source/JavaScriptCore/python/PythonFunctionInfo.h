@@ -105,11 +105,51 @@ struct CodeDetails {
     Vector<FrameVariable> frameVariables; // In the order of co_varnames, co_cellvars and co_freevars.
     VirtualRegister frameObjectRegister; // Where the frame object is, if there is one. Not valid for a generator, which keeps it itself.
     VirtualRegister scopeRegister;
+    // Where what is found once, when the code begins, is kept: the globals, the builtins, and the mapping that names are looked up in if that is not an argument.
+    VirtualRegister globalsRegister;
+    VirtualRegister builtinsRegister;
+    VirtualRegister namespaceRegister;
     // Where what was written begins. Before it the arguments are being given to the parameters, and to Python there is no frame yet: what
     // is raised there is raised by the call.
     unsigned firstTraceableOffset { 0 };
     // Where op_py_enter is. What is thrown from before it is thrown from a frame that has not been counted.
     unsigned enterOffset { 0 };
+
+    // A part of the code in which there is more to the frame than its variables: what CPython would have on its stack from one statement to the next. It is for frame.f_lineno = n, which has to know what there
+    // is where it is and what there has to be where it is going. Each op_py_line says which it is in. See PythonFrameJump.cpp.
+    struct JumpBlock {
+        enum class Kind : uint8_t {
+            Loop, // The body of a `for`. The iterator.
+            LoopEnd, // Where a `for` is left when there is no more. CPython has the iterator still, and something in place of what there was no more of.
+            Comprehension, // A comprehension that is part of the code that it is in. CPython has what it is making, and what its variable was before.
+            ComprehensionLoop, // What is gone round in one. The iterator.
+            Scope, // Where there is an environment more, for variables that other functions use.
+            With, // The body of a `with`. __exit__, and whether it has yet to be called.
+            WithExit, // Where a `with` that nothing was raised in calls __exit__. The same, and how the body was left and with what.
+            Handler, // All of the `except` clauses of a `try`. What was being handled before, what is being handled as it was thrown, and the exception.
+            Matching, // In one of those, where it is found out whether a clause is for the exception. CPython has the exception on its stack meanwhile.
+            Finally, // What comes after `finally`. How what came before was left and with what, and what was being handled before.
+            Protected, // What something is done after however it is left. CPython has nothing on its stack for it. How it was left and with what, which is said before it is begun to be by coming to the end of it.
+            Subject, // Where a `match` has yet to be done with what it is matching.
+        };
+        Kind kind;
+        bool isFallenInto { true }; // Of Finally and WithExit: whether what came before can come to its end. Of Handler: whether anything can be raised for it to handle.
+        unsigned parent { 0 }; // Which it is in, counting from 1, or 0.
+        VirtualRegister first;
+        VirtualRegister second;
+        VirtualRegister third;
+        VirtualRegister fourth;
+        // Of Finally and WithExit: a `return`, `break` or `continue` in what came before. CPython has a copy of the code for each, besides one for if the end is come to and one for if something is raised, and which
+        // it goes to depends on what order they are in. Here there is one copy, and what says how it was come to is in a register.
+        struct Leave {
+            int completionType; // What that register has.
+            VirtualRegister value; // The constant that is returned, if it is one.
+            bool keepsValue; // What is returned is no constant, so CPython has it on its stack meanwhile.
+            bool isInHandler; // CPython puts what handles exceptions after everything else.
+        };
+        Vector<Leave> leaves;
+    };
+    Vector<JumpBlock> jumpBlocks;
 };
 
 // What has to be known about a piece of Python code before it is compiled, to call it and to compile it. It is worked out when what

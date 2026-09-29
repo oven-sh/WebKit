@@ -497,6 +497,7 @@ namespace JSC {
         void emit_op_py_ret(const JSInstruction*);
         void emit_op_py_enter(const JSInstruction*);
         void emit_op_py_line(const JSInstruction*);
+        void emitSlow_op_py_line(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emit_op_py_leave(const JSInstruction*);
         void emit_op_py_call(const JSInstruction*);
         void emit_op_py_branch(const JSInstruction*);

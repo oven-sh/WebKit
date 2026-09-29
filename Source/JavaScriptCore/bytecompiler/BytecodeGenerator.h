@@ -623,6 +623,12 @@ namespace JSC {
 
         void emitExpressionInfo(const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd)
         {
+            emitExpressionInfo(instructions().size(), divot, divotStart, divotEnd);
+        }
+
+        // Of an instruction that has been emitted already, and those after it. Nothing may have been said of any that come after it.
+        void emitExpressionInfo(unsigned instructionOffset, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd)
+        {
             ASSERT(divot && divotStart && divotEnd);
             ASSERT(divot.offset >= divotStart.offset);
             ASSERT(divotEnd.offset >= divot.offset);
@@ -642,7 +648,6 @@ namespace JSC {
             unsigned startOffset = divot.offset - divotStart.offset;
             unsigned endOffset = divotEnd.offset - divot.offset;
 
-            unsigned instructionOffset = instructions().size();
             m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset);
         }
 

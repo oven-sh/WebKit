@@ -119,6 +119,27 @@ constants, calls, `try` and `finally`, scopes and generators are `BytecodeGenera
 What it costs when nothing is being told, for each time round: nothing to 2% for a loop or a branch, 1ns of 10 for a call in Baseline and 2.6ns of 23 in the interpreter, and for a step of a generator nothing
 in Baseline and 9ns of 51 in the interpreter. The DFG and the FTL can have a watchpoint.
 
+### Going on from another line
+
+`frame.f_lineno = n`, in what is told of a line, is how a debugger has a program go on from somewhere else: `PythonFrameJump.cpp`.
+
+- **It is `op_py_line` that goes somewhere else.** Its slow path says what to run next. The interpreter goes on from there, and compiled code jumps to where `JITCodeMap` has it. Nothing is added to what is run when
+  nothing is being told.
+- **Where it goes to is just after an `op_py_line`.** A compiler that keeps values in registers from one instruction to the next puts them all back before an instruction that it knows nothing of, which this is. So just
+  after one, nothing is expected to be in any register, and just before one, whatever is in them is written over the frame.
+- **So a statement begins with its `op_py_line`.** What comes after that depends on nothing but the variables and what is told of below. Which line a statement is on is that of whatever in it is done first, which is
+  not known when it is begun, so the instruction is emitted first and where it is from is said when that is come to (`beginLineOfStatement()`).
+- **Whether it can be done is decided as CPython decides it**, by what would be on its stack: it can leave a loop, a `with` or an `except`, and go into none, but it can go from one to another of the same kind. Here what
+  would be on the stack is in registers, of which each loop has its own. The compiler writes down what there is in each part of the code (`CodeDetails::JumpBlock`), each `op_py_line` says which part it is in, and
+  what is needed is copied from the registers of where it is to those of where it is going.
+- **CPython has a copy of what comes after `finally` for each way of coming to it**, and can go from one copy into another. Here there is one copy and a register that says how it was come to, which is set.
+- **Nothing is done until it is known that all of it can be.** What is refused, and what is not done because the warning that goes with it is an error, leaves the frame as it was.
+- **A generator that is resumed is given back only what could be made use of from where it left off.** So the globals and the builtins are found again, which costs a generator nothing until this is done to it. As for
+  the rest, whatever the engine's `BytecodeLivenessAnalysis` finds is made use of from where it is going has to be made use of from where it is as well, or have just been set. Otherwise it is refused.
+- What is never come to is not there to go to. What comes after a `return`, a `raise`, a `break` or a `continue`, or after what always ends in one, has no lines and no constants, as in CPython.
+
+`programs/jumping-to-another-line.py` tries each two lines of 43 pieces of code, which is 3,400 jumps, and looks at what is said, what is run afterwards and what is told of. What is otherwise on purpose is below.
+
 ### Code objects
 
 A code object is a `FunctionExecutable`: a piece of source, and what has to be known to compile it that the source does not say (`FunctionInfo`). Instructions are made from
@@ -740,6 +761,14 @@ There is nothing that is per process, nothing that is set after something is mad
 - **What line a frame that is over says that it is on**, if it was left by way of what nobody wrote: the end of a `finally`, or what is done at the end of `except E as e`. In CPython it is the last line that was
   written by somebody, which it has because it writes such things out again wherever they are come to. Here there is one of each, and it is said to be where the `try` is. Knowing better would take writing down
   each line as it is come to. `tb_lineno` is right, which is what a traceback is printed from.
+- **Where `frame.f_lineno = n` will not go** (`interop/jumping-where-cpython-does-otherwise.py`):
+  - It is only for the frame that is being told of, and only when it is a line that is told. CPython takes it for a frame further out, which is in the middle of a call, and does not survive. It also takes it as a
+    generator yields or is resumed.
+  - What is of one kind is not taken for another. CPython tells apart iterators, what was being handled, and everything else, so it will go from inside two loops to inside a `with`, and call an iterator for `__exit__`.
+  - It does not go into the middle of something that is written over several lines, but from that very place. CPython does if there is as much on the stack, whatever that is: `x = [len(o), 7]` can come to
+    `[<method 'append' of 'list' objects>, 7]`.
+  - Which of its copies of a `finally` CPython goes to depends on what is next to what in its code. A place counts as the beginning of a line if what is before it, as the code is laid out, is on some other line
+    (`marklines()`), so the copy for an exception is left out if the `finally` is one line long and the copy before it happens to be the other one. Here it is as if they all counted.
 - **What is said of the wrong arguments** by `super.__init__()`, which in CPython is worded one way if it is called and another if `super` is, and by a method written in C++ that is called by way of a `super` that was
   kept first, which here goes by the class that the method is in.
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots. What sets do with one another is CPython's `Objects/setobject.c`, function for function: how long each takes, which of two keys that are equal

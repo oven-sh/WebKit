@@ -712,7 +712,7 @@ void LOLJIT::privateCompileSlowCases()
         DEFINE_SLOWCASE_OP(op_async_iterator_open)
 
         DEFINE_SLOWCASE_SLOW_OP(py_enter, OpPyEnter)
-        DEFINE_SLOWCASE_SLOW_OP(py_line, OpPyLine)
+        DEFINE_SLOWCASE_OP(op_py_line)
         DEFINE_SLOWCASE_SLOW_OP(py_call, OpPyCall)
         DEFINE_SLOWCASE_SLOW_OP(py_branch, OpPyBranch)
         DEFINE_SLOWCASE_SLOW_OP(py_jump, OpPyJump)

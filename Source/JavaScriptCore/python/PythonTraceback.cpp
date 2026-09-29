@@ -209,7 +209,7 @@ static JSValue getFrameLine(JSGlobalObject* globalObject, JSValue self)
     return jsNumber(asFrame(self)->line(globalObject->vm()));
 }
 
-static void setFrameLine(JSGlobalObject* globalObject, JSValue, JSValue value)
+static void setFrameLine(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -218,7 +218,7 @@ static void setFrameLine(JSGlobalObject* globalObject, JSValue, JSValue value)
     else if (typeOf(globalObject, value) != globalObject->pyRealm()->typeInt())
         raiseValueError(globalObject, scope, "lineno must be an integer"_s);
     else
-        raiseValueError(globalObject, scope, "f_lineno can only be set in a trace function"_s);
+        RELEASE_AND_RETURN(scope, asFrame(self)->goOnFromLine(globalObject, value));
 }
 
 static JSValue getFrameLastInstruction(JSGlobalObject* globalObject, JSValue self)

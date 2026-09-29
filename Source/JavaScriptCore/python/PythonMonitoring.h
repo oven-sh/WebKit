@@ -104,6 +104,11 @@ struct MonitoringState {
     std::array<std::array<uint32_t, numberOfLocalMonitoringEvents>, numberOfMonitoringTools> timesAskedFor { };
     // Nothing is told of what is done by what is being told.
     unsigned callbackDepth { 0 };
+    // What is being told, if anything is, of which frame, and where that has got to. It is for frame.f_lineno = n, which can be done only by what is being told of a line.
+    std::optional<MonitoringEvent> eventBeingTold;
+    CallFrame* frameBeingToldOf { nullptr };
+    unsigned offsetBeingToldOf { 0 };
+    bool isToldFromLine { false }; // By op_py_line, which is what can go on from somewhere else.
     WriteBarrier<Unknown> traceFunction;
     WriteBarrier<Unknown> profileFunction;
     WriteBarrier<Unknown> disable; // sys.monitoring.DISABLE

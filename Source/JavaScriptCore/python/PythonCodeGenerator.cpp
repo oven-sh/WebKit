@@ -220,6 +220,14 @@ private:
         // What is never come to is nowhere.
         if (m_isNeverComeTo)
             return;
+        // This is the first thing to be done in a statement, so the statement is on its line. That holds though it be something that was not written, since where a thing is has to be said in the order that things are in.
+        if (m_lineOfStatement) {
+            g.emitExpressionInfo(*std::exchange(m_lineOfStatement, std::nullopt), JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
+            m_lastMarked = node;
+            m_lastMarkedLine = node.line;
+            ++m_numberOfLines;
+            return;
+        }
         g.emitExpressionInfo(JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
         // What was not written is on no line. Where it is said to be from is for if it goes wrong.
         if (m_isArtificial)
@@ -229,10 +237,68 @@ private:
         m_lastMarkedLine = node.line;
         // What follows is from the same place, having nothing to say otherwise.
         if (isOnAnotherLine) {
-            OpPyLine::emit(&g, static_cast<unsigned>(LineKind::Line));
+            emitLine(LineKind::Line);
             ++m_numberOfLines;
         }
     }
+
+    void emitLine(LineKind kind)
+    {
+        OpPyLine::emit(&g, static_cast<unsigned>(kind), m_jumpBlock);
+    }
+
+    // A statement begins with its op_py_line, so that frame.f_lineno = n can go to it: there is nothing before that for what comes after to depend on. Which line it is on is not known yet, being that of whatever
+    // in it is done first, and mark() says when that is come to. What is between the two cannot go wrong, or it would have said where it is.
+    void beginLineOfStatement()
+    {
+        if (m_isNeverComeTo || m_isArtificial || m_lineOfStatement)
+            return;
+        m_lineOfStatement = g.instructions().size();
+        emitLine(LineKind::WhereItCanBeGoneOnFrom);
+    }
+
+    // The same, of what is not the beginning of a statement and is on a line of its own all the same.
+    void markWhereItCanBeGoneOnFrom(const Node& node)
+    {
+        forgetLine();
+        beginLineOfStatement();
+        mark(node);
+    }
+
+    void noteWayOut(int completionType, VirtualRegister value, bool keepsValue, bool isOutOfLoop)
+    {
+        if (m_isNeverComeTo)
+            return;
+        for (WaysOut* ways : m_waysOut | std::views::reverse) {
+            // A `break` leaves only what is in the loop.
+            if (isOutOfLoop && ways->loopNesting != m_loopNesting)
+                return;
+            ways->leaves.append({ completionType, value, keepsValue, m_handledExceptions.size() > ways->handlerNesting });
+            // It gets no further than a `finally` that has some other way to go.
+            if (ways->isTheEnd)
+                return;
+        }
+    }
+
+    // See CodeDetails::JumpBlock.
+    class JumpBlock {
+        WTF_MAKE_NONCOPYABLE(JumpBlock);
+    public:
+        JumpBlock(CodeGenerator& generator, CodeDetails::JumpBlock::Kind kind, RegisterID* first = nullptr, RegisterID* second = nullptr, RegisterID* third = nullptr, bool isFallenInto = true)
+            : m_generator(generator)
+            , m_parent(generator.m_jumpBlock)
+        {
+            auto registerOf = [] (RegisterID* given) { return given ? given->virtualRegister() : VirtualRegister(); };
+            generator.m_details->jumpBlocks.append({ kind, isFallenInto, m_parent, registerOf(first), registerOf(second), registerOf(third) });
+            generator.m_jumpBlock = generator.m_details->jumpBlocks.size();
+        }
+
+        ~JumpBlock() { m_generator.m_jumpBlock = m_parent; }
+
+    private:
+        CodeGenerator& m_generator;
+        unsigned m_parent;
+    };
 
     // What comes next can be come to from some other line, whatever line was last written for: it is jumped to.
     void forgetLine() { m_lastMarkedLine = 0; }
@@ -250,7 +316,7 @@ private:
             return;
         m_lastMarkedLine = node.line;
         g.emitExpressionInfo(JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
-        OpPyLine::emit(&g, static_cast<unsigned>(LineKind::AfterBackwardJump));
+        emitLine(LineKind::AfterBackwardJump);
     }
 
     // update_start_location_to_match_attr(): if what has the attribute is on some earlier line, getting the attribute is on the line that its name is on.
@@ -283,23 +349,25 @@ private:
     }
 
     // What a condition comes to, if that is plain from the source.
-    std::optional<bool> constantTruth(Expression* expression)
+    // `isComeTo` is whether this is asked because code is being made for it, so that it is among the constants, and not to find something out beforehand.
+    std::optional<bool> constantTruth(Expression* expression, bool isComeTo = true)
     {
         if (auto* name = expression->tryAs<Name>()) {
             if (*name->id != m_names.dunder_debug)
                 return std::nullopt;
-            noteConstant({ m_info.optimizationLevel ? CodeDetails::Constant::Kind::False : CodeDetails::Constant::Kind::True }, ConstantUse::IsPartOfAnother);
+            if (isComeTo)
+                noteConstant({ m_info.optimizationLevel ? CodeDetails::Constant::Kind::False : CodeDetails::Constant::Kind::True }, ConstantUse::IsPartOfAnother);
             return !m_info.optimizationLevel;
         }
         if (auto* operation = expression->tryAs<UnaryOp>(); operation && operation->op == UnaryOperator::Not) {
-            auto operand = constantTruth(operation->operand);
+            auto operand = constantTruth(operation->operand, isComeTo);
             return operand ? std::optional { !*operand } : std::nullopt;
         }
         auto* constant = expression->tryAs<Constant>();
         if (!constant)
             return std::nullopt;
         // It was come to, though nothing is done with it.
-        if (constant->type != Constant::Type::Invalid)
+        if (isComeTo && constant->type != Constant::Type::Invalid)
             noteConstant(describeConstant(*constant), ConstantUse::IsPartOfAnother);
         switch (constant->type) {
         case Constant::Type::None:
@@ -380,38 +448,85 @@ private:
     bool alwaysLeave(Sequence<Statement*> statements)
     {
         for (Statement* statement : statements) {
-            switch (statement->kind) {
-            case Statement::Kind::Return:
-            case Statement::Kind::Raise:
+            if (alwaysLeaves(*statement))
                 return true;
-            case Statement::Kind::If: {
-                auto& node = statement->as<If>();
-                if (alwaysLeave(node.body) && alwaysLeave(node.orElse))
-                    return true;
-                break;
-            }
-            case Statement::Kind::While: {
-                auto& node = statement->as<While>();
-                if (constantTruth(node.test) == std::optional { true } && !hasBreak(node.body))
-                    return true;
-                break;
-            }
+        }
+        return false;
+    }
+
+    // It is asked of each statement by each thing that the statement is in, so what it comes to is kept.
+    bool alwaysLeaves(Statement& statement)
+    {
+        switch (statement.kind) {
+        case Statement::Kind::Return:
+        case Statement::Kind::Raise:
+        case Statement::Kind::Break:
+        case Statement::Kind::Continue:
+            return true;
+        case Statement::Kind::If:
+        case Statement::Kind::For:
+        case Statement::Kind::While:
+        case Statement::Kind::Try:
+            break;
+        default:
+            return false;
+        }
+        if (auto known = m_alwaysLeaves.find(&statement); known != m_alwaysLeaves.end())
+            return known->value;
+        bool result = false;
+        if (statement.is<If>())
+            result = alwaysLeave(statement.as<If>().body) && alwaysLeave(statement.as<If>().orElse);
+        else if (statement.is<While>()) {
+            // What comes after a loop is come to by a `break`, or by way of its `else`.
+            auto& node = statement.as<While>();
+            result = (constantTruth(node.test, false) == std::optional { true } || alwaysLeave(node.orElse)) && !hasBreak(node.body);
+        } else if (statement.is<For>())
+            result = alwaysLeave(statement.as<For>().orElse) && !hasBreak(statement.as<For>().body);
+        else
+            result = alwaysLeave(statement.as<Try>().finalBody) || alwaysLeavesBeforeFinally(statement.as<Try>());
+        m_alwaysLeaves.add(&statement, result);
+        return result;
+    }
+
+    // Whether there is anything in these that CPython has an instruction for that could raise.
+    bool canRaise(Sequence<Statement*> statements)
+    {
+        for (Statement* statement : statements) {
+            switch (statement->kind) {
+            case Statement::Kind::Pass:
+            case Statement::Kind::Global:
+            case Statement::Kind::Nonlocal:
+                continue;
+            case Statement::Kind::Break:
+            case Statement::Kind::Continue:
+                return false;
+            case Statement::Kind::Return:
+                return statement->as<Return>().value && !constantOf(statement->as<Return>().value);
+            case Statement::Kind::Expr:
+                if (statement->as<Expr>().value->is<Constant>())
+                    continue;
+                return true;
             case Statement::Kind::Try: {
                 auto& node = statement->as<Try>();
-                if (alwaysLeave(node.finalBody))
+                if (canRaise(node.body) || (!alwaysLeave(node.body) && canRaise(node.orElse)) || canRaise(node.finalBody))
                     return true;
-                bool allLeave = alwaysLeave(node.body) || alwaysLeave(node.orElse);
-                for (ExceptHandler* handler : node.handlers)
-                    allLeave = allLeave && alwaysLeave(handler->body);
-                if (allLeave)
-                    return true;
-                break;
+                if (alwaysLeaves(*statement))
+                    return false;
+                continue;
             }
             default:
-                break;
+                return true;
             }
         }
         return false;
+    }
+
+    bool alwaysLeavesBeforeFinally(Try& node)
+    {
+        bool allLeave = alwaysLeave(node.body) || alwaysLeave(node.orElse);
+        for (ExceptHandler* handler : node.handlers)
+            allLeave = allLeave && alwaysLeave(handler->body);
+        return allLeave;
     }
 
     // Statements that are never come to, `if 0:` and the like. They are compiled, since that is how it is found out what is wrong with them, and jumped over. They have no
@@ -2300,6 +2415,8 @@ private:
             Reg scope = g.emitResolveScope(nullptr, variable);
             g.emitGetFromScope(target->get(), scope.get(), variable, ThrowIfNotFound);
         }
+        m_details->globalsRegister = m_globals->virtualRegister();
+        m_details->builtinsRegister = m_builtins->virtualRegister();
     }
 
     // An environment for the variables of this block that other functions use.
@@ -2688,9 +2805,12 @@ private:
             emitAssign(generator.target, value.get());
         }
         Ref<Label> again = g.newLabel();
-        for (Expression* condition : generator.conditions)
-            emitBranch(condition, again.get(), false);
-        emitComprehensionLoops(generators, index + 1, nullptr, innermost);
+        {
+            JumpBlock loopBlock(*this, CodeDetails::JumpBlock::Kind::ComprehensionLoop, iterator.get());
+            for (Expression* condition : generator.conditions)
+                emitBranch(condition, again.get(), false);
+            emitComprehensionLoops(generators, index + 1, nullptr, innermost);
+        }
         emitLabel(again.get());
         emitLineAfterBackwardJump(*generator.iterable);
         g.emitJump(loop.get());
@@ -2739,7 +2859,13 @@ private:
         m_comprehensionScopes.append(WTF::move(scope));
 
         Reg result = g.newTemporary();
-        emitFillComprehension(result.get(), node, type, generators, element, value, iterator.get());
+        {
+            std::optional<JumpBlock> environment;
+            if (!cells.isEmpty())
+                environment.emplace(*this, CodeDetails::JumpBlock::Kind::Scope);
+            JumpBlock comprehension(*this, CodeDetails::JumpBlock::Kind::Comprehension);
+            emitFillComprehension(result.get(), node, type, generators, element, value, iterator.get());
+        }
 
         m_comprehensionScopes.removeLast();
         emitPopCells(cells);
@@ -2751,6 +2877,7 @@ private:
     {
         switch (type) {
         case ComprehensionType::List:
+            markIfOnAnotherLine(node);
             emitNewList(result, { });
             break;
         case ComprehensionType::Set:
@@ -3023,8 +3150,12 @@ private:
 
     void emit(Sequence<Statement*> statements)
     {
-        for (Statement* statement : statements)
-            emit(*statement);
+        for (size_t i = 0; i < statements.size(); ++i) {
+            emit(*statements[i]);
+            // What comes after a `return` is not there, to CPython.
+            if (i + 1 < statements.size() && !m_isNeverComeTo && alwaysLeaves(*statements[i]))
+                return emitNeverComeTo(statements.subspan(i + 1));
+        }
     }
 
     void emit(Statement& statement)
@@ -3040,6 +3171,8 @@ private:
         // before anything that is in them does, or have nothing in them.
         forgetLine();
         unsigned numberOfLines = m_numberOfLines;
+        if (!statement.is<Global>() && !statement.is<Nonlocal>())
+            beginLineOfStatement();
         switch (statement.kind) {
         case Statement::Kind::Break:
         case Statement::Kind::Continue:
@@ -3119,6 +3252,12 @@ private:
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, node.value && node.value->is<Constant>() && node.value->line == node.line ? static_cast<Node&>(*node.value) : node);
             if (!node.value)
                 noteConstant({ CodeDetails::Constant::Kind::None });
+            if (!m_isNeverComeTo && !m_waysOut.isEmpty()) {
+                auto* returned = node.value ? constantOf(node.value) : nullptr;
+                JSValue plain = node.value ? (returned ? plainValueOf(*returned) : JSValue()) : jsUndefined();
+                // A constant that is an object is one to CPython, and here it is like anything else that is worked out.
+                noteWayOut(static_cast<int>(CompletionType::Return), plain ? constant(plain)->virtualRegister() : VirtualRegister(), !plain, false);
+            }
             Reg value = node.value ? Reg(emitToTemporary(node.value)) : Reg(g.emitLoad(g.newTemporary(), jsUndefined()));
             markIfOnAnotherLine(node);
             if (!g.emitReturnViaFinallyIfNeeded(value.get())) {
@@ -3197,6 +3336,7 @@ private:
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
             if (!scope)
                 return fail("'break' outside loop"_s, statement);
+            noteWayOut(static_cast<int>(bytecodeOffsetToJumpID(g.instructions().size())), VirtualRegister(), false, true);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), scope->breakTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
                 emitJump(scope->breakTarget());
@@ -3209,6 +3349,7 @@ private:
                 return fail("'break', 'continue' and 'return' cannot appear in an except* block"_s, statement);
             if (!scope)
                 return fail("'continue' not properly in loop"_s, statement);
+            noteWayOut(static_cast<int>(bytecodeOffsetToJumpID(g.instructions().size())), VirtualRegister(), false, true);
             if (!g.emitJumpViaFinallyIfNeeded(scope->scopeDepth(), *scope->continueTarget())) {
                 g.restoreScopeRegister(g.labelScopeDepthToLexicalScopeIndex(scope->scopeDepth()));
                 emitJump(*scope->continueTarget());
@@ -3741,21 +3882,34 @@ private:
     {
         Reg subject = emitToTemporary(node.subject);
         Ref<Label> end = g.newLabel();
+        // codegen_match_inner(): CPython is done with what it is matching when it comes to a `case _:` that is the last of several, or has matched it with the pattern before that. With an earlier pattern, it is
+        // done with it as it begins on what to do.
+        Pattern& last = *node.cases.back()->pattern;
+        size_t numberWithSubject = node.cases.size() - (node.cases.size() > 1 && last.is<MatchAs>() && !last.as<MatchAs>().pattern && !last.as<MatchAs>().name);
         for (size_t i = 0; i < node.cases.size(); ++i) {
             MatchCase& matchCase = *node.cases[i];
             Ref<Label> next = g.newLabel();
             PatternContext context;
             context.allowIrrefutable = matchCase.guard || i + 1 == node.cases.size();
-            // `case _:` is come to, though there is nothing to it.
-            markIfOnAnotherLine(*matchCase.pattern);
-            emitPattern(*matchCase.pattern, subject.get(), next.get(), context);
-            if (m_error)
-                return;
-            for (auto& capture : context.captures)
-                emitStoreName(*capture.name, capture.value.get(), *matchCase.pattern);
-            context.captures.clear();
-            if (matchCase.guard)
-                emitBranch(matchCase.guard, next.get(), false);
+            {
+                std::optional<JumpBlock> subjectBlock;
+                if (i < numberWithSubject)
+                    subjectBlock.emplace(*this, CodeDetails::JumpBlock::Kind::Subject, subject.get());
+                // `case _:` is come to, though there is nothing to it.
+                markWhereItCanBeGoneOnFrom(*matchCase.pattern);
+                emitPattern(*matchCase.pattern, subject.get(), next.get(), context);
+                if (m_error)
+                    return;
+                for (auto& capture : context.captures)
+                    emitStoreName(*capture.name, capture.value.get(), *matchCase.pattern);
+                context.captures.clear();
+                if (matchCase.guard)
+                    emitBranch(matchCase.guard, next.get(), false);
+                if (i + 1 < numberWithSubject) {
+                    forgetLine();
+                    beginLineOfStatement();
+                }
+            }
             emit(matchCase.body);
             emitJump(end.get());
             emitLabel(next.get());
@@ -3820,12 +3974,17 @@ private:
             }
             {
                 NestedBlock block(*this, node);
+                JumpBlock loop(*this, CodeDetails::JumpBlock::Kind::Loop, iterator.get());
                 emit(node.body);
             }
             emitLabel(*scope.continueTarget());
             emitLineAfterBackwardJump(*node.iterable);
             g.emitJump(head.get());
             emitLabel(exhausted.get());
+            if (!node.isAsync) {
+                JumpBlock loopEnd(*this, CodeDetails::JumpBlock::Kind::LoopEnd);
+                markWhereItCanBeGoneOnFrom(*node.iterable);
+            }
         });
         emit(node.orElse);
         emitLabel(end.get());
@@ -3837,6 +3996,7 @@ private:
     {
         Ref<LabelScope> scope = g.newLabelScope(LabelScope::Loop);
         SetForScope mayBreak(m_isInExceptStarOutsideLoop, false);
+        SetForScope loopNesting(m_loopNesting, m_loopNesting + 1);
         Ref<Label> end = scope->breakTarget();
         emit(scope.get());
         return end;
@@ -3895,7 +4055,10 @@ private:
 
         Ref<Label> tryLabel = g.newEmittedLabel();
         TryData* tryData = g.pushTry(tryLabel.get(), finallyLabel.get(), HandlerType::Finally);
-        body();
+        {
+            JumpBlock protectedBlock(*this, CodeDetails::JumpBlock::Kind::Protected, context.completionTypeRegister(), context.completionValueRegister());
+            body();
+        }
         Ref<Label> tryEndLabel = g.newEmittedLabel();
         g.popTry(tryData, tryEndLabel.get());
 
@@ -3937,7 +4100,7 @@ private:
 
     // While it runs, `thrown` is the exception being handled, and whichever way it is left, what was being handled before is again.
     template<typename Body>
-    void emitWhileHandling(RegisterID* thrown, const Node& node, const Body& body)
+    void emitWhileHandling(RegisterID* thrown, const Node& node, const Body& body, RegisterID* exception = nullptr, bool isComeTo = true)
     {
         Reg previous = g.newTemporary();
         {
@@ -3945,7 +4108,10 @@ private:
             emitRuntimeCall(previous.get(), "pushHandledException"_s, { thrown }, node);
         }
         m_handledExceptions.append(thrown);
-        emitTryFinally(body, [&] {
+        emitTryFinally([&] {
+            JumpBlock handler(*this, CodeDetails::JumpBlock::Kind::Handler, previous.get(), thrown, exception, isComeTo);
+            body();
+        }, [&] {
             SetForScope isArtificial(m_isArtificial, true);
             emitRuntimeCall(nullptr, "popHandledException"_s, { previous.get() }, node);
         });
@@ -3955,9 +4121,12 @@ private:
     void emitTry(Try& node)
     {
         if (!node.finalBody.empty()) {
+            WaysOut waysOut { { }, m_loopNesting, static_cast<unsigned>(m_handledExceptions.size()), alwaysLeave(node.finalBody) };
             emitTryFinally([&] {
                 NestedBlock block(*this, node);
+                m_waysOut.append(&waysOut);
                 emitTryExcept(node);
+                m_waysOut.removeLast();
             }, [&] (RegisterID* completionType, RegisterID* completionValue) {
                 // If an exception is on its way through, it is what is being handled meanwhile.
                 Reg previous = g.newTemporary();
@@ -3969,6 +4138,8 @@ private:
                 }
                 emitTryFinally([&] {
                     NestedBlock block(*this, node);
+                    JumpBlock finally(*this, CodeDetails::JumpBlock::Kind::Finally, completionType, completionValue, previous.get(), !alwaysLeavesBeforeFinally(node));
+                    m_details->jumpBlocks.last().leaves = WTF::move(waysOut.leaves);
                     emit(node.finalBody);
                 }, [&] {
                     SetForScope isArtificial(m_isArtificial, true);
@@ -4002,6 +4173,8 @@ private:
                 for (ExceptHandler* handler : node.handlers) {
                     Ref<Label> next = g.newLabel();
                     if (handler->type) {
+                        JumpBlock matching(*this, CodeDetails::JumpBlock::Kind::Matching);
+                        markWhereItCanBeGoneOnFrom(*handler->type);
                         Reg type = emit(handler->type);
                         Reg matches = g.newTemporary();
                         mark(*handler->type);
@@ -4027,9 +4200,12 @@ private:
                 // Nothing wanted it.
                 g.emitThrow(thrown);
                 emitLabel(handled.get());
-            });
+            }, exception, canRaise(node.body));
         }, [&] {
-            emit(node.orElse);
+            if (alwaysLeave(node.body))
+                emitNeverComeTo(node.orElse);
+            else
+                emit(node.orElse);
         });
     }
 
@@ -4056,6 +4232,7 @@ private:
                     Ref<Label> next = g.newLabel();
                     Reg match = g.newTemporary();
                     {
+                        JumpBlock matching(*this, CodeDetails::JumpBlock::Kind::Matching);
                         Reg type = emit(handler->type);
                         Reg pair = g.newTemporary();
                         emitRuntimeCall(pair.get(), "matchExceptionGroup"_s, { rest.get(), type.get() }, *handler->type);
@@ -4131,12 +4308,16 @@ private:
             emitAwaitValue(entered.get(), entered.get(), position, AwaitContext::AsyncEnter);
 
         Reg finishedNormally = g.emitLoad(g.newTemporary(), jsBoolean(true));
+        WaysOut waysOut { { }, m_loopNesting, static_cast<unsigned>(m_handledExceptions.size()) };
         emitTryFinally([&] {
             emitTryCatch([&] {
                 NestedBlock block(*this, position);
+                JumpBlock with(*this, CodeDetails::JumpBlock::Kind::With, exit.get(), finishedNormally.get());
                 if (item.optionalVariables)
                     emitAssign(item.optionalVariables, entered.get());
+                m_waysOut.append(&waysOut);
                 emitWith(node, index + 1);
+                m_waysOut.removeLast();
             }, [&] (RegisterID* exception, RegisterID* thrown) {
                 // __exit__ is told of the exception, and may say that it has been dealt with.
                 g.emitLoad(finishedNormally.get(), jsBoolean(false));
@@ -4147,14 +4328,18 @@ private:
                         emitAwaitValue(suppress.get(), suppress.get(), position, AwaitContext::AsyncExit);
                     Ref<Label> suppressed = g.newLabel();
                     emitJumpIfTrue(suppress.get(), suppressed.get());
-                    OpPyLine::emit(&g, static_cast<unsigned>(LineKind::OfHandledException));
+                    emitLine(LineKind::OfHandledException);
                     g.emitThrow(thrown);
                     emitLabel(suppressed.get());
                 });
             }, [] { });
-        }, [&] {
+        }, [&] (RegisterID* completionType, RegisterID* completionValue) {
             Ref<Label> done = g.newLabel();
             g.emitJumpIfFalse(finishedNormally.get(), done.get());
+            JumpBlock withExit(*this, CodeDetails::JumpBlock::Kind::WithExit, exit.get(), finishedNormally.get(), completionType, !alwaysLeave(node.body));
+            m_details->jumpBlocks.last().fourth = completionValue->virtualRegister();
+            m_details->jumpBlocks.last().leaves = WTF::move(waysOut.leaves);
+            markWhereItCanBeGoneOnFrom(position);
             Reg result = g.newTemporary();
             emitRuntimeCall(result.get(), "callExit"_s, { exit.get(), none() }, position);
             if (node.isAsync)
@@ -4779,6 +4964,8 @@ private:
             generateFunction([&] {
                 if (m_info.usesNamespace)
                     m_namespace = emitLoadClosure(nullptr, m_info.parameterNames[0], m_block.location);
+                if (m_info.usesNamespace)
+                    m_details->namespaceRegister = m_namespace->virtualRegister();
                 emitModuleBody(module);
             });
             return;
@@ -4832,6 +5019,18 @@ private:
     HashSet<UniquedStringImpl*> m_notedNames;
     HashSet<UniquedStringImpl*> m_notedVariableNames;
     bool m_endIsNeverComeTo { false };
+    HashMap<Statement*, bool> m_alwaysLeaves;
+    // For each `try` with a `finally`, and each `with`, of which what comes first is being generated. See CodeDetails::JumpBlock::leaves.
+    struct WaysOut {
+        Vector<CodeDetails::JumpBlock::Leave> leaves;
+        unsigned loopNesting;
+        unsigned handlerNesting;
+        bool isTheEnd { false }; // What comes after `finally` never comes to its end.
+    };
+    Vector<WaysOut*, 4> m_waysOut;
+    unsigned m_loopNesting { 0 };
+    std::optional<unsigned> m_lineOfStatement; // Where the op_py_line is that a statement began with, until it is known what line that is.
+    unsigned m_jumpBlock { 0 }; // Which of m_details->jumpBlocks is being generated, counting from 1.
     NotedConstants m_notedConstants; // Of m_details->constants.
     Vector<bool> m_constantIsLoaded;
     Vector<CodeDetails::Constant> m_workedOutConstants;

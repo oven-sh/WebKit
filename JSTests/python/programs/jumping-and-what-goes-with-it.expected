@@ -1,0 +1,88 @@
+---- variables that have no value are given None, and it is said so
+1 4 (['jumped, and is on 4'], None) [(4, None, None)]
+1 3 (['jumped, and is on 3'], None) [(4, None, 3)]
+1 2 (['jumped, and is on 2'], None) [(4, 2, 3)]
+3 4 (['jumped, and is on 4'], None) [1, (4, 2, None)]
+4 1 (['jumped, and is on 1'], None) [1, 1, (4, 2, 3)]
+if that is an error, it stays where it is 1 4 (['RuntimeWarning: assigning None to 2 unbound locals'], None) [1, (4, 2, 3)]
+if that is an error, it stays where it is 3 4 (['RuntimeWarning: assigning None to 1 unbound local'], None) [1, (4, 2, 3)]
+if that is an error, it stays where it is 4 1 (['jumped, and is on 1'], None) [1, 1, (4, 2, 3)]
+---- twice
+4 3 (['jumped, and is on 4', 'and again, and is on 3'], None) [1, 3, 4, 5]
+4 5 (['jumped, and is on 4', 'and again, and is on 5'], None) [1, 5]
+5 1 (['jumped, and is on 5', 'and again, and is on 1'], None) [1, 1, 2, 3, 4, 5]
+3 3 (['jumped, and is on 3', 'and again, and is on 3'], None) [1, 3, 4, 5]
+4 99 (['jumped, and is on 4', 'ValueError: line 157 comes after the current code block'], None) [1, 4, 5]
+4 -5 (['jumped, and is on 4', 'ValueError: line 53 comes before the current code block'], None) [1, 4, 5]
+out of a loop and 3 5 (['jumped, and is on 3', "ValueError: can't jump into the body of a for loop"], None) [3, (5, 'a'), (5, 'b'), 6]
+out of a loop and 5 2 (['jumped, and is on 5', 'and again, and is on 2'], None) [(2, 0), (2, 1), 3, (5, 'a'), (5, 'b'), 6]
+out of a loop and 5 3 (['jumped, and is on 5', 'and again, and is on 3'], None) [3, (5, 'a'), (5, 'b'), 6]
+out of a loop and 6 2 (['jumped, and is on 6', "ValueError: can't jump into the body of a for loop"], None) [6]
+---- what is told raises, after
+(['jumped, and is on 4'], "KeyError: 'from what was told'") [1]
+---- what is being handled
+8 10 (['jumped, and is on 10'], None) [(4, 'first'), (10, 'first'), (11, 'None')] None
+8 11 (['jumped, and is on 11'], None) [(4, 'first'), (11, 'None')] None
+8 4 (['jumped, and is on 4'], None) [(4, 'first'), (4, 'first'), (8, "'second'"), 9, (10, 'first'), (11, 'None')] None
+9 1 (['jumped, and is on 1'], None) [(4, 'first'), (8, "'second'"), (4, 'first'), (8, "'second'"), 9, (10, 'first'), (11, 'None')] None
+4 11 (['jumped, and is on 11'], None) [(11, 'None')] None
+10 8 (["ValueError: can't jump into an 'except' block as there's no exception"], None) [(4, 'first'), (8, "'second'"), 9, (10, 'first'), (11, 'None')] None
+4 8 (["ValueError: can't jump into an 'except' block as there's no exception"], None) [(4, 'first'), (8, "'second'"), 9, (10, 'first'), (11, 'None')] None
+8 9 (['jumped, and is on 9'], None) [(4, 'first'), 9, (10, 'first'), (11, 'None')] None
+raise, in another handler 5 10 (['jumped, and is on 10'], None) [10, (13, 'ValueError', 'first')]
+raise, in another handler 5 11 (['jumped, and is on 11'], None) [(13, 'ValueError', 'first')]
+raise, in another handler 10 5 (['jumped, and is on 5'], None) [5, 6, 5, 6, 10, (13, 'KeyError', "'second'")]
+---- variables that other functions use
+3 4 (['jumped, and is on 4'], "TypeError: 'NoneType' object is not iterable") []
+3 5 (['jumped, and is on 5'], None) [(6, 1)]
+3 6 (['jumped, and is on 6'], "TypeError: 'NoneType' object is not callable") []
+3 1 (['jumped, and is on 1'], None) [('if', 0), ('if', 1), (4, [(1, 1), (1, 1)]), (6, 1)]
+3 2 (['jumped, and is on 2'], None) [('if', 0), ('if', 1), (4, [(1, 1), (1, 1)]), (6, 1)]
+1 3 (["ValueError: can't jump into the body of a for loop"], None) [('if', 0), ('if', 1), (4, [(1, 1), (1, 1)]), (6, 1)]
+6 2 (['jumped, and is on 2'], None) [('if', 0), ('if', 1), (4, [(1, 1), (1, 1)]), ('if', 0), ('if', 1), (4, [(1, 1), (1, 1)]), (6, 1)]
+4 2 (['jumped, and is on 2'], None) [('if', 0), ('if', 1), ('if', 0), ('if', 1), (4, [(1, 1), (1, 1)]), (6, 1)]
+---- a generator
+3 1 (['jumped, and is on 1'], [2, 2, 4]) [1, 1, 3, 5]
+5 1 (['jumped, and is on 1'], [2, 4, 2, 4]) [1, 3, 1, 3, 5]
+5 3 (['jumped, and is on 3'], [2, 4, 4]) [1, 3, 3, 5]
+1 5 (['jumped, and is on 5'], []) [5]
+3 5 (['jumped, and is on 5'], [2]) [1, 5]
+1 3 (['jumped, and is on 3'], [4]) [3, 5]
+---- with sys.monitoring
+LINE ([1, 2, 'jumped', 4, 5, 4, 6], [(5, None), (5, 1), 6]) ([1, 2, 1, 2, 1, 3, "can't jump into the body of a for loop", 4, 5, 4, 5, 4, 6], [(2, 0), (2, 1), 3, (5, 'a'), (5, 'b'), 6]) ([1, 2, 1, 2, 1, 3, 4, 5, 'jumped'], [(2, 0), (2, 1), 3, 6])
+PY_START (["ValueError: can't jump from the 'call' trace event of a new frame"], [(2, 0), (2, 1), 3, (5, 'a'), (5, 'b'), 6])
+PY_RETURN (["ValueError: can only jump from a 'line' trace event"], [(2, 0), (2, 1), 3, (5, 'a'), (5, 'b'), 6])
+CALL (["ValueError: can't jump during a call"], [(2, 0), (2, 1), 3, (5, 'a'), (5, 'b'), 6])
+INSTRUCTION (["ValueError: can only jump from a 'line' trace event"], [(2, 0), (2, 1), 3, (5, 'a'), (5, 'b'), 6])
+---- when nothing is being told
+f_lineno can only be set in a trace function
+'1' lineno must be an integer
+1.0 lineno must be an integer
+None lineno must be an integer
+True lineno must be an integer
+cannot delete attribute
+---- what is in no function
+a module 1 9 (['jumped'], [], None, ['b', 'o'])
+a module 1 4 (["can't jump into the body of a for loop"], [1, (4, 0), (4, 1), 6, 8], None, ['a', 'b', 'i', 'o'])
+a module 4 9 (['jumped'], [1], None, ['a', 'b', 'i', 'o'])
+a module 4 1 (['jumped'], [1, 1, (4, 0), (4, 1), 6, 8], None, ['a', 'b', 'i', 'o'])
+a module 2 6 (['jumped'], [1, 6, 8], None, ['b', 'o'])
+a module 2 8 (['jumped'], [1, 8], None, ['b', 'o'])
+a module 8 2 (['jumped'], [1, (4, 0), (4, 1), 6, (4, 0), (4, 1), 6, 8], None, ['a', 'b', 'i', 'o'])
+a module 9 3 (['jumped'], [1, (4, 0), (4, 1), 6, 8, (4, 0), (4, 1), 6, 8], None, ['a', 'b', 'i', 'o'])
+a module 1 0 (['line 0 comes before the current code block'], [1, (4, 0), (4, 1), 6, 8], None, ['a', 'b', 'i', 'o'])
+a module 1 10 (['line 10 comes after the current code block'], [1, (4, 0), (4, 1), 6, 8], None, ['a', 'b', 'i', 'o'])
+a class 3 7 (['jumped'], [1, (8, ['b']), 9], None, ['C', 'o'])
+a class 3 8 (['jumped'], [1, (8, []), 9], None, ['C', 'o'])
+a class 3 6 (["can't jump into the body of a for loop"], [1, 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])
+a class 6 8 (['jumped'], [1, 3, (8, ['a', 'i']), 9], None, ['C', 'o'])
+a class 6 3 (['jumped'], [1, 3, 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])
+a class 8 3 (['jumped'], [1, 3, (6, 0), (6, 1), 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])
+a class 3 2 (['jumped'], [1, 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])
+a class 3 1 (['line 1 comes before the current code block'], [1, 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])
+a class 3 9 (['line 9 comes after the current code block'], [1, 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])
+a class 4 4 (['jumped'], [1, 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])
+what a class is in 1 9 (['jumped'], [9], None, ['o'])
+what a class is in 1 3 (['jumped'], [9], None, ['o'])
+what a class is in 2 9 (['jumped'], [1, 9], None, ['o'])
+what a class is in 9 2 (['jumped'], [1, 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 3, (6, 0), (6, 1), (8, ['a', 'b', 'i']), 9], None, ['C', 'o'])

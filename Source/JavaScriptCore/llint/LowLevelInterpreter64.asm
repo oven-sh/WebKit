@@ -2702,8 +2702,9 @@ llintOp(op_py_line, OpPyLine, macro (size, get, dispatch)
     dispatch()
 
 .opPyLineSlow:
+    # It says what to run next.
     callSlowPath(_slow_path_py_line)
-    dispatch()
+    nextInstruction()
 end)
 
 

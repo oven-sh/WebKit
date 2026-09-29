@@ -135,6 +135,15 @@ public:
         m_pendingCallable.clear();
         m_pendingArgument.clear();
     }
+    // frame.f_lineno = n. See PythonFrameJump.cpp.
+    void goOnFromLine(JSGlobalObject*, JSValue line);
+    // Where it has been told to go on from, by that, if what it is at has yet to see to it.
+    struct GoesOnFrom {
+        unsigned offset; // Of an op_py_line.
+        unsigned next; // Of what comes after that, which is what is to be run.
+        unsigned line;
+    };
+    std::optional<GoesOnFrom> takeWhereItGoesOnFrom() { return std::exchange(m_goesOnFrom, std::nullopt); }
     bool tracesLines() const { return m_tracesLines; }
     void setTracesLines(bool value) { m_tracesLines = value; }
     bool tracesOpcodes() const { return m_tracesOpcodes; }
@@ -173,6 +182,7 @@ private:
     unsigned m_variableCount;
     int m_lastLine { -1 };
     int m_lineOverride { -1 };
+    std::optional<GoesOnFrom> m_goesOnFrom;
     unsigned m_pendingCallOffset { 0 };
     uint8_t m_pendingCallTools { 0 };
     bool m_isOver { false };
