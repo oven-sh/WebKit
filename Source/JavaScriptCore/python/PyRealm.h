@@ -364,6 +364,8 @@ public:
     Python::PosixModuleState& posixModule() { return m_posixModule; }
     // What whoever embeds the engine had to say, which it was asked when this was made.
     const Python::Configuration& configuration() const { return m_configuration; }
+    // For what works out where things are, as Python starts
+    Python::Configuration& mutableConfiguration() { return m_configuration; }
     Python::ASTState& ast() { return m_ast; }
 
     // sys.modules

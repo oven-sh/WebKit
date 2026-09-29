@@ -450,6 +450,8 @@ void reportUnraisableShowing(JSGlobalObject*, ASCIILiteral message, JSValue show
 bool auditSlow(JSGlobalObject*, ASCIILiteral event, const ArgList& arguments);
 // What has been raised and not caught by a program that is being run: sys.excepthook is given it. PyErr_Print(), but for SystemExit.
 void reportUncaughtException(JSGlobalObject*, JSValue exception);
+// PySys_WriteStderr(): to sys.stderr. What goes wrong with that is lost.
+void writeToStandardError(JSGlobalObject*, const String&);
 
 // ---- Operators
 

@@ -381,8 +381,9 @@ PYTHON_NATIVE(posixGetloadavg)
 
 PYTHON_NATIVE(posixCpuCount)
 {
-    UNUSED_PARAM(globalObject);
     UNUSED_PARAM(callFrame);
+    if (int said = globalObject->pyRealm()->configuration().cpuCount; said > 0)
+        return JSValue::encode(jsNumber(said));
     long count = ::sysconf(_SC_NPROCESSORS_ONLN);
     if (count < 1)
         RETURN_NONE();

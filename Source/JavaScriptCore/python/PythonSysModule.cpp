@@ -77,7 +77,8 @@ static void writeTo(JSGlobalObject* globalObject, JSValue file, const String& te
     scope.clearException();
 }
 
-static void writeToStandardError(JSGlobalObject* globalObject, const String& text)
+// PySys_WriteStderr()
+void writeToStandardError(JSGlobalObject* globalObject, const String& text)
 {
     writeTo(globalObject, sysAttribute(globalObject, "stderr"_s), text);
 }
@@ -159,25 +160,54 @@ PYTHON_NATIVE(sysAudit)
 
 // ---- What is raised and not caught
 
+// PyErr_Display(). It is `traceback`, in the library, that shows it, if it can be had and makes nothing of a mess of it. What there is here to show it with is for when there is no library, or Python has not got as far as being able
+// to import anything.
+static void displayException(JSGlobalObject* globalObject, JSValue value, JSValue traceback = { })
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    JSValue file = sysAttribute(globalObject, "stderr"_s);
+    if (!file) {
+        fputs("lost sys.stderr\n", stderr);
+        return;
+    }
+    if (isNone(file))
+        return;
+    bool isException = isInstance(globalObject, value, realm->typeBaseException());
+    // One that has no traceback of its own is given the one that came with it.
+    if (isException && traceback && typeOf(globalObject, traceback) == realm->typeTraceback()) {
+        JSValue own = asObject(value)->getDirect(vm, vm.pythonNames().private_traceback);
+        if (!own || isNone(own))
+            asObject(value)->putDirect(vm, vm.pythonNames().private_traceback, traceback);
+    }
+
+    JSValue print = importModuleAttribute(globalObject, "traceback"_s, "_print_exception_bltin"_s);
+    if (!scope.exception() && isCallable(globalObject, print)) {
+        call(globalObject, print, value);
+        if (!scope.exception())
+            return;
+    }
+    if (vm.hasPendingTerminationException())
+        return;
+    scope.clearException();
+
+    if (isNone(value))
+        writeToStandardError(globalObject, "NoneType: None\n"_s);
+    else if (!isException)
+        writeToStandardError(globalObject, concatenate("TypeError: print_exception(): Exception expected for value, "_s, typeName(globalObject, value), " found\n"_s));
+    else
+        writeToStandardError(globalObject, formatException(globalObject, value));
+    callMethodNamed(globalObject, file, vm.pythonNames().attribute_flush);
+    scope.clearException();
+}
+
 // sys.excepthook(exctype, value, traceback)
 PYTHON_NATIVE(sysExceptHook)
 {
     NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    JSValue value = args[1];
-    if (isNone(value)) {
-        writeToStandardError(globalObject, "NoneType: None\n"_s);
-        RETURN_NONE();
-    }
-    if (!isInstance(globalObject, value, realm->typeBaseException())) {
-        writeToStandardError(globalObject, concatenate("TypeError: print_exception(): Exception expected for value, "_s, typeName(globalObject, value), " found\n"_s));
-        RETURN_NONE();
-    }
-    // One that has no traceback of its own is given the one that came with it.
-    JSValue own = asObject(value)->getDirect(vm, names.private_traceback);
-    if ((!own || isNone(own)) && typeOf(globalObject, args[2]) == realm->typeTraceback())
-        asObject(value)->putDirect(vm, names.private_traceback, args[2]);
-    writeToStandardError(globalObject, formatException(globalObject, value));
+    displayException(globalObject, args[1], args[2]);
+    RETURN_IF_EXCEPTION(scope, { });
     RETURN_NONE();
 }
 
@@ -203,7 +233,7 @@ void reportUncaughtException(JSGlobalObject* globalObject, JSValue exception)
     }
     if (!hook) {
         writeToStandardError(globalObject, "sys.excepthook is missing\n"_s);
-        writeToStandardError(globalObject, formatException(globalObject, exception));
+        displayException(globalObject, exception);
         return;
     }
     call(globalObject, hook, type, exception, traceback);
@@ -212,9 +242,9 @@ void reportUncaughtException(JSGlobalObject* globalObject, JSValue exception)
         return;
     scope.clearException();
     writeToStandardError(globalObject, "Error in sys.excepthook:\n"_s);
-    writeToStandardError(globalObject, formatException(globalObject, second->value()));
+    displayException(globalObject, second->value());
     writeToStandardError(globalObject, "\nOriginal exception was:\n"_s);
-    writeToStandardError(globalObject, formatException(globalObject, exception));
+    displayException(globalObject, exception);
 }
 
 // ---- What is raised where there is nobody to catch it
@@ -706,7 +736,18 @@ PYTHON_NATIVE(returnTrue)
 PYTHON_NATIVE(sysExit)
 {
     NATIVE_PROLOGUE();
-    return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemExit, args.at(0)));
+    // PyErr_SetObject(), which makes the exception of what it is given as a class is called with it: a tuple is all of what it is called with.
+    JSValue status = args.at(0);
+    if (!status || !isTuple(status))
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::SystemExit, status));
+    MarkedArgumentBuffer arguments;
+    for (unsigned i = 0; i < asTuple(status)->length(); ++i)
+        arguments.append(asTuple(status)->at(i));
+    JSValue exception = call(globalObject, realm->typeSystemExit()->object(), arguments);
+    RETURN_IF_EXCEPTION(scope, { });
+    setContext(globalObject, asObject(exception));
+    throwException(globalObject, scope, exception);
+    return { };
 }
 
 PYTHON_NATIVE(sysException)
@@ -796,6 +837,74 @@ PYTHON_NATIVE(sysDisplayHook)
 
 // ---- Setting it up
 
+// _PySys_UpdateConfig(): what follows from what the program was started with, and from where things are, which is not known until Python starts
+void updateSysFromConfiguration(JSGlobalObject* globalObject, JSObject* module)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    auto& configuration = realm->configuration();
+    auto set = [&] (ASCIILiteral name, JSValue value) { module->putDirect(vm, Identifier::fromString(vm, name), value); };
+    auto listOf = [&] (const Vector<String>& strings) {
+        MarkedArgumentBuffer values;
+        for (auto& string : strings)
+            values.append(jsString(vm, string));
+        return newList(globalObject, values);
+    };
+    auto orNone = [&] (const String& text) -> JSValue { return text.isNull() ? jsUndefined() : JSValue(jsString(vm, text)); };
+    auto orElse = [&] (const String& text, const String& otherwise) { return jsString(vm, text.isNull() ? otherwise : text); };
+
+    set("path"_s, listOf(configuration.moduleSearchPaths));
+    set("executable"_s, jsString(vm, configuration.executable));
+    set("_base_executable"_s, orElse(configuration.baseExecutable, configuration.executable));
+    set("prefix"_s, jsString(vm, configuration.prefix));
+    set("base_prefix"_s, orElse(configuration.basePrefix, configuration.prefix));
+    set("exec_prefix"_s, jsString(vm, configuration.executablePrefix));
+    set("base_exec_prefix"_s, orElse(configuration.baseExecutablePrefix, configuration.executablePrefix));
+    set("platlibdir"_s, jsString(vm, configuration.platformLibraryDirectory));
+    set("pycache_prefix"_s, orNone(configuration.bytecodeCachePrefix));
+    set("argv"_s, listOf(configuration.arguments));
+    set("orig_argv"_s, listOf(configuration.originalArguments.isEmpty() ? configuration.arguments : configuration.originalArguments));
+    set("warnoptions"_s, listOf(configuration.warningOptions));
+    // _PyConfig_CreateXOptionsDict(): what an option is set to, or True
+    PyDict* extraOptions = PyDict::create(globalObject);
+    for (auto& option : configuration.extraOptions) {
+        size_t separator = option.find('=');
+        if (separator == notFound)
+            extraOptions->setString(globalObject, option, jsBoolean(true));
+        else
+            extraOptions->setString(globalObject, option.left(separator), jsString(vm, option.substring(separator + 1)));
+    }
+    set("_xoptions"_s, extraOptions);
+    set("_stdlib_dir"_s, orNone(configuration.libraryDirectory));
+
+    // set_flags_from_config()
+    realm->maximumDigitsOfIntAsString = configuration.maximumDigitsOfIntAsString;
+    MarkedArgumentBuffer flags;
+    flags.append(jsNumber(configuration.parserDebug));
+    flags.append(jsNumber(configuration.inspect));
+    flags.append(jsNumber(configuration.interactive));
+    flags.append(jsNumber(configuration.optimizationLevel));
+    flags.append(jsNumber(!configuration.writesBytecode));
+    flags.append(jsNumber(!configuration.usesUserSiteDirectory));
+    flags.append(jsNumber(!configuration.importsSite));
+    flags.append(jsNumber(!configuration.usesEnvironment));
+    flags.append(jsNumber(configuration.verbose));
+    flags.append(jsNumber(configuration.bytesWarning));
+    flags.append(jsNumber(configuration.quiet));
+    flags.append(jsNumber(0)); // hash_randomization: what a str hashes to is the same from one run to the next.
+    flags.append(jsNumber(configuration.isIsolated));
+    flags.append(jsBoolean(configuration.isDevelopmentMode));
+    flags.append(jsNumber(configuration.usesUTF8Mode));
+    flags.append(jsNumber(configuration.warnsOfDefaultEncoding));
+    flags.append(jsBoolean(configuration.hasSafePath));
+    flags.append(jsNumber(configuration.maximumDigitsOfIntAsString));
+    flags.append(jsNumber(1)); // gil
+    flags.append(jsNumber(configuration.threadsInheritContext));
+    flags.append(jsNumber(configuration.hasContextAwareWarnings));
+    set("flags"_s, newStructSequence(globalObject, realm->typeSysFlags(), flags));
+    set("dont_write_bytecode"_s, jsBoolean(!configuration.writesBytecode));
+}
+
 JSObject* createSysModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -818,7 +927,6 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
         return newList(globalObject, values);
     };
     set("modules"_s, realm->modules());
-    set("path"_s, listOf(configuration.moduleSearchPaths));
     set("meta_path"_s, newList(globalObject));
     set("path_hooks"_s, newList(globalObject));
     set("path_importer_cache"_s, PyDict::create(globalObject));
@@ -827,21 +935,7 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     for (ASCIILiteral name : standardLibraryModuleNames)
         libraryNames.append(jsString(vm, String(name)));
     set("stdlib_module_names"_s, setFromIterable(globalObject, realm->typeFrozenSet()->instanceStructure(), newList(globalObject, libraryNames)));
-    set("prefix"_s, jsString(vm, configuration.prefix));
-    set("base_prefix"_s, jsString(vm, configuration.prefix));
-    set("exec_prefix"_s, jsString(vm, configuration.executablePrefix));
-    set("base_exec_prefix"_s, jsString(vm, configuration.executablePrefix));
-    set("_stdlib_dir"_s, configuration.libraryDirectory.isNull() ? jsUndefined() : JSValue(jsString(vm, configuration.libraryDirectory)));
-    set("_base_executable"_s, jsString(vm, configuration.executable));
-    set("_home"_s, jsUndefined());
     set("_framework"_s, jsEmptyString(vm));
-    set("argv"_s, listOf(configuration.arguments));
-    set("orig_argv"_s, listOf(configuration.arguments));
-    set("executable"_s, jsString(vm, configuration.executable));
-    set("warnoptions"_s, newList(globalObject));
-    set("_xoptions"_s, PyDict::create(globalObject));
-    set("dont_write_bytecode"_s, jsBoolean(true));
-    set("pycache_prefix"_s, jsUndefined());
 
     // ---- Which Python this is
     auto structOf = [&] (PyType* type, std::span<const ASCIILiteral> fields, unsigned countInSequence, std::initializer_list<JSValue> values) {
@@ -851,15 +945,15 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
             buffer.append(value);
         return newStructSequence(globalObject, type, buffer);
     };
-    constexpr int major = 3;
-    constexpr int minor = 14;
-    constexpr int micro = 7;
+    constexpr int major = PYTHON_VERSION_MAJOR;
+    constexpr int minor = PYTHON_VERSION_MINOR;
+    constexpr int micro = PYTHON_VERSION_MICRO;
     constexpr int hexVersion = major << 24 | minor << 16 | micro << 8 | 0xF0;
     static constexpr ASCIILiteral versionFields[] = { "major"_s, "minor"_s, "micro"_s, "releaselevel"_s, "serial"_s };
     JSValue versionInfo = structOf(realm->typeSysVersionInfo(), versionFields, 5, { jsNumber(major), jsNumber(minor), jsNumber(micro), text("final"_s), jsNumber(0) });
     set("version_info"_s, versionInfo);
     set("hexversion"_s, jsNumber(hexVersion));
-    set("version"_s, strOrMemoryError(globalObject, concatenate(major, '.', minor, '.', micro, " (JavaScriptCore)"_s)));
+    set("version"_s, text(PYTHON_FULL_VERSION_STRING ""_s));
     set("api_version"_s, jsNumber(1013));
     set("abiflags"_s, jsEmptyString(vm));
     set("copyright"_s, text("Copyright (c) 2001 Python Software Foundation.\nAll Rights Reserved.\n\nCopyright (c) 2000 BeOpen.com.\nAll Rights Reserved.\n\nCopyright (c) 1995-2001 Corporation for National Research Initiatives.\nAll Rights Reserved.\n\nCopyright (c) 1991-1995 Stichting Mathematisch Centrum, Amsterdam.\nAll Rights Reserved."_s));
@@ -875,7 +969,6 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
 #endif
     set("implementation"_s, implementation);
     set("platform"_s, text(PYTHON_PLATFORM ""_s));
-    set("platlibdir"_s, text("lib"_s));
     set("byteorder"_s, text("little"_s));
     set("maxsize"_s, intFromInt64(globalObject, std::numeric_limits<int64_t>::max()));
     set("maxunicode"_s, jsNumber(0x10FFFF));
@@ -885,8 +978,8 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
         "bytes_warning"_s, "quiet"_s, "hash_randomization"_s, "isolated"_s, "dev_mode"_s, "utf8_mode"_s, "warn_default_encoding"_s, "safe_path"_s, "int_max_str_digits"_s, "gil"_s,
         "thread_inherit_context"_s, "context_aware_warnings"_s };
     JSValue zero = jsNumber(0);
-    set("flags"_s, structOf(realm->typeSysFlags(), flagFields, 18, { zero, zero, zero, zero, jsNumber(1), zero, zero, zero, zero, zero, zero, zero, zero, jsBoolean(false), jsNumber(1), zero, jsBoolean(false),
-        jsNumber(realm->maximumDigitsOfIntAsString), jsNumber(1), zero, zero }));
+    makeStructSequenceType(globalObject, realm->typeSysFlags(), flagFields, 18);
+    updateSysFromConfiguration(globalObject, module);
     static constexpr ASCIILiteral floatFields[] = { "max"_s, "max_exp"_s, "max_10_exp"_s, "min"_s, "min_exp"_s, "min_10_exp"_s, "dig"_s, "mant_dig"_s, "epsilon"_s, "radix"_s, "rounds"_s };
     using Limits = std::numeric_limits<double>;
     set("float_info"_s, structOf(realm->typeSysFloatInfo(), floatFields, 11, { floatFromDouble(Limits::max()), jsNumber(Limits::max_exponent), jsNumber(Limits::max_exponent10), floatFromDouble(Limits::min()),

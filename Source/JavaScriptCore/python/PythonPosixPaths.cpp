@@ -765,7 +765,7 @@ static size_t rootSizeOf(std::span<const char> path)
 }
 
 // _Py_normpath_and_size(). All that matters in a name is a byte each, so it is done to the bytes.
-static Vector<char> normalizePath(std::span<const char> path)
+Vector<char> normalizePath(std::span<const char> path)
 {
     Vector<char> out;
     if (path.empty())

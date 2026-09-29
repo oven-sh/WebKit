@@ -43,12 +43,19 @@ JS_EXPORT_PRIVATE void startPython(JSGlobalObject*);
 // Runs a program as `python file.py` does, as the module __main__, and reports what it does not catch. Returns the status that the process is to end with, if this is all that it does.
 JS_EXPORT_PRIVATE int runMain(JSGlobalObject*, std::span<const uint8_t>, const SourceOrigin&, const String& filename);
 
+// The same, for what `python` was started with, which readCommandLine() has read: whichever of a command, a module, a file, or what comes in on the standard input it says to run. pymain_run_python() of CPython.
+JS_EXPORT_PRIVATE int runMain(JSGlobalObject*);
 // What is done when there is no more to run, of what Py_FinalizeEx() does: what has been written and not sent on is sent on. It is for the host to say when that is, since a program in two languages is not over when
 // the Python that began it is. False if it could not all be, for which CPython ends the process with the status 120. It does nothing if Python was never started.
 JS_EXPORT_PRIVATE bool finalizePython(JSGlobalObject*);
 // The end of Py_RunMain(), for a program that runMain() ran: that, and then the status that the process is to end with, given the one that runMain() returned. If what ended the program was a KeyboardInterrupt that nothing
 // caught, it ends the process itself, by SIGINT, as CPython does, so that a shell that started it knows to stop.
 JS_EXPORT_PRIVATE int finalizeMain(JSGlobalObject*, int status);
+// _PyConfig_InitPathConfig(): works out all that Configuration says is worked out if `computesPaths`. It may throw.
+struct Configuration;
+void computePathConfiguration(JSGlobalObject*, Configuration&);
+// Modules/getpath.py of CPython, which does the working out
+std::span<const uint8_t> getPathSource();
 // _PyAtExit_Call(): what a program has registered with atexit, the last first. It raises nothing.
 void callAtExitFunctions(JSGlobalObject*);
 

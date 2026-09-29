@@ -123,6 +123,9 @@ JSValue decodeFileSystemBytes(JSGlobalObject*, std::span<const char>);
 // That, or bytes if that is what was asked with.
 JSValue nameLike(JSGlobalObject*, const PathArgument&, std::span<const char>);
 
+// _Py_normpath()
+Vector<char> normalizePath(std::span<const char>);
+
 // _pystat_fromstructstat()
 JSValue statResultFrom(JSGlobalObject*, const struct stat&);
 

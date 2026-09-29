@@ -41,7 +41,15 @@ struct ImportState {
     unsigned lockDepth { 0 }; // How many times the import lock has been taken. There is one thread.
     int overrideOfFrozenModules { 0 };
     bool isStarted { false }; // Whether all that is done before a program is run has been done.
+    bool hasCodecRegistry { false }; // Whether a codec can be looked for by name: `interp->unicode.fs_codec.encoding`, which _PyUnicode_InitEncodings() sets
     bool hasUnhandledKeyboardInterrupt { false }; // _PyRuntime.signals.unhandled_keyboard_interrupt
+    // What Python was doing as it started, for saying what it was that could not be done: the PyStatus that CPython would end with
+    ASCIILiteral startingFunction;
+    ASCIILiteral startingFailure;
+    // For -X importtime: `find_and_load` of CPython's struct _import_state
+    bool hasImportTimeHeaderToPrint { true };
+    int importLevel { 0 };
+    int64_t accumulatedImportTime { 0 };
 
     template<typename Visitor>
     void visit(Visitor& visitor)

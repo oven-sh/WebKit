@@ -28,6 +28,13 @@
 
 #include <wtf/Platform.h>
 
+// Which Python this is: Include/patchlevel.h of CPython
+#define PYTHON_VERSION_MAJOR 3
+#define PYTHON_VERSION_MINOR 14
+#define PYTHON_VERSION_MICRO 7
+#define PYTHON_VERSION_STRING "3.14.7" // PY_VERSION
+#define PYTHON_FULL_VERSION_STRING PYTHON_VERSION_STRING " (JavaScriptCore)" // sys.version: Py_GetVersion()
+
 // What kind of system this is, as CPython's configure script puts it.
 
 // sys.platform

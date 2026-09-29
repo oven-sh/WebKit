@@ -571,7 +571,8 @@ PYTHON_NATIVE(builtinCompile)
     bool isTree = isAST(globalObject, given);
     RETURN_IF_EXCEPTION(scope, { });
     // What the interpreter was started with is no optimization.
-    TreeOptions options { futureFeatures, static_cast<unsigned>(std::max(optimize, 0)), !!(flags & onlyAST), (flags & optimizedAST) == optimizedAST };
+    unsigned optimizationLevel = optimize < 0 ? configuredOptimizationLevel(globalObject) : optimize;
+    TreeOptions options { futureFeatures, optimizationLevel, !!(flags & onlyAST), (flags & optimizedAST) == optimizedAST };
     if (isTree)
         RELEASE_AND_RETURN(scope, JSValue::encode(compileTree(globalObject, given, filename, moduleKind, options)));
 
@@ -579,7 +580,7 @@ PYTHON_NATIVE(builtinCompile)
     RETURN_IF_EXCEPTION(scope, { });
     if (flags & onlyAST)
         RELEASE_AND_RETURN(scope, JSValue::encode(parseSource(globalObject, source, moduleKind, options)));
-    FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures, ImplementationVisibility::Public, std::max(optimize, 0));
+    FunctionExecutable* executable = compileSource(globalObject, source, kind, true, futureFeatures, ImplementationVisibility::Public, optimizationLevel);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(codeObjectFor(globalObject, executable));
 }

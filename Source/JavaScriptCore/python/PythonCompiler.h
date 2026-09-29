@@ -80,7 +80,9 @@ JSValue parseSource(JSGlobalObject*, const SourceCode&, Module::Kind, const Tree
 JSValue symbolTableOfSource(JSGlobalObject*, const SourceCode&, Module::Kind);
 struct Block;
 JSValue newSymbolTableEntry(JSGlobalObject*, Block&);
-FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public, unsigned optimizationLevel = 0);
+FunctionExecutable* compileSource(JSGlobalObject*, const SourceCode&, CodeKind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility = ImplementationVisibility::Public, std::optional<unsigned> optimizationLevel = std::nullopt);
+// _Py_GetConfig()->optimization_level, which is what `optimize=-1` means. More than 2 is 2.
+unsigned configuredOptimizationLevel(JSGlobalObject*);
 JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
 // The outermost environment of everything in a module, which is what that gives the function.
 JSScope* environmentForGlobals(JSGlobalObject*, JSObject* namespaceObject);

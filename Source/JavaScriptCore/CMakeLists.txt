@@ -2196,6 +2196,7 @@ add_custom_command(
 set(JavaScriptCore_PYTHON_LIBRARY
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_framelocals.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/_sysconfigdata.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/getpath.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/importlib/_bootstrap.py
     ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/importlib/_bootstrap_external.py
 )

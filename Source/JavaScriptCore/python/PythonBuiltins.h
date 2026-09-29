@@ -206,6 +206,7 @@ JSObject* createBisectModule(JSGlobalObject*);
 JSObject* createCMathModule(JSGlobalObject*);
 JSObject* createSymtableModule(JSGlobalObject*);
 JSObject* createCSVModule(JSGlobalObject*);
+void updateSysFromConfiguration(JSGlobalObject*, JSObject* sysModule);
 JSObject* createArrayModule(JSGlobalObject*);
 JSObject* createBinasciiModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);

@@ -696,10 +696,16 @@ JSValue symbolTableOfSource(JSGlobalObject* globalObject, const SourceCode& sour
     RELEASE_AND_RETURN(scope, newSymbolTableEntry(globalObject, table->top()));
 }
 
-FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility, unsigned optimizationLevel)
+unsigned configuredOptimizationLevel(JSGlobalObject* globalObject)
+{
+    return std::clamp(globalObject->pyRealm()->configuration().optimizationLevel, 0, 2);
+}
+
+FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode& source, CodeKind kind, bool usesNamespace, unsigned inheritedFutureFeatures, ImplementationVisibility visibility, std::optional<unsigned> givenOptimizationLevel)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    unsigned optimizationLevel = givenOptimizationLevel ? *givenOptimizationLevel : configuredOptimizationLevel(globalObject);
     ASSERT(source.provider()->isPython());
 
     unsigned parsingFlags = inheritedFutureFeatures & (DoNotImplyDedent | AllowIncompleteInput | TypeComments);

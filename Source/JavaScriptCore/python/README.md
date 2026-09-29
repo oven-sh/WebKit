@@ -373,14 +373,17 @@ copied then. So a local variable is copied when it is loaded for later use: anyt
 **A frame that is one too deep does not begin.** When `op_py_enter` finds that, the frame is put back where it was before there was anything to be seen of it, at its first instruction.
 So it is in no traceback, nothing is told of it, and nothing in it catches the `RecursionError`, which matters for a generator that is resumed inside a `try`. What went wrong is the call.
 
-**What is printed when an exception gets away** (`PythonExceptionDisplay.cpp`) is `TracebackException` of CPython's `Lib/traceback.py`, function for function, which is what CPython prints one with:
-what part of a line to point at, and with what; lines that are the same over and over; what led to it, without going round for ever; notes; groups; and the name that may have been meant.
+**What prints an exception that gets away is the library's `traceback`**, as in CPython: `PyErr_Display()` imports it and calls `_print_exception_bltin()`. So what a program has done to `traceback` or to `linecache` shows,
+and so does the source of what was never in a file, which `linecache` is told of: what follows `python -c`, and what is typed.
+
+**If that cannot be had, or raises, there is `PythonExceptionDisplay.cpp`.** It is for when there is no library, or Python has not got as far as being able to import anything. CPython has something in C for that too, which
+says less. This is `TracebackException` of `Lib/traceback.py`, function for function: what part of a line to point at, and with what; lines that are the same over and over; what led to it, without going round for ever;
+notes; groups; and the name that may have been meant.
 
 - Where that has the `ast` module parse a piece of a line, to find the operator or the brackets, this has the parser.
 - It counts in code points, as Python does, and in columns of a terminal where it lines things up.
 - It goes by where each instruction says that it is from, which is what `co_positions()` gives. That has one for each *two bytes* of code, because what wants to know where an instruction is from
   takes what comes at half its offset: `traceback.py` does with `tb_lasti`, and so does `dis`.
-- When the standard library is there, `sys.excepthook` can go to its `traceback` module as CPython's does, and will find what it needs.
 
 **What is printed of an exception that has nowhere to go**, by what `sys.unraisablehook` is at first, is less, because in CPython that is written in C: `formatTraceback()` is `_PyTraceBack_Print()` of `Python/traceback.c`. There is
 one line of source for each frame, read from the file, with nothing under it. `sys.tracebacklimit` says how many frames, and it is the innermost that are kept. What led to the exception, and its notes, are not shown.
@@ -642,8 +645,53 @@ it first (`PythonLifecycle.cpp`).
 The part of the library that is written in Python does not come with the engine. Where it is is for the host to say, in `Configuration::moduleSearchPaths` or `frozenModules`. The shell goes by `PYTHONPATH` and
 `PYTHONHOME`, as CPython does.
 
+### The command line
+
+**`readCommandLine()` is what `python` does with what it is started with** (`PythonCommandLine.cpp`): `Python/getopt.c`, and what has to do with the command line or the environment in `Python/preconfig.c` and
+`Python/initconfig.c`. It fills in a `Configuration`, which has grown to hold the rest of `PyConfig`. It needs nothing of the engine's and is done before there is an engine, so that `python -h` and `python -Z` make none.
+If there is nothing to run after all it gives the status to end with, having said what there is to say: what was asked for, or what is wrong, in CPython's words, down to `Fatal Python error: config_init_hash_seed: ...`
+and how far Python is said to have got.
+
+**What it says of itself is CPython's text.** `lib/convert-usage-text.py` takes it out of `initconfig.c` as it is (`PythonUsageText.h`).
+
+**`runMain()` with no file is `pymain_run_python()`** (`PythonLifecycle.cpp`): whichever of a command, a module, a file, a directory or an archive with a `__main__.py` in it, or what comes in on the standard input the
+`Configuration` says to run, and what `sys.path` begins with for each. What follows `-c` has taken from it whatever blanks all of its lines begin with, and is given to `linecache`.
+
+**Whose command line it is is the host's to say.** The shell takes it for Python's if it was started by a name that begins with `python`. That is how one program that is Python's starts another: it runs `sys.executable`
+with what `python` takes, which `subprocess`, `multiprocessing`, `venv`, `ensurepip` and most of CPython's own tests rely on. What is to be said to the engine can then be said in the environment (`JSC_useJIT=0`).
+
+**Where things are is worked out by CPython's own `Modules/getpath.py`**, which is in `lib` as it is there, and is part of the program as it is part of `python`. `PythonGetPath.cpp` is `Modules/getpath.c`: it gives that
+what it goes by and a dozen functions to look at files with, runs it as Python starts, and takes what it comes to: `sys.executable`, `sys.prefix` and its like, `sys._stdlib_dir` and `sys.path`. So `PYTHONHOME`, `pyvenv.cfg`,
+`python3.14._pth` and a build directory all mean what they mean to CPython. It is asked for with `Configuration::computesPaths`. A host that knows where things are says so instead.
+
+- It goes by where the program *really* is. A link named `python3` finds the library beside what it is a link to, and not beside itself.
+- `sys` is made before this is known. `updateSysFromConfiguration()`, which is `_PySys_UpdateConfig()`, sets all of it that follows from the `Configuration`, when `sys` is made and again after this.
+
+**What an option is looked at by:**
+
+| | |
+|---|---|
+| `-O`, `-OO` | `compileSource()`, if it is not told otherwise, and `compile(optimize=-1)`. Not what is frozen, which CPython compiled when it was built. |
+| `-b`, `-bb` | `bytes.__str__()`, and `__eq__()` and `__ne__()` of `bytes` and `bytearray`. That the second is an error is a filter in `sys.warnoptions`. |
+| `-X warn_default_encoding` | `io.text_encoding()` and `TextIOWrapper()` |
+| `-X importtime` | `findAndLoad()`, and for `=2` `ensureIsInitialized()`, in `PythonImport.cpp` |
+| `-X no_debug_ranges` | `co_positions()`, which then has no columns, and that is all that `traceback` goes by |
+| `-X int_max_str_digits` | `PyRealm::maximumDigitsOfIntAsString` |
+| `-X cpu_count` | `os.cpu_count()` |
+| `-X frozen_modules=off` | Nothing yet. It is for having what is in a file instead, and there is no file that what is frozen here is in. |
+| `-u`, `PYTHONIOENCODING` | `initializeStandardStreams()` |
+| `-W`, `-X dev`, `-E`, `-I`, `-P`, `-s`, `-S`, `-q`, `-v` | The library, by way of `sys.flags`, `sys.warnoptions` and `sys._xoptions`, and `getpath.py` |
+
+**What is taken and does nothing:** `-B` and `PYTHONDONTWRITEBYTECODE`, since nothing is written unless the host asks; `-R` and `PYTHONHASHSEED`, since what a `str` hashes to is the engine's and is the same from one run to
+the next; `-d`; `--check-hash-based-pycs`; `-X tracemalloc`, `-X faulthandler`, `-X perf` and `-X showrefcount`. Each is still found fault with as CPython finds fault with it.
+
+**What is wrong when Python cannot start** is said as `fatal_error()` says it. `startPython()` keeps what it is about, in the words of the `PyStatus` that CPython would end with: `Failed to import encodings module`.
+
+### When it is over
+
 When a program is over is for the host to say as well, since one that is in two languages is not over when the Python that began it has been run to its end: `finalizePython()`. It does what `Py_FinalizeEx()` does while
-there is still an interpreter to do it in, in the same order: `threading._shutdown()`, what has been registered with `atexit`, and flushing the standard streams.
+there is still an interpreter to do it in, in the same order: `threading._shutdown()`, what has been registered with `atexit`, and flushing the standard streams. The two that Python started with are flushed as well as the
+two that are there now. In CPython those are flushed when they are let go of, with everything else, and nothing is let go of here: without it `print('x'); sys.stdout = None` prints nothing.
 
 ### Where the library is written
 

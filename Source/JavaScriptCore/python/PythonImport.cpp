@@ -38,6 +38,9 @@
 #include "PythonIO.h"
 #include "PythonOperations.h"
 #include "PythonPlatform.h"
+#include "PythonTime.h"
+#include <wtf/MonotonicTime.h>
+#include <wtf/Scope.h>
 #include "TopExceptionScope.h"
 
 namespace JSC { namespace Python {
@@ -161,11 +164,27 @@ std::optional<bool> isShadowingStandardLibrary(JSGlobalObject* globalObject, JSV
     return result;
 }
 
+// _IMPORT_TIME_HEADER()
+static void printImportTimeHeader(ImportState& state)
+{
+    if (std::exchange(state.hasImportTimeHeaderToPrint, false))
+        fputs("import time: self [us] | cumulative | imported package\n", stderr);
+}
+
 // import_ensure_initialized(). False if it raised.
 static bool ensureIsInitialized(JSGlobalObject* globalObject, JSValue module, JSValue name)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    // With -X importtime=2 it is said of what has been imported already that it has been.
+    auto reportIfCached = makeScopeExit([&] {
+        if (globalObject->pyRealm()->configuration().importTime != 2 || scope.exception()) [[likely]]
+            return;
+        auto& state = importState(globalObject);
+        printImportTimeHeader(state);
+        CString text = stringIn(name)->value(globalObject)->utf8();
+        fprintf(stderr, "import time: cached    | cached     | %*s\n", state.importLevel * 2, text.data());
+    });
     // _lock_unlock_module() is only called if __spec__._initializing is true, which is why that is set before the module is put in sys.modules.
     JSValue spec = getAttributeIfPresent(globalObject, module, vm.pythonNames().dunder_spec);
     RETURN_IF_EXCEPTION(scope, false);
@@ -467,7 +486,24 @@ static JSValue findAndLoad(JSGlobalObject* globalObject, JSValue absoluteName)
     if (!audit(globalObject, "import"_s, absoluteName, jsUndefined(), orNone(sysAttribute(globalObject, "path"_s)), orNone(sysAttribute(globalObject, "meta_path"_s)), orNone(sysAttribute(globalObject, "path_hooks"_s))))
         return { };
     auto& state = importState(globalObject);
-    RELEASE_AND_RETURN(scope, callMethodNamed(globalObject, state.importlib.get(), identifier(vm, "_find_and_load"_s), absoluteName, state.importFunction.get()));
+    if (!globalObject->pyRealm()->configuration().importTime) [[likely]]
+        RELEASE_AND_RETURN(scope, callMethodNamed(globalObject, state.importlib.get(), identifier(vm, "_find_and_load"_s), absoluteName, state.importFunction.get()));
+
+    int64_t accumulatedBefore = state.accumulatedImportTime;
+    printImportTimeHeader(state);
+    ++state.importLevel;
+    auto now = [] { return static_cast<int64_t>(MonotonicTime::now().secondsSinceEpoch().nanoseconds()); };
+    int64_t start = now();
+    state.accumulatedImportTime = 0;
+    JSValue module = callMethodNamed(globalObject, state.importlib.get(), identifier(vm, "_find_and_load"_s), absoluteName, state.importFunction.get());
+    int64_t cumulative = now() - start;
+    --state.importLevel;
+    // Whether or not it raised
+    CString name = stringIn(absoluteName)->value(globalObject)->utf8();
+    fprintf(stderr, "import time: %9ld | %10ld | %*s%s\n", static_cast<long>(divideTime(cumulative - state.accumulatedImportTime, nanosecondsPerMicrosecond, TimeRounding::Ceiling)),
+        static_cast<long>(divideTime(cumulative, nanosecondsPerMicrosecond, TimeRounding::Ceiling)), state.importLevel * 2, "", name.data());
+    state.accumulatedImportTime = accumulatedBefore + cumulative;
+    return module;
 }
 
 static JSValue importModuleLevelWithFrames(JSGlobalObject* globalObject, JSValue name, JSValue globals, JSValue fromList, int level)
@@ -847,6 +883,8 @@ void importAllFrom(JSGlobalObject* globalObject, JSValue locals, JSValue module)
 
 #include "PythonLibrarySources.h"
 
+std::span<const uint8_t> getPathSource() { return s_librarySource_getpath; }
+
 // `_PyImport_FrozenBootstrap`: what importing is done with, which there is no doing without.
 static constexpr FrozenModule s_frozenBootstrap[] = {
     { "_frozen_importlib"_s, s_librarySource__bootstrap, false, "importlib._bootstrap"_s },
@@ -875,10 +913,8 @@ JSValue frozenModuleNames(JSGlobalObject* globalObject)
     Vector<ASCIILiteral> names;
     for (auto& module : s_frozenBootstrap)
         names.append(module.name);
-    if (usesFrozenModules(globalObject)) {
-        for (auto& module : s_frozenLibrary)
-            names.append(module.name);
-    }
+    for (auto& module : s_frozenLibrary)
+        names.append(module.name);
     for (auto& module : globalObject->pyRealm()->configuration().frozenModules) {
         if (!names.containsIf([&] (ASCIILiteral name) { return equalSpans(name.span(), module.name.span()); }))
             names.append(module.name);
@@ -901,11 +937,10 @@ static const FrozenModule* lookUpFrozen(JSGlobalObject* globalObject, const Stri
         if (name == module.name)
             return &module;
     }
-    if (usesFrozenModules(globalObject)) {
-        for (auto& module : s_frozenLibrary) {
-            if (name == module.name)
-                return &module;
-        }
+    // -X frozen_modules=off is for having what is in a file instead. There is no file that these are in.
+    for (auto& module : s_frozenLibrary) {
+        if (name == module.name)
+            return &module;
     }
     return nullptr;
 }
@@ -965,7 +1000,8 @@ void raiseFrozenError(JSGlobalObject* globalObject, FrozenStatus status, JSValue
 FunctionExecutable* compileFrozen(JSGlobalObject* globalObject, const FrozenInfo& info)
 {
     SourceCode source = makeSource(String::fromUTF8(byteCast<char8_t>(info.module->source)), SourceOrigin(), concatenate("<frozen "_s, info.originalName, '>'));
-    return compileSource(globalObject, source, CodeKind::Module, false, 0, info.module->visibility);
+    // In CPython it was compiled when Python was built, and so has everything in it whatever the program was started with.
+    return compileSource(globalObject, source, CodeKind::Module, false, 0, info.module->visibility, 0);
 }
 
 std::optional<bool> importFrozenModule(JSGlobalObject* globalObject, JSValue name)

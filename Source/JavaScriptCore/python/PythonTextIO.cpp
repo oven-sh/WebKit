@@ -30,6 +30,8 @@
 #include "JSBigInt.h"
 #include "PythonCharacters.h"
 #include "PythonCodecs.h"
+#include "PythonImport.h"
+#include "PythonImportState.h"
 #include "PythonLocale.h"
 #include "PythonNumbers.h"
 #include "PythonText.h"
@@ -958,6 +960,10 @@ PYTHON_NATIVE(textIOInit)
 
     state.isInitialized = false;
     state.isDetached = false;
+    if (encoding.isNull() && realm->configuration().warnsOfDefaultEncoding) {
+        warn(globalObject, BuiltinType::EncodingWarning, "'encoding' argument not specified"_s, 1);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (!errors || isNone(errors))
         errors = jsNontrivialString(vm, "strict"_s);
     else if (!stringIn(errors))
@@ -966,6 +972,11 @@ PYTHON_NATIVE(textIOInit)
     RETURN_IF_EXCEPTION(scope, { });
     if (errorsText.contains(static_cast<char16_t>(0)))
         return JSValue::encode(raiseValueError(globalObject, scope, "embedded null character"_s));
+    // io_check_errors(): with -X dev it is found out now whether there is such a thing, and not when something first goes wrong.
+    if (realm->configuration().isDevelopmentMode && importState(globalObject).hasCodecRegistry && args.at(3) && !isNone(args.at(3))) {
+        lookupErrorHandler(globalObject, errorsText);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     if (!validateNewline(globalObject, scope, newline))
         return { };
 

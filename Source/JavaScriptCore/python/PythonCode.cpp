@@ -425,10 +425,15 @@ PYTHON_NATIVE(codePositions)
                     start = placeOf(provider, range->first, compiled.info->lineDelta);
                     end = placeOf(provider, range->second, compiled.info->lineDelta);
                 }
-                last = PyTuple::create(globalObject, { intFromUInt64(globalObject, start.line), intFromUInt64(globalObject, end.line), intFromUInt64(globalObject, start.column), intFromUInt64(globalObject, end.column) });
-            } else
+                if (globalObject->pyRealm()->configuration().hasDebugRanges)
+                    last = PyTuple::create(globalObject, { intFromUInt64(globalObject, start.line), intFromUInt64(globalObject, end.line), intFromUInt64(globalObject, start.column), intFromUInt64(globalObject, end.column) });
+                else
+                    last = PyTuple::create(globalObject, { intFromUInt64(globalObject, start.line), intFromUInt64(globalObject, end.line), jsUndefined(), jsUndefined() });
+            } else {
                 // Before a module has begun it is on the line before its first.
-                last = PyTuple::create(globalObject, { intFromUInt64(globalObject, firstLineOf(*compiled.info) - isAllOfItsSource(*compiled.info)), intFromUInt64(globalObject, firstLineOf(*compiled.info)), jsNumber(0), jsNumber(0) });
+                JSValue column = globalObject->pyRealm()->configuration().hasDebugRanges ? jsNumber(0) : jsUndefined();
+                last = PyTuple::create(globalObject, { intFromUInt64(globalObject, firstLineOf(*compiled.info) - isAllOfItsSource(*compiled.info)), intFromUInt64(globalObject, firstLineOf(*compiled.info)), column, column });
+            }
             lastRange = range;
             distinct.append(last);
         }

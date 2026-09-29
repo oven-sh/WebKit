@@ -30,6 +30,7 @@
 #include "JSCInlines.h"
 #include "PyDict.h"
 #include "PyRealm.h"
+#include "PyTuple.h"
 #include "PythonBuiltins.h"
 #include "PythonCodecs.h"
 #include "PythonCompiler.h"
@@ -37,8 +38,14 @@
 #include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonOperations.h"
+#include "PythonPlatform.h"
 #include "PythonSignals.h"
 #include "TopExceptionScope.h"
+#include <wtf/URL.h>
+#if OS(UNIX)
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 // What is done before a program is run, running one, and what is done afterwards: of CPython's Python/pylifecycle.c, Python/pythonrun.c and Modules/main.c, what is not to do with there being one interpreter to a
 // process, or with the command line, which is the host's.
@@ -179,41 +186,71 @@ void startPython(JSGlobalObject* globalObject)
     if (state.isStarted)
         return;
     state.isStarted = true;
+    auto isAbout = [&] (ASCIILiteral function, ASCIILiteral failure) {
+        state.startingFunction = function;
+        state.startingFailure = failure;
+    };
+
+    // _PyConfig_InitImportConfig(), and then _PySys_UpdateConfig()
+    isAbout({ }, "error evaluating path"_s);
+#if OS(UNIX)
+    if (realm->configuration().computesPaths) {
+        computePathConfiguration(globalObject, realm->mutableConfiguration());
+        RETURN_IF_EXCEPTION(scope, void());
+        updateSysFromConfiguration(globalObject, realm->sysModule());
+    }
+#endif
     auto& configuration = realm->configuration();
 
+    isAbout("init_importlib_external"_s, "external importer setup failed"_s);
     initializeExternalImport(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
     // _PyUnicode_InitEncodings(). Importing `encodings` registers what finds a codec by name: _PyCodec_InitRegistry()
+    isAbout({ }, "Failed to import encodings module"_s);
     importModule(globalObject, "encodings"_s);
     RETURN_IF_EXCEPTION(scope, void());
+    isAbout("init_fs_encoding"_s, "failed to get the Python codec of the filesystem encoding"_s);
     codecNameOf(globalObject, "utf-8"_s);
     RETURN_IF_EXCEPTION(scope, void());
+    state.hasCodecRegistry = true;
+    isAbout("init_stdio_encoding"_s, "failed to get the Python codec name of the stdio encoding"_s);
     String streamEncoding = codecNameOf(globalObject, configuration.standardStreamEncoding);
     RETURN_IF_EXCEPTION(scope, void());
 
+    isAbout("init_interp_main"_s, "can't initialize signals"_s);
     initializeSignals(globalObject, configuration.installsSignalHandlers);
     RETURN_IF_EXCEPTION(scope, void());
 
+    isAbout("init_sys_streams"_s, "can't initialize sys standard streams"_s);
     initializeStandardStreams(globalObject, streamEncoding);
     RETURN_IF_EXCEPTION(scope, void());
 
     // init_set_builtins_open()
+    isAbout("init_set_builtins_open"_s, "can't initialize io.open"_s);
     JSValue open = importModuleAttribute(globalObject, "_io"_s, "open"_s);
     RETURN_IF_EXCEPTION(scope, void());
     setAttribute(globalObject, realm->builtinsModule(), Identifier::fromString(vm, "open"_s), open);
     RETURN_IF_EXCEPTION(scope, void());
 
+    isAbout("add_main_module"_s, "can't create __main__ module"_s);
     addMainModule(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
     JSValue options = sysAttribute(globalObject, "warnoptions"_s);
     if (options && isInstance(globalObject, options, realm->typeList()) && asList(options)->length()) {
         importModule(globalObject, "warnings"_s);
-        RETURN_IF_EXCEPTION(scope, void());
+        if (scope.exception()) [[unlikely]] {
+            // It is gone on without.
+            fputs("'import warnings' failed; traceback:\n", stderr);
+            Exception* raised = takeRaisedException(vm);
+            RETURN_IF_EXCEPTION(scope, void());
+            reportUncaughtException(globalObject, raised->value());
+        }
     }
 
     if (configuration.importsSite) {
+        isAbout("init_import_site"_s, "Failed to import the site module"_s);
         importModule(globalObject, "site"_s);
         RETURN_IF_EXCEPTION(scope, void());
     }
@@ -311,6 +348,24 @@ static int printExceptionAndGetStatus(JSGlobalObject* globalObject)
     return 1;
 }
 
+// Py_ExitStatusException(), and so fatal_error(), of what stopped Python from starting. What CPython says of this it says of a process that it is about to end.
+static int reportThatPythonCouldNotStart(JSGlobalObject* globalObject)
+{
+    auto& state = importState(globalObject);
+    fflush(stdout);
+    if (state.startingFunction.isNull())
+        fprintf(stderr, "Fatal Python error: %s\n", state.startingFailure.characters());
+    else
+        fprintf(stderr, "Fatal Python error: %s: %s\n", state.startingFunction.characters(), state.startingFailure.characters());
+    fputs("Python runtime state: core initialized\n", stderr);
+    int status = printExceptionAndGetStatus(globalObject);
+    // _Py_FatalError_DumpTracebacks(): nothing of Python's was running.
+#if OS(UNIX)
+    fprintf(stderr, "\nCurrent thread 0x%016lx (most recent call first):\n  <no Python frame>\n", static_cast<unsigned long>(std::bit_cast<uintptr_t>(pthread_self())));
+#endif
+    return status;
+}
+
 // _PyRun_SimpleFile()
 static void runInMainModule(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const SourceOrigin& origin, const String& filename)
 {
@@ -326,12 +381,50 @@ static void runInMainModule(JSGlobalObject* globalObject, std::span<const uint8_
         putStoredAttribute(vm, module, cached, jsUndefined());
     }
     auto run = [&] {
-        // set_main_loader()
-        JSValue external = getAttribute(globalObject, importState(globalObject).importlib.get(), Identifier::fromString(vm, "_bootstrap_external"_s));
-        RETURN_IF_EXCEPTION(scope, void());
-        JSValue loader = callMethodNamed(globalObject, external, Identifier::fromString(vm, "SourceFileLoader"_s), jsNontrivialString(vm, "__main__"_s), jsString(vm, filename));
-        RETURN_IF_EXCEPTION(scope, void());
-        putStoredAttribute(vm, module, names.dunder_loader, loader);
+        // maybe_pyc_file()
+        bool isCompiled = filename.endsWith(".pyc"_s) || (bytes.size() >= 2 && (bytes[0] | bytes[1] << 8) == (pycMagicNumberToken & 0xFFFF));
+        // set_main_loader(). What comes in on the standard input is not from anywhere that anything could load it from.
+        if (filename != "<stdin>"_s) {
+            JSValue external = getAttribute(globalObject, importState(globalObject).importlib.get(), Identifier::fromString(vm, "_bootstrap_external"_s));
+            RETURN_IF_EXCEPTION(scope, void());
+            JSValue loader = callMethodNamed(globalObject, external, Identifier::fromString(vm, isCompiled ? "SourcelessFileLoader"_s : "SourceFileLoader"_s), jsNontrivialString(vm, "__main__"_s), jsString(vm, filename));
+            RETURN_IF_EXCEPTION(scope, void());
+            putStoredAttribute(vm, module, names.dunder_loader, loader);
+        }
+
+        if (isCompiled) {
+            // run_pyc_file()
+            auto wordAt = [&] (size_t offset) { return bytes[offset] | bytes[offset + 1] << 8 | bytes[offset + 2] << 16 | bytes[offset + 3] << 24; };
+            if (bytes.size() < 4 || wordAt(0) != pycMagicNumberToken) {
+                raise(globalObject, scope, BuiltinType::RuntimeError, "Bad magic number in .pyc file"_s);
+                return;
+            }
+            JSValue code = bytes.size() >= 16 ? marshalLoads(globalObject, bytes.subspan(16)) : JSValue();
+            if (scope.exception() && !scope.tryClearException())
+                return;
+            if (!code || !isCode(globalObject, code)) {
+                raise(globalObject, scope, BuiltinType::RuntimeError, "Bad code object in .pyc file"_s);
+                return;
+            }
+            JSValue exec = getStoredAttribute(vm, globalObject->pyRealm()->builtinsModule(), Identifier::fromString(vm, "exec"_s));
+            scope.release();
+            call(globalObject, exec, code, PyDict::backedBy(globalObject, module));
+            return;
+        }
+
+        // What reads a file a line at a time says this of the first line that has one in it, and has for the line as much as comes before it: tok_nextc(), and _syntaxerror_range()
+        if (size_t zero = WTF::find(bytes, static_cast<uint8_t>(0)); zero != notFound) {
+            size_t lineStart = zero;
+            while (lineStart && bytes[lineStart - 1] != '\n')
+                --lineStart;
+            int line = 1 + std::ranges::count(bytes.first(lineStart), '\n');
+            JSValue text = jsString(vm, String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(bytes.subspan(lineStart, zero - lineStart))));
+            JSValue details = PyTuple::create(globalObject, { jsString(vm, filename), jsNumber(line), jsNumber(0), text, jsNumber(line), jsNumber(0) });
+            JSValue exception = call(globalObject, globalObject->pyRealm()->type(BuiltinType::SyntaxError)->object(), jsNontrivialString(vm, "source code cannot contain null bytes"_s), details);
+            RETURN_IF_EXCEPTION(scope, void());
+            throwException(globalObject, scope, exception);
+            return;
+        }
 
         SourceCode source = makeSource(globalObject, bytes, origin, filename);
         RETURN_IF_EXCEPTION(scope, void());
@@ -360,9 +453,7 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
     importState(globalObject).hasUnhandledKeyboardInterrupt = false;
     startPython(globalObject);
     if (scope.exception()) {
-        // What CPython says of this it says of a process that it is about to end.
-        dataLogLn("Fatal Python error: Python could not be started");
-        return printExceptionAndGetStatus(globalObject);
+        return reportThatPythonCouldNotStart(globalObject);
     }
     if (!audit(globalObject, "cpython.run_file"_s, jsString(vm, filename)))
         return printExceptionAndGetStatus(globalObject);
@@ -371,6 +462,319 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
         return printExceptionAndGetStatus(globalObject);
     return 0;
 }
+
+// ---- Running what `python` was asked to: Modules/main.c of CPython
+
+
+// _PyUnicode_Dedent(), of UTF-8: without whatever blanks all of its lines begin with, but for those that are nothing but blanks
+static Vector<uint8_t> dedent(std::span<const uint8_t> source)
+{
+    auto isBlank = [] (uint8_t c) { return c == ' ' || c == '\t'; };
+    // search_longest_common_leading_whitespace()
+    std::optional<std::span<const uint8_t>> common;
+    for (size_t i = 0; i < source.size(); ++i) {
+        size_t lineStart = i;
+        std::optional<size_t> endOfBlanks;
+        for (; i < source.size() && source[i] != '\n'; ++i) {
+            if (!endOfBlanks && !isBlank(source[i])) {
+                if (i == lineStart)
+                    return Vector<uint8_t>(source);
+                endOfBlanks = i;
+            }
+        }
+        if (!endOfBlanks)
+            continue;
+        auto blanks = source.subspan(lineStart, *endOfBlanks - lineStart);
+        if (!common) {
+            common = blanks;
+            continue;
+        }
+        size_t length = 0;
+        while (length < common->size() && length < blanks.size() && (*common)[length] == blanks[length])
+            ++length;
+        if (!length)
+            return Vector<uint8_t>(source);
+        common = common->first(length);
+    }
+    if (!common)
+        return Vector<uint8_t>(source);
+
+    Vector<uint8_t> result;
+    for (size_t i = 0; i < source.size(); ++i) {
+        size_t lineStart = i;
+        bool isAllBlanks = true;
+        for (; i < source.size() && source[i] != '\n'; ++i) {
+            if (!isBlank(source[i]))
+                isAllBlanks = false;
+        }
+        bool endsInNewline = i < source.size();
+        if (isAllBlanks && endsInNewline) {
+            result.append('\n');
+            continue;
+        }
+        result.append(source.subspan(lineStart + common->size(), i - lineStart - common->size()));
+        if (endsInNewline)
+            result.append('\n');
+    }
+    return result;
+}
+
+// pymain_run_command()
+static int runCommand(JSGlobalObject* globalObject, const String& command)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!audit(globalObject, "cpython.run_command"_s, jsString(vm, command)))
+        return printExceptionAndGetStatus(globalObject);
+    auto encoded = encodeString(globalObject, jsString(vm, command), "utf-8"_s, String());
+    if (scope.exception()) {
+        fputs("Unable to decode the command from the command line:\n", stderr);
+        return printExceptionAndGetStatus(globalObject);
+    }
+    Vector<uint8_t> dedented = dedent(encoded->span());
+    String text = String::fromUTF8(byteCast<char8_t>(dedented.span()));
+
+    // _PyRun_SimpleString(), by a name, and so run_mod() with the source, which is kept for what shows where something went wrong
+    auto run = [&] {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSObject* module = addModule(globalObject, jsNontrivialString(vm, "__main__"_s));
+        RETURN_IF_EXCEPTION(scope, void());
+        if (text.contains(static_cast<char16_t>(0))) {
+            raise(globalObject, scope, BuiltinType::SyntaxError, "source code string cannot contain null bytes"_s);
+            return;
+        }
+        JSString* filename = jsNontrivialString(vm, "<string>"_s);
+        JSFunction* function = compileModule(globalObject, makeSource(text, SourceOrigin(), "<string>"_s), module);
+        RETURN_IF_EXCEPTION(scope, void());
+        JSObject* code = codeObjectFor(globalObject, function->jsExecutable());
+        JSValue registerCode = importModuleAttribute(globalObject, "linecache"_s, "_register_code"_s);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!isCallable(globalObject, registerCode)) {
+            raiseValueError(globalObject, scope, "linecache._register_code is not callable"_s);
+            return;
+        }
+        call(globalObject, registerCode, code, jsString(vm, text), filename);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!audit(globalObject, "exec"_s, code))
+            return;
+        scope.release();
+        call(globalObject, function);
+    };
+    run();
+    return scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;
+}
+
+// pymain_run_module()
+static int runModule(JSGlobalObject* globalObject, const String& name, bool setsFirstArgument)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!audit(globalObject, "cpython.run_module"_s, jsString(vm, name)))
+        return printExceptionAndGetStatus(globalObject);
+    JSValue run = importModuleAttribute(globalObject, "runpy"_s, "_run_module_as_main"_s);
+    if (scope.exception()) {
+        fputs("Could not import runpy._run_module_as_main\n", stderr);
+        return printExceptionAndGetStatus(globalObject);
+    }
+    call(globalObject, run, jsString(vm, name), jsBoolean(setsFirstArgument));
+    return scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;
+}
+
+#if OS(UNIX)
+
+static CString encodedForSystem(const String& text)
+{
+    // What could not be decoded when it was read is put back as it was.
+    Vector<char> bytes;
+    for (char32_t character : StringView(text).codePoints()) {
+        if (character >= 0xDC80 && character <= 0xDCFF) {
+            bytes.append(static_cast<char>(character - 0xDC00));
+            continue;
+        }
+        uint8_t buffer[U8_MAX_LENGTH];
+        size_t length = 0;
+        U8_APPEND_UNSAFE(buffer, length, character);
+        bytes.append(byteCast<char>(std::span(buffer).first(length)));
+    }
+    return CString(bytes.span());
+}
+
+static bool readAll(FILE* file, Vector<uint8_t>& bytes)
+{
+    uint8_t buffer[16384];
+    while (size_t count = fread(buffer, 1, sizeof(buffer), file))
+        bytes.append(std::span(buffer).first(count));
+    return !ferror(file);
+}
+
+// pymain_run_file_obj()
+static int runFile(JSGlobalObject* globalObject, const Configuration& configuration)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    const String& filename = configuration.runFilename;
+    if (!audit(globalObject, "cpython.run_file"_s, jsString(vm, filename)))
+        return printExceptionAndGetStatus(globalObject);
+    auto complain = [&] (const String& afterName) {
+        String shown = repr(globalObject, jsString(vm, filename));
+        scope.clearException();
+        writeToStandardError(globalObject, concatenate(configuration.programName, ": "_s, afterName.startsWith(' ') ? shown : concatenate("can't open file "_s, shown), afterName, '\n'));
+    };
+    CString path = encodedForSystem(filename);
+    FILE* file = fopen(path.data(), "rb");
+    if (!file) {
+        int error = errno;
+        complain(concatenate(": [Errno "_s, error, "] "_s, String::fromUTF8(strerror(error))));
+        return 2;
+    }
+    struct stat information;
+    if (!fstat(fileno(file), &information) && S_ISDIR(information.st_mode)) {
+        complain(" is a directory, cannot continue"_s);
+        fclose(file);
+        return 1;
+    }
+    Vector<uint8_t> bytes;
+    readAll(file, bytes);
+    fclose(file);
+    std::span<const uint8_t> source = bytes.span();
+    // The end of the first line is kept, so that the lines are numbered as they were.
+    if (configuration.skipsFirstLineOfSource) {
+        size_t newline = WTF::find(source, static_cast<uint8_t>('\n'));
+        source = newline == notFound ? source.last(0) : source.subspan(newline);
+    }
+    if (!checkSignals(globalObject))
+        return printExceptionAndGetStatus(globalObject);
+    runInMainModule(globalObject, source, SourceOrigin { URL::fileURLWithFileSystemPath(filename) }, filename);
+    return scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;
+}
+
+// _PyPathConfig_ComputeSysPath0(): what sys.path is to begin with. Null if it is to be left as it is.
+static String computeFirstSearchPath(const Vector<String>& arguments)
+{
+    if (arguments.isEmpty())
+        return { };
+    const String& first = arguments[0];
+    bool hasModule = first == "-m"_s;
+    bool hasScript = !hasModule && first != "-c"_s;
+    char buffer[PATH_MAX];
+    if (hasModule) {
+        if (!getcwd(buffer, sizeof(buffer)))
+            return { };
+        return String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(unsafeSpan(buffer)));
+    }
+    // Nothing was named, and it is what comes in that is run: wherever the process is at the time.
+    if (!hasScript || first.isEmpty())
+        return emptyString();
+
+    CString path = encodedForSystem(first);
+    char link[PATH_MAX + 1];
+    ssize_t length = readlink(path.data(), link, PATH_MAX);
+    if (length > 0) {
+        link[length] = '\0';
+        if (link[0] == '/')
+            path = CString(unsafeSpan(link));
+        else if (strchr(link, '/')) {
+            // Beside what is a link to it
+            const char* separator = strrchr(path.data(), '/');
+            if (!separator)
+                path = CString(unsafeSpan(link));
+            else {
+                Vector<char> joined;
+                joined.append(path.span().first(separator + 1 - path.data()));
+                joined.append(unsafeSpan(link));
+                path = CString(joined.span());
+            }
+        }
+    }
+    if (realpath(path.data(), buffer))
+        path = CString(unsafeSpan(buffer));
+    const char* separator = strrchr(path.data(), '/');
+    size_t count = 0;
+    if (separator) {
+        count = separator + 1 - path.data();
+        if (count > 1)
+            --count;
+    }
+    return String::fromUTF8ReplacingInvalidSequences(byteCast<char8_t>(path.span().first(count)));
+}
+
+// pymain_run_python()
+int runMain(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    importState(globalObject).hasUnhandledKeyboardInterrupt = false;
+    startPython(globalObject);
+    if (scope.exception()) {
+        return reportThatPythonCouldNotStart(globalObject);
+    }
+    const Configuration& configuration = realm->configuration();
+    bool runsCode = !configuration.runCommand.isNull() || !configuration.runFilename.isNull() || !configuration.runModule.isNull(); // config_run_code()
+    bool isStandardInputInteractive = isatty(fileno(stdin)) || configuration.interactive; // stdin_is_interactive()
+
+    // If it is a directory or an archive that has a __main__.py in it, that is what is run, and it is what modules are looked for in first: pymain_get_importer()
+    bool isImportPath = false;
+    if (!configuration.runFilename.isNull()) {
+        JSValue importer = pathImporterFor(globalObject, jsString(vm, configuration.runFilename));
+        if (scope.exception()) {
+            fputs("Failed checking if argv[0] is an import path entry\n", stderr);
+            return printExceptionAndGetStatus(globalObject);
+        }
+        isImportPath = !isNone(importer);
+    }
+
+    String first;
+    if (isImportPath)
+        first = configuration.runFilename;
+    else if (!configuration.hasSafePath)
+        first = computeFirstSearchPath(configuration.arguments);
+    if (!first.isNull()) {
+        realm->mutableConfiguration().firstSearchPath = first;
+        // pymain_sys_path_add_path0()
+        JSValue path = sysAttribute(globalObject, "path"_s);
+        if (!path) {
+            auto throwScope = DECLARE_THROW_SCOPE(vm);
+            raise(globalObject, throwScope, BuiltinType::RuntimeError, "unable to get sys.path"_s);
+        } else
+            callMethodNamed(globalObject, path, Identifier::fromString(vm, "insert"_s), jsNumber(0), jsString(vm, first));
+        if (scope.exception())
+            return printExceptionAndGetStatus(globalObject);
+    }
+
+    // pymain_header()
+    if (!configuration.quiet && (configuration.verbose || (!runsCode && isStandardInputInteractive))) {
+        fprintf(stderr, "Python %s on %s\n", PYTHON_FULL_VERSION_STRING, PYTHON_PLATFORM);
+        if (configuration.importsSite)
+            fputs("Type \"help\", \"copyright\", \"credits\" or \"license\" for more information.\n", stderr);
+    }
+
+    if (!checkSignals(globalObject))
+        return printExceptionAndGetStatus(globalObject);
+    int status;
+    if (!configuration.runCommand.isNull())
+        status = runCommand(globalObject, configuration.runCommand);
+    else if (!configuration.runModule.isNull())
+        status = runModule(globalObject, configuration.runModule, true);
+    else if (isImportPath)
+        status = runModule(globalObject, "__main__"_s, false);
+    else if (!configuration.runFilename.isNull())
+        status = runFile(globalObject, configuration);
+    else {
+        // pymain_run_stdin(), for what is not typed
+        if (!audit(globalObject, "cpython.run_stdin"_s))
+            return printExceptionAndGetStatus(globalObject);
+        Vector<uint8_t> bytes;
+        readAll(stdin, bytes);
+        runInMainModule(globalObject, bytes.span(), SourceOrigin(), "<stdin>"_s);
+        status = scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;
+    }
+    if (!checkSignals(globalObject))
+        return printExceptionAndGetStatus(globalObject);
+    return status;
+}
+
+#endif // OS(UNIX)
 
 // ---- Afterwards
 
@@ -410,9 +814,14 @@ bool finalizePython(JSGlobalObject* globalObject)
 
     // flush_std_files()
     bool succeeded = true;
-    for (ASCIILiteral name : { "stdout"_s, "stderr"_s }) {
+    // In CPython the two that Python started with are sent on when they are let go of, which is when everything is. Nothing is let go of here, so they are seen to with the two that are there now, which are mostly the same two.
+    Vector<JSValue, 4> seen;
+    for (ASCIILiteral name : { "stdout"_s, "stderr"_s, "__stdout__"_s, "__stderr__"_s }) {
         JSValue file = sysAttribute(globalObject, name);
-        if (!file || isNone(file) || isFileClosed(globalObject, file))
+        if (!file || isNone(file) || seen.contains(file))
+            continue;
+        seen.append(file);
+        if (isFileClosed(globalObject, file))
             continue;
         callMethodNamed(globalObject, file, vm.pythonNames().attribute_flush);
         if (!scope.exception())

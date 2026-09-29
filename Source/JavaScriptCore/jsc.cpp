@@ -4486,6 +4486,21 @@ void GlobalObject::configurePython(JSGlobalObject*, Python::Configuration& confi
 // What a program that is Python's ends with is what the process ends with.
 static std::optional<int> pythonExitStatus;
 
+// The modules that have to do with the system, which it is for the host to say that there are
+static void addPythonHostModules(Python::Configuration& configuration)
+{
+    configuration.builtinModules.append({ "posix"_s, Python::createPosixModule });
+    configuration.builtinModules.append({ "_posixsubprocess"_s, Python::createPosixSubprocessModule });
+    configuration.builtinModules.append({ "_signal"_s, Python::createSignalModule });
+    configuration.builtinModules.append({ "select"_s, Python::createSelectModule });
+    configuration.builtinModules.append({ "resource"_s, Python::createResourceModule });
+    configuration.builtinModules.append({ "_socket"_s, Python::createSocketModule });
+}
+
+// Whether this was started by a name that begins with "python", as by way of a link. It is `python` then, and the whole of the command line is Python's. It is how a program that is Python's starts another: it runs
+// sys.executable, with what `python` takes.
+static bool isStartedAsPython;
+
 // jsc file.py, as `python file.py` would run it.
 static bool runPythonFile(GlobalObject* globalObject, const String& fileName)
 {
@@ -4509,6 +4524,12 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    if (isStartedAsPython) {
+        pythonExitStatus = Python::runMain(globalObject);
+        success = !*pythonExitStatus;
+        return;
+    }
+
     // As for `python file.py arguments`: the program is the first file, whichever language it is in, and its directory is where modules are
     // looked for first.
     for (auto& script : scripts) {
@@ -4520,12 +4541,7 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
         configuration.arguments.appendVector(options.m_arguments);
         String path = absoluteFileURL(program).fileSystemPath();
         configuration.firstSearchPath = path.left(path.reverseFind('/'));
-        configuration.builtinModules.append({ "posix"_s, Python::createPosixModule });
-        configuration.builtinModules.append({ "_posixsubprocess"_s, Python::createPosixSubprocessModule });
-        configuration.builtinModules.append({ "_signal"_s, Python::createSignalModule });
-        configuration.builtinModules.append({ "select"_s, Python::createSelectModule });
-        configuration.builtinModules.append({ "resource"_s, Python::createResourceModule });
-        configuration.builtinModules.append({ "_socket"_s, Python::createSocketModule });
+        addPythonHostModules(configuration);
         configuration.installsSignalHandlers = true;
         // Where the library is, as CPython is told: it does not come with the engine.
         if (const char* searchPath = getenv("PYTHONPATH")) {
@@ -5288,9 +5304,25 @@ int jscmain(int argc, char** argv)
     if constexpr (isDarwin())
         WTF::Thread::setCurrentThreadIsUserInteractive(-1);
 
+    if (argc) {
+        const char* name = strrchr(argv[0], '/');
+        isStartedAsPython = !strncmp(name ? name + 1 : argv[0], "python", strlen("python"));
+    }
+    if (isStartedAsPython) {
+        auto& configuration = pythonConfiguration();
+        addPythonHostModules(configuration);
+        configuration.computesPaths = true;
+        if (auto status = Python::readCommandLine(configuration, std::span<const char* const>(argv, argc)))
+            return *status;
+        // There is nothing on it for the shell. What is to be said to the engine can be said in the environment.
+        argc = 1;
+    }
+
     // Note that the options parsing can affect VM creation, and thus
     // comes first.
     mainCommandLine.construct(argc, argv);
+    if (isStartedAsPython)
+        mainCommandLine->m_interactive = false;
 
 #if OS(WINDOWS)
     // Needed for complex.yaml tests.

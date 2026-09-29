@@ -28,6 +28,7 @@
 #include "ImplementationVisibility.h"
 #include "JSCJSValue.h"
 #include "PythonFileOperations.h"
+#include <optional>
 #include <span>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -81,6 +82,60 @@ struct Configuration {
     // What io.open_code() is: given the name of a file whose contents are to be run, a str, it returns a file that is open for reading bytes, or nothing, having thrown. It is for what wants a say in what is
     // run, or has it somewhere other than in a file. Null is open(path, "rb"). PyFile_SetOpenCodeHook() of CPython.
     JSValue (*openCode)(JSGlobalObject*, JSValue path) { nullptr };
+
+    // ---- What `python` is told on its command line and in its environment: the rest of PyConfig. readCommandLine() fills it in, and much of what is above. As it comes it is what a program has that is not started that way.
+
+    Vector<String> originalArguments; // sys.orig_argv. `arguments`, if there are none.
+    Vector<String> warningOptions; // sys.warnoptions: -W and PYTHONWARNINGS
+    Vector<String> extraOptions; // sys._xoptions: -X
+    int parserDebug { 0 }; // -d, which does nothing
+    int inspect { 0 }; // -i
+    int interactive { 0 }; // -i
+    int optimizationLevel { 0 }; // -O
+    int verbose { 0 }; // -v
+    int bytesWarning { 0 }; // -b
+    int quiet { 0 }; // -q
+    // Not -B. It is not asked for unless it is asked for here, whatever the command line says: nothing is written yet.
+    bool writesBytecode { false };
+    bool usesUserSiteDirectory { true }; // Not -s
+    bool usesEnvironment { true }; // Not -E
+    bool isIsolated { false }; // -I
+    bool isDevelopmentMode { false }; // -X dev
+    // -X utf8. Everything is UTF-8 whatever this says. It is what sys.flags.utf8_mode is, which is what the library goes by.
+    bool usesUTF8Mode { true };
+    bool warnsOfDefaultEncoding { false }; // -X warn_default_encoding
+    bool hasSafePath { false }; // -P
+    int maximumDigitsOfIntAsString { 4300 }; // -X int_max_str_digits
+    bool threadsInheritContext { false }; // -X thread_inherit_context
+    bool hasContextAwareWarnings { false }; // -X context_aware_warnings
+    int importTime { 0 }; // -X importtime
+    int cpuCount { -1 }; // -X cpu_count. Negative is however many there are.
+    String bytecodeCachePrefix; // sys.pycache_prefix: -X pycache_prefix. Null is None.
+    bool hasDebugRanges { true }; // Not -X no_debug_ranges
+
+    // What is to be run, of which there is at most one. If there is none it is what comes in on the standard input.
+    String runCommand; // -c
+    String runModule; // -m
+    String runFilename;
+    bool skipsFirstLineOfSource { false }; // -x
+
+    // ---- Where things are. If `computesPaths`, all that is not given here is worked out from where the program is, by CPython's own Modules/getpath.py, when Python starts: `executable`, `prefix`, `executablePrefix`,
+    // `libraryDirectory` and `moduleSearchPaths` above, and what follows.
+
+    bool computesPaths { false };
+    bool hasModuleSearchPaths { false }; // Whether `moduleSearchPaths` is all of them already: PyConfig.module_search_paths_set
+    String programName; // What it was started as
+    String home; // PYTHONHOME
+    String searchPathFromEnvironment; // PYTHONPATH
+    String platformLibraryDirectory { "lib"_s }; // sys.platlibdir
+    String baseExecutable; // sys._base_executable. `executable`, if it is null.
+    String basePrefix; // sys.base_prefix. `prefix`, if it is null.
+    String baseExecutablePrefix; // sys.base_exec_prefix. `executablePrefix`, if it is null.
+    bool warnsOfPathConfiguration { true };
 };
+
+// What Py_BytesMain() does before there is anything to run anything with: _PyConfig_Read(), for what `python` was started with, the first of which is what it was started as. If there is nothing to be run after all, because
+// what was asked for was to be told something, which it has been, or because what was asked for makes no sense, which has been said, it is the status that the process is to end with.
+JS_EXPORT_PRIVATE std::optional<int> readCommandLine(Configuration&, std::span<const char* const> arguments);
 
 } } // namespace JSC::Python

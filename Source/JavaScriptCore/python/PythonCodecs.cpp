@@ -29,6 +29,8 @@
 
 #include "PythonBuiltins.h"
 #include "PythonBytes.h"
+#include "PythonImport.h"
+#include "PythonImportState.h"
 #include "PythonOperations.h"
 
 // What the codecs are written with, and str.encode() and bytes.decode(): Objects/unicodeobject.c of CPython.
@@ -328,9 +330,29 @@ static JSValue decodeByRegistry(JSGlobalObject* globalObject, std::span<const ui
     return result;
 }
 
+// unicode_check_encoding_errors(). With -X dev it is found out whether there are such things even if they would not be needed, as they are not where there is nothing to encode or nothing goes wrong. It may throw.
+static void checkEncodingAndErrors(JSGlobalObject* globalObject, const String& encoding, const String& errors)
+{
+    if (!globalObject->pyRealm()->configuration().isDevelopmentMode) [[likely]]
+        return;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!importState(globalObject).hasCodecRegistry)
+        return;
+    if (!encoding.isNull() && encoding != "utf-8"_s && encoding != "utf8"_s && encoding != "ascii"_s) {
+        lookupCodec(globalObject, encoding);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    if (!errors.isNull() && errors != "strict"_s && errors != "ignore"_s && errors != "replace"_s && errors != "surrogateescape"_s && errors != "surrogatepass"_s) {
+        scope.release();
+        lookupErrorHandler(globalObject, errors);
+    }
+}
+
 String decodeBytes(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    checkEncodingAndErrors(globalObject, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, { });
     String text;
     if (decodeIfKnown(globalObject, bytes, encoding, errors, text))
         return text;
@@ -342,6 +364,8 @@ String decodeBytes(JSGlobalObject* globalObject, std::span<const uint8_t> bytes,
 JSValue decodeBytesToObject(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const String& encoding, const String& errors)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    checkEncodingAndErrors(globalObject, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, { });
     String text;
     if (!decodeIfKnown(globalObject, bytes, encoding, errors, text))
         RELEASE_AND_RETURN(scope, decodeByRegistry(globalObject, bytes, encoding, errors));
@@ -393,6 +417,8 @@ static JSValue encodeByRegistry(JSGlobalObject* globalObject, JSValue string, co
 std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue string, const String& encoding, const String& errors)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    checkEncodingAndErrors(globalObject, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
     std::optional<ByteVector> encoded;
     if (encodeIfKnown(globalObject, string, encoding, errors, encoded))
         return encoded;
@@ -406,6 +432,8 @@ std::optional<ByteVector> encodeString(JSGlobalObject* globalObject, JSValue str
 JSValue encodeStringToObject(JSGlobalObject* globalObject, JSValue string, const String& encoding, const String& errors)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    checkEncodingAndErrors(globalObject, encoding, errors);
+    RETURN_IF_EXCEPTION(scope, { });
     std::optional<ByteVector> encoded;
     if (!encodeIfKnown(globalObject, string, encoding, errors, encoded))
         RELEASE_AND_RETURN(scope, encodeByRegistry(globalObject, string, encoding, errors));

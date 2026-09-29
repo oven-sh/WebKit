@@ -856,13 +856,40 @@ PYTHON_NATIVE(bytesContains)
     return JSValue::encode(jsBoolean(findIn(spanOf(self), needle.span()) != notFound));
 }
 
+// bytes_str() and bytearray_str()
+PYTHON_NATIVE(bytesStr)
+{
+    NATIVE_PROLOGUE();
+    if (realm->configuration().bytesWarning) {
+        warn(globalObject, BuiltinType::BytesWarning, typeOf(globalObject, args[0])->hasFlag(PyType::IsBytes) ? "str() on a bytes instance"_s : "str() on a bytearray instance"_s, 1);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, bytesRepr(globalObject, callFrame));
+}
+
 PYTHON_NATIVE(bytesCompare)
 {
     auto op = unpack<ComparisonOperator>(callFrame, 0);
     BYTES_PROLOGUE("__eq__");
+    // -b: it is never equal to text, or to a number, and whoever asks whether it is has most likely taken one for the other.
+    bool warns = globalObject->pyRealm()->configuration().bytesWarning && (op == ComparisonOperator::Eq || op == ComparisonOperator::NotEq);
     // A bytearray is compared with anything that has bytes to show, and bytes with bytes alone.
-    if (typeOf(globalObject, selfValue)->hasFlag(PyType::IsBytes) && !typeOf(globalObject, args[1])->hasFlag(PyType::IsBytes))
+    if (typeOf(globalObject, selfValue)->hasFlag(PyType::IsBytes) && !typeOf(globalObject, args[1])->hasFlag(PyType::IsBytes)) {
+        if (warns && stringIn(args[1])) {
+            warn(globalObject, BuiltinType::BytesWarning, "Comparison between bytes and string"_s, 1);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (warns && isInstance(globalObject, args[1], globalObject->pyRealm()->typeInt())) {
+            warn(globalObject, BuiltinType::BytesWarning, "Comparison between bytes and int"_s, 1);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         RETURN_NOT_IMPLEMENTED();
+    }
+    if (warns && stringIn(args[1])) {
+        warn(globalObject, BuiltinType::BytesWarning, "Comparison between bytearray and string"_s, 1);
+        RETURN_IF_EXCEPTION(scope, { });
+        RETURN_NOT_IMPLEMENTED();
+    }
     auto other = tryBufferOf(globalObject, args[1]);
     // What cannot be got at is something that this cannot be compared with.
     if (scope.exception())
@@ -3258,7 +3285,7 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
             { "__rmul__"_s, bytesMultiply },
             { "__mod__"_s, bytesModulo },
             { "__rmod__"_s, bytesReflectedModulo },
-            { "__str__"_s, bytesRepr },
+            { "__str__"_s, bytesStr },
             { "fromhex"_s, bytesFromHex, Kind::ClassMethod },
             { "maketrans"_s, bytesMakeTranslation, Kind::Function },
             { "find"_s, bytesFind, Kind::Method, pack(false, false) },

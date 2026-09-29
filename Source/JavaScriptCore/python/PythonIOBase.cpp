@@ -633,15 +633,19 @@ PYTHON_NATIVE(ioTextEncoding)
 {
     NATIVE_PROLOGUE();
     JSValue encoding = args.at(0);
+    int stackLevel = 2;
     if (JSValue level = args.at(1)) {
-        toCInt(globalObject, level);
+        auto given = toCInt(globalObject, level);
         RETURN_IF_EXCEPTION(scope, { });
+        stackLevel = *given;
     }
     if (!isNone(encoding))
         return JSValue::encode(encoding);
-    // FIXME: sys.flags.warn_default_encoding, when there are such options to be given.
-    // It is as with `python -X utf8`: text is UTF-8 whatever the locale.
-    return JSValue::encode(jsNontrivialString(vm, "utf-8"_s));
+    if (realm->configuration().warnsOfDefaultEncoding) {
+        warn(globalObject, BuiltinType::EncodingWarning, "'encoding' argument not specified"_s, stackLevel);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(realm->configuration().usesUTF8Mode ? jsNontrivialString(vm, "utf-8"_s) : jsNontrivialString(vm, "locale"_s));
 }
 
 static void initializeBaseClasses(JSGlobalObject* globalObject, IOModuleState& state)

@@ -775,6 +775,7 @@ python/PythonCodecsModule.cpp
 python/PythonCodecsUTF.cpp
 python/PythonCommonNames.cpp
 python/PythonCollections.cpp
+python/PythonCommandLine.cpp
 python/PythonCompiler.cpp
 python/PythonComplex.cpp
 python/PythonContainerTypes.cpp
@@ -783,6 +784,7 @@ python/PythonExceptionTypes.cpp
 python/PythonFunctoolsModule.cpp
 python/PythonHeapqModule.cpp
 python/PythonGenerators.cpp
+python/PythonGetPath.cpp
 python/PythonGenericAlias.cpp
 python/PythonIterators.cpp
 python/PythonItertools.cpp
