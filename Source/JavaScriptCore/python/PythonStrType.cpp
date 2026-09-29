@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PythonBuiltins.h"
 
+#include "PyStateObject.h"
 #include "PythonBytes.h"
 #include "PythonCharacters.h"
 #include "PythonUnicodeType.h"
@@ -843,119 +844,198 @@ PYTHON_NATIVE(strReplace)
 // ---- format()
 
 // A port of Objects/stringlib/unicode_format.h of CPython. What is an error, and which, depends on just how the string is gone through.
-class Formatter {
-public:
-    // With `mapping`, it is format_map(): names are looked up in it, and there are no positional arguments.
-    Formatter(JSGlobalObject* globalObject, const NativeArguments& args, JSValue mapping)
-        : m_globalObject(globalObject)
-        , m_vm(globalObject->vm())
-        , m_args(args)
-        , m_mapping(mapping)
-    {
-    }
 
-    // Empty if it raised.
-    JSValue format(JSValue given, const String& text)
-    {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
-        Characters characters;
-        charactersOf(m_globalObject, text, characters);
-        RETURN_IF_EXCEPTION(scope, { });
-        String result = buildString(characters, 0, characters.size(), outermost);
-        RETURN_IF_EXCEPTION(scope, { });
-        // As with `format % values`: if the first piece that has anything in it is the last, and is a str already, it is what is given. So it is with the format itself, if there is nothing to fill in.
-        if (m_only)
-            return m_only;
-        if (!text.contains('{') && !text.contains('}'))
-            return given;
-        return jsString(m_vm, result);
-    }
+namespace {
 
-private:
-    using Characters = Vector<char32_t, 64>;
+using FormatCharacters = Vector<char32_t, 64>;
 
-    struct Range {
-        size_t start { 0 };
-        size_t end { 0 };
-        bool isEmpty() const { return start >= end; }
-    };
+// SubString
+struct FormatRange {
+    size_t start { 0 };
+    size_t end { 0 };
+    bool isPresent { false }; // Whether it is part of the string at all, though it may have nothing in it.
+    bool isEmpty() const { return start >= end; }
+};
 
-    static String toString(const Characters& characters, Range range)
-    {
-        TextBuilder builder;
-        for (size_t i = range.start; i < range.end; ++i)
-            builder.append(characters[i]);
-        return builder.tryFinish();
-    }
+// What an iterator says of a step: 0, 1 or 2 in CPython.
+enum class FormatStep : uint8_t { Failed, Done, Found };
 
-    String buildString(const Characters& s, size_t start, size_t end, int recursionDepth)
-    {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (recursionDepth <= 0) {
-            raiseValueError(m_globalObject, scope, "Max string recursion exceeded"_s);
-            return { };
+String toString(const FormatCharacters& characters, FormatRange range)
+{
+    TextBuilder builder;
+    for (size_t i = range.start; i < range.end; ++i)
+        builder.append(characters[i]);
+    return builder.tryFinish();
+}
+
+// get_integer(): the number that the characters spell, or -1 if they spell none, or if it raised.
+int64_t getInteger(JSGlobalObject* globalObject, const FormatCharacters& s, FormatRange range)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (range.isEmpty())
+        return -1;
+    int64_t accumulator = 0;
+    for (size_t i = range.start; i < range.end; ++i) {
+        int digit = Unicode::toDecimalDigit(s[i]);
+        if (digit < 0)
+            return -1;
+        if (accumulator > (std::numeric_limits<int64_t>::max() - digit) / 10) {
+            raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
+            return -1;
         }
-        TextBuilder result;
-        size_t position = start;
-        while (position < end) {
-            // Literal text, up to a brace.
-            size_t literalStart = position;
-            char32_t c = 0;
-            bool markupFollows = false;
-            while (position < end) {
-                c = s[position++];
-                if (c == '{' || c == '}') {
-                    markupFollows = true;
+        accumulator = accumulator * 10 + digit;
+    }
+    return accumulator;
+}
+
+// .attribute and [item], as many as there are after the first part of the name of a field.
+struct FieldNameIterator {
+    size_t index { 0 };
+    size_t end { 0 };
+
+    FormatStep next(JSGlobalObject* globalObject, const FormatCharacters& s, bool& isAttribute, int64_t& nameIndex, FormatRange& name)
+    {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        auto fail = [&] (ASCIILiteral message) {
+            raiseValueError(globalObject, scope, message);
+            return FormatStep::Failed;
+        };
+        if (index >= end)
+            return FormatStep::Done;
+        name.isPresent = true;
+        switch (s[index++]) {
+        case '.':
+            isAttribute = true;
+            name.start = index;
+            while (index < end && s[index] != '.' && s[index] != '[')
+                ++index;
+            name.end = index;
+            nameIndex = -1;
+            break;
+        case '[': {
+            isAttribute = false;
+            name.start = index;
+            bool sawBracket = false;
+            while (index < end) {
+                if (s[index++] == ']') {
+                    sawBracket = true;
                     break;
                 }
             }
-            bool atEnd = position >= end;
-            size_t length = position - literalStart;
-            if (markupFollows && c == '}' && (atEnd || s[position] != c)) {
-                raiseValueError(m_globalObject, scope, "Single '}' encountered in format string"_s);
-                return { };
-            }
-            if (markupFollows && atEnd && c == '{') {
-                raiseValueError(m_globalObject, scope, "Single '{' encountered in format string"_s);
-                return { };
-            }
-            if (markupFollows && !atEnd) {
-                if (s[position] == c) {
-                    // A doubled brace stands for one.
-                    ++position;
-                    markupFollows = false;
-                } else
-                    --length;
-            }
-            for (size_t i = literalStart; i < literalStart + length; ++i)
-                result.append(s[i]);
-            if (!markupFollows)
-                continue;
-
-            Range fieldName;
-            Range specification;
-            bool specificationNeedsExpanding = false;
-            char32_t conversion = 0;
-            if (!parseField(s, position, end, fieldName, specification, specificationNeedsExpanding, conversion))
-                return { };
-            JSValue field = outputMarkup(s, fieldName, specification, specificationNeedsExpanding, conversion, recursionDepth);
-            RETURN_IF_EXCEPTION(scope, { });
-            String piece = stringIn(field)->value(m_globalObject);
-            if (recursionDepth == outermost && result.isEmpty() && position >= end && !piece.isEmpty())
-                m_only = field;
-            result.append(piece);
+            if (!sawBracket)
+                return fail("Missing ']' in format string"_s);
+            name.end = index - 1;
+            nameIndex = getInteger(globalObject, s, name);
+            RETURN_IF_EXCEPTION(scope, FormatStep::Failed);
+            break;
         }
-        RELEASE_AND_RETURN(scope, result.finish(m_globalObject));
+        default:
+            return fail("Only '.' or '[' may follow ']' in format field specifier"_s);
+        }
+        if (name.start == name.end)
+            return fail("Empty attribute in format string"_s);
+        return FormatStep::Found;
+    }
+};
+
+// Whether fields are numbered by the format or left to be counted. It is one or the other throughout.
+struct AutoNumber {
+    enum class State : uint8_t { Undecided, Automatic, Manual };
+    State state { State::Undecided };
+    int64_t fieldNumber { 0 };
+};
+
+// field_name_split(): what comes before the first '.' or '[', which is a number if it can be, and the rest. False if it raised. string.Formatter sees to the numbering for itself, and gives no AutoNumber.
+bool splitFieldName(JSGlobalObject* globalObject, const FormatCharacters& s, FormatRange input, FormatRange& first, int64_t& firstIndex, FieldNameIterator& rest, AutoNumber* autoNumber)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    size_t i = input.start;
+    while (i < input.end && s[i] != '[' && s[i] != '.')
+        ++i;
+    first = { input.start, i, true };
+    rest = { i, input.end };
+    firstIndex = getInteger(globalObject, s, first);
+    RETURN_IF_EXCEPTION(scope, false);
+    bool isEmpty = first.isEmpty();
+    if (!autoNumber || (!isEmpty && firstIndex == -1))
+        return true;
+    if (autoNumber->state == AutoNumber::State::Undecided)
+        autoNumber->state = isEmpty ? AutoNumber::State::Automatic : AutoNumber::State::Manual;
+    if (autoNumber->state == AutoNumber::State::Manual && isEmpty) {
+        raiseValueError(globalObject, scope, "cannot switch from manual field specification to automatic field numbering"_s);
+        return false;
+    }
+    if (autoNumber->state == AutoNumber::State::Automatic && !isEmpty) {
+        raiseValueError(globalObject, scope, "cannot switch from automatic field numbering to manual field specification"_s);
+        return false;
+    }
+    if (isEmpty)
+        firstIndex = autoNumber->fieldNumber++;
+    return true;
+}
+
+// Text as it is, and then a field, over and over.
+struct MarkupIterator {
+    size_t start { 0 };
+    size_t end { 0 };
+
+    FormatStep next(JSGlobalObject* globalObject, const FormatCharacters& s, FormatRange& literal, bool& isFieldPresent, FormatRange& fieldName, FormatRange& specification, char32_t& conversion, bool& specificationNeedsExpanding)
+    {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        literal = fieldName = specification = { };
+        conversion = 0;
+        specificationNeedsExpanding = false;
+        isFieldPresent = false;
+        if (start >= end)
+            return FormatStep::Done;
+
+        // As far as a brace. Of two that stand for one, the first is part of the text and the second is passed over, and what follows is text again the next time.
+        size_t literalStart = start;
+        char32_t c = 0;
+        bool markupFollows = false;
+        while (start < end) {
+            c = s[start++];
+            if (c == '{' || c == '}') {
+                markupFollows = true;
+                break;
+            }
+        }
+        bool atEnd = start >= end;
+        size_t length = start - literalStart;
+        if (c == '}' && (atEnd || s[start] != c)) {
+            raiseValueError(globalObject, scope, "Single '}' encountered in format string"_s);
+            return FormatStep::Failed;
+        }
+        if (atEnd && c == '{') {
+            raiseValueError(globalObject, scope, "Single '{' encountered in format string"_s);
+            return FormatStep::Failed;
+        }
+        if (!atEnd) {
+            if (s[start] == c) {
+                ++start;
+                markupFollows = false;
+            } else
+                --length;
+        }
+        literal = { literalStart, literalStart + length, true };
+        if (!markupFollows)
+            return FormatStep::Found;
+        isFieldPresent = true;
+        RELEASE_AND_RETURN(scope, parseField(globalObject, s, fieldName, specification, specificationNeedsExpanding, conversion) ? FormatStep::Found : FormatStep::Failed);
     }
 
-    bool parseField(const Characters& s, size_t& position, size_t end, Range& fieldName, Range& specification, bool& specificationNeedsExpanding, char32_t& conversion)
+private:
+    // parse_field()
+    bool parseField(JSGlobalObject* globalObject, const FormatCharacters& s, FormatRange& fieldName, FormatRange& specification, bool& specificationNeedsExpanding, char32_t& conversion)
     {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         auto fail = [&] (ASCIILiteral message) {
-            raiseValueError(m_globalObject, scope, message);
+            raiseValueError(globalObject, scope, message);
             return false;
         };
+        size_t& position = start;
         char32_t c = 0;
+        fieldName.isPresent = true;
         fieldName.start = position;
         while (position < end) {
             c = s[position++];
@@ -985,7 +1065,9 @@ private:
                         return fail("expected ':' after conversion specifier"_s);
                 }
             }
+            specification.isPresent = true;
             specification.start = position;
+            specification.end = end - 1;
             unsigned count = 1;
             while (position < end) {
                 c = s[position++];
@@ -1003,48 +1085,86 @@ private:
             return fail("expected '}' before end of string"_s);
         return true;
     }
+};
 
-    // The number that the characters spell, or -1 if they spell none. -2 if it raised.
-    int64_t getInteger(const Characters& s, Range range)
+} // anonymous namespace
+
+class Formatter {
+public:
+    // With `mapping`, it is format_map(): names are looked up in it, and there are no positional arguments.
+    Formatter(JSGlobalObject* globalObject, const NativeArguments& args, JSValue mapping)
+        : m_globalObject(globalObject)
+        , m_vm(globalObject->vm())
+        , m_args(args)
+        , m_mapping(mapping)
     {
-        auto scope = DECLARE_THROW_SCOPE(m_vm);
-        if (range.isEmpty())
-            return -1;
-        int64_t accumulator = 0;
-        for (size_t i = range.start; i < range.end; ++i) {
-            int digit = Unicode::toDecimalDigit(s[i]);
-            if (digit < 0)
-                return -1;
-            if (accumulator > (std::numeric_limits<int64_t>::max() - digit) / 10) {
-                raiseValueError(m_globalObject, scope, "Too many decimal digits in format string"_s);
-                return -2;
-            }
-            accumulator = accumulator * 10 + digit;
-        }
-        return accumulator;
     }
 
+    // Empty if it raised.
+    JSValue format(JSValue given, const String& text)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        Characters characters;
+        charactersOf(m_globalObject, text, characters);
+        RETURN_IF_EXCEPTION(scope, { });
+        String result = buildString(characters, 0, characters.size(), outermost);
+        RETURN_IF_EXCEPTION(scope, { });
+        // As with `format % values`: if the first piece that has anything in it is the last, and is a str already, it is what is given. So it is with the format itself, if there is nothing to fill in.
+        if (m_only)
+            return m_only;
+        if (!text.contains('{') && !text.contains('}'))
+            return given;
+        return jsString(m_vm, result);
+    }
+
+private:
+    using Characters = FormatCharacters;
+    using Range = FormatRange;
+
+    // build_string() and do_markup()
+    String buildString(const Characters& s, size_t start, size_t end, int recursionDepth)
+    {
+        auto scope = DECLARE_THROW_SCOPE(m_vm);
+        if (recursionDepth <= 0) {
+            raiseValueError(m_globalObject, scope, "Max string recursion exceeded"_s);
+            return { };
+        }
+        TextBuilder result;
+        MarkupIterator iterator { start, end };
+        while (true) {
+            Range literal;
+            Range fieldName;
+            Range specification;
+            bool isFieldPresent;
+            bool specificationNeedsExpanding;
+            char32_t conversion;
+            FormatStep step = iterator.next(m_globalObject, s, literal, isFieldPresent, fieldName, specification, conversion, specificationNeedsExpanding);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (step != FormatStep::Found)
+                break;
+            for (size_t i = literal.start; i < literal.end; ++i)
+                result.append(s[i]);
+            if (!isFieldPresent)
+                continue;
+            JSValue field = outputMarkup(s, fieldName, specification, specificationNeedsExpanding, conversion, recursionDepth);
+            RETURN_IF_EXCEPTION(scope, { });
+            String piece = stringIn(field)->value(m_globalObject);
+            if (recursionDepth == outermost && result.isEmpty() && iterator.start >= end && !piece.isEmpty())
+                m_only = field;
+            result.append(piece);
+        }
+        RELEASE_AND_RETURN(scope, result.finish(m_globalObject));
+    }
+
+    // get_field_object()
     JSValue getFieldObject(const Characters& s, Range input)
     {
         auto scope = DECLARE_THROW_SCOPE(m_vm);
-        // Up to the first '.' or '['.
-        size_t i = input.start;
-        while (i < input.end && s[i] != '[' && s[i] != '.')
-            ++i;
-        Range first { input.start, i };
-        int64_t index = getInteger(s, first);
+        Range first;
+        int64_t index;
+        FieldNameIterator rest;
+        splitFieldName(m_globalObject, s, input, first, index, rest, &m_autoNumber);
         RETURN_IF_EXCEPTION(scope, { });
-        bool isEmpty = first.isEmpty();
-        if (isEmpty || index != -1) {
-            if (m_numbering == Numbering::Undecided)
-                m_numbering = isEmpty ? Numbering::Automatic : Numbering::Manual;
-            if (m_numbering == Numbering::Manual && isEmpty)
-                return raiseValueError(m_globalObject, scope, "cannot switch from manual field specification to automatic field numbering"_s);
-            if (m_numbering == Numbering::Automatic && !isEmpty)
-                return raiseValueError(m_globalObject, scope, "cannot switch from automatic field numbering to manual field specification"_s);
-            if (isEmpty)
-                index = m_nextIndex++;
-        }
 
         JSValue object;
         if (index == -1) {
@@ -1070,39 +1190,19 @@ private:
             object = m_args[index + 1];
         }
 
-        // .attribute and [item], as many as there are.
-        while (i < input.end) {
-            char32_t c = s[i++];
+        while (true) {
+            bool isAttribute;
             Range name;
-            name.start = i;
-            if (c == '.') {
-                while (i < input.end && s[i] != '.' && s[i] != '[')
-                    ++i;
-                name.end = i;
-                if (name.isEmpty())
-                    return raiseValueError(m_globalObject, scope, "Empty attribute in format string"_s);
+            FormatStep step = rest.next(m_globalObject, s, isAttribute, index, name);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (step != FormatStep::Found)
+                return object;
+            if (isAttribute)
                 object = getAttribute(m_globalObject, object, Identifier::fromString(m_vm, toString(s, name)));
-            } else if (c == '[') {
-                bool sawBracket = false;
-                while (i < input.end) {
-                    if (s[i++] == ']') {
-                        sawBracket = true;
-                        break;
-                    }
-                }
-                if (!sawBracket)
-                    return raiseValueError(m_globalObject, scope, "Missing ']' in format string"_s);
-                name.end = i - 1;
-                int64_t item = getInteger(s, name);
-                RETURN_IF_EXCEPTION(scope, { });
-                if (name.isEmpty())
-                    return raiseValueError(m_globalObject, scope, "Empty attribute in format string"_s);
-                object = getItem(m_globalObject, object, item == -1 ? JSValue(jsString(m_vm, toString(s, name))) : intFromInt64(m_globalObject, item));
-            } else
-                return raiseValueError(m_globalObject, scope, "Only '.' or '[' may follow ']' in format field specifier"_s);
+            else
+                object = getItem(m_globalObject, object, index == -1 ? JSValue(jsString(m_vm, toString(s, name))) : intFromInt64(m_globalObject, index));
             RETURN_IF_EXCEPTION(scope, { });
         }
-        return object;
     }
 
     JSValue outputMarkup(const Characters& s, Range fieldName, Range specification, bool specificationNeedsExpanding, char32_t conversion, int recursionDepth)
@@ -1141,15 +1241,12 @@ private:
 
     static constexpr int outermost = 2; // How deep one field can be within another.
 
-    enum class Numbering : uint8_t { Undecided, Automatic, Manual };
-
     JSGlobalObject* m_globalObject;
     VM& m_vm;
     const NativeArguments& m_args;
     JSValue m_mapping;
     JSValue m_only;
-    int64_t m_nextIndex { 0 };
-    Numbering m_numbering { Numbering::Undecided };
+    AutoNumber m_autoNumber;
 };
 
 PYTHON_NATIVE(strFormat)
@@ -1162,6 +1259,179 @@ PYTHON_NATIVE(strFormatMap)
 {
     STR_PROLOGUE("format_map");
     RELEASE_AND_RETURN(scope, JSValue::encode(Formatter(globalObject, args, args[1]).format(args[0], self)));
+}
+
+// ---- The module _string, which lets string.Formatter, which is written in Python, go through a format as format() does
+
+namespace {
+
+struct StringModuleState final : NativeState {
+    PYTHON_NATIVE_STATE(StringModuleState);
+    WriteBarrier<PyType> formatterIterator;
+    WriteBarrier<PyType> fieldNameIterator;
+};
+
+template<typename Visitor>
+void StringModuleState::visit(Visitor& visitor)
+{
+    visitor.append(formatterIterator);
+    visitor.append(fieldNameIterator);
+}
+
+// formatteriterobject and fieldnameiterobject
+template<typename Iterator>
+struct FormatIteratorState final : NativeState {
+    PYTHON_NATIVE_STATE(FormatIteratorState);
+    WriteBarrier<Unknown> string;
+    FormatCharacters characters;
+    Iterator iterator;
+};
+
+template<typename Iterator>
+template<typename Visitor>
+void FormatIteratorState<Iterator>::visit(Visitor& visitor)
+{
+    visitor.append(string);
+}
+
+// SubString_new_object(), and PyUnicode_Substring(), to which the whole of a str is that str.
+JSValue newObject(JSGlobalObject* globalObject, JSValue string, const FormatCharacters& characters, FormatRange range)
+{
+    if (!range.isPresent)
+        return jsUndefined();
+    if (!range.start && range.end == characters.size() && string.isString())
+        return string;
+    return strOrMemoryError(globalObject, toString(characters, range));
+}
+
+// The iterator, with the characters in it. Null if it raised.
+template<typename Iterator>
+PyStateObject* newFormatIterator(JSGlobalObject* globalObject, PyType* type, JSValue given)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSString* string = stringIn(given);
+    if (!string) {
+        raiseTypeError(globalObject, scope, concatenate("expected str, got "_s, typeName(globalObject, given)));
+        return nullptr;
+    }
+    auto view = string->view(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto fields = makeUnique<FormatIteratorState<Iterator>>();
+    charactersOf(globalObject, view, fields->characters);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* object = PyStateObject::create(vm, type->instanceStructure(), WTF::move(fields));
+    object->template state<FormatIteratorState<Iterator>>().string.set(vm, object, given);
+    return object;
+}
+
+StringModuleState& stringModuleState(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<StringModuleState>(); }
+
+} // anonymous namespace
+
+// formatter_parser(string, /)
+PYTHON_NATIVE(stringFormatterParser)
+{
+    NATIVE_PROLOGUE();
+    PyStateObject* object = newFormatIterator<MarkupIterator>(globalObject, stringModuleState(globalObject).formatterIterator.get(), args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto& self = object->state<FormatIteratorState<MarkupIterator>>();
+    self.iterator = { 0, self.characters.size() };
+    return JSValue::encode(object);
+}
+
+// (literal, field_name, format_spec, conversion)
+PYTHON_NATIVE(formatterIteratorNext)
+{
+    NATIVE_PROLOGUE();
+    auto& self = stateOf<FormatIteratorState<MarkupIterator>>(args[0]);
+    FormatRange literal;
+    FormatRange fieldName;
+    FormatRange specification;
+    bool isFieldPresent;
+    bool specificationNeedsExpanding;
+    char32_t conversion;
+    FormatStep step = self.iterator.next(globalObject, self.characters, literal, isFieldPresent, fieldName, specification, conversion, specificationNeedsExpanding);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (step == FormatStep::Done)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::StopIteration, JSValue()));
+    JSValue string = self.string.get();
+    JSValue literalText = newObject(globalObject, string, self.characters, literal);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue fieldNameText = newObject(globalObject, string, self.characters, fieldName);
+    RETURN_IF_EXCEPTION(scope, { });
+    // If there is a field, what it is to be formatted by is a str, though nothing was said of it.
+    JSValue specificationText = isFieldPresent && !specification.isPresent ? JSValue(jsEmptyString(vm)) : newObject(globalObject, string, self.characters, specification);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue conversionText = jsUndefined();
+    if (conversion) {
+        TextBuilder builder;
+        builder.append(conversion);
+        conversionText = jsString(vm, builder.tryFinish());
+    }
+    return JSValue::encode(PyTuple::create(globalObject, { literalText, fieldNameText, specificationText, conversionText }));
+}
+
+// formatter_field_name_split(string, /)
+PYTHON_NATIVE(stringFormatterFieldNameSplit)
+{
+    NATIVE_PROLOGUE();
+    PyStateObject* object = newFormatIterator<FieldNameIterator>(globalObject, stringModuleState(globalObject).fieldNameIterator.get(), args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto& self = object->state<FormatIteratorState<FieldNameIterator>>();
+    FormatRange first;
+    int64_t firstIndex;
+    splitFieldName(globalObject, self.characters, { 0, self.characters.size(), true }, first, firstIndex, self.iterator, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue firstObject = firstIndex != -1 ? intFromInt64(globalObject, firstIndex) : newObject(globalObject, args[0], self.characters, first);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(PyTuple::create(globalObject, { firstObject, object }));
+}
+
+// (is_attr, value)
+PYTHON_NATIVE(fieldNameIteratorNext)
+{
+    NATIVE_PROLOGUE();
+    auto& self = stateOf<FormatIteratorState<FieldNameIterator>>(args[0]);
+    bool isAttribute;
+    int64_t index;
+    FormatRange name;
+    FormatStep step = self.iterator.next(globalObject, self.characters, isAttribute, index, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (step == FormatStep::Done)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::StopIteration, JSValue()));
+    JSValue value = index != -1 ? intFromInt64(globalObject, index) : newObject(globalObject, self.string.get(), self.characters, name);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(PyTuple::create(globalObject, { jsBoolean(isAttribute), value }));
+}
+
+PYTHON_NATIVE(formatIteratorSelf)
+{
+    return JSValue::encode(callFrame->uncheckedArgument(0));
+}
+
+JSObject* createStringModule(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    auto& state = stringModuleState(globalObject);
+    if (!state.formatterIterator) {
+        auto create = [&] (WriteBarrier<PyType>& member, ASCIILiteral name, NativeFunction next) {
+            PyType* type = createBuiltinType(globalObject, name, realm->typeObject(), PyType::Layout::Native, 0);
+            type->setInstanceStructure(vm, PyStateObject::createStructure(vm, globalObject, type));
+            member.set(vm, realm, type);
+            addMethods(globalObject, type, {
+                { "__iter__"_s, formatIteratorSelf },
+                { "__next__"_s, next },
+            });
+        };
+        create(state.formatterIterator, "formatteriterator"_s, formatterIteratorNext);
+        create(state.fieldNameIterator, "fieldnameiterator"_s, fieldNameIteratorNext);
+    }
+    JSObject* module = newBuiltinModule(globalObject, "_string"_s);
+    addFunction(globalObject, module, "formatter_field_name_split"_s, stringFormatterFieldNameSplit);
+    addFunction(globalObject, module, "formatter_parser"_s, stringFormatterParser);
+    return module;
 }
 
 // ---- translate() and maketrans(): _PyUnicode_TranslateCharmap() and unicode_maketrans_impl() of CPython's Objects/unicodeobject.c

@@ -189,6 +189,7 @@ JSObject* createCollectionsModule(JSGlobalObject*);
 JSObject* createImpModule(JSGlobalObject*);
 JSObject* createOpcodeModule(JSGlobalObject*);
 JSObject* createSREModule(JSGlobalObject*);
+JSObject* createStringModule(JSGlobalObject*);
 JSObject* createTokenizeModule(JSGlobalObject*);
 JSValue getObjectState(JSGlobalObject*, JSValue); // _PyObject_GetState()
 // {Py_tp_getattro, PyObject_GenericGetAttr}: the class has a __getattribute__ in its own name, which does what object's does.

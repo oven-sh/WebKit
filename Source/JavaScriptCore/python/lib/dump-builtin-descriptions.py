@@ -47,7 +47,7 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
 MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize")
 
@@ -140,6 +140,8 @@ for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "iter
 for example in examples():
     add_type(type(example))
 add_type(type(__import__("_codecs").charmap_build("\0a")))
+add_type(type(__import__("_string").formatter_parser("")))
+add_type(type(__import__("_string").formatter_field_name_split("")[1]))
 a_pattern = __import__("re").compile("a")
 for example in (a_pattern, a_pattern.match("a"), a_pattern.scanner("a"), __import__("re")._compile_template(a_pattern, "\\g<0>")):
     add_type(type(example))
