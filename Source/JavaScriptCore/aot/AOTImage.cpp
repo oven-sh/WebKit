@@ -858,6 +858,24 @@ Vector<uint8_t> ImageBuilder::finish()
                         outer = i;
                 }
             }
+            // What the text says of types (Lexer: a byte that is 1 and six characters) is nobody's to read. Where things are in one another
+            // has been settled by now, in terms of the text as it was.
+            if (Options::useTypeTags()) {
+                auto withoutTypeTags = [](std::span<const char> text) {
+                    Vector<char, 64> result;
+                    for (size_t at = 0; at < text.size(); ++at) {
+                        if (text[at] == 1)
+                            at += 6;
+                        else
+                            result.append(text[at]);
+                    }
+                    return CString(result.span());
+                };
+                for (auto& place : within)
+                    place.offset = withoutTypeTags(all[place.quote].text.span().first(place.offset)).length();
+                for (auto& quote : all)
+                    quote.text = withoutTypeTags(quote.text.span());
+            }
             quotesOfFunction[index] = safeCast<uint32_t>(quotes.size());
             appendVarint(quotes, all.size());
             uint32_t previousOffset = 0;

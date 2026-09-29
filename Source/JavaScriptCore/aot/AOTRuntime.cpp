@@ -1351,7 +1351,7 @@ void Instance::dumpSlotStatistics(PrintStream& out)
     for (unsigned i = 0; i < numberOfBuckets; ++i)
         out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
     {
-        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s };
+        static constexpr ASCIILiteral names[] = { "read: the layout has it"_s, "read: the layout lacks it"_s, "read: some other object"_s, "read: not a cell"_s, "write: the layout has it"_s, "write: some other object"_s, "literal made as a layout"_s, "literal made otherwise"_s, "read with no type"_s, "write with no type"_s, "constructed as a layout"_s, "constructed otherwise"_s };
         for (unsigned i = 0; i < NumberOfShapeCounts; ++i) {
             if (shapeCounts[i])
                 out.println("SHAPECOUNT\t", shapeCounts[i], "\t", names[i]);

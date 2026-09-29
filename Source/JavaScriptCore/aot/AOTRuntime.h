@@ -402,7 +402,7 @@ struct Instance {
     uint64_t allocationCounts[numberOfAllocationCounts] { };
     static constexpr ptrdiff_t offsetOfAllocationCounts() { return OBJECT_OFFSETOF(Instance, allocationCounts); }
     // TEMPORARY-SHAPE-COUNTS: likewise. What became of the accesses that go by a type.
-    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, NumberOfShapeCounts };
+    enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, NumberOfShapeCounts };
     uint64_t shapeCounts[NumberOfShapeCounts] { };
     uint64_t readsForReason[1024] { };
     static constexpr ptrdiff_t offsetOfReadsForReason() { return OBJECT_OFFSETOF(Instance, readsForReason); }

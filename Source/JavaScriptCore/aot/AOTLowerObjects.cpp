@@ -178,6 +178,18 @@ bool Lowering::tryLowerAllocation(Node* node)
                 KnownShape shape;
                 for (auto& property : plan.properties)
                     shape.names.append(code().codeBlock()->identifier(property.identifier).impl());
+                // The table of types says what a constructor makes where the first of its stores is. (In order: so far that is all it can be.)
+                if (uint32_t tag = node->graph->typeTagAt(plan.stores[0].offset); tag && (Options::aotShapes() & 1) && TypeTable::shared()) {
+                    if (auto layout = TypeTable::shared()->layoutOf(tag); layout && layout->properties.size() == count) {
+                        bool isAsWritten = true;
+                        for (unsigned i = 0; i < count; ++i)
+                            isAsWritten &= layout->properties[i].first == shape.names[i] && layout->properties[i].second == i;
+                        if (isAsWritten)
+                            shape.number = layout->number;
+                    }
+                    noteShapeSite(shape.number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
+                }
+                countShape(shape.number ? Instance::ConstructedWithLayout : Instance::ConstructedWithout);
                 if (std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
                     m_graph.noteShapeOfSite(slot, WTF::move(shape));
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };

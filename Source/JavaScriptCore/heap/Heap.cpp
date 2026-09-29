@@ -1353,6 +1353,39 @@ TypeCountSet Heap::objectTypeCounts()
         }
         for (auto& [chain, count] : chains)
             out->println("CHAIN ", count, " ", chain);
+        // TEMPORARY-STRUCTURE-CENSUS: each structure that one object has and that nothing else was ever made of: how many structures there are on the way
+        // to it that serve nothing else, and the first few names. (LOCAL USE ONLY: names the program's things.)
+        for (Structure* structure : all) {
+            if (instances.get(structure) != 1 || structure->isDictionary())
+                continue;
+            unsigned own = 0;
+            unsigned accessors = 0;
+            unsigned notEnumerable = 0;
+            Vector<UniquedStringImpl*, 4> names;
+            for (Structure* ancestor = structure; ancestor; ancestor = ancestor->previousID()) {
+                if (ancestor != structure && (instances.get(ancestor) || served.get(ancestor) != 1))
+                    break;
+                ++own;
+                if (ancestor->transitionPropertyAttributes() & PropertyAttribute::Accessor)
+                    ++accessors;
+                if (ancestor->transitionPropertyAttributes() & PropertyAttribute::DontEnum)
+                    ++notEnumerable;
+                if (ancestor->transitionPropertyName()) {
+                    if (names.size() == 4)
+                        names.removeAt(0);
+                    names.append(ancestor->transitionPropertyName());
+                }
+            }
+            if (own < 2)
+                continue;
+            Structure* root = structure;
+            while (root->previousID())
+                root = root->previousID();
+            out->print("LONE\t", own, "\t", accessors, "\t", notEnumerable, "\t", structure->classInfoForCells()->className, structure->mayBePrototype() ? "/prototype" : "", "\t", root->knownShape() ? "known shape" : "other root", "\t");
+            for (unsigned i = names.size(); i--;)
+                out->print(String { names[i] }, " ");
+            out->println();
+        }
         // And what the immutable butterflies are.
         {
             UncheckedKeyHashSet<JSCell*> cachedNames;
