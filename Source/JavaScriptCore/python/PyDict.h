@@ -78,10 +78,12 @@ private:
 
     static size_t allocationSize(unsigned capacity, unsigned indexSize, unsigned stride)
     {
-        return sizeof(PyHashStorage) + static_cast<size_t>(capacity) * stride * sizeof(WriteBarrier<Unknown>) + (static_cast<size_t>(capacity) + indexSize) * sizeof(uint32_t);
+        return offsetOfSlots() + static_cast<size_t>(capacity) * stride * sizeof(WriteBarrier<Unknown>) + (static_cast<size_t>(capacity) + indexSize) * sizeof(uint32_t);
     }
 
-    WriteBarrier<Unknown>* slots() { return std::bit_cast<WriteBarrier<Unknown>*>(this + 1); }
+    // The collector reads them while they are being written, and it is only of what is aligned that it cannot see half.
+    static constexpr size_t offsetOfSlots() { return WTF::roundUpToMultipleOf<sizeof(WriteBarrier<Unknown>)>(sizeof(PyHashStorage)); }
+    WriteBarrier<Unknown>* slots() { return std::bit_cast<WriteBarrier<Unknown>*>(std::bit_cast<char*>(this) + offsetOfSlots()); }
     uint32_t* hashes() { return std::bit_cast<uint32_t*>(slots() + static_cast<size_t>(m_capacity) * m_stride); }
 
     unsigned m_capacity;
