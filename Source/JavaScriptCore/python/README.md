@@ -766,6 +766,14 @@ that being able to be asked costs code that is running nothing. `op_py_enter` an
 **Signals are seen to first**, as by `_Py_HandlePending()`. What a handler raises is raised where the program is. If callbacks came first, the first function that one of them entered would find the signal, and
 what the handler raised would be shown and forgotten with the callback half run: a wait that the signal was to end would go on. `interop/a-signal-and-a-callback-at-once.py` has both come up together.
 
+### Where an event loop of Python's waits
+
+`asyncio` is CPython's, as it is, event loop and all. It waits in one place, for what it is watching or until it has something to do: `select.kqueue.control()`. What it watches with is a descriptor that can itself be
+watched. So a host that has an event loop of its own is given that to watch, `Configuration::waitForDescriptor`, and goes on with its own meanwhile: JavaScript's timers and promises carry on while `asyncio.run()` does, and
+what they run is inside the loop, as any callback is. `control()` looks without waiting before and after, and sees to signals each time round. With no such host it waits in the system, as it did.
+
+Nothing else that waits does this. What calls `time.sleep()` means nothing to happen meanwhile.
+
 ### Signals
 
 `PythonSignals.cpp` is `Modules/signalmodule.c`. As in CPython, what the system calls when a signal comes does next to nothing, and what the program has for the signal is called later, by Python code, between one thing and

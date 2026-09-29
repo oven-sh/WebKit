@@ -580,7 +580,34 @@ PYTHON_NATIVE(kqueueControl)
         return JSValue::encode(raiseMemoryError(globalObject, scope));
     int64_t deadline = timePointer ? deadlineAfter(timeout) : 0;
     int count;
-    while (true) {
+    // With a host that has things of its own to do, it is the host that waits: Configuration::waitForDescriptor. This looks, without waiting, before and after.
+    // There is no waiting if there is nothing to be told of, or no time to wait for.
+    auto wait = realm->configuration().waitForDescriptor;
+    bool hostWaits = wait && *maximum && (!timePointer || timeout > 0);
+    while (hostWaits) {
+        // What the host ran meanwhile may have closed it.
+        if (self.descriptor < 0)
+            return JSValue::encode(raiseClosedKqueue(globalObject, scope));
+        struct timespec noTime { 0, 0 };
+        errno = 0;
+        count = kevent(self.descriptor, changes.span().data(), static_cast<int>(changes.size()), events.mutableSpan().data(), *maximum, &noTime);
+        // They have been made, even if it was interrupted.
+        changes.clear();
+        if (count && errno != EINTR)
+            break;
+        checkSignals(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (timePointer) {
+            timeout = timeUntil(deadline);
+            if (timeout <= 0) {
+                count = 0;
+                break;
+            }
+        }
+        wait(globalObject, self.descriptor, timePointer ? std::optional { Seconds::fromNanoseconds(static_cast<double>(timeout)) } : std::nullopt);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    while (!hostWaits) {
         errno = 0;
         count = kevent(self.descriptor, changes.span().data(), static_cast<int>(changes.size()), events.mutableSpan().data(), *maximum, timePointer);
         if (errno != EINTR)

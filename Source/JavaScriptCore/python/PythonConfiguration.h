@@ -30,6 +30,7 @@
 #include "PythonFileOperations.h"
 #include <optional>
 #include <span>
+#include <wtf/Seconds.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -91,6 +92,10 @@ struct Configuration {
     // What io.open_code() is: given the name of a file whose contents are to be run, a str, it returns a file that is open for reading bytes, or nothing, having thrown. It is for what wants a say in what is
     // run, or has it somewhere other than in a file. Null is open(path, "rb"). PyFile_SetOpenCodeHook() of CPython.
     JSValue (*openCode)(JSGlobalObject*, JSValue path) { nullptr };
+    // Waits until a descriptor can be read from, or for so long, or for less: whoever asks looks for itself afterwards, and asks again. Nothing for the time is for as long as it takes. It is where an event loop of
+    // Python's waits, `asyncio`'s among them, for what it is watching or until it has something to do. What it watches with is a descriptor that can itself be watched. So a host that has an event loop of its own
+    // watches that, and goes on with its own meanwhile, and the two are one. It may throw. Null is to wait in the system, with nothing else going on.
+    void (*waitForDescriptor)(JSGlobalObject*, int descriptor, std::optional<Seconds> timeout) { nullptr };
     // Finds the module of JavaScript's that `import name` means, the name being the whole of it, dots and all. It is asked when nothing of Python's has been found by that name. `directories` is where Python looked:
     // sys.path, or the __path__ of what the module is below, which is what the host gave for it if that is JavaScript's too. Nothing if there is none, or if it threw. Null if none can be imported.
     std::optional<JavaScriptModule> (*findJavaScriptModule)(JSGlobalObject*, const String& name, std::span<const String> directories) { nullptr };
