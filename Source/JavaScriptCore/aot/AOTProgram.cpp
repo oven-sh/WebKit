@@ -64,6 +64,25 @@ void noteFunctionsPutInVariables(UnlinkedCodeBlock* codeBlock, Vector<FunctionPu
     functionsPutInVariables().set(codeBlock, WTF::move(functions));
 }
 
+static UncheckedKeyHashMap<uint32_t, std::unique_ptr<KnownFunction>>& bodiesOfFacts()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<uint32_t, std::unique_ptr<KnownFunction>>> bodies;
+    return bodies;
+}
+
+void noteBodyOfFact(uint32_t body, const KnownFunction& known)
+{
+    // Twice: the text was copied, and there is no saying which copy is meant.
+    auto result = bodiesOfFacts().add(body, nullptr);
+    result.iterator->value = result.isNewEntry ? makeUniqueWithoutFastMallocCheck<KnownFunction>(known) : nullptr;
+}
+
+const KnownFunction* bodyOfFact(uint32_t body)
+{
+    auto it = bodiesOfFacts().find(body);
+    return it == bodiesOfFacts().end() ? nullptr : it->value.get();
+}
+
 Vector<FunctionPutInVariable> functionsPutInVariablesBy(UnlinkedCodeBlock* codeBlock)
 {
     Locker locker { s_declaredNamesLock };

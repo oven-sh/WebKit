@@ -1482,6 +1482,8 @@ inline std::optional<unsigned> ASTBuilder::soundTypeCheckMask(const Identifier& 
     if (!second || second->m_next || !second->m_expr->isNumber() || !static_cast<NumberNode*>(second->m_expr)->isIntegerNode())
         return std::nullopt;
     double mask = static_cast<NumberNode*>(second->m_expr)->value();
+    if (Options::aotFacts() && mask >= (1u << 28) && mask <= 0x7fffffff && mask == static_cast<unsigned>(mask))
+        return static_cast<unsigned>(mask);
     if (!(mask >= 1 && mask < SoundTypeMaskEnd) || mask != static_cast<unsigned>(mask) || !isValidSoundTypeMask(static_cast<unsigned>(mask)))
         return std::nullopt;
     return static_cast<unsigned>(mask);

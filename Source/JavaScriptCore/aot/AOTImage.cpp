@@ -623,6 +623,8 @@ Vector<uint8_t> ImageBuilder::finish()
             codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + stubs.bytes.size());
         }
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
+        if (Options::aotLogsFacts()) [[unlikely]]
+            dataLogLn("PLACED @", m_functions[placement.size() - 1].key.module, ":", m_functions[placement.size() - 1].key.start, ":", m_functions[placement.size() - 1].key.kind, " ", codeSize);
         codeSize += sizeWithVeneers(indexOfFunction);
     }
 

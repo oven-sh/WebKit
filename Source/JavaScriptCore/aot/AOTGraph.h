@@ -117,6 +117,31 @@ struct Use {
     Node* node { nullptr };
 };
 
+// EXPERIMENT: Options::aotFacts(). See ~/code/tmp/aot/tsfacts/tofacts.ts.
+enum : unsigned { FactField = 1, FactDirect, FactBuiltin, FactBody, FactArray, FactElement, FactWrite };
+inline bool isFact(unsigned mask) { return mask >= 1u << 28; }
+inline Type typeHeldByFact(unsigned holds)
+{
+    switch (holds) {
+    case 2:
+        return TNumber;
+    case 3:
+        return TBoolean;
+    case 4:
+        return TString;
+    case 5:
+        return TFinalObject;
+    case 6:
+        return TArray;
+    case 7:
+        return TFunction;
+    case 8:
+        return TObject | TTypedArray;
+    default:
+        return TTop;
+    }
+}
+
 struct Node {
     NodeKind kind { NodeKind::Bytecode };
     OpcodeID opcode { op_nop };
@@ -142,6 +167,9 @@ struct Node {
     bool calleeIsChecked { false };
     bool wasTakenNeverToBeReached { false }; // inferTypes(): nothing was found that it could give. For Options::aotVerifiesFacts().
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
+    uint32_t fact { 0 }; // EXPERIMENT: Options::aotFacts().
+    uint8_t iteratedFact { 0 }; // Likewise: it is an array. What an element holds, plus one.
+    bool hasFact(unsigned kind, unsigned bitOfOption) const { return fact >> 28 == kind && (Options::aotFacts() & bitOfOption); }
     bool isMadeWhenWanted { false }; // See Graph::findListsOfArguments().
     Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
     Node* otherSite { nullptr };
@@ -336,6 +364,9 @@ public:
     static bool isArrayMadeHere(const Node* node) { return node->isBytecode(op_new_array) || node->isBytecode(op_new_array_with_size); }
     // The function that the call or construction is probably of, if there is any telling.
     const KnownFunction* knownCallee(const Node*, bool* isProven = nullptr) const;
+    const KnownFunction* knownCalleeWithoutFacts(const Node*, bool* isProven) const;
+    // What is iterated by an op_iterator_open, op_iterator_next or op_iterator_close_check is an array: Node::iteratedFact. Or 0.
+    static unsigned iteratedFactOf(const Node*);
     // An op_tail_call of what the callee is proven to be, whose frame fits where this function's own is: however few arguments this
     // one was passed, there is room for as many as it has parameters. So that is where the frame is made, and where it stays: the
     // callee is passed as many as it has parameters.

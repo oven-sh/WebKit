@@ -59,6 +59,17 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
+    if (node->hasFact(FactField, 1)) {
+        LValue address = m_out.add(lowJSValue(baseNode), m_out.constIntPtr(JSObject::offsetOfInlineStorage() + 8 * (node->fact & 255)));
+        setJSValue(node, m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address)));
+        return;
+    }
+    if (node->hasFact(FactBuiltin, 8)) {
+        // The function, from where the realm would keep it.
+        LValue address = m_out.add(m_globalObject, m_out.constIntPtr(1024 + 8 * (node->fact & 1023)));
+        setJSValue(node, m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), address)));
+        return;
+    }
     setJSValue(node, getByIdCached(node, lowJSValue(baseNode), baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
 }
 
@@ -200,6 +211,21 @@ void Lowering::lowerGetByVal(Node* node)
     Node* baseNode = node->use(bytecode.m_base);
     Node* propertyNode = node->use(bytecode.m_property);
     LValue base = lowJSValue(baseNode);
+
+    if (node->hasFact(FactElement, 32)) {
+        LBasicBlock inBounds = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue index = isSubtype(propertyNode->type, TInt32) ? lowInt32(propertyNode) : unboxInt32(lowJSValue(propertyNode));
+        LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+        ValueFromBlock beyond = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
+        m_out.branch(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), usually(inBounds), rarely(continuation));
+        m_out.appendTo(inBounds, continuation);
+        ValueFromBlock element = m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index))));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, beyond, element));
+        return;
+    }
 
     if (isCompact()) {
         setJSValue(node, callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode)));

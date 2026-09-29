@@ -489,11 +489,35 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         }
     }
 
+    // EXPERIMENT: Options::aotLean().
+    bool isLean = false;
+    if (unsigned lean = Options::aotLean(); lean && unlinkedCodeBlock->codeType() == FunctionCode) {
+        isLean = (lean & 4) || ((lean & 1) && facts && facts->isClosed);
+        if (!isLean && (lean & 2)) {
+            for (const auto& instruction : unlinkedCodeBlock->instructions()) {
+                if (instruction->opcodeID() == op_check_type && instruction->as<OpCheckType>().m_mask >> 28 == FactBody) {
+                    isLean = true;
+                    break;
+                }
+            }
+        }
+    }
+    bool hasLeanEntry = isLean && (Options::aotLean() & 16);
+    bool saysNotWhichItIs = isLean && (Options::aotLean() & 32);
+
     StubCalls& stubCalls = graph.stubCalls;
     bool makesCalls = graph.makesCalls;
-    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, &graph, makesCalls](CCallHelpers& jit, B3::Air::Code& code) {
+    proc.code().setPrologueForEntrypoint(0, createSharedTask<B3::Air::PrologueGeneratorFunction>([&stubCalls, &graph, makesCalls, saysNotWhichItIs](CCallHelpers& jit, B3::Air::Code& code) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         jit.emitFunctionPrologue();
+        if (saysNotWhichItIs) {
+            if (makesCalls || code.frameSize() > 256)
+                stubCalls.call(jit, Stub::Prologue, code.frameSize());
+            else if (code.frameSize())
+                jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
+            jit.emitSave(code.calleeSaveRegisterAtOffsetList());
+            return;
+        }
         // The frame has the Instance where a CodeBlock would be, and the object that was called for a callee. Once there is known to
         // be room for the frame that is put aside, and what says which function this is takes its place. Until then nobody looks,
         // and if there is no room, whoever says so wants to know which function (generateThrowStackOverflowAtPrologue()).
@@ -547,10 +571,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     CCallHelpers jit;
     // The CodeHeader. What is in it is filled in when it is known.
     CCallHelpers::Label header = jit.label();
-    for (unsigned i = 0; i < sizeof(CodeHeader) / sizeof(uint32_t); ++i)
+    // (One word, not none: an offset of nothing says that there is no such entry.)
+    for (unsigned i = 0; i < (hasLeanEntry ? 1 : sizeof(CodeHeader) / sizeof(uint32_t)); ++i)
         jit.m_assembler.buffer().putInt(0);
     unsigned numParameters = unlinkedCodeBlock->numParameters();
-    bool checksArity = unlinkedCodeBlock->codeType() == FunctionCode && numParameters != 1;
+    bool checksArity = unlinkedCodeBlock->codeType() == FunctionCode && numParameters != 1 && !hasLeanEntry;
     CCallHelpers::Label arityCheckWithStub;
     CCallHelpers::Jump arityChecked;
     CCallHelpers::Jump arityFixed;
@@ -565,7 +590,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
     }
     CCallHelpers::Label directEntry;
     CCallHelpers::Jump directlyEntered;
-    if (usesStubs && hasDirectEntry) {
+    if (hasLeanEntry) {
+        directEntry = jit.label();
+        if (!graph.catchEntrypoints.isEmpty())
+            directlyEntered = jit.jump();
+    } else if (usesStubs && hasDirectEntry) {
         // The frame is made, with the Instance in it, and the callee is where every call has it. If the function has nothing of the
         // realm yet, it is called the way a function nobody knows anything about is, which sees to that.
         // (One that may have been called as no object at all is found by its number, which is at hand.)
@@ -658,7 +687,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const ScopeCha
         contents.calleeSlot = graph.calleeSlot ? safeCast<int16_t>(graph.calleeSlot->offsetFromFP() / static_cast<int>(sizeof(Register))) : 0;
         // (Whoever puts it in an image gives it another.)
         contents.index = ownerForLinkBuffer ? allocateFunctionIndex() : 0;
-        performJITMemcpy<jitMemcpyRepatch>(linkBuffer.locationOf<JSEntryPtrTag>(header).untaggedPtr(), &contents, sizeof(contents));
+        if (!hasLeanEntry)
+            performJITMemcpy<jitMemcpyRepatch>(linkBuffer.locationOf<JSEntryPtrTag>(header).untaggedPtr(), &contents, sizeof(contents));
     }
 
     CompiledFunctionInfo info;

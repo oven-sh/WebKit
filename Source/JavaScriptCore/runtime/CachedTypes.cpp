@@ -6175,6 +6175,31 @@ struct BytecodeLinkEncoder::Impl {
             hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, bindingsOfModule(index).span(), describe);
             hints[index]->noteFunctionsPutInVariablesBy(codeBlock, describe);
         }
+        Vector<UnlinkedCodeBlock*> bodiesOfFacts;
+        if (Options::aotFacts() & 4) {
+            unsigned bodies = 0;
+            for (auto& function : functionsToCompile) {
+                if (!function.forCall)
+                    continue;
+                for (const auto& instruction : function.forCall->instructions()) {
+                    if (instruction->opcodeID() != op_check_type || instruction->as<OpCheckType>().m_mask >> 28 != AOT::FactBody)
+                        continue;
+                    AOT::KnownFunction known;
+                    known.executable = function.executable;
+                    if (describe(function.executable, known)) {
+                        known.isProven = true;
+                        known.isDeclaration = true;
+                        known.needsNoFunctionObject = true;
+                        known.returnType = AOT::TTop;
+                        AOT::noteBodyOfFact(instruction->as<OpCheckType>().m_mask & 0xfffffff, known);
+                        bodiesOfFacts.append(function.forCall);
+                        ++bodies;
+                    }
+                    break;
+                }
+            }
+            dataLogLn("FACTS: ", bodies, " bodies say which they are");
+        }
         // (What is inside a function that has code both for a call and for `new` is there twice, and is the same both times.)
         std::set<std::tuple<uint32_t, uint32_t, uint32_t>> keys;
         for (auto& function : functionsToCompile) {
@@ -6220,6 +6245,8 @@ struct BytecodeLinkEncoder::Impl {
                     calledDirectly.add(function.forConstruct);
             });
         }
+        for (auto* body : bodiesOfFacts)
+            calledDirectly.add(body);
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: ", proven, " variables of modules are proven to hold one function, of ", variables, " that the bundler tells of or that are given one");
 
@@ -6575,6 +6602,10 @@ struct BytecodeLinkEncoder::Impl {
                         bool isTopLevel = !(jobs[index].rank & 2);
                         bool startIsKnown = isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody;
                         AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? modules[jobs[index].module].source.provider()->source() : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
+                    }
+                    if (Options::aotLogsFacts()) [[unlikely]] {
+                        auto* executable = jobs[index].executableForStatistics;
+                        dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
                     }
                     if (Options::aotReportStats()) [[unlikely]] {
                         // TEMPORARY-IMAGE-STATS: whose the code is.
