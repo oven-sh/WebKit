@@ -1045,6 +1045,8 @@ public:
     Structure* nativeStdFunctionStructure() const { return m_nativeStdFunctionStructure.get(this); }
     // Python's built-in types and modules. See python/README.md.
     PyRealm* pyRealm() const { return m_pyRealm.get(this); }
+    // Null if Python has not been used here. It is for what is done for every program, most of which have no Python in them.
+    PyRealm* pyRealmIfExists() const { return m_pyRealm.isInitialized() ? m_pyRealm.get(this) : nullptr; }
     Structure* numberObjectStructure() const { return m_numberObjectStructure.get(this); }
     Structure* regExpStructure() const { return m_regExpStructure.get(); }
     Structure* shadowRealmStructure() const { return m_shadowRealmObjectStructure.get(); }

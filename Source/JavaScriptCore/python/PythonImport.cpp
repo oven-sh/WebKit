@@ -960,8 +960,7 @@ FrozenStatus findFrozen(JSGlobalObject* globalObject, JSValue name, FrozenInfo& 
     info.originalName = module->originalName.isNull() ? String(module->name) : String(module->originalName);
     if (!module->source.data())
         return FrozenStatus::Excluded;
-    if (module->source.empty())
-        return FrozenStatus::Invalid;
+    // What CPython has here is code that has been compiled, of which there cannot be none. This is source, and a file with nothing in it is a module.
     return FrozenStatus::Okay;
 }
 

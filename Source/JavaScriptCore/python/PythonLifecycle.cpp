@@ -355,11 +355,17 @@ static int printExceptionAndGetStatus(JSGlobalObject* globalObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue value = scope.exception()->value();
     scope.clearException();
+    importState(globalObject).mainHasRaised = true;
     int status = 1;
     if (handleSystemExit(globalObject, value, status))
         return status;
     reportUncaughtException(globalObject, value);
     return 1;
+}
+
+bool mainHasRaised(JSGlobalObject* globalObject)
+{
+    return importState(globalObject).mainHasRaised;
 }
 
 // Py_ExitStatusException(), and so fatal_error(), of what stopped Python from starting. What CPython says of this it says of a process that it is about to end.
@@ -465,6 +471,7 @@ int runMain(JSGlobalObject* globalObject, std::span<const uint8_t> bytes, const 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     importState(globalObject).hasUnhandledKeyboardInterrupt = false;
+    importState(globalObject).mainHasRaised = false;
     startPython(globalObject);
     if (scope.exception()) {
         return reportThatPythonCouldNotStart(globalObject);
@@ -838,6 +845,7 @@ int runMain(JSGlobalObject* globalObject)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
     importState(globalObject).hasUnhandledKeyboardInterrupt = false;
+    importState(globalObject).mainHasRaised = false;
     startPython(globalObject);
     if (scope.exception()) {
         return reportThatPythonCouldNotStart(globalObject);
@@ -958,7 +966,7 @@ bool finalizePython(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    if (!importState(globalObject).isStarted)
+    if (!globalObject->pyRealmIfExists() || !importState(globalObject).isStarted)
         return true;
 
     // wait_for_thread_shutdown()
@@ -997,7 +1005,7 @@ int finalizeMain(JSGlobalObject* globalObject, int status)
 {
     if (!finalizePython(globalObject))
         status = 120;
-    if (importState(globalObject).hasUnhandledKeyboardInterrupt)
+    if (globalObject->pyRealmIfExists() && importState(globalObject).hasUnhandledKeyboardInterrupt)
         status = exitByInterrupt();
     return status;
 }

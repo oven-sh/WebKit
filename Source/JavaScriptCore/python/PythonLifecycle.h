@@ -45,6 +45,9 @@ JS_EXPORT_PRIVATE int runMain(JSGlobalObject*, std::span<const uint8_t>, const S
 
 // The same, for what `python` was started with, which readCommandLine() has read: whichever of a command, a module, a file, or what comes in on the standard input it says to run. pymain_run_python() of CPython.
 JS_EXPORT_PRIVATE int runMain(JSGlobalObject*);
+// Whether what runMain() ran ended by raising something that nothing caught, SystemExit among them, and not by being run to its end. It is over then, as a program that is JavaScript's is after process.exit() or an
+// exception that nothing catches, whatever it has left for later. One that was run to its end is over when the host has nothing left to do for it.
+JS_EXPORT_PRIVATE bool mainHasRaised(JSGlobalObject*);
 // _PyRun_InteractiveLoop(): statements are read from the standard input, with a prompt for each, and run, until there are no more. What one of them raises is shown, and the next is read. It throws only if it is SystemExit, or
 // if there is no going on.
 void runInteractiveLoop(JSGlobalObject*);
