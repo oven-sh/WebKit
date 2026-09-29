@@ -768,6 +768,7 @@ python/PythonCodecsBytewise.cpp
 python/PythonCodecsModule.cpp
 python/PythonCodecsUTF.cpp
 python/PythonCommonNames.cpp
+python/PythonCollections.cpp
 python/PythonCompiler.cpp
 python/PythonComplex.cpp
 python/PythonContainerTypes.cpp

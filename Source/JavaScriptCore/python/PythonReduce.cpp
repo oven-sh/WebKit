@@ -128,7 +128,7 @@ static JSValue defaultState(JSGlobalObject* globalObject, JSValue object, bool r
     return PyTuple::create(globalObject, { state, slots });
 }
 
-static JSValue stateOf(JSGlobalObject* globalObject, JSValue object, bool required)
+static JSValue stateOfObject(JSGlobalObject* globalObject, JSValue object, bool required)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -138,6 +138,11 @@ static JSValue stateOf(JSGlobalObject* globalObject, JSValue object, bool requir
     if (auto* method = tryBoundMethod(getState); method && method->self() == object && method->function() == JSValue(globalObject->pyRealm()->function(Function::ObjectGetState)))
         RELEASE_AND_RETURN(scope, defaultState(globalObject, object, required));
     RELEASE_AND_RETURN(scope, call(globalObject, getState));
+}
+
+JSValue getObjectState(JSGlobalObject* globalObject, JSValue object)
+{
+    return stateOfObject(globalObject, object, false);
 }
 
 // What the class is to be called with to make another: __getnewargs_ex__(), or failing that __getnewargs__(). Both are empty if it has neither.
@@ -208,7 +213,7 @@ static JSValue reduceToNewObject(JSGlobalObject* globalObject, JSValue object)
         newArguments = PyTuple::create(globalObject, { type->object(), arguments, keywords });
     }
 
-    JSValue state = stateOf(globalObject, object, !(arguments || isList(object) || isDict(object)));
+    JSValue state = stateOfObject(globalObject, object, !(arguments || isList(object) || isDict(object)));
     RETURN_IF_EXCEPTION(scope, { });
     JSValue listItems = jsUndefined();
     if (isList(object)) {
@@ -528,7 +533,7 @@ PYTHON_NATIVE(setReduce)
     NATIVE_PROLOGUE();
     JSValue keys = listFromIterable(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    JSValue state = stateOf(globalObject, args[0], false);
+    JSValue state = stateOfObject(globalObject, args[0], false);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyTuple::create(globalObject, { typeOf(globalObject, args[0])->object(), PyTuple::create(globalObject, { keys }), state }));
 }
@@ -555,7 +560,7 @@ PYTHON_NATIVE(byteArrayReduce)
             protocol = *index;
         }
     }
-    JSValue state = stateOf(globalObject, args[0], false);
+    JSValue state = stateOfObject(globalObject, args[0], false);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue type = typeOf(globalObject, args[0])->object();
     auto content = uncheckedDowncast<JSUint8Array>(args[0].asCell())->typedSpan();

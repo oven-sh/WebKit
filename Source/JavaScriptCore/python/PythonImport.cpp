@@ -245,6 +245,7 @@ static void removeModule(JSGlobalObject* globalObject, JSValue name)
 static constexpr BuiltinModule s_builtinModules[] = {
     { "_ast"_s, createASTModule },
     { "_codecs"_s, createCodecsModule },
+    { "_collections"_s, createCollectionsModule },
     { "_contextvars"_s, createContextVarsModule },
     { "_frame"_s, createFrameModule },
     { "_imp"_s, createImpModule },

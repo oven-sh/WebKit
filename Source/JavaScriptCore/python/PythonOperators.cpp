@@ -68,7 +68,10 @@ static bool isNotImplemented(JSGlobalObject* globalObject, JSValue value)
 // Whether it is what a literal or a built-in function makes, and not an instance of some class derived from that.
 static bool isExact(JSGlobalObject* globalObject, JSValue value)
 {
-    return !value.isObject() || !typeOf(globalObject, value)->hasFlag(PyType::IsHeapType);
+    if (!value.isObject())
+        return true;
+    PyType* type = typeOf(globalObject, value);
+    return !type->hasFlag(PyType::IsHeapType) && !type->hasFlag(PyType::IsDerivedFromBuiltin);
 }
 
 // ---- Binary operators
@@ -239,7 +242,9 @@ bool isSequenceSlot(JSGlobalObject* globalObject, JSValue method)
         return false;
     PyRealm* realm = globalObject->pyRealm();
     JSObject* owner = native->owner();
-    return owner == realm->typeStr() || owner == realm->typeList() || owner == realm->typeTuple() || owner == realm->typeBytes() || owner == realm->typeByteArray() || owner == realm->typeTemplate();
+    if (owner == realm->typeStr() || owner == realm->typeList() || owner == realm->typeTuple() || owner == realm->typeBytes() || owner == realm->typeByteArray() || owner == realm->typeTemplate())
+        return true;
+    return isClass(owner) && asType(owner)->hasFlag(PyType::AddsAsSequence);
 }
 
 // A class that is derived from a built-in sequence still has what that has, whatever it has by the same name for itself.
@@ -1581,6 +1586,25 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
     }
 }
 
+// What PyObject_GetItem(), PyObject_SetItem() and PyObject_DelItem() do with the key for a class that has sq_item and no mp_subscript, before it gets as far as the class. It goes by whose method was found, so a
+// class derived from such a one is the same until it has a method of its own. Empty if it raised.
+static JSValue keyForMethod(JSGlobalObject* globalObject, JSValue method, JSValue key)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* native = method.isCell() ? dynamicDowncast<PyNativeFunction>(method.asCell()) : nullptr;
+    if (!native || !native->owner() || !isClass(native->owner()) || !asType(native->owner())->hasFlag(PyType::IsSubscriptedAsSequence)) [[likely]]
+        return key;
+    if (!classify(key).isInt() && !typeOf(globalObject, key)->lookup(vm, vm.pythonNames().dunder_index))
+        return raiseTypeError(globalObject, scope, concatenate("sequence index must be integer, not '"_s, typeName(globalObject, key), '\''));
+    // PyNumber_AsSsize_t(key, PyExc_IndexError)
+    JSValue index = toInt(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!tryInt64(index))
+        return raise(globalObject, scope, BuiltinType::IndexError, concatenate("cannot fit '"_s, typeName(globalObject, key), "' into an index-sized integer"_s));
+    return index;
+}
+
 JSValue getItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
 {
     VM& vm = globalObject->vm();
@@ -1597,8 +1621,11 @@ JSValue getItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
     JSValue self;
     JSValue method = lookupSpecial(globalObject, base, names.dunder_getitem, self);
     RETURN_IF_EXCEPTION(scope, { });
-    if (method)
+    if (method) {
+        key = keyForMethod(globalObject, method, key);
+        RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, callMethod(globalObject, method, self, key));
+    }
 
     if (isClass(base)) {
         // type[int], which is not to make every class that has type for its class generic.
@@ -1706,6 +1733,8 @@ static void setOrDeleteItem(JSGlobalObject* globalObject, JSValue base, JSValue 
     JSValue method = lookupSpecial(globalObject, base, value ? names.dunder_setitem : names.dunder_delitem, self);
     RETURN_IF_EXCEPTION(scope, void());
     if (method) {
+        key = keyForMethod(globalObject, method, key);
+        RETURN_IF_EXCEPTION(scope, void());
         scope.release();
         if (value)
             callMethod(globalObject, method, self, key, value);

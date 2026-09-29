@@ -224,18 +224,6 @@ PYTHON_NATIVE(iteratorReduce)
     }
 }
 
-// PyLong_AsSsize_t()
-static std::optional<int64_t> toSize(JSGlobalObject* globalObject, JSValue value)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!isInstance(globalObject, value, globalObject->pyRealm()->typeInt())) {
-        raiseTypeError(globalObject, scope, "an integer is required"_s);
-        return std::nullopt;
-    }
-    RELEASE_AND_RETURN(scope, toSsize(globalObject, value));
-}
-
 PYTHON_NATIVE(iteratorSetState)
 {
     NATIVE_PROLOGUE();
@@ -275,7 +263,7 @@ PYTHON_NATIVE(iteratorSetState)
         break;
     }
 
-    auto index = toSize(globalObject, state);
+    auto index = toSsizeOfInt(globalObject, state);
     RETURN_IF_EXCEPTION(scope, { });
     // One that has run out stays that way.
     if (!iterator->a())

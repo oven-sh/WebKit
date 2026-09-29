@@ -76,6 +76,12 @@ public:
         HasWeakReferences = 1 << 13, // There can be weak references to its instances.
         MayHaveForeignDict = 1 << 14, // Some instance has been given a __dict__ that is another object's too. See attributeStorage().
         IsJavaScript = 1 << 15, // JavaScript made it, and everything that it is derived from. So the attributes of an instance are its properties, as JavaScript finds them.
+        // What it has for __getitem__ and the like is written in C++ and is what CPython has as sq_item and sq_ass_item, with nothing for a mapping. So x[key] takes a place in a sequence and nothing else.
+        IsSubscriptedAsSequence = 1 << 16,
+        // It is written in C++ and derived from a class, such as dict, that the operators know how to do things with without asking. They ask this one, as they do a class that a program has derived.
+        IsDerivedFromBuiltin = 1 << 17,
+        // What it has for __add__ and __mul__ is written in C++ and is what CPython has as sq_concat and sq_repeat, with nothing for a number. See isSequenceSlot().
+        AddsAsSequence = 1 << 18,
 
         // What follows depends on the attributes of the class and of its bases, which can be set at any time. See hooks().
         HasCustomGetAttribute = 1 << 8, // __getattribute__ is not object's or type's.

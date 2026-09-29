@@ -521,6 +521,7 @@ inline double multiplyAdd(double a, double b, double c)
 JSValue intFromInt64(JSGlobalObject*, int64_t);
 JSValue intFromUInt64(JSGlobalObject*, uint64_t);
 bool isNumber(JSGlobalObject*, JSValue); // PyNumber_Check()
+std::optional<int64_t> toSsizeOfInt(JSGlobalObject*, JSValue); // PyLong_AsSsize_t(), which takes an int and nothing that could be made one. Nothing if it raised.
 // The "i" of PyArg_ParseTuple(). Nothing if it raised.
 std::optional<int> toCIntOfFormat(JSGlobalObject*, JSValue);
 // PyLong_AsUnsignedLongLongMask(): what an int has in its low 64 bits, whatever else it has.

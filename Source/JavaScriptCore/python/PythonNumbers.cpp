@@ -88,6 +88,16 @@ bool isNumber(JSGlobalObject* globalObject, JSValue value)
     return type->lookup(vm, names.dunder_index) || type->lookup(vm, names.dunder_int) || type->lookup(vm, names.dunder_float) || type->isSubtypeOf(globalObject->pyRealm()->typeComplex());
 }
 
+std::optional<int64_t> toSsizeOfInt(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!isInstance(globalObject, value, globalObject->pyRealm()->typeInt())) {
+        raiseTypeError(globalObject, scope, "an integer is required"_s);
+        return std::nullopt;
+    }
+    RELEASE_AND_RETURN(scope, toSsize(globalObject, value));
+}
+
 std::optional<int> toCIntOfFormat(JSGlobalObject* globalObject, JSValue value)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

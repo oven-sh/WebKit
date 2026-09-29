@@ -1,0 +1,334 @@
+---- what there is
+the module => ('_collections', '', 'BuiltinImporter', ['_count_elements', '_deque_iterator', '_deque_reverse_iterator', '_tuplegetter', 'defaultdict', 'deque'], 'High performance data structures.\n- deque:        ordered collection accessible from endpoints only\n- defaultdict:  dict subclass with a default value factory\n')
+deque => ('collections', 'deque', ['deque', 'object'], ['__add__', '__class_getitem__', '__contains__', '__copy__', '__delitem__', '__doc__', '__eq__', '__ge__', '__getattribute__', '__getitem__', '__gt__', '__hash__', '__iadd__', '__imul__', '__init__', '__iter__', '__le__', '__len__', '__lt__', '__module__', '__mul__', '__ne__', '__new__', '__reduce__', '__repr__', '__reversed__', '__rmul__', '__setitem__', '__sizeof__', 'append', 'appendleft', 'clear', 'copy', 'count', 'extend', 'extendleft', 'index', 'insert', 'maxlen', 'pop', 'popleft', 'remove', 'reverse', 'rotate'], '([iterable[, maxlen]])', 216, 0, 0, True, True, True, True, False, "<class 'collections.deque'>")
+its doc => A list-like sequence optimized for data accesses near its endpoints.
+deque.__add__ => ('wrapper_descriptor', '($self, value, /)', 'Return self+value.')
+deque.__class_getitem__ => ('classmethod_descriptor', '($type, object, /)', 'deques are generic over the type of their contents')
+deque.__contains__ => ('wrapper_descriptor', '($self, key, /)', 'Return bool(key in self).')
+deque.__copy__ => ('method_descriptor', '($self, /)', 'Return a shallow copy of a deque.')
+deque.__delitem__ => ('wrapper_descriptor', '($self, key, /)', 'Delete self[key].')
+deque.__eq__ => ('wrapper_descriptor', '($self, value, /)', 'Return self==value.')
+deque.__ge__ => ('wrapper_descriptor', '($self, value, /)', 'Return self>=value.')
+deque.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+deque.__getitem__ => ('wrapper_descriptor', '($self, key, /)', 'Return self[key].')
+deque.__gt__ => ('wrapper_descriptor', '($self, value, /)', 'Return self>value.')
+deque.__iadd__ => ('wrapper_descriptor', '($self, value, /)', 'Implement self+=value.')
+deque.__imul__ => ('wrapper_descriptor', '($self, value, /)', 'Implement self*=value.')
+deque.__init__ => ('wrapper_descriptor', '($self, /, *args, **kwargs)', 'Initialize self.  See help(type(self)) for accurate signature.')
+deque.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+deque.__le__ => ('wrapper_descriptor', '($self, value, /)', 'Return self<=value.')
+deque.__len__ => ('wrapper_descriptor', '($self, /)', 'Return len(self).')
+deque.__lt__ => ('wrapper_descriptor', '($self, value, /)', 'Return self<value.')
+deque.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+deque.__mul__ => ('wrapper_descriptor', '($self, value, /)', 'Return self*value.')
+deque.__ne__ => ('wrapper_descriptor', '($self, value, /)', 'Return self!=value.')
+deque.__reduce__ => ('method_descriptor', '($self, /)', 'Return state information for pickling.')
+deque.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+deque.__reversed__ => ('method_descriptor', '($self, /)', 'Return a reverse iterator over the deque.')
+deque.__rmul__ => ('wrapper_descriptor', '($self, value, /)', 'Return value*self.')
+deque.__setitem__ => ('wrapper_descriptor', '($self, key, value, /)', 'Set self[key] to value.')
+deque.__sizeof__ => ('method_descriptor', '($self, /)', 'Return the size of the deque in memory, in bytes.')
+deque.append => ('method_descriptor', '($self, item, /)', 'Add an element to the right side of the deque.')
+deque.appendleft => ('method_descriptor', '($self, item, /)', 'Add an element to the left side of the deque.')
+deque.clear => ('method_descriptor', '($self, /)', 'Remove all elements from the deque.')
+deque.copy => ('method_descriptor', '($self, /)', 'Return a shallow copy of a deque.')
+deque.count => ('method_descriptor', '($self, value, /)', 'Return number of occurrences of value.')
+deque.extend => ('method_descriptor', '($self, iterable, /)', 'Extend the right side of the deque with elements from the iterable.')
+deque.extendleft => ('method_descriptor', '($self, iterable, /)', 'Extend the left side of the deque with elements from the iterable.')
+deque.index => ('method_descriptor', '($self, value, [start, [stop]])', 'Return first index of value.\n\nRaises ValueError if the value is not present.')
+deque.insert => ('method_descriptor', '($self, index, value, /)', 'Insert value before index.')
+deque.maxlen => ('getset_descriptor', None, 'maximum size of a deque or None if unbounded')
+deque.pop => ('method_descriptor', '($self, /)', 'Remove and return the rightmost element.')
+deque.popleft => ('method_descriptor', '($self, /)', 'Remove and return the leftmost element.')
+deque.remove => ('method_descriptor', '($self, value, /)', 'Remove first occurrence of value.')
+deque.reverse => ('method_descriptor', '($self, /)', 'Reverse *IN PLACE*.')
+deque.rotate => ('method_descriptor', '($self, n=1, /)', 'Rotate the deque n steps to the right.  If n is negative, rotates left.')
+defaultdict => ('collections', 'defaultdict', ['defaultdict', 'dict', 'object'], ['__class_getitem__', '__copy__', '__doc__', '__getattribute__', '__init__', '__missing__', '__module__', '__or__', '__reduce__', '__repr__', '__ror__', 'copy', 'default_factory'], None, 56, 0, 0, False, True, True, False, True, "<class 'collections.defaultdict'>")
+its doc => defaultdict(default_factory=None, /, [...]) --> dict with default factory
+
+The default factory is called without arguments to produce
+a new value when a key is not present, in __getitem__ only.
+A defaultdict compares equal to a dict with the same items.
+All remaining arguments are treated the same as if they were
+passed to the dict constructor, including keyword arguments.
+
+defaultdict.__class_getitem__ => ('classmethod_descriptor', '($type, object, /)', "defaultdicts are generic over two types, signifying (respectively) the types of the dictionary's keys and values")
+defaultdict.__copy__ => ('method_descriptor', '($self, /)', 'D.copy() -> a shallow copy of D.')
+defaultdict.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+defaultdict.__init__ => ('wrapper_descriptor', '($self, /, *args, **kwargs)', 'Initialize self.  See help(type(self)) for accurate signature.')
+defaultdict.__missing__ => ('method_descriptor', '($self, object, /)', '__missing__(key) # Called by __getitem__ for missing key; pseudo-code:\n  if self.default_factory is None: raise KeyError((key,))\n  self[key] = value = self.default_factory()\n  return value\n')
+defaultdict.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+defaultdict.__or__ => ('wrapper_descriptor', '($self, value, /)', 'Return self|value.')
+defaultdict.__reduce__ => ('method_descriptor', '($self, /)', 'Return state information for pickling.')
+defaultdict.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+defaultdict.__ror__ => ('wrapper_descriptor', '($self, value, /)', 'Return value|self.')
+defaultdict.copy => ('method_descriptor', '($self, /)', 'D.copy() -> a shallow copy of D.')
+defaultdict.default_factory => ('member_descriptor', None, 'Factory for default value called by __missing__().')
+_deque_iterator => ('collections', '_deque_iterator', ['_deque_iterator', 'object'], ['__doc__', '__getattribute__', '__iter__', '__length_hint__', '__module__', '__new__', '__next__', '__reduce__'], None, 56, 0, 0, False, False, True, False, False, "<class 'collections._deque_iterator'>")
+its doc => None
+_deque_iterator.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+_deque_iterator.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+_deque_iterator.__length_hint__ => ('method_descriptor', '($self, /)', 'Private method returning an estimate of len(list(it)).')
+_deque_iterator.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+_deque_iterator.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+_deque_iterator.__reduce__ => ('method_descriptor', '($self, /)', 'Return state information for pickling.')
+_deque_reverse_iterator => ('collections', '_deque_reverse_iterator', ['_deque_reverse_iterator', 'object'], ['__doc__', '__getattribute__', '__iter__', '__length_hint__', '__module__', '__new__', '__next__', '__reduce__'], None, 56, 0, 0, False, False, True, False, False, "<class 'collections._deque_reverse_iterator'>")
+its doc => None
+_deque_reverse_iterator.__getattribute__ => ('wrapper_descriptor', '($self, name, /)', 'Return getattr(self, name).')
+_deque_reverse_iterator.__iter__ => ('wrapper_descriptor', '($self, /)', 'Implement iter(self).')
+_deque_reverse_iterator.__length_hint__ => ('method_descriptor', '($self, /)', 'Private method returning an estimate of len(list(it)).')
+_deque_reverse_iterator.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+_deque_reverse_iterator.__next__ => ('wrapper_descriptor', '($self, /)', 'Implement next(self).')
+_deque_reverse_iterator.__reduce__ => ('method_descriptor', '($self, /)', 'Return state information for pickling.')
+_tuplegetter => ('collections', '_tuplegetter', ['_tuplegetter', 'object'], ['__delete__', '__doc__', '__get__', '__module__', '__new__', '__reduce__', '__repr__', '__set__'], None, 32, 0, 0, False, False, True, False, False, "<class 'collections._tuplegetter'>")
+its doc => member_descriptor
+_tuplegetter.__delete__ => ('wrapper_descriptor', '($self, instance, /)', 'Delete an attribute of instance.')
+_tuplegetter.__get__ => ('wrapper_descriptor', '($self, instance, owner=None, /)', 'Return an attribute of instance, which is of type owner.')
+_tuplegetter.__module__ => ('str', None, "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.")
+_tuplegetter.__reduce__ => ('method_descriptor', '($self, /)', None)
+_tuplegetter.__repr__ => ('wrapper_descriptor', '($self, /)', 'Return repr(self).')
+_tuplegetter.__set__ => ('wrapper_descriptor', '($self, instance, value, /)', 'Set an attribute of instance to value.')
+_count_elements => ('builtin_function_or_method', '($module, mapping, iterable, /)', 'Count elements in the iterable, updating the mapping', '_collections')
+---- deque
+made => (deque([]), deque(['a', 'b', 'c']), deque([1, 2]), deque([0, 1, 2]), deque(['b', 'c'], maxlen=2), deque([], maxlen=0), deque(['a', 'b', 'c']), deque(['a', 'b', 'c'], maxlen=5), deque(['a', 'b']), deque([], maxlen=3), deque(['c', 'd'], maxlen=2), deque(['a', 'b']), deque([1]), deque(['a', 'b']), deque(['c'], maxlen=1))
+deque(*(5,), **{}) => TypeError: 'int' object is not iterable
+deque(*(None,), **{}) => TypeError: 'NoneType' object is not iterable
+deque(*('ab', -1), **{}) => ValueError: maxlen must be non-negative
+deque(*('ab', 1.5), **{}) => TypeError: an integer is required
+deque(*('ab', 'x'), **{}) => TypeError: an integer is required
+deque(*('ab', 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+deque(*('ab', 9223372036854775807), **{}) => deque(['a', 'b'], maxlen=9223372036854775807)
+deque(*('ab', 1, 2), **{}) => TypeError: deque() takes at most 2 arguments (3 given)
+deque(*('ab',), **{'other': 1}) => TypeError: deque() got an unexpected keyword argument 'other'
+deque(*('ab',), **{'iterable': 'c'}) => TypeError: argument for deque() given by name ('iterable') and position (1)
+deque(*(), **{'maxlen': -1}) => ValueError: maxlen must be non-negative
+deque(*('ab', [1]), **{}) => TypeError: an integer is required
+maxlen => (None, 3, 0, None, "AttributeError: attribute 'maxlen' of 'collections.deque' objects is not writable", "AttributeError: attribute 'maxlen' of 'collections.deque' objects is not writable")
+both ends => [(None, None, None, deque([]), 2, 0, deque([]), 1, deque([]), 'IndexError: pop from an empty deque', 'IndexError: pop from an empty deque')]
+with a limit => [(None, [2, 3, 4], None, [0, 2, 3], None, [3, 'x', 'y'], None, ['q', 'p', 3])]
+with room for nothing => [(None, None, None, None, [], 0, 'IndexError: deque already at its maximum size', 'IndexError: pop from an empty deque')]
+extend => [(None, ['a', 'b', 'c', 'd'], None, ['y', 'x', 'a', 'b', 'c', 'd'], None, ['y', 'x', 'a', 'b', 'c', 'd', 'y', 'x', 'a', 'b', 'c', 'd'], None, ['d', 'c', 'b', 'a', 'x', 'y', 'd', 'c', 'b', 'a', 'x', 'y', 'y', 'x', 'a', 'b', 'c', 'd', 'y', 'x', 'a', 'b', 'c', 'd'], None, None, 25)]
+extend with what fails => [("TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", 'ZeroDivisionError: division by zero', ['a', 1.0], 'ZeroDivisionError: division by zero', [0.5, 'a', 1.0])]
+what is gone through when there is room for nothing => [(None, ['a', 'b', 'c'])]
+len and truth => (0, 3, False, True, 1000)
+items => [('a', 'b', 'd', 'a', 'd', 'IndexError: deque index out of range', 'IndexError: deque index out of range', 'b')]
+d[slice(1, 2, None)] => ("TypeError: sequence index must be integer, not 'slice'", "TypeError: 'slice' object cannot be interpreted as an integer", "TypeError: 'slice' object cannot be interpreted as an integer", "TypeError: 'slice' object cannot be interpreted as an integer", "TypeError: sequence index must be integer, not 'slice'", "TypeError: sequence index must be integer, not 'slice'")
+d[slice(None, None, None)] => ("TypeError: sequence index must be integer, not 'slice'", "TypeError: 'slice' object cannot be interpreted as an integer", "TypeError: 'slice' object cannot be interpreted as an integer", "TypeError: 'slice' object cannot be interpreted as an integer", "TypeError: sequence index must be integer, not 'slice'", "TypeError: sequence index must be integer, not 'slice'")
+d['a'] => ("TypeError: sequence index must be integer, not 'str'", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: sequence index must be integer, not 'str'", "TypeError: sequence index must be integer, not 'str'")
+d[1.5] => ("TypeError: sequence index must be integer, not 'float'", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: sequence index must be integer, not 'float'", "TypeError: sequence index must be integer, not 'float'")
+d[None] => ("TypeError: sequence index must be integer, not 'NoneType'", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: sequence index must be integer, not 'NoneType'", "TypeError: sequence index must be integer, not 'NoneType'")
+d[(1,)] => ("TypeError: sequence index must be integer, not 'tuple'", "TypeError: 'tuple' object cannot be interpreted as an integer", "TypeError: 'tuple' object cannot be interpreted as an integer", "TypeError: 'tuple' object cannot be interpreted as an integer", "TypeError: sequence index must be integer, not 'tuple'", "TypeError: sequence index must be integer, not 'tuple'")
+d[9223372036854775808] => ("IndexError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "IndexError: cannot fit 'int' into an index-sized integer", "IndexError: cannot fit 'int' into an index-sized integer")
+d[-9223372036854775809] => ("IndexError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "IndexError: cannot fit 'int' into an index-sized integer", "IndexError: cannot fit 'int' into an index-sized integer")
+d[1267650600228229401496703205376] => ("IndexError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "OverflowError: cannot fit 'int' into an index-sized integer", "IndexError: cannot fit 'int' into an index-sized integer", "IndexError: cannot fit 'int' into an index-sized integer")
+with __index__ => [('b', 'd', None, None, ['z', 'c', 'd'], None, ['d', 'z', 'c'], None, ['d', 'i', 'z', 'c'], ['d', 'i', 'z', 'c', 'd', 'i', 'z', 'c'])]
+set and delete => [(None, None, ['A', 'b', 'c', 'D'], None, ['A', 'c', 'D'], None, ['A', 'c'], 'IndexError: deque index out of range', 'IndexError: deque index out of range', 'IndexError: deque index out of range')]
+in => (True, False, False, True, True)
+count and index => [(2, 0, 0, 0, 1, 3, 3, 3, 'ValueError: deque.index(x): x not in deque', 'ValueError: deque.index(x): x not in deque', 'ValueError: deque.index(x): x not in deque', 0, 0, 'ValueError: deque.index(x): x not in deque', 0, 'ValueError: deque.index(x): x not in deque')]
+index() => TypeError: index expected at least 1 argument, got 0
+index('a', 'x') => TypeError: slice indices must be integers or have an __index__ method
+index('a', None) => TypeError: slice indices must be integers or have an __index__ method
+index('a', 0, None) => TypeError: slice indices must be integers or have an __index__ method
+index('a', 1.5) => TypeError: slice indices must be integers or have an __index__ method
+index('a', 0, 1, 2) => TypeError: index expected at most 3 arguments, got 4
+index('a', 'Index') => 3
+insert => ['Xabcd', 'aXbcd', 'abXcd', 'abcXd', 'abcdX', 'abcdX', 'abcdX', 'abcXd', 'abXcd', 'aXbcd', 'Xabcd', 'Xabcd', 'Xabcd']
+insert into one that is full => [('IndexError: deque already at its maximum size', ['a', 'b', 'c'], 'c', None, ['a', 'X', 'b'])]
+remove => [(None, ['a', 'c', 'a'], None, ['c', 'a'], 'ValueError: deque.remove(x): x not in deque', None, None, [], 'ValueError: deque.remove(x): x not in deque')]
+rotate => ['abcde', 'eabcd', 'deabc', 'cdeab', 'bcdea', 'abcde', 'eabcd', 'deabc', 'bcdea', 'cdeab', 'abcde', 'bcdea', 'abcde', 'abcde', 'bcdea', 'eabcd']
+rotate() => [(None, 'cab', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C ssize_t', 'TypeError: rotate expected at most 1 argument, got 2', 'TypeError: deque.rotate() takes no keyword arguments')]
+rotate of little => [(None, []), (None, ['a']), (None, ['b', 'a'])]
+reverse => ['', 'a', 'ba', 'cba', 'dcba', 'edcba']
+reversed => (['c', 'b', 'a'], [], '_deque_reverse_iterator', ['c', 'b', 'a'])
+clear => [(None, [], 0, 5, None, [1], None, None)]
+copy => [(deque(['a', 'b', 'c'], maxlen=5), False, True, 5, None, ['a', 'b', 'c'], deque(['a', 'b', 'c', 'z'], maxlen=5), 'deque')]
++ => (deque(['a', 'b', 'c', 'd']), deque(['b', 'c', 'd'], maxlen=3), deque(['a', 'b', 'd']), 3, deque([]), 'TypeError: can only concatenate deque (not "str") to deque', 'TypeError: can only concatenate deque (not "list") to deque', 'TypeError: can only concatenate list (not "collections.deque") to list', 'TypeError: can only concatenate deque (not "NoneType") to deque')
++= => [(True, ['a', 'b', 'c', 'd'], True, ['a', 'b', 'c', 'd', 'a', 'b', 'c', 'd'], "TypeError: 'int' object is not iterable")]
+* => (deque(['a', 'b', 'a', 'b']), deque([]), deque([]), deque(['a', 'b']), deque(['a', 'a', 'a']), deque([]), deque(['b', 'a', 'b'], maxlen=3), deque(['b', 'a', 'b'], maxlen=3), deque(['a', 'a', 'a'], maxlen=3), 3, deque(['a', 'b', 'c']), "TypeError: can't multiply sequence by non-int of type 'str'", "TypeError: can't multiply sequence by non-int of type 'float'", "TypeError: can't multiply sequence by non-int of type 'collections.deque'", "OverflowError: cannot fit 'int' into an index-sized integer", 'MemoryError: ')
+by way of the methods => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'TypeError: can only concatenate deque (not "str") to deque', "OverflowError: cannot fit 'int' into an index-sized integer", "TypeError: can't multiply sequence by non-int of type 'collections.deque'", "TypeError: can't multiply sequence by non-int of type 'float'", "TypeError: can't multiply sequence by non-int of type 'str'", "TypeError: 'int' object is not iterable", "TypeError: unsupported operand type(s) for -: 'collections.deque' and 'collections.deque'", "TypeError: unsupported operand type(s) for @: 'collections.deque' and 'int'")
+*= => [(True, ['a', 'b', 'a', 'b'], True, True, []), [(deque(['a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a'], maxlen=70), 70, 70)], [(deque(['a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a', 'a']), 200)], [(deque(['c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c', 'a', 'b', 'c'], maxlen=100), 100, 'cabc')]]
+repr => ('deque([])', "deque(['a', 'b'])", "deque(['a', 'b'], maxlen=5)", 'deque([], maxlen=0)', "deque([1, 'a'])", "deque([deque(['a'])])")
+of itself => [(None, "deque(['a', [...]])", None, "deque(['a', [...], [[...]]])")]
+it cannot be hashed => ("TypeError: unhashable type: 'collections.deque'", None, "TypeError: cannot use 'collections.deque' as a dict key (unhashable type: 'collections.deque')")
+__eq__ => [[True, False, False, False, False], [False, True, False, False, False], [False, False, True, False, True], [False, False, False, True, False], [False, False, True, False, True]]
+__eq__ with something else => (NotImplemented, NotImplemented, NotImplemented, "TypeError: descriptor '__eq__' requires a 'collections.deque' object but received a 'int'")
+__ne__ => [[False, True, True, True, True], [True, False, True, True, True], [True, True, False, True, False], [True, True, True, False, True], [True, True, False, True, False]]
+__ne__ with something else => (NotImplemented, NotImplemented, NotImplemented, "TypeError: descriptor '__ne__' requires a 'collections.deque' object but received a 'int'")
+__lt__ => [[False, True, True, True, True], [False, False, True, True, True], [False, False, False, True, False], [False, False, False, False, False], [False, False, False, True, False]]
+__lt__ with something else => (NotImplemented, NotImplemented, NotImplemented, "TypeError: descriptor '__lt__' requires a 'collections.deque' object but received a 'int'")
+__le__ => [[True, True, True, True, True], [False, True, True, True, True], [False, False, True, True, True], [False, False, False, True, False], [False, False, True, True, True]]
+__le__ with something else => (NotImplemented, NotImplemented, NotImplemented, "TypeError: descriptor '__le__' requires a 'collections.deque' object but received a 'int'")
+__gt__ => [[False, False, False, False, False], [True, False, False, False, False], [True, True, False, False, False], [True, True, True, False, True], [True, True, False, False, False]]
+__gt__ with something else => (NotImplemented, NotImplemented, NotImplemented, "TypeError: descriptor '__gt__' requires a 'collections.deque' object but received a 'int'")
+__ge__ => [[True, False, False, False, False], [True, True, False, False, False], [True, True, True, False, True], [True, True, True, True, True], [True, True, True, False, True]]
+__ge__ with something else => (NotImplemented, NotImplemented, NotImplemented, "TypeError: descriptor '__ge__' requires a 'collections.deque' object but received a 'int'")
+compared => (True, False, True, "TypeError: '<' not supported between instances of 'collections.deque' and 'list'", "TypeError: '<' not supported between instances of 'int' and 'str'", True, [True])
+count while it is changed => [('RuntimeError: deque mutated during iteration', 4)]
+count with what cannot be compared => [('ZeroDivisionError: division by zero', 3)]
+count while it is cleared => [('RuntimeError: deque mutated during iteration', 0)]
+index while it is changed => [('RuntimeError: deque mutated during iteration', 4)]
+index with what cannot be compared => [('ZeroDivisionError: division by zero', 3)]
+index while it is cleared => [(0, 0)]
+remove while it is changed => [('IndexError: deque mutated during iteration', 4)]
+remove with what cannot be compared => [('ZeroDivisionError: division by zero', 3)]
+remove while it is cleared => [('IndexError: deque mutated during iteration', 0)]
+__contains__ while it is changed => [('RuntimeError: deque mutated during iteration', 4)]
+__contains__ with what cannot be compared => [('ZeroDivisionError: division by zero', 3)]
+__contains__ while it is cleared => [(True, 0)]
+remove, when what is found changes it => [('IndexError: deque mutated during iteration', ['c', 'a', 'b'])]
+__sizeof__ => [528, 528, 528, 528, 528, 528, 1056, 1056, 1584, 8448]
+__sizeof__ goes by where it began => [1056, 1056, 1056, 1056]
+__reduce__ => [('deque', (), None, ['a', 'b'], 4), ('deque', ((), 5), None, ['a', 'b'], 4), ('deque', (), None, [], 4), ('deque', ((), 0), None, [], 4)]
+deque[int] => ('collections.deque[int]', True)
+weakly referred to => [True]
+no attributes => ("AttributeError: 'collections.deque' object has no attribute 'x' and no __dict__ for setting new attributes", "AttributeError: 'collections.deque' object has no attribute '__dict__'")
+in a pattern => [('sequence', 'a', ['b', 'c'])]
+match => (('two', 'a', 'b'), ('more', 'a', ['b', 'c']), 'nothing', 'a mapping')
+made again => [(None, ['x', 'y'], None, None, [], None, ['b', 'c'], 'ValueError: maxlen must be non-negative', ['b', 'c'], 2, "TypeError: 'int' object is not iterable", [], None)]
+__new__ => (deque([]), deque([]), 'TypeError: collections.deque.__new__(): not enough arguments', 'TypeError: collections.deque.__new__(int): int is not a subtype of collections.deque', 'TypeError: object.__new__(collections.deque) is not safe, use collections.deque.__new__()', 0, None)
+---- what goes through one
+iter => [('_deque_iterator', True, 3, 'a', 2, ['b', 'c'], 0, 'StopIteration: ')]
+reversed => [('_deque_reverse_iterator', True, 3, 'c', 2, ['b', 'a'], 0, 'StopIteration: ')]
+iter, and then append => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter, and then pop => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter, and then rotate => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter, and then rotate by nothing => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter, and then clear => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter, and then reverse => [('a', None, 'c', 'b', 1)]
+iter, and then set an item => [('a', None, 'b', 'c', 1)]
+iter, and then extend with nothing => [('a', None, 'b', 'c', 1)]
+iter, and then *= 1 => [('a', None, 'b', 'c', 1)]
+iter, and then delete an item => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter, and then insert => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter, and then pop and append => [('a', None, 'RuntimeError: deque mutated during iteration', 'RuntimeError: deque mutated during iteration', 0)]
+iter that is over, and then it is changed => [(['a', 'b'], None, 'RuntimeError: deque mutated during iteration')]
+iter of an empty one, and then it is changed => [(None, 'RuntimeError: deque mutated during iteration')]
+iter.__reduce__ => [('_deque_iterator', (deque(['a', 'b', 'c']), 0), 'a', (deque(['a', 'b', 'c']), 1), ['b', 'c'], (deque(['a', 'b', 'c']), 3))]
+reversed, and then append => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed, and then pop => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed, and then rotate => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed, and then rotate by nothing => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed, and then clear => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed, and then reverse => [('d', None, 'b', 'c', 1)]
+reversed, and then set an item => [('d', None, 'c', 'b', 1)]
+reversed, and then extend with nothing => [('d', None, 'c', 'b', 1)]
+reversed, and then *= 1 => [('d', None, 'c', 'b', 1)]
+reversed, and then delete an item => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed, and then insert => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed, and then pop and append => [('d', None, 'RuntimeError: deque mutated during iteration', 'StopIteration: ', 0)]
+reversed that is over, and then it is changed => [(['b', 'a'], None, 'StopIteration: ')]
+reversed of an empty one, and then it is changed => [(None, 'StopIteration: ')]
+reversed.__reduce__ => [('_deque_reverse_iterator', (deque(['a', 'b', 'c']), 0), 'c', (deque(['a', 'b', 'c']), 1), ['b', 'a'], (deque(['a', 'b', 'c']), 3))]
+_deque_iterator => (['a', 'b', 'c', 'd'], ['a', 'b', 'c', 'd'], ['b', 'c', 'd'], ['d'], [], [], ['a', 'b', 'c', 'd'], [], [], ['b'])
+_deque_iterator(*(), **{}) => TypeError: function takes at least 1 argument (0 given)
+_deque_iterator(*(5,), **{}) => TypeError: argument 1 must be collections.deque, not int
+_deque_iterator(*('ab',), **{}) => TypeError: argument 1 must be collections.deque, not str
+_deque_iterator(*(None,), **{}) => TypeError: argument 1 must be collections.deque, not None
+_deque_iterator(*(deque([]), 'a'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+_deque_iterator(*(deque([]), 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+_deque_iterator(*(deque([]), None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+_deque_iterator(*(deque([]), 1, 2), **{}) => TypeError: function takes at most 2 arguments (3 given)
+_deque_iterator(*(deque([]), 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+_deque_iterator(*(deque(['a', 'b']),), **{'other': 1}) => ['a', 'b']
+_deque_iterator(*(), **{'deque': deque([])}) => TypeError: function takes at least 1 argument (0 given)
+it cannot be derived from => TypeError: type 'collections._deque_iterator' is not an acceptable base type
+_deque_reverse_iterator => (['d', 'c', 'b', 'a'], ['d', 'c', 'b', 'a'], ['c', 'b', 'a'], ['a'], [], [], ['d', 'c', 'b', 'a'], [], [], ['a'])
+_deque_reverse_iterator(*(), **{}) => TypeError: function takes at least 1 argument (0 given)
+_deque_reverse_iterator(*(5,), **{}) => TypeError: argument 1 must be collections.deque, not int
+_deque_reverse_iterator(*('ab',), **{}) => TypeError: argument 1 must be collections.deque, not str
+_deque_reverse_iterator(*(None,), **{}) => TypeError: argument 1 must be collections.deque, not None
+_deque_reverse_iterator(*(deque([]), 'a'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+_deque_reverse_iterator(*(deque([]), 1.5), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+_deque_reverse_iterator(*(deque([]), None), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+_deque_reverse_iterator(*(deque([]), 1, 2), **{}) => TypeError: function takes at most 2 arguments (3 given)
+_deque_reverse_iterator(*(deque([]), 9223372036854775808), **{}) => OverflowError: Python int too large to convert to C ssize_t
+_deque_reverse_iterator(*(deque(['a', 'b']),), **{'other': 1}) => ['b', 'a']
+_deque_reverse_iterator(*(), **{'deque': deque([])}) => TypeError: function takes at least 1 argument (0 given)
+it cannot be derived from => TypeError: type 'collections._deque_reverse_iterator' is not an acceptable base type
+across blocks => [(True, True, 300, [0, 31, 32, 63, 64, 65, 127, 128, 150, 298, 299, 299, 150, 0])]
+---- derived from deque
+Sub => [("Sub(['a', 'b'])", 'Sub', 'Sub', 'Sub', 'Sub', True, True, None, 1, {'x': 1}, 'type', 'Sub')]
+with a limit => [("Sub(['a', 'b'], maxlen=3)", 3, "Sub(['b', 'a', 'b'], maxlen=3)", "Sub(['b', 'a', 'b'], maxlen=3)")]
+how it is copied => [(None, None, [(['a', 'b'], (), {})], None, None, [(['a', 'b'], (5,), {}), (['a', 'b'], (5,), {})])]
+a class that gives something else => [('TypeError: Wrong() must return a deque, not str', 'TypeError: Wrong() must return a deque, not str', 'TypeError: Wrong() must return a deque, not str')]
+its own __getitem__ => [(('got', slice(1, 2, None)), ('got', 'a'), ('got', 1267650600228229401496703205376))]
+without one => [("TypeError: sequence index must be integer, not 'slice'", "IndexError: cannot fit 'int' into an index-sized integer", 'b')]
+its own __iter__ => [("I(['x', 'y'])", ['x', 'y'], False, I(['x', 'y']), 3)]
+---- at random, against a list
+maxlen None 92 True 881477245 []
+maxlen 0 0 True 399311703 []
+maxlen 1 0 True 399311703 []
+maxlen 5 5 True 917579074 []
+maxlen 64 64 True 347479776 []
+maxlen 100 99 True 179227500 []
+maxlen 200 200 True 554417026 []
+---- defaultdict
+made => (defaultdict(None, {}), defaultdict(<class 'int'>, {}), defaultdict(None, {}), defaultdict(<class 'list'>, {1: 2}), defaultdict(<class 'int'>, {1: 2}), defaultdict(<class 'int'>, {'a': 1}), defaultdict(<class 'int'>, {1: 2, 'a': 1}), defaultdict(None, {1: 2}), defaultdict(None, {'default_factory': 1}), defaultdict(<class 'int'>, {'default_factory': 1}))
+defaultdict(5,) => TypeError: first argument must be callable or None
+defaultdict('a',) => TypeError: first argument must be callable or None
+defaultdict([],) => TypeError: first argument must be callable or None
+defaultdict('int', 5) => TypeError: 'int' object is not iterable
+defaultdict('int', {}, {}) => TypeError: dict expected at most 1 argument, got 2
+defaultdict('int', [1]) => TypeError: object is not iterable
+what is not there => [(0, 0, defaultdict(<class 'int'>, {'a': 0, 3: None}), 0, 2, False, None, 'x', defaultdict(<class 'int'>, {'a': 0, 3: None}), 0, None, defaultdict(<class 'int'>, {'a': 0, 3: None}))]
+lists => [(None, None, None, defaultdict(<class 'list'>, {'a': [1, 2], 'b': [3]}))]
+with none => [('KeyError: 1', 'KeyError: 1', 'KeyError: (1, 2)', defaultdict(None, {}))]
+the key of the error => (((1, 2),), (1,), ('k',))
+__missing__ => [('made', {'k': 'made'}, 'made', 'TypeError: defaultdict.__missing__() takes exactly one argument (0 given)', 'TypeError: defaultdict.__missing__() takes exactly one argument (2 given)', "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')")]
+a factory that fails => [('ZeroDivisionError: division by zero', {})]
+a factory that takes something => TypeError: <lambda>.<locals>.<lambda>.<locals>.<lambda>() missing 1 required positional argument: 'x'
+a factory that puts something there => [('put there', {1: 'put there'})]
+default_factory => [(<class 'int'>, None, <class 'list'>, [], None, 'KeyError: 2', None, "TypeError: 'int' object is not callable", None, None, 'defaultdict(None, {1: []})', 'KeyError: 2', None)]
+repr => ('defaultdict(None, {})', "defaultdict(<class 'int'>, {})", "defaultdict(<class 'list'>, {1: [2]})", "defaultdict(None, {'a': 1})", "defaultdict(<class 'int'>, {})")
+of itself => [(None, "defaultdict(<class 'int'>, {1: defaultdict(<class 'int'>, {...})})")]
+whose factory is a method of it => [(None, 'defaultdict(<built-in method copy of collections.defaultdict object at')]
+copy => [(defaultdict(<class 'int'>, {1: 2, 5: 0}), False, <class 'int'>, 'defaultdict', defaultdict(<class 'int'>, {1: 2}), 0, defaultdict(<class 'int'>, {1: 2}))]
+| => (defaultdict(<class 'int'>, {1: 2, 3: 4}), defaultdict(<class 'int'>, {3: 4, 1: 2}), defaultdict(<class 'int'>, {1: 5}), <class 'int'>, <class 'list'>, <class 'int'>, "TypeError: unsupported operand type(s) for |: 'collections.defaultdict' and 'list'", "TypeError: unsupported operand type(s) for |: 'list' and 'collections.defaultdict'", NotImplemented, NotImplemented, defaultdict(<class 'int'>, {'b': 2, 'a': 1}))
+|= => [(True, defaultdict(<class 'int'>, {1: 2, 3: 4, 5: 6}), True, defaultdict(<class 'int'>, {1: 2, 3: 4, 5: 6}), <class 'int'>)]
+__reduce__ => [('defaultdict', (<class 'int'>,), None, None, [(1, 2)], 5), ('defaultdict', (), None, None, [], 5), ('defaultdict', (), None, None, [('a', 1)], 5)]
+it is a dict => (True, True, True, {'a': 1}, [('a', 1)], "TypeError: unhashable type: 'collections.defaultdict'", "AttributeError: 'collections.defaultdict' object has no attribute 'x' and no __dict__ for setting new attributes", 'collections.defaultdict[int, str]')
+made again => [(None, defaultdict(None, {1: 2, 3: 4}), <class 'list'>, None, None, None, defaultdict(None, {1: 2, 3: 4}), 'TypeError: first argument must be callable or None', None)]
+derived from => [("DD(<class 'int'>, {})", 0, 'DD', 'DD', 'DD', None, 1, 'DD')]
+its own __missing__ => [('its own', DM(<class 'int'>, {}))]
+made otherwise => [(0, 'TypeError: DI.__init__() takes 2 positional arguments but 3 were given', 'TypeError: DI.__init__() takes 2 positional arguments but 3 were given')]
+---- _count_elements
+counts => [(None, {'a': 6, 'b': 3, 'r': 2, 'c': 1, 'd': 1, 'z': 1}, None, {'a': 6, 'b': 3, 'r': 2, 'c': 1, 'd': 1, 'z': 1}, None, None, {'a': 6, 'b': 3, 'r': 2, 'c': 1, 'd': 1, 'z': 1})]
+what is there already => [(None, {'a': 12, 'b': 2.5, 'c': 0})]
+what cannot be added to => [('TypeError: can only concatenate str (not "int") to str', {'a': 'x', 'b': 1})]
+what cannot be hashed => [("TypeError: unhashable type: 'list'", {'a': 1})]
+a dict with its own get and __setitem__ => [(None, {'a': 2, 'b': 1}, [('get', 'a', 0), ('set', 'a', 1), ('get', 'b', 0), ('set', 'b', 1), ('get', 'a', 0), ('set', 'a', 2)])]
+with its own get => [(None, {'a': 101, 'b': 101})]
+derived from dict and nothing more => [(None, {'a': 2, 'b': 1})]
+no dict at all => [(None, {'a': 2, 'b': 1})]
+a defaultdict => [(None, {'a': 2, 'b': 1})]
+_count_elements() => TypeError: _count_elements expected 2 arguments, got 0
+_count_elements({},) => TypeError: _count_elements expected 2 arguments, got 1
+_count_elements({}, 5) => TypeError: 'int' object is not iterable
+_count_elements(5, 'a') => AttributeError: 'int' object has no attribute 'get'
+_count_elements(None, 'a') => AttributeError: 'NoneType' object has no attribute 'get'
+_count_elements({}, 'a', 1) => TypeError: _count_elements expected 2 arguments, got 3
+_count_elements([], 'a') => AttributeError: 'list' object has no attribute 'get'
+_count_elements('object', '') => AttributeError: 'object' object has no attribute 'get'
+which fails first => TypeError: 'int' object is not iterable
+---- _tuplegetter
+what it is => ("_tuplegetter(1, 'the doc')", 'the doc', 'b', 'b', 'TypeError: __get__(None, None) is invalid', 'TypeError: __get__(None, None) is invalid', True, '_tuplegetter', (1, 'the doc'), '_tuplegetter(0, None)', '_tuplegetter(-1, [1])')
+of the wrong thing => ("TypeError: descriptor for index '1' for tuple subclasses doesn't apply to 'list' object", "TypeError: descriptor for index '1' for tuple subclasses doesn't apply to 'int' object", "TypeError: descriptor for index '1' for tuple subclasses doesn't apply to 'str' object", 'IndexError: tuple index out of range', 'IndexError: tuple index out of range', 'IndexError: tuple index out of range', 'IndexError: tuple index out of range', 'TypeError: __get__ expected at least 1 argument, got 0', 'TypeError: __get__ expected at most 2 arguments, got 3')
+it cannot be set => ("AttributeError: can't set attribute", "AttributeError: can't delete attribute", "AttributeError: can't set attribute", 'TypeError: __set__ expected 2 arguments, got 1', 'TypeError: expected 1 argument, got 0')
+its doc can => [(None, 'another', "_tuplegetter(0, 'another')", None, None, None, None, '_tuplegetter(0, <NULL>)', None)]
+_tuplegetter(*(), **{}) => TypeError: _tuplegetter expected 2 arguments, got 0
+_tuplegetter(*(1,), **{}) => TypeError: _tuplegetter expected 2 arguments, got 1
+_tuplegetter(*(1, 2, 3), **{}) => TypeError: _tuplegetter expected 2 arguments, got 3
+_tuplegetter(*('a', 'd'), **{}) => TypeError: 'str' object cannot be interpreted as an integer
+_tuplegetter(*(1.5, 'd'), **{}) => TypeError: 'float' object cannot be interpreted as an integer
+_tuplegetter(*(None, 'd'), **{}) => TypeError: 'NoneType' object cannot be interpreted as an integer
+_tuplegetter(*(9223372036854775808, 'd'), **{}) => OverflowError: Python int too large to convert to C ssize_t
+_tuplegetter(*(True, 'd'), **{}) => _tuplegetter(1, 'd')
+_tuplegetter(*('Index', 'd'), **{}) => _tuplegetter(2, 'd')
+_tuplegetter(*(1, 'd'), **{'x': 1}) => TypeError: _tuplegetter() takes no keyword arguments
+_tuplegetter(*(), **{'index': 1, 'doc': 'd'}) => TypeError: _tuplegetter() takes no keyword arguments
+in a class => [(1, 2, True, "AttributeError: can't set attribute", "AttributeError: can't delete attribute", 'x', 'IndexError: tuple index out of range')]
+it cannot be derived from, nor given attributes => ("TypeError: type 'collections._tuplegetter' is not an acceptable base type", "AttributeError: 'collections._tuplegetter' object has no attribute 'x' and no __dict__ for setting new attributes")
+---- what is made of them
+namedtuple => [(N(x=1, y=2), 1, N(x=5, y=2), {'x': 1, 'y': 2}, ('x', 'y'), 'N(x, y)', 'Alias for field number 0', '_tuplegetter', N(x=7, y=8), 'N(x=1, y=2)', "TypeError: N.__new__() missing 1 required positional argument: 'y'", "AttributeError: can't set attribute")]
+Counter => [(Counter({'a': 5, 'b': 2, 'r': 2, 'c': 1, 'd': 1}), [('a', 5), ('b', 2)], 0, Counter({'a': 10, 'b': 4, 'r': 4, 'c': 2, 'd': 2}), Counter({'a': 4, 'r': 2, 'b': 1, 'c': 1, 'd': 1}), ['a', 'a', 'a', 'a', 'a', 'b', 'b', 'c', 'd', 'r', 'r'], 11)]
+collections => (True, True, True, True, 4, [('a', 1), ('b', 2)])

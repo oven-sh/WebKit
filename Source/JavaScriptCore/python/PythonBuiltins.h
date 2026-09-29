@@ -185,7 +185,9 @@ void addClassGetItemIfGeneric(JSGlobalObject*, PyType*); // C[int], if CPython's
 JSObject* createThreadModule(JSGlobalObject*);
 JSObject* createMarshalModule(JSGlobalObject*);
 JSObject* createErrnoModule(JSGlobalObject*);
+JSObject* createCollectionsModule(JSGlobalObject*);
 JSObject* createImpModule(JSGlobalObject*);
+JSValue getObjectState(JSGlobalObject*, JSValue); // _PyObject_GetState()
 // {Py_tp_getattro, PyObject_GenericGetAttr}: the class has a __getattribute__ in its own name, which does what object's does.
 void addGenericGetAttribute(JSGlobalObject*, PyType*);
 JSObject* createItertoolsModule(JSGlobalObject*);

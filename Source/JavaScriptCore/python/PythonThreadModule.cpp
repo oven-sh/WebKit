@@ -28,6 +28,7 @@
 #include "PythonBuiltins.h"
 
 #include "PyLock.h"
+#include "PythonBytes.h"
 #include "PythonCodecs.h"
 #include "PythonTime.h"
 #include <signal.h>
