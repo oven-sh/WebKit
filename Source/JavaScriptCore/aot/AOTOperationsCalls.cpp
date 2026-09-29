@@ -379,7 +379,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
     DeferGCForAWhile deferGC(vm);
     DeferTraps deferTraps(vm);
     uint32_t index = FunctionRef::at(instance, addressInFunction).index;
-    RELEASE_ASSERT(!instance->data[index]);
+    RELEASE_ASSERT(!instance->isLinked(index));
     auto [executable, kind] = StaticHeap::executableOfFunction(index);
     RELEASE_ASSERT(executable->aotIndexFor(kind) == index);
     const ImageFunction* function = instance->infos[index].function();

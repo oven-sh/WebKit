@@ -88,6 +88,18 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
 
 bool Lowering::tryLowerAllocation(Node* node)
 {
+    // TEMPORARY-ESCAPE-STATS
+    if (Options::aotCountsAllocations()) [[unlikely]] {
+        if (auto kind = kindOfAllocation(node)) {
+            static_assert(static_cast<unsigned>(Escape::NumberOfThem) <= 32);
+            ptrdiff_t offset = Instance::offsetOfAllocationCounts() + (static_cast<unsigned>(*kind) * 32 + static_cast<unsigned>(node->escape)) * 2 * sizeof(uint64_t);
+            TypedPointer count = m_out.address(m_heaps.root, m_instance, offset);
+            m_out.store64(m_out.add(m_out.load64(count), m_out.constInt64(1)), count);
+            TypedPointer bytes = m_out.address(m_heaps.root, m_instance, offset + sizeof(uint64_t));
+            m_out.store64(m_out.add(m_out.load64(bytes), m_out.constInt64(bytesOfAllocation(node))), bytes);
+        }
+    }
+
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewFunction, m_globalObject, lowCell(node->use(scope)),
             m_out.constInt32(index), m_out.constInt32(isExpression | whoseBytecode(node) << 1), m_out.constInt32(static_cast<uint32_t>(kind)), slotAddress(allocateSlots(2))));

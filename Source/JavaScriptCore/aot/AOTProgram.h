@@ -46,6 +46,12 @@ struct ProgramFacts {
     std::array<std::atomic<uint64_t>, mostParameters> parameterTypes { };
     // KnownFunction::returnType, where the function itself finds it.
     mutable std::atomic<uint64_t> returnType { 0 };
+    // What the function is passed that something may still be able to get at when it has returned: a bit for each parameter, `this` being
+    // the first. It goes by the code of the function and of what that calls, whoever calls it: from nothing up, like the rest.
+    // It takes for granted that reading and writing properties of what was passed runs nobody's code.
+    static constexpr unsigned mostParametersToldOfEscaping = 31;
+    static constexpr uint32_t whatIsPassedBeyondParametersEscapes = 1u << 31;
+    mutable std::atomic<uint32_t> parametersThatEscape { 0 };
 };
 // (One for the code of a function, however many variables hold it.)
 using FactsOfExecutables = UncheckedKeyHashMap<UnlinkedFunctionExecutable*, ProgramFacts*>;

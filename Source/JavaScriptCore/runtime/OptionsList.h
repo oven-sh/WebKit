@@ -167,6 +167,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotPassesValuesUnboxed, true, Normal, "With aotTypesParametersOfClosedFunctions: a closed function is passed what is always a number or a boolean as that, and hands such a thing back as that."_s) \
     v(Bool, aotCompilesBuiltins, true, Normal, "The image has code for the engine's own functions that are written in JavaScript."_s) \
     v(Unsigned, additionsBeforeLoneObjectIsDictionary, 0, Normal, "An object that has been given that many properties one after the other, none of which any other object was given after the same ones, becomes a dictionary: it is not given a Structure for each of the rest. Zero: never."_s) \
+    v(Bool, aotCountsAllocations, false, Normal, "TEMPORARY. When compiling: code counts what it makes, by what the compiler made of what becomes of it (Escape)."_s) \
     v(Bool, aotInlines, true, Normal, "A call of a function that is proven to be the callee is replaced by what the function does, if that is little or if it is the only call there is."_s) \
     v(Bool, aotInlinesBuiltins, true, Normal, "aotInlines, aotCompilesBuiltins, useImmutableIntrinsics: likewise a call of a method by the name of one of Array.prototype's that is passed a closure made on the spot, after a check that it is that one."_s) \
     v(Unsigned, aotInlinesUpTo, 60, Normal, "aotInlines: how many bytes of bytecode a function may have that is called from several places."_s) \

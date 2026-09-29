@@ -237,14 +237,14 @@ bool Lowering::run()
     m_instance = registerOnEntry(instanceGPR);
     m_numberTag = registerOnEntry(GPRInfo::numberTagRegister);
     m_notCellMask = registerOnEntry(GPRInfo::notCellMaskRegister);
-    LValue data = wordByIndex(nullptr, Instance::offsetOfData(), sizeof(Data*), true);
+    OwnData own = ownData();
     if (m_graph.startsCold) {
-        // It has none until it has shown that it is worth one, and until it is called by somebody who looks, nothing says even that.
-        m_data = m_out.select(m_out.notNull(data), data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+        // It has none until it has shown that it is worth one.
+        m_data = m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
         m_dataOnEntry = m_data;
         m_constants = wordByIndex(m_out.loadPtr(m_instance, m_heaps.AOTInstance_infos), FunctionInfo::offsetOfConstants(), sizeof(FunctionInfo), false);
     } else
-        m_dataOrNothing = data;
+        m_dataOrNothing = own.data;
     m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
     m_globalObject = m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);
     m_table = m_out.loadPtr(m_instance, m_heaps.AOTInstance_runtimeTable);
@@ -259,10 +259,10 @@ bool Lowering::run()
         LBasicBlock hasNone = m_out.newBlock();
         LBasicBlock hasData = m_out.newBlock();
         ValueFromBlock had = m_out.anchor(m_dataOrNothing);
-        m_out.branch(m_out.notNull(m_dataOrNothing), usually(hasData), rarely(hasNone));
+        m_out.branch(own.hasAny, usually(hasData), rarely(hasNone));
         m_out.appendTo(hasNone, hasData);
         callStub(Stub::LinkFunction, Void, { }, { }, StubClobbers::Nothing);
-        ValueFromBlock made = m_out.anchor(wordByIndex(nullptr, Instance::offsetOfData(), sizeof(Data*), true));
+        ValueFromBlock made = m_out.anchor(ownData().data);
         m_out.jump(hasData);
         m_out.appendTo(hasData);
         m_data = m_out.phi(pointerType(), had, made);
@@ -353,6 +353,12 @@ LValue Lowering::wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool 
         indexReferences->load(jit, hasBase ? params[1].gpr() : instanceGPR, params[0].gpr(), addend, scale);
     });
     return patchpoint;
+}
+
+Lowering::OwnData Lowering::ownData()
+{
+    LValue state = wordByIndex(nullptr, Instance::offsetOfStates(), sizeof(uint32_t), true);
+    return { m_out.aboveOrEqual(state, m_out.constIntPtr(Instance::leastStateWithData)), m_out.add(m_instance, m_out.shl(state, m_out.constInt32(Instance::shiftOfStateWithData))) };
 }
 
 LValue Lowering::registerOnEntry(Reg reg)
@@ -918,8 +924,8 @@ void Lowering::lowerBlock(BasicBlock* block)
     if (m_dataOnEntry) {
         m_data = m_dataOnEntry;
         if (block->isInLoop) {
-            LValue data = wordByIndex(nullptr, Instance::offsetOfData(), sizeof(Data*), true);
-            m_data = m_out.select(m_out.notNull(data), data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+            OwnData own = ownData();
+            m_data = m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
         }
     }
     if (block->endsWithGuard)

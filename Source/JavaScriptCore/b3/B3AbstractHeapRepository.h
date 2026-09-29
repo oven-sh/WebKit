@@ -219,7 +219,7 @@ namespace JSC::B3 {
 
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP(macro) \
     macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
-    macro(AOTInstance_data, AOT::Instance::offsetOfData(), sizeof(void*)) \
+    macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
     macro(AOTConstants, 0, sizeof(EncodedJSValue)) \
     macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
     macro(AOTIdentifiers, 0, sizeof(void*)) \

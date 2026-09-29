@@ -49,6 +49,7 @@ aot/AOTCompiler.cpp
 aot/AOTGraph.cpp
 aot/AOTImage.cpp
 aot/AOTInlineCaches.cpp
+aot/AOTEscapeAnalysis.cpp @no-unify
 aot/AOTInlining.cpp
 aot/AOTLoopOptimization.cpp
 aot/AOTLowerAccess.cpp

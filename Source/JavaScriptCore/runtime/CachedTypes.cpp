@@ -6449,8 +6449,13 @@ struct BytecodeLinkEncoder::Impl {
                     Summary& summary = summaries[index];
                     summary.callees.shrink(0);
                     summary.calleesGivenMore.shrink(0);
-                    uint64_t type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, index, summary.callees, summary.calleesGivenMore);
+                    uint32_t escaping = 0;
+                    uint64_t type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, index, summary.callees, summary.calleesGivenMore, escaping);
                     summary.changed = false;
+                    if (summary.facts) {
+                        uint32_t old = summary.facts->parametersThatEscape.fetch_or(escaping, std::memory_order_relaxed);
+                        summary.changed |= (old | escaping) != old;
+                    }
                     for (auto* function : summary.functions) {
                         uint64_t old = function->returnType.load(std::memory_order_relaxed);
                         summary.changed |= (type | old) != old;
@@ -6502,11 +6507,32 @@ struct BytecodeLinkEncoder::Impl {
                     }
                     Vector<const AOT::KnownFunction*> ignored;
                     Vector<const AOT::KnownFunction*> ignoredToo;
-                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, AOT::VariableFacts::nobody, ignored, ignoredToo, nameOfJob(index));
+                    uint32_t ignoredAsWell = 0;
+                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, AOT::VariableFacts::nobody, ignored, ignoredToo, ignoredAsWell, nameOfJob(index));
                 }
             }
             if (Options::aotReportStats()) [[unlikely]] {
                 dataLogLn("AOT: ", scopesNeverMade, " scopes are read from and never seen to be made");
+                {
+                    // TEMPORARY-ESCAPE-STATS
+                    uint64_t functions = 0, parameters = 0, thatStay = 0, functionsAllOfWhoseStay = 0;
+                    for (unsigned index = 0; index < summaries.size(); ++index) {
+                        auto& summary = summaries[index];
+                        if (!summary.facts)
+                            continue;
+                        functions++;
+                        uint32_t mask = summary.facts->parametersThatEscape.load();
+                        unsigned count = std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::ProgramFacts::mostParametersToldOfEscaping);
+                        bool all = count > 1;
+                        for (unsigned p = 1; p < count; ++p) {
+                            parameters++;
+                            thatStay += !(mask >> p & 1);
+                            all &= !(mask >> p & 1);
+                        }
+                        functionsAllOfWhoseStay += all;
+                    }
+                    dataLogLn("AOT: of ", parameters, " parameters of ", functions, " proven functions, ", thatStay, " do not escape; all of them for ", functionsAllOfWhoseStay, " functions");
+                }
                 UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> byType;
                 for (auto& summary : summaries) {
                     if (!summary.functions.isEmpty())

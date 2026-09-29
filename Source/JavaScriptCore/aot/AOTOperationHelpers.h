@@ -37,7 +37,7 @@ ALWAYS_INLINE void countOperationOnBehalfOf(JSGlobalObject* globalObject, CallFr
     if (++globalObject->aotInstance()->operationsNotCounted % oneIn) [[likely]]
         return;
     FunctionRef function = caller(globalObject, callFrame);
-    if (Data* data = function.instance->data[function.index]; !data || data == function.instance->sharedData) [[unlikely]]
+    if (!function.instance->dataIfItHasAny(function.index)) [[unlikely]]
         function.instance->countMisses(function.index, oneIn);
 }
 
@@ -71,7 +71,7 @@ ALWAYS_INLINE void noteSlowPath(ASCIILiteral operation, JSValue base = { }, Uniq
 ALWAYS_INLINE Data* callerData(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
     FunctionRef function = caller(globalObject, callFrame);
-    Data* data = function.instance->data[function.index];
+    Data* data = function.instance->dataIfItHasAny(function.index);
     return data ? data : function.instance->sharedData;
 }
 ALWAYS_INLINE UnlinkedCodeBlock* callerCode(JSGlobalObject* globalObject, CallFrame* callFrame) { return functionOfBytecodeOfCaller(globalObject, callFrame).ensureUnlinkedCodeBlock(); }

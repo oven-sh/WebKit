@@ -1194,6 +1194,38 @@ TypeCountSet Heap::objectTypeCounts()
         out->println("CENSUS begin, auxiliary bytes ", auxiliaryBytes, ", a Structure is ", sizeof(Structure), " bytes");
         for (AOT::Instance* instance : vm().m_aotInstances)
             instance->dumpSlotStatistics(*out);
+        // TEMPORARY-BLOCK-CENSUS: what the blocks are for, and how much of each kind is taken up by something.
+        {
+            struct OfKind {
+                uint64_t blocks { 0 };
+                uint64_t cells { 0 };
+                uint64_t occupied { 0 };
+                uint64_t blocksWithNothing { 0 };
+                uint64_t blocksUnderAQuarter { 0 };
+            };
+            UncheckedKeyHashMap<String, OfKind> kinds;
+            m_objectSpace.forEachBlock([&](MarkedBlock::Handle* handle) {
+                auto& kind = kinds.add(makeString(String::fromLatin1(handle->subspace()->name()), '\t', handle->cellSize()), OfKind { }).iterator->value;
+                uint64_t occupied = 0;
+                handle->forEachLiveCell([&](size_t, HeapCell*, HeapCell::Kind) {
+                    occupied++;
+                    return IterationStatus::Continue;
+                });
+                kind.blocks++;
+                kind.cells += handle->cellsPerBlock();
+                kind.occupied += occupied;
+                kind.blocksWithNothing += !occupied;
+                kind.blocksUnderAQuarter += occupied * 4 < handle->cellsPerBlock();
+            });
+            for (auto& [name, kind] : kinds)
+                out->println("BLOCKS\t", name, "\t", kind.blocks, "\t", kind.cells, "\t", kind.occupied, "\t", kind.blocksWithNothing, "\t", kind.blocksUnderAQuarter);
+            uint64_t precise = 0, preciseBytes = 0;
+            for (auto* allocation : m_objectSpace.preciseAllocations()) {
+                precise++;
+                preciseBytes += allocation->cellSize();
+            }
+            out->println("PRECISE\t", precise, "\t", preciseBytes, "\ta block is ", MarkedBlock::blockSize, " of which ", MarkedBlock::payloadSize, " is for cells");
+        }
         // TEMPORARY-IDENTITY-CENSUS: what each thing is one of. Taken before and after a collection, the difference is what the garbage is.
         {
             UncheckedKeyHashMap<String, std::pair<uint64_t, uint64_t>> byIdentity;

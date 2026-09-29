@@ -117,6 +117,50 @@ class Graph;
 struct BasicBlock;
 struct Node;
 
+// What becomes of something that the function makes: whether anything can still get at it once the function has returned, and if so
+// the first thing that was seen to make that so (analyzeEscapes()).
+enum class Escape : uint8_t {
+    NotLookedAt,
+    StaysHere, // Nothing sees it but the code of this function (and what has been made part of that).
+    IsOnlyLent, // It is passed to functions that are known, and known to be done with it when they return.
+    Returned,
+    Thrown,
+    StoredInProperty,
+    StoredInLiteral,
+    StoredInVariable,
+    Merged,
+    Homed,
+    PassedToMethod,
+    PassedAsThisToMethod,
+    PassedToBuiltin,
+    PassedToClosureMadeHere,
+    PassedToParameter,
+    PassedToVariable,
+    PassedToUnknown,
+    PassedToKnownThatKeepsIt,
+    PassedInList,
+    PassedInTailCall,
+    Constructed,
+    HeldByWhatEscapes,
+    ClosureLetsScopeOut,
+    Iterated,
+    Converted,
+    Suspended,
+    Other,
+    NumberOfThem,
+};
+inline bool stays(Escape escape) { return escape == Escape::StaysHere || escape == Escape::IsOnlyLent; }
+ASCIILiteral nameOf(Escape);
+enum class AllocationKind : uint8_t { Object, Array, Closure, Environment };
+static constexpr unsigned numberOfAllocationKinds = 4;
+inline ASCIILiteral nameOf(AllocationKind kind)
+{
+    static constexpr ASCIILiteral names[] = { "object"_s, "array"_s, "closure"_s, "environment"_s };
+    return names[static_cast<unsigned>(kind)];
+}
+std::optional<AllocationKind> kindOfAllocation(const Node*);
+unsigned bytesOfAllocation(const Node*);
+
 struct Use {
     VirtualRegister reg;
     Node* node { nullptr };
@@ -174,6 +218,7 @@ struct Node {
     bool calleeIsChecked { false };
     bool wasTakenNeverToBeReached { false }; // inferTypes(): nothing was found that it could give. For Options::aotVerifiesFacts().
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
+    Escape escape { Escape::NotLookedAt }; // If it makes something (kindOfAllocation()).
     uint32_t fact { 0 }; // EXPERIMENT: Options::aotFacts().
     uint8_t iteratedFact { 0 }; // Likewise: it is an array. What an element holds, plus one.
     bool hasFact(unsigned kind, unsigned bitOfOption) const { return fact >> 28 == kind && (Options::aotFacts() & bitOfOption); }
@@ -604,6 +649,10 @@ void inferRanges(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);
 void inlineCalls(Graph&, const CodeOfProgram&);
+void analyzeEscapes(Graph&); // Node::escape
+// ProgramFacts::parametersThatEscape, going by what is said so far of the functions it calls (calleesConsulted).
+uint32_t parametersThatEscape(Graph&, Vector<const KnownFunction*>* calleesConsulted);
+void reportEscapeStatistics();
 
 } } // namespace JSC::AOT
 

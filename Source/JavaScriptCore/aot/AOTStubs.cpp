@@ -145,9 +145,11 @@ static void loadInstanceAndDataOfSlot(CCallHelpers& jit, GPRReg slot, GPRReg ins
     jit.loadPtr(Address(instance, Instance::offsetOfSharedData()), data);
     jit.subPtr(slot, data, CCallHelpers::memoryTempRegister);
     Jump isShared = jit.branchPtr(CCallHelpers::Below, CCallHelpers::memoryTempRegister, CCallHelpers::TrustedImmPtr(SharedData::size));
-    jit.lshiftPtr(T15, TrustedImm32(3), data);
+    jit.lshiftPtr(T15, TrustedImm32(2), data);
     jit.addPtr(instance, data);
-    jit.loadPtr(Address(data, Instance::offsetOfData()), data);
+    jit.load32(Address(data, Instance::offsetOfStates()), data);
+    jit.lshiftPtr(TrustedImm32(Instance::shiftOfStateWithData), data);
+    jit.addPtr(instance, data);
     isShared.link(&jit);
 }
 
@@ -160,10 +162,13 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
     jit.loadPtr(Address(instance, Instance::offsetOfSharedData()), T11);
     Jump isItsOwn = jit.branchPtr(CCallHelpers::NotEqual, data, T11);
     jit.move(T15, T11);
-    jit.loadPtr(Address(instance, Instance::offsetOfMisses()), T12);
-    jit.load16(CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesTwo), T13);
+    jit.addPtr(TrustedImm32(Instance::offsetOfStates()), instance, T12);
+    jit.load32(CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesFour), T13);
+    // (It has been given one since it was called, and goes on without it until it returns. What is there is no longer a count.)
+    Jump hasItsOwnByNow = jit.branch32(CCallHelpers::AboveOrEqual, T13, TrustedImm32(Instance::leastStateWithData));
     jit.add32(TrustedImm32(1), T13);
-    jit.store16(T13, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesTwo));
+    // (The low half.)
+    jit.store16(T13, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesFour));
     jit.zeroExtend16To32(T13, T13);
     static_assert(sizeof(FunctionInfo) == 32);
     jit.lshiftPtr(T11, TrustedImm32(5), T12);
@@ -199,6 +204,7 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
     jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 80), T15);
     jit.addPtr(TrustedImm32(96), CCallHelpers::stackPointerRegister);
     notYet.link(&jit);
+    hasItsOwnByNow.link(&jit);
     isItsOwn.link(&jit);
 }
 
@@ -1653,9 +1659,9 @@ static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKin
     hasExecutable.link(&jit);
     jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T13);
     jit.loadPtr(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T11);
-    jit.addPtr(TrustedImm32(Instance::offsetOfData()), T12, T9);
-    jit.loadPtr(CCallHelpers::BaseIndex(T9, T13, CCallHelpers::TimesEight), T9);
-    Jump hasNothingYet = jit.branchTestPtr(CCallHelpers::Zero, T9);
+    jit.addPtr(TrustedImm32(Instance::offsetOfStates()), T12, T9);
+    jit.load32(CCallHelpers::BaseIndex(T9, T13, CCallHelpers::TimesFour), T9);
+    Jump hasNothingYet = jit.branch32(CCallHelpers::Below, T9, TrustedImm32(Instance::isLinkedWithoutData));
     adapt(jit, T11, T12);
 
     hasNothingYet.link(&jit);
@@ -1816,9 +1822,9 @@ static void findCodeOfCallee(CCallHelpers& jit, CodeSpecializationKind kind, CCa
     jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T13);
     if (kind == CodeSpecializationKind::CodeForConstruct)
         otherwise.append(jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(static_cast<int32_t>(FunctionExecutable::aotIndexOfWhatConstructsByCalling))));
-    jit.addPtr(TrustedImm32(Instance::offsetOfData()), instanceGPR, T11);
-    jit.loadPtr(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesEight), T11);
-    otherwise.append(jit.branchTestPtr(CCallHelpers::Zero, T11));
+    jit.addPtr(TrustedImm32(Instance::offsetOfStates()), instanceGPR, T11);
+    jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T11);
+    otherwise.append(jit.branch32(CCallHelpers::Below, T11, TrustedImm32(Instance::isLinkedWithoutData)));
 }
 
 // In a frame of the stub's, with a frame of the kind the rest of the engine makes below it, complete but for its CodeBlock: calls
@@ -2730,11 +2736,17 @@ void StubCalls::jumpToFunction(CCallHelpers& jit, uint32_t knownCallee)
 
 void IndexReferences::load(CCallHelpers& jit, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale)
 {
-    RELEASE_ASSERT(!(addend % sizeof(void*)) && !(scale % sizeof(void*)) && scale <= std::numeric_limits<uint16_t>::max());
+    // (Half a word at a time is what is loaded, if that is how far apart they are.)
+    bool isHalfWord = scale == sizeof(uint32_t);
+    RELEASE_ASSERT(isHalfWord ? !(addend % sizeof(uint32_t)) : !(addend % sizeof(void*)) && !(scale % sizeof(void*)));
+    RELEASE_ASSERT(scale <= std::numeric_limits<uint16_t>::max());
     m_references.append({ jit.label(), addend, scale });
 #if CPU(ARM64)
     jit.m_assembler.add<64>(dest, base, UInt12(0), 12);
-    jit.m_assembler.ldr<64>(dest, dest, 0u);
+    if (isHalfWord)
+        jit.m_assembler.ldr<32>(dest, dest, 0u);
+    else
+        jit.m_assembler.ldr<64>(dest, dest, 0u);
 #else
     UNUSED_PARAM(base);
     UNUSED_PARAM(dest);
@@ -2761,7 +2773,7 @@ void IndexReferences::fill(uint8_t* code, const IndexReference& reference, uint3
     constexpr uint32_t immediate = 0xfffu << 10;
     RELEASE_ASSERT(!(instructions[0] & immediate) && !(instructions[1] & immediate));
     instructions[0] |= static_cast<uint32_t>(distance >> 12) << 10;
-    instructions[1] |= static_cast<uint32_t>((distance & 0xfff) / sizeof(void*)) << 10;
+    instructions[1] |= static_cast<uint32_t>((distance & 0xfff) / (reference.scale == sizeof(uint32_t) ? sizeof(uint32_t) : sizeof(void*))) << 10;
 #else
     UNUSED_PARAM(code);
     UNUSED_PARAM(reference);

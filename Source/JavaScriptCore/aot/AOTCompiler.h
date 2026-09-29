@@ -28,7 +28,7 @@ struct CompiledCode;
 // See ProgramFacts. Any thread, likewise. False: there is no telling what the code does.
 JS_EXPORT_PRIVATE bool noteUsesOfProvenFunctionsForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FactsOfExecutables&, VariableFacts*);
 // See KnownFunction::returnType. Any thread, likewise.
-JS_EXPORT_PRIVATE uint64_t inferReturnTypeForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const ProgramFacts*, VariableFacts*, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, const String& nameForLog = String());
+JS_EXPORT_PRIVATE uint64_t inferReturnTypeForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const ProgramFacts*, VariableFacts*, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, uint32_t& parametersThatEscape, const String& nameForLog = String());
 JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr, const ProgramFacts* = nullptr, VariableFacts* = nullptr, const CodeOfProgram* = nullptr);
 // Whether inlineCalls() could pick it.
 bool mayBecomePartOfAnother(UnlinkedCodeBlock*, const ProgramFacts*);

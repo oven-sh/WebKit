@@ -157,6 +157,12 @@ private:
     LValue numberOfArgumentsPassed(); // Not counting `this`.
     LValue argumentsPassed(); // Where the first is.
     LValue argumentPassedOrUndefined(unsigned index);
+    // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
+    struct OwnData {
+        LValue hasAny;
+        LValue data;
+    };
+    OwnData ownData();
     TypedPointer slotWord(unsigned slot, unsigned word); // Word 0: structureID and offset. Word 1: pointer.
     LValue slotAddress(unsigned slot);
     unsigned allocateSlot() { return m_graph.numICSlots++; }

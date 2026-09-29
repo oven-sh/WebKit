@@ -39,7 +39,7 @@ namespace AOT {
 //
 //     Instance -> runtimeTable[Entry]              C++ operations and thunks: one table per VM
 //              -> vm, globalObject
-//              -> data[index of the function] -> constants[i]
+//              -> states[index of the function] -> its Data -> constants[i]
 //                                             -> identifiers[i]
 //                                             -> slots[i]      the function's inline caches
 //
@@ -285,25 +285,56 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
-    static constexpr ptrdiff_t offsetOfData() { return OBJECT_OFFSETOF(Instance, data); }
+    static constexpr ptrdiff_t offsetOfStates() { return OBJECT_OFFSETOF(Instance, states); }
     static constexpr ptrdiff_t offsetOfInfos() { return OBJECT_OFFSETOF(Instance, infos); }
     static constexpr ptrdiff_t offsetOfConstantsOfProgram() { return OBJECT_OFFSETOF(Instance, constantsOfProgram); }
     static constexpr ptrdiff_t offsetOfSharedData() { return OBJECT_OFFSETOF(Instance, sharedData); }
-    static constexpr ptrdiff_t offsetOfMisses() { return OBJECT_OFFSETOF(Instance, misses); }
     static constexpr ptrdiff_t offsetOfCode() { return OBJECT_OFFSETOF(Instance, code); }
     static constexpr ptrdiff_t offsetOfGranulesOfCode() { return OBJECT_OFFSETOF(Instance, granulesOfCode); }
     static constexpr ptrdiff_t offsetOfStartsOfFunctionsAfterFirst() { return OBJECT_OFFSETOF(Instance, startsOfFunctionsAfterFirst); }
     // The function's own Data, which it gets now if it has been doing without (SharedData). It has been linked.
     JS_EXPORT_PRIVATE Data* ensureData(uint32_t index);
+    // For one that has none of its own.
     void countMisses(uint32_t index, uint32_t count)
     {
-        uint32_t before = misses[index];
-        uint32_t after = std::min<uint32_t>(before + count, std::numeric_limits<uint16_t>::max());
-        misses[index] = static_cast<uint16_t>(after);
+        uint32_t state = states[index];
+        ASSERT(state < leastStateWithData);
+        uint32_t before = state & mostMisses;
+        uint32_t after = std::min<uint32_t>(before + count, mostMisses);
+        states[index] = (state & ~mostMisses) | after;
         uint32_t limit = static_cast<uint16_t>(missesToPutUpWithFor(infos[index].flags >> FunctionInfo::numberOfFlagBits));
         if (before < limit && after >= limit)
             ensureData(index);
     }
+
+    // See states.
+    static constexpr uint32_t mostMisses = 0xffff;
+    static constexpr uint32_t isLinkedWithoutData = 1u << 16;
+    static constexpr uint32_t leastStateWithData = 1u << 17;
+    static constexpr unsigned shiftOfStateWithData = 4;
+    bool isLinked(uint32_t index) const { return states[index] >= isLinkedWithoutData; }
+    Data* dataIfItHasAny(uint32_t index) const
+    {
+        uint32_t state = states[index];
+        if (state < leastStateWithData)
+            return nullptr;
+        return std::bit_cast<Data*>(std::bit_cast<uintptr_t>(this) + (static_cast<uintptr_t>(state) << shiftOfStateWithData));
+    }
+    void setLinkedWithoutData(uint32_t index)
+    {
+        ASSERT(states[index] < isLinkedWithoutData);
+        states[index] |= isLinkedWithoutData;
+    }
+    void setData(uint32_t index, Data* data)
+    {
+        uintptr_t distance = std::bit_cast<uintptr_t>(data) - std::bit_cast<uintptr_t>(this);
+        RELEASE_ASSERT(!(distance & ((1u << shiftOfStateWithData) - 1)) && distance >> shiftOfStateWithData >= leastStateWithData && !(distance >> shiftOfStateWithData >> 32));
+        states[index] = static_cast<uint32_t>(distance >> shiftOfStateWithData);
+    }
+    void setNotLinked(uint32_t index) { states[index] = 0; }
+    // Where the Datas are: after the Instance, so that it takes half a word to say where one is. Zeroed.
+    void* allocateForData(size_t);
+    void freeOfData(void*, size_t);
     // How often a slot may fail a function that has that many before it gets a Data.
     uint32_t missesToPutUpWithFor(uint32_t numSlots) const { return std::min<uint32_t>((numSlots * missesForEightSlots >> 3) + missesToSpare, std::numeric_limits<uint16_t>::max()); }
     static constexpr ptrdiff_t offsetOfMissesForEightSlots() { return OBJECT_OFFSETOF(Instance, missesForEightSlots); }
@@ -344,7 +375,6 @@ struct Instance {
     Collections* collections; // Of what there is in data.
     FunctionInfo* infos; // By the index of the function, like data.
     Data* sharedData; // SharedData::get()
-    uint16_t* misses; // By the index of the function: how often a slot has failed a function that has no Data of its own.
     const uint32_t* factsOfFunctions; // By the index of the function: StaticHeap::factsAt(). Zero: none. Null: no function has any.
     // For telling which function an address is in (loadIndexOfFunctionAt(), Image::whatIsAt()): where the image's code is; for each
     // granule of it, the last function that starts no later than the granule does; and where each function but the first starts.
@@ -355,6 +385,10 @@ struct Instance {
     const void* addressLastAskedAbout { nullptr };
     uint32_t functionLastAskedAbout { 0 };
     uint32_t operationsNotCounted { 0 }; // See countOperationOnBehalfOf().
+    // TEMPORARY-ESCAPE-STATS: Options::aotCountsAllocations(). By AllocationKind and Escape: how many, and how many bytes.
+    static constexpr unsigned numberOfAllocationCounts = 4 * 32 * 2;
+    uint64_t allocationCounts[numberOfAllocationCounts] { };
+    static constexpr ptrdiff_t offsetOfAllocationCounts() { return OBJECT_OFFSETOF(Instance, allocationCounts); }
     const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
     uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
     uint32_t missesToSpare;
@@ -366,7 +400,11 @@ struct Instance {
     uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
     // The realm's (JSGlobalObject::immutableIntrinsics()), where code gets at them with one load.
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
-    Data* data[0]; // By the index of the function. Null: the function has not been linked in this realm.
+    // By the index of the function. Reading one is enough to have the page it is on, so they are small.
+    //     Less than leastStateWithData: it has no Data of its own (SharedData). The low half is how often a slot has failed it, and
+    //     isLinkedWithoutData whether it has been linked in this realm: one that only those call who know what they are calling need not be.
+    //     From there up: it has been linked, and its Data is that many times sixteen bytes from the Instance.
+    uint32_t states[0];
 };
 
 // TEMPORARY-SHAPE-STATS: structures whose layout the compiler could have known. 1: of an object literal. 2: what a constructor's stores end in.

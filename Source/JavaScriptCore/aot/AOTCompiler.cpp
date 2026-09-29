@@ -484,6 +484,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
     graph.findListsOfArguments();
+    analyzeEscapes(graph);
     if (Options::aotDumpGraph()) [[unlikely]] {
         dataLogLn("AOT graph:");
         graph.dump(WTF::dataFile());
@@ -702,7 +703,7 @@ bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBl
     return true;
 }
 
-uint64_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, const String& nameForLog)
+uint64_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, uint32_t& parametersThatEscape, const String& nameForLog)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
@@ -710,9 +711,13 @@ uint64_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, c
     graph.setFacts(facts);
     graph.setVariableFacts(variableFacts, readerOfFacts);
     graph.setNameForLog(nameForLog);
-    if (!parseBytecode(graph))
+    if (!parseBytecode(graph)) {
+        parametersThatEscape = std::numeric_limits<uint32_t>::max();
         return TTop;
-    return inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;
+    }
+    Type result = inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;
+    parametersThatEscape = facts ? AOT::parametersThatEscape(graph, &calleesConsulted) : std::numeric_limits<uint32_t>::max();
+    return result;
 }
 
 bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, const CodeOfProgram* program)
@@ -732,6 +737,7 @@ void reportStatistics()
     Locker locker { stats.lock };
     dataLogLn("AOT: compiled ", stats.compiled, " functions (", stats.codeBytes, " bytes of code for ", stats.bytecodeBytes, " of bytecode) in ", stats.time.milliseconds(), " ms; declined ", stats.declined);
     dataLogLn("AOT: ", stats.intrinsicReads, " reads of immutable intrinsics; ", stats.slots, " slots");
+    reportEscapeStatistics();
     dataLogLn("AOT: reads of variables by name: ", stats.scopeReads[Graph::StaticVariable::Closure], " closure, ", stats.scopeReads[Graph::StaticVariable::Import], " linked imports, ", stats.scopeReads[Graph::StaticVariable::ModuleImport], " other imports, ", stats.scopeReadsInGlobalScopes, " globals, ", stats.scopeReads[Graph::StaticVariable::Unresolved] - stats.scopeReadsInGlobalScopes, " unresolved, ", stats.scopeReads[Graph::StaticVariable::Dynamic], " dynamic; ", stats.slots, " slots");
     Vector<std::pair<unsigned, String>> sorted;
     for (auto& entry : stats.reasons)

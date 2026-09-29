@@ -6,6 +6,10 @@
 #include "config.h"
 #include "AOTRuntime.h"
 
+#include "AOTGraph.h"
+#include <bmalloc/StaticRegion.h>
+#include <sys/mman.h>
+
 #include "ArrayConstructor.h"
 #include "ArrayPrototype.h"
 #include "MapPrototype.h"
@@ -168,7 +172,12 @@ struct Instance::Collections {
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
     size_t sizeOfInfos { 0 }; // If they are the Instance's own.
-    size_t sizeOfMisses { 0 };
+    size_t numberOfFunctions { 0 };
+    // Instance::allocateForData(). All in units of sixteen bytes from the Instance.
+    size_t startOfDatas { 0 };
+    size_t endOfDatasUsed { 0 };
+    size_t endOfDatas { 0 };
+    Vector<std::pair<size_t, size_t>> freeAmongDatas; // Where and how much, in order.
 };
 
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
@@ -213,13 +222,22 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     Instance* instance;
     size_t environmentsSize = 0;
     size_t size;
+    size_t numberOfFunctions;
+    // (Addresses. It is memory once it is touched.)
+    constexpr size_t roomForDatas = 256 * MB;
+    auto startOfDatasFor = [](size_t numberOfFunctions) {
+        return std::max<size_t>(roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + numberOfFunctions * sizeof(uint32_t)), static_cast<size_t>(leastStateWithData) << shiftOfStateWithData);
+    };
+    auto sizeFor = [&](size_t numberOfFunctions) { return startOfDatasFor(numberOfFunctions) + roomForDatas; };
     if (Image::environmentsSize() && !vm.m_aotInstanceOfProgram && StaticHeap::canPlaceCellsOf(vm)) {
         // Where cells can be that the collector did not allocate.
         environmentsSize = roundUpToMultipleOf(WTF::pageSize(), Image::environmentsSize());
-        size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + Image::numberOfFunctionsOfImageWithEnvironments() * sizeof(Data*));
+        numberOfFunctions = Image::numberOfFunctionsOfImageWithEnvironments();
+        size = sizeFor(numberOfFunctions);
         instance = reinterpret_cast<Instance*>(static_cast<char*>(StaticHeap::allocateBlock(vm, environmentsSize + size)) + environmentsSize);
     } else {
-        size = roundUpToMultipleOf(WTF::pageSize(), sizeof(Instance) + maxFunctions * sizeof(Data*));
+        numberOfFunctions = maxFunctions;
+        size = sizeFor(numberOfFunctions);
         instance = static_cast<Instance*>(OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages));
     }
     instance->runtimeTable = AOT::runtimeTable(vm).entries();
@@ -228,8 +246,10 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->collections = new Collections;
     instance->collections->environmentsSize = environmentsSize;
     instance->collections->sizeFromInstance = size;
-    // (Addresses, again.)
-    size_t numberOfFunctions = (size - sizeof(Instance)) / sizeof(Data*);
+    instance->collections->numberOfFunctions = numberOfFunctions;
+    instance->collections->startOfDatas = startOfDatasFor(numberOfFunctions) >> shiftOfStateWithData;
+    instance->collections->endOfDatasUsed = instance->collections->startOfDatas;
+    instance->collections->endOfDatas = size >> shiftOfStateWithData;
     instance->infos = environmentsSize ? StaticHeap::infosOfFunctions(vm) : nullptr;
     if (!instance->infos) {
         instance->collections->sizeOfInfos = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(FunctionInfo));
@@ -245,8 +265,6 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     }
     instance->missesForEightSlots = Options::aotMissesForEightSlots();
     instance->missesToSpare = Options::aotMissesToSpare();
-    instance->collections->sizeOfMisses = roundUpToMultipleOf(WTF::pageSize(), numberOfFunctions * sizeof(uint16_t));
-    instance->misses = static_cast<uint16_t*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfMisses, OSAllocator::FastMallocPages));
     instance->structureIDBase = JSC::structureIDBase();
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
     // (putDirect() does as it is told.)
@@ -274,6 +292,49 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     return *instance;
 }
 
+void* Instance::allocateForData(size_t size)
+{
+    size_t units = roundUpToMultipleOf<1 << shiftOfStateWithData>(size) >> shiftOfStateWithData;
+    auto at = [&](size_t where) { return std::bit_cast<void*>(std::bit_cast<uintptr_t>(this) + (where << shiftOfStateWithData)); };
+    auto& free = collections->freeAmongDatas;
+    for (unsigned i = 0; i < free.size(); ++i) {
+        if (free[i].second < units)
+            continue;
+        size_t where = free[i].first;
+        if (free[i].second == units)
+            free.removeAt(i);
+        else {
+            free[i].first += units;
+            free[i].second -= units;
+        }
+        memset(at(where), 0, units << shiftOfStateWithData);
+        return at(where);
+    }
+    size_t where = collections->endOfDatasUsed;
+    RELEASE_ASSERT(units <= collections->endOfDatas - where);
+    collections->endOfDatasUsed += units;
+    return at(where);
+}
+
+void Instance::freeOfData(void* pointer, size_t size)
+{
+    size_t units = roundUpToMultipleOf<1 << shiftOfStateWithData>(size) >> shiftOfStateWithData;
+    size_t where = (std::bit_cast<uintptr_t>(pointer) - std::bit_cast<uintptr_t>(this)) >> shiftOfStateWithData;
+    auto& free = collections->freeAmongDatas;
+    unsigned i = 0;
+    while (i < free.size() && free[i].first < where)
+        ++i;
+    free.insert(i, std::pair<size_t, size_t> { where, units });
+    if (i + 1 < free.size() && free[i].first + free[i].second == free[i + 1].first) {
+        free[i].second += free[i + 1].second;
+        free.removeAt(i + 1);
+    }
+    if (i && free[i - 1].first + free[i - 1].second == free[i].first) {
+        free[i - 1].second += free[i].second;
+        free.removeAt(i);
+    }
+}
+
 void Instance::destroy(Instance* instance)
 {
     instance->vm->m_aotInstances.removeFirst(instance);
@@ -285,7 +346,6 @@ void Instance::destroy(Instance* instance)
     size_t size = instance->collections->sizeFromInstance;
     if (instance->collections->sizeOfInfos)
         OSAllocator::decommitAndRelease(instance->infos, instance->collections->sizeOfInfos);
-    OSAllocator::decommitAndRelease(instance->misses, instance->collections->sizeOfMisses);
     delete instance->collections;
     fastFree(instance->selectorsOnObjectPrototype);
     if (environmentsSize)
@@ -506,7 +566,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     VM& vm = *instance.vm;
     DeferGCForAWhile deferGC(vm);
     unsigned numSlots = code.numSlots();
-    Data* data = static_cast<Data*>(fastZeroedMalloc(sizeof(Data) + numSlots * sizeof(Slot)));
+    Data* data = static_cast<Data*>(instance.allocateForData(sizeof(Data) + numSlots * sizeof(Slot)));
     data->codeBlock = codeBlock;
     data->instance = &instance;
     data->executable = executable;
@@ -522,10 +582,9 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     data->numSlots = numSlots;
     data->slotEpoch = 1;
 
-    RELEASE_ASSERT(sizeof(Instance) + (code.index() + 1) * sizeof(Data*) <= instance.collections->sizeFromInstance);
-    Data*& place = instance.data[code.index()];
-    RELEASE_ASSERT(!place);
-    place = data;
+    RELEASE_ASSERT(code.index() < instance.collections->numberOfFunctions);
+    RELEASE_ASSERT(!instance.dataIfItHasAny(code.index()));
+    instance.setData(code.index(), data);
     data->indexAmongAll = instance.collections->all.size();
     instance.collections->all.append(data);
     data->noteFilled(); // It is new.
@@ -548,8 +607,8 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
 Data* Instance::ensureData(uint32_t index)
 {
     // (One that starts cold, and that only those have called that know what they are calling, has nothing there at all.)
-    Data* data = this->data[index];
-    if (data && data != sharedData)
+    Data* data = dataIfItHasAny(index);
+    if (data)
         return data;
     const FunctionInfo& info = infos[index];
     auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
@@ -558,7 +617,6 @@ Data* Instance::ensureData(uint32_t index)
     Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function()), info.function() }, info.kind());
     RELEASE_ASSERT(code->index() == index);
     code->setInstance(*this);
-    this->data[index] = nullptr;
     s_gotDataLater++;
     data = Data::create(*this, executable, unlinkedCodeBlock, code.get());
     RELEASE_ASSERT(data); // Nothing that it is made of is made now.
@@ -648,8 +706,7 @@ CodeBlock* FunctionRef::ensureCodeBlock() const
 
 Data* FunctionRef::dataIfItHasAny() const
 {
-    Data* data = instance->data[index];
-    return data == instance->sharedData ? nullptr : data;
+    return instance->dataIfItHasAny(index);
 }
 
 Data* FunctionRef::ensureData() const
@@ -674,7 +731,7 @@ CodeBlock* FunctionRef::codeBlockIfThereIsOne() const
 uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
 {
     const FunctionInfo& info = this->info();
-    size_t which = slot - (SharedData::contains(slot) ? instance->sharedData : instance->data[index])->slots;
+    size_t which = slot - (SharedData::contains(slot) ? instance->sharedData : instance->dataIfItHasAny(index))->slots;
     if (info.flags & FunctionInfo::sitesHaveTheirConstants)
         return info.sites[which].identifierAndExtra;
     if (!(info.flags & FunctionInfo::hasSiteConstants))
@@ -995,9 +1052,8 @@ void Data::destroy(Data* data)
     // (MegamorphicCache::ConstructionEntry::m_site)
     if (auto* cache = instance.vm->megamorphicCache())
         cache->bumpEpoch();
-    Data*& place = instance.data[data->code->index()];
-    RELEASE_ASSERT(place == data);
-    place = nullptr;
+    RELEASE_ASSERT(instance.dataIfItHasAny(data->code->index()) == data);
+    instance.setNotLinked(data->code->index());
     auto removeFrom = [&](Vector<Data*>& list, unsigned Data::*index) {
         RELEASE_ASSERT(list[data->*index] == data);
         Data* last = list.takeLast();
@@ -1015,7 +1071,7 @@ void Data::destroy(Data* data)
     if (data->functions)
         fastFree(data->functions);
     data->code->deref();
-    fastFree(data);
+    instance.freeOfData(data, sizeof(Data) + data->numSlots * sizeof(Slot));
 }
 
 FunctionRef Data::function() const
@@ -1132,7 +1188,7 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
     Instance& instance = Instance::ensure(globalObject);
     code->setInstance(instance);
     uint32_t index = code->index();
-    if (instance.data[index])
+    if (instance.isLinked(index))
         RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
     else if (code->imageFunction()->startsCold && Options::aotStartFunctionsCold() && !instance.infos[index].sites && constantsAreOfNoRealm(unlinkedCodeBlock)) {
         if (!instance.collections->sizeOfInfos && Options::aotVerbose()) [[unlikely]]
@@ -1140,7 +1196,7 @@ bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind
         fillInfo(instance.infos[index], executable, unlinkedCodeBlock, code.get(), unlinkedCodeBlock->constantRegisters().span().data());
         instance.infos[index].flags |= FunctionInfo::startsCold;
         instance.collections->executablesWithoutData.append(executable);
-        instance.data[index] = instance.sharedData;
+        instance.setLinkedWithoutData(index);
         didStartCold();
     } else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
         return false;
@@ -1156,13 +1212,13 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
     uint32_t index = executable->aotIndexFor(kind);
     if (index == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
         return true;
-    if (instance->data[index])
+    if (instance->isLinked(index))
         return true;
     if (const FunctionInfo& info = instance->infos[index]; info.flags & FunctionInfo::startsCold && Options::aotStartFunctionsCold()) {
         RELEASE_ASSERT(info.executable() == executable && info.kind() == kind);
         if (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
             return false;
-        instance->data[index] = instance->sharedData;
+        instance->setLinkedWithoutData(index);
         didStartCold();
         return true;
     }
@@ -1271,6 +1327,43 @@ void Instance::dumpSlotStatistics(PrintStream& out)
     out.println("DATA withOwnConstants=", withOwnConstants, " ownConstantBytes=", ownConstants * sizeof(EncodedJSValue), " withFunctions=", withFunctions, " withWatchpoints=", withWatchpoints, " withCodeBlock=", withCodeBlock, " withUnlinkedCode=", withUnlinkedCode, " aJITCodeIs=", sizeof(JITCode));
     for (unsigned i = 0; i < numberOfBuckets; ++i)
         out.println("DATA up to ", upTo[i], " slots: functions=", count[i], " slots=", slotsOf[i], " filled=", filledOf[i]);
+    // TEMPORARY-RESIDENCY: how much of what is only there once it is touched has been.
+    {
+        auto resident = [&](ASCIILiteral name, const void* start, size_t size) {
+            size_t page = WTF::pageSize();
+            uintptr_t begin = std::bit_cast<uintptr_t>(start) & ~(page - 1);
+            uintptr_t end = roundUpToMultipleOf(page, std::bit_cast<uintptr_t>(start) + size);
+            Vector<char> pages((end - begin) / page);
+            if (mincore(std::bit_cast<void*>(begin), end - begin, pages.mutableSpan().data())) {
+                out.println("RESIDENT\t", name, "\tcannot tell");
+                return;
+            }
+            size_t count = 0;
+            for (char state : pages)
+                count += !!(state & MINCORE_INCORE);
+            out.println("RESIDENT\t", name, "\t", count * page, "\tof\t", end - begin);
+        };
+        size_t environmentsSize = collections->environmentsSize;
+        resident("environments of modules"_s, reinterpret_cast<char*>(this) - environmentsSize, environmentsSize);
+        resident("the Instance itself"_s, this, sizeof(Instance));
+        resident("Instance::states, a word for each function"_s, states, collections->numberOfFunctions * sizeof(uint32_t));
+        resident("the Datas"_s, reinterpret_cast<char*>(this) + (collections->startOfDatas << shiftOfStateWithData), (collections->endOfDatas - collections->startOfDatas) << shiftOfStateWithData);
+        char* bss = std::bit_cast<char*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Bss));
+        using Region = bmalloc::StaticRegion;
+        resident("Bss: strings, symbols, vtables"_s, bss, Region::offsetOfVMInBss);
+        resident("Bss: the VM"_s, bss + Region::offsetOfVMInBss, Region::offsetOfGlobalObjectInBss - Region::offsetOfVMInBss);
+        resident("Bss: the global object"_s, bss + Region::offsetOfGlobalObjectInBss, Region::offsetOfDecodersInBss - Region::offsetOfGlobalObjectInBss);
+        resident("Bss: decoders of modules"_s, bss + Region::offsetOfDecodersInBss, Region::offsetOfSourceProvidersInBss - Region::offsetOfDecodersInBss);
+        resident("Bss: source providers"_s, bss + Region::offsetOfSourceProvidersInBss, Region::offsetOfTopLevelExecutablesInBss - Region::offsetOfSourceProvidersInBss);
+        resident("Bss: top level executables"_s, bss + Region::offsetOfTopLevelExecutablesInBss, Region::offsetOfBlocksInBss - Region::offsetOfTopLevelExecutablesInBss);
+    }
+    for (unsigned kind = 0; kind < numberOfAllocationKinds; ++kind) {
+        for (unsigned escape = 0; escape < static_cast<unsigned>(Escape::NumberOfThem); ++escape) {
+            uint64_t* counts = &allocationCounts[(kind * 32 + escape) * 2];
+            if (counts[0])
+                out.println("ESCAPE\t", nameOf(static_cast<AllocationKind>(kind)), "\t", counts[0], "\t", counts[1], "\t", nameOf(static_cast<Escape>(escape)));
+        }
+    }
 }
 
 // TEMPORARY-SHAPE-STATS

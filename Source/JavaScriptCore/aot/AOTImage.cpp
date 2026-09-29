@@ -43,7 +43,8 @@ uint64_t imageStamp()
         stamp ^= stamp >> 29;
     };
     mix(numberOfEntries);
-    mix(Instance::offsetOfData());
+    mix(Instance::offsetOfStates());
+    mix(Instance::leastStateWithData);
     mix(numberOfStubs);
     mix(numOpcodeIDs);
     mix(sizeof(VM));
@@ -1671,7 +1672,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     // a second time is another function: it has constants of its own, for one thing.
     if (Instance* instance = scope->realm()->aotInstance()) {
         uint32_t index = function->index;
-        if (instance->data[index] && FunctionRef { instance, index }.executable() != executable)
+        if (instance->isLinked(index) && FunctionRef { instance, index }.executable() != executable)
             return { };
         if (const FunctionInfo& info = instance->infos[index]; info.executable() && info.executable() != executable)
             return { };
