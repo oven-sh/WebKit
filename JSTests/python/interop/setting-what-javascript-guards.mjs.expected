@@ -1,0 +1,235 @@
+plain, set => done | 1 -> 2
+plain, delete => done | 1 -> none
+empty, set => done | none -> 2
+empty, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none
+frozen, set => AttributeError: can't set attribute 'a' of 'Object' object | 1 frozen -> 1 frozen
+frozen, delete => AttributeError: can't delete attribute 'a' of 'Object' object | 1 frozen -> 1 frozen
+frozen and empty, set => AttributeError: can't set attribute 'a' of 'Object' object | none frozen -> none frozen
+frozen and empty, delete => AttributeError: 'Object' object has no attribute 'a' | none frozen -> none frozen
+sealed, set => done | 1 sealed -> 2 sealed
+sealed, delete => AttributeError: can't delete attribute 'a' of 'Object' object | 1 sealed -> 1 sealed
+sealed and empty, set => AttributeError: can't set attribute 'a' of 'Object' object | none frozen -> none frozen
+sealed and empty, delete => AttributeError: 'Object' object has no attribute 'a' | none frozen -> none frozen
+not extensible, set => done | 1 closed -> 2 closed
+not extensible, delete => done | 1 closed -> none frozen
+not extensible and empty, set => AttributeError: can't set attribute 'a' of 'Object' object | none frozen -> none frozen
+not extensible and empty, delete => AttributeError: 'Object' object has no attribute 'a' | none frozen -> none frozen
+not writable, set => AttributeError: can't set attribute 'a' of 'Object' object | 1 -> 1
+not writable, delete => done | 1 -> none
+not configurable, set => done | 1 -> 2
+not configurable, delete => AttributeError: can't delete attribute 'a' of 'Object' object | 1 -> 1
+a getter alone, set => AttributeError: can't set attribute 'a' of 'Object' object | accessor -> accessor
+a getter alone, delete => done | accessor -> none
+a setter, set => done | accessor -> accessor | set 2
+a setter, delete => done | accessor -> none
+both, set => done | accessor -> accessor | set 2
+both, delete => done | accessor -> none
+a setter that throws, set => ValueError: not 2 | accessor -> accessor
+a setter that throws, delete => done | accessor -> none
+a setter that is inherited, set => done | none -> none | set 2 on true
+a setter that is inherited, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none
+a getter alone that is inherited, set => AttributeError: can't set attribute 'a' of 'Object' object | none -> none
+a getter alone that is inherited, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none
+what is inherited is not writable, set => AttributeError: can't set attribute 'a' of 'Object' object | none -> none
+what is inherited is not writable, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none
+what is inherited is, set => done | none -> 2
+what is inherited is, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none
+a setter of a class, set => done | none -> none | set 2
+a setter of a class, delete => AttributeError: property 'a' of 'Guarded' object has no deleter | none -> none
+no prototype, set => done | none -> 2
+no prototype, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none
+a proxy, set => done | none -> 2 | set a 2
+a proxy, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none | describe a
+a proxy that has it, set => done | 1 -> 2
+a proxy that has it, delete => done | 1 -> none | delete a
+a proxy that says no, set => AttributeError: can't set attribute 'a' of 'Object' object | 1 -> 1
+a proxy that says no, delete => AttributeError: can't delete attribute 'a' of 'Object' object | 1 -> 1
+a proxy that throws, set => JSError: set | 1 -> 1
+a proxy that throws, delete => JSError: delete | 1 -> 1
+a function, set => done | none -> none  BUT ALSO  TypeError: can't apply this __setattr__ to type object | none -> none
+a function, delete => AttributeError: type object 'f' has no attribute 'a' | none -> none  BUT ALSO  TypeError: can't apply this __delattr__ to type object | none -> none
+a frozen function, set => done | none frozen -> none frozen  BUT ALSO  TypeError: can't apply this __setattr__ to type object | none frozen -> none frozen
+a frozen function, delete => AttributeError: type object 'f' has no attribute 'a' | none frozen -> none frozen  BUT ALSO  TypeError: can't apply this __delattr__ to type object | none frozen -> none frozen
+an arrow function, set => done | none -> 2
+an arrow function, delete => AttributeError: 'Function' object has no attribute 'a' | none -> none
+a frozen arrow function, set => AttributeError: can't set attribute 'a' of 'Function' object | none frozen -> none frozen
+a frozen arrow function, delete => AttributeError: 'Function' object has no attribute 'a' | none frozen -> none frozen
+an array, set => AttributeError: 'list' object has no attribute 'a' and no __dict__ for setting new attributes | none -> none
+an array, delete => AttributeError: 'list' object has no attribute 'a' and no __dict__ for setting new attributes | none -> none
+a frozen array, set => AttributeError: 'list' object has no attribute 'a' and no __dict__ for setting new attributes | none frozen -> none frozen
+a frozen array, delete => AttributeError: 'list' object has no attribute 'a' and no __dict__ for setting new attributes | none frozen -> none frozen
+a map, set => done | none -> 2
+a map, delete => AttributeError: 'Map' object has no attribute 'a' | none -> none
+a frozen map, set => AttributeError: can't set attribute 'a' of 'Map' object | none frozen -> none frozen
+a frozen map, delete => AttributeError: 'Map' object has no attribute 'a' | none frozen -> none frozen
+a promise, set => done | none -> 2
+a promise, delete => AttributeError: 'Promise' object has no attribute 'a' | none -> none
+a frozen promise, set => AttributeError: can't set attribute 'a' of 'Promise' object | none frozen -> none frozen
+a frozen promise, delete => AttributeError: 'Promise' object has no attribute 'a' | none frozen -> none frozen
+a regular expression, set => done | none -> 2
+a regular expression, delete => AttributeError: 'RegExp' object has no attribute 'a' | none -> none
+arguments, set => done | none -> 2
+arguments, delete => AttributeError: 'Object' object has no attribute 'a' | none -> none
+a typed array, set => done | none -> 2
+a typed array, delete => AttributeError: 'Float64Array' object has no attribute 'a' | none -> none
+a date, set => done | none -> 2
+a date, delete => AttributeError: 'Date' object has no attribute 'a' | none -> none
+what Python says of the like => ["FrozenInstanceError: cannot assign to field 'a'","FrozenInstanceError: cannot delete field 'a'",true]
+derived => ["done","1","{'a': 1}","done","{}","AttributeError: 'Derived' object has no attribute 'a'"]
+the global object => ["done",5,5,"done",false,"AttributeError: can't set attribute 'undefined' of 'Object' object","AttributeError: can't delete attribute 'undefined' of 'Object' object","AttributeError: 'Object' object has no attribute 'nothingOfTheKind'"]
+__dict__ of plain => ["mappingproxy({'a': 1})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[('a', 1)]"]
+__dict__ of frozen => ["mappingproxy({'a': 1})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[('a', 1)]"]
+__dict__ of a getter alone => ["mappingproxy({'a': 1})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[('a', 1)]"]
+__dict__ of a setter => ["mappingproxy({'a': None})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[('a', None)]"]
+__dict__ of a proxy that has it => ["mappingproxy({'a': 1})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[('a', 1)]"]
+__dict__ of a proxy that throws => ["mappingproxy({'a': 1})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[('a', 1)]"]
+__dict__ of an arrow function => ["mappingproxy({})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Function' objects is not writable","AttributeError: attribute '__dict__' of 'Function' objects is not writable","[]"]
+__dict__ of an array => ["AttributeError: 'list' object has no attribute '__dict__'","TypeError: vars() argument must have __dict__ attribute","TypeError: vars() argument must have __dict__ attribute","AttributeError: 'list' object has no attribute '__dict__'","AttributeError: 'list' object has no attribute '__dict__'","AttributeError: 'list' object has no attribute '__dict__'","AttributeError: 'list' object has no attribute '__dict__' and no __dict__ for setting new attributes","AttributeError: 'list' object has no attribute '__dict__' and no __dict__ for setting new attributes","TypeError: vars() argument must have __dict__ attribute"]
+__dict__ of a map => ["mappingproxy({})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Map' objects is not writable","AttributeError: attribute '__dict__' of 'Map' objects is not writable","[]"]
+__dict__ of no prototype => ["mappingproxy({})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[]"]
+__dict__ of a typed array => ["mappingproxy({'0': 0})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Float64Array' objects is not writable","AttributeError: attribute '__dict__' of 'Float64Array' objects is not writable","[('0', 0)]"]
+__dict__ of what has more => ["mappingproxy({'0': 'index', 'a': 1, 'g': 'got'})","True","False","TypeError: 'mappingproxy' object does not support item assignment","TypeError: 'mappingproxy' object does not support item deletion","AttributeError: 'mappingproxy' object has no attribute 'clear'","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","[('0', 'index'), ('a', 1), ('g', 'got')]"]
+__dict__ when a getter throws => ["ValueError: no","ValueError: no","ValueError: no","ValueError: no","ValueError: no","ValueError: no","AttributeError: attribute '__dict__' of 'Object' objects is not writable","AttributeError: attribute '__dict__' of 'Object' objects is not writable","ValueError: no"]
+a function of Python's, nothing:
+    seen => ["AttributeError: 'function' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => done | none -> 2
+    delete => AttributeError: 'function' object has no attribute 'a' | none -> none  AND BY __dict__  KeyError: 'a' | none -> none
+    otherwise, by __dict__ => ["done","done","done","KeyError: 'popitem(): dictionary is empty'","done"] none
+a function of Python's, a value:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 -> 2
+    delete => done | 1 -> none
+    otherwise, by __dict__ => ["done","done","done","KeyError: 'popitem(): dictionary is empty'","done"] none
+a function of Python's, a getter:
+    seen => ["AttributeError: 'function' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'function' object | accessor -> accessor
+    delete => AttributeError: 'function' object has no attribute 'a' | accessor -> accessor  AND BY __dict__  KeyError: 'a' | accessor -> accessor
+    otherwise, by __dict__ => ["AttributeError: can't set attribute 'a' of 'function' object","AttributeError: can't set attribute 'a' of 'function' object","KeyError: 'a'","KeyError: 'popitem(): dictionary is empty'","done"] accessor
+a function of Python's, a getter and a setter:
+    seen => ["AttributeError: 'function' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'function' object | accessor -> accessor
+    delete => AttributeError: 'function' object has no attribute 'a' | accessor -> accessor  AND BY __dict__  KeyError: 'a' | accessor -> accessor
+    otherwise, by __dict__ => ["AttributeError: can't set attribute 'a' of 'function' object","AttributeError: can't set attribute 'a' of 'function' object","KeyError: 'a'","KeyError: 'popitem(): dictionary is empty'","done"] accessor
+a function of Python's, one that is hidden:
+    seen => ["AttributeError: 'function' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => done | 1 -> 2
+    delete => AttributeError: 'function' object has no attribute 'a' | 1 -> 1  AND BY __dict__  KeyError: 'a' | 1 -> 1
+    otherwise, by __dict__ => ["done","done","done","KeyError: 'popitem(): dictionary is empty'","done"] none
+a function of Python's, one that is not writable:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'function' object | 1 -> 1
+    delete => done | 1 -> none
+    otherwise, by __dict__ => ["AttributeError: can't set attribute 'a' of 'function' object","done","done","KeyError: 'popitem(): dictionary is empty'","done"] none
+a function of Python's, one that is not configurable:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 -> 2
+    delete => AttributeError: can't delete attribute 'a' of 'function' object | 1 -> 1
+    otherwise, by __dict__ => ["done","done","AttributeError: can't delete attribute 'a' of 'function' object","AttributeError: can't delete attribute 'a' of 'function' object","AttributeError: can't delete attribute 'a' of 'function' object"] 3
+a function of Python's, frozen:
+    seen => ["AttributeError: 'function' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'function' object | none frozen -> none frozen
+    delete => AttributeError: 'function' object has no attribute 'a' | none frozen -> none frozen  AND BY __dict__  KeyError: 'a' | none frozen -> none frozen
+    otherwise, by __dict__ => ["AttributeError: can't set attribute 'a' of 'function' object","AttributeError: can't set attribute 'a' of 'function' object","KeyError: 'a'","KeyError: 'popitem(): dictionary is empty'","done"] none frozen
+a function of Python's, a value, and frozen:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'function' object | 1 frozen -> 1 frozen
+    delete => AttributeError: can't delete attribute 'a' of 'function' object | 1 frozen -> 1 frozen
+    otherwise, by __dict__ => ["AttributeError: can't set attribute 'a' of 'function' object","done","AttributeError: can't delete attribute 'a' of 'function' object","AttributeError: can't delete attribute 'a' of 'function' object","AttributeError: can't delete attribute 'a' of 'function' object"] 1 frozen
+a function of Python's, sealed:
+    seen => ["AttributeError: 'function' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'function' object | none frozen -> none frozen
+    delete => AttributeError: 'function' object has no attribute 'a' | none frozen -> none frozen  AND BY __dict__  KeyError: 'a' | none frozen -> none frozen
+    otherwise, by __dict__ => ["AttributeError: can't set attribute 'a' of 'function' object","AttributeError: can't set attribute 'a' of 'function' object","KeyError: 'a'","KeyError: 'popitem(): dictionary is empty'","done"] none frozen
+a function of Python's, a value, and sealed:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 sealed -> 2 sealed
+    delete => AttributeError: can't delete attribute 'a' of 'function' object | 1 sealed -> 1 sealed
+    otherwise, by __dict__ => ["done","done","AttributeError: can't delete attribute 'a' of 'function' object","AttributeError: can't delete attribute 'a' of 'function' object","AttributeError: can't delete attribute 'a' of 'function' object"] 3 sealed
+a TypeError of JavaScript's, nothing:
+    seen => ["AttributeError: 'TypeError' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => done | none -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | none -> none
+    delete => AttributeError: 'TypeError' object has no attribute 'a' | none -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | none -> none
+a TypeError of JavaScript's, a value:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => done | 1 -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+a TypeError of JavaScript's, a getter:
+    seen => ["'got'","'got'","True","True","'got'","{'a': 'got'}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'TypeError' object | accessor -> accessor  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | accessor -> accessor
+    delete => done | accessor -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | accessor -> accessor
+a TypeError of JavaScript's, a getter and a setter:
+    seen => ["'got'","'got'","True","True","'got'","{'a': 'got'}","(1, 1, 1)","True"]
+    set => done | accessor -> accessor | set 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | accessor -> accessor
+    delete => done | accessor -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | accessor -> accessor
+a TypeError of JavaScript's, one that is hidden:
+    seen => ["1","1","True","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => done | 1 -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => done | 1 -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+a TypeError of JavaScript's, one that is not writable:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'TypeError' object | 1 -> 1  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => done | 1 -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+a TypeError of JavaScript's, one that is not configurable:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => AttributeError: can't delete attribute 'a' of 'TypeError' object | 1 -> 1  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+a TypeError of JavaScript's, frozen:
+    seen => ["AttributeError: 'TypeError' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'TypeError' object | none frozen -> none frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | none frozen -> none frozen
+    delete => AttributeError: 'TypeError' object has no attribute 'a' | none frozen -> none frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | none frozen -> none frozen
+a TypeError of JavaScript's, a value, and frozen:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'TypeError' object | 1 frozen -> 1 frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 frozen -> 1 frozen
+    delete => AttributeError: can't delete attribute 'a' of 'TypeError' object | 1 frozen -> 1 frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 frozen -> 1 frozen
+a TypeError of JavaScript's, sealed:
+    seen => ["AttributeError: 'TypeError' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'TypeError' object | none sealed -> none sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | none sealed -> none sealed
+    delete => AttributeError: 'TypeError' object has no attribute 'a' | none sealed -> none sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | none sealed -> none sealed
+a TypeError of JavaScript's, a value, and sealed:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 sealed -> 2 sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 sealed -> 1 sealed
+    delete => AttributeError: can't delete attribute 'a' of 'TypeError' object | 1 sealed -> 1 sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 sealed -> 1 sealed
+an Error of JavaScript's, nothing:
+    seen => ["AttributeError: 'JSError' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => done | none -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | none -> none
+    delete => AttributeError: 'JSError' object has no attribute 'a' | none -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | none -> none
+an Error of JavaScript's, a value:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => done | 1 -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+an Error of JavaScript's, a getter:
+    seen => ["'got'","'got'","True","True","'got'","{'a': 'got'}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'JSError' object | accessor -> accessor  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | accessor -> accessor
+    delete => done | accessor -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | accessor -> accessor
+an Error of JavaScript's, a getter and a setter:
+    seen => ["'got'","'got'","True","True","'got'","{'a': 'got'}","(1, 1, 1)","True"]
+    set => done | accessor -> accessor | set 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | accessor -> accessor
+    delete => done | accessor -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | accessor -> accessor
+an Error of JavaScript's, one that is hidden:
+    seen => ["1","1","True","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => done | 1 -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => done | 1 -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+an Error of JavaScript's, one that is not writable:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'JSError' object | 1 -> 1  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => done | 1 -> none  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+an Error of JavaScript's, one that is not configurable:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 -> 2  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 -> 1
+    delete => AttributeError: can't delete attribute 'a' of 'JSError' object | 1 -> 1  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 -> 1
+an Error of JavaScript's, frozen:
+    seen => ["AttributeError: 'JSError' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'JSError' object | none frozen -> none frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | none frozen -> none frozen
+    delete => AttributeError: 'JSError' object has no attribute 'a' | none frozen -> none frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | none frozen -> none frozen
+an Error of JavaScript's, a value, and frozen:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => AttributeError: can't set attribute 'a' of 'JSError' object | 1 frozen -> 1 frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 frozen -> 1 frozen
+    delete => AttributeError: can't delete attribute 'a' of 'JSError' object | 1 frozen -> 1 frozen  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 frozen -> 1 frozen
+an Error of JavaScript's, sealed:
+    seen => ["AttributeError: 'JSError' object has no attribute 'a'","'nothing'","False","False","'nothing'","{}","(0, 0, 0)","False"]
+    set => AttributeError: can't set attribute 'a' of 'JSError' object | none sealed -> none sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | none sealed -> none sealed
+    delete => AttributeError: 'JSError' object has no attribute 'a' | none sealed -> none sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | none sealed -> none sealed
+an Error of JavaScript's, a value, and sealed:
+    seen => ["1","1","True","True","1","{'a': 1}","(1, 1, 1)","True"]
+    set => done | 1 sealed -> 2 sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item assignment | 1 sealed -> 1 sealed
+    delete => AttributeError: can't delete attribute 'a' of 'JSError' object | 1 sealed -> 1 sealed  AND BY __dict__  TypeError: 'mappingproxy' object does not support item deletion | 1 sealed -> 1 sealed

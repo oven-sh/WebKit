@@ -139,8 +139,9 @@ public:
 
     // Returns the number of values in the hashtable.
     unsigned size() const;
-    // How many of them Object.keys() would list: those that are enumerable and are not keyed by a symbol.
-    unsigned enumerableStringKeyCount() const { return m_enumerableStringKeyCount; }
+    // How many of them are enumerable, are not keyed by a symbol, and are values that are there to be read: what Object.keys() would list, less the accessors.
+    unsigned enumerableStringKeyedValueCount() const { return m_enumerableStringKeyedValueCount; }
+    static bool isEnumerableStringKeyedValue(KeyType key, unsigned attributes) { return !(attributes & (PropertyAttribute::DontEnum | PropertyAttribute::AccessorOrCustomAccessorOrValue)) && !key->isSymbol(); }
 
     // Checks if there are any values in the hashtable.
     bool isEmpty() const;
@@ -290,11 +291,10 @@ private:
     unsigned m_indexSize;
     unsigned m_indexMask;
     uintptr_t m_indexVector;
-    static bool isEnumerableStringKey(KeyType key, unsigned attributes) { return !(attributes & PropertyAttribute::DontEnum) && !key->isSymbol(); }
 
     unsigned m_keyCount;
     unsigned m_deletedCount;
-    unsigned m_enumerableStringKeyCount { 0 };
+    unsigned m_enumerableStringKeyedValueCount { 0 };
     std::unique_ptr<Vector<PropertyOffset>> m_deletedOffsets;
 
     static constexpr unsigned MinimumTableSize = 16;
@@ -397,7 +397,7 @@ ALWAYS_INLINE std::tuple<PropertyOffset, unsigned, bool> PropertyTable::addAfter
     });
 
     ++m_keyCount;
-    m_enumerableStringKeyCount += isEnumerableStringKey(entry.key(), entry.attributes());
+    m_enumerableStringKeyedValueCount += isEnumerableStringKeyedValue(entry.key(), entry.attributes());
 
     return std::tuple { entry.offset(), entry.attributes(), true };
 }
@@ -413,7 +413,7 @@ inline void PropertyTable::remove(VM& vm, KeyType key, unsigned entryIndex, unsi
     withIndexVector([&](auto* vector) {
         vector[index] = deletedEntryIndex();
         auto& entry = tableFromIndexVector(vector)[entryIndex - 1];
-        m_enumerableStringKeyCount -= isEnumerableStringKey(key, entry.attributes());
+        m_enumerableStringKeyedValueCount -= isEnumerableStringKeyedValue(key, entry.attributes());
         entry.setKey(PROPERTY_MAP_DELETED_ENTRY_KEY);
     });
     key->deref();
@@ -441,8 +441,8 @@ inline PropertyOffset PropertyTable::updateAttributeIfExists(const KeyType& key,
         FindResult result = findImpl(vector, table, key);
         if (result.offset == invalidOffset)
             return invalidOffset;
-        m_enumerableStringKeyCount -= isEnumerableStringKey(key, result.attributes);
-        m_enumerableStringKeyCount += isEnumerableStringKey(key, attributes);
+        m_enumerableStringKeyedValueCount -= isEnumerableStringKeyedValue(key, result.attributes);
+        m_enumerableStringKeyedValueCount += isEnumerableStringKeyedValue(key, attributes);
         table[result.entryIndex - 1].setAttributes(attributes);
         return result.offset;
     });

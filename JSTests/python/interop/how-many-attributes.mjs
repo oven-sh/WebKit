@@ -1,4 +1,4 @@
-// len(o.__dict__) is kept count of by the object's table of properties, and is not found by going through them. What Python counts is what Object.keys() would list. So whatever is done to the object, from either
+// len(o.__dict__) is kept count of by the object's table of properties, and is not found by going through them. What Python counts is what Object.keys() would list, less the accessors. So whatever is done to the object, from either
 // language, the count is to be what going through them comes to.
 import * as m from "./how-many-attributes.py";
 
@@ -7,20 +7,20 @@ let wrong = 0;
 function check(o, label)
 {
     const counts = Array.from(m.counts(o));
-    const expected = Object.keys(o).length;
+    const expected = Object.values(Object.getOwnPropertyDescriptors(o)).filter(d => d.enumerable && "value" in d).length;
     ++checks;
     if (counts.some(count => count !== expected)) {
         ++wrong;
-        print("WRONG", label, "Object.keys() has", expected, "and Python has", counts.join(" "));
+        print("WRONG", label, "JavaScript has", expected, "and Python has", counts.join(" "));
     }
 }
 
 const symbols = [Symbol("a"), Symbol("b"), Symbol.iterator];
 let refused = 0;
-// The last is an object of JavaScript's, which Python has a __dict__ for as well. An attribute of an object of Python's cannot be hidden, so it is with that one that the count is put to it.
-for (const kind of ["C", "E", "S", "Object"]) {
+// The last is a function like any other to JavaScript, which can do to it what it can do to any. An attribute of any other object of Python's cannot be hidden, so it is with that one that the count is put to it.
+for (const kind of ["C", "E", "S", "function"]) {
     for (const many of [0, 3, 40, 200, 2000]) {
-        const o = kind === "Object" ? { } : m.make(kind);
+        const o = m.make(kind);
         check(o, "new");
         // Past a certain number of them the object keeps its own table, which is changed where it is.
         for (let i = 0; i < many; ++i) {
@@ -67,7 +67,7 @@ for (const kind of ["C", "E", "S", "Object"]) {
             try {
                 step();
             } catch (e) {
-                if (kind === "Object" || !(e instanceof TypeError))
+                if (kind === "function" || !(e instanceof TypeError))
                     throw e;
                 ++refused;
             }
@@ -78,7 +78,7 @@ for (const kind of ["C", "E", "S", "Object"]) {
 print(checks, "checked,", wrong, "wrong,", refused, "things that an object of Python's would not have done to it");
 
 // What is said when it changes while it is gone through goes by the same count.
-const say = (label, change) => print(label, "=>", m.changed_while_going_through({ a: 1, b: 2, c: 3 }, change), "|", m.changed_while_going_through(Object.assign(m.make("C"), { a: 1, b: 2, c: 3 }), o => { try { change(o); } catch { } }));
+const say = (label, change) => print(label, "=>", m.changed_while_going_through(Object.assign(m.make("function"), { a: 1, b: 2, c: 3 }), change), "|", m.changed_while_going_through(Object.assign(m.make("C"), { a: 1, b: 2, c: 3 }), o => { try { change(o); } catch { } }));
 let n = 0;
 say("nothing is done", o => { });
 say("one is added", o => { o["n" + n++] = 1; });

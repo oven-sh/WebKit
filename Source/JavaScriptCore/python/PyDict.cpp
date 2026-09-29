@@ -437,7 +437,7 @@ void PyDict::detach(JSGlobalObject* globalObject)
 unsigned PyDict::backingSize() const
 {
     // Which the table keeps count of, so that this does not take as long as there are attributes. It is asked at each step of going through the dict.
-    return m_backing->structure()->enumerableStringKeyCount(m_backing->vm());
+    return m_backing->structure()->enumerableStringKeyedValueCount(m_backing->vm());
 }
 
 JSObject* PyDict::ensureBacking(JSGlobalObject* globalObject)
@@ -447,14 +447,30 @@ JSObject* PyDict::ensureBacking(JSGlobalObject* globalObject)
     return m_backing.get();
 }
 
+// See Python::getStoredAttribute().
+Vector<RefPtr<UniquedStringImpl>, 16> PyDict::backingNames(VM& vm)
+{
+    Vector<RefPtr<UniquedStringImpl>, 16> names;
+    m_backing->structure()->forEachProperty(vm, [&] (const auto& entry) {
+        if (PropertyTable::isEnumerableStringKeyedValue(entry.key(), entry.attributes()))
+            names.append(entry.key());
+        return true;
+    });
+    return names;
+}
+
+JSValue PyDict::backingValue(VM& vm, PropertyName name)
+{
+    return Python::getStoredAttribute(vm, m_backing.get(), name);
+}
+
 PyTuple* PyDict::backingKeys(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
-    PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    m_backing->structure()->getPropertyNamesFromStructure(vm, names, DontEnumPropertiesMode::Exclude);
+    auto names = backingNames(vm);
     PyTuple* keys = PyTuple::create(globalObject, names.size());
     for (unsigned i = 0; i < names.size(); ++i)
-        keys->initializeAt(vm, i, jsString(vm, names[i].string()));
+        keys->initializeAt(vm, i, jsString(vm, String(names[i].get())));
     return keys;
 }
 
@@ -496,8 +512,12 @@ bool PyDict::add(JSGlobalObject* globalObject, JSValue key, JSValue value, bool*
     bool isPresent = !!Python::getStoredAttribute(vm, m_backing.get(), name);
     if (wasAdded)
         *wasAdded = !isPresent;
-    if (!isPresent || replace)
-        Python::putStoredAttribute(vm, m_backing.get(), name, value);
+    if (isPresent && !replace)
+        return true;
+    if (!Python::tryPutStoredAttribute(vm, m_backing.get(), name, value)) [[unlikely]] {
+        Python::raiseCannotSetAttribute(globalObject, m_backing.get(), name, false);
+        return false;
+    }
     return true;
 }
 
@@ -506,9 +526,15 @@ JSValue PyDict::remove(JSGlobalObject* globalObject, JSValue key)
     Identifier name;
     if (!isInBacking(globalObject, key, name)) [[likely]]
         return Base::remove(globalObject, key);
-    JSValue value = Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
-    if (value)
-        Python::deleteStoredAttribute(globalObject, m_backing.get(), name);
+    VM& vm = globalObject->vm();
+    JSValue value = Python::getStoredAttribute(vm, m_backing.get(), name);
+    if (!value)
+        return { };
+    if (!Python::mayDeleteStoredAttribute(vm, m_backing.get(), name)) [[unlikely]] {
+        Python::raiseCannotSetAttribute(globalObject, m_backing.get(), name, true);
+        return { };
+    }
+    Python::deleteStoredAttribute(globalObject, m_backing.get(), name);
     return value;
 }
 
@@ -536,9 +562,12 @@ void PyDict::clear(JSGlobalObject* globalObject)
     Base::clear(globalObject->vm());
     if (!m_backing)
         return;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     PyTuple* keys = backingKeys(globalObject);
-    for (auto& key : keys->span())
+    for (auto& key : keys->span()) {
         remove(globalObject, key.get());
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 void PyDict::copyFrom(JSGlobalObject* globalObject, PyDict& other)

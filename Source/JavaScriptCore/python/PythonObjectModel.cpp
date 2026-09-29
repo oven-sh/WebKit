@@ -349,13 +349,24 @@ JSValue exceptionValue(JSGlobalObject*, JSValue thrown)
 
 // ---- Attributes
 
+// A TypeError that JavaScript made is an instance of Python's TypeError, there being one such class. It is none the less an object of JavaScript's.
+bool isJavaScriptObject(JSValue value, PyType* type)
+{
+    if (!value.isObject())
+        return false;
+    return type->hasFlag(PyType::IsJavaScript) || (value.asCell()->type() == ErrorInstanceType && !value.asCell()->structure()->typeInfo().overloadsOperators());
+}
+
 // Where an object's own attributes are, if it can have any. They are the properties of this.
 //
 // It is the object itself, and its __dict__ is a dict that is backed by it. The exception is an object that has been given, for its __dict__, a dict that
 // is some other object's already: two objects with one dict, so that what is set on either is set on both. Then it is that other object.
+//
+// An object of JavaScript's has none. Its attributes are its properties too, but as JavaScript finds and sets them: there may be a getter, a setter or a Proxy, and it may be
+// frozen. This would go around all of that.
 JSObject* attributeStorage(JSGlobalObject* globalObject, JSValue value, PyType* type)
 {
-    if (!type->hasFlag(PyType::HasInstanceDict) || !value.isObject())
+    if (!type->hasFlag(PyType::HasInstanceDict) || !value.isObject() || isJavaScriptObject(value, type))
         return nullptr;
     JSObject* object = asObject(value);
     // The attributes of a class are seen to separately.
@@ -516,12 +527,6 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool isJavaScriptObject(JSGlobalObject* globalObject, PyType* type)
-{
-    UNUSED_PARAM(globalObject);
-    return type->hasFlag(PyType::IsJavaScript);
-}
-
 JSValue nameAsString(VM& vm, PropertyName name)
 {
     return jsString(vm, String(name.uid()));
@@ -621,7 +626,7 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
         if (descriptor.isData)
             RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, value, type));
     }
-    if (isJavaScriptObject(globalObject, type) && value.isObject()) {
+    if (isJavaScriptObject(value, type)) {
         JSValue property = getJavaScriptProperty(globalObject, asObject(value), name, InheritedFunctions::Bind);
         RETURN_IF_EXCEPTION(scope, { });
         if (property)
@@ -945,6 +950,41 @@ void setDescriptor(JSGlobalObject* globalObject, JSValue descriptor, JSValue ins
     setThroughDescriptor(globalObject, descriptor, instance, typeOf(globalObject, instance), attribute, newValue);
 }
 
+void raiseCannotSetAttribute(JSGlobalObject* globalObject, JSValue object, PropertyName name, bool isDeleting)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    raise(globalObject, scope, BuiltinType::AttributeError, concatenate(isDeleting ? "can't delete attribute '"_s : "can't set attribute '"_s, StringView { name.uid() }, "' of '"_s, typeName(globalObject, object), "' object"_s));
+}
+
+// obj.name = newValue, of an object of JavaScript's, and del obj.name if `newValue` is empty. It is for JavaScript to say whether it can be done. What it will not do is
+// AttributeError, which is what a dataclass that is frozen raises.
+static void setJavaScriptProperty(JSGlobalObject* globalObject, JSObject* object, PyType* type, PropertyName name, JSValue newValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    StringView attribute { name.uid() };
+    // It is asked as code that is not strict asks, so that it says no and does not throw.
+    if (newValue) {
+        PutPropertySlot slot(object, false);
+        bool wasSet = object->methodTable()->put(object, globalObject, name, newValue, slot);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!wasSet)
+            RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, object, name, false));
+        return;
+    }
+    // JavaScript is content to delete what is not there.
+    bool isThere = object->hasOwnProperty(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!isThere) {
+        raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''));
+        return;
+    }
+    bool wasDeleted = JSCell::deleteProperty(object, globalObject, name);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!wasDeleted)
+        RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, object, name, true));
+}
+
 // object.__setattr__ and object.__delattr__, and type's. `newValue` is empty to delete.
 void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name, JSValue newValue)
 {
@@ -1004,7 +1044,8 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
 
     if (JSObject* storage = attributeStorage(globalObject, value, type)) {
         if (newValue) {
-            putStoredAttribute(vm, storage, name, newValue);
+            if (!tryPutStoredAttribute(vm, storage, name, newValue)) [[unlikely]]
+                RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, value, name, false));
             return;
         }
         if (!getStoredAttribute(vm, storage, name)) {
@@ -1012,20 +1053,15 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
             raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''));
             return;
         }
+        if (!mayDeleteStoredAttribute(vm, storage, name)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, value, name, true));
         scope.release();
         deleteStoredAttribute(globalObject, storage, name);
         return;
     }
 
-    if (isJavaScriptObject(globalObject, type) && value.isObject()) {
-        scope.release();
-        if (newValue) {
-            PutPropertySlot slot(value, true);
-            asObject(value)->methodTable()->put(asObject(value), globalObject, name, newValue, slot);
-        } else
-            JSCell::deleteProperty(asObject(value), globalObject, name);
-        return;
-    }
+    if (isJavaScriptObject(value, type))
+        RELEASE_AND_RETURN(scope, setJavaScriptProperty(globalObject, asObject(value), type, name, newValue));
 
     if (found) {
         raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object attribute '"_s, attribute, "' is read-only"_s));
@@ -1078,7 +1114,7 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
     if (isClass(base) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute))
         return getAttribute(globalObject, base, name);
     JSValue attribute = type->lookup(vm, name);
-    if (isJavaScriptObject(globalObject, type) && base.isObject()) {
+    if (isJavaScriptObject(base, type)) {
         // What is about to be called is called with the object as `this` in any case, so there is nothing for it to remember.
         if (!attribute || !classifyDescriptor(globalObject, attribute).isData) {
             auto scope = DECLARE_THROW_SCOPE(vm);

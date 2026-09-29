@@ -1329,10 +1329,10 @@ PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyName, uns
         });
 }
 
-unsigned Structure::enumerableStringKeyCount(VM& vm)
+unsigned Structure::enumerableStringKeyedValueCount(VM& vm)
 {
     PropertyTable* table = ensurePropertyTableIfNotEmpty(vm);
-    return table ? table->enumerableStringKeyCount() : 0;
+    return table ? table->enumerableStringKeyedValueCount() : 0;
 }
 
 void Structure::getPropertyNamesFromStructure(VM& vm, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)

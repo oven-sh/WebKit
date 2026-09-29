@@ -644,8 +644,8 @@ public:
     }
 
     void getPropertyNamesFromStructure(VM&, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
-    // How many names that would give for PropertyNameMode::Strings and DontEnumPropertiesMode::Exclude, without going through them.
-    JS_EXPORT_PRIVATE unsigned enumerableStringKeyCount(VM&);
+    // PropertyTable::enumerableStringKeyedValueCount()
+    JS_EXPORT_PRIVATE unsigned enumerableStringKeyedValueCount(VM&);
 
     inline JSValue cachedSpecialProperty(CachedSpecialPropertyKey key); // Defined in StructureInlines.h
     void cacheSpecialProperty(JSGlobalObject*, VM&, JSValue, CachedSpecialPropertyKey, const PropertySlot&);

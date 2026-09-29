@@ -715,7 +715,8 @@ PYTHON_NATIVE(objectDir)
 {
     NATIVE_PROLOGUE();
     PyDict* found = PyDict::create(globalObject);
-    JSValue dict = getAttributeIfPresent(globalObject, args[0], names.dunder_dict);
+    // An Error that JavaScript made has something else for its __dict__, with a dict in it.
+    JSValue dict = isJavaScriptObject(args[0], typeOf(globalObject, args[0])) ? getInstanceDict(globalObject, args[0]) : getAttributeIfPresent(globalObject, args[0], names.dunder_dict);
     RETURN_IF_EXCEPTION(scope, { });
     if (dict && isDict(dict)) {
         asDict(dict)->forEach(globalObject, [&] (JSValue key, JSValue) {
@@ -888,15 +889,44 @@ static void setClass(JSGlobalObject* globalObject, JSValue self, JSValue value)
     asObject(self)->setPrototypeDirect(vm, newType);
 }
 
+// What Object.entries() would give. It is how the object is now, and does not keep up: a dict is not something that a getter or a Proxy can be run from the middle of.
+static JSValue propertiesOfJavaScriptObject(JSGlobalObject* globalObject, JSObject* object)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyDict* dict = PyDict::create(globalObject);
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    object->methodTable()->getOwnPropertyNames(object, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& property : properties) {
+        JSValue value = object->get(globalObject, property);
+        RETURN_IF_EXCEPTION(scope, { });
+        dict->set(globalObject, jsString(vm, property.string()), value);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return dict;
+}
+
 JSValue getInstanceDict(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, self);
+    if (isJavaScriptObject(self, type))
+        RELEASE_AND_RETURN(scope, propertiesOfJavaScriptObject(globalObject, asObject(self)));
     JSObject* storage = attributeStorage(globalObject, self, type);
     if (!storage)
         return raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '__dict__'"_s));
     return PyDict::backedBy(globalObject, storage);
+}
+
+// obj.__dict__, of what may be an object of JavaScript's. What is set in a dict that does not keep up would be lost, so it cannot be.
+JSValue getInstanceDictOrProxy(JSGlobalObject* globalObject, JSValue self)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue dict = getInstanceDict(globalObject, self);
+    RETURN_IF_EXCEPTION(scope, { });
+    return isJavaScriptObject(self, typeOf(globalObject, self)) ? JSValue(PyNativeObject::create(globalObject, BuiltinType::MappingProxy, dict)) : dict;
 }
 
 // obj.__dict__ = mapping: that dict is the attributes from now on, and the dict that was is a dict like any other. del obj.__dict__ leaves it with none.
@@ -920,6 +950,10 @@ void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
     auto& names = vm.pythonNames();
     if (value && !isDict(value)) {
         raiseTypeError(globalObject, scope, concatenate("__dict__ must be set to a dictionary, not a '"_s, typeName(globalObject, value), '\''));
+        return;
+    }
+    if (isJavaScriptObject(self, typeOf(globalObject, self))) {
+        raise(globalObject, scope, BuiltinType::AttributeError, concatenate("attribute '__dict__' of '"_s, typeName(globalObject, self), "' objects is not writable"_s));
         return;
     }
     JSValue current = getInstanceDict(globalObject, self);
@@ -1961,8 +1995,9 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     addGetSet(globalObject, function, "__kwdefaults__"_s, getFunctionKeywordDefaults, setFunctionKeywordDefaults);
     addGetSet(globalObject, function, "__module__"_s, getFunctionModule, setFunctionModule);
 
-    for (PyType* type : { realm->typeFunction(), realm->typeStaticMethod(), realm->typeClassMethod(), realm->typeBaseException() })
+    for (PyType* type : { realm->typeFunction(), realm->typeStaticMethod(), realm->typeClassMethod() })
         addGetSet(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDictOfBuiltin);
+    addGetSet(globalObject, realm->typeBaseException(), "__dict__"_s, getInstanceDictOrProxy, setInstanceDictOfBuiltin);
     addMember(globalObject, realm->typeModule(), "__dict__"_s, getInstanceDict);
 
     for (PyType* type : { realm->typeNoneType(), realm->typeNotImplementedType(), realm->typeEllipsis() })

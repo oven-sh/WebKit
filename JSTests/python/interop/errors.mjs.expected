@@ -31,7 +31,7 @@ JS SyntaxError in Python => ["SyntaxError","JSON Parse error: Expected '}'",["Sy
 JS Error in Python => ["JSError","plain",["JSError","Exception","BaseException"],true]
 JS subclass in Python => ["TypeError","mine",["TypeError","Exception","BaseException"],true]
 except TypeError => caught TypeError
-describe JS error => ["TypeError","TypeError('js')",["js"],[],false,false,false]
+describe JS error => ["TypeError","TypeError('js')",["js"],[],true,true,false]
 JS error through Python is itself => true
 Python error through JS is itself => true
 not an Error !! undefined: undefined

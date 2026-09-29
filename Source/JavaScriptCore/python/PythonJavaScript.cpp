@@ -307,7 +307,7 @@ void initializeJavaScriptTypes(JSGlobalObject* globalObject)
     realm->typeJSObject()->setJavaScriptClass(vm, globalObject->objectConstructor(), globalObject->objectPrototype());
     realm->typeJSFunction()->setJavaScriptClass(vm, globalObject->functionConstructor(), globalObject->functionPrototype());
     realm->typeJSPromise()->setJavaScriptClass(vm, globalObject->promiseConstructor(), globalObject->promisePrototype());
-    addGetSet(globalObject, realm->typeJSObject(), "__dict__"_s, getInstanceDict, setInstanceDict);
+    addGetSet(globalObject, realm->typeJSObject(), "__dict__"_s, getInstanceDictOrProxy, setInstanceDict);
     // There can be a WeakRef to any object, and so can there be a weakref.ref.
     addGetSet(globalObject, realm->typeJSObject(), "__weakref__"_s, getWeakReferences);
     addGetSet(globalObject, realm->typeJSFunction(), "__name__"_s, getFunctionName);

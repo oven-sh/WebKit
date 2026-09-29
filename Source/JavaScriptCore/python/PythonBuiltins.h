@@ -242,7 +242,9 @@ JSObject* createFrameModule(JSGlobalObject*);
 
 void initializeRangeType(JSGlobalObject*);
 // What the __dict__ and __weakref__ of a class whose instances have such things get and set.
+// A dict in any case. That of an object of JavaScript's is how it is now.
 JSValue getInstanceDict(JSGlobalObject*, JSValue self);
+JSValue getInstanceDictOrProxy(JSGlobalObject*, JSValue self);
 void setInstanceDict(JSGlobalObject*, JSValue self, JSValue value);
 JSValue getWeakReferences(JSGlobalObject*, JSValue self);
 JSC_DECLARE_HOST_FUNCTION(sliceIndices);

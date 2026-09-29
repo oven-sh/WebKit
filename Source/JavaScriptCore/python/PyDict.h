@@ -220,6 +220,8 @@ public:
 
     // For iterators: the keys that are in the object now, and the rest of the dict.
     PyTuple* backingKeys(JSGlobalObject*);
+    JS_EXPORT_PRIVATE Vector<RefPtr<UniquedStringImpl>, 16> backingNames(VM&);
+    JS_EXPORT_PRIVATE JSValue backingValue(VM&, PropertyName);
     PyHashTable& ownTable() { return *this; }
 
     // Where an item is depends on the key, so there is no going through them by number.
@@ -275,12 +277,11 @@ template<typename Function>
 void PyDict::forEach(JSGlobalObject* globalObject, const Function& function)
 {
     VM& vm = globalObject->vm();
-    if (JSObject* object = m_backing.get()) {
-        PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-        object->structure()->getPropertyNamesFromStructure(vm, names, DontEnumPropertiesMode::Exclude);
-        for (auto& name : names) {
-            JSValue value = object->getDirect(vm, name);
-            if (value && !function(jsString(vm, name.string()), value))
+    if (m_backing) {
+        for (auto& name : backingNames(vm)) {
+            // It may have gone since, or become something else.
+            JSValue value = backingValue(vm, name.get());
+            if (value && !function(jsString(vm, String(name.get())), value))
                 return;
         }
     }

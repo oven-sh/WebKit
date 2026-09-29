@@ -168,8 +168,12 @@ JSObject* createMemberDescriptor(JSGlobalObject*, PyType* owner, JSString* name,
 JSValue getPropertyForJavaScript(JSGlobalObject*, JSValue receiver, PropertyName, PyType* from);
 // Where an object's own attributes are, if it can have any: they are the properties of this. Null if it cannot.
 JSObject* attributeStorage(JSGlobalObject*, JSValue, PyType*);
-// An attribute that something has of its own is a property of it that is enumerable. What is not enumerable is JavaScript's business: the name and
-// length of a function, the stack of an Error. Python does not see it. Empty if there is no such attribute.
+// Whether it is an object that JavaScript made, so that its attributes are its properties as JavaScript finds, sets and deletes them. `type` is its class.
+bool isJavaScriptObject(JSValue, PyType* type);
+// An attribute that something has of its own is a property of it that is enumerable, and is a value. What is not enumerable is JavaScript's business: the name and
+// length of a function, the stack of an Error. So is an accessor. Python does not see either. Empty if there is no such attribute.
+//
+// A cell of Python's does not let JavaScript make a property of it anything else (definePropertyFromJavaScript()), or freeze it. A function is a JSFunction, which does.
 //
 // A name that JavaScript would take for an index, as "0", cannot be that of a property like the rest: to the engine that is an element of an array. It
 // can only come from getattr() and the like or by way of a __dict__, not being something that can be written after a dot. An attribute of such a name is
@@ -188,13 +192,43 @@ inline JSValue getStoredAttribute(VM& vm, JSObject* object, PropertyName name)
         return getIndexLikeAttribute(vm, object, name);
     unsigned attributes;
     JSValue value = object->getDirect(vm, name, attributes);
-    return value && !(attributes & PropertyAttribute::DontEnum) ? value : JSValue();
+    return value && !(attributes & (PropertyAttribute::DontEnum | PropertyAttribute::AccessorOrCustomAccessorOrValue)) ? value : JSValue();
 }
+// Whether JavaScript has left it so that the attribute can be deleted. It is to be asked first.
+inline bool mayDeleteStoredAttribute(VM& vm, JSObject* object, PropertyName name)
+{
+    if (object->structure()->typeInfo().overloadsOperators() || isIndexLike(name)) [[likely]]
+        return true;
+    unsigned attributes;
+    return !object->getDirect(vm, name, attributes) || !(attributes & PropertyAttribute::DontDelete);
+}
+// What is raised if not. `isDeleting` says which was meant.
+void raiseCannotSetAttribute(JSGlobalObject*, JSValue object, PropertyName, bool isDeleting);
 inline void putStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSValue value)
 {
     if (isIndexLike(name)) [[unlikely]]
         return putIndexLikeAttribute(vm, object, name, value);
     object->putDirect(vm, name, value, static_cast<unsigned>(PropertyAttribute::None));
+}
+// The same, if JavaScript has left it so that it can be. False if it has not.
+inline bool tryPutStoredAttribute(VM& vm, JSObject* object, PropertyName name, JSValue value)
+{
+    if (object->structure()->typeInfo().overloadsOperators() || isIndexLike(name)) [[likely]] {
+        putStoredAttribute(vm, object, name, value);
+        return true;
+    }
+    unsigned attributes;
+    if (!object->getDirect(vm, name, attributes)) {
+        if (!object->isStructureExtensible())
+            return false;
+        attributes = 0;
+    }
+    // What is hidden is to be seen from now on, which what is not configurable cannot come to be.
+    constexpr unsigned hiddenForGood = PropertyAttribute::DontEnum | PropertyAttribute::DontDelete;
+    if ((attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue) || (attributes & hiddenForGood) == hiddenForGood)
+        return false;
+    object->putDirect(vm, name, value, attributes & PropertyAttribute::DontDelete);
+    return true;
 }
 // Takes away a property that holds an attribute. This is what delattr() comes down to in the end, so it is not to go by way of what JavaScript's
 // `delete` does to something of Python's, which is delattr().

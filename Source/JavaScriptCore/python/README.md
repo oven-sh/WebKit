@@ -597,16 +597,19 @@ The attributes of an instance and the globals of a module are properties, which 
 can be out of date, since there is only the one copy. A plain dict that is given to `exec()` for its globals becomes backed by a
 bare object, so compiled code always finds its globals the same way.
 
-- **An attribute is a property that is enumerable.** What is not enumerable is JavaScript's business, and Python does not see it: the
-  `name` and `length` of a function, the `stack` of an `Error`.
+- **An attribute is a property that is enumerable, and is a value.** What is not enumerable is JavaScript's business, and Python does not see it: the
+  `name` and `length` of a function, the `stack` of an `Error`. So is an accessor.
+- **A function is the one object of Python's that JavaScript can do anything to**, being a `JSFunction`. It can be frozen, and a property of it can be made an accessor, or read-only. So
+  before an attribute of one is set or deleted, it is seen whether JavaScript has left it so that it can be (`tryPutStoredAttribute()`), and if not that is `AttributeError`. Every other
+  cell of Python's refuses to have such a thing done to it, and is not asked.
 - What CPython keeps in a field of a C struct is a property under a private name, which neither language can name.
 - A name that JavaScript would take for an index, as `"0"`, cannot be that of a property. It is kept where a key that is not a string is: in the
   dict's own table.
 - Two objects can have one `__dict__`. The second finds its attributes in the first.
 
-How many attributes there are is `len(o.__dict__)`, and it is asked at each step of going through the dict, to say so if it changes. What Python counts is what `Object.keys()` would list: what is enumerable and is
-not keyed by a symbol, which leaves out what the engine keeps in the object for itself. An object with many properties has a table of its own that is changed where it is, so the count cannot be kept by
-`Structure`. `PropertyTable` keeps it, `enumerableStringKeyCount()`, and it changes where a property is added, removed or has its attributes changed, none of which is where an inline cache goes. It fits in what
+How many attributes there are is `len(o.__dict__)`, and it is asked at each step of going through the dict, to say so if it changes. What Python counts is what `Object.keys()` would list, less the accessors: what is enumerable, is
+not keyed by a symbol, which leaves out what the engine keeps in the object for itself, and is a value. An object with many properties has a table of its own that is changed where it is, so the count cannot be kept by
+`Structure`. `PropertyTable` keeps it, `enumerableStringKeyedValueCount()`, and it changes where a property is added, removed or has its attributes changed, none of which is where an inline cache goes. It fits in what
 was padding.
 
 ### Modules, and what is up to the host
@@ -1060,6 +1063,12 @@ An object of JavaScript's is an instance of its class: `type(js.Map.new()) is js
 an instance of `js.Function`. Its attributes are its properties, as JavaScript finds them. `obj[key]`, `len()`, `in`, iteration and `isinstance()` do what they
 would in JavaScript. `import js` is the global object.
 
+- **Whether a property can be set or deleted is for JavaScript to say.** A setter is run, a `Proxy` is asked, and what is frozen stays as it was. What it will not do is `AttributeError`, which is
+  what a dataclass that is frozen raises, and what `importlib` and the like expect of what will not take an attribute. Deleting what is not there is `AttributeError` too, though JavaScript
+  is content to. `interop/setting-what-javascript-guards.mjs` does each to some forty kinds of object.
+- **`obj.__dict__` is what `Object.entries()` would give, as it is now, and cannot be changed.** It is a `mappingproxy`, as the `__dict__` of a class is. A dict that kept up would have to run getters and
+  traps from the middle of whatever a dict does.
+
 - `obj.f(x)` passes `obj` as `this`.
 - **A function that is got from what an object inherits from is bound to the object**, as one got from a class is in Python. One that the
   object has of its own is as it is, as one in an instance's `__dict__` is. So `js.Math.floor` and `js.Array` are themselves.
@@ -1201,7 +1210,7 @@ of it, and it has a `stack` with the frames of both languages in it in order.
 | `ValueError`; `RecursionError` and `MemoryError` for those two | `RangeError` |
 
 Each is an instance of the other's class, whichever language made it. `name`, `message`, `cause` and `stack` are to JavaScript what they are for any
-`Error`, being not enumerable, and `AttributeError.name` is Python's. What JavaScript throws that is no `Error` passes through `except`, though not
+`Error`, being not enumerable, and `AttributeError.name` is Python's. One that JavaScript made is an object of JavaScript's whatever its class, so Python finds those on it, as it finds any property of it. What JavaScript throws that is no `Error` passes through `except`, though not
 through a bare one or `finally`.
 
 An `Error` of a kind that is not in the table is a `JSError` to Python, which is derived from `Exception`. Calling `JSError` makes an `Error`, and it is JavaScript that makes it, as it is for any class of JavaScript's.

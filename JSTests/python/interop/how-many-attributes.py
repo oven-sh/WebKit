@@ -10,8 +10,13 @@ class S:
     __slots__ = ("a", "__dict__")
 
 
+def function():
+    def f(): pass
+    return f
+
+
 def make(kind):
-    return {"C": C, "E": E, "S": S}[kind]()
+    return {"C": C, "E": E, "S": S, "function": function}[kind]()
 
 
 def counts(o):
