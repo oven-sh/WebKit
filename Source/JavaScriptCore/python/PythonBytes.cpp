@@ -1736,6 +1736,12 @@ PYTHON_NATIVE(byteArraySetItem)
     JSValue value = args.at(2);
     if (auto* slice = trySlice(args.at(1))) {
         ByteVector replacement;
+        // What is not a bytearray is made one of, and then it is all begun again with that. So the ends of the slice are asked what numbers they are before that and again after it, and it is what they say the second time, of
+        // the bytearray as it then is, that counts.
+        if (value && (value == args[0] || !typeOf(globalObject, value)->isSubtypeOf(realm->typeByteArray()))) {
+            slice->indices(globalObject, [&] { return self->length(); });
+            RETURN_IF_EXCEPTION(scope, { });
+        }
         if (value) {
             // PyNumber_Check()
             auto isNumber = [&] {

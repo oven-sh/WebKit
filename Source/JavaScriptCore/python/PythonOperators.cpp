@@ -761,29 +761,39 @@ static bool resultOf(ComparisonOperator op, int order)
     }
 }
 
-// Of lists and of tuples: by the first place where they differ.
-template<typename Get>
-static JSValue compareSequences(JSGlobalObject* globalObject, ComparisonOperator op, unsigned leftLength, unsigned rightLength, const Get& get)
+// Of lists and of tuples: by the first place where they differ. list_richcompare_impl() of Objects/listobject.c. What the elements of a list are compared by can change the list, so how long each is, and what is in it, is asked for
+// whenever it is wanted, and is not kept.
+template<typename Lengths, typename Get>
+static JSValue compareSequences(JSGlobalObject* globalObject, ComparisonOperator op, const Lengths& currentLengths, const Get& get)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (leftLength != rightLength && (op == ComparisonOperator::Eq || op == ComparisonOperator::NotEq))
+    if (auto [left, right] = currentLengths(); left != right && (op == ComparisonOperator::Eq || op == ComparisonOperator::NotEq))
         return jsBoolean(op == ComparisonOperator::NotEq);
-    unsigned common = std::min(leftLength, rightLength);
-    for (unsigned i = 0; i < common; ++i) {
+    auto isWithin = [&] (unsigned i) {
+        auto [left, right] = currentLengths();
+        return i < left && i < right;
+    };
+    unsigned i = 0;
+    for (; isWithin(i); ++i) {
         auto [a, b] = get(i);
         RETURN_IF_EXCEPTION(scope, { });
         bool same = isEqual(globalObject, a, b);
         RETURN_IF_EXCEPTION(scope, { });
-        if (same)
-            continue;
-        if (op == ComparisonOperator::Eq)
-            return jsBoolean(false);
-        if (op == ComparisonOperator::NotEq)
-            return jsBoolean(true);
-        RELEASE_AND_RETURN(scope, compare(globalObject, op, a, b));
+        if (!same)
+            break;
     }
-    return jsBoolean(resultOf(op, leftLength < rightLength ? -1 : leftLength > rightLength));
+    if (!isWithin(i)) {
+        auto [left, right] = currentLengths();
+        return jsBoolean(resultOf(op, left < right ? -1 : left > right));
+    }
+    if (op == ComparisonOperator::Eq)
+        return jsBoolean(false);
+    if (op == ComparisonOperator::NotEq)
+        return jsBoolean(true);
+    auto [a, b] = get(i);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, compare(globalObject, op, a, b));
 }
 
 // What the built-in types do. Empty if it is not for them.
@@ -825,12 +835,12 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
     if (isTuple(left) && isTuple(right)) {
         auto* a = uncheckedDowncast<PyTuple>(left.asCell());
         auto* b = uncheckedDowncast<PyTuple>(right.asCell());
-        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, a->length(), b->length(), [&] (unsigned i) { return std::pair { a->at(i), b->at(i) }; }));
+        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, [&] { return std::pair { a->length(), b->length() }; }, [&] (unsigned i) { return std::pair { a->at(i), b->at(i) }; }));
     }
     if (isList(left) && isList(right)) {
         JSArray* a = asList(left);
         JSArray* b = asList(right);
-        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, a->length(), b->length(), [&] (unsigned i) { return std::pair { listGet(globalObject, a, i), listGet(globalObject, b, i) }; }));
+        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, [&] { return std::pair { a->length(), b->length() }; }, [&] (unsigned i) { return std::pair { listGet(globalObject, a, i), listGet(globalObject, b, i) }; }));
     }
     if (isDict(left) && isDict(right)) {
         if (!isEquality)
@@ -859,7 +869,7 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
             return jsBoolean(op == ComparisonOperator::Eq || op == ComparisonOperator::LtE || op == ComparisonOperator::GtE);
         JSValue ofA[] = { a->start(), a->stop(), a->step() };
         JSValue ofB[] = { b->start(), b->stop(), b->step() };
-        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, 3, 3, [&] (unsigned i) { return std::pair { ofA[i], ofB[i] }; }));
+        RELEASE_AND_RETURN(scope, compareSequences(globalObject, op, [] { return std::pair { 3u, 3u }; }, [&] (unsigned i) { return std::pair { ofA[i], ofB[i] }; }));
     }
     if (auto* a = tryRange(left)) {
         auto* b = tryRange(right);
@@ -1497,11 +1507,13 @@ int64_t length(JSGlobalObject* globalObject, JSValue value)
 
 // ---- Subscripts
 
-// The place in a sequence of the length that an index means. Nothing if it is outside, and then IndexError has been raised.
-static std::optional<unsigned> normalizeIndex(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key, int64_t length, ASCIILiteral what)
+// The place in a sequence that an index means. Nothing if it is outside, and then IndexError has been raised. How long the sequence is is not asked until the index has been made a number of, since doing that can change it.
+template<typename Length>
+static std::optional<unsigned> normalizeIndex(JSGlobalObject* globalObject, ThrowScope& scope, JSValue key, const Length& currentLength, ASCIILiteral what)
 {
     auto index = toIndex(globalObject, key);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
+    int64_t length = currentLength();
     int64_t i = *index;
     if (i < 0)
         i += length;
@@ -1545,7 +1557,7 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         }
         if (!isIndexLike(globalObject, key))
             return raiseTypeError(globalObject, scope, concatenate("list indices must be integers or slices, not "_s, typeName(globalObject, key)));
-        auto index = normalizeIndex(globalObject, scope, key, list->length(), "list index"_s);
+        auto index = normalizeIndex(globalObject, scope, key, [&] { return list->length(); }, "list index"_s);
         RETURN_IF_EXCEPTION(scope, { });
         RELEASE_AND_RETURN(scope, listGet(globalObject, list, *index));
     }
@@ -1564,7 +1576,7 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
         }
         if (!isIndexLike(globalObject, key))
             return raiseTypeError(globalObject, scope, concatenate("tuple indices must be integers or slices, not "_s, typeName(globalObject, key)));
-        auto index = normalizeIndex(globalObject, scope, key, tuple->length(), "tuple index"_s);
+        auto index = normalizeIndex(globalObject, scope, key, [&] { return tuple->length(); }, "tuple index"_s);
         RETURN_IF_EXCEPTION(scope, { });
         return tuple->at(*index);
     }
@@ -1716,7 +1728,7 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
         raiseTypeError(globalObject, scope, concatenate("list indices must be integers or slices, not "_s, typeName(globalObject, key)));
         return true;
     }
-    auto index = normalizeIndex(globalObject, scope, key, list->length(), value ? "list assignment index"_s : "list assignment index"_s);
+    auto index = normalizeIndex(globalObject, scope, key, [&] { return list->length(); }, "list assignment index"_s);
     RETURN_IF_EXCEPTION(scope, true);
     scope.release();
     if (value)

@@ -159,12 +159,13 @@ PYTHON_NATIVE(listReverse)
     RETURN_NONE();
 }
 
-// index(value, start=0, stop=the end), of a list or a tuple.
-template<typename Get>
-static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeArguments& args, int64_t length, ASCIILiteral typeName, const Get& get)
+// index(value, start=0, stop=the end), of a list or a tuple. How long a list is can be changed by what its elements are compared by, so it is asked every time.
+template<typename Length, typename Get>
+static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeArguments& args, const Length& currentLength, ASCIILiteral typeName, const Get& get)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    int64_t length = currentLength();
     auto resolve = [&] (JSValue value, int64_t whenAbsent) -> int64_t {
         if (!value)
             return whenAbsent;
@@ -174,9 +175,10 @@ static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeAr
     };
     int64_t start = resolve(args.at(2), 0);
     RETURN_IF_EXCEPTION(scope, { });
-    int64_t stop = std::min(resolve(args.at(3), length), length);
+    // Not the length as it is now: what is added to a list meanwhile is looked at as well.
+    int64_t stop = resolve(args.at(3), std::numeric_limits<int64_t>::max());
     RETURN_IF_EXCEPTION(scope, { });
-    for (int64_t i = start; i < stop; ++i) {
+    for (int64_t i = start; i < stop && i < static_cast<int64_t>(currentLength()); ++i) {
         JSValue item = get(i);
         RETURN_IF_EXCEPTION(scope, { });
         bool same = isEqual(globalObject, item, args[1]);
@@ -187,13 +189,13 @@ static EncodedJSValue sequenceIndex(JSGlobalObject* globalObject, const NativeAr
     return JSValue::encode(raiseValueError(globalObject, scope, concatenate(typeName, ".index(x): x not in "_s, typeName)));
 }
 
-template<typename Get>
-static EncodedJSValue sequenceCount(JSGlobalObject* globalObject, const NativeArguments& args, unsigned length, const Get& get)
+template<typename Length, typename Get>
+static EncodedJSValue sequenceCount(JSGlobalObject* globalObject, const NativeArguments& args, const Length& currentLength, const Get& get)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     int32_t count = 0;
-    for (unsigned i = 0; i < length; ++i) {
+    for (unsigned i = 0; i < currentLength(); ++i) {
         JSValue item = get(i);
         RETURN_IF_EXCEPTION(scope, { });
         bool same = isEqual(globalObject, item, args[1]);
@@ -206,13 +208,13 @@ static EncodedJSValue sequenceCount(JSGlobalObject* globalObject, const NativeAr
 PYTHON_NATIVE(listIndex)
 {
     LIST_PROLOGUE("index");
-    RELEASE_AND_RETURN(scope, sequenceIndex(globalObject, args, self->length(), "list"_s, [&] (unsigned i) { return listGet(globalObject, self, i); }));
+    RELEASE_AND_RETURN(scope, sequenceIndex(globalObject, args, [&] { return self->length(); }, "list"_s, [&] (unsigned i) { return listGet(globalObject, self, i); }));
 }
 
 PYTHON_NATIVE(listCount)
 {
     LIST_PROLOGUE("count");
-    RELEASE_AND_RETURN(scope, sequenceCount(globalObject, args, self->length(), [&] (unsigned i) { return listGet(globalObject, self, i); }));
+    RELEASE_AND_RETURN(scope, sequenceCount(globalObject, args, [&] { return self->length(); }, [&] (unsigned i) { return listGet(globalObject, self, i); }));
 }
 
 // A stable merge sort of `values`, by `keys` if there are any. False if a comparison raised.
@@ -315,14 +317,14 @@ PYTHON_NATIVE(tupleIndex)
 {
     NATIVE_PROLOGUE();
     auto* self = uncheckedDowncast<PyTuple>(args.at(0).asCell());
-    RELEASE_AND_RETURN(scope, sequenceIndex(globalObject, args, self->length(), "tuple"_s, [&] (unsigned i) { return self->at(i); }));
+    RELEASE_AND_RETURN(scope, sequenceIndex(globalObject, args, [&] { return self->length(); }, "tuple"_s, [&] (unsigned i) { return self->at(i); }));
 }
 
 PYTHON_NATIVE(tupleCount)
 {
     NATIVE_PROLOGUE();
     auto* self = uncheckedDowncast<PyTuple>(args.at(0).asCell());
-    RELEASE_AND_RETURN(scope, sequenceCount(globalObject, args, self->length(), [&] (unsigned i) { return self->at(i); }));
+    RELEASE_AND_RETURN(scope, sequenceCount(globalObject, args, [&] { return self->length(); }, [&] (unsigned i) { return self->at(i); }));
 }
 
 // ---- dict
