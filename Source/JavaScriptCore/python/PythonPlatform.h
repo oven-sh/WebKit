@@ -33,7 +33,16 @@
 #define PYTHON_VERSION_MINOR 14
 #define PYTHON_VERSION_MICRO 7
 #define PYTHON_VERSION_STRING "3.14.7" // PY_VERSION
-#define PYTHON_FULL_VERSION_STRING PYTHON_VERSION_STRING " (JavaScriptCore)" // sys.version: Py_GetVersion()
+// Py_GetCompiler()
+#if defined(__clang__)
+#define PYTHON_COMPILER "[Clang " __clang_version__ "]"
+#elif defined(__GNUC__)
+#define PYTHON_COMPILER "[GCC " __VERSION__ "]"
+#else
+#define PYTHON_COMPILER "[C++]"
+#endif
+// sys.version: Py_GetVersion(). It is the version, what was built, and what with, and `platform` will not have it any other way. When it was built is left out, which `platform` allows.
+#define PYTHON_FULL_VERSION_STRING PYTHON_VERSION_STRING " (JavaScriptCore) " PYTHON_COMPILER
 
 // What kind of system this is, as CPython's configure script puts it.
 
