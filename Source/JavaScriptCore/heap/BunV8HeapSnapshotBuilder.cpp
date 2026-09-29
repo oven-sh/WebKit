@@ -151,9 +151,10 @@ unsigned BunV8HeapSnapshotBuilder::analyzeNodeInternal(JSCell* cell)
     unsigned index = m_nodes.size();
 
     // Reuse the identifier from a prior snapshot if this cell survived;
-    // Heap::removeDeadHeapSnapshotNodes() prunes dead entries on every GC so an
-    // address reused for a new object misses here. Only new cells are appended
-    // to m_snapshot — that's the contract for HeapSnapshot::appendNode().
+    // Heap::removeDeadHeapSnapshotNodes() prunes dead entries at the end of every
+    // full GC, the only kind that can free a cell a snapshot holds, so an address
+    // reused for a new object misses here. Only new cells are appended to
+    // m_snapshot — that's the contract for HeapSnapshot::appendNode().
     unsigned identifier;
     if (auto existing = m_previousSnapshot ? m_previousSnapshot->nodeForCell(cell) : std::nullopt)
         identifier = existing->identifier;
