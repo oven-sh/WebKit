@@ -244,10 +244,16 @@ JSValue importModuleFromSource(JSGlobalObject* globalObject, const SourceCode& s
 
 void exportModule(JSGlobalObject* globalObject, const SourceCode& source, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)
 {
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue module = importModuleFromSource(globalObject, source);
     RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, exportModule(globalObject, module, exportNames, exportValues));
+}
+
+void exportModule(JSGlobalObject* globalObject, JSValue module, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(module);
     if (!module.isObject())

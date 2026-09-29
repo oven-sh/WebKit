@@ -344,9 +344,11 @@ void registerModule(JSGlobalObject*, const String& name, JSValue module);
 // The source in a file. Null, with nothing raised, if it cannot be read.
 SourceCode readSourceIfPresent(JSGlobalObject*, const String& path);
 // The module that a file is, which is run if it has not been. For a module that is asked for by where it is: JavaScript's `import`.
-JSValue importModuleFromSource(JSGlobalObject*, const SourceCode&);
+JS_EXPORT_PRIVATE JSValue importModuleFromSource(JSGlobalObject*, const SourceCode&);
 // The same, as what a module of JavaScript's can import: each of its global variables by name, and itself as the default.
 void exportModule(JSGlobalObject*, const SourceCode&, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues);
+// That, of a module that there is already. It is for a host that has some other way of saying which is meant.
+JS_EXPORT_PRIVATE void exportModule(JSGlobalObject*, JSValue module, Vector<Identifier, 4>& exportNames, MarkedArgumentBuffer& exportValues);
 // exception.args
 PyTuple* exceptionArguments(JSGlobalObject*, JSValue exception);
 // OSError(errno, strerror(errno)[, filename]), or the class derived from it that is for that error.
