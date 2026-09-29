@@ -6232,7 +6232,7 @@ struct BytecodeLinkEncoder::Impl {
                         known.isProven = true;
                         known.isDeclaration = true;
                         known.needsNoFunctionObject = true;
-                        known.returnType = AOT::TTop;
+                        known.returnType.store(AOT::TTop);
                         AOT::noteBodyOfFact(instruction->as<OpCheckType>().m_mask & 0xfffffff, known);
                         ++bodies;
                     }
@@ -6452,19 +6452,18 @@ struct BytecodeLinkEncoder::Impl {
                     summary.callees.shrink(0);
                     summary.calleesGivenMore.shrink(0);
                     uint32_t escaping = 0;
-                    uint64_t type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, index, summary.callees, summary.calleesGivenMore, escaping);
+                    AOT::Type type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summary.facts, variableFacts, index, summary.callees, summary.calleesGivenMore, escaping);
                     summary.changed = false;
                     if (summary.facts) {
                         uint32_t old = summary.facts->parametersThatEscape.fetch_or(escaping, std::memory_order_relaxed);
                         summary.changed |= (old | escaping) != old;
                     }
                     for (auto* function : summary.functions) {
-                        uint64_t old = function->returnType.load(std::memory_order_relaxed);
+                        AOT::Type old = function->returnType.join(type);
                         summary.changed |= (type | old) != old;
-                        function->returnType.store(type | old, std::memory_order_relaxed);
                     }
                     if (summary.facts)
-                        summary.facts->returnType.store(type | summary.facts->returnType.load(std::memory_order_relaxed), std::memory_order_relaxed);
+                        summary.facts->returnType.join(type);
                 });
                 SetOfUnits next;
                 for (unsigned index : worklist) {

@@ -141,11 +141,11 @@ bool VariableFacts::hasGivenUpOn(Variable variable, UniquedStringImpl* name) con
     return m_scopesGivenUpOn.contains(variable.scope) || m_namesGivenUpOn.contains(name);
 }
 
-uint64_t VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned reader)
+Type VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned reader)
 {
     if (hasGivenUpOn(variable, name))
         return TAll;
-    uint64_t type = 0;
+    Type type = 0;
     for (unsigned offset : { variable.offset, Variable::initialValue }) {
         Variable which { variable.scope, offset };
         Shard& shard = shardFor(which);
@@ -153,20 +153,20 @@ uint64_t VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigne
         auto& cell = shard.cells.ensure({ which.scope, which.offset }, [] { return makeUnique<Cell>(); }).iterator->value;
         if (reader != nobody)
             cell->readers.add(reader);
-        type |= cell->type.load(std::memory_order_relaxed);
+        type |= cell->type.load();
     }
     return type;
 }
 
-void VariableFacts::join(Variable variable, uint64_t type)
+void VariableFacts::join(Variable variable, Type type)
 {
     Shard& shard = shardFor(variable);
     Locker locker { shard.lock };
     auto& cell = shard.cells.ensure({ variable.scope, variable.offset }, [] { return makeUnique<Cell>(); }).iterator->value;
-    uint64_t before = cell->type.load(std::memory_order_relaxed);
+    Type before = cell->type.load();
     if ((before | type) == before)
         return;
-    cell->type.store(before | type, std::memory_order_relaxed);
+    cell->type.store(before | type);
     cell->grew = true;
 }
 
@@ -175,7 +175,7 @@ Vector<unsigned> VariableFacts::giveUpOnWhatIsReadAndNeverMade(unsigned& count)
     UncheckedKeyHashSet<const void*> made;
     for (auto& shard : m_shards) {
         for (auto& entry : shard.cells) {
-            if (entry.key.second == Variable::initialValue && entry.value->type.load(std::memory_order_relaxed))
+            if (entry.key.second == Variable::initialValue && entry.value->type.load())
                 made.add(entry.key.first);
         }
     }
@@ -328,8 +328,8 @@ HowValuesArePassed howValuesArePassed(const ProgramFacts* facts, Convention conv
     };
     static_assert(numberOfArgumentGPRs < ProgramFacts::mostParameters);
     for (unsigned i = 0; i < convention.numberOfParameters; ++i)
-        result.parameters[i] = repFor(facts->parameterTypes[i + 1].load(std::memory_order_relaxed));
-    result.result = repFor(facts->returnType.load(std::memory_order_relaxed));
+        result.parameters[i] = repFor(facts->parameterTypes[i + 1].load());
+    result.result = repFor(facts->returnType.load());
     return result;
 }
 

@@ -163,11 +163,11 @@ private:
         unsigned count = std::min<unsigned>(known->forCall->numParameters(), ProgramFacts::mostParameters);
         for (unsigned i = 1; i < count; ++i) {
             Type type = i < argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
-            Type before = known->facts->parameterTypes[i].fetch_or(type, std::memory_order_relaxed);
+            Type before = known->facts->parameterTypes[i].join(type);
             givesMore |= (before | type) != before;
         }
         // (One with no parameters is reached all the same.)
-        Type before = known->facts->parameterTypes[0].fetch_or(TTop, std::memory_order_relaxed);
+        Type before = known->facts->parameterTypes[0].join(TTop);
         givesMore |= before != TTop;
         if (givesMore && !calleesGivenMore->contains(known))
             calleesGivenMore->append(known);
@@ -244,7 +244,7 @@ private:
             return TTop;
         if (calleesConsulted && !calleesConsulted->contains(known))
             calleesConsulted->append(known);
-        return known->returnType.load(std::memory_order_relaxed);
+        return known->returnType.load();
     }
 
     bool update(Node* node)

@@ -703,7 +703,7 @@ bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBl
     return true;
 }
 
-uint64_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, uint32_t& parametersThatEscape, const String& nameForLog)
+Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, unsigned readerOfFacts, Vector<const KnownFunction*>& calleesConsulted, Vector<const KnownFunction*>& calleesGivenMore, uint32_t& parametersThatEscape, const String& nameForLog)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);

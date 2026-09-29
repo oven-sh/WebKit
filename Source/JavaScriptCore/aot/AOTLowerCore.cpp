@@ -804,9 +804,10 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
             place = m_block->nodes[i];
         // (Neither is an address of anything, by the time the program runs.)
         m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
+        m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected >> 64));
         m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
         if (place->kind == NodeKind::Bytecode) {
-            vmCall(place, Void, Entry::operationAOTVerifyFact, m_globalObject, value, m_out.constInt64(expected), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
+            vmCall(place, Void, Entry::operationAOTVerifyFact, m_globalObject, value, m_out.constInt64(static_cast<int64_t>(expected)), m_out.constInt64(static_cast<int64_t>(expected >> 64)), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
                 m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
         }
     }

@@ -89,6 +89,18 @@ Type typeOfValue(JSValue value)
     return typeOfCellOfType(value.asCell()->type());
 }
 
+Type AtomicType::join(Type type)
+{
+    Type before = load();
+    if ((before | type) == before)
+        return before;
+    static Lock locks[64];
+    Locker locker { locks[(std::bit_cast<uintptr_t>(this) >> 4) % std::size(locks)] };
+    before = load();
+    store(before | type);
+    return before;
+}
+
 void dumpType(PrintStream& out, Type type)
 {
     if (!type) {
@@ -121,10 +133,24 @@ void dumpType(PrintStream& out, Type type)
     take(TSymbol, "Symbol"_s);
     take(TBigInt, "BigInt"_s);
     take(TFunction, "Function"_s);
+    if (type & TFunctionTag) {
+        if (uint32_t function = functionThatIs(type))
+            out.print(bar, "Function#", function);
+        else
+            out.print(bar, "Function#?");
+        type &= ~TFunction;
+    }
     take(TArray, "Array"_s);
     take(TObject, "Object"_s);
     take(TOtherObject, "OtherObject"_s);
     take(TFinalObject, "FinalObject"_s);
+    if (type & TFinalObjectTag) {
+        auto layouts = layoutsBornAs(type);
+        out.print(bar, "FinalObject#", layouts.lowest);
+        if (!layouts.isOne())
+            out.print("..", layouts.highest);
+        type &= ~TFinalObject;
+    }
     take(TMap, "Map"_s);
     take(TSet, "Set"_s);
     take(TWeakMap, "WeakMap"_s);

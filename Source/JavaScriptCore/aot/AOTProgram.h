@@ -43,9 +43,9 @@ struct ProgramFacts {
     // If closed: everything that is passed for each parameter, `this` being the first, from nothing up (see KnownFunction::returnType).
     // One that there are more of than this has nothing said of the rest.
     static constexpr unsigned mostParameters = 12;
-    std::array<std::atomic<uint64_t>, mostParameters> parameterTypes { };
+    std::array<AtomicType, mostParameters> parameterTypes { };
     // KnownFunction::returnType, where the function itself finds it.
-    mutable std::atomic<uint64_t> returnType { 0 };
+    mutable AtomicType returnType;
     // What the function is passed that something may still be able to get at when it has returned: a bit for each parameter, `this` being
     // the first. It goes by the code of the function and of what that calls, whoever calls it: from nothing up, like the rest.
     // It takes for granted that reading and writing properties of what was passed runs nobody's code.
@@ -79,8 +79,8 @@ public:
 
     // Any thread. reader: told of by takeReadersOfWhatGrew() if there turns out to be more to it. TAll: nothing is known.
     static constexpr unsigned nobody = std::numeric_limits<unsigned>::max();
-    uint64_t read(Variable, UniquedStringImpl* name, unsigned reader);
-    void join(Variable, uint64_t type);
+    Type read(Variable, UniquedStringImpl* name, unsigned reader);
+    void join(Variable, Type);
 
     // Not while any of that is going on.
     Vector<unsigned> takeReadersOfWhatGrew();
@@ -91,7 +91,7 @@ public:
     {
         for (auto& shard : m_shards) {
             for (auto& entry : shard.cells)
-                functor(Variable { entry.key.first, entry.key.second }, entry.value->type.load(std::memory_order_relaxed));
+                functor(Variable { entry.key.first, entry.key.second }, entry.value->type.load());
         }
     }
     bool hasGivenUpOn(Variable, UniquedStringImpl* name) const;
@@ -100,7 +100,7 @@ private:
     using SetOfReaders = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
     struct Cell {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(Cell);
-        std::atomic<uint64_t> type { 0 };
+        AtomicType type;
         bool grew { false };
         SetOfReaders readers;
     };
@@ -137,7 +137,7 @@ struct KnownFunction {
     mutable std::atomic<bool> needsNoFunctionObject { false };
     // If proven: everything that a call of it can return. It is worked out for all of them together, from nothing up
     // (inferReturnTypeForImage()), and means what it says once that has come to an end.
-    mutable std::atomic<uint64_t> returnType { 0 };
+    mutable AtomicType returnType;
     mutable ProgramFacts* facts { nullptr }; // If proven, and whoever compiles the program keeps them.
 
     KnownFunction() = default;
@@ -154,7 +154,7 @@ struct KnownFunction {
         isDeclaration = other.isDeclaration;
         escapes = other.escapes;
         needsNoFunctionObject = other.needsNoFunctionObject.load(std::memory_order_relaxed);
-        returnType = other.returnType.load(std::memory_order_relaxed);
+        returnType = other.returnType;
         facts = other.facts;
         return *this;
     }

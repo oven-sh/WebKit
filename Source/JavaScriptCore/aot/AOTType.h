@@ -32,13 +32,20 @@
 #include "SpeculatedType.h"
 #include <wtf/MathExtras.h>
 #include <wtf/PrintStream.h>
+#include <atomic>
 
 namespace JSC { namespace AOT {
 
 // What the static compiler knows about a value. Unlike a SpeculatedType this is never a guess: a value whose type is T has
 // been proven to be in T, by a type check that ran, by the operation that made it, or by both. The bits partition the values
 // a virtual register can hold.
-using Type = uint64_t;
+//
+// Above the bits that say what kind of thing a value is (the tags) are two that say WHICH: which function it is, and which layout of the
+// table of types an object was born as (TypeTable). Each is a number, written so that types can go on being joined with `|`: a
+// bit of the number takes two bits here, 01 if it is 0 and 10 if it is 1. So what two different numbers join to has 11 somewhere.
+// For a function that means there is more than one it may be. For a layout the bits that are 11 are ones that are not known,
+// which leaves a lowest and a highest that it may be. Nothing at all: there is no such value. And `&` gives what both allow.
+using Type = unsigned __int128;
 
 static constexpr Type TNone = 0;
 static constexpr Type TInt32 = Type(1) << 0; // A number that is encoded as an int32.
@@ -49,7 +56,17 @@ static constexpr Type TNull = Type(1) << 4;
 static constexpr Type TString = Type(1) << 5;
 static constexpr Type TSymbol = Type(1) << 6;
 static constexpr Type TBigInt = Type(1) << 7;
-static constexpr Type TFunction = Type(1) << 8; // JSFunctionType or InternalFunctionType.
+static constexpr unsigned numberOfTagBits = 40;
+static constexpr Type TAllTags = (Type(1) << numberOfTagBits) - 1;
+static constexpr unsigned bitsOfFunctionNumber = 18;
+static constexpr unsigned firstBitOfFunctionNumber = numberOfTagBits;
+static constexpr Type TWhicheverFunction = ((Type(1) << 2 * bitsOfFunctionNumber) - 1) << firstBitOfFunctionNumber;
+static constexpr unsigned bitsOfLayoutNumber = 16;
+static constexpr unsigned firstBitOfLayoutNumber = firstBitOfFunctionNumber + 2 * bitsOfFunctionNumber;
+static constexpr Type TWhicheverLayout = ((Type(1) << 2 * bitsOfLayoutNumber) - 1) << firstBitOfLayoutNumber;
+static_assert(firstBitOfLayoutNumber + 2 * bitsOfLayoutNumber <= 128);
+static constexpr Type TFunctionTag = Type(1) << 8;
+static constexpr Type TFunction = TFunctionTag | TWhicheverFunction; // JSFunctionType or InternalFunctionType.
 static constexpr Type TArray = Type(1) << 9; // ArrayType or DerivedArrayType.
 static constexpr Type TOtherObject = Type(1) << 10; // Every object that is none of the others. It may be one that can be called.
 static constexpr Type TCellOther = Type(1) << 11; // Cells that are not JS values, which bytecode passes around (SymbolTable, ...).
@@ -60,7 +77,8 @@ static constexpr Type TTypedArray = ((Type(1) << NumberOfTypedArrayTypesExcludin
 static constexpr unsigned firstBitAfterTypedArrays = 25;
 static_assert(firstTypedArrayBit + NumberOfTypedArrayTypesExcludingDataView <= firstBitAfterTypedArrays);
 // Objects that are told apart by their JSType. None of them can be called.
-static constexpr Type TFinalObject = Type(1) << 25; // What an object literal makes, and `new` of a function or a class that extends nothing.
+static constexpr Type TFinalObjectTag = Type(1) << 25;
+static constexpr Type TFinalObject = TFinalObjectTag | TWhicheverLayout; // What an object literal makes, and `new` of a function or a class that extends nothing.
 static constexpr Type TMap = Type(1) << 26;
 static constexpr Type TSet = Type(1) << 27;
 static constexpr Type TWeakMap = Type(1) << 28;
@@ -101,6 +119,46 @@ static constexpr Type TCell = TString | TSymbol | TBigInt | TAnyObject | TCellOt
 static constexpr Type TPrimitive = TNumber | TBoolean | TOther | TString | TSymbol | TBigInt;
 static constexpr Type TTop = TPrimitive | TAnyObject | TCellOther; // Any value a program can see.
 static constexpr Type TAll = TTop | TEmpty;
+
+constexpr Type numberOnRails(uint32_t number, unsigned firstBit, unsigned bits)
+{
+    Type result = 0;
+    for (unsigned i = 0; i < bits; ++i)
+        result |= Type(number >> i & 1 ? 2 : 1) << (firstBit + 2 * i);
+    return result;
+}
+// The lowest and the highest that the rails allow. If some bit has neither rail there is no such value, and lowest > highest.
+struct NumbersOnRails {
+    uint32_t lowest;
+    uint32_t highest;
+    bool isOne() const { return lowest == highest; }
+    bool isNone() const { return lowest > highest; }
+};
+constexpr NumbersOnRails numbersOnRails(Type type, unsigned firstBit, unsigned bits)
+{
+    NumbersOnRails result { 0, 0 };
+    for (unsigned i = 0; i < bits; ++i) {
+        unsigned rails = static_cast<unsigned>(type >> (firstBit + 2 * i)) & 3;
+        if (!rails)
+            return { 1, 0 };
+        if (rails == 2)
+            result.lowest |= 1u << i;
+        if (rails & 2)
+            result.highest |= 1u << i;
+    }
+    return result;
+}
+// Functions and layouts are numbered from 1.
+constexpr Type typeOfFunction(uint32_t number) { return TFunctionTag | numberOnRails(number, firstBitOfFunctionNumber, bitsOfFunctionNumber); }
+constexpr Type typeOfObjectBornAs(uint32_t layout) { return TFinalObjectTag | numberOnRails(layout, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
+// The one function that the value is, if it is a function. Zero: there is no telling.
+constexpr uint32_t functionThatIs(Type type)
+{
+    auto numbers = numbersOnRails(type, firstBitOfFunctionNumber, bitsOfFunctionNumber);
+    return (type & TFunctionTag) && numbers.isOne() ? numbers.lowest : 0;
+}
+// What the value was born as, if it is what a literal or a constructor makes. 0 among them: it may be of no layout at all.
+constexpr NumbersOnRails layoutsBornAs(Type type) { return numbersOnRails(type, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
 
 inline bool isSubtype(Type type, Type of) { return !(type & ~of); }
 inline bool mayBe(Type type, Type what) { return type & what; }
@@ -216,10 +274,30 @@ inline Type typeProvingMask(unsigned mask)
 // The one type of typed array that the value is, if it is known to be one.
 inline std::optional<JSType> typedArrayTypeOf(Type type)
 {
-    if (!type || !isSubtype(type, TTypedArray) || !hasOneBitSet(type))
+    if (!type || !isSubtype(type, TTypedArray) || !hasOneBitSet(static_cast<uint64_t>(type)))
         return std::nullopt;
-    return static_cast<JSType>(FirstTypedArrayType + WTF::ctz(type) - firstTypedArrayBit);
+    return static_cast<JSType>(FirstTypedArrayType + WTF::ctz(static_cast<uint64_t>(type)) - firstTypedArrayBit);
 }
+
+// A type that any thread may add to. It only ever grows.
+class AtomicType {
+public:
+    AtomicType() = default;
+    AtomicType(const AtomicType& other) { store(other.load()); }
+    AtomicType& operator=(const AtomicType& other) { store(other.load()); return *this; }
+    Type load() const { return static_cast<Type>(m_high.load(std::memory_order_relaxed)) << 64 | m_low.load(std::memory_order_relaxed); }
+    void store(Type type)
+    {
+        m_low.store(static_cast<uint64_t>(type), std::memory_order_relaxed);
+        m_high.store(static_cast<uint64_t>(type >> 64), std::memory_order_relaxed);
+    }
+    // What it was before. One at a time, if there is anything to add: whoever makes one function into several has to know which they are.
+    JS_EXPORT_PRIVATE Type join(Type);
+
+private:
+    std::atomic<uint64_t> m_low { 0 };
+    std::atomic<uint64_t> m_high { 0 };
+};
 
 Type typeOfValue(JSValue);
 void dumpType(PrintStream&, Type);

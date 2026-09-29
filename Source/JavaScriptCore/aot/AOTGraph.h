@@ -522,7 +522,7 @@ public:
     {
         if (!m_facts || !m_facts->isClosed || !indexIncludingThis || indexIncludingThis >= ProgramFacts::mostParameters)
             return TTop;
-        return m_facts->parameterTypes[indexIncludingThis].load(std::memory_order_relaxed);
+        return m_facts->parameterTypes[indexIncludingThis].load();
     }
     const CalleeHints* calleeHints() const { return m_hints; }
     unsigned indexOfKnownCallee(const ImageKey&);

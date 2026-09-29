@@ -626,8 +626,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
 
 // Options::aotVerifiesFacts()
 // That it is here is not to change what the program does: it may be called with an exception on its way to whoever catches it.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t type, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset))
 {
+    Type type = static_cast<Type>(highHalfOfType) << 64 | lowHalfOfType;
     Type actual = typeOfValue(JSValue::decode(encodedValue));
     // (Nothing: what a stub takes for there being no exception.)
     if (isSubtype(actual, type)) [[likely]]
