@@ -28,14 +28,11 @@
 
 #include "PythonBytes.h"
 #include "PythonCharacters.h"
+#include "PythonUnicodeType.h"
 
-#include <unicode/ucasemap.h>
-#include <unicode/uchar.h>
-#include <unicode/ustring.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
 #include <wtf/unicode/CharacterNames.h>
-#include <wtf/unicode/icu/ICUHelpers.h>
 
 // str.
 
@@ -43,9 +40,7 @@ namespace JSC { namespace Python {
 
 bool isSpace(char32_t c)
 {
-    if (c < 0x80)
-        return c == ' ' || (c >= '\t' && c <= '\r') || (c >= 0x1C && c <= 0x1F);
-    return c == 0x85 || u_isUWhiteSpace(c);
+    return Unicode::isWhitespace(c);
 }
 
 static JSValue unboxString(JSValue value)
@@ -193,6 +188,8 @@ PYTHON_NATIVE(strJoin)
     MarkedArgumentBuffer items;
     collectFast(globalObject, args[1], items, "can only join an iterable"_s);
     RETURN_IF_EXCEPTION(scope, { });
+    if (items.size() == 1 && items.at(0).isString())
+        return JSValue::encode(items.at(0));
     TextBuilder builder;
     for (unsigned i = 0; i < items.size(); ++i) {
         JSValue item = unboxString(items.at(i));
@@ -317,15 +314,12 @@ PYTHON_NATIVE(strSplitLines)
     JSValue keepValue = args.at(1);
     bool keepEnds = keepValue && isTrue(globalObject, keepValue);
     RETURN_IF_EXCEPTION(scope, { });
-    auto isLineBreak = [] (char16_t c) {
-        return c == '\n' || c == '\r' || c == 0x0B || c == 0x0C || c == 0x1C || c == 0x1D || c == 0x1E || c == 0x85 || c == 0x2028 || c == 0x2029;
-    };
     StringView view = self;
     MarkedArgumentBuffer result;
     unsigned length = view.length();
     for (unsigned i = 0; i < length;) {
         unsigned start = i;
-        while (i < length && !isLineBreak(view[i]))
+        while (i < length && !Unicode::isLineBreak(view[i]))
             ++i;
         unsigned end = i;
         if (i < length) {
@@ -504,66 +498,7 @@ PYTHON_NATIVE(strRemoveAffix)
 
 // ---- Case
 
-// Whether there is room for a string in another case, where it can be longer: the sharp s in upper case is SS. False, with MemoryError raised, if not. What puts it in the other case gives the string back as it
-// was if there is no room, or brings everything down, so this is asked first. `convert` is ICU's, which says how long it would be when it is given nowhere to put it.
-template<typename Convert>
-static bool hasRoomInAnotherCase(JSGlobalObject* globalObject, const String& string, bool isToLower, const Convert& convert)
-{
-    // One character makes three at the most, which is how much room CPython sets aside.
-    if (string.length() <= String::MaxLength / 3) [[likely]]
-        return true;
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (string.is8Bit()) {
-        // Of these the sharp s is the only one that makes more than one, and not in lower case, which it is in already.
-        size_t length = string.length();
-        if (!isToLower) {
-            for (Latin1Character character : string.span8())
-                length += character == WTF::Unicode::smallLetterSharpS;
-        }
-        if (length > String::MaxLength) {
-            raiseMemoryError(globalObject, scope);
-            return false;
-        }
-        return true;
-    }
-    UErrorCode status = U_ZERO_ERROR;
-    int32_t length = convert(nullptr, 0, string.span16().data(), string.length(), &status);
-    // That there was nowhere to put it is what it is bound to say. Anything else is that the length cannot be counted.
-    if ((status != U_BUFFER_OVERFLOW_ERROR && U_FAILURE(status)) || !StringImpl::isValidLength<char16_t>(length)) {
-        raiseMemoryError(globalObject, scope);
-        return false;
-    }
-    return true;
-}
-
-PYTHON_NATIVE(strUpper)
-{
-    STR_PROLOGUE("upper");
-    if (!hasRoomInAnotherCase(globalObject, self, false, [] (char16_t* to, int32_t capacity, const char16_t* from, int32_t length, UErrorCode* status) { return u_strToUpper(to, capacity, from, length, "", status); }))
-        return { };
-    return JSValue::encode(toJS(vm, self.convertToUppercaseWithoutLocale()));
-}
-
-PYTHON_NATIVE(strLower)
-{
-    STR_PROLOGUE("lower");
-    if (!hasRoomInAnotherCase(globalObject, self, true, [] (char16_t* to, int32_t capacity, const char16_t* from, int32_t length, UErrorCode* status) { return u_strToLower(to, capacity, from, length, "", status); }))
-        return { };
-    return JSValue::encode(toJS(vm, self.convertToLowercaseWithoutLocale()));
-}
-
-PYTHON_NATIVE(strCasefold)
-{
-    STR_PROLOGUE("casefold");
-    if (!hasRoomInAnotherCase(globalObject, self, false, [] (char16_t* to, int32_t capacity, const char16_t* from, int32_t length, UErrorCode* status) { return u_strFoldCase(to, capacity, from, length, U_FOLD_CASE_DEFAULT, status); }))
-        return { };
-    return JSValue::encode(toJS(vm, self.foldCase()));
-}
-
-static bool isCased(char32_t c) { return u_isUUppercase(c) || u_isULowercase(c) || u_istitle(c); }
-
-// One character at a time to another case, by the full mappings, which can make more than one character of one: the sharp s in upper case is SS. It is for what has a rule of its own for which
-// characters go to which case. What puts a whole string in one case can leave it all to ICU.
+// One character at a time to another case, by the full mappings, which can make more than one character of one: the sharp s in upper case is SS.
 class CaseMapper {
 public:
     // False if it raised.
@@ -571,10 +506,13 @@ public:
 
     size_t size() const { return m_characters.size(); }
     char32_t operator[](size_t i) const { return m_characters[i]; }
+    // Null if there is no room for it.
     String result() { return m_result.tryFinish(); }
 
     void keep(size_t i) { m_result.append(m_characters[i]); }
-    void upper(size_t i) { map(m_characters[i], toASCIIUpper<char32_t>, [] (auto... arguments) { return u_strToUpper(arguments...); }); }
+    void upper(size_t i) { map(Unicode::toUpperFull, m_characters[i]); }
+    void title(size_t i) { map(Unicode::toTitleFull, m_characters[i]); }
+    void fold(size_t i) { map(Unicode::toFoldedFull, m_characters[i]); }
 
     // lower_ucs4()
     void lower(size_t i)
@@ -584,61 +522,63 @@ public:
             m_result.append(static_cast<char32_t>(isFinalSigma(i) ? 0x3C2 : 0x3C3));
             return;
         }
-        map(c, toASCIILower<char32_t>, [] (auto... arguments) { return u_strToLower(arguments...); });
-    }
-
-    void title(size_t i)
-    {
-        map(m_characters[i], toASCIIUpper<char32_t>, [&] (char16_t* to, int32_t capacity, const char16_t* from, int32_t length, const char*, UErrorCode* error) {
-            if (!m_titleMap)
-                m_titleMap.reset(ucasemap_open("", U_TITLECASE_WHOLE_STRING | U_TITLECASE_NO_LOWERCASE | U_TITLECASE_NO_BREAK_ADJUSTMENT, error));
-            return U_FAILURE(*error) ? 0 : ucasemap_toTitle(m_titleMap.get(), to, capacity, from, length, error);
-        });
+        map(Unicode::toLowerFull, c);
     }
 
 private:
-    template<typename ForASCII, typename ForOthers>
-    void map(char32_t c, const ForASCII& forASCII, const ForOthers& forOthers)
+    void map(unsigned (*function)(char32_t, Unicode::Mapping&), char32_t c)
     {
-        if (isASCII(c)) {
-            m_result.append(static_cast<char>(forASCII(c)));
-            return;
-        }
-        // A surrogate on its own is nothing that ICU is to be asked about.
-        if (U_IS_SURROGATE(c)) {
-            m_result.append(static_cast<char16_t>(c));
-            return;
-        }
-        char16_t from[2];
-        int32_t length = 0;
-        U16_APPEND_UNSAFE(from, length, c);
-        // No mapping is to more than three characters.
-        char16_t to[8];
-        UErrorCode error = U_ZERO_ERROR;
-        int32_t mapped = forOthers(to, static_cast<int32_t>(std::size(to)), from, length, "", &error);
-        RELEASE_ASSERT(U_SUCCESS(error) && mapped <= static_cast<int32_t>(std::size(to)));
-        m_result.append(std::span<const char16_t> { to, static_cast<size_t>(mapped) });
+        Unicode::Mapping mapped;
+        unsigned count = function(c, mapped);
+        for (unsigned i = 0; i < count; ++i)
+            m_result.append(mapped[i]);
     }
 
     // handle_capital_sigma(): after something cased, and not before something cased, with no account taken of what is neither here nor there.
     bool isFinalSigma(size_t i) const
     {
-        auto isIgnorable = [] (char32_t c) { return u_hasBinaryProperty(c, UCHAR_CASE_IGNORABLE); };
         size_t before = i;
-        while (before && isIgnorable(m_characters[before - 1]))
+        while (before && Unicode::isCaseIgnorable(m_characters[before - 1]))
             --before;
-        if (!before || !isCased(m_characters[before - 1]))
+        if (!before || !Unicode::isCased(m_characters[before - 1]))
             return false;
         size_t after = i + 1;
-        while (after < m_characters.size() && isIgnorable(m_characters[after]))
+        while (after < m_characters.size() && Unicode::isCaseIgnorable(m_characters[after]))
             ++after;
-        return after == m_characters.size() || !isCased(m_characters[after]);
+        return after == m_characters.size() || !Unicode::isCased(m_characters[after]);
     }
 
     Vector<char32_t, 64> m_characters;
     TextBuilder m_result;
-    std::unique_ptr<UCaseMap, ICUDeleter<ucasemap_close>> m_titleMap;
 };
+
+enum class WholeCase : uint8_t { Upper, Lower, Folded };
+
+// upper(), lower() and casefold(): do_upper(), do_lower() and do_casefold()
+PYTHON_NATIVE(strWholeCase)
+{
+    auto which = unpack<WholeCase>(callFrame, 0);
+    STR_PROLOGUE("upper");
+    if (self.containsOnlyASCII())
+        return JSValue::encode(toJS(vm, which == WholeCase::Upper ? self.convertToASCIIUppercase() : self.convertToASCIILowercase()));
+    CaseMapper mapper;
+    if (!mapper.read(globalObject, self))
+        return { };
+    for (size_t i = 0; i < mapper.size(); ++i) {
+        switch (which) {
+        case WholeCase::Upper:
+            mapper.upper(i);
+            break;
+        case WholeCase::Lower:
+            mapper.lower(i);
+            break;
+        case WholeCase::Folded:
+            mapper.fold(i);
+            break;
+        }
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, mapper.result())));
+}
 
 PYTHON_NATIVE(strSwapCase)
 {
@@ -647,9 +587,9 @@ PYTHON_NATIVE(strSwapCase)
     if (!mapper.read(globalObject, self))
         return { };
     for (size_t i = 0; i < mapper.size(); ++i) {
-        if (u_isUUppercase(mapper[i]))
+        if (Unicode::isUppercase(mapper[i]))
             mapper.lower(i);
-        else if (u_isULowercase(mapper[i]))
+        else if (Unicode::isLowercase(mapper[i]))
             mapper.upper(i);
         else
             mapper.keep(i);
@@ -684,25 +624,19 @@ PYTHON_NATIVE(strTitle)
             mapper.lower(i);
         else
             mapper.title(i);
-        previousIsCased = isCased(mapper[i]);
+        previousIsCased = Unicode::isCased(mapper[i]);
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, mapper.result())));
 }
 
 // ---- Questions
 
-static bool isAlpha(char32_t c) { return u_isalpha(c); }
-static bool isDecimal(char32_t c) { return u_charType(c) == U_DECIMAL_DIGIT_NUMBER; }
-static bool isDigit(char32_t c) { return u_charDigitValue(c) >= 0 || u_getIntPropertyValue(c, UCHAR_NUMERIC_TYPE) == U_NT_DIGIT; }
-static bool isNumeric(char32_t c) { return u_getIntPropertyValue(c, UCHAR_NUMERIC_TYPE) != U_NT_NONE; }
-static bool isAlphanumeric(char32_t c) { return isAlpha(c) || isNumeric(c); }
-
 enum class CharacterClass : uint8_t { Alpha, Decimal, Digit, Numeric, Alphanumeric, Space };
 
 // True if there is at least one character and all of them are of the class.
 PYTHON_NATIVE(strAll)
 {
-    static constexpr bool (*predicates[])(char32_t) = { isAlpha, isDecimal, isDigit, isNumeric, isAlphanumeric, isSpace };
+    static constexpr bool (*predicates[])(char32_t) = { Unicode::isAlpha, Unicode::isDecimalDigit, Unicode::isDigit, Unicode::isNumeric, Unicode::isAlphanumeric, Unicode::isWhitespace };
     auto predicate = predicates[unpack<unsigned>(callFrame, 0)];
     STR_PROLOGUE("isalpha");
     if (self.isEmpty())
@@ -721,9 +655,9 @@ PYTHON_NATIVE(strIsCase)
     STR_PROLOGUE("isupper");
     bool hasCased = false;
     for (char32_t c : StringView(self).codePoints()) {
-        if (upper ? (u_isULowercase(c) || u_istitle(c)) : (u_isUUppercase(c) || u_istitle(c)))
+        if ((upper ? Unicode::isLowercase(c) : Unicode::isUppercase(c)) || Unicode::isTitlecase(c))
             return JSValue::encode(jsBoolean(false));
-        hasCased |= isCased(c);
+        hasCased |= upper ? Unicode::isUppercase(c) : Unicode::isLowercase(c);
     }
     return JSValue::encode(jsBoolean(hasCased));
 }
@@ -734,12 +668,12 @@ PYTHON_NATIVE(strIsTitle)
     bool hasCased = false;
     bool previousIsCased = false;
     for (char32_t c : StringView(self).codePoints()) {
-        if (u_isUUppercase(c) || u_istitle(c)) {
+        if (Unicode::isUppercase(c) || Unicode::isTitlecase(c)) {
             if (previousIsCased)
                 return JSValue::encode(jsBoolean(false));
             previousIsCased = true;
             hasCased = true;
-        } else if (u_isULowercase(c)) {
+        } else if (Unicode::isLowercase(c)) {
             if (!previousIsCased)
                 return JSValue::encode(jsBoolean(false));
             hasCased = true;
@@ -759,7 +693,7 @@ bool isIdentifier(StringView string)
 {
     bool isFirst = true;
     for (char32_t c : string.codePoints()) {
-        if (isFirst ? !(c == '_' || u_hasBinaryProperty(c, UCHAR_XID_START)) : !u_hasBinaryProperty(c, UCHAR_XID_CONTINUE))
+        if (isFirst ? !(c == '_' || Unicode::isXIDStart(c)) : !Unicode::isXIDContinue(c))
             return false;
         isFirst = false;
     }
@@ -1078,7 +1012,7 @@ private:
             return -1;
         int64_t accumulator = 0;
         for (size_t i = range.start; i < range.end; ++i) {
-            int digit = u_charType(s[i]) == U_DECIMAL_DIGIT_NUMBER ? u_charDigitValue(s[i]) : -1;
+            int digit = Unicode::toDecimalDigit(s[i]);
             if (digit < 0)
                 return -1;
             if (accumulator > (std::numeric_limits<int64_t>::max() - digit) / 10) {
@@ -1409,9 +1343,9 @@ void initializeStrType(JSGlobalObject* globalObject)
         { "expandtabs"_s, strExpandTabs },
         { "removeprefix"_s, strRemoveAffix, PyNativeFunction::Kind::Method, pack(true) },
         { "removesuffix"_s, strRemoveAffix, PyNativeFunction::Kind::Method, pack(false) },
-        { "upper"_s, strUpper },
-        { "lower"_s, strLower },
-        { "casefold"_s, strCasefold },
+        { "upper"_s, strWholeCase, PyNativeFunction::Kind::Method, pack(WholeCase::Upper) },
+        { "lower"_s, strWholeCase, PyNativeFunction::Kind::Method, pack(WholeCase::Lower) },
+        { "casefold"_s, strWholeCase, PyNativeFunction::Kind::Method, pack(WholeCase::Folded) },
         { "swapcase"_s, strSwapCase },
         { "capitalize"_s, strCapitalize },
         { "title"_s, strTitle },

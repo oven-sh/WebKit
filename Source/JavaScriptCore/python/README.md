@@ -460,6 +460,17 @@ of that is to show in Python, and `len(s)` and `s[i]` are to take no longer for 
   looked for with `findCharacters()` and the rest is not found in the middle of a pair. That takes looking into only if it begins with a second half or ends with a first half, which is next to never.
   And `strip()` goes by a character at a time, or it would take half of one emoji for half of another.
 
+### What kind of thing a character is
+
+Whether a character is a letter, a digit or a space, whether `repr()` shows it, whether a name can have it in it, and what it is in another case, are asked of `PythonUnicodeType.h`, which is `Objects/unicodectype.c`
+over the same table, `PythonUnicodeTypeDatabase.h`. `str`'s methods go by it, and the lexer, `int()` and `float()`, `repr()`, and format specifications. ICU is not asked. It knows whatever version of
+Unicode came with the system, so a program would do one thing on one machine and another on the next, and it does not always mean the same by the question: one character for one, the sharp s in upper case is itself to
+ICU and `S` to CPython.
+
+The table is not written by hand. `lib/convert-unicode-type-database.py` makes it from CPython's, and is to be run again when the version of CPython changes. `programs/every-character.py` asks everything of every character.
+
+What ICU is still asked for is what CPython has in `unicodedata`, which is not ported: names, NFKC for names in source, and how wide a character is where a caret is put under it.
+
 ### Adding to a string
 
 `s += x` in a loop is how a great deal of Python puts a string together, and it looks at what it has so far as it goes: `s[-1]`, `s.endswith(...)`, `len(s)`. CPython adds to the string where it is, if nothing else

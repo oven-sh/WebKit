@@ -27,6 +27,7 @@
 #include "PythonLexer.h"
 #include "PythonText.h"
 
+#include "PythonUnicodeType.h"
 #include "VM.h"
 #include <unicode/uchar.h>
 #include <unicode/unorm2.h>
@@ -784,24 +785,6 @@ private:
         }
     }
 
-    // Py_UNICODE_ISPRINTABLE()
-    static bool isPrintable(char32_t c)
-    {
-        switch (u_charType(c)) {
-        case U_CONTROL_CHAR:
-        case U_FORMAT_CHAR:
-        case U_SURROGATE:
-        case U_PRIVATE_USE_CHAR:
-        case U_UNASSIGNED:
-        case U_LINE_SEPARATOR:
-        case U_PARAGRAPH_SEPARATOR:
-        case U_SPACE_SEPARATOR:
-            return c == ' ';
-        default:
-            return true;
-        }
-    }
-
     // A name with something in it that is not ASCII: it has to be made of what Unicode allows in one, and it is its NFKC form that counts.
     bool addNormalizedName(unsigned start, std::span<const CharacterType> characters)
     {
@@ -813,13 +796,13 @@ private:
             unsigned before = i;
             char32_t c;
             U16_NEXT(buffer.span().data(), i, length, c);
-            bool isValid = !before ? c == '_' || u_hasBinaryProperty(c, UCHAR_XID_START) : u_hasBinaryProperty(c, UCHAR_XID_CONTINUE);
+            bool isValid = !before ? c == '_' || Unicode::isXIDStart(c) : Unicode::isXIDContinue(c);
             if (isValid)
                 continue;
             // Everything up to it is a name, and it is what is wrong.
             m_position = start + before;
             unsigned column = columnOf(m_position);
-            if (isPrintable(c))
+            if (Unicode::isPrintable(c))
                 return fail(concatenate("invalid character '"_s, StringView(buffer.span().subspan(before, i - before)), "' (U+"_s, hex(static_cast<unsigned>(c), 4), ')'), m_line, column, m_line, column);
             return fail(concatenate("invalid non-printable character U+"_s, hex(static_cast<unsigned>(c), 4)), m_line, column, m_line, column);
         }

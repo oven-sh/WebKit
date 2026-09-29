@@ -354,7 +354,12 @@ static JSValue intFromText(JSGlobalObject* globalObject, JSValue value, int64_t 
     if (JSString* string = stringIn(value)) {
         auto view = string->view(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        JSValue result = parseInt(globalObject, view, base);
+        String inASCII;
+        if (!view->containsOnlyASCII()) {
+            inASCII = decimalsAndSpacesInASCII(globalObject, view);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        JSValue result = parseInt(globalObject, inASCII.isNull() ? StringView(view) : StringView(inASCII), base);
         RETURN_IF_EXCEPTION(scope, { });
         if (!result) {
             String shown = textOrMemoryError(globalObject, reprOfString(view));
@@ -529,7 +534,12 @@ PYTHON_NATIVE(floatNew)
         if (plain.isString()) {
             auto view = asString(plain)->view(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
-            auto parsed = parseFloat(view);
+            String inASCII;
+            if (!view->containsOnlyASCII()) {
+                inASCII = decimalsAndSpacesInASCII(globalObject, view);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            auto parsed = parseFloat(inASCII.isNull() ? StringView(view) : StringView(inASCII));
             if (!parsed) {
                 String shown = textOrMemoryError(globalObject, reprOfString(view));
                 RETURN_IF_EXCEPTION(scope, { });

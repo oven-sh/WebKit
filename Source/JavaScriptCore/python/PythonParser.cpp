@@ -28,6 +28,7 @@
 
 #include "PythonLexer.h"
 #include "PythonText.h"
+#include "PythonUnicodeType.h"
 #include "VM.h"
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
@@ -2761,7 +2762,7 @@ private:
 
     static bool isPythonWhitespace(char16_t c)
     {
-        return c == ' ' || (c >= '\t' && c <= '\r') || (c >= 0x1C && c <= 0x1F) || c == 0x85 || c == 0xA0 || (c >= 0x80 && u_isUWhiteSpace(c));
+        return Unicode::isWhitespace(c);
     }
 
     // fstring_full_format_spec, after its colon.

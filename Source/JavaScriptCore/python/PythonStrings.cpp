@@ -34,7 +34,7 @@
 #include "PythonNumbers.h"
 #include "PythonSequences.h"
 #include "PythonText.h"
-#include <unicode/uchar.h>
+#include "PythonUnicodeType.h"
 #include <wtf/dtoa.h>
 #include <wtf/dtoa/double-conversion.h>
 #include <wtf/text/StringBuilder.h>
@@ -130,26 +130,33 @@ JSValue stringRepeat(JSGlobalObject* globalObject, JSString* string, int64_t cou
     return view->is8Bit() ? repeat(view->span8()) : repeat(view->span16());
 }
 
-// ---- repr
+// ---- Numbers that are written in a str
 
-static bool isPrintable(char32_t c)
+String decimalsAndSpacesInASCII(JSGlobalObject* globalObject, StringView text)
 {
-    if (c == ' ')
-        return true;
-    switch (u_charType(c)) {
-    case U_CONTROL_CHAR:
-    case U_FORMAT_CHAR:
-    case U_SURROGATE:
-    case U_PRIVATE_USE_CHAR:
-    case U_UNASSIGNED:
-    case U_LINE_SEPARATOR:
-    case U_PARAGRAPH_SEPARATOR:
-    case U_SPACE_SEPARATOR:
-        return false;
-    default:
-        return true;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    Vector<Latin1Character> result;
+    if (!result.tryReserveInitialCapacity(text.length())) {
+        raiseMemoryError(globalObject, scope);
+        return { };
     }
+    for (char32_t c : text.codePoints()) {
+        if (c < 127)
+            result.append(static_cast<Latin1Character>(c));
+        else if (Unicode::isWhitespace(c))
+            result.append(' ');
+        else if (int decimal = Unicode::toDecimalDigit(c); decimal >= 0)
+            result.append(static_cast<Latin1Character>('0' + decimal));
+        else {
+            // Nothing after it matters.
+            result.append('?');
+            break;
+        }
+    }
+    return String(result.span());
 }
+
+// ---- repr
 
 template<typename A, typename B>
 static int compareCharacters(std::span<const A> a, std::span<const B> b)
@@ -215,7 +222,7 @@ String reprOfString(StringView view)
             builder.append(static_cast<Latin1Character>(c));
             continue;
         }
-        if (c >= 0x7F && isPrintable(c)) {
+        if (c >= 0x7F && Unicode::isPrintable(c)) {
             builder.append(c);
             continue;
         }
@@ -408,6 +415,9 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     size_t i = 0;
     size_t end = characters.size();
     auto isAlign = [] (char32_t c) { return c == '<' || c == '>' || c == '=' || c == '^'; };
+    // get_integer(): a digit of any script will do.
+    auto isDigit = [&] (size_t index) { return index < end && Unicode::isDecimalDigit(characters[index]); };
+    auto digitAt = [&] (size_t index) -> char32_t { return '0' + Unicode::toDecimalDigit(characters[index]); };
     auto invalid = [&] () -> std::optional<FormatSpecification> {
         raiseValueError(globalObject, scope, concatenate("Invalid format specifier '"_s, text, "' for object of type '"_s, typeName, '\''));
         return std::nullopt;
@@ -441,9 +451,9 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
             result.align = '=';
         ++i;
     }
-    while (i < end && isASCIIDigit(characters[i])) {
+    while (isDigit(i)) {
         result.hasWidth = true;
-        if (!appendDigit(result.width, characters[i++])) {
+        if (!appendDigit(result.width, digitAt(i++))) {
             raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
             return std::nullopt;
         }
@@ -458,12 +468,12 @@ std::optional<FormatSpecification> parseFormatSpecification(JSGlobalObject* glob
     if (i < end && characters[i] == '.') {
         ++i;
         bool hasSomething = false;
-        if (i < end && isASCIIDigit(characters[i])) {
+        if (isDigit(i)) {
             hasSomething = true;
             result.precision = 0;
         }
-        while (i < end && isASCIIDigit(characters[i])) {
-            if (!appendDigit(result.precision, characters[i++])) {
+        while (isDigit(i)) {
+            if (!appendDigit(result.precision, digitAt(i++))) {
                 raiseValueError(globalObject, scope, "Too many decimal digits in format string"_s);
                 return std::nullopt;
             }

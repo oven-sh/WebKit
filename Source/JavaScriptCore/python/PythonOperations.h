@@ -521,6 +521,8 @@ inline double multiplyAdd(double a, double b, double c)
 JSValue intFromInt64(JSGlobalObject*, int64_t);
 JSValue intFromUInt64(JSGlobalObject*, uint64_t);
 bool isNumber(JSGlobalObject*, JSValue); // PyNumber_Check()
+// _PyUnicode_TransformDecimalAndSpaceToASCII(), of what is not all ASCII: a digit of any script is that digit, and a space of any kind is a space. It ends with a question mark at the first thing that is neither. Null if it raised.
+String decimalsAndSpacesInASCII(JSGlobalObject*, StringView);
 std::optional<int64_t> toSsizeOfInt(JSGlobalObject*, JSValue); // PyLong_AsSsize_t(), which takes an int and nothing that could be made one. Nothing if it raised.
 // The "i" of PyArg_ParseTuple(). Nothing if it raised.
 std::optional<int> toCIntOfFormat(JSGlobalObject*, JSValue);

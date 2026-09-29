@@ -815,6 +815,7 @@ python/PythonSysModule.cpp
 python/PythonTemplateStrings.cpp
 python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp
+python/PythonUnicodeType.cpp
 python/PythonSyntaxTreeSource.cpp
 python/PythonSyntaxWarnings.cpp
 python/PythonUnparse.cpp

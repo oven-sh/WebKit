@@ -719,7 +719,12 @@ PYTHON_NATIVE(complexNew)
         if (plain.isString()) {
             auto view = asString(plain)->view(globalObject);
             RETURN_IF_EXCEPTION(scope, { });
-            auto parsed = parseComplex(view);
+            String inASCII;
+            if (!view->containsOnlyASCII()) {
+                inASCII = decimalsAndSpacesInASCII(globalObject, view);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            auto parsed = parseComplex(inASCII.isNull() ? StringView(view) : StringView(inASCII));
             if (!parsed)
                 return JSValue::encode(raiseValueError(globalObject, scope, "complex() arg is a malformed string"_s));
             return make(*parsed);

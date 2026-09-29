@@ -31,6 +31,7 @@
 #include "PyFrame.h"
 #include "PythonGenerators.h"
 #include "PythonImport.h"
+#include "PythonUnicodeType.h"
 #include "SourceProvider.h"
 #include "TopExceptionScope.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -572,7 +573,7 @@ String appendSyntaxErrorLocation(JSGlobalObject* globalObject, StringBuilder& bu
                 builder.append("    "_s);
                 // A tab is kept, so that what is under it lines up.
                 for (int64_t i = 0; i < column && i < static_cast<int64_t>(stripped.size()); ++i)
-                    builder.append(u_isUWhiteSpace(stripped[i]) ? stripped[i] : U' ');
+                    builder.append(Unicode::isWhitespace(stripped[i]) ? stripped[i] : U' ');
                 for (int64_t i = column; i < endColumn; ++i)
                     builder.append('^');
                 builder.append('\n');
