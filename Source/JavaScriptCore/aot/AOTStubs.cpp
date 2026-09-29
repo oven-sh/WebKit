@@ -2632,6 +2632,11 @@ void StubCalls::callFunction(CCallHelpers& jit, Stub otherwise, uint32_t knownCa
     m_pending.append({ jit.nearCall(), otherwise, false, skipsArityCheck, isDirect, hasNoOtherWay, knownCallee });
 }
 
+void StubCalls::jumpToFunction(CCallHelpers& jit, Stub otherwise, uint32_t knownCallee, bool hasNoOtherWay)
+{
+    m_pending.append({ jit.nearTailCall(), otherwise, true, false, true, hasNoOtherWay, knownCallee });
+}
+
 void StubCalls::tailCall(CCallHelpers& jit, Stub stub)
 {
     m_pending.append({ jit.nearTailCall(), stub, true });

@@ -500,6 +500,20 @@ bool Graph::calleeIsProven(const Node* node) const
     return knownCallee(node, &isProven) && isProven;
 }
 
+bool Graph::isSiblingCall(const Node* node) const
+{
+    if (!usesStubs || !Options::aotSiblingCalls() || (Options::aotDisableFastPaths() & 128) || !node->isBytecode(op_tail_call) || m_codeBlock->codeType() != FunctionCode)
+        return false;
+    unsigned argumentCountIncludingThis = node->as<OpTailCall>().m_argc;
+    if (argumentCountIncludingThis > m_codeBlock->numParameters() || argumentCountIncludingThis > mostArgumentsOfSiblingCall)
+        return false;
+    bool isProven = false;
+    const KnownFunction* known = knownCallee(node, &isProven);
+    // (A function that is passed too few moves its frame down to make room for the rest. One that did that every time round would
+    // run out of stack, which is what a call in tail position is not to do.)
+    return known && isProven && known->forCall && argumentCountIncludingThis >= known->forCall->numParameters();
+}
+
 const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
 {
     if (!m_hints)
@@ -580,6 +594,8 @@ bool Graph::passesNoFunctionObject(const Node* node)
         calleeRegister = node->as<OpCall>().m_callee;
     else if (node->isBytecode(op_call_ignore_result))
         calleeRegister = node->as<OpCallIgnoreResult>().m_callee;
+    else if (isSiblingCall(node))
+        calleeRegister = node->as<OpTailCall>().m_callee;
     else
         return false;
     bool isProven = false;
@@ -613,6 +629,8 @@ void Graph::elideReadsOfCalleesNotPassed()
             wantsValue = use.reg != user->as<OpCall>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
         else if (user->isBytecode(op_call_ignore_result))
             wantsValue = use.reg != user->as<OpCallIgnoreResult>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
+        else if (user->isBytecode(op_tail_call))
+            wantsValue = use.reg != user->as<OpTailCall>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
         auto result = wanted.add(use.node, 0);
         if (result.isNewEntry)
             reads.append(use.node);

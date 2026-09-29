@@ -267,6 +267,7 @@ private:
     LValue canTailCall(Node*, LValue callee, Type calleeType);
     void lowerTailCall(Node*);
     void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, bool isConstruct, bool isTail);
+    bool lowerSiblingCall(Node*); // Graph::isSiblingCall()
     LValue emitCallVarargs(Node*, LValue callee, LValue thisValue, LValue arguments, LValue length, int firstVarArg, bool isConstruct, bool isTail);
     // Node::isMadeWhenWanted: where it is once it has been made, and it, made now if it has not been.
     TypedPointer whereItIsOnceMade(Node*);

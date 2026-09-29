@@ -991,7 +991,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     targetAt = veneerAt;
                 }
                 RELEASE_ASSERT((from > targetAt ? from - targetAt : targetAt - from) <= reachOfStubCall + roomToSpareInReachOfStubCall);
-                retargetStubCall(code, from, targetAt, false);
+                retargetStubCall(code, from, targetAt, call.isTailCall);
                 continue;
             }
             // (Whoever compiled the program has seen to it that there is code for what is called like that.)
@@ -1008,7 +1008,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 size_t targetAt = placement[target].first + (call.isDirect ? targetInfo.directEntryOffset : call.skipsArityCheck ? targetInfo.entryOffset : targetInfo.arityCheckOffset);
                 size_t from = codeAt + call.offset;
                 if ((from > targetAt ? from - targetAt : targetAt - from) <= reachOfStubCall)
-                    retargetStubCall(code, from, targetAt, false);
+                    retargetStubCall(code, from, targetAt, call.isTailCall);
                 break;
             }
         }

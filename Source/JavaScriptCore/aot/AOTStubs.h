@@ -334,6 +334,7 @@ public:
     void call(CCallHelpers&, Stub, uint32_t valueOfT9);
     void tailCall(CCallHelpers&, Stub);
     void callFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool skipsArityCheck, bool isDirect = false, bool hasNoOtherWay = false);
+    void jumpToFunction(CCallHelpers&, Stub otherwise, uint32_t knownCallee, bool hasNoOtherWay); // To its direct entry.
     // Links them to the copy in the JIT's memory, and says where they are.
     Vector<StubCall> link(LinkBuffer&);
 

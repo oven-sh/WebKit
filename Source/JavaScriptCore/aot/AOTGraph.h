@@ -331,6 +331,11 @@ public:
     static bool isArrayMadeHere(const Node* node) { return node->isBytecode(op_new_array) || node->isBytecode(op_new_array_with_size); }
     // The function that the call or construction is probably of, if there is any telling.
     const KnownFunction* knownCallee(const Node*, bool* isProven = nullptr) const;
+    // An op_tail_call of what the callee is proven to be, whose frame fits where this function's own is: however few arguments this
+    // one was passed, there is room for as many as it has parameters. So that is where the frame is made, and where it stays: the
+    // callee is passed as many as it has parameters.
+    bool isSiblingCall(const Node*) const;
+    static constexpr unsigned mostArgumentsOfSiblingCall = 12; // They are all in registers at once.
     bool calleeIsProven(const Node*) const; // See KnownFunction::isProven.
     const KnownFunction* knownFunctionReadBy(const Node* getFromScope, bool* isProven = nullptr) const;
     // A call of a function that wants nothing of the object it is called as (KnownFunction::needsNoFunctionObject). None is passed.

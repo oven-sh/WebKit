@@ -186,8 +186,57 @@ LValue Lowering::canTailCall(Node* node, LValue callee, Type calleeType)
     return m_out.phi(Int32, fastResult, slowResult);
 }
 
+bool Lowering::lowerSiblingCall(Node* node)
+{
+    if (!m_graph.isSiblingCall(node))
+        return false;
+    auto bytecode = node->as<OpTailCall>();
+    const KnownFunction* known = m_graph.knownCallee(node);
+    unsigned index = m_graph.indexOfKnownCallee(known->keyFor(false));
+    bool passesCallee = !m_graph.passesNoFunctionObject(node);
+    Arguments arguments = lowerArguments(node, bytecode.m_argc, bytecode.m_argv);
+    LValue callee = passesCallee || !known->isDeclaration ? lowJSValue(node->use(bytecode.m_callee)) : nullptr;
+
+    // What comes after this in the bytecode returns what the call returned, if it was made like any other.
+    LBasicBlock afterwards = m_out.newBlock();
+    if (!known->isDeclaration) {
+        // What is in the variable until it is initialized is not a function. Called like anything else, it is an error like any other.
+        LBasicBlock isInitialized = m_out.newBlock();
+        m_out.branch(m_out.equal(callee, m_out.constInt64(JSValue::ValueUndefined)), rarely(afterwards), usually(isInitialized));
+        m_out.appendTo(isInitialized, afterwards);
+    }
+
+    PatchpointValue* patchpoint = m_out.patchpoint(Void);
+    for (LValue argument : arguments)
+        patchpoint->append(ConstrainedValue(argument, ValueRep::SomeRegister));
+    if (passesCallee) {
+        // And what it takes to call it the long way, should there be no short one: from then on there is no frame to find that from.
+        patchpoint->append(ConstrainedValue(callee, ValueRep::reg(BaselineJITRegisters::Call::calleeGPR)));
+        patchpoint->append(ConstrainedValue(entry(Entry::CallLinkInfoForTailCall), ValueRep::reg(BaselineJITRegisters::Call::callLinkInfoGPR)));
+    }
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->effects.terminal = true;
+    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, argc = static_cast<unsigned>(arguments.size()), index, passesCallee](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        // The Instance stays where it is: the function is one of this realm.
+        for (unsigned i = 0; i < argc; ++i)
+            jit.store64(params[i].gpr(), CCallHelpers::addressFor(virtualRegisterForArgumentIncludingThis(i)));
+        jit.store32(CCallHelpers::TrustedImm32(argc), CCallHelpers::lowWordFor(CallFrameSlot::argumentCountIncludingThis));
+        jit.store64(passesCallee ? BaselineJITRegisters::Call::calleeGPR : ARM64Registers::zr, CCallHelpers::addressFor(CallFrameSlot::callee));
+        jit.emitRestore(params.proc().calleeSaveRegisterAtOffsetList());
+        jit.emitFunctionEpilogue();
+        stubCalls->jumpToFunction(jit, Stub::VirtualTailCall, index, !passesCallee);
+    });
+
+    m_out.appendTo(afterwards);
+    setJSValue(node, known->isDeclaration ? m_out.int64Zero : emitCall(node, callee, arguments));
+    return true;
+}
+
 void Lowering::lowerTailCall(Node* node)
 {
+    if (lowerSiblingCall(node))
+        return;
     auto bytecode = node->as<OpTailCall>();
     Node* calleeNode = node->use(bytecode.m_callee);
     LValue callee = lowJSValue(calleeNode);

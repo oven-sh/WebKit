@@ -28,8 +28,12 @@ static bool mayBeQuoted(const Graph& graph, Node* node)
         Node* value = node->use(base);
         return !value || value->type & (TOther | TEmpty);
     };
+    // (What is proven of a variable that is not a declaration is what it holds once it holds anything.)
+    auto isAlwaysTheFunction = [&] {
+        return graph.calleeIsProven(node) && graph.knownCallee(node)->isDeclaration;
+    };
     auto mayNotBeAFunction = [&](VirtualRegister callee) {
-        if (graph.calleeIsProven(node))
+        if (isAlwaysTheFunction())
             return false;
         Node* value = node->use(callee);
         return !value || value->type & ~TFunction;
@@ -56,7 +60,7 @@ static bool mayBeQuoted(const Graph& graph, Node* node)
     case op_tail_call:
         return mayNotBeAFunction(node->as<OpTailCall>().m_callee);
     case op_construct:
-        return !graph.calleeIsProven(node);
+        return !isAlwaysTheFunction();
     case op_get_by_id_with_this:
     case op_get_by_id_direct:
     case op_get_by_val_with_this:
