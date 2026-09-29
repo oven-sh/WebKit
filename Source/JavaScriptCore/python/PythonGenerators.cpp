@@ -35,6 +35,8 @@
 namespace JSC { namespace Python {
 
 // What generatorResume() of builtins/GeneratorPrototype.js does.
+static bool isThrowArguments(JSValue value) { return value.isCell() && value.asCell()->type() == JSCellButterflyType; }
+
 JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JSValue sent, JSGenerator::ResumeMode mode, JSValue& returned)
 {
     VM& vm = globalObject->vm();
@@ -45,6 +47,49 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     auto setState = [&] (int32_t state) { generator->internalField(static_cast<unsigned>(JSGenerator::Field::State)).set(vm, generator, jsNumber(state)); };
 
     int32_t state = field(JSGenerator::Field::State).asInt32();
+    bool isSuspended = state != static_cast<int32_t>(JSGenerator::State::Executing) && state != static_cast<int32_t>(JSGenerator::State::Completed) && state != static_cast<int32_t>(JSGenerator::State::Init);
+    if (mode == JSGenerator::ResumeMode::ThrowMode) {
+        // _gen_throw()
+        if (isThrowArguments(sent) && !checkThrowArguments(globalObject, sent, "throw"_s))
+            return { };
+        JSValue waitingOn = isSuspended ? generator->getDirect(vm, vm.pythonNames().private_yieldFrom) : JSValue();
+        if (waitingOn && !waitingOn.isUndefined()) {
+            // It is waiting on something, with `yield from` or `await`, and that is what is thrown into, with what throw() was given as it was given. This one is not woken for that. If what it is waiting on
+            // yields, that is what this one yields, from where it is. Only if that has come to an end, one way or the other, does this one go on, and then it is sent what came of it: see yieldFromStep().
+            setState(static_cast<int32_t>(JSGenerator::State::Executing));
+            JSValue returnedToIt;
+            bool isForThisOne = false;
+            JSValue yielded = stepIterator(globalObject, waitingOn, sent, true, returnedToIt, &isForThisOne);
+            setState(state);
+            Exception* raised = scope.exception();
+            if (!raised && yielded)
+                return yielded;
+            if (raised && vm.isTerminationException(raised))
+                return { };
+            JSValue thrownHere;
+            if (isForThisOne && !raised) {
+                // What it is waiting on cannot be thrown into, or has been closed. So it is thrown where that is waited on, if it is something that can be thrown. If not, this one is left waiting.
+                thrownHere = sent;
+                if (isThrowArguments(sent)) {
+                    auto* packet = uncheckedDowncast<JSCellButterfly>(sent.asCell());
+                    thrownHere = exceptionToThrow(globalObject, packet->get(0), packet->get(1), packet->get(2));
+                    RETURN_IF_EXCEPTION(scope, { });
+                }
+            }
+            auto* outcome = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, 2);
+            outcome->setIndex(vm, 0, jsBoolean(raised || thrownHere));
+            outcome->setIndex(vm, 1, raised ? raised->value() : thrownHere ? thrownHere : returnedToIt ? returnedToIt : jsUndefined());
+            if (raised && !scope.tryClearException())
+                return { };
+            sent = outcome;
+            mode = JSGenerator::ResumeMode::NormalMode;
+        } else if (isThrowArguments(sent)) {
+            // They are looked at before the generator is, and if they will not do it is left as it was.
+            auto* packet = uncheckedDowncast<JSCellButterfly>(sent.asCell());
+            sent = exceptionToThrow(globalObject, packet->get(0), packet->get(1), packet->get(2));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
     GeneratorKind kind = generatorKindOf(globalObject, generator);
     ASCIILiteral what = kind == GeneratorKind::Generator ? "generator"_s : kind == GeneratorKind::Coroutine ? "coroutine"_s : "async generator"_s;
     if (state == static_cast<int32_t>(JSGenerator::State::Executing))
@@ -93,8 +138,10 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
         setState(static_cast<int32_t>(JSGenerator::State::Completed));
         // A StopIteration that gets out of a generator would look like the end of whatever is iterating it.
         Exception* exception = scope.exception();
-        bool isStop = !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopIteration());
-        bool isAsyncStop = !isStop && kind == GeneratorKind::AsyncGenerator && !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopAsyncIteration());
+        // What is thrown into one that has not begun is thrown before anything of it has run, and comes out as it went in.
+        bool hadBegun = state != static_cast<int32_t>(JSGenerator::State::Init) || mode != JSGenerator::ResumeMode::ThrowMode;
+        bool isStop = hadBegun && !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopIteration());
+        bool isAsyncStop = hadBegun && !isStop && kind == GeneratorKind::AsyncGenerator && !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopAsyncIteration());
         if (isStop || isAsyncStop) {
             JSValue cause = exception->value();
             if (scope.tryClearException()) {
@@ -116,7 +163,7 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
     return value;
 }
 
-JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue received, bool wasThrown, JSValue& returned)
+JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue received, bool wasThrown, JSValue& returned, bool* isForWhatWaits)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -130,7 +177,31 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
         return { };
     };
 
-    if (wasThrown && isInstance(globalObject, received, realm->typeGeneratorExit())) {
+    // What was thrown is an exception, or what throw() was given, as it was given.
+    JSValue thrownType = received;
+    JSValue thrownValue;
+    JSValue thrownTraceback;
+    if (wasThrown && isThrowArguments(received)) {
+        auto* packet = uncheckedDowncast<JSCellButterfly>(received.asCell());
+        thrownType = packet->get(0);
+        thrownValue = packet->get(1);
+        thrownTraceback = packet->get(2);
+    }
+    // throw_here: it is thrown where the iterator is being waited on. Whether it can be thrown is for what is waiting to say, if it is asking, since if not it is left waiting.
+    auto throwHere = [&] () -> JSValue {
+        if (isForWhatWaits) {
+            *isForWhatWaits = true;
+            return { };
+        }
+        JSValue exception = received == thrownType ? received : exceptionToThrow(globalObject, thrownType, thrownValue, thrownTraceback);
+        RETURN_IF_EXCEPTION(scope, { });
+        throwException(globalObject, scope, exception);
+        return { };
+    };
+    // PyErr_GivenExceptionMatches()
+    bool isExit = wasThrown && (isClass(thrownType) ? asType(thrownType)->isSubtypeOf(realm->typeGeneratorExit()) : isInstance(globalObject, thrownType, realm->typeGeneratorExit()));
+
+    if (isExit) {
         // Whatever is iterating it is being closed, so it is too.
         if (generator)
             generatorClose(globalObject, generator);
@@ -141,8 +212,7 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
                 call(globalObject, close);
         }
         RETURN_IF_EXCEPTION(scope, { });
-        throwException(globalObject, scope, received);
-        return { };
+        return throwHere();
     }
 
     if (generator)
@@ -151,11 +221,15 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
     if (wasThrown) {
         JSValue method = getAttributeIfPresent(globalObject, iterator, Identifier::fromString(vm, "throw"_s));
         RETURN_IF_EXCEPTION(scope, { });
-        if (!method) {
-            throwException(globalObject, scope, received);
-            return { };
-        }
-        return finishCall(call(globalObject, method, received));
+        if (!method)
+            return throwHere();
+        MarkedArgumentBuffer arguments;
+        arguments.append(thrownType);
+        if (thrownValue)
+            arguments.append(thrownValue);
+        if (thrownValue && thrownTraceback)
+            arguments.append(thrownTraceback);
+        return finishCall(call(globalObject, method, arguments));
     }
     if (isNone(received)) {
         if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass()) {

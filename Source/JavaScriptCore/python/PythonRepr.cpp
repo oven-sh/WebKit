@@ -251,8 +251,16 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         builder.append(')');
         return builder.tryFinish();
     }
-    case PyTypeType:
-        return concatenate("<class '"_s, qualifiedNameOfType(globalObject, uncheckedDowncast<PyType>(cell)), "'>"_s);
+    case PyTypeType: {
+        auto* shown = uncheckedDowncast<PyType>(cell);
+        if (shown->hasFlag(PyType::IsHeapType)) {
+            JSValue module = shown->lookupOwn(vm, vm.pythonNames().dunder_module);
+            JSString* moduleName = module ? stringIn(module) : nullptr;
+            if (!moduleName || moduleName->value(globalObject).data == "builtins"_s)
+                return concatenate("<class '"_s, shown->nameString(globalObject), "'>"_s);
+        }
+        return concatenate("<class '"_s, qualifiedNameOfType(globalObject, shown), "'>"_s);
+    }
     case InternalFunctionType:
         if (isJavaScriptClass(cell))
             return concatenate("<class '"_s, qualifiedNameOfType(globalObject, asType(cell)), "'>"_s);
@@ -272,7 +280,8 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
     }
     case PyBoundMethodType: {
         auto* method = uncheckedDowncast<PyBoundMethod>(cell);
-        if (auto* native = dynamicDowncast<PyNativeFunction>(method->function())) {
+        // A method that a program made of a function written in C++ is a method like any other.
+        if (auto* native = type == globalObject->pyRealm()->typeMethod() ? nullptr : dynamicDowncast<PyNativeFunction>(method->function())) {
             bool isWrapper = native->kind() == PyNativeFunction::Kind::Wrapper;
             return concatenate(isWrapper ? "<method-wrapper '"_s : "<built-in method "_s, native->name(vm), isWrapper ? "' of "_s : " of "_s, typeName(globalObject, method->self()), " object at "_s, method->self().isCell() ? addressOf(method->self().asCell()) : "0x0"_str, '>');
         }

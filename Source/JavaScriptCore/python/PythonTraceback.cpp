@@ -215,6 +215,8 @@ static void setFrameLine(JSGlobalObject* globalObject, JSValue, JSValue value)
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!value)
         raise(globalObject, scope, BuiltinType::AttributeError, "cannot delete attribute"_s);
+    else if (typeOf(globalObject, value) != globalObject->pyRealm()->typeInt())
+        raiseValueError(globalObject, scope, "lineno must be an integer"_s);
     else
         raiseValueError(globalObject, scope, "f_lineno can only be set in a trace function"_s);
 }

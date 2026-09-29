@@ -865,7 +865,7 @@ private:
                 for (unsigned i = m_stack.size() - 1; i--;) {
                     if (m_stack[i]->type != BlockType::Class)
                         continue;
-                    if (!m_stack[i]->staticAttributes.contains(node.attribute))
+                    if (!m_stack[i]->staticAttributes.containsIf([&] (const Identifier* name) { return *name == *node.attribute; }))
                         m_stack[i]->staticAttributes.append(node.attribute);
                     break;
                 }

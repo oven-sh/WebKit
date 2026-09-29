@@ -134,7 +134,7 @@ bool checkArguments(JSGlobalObject* globalObject, CallFrame* callFrame)
         break;
     case PyNativeFunction::Kind::ClassMethod:
         if (!first)
-            raiseTypeError(globalObject, scope, concatenate("unbound method "_s, ownerName, '.', name, "() needs an argument"_s));
+            raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, name, "' of '"_s, ownerName, "' object needs an argument"_s));
         else if (!isClass(first))
             raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, name, "' for type '"_s, ownerName, "' needs a type, not a '"_s, typeName(globalObject, first), "' as arg 2"_s));
         else
@@ -346,6 +346,13 @@ PYTHON_NATIVE(objectNew)
     if (!args.size() || !isClass(args[0]))
         return JSValue::encode(raiseTypeError(globalObject, scope, "object.__new__(X): X is not a type object"_s));
     auto* type = asType(args[0]);
+    // tp_new_wrapper(), which comes before anything that object_new() has to say.
+    if (type->layout() != PyType::Layout::Object) {
+        PyType* builtin = type;
+        while (builtin->hasFlag(PyType::IsHeapType))
+            builtin = builtin->base();
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("object.__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, builtin->nameString(globalObject), ".__new__()"_s)));
+    }
     if (hasExcessArguments(args)) {
         if (type->lookup(vm, names.dunder_new).asCell() != realm->function(PyRealm::WellKnownFunction::ObjectNew))
             return JSValue::encode(raiseTypeError(globalObject, scope, "object.__new__() takes exactly one argument (the type to instantiate)"_s));
@@ -369,12 +376,6 @@ PYTHON_NATIVE(objectNew)
             joined.append(i ? "', '"_s : ""_s, asString(sorted.at(i))->value(globalObject).data);
         }
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Can't instantiate abstract class "_s, type->nameString(globalObject), " without an implementation for abstract method"_s, sorted.size() > 1 ? "s"_s : ""_s, " '"_s, joined.tryFinish(), '\'')));
-    }
-    if (type->layout() != PyType::Layout::Object) {
-        PyType* builtin = type;
-        while (builtin->hasFlag(PyType::IsHeapType))
-            builtin = builtin->base();
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("object.__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, builtin->nameString(globalObject), ".__new__()"_s)));
     }
     return JSValue::encode(PyInstance::create(vm, type->instanceStructure()));
 }
@@ -408,6 +409,14 @@ PYTHON_NATIVE(objectInit)
             return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), ".__init__() takes exactly one argument (the instance to initialize)"_s)));
     }
     RETURN_NONE();
+}
+
+PYTHON_NATIVE(objectRepr)
+{
+    NATIVE_PROLOGUE();
+    JSValue self = args.at(0);
+    const void* address = self.isCell() ? static_cast<const void*>(self.asCell()) : std::bit_cast<const void*>(JSValue::encode(self));
+    RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate('<', qualifiedNameOfType(globalObject, typeOf(globalObject, self)), " object at "_s, addressOf(address), '>'))));
 }
 
 PYTHON_NATIVE(objectStr)
@@ -464,7 +473,34 @@ std::optional<Identifier> attributeName(JSGlobalObject* globalObject, ThrowScope
     return string->toIdentifier(globalObject);
 }
 
+// object.__getattribute__(x, name) is PyObject_GenericGetAttr(), whatever x is. A class is then an instance of its metaclass like any other, with what is in its own __dict__ for its attributes, as they are.
 PYTHON_NATIVE(objectGetAttribute)
+{
+    NATIVE_PROLOGUE();
+    auto name = attributeName(globalObject, scope, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue value;
+    if (isClass(args[0])) {
+        PyType* metatype = asType(args[0])->metatype();
+        JSValue attribute = metatype->lookup(vm, *name);
+        bool isData = attribute && isDataDescriptor(globalObject, attribute);
+        // What a class that is built in has is not kept where this would look.
+        if (!isData && asType(args[0])->hasFlag(PyType::IsHeapType))
+            value = asType(args[0])->lookupOwn(vm, *name);
+        if (!value && attribute) {
+            value = bindDescriptor(globalObject, attribute, args[0], metatype);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    } else {
+        value = genericGetAttribute(globalObject, args[0], *name);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if (value)
+        return JSValue::encode(value);
+    return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\'')));
+}
+
+PYTHON_NATIVE(typeGetAttribute)
 {
     NATIVE_PROLOGUE();
     auto name = attributeName(globalObject, scope, args[1]);
@@ -478,9 +514,20 @@ PYTHON_NATIVE(objectGetAttribute)
     return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\'')));
 }
 
+// hackcheck(): what is built in and has its own way of setting attributes is not to be got round with object's. That is classes.
+static bool checkIsNotClass(JSGlobalObject* globalObject, ThrowScope& scope, JSValue self, ASCIILiteral what)
+{
+    if (!isClass(self))
+        return true;
+    raiseTypeError(globalObject, scope, concatenate("can't apply this "_s, what, " to "_s, typeName(globalObject, self), " object"_s));
+    return false;
+}
+
 PYTHON_NATIVE(objectSetAttr)
 {
     NATIVE_PROLOGUE();
+    if (!checkIsNotClass(globalObject, scope, args[0], "__setattr__"_s))
+        return { };
     auto name = attributeName(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
@@ -491,6 +538,38 @@ PYTHON_NATIVE(objectSetAttr)
 PYTHON_NATIVE(objectDelAttr)
 {
     NATIVE_PROLOGUE();
+    if (!checkIsNotClass(globalObject, scope, args[0], "__delattr__"_s))
+        return { };
+    auto name = attributeName(globalObject, scope, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    scope.release();
+    genericSetAttribute(globalObject, args[0], *name, JSValue());
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(typeSetAttr)
+{
+    NATIVE_PROLOGUE();
+    if (!asType(args[0])->hasFlag(PyType::IsHeapType)) {
+        String shown = repr(globalObject, args[1]);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot set "_s, shown, " attribute of immutable type '"_s, asType(args[0])->nameString(globalObject), '\'')));
+    }
+    auto name = attributeName(globalObject, scope, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    scope.release();
+    genericSetAttribute(globalObject, args[0], *name, args[2]);
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(typeDelAttr)
+{
+    NATIVE_PROLOGUE();
+    if (!asType(args[0])->hasFlag(PyType::IsHeapType)) {
+        String shown = repr(globalObject, args[1]);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot set "_s, shown, " attribute of immutable type '"_s, asType(args[0])->nameString(globalObject), '\'')));
+    }
     auto name = attributeName(globalObject, scope, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     scope.release();
@@ -772,6 +851,19 @@ JSValue getInstanceDict(JSGlobalObject* globalObject, JSValue self)
 }
 
 // obj.__dict__ = mapping: that dict is the attributes from now on, and the dict that was is a dict like any other. del obj.__dict__ leaves it with none.
+void setInstanceDict(JSGlobalObject*, JSValue self, JSValue value);
+
+// PyObject_GenericSetDict(), which is what those that are built in have. An instance of a class of a program's can do without one.
+static void setInstanceDictOfBuiltin(JSGlobalObject* globalObject, JSValue self, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!value) {
+        raiseTypeError(globalObject, scope, "cannot delete __dict__"_s);
+        return;
+    }
+    RELEASE_AND_RETURN(scope, setInstanceDict(globalObject, self, value));
+}
+
 void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = globalObject->vm();
@@ -845,8 +937,11 @@ PYTHON_NATIVE(typeNew)
 
 PYTHON_NATIVE(typeInit)
 {
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(callFrame);
+    NATIVE_PROLOGUE();
+    if (args.keywordCount() && args.size() == 2)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "type.__init__() takes no keyword arguments"_s));
+    if (args.size() != 2 && args.size() != 4)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "type.__init__() takes 1 or 3 arguments"_s));
     RETURN_NONE();
 }
 
@@ -1036,6 +1131,21 @@ PYTHON_NATIVE(functionGet)
     return JSValue::encode(PyBoundMethod::create(globalObject, args[0], args[1]));
 }
 
+// method_get() and wrapperdescr_get(): it is a method only of an instance of the class that it is in.
+PYTHON_NATIVE(methodDescriptorGet)
+{
+    NATIVE_PROLOGUE();
+    if (!checkDescriptorGet(globalObject, scope, args))
+        return { };
+    if (isNone(args[1]))
+        return JSValue::encode(args[0]);
+    auto* function = uncheckedDowncast<PyNativeFunction>(args[0].asCell());
+    PyType* owner = asType(function->owner());
+    if (!typeOf(globalObject, args[1])->isSubtypeOf(owner))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("descriptor '"_s, function->name(vm), "' for '"_s, owner->nameString(globalObject), "' objects doesn't apply to a '"_s, typeName(globalObject, args[1]), "' object"_s)));
+    return JSValue::encode(PyBoundMethod::create(globalObject, args[0], args[1]));
+}
+
 PYTHON_NATIVE(callableCall)
 {
     NATIVE_PROLOGUE();
@@ -1104,8 +1214,10 @@ static JSValue getNativeTextSignature(JSGlobalObject* globalObject, JSValue self
 static JSValue getNativeModule(JSGlobalObject* globalObject, JSValue self)
 {
     VM& vm = globalObject->vm();
-    if (tryBoundMethod(self))
-        return jsUndefined();
+    if (auto* method = tryBoundMethod(self)) {
+        JSValue set = method->getDirect(vm, vm.pythonNames().private_module);
+        return set ? set : jsUndefined();
+    }
     auto* function = uncheckedDowncast<PyNativeFunction>(self.asCell());
     if (JSValue set = function->getDirect(vm, vm.pythonNames().private_module))
         return set;
@@ -1118,8 +1230,7 @@ static JSValue getNativeModule(JSGlobalObject* globalObject, JSValue self)
 static void setNativeModule(JSGlobalObject* globalObject, JSValue self, JSValue value)
 {
     VM& vm = globalObject->vm();
-    if (auto* function = dynamicDowncast<PyNativeFunction>(self))
-        function->putDirect(vm, vm.pythonNames().private_module, value ? value : jsUndefined());
+    asObject(self)->putDirect(vm, vm.pythonNames().private_module, value ? value : jsUndefined());
 }
 
 PYTHON_NATIVE(nativeCallableCompare)
@@ -1177,7 +1288,7 @@ PYTHON_NATIVE(classMethodDescriptorGet)
 PYTHON_NATIVE(methodNew)
 {
     NATIVE_PROLOGUE();
-    return JSValue::encode(PyBoundMethod::create(globalObject, args[1], args[2]));
+    return JSValue::encode(PyBoundMethod::createMethod(globalObject, args[1], args[2]));
 }
 
 PYTHON_NATIVE(methodCompare)
@@ -1249,6 +1360,8 @@ PYTHON_NATIVE(descriptorGet)
         return { };
     JSValue instance = args.at(1);
     JSValue owner = args.at(2);
+    if (owner && !isNone(owner) && !isClass(owner) && typeOf(globalObject, args[0])->isSubtypeOf(realm->typeClassMethod()))
+        return JSValue::encode(PyBoundMethod::createMethod(globalObject, asNativeObject(args[0])->field(0), owner));
     PyType* type = owner && isClass(owner) ? asType(owner) : typeOf(globalObject, instance ? instance : jsUndefined());
     RELEASE_AND_RETURN(scope, JSValue::encode(bindDescriptor(globalObject, args.at(0), !instance || isNone(instance) ? JSValue() : instance, type)));
 }
@@ -1334,16 +1447,15 @@ PYTHON_NATIVE(superInit)
     if (!isClass(args[1]))
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("super() argument 1 must be a type, not "_s, typeName(globalObject, args[1]))));
     PyType* type = asType(args[1]);
+    JSValue instance = args.size() > 2 && !isNone(args[2]) ? args[2] : JSValue();
+    PyType* start = nullptr;
+    if (instance) {
+        start = superCheck(globalObject, type, instance);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     object->setField(vm, 0, type);
-    if (args.size() == 2)
-        RETURN_NONE();
-    JSValue instance = args[2];
-    if (isNone(instance))
-        RETURN_NONE();
-    PyType* start = superCheck(globalObject, type, instance);
-    RETURN_IF_EXCEPTION(scope, { });
     object->setField(vm, 1, instance);
-    object->setField(vm, 2, start);
+    object->setField(vm, 2, start ? JSValue(start) : JSValue());
     RETURN_NONE();
 }
 
@@ -1525,17 +1637,7 @@ PYTHON_NATIVE(generatorThrowMethod)
     NATIVE_PROLOGUE();
     if (!warnOfThrowSignature(globalObject, args, "throw"_s))
         return { };
-    JSValue exception = args[1];
-    if (isClass(exception) && asType(exception)->isExceptionType()) {
-        JSValue value = args.at(2);
-        if (value && typeOf(globalObject, value)->isExceptionType())
-            exception = value;
-        else
-            exception = value && !isNone(value) ? call(globalObject, exception, value) : call(globalObject, exception);
-        RETURN_IF_EXCEPTION(scope, { });
-    } else if (!typeOf(globalObject, exception)->isExceptionType())
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("exceptions must be classes or instances deriving from BaseException, not "_s, typeName(globalObject, exception))));
-    RELEASE_AND_RETURN(scope, JSValue::encode(generatorThrow(globalObject, asGenerator(args[0]), exception)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(generatorThrow(globalObject, asGenerator(args[0]), packThrowArguments(globalObject, args, 1))));
 }
 
 PYTHON_NATIVE(generatorCloseMethod)
@@ -1561,7 +1663,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addMethods(globalObject, object, {
         { "__new__"_s, objectNew, Kind::New },
         { "__init__"_s, objectInit },
-        { "__repr__"_s, nativeRepr },
+        { "__repr__"_s, objectRepr },
         { "__str__"_s, objectStr },
         { "__eq__"_s, objectEq },
         { "__ne__"_s, objectNe },
@@ -1596,9 +1698,9 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         { "__new__"_s, typeNew, Kind::New },
         { "__init__"_s, typeInit },
         { "__call__"_s, typeCall },
-        { "__getattribute__"_s, objectGetAttribute },
-        { "__setattr__"_s, objectSetAttr },
-        { "__delattr__"_s, objectDelAttr },
+        { "__getattribute__"_s, typeGetAttribute },
+        { "__setattr__"_s, typeSetAttr },
+        { "__delattr__"_s, typeDelAttr },
         { "__repr__"_s, nativeRepr },
         { "__dir__"_s, typeDir },
         { "mro"_s, typeMro },
@@ -1611,22 +1713,36 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     remember(type, names.dunder_getattribute, Function::TypeGetAttribute);
     remember(type, names.dunder_setattr, Function::TypeSetAttr);
     remember(type, names.dunder_delattr, Function::TypeDelAttr);
+    static constexpr auto checkSetSpecial = [] (JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, JSValue value, ASCIILiteral name) {
+        if (type->hasFlag(PyType::IsHeapType) && value)
+            return true;
+        raiseTypeError(globalObject, scope, concatenate("cannot "_s, type->hasFlag(PyType::IsHeapType) ? "delete"_s : "set"_s, " '"_s, name, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
+        return false;
+    };
     addGetSet(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->name(); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
-        if (value && value.isString())
-            asType(self)->setName(globalObject->vm(), asString(value));
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        PyType* type = asType(self);
+        if (!checkSetSpecial(globalObject, scope, type, value, "__name__"_s))
+            return;
+        JSString* name = stringIn(value);
+        if (!name) {
+            raiseTypeError(globalObject, scope, concatenate("can only assign string to "_s, type->nameString(globalObject), ".__name__, not '"_s, typeName(globalObject, value), '\''));
+            return;
+        }
+        auto text = name->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (text->contains(static_cast<char16_t>(0))) {
+            raiseValueError(globalObject, scope, "type name must not contain null characters"_s);
+            return;
+        }
+        type->setName(globalObject->vm(), name);
     });
     addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), qualifiedNameWithoutModule(globalObject, asType(self))); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         PyType* type = asType(self);
-        if (!type->hasFlag(PyType::IsHeapType)) {
-            raiseTypeError(globalObject, scope, concatenate("cannot set '__qualname__' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
+        if (!checkSetSpecial(globalObject, scope, type, value, "__qualname__"_s))
             return;
-        }
-        if (!value) {
-            raiseTypeError(globalObject, scope, concatenate("cannot delete '__qualname__' attribute of type '"_s, type->nameString(globalObject), '\''));
-            return;
-        }
         if (!value.isString()) {
             raiseTypeError(globalObject, scope, concatenate("can only assign string to "_s, type->nameString(globalObject), ".__qualname__, not '"_s, typeName(globalObject, value), '\''));
             return;
@@ -1651,8 +1767,10 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         }
         return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_module, jsNontrivialString(globalObject->vm(), "builtins"_s));
     }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
-        if (value)
-            asType(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_module, value);
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        if (!checkSetSpecial(globalObject, scope, asType(self), value, "__module__"_s))
+            return;
+        asType(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_module, value);
     });
     addGetSet(globalObject, type, "__abstractmethods__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
         VM& vm = globalObject->vm();
@@ -1765,7 +1883,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     }
     addGetSet(globalObject, realm->typeBuiltinFunction(), "__module__"_s, getNativeModule, setNativeModule);
     for (PyType* type : { realm->typeMethodDescriptor(), realm->typeWrapperDescriptor() })
-        addMethods(globalObject, type, { { "__get__"_s, functionGet } });
+        addMethods(globalObject, type, { { "__get__"_s, methodDescriptorGet } });
     addMethods(globalObject, realm->typeClassMethodDescriptor(), { { "__get__"_s, classMethodDescriptorGet } });
     for (PyType* type : { realm->typeMemberDescriptor(), realm->typeGetSetDescriptor() }) {
         addMethods(globalObject, type, {
@@ -1792,7 +1910,7 @@ void initializeFunctionTypes(JSGlobalObject* globalObject)
     addGetSet(globalObject, function, "__module__"_s, getFunctionModule, setFunctionModule);
 
     for (PyType* type : { realm->typeFunction(), realm->typeStaticMethod(), realm->typeClassMethod(), realm->typeBaseException() })
-        addGetSet(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDict);
+        addGetSet(globalObject, type, "__dict__"_s, getInstanceDict, setInstanceDictOfBuiltin);
     addMember(globalObject, realm->typeModule(), "__dict__"_s, getInstanceDict);
 
     for (PyType* type : { realm->typeNoneType(), realm->typeNotImplementedType(), realm->typeEllipsis() })

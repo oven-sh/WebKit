@@ -120,6 +120,16 @@ static JSValue unbox(JSValue value)
     return value;
 }
 
+// int.__repr__(True) is '1': it is bool that says otherwise.
+PYTHON_NATIVE(numberRepr)
+{
+    NATIVE_PROLOGUE();
+    JSValue self = args[0];
+    String text = builtinRepr(globalObject, self.isBoolean() ? jsNumber(self.asBoolean()) : self);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsString(vm, text));
+}
+
 PYTHON_NATIVE(numberBool)
 {
     NATIVE_PROLOGUE();
@@ -837,7 +847,7 @@ static void addArithmetic(JSGlobalObject* globalObject, PyType* target, NumberTy
         { "__ceil__"_s, numberFloorOrCeil, PyNativeFunction::Kind::Method, pack(false) },
         { "__round__"_s, numberRound },
         { "__format__"_s, numberFormat },
-        { "__repr__"_s, nativeRepr },
+        { "__repr__"_s, numberRepr },
         { "__hash__"_s, nativeHash },
         { "conjugate"_s, numberUnary, PyNativeFunction::Kind::Method, pack(UnaryOperator::UAdd) },
     });

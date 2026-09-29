@@ -205,20 +205,28 @@ static String functionString(JSGlobalObject* globalObject, CallFrame* callFrame)
     JSObject* owner = function->owner();
     if (!owner)
         return concatenate(name, "()"_s);
-    if (function->signature() && !function->signature()->functionName().isNull())
-        return concatenate(function->signature()->functionName(), "()"_s);
+    // `instance.method` that was got first and called afterwards calls the function from C++, which comes back into the engine to do it.
+    auto boundMethodThatCalled = [&] () -> PyBoundMethod* {
+        EntryFrame* entryFrame = vm.topEntryFrame;
+        CallFrame* caller = callFrame->callerFrame(entryFrame);
+        if (!caller || caller->isNativeCalleeFrame() || caller->codeBlock())
+            return nullptr;
+        auto* method = tryBoundMethod(caller->jsCallee());
+        return method && method->function() == JSValue(function) ? method : nullptr;
+    };
+    if (function->signature() && !function->signature()->functionName().isNull()) {
+        // A method that says what it is called is one that CPython gives its arguments in a tuple. That goes by its name alone if it is the method that is called, and as any other does if it is called where it is got.
+        if (!isType(owner) || function->kind() != PyNativeFunction::Kind::Method || boundMethodThatCalled())
+            return concatenate(function->signature()->functionName(), "()"_s);
+    }
     if (function->takesArgumentsOfTheClass())
         return concatenate(asType(owner)->nameWithoutModule(globalObject), "()"_s);
     if (isType(owner)) {
         // What was called is the function itself, which goes by the class that it is in, unless it is `instance.method` that was got first and called
-        // afterwards. That goes by the class that it was got by way of. It calls the function from C++, which comes back into the engine to do it.
+        // afterwards. That goes by the class that it was got by way of.
         PyType* type = asType(owner);
-        EntryFrame* entryFrame = vm.topEntryFrame;
-        CallFrame* caller = callFrame->callerFrame(entryFrame);
-        if (caller && !caller->isNativeCalleeFrame() && !caller->codeBlock()) {
-            if (auto* method = tryBoundMethod(caller->jsCallee()); method && method->function() == JSValue(function))
-                type = isClass(method->self()) ? asType(method->self()) : typeOf(globalObject, method->self());
-        }
+        if (auto* method = boundMethodThatCalled())
+            type = isClass(method->self()) ? asType(method->self()) : typeOf(globalObject, method->self());
         return concatenate(qualifiedNameWithoutModule(globalObject, type), '.', name, "()"_s);
     }
     JSValue moduleName = owner->getDirect(vm, vm.pythonNames().dunder_name);

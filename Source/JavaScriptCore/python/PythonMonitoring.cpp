@@ -502,6 +502,14 @@ void enterFrame(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeInde
     auto argument = [&] (JSGenerator::Argument which) { return callFrame->uncheckedArgument(static_cast<unsigned>(which) - 1); };
     if (pythonInfoOfFrame(callFrame)->isGeneratorBody && argument(JSGenerator::Argument::ResumeMode).asInt32() == static_cast<int32_t>(JSGenerator::ResumeMode::ThrowMode))
         RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::PyThrow, argument(JSGenerator::Argument::Value))));
+    // What it was waiting on was thrown into, and that was the end of it: see resumeGenerator(). It is on account of a throw() that this goes on, with what was raised, or with the StopIteration that returning is.
+    if (JSValue sent = pythonInfoOfFrame(callFrame)->isGeneratorBody ? argument(JSGenerator::Argument::Value) : JSValue(); sent && sent.isCell() && sent.asCell()->type() == JSCellButterflyType) {
+        auto* outcome = uncheckedDowncast<JSCellButterfly>(sent.asCell());
+        JSValue exception = outcome->get(1);
+        if (!outcome->get(0).asBoolean())
+            exception = createException(globalObject, globalObject->pyRealm()->typeStopIteration(), isNone(exception) ? JSValue() : exception);
+        RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::PyThrow, exception)));
+    }
     RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, isResume ? MonitoringEvent::PyResume : MonitoringEvent::PyStart)));
 }
 
@@ -690,6 +698,22 @@ void generatorHasReturnedTo(JSGlobalObject* globalObject, CallFrame* callFrame, 
     JSValue exception = isNone(returned) ? call(globalObject, type) : call(globalObject, type, returned);
     RETURN_IF_EXCEPTION(scope, void());
     RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::StopIteration, exception)));
+}
+
+// What the frame was waiting on returned because of what was thrown into it. Then the frame goes on by having StopIteration thrown into it, in CPython, which it handles there and then.
+void generatorHasReturnedOnThrowTo(JSGlobalObject* globalObject, CallFrame* callFrame, BytecodeIndex index, JSValue returned)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!stateOf(globalObject).isWatching)
+        return;
+    auto site = siteOf(globalObject, callFrame, index);
+    if (!site || (!toolsFor(*site, MonitoringEvent::Raise) && !toolsFor(*site, MonitoringEvent::ExceptionHandled)))
+        return;
+    JSValue exception = createException(globalObject, globalObject->pyRealm()->typeStopIteration(), isNone(returned) ? JSValue() : returned);
+    fireAtOffset(*site, MonitoringEvent::Raise, exception);
+    RETURN_IF_EXCEPTION(scope, void());
+    RELEASE_AND_RETURN(scope, void(fireAtOffset(*site, MonitoringEvent::ExceptionHandled, exception)));
 }
 
 void noteCaughtStopIteration(JSGlobalObject* globalObject, JSValue exception)

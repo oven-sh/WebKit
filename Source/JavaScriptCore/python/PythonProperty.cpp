@@ -219,7 +219,7 @@ void initializeProperty(JSGlobalObject* globalObject)
         { "__get__"_s, propertyGet },
         { "__set__"_s, propertySet },
         { "__delete__"_s, propertyDelete },
-        { "__set_name__"_s, propertySetName, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreNotChecked },
+        { "__set_name__"_s, propertySetName, Kind::Method, 0, "__set_name__($self, /, *args)"_s },
         { "getter"_s, propertyWith, Kind::Method, pack(PropertyField::Get) },
         { "setter"_s, propertyWith, Kind::Method, pack(PropertyField::Set) },
         { "deleter"_s, propertyWith, Kind::Method, pack(PropertyField::Delete) },

@@ -526,6 +526,14 @@ PyBoundMethod* PyBoundMethod::create(JSGlobalObject* globalObject, JSValue funct
     return method;
 }
 
+PyBoundMethod* PyBoundMethod::createMethod(JSGlobalObject* globalObject, JSValue function, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    auto* method = new (NotNull, allocateCell<PyBoundMethod>(vm)) PyBoundMethod(vm, globalObject->pyRealm()->structureFor(BuiltinType::Method), function, self);
+    method->finishCreation(vm);
+    return method;
+}
+
 static JSC_DECLARE_HOST_FUNCTION(callBoundMethod);
 
 JSValue PyBoundMethod::call(JSGlobalObject* globalObject, const ArgList& all, Python::KeywordNames* keywordNames)

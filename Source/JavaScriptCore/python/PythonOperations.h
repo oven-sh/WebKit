@@ -385,6 +385,7 @@ void frameIsReturning(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
 void frameIsYielding(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
 // A generator that the frame was going through, or waiting on, has returned. To be called if VM::isPythonWatched().
 void generatorHasReturnedTo(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue returned);
+void generatorHasReturnedOnThrowTo(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue returned);
 // What is no generator says that there is no more by raising StopIteration, which is caught at once by what asked. It was raised all the same, and the frame that asked is told
 // of as one that it came to. The first is for what catches it, the second for what began the asking, before and after. All are for if VM::isPythonWatched().
 void noteCaughtStopIteration(JSGlobalObject*, JSValue exception);

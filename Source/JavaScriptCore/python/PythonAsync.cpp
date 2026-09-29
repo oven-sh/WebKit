@@ -83,20 +83,82 @@ bool warnOfThrowSignature(JSGlobalObject* globalObject, const NativeArguments& a
     return warn(globalObject, BuiltinType::DeprecationWarning, concatenate("the (type, exc, tb) signature of "_s, method, "() is deprecated, use the single-arg signature instead."_s));
 }
 
-JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValue value)
+JSValue packThrowArguments(JSGlobalObject* globalObject, const NativeArguments& args, unsigned first)
+{
+    VM& vm = globalObject->vm();
+    // As many as there were, though only three can be made anything of: checkThrowArguments().
+    unsigned count = args.size() - first;
+    auto* packet = JSCellButterfly::create(vm, CopyOnWriteArrayWithContiguous, std::max(count, 3u));
+    for (unsigned i = 0; i < count; ++i)
+        packet->setIndex(vm, i, args[first + i]);
+    return packet;
+}
+
+// _PyArg_CheckPositional(name, count, 1, 3). What was not given is empty, and nothing that was given is.
+bool checkThrowArguments(JSGlobalObject* globalObject, JSValue arguments, ASCIILiteral name)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto* packet = uncheckedDowncast<JSCellButterfly>(arguments.asCell());
+    if (!packet->get(0)) {
+        raiseTypeError(globalObject, scope, concatenate(name, " expected at least 1 argument, got 0"_s));
+        return false;
+    }
+    if (packet->length() > 3) {
+        raiseTypeError(globalObject, scope, concatenate(name, " expected at most 3 arguments, got "_s, packet->length()));
+        return false;
+    }
+    return true;
+}
+
+JSValue exceptionToThrow(JSGlobalObject* globalObject, JSValue exception, JSValue value, JSValue traceback)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (traceback && isNone(traceback))
+        traceback = { };
+    if (traceback && typeOf(globalObject, traceback) != globalObject->pyRealm()->typeTraceback())
+        return raiseTypeError(globalObject, scope, "throw() third argument must be a traceback object"_s);
+    auto withTraceback = [&] (JSValue made) {
+        if (traceback)
+            asObject(made)->putDirect(vm, vm.pythonNames().private_traceback, traceback);
+        return made;
+    };
+
     if (isClass(exception) && asType(exception)->isExceptionType()) {
-        if (value && typeOf(globalObject, value)->isExceptionType())
-            return value;
-        RELEASE_AND_RETURN(scope, value && !isNone(value) ? call(globalObject, exception, value) : call(globalObject, exception));
+        // PyErr_NormalizeException(): the value is the exception if it is an instance of the class, and otherwise is what the class is called with.
+        if (value && typeOf(globalObject, value)->isSubtypeOf(asType(exception)))
+            return withTraceback(value);
+        JSValue made;
+        if (!value || isNone(value))
+            made = call(globalObject, exception);
+        else if (isTuple(value)) {
+            PyTuple* arguments = asTuple(value);
+            MarkedArgumentBuffer buffer;
+            for (unsigned i = 0; i < arguments->length(); ++i)
+                buffer.append(arguments->at(i));
+            made = call(globalObject, exception, buffer);
+        } else
+            made = call(globalObject, exception, value);
+        if (!scope.exception() && !typeOf(globalObject, made)->isExceptionType()) {
+            String shown = repr(globalObject, exception);
+            if (!scope.exception())
+                raiseTypeError(globalObject, scope, concatenate("calling "_s, shown, " should have returned an instance of BaseException, not "_s, typeName(globalObject, made)));
+        }
+        // What went wrong in making it takes its place.
+        if (Exception* raised = scope.exception()) {
+            if (vm.isTerminationException(raised))
+                return { };
+            made = exceptionValue(globalObject, raised->value());
+            if (!scope.tryClearException())
+                return { };
+        }
+        return withTraceback(made);
     }
     if (!typeOf(globalObject, exception)->isExceptionType())
         return raiseTypeError(globalObject, scope, concatenate("exceptions must be classes or instances deriving from BaseException, not "_s, typeName(globalObject, exception)));
     if (value && !isNone(value))
         return raiseTypeError(globalObject, scope, "instance exception may not have a separate value"_s);
-    return exception;
+    return withTraceback(exception);
 }
 
 // ---- Waiting for what is JavaScript's
@@ -464,9 +526,7 @@ PYTHON_NATIVE(coroutineThrow)
     NATIVE_PROLOGUE();
     if (!warnOfThrowSignature(globalObject, args, "throw"_s))
         return { };
-    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(generatorThrow(globalObject, generatorOfSelf(globalObject, args[0]), exception)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(generatorThrow(globalObject, generatorOfSelf(globalObject, args[0]), packThrowArguments(globalObject, args, 1))));
 }
 
 PYTHON_NATIVE(coroutineClose)
@@ -602,9 +662,7 @@ PYTHON_NATIVE(asendThrow)
     NATIVE_PROLOGUE();
     if (!warnOfThrowSignature(globalObject, args, "throw"_s))
         return { };
-    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(asendThrowImpl(globalObject, asNative(args[0]), exception)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(asendThrowImpl(globalObject, asNative(args[0]), packThrowArguments(globalObject, args, 1))));
 }
 
 // What close() makes of throwing GeneratorExit in: nothing, if that ended it.
@@ -686,6 +744,9 @@ PYTHON_NATIVE(athrowSend)
             if (isWrappedValue(globalObject, result))
                 RELEASE_AND_RETURN(scope, JSValue::encode(athrowFinish(globalObject, self, true)));
         } else {
+            // It is left as it is, in the middle of things, as it is by CPython.
+            if (!checkThrowArguments(globalObject, self->field(1), "athrow"_s))
+                return { };
             result = resumeAsyncGenerator(globalObject, generator, self->field(1), JSGenerator::ResumeMode::ThrowMode);
             result = unwrapAsyncValue(globalObject, generator, result);
         }
@@ -743,9 +804,7 @@ PYTHON_NATIVE(athrowThrow)
     NATIVE_PROLOGUE();
     if (!warnOfThrowSignature(globalObject, args, "throw"_s))
         return { };
-    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(athrowThrowImpl(globalObject, asNative(args[0]), exception)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(athrowThrowImpl(globalObject, asNative(args[0]), packThrowArguments(globalObject, args, 1))));
 }
 
 PYTHON_NATIVE(athrowClose)
@@ -800,11 +859,10 @@ PYTHON_NATIVE(asyncGeneratorAThrow)
     NATIVE_PROLOGUE();
     if (!warnOfThrowSignature(globalObject, args, "athrow"_s))
         return { };
-    JSValue exception = exceptionToThrow(globalObject, args[1], args.at(2));
-    RETURN_IF_EXCEPTION(scope, { });
     initializeHooks(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, args[0], exception, jsNumber(AwaitableState::Init)));
+    // Whether it can be thrown is found out when it is.
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::AsyncGeneratorAThrow, args[0], packThrowArguments(globalObject, args, 1), jsNumber(AwaitableState::Init)));
 }
 
 PYTHON_NATIVE(asyncGeneratorAClose)
@@ -878,8 +936,14 @@ PYTHON_NATIVE(anextProxy)
     JSValue function = getAttribute(globalObject, iterator, Identifier::fromString(vm, method));
     RETURN_IF_EXCEPTION(scope, { });
     MarkedArgumentBuffer arguments;
-    for (unsigned i = 1; i < args.size(); ++i)
-        arguments.append(args[i]);
+    if (args.size() == 2 && method == "send"_s && isTuple(args[1])) {
+        // CPython calls it with PyObject_CallMethod(awaitable, "send", "O", argument), which takes a tuple to be all of the arguments.
+        for (unsigned i = 0; i < asTuple(args[1])->length(); ++i)
+            arguments.append(asTuple(args[1])->at(i));
+    } else {
+        for (unsigned i = 1; i < args.size(); ++i)
+            arguments.append(args[i]);
+    }
     JSValue result = call(globalObject, function, arguments);
     if (scope.exception() && catchException(globalObject, BuiltinType::StopAsyncIteration)) {
         JSValue defaultValue = self->field(1);
@@ -887,6 +951,61 @@ PYTHON_NATIVE(anextProxy)
     }
     scope.release();
     return JSValue::encode(result);
+}
+
+// PyErr_FormatUnraisable("Exception ignored while ... %R", generator). How it is shown is found out beforehand, while nothing has been raised.
+static void reportUnraisableOf(JSGlobalObject* globalObject, ASCIILiteral whileDoing, const String& shown)
+{
+    reportUnraisable(globalObject, concatenate("Exception ignored while "_s, whileDoing, ' ', shown));
+}
+
+// generator.__del__(), and that of a coroutine and of an asynchronous generator: _PyGen_Finalize(). It is what CPython does with one that nothing has any more. Nothing here calls it, but a program can.
+PYTHON_NATIVE(generatorDel)
+{
+    NATIVE_PROLOGUE();
+    JSGenerator* generator = asGenerator(args[0]);
+    int32_t state = stateOf(generator);
+    if (state == static_cast<int32_t>(JSGenerator::State::Completed))
+        RETURN_NONE();
+    String shown = repr(globalObject, generator);
+    RETURN_IF_EXCEPTION(scope, { });
+    GeneratorKind kind = generatorKindOf(globalObject, generator);
+    if (kind == GeneratorKind::AsyncGenerator) {
+        JSValue finalizer = generator->getDirect(vm, names.private_finalizer);
+        if (finalizer && !isNone(finalizer) && !flag(generator, names.private_isClosedAsync)) {
+            call(globalObject, finalizer, generator);
+            if (scope.exception())
+                reportUnraisableOf(globalObject, "finalizing generator"_s, shown);
+            RETURN_NONE();
+        }
+    }
+    if (kind == GeneratorKind::Coroutine && state == static_cast<int32_t>(JSGenerator::State::Init)) {
+        String name = nameOfFunction(globalObject, uncheckedDowncast<JSFunction>(generator->internalField(static_cast<unsigned>(JSGenerator::Field::Next)).get().asCell()), true);
+        if (!warn(globalObject, BuiltinType::RuntimeWarning, concatenate("coroutine '"_s, name, "' was never awaited"_s)))
+            reportUnraisableOf(globalObject, "finalizing coroutine"_s, shown);
+        RETURN_NONE();
+    }
+    generatorClose(globalObject, generator);
+    if (scope.exception())
+        reportUnraisableOf(globalObject, "closing generator"_s, shown);
+    RETURN_NONE();
+}
+
+// async_gen_asend_finalize() and async_gen_athrow_finalize(): what was made to be awaited, and never was.
+PYTHON_NATIVE(asyncAwaitableDel)
+{
+    NATIVE_PROLOGUE();
+    PyNativeObject* self = asNative(args[0]);
+    if (awaitableState(self) != AwaitableState::Init)
+        RETURN_NONE();
+    JSGenerator* generator = asGenerator(self->field(0));
+    String shown = repr(globalObject, generator);
+    RETURN_IF_EXCEPTION(scope, { });
+    ASCIILiteral method = typeOf(globalObject, self) == realm->typeAsyncGeneratorASend() ? "asend"_s : self->field(1) ? "athrow"_s : "aclose"_s;
+    String name = nameOfFunction(globalObject, uncheckedDowncast<JSFunction>(generator->internalField(static_cast<unsigned>(JSGenerator::Field::Next)).get().asCell()), true);
+    if (!warn(globalObject, BuiltinType::RuntimeWarning, concatenate("coroutine method '"_s, method, "' of '"_s, name, "' was never awaited"_s)))
+        reportUnraisableOf(globalObject, "finalizing async generator"_s, shown);
+    RETURN_NONE();
 }
 
 // ---- Setting them up
@@ -903,6 +1022,10 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
     for (PyType* type : { realm->typeCoroutineWrapper(), realm->typeAsyncGeneratorASend(), realm->typeAsyncGeneratorAThrow(), realm->typePromiseAwaiter(), realm->typeAsyncGeneratorWrappedValue(), realm->typeANextAwaitable() })
         type->setInstanceStructure(vm, PyNativeObject::createStructure(vm, globalObject, type));
 
+    for (PyType* type : { realm->typeGenerator(), realm->typeCoroutine(), realm->typeAsyncGenerator() })
+        addMethods(globalObject, type, { { "__del__"_s, generatorDel, Kind::Wrapper, 0, "($self, /)"_s } });
+    for (PyType* type : { realm->typeAsyncGeneratorASend(), realm->typeAsyncGeneratorAThrow() })
+        addMethods(globalObject, type, { { "__del__"_s, asyncAwaitableDel, Kind::Wrapper, 0, "($self, /)"_s } });
     addMethods(globalObject, realm->typeCoroutine(), {
         { "__await__"_s, coroutineAwait },
         { "send"_s, coroutineSend },
@@ -920,7 +1043,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__aiter__"_s, nativeSelf },
         { "__anext__"_s, asyncGeneratorANext },
         { "asend"_s, asyncGeneratorASend },
-        { "athrow"_s, asyncGeneratorAThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
+        { "athrow"_s, asyncGeneratorAThrow, Kind::Method, 0, "athrow($self, /, *args)"_s },
         { "aclose"_s, asyncGeneratorAClose },
     });
     addMethods(globalObject, realm->typeAsyncGeneratorASend(), {
@@ -928,7 +1051,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, asendSend },
         { "send"_s, asendSend },
-        { "throw"_s, asendThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
+        { "throw"_s, asendThrow, Kind::Method, 0, "($self, /, *args)"_s },
         { "close"_s, asendClose },
     });
     addMethods(globalObject, realm->typeAsyncGeneratorAThrow(), {
@@ -936,7 +1059,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, athrowSend },
         { "send"_s, athrowSend },
-        { "throw"_s, athrowThrow, Kind::Method, 0, "($self, typ, val=None, tb=None, /)"_s },
+        { "throw"_s, athrowThrow, Kind::Method, 0, "($self, /, *args)"_s },
         { "close"_s, athrowClose },
     });
     addMethods(globalObject, realm->typeANextAwaitable(), {
@@ -944,7 +1067,7 @@ void initializeAsyncTypes(JSGlobalObject* globalObject, JSObject* builtins)
         { "__iter__"_s, nativeSelf },
         { "__next__"_s, anextProxy, Kind::Method, 0 },
         { "send"_s, anextProxy, Kind::Method, 1 },
-        { "throw"_s, anextProxy, Kind::Method, 2, "($self, typ, val=None, tb=None, /)"_s },
+        { "throw"_s, anextProxy, Kind::Method, 2, "throw($self, /, *args)"_s },
         { "close"_s, anextProxy, Kind::Method, 3 },
     });
     addMethods(globalObject, realm->typePromiseAwaiter(), {

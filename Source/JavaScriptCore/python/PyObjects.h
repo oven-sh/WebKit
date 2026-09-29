@@ -56,7 +56,10 @@ public:
     static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetCallData;
     PYTHON_CELL_BOILERPLATE(PyBoundMethod, pyBoundMethodSpace)
 
+    // What comes of getting a function from an instance. If the function is written in C++ it is a builtin_function_or_method or a method-wrapper.
     static PyBoundMethod* create(JSGlobalObject*, JSValue function, JSValue self);
+    // A method, whatever it is of: what a program makes with types.MethodType(), and what a classmethod gives.
+    static PyBoundMethod* createMethod(JSGlobalObject*, JSValue function, JSValue self);
     JSValue function() const { return m_function.get(); }
     JSValue self() const { return m_self.get(); }
     static CallData getCallData(JSCell*);

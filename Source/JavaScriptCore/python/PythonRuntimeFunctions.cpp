@@ -636,11 +636,28 @@ PYTHON_RUNTIME_FUNCTION(yieldFromStep)
     JSValue returned;
     if (vm.isPythonWatched()) [[unlikely]]
         forgetCaughtStopIteration(globalObject);
-    JSValue yielded = stepIterator(globalObject, iterator, received, wasThrown, returned);
-    RETURN_IF_EXCEPTION(scope, { });
+    JSValue yielded;
+    bool cameOfThrow = false;
+    if (!wasThrown && received.isCell() && received.asCell()->type() == JSCellButterflyType) [[unlikely]] {
+        cameOfThrow = true;
+        // Something was thrown into the iterator while this generator waited, and that was the end of the iterator: see resumeGenerator(). This is what came of it.
+        auto* outcome = uncheckedDowncast<JSCellButterfly>(received.asCell());
+        if (outcome->get(0).asBoolean())
+            throwException(globalObject, scope, outcome->get(1));
+        else
+            returned = outcome->get(1);
+    } else
+        yielded = stepIterator(globalObject, iterator, received, wasThrown, returned);
+    if (scope.exception()) [[unlikely]] {
+        // It is not waiting on it any more, whatever it does about this.
+        asObject(argument(3))->putDirect(vm, vm.pythonNames().private_yieldFrom, jsUndefined());
+        return { };
+    }
     if (!yielded && vm.isPythonWatched()) [[unlikely]] {
         if (CallFrame* caller = callerOf(callFrame)) {
-            if (iterator.isCell() && iterator.asCell()->type() == JSGeneratorType)
+            if (cameOfThrow)
+                generatorHasReturnedOnThrowTo(globalObject, caller, caller->bytecodeIndex(), returned ? returned : jsUndefined());
+            else if (iterator.isCell() && iterator.asCell()->type() == JSGeneratorType)
                 generatorHasReturnedTo(globalObject, caller, caller->bytecodeIndex(), returned ? returned : jsUndefined());
             else
                 tellOfCaughtStopIteration(globalObject, caller, caller->bytecodeIndex());

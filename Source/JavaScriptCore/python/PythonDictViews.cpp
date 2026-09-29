@@ -159,15 +159,8 @@ static JSValue intersect(JSGlobalObject* globalObject, JSValue self, JSValue oth
 
     // What is gone through is the smaller of the two, where that can be told.
     if (isExactly(globalObject, other, globalObject->pyRealm()->typeSet()) && size <= static_cast<int64_t>(uncheckedDowncast<PySet>(other.asCell())->size())) {
-        PySet* result = PySet::create(globalObject);
-        forEach(globalObject, self, [&] (JSValue item) {
-            bool isIn = contains(globalObject, other, item);
-            if (isIn && !scope.exception())
-                result->add(globalObject, item);
-            return !scope.exception();
-        });
-        RETURN_IF_EXCEPTION(scope, { });
-        return result;
+        // other.intersection(self)
+        RELEASE_AND_RETURN(scope, setIntersection(globalObject, uncheckedDowncast<PySet>(other.asCell()), self));
     }
     if (isSetLikeView(globalObject, other) && static_cast<int64_t>(dictOfView(other)->size()) > size)
         std::swap(self, other);

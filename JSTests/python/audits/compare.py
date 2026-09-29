@@ -63,7 +63,7 @@ elif audit == "syntax-errors":
     wrong = [key for key in expected if actual.get(key) != expected[key]]
     report([("of %d the same" % len(expected), len(expected) - len(wrong))] + [("of %d from %s" % (total, name), same) for name, (same, total) in groups.items()],
            ["%s: %s\n        here: %s" % (key, expected[key][:170], actual.get(key, "nothing")[:170]) for key in wrong])
-elif audit in ("operations", "methods", "special-methods"):
+elif audit in ("operations", "methods", "special-methods", "other-objects"):
     def load(path):
         with open(path) as file:
             return dict(line.rstrip("\n").split(" | ", 1) for line in file if " | " in line)

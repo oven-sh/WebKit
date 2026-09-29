@@ -46,7 +46,8 @@ JSValue resumeGenerator(JSGlobalObject*, JSGenerator*, JSValue sent, JSGenerator
 JSValue catchStopIteration(JSGlobalObject*);
 
 // The same for anything that can be iterated: what `yield from` does each time round. What is received is sent to it, or thrown into it.
-JSValue stepIterator(JSGlobalObject*, JSValue iterator, JSValue received, bool wasThrown, JSValue& returned);
+// If what was thrown is not for the iterator after all, because it has no throw() or because it has been closed, it is thrown from here, unless `isForWhatWaits` is given, which is then set.
+JSValue stepIterator(JSGlobalObject*, JSValue iterator, JSValue received, bool wasThrown, JSValue& returned, bool* isForWhatWaits = nullptr);
 
 // A coroutine and an asynchronous generator are generators too. They differ in their class, which is their prototype.
 enum class GeneratorKind : uint8_t { Generator, Coroutine, AsyncGenerator };
@@ -61,8 +62,13 @@ JSValue getAwaitable(JSGlobalObject*, JSValue, unsigned context);
 JSValue getAsyncIterator(JSGlobalObject*, JSValue);
 JSValue getAsyncNext(JSGlobalObject*, JSValue iterator);
 JSValue wrapAsyncYield(JSGlobalObject*, JSValue);
-// An exception, from what may be the class of one, with a value to make it from. Empty if it raised.
-JSValue exceptionToThrow(JSGlobalObject*, JSValue typeOrValue, JSValue value);
+// What throw(type, value, traceback) is to throw: _gen_throw(), from throw_here on. Those that were not given are empty. Empty if it raised, which is for what cannot be thrown at all. If making the exception goes
+// wrong, what went wrong is what there is to throw, as PyErr_NormalizeException() has it.
+JSValue exceptionToThrow(JSGlobalObject*, JSValue typeOrValue, JSValue value, JSValue traceback = { });
+// What throw() was given, as it was given, to be thrown into a generator with resumeGenerator(). What is made of it depends on the generator. If that is waiting on another, with `yield from` or `await`, it goes to
+// that one as it is, and only what it comes to at last says whether it can be thrown. It is nothing that a program can get hold of, and is never itself thrown.
+JSValue packThrowArguments(JSGlobalObject*, const NativeArguments&, unsigned first);
+bool checkThrowArguments(JSGlobalObject*, JSValue arguments, ASCIILiteral name); // False if it raised.
 bool warnOfThrowSignature(JSGlobalObject*, const NativeArguments&, ASCIILiteral method); // False if it raised.
 
 // ---- The two languages waiting for each other. See "Waiting" in README.md.

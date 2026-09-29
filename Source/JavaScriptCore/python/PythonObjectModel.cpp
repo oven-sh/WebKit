@@ -484,7 +484,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
         return uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
     case DescriptorKind::ClassMethod: {
         JSValue function = uncheckedDowncast<PyNativeObject>(value.asCell())->field(0);
-        return PyBoundMethod::create(globalObject, function, type->object());
+        return PyBoundMethod::createMethod(globalObject, function, type->object());
     }
     case DescriptorKind::Member: {
         if (!instance)
@@ -495,7 +495,7 @@ JSValue bind(JSGlobalObject* globalObject, const Descriptor& descriptor, JSValue
         // One of a built-in type has a value from the start.
         if (JSValue initial = member->initialValue())
             return initial;
-        return raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, member->name()->value(globalObject).data, '\''));
+        return raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', fullyQualifiedTypeName(globalObject, instance), "' object has no attribute '"_s, member->name()->value(globalObject).data, '\''));
     }
     case DescriptorKind::General:
         if (!descriptor.getter)

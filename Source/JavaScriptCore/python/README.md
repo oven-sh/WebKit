@@ -300,6 +300,20 @@ what part of a line to point at, and with what; lines that are the same over and
 **`BaseExceptionGroup`, and what `except*` is compiled into calls of** (`PythonExceptionGroups.cpp`), are `Objects/exceptions.c` and `_PyEval_ExceptionGroupMatch()`, function for function.
 `ExceptionGroup` has two bases, and is made when a realm is as a class statement would make it, as in CPython.
 
+### Throwing into a generator
+
+A generator of Python's is a `JSGenerator`, and `yield from` and `await` are a loop in bytecode round `yieldFromStep()`, which sends what the generator is sent to what it is waiting on. `throw()` is not done by that
+loop. It is `_gen_throw()` of CPython's `Objects/genobject.c`, and is in `resumeGenerator()`, which everything that throws into a generator comes to:
+
+- **What `throw()` was given goes on as it was given**, all three of them, to whatever is waited on at the far end, and only that says whether it is something that can be thrown. On the way it is in a
+  `JSCellButterfly`, which is nothing that a program can get hold of. It is handed from one C++ function to the next, and is never itself thrown, so what is tracing or monitoring does not see it.
+- **A generator that is waiting is not woken for it.** If what it is waiting on yields, that is what it yields, from where it is. It goes on only if that has come to an end, and then it is *sent* what came of it, whether
+  that returned or raised, which `yieldFromStep()` takes for what it is. So what is watching sees the frames that CPython goes into and no others.
+- **If it cannot be thrown, the generator is left as it was.** If making the exception goes wrong, what went wrong is what is thrown, as `PyErr_NormalizeException()` has it.
+- What JavaScript throws in, with the `throw()` that a generator of JavaScript's has, wakes the generator, and the loop catches it and passes it on.
+
+`programs/throwing-into-what-is-waited-on.py` has it with nothing watching, traced and monitored.
+
 ### What is said to be wrong with source
 
 The parser is written by hand and goes down through the grammar, as the one for JavaScript does. CPython's is generated from `Grammar/python.gram`, and **what it says is wrong with source, and where, is
@@ -698,6 +712,11 @@ There is nothing that is per process, nothing that is set after something is mad
   moment the last reference to it goes. Here it would stay locked until the next collection, and programs that are right would fail. A view
   holds no pointer, only where it is looking, and checks each time. For the same reason the `__release_buffer__()` of a class that has one is called when
   the last `memoryview` of it is released, by `release()` or by `with`, and not when it is merely let go of.
+- **What line a frame that is over says that it is on**, if it was left by way of what nobody wrote: the end of a `finally`, or what is done at the end of `except E as e`. In CPython it is the last line that was
+  written by somebody, which it has because it writes such things out again wherever they are come to. Here there is one of each, and it is said to be where the `try` is. Knowing better would take writing down
+  each line as it is come to. `tb_lineno` is right, which is what a traceback is printed from.
+- **What is said of the wrong arguments** by `super.__init__()`, which in CPython is worded one way if it is called and another if `super` is, and by a method written in C++ that is called by way of a `super` that was
+  kept first, which here goes by the class that the method is in.
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots. What sets do with one another is CPython's `Objects/setobject.c`, function for function: how long each takes, which of two keys that are equal
   is kept, and what is asked of the keys and how often (`programs/sets-with-one-another.py`). The one thing that is otherwise is for the sake of the order: `a ^ b` has what is only in `a` first.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
@@ -732,6 +751,13 @@ of it, so that what is kept to compare with is small, and given `everything` pri
 `special-methods.py` is the other way about: it is of what the language does with what a program's classes do. Each special method is given each of some eighty things to do, which are to return something, mostly
 not what is wanted of it, to raise something, to take the wrong number of arguments, and not to be a function at all. Then everything that would call it is tried: the operators, the statements, the built-in
 functions, and the methods of the built-in classes that take such a thing. That is ninety thousand things tried.
+
+`other-objects.py` is `methods.py` for everything else that is built in: what goes through things, views, generators and coroutines and what is made to wait for them, functions and methods, descriptors, code, frames,
+tracebacks, cells, modules, classes, `super`, exceptions. Most of these have a state, so each is tried as it is when it is new, part of the way through, at its end, and with what it goes through changed under it, and
+some as they are only while something is going on: a generator to itself while it runs, a frame that is running, a traceback that is being handled. So what is tried is not an object but a function that makes one and
+does something with it there. Every attribute is got, is set to each of some twenty things, and is deleted, and what can be called is called. Nothing is used twice, neither what is tried nor what it is given, since
+what one engine gets wrong would otherwise show in what comes after. A call is made both by way of `getattr()` and as it would be written, `x.method(a, k=v)`, which CPython does not go about in the same way, so that
+what it says of the wrong arguments can be one thing or the other. That is 1,800,000 things tried, of which four kinds are more than CPython 3.14.7 survives, and are left out of what is compared.
 
 `complexity.py` is of how long things take as what they are done to gets longer. Each of four hundred things is done about n times to something of about n elements, and timed at n and at four times n, so what
 it prints is the power of n that the time goes up by: 1 if each takes as long however many there are, and 2 if each takes as long as there are elements. `compare-complexity.py` puts what CPython printed beside

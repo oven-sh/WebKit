@@ -1,0 +1,237 @@
+---- what object has is for anything, and takes it for no more than an object
+object.__new__(int, 1) => TypeError: object.__new__(int) is not safe, use int.__new__()
+object.__new__(ValueError, 1, 2) => TypeError: object.__new__(ValueError) is not safe, use ValueError.__new__()
+object.__new__(Plain, 1) => Plain
+object.__repr__(int) => <type object at>
+object.__repr__(5) => <int object at>
+object.__repr__([]) => <list object at>
+OfMeta.__repr__(int) => <type object at>
+repr(OfMeta) => <Meta>
+int.__repr__(True) => 1
+object.__getattribute__(int, 'real') => AttributeError: 'type' object has no attribute 'real'
+object.__getattribute__(bool, 'real') => AttributeError: 'type' object has no attribute 'real'
+object.__getattribute__(Plain, 'method') => function
+object.__getattribute__(Derived, 'method') => AttributeError: 'type' object has no attribute 'method'
+object.__getattribute__(Plain, '__dict__') => mappingproxy
+object.__getattribute__(int, '__name__') => int
+object.__getattribute__(int, 'nope') => AttributeError: 'type' object has no attribute 'nope'
+type.__getattribute__(int, 'nope') => AttributeError: type object 'int' has no attribute 'nope'
+type.__getattribute__(bool, 'real') => getset_descriptor
+object.__setattr__(Plain, 'a', 1) => TypeError: can't apply this __setattr__ to type object
+object.__setattr__(OfMeta, 'a', 1) => TypeError: can't apply this __setattr__ to Meta object
+object.__delattr__(int, None) => TypeError: can't apply this __delattr__ to type object
+type.__setattr__(Plain, 'a', 1) => (None, 1)
+type.__setattr__(int, None, 1) => TypeError: cannot set None attribute of immutable type 'int'
+type.__delattr__(int, 'a') => TypeError: cannot set 'a' attribute of immutable type 'int'
+type.__setattr__(Plain, None, 1) => TypeError: attribute name must be string, not 'NoneType'
+type.__init__(int) => TypeError: type.__init__() takes 1 or 3 arguments
+type.__init__(int, 1) => None
+type.__init__(int, 1, 2) => TypeError: type.__init__() takes 1 or 3 arguments
+type.__init__(int, 1, 2, 3) => None
+type.__init__(int, 1, a=1) => TypeError: type.__init__() takes no keyword arguments
+---- what a class is called, and where it is from
+del C.__name__ => TypeError: cannot delete '__name__' attribute of immutable type 'C'
+C.__name__ = 5 => TypeError: can only assign string to C.__name__, not 'int'
+C.__name__ = 'x' => (None, "<class '__main__.C'>", 'x')
+int.__name__ = 'x' => TypeError: cannot set '__name__' attribute of immutable type 'int'
+del int.__name__ => TypeError: cannot set '__name__' attribute of immutable type 'int'
+del C.__qualname__ => TypeError: cannot delete '__qualname__' attribute of immutable type 'C'
+C.__qualname__ = 5 => TypeError: can only assign string to C.__qualname__, not 'int'
+C.__qualname__ = 'x' => (None, "<class '__main__.x'>", 'x')
+int.__qualname__ = 'x' => TypeError: cannot set '__qualname__' attribute of immutable type 'int'
+del int.__qualname__ => TypeError: cannot set '__qualname__' attribute of immutable type 'int'
+del C.__module__ => TypeError: cannot delete '__module__' attribute of immutable type 'C'
+C.__module__ = 5 => (None, "<class 'C'>", 5)
+C.__module__ = 'x' => (None, "<class 'x.C'>", 'x')
+int.__module__ = 'x' => TypeError: cannot set '__module__' attribute of immutable type 'int'
+del int.__module__ => TypeError: cannot set '__module__' attribute of immutable type 'int'
+C.__name__ = 'a\0b' => ValueError: type name must not contain null characters
+C.__module__ = 'builtins' => (None, "<class 'C'>")
+__static_attributes__ => ('another', 'slot')
+a slot with nothing in it => AttributeError: 'Plain' object has no attribute 'empty'
+of a class that is inside something => AttributeError: 'inner.<locals>.Local' object has no attribute 'empty'
+---- methods
+MethodType(len, [1, 2]) => ('method', '<bound method len of [1, 2]>', 2, True, [1, 2])
+classmethod(len).__get__(None, int) => ('method', "<bound method len of <class 'int'>>")
+classmethod(f).__get__(None, 5) => <bound method of_class of 5>
+classmethod(f).__get__(5) => <bound method of_class of <class 'int'>>
+str.upper.__get__(5) => TypeError: descriptor 'upper' for 'str' objects doesn't apply to a 'int' object
+str.upper.__get__('a')() => A
+str.upper.__get__(None, str) => <method 'upper' of 'str' objects>
+str.upper.__get__(None, None) => TypeError: __get__(None, None) is invalid
+int.__add__.__get__('a') => TypeError: descriptor '__add__' for 'int' objects doesn't apply to a 'str' object
+int.__add__.__get__(True)(1) => 2
+dict.__dict__['fromkeys']() => TypeError: descriptor 'fromkeys' of 'dict' object needs an argument
+dict.__dict__['fromkeys'](5) => TypeError: descriptor 'fromkeys' for type 'dict' needs a type, not a 'int' as arg 2
+[].count.__module__ = 5 => (None, 5)
+[].count.__module__ => None
+property().__set_name__(a=1) => TypeError: property.__set_name__() takes no keyword arguments
+got first, and then called => TypeError: __set_name__() takes no keyword arguments
+property.__set_name__(property(), a=1) => TypeError: property.__set_name__() takes no keyword arguments
+property().__set_name__(1) => TypeError: __set_name__() takes 2 positional arguments but 1 were given
+del __dict__ of a function => TypeError: cannot delete __dict__
+del __dict__ of a staticmethod => TypeError: cannot delete __dict__
+del __dict__ of a classmethod => TypeError: cannot delete __dict__
+del __dict__ of an exception => TypeError: cannot delete __dict__
+of an instance => None
+---- super
+s.__init__(Derived) => TypeError: Plain.__init__() takes 1 positional argument but 2 were given
+s.__init__(Plain, 5) => TypeError: Plain.__init__() takes 1 positional argument but 3 were given
+and it is as it was => <super: <class 'Derived'>, <Derived object>>
+super(Derived, Derived).__eq__(1, 1) => True
+super(Derived, Derived).__setattr__(int, 'a', 1) => TypeError: can't apply this __setattr__ to type object
+---- exceptions
+with_traceback(0) => TypeError: __traceback__ must be a traceback or None
+with_traceback(None) => x
+NameError(a=1, b=2) => TypeError: NameError() takes at most 1 keyword argument (2 given)
+NameError(a=1) => TypeError: NameError() got an unexpected keyword argument 'a'
+AttributeError(a=1, b=2, c=3) => TypeError: AttributeError() takes at most 2 keyword arguments (3 given)
+ImportError(a=1, b=2, c=3, d=4) => TypeError: ImportError() takes at most 3 keyword arguments (4 given)
+---- throw
+new: throw(KeyError) => ('KeyError: ', [], None)
+new: throw(KeyError, 1) => ('KeyError: 1', [], None)
+new: throw(KeyError, (1, 2)) => ('KeyError: (1, 2)', [], None)
+new: throw(KeyError, ()) => ('KeyError: ', [], None)
+new: throw(KeyError, None) => ('KeyError: ', [], None)
+new: throw(KeyError(1)) => ('KeyError: 1', [], None)
+new: throw(KeyError(1), None) => ('KeyError: 1', [], None)
+new: throw(KeyError(1), 2) => ('TypeError: instance exception may not have a separate value', [1, (2, None)], None)
+new: throw(KeyError, KeyError(3)) => ('KeyError: 3', [], None)
+new: throw(LookupError, KeyError(3)) => ('KeyError: 3', [], None)
+new: throw(KeyError, ValueError(3)) => ('KeyError: ValueError(3)', [], None)
+new: throw(None) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not NoneType', [1, (2, None)], None)
+new: throw(5) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not int', [1, (2, None)], None)
+new: throw(int) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not type', [1, (2, None)], None)
+new: throw(KeyError, 1, 2) => ('TypeError: throw() third argument must be a traceback object', [1, (2, None)], None)
+new: throw(None, None, 2) => ('TypeError: throw() third argument must be a traceback object', [1, (2, None)], None)
+new: throw(KeyError(1), None, 2) => ('TypeError: throw() third argument must be a traceback object', [1, (2, None)], None)
+new: throw(KeyError, None, None) => ('KeyError: ', [], None)
+new: throw(KeyError, None, a traceback) => ('KeyError: ', [], None)
+new: throw(StopIteration) => ('StopIteration: ', [], None)
+new: throw(StopIteration(5)) => ('StopIteration: 5', [], None)
+new: throw(GeneratorExit) => ('GeneratorExit: ', [], None)
+new: throw(Fussy) => ("TypeError: Fussy.__init__() missing 2 required positional arguments: 'a' and 'b'", [], None)
+new: throw(Fussy, 1) => ("TypeError: Fussy.__init__() missing 1 required positional argument: 'b'", [], None)
+new: throw(Fussy, (1, 2)) => ('Fussy: (1, 2)', [], None)
+new: throw(Odd) => ("TypeError: calling <class '__main__.Odd'> should have returned an instance of BaseException, not int", [], None)
+begun: throw(KeyError) => (('caught', ()), [], None)
+begun: throw(KeyError, 1) => (('caught', (1,)), [], None)
+begun: throw(KeyError, (1, 2)) => (('caught', (1, 2)), [], None)
+begun: throw(KeyError, ()) => (('caught', ()), [], None)
+begun: throw(KeyError, None) => (('caught', ()), [], None)
+begun: throw(KeyError(1)) => (('caught', (1,)), [], None)
+begun: throw(KeyError(1), None) => (('caught', (1,)), [], None)
+begun: throw(KeyError(1), 2) => ('TypeError: instance exception may not have a separate value', [(2, None)], None)
+begun: throw(KeyError, KeyError(3)) => (('caught', (3,)), [], None)
+begun: throw(LookupError, KeyError(3)) => (('caught', (3,)), [], None)
+begun: throw(KeyError, ValueError(3)) => (('caught', (ValueError(3),)), [], None)
+begun: throw(None) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not NoneType', [(2, None)], None)
+begun: throw(5) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not int', [(2, None)], None)
+begun: throw(int) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not type', [(2, None)], None)
+begun: throw(KeyError, 1, 2) => ('TypeError: throw() third argument must be a traceback object', [(2, None)], None)
+begun: throw(None, None, 2) => ('TypeError: throw() third argument must be a traceback object', [(2, None)], None)
+begun: throw(KeyError(1), None, 2) => ('TypeError: throw() third argument must be a traceback object', [(2, None)], None)
+begun: throw(KeyError, None, None) => (('caught', ()), [], None)
+begun: throw(KeyError, None, a traceback) => (('caught', ()), [], None)
+begun: throw(StopIteration) => ('RuntimeError: generator raised StopIteration', [], None)
+begun: throw(StopIteration(5)) => ('RuntimeError: generator raised StopIteration', [], None)
+begun: throw(GeneratorExit) => ('GeneratorExit: ', [], None)
+begun: throw(Fussy) => ("TypeError: Fussy.__init__() missing 2 required positional arguments: 'a' and 'b'", [], None)
+begun: throw(Fussy, 1) => ("TypeError: Fussy.__init__() missing 1 required positional argument: 'b'", [], None)
+begun: throw(Fussy, (1, 2)) => ('Fussy: (1, 2)', [], None)
+begun: throw(Odd) => ("TypeError: calling <class '__main__.Odd'> should have returned an instance of BaseException, not int", [], None)
+delegating: throw(KeyError) => (('caught', ()), [], None)
+delegating: throw(KeyError, 1) => (('caught', (1,)), [], None)
+delegating: throw(KeyError, (1, 2)) => (('caught', (1, 2)), [], None)
+delegating: throw(KeyError, ()) => (('caught', ()), [], None)
+delegating: throw(KeyError, None) => (('caught', ()), [], None)
+delegating: throw(KeyError(1)) => (('caught', (1,)), [], None)
+delegating: throw(KeyError(1), None) => (('caught', (1,)), [], None)
+delegating: throw(KeyError(1), 2) => (('outer caught', 'instance exception may not have a separate value'), [], None)
+delegating: throw(KeyError, KeyError(3)) => (('caught', (3,)), [], None)
+delegating: throw(LookupError, KeyError(3)) => (('caught', (3,)), [], None)
+delegating: throw(KeyError, ValueError(3)) => (('caught', (ValueError(3),)), [], None)
+delegating: throw(None) => (('outer caught', 'exceptions must be classes or instances deriving from BaseException, not NoneType'), [], None)
+delegating: throw(5) => (('outer caught', 'exceptions must be classes or instances deriving from BaseException, not int'), [], None)
+delegating: throw(int) => (('outer caught', 'exceptions must be classes or instances deriving from BaseException, not type'), [], None)
+delegating: throw(KeyError, 1, 2) => (('outer caught', 'throw() third argument must be a traceback object'), [], None)
+delegating: throw(None, None, 2) => (('outer caught', 'throw() third argument must be a traceback object'), [], None)
+delegating: throw(KeyError(1), None, 2) => (('outer caught', 'throw() third argument must be a traceback object'), [], None)
+delegating: throw(KeyError, None, None) => (('caught', ()), [], None)
+delegating: throw(KeyError, None, a traceback) => (('caught', ()), [], None)
+delegating: throw(StopIteration) => ('RuntimeError: generator raised StopIteration', [], None)
+delegating: throw(StopIteration(5)) => ('RuntimeError: generator raised StopIteration', [], None)
+delegating: throw(GeneratorExit) => ('GeneratorExit: ', [], None)
+delegating: throw(Fussy) => (('outer caught', "Fussy.__init__() missing 2 required positional arguments: 'a' and 'b'"), [], None)
+delegating: throw(Fussy, 1) => (('outer caught', "Fussy.__init__() missing 1 required positional argument: 'b'"), [], None)
+delegating: throw(Fussy, (1, 2)) => ('Fussy: (1, 2)', [], None)
+delegating: throw(Odd) => (('outer caught', "calling <class '__main__.Odd'> should have returned an instance of BaseException, not int"), [], None)
+done: throw(KeyError) => ('KeyError: ', [], None)
+done: throw(KeyError, 1) => ('KeyError: 1', [], None)
+done: throw(KeyError, (1, 2)) => ('KeyError: (1, 2)', [], None)
+done: throw(KeyError, ()) => ('KeyError: ', [], None)
+done: throw(KeyError, None) => ('KeyError: ', [], None)
+done: throw(KeyError(1)) => ('KeyError: 1', [], None)
+done: throw(KeyError(1), None) => ('KeyError: 1', [], None)
+done: throw(KeyError(1), 2) => ('TypeError: instance exception may not have a separate value', [], None)
+done: throw(KeyError, KeyError(3)) => ('KeyError: 3', [], None)
+done: throw(LookupError, KeyError(3)) => ('KeyError: 3', [], None)
+done: throw(KeyError, ValueError(3)) => ('KeyError: ValueError(3)', [], None)
+done: throw(None) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not NoneType', [], None)
+done: throw(5) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not int', [], None)
+done: throw(int) => ('TypeError: exceptions must be classes or instances deriving from BaseException, not type', [], None)
+done: throw(KeyError, 1, 2) => ('TypeError: throw() third argument must be a traceback object', [], None)
+done: throw(None, None, 2) => ('TypeError: throw() third argument must be a traceback object', [], None)
+done: throw(KeyError(1), None, 2) => ('TypeError: throw() third argument must be a traceback object', [], None)
+done: throw(KeyError, None, None) => ('KeyError: ', [], None)
+done: throw(KeyError, None, a traceback) => ('KeyError: ', [], None)
+done: throw(StopIteration) => ('StopIteration: ', [], None)
+done: throw(StopIteration(5)) => ('StopIteration: 5', [], None)
+done: throw(GeneratorExit) => ('GeneratorExit: ', [], None)
+done: throw(Fussy) => ("TypeError: Fussy.__init__() missing 2 required positional arguments: 'a' and 'b'", [], None)
+done: throw(Fussy, 1) => ("TypeError: Fussy.__init__() missing 1 required positional argument: 'b'", [], None)
+done: throw(Fussy, (1, 2)) => ('Fussy: (1, 2)', [], None)
+done: throw(Odd) => ("TypeError: calling <class '__main__.Odd'> should have returned an instance of BaseException, not int", [], None)
+the traceback that it was given => NameError: name 'catch' is not defined
+generator after None
+---- what is waited for
+athrow(None) is made => async_generator_athrow
+and says so when it is gone on with => TypeError: exceptions must be classes or instances deriving from BaseException, not NoneType
+athrow() is made => async_generator_athrow
+and says so => TypeError: athrow expected at least 1 argument, got 0
+athrow(1, 2, 3, 4) => TypeError: athrow expected at most 3 arguments, got 4
+athrow(a=1) => TypeError: async_generator.athrow() takes no keyword arguments
+got first, and then called => TypeError: athrow() takes no keyword arguments
+asend(None).throw() => TypeError: throw expected at least 1 argument, got 0
+asend(None).throw(None) => TypeError: exceptions must be classes or instances deriving from BaseException, not NoneType
+one that is done with, .throw() => ('StopIteration: 1', 'RuntimeError: cannot reuse already awaited __anext__()/asend()', 'RuntimeError: cannot reuse already awaited __anext__()/asend()')
+athrow(ValueError), done with, .throw() => ('ValueError: ', 'RuntimeError: cannot reuse already awaited aclose()/athrow()', 'RuntimeError: cannot reuse already awaited aclose()/athrow()')
+anext(g, 0).send(()) => TypeError: async_generator_asend.send() takes exactly one argument (0 given)
+anext(g, 0).send((None,)) => StopIteration: 1
+anext(g, 0).throw(a=1) => TypeError: anext_awaitable.throw() takes no keyword arguments
+got first, and then called => TypeError: throw() takes no keyword arguments
+coroutine().throw(KeyError, (1, 2)) => KeyError: (1, 2)
+coroutine().throw(None, None, 5) => TypeError: throw() third argument must be a traceback object
+---- __del__, which a program can call
+generator => ('wrapper_descriptor', None)
+generator with an argument => TypeError: expected 0 arguments, got 1
+coroutine => ('wrapper_descriptor', None)
+coroutine with an argument => TypeError: expected 0 arguments, got 1
+async_generator => ('wrapper_descriptor', None)
+async_generator with an argument => TypeError: expected 0 arguments, got 1
+asend => ('wrapper_descriptor', None)
+asend with an argument => TypeError: expected 0 arguments, got 1
+athrow => ('wrapper_descriptor', None)
+athrow with an argument => TypeError: expected 0 arguments, got 1
+aclose => ('wrapper_descriptor', None)
+aclose with an argument => TypeError: expected 0 arguments, got 1
+None [] None
+closing
+[('RuntimeWarning', "coroutine 'coroutine' was never awaited", 'Exception ignored while finalizing coroutine <coroutine object coroutine at>'), ('RuntimeWarning', "coroutine method 'asend' of 'async_generator' was never awaited", 'Exception ignored while finalizing async generator <async_generator object async_generator at>'), ('RuntimeWarning', "coroutine method 'aclose' of 'async_generator' was never awaited", 'Exception ignored while finalizing async generator <async_generator object async_generator at>'), ('RuntimeError', 'generator ignored GeneratorExit', 'Exception ignored while closing generator <generator object refusing at>')]
+---- the rest
+{1: [2]}.items() & {1} => TypeError: unhashable type: 'list'
+{1} & {1: [2]}.items() => TypeError: unhashable type: 'list'
+{1: 2}.items() & {(1, 2), 3} => {(1, 2)}
+f_lineno = None => ValueError: lineno must be an integer
+f_lineno = True => ValueError: lineno must be an integer
+f_lineno = 5 => ValueError: f_lineno can only be set in a trace function

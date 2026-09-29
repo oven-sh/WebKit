@@ -78,11 +78,13 @@ PYTHON_NATIVE(exceptionStr)
     return JSValue::encode(jsString(vm, text));
 }
 
+static void setTraceback(JSGlobalObject*, JSValue self, JSValue);
+
 PYTHON_NATIVE(exceptionWithTraceback)
 {
     NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
-    asObject(args.at(0))->putDirect(vm, names.private_traceback, args.at(1));
+    setTraceback(globalObject, args[0], args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(args[0]);
 }
 
@@ -282,6 +284,9 @@ PYTHON_NATIVE(exceptionInitWithKeywords)
     NATIVE_PROLOGUE();
     JSObject* self = asObject(args[0]);
     self->putDirect(vm, names.private_args, argumentsAfterFirst(globalObject, args));
+    unsigned most = which == KeywordException::Import ? 3 : which == KeywordException::Attribute ? 2 : 1;
+    if (args.keywordCount() > most)
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(which == KeywordException::Import ? "ImportError"_s : which == KeywordException::Attribute ? "AttributeError"_s : "NameError"_s, "() takes at most "_s, most, " keyword argument"_s, most == 1 ? ""_s : "s"_s, " ("_s, args.keywordCount(), " given)"_s)));
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         String name = args.keywordName(i)->value(globalObject);
         const Identifier* field = nullptr;
