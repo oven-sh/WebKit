@@ -21,6 +21,10 @@
 
 #include "config.h"
 #include "Heap.h"
+#include "StructureRareDataInlines.h"
+#include "ObjectPrototype.h"
+#include "JSCellButterfly.h"
+#include "FunctionPrototype.h"
 
 #include "AOTRuntime.h"
 
@@ -67,7 +71,6 @@
 #include "JSFinalizationRegistry.h"
 #include "JSFunctionInlines.h"
 #include "JSFunctionWithFields.h"
-#include "JSModuleEnvironment.h" // TEMPORARY-FUNCTION-STATS
 #include "JSGenerator.h"
 #include "JSIterator.h"
 #include "JSMicrotaskDispatcher.h"
@@ -118,6 +121,7 @@
 #include "WeakSetInlines.h"
 #include <algorithm>
 #include <bmalloc/bmalloc.h>
+#include <wtf/FilePrintStream.h>
 #include <wtf/AvailableMemory.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/ListDump.h>
@@ -1155,59 +1159,26 @@ TypeCountSet Heap::objectTypeCounts()
                 recordType(result, static_cast<JSCell*>(cell));
             return IterationStatus::Continue;
         });
-    // TEMPORARY-FUNCTION-STATS
-    if (Options::aotReportStats()) {
-        for (auto* instance : vm().m_aotInstances)
-            instance->dumpSlotStatistics();
-        uint64_t functions[32][3][2] = { }, executables[32][2] = { }, bytesBySize[64] = { }, structures[4] = { };
+    // TEMPORARY-STRUCTURE-CENSUS: BUN_HEAP_CENSUS=<file>. What is in the heap by class, and what the structures are for.
+    if (const char* path = getenv("BUN_HEAP_CENSUS")) {
+        auto out = FilePrintStream::open(path, "a");
+        if (!out)
+            return result;
         UncheckedKeyHashMap<const ClassInfo*, std::pair<uint64_t, uint64_t>> byClass;
+        UncheckedKeyHashMap<Structure*, uint64_t> instances;
+        UncheckedKeyHashSet<Structure*> parents;
+        Vector<Structure*> all;
+        uint64_t auxiliaryBytes = 0;
         m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
             size_t size = heapCell->cellSize();
             if (!isJSCellKind(kind)) {
-                bytesBySize[0] += size;
+                auxiliaryBytes += size;
                 return IterationStatus::Continue;
             }
             auto* cell = static_cast<JSCell*>(heapCell);
             auto& entry = byClass.add(cell->classInfo(), std::pair<uint64_t, uint64_t> { }).iterator->value;
             entry.first++;
             entry.second += size;
-            if (auto* executable = dynamicDowncast<FunctionExecutable>(cell))
-                executables[static_cast<unsigned>(executable->parseMode())][executable->codeBlockForCall() || executable->codeBlockForConstruct()]++;
-            else if (auto* function = dynamicDowncast<JSFunction>(cell); function && !function->isHostOrBuiltinFunction()) {
-                auto* executable = function->jsExecutable();
-                JSScope* scope = function->scope();
-                unsigned where = scope->inherits<JSModuleEnvironment>() ? 0 : scope->next() && scope->next()->inherits<JSModuleEnvironment>() ? 1 : 2;
-                functions[static_cast<unsigned>(executable->parseMode())][where][executable->codeBlockForCall() || executable->codeBlockForConstruct()]++;
-            } else if (auto* structure = dynamicDowncast<Structure>(cell)) {
-                structures[0]++;
-                if (structure->previousID())
-                    structures[1]++;
-                if (structure->isDictionary())
-                    structures[2]++;
-                if (structure->isPinnedPropertyTable())
-                    structures[3]++;
-            }
-            return IterationStatus::Continue;
-        });
-        for (unsigned mode = 0; mode < 32; ++mode) {
-            if (executables[mode][0] + executables[mode][1])
-                dataLogLn("FNSTATS executable mode=", mode, " neverRan=", executables[mode][0], " ran=", executables[mode][1]);
-            for (unsigned where = 0; where < 3; ++where) {
-                if (functions[mode][where][0] + functions[mode][where][1])
-                    dataLogLn("FNSTATS function mode=", mode, " scope=", where, " neverRan=", functions[mode][where][0], " ran=", functions[mode][where][1]);
-            }
-        }
-        dataLogLn("FNSTATS structures=", structures[0], " withPrevious=", structures[1], " dictionary=", structures[2], " withTable=", structures[3], " auxiliaryBytes=", bytesBySize[0]);
-        for (auto& [info, entry] : byClass)
-            dataLogLn("FNSTATS class ", info->className, " count=", entry.first, " bytes=", entry.second);
-        // What the structures are for.
-        UncheckedKeyHashMap<Structure*, uint64_t> instances;
-        UncheckedKeyHashSet<Structure*> parents;
-        Vector<Structure*> all;
-        m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
-            if (!isJSCellKind(kind))
-                return IterationStatus::Continue;
-            auto* cell = static_cast<JSCell*>(heapCell);
             instances.add(cell->structure(), 0).iterator->value++;
             if (auto* structure = dynamicDowncast<Structure>(cell)) {
                 all.append(structure);
@@ -1216,127 +1187,87 @@ TypeCountSet Heap::objectTypeCounts()
             }
             return IterationStatus::Continue;
         });
-        struct Census { uint64_t total, one, many, intermediate, unusedLeaf, properties, root; };
-        UncheckedKeyHashMap<const ClassInfo*, Census> census;
-        uint64_t byProperties[5][3] = { };
+        out->println("CENSUS begin, auxiliary bytes ", auxiliaryBytes, ", a Structure is ", sizeof(Structure), " bytes");
+        for (auto& [info, entry] : byClass)
+            out->println("CLASS ", info->className, " count=", entry.first, " bytes=", entry.second);
+        UncheckedKeyHashMap<String, uint64_t> kinds;
+        UncheckedKeyHashMap<String, uint64_t> namesOfUnused;
         for (Structure* structure : all) {
-            auto& entry = census.add(structure->classInfoForCells(), Census { }).iterator->value;
             uint64_t count = instances.get(structure);
+            ASCIILiteral use = count > 1 ? "used-by-many"_s : count ? "used-by-one"_s : parents.contains(structure) ? "intermediate"_s : "unused-leaf"_s;
             unsigned properties = structure->maxOffset() == invalidOffset ? 0 : structure->inlineSize() + structure->outOfLineSize();
-            entry.total++;
-            entry.properties += properties;
-            if (!structure->previousID())
-                entry.root++;
-            unsigned how = count ? 0 : parents.contains(structure) ? 1 : 2;
-            if (count == 1)
-                entry.one++;
-            else if (count)
-                entry.many++;
-            else if (how == 1)
-                entry.intermediate++;
-            else
-                entry.unusedLeaf++;
-            byProperties[properties < 1 ? 0 : properties < 4 ? 1 : properties < 9 ? 2 : properties < 21 ? 3 : 4][how]++;
+            kinds.add(makeString(String::fromLatin1(structure->classInfoForCells()->className.characters()), structure->mayBePrototype() ? "/prototype"_s : ""_s,
+                " kind="_s, static_cast<unsigned>(structure->transitionKind()), " attributes="_s, static_cast<unsigned>(structure->transitionPropertyAttributes()),
+                structure->isDictionary() ? " dictionary"_s : ""_s, structure->knownShape() ? " known-shape"_s : ""_s, !structure->previousID() ? " root"_s : ""_s,
+                " properties="_s, properties < 1 ? "0"_s : properties < 4 ? "1-3"_s : properties < 9 ? "4-8"_s : properties < 21 ? "9-20"_s : "21+"_s, ' ', use), 0).iterator->value++;
+            if (!count && structure->transitionPropertyName())
+                namesOfUnused.add(String { structure->transitionPropertyName() }, 0).iterator->value++;
         }
-        for (auto& [info, entry] : census) {
-            if (entry.total >= 60)
-                dataLogLn("STRUCT ", info->className, " total=", entry.total, " oneInstance=", entry.one, " moreInstances=", entry.many, " intermediate=", entry.intermediate, " unusedLeaf=", entry.unusedLeaf, " roots=", entry.root, " properties=", entry.properties);
+        for (auto& [kind, count] : kinds)
+            out->println("STRUCTURE ", count, " ", kind);
+        // Of each structure that no object has: what its chain starts from, and how many objects have a structure further down.
+        UncheckedKeyHashMap<Structure*, uint64_t> served;
+        for (Structure* structure : all) {
+            uint64_t count = instances.get(structure);
+            if (!count)
+                continue;
+            for (Structure* ancestor = structure->previousID(); ancestor; ancestor = ancestor->previousID())
+                served.add(ancestor, 0).iterator->value += count;
         }
-        for (unsigned i = 0; i < 5; ++i)
-            dataLogLn("STRUCTSIZE bucket=", i, " used=", byProperties[i][0], " intermediate=", byProperties[i][1], " unusedLeaf=", byProperties[i][2]);
-        // Which functions there are the most closures of, and which shapes the most objects.
+        UncheckedKeyHashMap<String, uint64_t> chains;
+        for (Structure* structure : all) {
+            if (instances.get(structure))
+                continue;
+            Structure* root = structure;
+            while (root->previousID())
+                root = root->previousID();
+            JSValue prototype = root->hasMonoProto() ? root->storedPrototype() : JSValue();
+            JSGlobalObject* realm = root->realm();
+            ASCIILiteral prototypeIs = !prototype ? "poly"_s : prototype.isNull() ? "null"_s : realm && prototype == JSValue(realm->objectPrototype()) ? "Object.prototype"_s
+                : realm && prototype == JSValue(realm->functionPrototype()) ? "Function.prototype"_s : "another object"_s;
+            unsigned propertiesOfRoot = root->maxOffset() == invalidOffset ? 0 : root->inlineSize() + root->outOfLineSize();
+            uint64_t objects = served.get(structure);
+            chains.add(makeString(String::fromLatin1(root->classInfoForCells()->className.characters()), " root: "_s, root->knownShape() ? "known shape"_s : root->hasBeenFlattenedBefore() ? "flattened"_s : propertiesOfRoot ? "has properties"_s : "empty"_s,
+                ", prototype "_s, prototypeIs, "; serves "_s, !objects ? "0"_s : objects == 1 ? "1"_s : objects < 6 ? "2-5"_s : "6+"_s), 0).iterator->value++;
+        }
+        for (auto& [chain, count] : chains)
+            out->println("CHAIN ", count, " ", chain);
+        // And what the immutable butterflies are.
         {
-            UncheckedKeyHashMap<ExecutableBase*, uint64_t> closures;
-            UncheckedKeyHashMap<Structure*, std::pair<uint64_t, uint64_t>> objects;
-            UncheckedKeyHashMap<SymbolTable*, std::pair<uint64_t, uint64_t>> environments;
+            UncheckedKeyHashSet<JSCell*> cachedNames;
             m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
                 if (!isJSCellKind(kind))
                     return IterationStatus::Continue;
-                auto* cell = static_cast<JSCell*>(heapCell);
-                if (auto* function = dynamicDowncast<JSFunction>(cell))
-                    closures.add(function->executable(), 0).iterator->value++;
-                else if (auto* environment = dynamicDowncast<JSLexicalEnvironment>(cell)) {
-                    auto& entry = environments.add(environment->symbolTable(), std::pair<uint64_t, uint64_t> { }).iterator->value;
-                    entry.first++;
-                    entry.second += heapCell->cellSize();
-                } else if (cell->type() == FinalObjectType) {
-                    auto& entry = objects.add(cell->structure(), std::pair<uint64_t, uint64_t> { }).iterator->value;
-                    entry.first++;
-                    entry.second += heapCell->cellSize() + cell->structure()->outOfLineCapacity() * sizeof(JSValue);
+                if (auto* rareData = dynamicDowncast<StructureRareData>(static_cast<JSCell*>(heapCell))) {
+                    for (auto which : { CachedPropertyNamesKind::EnumerableStrings, CachedPropertyNamesKind::Strings, CachedPropertyNamesKind::Symbols, CachedPropertyNamesKind::StringsAndSymbols }) {
+                        if (JSCellButterfly* names = rareData->cachedPropertyNames(which))
+                            cachedNames.add(names);
+                    }
                 }
                 return IterationStatus::Continue;
             });
-            Vector<std::pair<uint64_t, ExecutableBase*>> topClosures;
-            for (auto& entry : closures)
-                topClosures.append({ entry.value, entry.key });
-            std::ranges::sort(topClosures, [](auto& a, auto& b) { return a.first > b.first; });
-            uint64_t cumulative = 0;
-            for (unsigned i = 0; i < topClosures.size(); ++i) {
-                cumulative += topClosures[i].first;
-                if (i >= 70)
-                    continue;
-                if (auto* executable = dynamicDowncast<FunctionExecutable>(topClosures[i].second))
-                    dataLogLn("CLOSURES ", topClosures[i].first, " ", executable->ecmaName().string(), " ", executable->sourceURL(), ":", executable->firstLine(), " mode=", static_cast<unsigned>(executable->parseMode()));
-                else
-                    dataLogLn("CLOSURES ", topClosures[i].first, " (host function)");
-            }
-            unsigned atLeast[5] = { };
-            uint64_t inThose[5] = { };
-            for (auto& entry : topClosures) {
-                unsigned bucket = entry.first >= 1000 ? 0 : entry.first >= 100 ? 1 : entry.first >= 10 ? 2 : entry.first >= 2 ? 3 : 4;
-                atLeast[bucket]++;
-                inThose[bucket] += entry.first;
-            }
-            dataLogLn("CLOSURESUM total=", cumulative, " distinct=", topClosures.size(), " >=1000: ", atLeast[0], "/", inThose[0], " >=100: ", atLeast[1], "/", inThose[1], " >=10: ", atLeast[2], "/", inThose[2], " >=2: ", atLeast[3], "/", inThose[3], " 1: ", atLeast[4], "/", inThose[4]);
-            Vector<std::pair<uint64_t, Structure*>> topObjects;
-            for (auto& entry : objects)
-                topObjects.append({ entry.value.second, entry.key });
-            std::ranges::sort(topObjects, [](auto& a, auto& b) { return a.first > b.first; });
-            for (unsigned i = 0; i < topObjects.size() && i < 50; ++i) {
-                Structure* structure = topObjects[i].second;
-                StringPrintStream names;
-                unsigned total = 0;
-                structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-                    if (total < 9)
-                        names.print(total ? "," : "", entry.key());
-                    total++;
-                    return true;
-                });
-                dataLogLn("OBJECTS bytes=", topObjects[i].first, " count=", objects.get(structure).first, " properties=", total, " names=", names.toString());
-            }
-        }
-        // The chains: from each structure that is in use, back over the steps that are not, each counted for the first to get there.
-        UncheckedKeyHashSet<Structure*> counted;
-        Vector<std::pair<unsigned, Structure*>> chains;
-        for (Structure* structure : all) {
-            if (!instances.get(structure))
-                continue;
-            unsigned steps = 0;
-            for (Structure* step = structure->previousID(); step && !instances.get(step) && counted.add(step).isNewEntry; step = step->previousID())
-                steps++;
-            if (steps)
-                chains.append({ steps, structure });
-        }
-        std::ranges::sort(chains, [](auto& a, auto& b) { return a.first > b.first; });
-        uint64_t stepsByKind[4] = { };
-        for (unsigned i = 0; i < chains.size(); ++i) {
-            Structure* structure = chains[i].second;
-            unsigned accessors = 0, functions = 0, total = 0;
-            StringPrintStream names;
-            structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
-                if (entry.attributes() & PropertyAttribute::Accessor)
-                    accessors++;
-                if (total < 7)
-                    names.print(total ? "," : "", entry.key());
-                total++;
-                return true;
+            UncheckedKeyHashMap<String, std::pair<uint64_t, uint64_t>> butterflies;
+            m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+                if (!isJSCellKind(kind))
+                    return IterationStatus::Continue;
+                auto* butterfly = dynamicDowncast<JSCellButterfly>(static_cast<JSCell*>(heapCell));
+                if (!butterfly)
+                    return IterationStatus::Continue;
+                unsigned length = butterfly->length();
+                auto& entry = butterflies.add(makeString(cachedNames.contains(butterfly) ? "names of a structure"_s : "other"_s, " indexing="_s, static_cast<unsigned>(butterfly->indexingMode()),
+                    " length="_s, length < 9 ? "0-8"_s : length < 65 ? "9-64"_s : length < 513 ? "65-512"_s : "513+"_s), std::pair<uint64_t, uint64_t> { }).iterator->value;
+                entry.first++;
+                entry.second += heapCell->cellSize();
+                return IterationStatus::Continue;
             });
-            UNUSED_VARIABLE(functions);
-            stepsByKind[accessors * 2 > total ? 0 : structure->mayBePrototype() ? 1 : instances.get(structure) == 1 ? 2 : 3] += chains[i].first;
-            if (i < 60)
-                dataLogLn("CHAIN steps=", chains[i].first, " properties=", total, " accessors=", accessors, " instances=", instances.get(structure), " prototype=", structure->mayBePrototype(), " class=", structure->classInfoForCells()->className, " names=", names.toString());
+            for (auto& [what, entry] : butterflies)
+                out->println("BUTTERFLY ", entry.first, " ", entry.second, " ", what);
         }
-        dataLogLn("CHAINKINDS mostlyAccessors=", stepsByKind[0], " prototypes=", stepsByKind[1], " otherSingletons=", stepsByKind[2], " shared=", stepsByKind[3], " chains=", chains.size());
+        for (auto& [name, count] : namesOfUnused) {
+            if (count >= 25)
+                out->println("NAME ", count, " ", name);
+        }
+        out->println("CENSUS end");
     }
     return result;
 }

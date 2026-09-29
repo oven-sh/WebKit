@@ -253,6 +253,7 @@ struct Site;
 // CodeHeader::index: Instance::infos.
 struct FunctionInfo {
     static constexpr uint16_t hasSiteConstants = 1; // After the last of the sites: ImageFunction::siteConstants().
+    static constexpr uint16_t sitesHaveTheirConstants = 16; // Or where a site has its identifier, which is the constant if it has one.
     static constexpr uint16_t constructs = 4; // kind(), where there is no executable to say it with.
     static constexpr uint16_t constantsAreOfNoRealm = 8; // `constants` are all there are, if any.
     static constexpr uint16_t startsCold = 2; // See CompiledFunctionInfo::startsCold.
@@ -558,7 +559,8 @@ struct ImageFunction {
     uint32_t frameSizeInBytes;
     uint32_t numSlots;
     uint32_t bytecodeHash;
-    uint32_t numberOfKnownCallees : 30;
+    uint32_t numberOfKnownCallees : 29;
+    uint32_t hasSiteConstants : 1; // If not, see FunctionInfo::sitesHaveTheirConstants.
     uint32_t usesStaticImports : 1; // See Graph::usesStaticImports.
     uint32_t startsCold : 1; // See CompiledFunctionInfo::startsCold.
     uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none.
@@ -571,8 +573,9 @@ struct ImageFunction {
     const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(this + 1); }
     const Site* sites() const { return reinterpret_cast<const Site*>(catchEntrypoints() + numberOfCatchEntrypoints); }
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
-    const ImageKey* knownCallees() const { return reinterpret_cast<const ImageKey*>(siteConstants() + numSlots); }
-    const uint32_t* plans() const { return reinterpret_cast<const uint32_t*>(knownCallees() + numberOfKnownCallees); }
+    const uint32_t* knownCallees() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); } // CodeHeader::index of each. Or, if the image has no code for it, noSuchFunction.
+    const uint32_t* plans() const { return knownCallees() + numberOfKnownCallees; }
+    static constexpr uint32_t noSuchFunction = std::numeric_limits<uint32_t>::max();
 };
 
 class JITCode final : public JSC::JITCode {
@@ -604,7 +607,6 @@ public:
     unsigned frameSizeInBytes() const { return m_function ? m_function->frameSizeInBytes : m_owned->info.frameSizeInBytes; }
     unsigned numSlots() const { return m_function ? m_function->numSlots : m_owned->info.numSlots; }
     const Site* sites() const { return m_function ? m_function->sites() : m_owned->info.sites.span().data(); }
-    const ImageKey& knownCallee(unsigned index) const { return m_function ? m_function->knownCallees()[index] : m_owned->info.knownCallees[index]; }
     template<typename Functor> void forEachCatchEntrypoint(const Functor& functor) const // (offset of the op_catch, offset in the code)
     {
         if (m_function) {

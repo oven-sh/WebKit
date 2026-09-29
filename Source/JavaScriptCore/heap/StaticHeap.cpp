@@ -100,7 +100,10 @@ struct StaticHeap::Header {
     uint64_t numberOfSources;
     uint64_t hasPositionsOfCallSites;
     uint64_t hasIdentifiersOfProgram; // See AOT::NumbersOfIdentifiers.
+    uint64_t identifiersOfProgram; // UniquedStringImpl*[], by number.
     uint64_t constantsOfProgram; // EncodedJSValue[]. See AOT::NumbersOfConstants.
+    uint64_t keysOfImage; // AOT::ImageKey[]. See keysOfImage().
+    uint64_t capacityOfKeysOfImage;
 
     // What the cells say they are: which of the VM's own structures, and where that has to be.
     uint32_t numberOfStructures;
@@ -787,7 +790,7 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     info.executableAndKind = executable ? std::bit_cast<uintptr_t>(executable) | !isCall(kind) : 0;
     info.numSlots = function.numSlots;
     // (It takes a Data to say which executable's the code is, if this does not.)
-    info.flags = AOT::FunctionInfo::hasSiteConstants | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | (isCall(kind) ? 0 : AOT::FunctionInfo::constructs) | (constantsWillDo ? AOT::FunctionInfo::constantsAreOfNoRealm : 0);
+    info.flags = (function.hasSiteConstants ? AOT::FunctionInfo::hasSiteConstants : AOT::FunctionInfo::sitesHaveTheirConstants) | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | (isCall(kind) ? 0 : AOT::FunctionInfo::constructs) | (constantsWillDo ? AOT::FunctionInfo::constantsAreOfNoRealm : 0);
     fillFacts(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
 }
 
@@ -1016,6 +1019,24 @@ void StaticHeap::setCodeOf(VM& vm, const UnlinkedFunctionExecutable& executable,
     codeKeptBy(vm).add(&executable, std::array<Strong<UnlinkedFunctionCodeBlock>, 2> { }).iterator->value[static_cast<unsigned>(kind)].set(vm, codeBlock);
 }
 
+UniquedStringImpl* const* StaticHeap::identifiersOfProgram()
+{
+    return s_header ? std::bit_cast<UniquedStringImpl* const*>(s_header->identifiersOfProgram) : nullptr;
+}
+
+std::span<const AOT::ImageKey> StaticHeap::keysOfImage()
+{
+    if (!s_header)
+        return { };
+    return { std::bit_cast<const AOT::ImageKey*>(s_header->keysOfImage), static_cast<size_t>(s_header->capacityOfKeysOfImage) };
+}
+
+const AOT::ImageFunction* StaticHeap::imageFunctionOfFunction(uint32_t index)
+{
+    RELEASE_ASSERT(s_header && index < s_header->numberOfFunctions);
+    return std::bit_cast<const AOT::FunctionInfo*>(s_header->infosOfFunctions)[index].function;
+}
+
 const void* StaticHeap::constantsOfProgram(VM& vm)
 {
     return hasExecutablesOfFunctions(vm) ? std::bit_cast<const void*>(s_header->constantsOfProgram) : nullptr;
@@ -1190,6 +1211,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                             }
                             s_identifiersOfProgram = { static_cast<UniquedStringImpl**>(Region::allocate(Region::Arena::Data, count * sizeof(UniquedStringImpl*), sizeof(UniquedStringImpl*))), count };
                             zeroSpan(s_identifiersOfProgram);
+                            header.identifiersOfProgram = std::bit_cast<uint64_t>(s_identifiersOfProgram.data());
                         }
                         s_factsBeingBuilt = { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, imageView->numberOfFunctions() * sizeof(uint32_t), pageSizeOfImage)), imageView->numberOfFunctions() };
                         zeroSpan(s_factsBeingBuilt);
@@ -1298,6 +1320,32 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     memset(address, 0, sizeof(Decoder));
                 }
                 s_tdzBeingBuilt = nullptr;
+                if (imageView && imageView->keysAreLeftOut()) {
+                    // An executable made here says which function it is. The rest are made when the program runs, and are looked up.
+                    auto isLookedUp = [&](const AOT::ImageKey& key) {
+                        return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !infosOfFunctions[imageView->indexOfFunctionWith(key)].executableAndKind;
+                    };
+                    size_t count = 0;
+                    for (auto& key : imageView->keys())
+                        count += isLookedUp(key);
+                    size_t capacity = 16;
+                    while (capacity * 3 < count * 4)
+                        capacity *= 2;
+                    std::span<AOT::ImageKey> kept { static_cast<AOT::ImageKey*>(Region::allocate(Region::Arena::Data, capacity * sizeof(AOT::ImageKey), alignof(AOT::ImageKey))), capacity };
+                    zeroSpan(kept);
+                    for (auto& key : imageView->keys()) {
+                        if (!isLookedUp(key))
+                            continue;
+                        size_t bucket = key.hash() & (capacity - 1);
+                        while (kept[bucket].record)
+                            bucket = (bucket + 1) & (capacity - 1);
+                        kept[bucket] = key;
+                    }
+                    header.keysOfImage = std::bit_cast<uint64_t>(kept.data());
+                    header.capacityOfKeysOfImage = capacity;
+                    if (Options::aotReportStats()) [[unlikely]]
+                        dataLogLn("StaticHeap: ", count, " functions of the image are looked up when the program runs: ", kept.size_bytes(), " bytes");
+                }
                 if (positionsToKeep && !s_factsBeingBuilt.empty()) {
                     size_t sizeOfText = 0;
                     for (auto& name : namesOfSources)

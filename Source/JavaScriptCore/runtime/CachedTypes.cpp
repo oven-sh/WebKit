@@ -6317,10 +6317,11 @@ struct BytecodeLinkEncoder::Impl {
                 }
                 dataLogLn("AOT: the functions have ", inAll, " identifiers between them, which are ", inOrder.size(), " different ones; the 100 that most have account for ", at[0], ", the 1000 for ", at[1], ", the 10000 for ", at[2], ", the 65536 for ", at[3]);
             }
+            // (From one: they are what properties are looked up by in the dispatch table, where nothing stands for nothing.)
             for (uint32_t number = 0; number < inOrder.size(); ++number)
-                numbersOfIdentifiers.set(inOrder[number].first, number);
+                numbersOfIdentifiers.set(inOrder[number].first, number + 1);
             AOT::setNumbersOfIdentifiersOfProgram(&numbersOfIdentifiers);
-            builder.setNumberOfIdentifiersOfProgram(inOrder.size());
+            builder.setNumbersOfIdentifiersOfProgram(&numbersOfIdentifiers, inOrder.size() + 1);
         }
 
         // See AOT::NumbersOfConstants.

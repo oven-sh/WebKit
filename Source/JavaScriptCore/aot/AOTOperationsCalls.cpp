@@ -255,7 +255,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
         return;
     CodeSpecializationKind kind = isConstruct ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
     FunctionExecutable* executable = function->jsExecutable();
-    const void* startOfCallee;
+    const ImageFunction* functionOfCallee;
+    uint32_t indexOfCallee;
     if (isConstruct && executable->constructsByCalling())
         return;
     if (executable->aotEntryFor(kind)) {
@@ -263,21 +264,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
         DeferGCForAWhile deferGC(vm);
         if (caller->instance != vm.m_aotInstanceOfProgram || !linkStaticFunction(vm, executable, kind, function->scope()))
             return;
-        const ImageFunction& functionOfCallee = *caller->instance->infos[executable->aotIndexFor(kind)].function;
-        startOfCallee = Image::of(functionOfCallee).codeFor(functionOfCallee);
+        indexOfCallee = executable->aotIndexFor(kind);
+        functionOfCallee = caller->instance->infos[indexOfCallee].function;
     } else {
         if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
             return;
         auto* codeOfCallee = static_cast<JITCode*>(executable->generatedJITCodeFor(kind).ptr());
-        if (codeOfCallee->instance() != caller->instance)
+        if (codeOfCallee->instance() != caller->instance || !codeOfCallee->isFromImage())
             return;
-        startOfCallee = codeOfCallee->start();
+        indexOfCallee = codeOfCallee->header().index;
+        functionOfCallee = codeOfCallee->imageFunction();
     }
-    auto key = imageKeyFor(executable, kind);
-    if (!key || !key->sameFunction(code->knownCallee(knownCallee)))
-        return;
-    auto [image, record] = Image::find(*key);
-    if (!record || image->codeFor(*record) != startOfCallee)
+    // (The number is one of the caller's image.)
+    if (code->imageFunction()->knownCallees()[knownCallee] != indexOfCallee || &Image::of(*functionOfCallee) != &Image::of(*code->imageFunction()))
         return;
     fillCallCache(vm, caller, cache, function);
 }

@@ -462,7 +462,7 @@ static void fillInfo(FunctionInfo& info, ScriptExecutable* executable, UnlinkedC
     info.function = code.imageFunction();
     info.executableAndKind = std::bit_cast<uintptr_t>(executable) | (unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->codeType() == FunctionCode);
     info.numSlots = code.numSlots();
-    info.flags = code.isFromImage() ? FunctionInfo::hasSiteConstants : 0;
+    info.flags = !code.isFromImage() ? 0 : code.imageFunction()->hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants;
 }
 
 Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, CodeBlock* codeBlock)
@@ -482,7 +482,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     FunctionInfo& info = instance.infos[code.header().index];
     data->identifiers = info.sites ? info.identifiers : unlinkedCodeBlock->identifiers().span().data();
     data->sites = code.sites();
-    data->hasSiteConstants = code.isFromImage();
+    data->hasSiteConstants = code.isFromImage() && code.imageFunction()->hasSiteConstants;
     data->numSlots = numSlots;
     data->slotEpoch = 1;
 
@@ -577,9 +577,12 @@ CodeBlock* FunctionRef::codeBlockIfThereIsOne() const
 uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
 {
     const FunctionInfo& info = this->info();
+    size_t which = slot - (SharedData::contains(slot) ? instance->sharedData : instance->data[index])->slots;
+    if (info.flags & FunctionInfo::sitesHaveTheirConstants)
+        return info.sites[which].identifierAndExtra;
     if (!(info.flags & FunctionInfo::hasSiteConstants))
         return 0;
-    return reinterpret_cast<const uint32_t*>(info.sites + info.numSlots)[slot - (SharedData::contains(slot) ? instance->sharedData : instance->data[index])->slots];
+    return reinterpret_cast<const uint32_t*>(info.sites + info.numSlots)[which];
 }
 
 std::optional<std::pair<String, bool>> FunctionRef::quoteAt(BytecodeIndex bytecodeIndex) const

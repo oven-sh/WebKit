@@ -7,6 +7,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTProgram.h"
 #include "AOTRuntime.h"
 #include "CodeSpecializationKind.h"
 #include "YarrFlags.h"
@@ -42,7 +43,7 @@ struct ImageHeader {
     uint64_t codeOffset;
     uint64_t codeSize;
     uint32_t tableOffset;
-    uint32_t tableCapacity; // A power of two.
+    uint32_t tableCapacity; // A power of two. Or nothing: see StaticHeap::keysOfImage().
     uint32_t recordsOffset;
     uint32_t recordsSize;
     uint32_t numberOfFunctions;
@@ -52,12 +53,13 @@ struct ImageHeader {
     // Shapes and selectors are numbered from one.
     uint32_t shapesOffset; // ImageShape, by number.
     uint32_t numberOfShapes; // One more than the last.
-    uint32_t namesOfShapesOffset; // uint32_t: selectors.
+    // With numberOfIdentifiersOfProgram, a selector is the number of the identifier, and what it says is for StaticHeap to know.
     uint32_t selectorsOffset; // ImageSelector, by number.
-    uint32_t numberOfSelectors;
+    uint32_t numberOfSelectors; // One more than the last.
     uint32_t rowsOfSelectorsOffset; // uint32_t, by number: the entry of the dispatch table for a shape is at this plus the number of the shape.
     uint32_t textOfSelectorsOffset;
-    uint32_t selectorsInOrderOffset; // uint32_t, numberOfSelectors - 1 of them: by length, and then by what they say. The 8 bit ones first.
+    uint32_t selectorsInOrderOffset; // uint32_t: by length, and then by what they say. The 8 bit ones first.
+    uint32_t numberOfSelectorsInOrder;
     uint32_t hashOfIntrinsics; // ImmutableIntrinsics::hash(), if the code goes by their numbers. Zero: it does not.
     uint32_t dispatchOffset; // uint32_t: ImageDispatchEntry.
     uint32_t dispatchSize; // In entries.
@@ -88,7 +90,6 @@ struct ImageRegExp {
 };
 
 struct ImageShape {
-    uint32_t names; // Where its names start, among the names of shapes.
     uint16_t numberOfProperties;
     uint16_t inlineCapacity;
 };
@@ -133,7 +134,12 @@ public:
     size_t numberOfFunctions() const { return m_functions.size(); }
     void clear() { m_functions.clear(); } // Of functions.
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
-    void setNumberOfIdentifiersOfProgram(uint32_t number) { m_numberOfIdentifiersOfProgram = number; }
+    // They are there until finish() is done. `number`: one more than the last.
+    void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers* numbers, uint32_t number)
+    {
+        m_numbersOfIdentifiersOfProgram = numbers;
+        m_numberOfIdentifiersOfProgram = number;
+    }
     void setNumberOfConstantsOfProgram(uint32_t number) { m_numberOfConstantsOfProgram = number; }
     // The thread that has the VM. False: there is not going to be code for it.
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
@@ -158,6 +164,7 @@ private:
         Yarr::YarrCodeForImage code[2]; // 8 bit, 16 bit.
     };
     uint32_t m_numberOfIdentifiersOfProgram { 0 };
+    const NumbersOfIdentifiers* m_numbersOfIdentifiersOfProgram { nullptr };
     uint32_t m_numberOfConstantsOfProgram { 0 };
     Vector<RegExpCode> m_regExps;
     UncheckedKeyHashMap<String, bool> m_regExpsAsked; // By the flags and the pattern.
@@ -195,7 +202,6 @@ public:
     std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
-    AtomString nameOfSelector(uint32_t) const;
     uint32_t selectorNamed(const StringImpl&) const; // Zero: none.
 
     const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + function.codeOffset; }
@@ -223,10 +229,15 @@ public:
         const ImageFunction* function; // Likewise.
         uint32_t numSlots;
         bool startsCold;
+        bool hasSiteConstants;
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
     JS_EXPORT_PRIVATE void* addressOfStub(Stub) const;
+    // The image goes without its table of keys, which is what follows it in `data`. Whoever this is for keeps what is wanted of it.
+    bool keysAreLeftOut() const { return !header().tableCapacity; }
+    JS_EXPORT_PRIVATE std::span<const ImageKey> keys() const; // The table: those with no record are empty places in it.
+    JS_EXPORT_PRIVATE uint32_t indexOfFunctionWith(const ImageKey&) const; // One of the table's own.
     size_t numberOfFunctions() const { return header().numberOfFunctions; }
     uint32_t numberOfIdentifiersOfProgram() const { return header().numberOfIdentifiersOfProgram; }
     uint32_t numberOfConstantsOfProgram() const { return header().numberOfConstantsOfProgram; }

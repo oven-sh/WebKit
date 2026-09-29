@@ -13,6 +13,7 @@
 #include "CodeBlock.h"
 #include "CodeCache.h"
 #include "ExecutableAllocator.h"
+#include "StaticHeap.h"
 #include "FunctionExecutable.h"
 #include "JSCBytecodeCacheVersion.h"
 #include "JSCInlines.h"
@@ -379,9 +380,19 @@ Vector<uint8_t> ImageBuilder::finish()
 
     // The shapes that objects are made with and the names that properties are read by, numbered for the whole program in the order
     // they turn up in.
+    // Or, if the identifiers of the program are numbered, by those numbers: then a site that says what it reads has said this too.
+    const NumbersOfIdentifiers* numbersOfIdentifiers = m_numbersOfIdentifiersOfProgram;
     Vector<UniquedStringImpl*> selectors { nullptr };
+    if (numbersOfIdentifiers)
+        selectors.fill(nullptr, m_numberOfIdentifiersOfProgram);
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> numberOfSelector;
     auto selectorFor = [&](UniquedStringImpl* name) {
+        if (numbersOfIdentifiers) {
+            uint32_t number = numbersOfIdentifiers->get(name);
+            RELEASE_ASSERT(number);
+            selectors[number] = name;
+            return number;
+        }
         return numberOfSelector.ensure(name, [&] {
             selectors.append(name);
             return static_cast<uint32_t>(selectors.size() - 1);
@@ -397,9 +408,17 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& function : m_functions) {
         auto& info = function.code.info;
         RELEASE_ASSERT(info.siteConstants.size() == info.numSlots);
-        for (uint32_t& constant : info.siteConstants) {
+        for (unsigned slot = 0; slot < info.numSlots; ++slot) {
+            uint32_t& constant = info.siteConstants[slot];
             if (!constant)
                 continue;
+            // What makes objects has no identifier to say.
+            auto keepInSite = makeScopeExit([&] {
+                if (!numbersOfIdentifiers)
+                    return;
+                RELEASE_ASSERT(!info.sites[slot].identifierAndExtra);
+                info.sites[slot].identifierAndExtra = constant;
+            });
             if (constant & CompiledFunctionInfo::siteConstantIsPlan) {
                 constant &= ~CompiledFunctionInfo::siteConstantIsPlan;
                 continue;
@@ -407,6 +426,8 @@ Vector<uint8_t> ImageBuilder::finish()
             if (!(constant & CompiledFunctionInfo::siteConstantIsShape)) {
                 constant = selectorFor(info.selectors[constant - 1]);
                 selectorIsRead.set(constant);
+                keepInSite.release();
+                RELEASE_ASSERT(!numbersOfIdentifiers || (info.sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1)) == constant);
                 continue;
             }
             const KnownShape& known = info.shapes[(constant & ~CompiledFunctionInfo::siteConstantIsShape) - 1];
@@ -491,14 +512,14 @@ Vector<uint8_t> ImageBuilder::finish()
         growWithZeros(furthest + shapes.size());
     }
     Vector<ImageShape> imageShapes;
-    Vector<uint32_t> namesOfShapes;
+    size_t numberOfPropertiesOfShapes = 0;
     for (auto& shape : shapes) {
-        imageShapes.append({ static_cast<uint32_t>(namesOfShapes.size()), safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity) });
-        namesOfShapes.appendVector(shape.names);
+        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity) });
+        numberOfPropertiesOfShapes += shape.names.size();
     }
     Vector<ImageSelector> imageSelectors;
     Vector<uint8_t> textOfSelectors;
-    for (uint32_t selector = 0; selector < selectors.size(); ++selector) {
+    for (uint32_t selector = 0; selector < selectors.size() && !numbersOfIdentifiers; ++selector) {
         UniquedStringImpl* name = selectors[selector];
         if (!name) {
             imageSelectors.append({ 0, 0, 1 });
@@ -510,13 +531,15 @@ Vector<uint8_t> ImageBuilder::finish()
         textOfSelectors.append(name->is8Bit() ? asBytes(name->span8()) : asBytes(name->span16()));
     }
     Vector<uint32_t> selectorsInOrder;
-    for (uint32_t selector = 1; selector < selectors.size(); ++selector)
-        selectorsInOrder.append(selector);
+    for (uint32_t selector = 1; selector < selectors.size(); ++selector) {
+        if (selectors[selector])
+            selectorsInOrder.append(selector);
+    }
     std::ranges::sort(selectorsInOrder, [&](uint32_t a, uint32_t b) {
         return compareSelectors(*selectors[a], *selectors[b]) < 0;
     });
     if (Options::aotReportStats()) [[unlikely]]
-        dataLogLn("AOT: ", shapes.size() - 1, " shapes with ", namesOfShapes.size(), " properties, ", selectors.size() - 1, " selectors of which ", selectorIsRead.bitCount(), " are read by, ", dispatch.size(), " entries in the dispatch table");
+        dataLogLn("AOT: ", shapes.size() - 1, " shapes with ", numberOfPropertiesOfShapes, " properties, ", selectorsInOrder.size(), " selectors of which ", selectorIsRead.bitCount(), " are read by, ", dispatch.size(), " entries in the dispatch table");
 
     // Which function a call is to: the first that has the key.
     Vector<uint32_t> functionWithKey;
@@ -587,7 +610,7 @@ Vector<uint8_t> ImageBuilder::finish()
     size_t codeSize = 0;
     for (size_t indexOfFunction = 0; indexOfFunction < m_functions.size(); ++indexOfFunction) {
         auto& function = m_functions[indexOfFunction];
-        recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + sizeof(uint32_t)) + function.code.info.knownCallees.size() * sizeof(ImageKey) + function.code.info.plans.sizeInBytes();
+        recordsSize += sizeof(ImageFunction) + function.code.info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint) + function.code.info.sites.size() * (sizeof(Site) + (numbersOfIdentifiers ? 0 : sizeof(uint32_t))) + function.code.info.knownCallees.size() * sizeof(uint32_t) + function.code.info.plans.sizeInBytes();
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
         if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(indexOfFunction) - stubsAt.last() > reachOfStubCall)) {
@@ -674,27 +697,46 @@ Vector<uint8_t> ImageBuilder::finish()
             if (all.isEmpty())
                 continue;
             numberOfQuotes += all.size();
-            // Of those that start in the same place, the longest has the others at its start.
-            UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> longestFrom;
-            for (unsigned i = 0; i < all.size(); ++i) {
-                if (all[i].start == std::numeric_limits<uint32_t>::max() - 1 || all[i].start == std::numeric_limits<uint32_t>::max())
-                    continue;
-                auto result = longestFrom.add(all[i].start, i);
-                if (!result.isNewEntry && all[i].text.length() > all[result.iterator->value].text.length())
-                    result.iterator->value = i;
+            // Expressions are made of expressions: what is said in the middle of something else that is kept is there already.
+            // (Where that is can only be told from where it was in the source if a character is a byte.)
+            struct Within {
+                unsigned quote;
+                uint32_t offset;
+            };
+            Vector<Within, 16> within(all.size(), [](size_t i) { return Within { static_cast<unsigned>(i), 0 }; });
+            {
+                Vector<unsigned, 16> inOrder;
+                for (unsigned i = 0; i < all.size(); ++i) {
+                    if (all[i].start != std::numeric_limits<uint32_t>::max() && charactersAreAllASCII(byteCast<Latin1Character>(all[i].text.span())))
+                        inOrder.append(i);
+                }
+                std::ranges::sort(inOrder, [&](unsigned a, unsigned b) {
+                    if (all[a].start != all[b].start)
+                        return all[a].start < all[b].start;
+                    return all[a].text.length() > all[b].text.length();
+                });
+                std::optional<unsigned> outer;
+                for (unsigned i : inOrder) {
+                    if (outer) {
+                        auto& longer = all[*outer];
+                        uint64_t offset = all[i].start - longer.start;
+                        if (offset + all[i].text.length() <= longer.text.length() && !memcmp(longer.text.data() + offset, all[i].text.data(), all[i].text.length())) {
+                            within[i] = { *outer, static_cast<uint32_t>(offset) };
+                            continue;
+                        }
+                    }
+                    if (!outer || static_cast<uint64_t>(all[i].start) + all[i].text.length() > static_cast<uint64_t>(all[*outer].start) + all[*outer].text.length())
+                        outer = i;
+                }
             }
             quotesOfFunction[index] = safeCast<uint32_t>(quotes.size());
             appendVarint(quotes, all.size());
             uint32_t previousOffset = 0;
             int64_t previousStart = 0;
-            for (auto& quote : all) {
-                const CString* kept = &quote.text;
-                if (auto it = longestFrom.find(quote.start); it != longestFrom.end()) {
-                    const CString& longest = all[it->value].text;
-                    if (longest.length() >= quote.text.length() && !memcmp(longest.data(), quote.text.data(), quote.text.length()))
-                        kept = &longest;
-                }
-                uint32_t start = whereItIs.ensure(*kept, [&] {
+            for (unsigned i = 0; i < all.size(); ++i) {
+                auto& quote = all[i];
+                const CString* kept = &all[within[i].quote].text;
+                uint32_t start = within[i].offset + whereItIs.ensure(*kept, [&] {
                     uint32_t result = safeCast<uint32_t>(textOfQuotes.size());
                     textOfQuotes.append(kept->span());
                     return result;
@@ -711,8 +753,11 @@ Vector<uint8_t> ImageBuilder::finish()
             dataLogLn("AOT: ", numberOfQuotes, " places that an error message may quote: ", quotes.size(), " bytes, and ", textOfQuotes.size(), " of text in ", whereItIs.size(), " pieces");
     }
 
-    header.tableCapacity = capacity;
-    header.recordsOffset = header.tableOffset + capacity * sizeof(ImageKey);
+    // Code that goes by the tables of a static heap is no use without one, and that says which function nearly every executable is.
+    // So it is for whoever makes it to keep the keys of the rest (StaticHeap::keysOfImage()): the table comes after the image.
+    bool keysAreLeftOut = !!m_numberOfIdentifiersOfProgram;
+    header.tableCapacity = keysAreLeftOut ? 0 : capacity;
+    header.recordsOffset = header.tableOffset + header.tableCapacity * sizeof(ImageKey);
     header.recordsSize = recordsSize;
     header.environmentsSize = m_environmentsSize;
     header.environmentsOffset = WTF::roundUpToMultipleOf<8>(static_cast<size_t>(header.recordsOffset) + recordsSize);
@@ -726,12 +771,12 @@ Vector<uint8_t> ImageBuilder::finish()
     };
     header.shapesOffset = place(imageShapes.sizeInBytes());
     header.numberOfShapes = imageShapes.size();
-    header.namesOfShapesOffset = place(namesOfShapes.sizeInBytes());
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
-    header.numberOfSelectors = imageSelectors.size();
+    header.numberOfSelectors = selectors.size();
     header.rowsOfSelectorsOffset = place(rowOfSelector.sizeInBytes());
     header.textOfSelectorsOffset = place(textOfSelectors.size());
     header.selectorsInOrderOffset = place(selectorsInOrder.sizeInBytes());
+    header.numberOfSelectorsInOrder = selectorsInOrder.size();
     header.dispatchOffset = place(dispatch.sizeInBytes());
     Vector<uint32_t> constructSitesOfFunction;
     constructSitesOfFunction.fill(0, m_functions.size());
@@ -770,30 +815,29 @@ Vector<uint8_t> ImageBuilder::finish()
             heads += sizeof(ImageFunction);
             catchEntrypoints += info.catchEntrypoints.size() * sizeof(ImageCatchEntrypoint);
             sites += info.sites.size() * sizeof(Site);
-            siteConstants += info.sites.size() * sizeof(uint32_t);
+            siteConstants += numbersOfIdentifiers ? 0 : info.sites.size() * sizeof(uint32_t);
             for (uint32_t constant : info.siteConstants)
                 sitesWithConstant += !!constant;
-            knownCallees += info.knownCallees.size() * sizeof(ImageKey);
+            knownCallees += info.knownCallees.size() * sizeof(uint32_t);
             plans += info.plans.sizeInBytes();
             code += function.code.bytes.size();
         }
-        dataLogLn("IMAGE: table of keys ", capacity * sizeof(ImageKey), " (", m_functions.size(), " of ", capacity, " used); records ", recordsSize, ": heads ", heads, ", callee saves ", calleeSaves, ", catch entrypoints ", catchEntrypoints,
+        dataLogLn("IMAGE: table of keys ", header.tableCapacity * sizeof(ImageKey), " (", m_functions.size(), " of ", capacity, " used); records ", recordsSize, ": heads ", heads, ", callee saves ", calleeSaves, ", catch entrypoints ", catchEntrypoints,
             ", sites ", sites, ", site constants ", siteConstants, " (", sitesWithConstant, " are not zero), known callees ", knownCallees, ", plans ", plans);
-        dataLogLn("IMAGE: shapes ", imageShapes.sizeInBytes(), ", names of shapes ", namesOfShapes.sizeInBytes(), ", selectors ", imageSelectors.sizeInBytes() + rowOfSelector.sizeInBytes() + selectorsInOrder.sizeInBytes(), ", their text ", textOfSelectors.size(),
+        dataLogLn("IMAGE: shapes ", imageShapes.sizeInBytes(),  ", selectors ", imageSelectors.sizeInBytes() + rowOfSelector.sizeInBytes() + selectorsInOrder.sizeInBytes(), ", their text ", textOfSelectors.size(),
             ", dispatch ", dispatch.sizeInBytes(), ", quotes and construct sites ", quotes.size(), ", text of quotes ", textOfQuotes.size(), "; code ", codeSize, ", of which the functions' own ", code, " and ", stubsAt.size(), " copies of ", stubs.bytes.size(), " bytes of stubs");
     }
 
     Vector<uint8_t> image;
-    image.fill(0, header.size);
+    image.fill(0, header.size + (keysAreLeftOut ? capacity * sizeof(ImageKey) : 0));
     uint8_t* base = image.mutableSpan().data();
     memcpy(base, &header, sizeof(header));
-    auto* table = reinterpret_cast<ImageKey*>(base + header.tableOffset);
+    auto* table = reinterpret_cast<ImageKey*>(base + (keysAreLeftOut ? header.size : header.tableOffset));
     uint8_t* records = base + header.recordsOffset;
     uint8_t* code = base + header.codeOffset;
 
     memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
     memcpy(base + header.shapesOffset, imageShapes.span().data(), imageShapes.sizeInBytes());
-    memcpy(base + header.namesOfShapesOffset, namesOfShapes.span().data(), namesOfShapes.sizeInBytes());
     memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
     memcpy(base + header.rowsOfSelectorsOffset, rowOfSelector.span().data(), rowOfSelector.sizeInBytes());
     memcpy(base + header.textOfSelectorsOffset, textOfSelectors.span().data(), textOfSelectors.size());
@@ -865,6 +909,7 @@ Vector<uint8_t> ImageBuilder::finish()
             record.offsetOfCalleeSaves = safeCast<int32_t>(info.calleeSaveRegisters.at(0).offset());
         record.numberOfCatchEntrypoints = info.catchEntrypoints.size();
         record.numberOfKnownCallees = info.knownCallees.size();
+        record.hasSiteConstants = !numbersOfIdentifiers;
         record.usesStaticImports = info.usesStaticImports;
         record.startsCold = info.startsCold;
         record.quotes = quotesOfFunction[index];
@@ -902,10 +947,21 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         memcpy(records + recordAt, info.sites.span().data(), info.sites.size() * sizeof(Site));
         recordAt += info.sites.size() * sizeof(Site);
-        memcpy(records + recordAt, info.siteConstants.span().data(), info.siteConstants.sizeInBytes());
-        recordAt += info.siteConstants.sizeInBytes();
-        memcpy(records + recordAt, info.knownCallees.span().data(), info.knownCallees.size() * sizeof(ImageKey));
-        recordAt += info.knownCallees.size() * sizeof(ImageKey);
+        if (!numbersOfIdentifiers) {
+            memcpy(records + recordAt, info.siteConstants.span().data(), info.siteConstants.sizeInBytes());
+            recordAt += info.siteConstants.sizeInBytes();
+        }
+        for (auto& callee : info.knownCallees) {
+            uint32_t indexOfCallee = ImageFunction::noSuchFunction;
+            for (unsigned bucket = callee.hash() & (capacity - 1); functionWithKey[bucket] != std::numeric_limits<uint32_t>::max(); bucket = (bucket + 1) & (capacity - 1)) {
+                if (m_functions[functionWithKey[bucket]].key.sameFunction(callee)) {
+                    indexOfCallee = functionWithKey[bucket];
+                    break;
+                }
+            }
+            memcpy(records + recordAt, &indexOfCallee, sizeof(indexOfCallee));
+            recordAt += sizeof(indexOfCallee);
+        }
         memcpy(records + recordAt, info.plans.span().data(), info.plans.sizeInBytes());
         recordAt += info.plans.sizeInBytes();
 
@@ -984,7 +1040,7 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     auto& header = *reinterpret_cast<const ImageHeader*>(data.data());
     if (header.magic != imageMagic || header.stamp != imageStamp() || header.size > data.size())
         return nullptr;
-    if (!hasOneBitSet(header.tableCapacity)
+    if ((header.tableCapacity && !hasOneBitSet(header.tableCapacity))
         || static_cast<uint64_t>(header.tableOffset) + static_cast<uint64_t>(header.tableCapacity) * sizeof(ImageKey) > header.recordsOffset
         || static_cast<uint64_t>(header.recordsOffset) + header.recordsSize > header.environmentsOffset
         || static_cast<uint64_t>(header.environmentsOffset) + static_cast<uint64_t>(header.numberOfEnvironments) * sizeof(ImageEnvironment) > header.codeOffset
@@ -1037,27 +1093,25 @@ Image* Image::withShapes()
     return nullptr;
 }
 
-AtomString Image::nameOfSelector(uint32_t selector) const
-{
-    RELEASE_ASSERT(selector && selector < header().numberOfSelectors);
-    const ImageSelector& entry = at<ImageSelector>(header().selectorsOffset)[selector];
-    const uint8_t* text = at<uint8_t>(header().textOfSelectorsOffset) + entry.text;
-    if (entry.is8Bit)
-        return AtomString(std::span { reinterpret_cast<const Latin1Character*>(text), entry.length });
-    return AtomString(std::span { reinterpret_cast<const char16_t*>(text), entry.length });
-}
-
 uint32_t Image::selectorNamed(const StringImpl& name) const
 {
     const uint32_t* inOrder = at<uint32_t>(header().selectorsInOrderOffset);
     const ImageSelector* all = at<ImageSelector>(header().selectorsOffset);
     const uint8_t* text = at<uint8_t>(header().textOfSelectorsOffset);
+    UniquedStringImpl* const* identifiers = header().numberOfIdentifiersOfProgram ? StaticHeap::identifiersOfProgram() : nullptr;
+    if (header().numberOfIdentifiersOfProgram && !identifiers)
+        return 0;
     size_t low = 0;
-    size_t high = header().numberOfSelectors - 1;
+    size_t high = header().numberOfSelectorsInOrder;
     while (low < high) {
         size_t middle = low + (high - low) / 2;
-        const ImageSelector& entry = all[inOrder[middle]];
-        int order = compareSelectors(entry.is8Bit, { text + entry.text, static_cast<size_t>(entry.length) * (entry.is8Bit ? 1 : 2) }, name.is8Bit(), bytesOf(name));
+        int order;
+        if (identifiers)
+            order = compareSelectors(*identifiers[inOrder[middle]], name);
+        else {
+            const ImageSelector& entry = all[inOrder[middle]];
+            order = compareSelectors(entry.is8Bit, { text + entry.text, static_cast<size_t>(entry.length) * (entry.is8Bit ? 1 : 2) }, name.is8Bit(), bytesOf(name));
+        }
         if (!order)
             return inOrder[middle];
         if (order < 0)
@@ -1177,8 +1231,12 @@ auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -
 const ImageFunction* Image::lookup(const ImageKey& key) const
 {
     auto& header = this->header();
-    auto* table = reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset);
-    unsigned mask = header.tableCapacity - 1;
+    std::span<const ImageKey> table { reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset), header.tableCapacity };
+    if (table.empty())
+        table = StaticHeap::keysOfImage();
+    if (table.empty())
+        return nullptr;
+    unsigned mask = table.size() - 1;
     for (unsigned bucket = key.hash() & mask; table[bucket].record; bucket = (bucket + 1) & mask) {
         if (table[bucket].sameFunction(key))
             return reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + table[bucket].record - 1);
@@ -1199,8 +1257,10 @@ std::optional<ImageView> ImageView::tryCreate(std::span<const uint8_t> data, con
 std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
 {
     auto& header = this->header();
-    auto* table = reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset);
-    unsigned mask = header.tableCapacity - 1;
+    auto table = keys();
+    if (table.empty())
+        return std::nullopt;
+    unsigned mask = table.size() - 1;
     for (unsigned bucket = key.hash() & mask; table[bucket].record; bucket = (bucket + 1) & mask) {
         if (!table[bucket].sameFunction(key))
             continue;
@@ -1208,9 +1268,24 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         size_t start = header.codeOffset + function.codeOffset;
         auto whereItIsGoingToBe = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
         return Function { const_cast<uint8_t*>(m_address) + start + function.arityCheckOffset, reinterpret_cast<const CodeHeader*>(m_data.data() + start)->index,
-            reinterpret_cast<const Site*>(whereItIsGoingToBe(function.sites())), reinterpret_cast<const ImageFunction*>(whereItIsGoingToBe(&function)), function.numSlots, !!function.startsCold };
+            reinterpret_cast<const Site*>(whereItIsGoingToBe(function.sites())), reinterpret_cast<const ImageFunction*>(whereItIsGoingToBe(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants };
     }
     return std::nullopt;
+}
+
+std::span<const ImageKey> ImageView::keys() const
+{
+    auto& header = this->header();
+    if (header.tableCapacity)
+        return { reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset), header.tableCapacity };
+    return { reinterpret_cast<const ImageKey*>(m_data.data() + header.size), (m_data.size() - header.size) / sizeof(ImageKey) };
+}
+
+uint32_t ImageView::indexOfFunctionWith(const ImageKey& key) const
+{
+    auto& header = this->header();
+    auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + key.record - 1);
+    return reinterpret_cast<const CodeHeader*>(m_data.data() + header.codeOffset + function.codeOffset)->index;
 }
 
 void* ImageView::addressOfStub(Stub stub) const
@@ -1320,17 +1395,27 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     if (!Image::hasAny())
         return { };
 
-    auto key = imageKeyFor(executable, kind);
-    if (!key) {
-        if (Options::aotVerbose()) [[unlikely]]
-            dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL());
-        return { };
-    }
-    auto [image, function] = Image::find(*key);
-    if (!function) {
-        if (Options::aotVerbose()) [[unlikely]]
-            dataLogLn("AOT: not in the image: ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") bytecode ", unlinkedCodeBlock->instructionsSize());
-        return { };
+    Image* image = nullptr;
+    const ImageFunction* function = nullptr;
+    ImageKey key;
+    if (auto* ofFunction = dynamicDowncast<FunctionExecutable>(executable); ofFunction && ofFunction->aotEntryFor(kind) && !(kind == CodeSpecializationKind::CodeForConstruct && ofFunction->constructsByCalling())) {
+        // An executable of the static heap's says which function it is.
+        function = StaticHeap::imageFunctionOfFunction(ofFunction->aotIndexFor(kind));
+        image = &Image::of(*function);
+    } else {
+        auto keyOfExecutable = imageKeyFor(executable, kind);
+        if (!keyOfExecutable) {
+            if (Options::aotVerbose()) [[unlikely]]
+                dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL());
+            return { };
+        }
+        key = *keyOfExecutable;
+        std::tie(image, function) = Image::find(key);
+        if (!function) {
+            if (Options::aotVerbose()) [[unlikely]]
+                dataLogLn("AOT: not in the image: ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " (module ", key.module, " start ", key.start, " kind ", key.kind, ")");
+            return { };
+        }
     }
 
     // The code finds what it has of the realm by its own number, so that is for one function of the realm. The same text evaluated
@@ -1360,12 +1445,12 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
 
     if (Options::aotValidateImage() && unlinkedCodeBlock) [[unlikely]] {
         if (hashOfBytecode(unlinkedCodeBlock) != function->bytecodeHash) {
-            dataLogLn("AOT: the image's code for ", nameForLogging(executable), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") was compiled from other bytecode");
+            dataLogLn("AOT: the image's code for ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") was compiled from other bytecode");
             return { };
         }
     }
     if (Options::aotVerbose()) [[unlikely]]
-        dataLogLn("AOT: ", nameForLogging(executable), " (module ", key->module, " start ", key->start, " kind ", key->kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", function->codeSize, " hash ", hashOfCode({ image->codeFor(*function), function->codeSize }));
+        dataLogLn("AOT: ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", function->codeSize, " hash ", hashOfCode({ image->codeFor(*function), function->codeSize }));
     return { image, function };
 }
 

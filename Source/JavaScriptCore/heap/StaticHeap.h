@@ -28,6 +28,8 @@ class PreciseAllocation;
 class FunctionExecutable;
 namespace AOT {
 struct FunctionInfo;
+struct ImageFunction;
+struct ImageKey;
 }
 class ScriptExecutable;
 class SourceCodeKey;
@@ -122,6 +124,7 @@ public:
     // See PositionsToKeep, and AOT::FunctionRef::reportedPositionFor().
     static bool hasPositionsOfCallSites();
     static bool hasIdentifiersOfProgram();
+    static WTF::UniquedStringImpl* const* identifiersOfProgram(); // By number. Null if there are none.
     JS_EXPORT_PRIVATE static String nameOfSource(uint32_t); // From one.
     // Of what is said to be a payload: it is that one, or the static heap it would be in has not been mapped at all.
     static bool isNoPayloadToRead(std::span<const uint8_t> bytes) { return contains(bytes.data()) && (!isMapped() || payloadIsLeftOut()); }
@@ -181,6 +184,9 @@ public:
     // What the image's functions are, by that number, as far as that could be told when the program was built. Null: nothing was.
     static AOT::FunctionInfo* infosOfFunctions(VM&);
     static const void* constantsOfProgram(VM&); // AOT::Instance::constantsOfProgram
+    // The image's table of keys, if it goes without: those of the functions whose executables are made when the program runs.
+    static std::span<const AOT::ImageKey> keysOfImage();
+    static const AOT::ImageFunction* imageFunctionOfFunction(uint32_t index);
     // AOT::Instance::factsOfFunctions, and what the numbers in AOT::FunctionFacts are: how far into an arena.
     static const uint32_t* factsOfFunctions(VM&);
     template<typename T> static const T* inData(uint32_t offset) { return reinterpret_cast<const T*>(bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Data) + offset); }
