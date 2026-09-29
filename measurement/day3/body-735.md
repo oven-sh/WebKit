@@ -3,40 +3,56 @@
 - The cache never holds an absent property (`performLLIntGetByID`, `llint/LLIntSlowPaths.cpp`) or a string length. It holds a prototype value once for each site.
 
 ### Fix
-- `missCountForLLIntTierUp` (12): the 12th slow path call of one `get_by_id` or `put_by_id` site lowers the CodeBlock's threshold to that of `jitSoon()`, keeps the count, and ends its startup deferral.
+- `missCountForLLIntTierUp` (12): the 12th slow path call of one `get_by_id` or `put_by_id` site lowers the CodeBlock's threshold to that of `jitSoon()` and keeps the count. Not for a CodeBlock above `maximumBytecodeCostForLLIntMissTierUp` (10000).
 - `useLLIntStringLengthFastPath` (on) reads a string's length where `get_length` misses.
-- Off by default: `useLLIntUnsetCaching` caches an absent property, and `useLLIntPrototypeCacheRearming` lets a site make its cache 4 times.
-- Verified: five new `JSTests/stress/llint-*.js` tests, JSTests with and without the JIT.
+- Off by default: `useStartupJITDeferralAfterLLIntMisses=0` (no startup deferral after the misses), `useLLIntUnsetCaching`, `useLLIntPrototypeCacheRearming`.
+- Verified: five `JSTests/stress/llint-*.js` tests, JSTests with and without the JIT. Self-reviewed: 28 concerns raised, 17 addressed (Notes).
 
 ### Background
 - The LLInt is the interpreter. A `get_by_id` site has 16 bytes of metadata. The first commit keys its watchpoints by site.
-- A watchpoint runs code when a structure changes. The execution counter decides when the Baseline JIT compiles a function.
+- A watchpoint runs code when a structure changes. The execution counter decides when the Baseline JIT compiles a function. The startup deferral scale (Bun's JIT policy) multiplies its threshold.
 - Considered a 16-bit offset and 24 bytes of metadata. The counts are in bytes that only ProtoLoad mode uses.
 
 ### Downsides
-- A small `tsc` run at a deferral scale of 10 has 423 more compiles. They run 4.3% more instructions and make 2.1 MB more JIT code. The rest of the main thread runs 5.3% fewer. `useStartupJITDeferralAfterLLIntMisses` makes it 282, 2.9% and 4.6%.
-- The JIT's stale miss for `globalThis.x` after a `var x` (`main` has it) shows sooner in a function that tiers up early.
-- A bucket of the watchpoint map has 24 bytes, not 16.
+- At a scale of 10, a small `tsc` run has 282 more compiles and 4.0 MiB more memory at its end. The main thread runs 4.6% fewer instructions outside the compilers.
+- With no scale, that run gains 0.3% and the compilers run 1.9% more.
+- The JIT's stale miss for `globalThis.x` (oven-sh/WebKit#738 fixes it) shows sooner in a function that tiers up early.
 
 <details><summary>Notes</summary>
 
 **Why.** Measured by @Jarred-Sumner on a large Bun application: `llint_slow_path_get_by_id` runs about 1.28 M times in a session, at about 54 k sites. 83% of the calls come from the 4% of sites that miss more than 100 times, and most repeat misses happen between execution counts 500 and 5000. A threshold of 500 for everything removes 71% of the calls, but it compiles everything earlier. This change sends only the functions that pay for the interpreter to the Baseline JIT early.
 
-**The options.** `JSC_<option>=0` for `jsc`, `BUN_JSC_<option>=0` for Bun.
+**The options.** `JSC_<option>` for `jsc`, `BUN_JSC_<option>` for Bun.
 
 | Option | Default | What it does |
 | --- | --- | --- |
 | `missCountForLLIntTierUp` | 12 | The number of the miss that lowers the threshold. 0: misses are not counted. |
-| `useStartupJITDeferralAfterLLIntMisses` | false | true: `VM::startupJITDeferralScale()` applies to the threshold that the misses lowered. |
+| `maximumBytecodeCostForLLIntMissTierUp` | 10000 | The misses do nothing for a CodeBlock with a bytecode cost above this. 0: no limit. |
+| `useStartupJITDeferralAfterLLIntMisses` | true | `VM::startupJITDeferralScale()` applies to the threshold that the misses lowered. false: a CodeBlock is out of the deferral after the misses. |
 | `useLLIntStringLengthFastPath` | true | The length of a string on the miss edge of `get_length`. |
 | `useLLIntUnsetCaching` | false | The cache of an absent property. |
 | `useLLIntPrototypeCacheRearming` | false | A site makes a prototype load or unset cache again. |
 
-The last two are off by default: with the first and the third on, they change the slow path calls of the `tsc` workload and its Baseline compiles by 2% (table below), and the unset cache had a wrong result (next paragraph). A measurement on an application can turn them on.
+`JSC_missCountForLLIntTierUp=0 JSC_useLLIntStringLengthFastPath=0` is the behaviour of `main`, but for one fix (a receiver with `GetOwnPropertySlotIsImpure`, below).
 
-**What the self-review found.** The unset cache trusted the structure flags of the class of an object. The object of a `node:vm` context in Bun (`vm.constants.DONT_CONTEXTIFY`) has its own `getOwnPropertySlot()`, which answers with what the global object of the context has, and its class set no flag that says so. A read returned `undefined` for a property that the context got after the second read of the site. The last commit changes the rule (see "What is not cached as absent"), and oven-sh/bun#44024 sets the flag. The same review asked for the new defaults and for the option of the startup deferral.
+**Decisions that are open.** They are for @Jarred-Sumner, after the measurement on the application. Each is an option now, so no build is necessary for the measurement.
 
-**The commits.** The first is groundwork, with no change in behaviour (it was oven-sh/WebKit#736, which is closed). Then one for each of the four options (tier-up, unset cache, string length, rearming). Then one that makes the slow path cheaper, one for the countdown and the tier-up test, one for the absence rule, the defaults and `useStartupJITDeferralAfterLLIntMisses`, and two for what the reviews of the pull request found. Each builds, and passes the tests that it has.
+1. The startup deferral after the misses. The default keeps it, because the scale is what the embedder asked for. `useStartupJITDeferralAfterLLIntMisses=0` gives more in the first seconds (`tsc` on 4 files: 5.3% fewer instructions against 4.6%) for more compiles (423 against 282), and React server rendering is 1.7% slower with it after 800 renders.
+2. The unset cache and the rearming. With the JIT they give nothing that the instruction count shows, and they are 45% of the lines of this change outside the tests. They can stay off, or go out of this pull request.
+3. The misses with no scale. The gain is 0.3% there, for 1.9% more instructions in the compilers. `missCountForLLIntTierUp` can be for a VM with a scale only.
+
+**What the reviews found, and what changed.** Three rounds: a self-review of the first head, the reviews of the pull request, and a self-review of the head `867429ea5d`. The last one raised 28 concerns: 17 are addressed, 7 are the three decisions above, and 4 are notes.
+
+- A wrong result of the unset cache for the object of a `node:vm` context in Bun (`vm.constants.DONT_CONTEXTIFY`), whose class has its own `getOwnPropertySlot()` and no flag. The unset cache refuses each such class, and oven-sh/bun#44024 gives the class `ProhibitsPropertyCaching`.
+- A wrong result that `main` has: the prototype load cache of the LLInt for a receiver with `GetOwnPropertySlotIsImpure` returns the value of the prototype after the receiver got the property. The rearming made such a cache again. `tryToSetUpGetByIdPrototypeCache()` now refuses such a receiver, as `actionForCell()` does for the JIT.
+- A body that runs once, with a loop and a site that misses, was compiled whole. A bundle of six packages had 1.5 MB of Baseline code at its start where it had 24 KB, for one loop of 256 turns. `maximumBytecodeCostForLLIntMissTierUp` is the limit: with it the bundle has 24 KB (53 KB with no deferral after the misses).
+- The exemption from the deferral was a bit of one CodeBlock, and the counter is that of the UnlinkedCodeBlock: a second realm put the deferral back. The bit was then beside `m_age`, which the collector writes from another thread. It is now a byte of its own in the UnlinkedCodeBlock.
+- The JIT keeps "no such property" for a global object after a later script declares the variable (oven-sh/WebKit#738 is the fix). A read that finds nothing, of a global object or of an object with one on its chain, does not count as a miss. When oven-sh/WebKit#738 is in `main`, this rule can go.
+- The defaults: the unset cache and the rearming are off, and the startup deferral stays after the misses.
+- The tests: each configuration under 200 ms, a method read and a for-of with 16 classes, a function above the limit, a receiver with a delegate, two realms.
+- Not done: a Bun pull request of its own for the flag of `NodeVMSpecialSandbox`. The fixture of oven-sh/bun#44024 needs the flag, and two open pull requests remove the class.
+
+**The commits.** The first is groundwork, with no change in behaviour (it was oven-sh/WebKit#736, which is closed). Then one for each of the four options (tier-up, unset cache, string length, rearming). Then one that makes the slow path cheaper, one for the countdown and the tier-up test, one for the absence rule, the defaults and `useStartupJITDeferralAfterLLIntMisses`, two for what the reviews of the pull request found, and two for what the second self-review found. Each builds, and passes the tests that it has.
 
 **The first commit.** `CodeBlock::m_llintGetByIdWatchpointMap` had the key `(StructureID, BytecodeIndex)`. A site could have more than one entry, and nothing found the entry of a site without the structure. The key is now the `BytecodeIndex`, which has the checkpoint (`iterator_next` and `instanceof` have two sites each), and the entry has the `StructureID` and the watchpoints. `CodeBlock::llintGetByIdModeMetadata()` finds the metadata of a site: the watchpoint and the collector each had that switch. `clearToDefaultModeWithoutCache()`, `setUnsetMode()` and `setArrayLengthMode()` set bytes 8 to 13 of `GetByIdModeMetadata` to zero, where a site that left ProtoLoad mode kept 6 bytes of a pointer. A watchpoint or a collection now clears the cache that it guards. Before, it cleared what the site had at that time, and both caches of `iterator_next` and `instanceof`. Only `$vm` and the time of a read show that. The tests that cover this code before the other commits: `llint-proto-get-by-id-cache-change-prototype.js`, `llint-proto-get-by-id-cache-intercept-value.js`, `llint-get-by-id-cache-prototype-load-from-dictionary.js` and `llint-cache-replace-then-cache-get-and-fold-then-invalidate.js`.
 
@@ -49,13 +65,62 @@ after   structureID(4) cachedOffset(4) | cachedSlot(8)  or  unused(4) cacheSetup
 
 In ProtoLoad mode the second half is the pointer to the slot base, so the three counts of a site in that mode are in its entry of `CodeBlock::llintGetByIdWatchpointMap()`. The counts go with the site when the mode changes. `OpPutById::Metadata` keeps its 24 bytes: its count is in the padding before `m_structureChain` (a `static_assert` in `LLIntSlowPaths.cpp` says so).
 
-**What the 12th miss does.** `ExecutionCounter::lowerThreshold()` makes the threshold of the LLInt counter that of `jitSoon()` (`thresholdForJITSoon`, 100) and keeps the count. A function that had 7 calls is so compiled at its next call. It does nothing when the CodeBlock is not in the LLInt, when `dontJITAnytimeSoon()` stopped the counter, when the Baseline JIT is off, or with `--useLLIntICs=0`. It marks the UnlinkedCodeBlock, which has the counter, and `checkIfJITThresholdReached()` does not apply `VM::startupJITDeferralScale()` to a CodeBlock of a marked UnlinkedCodeBlock. So a CodeBlock of the same code in another realm has the lower threshold too, and its check of the counter does not put the deferral back (tested). With `useStartupJITDeferralAfterLLIntMisses` there is no mark, so the lower threshold is `thresholdForJITSoon` times the scale. The memory pressure scale applies in both cases. A read that finds no property is not counted if the receiver is a global object, its proxy, or an object with one of them on its chain: see the end of these notes. The mark is a byte of its own in the UnlinkedCodeBlock (192 bytes, as before), because the collector writes the bits beside it from another thread. The count is for one site: a function with 40 sites that miss 4 times each is not sent anywhere (tested).
+**What the 12th miss does.** `ExecutionCounter::lowerThreshold()` makes the threshold of the LLInt counter that of `jitSoon()` (`thresholdForJITSoon`, 100) and keeps the count. With no scale, a function that had 7 calls is so compiled at its next call. It does nothing when the CodeBlock is not in the LLInt, when its bytecode cost is above the limit, when `dontJITAnytimeSoon()` stopped the counter, when the Baseline JIT is off, or with `--useLLIntICs=0`. `VM::startupJITDeferralScale()` applies to the lower threshold: with a scale of 10, the function is compiled after about 67 calls, where it waited for 334. With `useStartupJITDeferralAfterLLIntMisses=0` the UnlinkedCodeBlock, which has the counter, gets a mark, and `checkIfJITThresholdReached()` does not apply the scale to a CodeBlock of it. So a CodeBlock of the same code in another realm is out of the deferral too (tested). The mark is a byte of its own (192 bytes for an UnlinkedCodeBlock, as before), because the collector writes the bits beside it from another thread. The memory pressure scale applies in each case. The count is for one site: a function with 40 sites that miss 4 times each is not sent anywhere (tested). A read that finds no property is not counted if the receiver is a global object, its proxy, or an object with one of them on its chain: see the end of these notes.
 
 **What is not cached as absent.** A receiver or a chain object whose class has its own `getOwnPropertySlot()` (`OverridesGetOwnPropertySlot`), with or without the flags that say that the lookup is impure. `DFG::Graph::tryEnsureAbsence()` has the same rule. The inline cache of the Baseline JIT trusts the flags. The rule takes in a global object (a `var` of a later script becomes a property of the global object with no new structure) and a proxy. It also takes in arrays, functions, strings and typed arrays: a site with such a receiver has no unset cache. For the `tsc` workload, the unset cache alone has 259738 calls with the rule, and it had 259753 before the rule. Also not cached: a dictionary that was made flat before, and a chain with poly proto. Such a receiver does not use up the countdown.
 
 **What bounds the work of rearming.** A site tries to make a prototype load or unset cache 4 times at most (`GetByIdSiteCounts::maxCacheSetupCount`), with or without success. Before, it tried once. A new cache replaces the entry of the site in the watchpoint map. A cache of an own property or of the length of an array removes it. A watchpoint that fires cannot remove its own entry, so that entry stays until a collection or until the site makes a cache again. Its other watchpoints do nothing to a site that has no cache with guards.
 
-**Measurements.** x86_64 Linux, release builds of `main` (`f20ce77445`) and of this change. The counts are hit counts of gdb breakpoints. The instructions are those of the main thread, from a DynamoRIO client that counts for each thread.
+**The head (`7da0e718d4`).** x86_64 Linux, release builds. "Scale 10" is `--thresholdForJITAfterWarmUp=500 --startupJITDeferralScale=10`, and "500" is that threshold with no scale. "Off" is `missCountForLLIntTierUp=0` and `useLLIntStringLengthFastPath=0`. How each number is made is in the sections below.
+
+Instructions of the main thread, the TypeScript compiler on 4 files:
+
+| Configuration | Execution | Compile | Compiles | All |
+| --- | --- | --- | --- | --- |
+| Scale 10, off | 3.764 G | 3.974 G | 2628 | 7.844 G |
+| Scale 10, defaults | 3.591 G (-4.6%) | 4.089 G (+2.9%) | 2910 | 7.787 G (-0.7%) |
+| Scale 10, `useStartupJITDeferralAfterLLIntMisses=0` | 3.564 G (-5.3%) | 4.145 G (+4.3%) | 3051 | 7.816 G (-0.4%) |
+| 500, off | 3.024 G | 8.394 G | 5289 | 11.646 G |
+| 500, defaults | 3.015 G (-0.3%) | 8.551 G (+1.9%) | 5335 | 11.795 G (+1.3%) |
+
+Calls of the three slow paths, Baseline compiles and JIT code at the end:
+
+| Configuration | 4 files: calls | Baseline compiles | JIT code | 40 files: calls | Baseline compiles | JIT code |
+| --- | --- | --- | --- | --- | --- | --- |
+| Scale 10, off | 279300 | 1593 | 6.4 MB | 370949 | 2536 | 12.4 MB |
+| Scale 10, defaults | 89784 | 1863 | 7.9 MB | 109723 | 2778 | 13.6 MB |
+| Scale 10, `useStartupJITDeferralAfterLLIntMisses=0` | 49167 | 1997 | 8.5 MB | 56199 | 2916 | 14.2 MB |
+| 500, off | 63395 | 2924 | 12.3 MB | 74736 | 3957 | 19.3 MB |
+| 500, defaults | 43789 | 2969 | 13.5 MB | 49019 | 4011 | 19.5 MB |
+
+Memory of the process when the workload ends (`MemoryFootprint()` of the shell), scale 10, no concurrent compiler, medians of 7 runs (4 files) and 5 runs (40 files), with the smallest and the largest run:
+
+| Configuration | 4 files | 40 files |
+| --- | --- | --- |
+| Off | 137.1 MiB (136.0 to 139.0) | 357.6 MiB (355.2 to 358.5) |
+| Defaults | 141.1 MiB (140.6 to 143.8) | 363.0 MiB (362.0 to 363.7) |
+| `useStartupJITDeferralAfterLLIntMisses=0` | 143.5 MiB (143.2 to 144.4) | 366.9 MiB (364.7 to 367.6) |
+| No scale, off | 168.9 MiB (166.6 to 169.1) | 388.8 MiB (358.7 to 390.1) |
+
+The memory grows by about 3 times what the JIT code grows by.
+
+React 18 server rendering of one page in the `jsc` shell, scale 10, instructions of the main thread outside the compilers and the collector:
+
+| Configuration | 30 renders | 800 renders |
+| --- | --- | --- |
+| Off | 267.7 M | 2698.8 M |
+| Defaults | 263.0 M (-1.8%) | 2703.8 M (+0.2%) |
+| `useStartupJITDeferralAfterLLIntMisses=0` | 260.8 M (-2.6%) | 2745.3 M (+1.7%) |
+
+So the gain is in the first seconds. With no deferral after the misses, a function gets to the DFG JIT with a younger profile, and this workload is slower in its steady state.
+
+The start of a bundle of six packages (zod, lodash-es, rxjs, graphql, hono, hexoid) in Bun, scale 10, no concurrent compiler: 10 Baseline compiles and 24000 bytes of Baseline code with the options off and with the defaults. With `useStartupJITDeferralAfterLLIntMisses=0`: 15 compiles and 53440 bytes. With that and no limit of the bytecode cost: 16 compiles and 1514272 bytes, of which 1460832 are the body of the module.
+
+Cost with the options off, 4 files, no JIT, where a site with several structures never leaves its slow path: 11.329 G instructions against 11.245 G on `main` (+0.7%). A call of the slow path of `get_by_id` runs 19 more instructions, one of `get_length` 9 more, one of `put_by_id` 10 more. With the defaults the run has 11.079 G (-1.5%).
+
+**Measurements of the heads before.** The tables from here to "Tests" are from `4fcab1e7c2` and the heads before it. `useStartupJITDeferralAfterLLIntMisses` was false by default there. So "defaults" in these tables is what `useStartupJITDeferralAfterLLIntMisses=0` gives now, and the rows with `useStartupJITDeferralAfterLLIntMisses` are the defaults of now.
+
+x86_64 Linux, release builds of `main` (`f20ce77445`) and of this change. The counts are hit counts of gdb breakpoints. The instructions are those of the main thread, from a DynamoRIO client that counts for each thread.
 
 The TypeScript compiler 5.9.2 checks and emits 40 files of Bun's `src/js` (1.08 MB) in the `jsc` shell, with `--useConcurrentJIT=0`, so that a run does not depend on the time that a compiler thread takes. "5000" is `--thresholdForJITAfterWarmUp=5000`. "Scale 10" is `--thresholdForJITAfterWarmUp=500 --startupJITDeferralScale=10`. The table is for the last commit (`4fcab1e7c2`). Two runs of one configuration differ by 0.2% at most.
 
@@ -203,16 +268,16 @@ The small workload with no JIT, the last commit, the collector on the main threa
 
 **A second cache entry is not in this change.** With the JIT, the 12th miss ends the misses of a site. With the JIT off, a site whose receivers alternate keeps its misses: 2000 reads of an own property of 2 structures in turn make 2000 calls of the slow path, before and after. The metadata has 4 bytes free outside ProtoLoad mode, which is room for a second structure.
 
-**Tests.** `llint-ic-miss-tier-up.js`: a function with a site that misses leaves the LLInt at call 12 to 14 with a threshold of 100000, also with a startup deferral scale of 50, and also when the read throws. With `useStartupJITDeferralAfterLLIntMisses` and a scale of 4 it leaves at the call that `thresholdForJITSoon` times 4 gives. A function of one source in two realms leaves the LLInt in both. A read that finds no property of the global object, or through it, stays in the LLInt. A function with one structure, and one whose 40 sites miss 4 times each, stay. The count of a site goes with it through a prototype load cache, a watchpoint, a cache of an own property and a collection. `llint-get-by-id-unset-cache.js`: 30 ways to make an absent property appear (on the chain, on `Object.prototype`, as a getter, by a new prototype, on a dictionary, through a proxy, on primitives of two realms, as a variable of a later script, through an object that answers for another object). It also checks that a receiver with its own `getOwnPropertySlot()` gets no unset cache. `llint-get-length-string.js`: ropes, substrings, two encodings, a site with strings and arrays. The count of the site shows that the reads did not call the slow path. `llint-proto-get-by-id-cache-rearm.js`: the cache after a transition of the receiver, after an own property, after a watchpoint, for arrays of each indexing type, and the limit of 4 tries. `llint-get-by-id-cache-random.js`: 6000 random steps, each read compared with a walk of the chain. Each configuration of the five tests takes 100 ms of CPU time at most on a release build (`JSTests/README.md` allows 200 ms). The tests read the state of a site through `$vm.llintGetByIdCaches`, `$vm.llintGetByIdCacheHits`, `$vm.llintGetByIdMissCounts` and `$vm.llintGetByIdCacheSetupCounts`.
+**Tests.** `llint-ic-miss-tier-up.js`: a function with a site that misses leaves the LLInt at call 12 to 14 with a threshold of 100000, and also when the read throws. With a scale of 4 it leaves at the call that `thresholdForJITSoon` times 4 gives. With `useStartupJITDeferralAfterLLIntMisses=0` and a scale of 50 it leaves at call 12 to 14. A method read of instances of 16 classes, and a for-of with iterators of 16 classes, leave the LLInt too: their sites count in ProtoLoad mode. A function above the limit of the bytecode cost stays, also for a loop of 100 turns in it. A function of one source in two realms leaves the LLInt in both. A read that finds no property of the global object, or through it, stays in the LLInt. A function with one structure, and one whose 40 sites miss 4 times each, stay. The count of a site goes with it through a prototype load cache, a watchpoint, a cache of an own property and a collection. `llint-get-by-id-unset-cache.js`: 30 ways to make an absent property appear (on the chain, on `Object.prototype`, as a getter, by a new prototype, on a dictionary, through a proxy, on primitives of two realms, as a variable of a later script, through an object that answers for another object). It also checks that a receiver with its own `getOwnPropertySlot()` gets no unset cache. `llint-get-length-string.js`: ropes, substrings, two encodings, a site with strings and arrays. The count of the site shows that the reads did not call the slow path. `llint-proto-get-by-id-cache-rearm.js`: the cache after a transition of the receiver, after an own property, after a watchpoint, for arrays of each indexing type, and the limit of 4 tries. A receiver with a delegate (`$vm.createImpureGetter`) has no prototype load cache, as first cache of a site and as a later one. `llint-get-by-id-cache-random.js`: 6000 random steps, each read compared with a walk of the chain, with receivers that have a delegate. Each of the 30 configurations of the five tests takes 60 ms of CPU time at most on a release build (`JSTests/README.md` allows 200 ms). The tests read the state of a site through `$vm.llintGetByIdCaches`, `$vm.llintGetByIdCacheHits`, `$vm.llintGetByIdMissCounts` and `$vm.llintGetByIdCacheSetupCounts`.
 
-**JSTests.** CI runs all the tests on x86_64 and arm64 Linux, and both are green for the last commit. The table below is from the commit before the last one: `run-javascriptcore-tests` on a release build with assertions, x86_64 Linux, for the tests with one of these in their name: `llint`, `get-by-id`, `proto`, `unset`, `length`, `dictionar`, `inline-cache`, `poly`, `instanceof`, `iterator`, `for-of`, `put-by-id`, `tier`, `osr`, `string`, `array`, `global`, `missing`, `undefined`, `property`, `structure`, `watchpoint`, `jit`, `deferral`, `baseline`. The stress tests run with `--validateExceptionChecks=true` in every mode.
+**JSTests.** CI runs all the tests on x86_64 and arm64 Linux for each head. The table below is from the head `0b25b767c8`: `run-javascriptcore-tests` on a release build with assertions, x86_64 Linux, for the tests with one of these in their name: `llint`, `get-by-id`, `proto`, `unset`, `length`, `dictionar`, `inline-cache`, `poly`, `instanceof`, `iterator`, `for-of`, `put-by-id`, `tier`, `osr`, `string`, `array`, `global`, `missing`, `undefined`, `property`, `structure`, `watchpoint`, `jit`, `deferral`, `baseline`. The stress tests run with `--validateExceptionChecks=true` in every mode.
 
 | Mode | Runs | Failures |
 | --- | --- | --- |
 | Default | 77503 | 5 |
 | `JSC_useJIT=0` | 10625 | 10 |
 
-`useLLIntUnsetCaching` and `useLLIntPrototypeCacheRearming` are off by default, so CI does not run the tests with them. The same tests with the two options on (`--env-vars`) and the last commit:
+`useLLIntUnsetCaching` and `useLLIntPrototypeCacheRearming` are off by default, so CI does not run the tests with them. The same tests with the two options on (`--env-vars`) and the head `4fcab1e7c2`:
 
 | Mode | Runs | Failures |
 | --- | --- | --- |
@@ -226,7 +291,7 @@ No failure is from this change:
 - Default: `js/script-tests/JSON-parse-reviver.js` in 5 modes, `ASSERTION FAILED: impl->state() != WeakImpl::State::Deallocated` (`jit/JITThunks.cpp:100`). The build of `main` hits it in 8 of 20 runs of that test with the same command, and this change in 6 of 20.
 - `JSC_useJIT=0`: `stress/buffer-accessor-jit-*.js` test the JIT (9 runs), and `stress/proxy-set-failure-inline-cache.js` in bytecode cache mode hits `ASSERTION FAILED: addResult.isNewEntry` in `CachedBytecode::copyLeafExecutables`. Both are so on the build without this change.
 
-The five new tests pass in each of their 29 modes on a release build with assertions. Each commit passes the tests that it has.
+The five new tests pass in each of their 30 configurations on a release build and on one with assertions.
 
 **Do the tests see a defect.** Eight builds of the commit before the last one, each with one defect made on purpose, and each fails a test:
 
@@ -249,6 +314,7 @@ The five new tests pass in each of their 29 modes on a release build with assert
 - Two functions made by `new Function` from the same source share their code and their LLInt metadata. Two classes with the same shape share the structure of their prototypes until one of the prototypes changes, and the shared structure cannot be watched after that. The tests give each function a source of its own and each prototype a property of its own.
 
 </details>
+
 
 
 
