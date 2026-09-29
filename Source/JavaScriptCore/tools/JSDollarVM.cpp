@@ -2169,7 +2169,7 @@ static JSC_DECLARE_HOST_FUNCTION(constructInternalFunctionWithoutConstructData);
 class InternalFunctionWithoutConstructData final : public InternalFunction {
 public:
     using Base = InternalFunction;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | ReportsNoConstructData;
+    using JSCell::getConstructData;
 
     DECLARE_INFO;
 

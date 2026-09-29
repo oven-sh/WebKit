@@ -47,7 +47,16 @@ InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction 
     ASSERT(is<InternalFunction>(this));
     // JSCell::{getCallData,getConstructData} relies on the following conditions.
     ASSERT(methodTable()->getCallData == InternalFunction::info()->methodTable.getCallData);
+#if USE(BUN_JSC_ADDITIONS)
+    // A subclass whose functionForConstruct does not return an object takes JSCell::getConstructData with a using-declaration.
+    // It is then a constructor to nothing that reads construct data: isConstructor(), construct(), Reflect.construct, bind,
+    // Proxy, Array.of, Array.from, a species lookup. `new f()` and `super()` read none: they still run functionForConstruct,
+    // which has to check new.target.
+    ASSERT(methodTable()->getConstructData == InternalFunction::info()->methodTable.getConstructData
+        || methodTable()->getConstructData == JSCell::getConstructData);
+#else
     ASSERT(methodTable()->getConstructData == InternalFunction::info()->methodTable.getConstructData);
+#endif
     ASSERT(type() == InternalFunctionType || type() == NullSetterFunctionType);
 }
 
@@ -125,10 +134,6 @@ CallData InternalFunction::getConstructData(JSCell* cell)
     CallData constructData;
     auto* function = uncheckedDowncast<InternalFunction>(cell);
     if (function->m_functionForConstruct != callHostFunctionAsConstructor) {
-#if USE(BUN_JSC_ADDITIONS)
-        if (function->structure()->typeInfo().reportsNoConstructData()) [[unlikely]]
-            return constructData;
-#endif
         constructData.type = CallData::Type::Native;
         constructData.native.function = function->m_functionForConstruct;
         constructData.native.isBoundFunction = false;

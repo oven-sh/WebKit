@@ -1,4 +1,4 @@
-// An InternalFunction with the ReportsNoConstructData flag keeps its functionForConstruct for `new f()`,
+// An InternalFunction subclass that takes JSCell::getConstructData keeps its functionForConstruct for `new f()`,
 // and is not a constructor to anything that asks before it constructs.
 
 function shouldBe(actual, expected) {
@@ -51,7 +51,7 @@ for (let i = 0; i < testLoopCount; ++i) {
     shouldBe(callWithSpread([1]), "call:1");
     shouldBe(queryIsConstructor(), false);
 
-    // The same `new` site sees a class and the flagged function.
+    // The same `new` site sees a class and this function.
     shouldBe(constructAny(i & 1 ? f : Plain) instanceof Plain, !(i & 1));
 }
 
