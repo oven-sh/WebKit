@@ -187,10 +187,7 @@ static PyType* bestBase(JSGlobalObject* globalObject, PyTuple* bases)
     PyType* winner = nullptr;
     for (auto& entry : bases->span()) {
         if (!isClass(entry.get())) {
-            // list[int] can be derived from, by a class statement, which asks it what to derive from in its place.
-            bool standsForOthers = !!getAttributeIfPresent(globalObject, entry.get(), vm.pythonNames().dunder_mro_entries);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            raiseTypeError(globalObject, scope, standsForOthers ? "type() doesn't support MRO entry resolution; use types.new_class()"_s : "bases must be types"_s);
+            raiseTypeError(globalObject, scope, "bases must be types"_s);
             return nullptr;
         }
         auto* base = asType(entry.get());
@@ -515,7 +512,7 @@ static PyTuple* resolveBases(JSGlobalObject* globalObject, PyTuple* bases)
 }
 
 // The most derived of the metaclasses of the bases and the one that was asked for.
-static PyType* calculateMetaclass(JSGlobalObject* globalObject, PyType* metatype, PyTuple* bases)
+PyType* calculateMetaclass(JSGlobalObject* globalObject, PyType* metatype, PyTuple* bases)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

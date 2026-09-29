@@ -924,18 +924,39 @@ PYTHON_NATIVE(typeNew)
     if (!isDict(args[3]))
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 3 must be dict, not "_s, typeName(globalObject, args[3]))));
 
+    // The most derived metaclass among the bases' has the last word, and if it has a __new__() of its own, the whole of it: type_new_get_bases()
+    auto* bases = uncheckedDowncast<PyTuple>(args[2].asCell());
+    for (auto& entry : bases->span()) {
+        if (isClass(entry.get()))
+            continue;
+        // list[int] can be derived from, by a class statement, which asks it what to derive from in its place.
+        JSValue standsForOthers = getAttributeIfPresent(globalObject, entry.get(), names.dunder_mro_entries);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (standsForOthers)
+            return JSValue::encode(raiseTypeError(globalObject, scope, "type() doesn't support MRO entry resolution; use types.new_class()"_s));
+    }
+    PyType* winner = calculateMetaclass(globalObject, metatype, bases);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (winner != metatype) {
+        JSValue constructor = winner->lookup(vm, names.dunder_new);
+        if (constructor != realm->typeType()->lookup(vm, names.dunder_new)) {
+            constructor = bindDescriptor(globalObject, constructor, JSValue(), winner);
+            RETURN_IF_EXCEPTION(scope, { });
+            MarkedArgumentBuffer arguments;
+            arguments.append(winner->object());
+            ArgList rest = args.allFrom(1);
+            for (unsigned i = 0; i < rest.size(); ++i)
+                arguments.append(rest.at(i));
+            RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, constructor, arguments, args.keywordNames())));
+        }
+        metatype = winner;
+    }
+
     PyDict* keywords = nullptr;
     if (args.keywordCount()) {
         keywords = PyDict::create(globalObject);
         for (unsigned i = 0; i < args.keywordCount(); ++i)
             keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
-    }
-    // The most derived metaclass among the bases' has the last word.
-    auto* bases = uncheckedDowncast<PyTuple>(args[2].asCell());
-    for (auto& base : bases->span()) {
-        PyType* candidate = typeOf(globalObject, base.get());
-        if (candidate != metatype && candidate->isSubtypeOf(metatype))
-            metatype = candidate;
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(newType(globalObject, metatype, asString(args[1]), bases, uncheckedDowncast<PyDict>(args[3].asCell()), keywords)));
 }

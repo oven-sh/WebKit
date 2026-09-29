@@ -1825,6 +1825,17 @@ JSValue iteratorNext(JSGlobalObject* globalObject, JSValue iterator, JSValue* re
     return { };
 }
 
+JSValue iteratorStep(JSGlobalObject* globalObject, JSValue iterator)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue returned;
+    JSValue value = iteratorNextKeepingStopIteration(globalObject, iterator, &returned);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!value && returned && !isNone(returned))
+        return raise(globalObject, scope, BuiltinType::StopIteration, returned);
+    return value;
+}
+
 JSValue iteratorNextKeepingStopIteration(JSGlobalObject* globalObject, JSValue iterator, JSValue* returnedByGenerator)
 {
     VM& vm = globalObject->vm();

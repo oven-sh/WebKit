@@ -1053,7 +1053,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         return value;
     }
     case Kind::Enumerate: {
-        JSValue value = Python::iteratorNext(globalObject, m_a.get());
+        JSValue value = Python::iteratorStep(globalObject, m_a.get());
         RETURN_IF_EXCEPTION(scope, { });
         if (!value)
             return { };
@@ -1077,7 +1077,8 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             return { };
         MarkedArgumentBuffer values;
         for (unsigned i = 0; i < count; ++i) {
-            JSValue value = Python::iteratorNext(globalObject, iterators->at(i));
+            // If they need not all run out together, it is over as soon as one has, and what that one said is what is said.
+            JSValue value = m_index ? Python::iteratorNext(globalObject, iterators->at(i)) : Python::iteratorStep(globalObject, iterators->at(i));
             RETURN_IF_EXCEPTION(scope, { });
             if (value) {
                 values.append(value);
@@ -1102,7 +1103,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
     }
     case Kind::Filter: {
         while (true) {
-            JSValue value = Python::iteratorNext(globalObject, m_b.get());
+            JSValue value = Python::iteratorStep(globalObject, m_b.get());
             RETURN_IF_EXCEPTION(scope, { });
             if (!value)
                 return { };

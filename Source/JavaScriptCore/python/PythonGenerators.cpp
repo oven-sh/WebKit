@@ -234,7 +234,9 @@ JSValue stepIterator(JSGlobalObject* globalObject, JSValue iterator, JSValue rec
     if (isNone(received)) {
         if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass()) {
             JSValue yielded = native->next(globalObject);
-            RETURN_IF_EXCEPTION(scope, { });
+            // One that goes through another lets by what that one said as it ended.
+            if (scope.exception()) [[unlikely]]
+                return finishCall({ });
             if (!yielded)
                 returned = jsUndefined();
             return yielded;

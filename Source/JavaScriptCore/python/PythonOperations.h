@@ -269,6 +269,8 @@ JSValue instantiateFrom(JSGlobalObject*, PyType*, PyType* from, const ArgList&, 
 
 // What a class statement does. `body` is a function that fills in the namespace it is given.
 JSValue buildClass(JSGlobalObject*, JSValue body, JSString* name, PyTuple* bases, PyDict* keywords);
+// _PyType_CalculateMetaclass(): the most derived of the metaclasses of the bases and the one that was asked for. Null if it raised.
+PyType* calculateMetaclass(JSGlobalObject*, PyType* metatype, PyTuple* bases);
 // type.__new__(metatype, name, bases, namespace, **keywords)
 JSValue newType(JSGlobalObject*, PyType* metatype, JSString* name, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords);
 // isinstance() and issubclass(), which a class can have its own idea of.
@@ -469,6 +471,9 @@ bool hasWhatItTakesToBeIterated(JSGlobalObject*, JSValue);
 JSValue iteratorNext(JSGlobalObject*, JSValue iterator, JSValue* returnedByGenerator = nullptr);
 // The same, but that if it is by raising StopIteration that it said there is no more, that is still raised: tp_iternext.
 JSValue iteratorNextKeepingStopIteration(JSGlobalObject*, JSValue iterator, JSValue* returnedByGenerator = nullptr);
+// (*Py_TYPE(iterator)->tp_iternext)(iterator), which is what an iterator that goes through another one asks it: empty when there is no more, and then StopIteration has been raised if there is anything for it to say,
+// as there is when a generator returns something. So what returns as soon as this is empty says whatever the other one said.
+JSValue iteratorStep(JSGlobalObject*, JSValue iterator);
 // Calls the function with each. It returns false to stop. Returns false if something was raised.
 bool forEach(JSGlobalObject*, JSValue iterable, const ScopedLambda<bool(JSValue)>&);
 bool collect(JSGlobalObject*, JSValue iterable, MarkedArgumentBuffer&);
