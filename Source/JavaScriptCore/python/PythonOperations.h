@@ -236,7 +236,9 @@ struct GlobalLocation {
     PropertyOffset offset { 0 };
 };
 // The value of a global variable: what `globals` has by that name, or failing that `builtins`. Otherwise it raises NameError.
-JSValue loadGlobal(JSGlobalObject*, JSObject* globals, JSObject* builtins, PropertyName, GlobalLocation&);
+// LOAD_GLOBAL asks a dict of a derived class as it would any mapping. LOAD_NAME, which has asked the locals so, looks in the globals for itself.
+enum class GlobalsAre : bool { LookedIn, AskedAsAMapping };
+JSValue loadGlobal(JSGlobalObject*, JSObject* globals, JSObject* builtins, PropertyName, GlobalLocation&, GlobalsAre = GlobalsAre::AskedAsAMapping);
 
 // ---- Calls
 

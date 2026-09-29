@@ -74,7 +74,20 @@ static JSValue lookUpInNamespace(JSGlobalObject* globalObject, JSValue namespace
     return value;
 }
 
+// LOAD_NAME, and LOAD_FROM_DICT_OR_GLOBALS, which is for what is in a class without being part of its body. They differ in how the globals are asked.
+static EncodedJSValue loadNameFrom(JSGlobalObject*, CallFrame*, GlobalsAre);
+
 PYTHON_RUNTIME_FUNCTION(loadName)
+{
+    return loadNameFrom(globalObject, callFrame, GlobalsAre::LookedIn);
+}
+
+PYTHON_RUNTIME_FUNCTION(loadFromDictOrGlobals)
+{
+    return loadNameFrom(globalObject, callFrame, GlobalsAre::AskedAsAMapping);
+}
+
+static EncodedJSValue loadNameFrom(JSGlobalObject* globalObject, CallFrame* callFrame, GlobalsAre globalsAre)
 {
     PROLOGUE();
     JSString* name = asString(argument(3));
@@ -85,7 +98,7 @@ PYTHON_RUNTIME_FUNCTION(loadName)
     auto identifier = name->toIdentifier(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     GlobalLocation location;
-    RELEASE_AND_RETURN(scope, JSValue::encode(loadGlobal(globalObject, asObject(argument(1)), asObject(argument(2)), identifier, location)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(loadGlobal(globalObject, asObject(argument(1)), asObject(argument(2)), identifier, location, globalsAre)));
 }
 
 PYTHON_RUNTIME_FUNCTION(loadFromNamespace)
@@ -1191,6 +1204,7 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
         object->putDirect(vm, Identifier::fromString(vm, name), PyNativeFunction::create(vm, globalObject, 0, String(name), function, PyNativeFunction::Kind::Function, nullptr, 0, ImplementationVisibility::Private));
     };
     add("loadName"_s, loadName);
+    add("loadFromDictOrGlobals"_s, loadFromDictOrGlobals);
     add("checkAnnotationFormat"_s, checkAnnotationFormat);
     add("newInterpolation"_s, runtimeNewInterpolation);
     add("newTemplate"_s, runtimeNewTemplate);

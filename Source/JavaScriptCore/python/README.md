@@ -261,6 +261,12 @@ the structure that the one had, that of the other if that is where it was, and t
 those and load. So shadowing a builtin, deleting what shadowed it, and changing the builtins are all seen at once by code that is
 already hot.
 
+**The globals can be a dict of a class that a program has derived**, given to `function()`, `exec()` or `eval()`, and so can the builtins. CPython then asks it as it would ask any mapping, so that its `__getitem__()` and
+`__missing__()` are heard. `annotationlib` depends on that: to say what an annotation is that names something not yet defined, it runs what works the annotations out again, with globals that make something up for whatever is
+not there. `dataclasses` does that to every class it is given. The object that such a dict keeps its items in has a property that says so, `loadGlobal()` looks for it, and nothing is remembered of what comes of asking. It being a
+property, no such object has the structure of one that is not, so what has been remembered about other globals is not taken to be about these. Which of CPython's instructions a name is loaded by matters here:
+`LOAD_GLOBAL` and `LOAD_FROM_DICT_OR_GLOBALS` ask, and `LOAD_NAME`, having asked the locals, looks in the globals for itself. Storing and deleting never ask.
+
 ### Calls
 
 `f(a, b)` is `call`, with `undefined` for `this`. Python's parameters are JavaScript's, in order, so either language calls the

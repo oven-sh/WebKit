@@ -896,7 +896,7 @@ private:
             return result.get();
         }
         case Where::Namespace:
-            return emitRuntimeCall(dst, "loadName"_s, { m_namespace.get(), m_globals.get(), m_builtins.get(), stringConstant(name) }, node);
+            return emitRuntimeCall(dst, m_info.canSeeClassScope ? "loadFromDictOrGlobals"_s : "loadName"_s, { m_namespace.get(), m_globals.get(), m_builtins.get(), stringConstant(name) }, node);
         case Where::NamespaceOrClosure: {
             Reg result = temporaryDestination(dst);
             emitRuntimeCall(result.get(), "loadFromNamespace"_s, { m_namespace.get(), stringConstant(name) }, node);
@@ -4453,8 +4453,7 @@ private:
         {
             noteName(m_names.dunder_name);
             Reg moduleName = g.newTemporary();
-            mark(node);
-            OpPyLoadGlobal::emit(&g, moduleName.get(), m_globals.get(), m_builtins.get(), g.addConstant(m_names.dunder_name), g.nextValueProfileIndex());
+            emitRuntimeCall(moduleName.get(), "loadName"_s, { m_namespace.get(), m_globals.get(), m_builtins.get(), stringConstant(m_names.dunder_name) }, node);
             store(m_names.dunder_module, moduleName.get());
         }
         store(m_names.dunder_qualname, constant(jsString(m_vm, m_info.qualifiedName)));

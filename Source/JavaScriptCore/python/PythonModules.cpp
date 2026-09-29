@@ -73,10 +73,37 @@ JSObject* tryModule(JSGlobalObject* globalObject, JSValue value)
     return typeOf(globalObject, value)->isSubtypeOf(globalObject->pyRealm()->typeModule()) ? asObject(value) : nullptr;
 }
 
-JSValue loadGlobal(JSGlobalObject* globalObject, JSObject* globals, JSObject* builtins, PropertyName name, GlobalLocation& location)
+// PyMapping_GetOptionalItem(), of the dict that an object is the properties of. Empty if it is not there, or if it raised.
+static JSValue getOptionalItem(JSGlobalObject* globalObject, JSObject* namespaceObject, PropertyName name)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = getItem(globalObject, PyDict::backedBy(globalObject, namespaceObject), jsString(vm, String(name.uid())));
+    if (scope.exception()) [[unlikely]] {
+        catchException(globalObject, BuiltinType::KeyError);
+        return { };
+    }
+    return value;
+}
+
+JSValue loadGlobal(JSGlobalObject* globalObject, JSObject* globals, JSObject* builtins, PropertyName name, GlobalLocation& location, GlobalsAre globalsAre)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto isOfDerivedClass = [&] (JSObject* object) { return !!object->getDirect(vm, vm.pythonNames().private_isDictOfDerivedClass); };
+    // _PyEval_LoadGlobalStackRef(): a dict of a class that a program has derived is asked as anything is asked for an item, so that its __getitem__() and __missing__() have their say. Nothing is remembered of that.
+    // annotationlib depends on it: it runs what works out annotations again with globals that make something up for whatever is not there.
+    if (globalsAre == GlobalsAre::AskedAsAMapping && isOfDerivedClass(globals)) [[unlikely]] {
+        JSValue value = getOptionalItem(globalObject, globals, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!value) {
+            value = getOptionalItem(globalObject, builtins, name);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        if (!value)
+            return raiseNameError(globalObject, scope, String(name.uid()));
+        return value;
+    }
     // What is not enumerable is no variable: see getStoredAttribute().
     auto find = [&] (JSObject* object, PropertyOffset& offset) -> JSValue {
         unsigned attributes;
@@ -91,6 +118,13 @@ JSValue loadGlobal(JSGlobalObject* globalObject, JSObject* globals, JSObject* bu
     if (JSValue value = find(globals, offset)) {
         if (globalsStructure->propertyAccessesAreCacheable())
             location = { globalsStructure, nullptr, offset };
+        return value;
+    }
+    if (isOfDerivedClass(builtins)) [[unlikely]] {
+        JSValue value = getOptionalItem(globalObject, builtins, name);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!value)
+            return raiseNameError(globalObject, scope, String(name.uid()));
         return value;
     }
     if (JSValue value = find(builtins, offset)) {

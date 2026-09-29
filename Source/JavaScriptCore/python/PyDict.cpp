@@ -415,6 +415,9 @@ void PyDict::becomeBackedBy(JSGlobalObject* globalObject, JSObject* object)
     }
     m_backing.set(vm, this, object);
     object->putDirect(vm, vm.pythonNames().private_dict, this);
+    // See Python::loadGlobal(). It is a property so that no such object has the structure of one that is not.
+    if (Python::typeOf(globalObject, this) != globalObject->pyRealm()->typeDict())
+        object->putDirect(vm, vm.pythonNames().private_isDictOfDerivedClass, jsBoolean(true));
 }
 
 void PyDict::detach(JSGlobalObject* globalObject)
@@ -426,6 +429,7 @@ void PyDict::detach(JSGlobalObject* globalObject)
     items->copyFrom(globalObject, *this);
     clear(globalObject);
     JSCell::deleteProperty(object, globalObject, vm.pythonNames().private_dict);
+    JSCell::deleteProperty(object, globalObject, vm.pythonNames().private_isDictOfDerivedClass);
     m_backing.clear();
     copyFrom(globalObject, *items);
 }
