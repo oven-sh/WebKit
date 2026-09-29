@@ -739,6 +739,9 @@ SlotVisitor::SharedDrainResult SlotVisitor::drainInParallelPassively(MonotonicTi
     ASSERT(Options::numberOfGCMarkers());
     
     if (Options::numberOfGCMarkers() == 1
+#if USE(BUN_JSC_ADDITIONS)
+        || !m_heap.usesParallelMarking()
+#endif
         || (m_heap.m_worldState.load() & Heap::mutatorWaitingBit)
         || !m_heap.hasHeapAccess()
         || m_heap.worldIsStopped()) {
@@ -792,6 +795,10 @@ void SlotVisitor::donate()
     
     if (Options::numberOfGCMarkers() == 1)
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (!m_heap.usesParallelMarking())
+        return;
+#endif
     
     donateKnownParallel();
 }

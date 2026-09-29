@@ -346,7 +346,11 @@ private:
 #define INIT_SERVER_STRUCTURE_ISO_SUBSPACE(name, heapCellType, type) \
     , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
 
+#if USE(BUN_JSC_ADDITIONS)
+Heap::Heap(VM& vm, HeapType heapType, HeapMarking marking)
+#else
 Heap::Heap(VM& vm, HeapType heapType)
+#endif
     : m_heapType(heapType)
     , m_ramSize(Options::forceRAMSize() ? Options::forceRAMSize() : ramSize())
     , m_minBytesPerCycle(minHeapSize(m_heapType, m_ramSize))
@@ -373,6 +377,9 @@ Heap::Heap(VM& vm, HeapType heapType)
     , m_helperClient(&heapHelperPool())
     , m_threadLock(Box<Lock>::create())
     , m_threadCondition(AutomaticThreadCondition::create())
+#if USE(BUN_JSC_ADDITIONS)
+    , m_marking(marking)
+#endif
 
     // HeapCellTypes
     , auxiliaryHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::Auxiliary))
@@ -459,6 +466,11 @@ Heap::Heap(VM& vm, HeapType heapType)
 
     m_worldState.store(0);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A SerialUnlessLarge heap gets its parallel visitors the first time it marks with the pool.
+    if (m_marking == HeapMarking::Parallel)
+        ensureParallelSlotVisitors();
+#else
     for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
         std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
         if (Options::optimizeParallelSlotVisitorsForStoppedMutator())
@@ -466,6 +478,7 @@ Heap::Heap(VM& vm, HeapType heapType)
         m_availableParallelSlotVisitors.append(visitor.get());
         m_parallelSlotVisitors.append(WTF::move(visitor));
     }
+#endif
     
     if (Options::useConcurrentGC()) {
         if (Options::useStochasticMutatorScheduler())
@@ -493,6 +506,25 @@ Heap::Heap(VM& vm, HeapType heapType)
 
 #undef INIT_SERVER_ISO_SUBSPACE
 #undef INIT_SERVER_STRUCTURE_ISO_SUBSPACE
+
+#if USE(BUN_JSC_ADDITIONS)
+// Called from the constructor, or from runBeginPhase with the world stopped and before the pool has
+// the task: nothing iterates the visitors at either point.
+void Heap::ensureParallelSlotVisitors()
+{
+    if (!m_parallelSlotVisitors.isEmpty())
+        return;
+    Locker locker { m_parallelSlotVisitorLock };
+    for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
+        std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
+        if (Options::optimizeParallelSlotVisitorsForStoppedMutator())
+            visitor->optimizeForStoppedMutator();
+        visitor->updateMutatorIsStopped(NoLockingNecessary);
+        m_availableParallelSlotVisitors.append(visitor.get());
+        m_parallelSlotVisitors.append(WTF::move(visitor));
+    }
+}
+#endif
 
 Heap::~Heap()
 {
@@ -2104,6 +2136,13 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
 
     ASSERT(m_collectionScope);
     bool isFullGC = m_collectionScope.value() == CollectionScope::Full;
+#if USE(BUN_JSC_ADDITIONS)
+    // Decided here, before the visitors are told that marking starts, and read until runEndPhase.
+    m_usesParallelMarking = m_marking == HeapMarking::Parallel
+        || (isFullGC && m_sizeAfterLastCollect >= Options::largeHeapSizeForSharedMarking());
+    if (m_usesParallelMarking)
+        ensureParallelSlotVisitors();
+#endif
     if (Options::useGCSignpost()) [[unlikely]] {
         StringPrintStream stream;
         stream.print("GC:(", RawPointer(this), "),mode:(", (isFullGC ? "Full" : "Eden"), "),version:(", m_gcVersion, "),conn:(", gcConductorShortName(conn), "),capacity(", capacity() / 1024, "kb)");
@@ -2135,6 +2174,9 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
 
     m_parallelMarkersShouldExit = false;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_usesParallelMarking)
+#endif
     m_helperClient.setFunction(
         [this] () {
             SlotVisitor* visitor;
@@ -2318,6 +2360,9 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
         m_parallelMarkersShouldExit = true;
         m_markingConditionVariable.notifyAll();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (usesParallelMarking())
+#endif
     m_helperClient.finish();
     
     ASSERT(m_mutatorMarkStack->isEmpty());

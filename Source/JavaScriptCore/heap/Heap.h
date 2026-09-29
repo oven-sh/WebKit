@@ -337,6 +337,15 @@ typedef HashCountedSet<ASCIILiteral> TypeCountSet;
 
 enum class HeapType : uint8_t { Small, Medium, Large };
 
+#if USE(BUN_JSC_ADDITIONS)
+// How a heap marks. Parallel: every collection marks with the process-wide helper thread pool
+// (heapHelperPool()). SerialUnlessLarge: a collection marks on its collecting thread, except a full
+// collection of a heap whose live size is at least Options::largeHeapSizeForSharedMarking(). The pool
+// binds a helper to one heap for that heap's whole marking phase, so a process with many heaps that
+// collect at once keeps the small ones off it.
+enum class HeapMarking : uint8_t { Parallel, SerialUnlessLarge };
+#endif
+
 class HeapUtil;
 
 class Heap {
@@ -361,7 +370,13 @@ public:
     // Take this if you know that from->cellState() < barrierThreshold.
     JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from);
 
+#if USE(BUN_JSC_ADDITIONS)
+    Heap(VM&, HeapType, HeapMarking = HeapMarking::Parallel);
+    // Whether the collection in progress marks with the helper pool. Decided in runBeginPhase.
+    bool usesParallelMarking() const { return m_usesParallelMarking; }
+#else
     Heap(VM&, HeapType);
+#endif
     ~Heap();
     void lastChanceToFinalize();
     void releaseDelayedReleasedObjects();
@@ -1152,6 +1167,11 @@ private:
 #endif
 
     bool m_parallelMarkersShouldExit { false };
+#if USE(BUN_JSC_ADDITIONS)
+    void ensureParallelSlotVisitors();
+    const HeapMarking m_marking;
+    bool m_usesParallelMarking { true };
+#endif
     Lock m_collectContinuouslyLock;
     Condition m_collectContinuouslyCondition;
 
