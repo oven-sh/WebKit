@@ -48,10 +48,23 @@ function isOnChainOf(object, candidate) {
     return false;
 }
 
+const hasVM = typeof $vm === "object";
+
+// An object with a delegate answers with what the delegate has, so it gets a property with no new structure.
+const delegates = [];
 let made = 0;
 function makeObject() {
     let object;
-    switch (random(6)) {
+    switch (random(hasVM ? 7 : 6)) {
+    case 6: {
+        const delegate = Object.create(null);
+        if (delegates.length < 6)
+            delegates.push(delegate);
+        else
+            delegates[random(delegates.length)] = delegate;
+        object = $vm.createImpureGetter(delegate);
+        break;
+    }
     case 0:
         object = { };
         break;
@@ -80,10 +93,11 @@ for (let i = 0; i < 24; ++i)
     pool.push(makeObject());
 const primitives = ["text", "a longer text " + made, 7, 1.5, true, Symbol("s"), 10n, "ro" + "pe".repeat(20)];
 const shared = [Object.prototype, Array.prototype, Function.prototype, String.prototype, Number.prototype];
-const hasVM = typeof $vm === "object";
 
 function change(step) {
-    const object = pool[random(pool.length)];
+    // A delegate keeps its null prototype: the object that it answers for must not be on its chain.
+    const isDelegate = delegates.length && !random(5);
+    const object = isDelegate ? delegates[random(delegates.length)] : pool[random(pool.length)];
     const name = names[random(names.length)];
     switch (random(12)) {
     case 0:
@@ -97,6 +111,8 @@ function change(step) {
         delete object[name];
         break;
     case 5: {
+        if (isDelegate)
+            break;
         const proto = random(4) ? pool[random(pool.length)] : null;
         if (proto === null || !isOnChainOf(object, proto)) {
             if (Object.isExtensible(object))

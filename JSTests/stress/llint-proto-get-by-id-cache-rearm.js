@@ -330,6 +330,45 @@ function expectTries(get, expected, message) {
     shouldBe(get(o), undefined);
 }
 
+// A receiver that answers with what another object has (GetOwnPropertySlotIsImpure) can get the property with no new
+// structure. It has no prototype load cache: not as the first cache of a site, and not as a later one.
+if (typeof $vm.createImpureGetter === "function") {
+    const delegate = { a: 1 };
+    const impure = $vm.createImpureGetter(delegate);
+    Object.setPrototypeOf(impure, { value: "prototype" });
+
+    const get = makeGetter();
+    for (let i = 0; i < warmUp; ++i)
+        shouldBe(get(impure), "prototype");
+    if (interpreterOnly)
+        shouldBe($vm.llintGetByIdCaches(get)[0], "empty", "receiver with a delegate");
+    delegate.value = "delegate";
+    shouldBe(get(impure), "delegate", "receiver with a delegate, first cache of the site");
+    delete delegate.value;
+    shouldBe(get(impure), "prototype");
+
+    // The site has a cache of an own property of another object first.
+    const getLater = makeGetter();
+    const own = { value: "own" };
+    for (let i = 0; i < warmUp; ++i)
+        shouldBe(getLater(own), "own");
+    for (let i = 0; i < warmUp; ++i)
+        shouldBe(getLater(impure), "prototype");
+    delegate.value = "delegate";
+    shouldBe(getLater(impure), "delegate", "receiver with a delegate, later cache of the site");
+    delete delegate.value;
+
+    // The delegate is on the chain of an ordinary receiver.
+    const inheritor = Object.create(impure);
+    inheritor.b = 1;
+    const getThroughChain = makeGetter();
+    for (let i = 0; i < warmUp; ++i)
+        shouldBe(getThroughChain(inheritor), "prototype");
+    delegate.value = "delegate";
+    shouldBe(getThroughChain(inheritor), "delegate", "object with a delegate on the chain");
+    delete delegate.value;
+}
+
 // instanceof reads Symbol.hasInstance and "prototype" of the constructor with the same cache.
 {
     function check(value, constructor) { return value instanceof constructor; }

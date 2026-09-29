@@ -6,6 +6,7 @@
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntICs=0")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntUnsetCaching=1", "--useLLIntStringLengthFastPath=0", "--useLLIntPrototypeCacheRearming=1")
 //@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=1")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--maximumBytecodeCostForLLIntMissTierUp=0")
 //@ runDefault("--useJIT=0", "--missCountForLLIntTierUp=12")
 
 // A get_by_id or put_by_id site counts the calls of its slow path in the LLInt. The call that makes the count
@@ -124,6 +125,84 @@ function expectEarly(name, call) {
         return $vm.llintTrue();
     }
     expectEarly("numberGet", firstCallOutOfLLInt(numberGet, i => i));
+}
+
+// Instances of this many classes. Each class has its own prototype, with the methods on it.
+function makeInstances(count) {
+    const instances = [];
+    for (let i = 0; i < count; ++i) {
+        const C = class { method() { return i; } next() { return this.result; } };
+        C.prototype["uniqueToClass" + i] = true;
+        instances.push(new C);
+    }
+    return instances;
+}
+
+// get_by_id of a method of the prototype, for instances of many classes. The second result makes a prototype load
+// cache, so the site counts the misses after it in its entry of the watchpoint map.
+{
+    function megamorphicMethodGet(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const instances = makeInstances(16);
+    const call = firstCallOutOfLLInt(megamorphicMethodGet, i => instances[i % instances.length]);
+    if (options.useLLIntICs && missCount > 2) {
+        shouldBe($vm.llintGetByIdCaches(megamorphicMethodGet)[0], "proto", "the cache of megamorphicMethodGet");
+        shouldBe($vm.llintGetByIdMissCounts(megamorphicMethodGet)[0], missCount, "the count of megamorphicMethodGet");
+    }
+    expectEarly("megamorphicMethodGet", call);
+}
+
+// The same with one class: two misses, so no tier up.
+{
+    function monomorphicMethodGet(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const instance = makeInstances(1)[0];
+    shouldBe(firstCallOutOfLLInt(monomorphicMethodGet, i => instance), 0, "monomorphicMethodGet must stay in the LLInt");
+}
+
+// A site with a checkpoint: for-of reads "next" of the iterator in iterator_open. The iterators are instances of
+// many classes with "next" on the prototype, and nothing else in the function misses more than twice.
+{
+    function megamorphicIteratorNext(iterable) {
+        for (const value of iterable) { }
+        return $vm.llintTrue();
+    }
+    const end = { value: undefined, done: true };
+    const iterators = makeInstances(16);
+    for (const iterator of iterators)
+        iterator.result = end;
+    let next = 0;
+    const iterable = { [Symbol.iterator]() { return iterators[next++ % iterators.length]; } };
+    expectEarly("megamorphicIteratorNext", firstCallOutOfLLInt(megamorphicIteratorNext, i => iterable));
+}
+
+// A function with a bytecode cost above Options::maximumBytecodeCostForLLIntMissTierUp() gets nothing from the
+// misses: a large body that runs once is not compiled for a loop in it.
+{
+    const limit = options.maximumBytecodeCostForLLIntMissTierUp;
+    // A statement is more than 2 bytes of bytecode.
+    const statements = limit ? Math.ceil(limit / 2) : 5000;
+    const large = new Function("o", "p", "let t = o.tag;" + "t = p.a;".repeat(statements) + "return $vm.llintTrue();");
+    const padding = { a: 1 };
+    const objects = makeObjects(16);
+    let call = 0;
+    for (let i = 0; i < 40 && !call; ++i) {
+        if (!large(objects[i % objects.length], padding))
+            call = i + 1;
+    }
+    if (limit)
+        shouldBe(call, 0, "a function above the limit must stay in the LLInt");
+    else
+        expectEarly("a large function with no limit", call);
+
+    // The same function with 100 turns of a loop in one call: the loop does not enter the Baseline JIT code.
+    const largeWithLoop = new Function("objects", "p", "let t; for (let i = 0; i < 100; ++i) t = objects[i % objects.length].tag;" + "t = p.a;".repeat(statements) + "return $vm.llintTrue();");
+    if (limit)
+        shouldBe(largeWithLoop(objects, padding), true, "a body above the limit that runs once must stay in the LLInt");
 }
 
 // put_by_id that replaces a property of receivers with many structures.

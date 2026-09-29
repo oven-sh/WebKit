@@ -965,7 +965,9 @@ static bool tryToSetUpGetByIdPrototypeCache(JSGlobalObject* globalObject, VM& vm
     if (structure->typeInfo().prohibitsPropertyCaching())
         return false;
     
-    if (structure->needImpurePropertyWatchpoint())
+    // As actionForCell() does for the inline cache of the JIT: the receiver can get the property with no new
+    // structure. The kind of dictionary is not asked here, because a dictionary is made flat below.
+    if (structure->typeInfo().getOwnPropertySlotIsImpure())
         return false;
 
     if (slot.isUnset() && !canCacheAbsenceFor(structure))
@@ -1096,14 +1098,14 @@ static JSValue performLLIntGetByID(BytecodeIndex bytecodeIndex, CodeBlock* codeB
     // The call counts also when the read throws. From here to the end nothing runs that can change the watchpoint
     // map, but for the try to make a cache.
     CodeBlock::LLIntGetByIdGuards* guardsInProtoLoadMode = nullptr;
-    if (metadata.mode == GetByIdMode::ProtoLoad) [[unlikely]]
+    uint8_t* missCount = &metadata.missCount;
+    if (metadata.mode == GetByIdMode::ProtoLoad) [[unlikely]] {
         guardsInProtoLoadMode = guardsOfSiteInProtoLoadMode(codeBlock, bytecodeIndex);
-    if (!isAbsenceThatAGlobalObjectCanEnd(baseValue, slot)) [[likely]] {
-        if (metadata.mode != GetByIdMode::ProtoLoad) [[likely]]
-            codeBlock->noteLLIntInlineCacheMiss(metadata.missCount);
-        else if (guardsInProtoLoadMode)
-            codeBlock->noteLLIntInlineCacheMiss(guardsInProtoLoadMode->counts.missCount);
+        missCount = guardsInProtoLoadMode ? &guardsInProtoLoadMode->counts.missCount : nullptr;
     }
+    // The count first: it is enough for a site that has its count, and with the option off.
+    if (missCount && *missCount < Options::missCountForLLIntTierUp() && !isAbsenceThatAGlobalObjectCanEnd(baseValue, slot))
+        codeBlock->noteLLIntInlineCacheMiss(*missCount);
     RETURN_IF_EXCEPTION(throwScope, { });
 
     if (!Options::useLLIntICs() || !baseValue.isCell())

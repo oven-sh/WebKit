@@ -4279,6 +4279,9 @@ void CodeBlock::lowerJITThresholdForLLIntInlineCacheMisses()
     // With no inline caches in the LLInt, each execution of a site is a call of its slow path.
     if (!Options::useBaselineJIT() || !Options::useLLIntICs() || jitType() != JITType::InterpreterThunk)
         return;
+    // The counter does not say if a body runs once. What a wrong guess costs is the size of the body.
+    if (unsigned maximumCost = Options::maximumBytecodeCostForLLIntMissTierUp(); maximumCost && bytecodeCost() > maximumCost)
+        return;
     if (!m_unlinkedCode->llintExecuteCounter().lowerThreshold(m_unlinkedCode->thresholdForJIT(Options::thresholdForJITSoon()), this))
         return; // dontJITAnytimeSoon()
     // The counter is that of the UnlinkedCodeBlock, and each CodeBlock of it checks it. So the exemption is there too.
