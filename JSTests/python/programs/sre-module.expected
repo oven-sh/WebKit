@@ -293,6 +293,7 @@ expand, of bytes => [(b'[b]', b'plain', b'[b]', b'[b]', 'bytes', 'a')]
 ---- replacing
 with a template => ('[ab] [a]', 'aaaa', '\\\\', '\n', 'a0', 'a', '\\1', 'PatternError: invalid group reference 1 at position 1', "IndexError: unknown group name 'x'", 'PatternError: bad escape \\q at position 0', 'PatternError: bad escape (end of pattern) at position 0', 'a')
 a template is looked at even if nothing is found => PatternError: invalid group reference 1 at position 1
+with what cannot be hashed, which is looked for in a cache => ["TypeError: unhashable type: 'list'", "TypeError: unhashable type: 'dict'", 'TypeError: decoding to str: need a bytes-like object, NoneType found', 'TypeError: decoding to str: need a bytes-like object, int found', "TypeError: unhashable type: 'list'", "TypeError: unhashable type: 'dict'", 'TypeError: decoding to str: need a bytes-like object, NoneType found', 'TypeError: decoding to str: need a bytes-like object, int found']
 with a great many parts => a-b-c-a-b-c-a-b-c-a-b-c
 with a function => ('XbX', 'b', 'b', 'aabaa', 'TypeError: sequence item 0: expected str instance, int found', 'TypeError: sequence item 0: expected str instance, bytes found', 'ZeroDivisionError: division by zero', 'TypeError: <lambda>.<locals>.<lambda>() takes 0 positional arguments but 1 was given', 'aba', 'AbA', '<re.Match ')
 with a class derived from str => ('XbX', 'str', '[a]b[a]', 'str')

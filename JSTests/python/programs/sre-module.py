@@ -150,6 +150,7 @@ t("expand, of bytes", lambda: [(x.expand(rb"[\1]"), x.expand(b"plain"), x.expand
 print("---- replacing")
 t("with a template", lambda: (P("(a)(b)?").sub(r"[\1\2]", "ab a"), P("(?P<x>a)").sub(r"\g<x>\g<x>", "aa"), P("a").sub(r"\\", "aa"), P("a").sub(r"\n", "a"), P("(a)").sub(r"\g<1>0", "a"), P("(a)").sub(r"\10" if False else r"\g<1>", "a"), P("a").sub("\\\\1", "a"), attempt(P("a").sub, r"\1", "a"), attempt(P("a").sub, r"\g<x>", "a"), attempt(P("a").sub, r"\q", "a"), attempt(P("a").sub, "\\", "a"), P("z").sub(r"\1" if False else "x", "a")))
 t("a template is looked at even if nothing is found", lambda: attempt(P("z").sub, r"\1", "a"))
+t("with what cannot be hashed, which is looked for in a cache", lambda: [attempt(f, r, "abc") for f in (P("b").sub, P("b").subn) for r in ([], {}, None, 5)])
 t("with a great many parts", lambda: P("(a)(b)(c)").sub(r"\1-\2-\3-\1-\2-\3-\1-\2-\3-\1-\2-\3", "abc"))
 t("with a function", lambda: (P("a").sub(lambda m: "X", "aba"), P("a").sub(lambda m: None, "aba"), P("a").sub(lambda m: "", "aba"), P("(a)").sub(lambda m: m.group(1) * 2, "aba"), attempt(P("a").sub, lambda m: 5, "aba"), attempt(P("a").sub, lambda m: b"X", "aba"), attempt(P("a").sub, lambda m: 1 / 0, "aba"), attempt(P("a").sub, lambda: "X", "aba"), P("z").sub(lambda m: 5, "aba"), P("a").sub(str.upper if False else (lambda m: m.group().upper()), "aba"), P("a").sub(S, "a")[:10]))
 t("with a class derived from str", lambda: (P("a").sub(S("X"), "aba"), type(P("a").sub(S("X"), "aba")).__name__, P("(a)").sub(S(r"[\1]"), "aba"), type(P("a").sub(S("X"), "a")).__name__))

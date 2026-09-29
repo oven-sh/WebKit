@@ -47,9 +47,9 @@ import json
 import sys
 
 # The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
-MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator")
+MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools")
 
 
 def generator():
@@ -133,7 +133,7 @@ def add_type(a_type):
 for value in vars(builtins).values():
     if isinstance(value, type):
         add_type(value)
-for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator"):
+for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator", "_functools"):
     for value in vars(__import__(name)).values():
         if isinstance(value, type):
             add_type(value)
@@ -147,6 +147,7 @@ add_type(type(__import__("_struct").iter_unpack("b", b"")))
 add_type(type(__import__("unicodedata")._ucnhash_CAPI))
 add_type(type(iter(__import__("array").array("b"))))
 add_type(type(__import__("abc").ABC._abc_impl))
+add_type(type(__import__("functools").cmp_to_key(len)))
 a_pattern = __import__("re").compile("a")
 for example in (a_pattern, a_pattern.match("a"), a_pattern.scanner("a"), __import__("re")._compile_template(a_pattern, "\\g<0>")):
     add_type(type(example))

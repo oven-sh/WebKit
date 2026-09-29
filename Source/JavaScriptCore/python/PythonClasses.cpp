@@ -272,16 +272,26 @@ static bool callSetNames(JSGlobalObject* globalObject, PyType* type, PyDict* nam
 JSValue callWithKeywordDict(JSGlobalObject* globalObject, JSValue callable, MarkedArgumentBuffer& arguments, PyDict* keywords)
 {
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!keywords || !keywords->size())
-        return call(globalObject, callable, arguments);
+        RELEASE_AND_RETURN(scope, call(globalObject, callable, arguments));
     KeywordNames* names = KeywordNames::create(vm, CopyOnWriteArrayWithContiguous, keywords->size());
     unsigned i = 0;
+    bool areAllStrings = true;
+    // _PyStack_UnpackDict(). Whatever is among the names is taken for a string by all that looks at them, and a dict can have anything for a key.
     keywords->forEach(globalObject, [&] (JSValue key, JSValue value) {
-        names->setIndex(vm, i++, key);
+        JSString* name = stringIn(key);
+        if (!name) {
+            areAllStrings = false;
+            return false;
+        }
+        names->setIndex(vm, i++, name);
         arguments.append(value);
         return true;
     });
-    return callWithKeywords(globalObject, callable, arguments, names);
+    if (!areAllStrings)
+        return raiseTypeError(globalObject, scope, "keywords must be strings"_s);
+    RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, callable, arguments, names));
 }
 
 JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords)

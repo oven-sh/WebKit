@@ -786,6 +786,16 @@ with `_py_abc` is `_py_abc`: `isinstance()` of a protocol that has attributes th
 it is an attribute of, and one that is built in is not. `glob.py` has `concat_path = operator.add` in a class, so with the one in Python `Path.glob("**/*")` raised `TypeError`. And `operator.index()` in Python is
 `a.__index__()`, which is not what `PyNumber_Index()` does with an int, or with what does not give one.
 
+### `_functools`
+
+`PythonFunctoolsModule.cpp` is `Modules/_functoolsmodule.c`: `partial`, `Placeholder`, `reduce()`, `cmp_to_key()`, and what `lru_cache()` makes.
+
+What is in a cache that has a limit is in a ring, from what was wanted longest ago to what was wanted last. In CPython the pointers of the ring do not count, and each thing in it is counted once besides for being there, apart from
+being in the dict. Here to be in the ring is to be kept: the links are looked at by the collector like anything else. So one that has been taken out of the dict by what was called, and is still in the ring, is still there.
+The dict is one that no program sees, and it is asked with a hash that is known already, so that `__hash__()` is called once for each call, as in CPython.
+
+`partial(p, ...)` is of what `p` is of only if `p` has no `__dict__` yet, and asking for that makes one. Here that is whether the object has any properties.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see
