@@ -175,13 +175,26 @@ void emitMegamorphicStore(CCallHelpers& jit, GPRReg base, GPRReg uid, GPRReg val
 
 } // anonymous namespace
 
-// The megamorphic cache is for the sites that have found that their own slot is of no use to them. Any other has to get to its
-// operation, which fills the slot: what another site has left in the megamorphic cache would keep it from ever having one.
+// A site with a slot of its own that has nothing in it yet has to get to its operation, which fills the slot: what another site has
+// left in the megamorphic cache would keep it from ever having one. Any other has nothing to lose by looking there first: its
+// slot is for another structure, so it sees more than one; or it has given up on the slot; or the slot is nobody's (SharedData), and
+// is never filled.
 static void branchIfSlotIsStillOfUse(CCallHelpers& jit, GPRReg slot, JumpList& slowCases)
 {
     jit.load32(Address(slot, OBJECT_OFFSETOF(Slot, offset)), scratch0);
     jit.and32(TrustedImm32(Slot::attemptsMask), scratch0);
-    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, TrustedImm32(Slot::attemptsMask)));
+    if (!Options::aotLooksInMegamorphicCacheUnlessSlotIsEmpty()) {
+        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, TrustedImm32(Slot::attemptsMask)));
+        return;
+    }
+    Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, scratch0, TrustedImm32(Slot::attemptsMask));
+    Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(slot, OBJECT_OFFSETOF(Slot, structureID)));
+    jit.loadPtr(CCallHelpers::addressFor(CallFrameSlot::codeBlock), scratch0); // The Instance.
+    jit.loadPtr(Address(scratch0, Instance::offsetOfSharedData()), scratch0);
+    jit.subPtr(slot, scratch0, scratch0);
+    slowCases.append(jit.branchPtr(CCallHelpers::AboveOrEqual, scratch0, CCallHelpers::TrustedImmPtr(SharedData::size)));
+    hasGivenUp.link(&jit);
+    isTaken.link(&jit);
 }
 
 // (globalObject, base, identifierIndex, slot)

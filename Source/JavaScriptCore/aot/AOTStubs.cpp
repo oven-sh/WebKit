@@ -1136,15 +1136,27 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         jit.ret();
         notInTable.link(&jit);
 
-        // A site that has found that its slot is of no use to it, because it sees many structures. (Any other has to get to its
-        // operation, which fills the slot: what another site has left in the megamorphic cache would keep it from ever having one.)
+        // See branchIfSlotIsStillOfUse() (AOTThunks.cpp).
         CCallHelpers::JumpList notFound;
         notFound.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
         notFound.append(jit.branchIfNotObject(A0));
         jit.load32(Address(A1, OBJECT_OFFSETOF(Slot, offset)), T11);
         jit.and32(TrustedImm32(Slot::attemptsMask), T11);
-        notFound.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(Slot::attemptsMask)));
-        loadInstanceAndDataOfSlot(jit, A1, T9, T10);
+        if (!Options::aotLooksInMegamorphicCacheUnlessSlotIsEmpty()) {
+            notFound.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(Slot::attemptsMask)));
+            loadInstanceAndDataOfSlot(jit, A1, T9, T10);
+        } else {
+            Jump hasGivenUp = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(Slot::attemptsMask));
+            loadInstanceAndDataOfSlot(jit, A1, T9, T10);
+            Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(A1, OBJECT_OFFSETOF(Slot, structureID)));
+            jit.loadPtr(Address(T9, Instance::offsetOfSharedData()), T11);
+            notFound.append(jit.branchPtr(CCallHelpers::NotEqual, T10, T11));
+            Jump isNobodys = jit.jump();
+            hasGivenUp.link(&jit);
+            loadInstanceAndDataOfSlot(jit, A1, T9, T10);
+            isTaken.link(&jit);
+            isNobodys.link(&jit);
+        }
         siteOfSlot(jit, T10, A1, T13);
         loadInfo(jit, T9, T10);
         jit.loadPtr(Address(T10, FunctionInfo::offsetOfSites()), T11);

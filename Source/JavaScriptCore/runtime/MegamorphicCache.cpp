@@ -35,6 +35,22 @@ namespace JSC {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MegamorphicCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MegamorphicCache);
 
+bool MegamorphicCache::noteDependenceOnPrototypes(StructureID structureID, JSCell* upTo)
+{
+    for (Structure* structure = structureID.decode();;) {
+        if (!structure->hasMonoProto())
+            return false;
+        JSValue prototype = structure->storedPrototype();
+        if (!prototype.isObject())
+            return true;
+        JSObject* object = asObject(prototype);
+        object->setIsPrototypeThatMegamorphicCacheGoesBy();
+        if (object == upTo)
+            return true;
+        structure = object->structure();
+    }
+}
+
 void MegamorphicCache::age(CollectionScope collectionScope)
 {
     ++m_epoch;

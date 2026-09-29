@@ -225,6 +225,8 @@ public:
 
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
+        if (!noteDependenceOnPrototypes(structureID))
+            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
         auto& entry = m_loadCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -236,6 +238,8 @@ public:
 
     void initAsHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
+        if (!ownProperty && !noteDependenceOnPrototypes(structureID, holder))
+            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
         auto& entry = m_loadCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -247,6 +251,8 @@ public:
 
     void initAsGetterHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
+        if (!ownProperty && !noteDependenceOnPrototypes(structureID, holder))
+            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & getterCachePrimaryMask;
         auto& entry = m_getterCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -258,6 +264,8 @@ public:
 
     void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, bool reallocating)
     {
+        if (!noteDependenceOnPrototypes(oldStructureID))
+            return;
         uint32_t primaryIndex = MegamorphicCache::storeCachePrimaryHash(oldStructureID, uid) & storeCachePrimaryMask;
         auto& entry = m_storeCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -280,6 +288,8 @@ public:
 
     void initAsHasHit(StructureID structureID, UniquedStringImpl* uid)
     {
+        if (!noteDependenceOnPrototypes(structureID))
+            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -291,6 +301,8 @@ public:
 
     void initAsHasMiss(StructureID structureID, UniquedStringImpl* uid)
     {
+        if (!noteDependenceOnPrototypes(structureID))
+            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -301,6 +313,11 @@ public:
     }
 
     uint16_t epoch() const { return m_epoch; }
+
+    // What is about to be cached about objects of that structure goes by the objects on their prototype chain, as far as `upTo` if that is
+    // given: they are marked (JSObject::isPrototypeThatMegamorphicCacheGoesBy()), so that a change to one of them is heard of, and
+    // a change to any other object is not. False: which they are cannot be told from the structure, so it is not to be cached.
+    JS_EXPORT_PRIVATE static bool NODELETE noteDependenceOnPrototypes(StructureID, JSCell* upTo = nullptr);
 
     // TEMPORARY-SLOT-STATS
     ASCIILiteral whyLoadIsNotFound(StructureID structureID, UniquedStringImpl* uid) const

@@ -656,6 +656,10 @@ public:
 
     bool mayBePrototype() const;
     void didBecomePrototype(VM&);
+    // Whether something in the MegamorphicCache, about an object that has this on its prototype chain, goes by what this has and what
+    // its own prototype is. It stays so. Whoever changes either says so if it is (VM::invalidateStructureChainIntegrity()).
+    bool isPrototypeThatMegamorphicCacheGoesBy() const;
+    void setIsPrototypeThatMegamorphicCacheGoesBy() { setPerCellBit(true); }
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
 

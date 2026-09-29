@@ -405,7 +405,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             result = offset;
         });
-    if (mayBePrototype()) [[unlikely]]
+    if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     return result;
 }
@@ -540,7 +540,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             if ((mode == PutModeDefineOwnProperty) && (newAttributes != attributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
                 DeferredStructureTransitionWatchpointFire deferred(vm, structure);
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
-                if (mayBePrototype()) [[unlikely]]
+                if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
             } else {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
@@ -554,7 +554,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         slot.setNewProperty(this, offset);
         if (attributes & PropertyAttribute::ReadOnly)
             this->structure()->setContainsReadOnlyProperties();
-        if (mayBePrototype()) [[unlikely]]
+        if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
         return { };
     }
@@ -579,7 +579,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             putDirectOffset(vm, offset, value);
             setStructure(vm, newStructure);
             slot.setNewProperty(this, offset);
-            if (mayBePrototype()) [[unlikely]]
+            if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
             return { };
         }
@@ -601,7 +601,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             // This allows adaptive watchpoints to observe if the new structure is the one we want.
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
-            if (mayBePrototype()) [[unlikely]]
+            if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
         } else {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
@@ -639,9 +639,14 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     slot.setNewProperty(this, offset);
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();
-    if (mayBePrototype()) [[unlikely]]
+    if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     return { };
+}
+
+inline bool JSObject::isPrototypeThatMegamorphicCacheGoesBy() const
+{
+    return mayBePrototype() && (perCellBit() || !Options::useMarkedPrototypesForMegamorphicCache());
 }
 
 inline bool JSObject::mayBePrototype() const
