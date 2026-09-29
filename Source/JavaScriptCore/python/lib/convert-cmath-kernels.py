@@ -1,0 +1,132 @@
+#!/usr/bin/env python3
+#
+# Copyright (C) 2026 Apple Inc. All rights reserved.
+#
+# Redistribution and use in source and binary forms, with or without
+# modification, are permitted provided that the following conditions
+# are met:
+# 1. Redistributions of source code must retain the above copyright
+#    notice, this list of conditions and the following disclaimer.
+# 2. Redistributions in binary form must reproduce the above copyright
+#    notice, this list of conditions and the following disclaimer in the
+#    documentation and/or other materials provided with the distribution.
+#
+# THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+# EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+# IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+# PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+# CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+# EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+# PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+# PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+# OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+# (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+# OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+# Makes PythonCMathKernels.h out of Modules/cmathmodule.c of CPython: the functions there that take complex numbers of C's and give complex numbers of C's, and the tables of what they give for infinities and NaNs.
+#
+#     python3 convert-cmath-kernels.py <the directory that CPython's source is in> > ../PythonCMathKernels.h
+#
+# They are taken as they are, expression for expression, because how a sum is written decides how it is rounded: see "One rounding or two" in the README. What has to do with objects is in PythonCMathModule.cpp, and is
+# written by hand.
+import re
+import sys
+
+root = sys.argv[1]
+source = open(root + "/Modules/cmathmodule.c").read()
+helpers = open(root + "/Modules/_math.h").read()
+complexes = open(root + "/Objects/complexobject.c").read()
+
+
+def function(name, text):
+    "A function, from the line that says what it returns to the brace in the first column that ends it"
+    m = re.search(r"^(?:static (?:inline )?)?[\w ]+\n%s\(.*?^}\n" % re.escape(name), text, re.M | re.S)
+    assert m, name
+    return m.group(0)
+
+
+def between(first, last):
+    a, b = source.index(first), source.index(last)
+    assert source.count(first) == 1 and source.count(last) == 1 and a < b, (first, last)
+    return source[a:b]
+
+
+rect = between("static Py_complex rect_special_values[7][7] = {", "/*[clinic input]\ncmath.isfinite = cmath.polar")
+# It is left for whoever calls it to see what errno is, as with all the others.
+rect, count = re.subn(r"    if \(errno != 0\)\n        return math_error\(\);\n    else\n        return PyComplex_FromCComplex\(z\);\n", "    return z;\n", rect)
+assert count == 1
+rect, count = re.subn(r"static PyObject \*\ncmath_rect_impl", "static Py_complex\ncmath_rect_impl", rect)
+assert count == 1
+
+text = "\n".join([
+    "// ---- Of Objects/complexobject.c\n",
+    function("_Py_c_diff", complexes), function("_Py_c_neg", complexes), function("_Py_c_quot", complexes), function("_Py_c_abs", complexes),
+    "// ---- Of Modules/_math.h\n",
+    function("_Py_log1p", helpers),
+    "// ---- Of Modules/cmathmodule.c\n",
+    between("#ifndef M_LN2\n", "/*[clinic input]\ncmath.log\n"),
+    rect,
+])
+
+# What Argument Clinic reads and writes
+text = re.sub(r"/\*\[clinic input\].*?\[clinic start generated code\]\*/\n", "", text, flags=re.S)
+text = re.sub(r"/\*\[clinic end generated code: .*?\]\*/\n", "", text)
+
+# What is spelt otherwise in C++, or is CPython's own way of spelling something. Each has to be there.
+spellings = [
+    (r"^static PyObject \* math_error\(void\);\n", ""),
+    (r"\(PyObject \*, Py_complex\)", "(Py_complex)"),
+    (r"\(PyObject \*module, ", "("),
+    (r"_impl\(module, ", "_impl("),
+    # They are never written to.
+    (r"^static Py_complex (\w+_special_values)\[7\]\[7\] = \{", r"static constexpr Py_complex \1[7][7] = {"),
+    (r"^Py_complex\n(_Py_c_\w+)", r"static inline Py_complex\n\1"),
+    (r"^double\n(_Py_c_abs)", r"static inline double\n\1"),
+    (r"\bm_log1p\(", "_Py_log1p("),
+    (r"\bPy_NAN\b", "std::numeric_limits<double>::quiet_NaN()"),
+    (r"\bPy_INFINITY\b", "std::numeric_limits<double>::infinity()"),
+    (r"\bPy_MATH_PI\b", "3.14159265358979323846"),
+    (r"\bPy_MATH_E\b", "2.7182818284590452354"),
+    (r"^ *assert\(.*?\);\n", ""),
+]
+for pattern, replacement in spellings:
+    text, count = re.subn(pattern, replacement, text, flags=re.M)
+    assert count, pattern
+left = sorted(set(re.findall(r"\w*Py\w*", re.sub(r"/\*.*?\*/|//[^\n]*", "", text, flags=re.S))) - {"Py_complex", "_Py_c_diff", "_Py_c_neg", "_Py_c_quot", "_Py_c_abs", "_Py_log1p"})
+assert not left, left
+defined = list(dict.fromkeys(re.findall(r"^# *define (\w+)", text, re.M)))
+
+print("""/*
+ * Generated by lib/convert-cmath-kernels.py from Modules/cmathmodule.c, Modules/_math.h and Objects/complexobject.c of CPython. Do not edit.
+ *
+ * It is CPython's authors' work, and is under CPython's licence: see lib/importlib/LICENSE.
+ */
+
+#pragma once
+
+#include <cerrno>
+#include <cfloat>
+#include <cmath>
+#include <limits>
+
+// This is to be included where `a * b + c`, written as one expression, is rounded once if the processor can do that, as it is in what CPython is built with. See PythonMathModule.cpp.
+// It is for PythonCMathModule.cpp and nothing else to include, after everything else that that includes: it has names of one letter for things, until the end of it.
+
+namespace JSC { namespace Python { namespace CMathKernels {
+
+using std::isfinite;
+using std::isinf;
+using std::isnan;
+
+struct Py_complex {
+    double real;
+    double imag;
+};
+""")
+print(re.sub(r"\n{3,}", "\n\n", text).rstrip("\n"))
+print()
+for name in defined:
+    print("#undef " + name)
+print("""
+} } } // namespace JSC::Python::CMathKernels""")

@@ -804,6 +804,12 @@ compared by asking the class outright, until it has nothing to say. The two kind
 
 `_heapq.__about__` is four thousand characters of prose, and is not all ASCII. It comes from CPython with the signatures and the docstrings, in a table of its own: `findModuleText()`.
 
+### `cmath`
+
+`Modules/cmathmodule.c` is in two parts here, as `mathmodule.c` is and for the same reason. What takes complex numbers of C's and gives complex numbers of C's, with the tables of what is given for infinities and NaNs, is
+`PythonCMathKernels.h`, which `lib/convert-cmath-kernels.py` makes. `PythonCMathModule.cpp` is what has to do with objects. It is compiled with `#pragma STDC FP_CONTRACT ON` too: without that, ten of the functions differ from
+CPython's in the last bit somewhere among the numbers that `cmath-module.py` tries. It is not compiled together with anything else, since the kernels have names of one letter for things.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see

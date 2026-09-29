@@ -264,6 +264,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_functools"_s, createFunctoolsModule },
     { "_heapq"_s, createHeapqModule },
     { "_bisect"_s, createBisectModule },
+    { "cmath"_s, createCMathModule },
     { "_tokenize"_s, createTokenizeModule },
     { "_io"_s, createIOModule },
     { "_thread"_s, createThreadModule },
