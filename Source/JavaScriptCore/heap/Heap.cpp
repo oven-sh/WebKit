@@ -65,6 +65,8 @@
 #include "IsoCellSetInlines.h"
 #include "IsoInlinedHeapCellTypeInlines.h"
 #include "JITStubRoutineSet.h"
+#include "AbstractModuleRecord.h"
+#include "PrelinkedModuleGraph.h"
 #include "JSBoundFunction.h"
 #include "JSLexicalEnvironment.h"
 #include "SymbolTable.h"
@@ -1194,6 +1196,29 @@ TypeCountSet Heap::objectTypeCounts()
         out->println("CENSUS begin, auxiliary bytes ", auxiliaryBytes, ", a Structure is ", sizeof(Structure), " bytes");
         for (AOT::Instance* instance : vm().m_aotInstances)
             instance->dumpSlotStatistics(*out);
+        // TEMPORARY-MODULE-CENSUS: which modules of the program there is a record of, and what each imports for certain.
+        {
+            PrelinkedModuleGraph* graph = nullptr;
+            m_objectSpace.forEachLiveCell(iterationScope, [&](HeapCell* heapCell, HeapCell::Kind kind) -> IterationStatus {
+                if (!isJSCellKind(kind))
+                    return IterationStatus::Continue;
+                if (auto* record = dynamicDowncast<AbstractModuleRecord>(static_cast<JSCell*>(heapCell)); record && record->prelinkedGraph()) {
+                    graph = record->prelinkedGraph();
+                    out->println("MODULELOADED\t", record->prelinkedIndex());
+                }
+                return IterationStatus::Continue;
+            });
+            if (graph) {
+                for (uint32_t index = 0; index < graph->moduleCount(); ++index) {
+                    out->print("MODULEIMPORTS\t", index);
+                    for (auto& request : graph->requests(graph->module(index))) {
+                        if (request.moduleIndex != PrelinkedModuleGraph::noModule)
+                            out->print("\t", request.moduleIndex);
+                    }
+                    out->println();
+                }
+            }
+        }
         // TEMPORARY-BLOCK-CENSUS: what the blocks are for, and how much of each kind is taken up by something.
         {
             struct OfKind {

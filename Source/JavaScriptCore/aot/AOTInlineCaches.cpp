@@ -248,7 +248,9 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         cache->newStructureID = structureAfterwards ? structureAfterwards->id() : StructureID();
         WTF::storeStoreFence();
         cache->structureID = oldStructure->id();
-        // For a transition CodeBlock::propagateTransitions() has to see it too, even if the collector has been by already.
+        // For a transition the collector has to see it too, even if it has been by already.
+        if (structureAfterwards)
+            data->instance->noteTransitionCached(cache);
         didFillSlot(vm, data);
     };
 

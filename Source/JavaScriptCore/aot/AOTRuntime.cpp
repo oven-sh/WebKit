@@ -167,6 +167,9 @@ struct Instance::Collections {
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
     Vector<ScriptExecutable*> executablesWithoutData; // That the collector has to be told of.
+    // The slots that have, or have had, a transition. The collector goes over them again and again while it marks, and they are few.
+    Vector<Slot*> transitions;
+    Vector<Slot*> transitionsSinceLastCollection;
     UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
@@ -625,12 +628,12 @@ Data* Instance::ensureData(uint32_t index)
 
 FunctionRef FunctionRef::at(Instance* instance, const void* address)
 {
-    if (instance->addressLastAskedAbout == address) [[likely]]
-        return { instance, instance->functionLastAskedAbout };
+    auto& asked = instance->placeAskedAbout(address);
+    if (asked.address == address) [[likely]]
+        return { instance, asked.function };
     WhatIsAt what = whatIsAt(address);
     RELEASE_ASSERT(what.kind == WhatIsAt::Function);
-    instance->addressLastAskedAbout = address;
-    instance->functionLastAskedAbout = what.index;
+    asked = { address, what.index, Instance::PlaceAskedAbout::siteNotLookedFor };
     return { instance, what.index };
 }
 
@@ -665,14 +668,21 @@ FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
 {
     if (returnAddress == s_returnAddressWithSiteInPlace) [[unlikely]]
         return placeOfSite(*this, s_siteInPlace);
-    WhatIsAt what = whatIsAt(returnAddress);
-    RELEASE_ASSERT(what.kind == WhatIsAt::Function && what.index == index);
+    using Asked = Instance::PlaceAskedAbout;
+    auto& asked = instance->placeAskedAbout(returnAddress);
+    if (asked.address != returnAddress || asked.site == Asked::siteNotLookedFor) [[unlikely]] {
+        WhatIsAt what = whatIsAt(returnAddress);
+        RELEASE_ASSERT(what.kind == WhatIsAt::Function && what.index == index);
+        auto site = tryCallSiteAt(*info().function(), what.offset);
+        RELEASE_ASSERT(!site || *site < Asked::hasNoSite);
+        asked = { returnAddress, index, site.value_or(Asked::hasNoSite) };
+    }
+    ASSERT(asked.function == index);
     // Not every call is one that anybody was expected to ask about: what is called does not throw, and does not look at the stack. But
     // something may look at the stack at any time (a profiler of allocations does). Then it is the function, and nowhere in particular.
-    auto site = tryCallSiteAt(*info().function(), what.offset);
-    if (!site) [[unlikely]]
+    if (asked.site == Asked::hasNoSite) [[unlikely]]
         return { *this, BytecodeIndex(), 0 };
-    return placeOfSite(*this, *site);
+    return placeOfSite(*this, asked.site);
 }
 
 FunctionRef::Place FunctionRef::placeOfInlinedCall(unsigned inlineFrame) const
@@ -1054,6 +1064,9 @@ void Data::destroy(Data* data)
         cache->bumpEpoch();
     RELEASE_ASSERT(instance.dataIfItHasAny(data->code->index()) == data);
     instance.setNotLinked(data->code->index());
+    auto isOfThis = [&](Slot* slot) { return slot >= data->slots && slot < data->slots + data->numSlots; };
+    instance.collections->transitions.removeAllMatching(isOfThis);
+    instance.collections->transitionsSinceLastCollection.removeAllMatching(isOfThis);
     auto removeFrom = [&](Vector<Data*>& list, unsigned Data::*index) {
         RELEASE_ASSERT(list[data->*index] == data);
         Data* last = list.takeLast();
@@ -1258,16 +1271,16 @@ void Data::visit(Visitor& visitor)
         for (unsigned i = numberOfOwnConstants; i--;)
             visitor.appendUnbarriered(values[i].get());
     }
-    // Code that has cached a transition can put an object that has already been visited in the new structure.
-    for (unsigned i = 0; i < numSlots; ++i) {
-        Slot& slot = slots[i];
-        StructureID oldStructureID = slot.structureID;
-        StructureID newStructureID = slot.newStructureID;
-        if (!oldStructureID || !newStructureID || slot.unused || slot.hasPointer())
-            continue;
-        if (visitor.isMarked(oldStructureID.decode()))
-            visitor.appendUnbarriered(newStructureID.decode());
-    }
+}
+
+static ALWAYS_INLINE bool hasTransition(const Slot& slot)
+{
+    return slot.structureID && slot.newStructureID && !slot.unused && !slot.hasPointer();
+}
+
+void Instance::noteTransitionCached(Slot* slot)
+{
+    collections->transitionsSinceLastCollection.append(slot);
 }
 
 // What was there at the last collection and has not been filled since refers to nothing that is young.
@@ -1276,6 +1289,16 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
 {
     for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
         data->visit(visitor);
+    // Code that has cached a transition can put an object that has already been visited in the new structure.
+    auto visitTransitions = [&](const Vector<Slot*>& slots) {
+        for (Slot* slot : slots) {
+            if (hasTransition(*slot) && visitor.isMarked(slot->structureID.decode()))
+                visitor.appendUnbarriered(slot->newStructureID.decode());
+        }
+    };
+    visitTransitions(collections->transitionsSinceLastCollection);
+    if (!onlyWhatIsNew)
+        visitTransitions(collections->transitions);
     for (Structure* structure : collections->shapes.values()) {
         if (structure)
             visitor.appendUnbarriered(structure);
@@ -1446,6 +1469,15 @@ void Instance::finalizeUnconditionally(bool onlyWhatIsNew)
     for (Data* data : collections->filledSinceLastCollection)
         data->hasBeenFilledSinceLastCollection = false;
     collections->filledSinceLastCollection.shrink(0);
+    collections->transitions.appendVector(collections->transitionsSinceLastCollection);
+    collections->transitionsSinceLastCollection.shrink(0);
+    if (!onlyWhatIsNew) {
+        // Each once, and only those that still have one.
+        auto& transitions = collections->transitions;
+        std::ranges::sort(transitions);
+        transitions.shrink(std::ranges::unique(transitions).begin() - transitions.begin());
+        transitions.removeAllMatching([](Slot* slot) { return !hasTransition(*slot); });
+    }
 }
 
 void Data::finalizeUnconditionally(VM& vm)

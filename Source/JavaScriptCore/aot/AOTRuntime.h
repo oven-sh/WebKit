@@ -332,6 +332,8 @@ struct Instance {
         states[index] = static_cast<uint32_t>(distance >> shiftOfStateWithData);
     }
     void setNotLinked(uint32_t index) { states[index] = 0; }
+    // A slot has been given a transition: from one structure to another, which is to be kept for as long as the first is.
+    void noteTransitionCached(Slot*);
     // Where the Datas are: after the Instance, so that it takes half a word to say where one is. Zeroed.
     void* allocateForData(size_t);
     void freeOfData(void*, size_t);
@@ -381,9 +383,17 @@ struct Instance {
     const uint8_t* code;
     const uint32_t* granulesOfCode;
     const uint32_t* startsOfFunctionsAfterFirst;
-    // The last address that was asked about (FunctionRef::at()), and the answer: one operation asks several times.
-    const void* addressLastAskedAbout { nullptr };
-    uint32_t functionLastAskedAbout { 0 };
+    // Addresses in the code that have been asked about (FunctionRef::at(), placeAt()), and the answers, which are the same every time.
+    struct PlaceAskedAbout {
+        static constexpr uint32_t siteNotLookedFor = std::numeric_limits<uint32_t>::max();
+        static constexpr uint32_t hasNoSite = siteNotLookedFor - 1;
+        const void* address;
+        uint32_t function;
+        uint32_t site;
+    };
+    static constexpr unsigned numberOfPlacesAskedAbout = 512;
+    PlaceAskedAbout placesAskedAbout[numberOfPlacesAskedAbout] { };
+    PlaceAskedAbout& placeAskedAbout(const void* address) { return placesAskedAbout[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfPlacesAskedAbout]; }
     uint32_t operationsNotCounted { 0 }; // See countOperationOnBehalfOf().
     // TEMPORARY-ESCAPE-STATS: Options::aotCountsAllocations(). By AllocationKind and Escape: how many, and how many bytes.
     static constexpr unsigned numberOfAllocationCounts = 4 * 32 * 2;
