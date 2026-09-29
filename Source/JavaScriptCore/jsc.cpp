@@ -79,6 +79,7 @@
 #include "PythonCompiler.h"
 #include "PythonConfiguration.h"
 #include "PythonOperations.h"
+#include "PythonPosixModule.h"
 #include "ReleaseHeapAccessScope.h"
 #include "SamplingProfiler.h"
 #include "SideDataRepository.h"
@@ -4482,134 +4483,10 @@ void GlobalObject::configurePython(JSGlobalObject*, Python::Configuration& confi
     configuration = pythonConfiguration();
 }
 
-namespace JSC { namespace Python {
-
-// posix, or as much of it as it takes to find a module and read it.
-
-// open(path, flags, mode=0o777)
-PYTHON_NATIVE(posixOpen)
-{
-    NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "open"_s, 2, 3))
-        return { };
-    auto path = toFileSystemPath(globalObject, args[0]);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto flags = toIndex(globalObject, args[1]);
-    RETURN_IF_EXCEPTION(scope, { });
-    int64_t mode = 0777;
-    if (args.size() > 2) {
-        auto given = toIndex(globalObject, args[2]);
-        RETURN_IF_EXCEPTION(scope, { });
-        mode = *given;
-    }
-    int descriptor;
-    do {
-        descriptor = ::open(path->data(), static_cast<int>(*flags) | O_CLOEXEC, static_cast<mode_t>(mode));
-    } while (descriptor < 0 && errno == EINTR);
-    if (descriptor < 0)
-        return JSValue::encode(raiseOSError(globalObject, scope, errno, args[0]));
-    return JSValue::encode(jsNumber(descriptor));
-}
-
-static std::optional<int> descriptorArgument(JSGlobalObject* globalObject, JSValue value)
-{
-    auto index = toIndex(globalObject, value);
-    return index ? std::optional(static_cast<int>(*index)) : std::nullopt;
-}
-
-// read(fd, length)
-PYTHON_NATIVE(posixRead)
-{
-    NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "read"_s, 2, 2))
-        return { };
-    auto descriptor = descriptorArgument(globalObject, args[0]);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto length = toIndex(globalObject, args[1]);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (*length < 0)
-        return JSValue::encode(raiseOSError(globalObject, scope, EINVAL));
-    Vector<uint8_t> buffer(static_cast<size_t>(*length));
-    ssize_t count;
-    do {
-        count = ::read(*descriptor, buffer.mutableSpan().data(), buffer.size());
-    } while (count < 0 && errno == EINTR);
-    if (count < 0)
-        return JSValue::encode(raiseOSError(globalObject, scope, errno));
-    RELEASE_AND_RETURN(scope, JSValue::encode(newBytes(globalObject, buffer.span().first(count))));
-}
-
-// write(fd, data)
-PYTHON_NATIVE(posixWrite)
-{
-    NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "write"_s, 2, 2))
-        return { };
-    auto descriptor = descriptorArgument(globalObject, args[0]);
-    RETURN_IF_EXCEPTION(scope, { });
-    auto data = bufferOf(globalObject, args[1]);
-    RETURN_IF_EXCEPTION(scope, { });
-    // What print() writes in JavaScript goes by way of these, so this does too, or the two would come out in the wrong order.
-    if (FILE* stream = *descriptor == STDOUT_FILENO ? stdout : *descriptor == STDERR_FILENO ? stderr : nullptr) {
-        size_t written = fwrite(data->data(), 1, data->size(), stream);
-        // It has been written when this returns, which is what write() is.
-        if ((written < data->size() && ferror(stream)) || fflush(stream))
-            return JSValue::encode(raiseOSError(globalObject, scope, errno));
-        return JSValue::encode(jsNumber(written));
-    }
-    ssize_t count;
-    do {
-        count = ::write(*descriptor, data->data(), data->size());
-    } while (count < 0 && errno == EINTR);
-    if (count < 0)
-        return JSValue::encode(raiseOSError(globalObject, scope, errno));
-    return JSValue::encode(jsNumber(count));
-}
-
-// close(fd)
-PYTHON_NATIVE(posixClose)
-{
-    NATIVE_PROLOGUE();
-    if (!args.check(globalObject, scope, "close"_s, 1, 1))
-        return { };
-    auto descriptor = descriptorArgument(globalObject, args[0]);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (::close(*descriptor) < 0)
-        return JSValue::encode(raiseOSError(globalObject, scope, errno));
-    RETURN_NONE();
-}
-
-static JSObject* createPosixModule(JSGlobalObject* globalObject)
-{
-    VM& vm = globalObject->vm();
-    JSObject* module = newBuiltinModule(globalObject, "posix"_s);
-    JSObject* ns = module;
-    addFunction(globalObject, ns, "open"_s, posixOpen);
-    addFunction(globalObject, ns, "read"_s, posixRead);
-    addFunction(globalObject, ns, "write"_s, posixWrite);
-    addFunction(globalObject, ns, "close"_s, posixClose);
-    auto constant = [&] (ASCIILiteral name, int value) { ns->putDirect(vm, Identifier::fromString(vm, name), jsNumber(value)); };
-    constant("O_RDONLY"_s, O_RDONLY);
-    constant("O_WRONLY"_s, O_WRONLY);
-    constant("O_RDWR"_s, O_RDWR);
-    constant("O_CREAT"_s, O_CREAT);
-    constant("O_EXCL"_s, O_EXCL);
-    constant("O_TRUNC"_s, O_TRUNC);
-    constant("O_APPEND"_s, O_APPEND);
-    return module;
-}
-
-} } // namespace JSC::Python
-
 JSObject* GlobalObject::createPythonBuiltinModule(JSGlobalObject* globalObject, const String& name)
 {
-#if OS(UNIX)
     if (name == "posix"_s)
         return Python::createPosixModule(globalObject);
-#else
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(name);
-#endif
     return nullptr;
 }
 

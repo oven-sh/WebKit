@@ -46,6 +46,8 @@ JSUint8Array* newByteArray(JSGlobalObject*, std::span<const uint8_t>);
 // Of what was put together. Null, with MemoryError raised, if there was no room for it.
 JSUint8Array* newBytes(JSGlobalObject*, const ByteVector&);
 JSUint8Array* newByteArray(JSGlobalObject*, const ByteVector&);
+// bytearray.resize(). What is added is zeros. False if it raised.
+bool resizeByteArray(JSGlobalObject*, JSUint8Array*, size_t newLength);
 
 // What is in anything of a built-in kind that has bytes in it, one after another: bytes, bytearray, a memoryview that skips none, and any typed array or
 // ArrayBuffer of JavaScript's. Nothing if it is no such thing. It runs no code of a program's.

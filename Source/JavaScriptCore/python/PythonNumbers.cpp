@@ -72,6 +72,20 @@ bool isFloat(JSValue value)
     return value.isNumber() && !taggedInteger(value);
 }
 
+JSValue intFromUInt64(JSGlobalObject* globalObject, uint64_t value)
+{
+    if (value <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
+        return intFromInt64(globalObject, static_cast<int64_t>(value));
+    return JSBigInt::createFrom(globalObject, value);
+}
+
+uint64_t lowBitsOfInt(JSValue value)
+{
+    Number number = classify(value);
+    ASSERT(number.isInt());
+    return number.kind == Number::Kind::Small ? static_cast<uint64_t>(static_cast<int64_t>(number.small)) : JSBigInt::toBigUInt64(number.big);
+}
+
 JSValue floatFromDouble(double value)
 {
     return jsTaggedFloat(value);

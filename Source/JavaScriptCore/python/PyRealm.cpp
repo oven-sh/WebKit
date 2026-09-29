@@ -27,6 +27,7 @@
 #include "PyRealm.h"
 
 #include "FunctionPrototype.h"
+#include "GlobalObjectMethodTable.h"
 #include "ObjectConstructor.h"
 #include "PythonBuiltins.h"
 #include "PythonBytes.h"
@@ -56,6 +57,8 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_monitoring.visit(visitor);
     thisObject->m_warnings.visit(visitor);
     thisObject->m_threadModule.visit(visitor);
+    thisObject->m_ioModule.visit(visitor);
+    thisObject->m_posixModule.visit(visitor);
     thisObject->m_ast.visit(visitor);
     visitor.append(thisObject->m_ellipsis);
     visitor.append(thisObject->m_noDefault);
@@ -156,6 +159,8 @@ static void putDocOfBuiltinType(VM& vm, JSGlobalObject* globalObject, PyType* ty
 void PyRealm::initialize(VM& vm, JSGlobalObject* globalObject)
 {
     DeferGC deferGC(vm);
+    if (auto configure = globalObject->globalObjectMethodTable()->configurePython)
+        configure(globalObject, m_configuration);
 
     // The types first, bare. A type has a tuple of bases, and a tuple has a type.
 #define CREATE(name, pythonName, base, layout, flags) \

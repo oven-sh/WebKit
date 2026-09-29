@@ -94,6 +94,7 @@
 #include "ProgramExecutable.h"
 #include "ProxyObject.h"
 #include "PyLock.h"
+#include "PyStateObject.h"
 #include "PyWeakReference.h"
 #include "PythonCharacters.h"
 #include "SamplingProfiler.h"
@@ -400,6 +401,7 @@ Heap::Heap(VM& vm, HeapType heapType)
     , nativeStdFunctionHeapCellType(IsoHeapCellType::Args<JSNativeStdFunction>())
     , pyLockHeapCellType(IsoHeapCellType::Args<PyLock>())
     , pyRealmHeapCellType(IsoHeapCellType::Args<PyRealm>())
+    , pyStateObjectHeapCellType(IsoHeapCellType::Args<PyStateObject>())
     , pyTypeHeapCellType(IsoHeapCellType::Args<PyType>())
     , weakMapHeapCellType(IsoHeapCellType::Args<JSWeakMap>())
     , weakSetHeapCellType(IsoHeapCellType::Args<JSWeakSet>())

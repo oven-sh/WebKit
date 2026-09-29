@@ -537,8 +537,12 @@ is written in Python.) An ES module can import a Python file: it is a synthetic 
 exports each global by name and the module as the default.
 
 What is up to the host is asked of it as JavaScript asks it, through `GlobalObjectMethodTable`: `configurePython` for `sys.argv`, `sys.path` and the
-like, and `createPythonBuiltinModule` for modules that only the host can provide. `posix` is one, and everything that touches a file goes
-through it, `import` and `print()` included.
+like, and `createPythonBuiltinModule` for modules that it is for the host to provide. `posix` is one: it is what a program reaches the system with, so whether there is such a module is the host's to say. It is
+written here all the same (`createPosixModule()`, which the host calls or does not), since otherwise each host would write it again.
+
+What is done to an open file is asked of the host too, if it wants to be asked: `Configuration::files`, a `FileOperations`, which is `open`, `close`, `read`, `write` and the few others that `io.FileIO` is made of.
+`FileIO` and the functions of `posix` that do the same go through it. That is so that what Python writes to the standard output can go the way that what JavaScript writes there goes, and the two come out in the
+order in which they were written. Left alone, it is the system calls.
 
 ### Where the library is written
 
@@ -548,6 +552,10 @@ lines in a traceback, and ask for its source. Programs do. So a module is writte
 
 A class that is built in and belongs to a module is made when the module is first imported: `createBuiltinType()`. What the module has to keep for the realm, those classes among it, is a struct in `PyRealm`,
 as CPython keeps a module's state: `ThreadModuleState`.
+
+An instance of such a class has what in CPython is a C struct. Here it is a struct as well, derived from `NativeState`, and one kind of cell holds any of them: `PyStateObject`. So a class that is ported does not
+take a cell type, a subspace and a destructor of its own, only what it has and what of that the collector is to be told of. Where CPython leaves making the instance to `object.__new__()` and its `tp_alloc`, so that
+one can be had that `__init__()` has never been called on, the class says how one is made: `PyType::setAllocator()`.
 
 Besides that there is what the front end itself is easier said in Python for: `lib/*.py` are compiled by it when a realm is made, and are in no traceback.
 
@@ -581,6 +589,30 @@ There is one thread, and `_thread` is as it is in CPython for a program that has
 What is written is what CPython writes, byte for byte, and each can read what the other has written, but for two things. What may be come upon again is marked, from version 3 on, and to CPython that is what has
 more than one reference to it. There is no telling that here, so everything is marked that could be, which is read the same. And code is written in the same form, with this engine's `co_code` in it: see
 *Code objects*.
+
+### `io`
+
+`_io` is `Modules/_io/` of CPython, file for file: `PythonIOBase.cpp`, `PythonFileIO.cpp`, `PythonBytesIO.cpp`, `PythonBufferedIO.cpp`, `PythonTextIO.cpp`, `PythonStringIO.cpp`. What matters in the port of the buffered
+classes is not only what a program gets from them but what they ask of the raw stream underneath, since that can be a class of a program's: which method, with how many bytes, and in what order. So that is what
+`programs/buffered-io.py` compares, over streams that take note of it.
+
+A buffered stream reads into its own buffer and writes from it, and what the raw stream is given for that is a `memoryview`, made for the one call and released after it, so one that is kept sees nothing later.
+
+`StringIO` counts in characters, so what is in it is a character to each 32 bits, as in CPython, but while it has only ever been added to at the end, when it is a string that is being built.
+
+`TextIOWrapper` and `open()` are not written yet. They need the codecs that are found by name, which are in the library.
+
+### `posix`
+
+`Modules/posixmodule.c`, in parts: `PythonPosixShared.cpp` has what turns arguments into names of files, descriptors and ids, and what raises; `Paths`, `Descriptors`, `Directories`, `Identity` and `Processes` have the
+functions; `Constants` has the constants, and the names that `sysconf()` and the like go by. It has everything that CPython's has on macOS but `fork()`, `forkpty()` and `register_at_fork()`: see *Where it differs*.
+What CPython has only on Linux is not written, and what is written for Linux has not been compiled.
+
+### One rounding or two
+
+`a * b + c` is one instruction on some processors, and it rounds once where a multiplication and then an addition round twice. JavaScriptCore is built with `-ffp-contract=off`, so that it is never used unasked, as
+JavaScript's arithmetic requires. What CPython is built with does use it, for what is written in one expression, so `_Py_c_quot()` and `st_mtime` come out one way on ARM64 and another on x86-64, in the last digit.
+A program can see that, and one that keeps a time to compare it with later does. So where CPython has such an expression it is written `multiplyAdd()` here, which is the one instruction where CPython's would be.
 
 ## The two languages
 
@@ -820,15 +852,16 @@ There is nothing that is per process, nothing that is set after something is mad
   is to be the same string to both languages. Nothing but a program that puts halves together by hand can tell.
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
   line before the first, or at a column before the first, is on line 0 or at column 0, where to CPython it is nowhere.
-- **The last bits of a complex quotient or power can differ.** The steps are CPython's, but a compiler may do a multiplication and an addition in one, without rounding between them. JavaScriptCore is built
-  with `-ffp-contract=off`, so that it does not, and clang otherwise does where the machine can. `(-1.5-0.5j) / (-1.5-0.5j)` is `(1-0j)` here and `(1+1.67e-17j)` in a CPython built for arm64 in the usual way, and
-  those are what `_Py_c_quot()` gives by itself when it is compiled the one way and the other.
+- **A `BytesIO` can be written to while there is a view of it** from `getbuffer()`, where CPython raises `BufferError`. It is as it is for a `bytearray`, and for the same reason.
+- **There is no `os.fork()`.** What it would leave in the new process is the one thread, and the collector and the compilers have threads of their own, which would be waited for and never answer. `os` has none on the
+  systems where it cannot be had, so a program that can do without looks first, as the library does. `posix_spawn()`, `exec*()` and `system()` are there.
+- **`os.closerange()` closes what is open**, which it finds out, where CPython on macOS tries every number in the range.
 
 ## Tests
 
 | | |
 |---|---|
-| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in five configurations of the engine, and once by way of its syntax tree |
+| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in five configurations of the engine, and once by way of its syntax tree. What is expected was taken on macOS on ARM64, and a few of them show it |
 | `JSTests/python/run-interop.sh <jsc>` | the two languages together. There is nothing to compare these with: what is expected was read and found right |
 | `JSTests/python/audits/run-audits.sh <jsc> [n]` | not tests but measures of how far there is to go, over everything that is built in |
 | `JSTests/python/parser.js`, `symbol-table.js` | the first stages by themselves |
@@ -863,4 +896,9 @@ which takes no time.
 
 Threads, when objects are finalized (`__del__`, and `with`-less file handles), and extension modules written for CPython's C API.
 
-What follows from the second: what a weak reference refers to is gone when the collector finds that it is, and not when the last reference to it goes, and the callback is called some time after that.
+What follows from the second:
+
+- **A file that is let go of without being closed is not closed, and what has been written to it and not yet sent on is lost.** `open(p, "w").write(s)` is written a great deal, and in CPython it works, because the
+  file is finalized as the statement ends. `__del__()` is there to be called, and does what it does in CPython. Nothing calls it.
+- What a weak reference refers to is gone when the collector finds that it is, and not when the last reference to it goes, and the callback is called some time after that.
+- What is warned of when something is let go of while it is open (`ResourceWarning`) is not.

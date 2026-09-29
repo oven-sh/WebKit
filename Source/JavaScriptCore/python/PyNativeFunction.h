@@ -63,6 +63,9 @@ public:
         AreThoseOfTheClass,
         // The same, for one that has something of its own to say first. It calls Python::checkArgumentsSlow() when it has.
         AreThoseOfTheClassButNotChecked,
+        // A method that in CPython is told which class it was defined in (`cls: defining_class`, to Argument Clinic) has its arguments taken apart as if they could be given by name, even if none of them can,
+        // and what is said of them when they are wrong is said accordingly. There is nothing in its signature to tell that by.
+        AreCheckedAsWithDefiningClass,
     };
 
     template<typename CellType, SubspaceAccess mode>
@@ -92,6 +95,7 @@ public:
     const Python::NativeSignature* signature() const { return m_signature; }
     bool checksArguments() const { return m_checksArguments; }
     bool takesArgumentsOfTheClass() const { return m_takesArgumentsOfTheClass; }
+    bool takesDefiningClass() const { return m_takesDefiningClass; }
     // Null if CPython has no such function.
     const Python::BuiltinDescription* description() const { return m_description; }
     // Whether so many arguments, none of them given by name, are as many as it takes. They include the instance or the class that comes first.
@@ -111,6 +115,7 @@ private:
     Kind m_kind;
     bool m_checksArguments { false };
     bool m_takesArgumentsOfTheClass { false };
+    bool m_takesDefiningClass { false };
     unsigned m_data;
     unsigned m_minimumArguments { 0 };
     unsigned m_maximumArguments { std::numeric_limits<unsigned>::max() };

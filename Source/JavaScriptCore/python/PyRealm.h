@@ -29,6 +29,9 @@
 #include "PyType.h"
 #include "PythonMonitoring.h"
 #include "PythonASTModule.h"
+#include "PythonConfiguration.h"
+#include "PythonIOState.h"
+#include "PythonPosixState.h"
 #include "PythonThreadModule.h"
 #include "PythonWarnings.h"
 #include "WeakGCMap.h"
@@ -341,6 +344,10 @@ public:
     Python::MonitoringState& monitoring() { return m_monitoring; }
     Python::WarningsState& warnings() { return m_warnings; }
     Python::ThreadModuleState& threadModule() { return m_threadModule; }
+    Python::IOModuleState& ioModule() { return m_ioModule; }
+    Python::PosixModuleState& posixModule() { return m_posixModule; }
+    // What whoever embeds the engine had to say, which it was asked when this was made.
+    const Python::Configuration& configuration() const { return m_configuration; }
     Python::ASTState& ast() { return m_ast; }
 
     // sys.modules
@@ -389,6 +396,9 @@ private:
     Python::MonitoringState m_monitoring;
     Python::WarningsState m_warnings;
     Python::ThreadModuleState m_threadModule;
+    Python::IOModuleState m_ioModule;
+    Python::PosixModuleState m_posixModule;
+    Python::Configuration m_configuration;
     Python::ASTState m_ast;
     // By the string in the table of atoms, which the str keeps there.
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;

@@ -347,7 +347,14 @@ PYTHON_NATIVE(objectNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, "object.__new__(X): X is not a type object"_s));
     auto* type = asType(args[0]);
     // tp_new_wrapper(), which comes before anything that object_new() has to say.
+    PyType::Allocator allocator = nullptr;
     if (type->layout() != PyType::Layout::Object) {
+        PyType* builtin = type;
+        while (builtin->hasFlag(PyType::IsHeapType))
+            builtin = builtin->base();
+        allocator = builtin->allocator();
+    }
+    if (type->layout() != PyType::Layout::Object && !allocator) {
         PyType* builtin = type;
         while (builtin->hasFlag(PyType::IsHeapType))
             builtin = builtin->base();
@@ -377,6 +384,8 @@ PYTHON_NATIVE(objectNew)
         }
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("Can't instantiate abstract class "_s, type->nameString(globalObject), " without an implementation for abstract method"_s, sorted.size() > 1 ? "s"_s : ""_s, " '"_s, joined.tryFinish(), '\'')));
     }
+    if (allocator)
+        return JSValue::encode(allocator(vm, type->instanceStructure()));
     return JSValue::encode(PyInstance::create(vm, type->instanceStructure()));
 }
 

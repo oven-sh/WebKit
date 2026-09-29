@@ -54,6 +54,12 @@ namespace Python {
     v(suppress_context) v(traceback) v(truediv) v(trunc) v(type_params) v(typing_is_unpacked_typevartuple) v(typing_prepare_subst) v(typing_subst) v(typing_unpacked_tuple_args) \
     v(unpacked) v(weakref) v(wrapped) v(xor)
 
+// Attributes that what is written in C++ gets, sets and calls by name: what CPython has as _Py_ID(name).
+#define FOR_EACH_PYTHON_ATTRIBUTE_NAME(v) \
+    v(_blksize) v(_dealloc_warn) v(_finalizing) v(_isatty_open_only) v(buffer) v(close) v(closed) v(decode) v(detach) v(encode) v(encoding) v(errors) v(extend) v(fileno) v(flush) v(getstate) \
+    v(isatty) v(mode) v(name) v(newlines) v(peek) v(raw) v(read) v(read1) v(readable) v(readall) v(readinto) v(readinto1) v(readline) v(reset) v(seek) v(seekable) v(setstate) v(tell) v(truncate) \
+    v(writable) v(write)
+
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
     v(weakReferences) v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
@@ -74,6 +80,10 @@ struct CommonNames {
 #define DECLARE(name) const Identifier dunder_##name;
     FOR_EACH_PYTHON_DUNDER_NAME(DECLARE)
 #undef DECLARE
+#define DECLARE(name) const Identifier attribute_##name;
+    FOR_EACH_PYTHON_ATTRIBUTE_NAME(DECLARE)
+#undef DECLARE
+    const Identifier attribute_ioBaseClosed; // "__IOBase_closed"
 #define DECLARE(name) const Identifier private_##name;
     FOR_EACH_PYTHON_PRIVATE_NAME(DECLARE)
 #undef DECLARE

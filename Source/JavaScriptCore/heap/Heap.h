@@ -298,6 +298,7 @@ class Heap;
     v(pyRangeSpace, cellHeapCellType, PyRange) \
     v(pyRealmSpace, pyRealmHeapCellType, PyRealm) \
     v(pySetSpace, cellHeapCellType, PySet) \
+    v(pyStateObjectSpace, pyStateObjectHeapCellType, PyStateObject) \
     v(pyTypingObjectSpace, cellHeapCellType, PyTypingObject) \
     v(pyWeakReferenceSpace, cellHeapCellType, PyWeakReference) \
     v(pyWeakReferenceListSpace, cellHeapCellType, PyWeakReferenceList) \
@@ -1196,6 +1197,7 @@ public:
     IsoHeapCellType nativeStdFunctionHeapCellType;
     IsoHeapCellType pyLockHeapCellType;
     IsoHeapCellType pyRealmHeapCellType;
+    IsoHeapCellType pyStateObjectHeapCellType;
     IsoHeapCellType pyTypeHeapCellType;
     IsoInlinedHeapCellType<JSString> stringHeapCellType;
     IsoInlinedHeapCellType<JSRopeString> ropeStringHeapCellType;

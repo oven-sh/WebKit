@@ -131,14 +131,14 @@ static Complex quotient(Complex a, Complex b, Failure& failure)
             return { };
         }
         double ratio = b.imag / b.real;
-        double denominator = b.real + b.imag * ratio;
-        r.real = (a.real + a.imag * ratio) / denominator;
-        r.imag = (a.imag - a.real * ratio) / denominator;
+        double denominator = multiplyAdd(b.imag, ratio, b.real);
+        r.real = multiplyAdd(a.imag, ratio, a.real) / denominator;
+        r.imag = multiplyAdd(-a.real, ratio, a.imag) / denominator;
     } else if (absImag >= absReal) {
         double ratio = b.real / b.imag;
-        double denominator = b.real * ratio + b.imag;
-        r.real = (a.real * ratio + a.imag) / denominator;
-        r.imag = (a.imag * ratio - a.real) / denominator;
+        double denominator = multiplyAdd(b.real, ratio, b.imag);
+        r.real = multiplyAdd(a.real, ratio, a.imag) / denominator;
+        r.imag = multiplyAdd(a.imag, ratio, -a.real) / denominator;
     } else
         r.real = r.imag = std::numeric_limits<double>::quiet_NaN();
 
@@ -170,12 +170,12 @@ static Complex quotient(double a, Complex b, Failure& failure)
             return { };
         }
         double ratio = b.imag / b.real;
-        double denominator = b.real + b.imag * ratio;
+        double denominator = multiplyAdd(b.imag, ratio, b.real);
         r.real = a / denominator;
         r.imag = (-a * ratio) / denominator;
     } else if (absImag >= absReal) {
         double ratio = b.real / b.imag;
-        double denominator = b.real * ratio + b.imag;
+        double denominator = multiplyAdd(b.real, ratio, b.imag);
         r.real = (a * ratio) / denominator;
         r.imag = -a / denominator;
     } else
@@ -226,7 +226,7 @@ static Complex powerOfComplex(Complex a, Complex b, Failure& failure)
     double phase = angle * b.real;
     if (b.imag) {
         length *= std::exp(-angle * b.imag);
-        phase += b.imag * std::log(magnitude);
+        phase = multiplyAdd(b.imag, std::log(magnitude), phase);
     }
     Complex r { length * std::cos(phase), length * std::sin(phase) };
     noteOverflow(r, failure);

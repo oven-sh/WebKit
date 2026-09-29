@@ -112,6 +112,7 @@ PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral
         type->m_dictOffset = cpython->dictOffset;
         type->m_weakReferenceOffset = cpython->weakReferenceOffset;
         type->m_flagsForPython = cpython->flags;
+        type->m_isCPythons = true;
     } else if (base) {
         type->m_flagsForPython = base->m_flagsForPython;
         type->m_basicSize = base->m_basicSize;
@@ -521,7 +522,7 @@ bool PyType::cannotBeInstantiated(VM& vm) const
     constexpr unsigned long disallowsInstantiation = 1ul << 7;
     if (m_flagsForPython & disallowsInstantiation)
         return true;
-    return !hasFlag(IsHeapType) && base() && !base()->base() && !getDirect(vm, vm.pythonNames().dunder_new);
+    return !m_isCPythons && !hasFlag(IsHeapType) && base() && !base()->base() && !getDirect(vm, vm.pythonNames().dunder_new);
 }
 
 static JSC_DECLARE_HOST_FUNCTION(callType);

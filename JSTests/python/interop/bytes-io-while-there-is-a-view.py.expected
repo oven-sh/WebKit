@@ -1,0 +1,17 @@
+the view => (b'0123456789', 10, False)
+written by way of the view => (None, None, b'ABC3456789')
+written by way of the file => (3, 2, b'ABCDE56789', b'ABCDE56789')
+made longer => (10, 4, b'ABCDE56789more', 10, b'ABCDE56789')
+another view sees all of it => b'ABCDE56789more'
+cut short => (4, b'ABCD')
+what the view has of it now => (10, b'')
+past the end of it => IndexError: index out of bounds on dimension 1
+written past the end of it => IndexError: index out of bounds on dimension 1
+made longer again => (4, 9, b'ABCDxyzxyzxyz', b'ABCDxyzxyz')
+what was got before is as it was => [(b'ABCDxyzxyzxyz', 0, 1, None, b'ABCDxyzxyzxyz', b'!?CDxyzxyzxyz')]
+closed => (None, True)
+the view of what is closed => (10, b'!?CDxyzxyz')
+released => (None, None)
+and then => ValueError: operation forbidden on released memoryview object
+in a with => (4, b'XYZ', b'XYZW')
+after it => (1, b'XYZW!')

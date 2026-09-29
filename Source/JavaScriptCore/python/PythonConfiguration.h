@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "PythonFileOperations.h"
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
@@ -37,6 +38,7 @@ struct Configuration {
     Vector<String> moduleSearchPaths; // sys.path
     String executable; // sys.executable
     String implementationName { "javascriptcore"_s }; // sys.implementation.name
+    const FileOperations* files { systemFileOperations() }; // Null if there are to be no files.
 };
 
 } } // namespace JSC::Python

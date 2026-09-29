@@ -283,6 +283,11 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     // A class that takes one is not called in the way that a method that takes one is.
     if (function->takesArgumentsOfTheClass() && family == NativeSignature::Family::OneArgument)
         family = NativeSignature::Family::Positional;
+    if (function->takesDefiningClass()) {
+        if (family == NativeSignature::Family::NoArguments)
+            return !given && !keywordCount ? true : fail(concatenate(name, "() takes no arguments"_s));
+        family = NativeSignature::Family::Keywords;
+    }
     switch (family) {
     case NativeSignature::Family::Unchecked:
         return true;

@@ -40,6 +40,10 @@ CommonNames::CommonNames(VM& vm)
 #define INITIALIZE(name) dunder_##name(Identifier::fromString(vm, "__" #name "__"_s)),
     FOR_EACH_PYTHON_DUNDER_NAME(INITIALIZE)
 #undef INITIALIZE
+#define INITIALIZE(name) attribute_##name(Identifier::fromString(vm, #name ""_s)),
+    FOR_EACH_PYTHON_ATTRIBUTE_NAME(INITIALIZE)
+#undef INITIALIZE
+    attribute_ioBaseClosed(Identifier::fromString(vm, "__IOBase_closed"_s)),
 #define INITIALIZE(name) private_##name(Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "py" #name ""_s))),
     FOR_EACH_PYTHON_PRIVATE_NAME(INITIALIZE)
 #undef INITIALIZE

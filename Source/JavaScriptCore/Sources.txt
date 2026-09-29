@@ -744,6 +744,7 @@ python/PyObjects.cpp
 python/PyRealm.cpp
 python/PyType.cpp
 python/PyLock.cpp
+python/PyStateObject.cpp
 python/PyWeakReference.cpp
 python/PythonConstantFolding.cpp
 python/PythonFrameJump.cpp
@@ -773,6 +774,11 @@ python/PythonGenericAlias.cpp
 python/PythonIterators.cpp
 python/PythonJavaScript.cpp
 python/PythonLexer.cpp
+python/PythonBufferedIO.cpp
+python/PythonBytesIO.cpp
+python/PythonFileIO.cpp
+python/PythonFileOperations.cpp
+python/PythonIOBase.cpp
 python/PythonMarshal.cpp
 python/PythonModules.cpp
 python/PythonContextVars.cpp
@@ -802,6 +808,16 @@ python/PythonTypeParameters.cpp
 python/PythonSyntaxTreeSource.cpp
 python/PythonSyntaxWarnings.cpp
 python/PythonUnparse.cpp
+python/PythonPosixConstants.cpp
+python/PythonPosixDescriptors.cpp
+python/PythonPosixDirectories.cpp
+python/PythonPosixIdentity.cpp
+python/PythonPosixModule.cpp
+python/PythonPosixPaths.cpp
+python/PythonPosixProcesses.cpp
+python/PythonPosixShared.cpp
+python/PythonStringIO.cpp
+python/PythonTextIO.cpp
 python/PythonThreadModule.cpp
 python/PythonTime.cpp
 python/PythonWarnings.cpp

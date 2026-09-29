@@ -185,6 +185,7 @@ PyType* createBuiltinType(JSGlobalObject*, ASCIILiteral name, PyType* base, PyTy
 void addClassGetItemIfGeneric(JSGlobalObject*, PyType*); // C[int], if CPython's has that
 JSObject* createThreadModule(JSGlobalObject*);
 JSObject* createMarshalModule(JSGlobalObject*);
+JSObject* createIOModule(JSGlobalObject*);
 JSValue marshalDumps(JSGlobalObject*, JSValue); // PyMarshal_WriteObjectToString()
 JSValue marshalLoads(JSGlobalObject*, std::span<const uint8_t>); // PyMarshal_ReadObjectFromString()
 void initializeWeakReferenceTypes(JSGlobalObject*);

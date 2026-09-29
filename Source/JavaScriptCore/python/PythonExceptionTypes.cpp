@@ -497,7 +497,7 @@ JSValue raiseOSError(JSGlobalObject* globalObject, ThrowScope& scope, int errorN
     return { };
 }
 
-std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue given)
+std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue given, ASCIILiteral ifItHasZero)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -529,7 +529,7 @@ std::optional<CString> toFileSystemPath(JSGlobalObject* globalObject, JSValue gi
     } else
         bytes = *builtinBufferOf(path);
     if (WTF::find(bytes, static_cast<uint8_t>(0)) != notFound) {
-        raiseValueError(globalObject, scope, path.isString() ? "embedded null character"_s : "embedded null byte"_s);
+        raiseValueError(globalObject, scope, !ifItHasZero.isNull() ? ifItHasZero : path.isString() ? "embedded null character"_s : "embedded null byte"_s);
         return std::nullopt;
     }
     return CString(byteCast<char>(bytes));

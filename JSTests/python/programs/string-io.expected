@@ -1,0 +1,245 @@
+---- the classes
+StringIO => ('_io', ['StringIO', '_TextIOBase', '_IOBase', 'object'], ['__getstate__', '__init__', '__module__', '__new__', '__next__', '__setstate__', 'close', 'closed', 'getvalue', 'line_buffering', 'newlines', 'read', 'readable', 'readline', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write'])
+IncrementalNewlineDecoder => ('_io', ['IncrementalNewlineDecoder', 'object'], ['__init__', '__module__', 'decode', 'getstate', 'newlines', 'reset', 'setstate'])
+---- IncrementalNewlineDecoder, of text
+translate=True => [('abc', None, (b'', 0)), ('a\nb', '\n', (b'', 0)), ('a', '\n', (b'', 1)), ('\nb', ('\n', '\r\n'), (b'', 0)), ('', ('\n', '\r\n'), (b'', 1)), ('\nc', ('\r', '\n', '\r\n'), (b'', 0)), ('x\ny', ('\r', '\n', '\r\n'), (b'', 0)), ('\n', ('\r', '\n', '\r\n'), (b'', 1)), ('\n', ('\r', '\n', '\r\n'), (b'', 1)), ('', ('\r', '\n', '\r\n'), (b'', 1)), ('\n', ('\r', '\n', '\r\n'), (b'', 1))]
+at the end => ('\n', (b'', 0), '\n', '\n', ('\r', '\n', '\r\n'))
+reset => ('', (b'', 1), None, (b'', 0), None, 'z')
+translate=False => [('abc', None, (b'', 0)), ('a\nb', '\n', (b'', 0)), ('a', '\n', (b'', 1)), ('\r\nb', ('\n', '\r\n'), (b'', 0)), ('', ('\n', '\r\n'), (b'', 1)), ('\rc', ('\r', '\n', '\r\n'), (b'', 0)), ('x\r\ny', ('\r', '\n', '\r\n'), (b'', 0)), ('\r', ('\r', '\n', '\r\n'), (b'', 1)), ('\r\n', ('\r', '\n', '\r\n'), (b'', 1)), ('', ('\r', '\n', '\r\n'), (b'', 1)), ('\r', ('\r', '\n', '\r\n'), (b'', 1))]
+at the end => ('\r', (b'', 0), '\r', '\r', ('\r', '\n', '\r\n'))
+reset => ('', (b'', 1), None, (b'', 0), None, 'z')
+newlines with LF => [('\n', '\n'), ('\n', '\n')]
+newlines with CR => [('\n', '\r'), ('\r', '\r')]
+newlines with CRLF => [('\n', '\r\n'), ('\r\n', '\r\n')]
+newlines with LF and CRLF => [('\n\n', ('\n', '\r\n')), ('\r\n\n', ('\n', '\r\n'))]
+newlines with CR and CRLF => [('\n\n', ('\r', '\r\n')), ('\r\r\n', ('\r', '\r\n'))]
+newlines with CR and LF => [('\n\n', ('\r', '\n')), ('\n\r', ('\r', '\n'))]
+newlines with all => [('\n\n\n', ('\r', '\n', '\r\n')), ('\n\r\r\n', ('\r', '\n', '\r\n'))]
+newlines with none => [('abc', None), ('abc', None)]
+wide characters => [('\u20ac\n\U0001f600\n\u0100\n\ud800\n', ('\r', '\n', '\r\n')), ('\u20ac\r\n\U0001f600\r\u0100\n\ud800\r', ('\r', '\n', '\r\n'))]
+characters that look like them in one byte or the other => [('\u010a\u0a0a\u0d0d\u010d\u0a00', None), ('\u010a\u0a0a\u0d0d\u010d\u0a00', None)]
+setstate => [(None, (b'', 1), '\na', None, 'a', None, (b'', 1))]
+setstate(()) => TypeError: setstate(): illegal state argument
+setstate((b'',)) => TypeError: setstate(): illegal state argument
+setstate((b'', 1, 2)) => TypeError: setstate(): illegal state argument
+setstate([b'', 1]) => TypeError: state argument must be a tuple
+setstate(None) => TypeError: state argument must be a tuple
+setstate((b'', 'a')) => TypeError: setstate(): illegal state argument
+setstate((b'', 1.5)) => TypeError: setstate(): illegal state argument
+setstate((b'', None)) => TypeError: setstate(): illegal state argument
+setstate((b'', -1)) => [(None, (b'', 1))]
+setstate((b'', 18446744073709551619)) => [(None, (b'', 1))]
+setstate((b'', True)) => [(None, (b'', 1))]
+setstate(('anything', 0)) => [(None, (b'', 0))]
+decode(b'abc') => TypeError: decoder should return a string result, not 'bytes'
+decode(1) => TypeError: decoder should return a string result, not 'int'
+decode(None) => TypeError: decoder should return a string result, not 'NoneType'
+decode(['a']) => TypeError: decoder should return a string result, not 'list'
+of a class derived from str => [('S', 'str', 'str', 'str', 'S')]
+IncrementalNewlineDecoder() => TypeError: IncrementalNewlineDecoder() missing required argument 'decoder' (pos 1)
+IncrementalNewlineDecoder(None) => TypeError: IncrementalNewlineDecoder() missing required argument 'translate' (pos 2)
+IncrementalNewlineDecoder(None, 1, 'e', 2) => TypeError: IncrementalNewlineDecoder() takes at most 3 arguments (4 given)
+IncrementalNewlineDecoderby name => IncrementalNewlineDecoder
+IncrementalNewlineDecoder(None, other=1) => TypeError: IncrementalNewlineDecoder() missing required argument 'translate' (pos 2)
+decode of one that is not made => ValueError: IncrementalNewlineDecoder.__init__() not called
+getstate of one that is not made => ValueError: IncrementalNewlineDecoder.__init__() not called
+setstate of one that is not made => ValueError: IncrementalNewlineDecoder.__init__() not called
+reset of one that is not made => ValueError: IncrementalNewlineDecoder.__init__() not called
+newlines of one that is not made => ValueError: IncrementalNewlineDecoder.__init__() not called
+no attributes => AttributeError: '_io.IncrementalNewlineDecoder' object has no attribute 'a' and no __dict__ for setting new attributes
+newlines cannot be set => AttributeError: attribute 'newlines' of '_io.IncrementalNewlineDecoder' objects is not writable
+---- over another decoder
+decode => ('a', '\nb', 'c', [('decode', b'a\r', False), ('decode', b'\nb', True), ('decode', b'c', False)])
+getstate => ((b'kept', 10), '', (b'kept', 11))
+setstate and reset => (None, 'from setstate', 'from setstate', 'from reset', [('setstate', (b'x', 4)), ('setstate', (b'y', 4)), ('reset',)])
+a decoder that returns bytes => TypeError: decoder should return a string result, not 'bytes'
+a decoder that returns an int => TypeError: decoder should return a string result, not 'int'
+a decoder whose state is a list => TypeError: illegal decoder state
+a decoder whose state is None => TypeError: illegal decoder state
+a decoder whose state is one thing => TypeError: illegal decoder state
+a decoder whose state is three => TypeError: illegal decoder state
+a decoder whose state is a str for the flags => TypeError: illegal decoder state
+a decoder whose state is large flags => (b'', 0)
+a decoder whose state is larger => (b'', 2)
+a decoder whose state is negative => (b'', 18446744073709551614)
+a decoder whose state is anything for the buffer => (5, 2)
+a decoder that has no such thing => ("AttributeError: 'int' object has no attribute 'decode'", "AttributeError: 'int' object has no attribute 'getstate'", "AttributeError: 'int' object has no attribute 'reset'")
+---- StringIO, made from
+nothing => [('', 0, '', 'str')]
+a str => [('abc', 0, 'abc', 'str')]
+None => [('', 0, '', 'str')]
+'' => [('', 0, '', 'str')]
+by name => [('xy', 0, 'xy', 'str')]
+bytes => TypeError: initial_value must be str or None, not bytes
+an int => TypeError: initial_value must be str or None, not int
+three => TypeError: StringIO() takes at most 2 arguments (3 given)
+another name => TypeError: StringIO() got an unexpected keyword argument 'other'
+derived from str => [('abc', 0, 'abc', 'str')]
+newline=None => [('a\nb\nc\nd', ['a\n', 'b\n', 'c\n', 'd'], ('\r', '\n', '\r\n'), 8, 'a\nb\nc\ndp\nq\nr\ns', ('\r', '\n', '\r\n'))]
+newline='' => [('a\nb\rc\r\nd', ['a\n', 'b\r', 'c\r\n', 'd'], ('\r', '\n', '\r\n'), 8, 'a\nb\rc\r\ndp\nq\rr\r\ns', ('\r', '\n', '\r\n'))]
+newline='\n' => [('a\nb\rc\r\nd', ['a\n', 'b\rc\r\n', 'd'], None, 8, 'a\nb\rc\r\ndp\nq\rr\r\ns', None)]
+newline='\r' => [('a\rb\rc\r\rd', ['a\r', 'b\r', 'c\r', '\r', 'd'], None, 8, 'a\rb\rc\r\rdp\rq\rr\r\rs', None)]
+newline='\r\n' => [('a\r\nb\rc\r\r\nd', ['a\r\n', 'b\rc\r\r\n', 'd'], None, 8, 'a\r\nb\rc\r\r\ndp\r\nq\rr\r\r\ns', None)]
+newline='x' => ValueError: illegal newline value: 'x'
+newline='\n\r' => ValueError: illegal newline value: '\\n\\r'
+newline='\r\n\n' => ValueError: illegal newline value: '\\r\\n\\n'
+newline=' ' => ValueError: illegal newline value: ' '
+newline=b'\n' => TypeError: newline must be str or None, not bytes
+newline=5 => TypeError: newline must be str or None, not int
+newline='€' => ValueError: illegal newline value: '\u20ac'
+newline='\x00' => [('a\nb\rc\r\nd', ['a\n', 'b\r', 'c\r\n', 'd'], ('\r', '\n', '\r\n'), 8, 'a\nb\rc\r\ndp\nq\rr\r\ns', ('\r', '\n', '\r\n'))]
+newline='\r' => [('a\rb\rc\r\rd', ['a\r', 'b\r', 'c\r', '\r', 'd'], None, 8, 'a\rb\rc\r\rdp\rq\rr\r\rs', None)]
+---- reading
+read => ('he', '', 2, 'llo\nworld\n\nlast', '', '', 17)
+read(None) and negative => (3, 'lo\nworld\n\nlast', 3, 'lo\nworld\n\nlast', 3, 'lo\nworld\n\nlast')
+readline => (0, 'hello\n', 'wor', '', 'ld\n', '\n', 'last', '', '')
+readlines and iteration => (0, ['hello\n', 'world\n', '\n', 'last'], 0, ['hello\n'], ['world\n', '\n', 'last'], 0, ['hello\n', 'world\n', '\n', 'last'], [], 6, 'world\n', True)
+next at the end => StopIteration: 
+read('a',) => TypeError: argument should be integer or None, not 'str'
+read(1.5,) => TypeError: argument should be integer or None, not 'float'
+read(1, 2) => TypeError: read expected at most 1 argument, got 2
+read(1180591620717411303424,) => OverflowError: cannot fit 'int' into an index-sized integer
+readline('a',) => TypeError: argument should be integer or None, not 'str'
+readline(1.5,) => TypeError: argument should be integer or None, not 'float'
+readlines('a',) => TypeError: argument should be integer or None, not 'str'
+a character is a character => (12, 'a', '\U0001f600', 2, 'b\u20ac\ud800', 5, 'c\udc00', '\U0010ffff', 8, 'd\n', 10, '\U0001f601e', 12, True)
+seek among them => [(0, 'a'), (1, '\U0001f600'), (2, 'b'), (3, '\u20ac'), (4, '\ud800'), (5, 'c'), (6, '\udc00'), (7, '\U0010ffff'), (8, 'd'), (9, '\n'), (10, '\U0001f601'), (11, 'e'), (12, '')]
+written among them => (1, 1, 3, 2, 'aXb\U0001f602\U0001f603c\udc00\U0010ffffd\n\U0001f601e', 5, 12)
+how many were written => [(1, 3, 4, 0, 4)]
+truncated among them => [(2, 'a\U0001f600', 1, 'a')]
+---- where it is
+seek => (3, 3, 3, 10, 15, 15, '', 0)
+seek(-1,) => ValueError: Negative seek position -1
+seek(1, 1) => OSError: Can't do nonzero cur-relative seeks
+seek(-1, 1) => OSError: Can't do nonzero cur-relative seeks
+seek(1, 2) => OSError: Can't do nonzero cur-relative seeks
+seek(-1, 2) => OSError: Can't do nonzero cur-relative seeks
+seek(0, 3) => ValueError: Invalid whence (3, should be 0, 1 or 2)
+seek(0, -1) => ValueError: Invalid whence (-1, should be 0, 1 or 2)
+seek('a',) => TypeError: 'str' object cannot be interpreted as an integer
+seek(0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+seek(1.5,) => TypeError: 'float' object cannot be interpreted as an integer
+seek() => TypeError: seek expected at least 1 argument, got 0
+seek(0, 0, 0) => TypeError: seek expected at most 2 arguments, got 3
+seek(9223372036854775808,) => OverflowError: Python int too large to convert to C ssize_t
+seek(9223372036854775807,) => (1, 9223372036854775807)
+seek(None,) => TypeError: 'NoneType' object cannot be interpreted as an integer
+past the end => [(5, '', '', 'ab', 1, 'ab\x00\x00\x00Z', 6)]
+as far as can be => [(9223372036854775807, '', '', 'OverflowError: new position too large')]
+---- writing
+write => (3, 2, 0, 5, 'abcde', True)
+over what is there => (1, 2, 'aXYde', 3, 4, 3, 'aXYd123')
+write(b'a') => TypeError: string argument expected, got 'bytes'
+write(1) => TypeError: string argument expected, got 'int'
+write(None) => TypeError: string argument expected, got 'NoneType'
+write(['a']) => TypeError: string argument expected, got 'list'
+write(1.5) => TypeError: string argument expected, got 'float'
+write() => TypeError: StringIO.write() takes exactly one argument (0 given)
+of a class derived from str => [(2, 'str', 'ab')]
+writelines => [(None, None, 'ab\nc')]
+with bytes in it => [("TypeError: string argument expected, got 'bytes'", 'a')]
+truncate => [(4, 4, '0123', 4, 2, '01', 4, 10, '01', 0, '', 4, 1, '\x00\x00\x00\x00z')]
+truncate(-1) => ValueError: Negative size value -1
+truncate('a') => TypeError: argument should be integer or None, not 'str'
+truncate(1.5) => TypeError: argument should be integer or None, not 'float'
+truncate(1180591620717411303424) => OverflowError: cannot fit 'int' into an index-sized integer
+truncate(True) => 1
+written to, read, and written to again => [(3, 'abc', 3, 0, 'abcdef', 3, 'abcdefghi', 2, 'cd', 1, 'abcd!fghi')]
+a great deal => [(300000, 300000, 300000, 299990, '0123456789', 5, '01234')]
+---- closed, and not made
+close => (False, None, True, None)
+read() of one that is closed => ValueError: I/O operation on closed file
+readline() of one that is closed => ValueError: I/O operation on closed file
+readlines() of one that is closed => ValueError: I/O operation on closed file.
+write('a',) of one that is closed => ValueError: I/O operation on closed file
+write('',) of one that is closed => ValueError: I/O operation on closed file
+write(b'a',) of one that is closed => TypeError: string argument expected, got 'bytes'
+writelines([],) of one that is closed => ValueError: I/O operation on closed file.
+seek(0,) of one that is closed => ValueError: I/O operation on closed file
+tell() of one that is closed => ValueError: I/O operation on closed file
+truncate() of one that is closed => ValueError: I/O operation on closed file
+getvalue() of one that is closed => ValueError: I/O operation on closed file
+flush() of one that is closed => None
+isatty() of one that is closed => ValueError: I/O operation on closed file.
+readable() of one that is closed => ValueError: I/O operation on closed file
+writable() of one that is closed => ValueError: I/O operation on closed file
+seekable() of one that is closed => ValueError: I/O operation on closed file
+__next__() of one that is closed => ValueError: I/O operation on closed file
+__enter__() of one that is closed => ValueError: I/O operation on closed file.
+__iter__() of one that is closed => ValueError: I/O operation on closed file.
+__getstate__() of one that is closed => ValueError: I/O operation on closed file
+fileno() of one that is closed => UnsupportedOperation: fileno
+detach() of one that is closed => UnsupportedOperation: detach
+read('a',) of one that is closed => TypeError: argument should be integer or None, not 'str'
+__setstate__(('', '\n', 0, None),) of one that is closed => ValueError: I/O operation on closed file
+closed of one that is closed => True
+newlines of one that is closed => ValueError: I/O operation on closed file
+line_buffering of one that is closed => ValueError: I/O operation on closed file
+encoding of one that is closed => None
+errors of one that is closed => None
+read() of one that is not made => ValueError: I/O operation on uninitialized object
+readline() of one that is not made => ValueError: I/O operation on uninitialized object
+readlines() of one that is not made => ValueError: I/O operation on uninitialized object
+write('a',) of one that is not made => ValueError: I/O operation on uninitialized object
+write('',) of one that is not made => ValueError: I/O operation on uninitialized object
+write(b'a',) of one that is not made => ValueError: I/O operation on uninitialized object
+writelines([],) of one that is not made => ValueError: I/O operation on uninitialized object
+seek(0,) of one that is not made => ValueError: I/O operation on uninitialized object
+tell() of one that is not made => ValueError: I/O operation on uninitialized object
+truncate() of one that is not made => ValueError: I/O operation on uninitialized object
+getvalue() of one that is not made => ValueError: I/O operation on uninitialized object
+flush() of one that is not made => None
+isatty() of one that is not made => ValueError: I/O operation on uninitialized object
+readable() of one that is not made => ValueError: I/O operation on uninitialized object
+writable() of one that is not made => ValueError: I/O operation on uninitialized object
+seekable() of one that is not made => ValueError: I/O operation on uninitialized object
+__next__() of one that is not made => ValueError: I/O operation on uninitialized object
+__enter__() of one that is not made => ValueError: I/O operation on uninitialized object
+__iter__() of one that is not made => ValueError: I/O operation on uninitialized object
+__getstate__() of one that is not made => ValueError: I/O operation on uninitialized object
+fileno() of one that is not made => UnsupportedOperation: fileno
+detach() of one that is not made => UnsupportedOperation: detach
+read('a',) of one that is not made => TypeError: argument should be integer or None, not 'str'
+__setstate__(('', '\n', 0, None),) of one that is not made => None
+closed of one that is not made => False
+newlines of one that is not made => None
+line_buffering of one that is not made => False
+encoding of one that is not made => None
+errors of one that is not made => None
+open => [(True, True, True, False, None, False, None, None, None)]
+with => [(False, None, True)]
+made again => [('ol', None, 0, 'new', None, None, False, 'again', None, '')]
+made again, and it fails => [('TypeError: initial_value must be str or None, not int', 'old', "ValueError: illegal newline value: 'x'", 'old')]
+closed cannot be set => AttributeError: attribute 'closed' of '_io.StringIO' objects is not writable
+newlines cannot be set => AttributeError: attribute 'newlines' of '_io.StringIO' objects is not writable
+line_buffering cannot be set => AttributeError: attribute 'line_buffering' of '_io.StringIO' objects is not writable
+---- state
+__getstate__ => (('ab\ncd', None, 2, None), ('a\r\r\nb', '\r\n', 0, None), ('a', '', 0, None), ('', '\n', 0, None))
+with attributes => (('ab\ncd', None, 2, {'extra': [1]}), {'extra': [1]})
+__setstate__ => [(None, 'x\r\ny', 1, ['\r\n', 'y'], None, 'pq', 5, 1, 1, 'pq\x00\x00\x00\r', None, '', ['a', 'b'])]
+__setstate__(()) => TypeError: _io.StringIO.__setstate__ argument should be 4-tuple, got tuple
+__setstate__(('', '\n', 0)) => TypeError: _io.StringIO.__setstate__ argument should be 4-tuple, got tuple
+__setstate__(['', '\n', 0, None]) => TypeError: _io.StringIO.__setstate__ argument should be 4-tuple, got list
+__setstate__(None) => TypeError: _io.StringIO.__setstate__ argument should be 4-tuple, got NoneType
+__setstate__((b'a', '\n', 0, None)) => TypeError: initial_value must be str or None, not bytes
+__setstate__(('', 'x', 0, None)) => ValueError: illegal newline value: 'x'
+__setstate__(('', 5, 0, None)) => TypeError: newline must be str or None, not int
+__setstate__(('', '\n', 'a', None)) => TypeError: third item of state must be an integer, got str
+__setstate__(('', '\n', -1, None)) => ValueError: position value cannot be negative
+__setstate__(('', '\n', 1180591620717411303424, None)) => OverflowError: Python int too large to convert to C ssize_t
+__setstate__(('', '\n', 1.5, None)) => TypeError: third item of state must be an integer, got float
+__setstate__(('', '\n', 0, [])) => TypeError: fourth item of state should be a dict, got a list
+__setstate__(('', '\n', 0, 5)) => TypeError: fourth item of state should be a dict, got a int
+__setstate__(('', '\n', True, None)) => [(None, '', 1)]
+---- derived from
+it => [('t', 'a', True, {'tag': 't'})]
+next goes by way of its readline => <a\n>
+which is to return a str => OSError: readline() should have returned a str object, not 'bytes'
+attributes => [(None, 1, {'a': 1})]
+weakly referred to => [True]
+---- at random, against a list of characters
+newline='\n' => ([], 19, 59261, None)
+newline='' => ([], 31, 22510, ('\r', '\n', '\r\n'))
+newline=None => ([], 22, 73022, ('\r', '\n', '\r\n'))
+newline='\r' => ([], 81, 87511, None)
+newline='\r\n' => ([], 19, 66274, None)

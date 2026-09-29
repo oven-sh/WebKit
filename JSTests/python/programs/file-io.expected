@@ -1,0 +1,253 @@
+---- classes
+_IOBase => ('_io', '_IOBase', ['_IOBase', 'object'], ['__del__', '__dict__', '__enter__', '__exit__', '__iter__', '__module__', '__next__', '_checkClosed', '_checkReadable', '_checkSeekable', '_checkWritable', 'close', 'closed', 'fileno', 'flush', 'isatty', 'readable', 'readline', 'readlines', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'writelines'], True, True, True)
+_RawIOBase => ('_io', '_RawIOBase', ['_RawIOBase', '_IOBase', 'object'], ['__module__', 'read', 'readall', 'readinto', 'write'], True, True, True)
+_BufferedIOBase => ('_io', '_BufferedIOBase', ['_BufferedIOBase', '_IOBase', 'object'], ['__module__', 'detach', 'read', 'read1', 'readinto', 'readinto1', 'write'], True, True, True)
+_TextIOBase => ('_io', '_TextIOBase', ['_TextIOBase', '_IOBase', 'object'], ['__module__', 'detach', 'encoding', 'errors', 'newlines', 'read', 'readline', 'write'], True, True, True)
+FileIO => ('_io', 'FileIO', ['FileIO', '_RawIOBase', '_IOBase', 'object'], ['__getstate__', '__init__', '__module__', '__new__', '__repr__', '_blksize', '_dealloc_warn', '_finalizing', '_isatty_open_only', 'close', 'closed', 'closefd', 'fileno', 'isatty', 'mode', 'read', 'readable', 'readall', 'readinto', 'seek', 'seekable', 'tell', 'truncate', 'writable', 'write'], True, True, True)
+UnsupportedOperation => ('io', 'UnsupportedOperation', ['UnsupportedOperation', 'OSError', 'ValueError', 'Exception', 'BaseException', 'object'], ['__module__', '__weakref__'], True, True, True)
+---- _IOBase
+seek(0,) => UnsupportedOperation: seek
+seek(0, 1) => UnsupportedOperation: seek
+seek('a',) => TypeError: 'str' object cannot be interpreted as an integer
+seek() => TypeError: seek() takes at least 1 positional argument (0 given)
+seek(0, 0, 0) => TypeError: seek() takes at most 2 arguments (3 given)
+tell() => UnsupportedOperation: seek
+truncate() => UnsupportedOperation: truncate
+truncate(1,) => UnsupportedOperation: truncate
+truncate('a',) => UnsupportedOperation: truncate
+flush() => None
+seekable() => False
+readable() => False
+writable() => False
+_checkClosed() => None
+_checkSeekable() => UnsupportedOperation: File or stream is not seekable.
+_checkReadable() => UnsupportedOperation: File or stream is not readable.
+_checkWritable() => UnsupportedOperation: File or stream is not writable.
+fileno() => UnsupportedOperation: fileno
+isatty() => False
+readline() => AttributeError: '_io._IOBase' object has no attribute 'read'
+readlines() => AttributeError: '_io._IOBase' object has no attribute 'read'
+writelines([],) => None
+writelines([b'a'],) => AttributeError: '_io._IOBase' object has no attribute 'write'
+__next__() => AttributeError: '_io._IOBase' object has no attribute 'read'
+readline('a',) => TypeError: argument should be integer or None, not 'str'
+readline(None,) => AttributeError: '_io._IOBase' object has no attribute 'read'
+readline(1.5,) => TypeError: argument should be integer or None, not 'float'
+readlines('a',) => TypeError: argument should be integer or None, not 'str'
+closed => (False, {'__IOBase_closed': True}, None, True, {'__IOBase_closed': True}, None)
+flush when closed => ValueError: I/O operation on closed file.
+isatty when closed => ValueError: I/O operation on closed file.
+__enter__ when closed => ValueError: I/O operation on closed file.
+__iter__ when closed => ValueError: I/O operation on closed file.
+_checkClosed when closed => ValueError: I/O operation on closed file.
+readline when closed => AttributeError: '_io._IOBase' object has no attribute 'read'
+seekable when closed => False
+fileno when closed => UnsupportedOperation: fileno
+tell when closed => UnsupportedOperation: seek
+writelines when closed => ValueError: I/O operation on closed file.
+with => [(False, None, True)]
+closed cannot be set => AttributeError: attribute 'closed' of '_io._IOBase' objects is not writable
+attributes => (None, 1, {'__IOBase_closed': True, 'x': 1})
+__dict__ cannot be set => AttributeError: attribute '__dict__' of '_io._IOBase' objects is not writable
+__del__ => [(None, True, {'_finalizing': True, '__IOBase_closed': True})]
+---- _RawIOBase
+read => [(b'ab', b'cde', b'', b'fghijkl', [('readinto', 'bytearray', 2), ('readinto', 'bytearray', 10), ('readinto', 'bytearray', 0), ('readinto', 'bytearray', 131072), ('readinto', 'bytearray', 131072), ('readinto', 'bytearray', 131072), ('readinto', 'bytearray', 131072)])]
+readall => [(b'abcdefg', b'', 5, ('readinto', 'bytearray', 131072))]
+readline => [(b'ab\n', b'cde', b'fg\n', b'\n', b'h')]
+readlines => ([b'a\n', b'b\n', b'c'], [b'a\n', b'bb\n'], [b'a\n', b'bb\n'], [b'a\n', b'b'], [b'a\n', b'b'])
+iteration => ([b'a\n', b'b\n', b'\n', b'c'], b'x\n')
+read('a') => TypeError: 'str' object cannot be interpreted as an integer
+read(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+read(1, 2) => TypeError: read expected at most 1 argument, got 2
+the base's readinto and write => NotImplementedError: 
+write => NotImplementedError: 
+read of the base => NotImplementedError: 
+readinto that returns None => None
+readinto that returns too many => ValueError: readinto returned 100 outside buffer size 4
+readinto that returns negative => ValueError: readinto returned -1 outside buffer size 4
+readinto that returns a str => TypeError: 'str' object cannot be interpreted as an integer
+readinto that returns huge => ValueError: cannot fit 'int' into an index-sized integer
+readinto that returns a float => TypeError: 'float' object cannot be interpreted as an integer
+readall with read that returns None at once => None
+readall with read that returns None later => b'ab'
+readall with read that returns a str => TypeError: read() should return bytes
+readall with read that returns a bytearray => TypeError: read() should return bytes
+readall with read that returns bytes => b'abc'
+readline with peek => [(b'ab\n', b'cd', b'efghi\n', [('peek', 1), ('read', 3), ('peek', 1), ('read', 2), ('peek', 1), ('read', 5), ('peek', 1), ('read', 1)])]
+peek that returns a str => OSError: peek() should have returned a bytes object, not 'str'
+read that returns a str => OSError: read() should have returned a bytes object, not 'str'
+---- _BufferedIOBase and _TextIOBase
+_BufferedIOBase.detach() => UnsupportedOperation: detach
+_BufferedIOBase.read() => UnsupportedOperation: read
+_BufferedIOBase.read(1,) => UnsupportedOperation: read
+_BufferedIOBase.read('a',) => TypeError: 'str' object cannot be interpreted as an integer
+_BufferedIOBase.read(None,) => TypeError: 'NoneType' object cannot be interpreted as an integer
+_BufferedIOBase.read1() => UnsupportedOperation: read1
+_BufferedIOBase.readline() => UnsupportedOperation: read
+_BufferedIOBase.readline(1,) => UnsupportedOperation: read
+_BufferedIOBase.write(b'a',) => UnsupportedOperation: write
+_BufferedIOBase.write('a',) => UnsupportedOperation: write
+_BufferedIOBase.write(1,) => UnsupportedOperation: write
+_BufferedIOBase.write() => TypeError: write() takes exactly 1 positional argument (0 given)
+_BufferedIOBase.readinto(bytearray(b'\x00\x00'),) => UnsupportedOperation: read
+_BufferedIOBase.readinto(b'ab',) => TypeError: readinto() argument must be read-write bytes-like object, not bytes
+_BufferedIOBase.readinto1(bytearray(b'\x00\x00'),) => UnsupportedOperation: read1
+_BufferedIOBase.readinto(1,) => TypeError: readinto() argument must be read-write bytes-like object, not int
+_TextIOBase.detach() => UnsupportedOperation: detach
+_TextIOBase.read() => UnsupportedOperation: read
+_TextIOBase.read(1,) => UnsupportedOperation: read
+_TextIOBase.read('a',) => TypeError: 'str' object cannot be interpreted as an integer
+_TextIOBase.read(None,) => TypeError: 'NoneType' object cannot be interpreted as an integer
+_TextIOBase.readline() => UnsupportedOperation: readline
+_TextIOBase.readline(1,) => UnsupportedOperation: readline
+_TextIOBase.write(b'a',) => TypeError: write() argument 1 must be str, not bytes
+_TextIOBase.write('a',) => UnsupportedOperation: write
+_TextIOBase.write(1,) => TypeError: write() argument 1 must be str, not int
+_TextIOBase.write() => TypeError: write() takes exactly 1 positional argument (0 given)
+_TextIOBase attributes => (None, None, None)
+readinto with read that returns bytes => (2, bytearray(b'ab..'), 2, [('read', 4), ('read1', 4)])
+readinto with read that returns too much => ValueError: read() returned too much data: 4 bytes requested, 6 returned
+readinto with read that returns a str => TypeError: read() should return bytes
+readinto with read that returns nothing => (0, bytearray(b'....'), 0, [('read', 4), ('read1', 4)])
+readinto with read that returns a bytearray => TypeError: read() should return bytes
+readinto with read that returns None => TypeError: read() should return bytes
+---- FileIO
+new => ("<_io.FileIO name='D/a.bin' mode='wb' closefd=True>", 'D/a.bin', 'wb', False, True, False, True, True, False, False, True, True, False, {'name': 'D/a.bin'})
+write => (5, 1, 5, 0, 11)
+write('a') => TypeError: a bytes-like object is required, not 'str'
+write(1) => TypeError: a bytes-like object is required, not 'int'
+write() => TypeError: write() takes exactly 1 positional argument (0 given)
+read => UnsupportedOperation: File not open for reading
+readall => OSError: [Errno 9] Bad file descriptor
+readinto => UnsupportedOperation: File not open for reading
+seek => (0, 0, 2, 10, 100, 11)
+seek(-1) => OSError: [Errno 22] Invalid argument
+seek('a') => TypeError: 'str' object cannot be interpreted as an integer
+seek(0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+seek(0, 9) => OSError: [Errno 22] Invalid argument
+seek(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+seek(2 ** 70) => OverflowError: Python int too large to convert to C long
+seek() => TypeError: seek expected at least 1 argument, got 0
+truncate => (5, 5, 5, 3, 5, 8, 8, 8)
+truncate(-1) => OSError: [Errno 22] Invalid argument
+truncate('a') => TypeError: 'str' object cannot be interpreted as an integer
+close => (None, True, '<_io.FileIO [closed]>', None, 'wb', True, 'D/a.bin', {'name': 'D/a.bin', '__IOBase_closed': True})
+read when closed => ValueError: I/O operation on closed file
+readall when closed => ValueError: I/O operation on closed file
+readinto when closed => ValueError: I/O operation on closed file
+write when closed => ValueError: I/O operation on closed file
+seek when closed => ValueError: I/O operation on closed file
+tell when closed => ValueError: I/O operation on closed file
+truncate when closed => ValueError: I/O operation on closed file
+fileno when closed => ValueError: I/O operation on closed file
+isatty when closed => ValueError: I/O operation on closed file
+_isatty_open_only when closed => ValueError: I/O operation on closed file
+readable when closed => ValueError: I/O operation on closed file
+writable when closed => ValueError: I/O operation on closed file
+seekable when closed => ValueError: I/O operation on closed file
+flush when closed => ValueError: I/O operation on closed file.
+readline when closed => ValueError: I/O operation on closed file
+__enter__ when closed => ValueError: I/O operation on closed file.
+__iter__ when closed => ValueError: I/O operation on closed file.
+readlines when closed => ValueError: I/O operation on closed file.
+writelines when closed => ValueError: I/O operation on closed file.
+_blksize when closed => 131072
+read => ("<_io.FileIO name='D/a.bin' mode='rb' closefd=True>", 'rb', True, False, b'he', b'', b'l\x00\x00\x00\x00\x00', b'', b'', 0, b'hel\x00\x00\x00\x00\x00', b'')
+read(None) => (1, b'el\x00\x00\x00\x00\x00', 1, b'el\x00\x00\x00\x00\x00')
+read('a') => TypeError: argument should be integer or None, not 'str'
+read(2 ** 70) => OverflowError: cannot fit 'int' into an index-sized integer
+readinto => [(0, 4, bytearray(b'h\x00\x00\x00'), 2, bytearray(b'h\x00\x00\x00'), 0)]
+readinto(bytes) => TypeError: readinto() argument 1 must be read-write bytes-like object, not bytes
+readinto('a') => TypeError: readinto() argument 1 must be read-write bytes-like object, not str
+write => UnsupportedOperation: File not open for writing
+truncate => UnsupportedOperation: File not open for writing
+readline and iteration => (9, 0, b'a\n', b'b', [b'b\n', b'\n', b'ccc'], 0, [b'a\n', b'bb\n', b'\n', b'ccc'])
+mode 'r' => ('rb', True, False, 0, "<_io.FileIO name='D/a.bin' mode='rb' closefd=True>")
+mode 'w' => ('wb', False, True, 0, "<_io.FileIO name='D/a.bin' mode='wb' closefd=True>")
+mode 'a' => ('ab', False, True, 5, "<_io.FileIO name='D/a.bin' mode='ab' closefd=True>")
+mode 'x' => ('xb', False, True, 0, "<_io.FileIO name='D/x0.bin' mode='xb' closefd=True>")
+mode 'r+' => ('rb+', True, True, 0, "<_io.FileIO name='D/a.bin' mode='rb+' closefd=True>")
+mode 'w+' => ('rb+', True, True, 0, "<_io.FileIO name='D/a.bin' mode='rb+' closefd=True>")
+mode 'a+' => ('ab+', True, True, 5, "<_io.FileIO name='D/a.bin' mode='ab+' closefd=True>")
+mode 'x+' => ('xb+', True, True, 0, "<_io.FileIO name='D/x1.bin' mode='xb+' closefd=True>")
+mode 'rb' => ('rb', True, False, 0, "<_io.FileIO name='D/a.bin' mode='rb' closefd=True>")
+mode 'wb' => ('wb', False, True, 0, "<_io.FileIO name='D/a.bin' mode='wb' closefd=True>")
+mode 'br' => ('rb', True, False, 0, "<_io.FileIO name='D/a.bin' mode='rb' closefd=True>")
+mode 'b+r' => ('rb+', True, True, 0, "<_io.FileIO name='D/a.bin' mode='rb+' closefd=True>")
+mode 'rb+' => ('rb+', True, True, 0, "<_io.FileIO name='D/a.bin' mode='rb+' closefd=True>")
+mode '+' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+mode '' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+mode 'b' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+mode 'rw' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+mode 'ra' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+mode 'rr' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+mode 'r++' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+mode 'z' => ValueError: invalid mode: z
+mode 'rt' => ValueError: invalid mode: rt
+mode 'U' => ValueError: invalid mode: U
+mode 'r\x00' => ValueError: embedded null character
+mode 'é' => ValueError: invalid mode: é
+mode 'wx' => ValueError: Must have exactly one of create/read/write/append mode and at most one plus
+x of what is there => FileExistsError: [Errno 17] File exists: 'D/a.bin'
+what is not there => FileNotFoundError: [Errno 2] No such file or directory: 'D/missing'
+its attributes => NameError: name 'attempt' is not defined
+a directory => IsADirectoryError: [Errno 21] Is a directory: 'D/'
+a directory, to write => IsADirectoryError: [Errno 21] Is a directory: 'D/'
+in what is not there => FileNotFoundError: [Errno 2] No such file or directory: 'D/no/such'
+its attributes => [(2, 'No such file or directory', 'D/missing', None, 'FileNotFoundError')]
+FileIO() => TypeError: FileIO() missing required argument 'file' (pos 1)
+FileIO(1.5) => TypeError: expected str, bytes or os.PathLike object, not float
+FileIO(None) => TypeError: expected str, bytes or os.PathLike object, not NoneType
+FileIO([]) => TypeError: expected str, bytes or os.PathLike object, not list
+FileIO(-1) => ValueError: negative file descriptor
+FileIO(-5) => ValueError: negative file descriptor
+FileIO(2 ** 40) => TypeError: expected str, bytes or os.PathLike object, not int
+FileIO(99999) => OSError: [Errno 9] Bad file descriptor
+FileIO(p, 1) => TypeError: FileIO() argument 'mode' must be str, not int
+FileIO(p, None) => TypeError: FileIO() argument 'mode' must be str, not None
+FileIO(p, 'r', False) => ValueError: Cannot use closefd=False with file name
+FileIO(p, 'r', True, None, 1) => TypeError: FileIO() takes at most 4 arguments (5 given)
+FileIO(p, other=1) => TypeError: FileIO() got an unexpected keyword argument 'other'
+FileIO(file=p, mode='r', closefd=1, opener=None) => [('D/a.bin', 'rb', None)]
+FileIO(b'...') => [(b'D/a.bin', 'rb', None)]
+FileIO('a\0b') => ValueError: embedded null byte
+FileIO(b'a\0b') => ValueError: embedded null byte
+FileIO(bytearray) => TypeError: expected str, bytes or os.PathLike object, not bytearray
+FileIO('\udc80') => FileNotFoundError: [Errno 2] No such file or directory: 'D/\udc80'
+FileIO('\ud800') => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 74: surrogates not allowed
+what has __fspath__ => [('Path', None)]
+that returns an int => TypeError: expected Path.__fspath__() to return str or bytes, not int
+---- by number
+closefd=False => [("<_io.FileIO name=N mode='rb' closefd=False>", True, False, b'12', None, True, b'34')]
+True => RuntimeWarning: bool is used as a file descriptor
+closefd=True => [(True, None, 'OSError', 'OSError', True)]
+---- opener
+is asked => [(b'123', 'D/a.bin', True, [('D/a.bin', 16777216)], True)]
+that returns a str => TypeError: expected integer from opener
+that returns None => TypeError: expected integer from opener
+that returns -1 => ValueError: opener returned -1
+that returns -7 => ValueError: opener returned -7
+that returns a float => TypeError: expected integer from opener
+that returns huge => OverflowError: Python int too large to convert to C int
+that returns one that is not open => OSError: [Errno 9] Bad file descriptor
+that raises => ZeroDivisionError: division by zero
+that is not callable => TypeError: 'int' object is not callable
+---- again, and the rest
+__init__ again => (None, 'rb+', True, True, False)
+__init__ that fails => FileNotFoundError: [Errno 2] No such file or directory: 'D/missing'
+leaves it closed => (True, 'rb+')
+__new__ alone => [(True, '<_io.FileIO [closed]>', 'wb', True, 'ValueError', None)]
+pickle => TypeError: cannot pickle 'FileIO' instances
+_finalizing => [(False, None, True)]
+_finalizing = 1 => TypeError: attribute value type must be bool
+del _finalizing => TypeError: can't delete numeric/char attribute
+mode cannot be set => AttributeError: attribute 'mode' of '_io.FileIO' objects is not writable
+name can => [(None, "<_io.FileIO name='other' mode='rb' closefd=True>", None, "<_io.FileIO fd=N mode='rb' closefd=True>", None)]
+a name that shows the file => RuntimeError: reentrant call inside _io.FileIO.__repr__
+derived from => [("<Sub name='D/a.bin' mode='rb' closefd=True>", 5, b'', True, None)]
+_dealloc_warn => [(None, None, None)]
+append => None
+append => (3, 2, 0, 1, 6, None, b'abcdef')
+with => [(False, None, True)]
+a large one => [(300000, None, 300000, 300000, [(100000, 200000)])]
+who is told => (None, None, 'ValueError', [('open', ('D/a.bin', 'r', 16777216)), ('open', ('D/a.bin', 'wb+', 16778754))])

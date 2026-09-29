@@ -760,9 +760,7 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
         set(original, module->getDirect(vm, Identifier::fromString(vm, name)));
     };
 
-    Configuration configuration;
-    if (auto configure = globalObject->globalObjectMethodTable()->configurePython)
-        configure(globalObject, configuration);
+    const Configuration& configuration = realm->configuration();
     auto listOf = [&] (const Vector<String>& strings) {
         MarkedArgumentBuffer values;
         for (auto& string : strings)

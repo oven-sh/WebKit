@@ -142,6 +142,10 @@ public:
     // they are what CPython goes by to tell whether two classes can both be derived from, which is if the instances of one are laid out as those of
     // the other and then some, and whether instances can be given __slots__. So they are kept as CPython would have them, and gone by for the same.
     int basicSize() const { return m_basicSize; }
+    // For a class that is built in, whose instances are some cell of their own, and that has no __new__(): it leaves making them to object.__new__(), which does it with this. It is what tp_alloc is to CPython.
+    using Allocator = JSObject* (*)(VM&, Structure*);
+    Allocator allocator() const { return m_allocator; }
+    void setAllocator(Allocator allocator) { m_allocator = allocator; }
     int itemSize() const { return m_itemSize; }
     int dictOffset() const { return m_dictOffset; }
     int weakReferenceOffset() const { return m_weakReferenceOffset; }
@@ -240,6 +244,8 @@ private:
     int m_dictOffset { 0 };
     int m_weakReferenceOffset { 0 };
     unsigned long m_flagsForPython { 0 };
+    Allocator m_allocator { nullptr };
+    bool m_isCPythons { false }; // It is built in, and is a class that CPython has, so that those are what CPython says of it.
     ErrorType m_errorType { ErrorType::Error };
     unsigned m_flags { 0 };
     bool m_knowsHooks { false }; // Whether hookFlags are as they would be worked out to be.

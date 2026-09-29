@@ -48,7 +48,7 @@
 namespace JSC { namespace Python {
 
 static PyLock* asLock(JSValue value) { return uncheckedDowncast<PyLock>(value.asCell()); }
-static ThreadModuleState& stateOf(JSGlobalObject* globalObject) { return globalObject->pyRealm()->threadModule(); }
+static ThreadModuleState& threadStateOf(JSGlobalObject* globalObject) { return globalObject->pyRealm()->threadModule(); }
 
 // PyThread_get_thread_ident_ex()
 static uint64_t currentThreadIdentifier()
@@ -58,13 +58,6 @@ static uint64_t currentThreadIdentifier()
 #else
     return Thread::currentSingleton().uid();
 #endif
-}
-
-static JSValue intFromUInt64(JSGlobalObject* globalObject, uint64_t value)
-{
-    if (value <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()))
-        return intFromInt64(globalObject, static_cast<int64_t>(value));
-    return JSBigInt::createFrom(globalObject, value);
 }
 
 // ---- Waiting
@@ -117,7 +110,7 @@ PYTHON_NATIVE(lockNew)
         return { };
     if (args.size() > 1)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("lock expected 0 arguments, got "_s, args.size() - 1)));
-    return JSValue::encode(PyLock::create(vm, stateOf(globalObject).lockType->instanceStructure()));
+    return JSValue::encode(PyLock::create(vm, threadStateOf(globalObject).lockType->instanceStructure()));
 }
 
 PYTHON_NATIVE(lockAcquire)
@@ -267,7 +260,7 @@ PYTHON_NATIVE(recursiveLockAcquireRestore)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("_acquire_restore() argument 1, item 1 must be int, not "_s, typeNameOfArgument(globalObject, items.at(1)))));
     JSValue ownerValue = toInt(globalObject, items.at(1));
     RETURN_IF_EXCEPTION(scope, { });
-    uint64_t owner = ownerValue.isInt32() ? static_cast<uint64_t>(static_cast<int64_t>(ownerValue.asInt32())) : JSBigInt::toBigUInt64(ownerValue);
+    uint64_t owner = lowBitsOfInt(ownerValue);
     lockRecursively(vm, self, Seconds::infinity());
     RETURN_IF_EXCEPTION(scope, { });
     self->setOwner(owner);
@@ -309,7 +302,7 @@ PYTHON_NATIVE(localGetAttribute)
     // _PyObject_GenericGetAttrWithDict(), with what it has for the dict, whether or not instances of the class have a __dict__ besides. If the class is this one and not one derived from it, what it has comes before
     // anything that the class has to say.
     PyType* type = typeOf(globalObject, self);
-    JSValue found = type == stateOf(globalObject).localType.get() ? JSValue() : type->lookup(vm, *name);
+    JSValue found = type == threadStateOf(globalObject).localType.get() ? JSValue() : type->lookup(vm, *name);
     if (!found || !isDataDescriptor(globalObject, found)) {
         if (JSValue value = getStoredAttribute(vm, self, *name))
             return JSValue::encode(value);
@@ -369,7 +362,7 @@ static PyLock* runningLockOf(PyNativeObject* handle) { return asLock(handle->fie
 static PyNativeObject* newHandle(JSGlobalObject* globalObject, JSValue identifier, HandleStatus status)
 {
     VM& vm = globalObject->vm();
-    auto& state = stateOf(globalObject);
+    auto& state = threadStateOf(globalObject);
     PyLock* isRunning = PyLock::create(vm, state.lockType->instanceStructure());
     isRunning->tryLock();
     auto* handle = PyNativeObject::create(vm, state.handleType->instanceStructure());
@@ -520,7 +513,7 @@ PYTHON_NATIVE(threadStartJoinable)
         return JSValue::encode(raiseTypeError(globalObject, scope, "thread function must be callable"_s));
     if (!handle)
         handle = jsUndefined();
-    else if (!isNone(handle) && typeOf(globalObject, handle) != stateOf(globalObject).handleType.get())
+    else if (!isNone(handle) && typeOf(globalObject, handle) != threadStateOf(globalObject).handleType.get())
         return JSValue::encode(raiseTypeError(globalObject, scope, "'handle' must be a _ThreadHandle"_s));
     if (!audit(globalObject, "_thread.start_joinable_thread"_s, function, jsNumber(isDaemon), handle))
         return { };
@@ -564,7 +557,7 @@ PYTHON_NATIVE(threadInterruptMain)
 
 PYTHON_NATIVE(threadAllocateLock)
 {
-    return JSValue::encode(PyLock::create(globalObject->vm(), stateOf(globalObject).lockType->instanceStructure()));
+    return JSValue::encode(PyLock::create(globalObject->vm(), threadStateOf(globalObject).lockType->instanceStructure()));
 }
 
 PYTHON_NATIVE(threadGetIdentifier)
@@ -574,7 +567,7 @@ PYTHON_NATIVE(threadGetIdentifier)
 
 PYTHON_NATIVE(threadGetMainIdentifier)
 {
-    return JSValue::encode(intFromUInt64(globalObject, stateOf(globalObject).mainThread));
+    return JSValue::encode(intFromUInt64(globalObject, threadStateOf(globalObject).mainThread));
 }
 
 #if OS(DARWIN) || OS(LINUX)
@@ -614,7 +607,7 @@ PYTHON_NATIVE(threadStackSize)
     constexpr int64_t smallest = (1 << 11) * sizeof(void*) * 3 + 4 * KB;
     if (newSize && newSize < smallest)
         return JSValue::encode(raiseValueError(globalObject, scope, concatenate("size must be at least "_s, smallest, " bytes"_s)));
-    auto& state = stateOf(globalObject);
+    auto& state = threadStateOf(globalObject);
     size_t oldSize = state.stackSize;
     if (newSize) {
 #if USE(PTHREADS)
@@ -646,7 +639,7 @@ static void writeToFile(JSGlobalObject* globalObject, JSValue file, const String
 PYTHON_NATIVE(threadExceptHook)
 {
     NATIVE_PROLOGUE();
-    if (typeOf(globalObject, args[0]) != stateOf(globalObject).exceptHookArgsType.get())
+    if (typeOf(globalObject, args[0]) != threadStateOf(globalObject).exceptHookArgsType.get())
         return JSValue::encode(raiseTypeError(globalObject, scope, "_thread.excepthook argument type must be ExceptHookArgs"_s));
     PyTuple* hookArguments = asTuple(args[0]);
     JSValue type = hookArguments->at(0);
@@ -829,7 +822,7 @@ JSObject* createThreadModule(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
-    auto& state = stateOf(globalObject);
+    auto& state = threadStateOf(globalObject);
     if (!state.lockType) {
         initializeThreadTypes(globalObject, state);
         state.mainThread = currentThreadIdentifier();

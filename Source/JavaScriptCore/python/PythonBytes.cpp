@@ -307,7 +307,13 @@ int64_t hashOfBytes(std::span<const uint8_t> content)
 
 // ---- Changing the length of a bytearray
 
-// False if it raised.
+static bool resize(JSGlobalObject*, JSUint8Array*, size_t newLength);
+
+bool resizeByteArray(JSGlobalObject* globalObject, JSUint8Array* view, size_t newLength)
+{
+    return resize(globalObject, view, newLength);
+}
+
 static bool resize(JSGlobalObject* globalObject, JSUint8Array* view, size_t newLength)
 {
     VM& vm = globalObject->vm();

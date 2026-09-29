@@ -2064,7 +2064,9 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
 
     python/PyNativeFunction.h
     python/PythonConfiguration.h
+    python/PythonFileOperations.h
     python/PythonFunctionInfo.h
+    python/PythonPosixModule.h
     python/PythonSyntaxError.h
 
     ffi/BunFFI.h

@@ -338,7 +338,8 @@ PyTuple* exceptionArguments(JSGlobalObject*, JSValue exception);
 // OSError(errno, strerror(errno)[, filename]), or the class derived from it that is for that error.
 JS_EXPORT_PRIVATE JSValue raiseOSError(JSGlobalObject*, ThrowScope&, int errorNumber, JSValue filename = JSValue());
 // What is given for the name of a file, as the system wants it: a str, bytes, or what has __fspath__. Nothing if it raised.
-JS_EXPORT_PRIVATE std::optional<CString> toFileSystemPath(JSGlobalObject*, JSValue);
+// It cannot have a zero in it, and what is said if it has depends on who is asking: PyUnicode_FSDecoder() unless it is given, and "embedded null byte" is PyUnicode_FSConverter().
+JS_EXPORT_PRIVATE std::optional<CString> toFileSystemPath(JSGlobalObject*, JSValue, ASCIILiteral ifItHasZero = { });
 // An attribute of the module sys, as it is now. Empty if it has been deleted.
 JSValue sysAttribute(JSGlobalObject*, ASCIILiteral name);
 
@@ -501,7 +502,21 @@ int64_t hashOfPointer(const void*);
 // ---- Numbers
 
 // An int, from what may not fit an int32.
+// a * b + c, as it comes out in CPython where that is written as one expression. Where there is an instruction that does both, the compilers that CPython is built with use it, and it rounds once where two would
+// round twice, which shows in the last digit. Nothing here is compiled that way, since that is not what JavaScript's arithmetic is, so where CPython has such an expression it is said.
+inline double multiplyAdd(double a, double b, double c)
+{
+#if CPU(ARM64)
+    return std::fma(a, b, c);
+#else
+    return a * b + c;
+#endif
+}
+
 JSValue intFromInt64(JSGlobalObject*, int64_t);
+JSValue intFromUInt64(JSGlobalObject*, uint64_t);
+// PyLong_AsUnsignedLongLongMask(): what an int has in its low 64 bits, whatever else it has.
+uint64_t lowBitsOfInt(JSValue);
 JSValue parseInt(JSGlobalObject*, StringView, unsigned base); // The int that a string spells, in the base. Empty if it spells none.
 JSValue intFromDouble(JSGlobalObject*, double); // Truncated.
 JSValue floatFromDouble(double);
