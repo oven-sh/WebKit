@@ -1,0 +1,3 @@
+caught KeyError('from the handler') ['the handler', 'the callback'] True
+caught KeyError('from the handler') ['the handler', 'the callback'] True
+caught KeyError('from the handler') ['the handler', 'the callback'] True

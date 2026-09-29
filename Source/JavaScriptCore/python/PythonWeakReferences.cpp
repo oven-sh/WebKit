@@ -30,6 +30,7 @@
 #include "PyWeakReference.h"
 #include "PythonSignals.h"
 #include "TopExceptionScope.h"
+#include <wtf/Scope.h>
 
 // Weak references: Objects/weakrefobject.c and Modules/_weakref.c of CPython. What they are made of is in PyWeakReference.h.
 //
@@ -563,6 +564,22 @@ void doPendingWork(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     vm.setHasPythonWork(false);
+    // If it raises, the rest is still to be done.
+    auto putOffTheRest = makeScopeExit([&] {
+        if (scope.exception()) [[unlikely]]
+            vm.setHasPythonWork(true);
+    });
+
+    // In the order of _Py_HandlePending(): signals, what has been asked to be called, and then what comes of collecting. What a handler raises is raised where the
+    // program is. In a callback, which is where it would be run if those came first, it would be shown and forgotten.
+    //
+    // It says that there are none before it looks, so that one that comes meanwhile is not lost.
+    if (vm.takePythonSignal()) {
+        handleSignals(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+    reportSignalWakeupErrors(globalObject);
+    RETURN_IF_EXCEPTION(scope, void());
 
     // handle_callback(), for each. Those of the references to an object are called beginning with the one that was made last.
     MarkedArgumentBuffer references;
@@ -582,13 +599,6 @@ void doPendingWork(JSGlobalObject* globalObject)
             RETURN_IF_EXCEPTION(scope, void());
         }
     }
-
-    // It says that there are none before it looks, so that one that comes meanwhile is not lost.
-    if (vm.takePythonSignal()) {
-        handleSignals(globalObject);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
-    RELEASE_AND_RETURN(scope, reportSignalWakeupErrors(globalObject));
 }
 
 } } // namespace JSC::Python

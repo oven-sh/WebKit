@@ -186,7 +186,9 @@ print("---- interrupted")
 def interrupted(handler, f, after=0.1, least=None, most=60.0):
     "What comes of `f` when a signal comes while it waits"
     old = signal.signal(signal.SIGALRM, handler)
-    signal.setitimer(signal.ITIMER_REAL, after)
+    # What is to end the wait by raising is tried again until it does. A handler is run wherever the program has got to, and what it raises in a callback that comes of
+    # collecting is shown and forgotten.
+    signal.setitimer(signal.ITIMER_REAL, after, after if handler is raiser else 0)
     try:
         return timed(f, least=after if least is None else least, most=most)
     finally:

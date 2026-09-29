@@ -746,6 +746,9 @@ Some things come up when nothing can be run, and are to be run as soon as someth
 "eval breaker" for that, a word that running code looks at now and then. Here the word is the one that it looks at anyway, `VM::m_pythonLimitUnlessWatched`, which is 0 while there is something to see to, so
 that being able to be asked costs code that is running nothing. `op_py_enter` and `op_py_line` then go the slow way, which is `doPendingWork()`.
 
+**Signals are seen to first**, as by `_Py_HandlePending()`. What a handler raises is raised where the program is. If callbacks came first, the first function that one of them entered would find the signal, and
+what the handler raised would be shown and forgotten with the callback half run: a wait that the signal was to end would go on. `interop/a-signal-and-a-callback-at-once.py` has both come up together.
+
 ### Signals
 
 `PythonSignals.cpp` is `Modules/signalmodule.c`. As in CPython, what the system calls when a signal comes does next to nothing, and what the program has for the signal is called later, by Python code, between one thing and
