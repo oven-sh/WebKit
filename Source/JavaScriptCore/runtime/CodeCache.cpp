@@ -87,44 +87,48 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
     });
 }
 
+static void generateUnlinkedCodeBlockForFunctions(VM&, UnlinkedCodeBlock*, const SourceCode& parentSource, OptionSet<CodeGenerationMode>, ParserError&, unsigned depth, OptimizeBytecode);
+
+// depth: counting the function itself.
+static void generateUnlinkedCodeBlocksOfFunction(VM& vm, UnlinkedFunctionExecutable* unlinkedExecutable, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
+{
+    // FIXME: We should also generate CodeBlocks for CodeForConstruct of ordinary functions.
+    // https://bugs.webkit.org/show_bug.cgi?id=193823
+    CodeSpecializationKind kind = unlinkedExecutable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
+    SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
+    UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize);
+    if (unlinkedFunctionCodeBlock)
+        generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize);
+    // When all the code there is going to be is generated now: also what `new` runs, of a function that looks as if it is
+    // for that. (Not of any function that says `this`: some of those have a whole library inside, which would be there twice.)
+    if (!Options::resolveAllScopeSlotsStatically() || !unlinkedFunctionCodeBlock || kind != CodeSpecializationKind::CodeForCall)
+        return;
+    if (unlinkedExecutable->constructAbility() != ConstructAbility::CanConstruct)
+        return;
+    // Any other can be constructed with by calling it (FunctionExecutable::constructsByCalling()), unless it has a way of telling
+    // that from the real thing: new.target, said by itself, by what it evaluates, or by an arrow function inside it, which gets
+    // it from a variable that this one has stored it in.
+    bool canTellWhetherItIsConstructing = unlinkedExecutable->features() & (NewTargetFeature | EvalFeature);
+    for (auto& identifier : unlinkedFunctionCodeBlock->identifiers())
+        canTellWhetherItIsConstructing |= identifier == vm.propertyNames->builtinNames().newTargetLocalPrivateName();
+    if (!canTellWhetherItIsConstructing) {
+        if (!(unlinkedExecutable->features() & ThisFeature))
+            return;
+        if (unlinkedFunctionCodeBlock->instructionsSize() > 2048 || unlinkedFunctionCodeBlock->numberOfFunctionDecls() + unlinkedFunctionCodeBlock->numberOfFunctionExprs() > 4)
+            return;
+    }
+    if (auto* forConstruct = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForConstruct, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize))
+        generateUnlinkedCodeBlockForFunctions(vm, forConstruct, source, codeGenerationMode, error, depth - 1, optimize);
+}
+
 static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
     if (!depth)
         return;
-    auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable) {
-        // FIXME: We should also generate CodeBlocks for CodeForConstruct of ordinary functions.
-        // https://bugs.webkit.org/show_bug.cgi?id=193823
-        CodeSpecializationKind kind = unlinkedExecutable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
-        SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
-        UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize);
-        if (unlinkedFunctionCodeBlock)
-            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize);
-        // When all the code there is going to be is generated now: also what `new` runs, of a function that looks as if it is
-        // for that. (Not of any function that says `this`: some of those have a whole library inside, which would be there twice.)
-        if (!Options::resolveAllScopeSlotsStatically() || !unlinkedFunctionCodeBlock || kind != CodeSpecializationKind::CodeForCall)
-            return;
-        if (unlinkedExecutable->constructAbility() != ConstructAbility::CanConstruct)
-            return;
-        // Any other can be constructed with by calling it (FunctionExecutable::constructsByCalling()), unless it has a way of telling
-        // that from the real thing: new.target, said by itself, by what it evaluates, or by an arrow function inside it, which gets
-        // it from a variable that this one has stored it in.
-        bool canTellWhetherItIsConstructing = unlinkedExecutable->features() & (NewTargetFeature | EvalFeature);
-        for (auto& identifier : unlinkedFunctionCodeBlock->identifiers())
-            canTellWhetherItIsConstructing |= identifier == vm.propertyNames->builtinNames().newTargetLocalPrivateName();
-        if (!canTellWhetherItIsConstructing) {
-            if (!(unlinkedExecutable->features() & ThisFeature))
-                return;
-            if (unlinkedFunctionCodeBlock->instructionsSize() > 2048 || unlinkedFunctionCodeBlock->numberOfFunctionDecls() + unlinkedFunctionCodeBlock->numberOfFunctionExprs() > 4)
-                return;
-        }
-        if (auto* forConstruct = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForConstruct, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize))
-            generateUnlinkedCodeBlockForFunctions(vm, forConstruct, source, codeGenerationMode, error, depth - 1, optimize);
-    };
-
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++)
-        generate(unlinkedCodeBlock->functionDecl(i));
+        generateUnlinkedCodeBlocksOfFunction(vm, unlinkedCodeBlock->functionDecl(i), parentSource, codeGenerationMode, error, depth, optimize);
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++)
-        generate(unlinkedCodeBlock->functionExpr(i));
+        generateUnlinkedCodeBlocksOfFunction(vm, unlinkedCodeBlock->functionExpr(i), parentSource, codeGenerationMode, error, depth, optimize);
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType = ScriptExecutable>
@@ -199,10 +203,8 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 
 void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
-    SourceCode source = executable->linkedSourceCode(parentSource);
-    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode(), optimize);
-    if (codeBlock)
-        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth, optimize);
+    // (As for a function that is inside another: what `new` runs too, if it can tell.)
+    generateUnlinkedCodeBlocksOfFunction(vm, executable, parentSource, { }, error, depth == std::numeric_limits<unsigned>::max() ? depth : depth + 1, optimize);
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth, OptimizeBytecode optimize)

@@ -244,7 +244,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* glo
             bool threw = false;
             const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
             FunctionRef function = caller(globalObject, callFrame);
-            uint32_t callSite = CallSiteIndex(function.bytecodeIndexAt(returnAddress)).bits();
+            uint32_t callSite = callSiteAt(*function.info().function(), whatIsAt(returnAddress).offset);
             forEachSpread([&](EncodedJSValue& item, unsigned index) {
                 if (threw)
                     return;

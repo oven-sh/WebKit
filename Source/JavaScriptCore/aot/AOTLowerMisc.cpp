@@ -89,7 +89,7 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
         // There is one way out, however many returns there are: what it takes to leave is not worth having twice.
         if (!m_returnBlock)
             m_returnBlock = m_out.newBlock();
-        m_returnValues.append(m_out.anchor(lowJSValue(node->use(node->as<OpRet>().m_value))));
+        m_returnValues.append(m_out.anchor(lowAs(node->use(node->as<OpRet>().m_value), m_howValuesArePassed.result)));
         m_out.jump(m_returnBlock);
         return;
     case op_unreachable:
@@ -187,7 +187,7 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
 
 void Lowering::lowerSwitch(Node* node)
 {
-    UnlinkedCodeBlock* codeBlock = m_graph.codeBlock();
+    UnlinkedCodeBlock* codeBlock = code().codeBlock();
     Vector<FTL::SwitchCase> cases;
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> seen;
     auto addCase = [&](int32_t value, int32_t offset) {
@@ -364,10 +364,14 @@ bool Lowering::tryLowerMisc(Node* node)
         lowerCatch(node);
         return true;
     case op_get_scope:
-        if (m_graph.scopeIsEnvironmentOfModule()) {
+        if (Node* scope = code().scopeOfClosure) {
+            setJSValue(node, lowJSValue(scope));
+            return true;
+        }
+        if (code().scopeIsEnvironmentOfModule()) {
             // (Most have no use for it: what they read of the module's they find the same way.)
             if (node->useCount)
-                setJSValue(node, environmentAt(m_graph.distanceOfEnvironmentOfModule()));
+                setJSValue(node, environmentAt(code().distanceOfEnvironmentOfModule()));
             return true;
         }
         setJSValue(node, m_out.loadPtr(callee(), m_heaps.JSCallee_scope));
@@ -384,7 +388,7 @@ bool Lowering::tryLowerMisc(Node* node)
         if (m_graph.convention().signature == Signature::List)
             setJSValue(node, argumentPassedOrUndefined(index));
         else
-            setJSValue(node, registerOnEntry(argumentGPR(index)));
+            setJSValue(node, lowJSValueOfParameterOnEntry(index));
         return true;
     }
     case op_check_tdz: {

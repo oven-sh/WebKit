@@ -8,6 +8,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "B3PatchpointValue.h"
 #include "BytecodeStructs.h"
 #include "JSCInlines.h"
 

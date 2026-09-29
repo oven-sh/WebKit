@@ -267,6 +267,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     vm.m_aotInstances.append(instance);
     if (environmentsSize) {
         RELEASE_ASSERT(!vm.m_aotInstanceOfProgram);
+        // (StaticHeap::builtinOfEngineFor() went by that.)
+        RELEASE_ASSERT(!vm.m_firstRealmHasBuiltinsOfStaticHeap || vm.m_firstRealm == globalObject);
         vm.m_aotInstanceOfProgram = instance;
     }
     return *instance;
@@ -327,6 +329,18 @@ SUPPRESS_ASAN Instance* instanceOfFrame(const void* frame)
         if (kind == WhatIsAt::Adapter)
             return *reinterpret_cast<Instance* const*>(reinterpret_cast<const char*>(record->previous) + offsetOfInstanceInAdapter);
     }
+}
+
+SUPPRESS_ASAN bool canTellInstanceOfFrame(const void* frame)
+{
+    for (auto* record = static_cast<const FrameRecord*>(frame); record; record = record->previous) {
+        WhatIsAt::Kind kind = whatIsAt(removeCodePtrTag(record->returnAddress)).kind;
+        if (kind == WhatIsAt::SomethingElse)
+            return false;
+        if (kind == WhatIsAt::Adapter)
+            return true;
+    }
+    return false;
 }
 
 NEVER_INLINE bool topFrameIsNotTheEnginesOwn(const void* frame)
@@ -572,13 +586,41 @@ SiteInPlaceOfCallSite::~SiteInPlaceOfCallSite()
     s_returnAddressWithSiteInPlace = nullptr;
 }
 
-BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
+static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
+{
+    const ImageFunction& record = *function.info().function();
+    if (!record.hasInlineFrames) [[likely]]
+        return { function, CallSiteIndex(site).bytecodeIndex(), 0 };
+    unsigned frame = PackedSite::inlineFrame(site);
+    BytecodeIndex bytecodeIndex = CallSiteIndex(PackedSite::bits(site)).bytecodeIndex();
+    if (!frame)
+        return { function, bytecodeIndex, 0 };
+    return { FunctionRef { function.instance, inlineFrameOf(record, frame).function }, bytecodeIndex, frame };
+}
+
+FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
 {
     if (returnAddress == s_returnAddressWithSiteInPlace) [[unlikely]]
-        return CallSiteIndex(s_siteInPlace).bytecodeIndex();
+        return placeOfSite(*this, s_siteInPlace);
     WhatIsAt what = whatIsAt(returnAddress);
     RELEASE_ASSERT(what.kind == WhatIsAt::Function && what.index == index);
-    return CallSiteIndex(callSiteAt(*info().function(), what.offset)).bytecodeIndex();
+    // Not every call is one that anybody was expected to ask about: what is called does not throw, and does not look at the stack. But
+    // something may look at the stack at any time (a profiler of allocations does). Then it is the function, and nowhere in particular.
+    auto site = tryCallSiteAt(*info().function(), what.offset);
+    if (!site) [[unlikely]]
+        return { *this, BytecodeIndex(), 0 };
+    return placeOfSite(*this, *site);
+}
+
+FunctionRef::Place FunctionRef::placeOfInlinedCall(unsigned inlineFrame) const
+{
+    InlineFrameOfImage frame = inlineFrameOf(*info().function(), inlineFrame);
+    return placeOfSite(*this, PackedSite::pack(frame.parent, frame.callSite));
+}
+
+BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress) const
+{
+    return placeAt(returnAddress).bytecodeIndex;
 }
 
 FunctionRef FunctionRef::of(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind)
@@ -806,10 +848,10 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, OfConstructio
     }
     if (!at)
         return std::nullopt;
-    // (Where the function starts.)
-    readVarint(at);
-    readVarint(at);
+    // Where the function starts: which is where it is, for want of anything better (a builtin has nothing that says where anything is).
     ReportedPosition result;
+    result.lineColumn.line = static_cast<unsigned>(readVarint(at));
+    result.lineColumn.column = static_cast<unsigned>(readVarint(at));
     uint64_t offset = 0;
     int64_t line = 0;
     int64_t column = 0;

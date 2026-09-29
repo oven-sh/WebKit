@@ -133,6 +133,8 @@ public:
     // Likewise what linking the result of decodeBuiltinFunction() would give, for a builtin whose entry in the payload is there,
     // and whose source is that. Its source() is what makeSource() would have returned. Only in the realm that the program is run in.
     JS_EXPORT_PRIVATE static FunctionExecutable* builtinFunctionFor(JSGlobalObject*, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
+    // Likewise for one of the engine's own (BuiltinExecutables::stampOf()). It may be asked for while the realm is being made.
+    static FunctionExecutable* builtinOfEngineFor(JSGlobalObject*, unsigned index, std::span<const Latin1Character> text);
     JS_EXPORT_PRIVATE static RefPtr<TDZEnvironmentLink> parentScopeTDZVariablesOf(const UnlinkedFunctionExecutable&);
 
     // A cell says what it is by the place of its Structure among all Structures. The first VM of a process makes the ones it starts

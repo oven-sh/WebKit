@@ -85,6 +85,7 @@ enum class GuardKind : uint8_t {
     Callee, // That the callee is what the call takes it for.
     KnownCallee, // That the callee (uses[0]) is a closure of the function that the call was compiled for (Graph::knownCallee()).
     TypedArrayStorage, // That the typed array (uses[0]) is of a fixed length. It is where the length and the storage are loaded.
+    IsIntrinsic, // That uses[0] is the one of the realm's ImmutableIntrinsics that Node::intrinsic says. Made by inlineCalls().
 };
 
 // What a constructor does first, as a rule, is give the new object its properties:
@@ -111,6 +112,10 @@ struct NewObjectPlan {
 
     static NewObjectPlan forCreateThis(const JSInstructionStream&, unsigned offsetOfCreateThis);
 };
+
+class Graph;
+struct BasicBlock;
+struct Node;
 
 struct Use {
     VirtualRegister reg;
@@ -143,6 +148,8 @@ inline Type typeHeldByFact(unsigned holds)
 }
 
 struct Node {
+    // Whose code it is of: the function that is being compiled, or one that has been made part of it (inlineCalls()).
+    Graph* graph { nullptr };
     NodeKind kind { NodeKind::Bytecode };
     OpcodeID opcode { op_nop };
     Type type { TNone };
@@ -233,6 +240,7 @@ struct Node {
 };
 
 struct BasicBlock {
+    Graph* graph { nullptr }; // As Node::graph.
     unsigned index { 0 };
     unsigned bytecodeBegin { 0 };
     unsigned bytecodeEnd { 0 }; // Exclusive.
@@ -255,6 +263,7 @@ struct BasicBlock {
     // and if they counted, the fast copy would know no more. So they have to pass a test here (GuardKind::Reentry) and if one does
     // not, it is another time round the generic copy.
     bool isReentry { false };
+    bool isSeldomReached { false }; // What is done if a GuardKind::IsIntrinsic does not hold.
 
     // optimizeLoops()
     BasicBlock* immediateDominator { nullptr };
@@ -303,6 +312,31 @@ public:
 
     VM& vm() { return m_vm; }
     UnlinkedCodeBlock* codeBlock() { return m_codeBlock; }
+
+    // ---- A call of a function that is known can be done away with: what the function does is done where the call was (inlineCalls()).
+    // The function is parsed on its own, into a graph of its own, and the graph of the caller takes that over: its blocks are among the
+    // caller's from then on, and it stays what there is to ask about the code they are of. Whatever is asked of a graph about a node is
+    // answered by the graph the node is of. What comes of lowering (slots, sites, calls) is all the caller's.
+    Graph& outermost() { return *m_outermost; }
+    bool isOutermost() const { return m_outermost == this; }
+    // Which of InlineFrames it is. None: the function that is being compiled.
+    unsigned inlineFrame() const { return m_inlineFrame; }
+    struct InlineFrame {
+        unsigned parent; // Another of these, or none: what the call was in.
+        uint32_t callSite; // Where it was, there (CallSiteIndex::bits()).
+        unsigned knownCallee; // What was called: indexOfKnownCallee().
+    };
+    Vector<InlineFrame> inlineFrames; // From 1. Of the outermost.
+    // Everything that is left of the other but for what it knows.
+    void adopt(std::unique_ptr<Graph>&&, InlineFrame);
+    void computeOrderOfBlocks(); // m_rpo, after blocks have been added.
+    const ModuleLinkage* linkage() const { return m_linkage; }
+    // Of a closure that was made where its scope is at hand: that. It is what its op_get_scope gets (and is among that node's uses).
+    Node* scopeOfClosure { nullptr };
+    // Its loops are left as they are: what they call is going to be part of them (see BasicBlock::isGeneric).
+    bool loopsAreNotSplit { false };
+    unsigned numberOfNodes() const { return m_nodes.size(); }
+    Node* lastNode() { return &m_nodes.last(); }
     const ScopeChain& scopeChain() const { return m_scopeChain; }
 
     // Registers are numbered arguments first (this is 0), then locals.
@@ -348,6 +382,7 @@ public:
     }
     unsigned numberOfHomes() const { return m_homed.bitCount(); }
     Convention convention() const { return m_convention; }
+    HowValuesArePassed howValuesArePassed() const { return AOT::howValuesArePassed(m_facts, m_convention); }
 
     Node* addNode(NodeKind);
     BasicBlock* addBlock();
@@ -550,6 +585,10 @@ private:
     UncheckedKeyHashMap<unsigned, Node*, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_intrinsics;
     ASCIILiteral m_failureReason;
     OpcodeID m_failureOpcode { op_nop };
+    Graph* m_outermost { this };
+    unsigned m_inlineFrame { 0 };
+    unsigned m_numberOfNodesAdopted { 0 };
+    Vector<std::unique_ptr<Graph>> m_adopted;
 };
 
 // Phases. Each returns false (and Graph::failed() says why) if the function is not for the static compiler.
@@ -560,6 +599,7 @@ Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesConsulted = nullptr
 void inferRanges(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);
+void inlineCalls(Graph&, const CodeOfProgram&);
 
 } } // namespace JSC::AOT
 

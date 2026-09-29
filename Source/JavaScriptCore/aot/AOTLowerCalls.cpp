@@ -43,7 +43,7 @@ LValue Lowering::storeArgumentsToScratch(const Arguments& arguments)
     return m_scratch;
 }
 
-void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode)
+void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode, Rep result)
 {
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     if (mode == CallMode::TailCall) {
@@ -52,16 +52,14 @@ void Lowering::finishCall(PatchpointValue* patchpoint, CallMode mode)
     }
     m_graph.emitsCalls = true;
     patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
-    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    patchpoint->resultConstraints = { result == Rep::Double ? ValueRep::reg(FPRInfo::returnValueFPR) : ValueRep::reg(GPRInfo::returnValueGPR) };
 }
 
 LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments, CallMode mode, StubIntrinsic intrinsic)
 {
     unsigned count = arguments.size() - 1;
     bool inMemory = count > numberOfArgumentGPRs;
-    // (What is in this function's frame is gone by the time a tail call gets there.)
-    if (inMemory && mode == CallMode::TailCall)
-        mode = CallMode::Call;
+    RELEASE_ASSERT(mode != CallMode::TailCall || (!inMemory && m_howValuesArePassed.result == Rep::JSValue));
     LValue list = inMemory ? storeArgumentsToScratch(arguments) : nullptr;
     LValue countInMemory = inMemory ? m_out.constIntPtr(count) : nullptr;
 
@@ -100,7 +98,7 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
 
 // A call of what a variable is proven to hold (KnownFunction::isProven): to where the function's code is, which is known when the image
 // is put together, with what the function has a use for and nothing else.
-bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegister, const Arguments& arguments, CallMode mode, bool hasResult)
+bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegister, unsigned argv, const Arguments& arguments, CallMode mode, bool hasResult)
 {
     bool isConstruct = mode == CallMode::Construct;
     bool isProven = false;
@@ -111,7 +109,9 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     unsigned index = m_graph.indexOfKnownCallee(known->keyFor(isConstruct));
     bool passesCallee = !m_graph.passesNoFunctionObject(node);
     bool takesList = convention.signature == Signature::List;
-    if (takesList && mode == CallMode::TailCall)
+    HowValuesArePassed how = isConstruct ? HowValuesArePassed { } : howValuesArePassed(known->facts, convention);
+    // (What the callee hands back goes to whoever called this function, as it is.)
+    if ((takesList || how.result != m_howValuesArePassed.result) && mode == CallMode::TailCall)
         mode = CallMode::Call;
 
     LValue callee = passesCallee || !known->isDeclaration ? lowJSValue(node->use(calleeRegister)) : nullptr;
@@ -130,8 +130,20 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     LValue list = takesList ? storeArgumentsToScratch(arguments) : nullptr;
     LValue countInMemory = takesList ? m_out.constIntPtr(count) : nullptr;
     LValue undefined = m_out.constInt64(JSValue::ValueUndefined);
+    Vector<LValue, 8> passed;
+    if (!takesList) {
+        int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
+        for (unsigned i = 0; i < convention.numberOfParameters; ++i) {
+            if (how.parameters[i] == Rep::JSValue) {
+                passed.append(i < count ? arguments[i + 1] : undefined);
+                continue;
+            }
+            RELEASE_ASSERT(i < count); // (Or it would have been passed undefined.)
+            passed.append(lowAs(node->use(VirtualRegister(firstArgument + i + 1)), how.parameters[i]));
+        }
+    }
 
-    PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
+    PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : how.result == Rep::JSValue ? Int64 : how.result == Rep::Double ? Double : Int32);
     if (passesCallee)
         patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
     if (convention.usesThis)
@@ -141,9 +153,9 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         patchpoint->append(ConstrainedValue(list, ValueRep::reg(argumentGPR(1))));
     } else {
         for (unsigned i = 0; i < convention.numberOfParameters; ++i)
-            patchpoint->append(ConstrainedValue(i < count ? arguments[i + 1] : undefined, ValueRep::reg(argumentGPR(i))));
+            patchpoint->append(ConstrainedValue(passed[i], how.parameters[i] == Rep::Double ? ValueRep::reg(FPRInfo::toArgumentRegister(i)) : ValueRep::reg(argumentGPR(i))));
     }
-    finishCall(patchpoint, mode);
+    finishCall(patchpoint, mode, how.result);
     CallSite site { mode == CallMode::TailCall ? StubCall::noCallSite : callSiteBitsOf(node) };
     patchpoint->setGenerator([graph = &m_graph, index, mode, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -161,24 +173,27 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         return true;
     }
     if (hasResult)
-        setJSValue(node, patchpoint);
+        setResult(node, patchpoint, how.result);
     return true;
 }
 
 void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned argc, unsigned argv, CallMode mode, bool hasResult)
 {
-    if (mode == CallMode::TailCall && ((Options::aotDisableFastPaths() & 128) || argc - 1 > numberOfArgumentGPRs))
+    if (mode == CallMode::TailCall && ((Options::aotDisableFastPaths() & 128) || argc - 1 > numberOfArgumentGPRs || !node->graph->isOutermost()))
         mode = CallMode::Call;
     Arguments arguments = lowerArguments(node, argc, argv);
-    if (lowerCallToKnownFunction(node, calleeRegister, arguments, mode, hasResult))
+    if (lowerCallToKnownFunction(node, calleeRegister, argv, arguments, mode, hasResult))
         return;
+    // (Whatever else is called hands back a boxed value.)
+    if (m_howValuesArePassed.result != Rep::JSValue && mode == CallMode::TailCall)
+        mode = CallMode::Call;
 
     Node* calleeNode = node->use(calleeRegister);
     LValue callee = lowJSValue(calleeNode);
     // What the callee was found as says what it may well be.
     StubIntrinsic intrinsic = StubIntrinsic::None;
     if (mode != CallMode::Construct && calleeNode->isBytecode(op_get_by_id))
-        intrinsic = stubIntrinsicFor(m_graph.codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
+        intrinsic = stubIntrinsicFor(calleeNode->graph->codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
     if (mode == CallMode::TailCall) {
         LBasicBlock otherwise = leaveIfFunction(calleeNode, callee);
         if (emitCall(node, callee, arguments, mode, intrinsic)) {
@@ -213,7 +228,7 @@ LBasicBlock Lowering::leaveIfFunction(Node* calleeNode, LValue callee)
 // f(...list), f.apply(o, list): a stub asks how long the list is, makes room, has it copied there, and makes the call (Stub::CallVarargs).
 void Lowering::lowerCallVarargs(Node* node, VirtualRegister calleeRegister, VirtualRegister thisRegister, VirtualRegister argumentsRegister, int firstVarArg, CallMode mode)
 {
-    if (mode == CallMode::TailCall && (Options::aotDisableFastPaths() & 128))
+    if (mode == CallMode::TailCall && ((Options::aotDisableFastPaths() & 128) || m_howValuesArePassed.result != Rep::JSValue || !node->graph->isOutermost()))
         mode = CallMode::Call;
     LValue callee = lowJSValue(node->use(calleeRegister));
     LValue thisValue = lowJSValue(node->use(thisRegister));
@@ -303,7 +318,7 @@ void Lowering::lowerCallWithItems(Node* node, Node* calleeNode, LValue callee, L
         for (unsigned i = 0; i < items.size(); ++i) {
             descriptor |= ListDescriptor::kindOfItem(i, items[i].kind);
             if (items[i].kind == ListDescriptor::Spread)
-                m_graph.sitesOfSpreads.append({ CallSiteIndex(node->bytecodeIndex).bits(), i, callSiteBitsOf(items[i].spread) });
+                m_graph.sitesOfSpreads.append({ siteOf(node), i, callSiteBitsOf(items[i].spread) });
             if (items[i].kind == ListDescriptor::Passed) {
                 auto [count, where] = passed(items[i].node);
                 m_out.store64(count, scratchWord(word++));

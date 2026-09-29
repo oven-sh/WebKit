@@ -131,6 +131,7 @@ class JSGlobalObject;
     v(createPrivateSymbol, nullptr) \
     v(emptyPropertyNameEnumerator, nullptr) \
     v(sentinelString, nullptr) \
+    v(orderedHashTableSentinel, nullptr) \
     v(createRemoteFunction, nullptr) \
     v(isRemoteFunction, nullptr) \
     v(arrayFromFastWithoutMapFn, nullptr) \

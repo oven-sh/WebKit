@@ -16,7 +16,17 @@ namespace JSC { namespace AOT {
 
 // An operation is called by a stub, in a frame of the stub's: which is what it takes itself to have been called from, and what `callFrame`
 // is in all of them. Where the stub is to go back to says which function called it, and where that has got to.
+// (The function whose code that is. What it is in the middle of may be what another does: FunctionRef::placeAt().)
 ALWAYS_INLINE FunctionRef caller(JSGlobalObject* globalObject, CallFrame* callFrame) { return FunctionRef::at(globalObject->aotInstance(), removeCodePtrTag(callFrame->rawReturnPC())); }
+// The function whose bytecode it is that the caller is in the middle of: itself, unless that is one that was made part of it. Whatever goes
+// by a number that the bytecode has is a matter for this one; slots and the like are the caller's.
+ALWAYS_INLINE FunctionRef functionOfBytecodeOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame)
+{
+    FunctionRef function = caller(globalObject, callFrame);
+    if (!function.info().function()->hasInlineFrames) [[likely]]
+        return function;
+    return function.placeAt(removeCodePtrTag(callFrame->rawReturnPC())).function;
+}
 ALWAYS_INLINE BytecodeIndex bytecodeIndexOfCaller(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).bytecodeIndexAt(removeCodePtrTag(callFrame->rawReturnPC())); }
 
 // Whatever a function that has no Data of its own comes to an operation for, it may well be for want of one. See Instance::misses.
@@ -64,7 +74,7 @@ ALWAYS_INLINE Data* callerData(JSGlobalObject* globalObject, CallFrame* callFram
     Data* data = function.instance->data[function.index];
     return data ? data : function.instance->sharedData;
 }
-ALWAYS_INLINE UnlinkedCodeBlock* callerCode(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).ensureUnlinkedCodeBlock(); }
+ALWAYS_INLINE UnlinkedCodeBlock* callerCode(JSGlobalObject* globalObject, CallFrame* callFrame) { return functionOfBytecodeOfCaller(globalObject, callFrame).ensureUnlinkedCodeBlock(); }
 
 // What a slot refers to it does not keep alive: Data::finalizeUnconditionally() empties it when that dies. A collection of the young
 // only looks at the ones that have said that they have something new. An identifier of a structure that has died is sooner or later
@@ -78,9 +88,9 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
         data->noteFilled();
 }
 ALWAYS_INLINE const Identifier& identifierAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return static_cast<const Identifier*>(caller(globalObject, callFrame).info().identifiers)[index]; }
-ALWAYS_INLINE FunctionExecutable* functionDeclAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return caller(globalObject, callFrame).functionDecl(index); }
-ALWAYS_INLINE FunctionExecutable* functionExprAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return caller(globalObject, callFrame).functionExpr(index); }
-ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(JSGlobalObject* globalObject, CallFrame* callFrame) { return caller(globalObject, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
+ALWAYS_INLINE FunctionExecutable* functionDeclAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return functionOfBytecodeOfCaller(globalObject, callFrame).functionDecl(index); }
+ALWAYS_INLINE FunctionExecutable* functionExprAt(JSGlobalObject* globalObject, CallFrame* callFrame, unsigned index) { return functionOfBytecodeOfCaller(globalObject, callFrame).functionExpr(index); }
+ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(JSGlobalObject* globalObject, CallFrame* callFrame) { return functionOfBytecodeOfCaller(globalObject, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
 } } // namespace JSC::AOT
 

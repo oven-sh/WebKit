@@ -160,8 +160,9 @@ Graph::~Graph() = default;
 Node* Graph::addNode(NodeKind kind)
 {
     Node& node = m_nodes.alloc();
+    node.graph = this;
     node.kind = kind;
-    node.index = m_nodes.size() - 1;
+    node.index = m_nodes.size() - 1 + m_numberOfNodesAdopted;
     return &node;
 }
 
@@ -169,6 +170,7 @@ BasicBlock* Graph::addBlock()
 {
     blocks.append(makeUniqueWithoutFastMallocCheck<BasicBlock>());
     blocks.last()->index = blocks.size() - 1;
+    blocks.last()->graph = this;
     return blocks.last().get();
 }
 
@@ -375,6 +377,8 @@ Graph::CallOperands Graph::operandsOfCall(const JSInstruction* instruction)
 
 CallIntrinsic Graph::intrinsicOfCall(const Node* node) const
 {
+    if (node->graph != this)
+        return node->graph->intrinsicOfCall(node);
     if (node->opcode != op_call && node->opcode != op_call_ignore_result)
         return CallIntrinsic::None;
     CallOperands operands = operandsOfCall(node->instruction);
@@ -391,7 +395,7 @@ CallIntrinsic Graph::intrinsicOfCall(const Node* node) const
     }
     if (!callee->isBytecode(op_get_by_id))
         return CallIntrinsic::None;
-    return callIntrinsicFor(m_codeBlock->identifier(callee->as<OpGetById>().m_property).impl(), operands.argc);
+    return callIntrinsicFor(callee->graph->codeBlock()->identifier(callee->as<OpGetById>().m_property).impl(), operands.argc);
 }
 
 std::optional<JSType> Graph::typedArrayAccessed(const Node* node)
@@ -423,6 +427,8 @@ std::optional<JSType> Graph::typedArrayAccessed(const Node* node)
 
 std::pair<Node*, Node*> Graph::arrayAndElementStored(const Node* node) const
 {
+    if (node->graph != this)
+        return node->graph->arrayAndElementStored(node);
     if (node->kind != NodeKind::Bytecode)
         return { nullptr, nullptr };
     if (node->opcode == op_put_by_val) {
@@ -438,6 +444,8 @@ std::pair<Node*, Node*> Graph::arrayAndElementStored(const Node* node) const
 
 std::optional<uint32_t> Graph::distanceOfEnvironmentAccessed(const Node* node)
 {
+    if (node->graph != this)
+        return node->graph->distanceOfEnvironmentAccessed(node);
     if (!m_linkage)
         return std::nullopt;
     unsigned identifier;
@@ -489,6 +497,8 @@ std::optional<uint32_t> Graph::distanceOfEnvironmentAccessed(const Node* node)
 
 bool Graph::isScopeThatStandsForNoThis(const Node* node)
 {
+    if (node->graph != this)
+        return node->graph->isScopeThatStandsForNoThis(node);
     if (node->isBytecode(op_get_scope))
         return true;
     if (node->kind == NodeKind::Intrinsic)
@@ -517,6 +527,8 @@ bool Graph::isThatManyScopesOut(const Node* scope, unsigned hops)
 
 std::optional<uint32_t> Graph::distanceOfEnvironmentResolvedTo(const Node* node)
 {
+    if (node->graph != this)
+        return node->graph->distanceOfEnvironmentResolvedTo(node);
     if (!m_linkage)
         return std::nullopt;
     auto bytecode = node->as<OpResolveScope>();
@@ -541,12 +553,16 @@ std::optional<uint32_t> Graph::distanceOfEnvironmentResolvedTo(const Node* node)
 
 bool Graph::calleeIsProven(const Node* node) const
 {
+    if (node->graph != this)
+        return node->graph->calleeIsProven(node);
     bool isProven = false;
     return knownCallee(node, &isProven) && isProven;
 }
 
 const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
 {
+    if (node->graph != this)
+        return node->graph->knownCallee(node, isProven);
     bool proven = false;
     const KnownFunction* known = knownCalleeWithoutFacts(node, &proven);
     // Only where nothing better is known: what is known of a closed function is known from the calls that are proven the other way.
@@ -595,6 +611,8 @@ unsigned Graph::iteratedFactOf(const Node* node)
 
 const KnownFunction* Graph::knownCalleeWithoutFacts(const Node* node, bool* isProven) const
 {
+    if (node->graph != this)
+        return node->graph->knownCalleeWithoutFacts(node, isProven);
     if (!m_hints)
         return nullptr;
     VirtualRegister calleeRegister;
@@ -640,6 +658,8 @@ const KnownFunction* Graph::knownCalleeWithoutFacts(const Node* node, bool* isPr
 
 const KnownFunction* Graph::knownFunctionReadBy(const Node* callee, bool* isProven) const
 {
+    if (callee->graph != this)
+        return callee->graph->knownFunctionReadBy(callee, isProven);
     if (!m_hints)
         return nullptr;
     auto bytecode = callee->as<OpGetFromScope>();
@@ -706,6 +726,8 @@ const KnownFunction* Graph::probablyFunctionInVariableOfModule(unsigned identifi
 
 bool Graph::passesNoFunctionObject(const Node* node)
 {
+    if (node->graph != this)
+        return node->graph->passesNoFunctionObject(node);
     VirtualRegister calleeRegister;
     if (node->isBytecode(op_call))
         calleeRegister = node->as<OpCall>().m_callee;
@@ -781,6 +803,8 @@ void Graph::elideReadsOfCalleesNotPassed()
 
 const void* Graph::identityOfScope(const Node* scope, unsigned depth)
 {
+    if (scope->graph != this)
+        return scope->graph->identityOfScope(scope, depth);
     if (depth > 6)
         return nullptr;
     auto fromOutside = [&](unsigned hops) -> const void* {
@@ -882,6 +906,8 @@ const void* Graph::identityOfScope(const Node* scope, unsigned depth)
 
 Variable Graph::variableAccessedBy(const Node* node)
 {
+    if (node->graph != this)
+        return node->graph->variableAccessedBy(node);
     VirtualRegister scope;
     unsigned identifier;
     unsigned offset;
@@ -1165,6 +1191,8 @@ void Graph::notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words)
 
 std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
 {
+    if (node->graph != this)
+        return node->graph->shapeOfLiteral(node);
     unsigned count = node->numberOfLiteralProperties;
     if (count < 2 || count > KnownShape::maxProperties)
         return std::nullopt;
@@ -1190,6 +1218,8 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
 
 unsigned Graph::indexOfKnownCallee(const ImageKey& key)
 {
+    if (!isOutermost())
+        return outermost().indexOfKnownCallee(key);
     for (unsigned i = 0; i < knownCallees.size(); ++i) {
         if (knownCallees[i].sameFunction(key))
             return i;
@@ -1310,8 +1340,77 @@ void Graph::setLinkage(const ModuleLinkage* linkage, const DeclaredNamesLink* de
     }
 }
 
+void Graph::adopt(std::unique_ptr<Graph>&& other, InlineFrame frame)
+{
+    RELEASE_ASSERT(isOutermost() && other->isOutermost() && other->m_adopted.isEmpty());
+    if (inlineFrames.isEmpty())
+        inlineFrames.append({ });
+    other->m_inlineFrame = inlineFrames.size();
+    inlineFrames.append(frame);
+    other->m_outermost = this;
+    for (auto& node : other->m_nodes)
+        node.index += m_nodes.size() + m_numberOfNodesAdopted;
+    m_numberOfNodesAdopted += other->m_nodes.size();
+    for (auto& block : other->blocks) {
+        block->index = blocks.size();
+        blocks.append(WTF::move(block));
+    }
+    other->blocks.clear();
+    other->m_rpo.clear();
+    callsItself |= other->callsItself;
+    makesCalls |= other->makesCalls;
+    usesStaticImports |= other->usesStaticImports;
+    numberOfIntrinsicReads += other->numberOfIntrinsicReads;
+    m_adopted.append(WTF::move(other));
+}
+
+void Graph::computeOrderOfBlocks()
+{
+    // As Parser::computeReversePostOrder(), which has said which blocks are in loops of their own function's.
+    for (auto& block : blocks)
+        block->isReachable = false;
+    m_rpo.shrink(0);
+    Vector<BasicBlock*> postOrder;
+    BitVector visited(blocks.size());
+    struct Frame {
+        BasicBlock* block;
+        unsigned next;
+    };
+    auto visitFrom = [&](BasicBlock* start) {
+        if (visited.get(start->index))
+            return;
+        Vector<Frame> stack;
+        visited.set(start->index);
+        stack.append({ start, 0 });
+        while (!stack.isEmpty()) {
+            Frame& frame = stack.last();
+            if (frame.next < frame.block->successors.size()) {
+                BasicBlock* successor = frame.block->successors[frame.next++];
+                if (!visited.get(successor->index)) {
+                    visited.set(successor->index);
+                    stack.append({ successor, 0 });
+                }
+                continue;
+            }
+            postOrder.append(frame.block);
+            stack.removeLast();
+        }
+    };
+    for (BasicBlock* entrypoint : catchEntrypoints)
+        visitFrom(entrypoint);
+    visitFrom(root);
+    for (unsigned i = postOrder.size(); i--;) {
+        postOrder[i]->isReachable = true;
+        m_rpo.append(postOrder[i]);
+    }
+}
+
 void Graph::fail(ASCIILiteral reason, OpcodeID opcode)
 {
+    if (!isOutermost()) {
+        outermost().fail(reason, opcode);
+        return;
+    }
     if (failed())
         return;
     m_failureReason = reason;
@@ -1390,6 +1489,9 @@ void Node::dump(PrintStream& out) const
             break;
         case GuardKind::TypedArrayStorage:
             out.print("GuardTypedArrayStorage");
+            break;
+        case GuardKind::IsIntrinsic:
+            out.print("IsIntrinsic ", intrinsic, " ");
             break;
         }
         break;
@@ -1883,7 +1985,7 @@ private:
     // With the blocks and the loops known: where the guards go. False if nowhere.
     bool chooseGuards()
     {
-        if (!Options::aotSplitLoops() || !Options::aotLoopsToSplit() || !usesStubs)
+        if (!Options::aotSplitLoops() || !Options::aotLoopsToSplit() || !usesStubs || m_graph.loopsAreNotSplit)
             return false;
         unsigned size = m_instructions.size();
         struct OfBlock {

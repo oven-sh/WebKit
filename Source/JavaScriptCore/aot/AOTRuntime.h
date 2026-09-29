@@ -505,6 +505,13 @@ struct CompiledFunctionInfo {
     Convention convention;
     Vector<IndexReference> indexReferences;
     Vector<SiteOfSpread> sitesOfSpreads;
+    struct InlineFrame {
+        uint32_t parent;
+        uint32_t callSite;
+        uint32_t knownCallee;
+    };
+    Vector<InlineFrame> inlineFrames; // Graph::inlineFrames
+    bool isOnlyCalledDirectly { false }; // ProgramFacts::isClosed: by a call instruction that goes to it, and in no other way.
     unsigned frameSizeInBytes { 0 };
     unsigned numSlots { 0 };
     bool usesStaticImports { false };
@@ -562,7 +569,8 @@ struct ImageFunction {
     uint16_t frameSizeInUnits; // Of stackAlignmentBytes().
     uint16_t numberOfCatchEntrypoints;
     uint8_t numberOfParameters; // Convention::numberOfParameters
-    uint8_t takesList; // Signature::List
+    uint8_t takesList : 1; // Signature::List
+    uint8_t hasInlineFrames : 1; // Its call sites are PackedSites.
     uint32_t callSites; // From ImageHeader::callSitesOffset: see callSiteAt(). Zero: none.
     uint32_t index; // Which function it is: they are numbered in the order their code is in.
 

@@ -891,6 +891,11 @@ public:
 #if ENABLE(FTL_JIT)
         if (AOT::FunctionRef function = visitor->aotFunction()) {
             m_codeBlock = nullptr;
+            // (What has been made part of another function has no handlers. The other's are looked at when it is its turn.)
+            if (visitor->isInlinedAOTFrame())
+                return IterationStatus::Continue;
+            // (Whatever can throw is called from somewhere that is known.)
+            RELEASE_ASSERT(visitor->bytecodeIndex());
             if (!m_isTermination) {
                 m_handler = { function.handlerFor(visitor->bytecodeIndex().offset()), function };
                 if (m_handler.m_valid)

@@ -1106,6 +1106,9 @@ void JSGlobalObject::init(VM& vm)
     ASSERT(vm.traps().isDeferringTermination());
     ASSERT(vm.currentThreadIsHoldingAPILock());
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (!vm.m_firstRealm)
+        vm.m_firstRealm = this;
+    MakingBuiltinsFor makingBuiltinsFor(vm, this);
 
     convertToDictionary(vm);
 
@@ -1476,6 +1479,7 @@ void JSGlobalObject::init(VM& vm)
     m_regExpStringIteratorStructure.set(vm, this, JSRegExpStringIterator::createStructure(vm, this, regExpStringIteratorPrototype));
 
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::sentinelString)].set(vm, this, vm.smallStrings.sentinelString());
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::orderedHashTableSentinel)].set(vm, this, vm.orderedHashTableSentinel());
 
     JSFunction* defaultPromiseThen = JSFunction::create(vm, this, 2, vm.propertyNames->then.impl(), promiseProtoFuncThen, ImplementationVisibility::Public, PromisePrototypeThenIntrinsic);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::defaultPromiseThen)].set(vm, this, defaultPromiseThen);

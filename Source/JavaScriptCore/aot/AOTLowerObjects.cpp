@@ -112,7 +112,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             if (auto shape = m_graph.shapeOfLiteral(node))
                 m_graph.noteShapeOfSite(slot, WTF::move(*shape));
             {
-                auto& instructions = m_graph.codeBlock()->instructions();
+                auto& instructions = code().codeBlock()->instructions();
                 auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= count);
                 Vector<uint32_t, 16> words { AllocationPlan::encode(node->as<OpNewObject>().m_inlineCapacity, count) };
@@ -149,11 +149,11 @@ bool Lowering::tryLowerAllocation(Node* node)
             LValue callee = lowCell(node->use(bytecode.m_callee));
             unsigned slot = allocateSlots(3);
             {
-                NewObjectPlan plan = NewObjectPlan::forCreateThis(m_graph.codeBlock()->instructions(), node->bytecodeIndex.offset());
+                NewObjectPlan plan = NewObjectPlan::forCreateThis(code().codeBlock()->instructions(), node->bytecodeIndex.offset());
                 RELEASE_ASSERT(plan.properties.size() == count);
                 KnownShape shape;
                 for (auto& property : plan.properties)
-                    shape.names.append(m_graph.codeBlock()->identifier(property.identifier).impl());
+                    shape.names.append(code().codeBlock()->identifier(property.identifier).impl());
                 if (std::ranges::none_of(shape.names, [](UniquedStringImpl* name) { return name->isSymbol(); }))
                     m_graph.noteShapeOfSite(slot, WTF::move(shape));
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
@@ -272,7 +272,7 @@ bool Lowering::tryLowerAllocation(Node* node)
         return true;
     }
     case op_create_direct_arguments:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateDirectArguments, m_globalObject, callee(), numberOfArgumentsPassed(), argumentsPassed(), m_out.constInt32(m_graph.codeBlock()->numParameters() - 1)));
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateDirectArguments, m_globalObject, callee(), numberOfArgumentsPassed(), argumentsPassed(), m_out.constInt32(code().codeBlock()->numParameters() - 1)));
         return true;
     case op_create_scoped_arguments:
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateScopedArguments, m_globalObject, lowCell(node->use(node->as<OpCreateScopedArguments>().m_scope)), callee(), numberOfArgumentsPassed(), argumentsPassed()));
@@ -292,7 +292,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 
 void Lowering::throwTDZError(Node* node)
 {
-    bool isThis = node->as<OpCheckTdz>().m_targetVirtualRegister == m_graph.codeBlock()->thisRegister();
+    bool isThis = node->as<OpCheckTdz>().m_targetVirtualRegister == code().codeBlock()->thisRegister();
     vmCall(node, Void, Entry::operationAOTThrowTDZError, m_globalObject, m_out.constInt32(isThis));
     m_out.unreachable();
 }

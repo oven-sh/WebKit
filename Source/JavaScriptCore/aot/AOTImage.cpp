@@ -566,6 +566,47 @@ Vector<uint8_t> ImageBuilder::finish()
         return std::nullopt;
     };
 
+    // A function that is only ever called by instructions that go straight to it, and that no such instruction is left for (what it does
+    // having been made part of whoever called it), has no use for code. What there is to say about it stays: it is still what a stack
+    // trace names.
+    if (Options::aotInlines()) {
+        BitVector isCalled(m_functions.size());
+        Vector<uint32_t> worklist;
+        auto call = [&](size_t index) {
+            if (!isCalled.set(index))
+                worklist.append(static_cast<uint32_t>(index));
+        };
+        for (size_t index = 0; index < m_functions.size(); ++index) {
+            if (!m_functions[index].code.info.isOnlyCalledDirectly)
+                call(index);
+        }
+        while (!worklist.isEmpty()) {
+            auto& info = m_functions[worklist.takeLast()].code.info;
+            for (auto& stubCall : info.stubCalls) {
+                if (auto target = directTargetOf(info, stubCall))
+                    call(*target);
+            }
+        }
+        size_t functions = 0;
+        size_t bytes = 0;
+        for (size_t index = 0; index < m_functions.size(); ++index) {
+            if (isCalled.get(index))
+                continue;
+            auto& code = m_functions[index].code;
+            ++functions;
+            bytes += code.bytes.size();
+            static constexpr uint32_t breakpoint = 0xd4200000;
+            code.bytes.resize(sizeof(breakpoint));
+            memcpy(code.bytes.mutableSpan().data(), &breakpoint, sizeof(breakpoint));
+            code.info.stubCalls.clear();
+            code.info.indexReferences.clear();
+            code.info.sitesOfSpreads.clear();
+            code.info.inlineFrames.clear();
+            code.info.catchEntrypoints.clear();
+        }
+        dataLogLnIf(Options::aotVerbose() || Options::aotReportStats(), "AOT: ", functions, " functions that nothing calls any more had ", bytes, " bytes of code");
+    }
+
     // Where everything goes. The stubs come first, and again whenever the last copy is about to be out of reach.
     const StubBlob& stubs = stubBlob();
     Vector<size_t> stubsAt;
@@ -659,7 +700,19 @@ Vector<uint8_t> ImageBuilder::finish()
         std::ranges::sort(all);
         callSitesOfFunction.append(safeCast<uint32_t>(callSites.size()));
         auto& sitesOfSpreads = function.code.info.sitesOfSpreads;
-        appendVarint(callSites, all.size() << 1 | !sitesOfSpreads.isEmpty());
+        auto& inlineFrames = function.code.info.inlineFrames;
+        appendVarint(callSites, all.size() << 2 | !inlineFrames.isEmpty() << 1 | !sitesOfSpreads.isEmpty());
+        if (!inlineFrames.isEmpty()) {
+            // (The first stands for the function itself.)
+            appendVarint(callSites, inlineFrames.size() - 1);
+            for (unsigned frame = 1; frame < inlineFrames.size(); ++frame) {
+                appendVarint(callSites, inlineFrames[frame].parent);
+                appendVarint(callSites, inlineFrames[frame].callSite);
+                StubCall call { };
+                call.function = inlineFrames[frame].knownCallee;
+                appendVarint(callSites, *directTargetOf(function.code.info, call));
+            }
+        }
         uint32_t previousOffset = 0;
         int64_t previousSite = 0;
         for (auto& [offset, site] : all) {
@@ -964,6 +1017,7 @@ Vector<uint8_t> ImageBuilder::finish()
         record.index = safeCast<uint32_t>(index);
         record.numberOfParameters = info.convention.numberOfParameters;
         record.takesList = info.convention.signature == Signature::List;
+        record.hasInlineFrames = !info.inlineFrames.isEmpty();
         record.callSites = callSitesOfFunction[index];
         record.frameSizeInUnits = safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes());
         record.numSlots = info.numSlots;
@@ -1266,6 +1320,32 @@ bool hasCode()
     return s_headerOfImageWithCode || Image::withCode();
 }
 
+static void skipInlineFrames(const uint8_t*& at, uint64_t first)
+{
+    if (!(first & 2))
+        return;
+    for (uint64_t count = readVarint(at) * 3; count--;)
+        readVarint(at);
+}
+
+InlineFrameOfImage inlineFrameOf(const ImageFunction& function, unsigned frame)
+{
+    RELEASE_ASSERT(function.hasInlineFrames && frame);
+    Image& image = Image::of(function);
+    const uint8_t* at = image.at<uint8_t>(image.header().callSitesOffset) + function.callSites;
+    uint64_t first = readVarint(at);
+    RELEASE_ASSERT(first & 2);
+    uint64_t count = readVarint(at);
+    RELEASE_ASSERT(frame <= count);
+    InlineFrameOfImage result { };
+    for (unsigned i = 0; i < frame; ++i) {
+        result.parent = static_cast<uint32_t>(readVarint(at));
+        result.callSite = static_cast<uint32_t>(readVarint(at));
+        result.function = static_cast<uint32_t>(readVarint(at));
+    }
+    return result;
+}
+
 std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t offsetOfReturnAddress)
 {
     if (!function.callSites)
@@ -1274,7 +1354,9 @@ std::optional<uint32_t> tryCallSiteAt(const ImageFunction& function, uint32_t of
     const uint8_t* at = image.at<uint8_t>(image.header().callSitesOffset) + function.callSites;
     uint32_t offset = 0;
     int64_t site = 0;
-    for (uint64_t count = readVarint(at) >> 1; count--;) {
+    uint64_t first = readVarint(at);
+    skipInlineFrames(at, first);
+    for (uint64_t count = first >> 2; count--;) {
         offset += readVarint(at) * sizeof(uint32_t);
         uint64_t step = readVarint(at);
         site += static_cast<int64_t>(step >> 1) ^ -static_cast<int64_t>(step & 1);
@@ -1296,7 +1378,8 @@ std::optional<uint32_t> siteOfSpread(const ImageFunction& function, uint32_t cal
     uint64_t first = readVarint(at);
     if (!(first & 1))
         return std::nullopt;
-    for (uint64_t count = first >> 1; count--;) {
+    skipInlineFrames(at, first);
+    for (uint64_t count = first >> 2; count--;) {
         readVarint(at);
         readVarint(at);
     }

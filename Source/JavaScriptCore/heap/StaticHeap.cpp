@@ -6,6 +6,7 @@
 #include "config.h"
 #include "StaticHeap.h"
 
+#include "BuiltinExecutables.h"
 #include "AOTImage.h"
 #include "AOTRuntime.h"
 #include "AbstractSlotVisitorInlines.h"
@@ -734,6 +735,7 @@ private:
 };
 ArraysInCommon* s_arraysBeingBuilt;
 std::span<const ReportableSitesOfFunction> s_whatTheCompilerSaysOfFunctions;
+static thread_local bool s_realmIsKnownToBeThatOfProgram;
 std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdentifiers.
 std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
 }
@@ -2038,6 +2040,42 @@ public:
     }
 };
 
+FunctionExecutable* StaticHeap::builtinOfEngineFor(JSGlobalObject* globalObject, unsigned index, std::span<const Latin1Character> text)
+{
+    VM& vm = globalObject->vm();
+    // The realm that the program is run in is the first that there is. (AOT::Instance::ensure() sees to it that it was.)
+    if (globalObject != vm.m_firstRealm || !hasExecutablesOfFunctions(vm) || BytecodeOrderRecorder::ofVM(vm))
+        return nullptr;
+    // Where each is in the payload, plus one.
+    static NeverDestroyed<Vector<uint32_t>> entries;
+    static std::once_flag once;
+    std::call_once(once, [] {
+        std::span<const StaticHeapModule> modules { std::bit_cast<const StaticHeapModule*>(s_header->modules), static_cast<size_t>(s_header->numberOfModules) };
+        for (auto& module : modules) {
+            if (!module.isBuiltinFunction || !module.codeBlock || !BuiltinExecutables::isStamp(module.keyHash))
+                continue;
+            unsigned which = module.keyHash & 0xffff;
+            while (entries->size() <= which)
+                entries->append(0);
+            entries.get()[which] = module.entryOffset + 1;
+        }
+    });
+    if (index >= entries->size() || !entries.get()[index])
+        return nullptr;
+    // (Some are asked for more than once: a function that goes by two names is two functions.)
+    if (vm.m_builtinsOfStaticHeap.isEmpty())
+        vm.m_builtinsOfStaticHeap.fill(nullptr, entries->size());
+    if (FunctionExecutable* given = vm.m_builtinsOfStaticHeap[index])
+        return given;
+    s_realmIsKnownToBeThatOfProgram = true;
+    FunctionExecutable* result = builtinFunctionFor(globalObject, entries.get()[index] - 1, BuiltinExecutables::stampOf(index), StringImpl::createWithoutCopying(text), SourceOrigin(), String());
+    s_realmIsKnownToBeThatOfProgram = false;
+    if (result)
+        vm.m_firstRealmHasBuiltinsOfStaticHeap = true;
+    vm.m_builtinsOfStaticHeap[index] = result;
+    return result;
+}
+
 FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject, uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin& sourceOrigin, const String& sourceURL)
 {
     VM& vm = globalObject->vm();
@@ -2049,7 +2087,7 @@ FunctionExecutable* StaticHeap::builtinFunctionFor(JSGlobalObject* globalObject,
         return nullptr;
     if (modules[index].keyHash != embedderStamp || modules[index].keyLength != text.length())
         return nullptr;
-    if (&AOT::Instance::ensure(globalObject) != vm.m_aotInstanceOfProgram)
+    if (!s_realmIsKnownToBeThatOfProgram && &AOT::Instance::ensure(globalObject) != vm.m_aotInstanceOfProgram)
         return nullptr;
 
     SourceProvider* provider = nullptr;

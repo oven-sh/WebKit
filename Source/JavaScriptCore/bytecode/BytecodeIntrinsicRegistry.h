@@ -155,8 +155,8 @@ enum class LinkTimeConstant : int32_t;
     macro(InternalMicrotaskAsyncFromSyncIteratorDone) \
 
 
-#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro) \
-    macro(orderedHashTableSentinel)
+// (None: what is a cell is the VM's own, and code that has it for a constant is no good for another. See LinkTimeConstant::orderedHashTableSentinel.)
+#define JSC_COMMON_BYTECODE_INTRINSIC_CONSTANTS_CUSTOM_EACH_NAME(macro)
 
 class BytecodeIntrinsicRegistry {
     WTF_MAKE_NONCOPYABLE(BytecodeIntrinsicRegistry);

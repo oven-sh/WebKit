@@ -153,9 +153,9 @@ void Lowering::guardReentry(BasicBlock* block)
 unsigned Lowering::slotOfPropertyGuard(Node* guard)
 {
     if (guard->opcode == op_get_by_id)
-        return sharedSite(guard, numberOf(guard->as<OpGetById>().m_property));
+        return sharedSite(guard, numberOf(guard, guard->as<OpGetById>().m_property));
     auto bytecode = guard->as<OpPutById>();
-    return sharedSite(guard, numberOf(bytecode.m_property), (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0));
+    return sharedSite(guard, numberOf(guard, bytecode.m_property), (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0));
 }
 
 // There is always something there to load.
@@ -208,6 +208,9 @@ void Lowering::emitGuard(Node* guard)
         return;
     case GuardKind::Callee:
         checkCallee(guard);
+        return;
+    case GuardKind::IsIntrinsic:
+        exitUnless(m_out.equal(lowJSValue(guard->uses[0].node), m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[guard->intrinsic])));
         return;
     case GuardKind::KnownCallee: {
         const KnownFunction* known = m_graph.knownCallee(guard);
@@ -940,7 +943,7 @@ bool Lowering::guardResolveScope(Node* guard)
         exitUnless(m_out.notZero64(guard->lowered));
         return true;
     }
-    unsigned extra = m_graph.extraOfResolveScope(bytecode);
+    unsigned extra = code().extraOfResolveScope(bytecode);
     if (variable.kind != StaticVariable::Unresolved || !Site::fits(numberOf(bytecode.m_var), extra))
         return false;
 
@@ -1003,7 +1006,7 @@ bool Lowering::guardGetFromScope(Node* guard)
     }
     if (variable.kind == StaticVariable::Import)
         return loadLazily(variable.offset.offset());
-    unsigned throwIfNotFound = m_graph.extraOfGetFromScope(bytecode);
+    unsigned throwIfNotFound = code().extraOfGetFromScope(bytecode);
     if (!variable.isCachedInSlot() || !Site::fits(numberOf(bytecode.m_var), throwIfNotFound))
         return false;
 

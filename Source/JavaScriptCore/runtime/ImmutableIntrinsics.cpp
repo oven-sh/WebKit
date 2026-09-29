@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ImmutableIntrinsics.h"
 
+#include "BuiltinExecutables.h"
 #include "JSCInlines.h"
 #include "JSGlobalObject.h"
 #include <wtf/Lock.h>
@@ -84,6 +85,10 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
             entry.isCell = true;
             entry.type = value.asCell()->type();
             entry.canonical = numberOfCell.add(value.asCell(), number).iterator->value;
+            if (auto* function = dynamicDowncast<JSFunction>(value.asCell()); function && function->isBuiltinFunction()) {
+                if (auto index = vm.builtinExecutables()->indexOf(function->jsExecutable()->unlinkedExecutable()))
+                    entry.builtinCode = *index + 1;
+            }
         } else
             entry.primitive = JSValue::encode(value);
         // (Of two names that cannot be told apart at a glance, neither is known.)

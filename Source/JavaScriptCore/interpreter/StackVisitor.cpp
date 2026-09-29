@@ -143,6 +143,16 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 void StackVisitor::gotoNextFrame()
 {
     m_frame.m_index++;
+#if ENABLE(FTL_JIT)
+    if (m_frame.m_aotInlineFrame) {
+        auto place = m_frame.m_aotFunctionOfFrame.placeOfInlinedCall(m_frame.m_aotInlineFrame);
+        m_frame.m_aotFunction = place.function;
+        m_frame.m_aotInlineFrame = place.inlineFrame;
+        m_frame.m_bytecodeIndex = place.bytecodeIndex;
+        m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfThereIsOne();
+        return;
+    }
+#endif
 #if ENABLE(DFG_JIT)
     if (m_frame.isInlinedDFGFrame()) {
         InlineCallFrame* inlineCallFrame = m_frame.inlineCallFrame();
@@ -287,9 +297,12 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
     m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
     if (!m_aotInstance)
         m_aotInstance = AOT::instanceOfFrame(callFrame);
-    m_frame.m_aotFunction = { m_aotInstance, index };
+    m_frame.m_aotFunctionOfFrame = { m_aotInstance, index };
+    auto place = m_frame.m_aotFunctionOfFrame.placeAt(returnPC);
+    m_frame.m_aotFunction = place.function;
+    m_frame.m_aotInlineFrame = place.inlineFrame;
+    m_frame.m_bytecodeIndex = place.bytecodeIndex;
     m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfThereIsOne();
-    m_frame.m_bytecodeIndex = m_frame.m_aotFunction.bytecodeIndexAt(returnPC);
     findCaller(callFrame);
     // What is above that came in some other way.
     if (m_frame.m_aotAdapterFrame)
@@ -303,6 +316,7 @@ void StackVisitor::readNonInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOri
     m_frame.m_returnPC = m_previousReturnPC;
     m_frame.m_argumentCountIncludingThis = callFrame->argumentCountIncludingThis();
     m_frame.m_aotFunction = { };
+    m_frame.m_aotInlineFrame = 0;
     findCaller(callFrame);
     m_frame.m_isWasmFrame = false;
     m_frame.m_callee = callFrame->callee();
@@ -532,7 +546,7 @@ const RegisterAtOffsetList* StackVisitor::Frame::calleeSaveRegistersForUnwinding
 
 #if ENABLE(FTL_JIT)
     if (m_aotFunction)
-        return AOT::calleeSaveRegistersOf(*m_aotFunction.info().function());
+        return AOT::calleeSaveRegistersOf(*m_aotFunctionOfFrame.info().function());
 #endif
     if (CodeBlock* codeBlock = this->codeBlock())
         return codeBlock->jitCode()->calleeSaveRegisters();

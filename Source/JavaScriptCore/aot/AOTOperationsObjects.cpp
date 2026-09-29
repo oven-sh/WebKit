@@ -84,7 +84,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     } else {
         // The first so many of Graph::storesOfLiteral(). Which they are was settled when the code was compiled: they are the stores
         // to the register, whatever else there is in between.
-        UnlinkedCodeBlock* codeBlock = function.ensureUnlinkedCodeBlock();
+        UnlinkedCodeBlock* codeBlock = callerCode(globalObject, callFrame);
         const JSInstruction* instruction = codeBlock->instructions().at(bytecodeIndexOfCaller(globalObject, callFrame)).ptr();
         inlineCapacityInBytecode = instruction->as<OpNewObject>().m_inlineCapacity;
         auto& instructions = codeBlock->instructions();

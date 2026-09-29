@@ -49,6 +49,7 @@ aot/AOTCompiler.cpp
 aot/AOTGraph.cpp
 aot/AOTImage.cpp
 aot/AOTInlineCaches.cpp
+aot/AOTInlining.cpp
 aot/AOTLoopOptimization.cpp
 aot/AOTLowerAccess.cpp
 aot/AOTLowerArith.cpp

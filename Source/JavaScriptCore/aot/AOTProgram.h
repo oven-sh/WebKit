@@ -8,6 +8,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "AOTStubs.h"
+#include "AOTType.h"
 #include "DeclaredNamesLink.h"
 #include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
@@ -43,6 +44,8 @@ struct ProgramFacts {
     // One that there are more of than this has nothing said of the rest.
     static constexpr unsigned mostParameters = 12;
     std::array<std::atomic<uint64_t>, mostParameters> parameterTypes { };
+    // KnownFunction::returnType, where the function itself finds it.
+    mutable std::atomic<uint64_t> returnType { 0 };
 };
 // (One for the code of a function, however many variables hold it.)
 using FactsOfExecutables = UncheckedKeyHashMap<UnlinkedFunctionExecutable*, ProgramFacts*>;
@@ -157,6 +160,36 @@ struct KnownFunction {
         return result;
     }
 };
+
+// Whether the code reads the object it is called as, other than to get at the scope.
+bool readsCallee(UnlinkedCodeBlock*);
+
+class CalleeHints;
+struct ModuleLinkage;
+// What whoever compiles the program has for each piece of its code, for making one part of another.
+class CodeOfProgram {
+public:
+    virtual ~CodeOfProgram() = default;
+    struct About {
+        const CalleeHints* hints { nullptr };
+        const ModuleLinkage* linkage { nullptr };
+        const ProgramFacts* facts { nullptr };
+        ImageKey key;
+    };
+    virtual std::optional<About> about(UnlinkedCodeBlock*) const = 0; // Any thread.
+    // The code for a call of one of the engine's own functions, by BuiltinCodeIndex. Null if there is none.
+    virtual UnlinkedFunctionCodeBlock* codeOfBuiltin(unsigned) const = 0;
+};
+
+// Whoever calls a closed function knows what it is calling, and it is known what all of them pass and what comes back. So what is a number
+// or a boolean every time goes as that: an int32 or a boolean in the register the parameter has anyway, a double in the floating point
+// register of the same number. Likewise what is returned. Plain from the facts, so the function and whoever calls it agree.
+struct HowValuesArePassed {
+    std::array<Rep, numberOfArgumentGPRs> parameters;
+    Rep result { Rep::JSValue };
+    HowValuesArePassed() { parameters.fill(Rep::JSValue); }
+};
+HowValuesArePassed howValuesArePassed(const ProgramFacts*, Convention);
 
 // A constant that is whatever the realm has for it (SourceCodeRepresentation::LinkTimeConstant): the number of that among what cannot be
 // changed (ImmutableIntrinsics), if it is one of those. Then code gets it from there, and has no use for the constant.

@@ -189,9 +189,9 @@ private:
             // Either it is a matter of following pointers that never change, or the guard's.
             if (isStaticClosureVarResolveType(bytecode.m_resolveType))
                 return true;
-            auto variable = m_graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType);
+            auto variable = guard->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType);
             if (variable.kind == Graph::StaticVariable::Unresolved)
-                return Site::fits(bytecode.m_var, m_graph.extraOfResolveScope(bytecode));
+                return Site::fits(bytecode.m_var, guard->graph->extraOfResolveScope(bytecode));
             return variable.kind != Graph::StaticVariable::Dynamic;
         }
         case op_get_from_scope: {
@@ -199,7 +199,7 @@ private:
             ResolveType type = bytecode.m_getPutInfo.resolveType();
             if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
                 return true;
-            return Site::fits(bytecode.m_var, 1) && m_graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type).kind != Graph::StaticVariable::Dynamic;
+            return Site::fits(bytecode.m_var, 1) && guard->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type).kind != Graph::StaticVariable::Dynamic;
         }
         default:
             return false;

@@ -30,6 +30,7 @@
 #include "BuiltinNames.h"
 #include "JSCJSValueInlines.h"
 #include "Parser.h"
+#include "StaticHeap.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -339,6 +340,36 @@ UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
 }
 JSC_FOREACH_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
+
+void BuiltinExecutables::forEachOnItsOwn(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>& functor)
+{
+#define ON_ITS_OWN(name, functionName, overrideName, length) { \
+        SourceCode source = makeSource(StringImpl::createWithoutCopying(std::span { std::bit_cast<const Latin1Character*>(s_##name), static_cast<size_t>(length) }), SourceOrigin(), SourceTaintedOrigin::Untainted); \
+        Identifier executableName = m_vm.propertyNames->builtinNames().functionName##PublicName(); \
+        if (overrideName) \
+            executableName = Identifier::fromString(m_vm, overrideName); \
+        functor(static_cast<unsigned>(BuiltinCodeIndex::name), createExecutable(m_vm, source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute, NeedsClassFieldInitializer::No), source); \
+    }
+    JSC_FOREACH_BUILTIN_CODE(ON_ITS_OWN)
+#undef ON_ITS_OWN
+}
+
+std::optional<unsigned> BuiltinExecutables::indexOf(UnlinkedFunctionExecutable* executable) const
+{
+    for (unsigned index = 0; index < numberOfBuiltinCodes; ++index) {
+        if (m_unlinkedExecutables[index] == executable)
+            return index;
+    }
+    return std::nullopt;
+}
+
+FunctionExecutable* BuiltinExecutables::staticExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)
+{
+    JSGlobalObject* realm = m_vm.m_realmThatBuiltinsAreMadeFor;
+    if (!realm) [[likely]]
+        return nullptr;
+    return StaticHeap::builtinOfEngineFor(realm, static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
+}
 
 }
 

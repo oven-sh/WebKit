@@ -99,6 +99,9 @@ public:
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }
         // Between such a frame and callerFrame(), if that is not another: the frame of what let the code in, which has saved registers.
         CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
+        // It is not a frame at all, but a call that such code makes no more, having what the callee does in its place. The frame is that
+        // of the function that has it, which comes later.
+        bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
         // Of the code that the frame runs, if it is JavaScript.
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
         JS_EXPORT_PRIVATE bool isBuiltinFunction() const; // hasCode()
@@ -167,6 +170,8 @@ public:
         mutable CodeBlock* m_codeBlock { nullptr };
         AOT::FunctionRef m_aotFunction;
         CallFrame* m_aotAdapterFrame { nullptr };
+        AOT::FunctionRef m_aotFunctionOfFrame; // Whose code it is that runs in the frame.
+        unsigned m_aotInlineFrame { 0 };
         void* m_returnPC { nullptr };
         void* m_callerReturnPC { nullptr }; // Where m_callerFrame is going to be returned to.
         size_t m_index { 0 };

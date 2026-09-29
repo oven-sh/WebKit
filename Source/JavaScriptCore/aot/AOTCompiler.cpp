@@ -159,7 +159,7 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
             ResolveType type = bytecode.m_getPutInfo.resolveType();
             if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar)
                 return "a closure variable"_s;
-            auto variable = graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
+            auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
             if (variable.isInGlobalScopes)
                 return "a global"_s;
             switch (variable.kind) {
@@ -255,7 +255,7 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
                 if (graph.knownCallee(user))
                     argumentOf = "a known function"_s;
                 else if (callee->isBytecode(op_get_by_id))
-                    argumentOf = makeString("method "_s, StringView(codeBlock->identifier(callee->as<OpGetById>().m_property).impl()));
+                    argumentOf = makeString("method "_s, StringView(callee->graph->codeBlock()->identifier(callee->as<OpGetById>().m_property).impl()));
                 else
                     argumentOf = origin(callee);
                 continue;
@@ -306,8 +306,8 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
             if (node->isBytecode(op_get_from_scope)) {
                 auto bytecode = node->as<OpGetFromScope>();
                 ResolveType type = bytecode.m_getPutInfo.resolveType();
-                if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type).isGlobal)
-                    count(makeString("GLOBALREAD "_s, StringView(codeBlock->identifier(bytecode.m_var).impl())));
+                if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar && node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type).isGlobal)
+                    count(makeString("GLOBALREAD "_s, StringView(node->graph->codeBlock()->identifier(bytecode.m_var).impl())));
             }
             for (auto& use : node->uses) {
                 if (use.node->kind == NodeKind::Intrinsic && use.node->intrinsic) {
@@ -327,14 +327,14 @@ static void countWhatIsKnown(Graph& graph, UncheckedKeyHashMap<String, uint64_t>
                 else if (callee->isBytecode(op_get_by_id)) {
                     count("CALL method"_s);
                     count(makeString("METHODBASE "_s, origin(callee->use(callee->as<OpGetById>().m_base)), ", "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type)));
-                    count(makeString("METHODNAME "_s, StringView(codeBlock->identifier(callee->as<OpGetById>().m_property).impl())));
+                    count(makeString("METHODNAME "_s, StringView(callee->graph->codeBlock()->identifier(callee->as<OpGetById>().m_property).impl())));
                     count(makeString("METHODON "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type)));
-                    count(makeString("METHODOF "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type), " . "_s, StringView(codeBlock->identifier(callee->as<OpGetById>().m_property).impl())));
+                    count(makeString("METHODOF "_s, typeName(strip(callee->use(callee->as<OpGetById>().m_base))->type), " . "_s, StringView(callee->graph->codeBlock()->identifier(callee->as<OpGetById>().m_property).impl())));
                 } else {
                     count(makeString("CALL "_s, origin(callee)));
                     if (callee->kind == NodeKind::ConstantCell) {
-                        bool isLinkTime = codeBlock->constantSourceCodeRepresentation(callee->reg) == SourceCodeRepresentation::LinkTimeConstant;
-                        JSValue value = codeBlock->getConstant(callee->reg);
+                        bool isLinkTime = callee->graph->codeBlock()->constantSourceCodeRepresentation(callee->reg) == SourceCodeRepresentation::LinkTimeConstant;
+                        JSValue value = callee->graph->codeBlock()->getConstant(callee->reg);
                         count(makeString("CALLCONST cell "_s, isLinkTime ? makeString("link time constant "_s, value.asInt32AsAnyInt()) : value.isCell() ? String::fromLatin1(value.asCell()->classInfo()->className.characters()) : "?"_s, codeBlock->isBuiltinFunction() ? " in a builtin"_s : ""_s));
                     } else if (callee->kind == NodeKind::Constant)
                         count(makeString("CALLCONST value "_s, callee->constant.isUndefined() ? "undefined"_s : callee->constant.isEmpty() ? "empty"_s : "other"_s, " after "_s, node->use(*calleeRegister)->kind == NodeKind::Bytecode ? opcodeNames[node->use(*calleeRegister)->opcode] : "nothing"_s));
@@ -457,7 +457,7 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
     jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const ProgramFacts* facts, VariableFacts* variableFacts)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const ProgramFacts* facts, VariableFacts* variableFacts, const CodeOfProgram* program)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
@@ -477,6 +477,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     }
     if (!parseBytecode(graph))
         return declined();
+    if (program)
+        inlineCalls(graph, *program);
     inferTypes(graph);
     inferRanges(graph);
     optimizeLoops(graph);
@@ -591,6 +593,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.quotableSites = WTF::move(graph.quotableSites);
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
+    if (program && mayBecomePartOfAnother(unlinkedCodeBlock, facts))
+        noteEverySiteOf(graph);
+    info.isOnlyCalledDirectly = facts && facts->isClosed;
+    for (auto& frame : graph.inlineFrames)
+        info.inlineFrames.append({ frame.parent, frame.callSite, frame.knownCallee });
     info.sitesOfSpreads = WTF::move(graph.sitesOfSpreads);
     info.callSites = WTF::move(graph.callSites);
     std::ranges::sort(info.callSites);
@@ -629,7 +636,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
                     auto bytecode = node->as<OpGetFromScope>();
                     ResolveType type = bytecode.m_getPutInfo.resolveType();
                     if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar) {
-                        auto variable = graph.resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
+                        auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
                         stats.scopeReads[variable.kind]++;
                         stats.scopeReadsInGlobalScopes += variable.isInGlobalScopes;
                     }
@@ -708,12 +715,12 @@ uint64_t inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, c
     return inferTypes(graph, &calleesConsulted, &calleesGivenMore) & TTop;
 }
 
-bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts)
+bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const ProgramFacts* facts, VariableFacts* variableFacts, const CodeOfProgram* program)
 {
     MonotonicTime before = MonotonicTime::now();
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
-    bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts);
+    bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts, program);
     if (Options::aotReportStats()) [[unlikely]]
         recordStatistics(ok, ok ? result.bytes.size() : 0, unlinkedCodeBlock->instructionsSize(), MonotonicTime::now() - before, reason, reasonOpcode);
     return ok;

@@ -257,6 +257,17 @@ private:
 enum VMIdentifierType { };
 using VMIdentifier = AtomicObjectIdentifier<VMIdentifierType>;
 
+class VM;
+class MakingBuiltinsFor {
+    WTF_MAKE_NONCOPYABLE(MakingBuiltinsFor);
+public:
+    inline MakingBuiltinsFor(VM&, JSGlobalObject*);
+    inline ~MakingBuiltinsFor();
+private:
+    VM& m_vm;
+    JSGlobalObject* m_before;
+};
+
 class VM : public ThreadSafeRefCountedWithSuppressingSaferCPPChecking<VM> {
 public:
     // The first of a process that has a StaticHeap mapped is where that says.
@@ -500,6 +511,11 @@ public:
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
     Vector<AOT::Instance*, 1> m_aotInstances; // Each is its global object's.
     void* m_staticHeapOfVM { nullptr }; // See StaticHeap::isUsedBy().
+    // The realm that functions of the engine's own are being made for, where that is known (BuiltinExecutables::staticExecutableFor()).
+    JSGlobalObject* m_realmThatBuiltinsAreMadeFor { nullptr };
+    JSGlobalObject* m_firstRealm { nullptr }; // Not kept alive by this, and never looked into.
+    bool m_firstRealmHasBuiltinsOfStaticHeap { false };
+    Vector<FunctionExecutable*> m_builtinsOfStaticHeap; // What it has been given, by BuiltinCodeIndex. The collector has nothing to do with them.
     AOT::Instance* m_aotInstanceOfProgram { nullptr }; // The one that has the environments of the program's modules in their places.
     static constexpr ptrdiff_t offsetOfAOTInstanceOfProgram() { return OBJECT_OFFSETOF(VM, m_aotInstanceOfProgram); }
     static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); } // Which starts with its entries.
@@ -1570,6 +1586,19 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
+
+
+inline MakingBuiltinsFor::MakingBuiltinsFor(VM& vm, JSGlobalObject* realm)
+    : m_vm(vm)
+    , m_before(vm.m_realmThatBuiltinsAreMadeFor)
+{
+    vm.m_realmThatBuiltinsAreMadeFor = realm;
+}
+
+inline MakingBuiltinsFor::~MakingBuiltinsFor()
+{
+    m_vm.m_realmThatBuiltinsAreMadeFor = m_before;
+}
 
 } // namespace JSC
 

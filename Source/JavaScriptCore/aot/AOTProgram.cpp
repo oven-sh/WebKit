@@ -315,6 +315,24 @@ std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
     return number ? std::optional { number } : std::nullopt;
 }
 
+HowValuesArePassed howValuesArePassed(const ProgramFacts* facts, Convention convention)
+{
+    HowValuesArePassed result;
+    // (What is checked is what a value is when it is boxed.)
+    if (!facts || !facts->isClosed || convention.signature != Signature::Registers || !Options::aotPassesValuesUnboxed()
+        || !Options::aotTypesParametersOfClosedFunctions() || Options::aotVerifiesFacts())
+        return result;
+    auto repFor = [](Type type) {
+        Rep rep = type ? repForType(type) : Rep::JSValue;
+        return rep == Rep::Int32 || rep == Rep::Double || rep == Rep::Boolean ? rep : Rep::JSValue;
+    };
+    static_assert(numberOfArgumentGPRs < ProgramFacts::mostParameters);
+    for (unsigned i = 0; i < convention.numberOfParameters; ++i)
+        result.parameters[i] = repFor(facts->parameterTypes[i + 1].load(std::memory_order_relaxed));
+    result.result = repFor(facts->returnType.load(std::memory_order_relaxed));
+    return result;
+}
+
 Convention conventionOf(UnlinkedCodeBlock* codeBlock)
 {
     Convention result;
@@ -355,6 +373,11 @@ bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)
     const DeclaredNamesLink* declaredNames = declaredNamesFor(codeBlock);
     if (!declaredNames || !declaredNames->scopeIsOutermostEnvironment())
         return true;
+    return readsCallee(codeBlock);
+}
+
+bool readsCallee(UnlinkedCodeBlock* codeBlock)
+{
     bool result = false;
     for (const auto& instruction : codeBlock->instructions()) {
         switch (instruction->opcodeID()) {

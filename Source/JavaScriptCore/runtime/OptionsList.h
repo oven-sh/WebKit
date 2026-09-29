@@ -164,6 +164,13 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotLooksInMegamorphicCacheUnlessSlotIsEmpty, true, Normal, "A site whose slot failed it looks in the megamorphic cache before it goes to C++, unless the slot is its own and has nothing in it yet. If not: only once it has given up on the slot. (When the stubs are made.)"_s) \
     v(Bool, aotCachesConstructionForManyFunctions, true, Normal, "Where a constructor makes its object and stores to it, and the site knows another function than the one that is being constructed with, what the object ends up as is looked for in a table all such sites share."_s) \
     v(Bool, aotTypesParametersOfClosedFunctions, true, Normal, "A function that only the calls of it that the compiler can see get to call is compiled for what those pass it."_s) \
+    v(Bool, aotPassesValuesUnboxed, true, Normal, "With aotTypesParametersOfClosedFunctions: a closed function is passed what is always a number or a boolean as that, and hands such a thing back as that."_s) \
+    v(Bool, aotCompilesBuiltins, true, Normal, "The image has code for the engine's own functions that are written in JavaScript."_s) \
+    v(Bool, aotInlines, true, Normal, "A call of a function that is proven to be the callee is replaced by what the function does, if that is little or if it is the only call there is."_s) \
+    v(Bool, aotInlinesBuiltins, true, Normal, "aotInlines, aotCompilesBuiltins, useImmutableIntrinsics: likewise a call of a method by the name of one of Array.prototype's that is passed a closure made on the spot, after a check that it is that one."_s) \
+    v(Unsigned, aotInlinesUpTo, 60, Normal, "aotInlines: how many bytes of bytecode a function may have that is called from several places."_s) \
+    v(Unsigned, aotInlinesOnlyCallUpTo, 1200, Normal, "aotInlines: how many if it is called from one place, and by nothing else."_s) \
+    v(Unsigned, aotInlinesAtMost, 4000, Normal, "aotInlines: how many bytes of bytecode one function takes over in all."_s) \
     v(Bool, aotVerifiesFacts, false, Normal, "For testing the compiler: wherever a value is taken to be of some type without being looked at, it is looked at, and if it is not of that type the process ends."_s) \
     v(Bool, aotTypesVariables, true, Normal, "What is read from a variable that lives in an environment record, of a module or of a function, is taken to be one of the things that the program puts there."_s) \
     v(Bool, aotKnowsWhatBuiltinsReturn, true, Normal, "What comes back from a function of the language itself, where the program cannot have put another in its place, is taken to be what the specification says it is."_s) \

@@ -55,6 +55,9 @@ public:
         uint16_t canonical { 0 }; // The number that stands for the object it is, which may be found in more than one place.
         JSType type { CellType }; // If it is a cell.
         bool isCell { false };
+        // If it is a function of the engine's own that is written in JavaScript: its BuiltinCodeIndex, plus one. Only where the realm was
+        // made the ordinary way, which is where a compiler runs.
+        uint16_t builtinCode { 0 };
     };
 
     // Null until a realm has been made with Options::useImmutableIntrinsics().

@@ -73,6 +73,33 @@ private:
     LValue lowDouble(Node*);
     LValue lowBoolean(Node*);
     LValue lowCell(Node* node) { return lowJSValue(node); }
+    LValue lowAs(Node* node, Rep rep)
+    {
+        // What is passed or returned is of a type that everything passed or returned there is of. If not, something is wrong with the facts.
+        Rep from = node->rep();
+        bool canBe = rep == Rep::JSValue || from == Rep::JSValue || from == rep || (from != Rep::Boolean && rep != Rep::Boolean);
+        if (!canBe) [[unlikely]] {
+            dataLog("AOT: A VALUE IS NOT WHAT IS PASSED THERE: ");
+            node->dump(WTF::dataFile());
+            dataLogLn(" held as ", static_cast<unsigned>(from), " wanted as ", static_cast<unsigned>(rep), " at bc#", m_node ? m_node->bytecodeIndex.offset() : 0, " ", m_node ? opcodeNames[m_node->opcode] : "", " in ", m_graph.nameForLog());
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+        // (What is taken never to be reached is of no type, and held as anything is.)
+        return rep == Rep::JSValue ? lowJSValue(node) : convert(lowRaw(node), from, node->type, rep);
+    }
+    LValue lowJSValueOfParameterOnEntry(unsigned index)
+    {
+        switch (m_howValuesArePassed.parameters[index]) {
+        case Rep::Int32:
+            return boxInt32(m_out.castToInt32(registerOnEntry(argumentGPR(index))));
+        case Rep::Boolean:
+            return boxBoolean(m_out.castToInt32(registerOnEntry(argumentGPR(index))));
+        case Rep::Double:
+            return boxDouble(registerOnEntry(FPRInfo::toArgumentRegister(index)));
+        default:
+            return registerOnEntry(argumentGPR(index));
+        }
+    }
     // ImageEnvironment::distance. In two steps, of which the first is the same for everything nearby, and is kept from being merged
     // with the second: what is left of that fits in a load or a store, which the distance from the Instance does not.
     LValue environmentAt(uint32_t distance)
@@ -87,7 +114,10 @@ private:
         RELEASE_ASSERT(m_calleeSlot);
         return m_out.load64(m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot));
     }
-    LValue lowConstantRegister(VirtualRegister); // For an operand that BytecodeUseDef does not count among the uses.
+    LValue lowConstantRegister(VirtualRegister reg) { return lowConstantRegister(code(), reg); } // For an operand that BytecodeUseDef does not count among the uses.
+    LValue lowConstantRegister(Graph&, VirtualRegister);
+    // The graph of the code that what is being lowered is of (Node::graph). What comes of lowering goes to m_graph.
+    Graph& code() { return m_code ? *m_code : m_graph; }
     LValue convert(LValue, Rep from, Type fromType, Rep to);
     void setJSValue(Node*, LValue);
     void setInt32(Node*, LValue);
@@ -132,6 +162,7 @@ private:
     unsigned allocateSlot() { return m_graph.numICSlots++; }
     // What a frame says where it is with, while what the node does is being done somewhere else.
     uint32_t callSiteBitsOf(Node*);
+    uint32_t siteOf(Node*); // The same, of a place that has been said to be one, or is not going to be asked about.
     unsigned allocateSlots(unsigned count)
     {
         unsigned first = m_graph.numICSlots;
@@ -175,11 +206,13 @@ private:
     bool isFusedWithGetFromScope(Node*);
     // A slot that a stub can be told about.
     // What the code says for one of the function's identifiers. See AOT::NumbersOfIdentifiers.
-    unsigned numberOf(unsigned identifier)
+    unsigned numberOf(Graph& graph, unsigned identifier)
     {
         auto* numbers = numbersOfIdentifiersOfProgram();
-        return numbers ? numbers->get(m_graph.codeBlock()->identifier(identifier).impl()) : identifier;
+        return numbers ? numbers->get(graph.codeBlock()->identifier(identifier).impl()) : identifier;
     }
+    unsigned numberOf(unsigned identifier) { return numberOf(code(), identifier); } // Of what is being lowered.
+    unsigned numberOf(const Node* whose, unsigned identifier) { return numberOf(*whose->graph, identifier); }
     unsigned allocateSite(Node*, unsigned identifier, unsigned extra = 0);
     // The one site of an instruction that is in both copies of a loop: what the generic copy finds out, the fast one goes by.
     unsigned sharedSite(Node*, unsigned identifier, unsigned extra = 0);
@@ -204,7 +237,7 @@ private:
     void lowerPutToScope(Node*);
     LValue loadProperty(LValue object, LValue offset);
     using StaticVariable = Graph::StaticVariable;
-    StaticVariable resolveStatically(unsigned identifierIndex, unsigned localScopeDepth, ResolveType type) { return m_graph.resolveStatically(identifierIndex, localScopeDepth, type); }
+    StaticVariable resolveStatically(unsigned identifierIndex, unsigned localScopeDepth, ResolveType type) { return code().resolveStatically(identifierIndex, localScopeDepth, type); }
 
     TypedPointer cachedPropertyAddress(LValue object, LValue firstSlotWord, const B3::AbstractHeap* = nullptr);
     LValue getByIdCached(Node*, LValue base, Type baseType, Entry operation, unsigned identifier);
@@ -269,12 +302,12 @@ private:
     // Of whatever the callee turns out to be. A tail call ends the block, and there is no result.
     LValue emitCall(Node*, LValue callee, const Arguments&, CallMode = CallMode::Call, StubIntrinsic = StubIntrinsic::None);
     void lowerCall(Node*, VirtualRegister callee, unsigned argc, unsigned argv, CallMode, bool hasResult);
-    bool lowerCallToKnownFunction(Node*, VirtualRegister callee, const Arguments&, CallMode, bool hasResult);
+    bool lowerCallToKnownFunction(Node*, VirtualRegister callee, unsigned argv, const Arguments&, CallMode, bool hasResult);
     void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, CallMode);
     void lowerCallWithItems(Node*, Node* calleeNode, LValue callee, LValue thisValue, Node* list, CallMode);
     void lowerCallDirectEval(Node*);
     LValue storeArgumentsToScratch(const Arguments&); // But for the first. Where they are.
-    void finishCall(B3::PatchpointValue*, CallMode);
+    void finishCall(B3::PatchpointValue*, CallMode, Rep result = Rep::JSValue);
     LBasicBlock leaveIfFunction(Node* calleeNode, LValue callee);
 
     Graph& m_graph;
@@ -282,6 +315,7 @@ private:
     B3::AbstractHeapRepository m_heaps;
     FTL::Output m_out;
 
+    HowValuesArePassed m_howValuesArePassed; // This function.
     LValue m_callFrame { nullptr };
     LValue m_instance { nullptr };
     LValue m_data { nullptr };
@@ -307,6 +341,7 @@ private:
     BasicBlock* m_block { nullptr };
     unsigned m_nodeIndex { 0 }; // Of the node being lowered, in m_block.
     Node* m_node { nullptr }; // It, if it has a place in the bytecode.
+    Graph* m_code { nullptr }; // code()
 };
 
 template<typename... Args>

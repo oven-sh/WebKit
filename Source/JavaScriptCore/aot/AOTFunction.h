@@ -58,8 +58,13 @@ struct AllocationPlan {
 struct FunctionRef {
     // What has that address in its code.
     JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
-    // Where in its bytecode it is, if that is where it is going to be returned to.
-    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress) const;
+    // Where in its bytecode it is, if that is where it is going to be returned to. It may be in the middle of what a function does that
+    // was made part of it: then that is the function, and this is where in that one's. inlineFrame: which call that was, or none.
+    struct Place;
+    JS_EXPORT_PRIVATE Place placeAt(const void* returnAddress) const;
+    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress) const; // Place::bytecodeIndex
+    // The call itself: where that was, and in what.
+    JS_EXPORT_PRIVATE Place placeOfInlinedCall(unsigned inlineFrame) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*); // None, unless its code is the static compiler's.
     // What has run as this executable's code of this kind. None, if its realm is no more.
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, FunctionExecutable*, CodeSpecializationKind);
@@ -116,6 +121,12 @@ struct FunctionRef {
     uint32_t index { 0 };
 };
 
+struct FunctionRef::Place {
+    FunctionRef function;
+    BytecodeIndex bytecodeIndex;
+    unsigned inlineFrame { 0 };
+};
+
 // ---- Frames
 //
 // A frame of this compiler's code has nothing in it that says so. What it is a frame of is told from the address that is going to be
@@ -146,6 +157,14 @@ JS_EXPORT_PRIVATE bool hasCode(); // There is an image with code in it: otherwis
 // Nothing: nobody was to ask about what is called from there, or it is not where anything is going to return to.
 JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
 std::optional<uint32_t> siteOfSpread(const ImageFunction&, uint32_t callSite, unsigned item); // See SiteOfSpread.
+// A call that was done away with (Graph::InlineFrame): what it was in (another such call, or none: the function whose code it is), where
+// it was there, and which function it was of.
+struct InlineFrameOfImage {
+    uint32_t parent;
+    uint32_t callSite;
+    uint32_t function;
+};
+JS_EXPORT_PRIVATE InlineFrameOfImage inlineFrameOf(const ImageFunction&, unsigned frame);
 // For as long as there is one of these, the function that is going to be returned to there is somewhere else as far as anybody can tell.
 class SiteInPlaceOfCallSite {
     WTF_MAKE_NONCOPYABLE(SiteInPlaceOfCallSite);
@@ -155,6 +174,9 @@ public:
 };
 // Of a frame of code from the static compiler, or of a stub that such code called: whose realm's. The adapter that let the code in says.
 JS_EXPORT_PRIVATE Instance* instanceOfFrame(const void* frame);
+// Whether that can be asked. It can of any frame of such code that anything is expected to look at; something that looks at the stack at
+// any time at all (a profiler of allocations) may find a call on its way in, with nothing above it yet that says whose it is.
+JS_EXPORT_PRIVATE bool canTellInstanceOfFrame(const void* frame);
 // frame: the last that the VM was told of (VM::topCallFrame). Whether it is a stub's, or such code's: then there is nothing in it of what a
 // frame has in the engine's own convention, and nothing is to be asked of it but by way of a StackVisitor.
 JS_EXPORT_PRIVATE bool topFrameIsNotTheEnginesOwn(const void* frame);

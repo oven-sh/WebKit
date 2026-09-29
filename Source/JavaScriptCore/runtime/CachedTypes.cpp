@@ -35,6 +35,7 @@
 #include "AOTProgram.h"
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
+#include "BuiltinExecutables.h"
 #include "BytecodeCacheError.h"
 #include "BytecodeLivenessAnalysis.h"
 #include "CodeCache.h"
@@ -3332,6 +3333,8 @@ public:
         }
 
         if (auto* immutableButterfly = dynamicDowncast<JSCellButterfly>(cell)) {
+            // (What comes of this is another that holds the same, which is no good for one that is told by which it is.)
+            RELEASE_ASSERT(cell != encoder.vm().orderedHashTableSentinel());
             this->allocate<CachedImmutableButterfly>(encoder)->encode(encoder, *immutableButterfly);
             return Kind::ImmutableButterfly;
         }
@@ -5851,6 +5854,7 @@ struct BytecodeLinkEncoder::Impl {
         Strong<JSCell> root;
         SourceCode source;
         unsigned builtinEmbedderStamp { 0 };
+        bool isOfEngine { false }; // Nobody added it: addBuiltinsOfEngine().
         bool isLate { false };
         GenericCacheEntry* entry { nullptr }; // in the encoder's pages, which stay where they are until release()
         uint32_t entryOffset { 0 };
@@ -5902,6 +5906,34 @@ struct BytecodeLinkEncoder::Impl {
         if (!modules[index].isLate)
             writeHead(index);
     }
+
+#if ENABLE(FTL_JIT)
+    // The engine's own functions that are written in JavaScript, each as a builtin of an embedder's would be: with a text of its own.
+    // What runs the program asks StaticHeap for them (BuiltinExecutables::staticExecutableFor()), so that they are neither parsed nor
+    // interpreted.
+    Vector<UnlinkedFunctionExecutable*> builtinsOfEngine; // By BuiltinCodeIndex. The modules keep them.
+    void addBuiltinsOfEngine()
+    {
+        unsigned added = 0;
+        vm.builtinExecutables()->forEachOnItsOwn([&](unsigned index, UnlinkedFunctionExecutable* executable, const SourceCode& source) {
+            ParserError error;
+            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max());
+            if (error.isValid()) {
+                dataLogLn("AOT: no code for `", executable->name().string(), "`, one of the engine's own functions: ", error.message());
+                return;
+            }
+            while (builtinsOfEngine.size() <= index)
+                builtinsOfEngine.append(nullptr);
+            builtinsOfEngine[index] = executable;
+            Module module { SourceCodeKey(), Strong<JSCell>(vm, executable), source, BuiltinExecutables::stampOf(index) };
+            module.isOfEngine = true;
+            add(WTF::move(module), BytecodeOrderNames { });
+            ++added;
+        });
+        if (Options::aotVerbose() || Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: ", added, " of the engine's own functions are part of the link");
+    }
+#endif
 
     // Functions that whoever compiles the program never gets to see: with no code, that were not placed, with nothing to go by.
     std::array<unsigned, 3> functionsLeftOut { };
@@ -6225,6 +6257,13 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
 
+        auto textOfModule = [&](unsigned module) -> StringView {
+            return modules[module].source.provider()->source();
+        };
+        auto isModuleOfProgram = [&](unsigned module) {
+            return !!dynamicDowncast<UnlinkedCodeBlock>(modules[module].root.get());
+        };
+
         for (auto& function : functionsToCompile) {
             if (!hints[function.module])
                 continue;
@@ -6417,6 +6456,8 @@ struct BytecodeLinkEncoder::Impl {
                         summary.changed |= (type | old) != old;
                         function->returnType.store(type | old, std::memory_order_relaxed);
                     }
+                    if (summary.facts)
+                        summary.facts->returnType.store(type | summary.facts->returnType.load(std::memory_order_relaxed), std::memory_order_relaxed);
                 });
                 SetOfUnits next;
                 for (unsigned index : worklist) {
@@ -6573,6 +6614,24 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
         }
+        class CodeOfThisProgram final : public AOT::CodeOfProgram {
+        public:
+            std::optional<About> about(UnlinkedCodeBlock* codeBlock) const final
+            {
+                auto it = all.find(codeBlock);
+                return it == all.end() ? std::nullopt : std::optional { it->value };
+            }
+            UnlinkedFunctionCodeBlock* codeOfBuiltin(unsigned index) const final
+            {
+                return index < builtins->size() && builtins->at(index) ? builtins->at(index)->codeBlockIfThereIsOne(CodeSpecializationKind::CodeForCall) : nullptr;
+            }
+            UncheckedKeyHashMap<UnlinkedCodeBlock*, About> all;
+            const Vector<UnlinkedFunctionExecutable*>* builtins { nullptr };
+        };
+        CodeOfThisProgram codeOfProgram;
+        codeOfProgram.builtins = &builtinsOfEngine;
+        for (auto& job : jobs)
+            codeOfProgram.all.add(job.codeBlock, AOT::CodeOfProgram::About { hints[job.module].get(), linkages[job.module].get(), factsOfCode.get(job.codeBlock), job.key });
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
                 if (Options::aotReportStats()) [[unlikely]] {
@@ -6589,13 +6648,13 @@ struct BytecodeLinkEncoder::Impl {
                     AOT::setOriginForStatistics(origin);
                 }
                 AOT::CompiledCode code;
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfCode.get(jobs[index].codeBlock), variableFacts)) {
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfCode.get(jobs[index].codeBlock), variableFacts, &codeOfProgram)) {
                     // (A function's key says where its source starts, if it is a function that somebody wrote.)
                     {
                         auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                         bool isTopLevel = !(jobs[index].rank & 2);
                         bool startIsKnown = isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody;
-                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? modules[jobs[index].module].source.provider()->source() : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
+                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? textOfModule(jobs[index].module) : StringView { }, isTopLevel ? 0 : jobs[index].key.start);
                     }
                     if (Options::aotLogsFacts()) [[unlikely]] {
                         auto* executable = jobs[index].executableForStatistics;
@@ -6607,7 +6666,7 @@ struct BytecodeLinkEncoder::Impl {
                         static NeverDestroyed<UncheckedKeyHashMap<String, std::array<uint64_t, 4>>> statistics;
                         auto* executable = jobs[index].executableForStatistics;
                         String name = executable ? executable->name().string() : String();
-                        bool isProgram = !!dynamicDowncast<UnlinkedCodeBlock>(modules[jobs[index].module].root.get());
+                        bool isProgram = isModuleOfProgram(jobs[index].module);
                         ASCIILiteral kind = !isProgram ? "an internal module's"_s : !executable ? "top level of a module"_s : name.startsWith("init_"_s) ? "init_*"_s : name.startsWith("require_"_s) ? "require_*"_s
                             : executable->isClassConstructorFunction() ? "class constructor"_s : name.isEmpty() ? "anonymous"_s : "named"_s;
                         Locker locker { statisticsLock };
@@ -6627,9 +6686,9 @@ struct BytecodeLinkEncoder::Impl {
                     auto kindOfFunction = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
                     bool isTopLevel = !(jobs[index].rank & 2);
                     // (An embedder's builtin has its text wherever the embedder has it.)
-                    bool isOfProgram = !!dynamicDowncast<UnlinkedCodeBlock>(modules[jobs[index].module].root.get());
+                    bool isOfProgram = isModuleOfProgram(jobs[index].module);
                     if (Options::aotKeepsQuotes() && isOfProgram && (isTopLevel || kindOfFunction == OrderFunctionKind::Function || kindOfFunction == OrderFunctionKind::InnerBody))
-                        AOT::collectQuotes(code.info, jobs[index].codeBlock, modules[jobs[index].module].source.provider()->source(), isTopLevel ? 0 : jobs[index].key.start);
+                        AOT::collectQuotes(code.info, jobs[index].codeBlock, textOfModule(jobs[index].module), isTopLevel ? 0 : jobs[index].key.start);
                     if (auto* numbers = AOT::numbersOfIdentifiersOfProgram()) {
                         for (auto& identifier : jobs[index].codeBlock->identifiers())
                             code.info.numbersOfIdentifiers.append(numbers->get(identifier.impl()));
@@ -6929,6 +6988,10 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
 auto BytecodeLinkEncoder::finish() -> Result
 {
     static_assert(numberOfRegions == BytecodeLinkRegions::Count);
+#if ENABLE(FTL_JIT)
+    if (m_impl->compilesAheadOfTime && Options::aotCompilesBuiltins() && Options::staticHeapHasBuiltinFunctions())
+        m_impl->addBuiltinsOfEngine();
+#endif
     Result result;
     Encoder& encoder = m_impl->encoder;
     auto closeRegion = [&](unsigned region) {
@@ -6976,7 +7039,8 @@ auto BytecodeLinkEncoder::finish() -> Result
     result.placedHotFunctions = encoder.placedHotFunctions();
     result.functionsWithoutName = encoder.functionsWithoutName();
     for (auto& module : m_impl->modules) {
-        result.entryOffsets.append(module.entryOffset);
+        if (!module.isOfEngine)
+            result.entryOffsets.append(module.entryOffset);
         if (module.root->classInfo() != UnlinkedFunctionExecutable::info() || Options::staticHeapHasBuiltinFunctions())
             result.entryOffsetsOfModules.append(module.entryOffset);
     }

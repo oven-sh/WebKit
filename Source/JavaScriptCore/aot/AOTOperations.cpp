@@ -704,7 +704,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* glo
         OPERATION_RETURN(scope, 0);
     auto string = asString(value)->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0); // Out of memory resolving a rope.
-    const UnlinkedStringJumpTable& table = caller(globalObject, callFrame).stringSwitchJumpTable(tableIndex);
+    const UnlinkedStringJumpTable& table = functionOfBytecodeOfCaller(globalObject, callFrame).stringSwitchJumpTable(tableIndex);
     OPERATION_RETURN(scope, table.offsetForValue(string.data.impl()));
 }
 

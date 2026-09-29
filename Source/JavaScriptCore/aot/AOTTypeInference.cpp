@@ -105,9 +105,9 @@ private:
             if (Variable variable = m_graph.variableAccessedBy(node)) {
                 facts->join(variable, node->use(node->as<OpPutToScope>().m_value)->type);
                 if (!m_graph.nameForLog().isNull()) [[unlikely]]
-                    dataLogLn("FACTLOG put `", m_graph.codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` scope ", RawPointer(variable.scope), " offset ", variable.offset, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), ": ", TypeDump(node->use(node->as<OpPutToScope>().m_value)->type));
+                    dataLogLn("FACTLOG put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` scope ", RawPointer(variable.scope), " offset ", variable.offset, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), ": ", TypeDump(node->use(node->as<OpPutToScope>().m_value)->type));
             } else if (!m_graph.nameForLog().isNull()) [[unlikely]]
-                dataLogLn("FACTLOG put `", m_graph.codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` WHO KNOWS WHERE in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
+                dataLogLn("FACTLOG put `", node->graph->codeBlock()->identifier(node->as<OpPutToScope>().m_var).impl(), "` WHO KNOWS WHERE in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset());
             return;
         case op_create_lexical_environment:
             noteInitialValue(node->as<OpCreateLexicalEnvironment>().m_initialValue);
@@ -202,7 +202,7 @@ private:
             Type base = callee->use(bytecode.m_base)->type;
             if (!base)
                 return TNone;
-            number = intrinsicFoundOnPrimitive(base, *m_graph.codeBlock()->identifier(bytecode.m_property).impl());
+            number = intrinsicFoundOnPrimitive(base, *callee->graph->codeBlock()->identifier(bytecode.m_property).impl());
         }
         if (!number)
             return std::nullopt;
@@ -682,7 +682,7 @@ private:
             if (VariableFacts* facts = m_graph.variableFacts()) {
                 if (Variable variable = m_graph.variableAccessedBy(node)) {
                     auto bytecode = node->as<OpGetFromScope>();
-                    Type type = facts->read(variable, m_graph.codeBlock()->identifier(bytecode.m_var).impl(), m_graph.readerOfFacts());
+                    Type type = facts->read(variable, node->graph->codeBlock()->identifier(bytecode.m_var).impl(), m_graph.readerOfFacts());
                     // (A function that a module declares is made when it is first read, by whatever reads it.)
                     return bytecode.m_getPutInfo.resolveType() == ResolvedLazyClosureVar ? type | TFunction : type;
                 }

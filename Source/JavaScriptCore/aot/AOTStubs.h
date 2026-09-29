@@ -344,6 +344,21 @@ struct ListDescriptor {
 };
 static constexpr unsigned mostItemsInList = ListDescriptor::mostItems;
 
+// In a function that others have been made part of (Graph::adopt()), a call site says which of those calls it is in, above where it is in
+// the bytecode of the function that was called.
+struct PackedSite {
+    static constexpr unsigned shift = 24;
+    static constexpr unsigned mostInlineFrames = 254; // (StubCall::noCallSite is not one.)
+    static bool fits(uint32_t bits) { return !(bits >> shift); }
+    static uint32_t pack(unsigned inlineFrame, uint32_t bits)
+    {
+        RELEASE_ASSERT(inlineFrame <= mostInlineFrames && fits(bits));
+        return inlineFrame << shift | bits;
+    }
+    static unsigned inlineFrame(uint32_t site) { return site >> shift; }
+    static uint32_t bits(uint32_t site) { return site & ((1u << shift) - 1); }
+};
+
 // A call that is passed items (ListDescriptor) is where all of them are gone through, as far as its frame says. This says where in the
 // bytecode each would have been, for whoever asks while that one is being gone through.
 struct SiteOfSpread {

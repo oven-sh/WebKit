@@ -204,6 +204,7 @@ namespace JSC {
     macro(entries) \
     macro(emptyPropertyNameEnumerator) \
     macro(sentinelString) \
+    macro(orderedHashTableSentinel) \
     macro(createRemoteFunction) \
     macro(isRemoteFunction) \
     macro(arrayFromFastWithoutMapFn) \

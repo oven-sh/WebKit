@@ -86,7 +86,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     }
     unsigned slot = stub ? sharedSite(node, identifier) : allocateSlot();
     if (stub == Stub::GetById)
-        m_graph.noteSelectorOfSite(slot, m_graph.codeBlock()->identifier(identifierOfFunction).impl());
+        m_graph.noteSelectorOfSite(slot, code().codeBlock()->identifier(identifierOfFunction).impl());
     auto throughStub = [&]() -> LValue {
         return callStub(*stub, Int64, { { base, GPRInfo::argumentGPR0 }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { });
     };
@@ -136,7 +136,7 @@ void Lowering::lowerPutById(Node* node)
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     if (isCompact() && Site::fits(numberOf(bytecode.m_property), flags)) {
         unsigned slot = sharedSite(node, numberOf(bytecode.m_property), flags);
-        m_graph.noteSelectorOfSite(slot, m_graph.codeBlock()->identifier(bytecode.m_property).impl());
+        m_graph.noteSelectorOfSite(slot, code().codeBlock()->identifier(bytecode.m_property).impl());
         callStub(Stub::PutById, Void, { { base, GPRInfo::argumentGPR0 }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
         return;
     }
@@ -397,7 +397,7 @@ void Lowering::lowerResolveScope(Node* node)
         return;
     }
 
-    unsigned extra = m_graph.extraOfResolveScope(bytecode);
+    unsigned extra = code().extraOfResolveScope(bytecode);
     if (isFusedWithGetFromScope(node))
         return;
     if (usesStubs && variable.kind == StaticVariable::Unresolved && Site::fits(numberOf(bytecode.m_var), extra)) {
@@ -431,7 +431,7 @@ bool Lowering::isFusedWithGetFromScope(Node* node)
     if (!usesStubs || !node->isBytecode(op_resolve_scope) || node->block != m_block || node->useCount != 1)
         return false;
     auto resolve = node->as<OpResolveScope>();
-    if (isStaticClosureVarResolveType(resolve.m_resolveType) || !Site::fits(numberOf(resolve.m_var), m_graph.extraOfResolveScope(resolve)))
+    if (isStaticClosureVarResolveType(resolve.m_resolveType) || !Site::fits(numberOf(resolve.m_var), code().extraOfResolveScope(resolve)))
         return false;
     if (resolveStatically(resolve.m_var, resolve.m_localScopeDepth, resolve.m_resolveType).kind != StaticVariable::Unresolved)
         return false;
@@ -456,8 +456,8 @@ void Lowering::lowerGetFromScope(Node* node)
     if (Node* resolveNode = node->use(bytecode.m_scope); isFusedWithGetFromScope(resolveNode)) {
         auto resolve = resolveNode->as<OpResolveScope>();
         LValue scope = lowCell(resolveNode->use(resolve.m_scope));
-        unsigned site = allocateSite(resolveNode, numberOf(resolve.m_var), m_graph.extraOfResolveScope(resolve));
-        unsigned siteOfGet = allocateSite(node, numberOf(bytecode.m_var), m_graph.extraOfGetFromScope(bytecode));
+        unsigned site = allocateSite(resolveNode, numberOf(resolve.m_var), code().extraOfResolveScope(resolve));
+        unsigned siteOfGet = allocateSite(node, numberOf(bytecode.m_var), code().extraOfGetFromScope(bytecode));
         RELEASE_ASSERT(siteOfGet == site + 1);
         setJSValue(node, callStub(Stub::GetGlobal, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(site), GPRInfo::argumentGPR1 } }, { }));
         return;
@@ -503,7 +503,7 @@ void Lowering::lowerGetFromScope(Node* node)
         return;
     }
 
-    unsigned throwIfNotFound = m_graph.extraOfGetFromScope(bytecode);
+    unsigned throwIfNotFound = code().extraOfGetFromScope(bytecode);
     if (usesStubs && variable.isCachedInSlot() && Site::fits(numberOf(bytecode.m_var), throwIfNotFound)) {
         setJSValue(node, callStub(Stub::GetFromScope, Int64, { { scope, GPRInfo::argumentGPR0 }, { slotAddress(sharedSite(node, numberOf(bytecode.m_var), throwIfNotFound)), GPRInfo::argumentGPR1 } }, { }));
         return;

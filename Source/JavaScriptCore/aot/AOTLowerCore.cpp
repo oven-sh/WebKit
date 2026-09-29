@@ -94,10 +94,67 @@ static bool mayBeQuoted(const Graph& graph, Node* node)
 
 uint32_t Lowering::callSiteBitsOf(Node* node)
 {
-    if (mayBeQuoted(m_graph, node))
-        m_graph.quotableSites.append(node->bytecodeIndex.offset());
-    m_graph.callSites.append(node->bytecodeIndex.offset());
-    return CallSiteIndex(node->bytecodeIndex).bits();
+    // (A function that may end up as part of another keeps what there is to say about all of its sites: noteEverySiteOf().)
+    if (node->graph->isOutermost()) {
+        if (mayBeQuoted(m_graph, node))
+            m_graph.quotableSites.append(node->bytecodeIndex.offset());
+        m_graph.callSites.append(node->bytecodeIndex.offset());
+    }
+    return siteOf(node);
+}
+
+uint32_t Lowering::siteOf(Node* node)
+{
+    uint32_t bits = CallSiteIndex(node->bytecodeIndex).bits();
+    if (m_graph.inlineFrames.isEmpty())
+        return bits;
+    return PackedSite::pack(node->graph->inlineFrame(), bits);
+}
+
+void noteEverySiteOf(Graph& graph)
+{
+    for (const auto& instruction : graph.codeBlock()->instructions()) {
+        graph.callSites.append(instruction.offset());
+        switch (instruction->opcodeID()) {
+        case op_get_by_id:
+        case op_get_length:
+        case op_get_by_val:
+        case op_put_by_id:
+        case op_put_by_val:
+        case op_del_by_id:
+        case op_del_by_val:
+        case op_call:
+        case op_call_ignore_result:
+        case op_tail_call:
+        case op_construct:
+        case op_get_by_id_with_this:
+        case op_get_by_id_direct:
+        case op_get_by_val_with_this:
+        case op_get_private_name:
+        case op_put_by_val_direct:
+        case op_put_private_name:
+        case op_set_private_brand:
+        case op_check_private_brand:
+        case op_has_private_name:
+        case op_has_private_brand:
+        case op_in_by_id:
+        case op_in_by_val:
+        case op_instanceof:
+        case op_call_varargs:
+        case op_tail_call_varargs:
+        case op_construct_varargs:
+        case op_iterator_open:
+        case op_iterator_next:
+        case op_check_tdz:
+        case op_to_object:
+        case op_get_prototype_of:
+        case op_spread:
+            graph.quotableSites.append(instruction.offset());
+            break;
+        default:
+            break;
+        }
+    }
 }
 
 using namespace B3;
@@ -175,6 +232,7 @@ bool Lowering::run()
     m_out.initializeConstants(m_proc, prologue);
 
     // Runs on every way in, so what it computes may only depend on the frame pointer and on what is in the same register throughout.
+    m_howValuesArePassed = m_graph.howValuesArePassed();
     m_callFrame = m_out.framePointer();
     m_instance = registerOnEntry(instanceGPR);
     m_numberTag = registerOnEntry(GPRInfo::numberTagRegister);
@@ -262,7 +320,8 @@ bool Lowering::run()
 
     if (m_returnBlock) {
         m_out.appendTo(m_returnBlock);
-        m_out.ret(m_out.phi(Int64, m_returnValues));
+        Rep rep = m_howValuesArePassed.result;
+        m_out.ret(m_out.phi(rep == Rep::JSValue ? Int64 : rep == Rep::Double ? Double : Int32, m_returnValues));
     }
     m_heaps.computeRangesAndDecorateInstructions();
     m_proc.deleteOrphans();
@@ -506,9 +565,9 @@ unsigned Lowering::allocateSite(Node*, unsigned identifier, unsigned extra)
 
 unsigned Lowering::sharedSite(Node* node, unsigned identifier, unsigned extra)
 {
-    if (!m_graph.hasGuards())
+    if (!node->graph->hasGuards())
         return allocateSite(node, identifier, extra);
-    return m_sharedSites.ensure(static_cast<uint64_t>(node->bytecodeIndex.offset()) << 32 | identifier, [&] {
+    return m_sharedSites.ensure((static_cast<uint64_t>(node->bytecodeIndex.offset()) << 32 | identifier) ^ static_cast<uint64_t>(node->graph->inlineFrame()) << 56, [&] {
         return allocateSite(node, identifier, extra);
     }).iterator->value;
 }
@@ -572,6 +631,12 @@ LValue Lowering::convert(LValue value, Rep from, Type fromType, Rep to)
             return m_out.select(m_out.equal(m_out.signExt32To64(narrow), value), boxInt32(narrow), boxDouble(m_out.intToDouble(value)));
         }
         case Rep::Double:
+            // The engine's own functions pass numbers to functions that take it for granted how they are encoded: whatever an int32 can
+            // hold is one, as it is when the interpreter has made it. (Nothing that a program can say tells the two apart.)
+            if (code().codeBlock()->isBuiltinFunction()) {
+                LValue narrow = m_out.doubleToInt32(value);
+                return m_out.select(m_out.equal(m_out.bitCast(m_out.intToDouble(narrow), Int64), m_out.bitCast(value, Int64)), boxInt32(narrow), boxDouble(value));
+            }
             return boxDouble(value);
         case Rep::Boolean:
             return boxBoolean(value);
@@ -639,7 +704,7 @@ LValue Lowering::lowRaw(Node* node)
         }
         break;
     case NodeKind::ConstantCell:
-        return lowConstantRegister(node->reg);
+        return lowConstantRegister(*node->graph, node->reg);
     case NodeKind::Intrinsic:
         if (node->intrinsic == ImmutableIntrinsics::globalObject)
             return m_globalObject;
@@ -651,13 +716,14 @@ LValue Lowering::lowRaw(Node* node)
     return node->lowered;
 }
 
-LValue Lowering::lowConstantRegister(VirtualRegister reg)
+LValue Lowering::lowConstantRegister(Graph& graph, VirtualRegister reg)
 {
-    if (auto* numbers = numbersOfConstantsOfProgramFor(m_graph.codeBlock())) {
+    if (auto* numbers = numbersOfConstantsOfProgramFor(graph.codeBlock())) {
         uint32_t number = numbers->at(reg.toConstantIndex());
         RELEASE_ASSERT(number != notAConstantOfProgram);
         return m_out.load64(m_out.address(m_out.loadPtr(m_instance, m_heaps.AOTInstance_constantsOfProgram), m_heaps.AOTConstants[number]));
     }
+    RELEASE_ASSERT(graph.isOutermost()); // (Or its constants would be among the program's.)
     LValue constants = m_graph.startsCold ? m_constants : m_out.loadPtr(m_data, m_heaps.AOTData_constants);
     return m_out.load64(m_out.address(constants, m_heaps.AOTConstants[reg.toConstantIndex()]));
 }
@@ -716,10 +782,10 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
         }
         Variable variable;
         if (origin->isBytecode(op_get_from_scope)) {
-            identifierPlusOne = numberOf(origin->as<OpGetFromScope>().m_var) + 1;
+            identifierPlusOne = numberOf(origin, origin->as<OpGetFromScope>().m_var) + 1;
             variable = m_graph.variableAccessedBy(origin);
         } else if (node->isBytecode(op_get_by_id))
-            identifierPlusOne = numberOf(node->as<OpGetById>().m_property) + 1;
+            identifierPlusOne = numberOf(node, node->as<OpGetById>().m_property) + 1;
         // (Something that has a place in the source, for the frame to be reported at.)
         Node* place = node;
         for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
@@ -731,6 +797,17 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
             vmCall(place, Void, Entry::operationAOTVerifyFact, m_globalObject, value, m_out.constInt64(expected), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
                 m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
         }
+    }
+    if (Rep to = node->rep(); rep != to && rep != Rep::JSValue && to != Rep::JSValue && (rep == Rep::Boolean || to == Rep::Boolean)) [[unlikely]] {
+        dataLog("AOT: WHAT WAS MADE IS NOT WHAT THE NODE IS KNOWN TO BE: ");
+        node->dump(WTF::dataFile());
+        dataLogLn(" made as ", static_cast<unsigned>(rep), " held as ", static_cast<unsigned>(to), ", inline frame ", node->graph->inlineFrame(), " in ", m_graph.nameForLog());
+        for (auto& use : node->uses) {
+            dataLog("    uses ");
+            use.node->dump(WTF::dataFile());
+            dataLogLn(" of inline frame ", use.node->graph->inlineFrame());
+        }
+        RELEASE_ASSERT_NOT_REACHED();
     }
     node->lowered = convert(value, rep, node->type, node->rep());
     // Whoever wants it the way it came gets that. If nobody wants it any other way, nothing comes of the conversion.
@@ -831,7 +908,7 @@ void Lowering::emitUpsilons(BasicBlock* block, BasicBlock* successor)
 void Lowering::lowerBlock(BasicBlock* block)
 {
     m_block = block;
-    m_out.setFrequency(block->isGeneric ? coldFrequency : 1);
+    m_out.setFrequency(block->isGeneric || block->isSeldomReached ? coldFrequency : 1);
     m_out.appendTo(block->lowered);
     for (Node* phi : block->phis)
         m_out.m_block->append(phi->lowered);
@@ -847,6 +924,7 @@ void Lowering::lowerBlock(BasicBlock* block)
     // The origin of a B3 value is the opcode it was made for, plus one: for saying what the code's bytes went to.
     auto setOrigin = [&](Node* node) {
         m_node = node && node->instruction ? node : nullptr;
+        m_code = node ? node->graph : block->graph;
         unsigned tag = !node ? 0 : node->kind == NodeKind::Bytecode ? node->opcode + 1 : numOpcodeIDs + 1 + static_cast<unsigned>(node->kind);
         m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(tag) << 4));
     };
@@ -913,8 +991,23 @@ void Lowering::lowerNode(Node* node)
             setJSValue(node, registerOnEntry(thisGPR));
         else if (m_graph.convention().signature == Signature::List)
             setJSValue(node, argumentPassedOrUndefined(node->reg.toArgument() - 1));
-        else
-            setJSValue(node, registerOnEntry(argumentGPR(node->reg.toArgument() - 1)));
+        else {
+            unsigned index = node->reg.toArgument() - 1;
+            switch (m_howValuesArePassed.parameters[index]) {
+            case Rep::Int32:
+                setInt32(node, m_out.castToInt32(registerOnEntry(argumentGPR(index))));
+                break;
+            case Rep::Boolean:
+                setBoolean(node, m_out.castToInt32(registerOnEntry(argumentGPR(index))));
+                break;
+            case Rep::Double:
+                setDouble(node, registerOnEntry(FPRInfo::toArgumentRegister(index)));
+                break;
+            default:
+                setJSValue(node, registerOnEntry(argumentGPR(index)));
+                break;
+            }
+        }
         return;
     case NodeKind::GetStack:
         setJSValue(node, m_out.load64(addressFor(node->reg)));
@@ -947,7 +1040,7 @@ void Lowering::lowerBytecode(Node* node)
 
 LBasicBlock Lowering::blockFor(Node* branch, int relativeOffset)
 {
-    BasicBlock* target = m_graph.targetFrom(m_block, branch->bytecodeIndex.offset() + relativeOffset);
+    BasicBlock* target = m_block->graph->targetFrom(m_block, branch->bytecodeIndex.offset() + relativeOffset);
     RELEASE_ASSERT(target && target->lowered);
     return edgeTo(target);
 }
