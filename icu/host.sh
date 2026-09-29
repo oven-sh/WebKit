@@ -18,6 +18,8 @@ for dir in stubdata common i18n tools/toolutil tools/gencnval tools/genbrk tools
 done
 make config/icucross.mk config/icucross.inc
 node --experimental-strip-types /tmp/icu-host/bun/data/icu-data.ts --tools "$PWD/bin" --work /tmp/icu-data --out /icudt.dat
+# Said first: the check says only that it failed, and a new commit of ICU needs the new one.
+sha256sum /icudt.dat
 echo "$ICU_DATA_SHA256  /icudt.dat" | sha256sum -c -
 mkdir -p /icu-host/config
 cp config/icucross.mk config/icucross.inc /icu-host/config

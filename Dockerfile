@@ -15,7 +15,7 @@ ARG LINUX_ARCH="x86_64"
 # The arm64 ubuntu:20.04, only ever copied from (see the aarch64 sysroot in `base`): nothing of it is run.
 FROM --platform=linux/arm64 ubuntu:20.04 as rootfs-arm64
 
-# `base` is the toolchain and nothing else: it takes no lane setting (LTO_FLAG, MARCH_FLAG, WEBKIT_RELEASE_TYPE, ...), so
+# `base` is the toolchain and ICU's data: it takes no lane setting (LTO_FLAG, MARCH_FLAG, WEBKIT_RELEASE_TYPE, ...), so
 # it is the same for every lane of an architecture. CI builds it once per change, keeps it in ghcr.io, and hands it to
 # the lanes as `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the
 # `image` job). Without that, it is built here like any other stage. Lane settings belong in `lane` below.

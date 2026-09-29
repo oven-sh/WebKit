@@ -8,7 +8,7 @@ ARG USE_EXTERNAL_MIMALLOC="OFF"
 # `base` carries. The container itself is always linux/amd64.
 ARG LINUX_ARCH="x86_64"
 
-# `base` is the toolchain and nothing else: it takes no lane setting, so it is the same for every lane. CI builds it once per change, keeps it in ghcr.io, and hands it to the lanes as
+# `base` is the toolchain and ICU's data: it takes no lane setting, so it is the same for every lane. CI builds it once per change, keeps it in ghcr.io, and hands it to the lanes as
 # `--build-context base=docker-image://...`, which replaces this stage (.github/workflows/ci.yml, the `image` job).
 # Without that, it is built here like any other stage. Lane settings belong in `lane` below.
 FROM alpine:3.23 as base
