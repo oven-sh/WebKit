@@ -4319,10 +4319,9 @@ private:
         }
     }
 
+    // `from __future__ import x` has been seen to by now, and is an import like any other besides.
     void emitImportFrom(ImportFrom& node)
     {
-        if (!node.level && node.module && *node.module == "__future__"_s)
-            return;
         Vector<Reg, 8> names;
         for (Alias* alias : node.names) {
             names.append(g.newTemporary());

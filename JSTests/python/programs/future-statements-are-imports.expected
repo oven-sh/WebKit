@@ -1,0 +1,13 @@
+bound => (_Feature((3, 7, 0, 'beta', 1), None, 16777216), _Feature((2, 2, 0, 'alpha', 2), (3, 0, 0, 'alpha', 0), 131072), _Feature((3, 5, 0, 'beta', 1), (3, 7, 0, 'alpha', 0), 8388608))
+they are what the module has => (True, True)
+what one has => ((3, 7, 0, 'beta', 1), None, 16777216, (3, 7, 0, 'beta', 1), None, '_Feature', '__future__')
+all of them => [('nested_scopes', _Feature((2, 1, 0, 'beta', 1), (2, 2, 0, 'alpha', 0), 16)), ('generators', _Feature((2, 2, 0, 'alpha', 1), (2, 3, 0, 'final', 0), 0)), ('division', _Feature((2, 2, 0, 'alpha', 2), (3, 0, 0, 'alpha', 0), 131072)), ('absolute_import', _Feature((2, 5, 0, 'alpha', 1), (3, 0, 0, 'alpha', 0), 262144)), ('with_statement', _Feature((2, 5, 0, 'alpha', 1), (2, 6, 0, 'alpha', 0), 524288)), ('print_function', _Feature((2, 6, 0, 'alpha', 2), (3, 0, 0, 'alpha', 0), 1048576)), ('unicode_literals', _Feature((2, 6, 0, 'alpha', 2), (3, 0, 0, 'alpha', 0), 2097152)), ('barry_as_FLUFL', _Feature((3, 1, 0, 'alpha', 2), (4, 0, 0, 'alpha', 0), 4194304)), ('generator_stop', _Feature((3, 5, 0, 'beta', 1), (3, 7, 0, 'alpha', 0), 8388608)), ('annotations', _Feature((3, 7, 0, 'beta', 1), None, 16777216))]
+what the module has => ['CO_FUTURE_ABSOLUTE_IMPORT', 'CO_FUTURE_ANNOTATIONS', 'CO_FUTURE_BARRY_AS_BDFL', 'CO_FUTURE_DIVISION', 'CO_FUTURE_GENERATOR_STOP', 'CO_FUTURE_PRINT_FUNCTION', 'CO_FUTURE_UNICODE_LITERALS', 'CO_FUTURE_WITH_STATEMENT', 'CO_GENERATOR_ALLOWED', 'CO_NESTED', '_Feature', 'absolute_import', 'all_feature_names', 'annotations', 'barry_as_FLUFL', 'division', 'generator_stop', 'generators', 'nested_scopes', 'print_function', 'unicode_literals', 'with_statement']
+__all__ => ['all_feature_names', 'nested_scopes', 'generators', 'division', 'absolute_import', 'with_statement', 'print_function', 'unicode_literals', 'barry_as_FLUFL', 'generator_stop', 'annotations']
+the flags are what compile() takes => [True, True]
+and it does what it asks => ({'a': 'nothing'}, _Feature((3, 7, 0, 'beta', 1), None, 16777216))
+in a function it is too late => SyntaxError: from __future__ imports must occur at the beginning of the file (<s>, line 2)
+what there is none of => SyntaxError: future feature nothing is not defined (<s>, line 1)
+all of them at once => SyntaxError: future feature * is not defined (<s>, line 1)
+by another name => ['a', 'division']
+the module is a module => ('module', '__future__')
