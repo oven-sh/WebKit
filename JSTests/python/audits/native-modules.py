@@ -1,7 +1,14 @@
 # Everything in the modules that are written in C++: what each module and each class in it has, and what comes of calling each function and each method wrongly. With no arguments, with nine, with a keyword that it does not have,
 # with no instance, with an instance of the wrong class, with each of a score of things that it is unlikely to have been meant for, and, for a method, of an instance that has been made and not initialized. It must never crash.
+#
+# There is a line for each function and each method, with how many things were tried and a checksum of what came of them. Given `all` as an argument, it prints what came of each, as it comes:
+#
+#     jsc native-modules.py -- all
+import binascii
 import sys
 import warnings
+
+ALL = sys.argv[1:] == ["all"]
 
 warnings.simplefilter("ignore")
 MODULES = ("_abc", "_ast", "_codecs", "_collections", "_contextvars", "_functools", "_imp", "_io", "_opcode", "_operator", "_posixsubprocess", "_random", "_signal", "_sre", "_stat", "_string", "_struct", "_thread", "_tokenize", "_typing", "_warnings", "_weakref", "array", "atexit", "binascii", "errno", "itertools", "marshal", "math", "posix", "select", "time", "unicodedata")
@@ -45,15 +52,30 @@ def scrub(text):
     return "".join(out)
 
 
+outcomes = []
+
+
 def attempt(label, f, *a, **k):
+    if ALL:
+        print(label, end=" ", flush=True)
     try:
         f(*a, **k)
     except OSError as e:
-        print(label, "|", type(e).__name__, e.errno)
+        outcome = "%s %s" % (type(e).__name__, e.errno)
     except BaseException as e:
-        print(label, "|", type(e).__name__, ascii(scrub(str(e)))[:150])
+        outcome = "%s %s" % (type(e).__name__, ascii(scrub(str(e)))[:150])
     else:
-        print(label, "| fine")
+        outcome = "fine"
+    if ALL:
+        print("|", outcome, flush=True)
+    outcomes.append(label + " | " + outcome)
+
+
+def finish(subject):
+    "All that has been tried since the last time, in a line"
+    if outcomes and not ALL:
+        print(subject, "|", len(outcomes), binascii.crc32("\n".join(outcomes).encode()))
+    outcomes.clear()
 
 
 def hostile():
@@ -94,13 +116,13 @@ for name in MODULES:
     try:
         module = __import__(name)
     except ImportError:
-        print("module", name, "| there is none")
+        print("module", name, "| 1 there is none")
         continue
-    print("module", name, "|", kinds(vars(module)))
+    print("module", name, "| 1", kinds(vars(module)))
     for attribute in sorted(vars(module)):
         value = getattr(module, attribute)
         if isinstance(value, type):
-            print("class", name, attribute, "|", value.__module__, value.__qualname__, [b.__name__ for b in value.__mro__], value.__flags__ & 0x7FFF, value.__basicsize__, kinds(vars(value)))
+            print("class", name, attribute, "| 1", value.__module__, value.__qualname__, [b.__name__ for b in value.__mro__], value.__flags__ & 0x7FFF, value.__basicsize__, kinds(vars(value)))
         if attribute in SKIP.get(name, ()) or attribute.startswith(("set", "sched_set", "__")) or not callable(value):
             continue
         if isinstance(value, type) and issubclass(value, BaseException):
@@ -114,6 +136,7 @@ for name in MODULES:
             attempt("%s %s" % (label, what), value, v)
         for what, v in hostile():
             attempt("%s %s twice" % (label, what), value, v, v)
+        finish(label)
 
 
 def exercise(label, make, initialized):
@@ -138,6 +161,7 @@ def exercise(label, make, initialized):
             attempt("%s %s wrong self and an argument" % (label, name), u, ..., None)
             for what, v in hostile():
                 attempt("%s %s %s twice" % (label, name, what), getattr(make(), name), v, v)
+        finish("%s %s" % (label, name))
 
 
 seen = {}
@@ -159,8 +183,9 @@ for name in MODULES:
         try:
             t.__new__(t)
         except BaseException as e:
-            print("raw %s.%s | %s %s" % (name, attribute, type(e).__name__, ascii(scrub(str(e)))[:150]))
+            print("raw %s.%s | 1 %s %s" % (name, attribute, type(e).__name__, ascii(scrub(str(e)))[:150]))
             continue
         exercise("raw %s.%s" % (name, attribute), lambda: t.__new__(t), False)
         for what in ("repr", "str", "hash", "iter", "len", "bool"):
             attempt("raw %s.%s %s()" % (name, attribute, what), getattr(__builtins__, what) if not isinstance(__builtins__, dict) else __builtins__[what], t.__new__(t))
+        finish("raw %s.%s by what is built in" % (name, attribute))
