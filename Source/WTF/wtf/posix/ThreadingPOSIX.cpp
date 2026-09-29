@@ -203,7 +203,7 @@ void Thread::signalHandlerSuspendResume(int, siginfo_t*, void* ucontext)
         // The signal handler of WTF runs on the alternate signal stack (SA_ONSTACK), and it can wait
         // there for a lock that the thread that suspends holds (SamplingProfiler::takeSample()): no
         // retry would succeed. It publishes the registers that it interrupted.
-        registersOfOwnStack = registersInterruptedBySignalHandler();
+        registersOfOwnStack = registersInterruptedBySignalHandler(thread->m_stack);
 #endif
         if (!registersOfOwnStack) {
             // This happens if we use an alternative signal stack.

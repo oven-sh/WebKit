@@ -148,10 +148,11 @@ class Thread;
 void registerThreadForMachExceptionHandling(Thread&);
 #endif // HAVE(MACH_EXCEPTIONS)
 
-#if USE(BUN_JSC_ADDITIONS) && OS(UNIX) && !OS(DARWIN)
-// While the signal handler of WTF runs on the alternate signal stack of the current thread: the
-// registers of the code that it interrupted on the thread's own stack. Null at any other time.
-WTF_EXPORT_PRIVATE PlatformRegisters* registersInterruptedBySignalHandler();
+#if USE(BUN_JSC_ADDITIONS) && OS(UNIX) && !OS(DARWIN) && HAVE(MACHINE_CONTEXT)
+class StackBounds;
+// While the signal handler of WTF runs on the current thread: the registers of the code that it
+// interrupted, when the stack pointer of that code is in the given stack. Null otherwise.
+WTF_EXPORT_PRIVATE PlatformRegisters* registersInterruptedBySignalHandler(const StackBounds&);
 #endif
 
 } // namespace WTF
