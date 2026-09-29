@@ -255,7 +255,11 @@ void VM::computeCanUseJIT()
 
 static bool vmCreationShouldCrash = false;
 
+#if USE(BUN_JSC_ADDITIONS)
+VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success, HeapMarking marking)
+#else
 VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
+#endif
     : topCallFrame(CallFrame::noCaller())
     , m_identifier(VMIdentifier::generate())
     , m_apiLock(adoptRef(*new JSLock(this)))
@@ -263,7 +267,11 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     , m_random(Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint32_t>())
     , m_heapRandom(Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint32_t>())
     , m_integrityRandom(*this)
+#if USE(BUN_JSC_ADDITIONS)
+    , heap(*this, heapType, marking)
+#else
     , heap(*this, heapType)
+#endif
     , clientHeap(heap)
     , vmType(vmType)
     , deferredWorkTimer(DeferredWorkTimer::create(*this))
@@ -774,6 +782,17 @@ Ref<VM> VM::createContextGroup(HeapType heapType)
     return adoptRef(*new VM(VMType::APIContextGroup, heapType));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+Ref<VM> VM::create(HeapType heapType, WTF::RunLoop* runLoop, HeapMarking marking)
+{
+    return adoptRef(*new VM(VMType::Default, heapType, runLoop, nullptr, marking));
+}
+
+RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop, HeapMarking marking)
+{
+    bool success = true;
+    RefPtr<VM> vm = adoptRef(new VM(VMType::Default, heapType, runLoop, &success, marking));
+#else
 Ref<VM> VM::create(HeapType heapType, WTF::RunLoop* runLoop)
 {
     return adoptRef(*new VM(VMType::Default, heapType, runLoop));
@@ -783,6 +802,7 @@ RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
 {
     bool success = true;
     RefPtr<VM> vm = adoptRef(new VM(VMType::Default, heapType, runLoop, &success));
+#endif
     if (!success) {
         // Here, we're destructing a partially constructed VM and we know that
         // no one else can be using it at the same time. So, acquiring the lock

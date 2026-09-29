@@ -346,7 +346,11 @@ private:
 #define INIT_SERVER_STRUCTURE_ISO_SUBSPACE(name, heapCellType, type) \
     , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
 
+#if USE(BUN_JSC_ADDITIONS)
+Heap::Heap(VM& vm, HeapType heapType, HeapMarking marking)
+#else
 Heap::Heap(VM& vm, HeapType heapType)
+#endif
     : m_heapType(heapType)
     , m_ramSize(Options::forceRAMSize() ? Options::forceRAMSize() : ramSize())
     , m_minBytesPerCycle(minHeapSize(m_heapType, m_ramSize))
@@ -373,6 +377,9 @@ Heap::Heap(VM& vm, HeapType heapType)
     , m_helperClient(&heapHelperPool())
     , m_threadLock(Box<Lock>::create())
     , m_threadCondition(AutomaticThreadCondition::create())
+#if USE(BUN_JSC_ADDITIONS)
+    , m_usesParallelMarking(marking == HeapMarking::Parallel)
+#endif
 
     // HeapCellTypes
     , auxiliaryHeapCellType(CellAttributes(DoesNotNeedDestruction, HeapCell::Auxiliary))
@@ -459,7 +466,12 @@ Heap::Heap(VM& vm, HeapType heapType)
 
     m_worldState.store(0);
 
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned numberOfParallelThreads = usesParallelMarking() ? heapHelperPool().numberOfThreads() : 0;
+    for (unsigned i = 0; i < numberOfParallelThreads; ++i) {
+#else
     for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
+#endif
         std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
         if (Options::optimizeParallelSlotVisitorsForStoppedMutator())
             visitor->optimizeForStoppedMutator();
@@ -2135,6 +2147,9 @@ NEVER_INLINE bool Heap::runBeginPhase(GCConductor conn)
 
     m_parallelMarkersShouldExit = false;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (usesParallelMarking())
+#endif
     m_helperClient.setFunction(
         [this] () {
             SlotVisitor* visitor;
@@ -2318,6 +2333,9 @@ NEVER_INLINE bool Heap::runEndPhase(GCConductor conn)
         m_parallelMarkersShouldExit = true;
         m_markingConditionVariable.notifyAll();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (usesParallelMarking())
+#endif
     m_helperClient.finish();
     
     ASSERT(m_mutatorMarkStack->isEmpty());

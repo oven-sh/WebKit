@@ -337,6 +337,14 @@ typedef HashCountedSet<ASCIILiteral> TypeCountSet;
 
 enum class HeapType : uint8_t { Small, Medium, Large };
 
+#if USE(BUN_JSC_ADDITIONS)
+// Whether this heap marks with the process-wide helper thread pool (heapHelperPool()) or on its
+// collecting thread only. Chosen at construction: the pool binds a helper to one heap for that heap's
+// whole marking phase, so a process with many heaps collecting at once is better off keeping the
+// short-lived ones off the pool.
+enum class HeapMarking : uint8_t { Parallel, Serial };
+#endif
+
 class HeapUtil;
 
 class Heap {
@@ -361,7 +369,12 @@ public:
     // Take this if you know that from->cellState() < barrierThreshold.
     JS_EXPORT_PRIVATE void writeBarrierSlowPath(const JSCell* from);
 
+#if USE(BUN_JSC_ADDITIONS)
+    Heap(VM&, HeapType, HeapMarking = HeapMarking::Parallel);
+    bool usesParallelMarking() const { return m_usesParallelMarking; }
+#else
     Heap(VM&, HeapType);
+#endif
     ~Heap();
     void lastChanceToFinalize();
     void releaseDelayedReleasedObjects();
@@ -1152,6 +1165,9 @@ private:
 #endif
 
     bool m_parallelMarkersShouldExit { false };
+#if USE(BUN_JSC_ADDITIONS)
+    const bool m_usesParallelMarking;
+#endif
     Lock m_collectContinuouslyLock;
     Condition m_collectContinuouslyCondition;
 
