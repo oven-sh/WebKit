@@ -150,7 +150,6 @@ bool hasCapacityToUseLargeGigacage();
     v(OptionString, aotFilter, nullptr, Normal, "Only functions whose name contains this string are compiled by the static compiler."_s) \
     v(Unsigned, aotB3OptLevel, 2, Normal, "B3 optimization level for the static compiler."_s) \
     v(OptionString, aotImagePath, nullptr, Normal, "An image of code from the static compiler: functions it has code for run that code. With aotWriteImage, where to write one."_s) \
-    v(Bool, aotValidateImage, false, Normal, "Code from an image is only used for a function whose bytecode is what the code was compiled from."_s) \
     v(Bool, aotWriteImage, false, Normal, "With useAOT: what the static compiler compiles is written to aotImagePath when the process exits."_s) \
     v(Bool, aotUseLiveScopes, false, Normal, "With useAOT: the static compiler looks at the scope chain the function was closed over, which it cannot do ahead of time."_s) \
     v(Unsigned, aotReportSlowPaths, 0, Normal, "If not zero: every that many times an operation of the static compiler's that keeps count is called, say which were called most, and for what."_s) \

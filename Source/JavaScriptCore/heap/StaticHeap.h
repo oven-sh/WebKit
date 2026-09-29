@@ -138,18 +138,8 @@ public:
     // with in an order that does not change, in a block that is where this says.
     static constexpr uint32_t offsetOfFirstStructureBlock = 16 * 1024;
 
-    // A cell is preceded by its size, and is halfway between two multiples of 16.
+    // A cell is halfway between two multiples of 16: this far past one.
     static constexpr size_t sizeOfCellHeader = 8;
-    static size_t cellSize(const void* cell) { return *reinterpret_cast<const size_t*>(static_cast<const char*>(cell) - sizeOfCellHeader); }
-    template<typename Functor> static void forEachCell(bmalloc::StaticRegion::Arena arena, size_t bytesUsed, const Functor& functor)
-    {
-        uintptr_t start = bmalloc::StaticRegion::startOf(arena);
-        for (size_t offset = 0; offset < bytesUsed;) {
-            void* cell = reinterpret_cast<void*>(start + offset + sizeOfCellHeader);
-            functor(cell, cellSize(cell));
-            offset += (sizeOfCellHeader + cellSize(cell) + 15) & ~static_cast<size_t>(15);
-        }
-    }
 
     // While the region is being built, on a thread that has a bmalloc::StaticRegion::AllocationScope; or the place that
     // placeNextCell() said. Null otherwise.

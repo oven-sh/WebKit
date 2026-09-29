@@ -77,12 +77,12 @@ static ALWAYS_INLINE StringTableImpl& stringTable()
     return Thread::currentSingleton().atomStringTable()->table();
 }
 
-static ALWAYS_INLINE const StringTableImpl* staticStringTable()
+static ALWAYS_INLINE const AtomStringTable::StaticAtoms& staticAtoms()
 {
-    return Thread::currentSingleton().atomStringTable()->staticTable();
+    return Thread::currentSingleton().atomStringTable()->staticAtoms();
 }
 
-// What the table does not have may be in the table of static atoms (AtomStringTable::staticTable()), and then that is what goes
+// What the table does not have may be in the table of static atoms (AtomStringTable::staticAtoms()), and then that is what goes
 // into the table. So that one is looked in once for each atom that is new to the thread, and never for one that is not.
 template<typename T, typename HashTranslator>
 struct WithStaticAtoms {
@@ -90,10 +90,9 @@ struct WithStaticAtoms {
     static bool equal(AtomStringTable::StringEntry const& entry, const T& value) { return HashTranslator::equal(entry, value); }
     static void translate(AtomStringTable::StringEntry& location, const T& value, unsigned hash)
     {
-        if (auto* staticTable = staticStringTable()) [[unlikely]] {
-            auto iterator = staticTable->template find<HashTranslator>(value);
-            if (iterator != staticTable->end()) {
-                location = *iterator;
+        if (auto& atoms = staticAtoms()) [[unlikely]] {
+            if (StringImpl* atom = atoms.template find<HashTranslator>(value)) {
+                location = atom;
                 return;
             }
         }
@@ -525,10 +524,9 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUpSlowCase(StringImpl& string)
     auto iterator = atomStringTable.find(&string);
     if (iterator != atomStringTable.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
-    if (auto* staticTable = staticStringTable()) [[unlikely]] {
-        auto staticIterator = staticTable->find(&string);
-        if (staticIterator != staticTable->end())
-            return uncheckedDowncast<AtomStringImpl>(staticIterator->get());
+    if (auto& atoms = staticAtoms()) [[unlikely]] {
+        if (StringImpl* atom = atoms.find<ExistingStringTranslator>(&string))
+            return uncheckedDowncast<AtomStringImpl>(atom);
     }
     return nullptr;
 }
@@ -552,10 +550,9 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUp(std::span<const Latin1Character> c
     auto iterator = table.find<Latin1BufferTranslator>(buffer);
     if (iterator != table.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
-    if (auto* staticTable = staticStringTable()) [[unlikely]] {
-        auto staticIterator = staticTable->find<Latin1BufferTranslator>(buffer);
-        if (staticIterator != staticTable->end())
-            return uncheckedDowncast<AtomStringImpl>(staticIterator->get());
+    if (auto& atoms = staticAtoms()) [[unlikely]] {
+        if (StringImpl* atom = atoms.find<Latin1BufferTranslator>(buffer))
+            return uncheckedDowncast<AtomStringImpl>(atom);
     }
     return nullptr;
 }
@@ -569,10 +566,9 @@ RefPtr<AtomStringImpl> AtomStringImpl::lookUp(std::span<const char16_t> characte
     auto iterator = table.find<UTF16BufferTranslator>(buffer);
     if (iterator != table.end())
         return uncheckedDowncast<AtomStringImpl>(iterator->get());
-    if (auto* staticTable = staticStringTable()) [[unlikely]] {
-        auto staticIterator = staticTable->find<UTF16BufferTranslator>(buffer);
-        if (staticIterator != staticTable->end())
-            return uncheckedDowncast<AtomStringImpl>(staticIterator->get());
+    if (auto& atoms = staticAtoms()) [[unlikely]] {
+        if (StringImpl* atom = atoms.find<UTF16BufferTranslator>(buffer))
+            return uncheckedDowncast<AtomStringImpl>(atom);
     }
     return nullptr;
 }

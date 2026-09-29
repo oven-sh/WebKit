@@ -265,7 +265,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkCall, void, (JSGlobalObject* g
         if (caller->instance != vm.m_aotInstanceOfProgram || !linkStaticFunction(vm, executable, kind, function->scope()))
             return;
         indexOfCallee = executable->aotIndexFor(kind);
-        functionOfCallee = caller->instance->infos[indexOfCallee].function;
+        functionOfCallee = caller->instance->infos[indexOfCallee].function();
     } else {
         if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
             return;
@@ -334,7 +334,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void*, (CallFrame* c
     auto* scope = std::bit_cast<JSScope*>(std::bit_cast<uint8_t*>(instance) - distanceOfEnvironment);
     RELEASE_ASSERT(executable->aotIndexFor(kind) == index);
     RELEASE_ASSERT(linkStaticFunction(vm, executable, kind, scope));
-    const ImageFunction& function = *instance->infos[index].function;
+    const ImageFunction& function = *instance->infos[index].function();
     return tagCodePtr<JSEntryPtrTag>(const_cast<uint8_t*>(Image::of(function).codeFor(function)) + function.directEntryOffset);
 }
 

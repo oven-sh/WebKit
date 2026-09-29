@@ -262,12 +262,13 @@ public:
 
     InlineWatchpointSet& ensurePolyProtoWatchpoint()
     {
-        if (!m_polyProtoWatchpoint)
-            m_polyProtoWatchpoint = Box<InlineWatchpointSet>::create(IsWatched);
-        return *m_polyProtoWatchpoint;
+        RareData& rareData = ensureRareData();
+        if (!rareData.m_polyProtoWatchpoint)
+            rareData.m_polyProtoWatchpoint = Box<InlineWatchpointSet>::create(IsWatched);
+        return *rareData.m_polyProtoWatchpoint;
     }
 
-    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
+    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return m_rareData ? m_rareData->m_polyProtoWatchpoint : nullptr; }
 
     ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND
     {
@@ -333,6 +334,7 @@ public:
         WriteBarrier<JSString> m_asString;
         unsigned m_functionStart { UINT_MAX };
         unsigned m_functionEnd { UINT_MAX };
+        Box<InlineWatchpointSet> m_polyProtoWatchpoint;
     };
 
 private:
@@ -362,7 +364,6 @@ private:
     WriteBarrier<CodeBlock> m_codeBlockForCall;
     WriteBarrier<CodeBlock> m_codeBlockForConstruct;
     InferredValue<JSFunction> m_singleton;
-    Box<InlineWatchpointSet> m_polyProtoWatchpoint;
     void* m_aotEntry[2] { };
     uint32_t m_aotIndex[2] { };
 

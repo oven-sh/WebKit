@@ -49,17 +49,6 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RuntimeTable);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(Data);
 WTF_MAKE_STRUCT_TZONE_ALLOCATED_IMPL(VirtualCallInfo);
 
-unsigned hashOfBytecode(UnlinkedCodeBlock* codeBlock)
-{
-    const auto& instructions = codeBlock->instructions();
-    unsigned hash = 2166136261u ^ codeBlock->numParameters();
-    for (uint8_t byte : std::span { static_cast<const uint8_t*>(instructions.rawPointer()), instructions.sizeInBytes() })
-        hash = (hash ^ byte) * 16777619u;
-    hash = (hash ^ codeBlock->constantRegisters().size()) * 16777619u;
-    hash = (hash ^ codeBlock->numberOfIdentifiers()) * 16777619u;
-    return hash;
-}
-
 void* addressOfStub(Stub stub)
 {
     if (const void* inImage = Image::addressOfStub(stub))
@@ -383,7 +372,7 @@ static bool linkConstants(VM& vm, Data& data)
     if (!data.unlinkedCodeBlock) {
         // Whoever built the program has looked.
         const FunctionInfo& info = data.function().info();
-        if (info.flags & FunctionInfo::constantsAreOfNoRealm) {
+        if (info.constantsAreOfNoRealm()) {
             data.constants = info.constants;
             return true;
         }
@@ -459,10 +448,8 @@ static void fillInfo(FunctionInfo& info, ScriptExecutable* executable, UnlinkedC
     info.constants = constants;
     info.identifiers = unlinkedCodeBlock->identifiers().span().data();
     info.sites = code.sites();
-    info.function = code.imageFunction();
-    info.executableAndKind = std::bit_cast<uintptr_t>(executable) | (unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->codeType() == FunctionCode);
-    info.numSlots = code.numSlots();
-    info.flags = !code.isFromImage() ? 0 : code.imageFunction()->hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants;
+    info.setExecutable(executable, unlinkedCodeBlock->isConstructor() && unlinkedCodeBlock->codeType() == FunctionCode ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, false);
+    info.flags = (!code.isFromImage() ? 0 : code.imageFunction()->hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveTheirConstants) | FunctionInfo::slotsAmongFlags(code.numSlots());
 }
 
 Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCodeBlock* unlinkedCodeBlock, JITCode& code, CodeBlock* codeBlock)
@@ -505,7 +492,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
             dataLogLn("AOT: nothing was known of function ", code.header().index, " when the program was built");
         fillInfo(info, executable, unlinkedCodeBlock, code, data->constants);
     }
-    RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && info.numSlots == numSlots && (!info.executableAndKind || info.executable() == executable));
+    RELEASE_ASSERT(info.identifiers == data->identifiers && info.sites == data->sites && (info.flags >> FunctionInfo::numberOfFlagBits) == std::min<uint32_t>(numSlots, FunctionInfo::mostSlotsSaid) && (!info.executable() || info.executable() == executable));
     return data;
 }
 
@@ -519,7 +506,7 @@ Data* Instance::ensureData(uint32_t index)
     auto* executable = uncheckedDowncast<FunctionExecutable>(info.executable());
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = executable->unlinkedExecutable()->codeBlockIfThereIsOne(info.kind());
     // (An executable that was made when the program was built has no way of holding on to one.)
-    Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function), info.function }, info.kind());
+    Ref<JITCode> code = executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : codeOfFunctionFromImage({ &Image::of(*info.function()), info.function() }, info.kind());
     RELEASE_ASSERT(code->header().index == index);
     code->setInstance(*this);
     this->data[index] = nullptr;
@@ -582,12 +569,12 @@ uint32_t FunctionRef::siteConstantOf(const Slot* slot) const
         return info.sites[which].identifierAndExtra;
     if (!(info.flags & FunctionInfo::hasSiteConstants))
         return 0;
-    return reinterpret_cast<const uint32_t*>(info.sites + info.numSlots)[which];
+    return info.function()->siteConstants()[which];
 }
 
 std::optional<std::pair<String, bool>> FunctionRef::quoteAt(BytecodeIndex bytecodeIndex) const
 {
-    const ImageFunction* function = info().function;
+    const ImageFunction* function = info().function();
     if (!function)
         return std::nullopt;
     return Image::of(*function).quoteAt(*function, bytecodeIndex.offset());
@@ -604,7 +591,7 @@ FunctionRef FunctionRef::of(CodeBlock* codeBlock)
 
 bool FunctionRef::constructsAt(BytecodeIndex bytecodeIndex) const
 {
-    const ImageFunction* function = info().function;
+    const ImageFunction* function = info().function();
     return function && Image::of(*function).constructsAt(*function, bytecodeIndex.offset());
 }
 
@@ -613,7 +600,7 @@ AllocationPlan FunctionRef::planOf(const Slot* firstOfSite) const
     uint32_t constant = siteConstantOf(firstOfSite + 1);
     if (!constant)
         return { };
-    return { info().function->plans() + constant - 1 };
+    return { info().function()->plans() + constant - 1 };
 }
 
 UnlinkedCodeBlock* FunctionRef::unlinkedCodeBlockIfThereIsOne() const
@@ -1038,7 +1025,7 @@ bool linkStaticFunction(VM& vm, FunctionExecutable* executable, CodeSpecializati
         return true;
     if (const FunctionInfo& info = instance->infos[index]; info.flags & FunctionInfo::startsCold && Options::aotStartFunctionsCold()) {
         RELEASE_ASSERT(info.executable() == executable && info.kind() == kind);
-        if (info.function->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
+        if (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
             return false;
         instance->data[index] = instance->sharedData;
         didStartCold();
@@ -1319,13 +1306,14 @@ static const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& fu
     static Lock lock;
     static NeverDestroyed<UncheckedKeyHashMap<uint64_t, Vector<std::unique_ptr<RegisterAtOffsetList>, 1>>> lists;
 
-    uint64_t mask = static_cast<uint64_t>(function.calleeSaveRegisters[1]) << 32 | function.calleeSaveRegisters[0];
-    uint64_t key = (mask ^ static_cast<uint64_t>(static_cast<uint32_t>(function.offsetOfCalleeSaves)) * 0x9e3779b97f4a7c15ULL) * 2 + 1; // Not one of the two that a table has a use for.
+    uint64_t mask = ImageFunction::unpackRegisters(function.calleeSaveRegisters);
+    ptrdiff_t offsetOfFirst = -static_cast<ptrdiff_t>(function.whereCalleeSavesStart * sizeof(CPURegister));
+    uint64_t key = (static_cast<uint64_t>(function.whereCalleeSavesStart) << 32 | function.calleeSaveRegisters) * 2 + 1; // Not one of the two that a table has a use for.
     auto isThat = [&](const RegisterAtOffsetList& list) {
         uint64_t registers = 0;
         for (unsigned i = 0; i < list.registerCount(); ++i)
             registers |= 1ULL << list.at(i).reg().index();
-        return registers == mask && (!mask || list.at(0).offset() == function.offsetOfCalleeSaves);
+        return registers == mask && (!mask || list.at(0).offset() == offsetOfFirst);
     };
 
     Locker locker { lock };
@@ -1341,7 +1329,7 @@ static const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& fu
     }
     auto list = makeUnique<RegisterAtOffsetList>(registers);
     if (mask)
-        list->adjustOffsets(function.offsetOfCalleeSaves - list->at(0).offset());
+        list->adjustOffsets(offsetOfFirst - list->at(0).offset());
     RELEASE_ASSERT(isThat(*list));
     candidates.append(WTF::move(list));
     return candidates.last().get();
@@ -1351,7 +1339,7 @@ JITCode::JITCode(void* code, const ImageFunction& function, Way way)
     // Code in an image is nobody's memory: the collector, which paces itself by what the heap holds on to, is not to count it.
     : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(addressOfStub(stubFor(way)))), ShareAttribute::Shared)
     , m_code(code)
-    , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + function.arityCheckOffset))
+    , m_entry(tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(code) + function.arityCheckOffset()))
     , m_function(&function)
     , m_calleeSaveRegisters(calleeSaveRegistersOf(function))
 {

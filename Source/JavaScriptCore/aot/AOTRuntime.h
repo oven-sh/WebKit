@@ -253,30 +253,42 @@ struct Site;
 // CodeHeader::index: Instance::infos.
 struct FunctionInfo {
     static constexpr uint16_t hasSiteConstants = 1; // After the last of the sites: ImageFunction::siteConstants().
-    static constexpr uint16_t sitesHaveTheirConstants = 16; // Or where a site has its identifier, which is the constant if it has one.
-    static constexpr uint16_t constructs = 4; // kind(), where there is no executable to say it with.
-    static constexpr uint16_t constantsAreOfNoRealm = 8; // `constants` are all there are, if any.
     static constexpr uint16_t startsCold = 2; // See CompiledFunctionInfo::startsCold.
+    static constexpr uint16_t sitesHaveTheirConstants = 4; // Or where a site has its identifier, which is the constant if it has one.
+
+    // Above those: how many slots it has, or as many as can be said.
+    static constexpr unsigned numberOfFlagBits = 3;
+    static constexpr uint32_t mostSlotsSaid = (1u << (16 - numberOfFlagBits)) - 1;
+    static constexpr uint16_t slotsAmongFlags(uint32_t numSlots) { return static_cast<uint16_t>(std::min(numSlots, mostSlotsSaid) << numberOfFlagBits); }
 
     static constexpr ptrdiff_t offsetOfConstants() { return OBJECT_OFFSETOF(FunctionInfo, constants); }
     static constexpr ptrdiff_t offsetOfIdentifiers() { return OBJECT_OFFSETOF(FunctionInfo, identifiers); }
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(FunctionInfo, sites); }
-    static constexpr ptrdiff_t offsetOfNumSlots() { return OBJECT_OFFSETOF(FunctionInfo, numSlots); }
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
 
-    ScriptExecutable* executable() const { return std::bit_cast<ScriptExecutable*>(executableAndKind & ~static_cast<uintptr_t>(1)); }
-    CodeSpecializationKind kind() const { return executableAndKind & 1 || flags & constructs ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
+    // The executable may not be known: it takes a Data to say which it is then.
+    void setExecutable(ScriptExecutable* executable, CodeSpecializationKind kind, bool constantsAreOfNoRealm)
+    {
+        uintptr_t bits = std::bit_cast<uintptr_t>(executable);
+        RELEASE_ASSERT(!(bits >> 48) && !(bits & 7));
+        bits |= (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0) | (constantsAreOfNoRealm ? 2 : 0);
+        executableAndMoreLow = static_cast<uint32_t>(bits);
+        executableAndMoreHigh = static_cast<uint16_t>(bits >> 32);
+    }
+    ScriptExecutable* executable() const { return std::bit_cast<ScriptExecutable*>((static_cast<uintptr_t>(executableAndMoreHigh) << 32 | executableAndMoreLow) & ~static_cast<uintptr_t>(7)); }
+    CodeSpecializationKind kind() const { return executableAndMoreLow & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
+    bool constantsAreOfNoRealm() const { return executableAndMoreLow & 2; } // `constants` are all there are, if any.
+    bool isOfCodeInImage() const { return flags & (hasSiteConstants | sitesHaveTheirConstants); }
+    inline const ImageFunction* function() const; // If the code is in an image: what comes right before its sites.
 
     const void* constants; // const WriteBarrier<Unknown>*. Unless constantsAreOfNoRealm, the Data has them.
     const void* identifiers; // const Identifier*
     const Site* sites; // One for each slot.
-    const ImageFunction* function; // If the code is in an image.
-    uintptr_t executableAndKind; // With the low bit set if the code is for construction.
-    uint32_t numSlots;
-    uint16_t unused;
+    uint32_t executableAndMoreLow; // See setExecutable().
+    uint16_t executableAndMoreHigh;
     uint16_t flags;
 };
-static_assert(sizeof(FunctionInfo) == 48);
+static_assert(sizeof(FunctionInfo) == 32);
 
 // One for each realm that runs code from the static compiler.
 struct Instance {
@@ -299,7 +311,7 @@ struct Instance {
     JS_EXPORT_PRIVATE Data* ensureData(uint32_t index);
     void countMiss(uint32_t index)
     {
-        if (++misses[index] == static_cast<uint16_t>(missesToPutUpWithFor(infos[index].numSlots)))
+        if (++misses[index] == static_cast<uint16_t>(missesToPutUpWithFor(infos[index].flags >> FunctionInfo::numberOfFlagBits)))
             ensureData(index);
     }
     // How often a slot may fail a function that has that many before it gets a Data.
@@ -509,7 +521,6 @@ struct CompiledFunctionInfo {
     unsigned directEntryOffset { 0 };
     unsigned frameSizeInBytes { 0 };
     unsigned numSlots { 0 };
-    unsigned bytecodeHash { 0 }; // hashOfBytecode() of what it was compiled from.
     bool usesStaticImports { false };
     // Most functions that are run at all are run once or twice, and what a Data is for is the times after that. Such a function does
     // without one until it has shown that it is not one of those (SharedData). That takes code that gets at what stays the same
@@ -546,37 +557,60 @@ struct ImageCatchEntrypoint {
     uint32_t codeOffset;
 };
 
-// Followed by numberOfCatchEntrypoints ImageCatchEntrypoint, then numSlots Site, then
-// numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero for none), then numberOfKnownCallees ImageKey,
-// then CompiledFunctionInfo::plans.
+// Followed by numSlots Site, then perhaps numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero
+// for none), then numberOfKnownCallees uint32_t, then numberOfCatchEntrypoints ImageCatchEntrypoint, then CompiledFunctionInfo::plans.
 struct ImageFunction {
     uint32_t codeOffset; // In the code.
     uint32_t codeSize;
-    uint16_t entryOffset;
-    uint16_t arityCheckOffset;
-    uint16_t directEntryOffset;
-    uint16_t numberOfCatchEntrypoints;
-    uint32_t frameSizeInBytes;
     uint32_t numSlots;
-    uint32_t bytecodeHash;
     uint32_t numberOfKnownCallees : 29;
     uint32_t hasSiteConstants : 1; // If not, see FunctionInfo::sitesHaveTheirConstants.
     uint32_t usesStaticImports : 1; // See Graph::usesStaticImports.
     uint32_t startsCold : 1; // See CompiledFunctionInfo::startsCold.
-    uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none.
-    uint32_t constructSites; // Likewise. See Image::constructsAt().
-    // The registers that the function saves, by Reg::index(). They are next to each other in the frame, in that order, the way
-    // Air::Code puts them: this is where the first of them is.
-    uint32_t calleeSaveRegisters[2];
-    int32_t offsetOfCalleeSaves;
+    uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none. See Image::quoteAt(), and after that Image::constructsAt().
+    // The registers that the function saves (packRegisters()). They are next to each other in the frame, in the order of
+    // Reg::index(), the way Air::Code puts them: the first is this many registers below what the frame pointer points at.
+    uint32_t calleeSaveRegisters;
+    uint16_t whereCalleeSavesStart;
+    uint16_t frameSizeInUnits; // Of stackAlignmentBytes().
+    uint16_t numberOfCatchEntrypoints;
+    uint16_t directEntryOffset;
+    uint8_t entryOffsetInWords;
+    uint8_t arityCheckOffsetInWords;
 
-    const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(this + 1); }
-    const Site* sites() const { return reinterpret_cast<const Site*>(catchEntrypoints() + numberOfCatchEntrypoints); }
+    unsigned entryOffset() const { return entryOffsetInWords * sizeof(uint32_t); }
+    unsigned arityCheckOffset() const { return arityCheckOffsetInWords * sizeof(uint32_t); }
+    unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
+    // A bit for each by Reg::index(), in half the room: no callee saves any of the rest.
+#if CPU(ARM64)
+    static constexpr unsigned firstGPRSaid = 16;
+    static constexpr unsigned firstFPRSaid = 32;
+#else
+    static constexpr unsigned firstGPRSaid = 0;
+    static constexpr unsigned firstFPRSaid = 16;
+#endif
+    static uint64_t unpackRegisters(uint32_t packed) { return static_cast<uint64_t>(packed & 0xffff) << firstGPRSaid | static_cast<uint64_t>(packed >> 16) << firstFPRSaid; }
+    static uint32_t packRegisters(uint64_t mask)
+    {
+        uint32_t packed = static_cast<uint32_t>(mask >> firstGPRSaid & 0xffff) | static_cast<uint32_t>(mask >> firstFPRSaid & 0xffff) << 16;
+        RELEASE_ASSERT(unpackRegisters(packed) == mask);
+        return packed;
+    }
+
+    const Site* sites() const { return reinterpret_cast<const Site*>(this + 1); } // (FunctionInfo::function() goes by that.)
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
     const uint32_t* knownCallees() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); } // CodeHeader::index of each. Or, if the image has no code for it, noSuchFunction.
-    const uint32_t* plans() const { return knownCallees() + numberOfKnownCallees; }
+    const ImageCatchEntrypoint* catchEntrypoints() const { return reinterpret_cast<const ImageCatchEntrypoint*>(knownCallees() + numberOfKnownCallees); }
+    const uint32_t* plans() const { return reinterpret_cast<const uint32_t*>(catchEntrypoints() + numberOfCatchEntrypoints); }
     static constexpr uint32_t noSuchFunction = std::numeric_limits<uint32_t>::max();
 };
+
+static_assert(sizeof(ImageFunction) == 36);
+
+inline const ImageFunction* FunctionInfo::function() const
+{
+    return isOfCodeInImage() ? reinterpret_cast<const ImageFunction*>(sites) - 1 : nullptr;
+}
 
 class JITCode final : public JSC::JITCode {
 public:
@@ -601,10 +635,10 @@ public:
     bool isFromImage() const { return !!m_function; }
     const ImageFunction* imageFunction() const { return m_function; }
     unsigned codeSize() const { return m_function ? m_function->codeSize : m_owned->info.codeSize; }
-    unsigned entryOffset() const { return m_function ? m_function->entryOffset : m_owned->info.entryOffset; }
-    unsigned arityCheckOffset() const { return m_function ? m_function->arityCheckOffset : m_owned->info.arityCheckOffset; }
+    unsigned entryOffset() const { return m_function ? m_function->entryOffset() : m_owned->info.entryOffset; }
+    unsigned arityCheckOffset() const { return m_function ? m_function->arityCheckOffset() : m_owned->info.arityCheckOffset; }
     void* directEntry() const { return tagCodePtr<JSEntryPtrTag>(static_cast<uint8_t*>(m_code) + (m_function ? m_function->directEntryOffset : m_owned->info.directEntryOffset)); }
-    unsigned frameSizeInBytes() const { return m_function ? m_function->frameSizeInBytes : m_owned->info.frameSizeInBytes; }
+    unsigned frameSizeInBytes() const { return m_function ? m_function->frameSizeInBytes() : m_owned->info.frameSizeInBytes; }
     unsigned numSlots() const { return m_function ? m_function->numSlots : m_owned->info.numSlots; }
     const Site* sites() const { return m_function ? m_function->sites() : m_owned->info.sites.span().data(); }
     template<typename Functor> void forEachCatchEntrypoint(const Functor& functor) const // (offset of the op_catch, offset in the code)
@@ -647,7 +681,6 @@ bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock
 // gives its code what it has of the realm. False if the code is not for the realm the function is of.
 bool linkStaticFunction(VM&, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 
-unsigned hashOfBytecode(UnlinkedCodeBlock*);
 // Where code from the JIT that wants to call `code` with a call instruction, whose reach is limited, can call. Any thread.
 void* nearCallTargetFor(void* code);
 void* catchThunk();

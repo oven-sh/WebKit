@@ -24,6 +24,8 @@ bool StaticRegion::s_isBuilding = false;
 static size_t s_used[StaticRegion::numberOfArenas];
 static thread_local bool t_isAllocating = false;
 static thread_local bool t_isAllocatingWhatIsMutable = false;
+static uint32_t* s_sizes; // See sizeOfImmutable().
+static size_t s_capacityOfSizes;
 
 bool StaticRegion::beginBuilding()
 {
@@ -45,6 +47,8 @@ void StaticRegion::endBuilding()
 {
     RELEASE_BASSERT(s_isBuilding && !t_isAllocating);
     s_isBuilding = false;
+    ::free(std::exchange(s_sizes, nullptr));
+    s_capacityOfSizes = 0;
     munmap(reinterpret_cast<void*>(base), numberOfArenasInFile * arenaReservation);
 }
 
@@ -138,8 +142,36 @@ bool StaticRegion::map(Arena arena, int fileDescriptor, off_t offsetInFile, size
     return true;
 }
 
-// What is asked for is preceded by how much was asked for.
+// In Arena::MutableMalloc, what is asked for is preceded by how much was asked for: it may be given back, or be found too small,
+// when the program runs.
 static constexpr size_t sizeOfHeader = 8;
+
+// What is in Arena::Malloc stays as it is once the region is built, so how big it is only matters until then, and is not in the
+// file: it is kept here, by where the thing is. And it is only kept clear of what comes next by as much as it has to be. Everything is
+// a multiple of this.
+static constexpr size_t unit = 8;
+
+static bool isInImmutableMalloc(const void* pointer)
+{
+    return reinterpret_cast<uintptr_t>(pointer) - StaticRegion::startOf(StaticRegion::Arena::Malloc) < StaticRegion::arenaReservation;
+}
+
+static uint32_t& sizeOfImmutable(const void* pointer)
+{
+    size_t index = (reinterpret_cast<uintptr_t>(pointer) - StaticRegion::startOf(StaticRegion::Arena::Malloc)) / unit;
+    if (index >= s_capacityOfSizes) {
+        size_t capacity = s_capacityOfSizes ? s_capacityOfSizes : 1 << 20;
+        while (capacity <= index)
+            capacity *= 2;
+        s_sizes = static_cast<uint32_t*>(::realloc(s_sizes, capacity * sizeof(uint32_t)));
+        RELEASE_BASSERT(s_sizes);
+        memset(s_sizes + s_capacityOfSizes, 0, (capacity - s_capacityOfSizes) * sizeof(uint32_t));
+        s_capacityOfSizes = capacity;
+    }
+    return s_sizes[index];
+}
+
+static size_t unitsFor(size_t size) { return size ? (size + unit - 1) / unit : 1; }
 
 // TEMPORARY-MALLOC-AUDIT. BUN_STATIC_HEAP_MALLOC_AUDIT=1: who asks for how much.
 namespace {
@@ -203,31 +235,49 @@ constexpr size_t numberOfFreeLists = 4096;
 FreeBlock* s_freeLists[2][numberOfFreeLists];
 uint64_t s_freeListsInUse[2][numberOfFreeLists / 64];
 }
+// Those are: of Arena::MutableMalloc, as said; and of Arena::Malloc, by how many units, those that are at a multiple of 16. These are
+// the rest of Arena::Malloc's.
+static constexpr size_t immutableAtMultipleOf16 = 0;
+static constexpr size_t mutableOnes = 1;
+static constexpr size_t immutableOthers = 2;
+namespace {
+FreeBlock* s_moreFreeLists[numberOfFreeLists];
+uint64_t s_moreFreeListsInUse[numberOfFreeLists / 64];
+}
+static FreeBlock** freeLists(size_t which) { return which == immutableOthers ? s_moreFreeLists : s_freeLists[which]; }
+static uint64_t* freeListsInUse(size_t which) { return which == immutableOthers ? s_moreFreeListsInUse : s_freeListsInUse[which]; }
 
 static size_t freeListFor(size_t size) { return (size + sizeOfHeader + 15) / 16; }
 
-static void pushFree(bool isMutable, size_t index, void* pointer)
+static void pushFree(size_t which, size_t index, void* pointer)
 {
     auto* block = static_cast<FreeBlock*>(pointer);
-    block->next = std::exchange(s_freeLists[isMutable][index], block);
-    s_freeListsInUse[isMutable][index / 64] |= 1ull << (index % 64);
+    block->next = std::exchange(freeLists(which)[index], block);
+    freeListsInUse(which)[index / 64] |= 1ull << (index % 64);
 }
 
-static void* popFree(bool isMutable, size_t index)
+static void* popFree(size_t which, size_t index)
 {
-    FreeBlock*& list = s_freeLists[isMutable][index];
+    FreeBlock*& list = freeLists(which)[index];
     FreeBlock* block = list;
     list = std::exchange(block->next, nullptr);
     if (!list)
-        s_freeListsInUse[isMutable][index / 64] &= ~(1ull << (index % 64));
+        freeListsInUse(which)[index / 64] &= ~(1ull << (index % 64));
     return block;
 }
 
+// So many units of Arena::Malloc, all zero. (What is too big for the lists is not used again.)
+static void pushFreeImmutable(void* pointer, size_t units)
+{
+    if (units && units < numberOfFreeLists)
+        pushFree(reinterpret_cast<uintptr_t>(pointer) & 15 ? immutableOthers : immutableAtMultipleOf16, units, pointer);
+}
+
 // The first list, from that one on, that has something in it.
-static size_t firstFreeListInUse(bool isMutable, size_t index)
+static size_t firstFreeListInUse(size_t which, size_t index)
 {
     for (size_t word = index / 64; word < numberOfFreeLists / 64; ++word) {
-        uint64_t bits = s_freeListsInUse[isMutable][word];
+        uint64_t bits = freeListsInUse(which)[word];
         if (word == index / 64)
             bits &= ~0ull << (index % 64);
         if (bits)
@@ -239,10 +289,10 @@ static size_t firstFreeListInUse(bool isMutable, size_t index)
 size_t StaticRegion::bytesThatAreFree()
 {
     size_t bytes = 0;
-    for (auto& lists : s_freeLists) {
+    for (size_t which : { immutableAtMultipleOf16, mutableOnes, immutableOthers }) {
         for (size_t index = 0; index < numberOfFreeLists; ++index) {
-            for (FreeBlock* block = lists[index]; block; block = block->next)
-                bytes += index * 16;
+            for (FreeBlock* block = freeLists(which)[index]; block; block = block->next)
+                bytes += index * (which == mutableOnes ? 16 : unit);
         }
     }
     return bytes;
@@ -250,51 +300,98 @@ size_t StaticRegion::bytesThatAreFree()
 
 void StaticRegion::forgetWhatIsFree()
 {
-    for (auto& lists : s_freeLists) {
-        for (auto*& list : lists) {
+    for (size_t which : { immutableAtMultipleOf16, mutableOnes, immutableOthers }) {
+        for (size_t index = 0; index < numberOfFreeLists; ++index) {
+            FreeBlock*& list = freeLists(which)[index];
             while (list)
                 list = std::exchange(list->next, nullptr);
         }
     }
     memset(s_freeListsInUse, 0, sizeof(s_freeListsInUse));
+    memset(s_moreFreeListsInUse, 0, sizeof(s_moreFreeListsInUse));
+}
+
+static void noteForAudit(size_t bytes)
+{
+    static const bool audit = !!getenv("BUN_STATIC_HEAP_MALLOC_AUDIT");
+    if (!audit)
+        return;
+    if (!s_audit)
+        s_audit = static_cast<AuditEntry*>(calloc(auditCapacity, sizeof(AuditEntry)));
+    if (auto* entry = auditEntryForCaller()) {
+        entry->count++;
+        entry->bytes += bytes;
+    }
+}
+
+static void* mallocImmutable(size_t size, size_t alignment)
+{
+    RELEASE_BASSERT(size <= UINT32_MAX);
+    // Nothing whose size is not a multiple of 16 is, or is made of, what has to be at one.
+    if (alignment <= 16)
+        alignment = size % 16 || !size ? unit : 16;
+    size_t units = unitsFor(size);
+    if (alignment <= 16 && units + 1 < numberOfFreeLists) {
+        // The smallest that will do. What is left over of it is for somebody else.
+        size_t atMultiple = firstFreeListInUse(immutableAtMultipleOf16, units);
+        size_t other = firstFreeListInUse(immutableOthers, alignment == 16 ? units + 1 : units);
+        if (atMultiple < numberOfFreeLists || other < numberOfFreeLists) {
+            bool takesOther = other < atMultiple || (other == atMultiple && alignment == unit);
+            size_t found = takesOther ? other : atMultiple;
+            auto* block = static_cast<char*>(popFree(takesOther ? immutableOthers : immutableAtMultipleOf16, found));
+            if (takesOther && alignment == 16) {
+                pushFreeImmutable(block, 1);
+                block += unit;
+                --found;
+            }
+            pushFreeImmutable(block + units * unit, found - units);
+            sizeOfImmutable(block) = static_cast<uint32_t>(size);
+            return block;
+        }
+    }
+    noteForAudit(units * unit);
+    uintptr_t endOfLast = StaticRegion::startOf(StaticRegion::Arena::Malloc) + StaticRegion::used(StaticRegion::Arena::Malloc);
+    auto* block = static_cast<char*>(StaticRegion::allocate(StaticRegion::Arena::Malloc, units * unit, alignment));
+    pushFreeImmutable(reinterpret_cast<void*>(endOfLast), (reinterpret_cast<uintptr_t>(block) - endOfLast) / unit);
+    sizeOfImmutable(block) = static_cast<uint32_t>(size);
+    return block;
 }
 
 void* StaticRegion::tryMallocSlow(size_t size, size_t alignment)
 {
     if (!t_isAllocating)
         return nullptr;
+    if (!t_isAllocatingWhatIsMutable)
+        return mallocImmutable(size, alignment);
     if (alignment < 16)
         alignment = 16;
     if (size_t index = freeListFor(size); alignment == 16 && index < numberOfFreeLists) {
         // The smallest that will do. What is left over of it is for somebody else.
-        if (size_t found = firstFreeListInUse(t_isAllocatingWhatIsMutable, index); found < numberOfFreeLists) {
-            auto* block = static_cast<char*>(popFree(t_isAllocatingWhatIsMutable, found));
+        if (size_t found = firstFreeListInUse(mutableOnes, index); found < numberOfFreeLists) {
+            auto* block = static_cast<char*>(popFree(mutableOnes, found));
             memcpy(block - sizeOfHeader, &size, sizeof(size));
             if (found > index) {
                 char* rest = block + index * 16;
                 size_t sizeOfRest = (found - index) * 16 - sizeOfHeader;
                 memcpy(rest - sizeOfHeader, &sizeOfRest, sizeof(sizeOfRest));
-                pushFree(t_isAllocatingWhatIsMutable, found - index, rest);
+                pushFree(mutableOnes, found - index, rest);
             }
             return block;
         }
     }
-    static const bool audit = !!getenv("BUN_STATIC_HEAP_MALLOC_AUDIT");
-    if (audit) {
-        if (!s_audit)
-            s_audit = static_cast<AuditEntry*>(calloc(auditCapacity, sizeof(AuditEntry)));
-        if (auto* entry = auditEntryForCaller()) {
-            entry->count++;
-            entry->bytes += (size + sizeOfHeader + 15) & ~static_cast<size_t>(15);
-        }
-    }
-    auto* header = static_cast<char*>(allocate(t_isAllocatingWhatIsMutable ? Arena::MutableMalloc : Arena::Malloc, size + sizeOfHeader, alignment, alignment - sizeOfHeader));
+    noteForAudit((size + sizeOfHeader + 15) & ~static_cast<size_t>(15));
+    auto* header = static_cast<char*>(allocate(Arena::MutableMalloc, size + sizeOfHeader, alignment, alignment - sizeOfHeader));
     memcpy(header, &size, sizeof(size));
     return header + sizeOfHeader;
 }
 
 size_t StaticRegion::mallocSize(const void* pointer)
 {
+    if (isInImmutableMalloc(pointer)) {
+        // (Whoever wants to know that of what cannot change?)
+        RELEASE_BASSERT(s_isBuilding);
+        return sizeOfImmutable(pointer);
+    }
     size_t size;
     memcpy(&size, static_cast<const char*>(pointer) - sizeOfHeader, sizeof(size));
     return size;
@@ -304,10 +401,21 @@ void* StaticRegion::reallocate(void* pointer, size_t newSize)
 {
     // The last there is has room after it.
     if (s_isBuilding && t_isAllocating) {
-        uintptr_t end = reinterpret_cast<uintptr_t>(pointer) + mallocSize(pointer);
-        for (Arena arena : { Arena::Malloc, Arena::MutableMalloc }) {
-            size_t& used = s_used[static_cast<size_t>(arena)];
-            if (end == startOf(arena) + used && newSize >= mallocSize(pointer) && newSize - mallocSize(pointer) <= arenaReservation - used) {
+        if (isInImmutableMalloc(pointer)) {
+            size_t& used = s_used[static_cast<size_t>(Arena::Malloc)];
+            size_t units = unitsFor(mallocSize(pointer));
+            size_t newUnits = unitsFor(newSize);
+            // (Where it is has to do for what it is going to be, too.)
+            bool isWhereItMayBe = newSize % 16 || !(reinterpret_cast<uintptr_t>(pointer) & 15);
+            if (reinterpret_cast<uintptr_t>(pointer) + units * unit == startOf(Arena::Malloc) + used && newUnits >= units && isWhereItMayBe && newSize <= UINT32_MAX && (newUnits - units) * unit <= arenaReservation - used) {
+                used += (newUnits - units) * unit;
+                sizeOfImmutable(pointer) = static_cast<uint32_t>(newSize);
+                return pointer;
+            }
+        } else {
+            uintptr_t end = reinterpret_cast<uintptr_t>(pointer) + mallocSize(pointer);
+            size_t& used = s_used[static_cast<size_t>(Arena::MutableMalloc)];
+            if (end == startOf(Arena::MutableMalloc) + used && newSize >= mallocSize(pointer) && newSize - mallocSize(pointer) <= arenaReservation - used) {
                 used += newSize - mallocSize(pointer);
                 memcpy(static_cast<char*>(pointer) - sizeOfHeader, &newSize, sizeof(newSize));
                 return pointer;
@@ -333,15 +441,21 @@ void* StaticRegion::reallocate(void* pointer, size_t newSize)
 void StaticRegion::didFreeSlow(void* pointer)
 {
     uintptr_t address = reinterpret_cast<uintptr_t>(pointer);
-    for (Arena arena : { Arena::Malloc, Arena::MutableMalloc }) {
-        if (address - startOf(arena) < used(arena)) {
-            s_auditFreedBytes += (mallocSize(pointer) + sizeOfHeader + 15) & ~static_cast<size_t>(15);
-            s_auditFreedCount++;
-            memset(pointer, 0, mallocSize(pointer));
-            if (size_t index = freeListFor(mallocSize(pointer)); index < numberOfFreeLists && !(address & 15))
-                pushFree(arena == Arena::MutableMalloc, index, pointer);
-            return;
-        }
+    if (address - startOf(Arena::Malloc) < used(Arena::Malloc)) {
+        size_t units = unitsFor(mallocSize(pointer));
+        s_auditFreedBytes += units * unit;
+        s_auditFreedCount++;
+        memset(pointer, 0, units * unit);
+        sizeOfImmutable(pointer) = 0;
+        pushFreeImmutable(pointer, units);
+        return;
+    }
+    if (address - startOf(Arena::MutableMalloc) < used(Arena::MutableMalloc)) {
+        s_auditFreedBytes += (mallocSize(pointer) + sizeOfHeader + 15) & ~static_cast<size_t>(15);
+        s_auditFreedCount++;
+        memset(pointer, 0, mallocSize(pointer));
+        if (size_t index = freeListFor(mallocSize(pointer)); index < numberOfFreeLists && !(address & 15))
+            pushFree(mutableOnes, index, pointer);
     }
 }
 

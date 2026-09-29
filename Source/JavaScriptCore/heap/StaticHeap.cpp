@@ -83,7 +83,8 @@ struct StaticHeap::Header {
     uint64_t strings;
     uint64_t stringsSize;
     uint64_t stringSlots;
-    uint64_t atomStringTable;
+    uint64_t staticAtoms; // uint32_t[]. See AtomStringTable::StaticAtoms.
+    uint64_t capacityOfStaticAtoms;
     uint64_t symbolRegistries[2]; // SymbolRegistry*: public, private.
     uint64_t payload;
     uint64_t payloadSize;
@@ -184,6 +185,18 @@ PreciseAllocation* StaticHeap::containerOfSlow(const void* cell)
     return PreciseAllocation::containerOfStaticCells();
 }
 
+// Where the cells are and how big, for as long as the region is being built. Nothing needs to be told once it is.
+static Vector<std::pair<void*, size_t>> s_cellsBeingBuilt[2]; // Those of Arena::Cells, and of Arena::MutableCells.
+
+template<typename Functor> static void forEachCell(Region::Arena arena, const Functor& functor)
+{
+    RELEASE_ASSERT(arena == Region::Arena::Cells || arena == Region::Arena::MutableCells);
+    // (By index: what is done with a cell may make another.)
+    auto& cells = s_cellsBeingBuilt[arena == Region::Arena::MutableCells];
+    for (size_t i = 0; i < cells.size(); ++i)
+        functor(cells[i].first, cells[i].second);
+}
+
 void StaticHeap::placeNextCell(VM& vm, void* address)
 {
     RELEASE_ASSERT(!vm.heap.m_placeOfNextCell && !s_isBuilding && contains(address) && (std::bit_cast<uintptr_t>(address) & 15) == sizeOfCellHeader);
@@ -264,16 +277,15 @@ void StaticHeap::didPlaceCell(VM& vm, JSCell* cell)
 void* StaticHeap::tryAllocateCellSlow(VM& vm, size_t size)
 {
     if (vm.heap.m_placeOfNextCell != placeOfEveryCellWhileBuilding) {
-        void* place = std::exchange(vm.heap.m_placeOfNextCell, nullptr);
-        *reinterpret_cast<size_t*>(static_cast<char*>(place) - sizeOfCellHeader) = size;
-        return place;
+        return std::exchange(vm.heap.m_placeOfNextCell, nullptr);
     }
     if (!Region::isAllocatingOnThisThread())
         return nullptr;
-    auto arena = Region::isAllocatingWhatIsMutable() ? Region::Arena::MutableCells : Region::Arena::Cells;
-    auto* header = static_cast<char*>(Region::allocate(arena, sizeOfCellHeader + size, 16));
-    *reinterpret_cast<size_t*>(header) = size;
-    return header + sizeOfCellHeader;
+    bool isMutable = Region::isAllocatingWhatIsMutable();
+    void* cell = Region::allocate(isMutable ? Region::Arena::MutableCells : Region::Arena::Cells, size, 16, sizeOfCellHeader);
+    Region::AllocationScope notInRegion(false);
+    s_cellsBeingBuilt[isMutable].append({ cell, size });
+    return cell;
 }
 
 JSString* StaticHeap::emptyStringWhileBuilding(VM& vm)
@@ -355,7 +367,7 @@ static void reportWhatPointsInto(uint64_t start, uint64_t end, std::span<const u
     UncheckedKeyHashMap<String, unsigned> found;
     auto isInside = [&](uint64_t word) { return word - start < end - start; };
     for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-        StaticHeap::forEachCell(arena, Region::used(arena), [&](void* pointer, size_t size) {
+        forEachCell(arena, [&](void* pointer, size_t size) {
             auto* words = static_cast<uint64_t*>(pointer);
             for (size_t i = 0; i < size / 8; ++i) {
                 if (isInside(words[i]))
@@ -413,7 +425,7 @@ static void reportWhatMayPointOut()
     };
     UncheckedKeyHashMap<String, unsigned> found;
     for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-        StaticHeap::forEachCell(arena, Region::used(arena), [&](void* pointer, size_t size) {
+        forEachCell(arena, [&](void* pointer, size_t size) {
             auto* words = static_cast<uint64_t*>(pointer);
             for (size_t i = 0; i < size / 8; ++i) {
                 if (looksLikePointerOut(words[i]))
@@ -421,7 +433,8 @@ static void reportWhatMayPointOut()
             }
         });
     }
-    for (auto arena : { Region::Arena::Malloc, Region::Arena::MutableMalloc }) {
+    // (Not Arena::Malloc, where nothing says where one thing ends and the next begins.)
+    for (auto arena : { Region::Arena::MutableMalloc }) {
         uintptr_t start = Region::startOf(arena);
         size_t used = Region::used(arena);
         // Each allocation is preceded by its size, and starts at a multiple of 16 (or more, which leaves a gap of zeros).
@@ -786,11 +799,9 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
         }
     }
     info.sites = function.sites;
-    info.function = function.function;
-    info.executableAndKind = executable ? std::bit_cast<uintptr_t>(executable) | !isCall(kind) : 0;
-    info.numSlots = function.numSlots;
-    // (It takes a Data to say which executable's the code is, if this does not.)
-    info.flags = (function.hasSiteConstants ? AOT::FunctionInfo::hasSiteConstants : AOT::FunctionInfo::sitesHaveTheirConstants) | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | (isCall(kind) ? 0 : AOT::FunctionInfo::constructs) | (constantsWillDo ? AOT::FunctionInfo::constantsAreOfNoRealm : 0);
+    info.setExecutable(executable, kind, constantsWillDo);
+    info.flags = (function.hasSiteConstants ? AOT::FunctionInfo::hasSiteConstants : AOT::FunctionInfo::sitesHaveTheirConstants) | (function.startsCold && executable ? AOT::FunctionInfo::startsCold : 0) | AOT::FunctionInfo::slotsAmongFlags(function.numSlots);
+    RELEASE_ASSERT(info.function() == function.function);
     fillFacts(function.index, codeBlock, executable, s_entryOffsetOfModuleBeingBuilt);
 }
 
@@ -828,7 +839,7 @@ static void makeExecutables(VM& vm, UnlinkedCodeBlock* codeBlock, const SourceCo
         // of code for each of those all the same, which is the code of one executable (AOT::FunctionInfo).
         FunctionExecutable* executable = nullptr;
         for (auto& function : code) {
-            if (function && byIndex[function->index].executableAndKind)
+            if (function && byIndex[function->index].executable())
                 executable = uncheckedDowncast<FunctionExecutable>(byIndex[function->index].executable());
         }
         if (executable) {
@@ -969,7 +980,7 @@ std::pair<FunctionExecutable*, CodeSpecializationKind> StaticHeap::executableOfF
 {
     RELEASE_ASSERT(s_header && index < s_header->numberOfFunctions);
     const AOT::FunctionInfo& info = std::bit_cast<const AOT::FunctionInfo*>(s_header->infosOfFunctions)[index];
-    RELEASE_ASSERT(info.executableAndKind);
+    RELEASE_ASSERT(info.executable());
     return { uncheckedDowncast<FunctionExecutable>(info.executable()), info.kind() };
 }
 
@@ -1034,7 +1045,7 @@ std::span<const AOT::ImageKey> StaticHeap::keysOfImage()
 const AOT::ImageFunction* StaticHeap::imageFunctionOfFunction(uint32_t index)
 {
     RELEASE_ASSERT(s_header && index < s_header->numberOfFunctions);
-    return std::bit_cast<const AOT::FunctionInfo*>(s_header->infosOfFunctions)[index].function;
+    return std::bit_cast<const AOT::FunctionInfo*>(s_header->infosOfFunctions)[index].function();
 }
 
 const void* StaticHeap::constantsOfProgram(VM& vm)
@@ -1109,6 +1120,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     s_whatTheCompilerSaysOfFunctions = whatTheCompilerSaysOfFunctions;
     s_identifiersOfProgram = { };
     s_constantsOfProgram = { };
+    auto forgetCells = makeScopeExit([] {
+        for (auto& cells : s_cellsBeingBuilt)
+            cells = { };
+    });
     if (positionsToKeep)
         whatIsKeptOfPayloadStartsAt = payload.size();
     UncheckedKeyHashMap<CString, uint32_t> sources;
@@ -1161,18 +1176,18 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
 
         // Every string is an atom, of a table that has nothing else in it: whatever is equal to one of them, when the program runs,
         // is that one.
-        auto* atoms = new (NotNull, Region::allocate(Region::Arena::Data, sizeof(AtomStringTable), 16)) AtomStringTable;
-        header.atomStringTable = std::bit_cast<uint64_t>(atoms);
+        // (The table itself is only for making them with. What is kept of it is made when they are all there.)
+        auto atoms = makeUnique<AtomStringTable>();
+        atoms->table().reserveInitialCapacity(count);
         for (bool isPrivate : { false, true }) {
             s_symbolRegistriesBeingBuilt[isPrivate] = new (NotNull, Region::allocate(Region::Arena::Data, sizeof(SymbolRegistry), 16)) SymbolRegistry(isPrivate ? SymbolRegistry::Type::PrivateSymbol : SymbolRegistry::Type::PublicSymbol);
             header.symbolRegistries[isPrivate] = std::bit_cast<uint64_t>(s_symbolRegistriesBeingBuilt[isPrivate]);
         }
-        AtomStringTable* usualAtoms = Thread::currentSingleton().setCurrentAtomStringTable(atoms);
+        AtomStringTable* usualAtoms = Thread::currentSingleton().setCurrentAtomStringTable(atoms.get());
         {
             Region::AllocationScope allocationScope;
             s_isBuilding = true;
             vm.heap.m_placeOfNextCell = placeOfEveryCellWhileBuilding;
-            atoms->table().reserveInitialCapacity(count);
             for (uint32_t ordinal = 0; ordinal < count; ++ordinal) {
                 table.atomFor(vm, ordinal);
                 // So that nothing that is decoded when the program runs has to make one, which would be writing to the slot. If
@@ -1323,7 +1338,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                 if (imageView && imageView->keysAreLeftOut()) {
                     // An executable made here says which function it is. The rest are made when the program runs, and are looked up.
                     auto isLookedUp = [&](const AOT::ImageKey& key) {
-                        return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !infosOfFunctions[imageView->indexOfFunctionWith(key)].executableAndKind;
+                        return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !infosOfFunctions[imageView->indexOfFunctionWith(key)].executable();
                     };
                     size_t count = 0;
                     for (auto& key : imageView->keys())
@@ -1403,8 +1418,26 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             vm.heap.m_placeOfNextCell = nullptr;
         }
         Thread::currentSingleton().setCurrentAtomStringTable(usualAtoms);
-        for (auto& atom : atoms->table())
-            atom->becomeStatic();
+        {
+            using StaticAtoms = AtomStringTable::StaticAtoms;
+            size_t capacity = atoms->table().capacity();
+            RELEASE_ASSERT(hasOneBitSet(capacity) && capacity > atoms->table().size());
+            std::span<uint32_t> entries { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, capacity * sizeof(uint32_t), pageSizeOfImage)), capacity };
+            zeroSpan(entries);
+            unsigned mask = capacity - 1;
+            for (auto& atom : atoms->table()) {
+                atom->becomeStatic();
+                uintptr_t distance = std::bit_cast<uintptr_t>(atom.get()) - Region::base;
+                RELEASE_ASSERT(contains(atom.get()) && distance && !(distance & ((1u << StaticAtoms::shift) - 1)) && !(distance >> StaticAtoms::shift >> 32));
+                unsigned probes = 0;
+                unsigned place = atom->hash() & mask;
+                while (entries[place])
+                    place = StaticAtoms::next(place, probes, mask);
+                entries[place] = static_cast<uint32_t>(distance >> StaticAtoms::shift);
+            }
+            header.staticAtoms = std::bit_cast<uint64_t>(entries.data());
+            header.capacityOfStaticAtoms = capacity;
+        }
         for (auto* registry : s_symbolRegistriesBeingBuilt)
             registry->becomeStatic();
         if (Options::aotReportStats()) [[unlikely]]
@@ -1415,7 +1448,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     {
         ClosureChecker checker(vm);
         for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-            forEachCell(arena, Region::used(arena), [&](void* pointer, size_t) {
+            forEachCell(arena, [&](void* pointer, size_t) {
                 checker.current = static_cast<JSCell*>(pointer);
                 checker.current->methodTable()->visitChildren(checker.current, checker);
             });
@@ -1437,7 +1470,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     UncheckedKeyHashMap<uint32_t, uint32_t> idInFirstVM;
     UncheckedKeyHashMap<String, std::pair<uint64_t, uint64_t>> byClass;
     for (auto arena : { Region::Arena::Cells, Region::Arena::MutableCells }) {
-        forEachCell(arena, Region::used(arena), [&](void* pointer, size_t size) {
+        forEachCell(arena, [&](void* pointer, size_t size) {
             auto* cell = static_cast<JSCell*>(pointer);
             uint32_t id = cell->structureID().bits();
             if (Options::aotReportStats()) [[unlikely]] {
@@ -1480,7 +1513,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
     }
 
     // What a cell works out when it is first asked, and keeps: it is asked now. Nobody is going to store to it.
-    forEachCell(Region::Arena::Cells, Region::used(Region::Arena::Cells), [&](void* pointer, size_t) {
+    forEachCell(Region::Arena::Cells, [&](void* pointer, size_t) {
         if (auto* bigInt = dynamicDowncast<JSBigInt>(static_cast<JSCell*>(pointer)))
             bigInt->hash();
     });
@@ -1491,7 +1524,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         Region::AllocationScope notInRegion(false);
         UncheckedKeyHashSet<String> distinct;
         uint64_t all = 0, withMore = 0;
-        forEachCell(Region::Arena::Cells, Region::used(Region::Arena::Cells), [&](void* pointer, size_t) {
+        forEachCell(Region::Arena::Cells, [&](void* pointer, size_t) {
             auto* executable = dynamicDowncast<UnlinkedFunctionExecutable>(static_cast<JSCell*>(pointer));
             if (!executable)
                 return;
@@ -1600,7 +1633,7 @@ bool StaticHeap::map(std::span<const uint8_t> image, int fileDescriptor, off_t o
             return false;
     }
     s_header = &header;
-    atoms->setStaticTable(&std::bit_cast<AtomStringTable*>(header.atomStringTable)->table());
+    atoms->setStaticAtoms({ std::bit_cast<const uint32_t*>(header.staticAtoms), static_cast<uint32_t>(header.capacityOfStaticAtoms - 1), Region::base });
     return true;
 }
 
@@ -1611,7 +1644,7 @@ void StaticHeap::prepareThread()
     AtomStringTable* atoms = Thread::currentSingleton().atomStringTable();
     if (!atoms->table().isEmpty())
         return;
-    atoms->setStaticTable(&std::bit_cast<AtomStringTable*>(s_header->atomStringTable)->table());
+    atoms->setStaticAtoms({ std::bit_cast<const uint32_t*>(s_header->staticAtoms), static_cast<uint32_t>(s_header->capacityOfStaticAtoms - 1), Region::base });
     t_threadIsPrepared = true;
 }
 

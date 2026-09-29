@@ -47,12 +47,35 @@ public:
     // Atoms that were there before the thread was, are there for good, and are not in table() until they are asked for: strings
     // that are static (StringImpl::becomeStatic()) and say that they are atoms. It is only looked in, when table() does not have
     // what is wanted. To be set before the thread has an atom that may be equal to one of them.
-    const StringTableImpl* staticTable() const { return m_staticTable; }
-    void setStaticTable(const StringTableImpl* table) { m_staticTable = table; }
+    // They are all within reach of one address, and nothing is ever added: so it is a table of how far each is from that, in units
+    // of 8 bytes, nothing standing for nothing, that is looked in the way any table is.
+    struct StaticAtoms {
+        static constexpr unsigned shift = 3;
+        const uint32_t* entries { nullptr };
+        uint32_t mask { 0 }; // One less than how many places there are, which is a power of two.
+        uintptr_t base { 0 };
+
+        explicit operator bool() const { return !!entries; }
+        static unsigned next(unsigned place, unsigned& probes, unsigned mask) { return (place + ++probes) & mask; }
+        template<typename HashTranslator, typename T> StringImpl* find(const T& value) const
+        {
+            unsigned probes = 0;
+            for (unsigned place = HashTranslator::hash(value) & mask;; place = next(place, probes, mask)) {
+                uint32_t entry = entries[place];
+                if (!entry)
+                    return nullptr;
+                auto* string = reinterpret_cast<StringImpl*>(base + (static_cast<uintptr_t>(entry) << shift));
+                if (HashTranslator::equal(StringEntry { string }, value))
+                    return string;
+            }
+        }
+    };
+    const StaticAtoms& staticAtoms() const LIFETIME_BOUND { return m_staticAtoms; }
+    void setStaticAtoms(const StaticAtoms& atoms) { m_staticAtoms = atoms; }
 
 private:
     StringTableImpl m_table;
-    const StringTableImpl* m_staticTable { nullptr };
+    StaticAtoms m_staticAtoms;
 };
 
 }

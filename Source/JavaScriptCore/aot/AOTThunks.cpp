@@ -115,9 +115,8 @@ void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), scratch4);
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(lowestAccessibleAddress()) - JSValue::NativeCalleeTag + OBJECT_OFFSETOF(CodeHeader, index)), result);
     jit.load32(BaseIndex(scratch4, result, CCallHelpers::TimesOne), scratch4);
-    static_assert(sizeof(FunctionInfo) == 48);
-    jit.getEffectiveAddress(BaseIndex(scratch4, scratch4, CCallHelpers::TimesTwo), scratch4);
-    jit.lshiftPtr(TrustedImm32(4), scratch4);
+    static_assert(sizeof(FunctionInfo) == 32);
+    jit.lshiftPtr(TrustedImm32(5), scratch4);
     loadInstance(jit, result);
     jit.loadPtr(Address(result, Instance::offsetOfInfos()), result);
     jit.addPtr(scratch4, result);

@@ -173,9 +173,8 @@ static void loadInfo(CCallHelpers& jit, GPRReg instance, GPRReg result)
     jit.load64(CCallHelpers::addressFor(CallFrameSlot::callee), result);
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(lowestAccessibleAddress()) - JSValue::NativeCalleeTag + OBJECT_OFFSETOF(CodeHeader, index)), CCallHelpers::memoryTempRegister);
     jit.load32(CCallHelpers::BaseIndex(result, CCallHelpers::memoryTempRegister, CCallHelpers::TimesOne), result);
-    static_assert(sizeof(FunctionInfo) == 48);
-    jit.getEffectiveAddress(CCallHelpers::BaseIndex(result, result, CCallHelpers::TimesTwo), result);
-    jit.lshiftPtr(TrustedImm32(4), result);
+    static_assert(sizeof(FunctionInfo) == 32);
+    jit.lshiftPtr(TrustedImm32(5), result);
     jit.loadPtr(Address(instance, Instance::offsetOfInfos()), CCallHelpers::memoryTempRegister);
     jit.addPtr(CCallHelpers::memoryTempRegister, result);
 }
@@ -211,12 +210,13 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
     jit.add32(TrustedImm32(1), T13);
     jit.store16(T13, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesTwo));
     jit.zeroExtend16To32(T13, T13);
-    jit.getEffectiveAddress(CCallHelpers::BaseIndex(T11, T11, CCallHelpers::TimesTwo), T12);
-    jit.lshiftPtr(TrustedImm32(4), T12);
+    static_assert(sizeof(FunctionInfo) == 32);
+    jit.lshiftPtr(T11, TrustedImm32(5), T12);
     jit.loadPtr(Address(instance, Instance::offsetOfInfos()), CCallHelpers::memoryTempRegister);
     jit.addPtr(CCallHelpers::memoryTempRegister, T12);
     // Instance::missesToPutUpWithFor(). (What is too many to count is never reached, and such a function is not one that starts so.)
-    jit.load32(Address(T12, FunctionInfo::offsetOfNumSlots()), T12);
+    jit.load16(Address(T12, FunctionInfo::offsetOfFlags()), T12);
+    jit.urshift32(TrustedImm32(FunctionInfo::numberOfFlagBits), T12);
     jit.load32(Address(instance, Instance::offsetOfMissesForEightSlots()), CCallHelpers::memoryTempRegister);
     jit.mul32(CCallHelpers::memoryTempRegister, T12, T12);
     jit.urshift32(TrustedImm32(3), T12);
@@ -953,8 +953,8 @@ static void findInDispatchTable(CCallHelpers& jit, GPRReg slot, GPRReg selector,
     static_assert(sizeof(Site) == 8);
     Jump isWhatTheSiteReads = jit.branchTest32(CCallHelpers::NonZero, selector, TrustedImm32(FunctionInfo::sitesHaveTheirConstants));
     notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, selector, TrustedImm32(FunctionInfo::hasSiteConstants)));
-    jit.load32(Address(T12, FunctionInfo::offsetOfNumSlots()), selector);
     jit.loadPtr(Address(T12, FunctionInfo::offsetOfSites()), T12);
+    jit.load32(Address(T12, static_cast<ptrdiff_t>(OBJECT_OFFSETOF(ImageFunction, numSlots)) - static_cast<ptrdiff_t>(sizeof(ImageFunction))), selector);
     jit.getEffectiveAddress(CCallHelpers::BaseIndex(T12, selector, CCallHelpers::TimesEight), T12);
     jit.load32(CCallHelpers::BaseIndex(T12, T13, CCallHelpers::TimesFour), selector);
     Jump haveSelector = jit.jump();

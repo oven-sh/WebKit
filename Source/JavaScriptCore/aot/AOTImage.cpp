@@ -259,12 +259,17 @@ Vector<ReportableSitesOfFunction> ImageBuilder::reportableSites()
     return all;
 }
 
-// How many there are. Then for each, in order, how much further on in the bytecode it is than the one before.
+// After what quoteAt() goes by. How many there are. Then for each, in order, how much further on in the bytecode it is than the one before.
 bool Image::constructsAt(const ImageFunction& function, unsigned bytecodeOffset) const
 {
-    if (!function.constructSites)
+    if (!function.quotes)
         return false;
-    const uint8_t* at = this->at<uint8_t>(header().quotesOffset) + function.constructSites;
+    const uint8_t* at = this->at<uint8_t>(header().quotesOffset) + function.quotes;
+    for (uint64_t count = readVarint(at); count--;) {
+        readVarint(at);
+        readVarint(at);
+        readVarint(at);
+    }
     uint64_t offset = 0;
     for (uint64_t count = readVarint(at); count--;) {
         offset += readVarint(at);
@@ -694,7 +699,8 @@ Vector<uint8_t> ImageBuilder::finish()
         size_t numberOfQuotes = 0;
         for (size_t index = 0; index < m_functions.size(); ++index) {
             auto& all = m_functions[index].code.info.quotes;
-            if (all.isEmpty())
+            auto& constructSites = m_functions[index].code.info.constructSites;
+            if (all.isEmpty() && constructSites.isEmpty())
                 continue;
             numberOfQuotes += all.size();
             // Expressions are made of expressions: what is said in the middle of something else that is kept is there already.
@@ -748,6 +754,13 @@ Vector<uint8_t> ImageBuilder::finish()
                 previousOffset = quote.bytecodeOffset;
                 previousStart = start;
             }
+            // See Image::constructsAt().
+            appendVarint(quotes, constructSites.size());
+            uint32_t previous = 0;
+            for (uint32_t offset : constructSites) {
+                appendVarint(quotes, offset - previous);
+                previous = offset;
+            }
         }
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: ", numberOfQuotes, " places that an error message may quote: ", quotes.size(), " bytes, and ", textOfQuotes.size(), " of text in ", whereItIs.size(), " pieces");
@@ -778,20 +791,6 @@ Vector<uint8_t> ImageBuilder::finish()
     header.selectorsInOrderOffset = place(selectorsInOrder.sizeInBytes());
     header.numberOfSelectorsInOrder = selectorsInOrder.size();
     header.dispatchOffset = place(dispatch.sizeInBytes());
-    Vector<uint32_t> constructSitesOfFunction;
-    constructSitesOfFunction.fill(0, m_functions.size());
-    for (unsigned index = 0; index < m_functions.size(); ++index) {
-        auto& all = m_functions[index].code.info.constructSites;
-        if (all.isEmpty())
-            continue;
-        constructSitesOfFunction[index] = safeCast<uint32_t>(quotes.size());
-        appendVarint(quotes, all.size());
-        uint32_t previous = 0;
-        for (uint32_t offset : all) {
-            appendVarint(quotes, offset - previous);
-            previous = offset;
-        }
-    }
     header.quotesOffset = place(quotes.size());
     header.textOfQuotesOffset = place(textOfQuotes.size());
     header.numberOfIdentifiersOfProgram = m_numberOfIdentifiersOfProgram;
@@ -894,26 +893,30 @@ Vector<uint8_t> ImageBuilder::finish()
         ImageFunction record { };
         record.codeOffset = codeAt;
         record.codeSize = function.code.bytes.size();
-        record.entryOffset = safeCast<uint16_t>(info.entryOffset);
-        record.arityCheckOffset = safeCast<uint16_t>(info.arityCheckOffset);
+        RELEASE_ASSERT(!(info.entryOffset % sizeof(uint32_t)) && !(info.arityCheckOffset % sizeof(uint32_t)) && !(info.frameSizeInBytes % stackAlignmentBytes()));
+        record.entryOffsetInWords = safeCast<uint8_t>(info.entryOffset / sizeof(uint32_t));
+        record.arityCheckOffsetInWords = safeCast<uint8_t>(info.arityCheckOffset / sizeof(uint32_t));
         record.directEntryOffset = safeCast<uint16_t>(info.directEntryOffset);
-        record.frameSizeInBytes = info.frameSizeInBytes;
+        record.frameSizeInUnits = safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes());
         record.numSlots = info.numSlots;
-        record.bytecodeHash = info.bytecodeHash;
+        uint64_t calleeSaveRegisters = 0;
         for (unsigned i = 0; i < info.calleeSaveRegisters.registerCount(); ++i) {
             const RegisterAtOffset& entry = info.calleeSaveRegisters.at(i);
             RELEASE_ASSERT(entry.reg().index() < 64 && entry.offset() == info.calleeSaveRegisters.at(0).offset() + static_cast<ptrdiff_t>(i * sizeof(CPURegister)) && (!i || entry.reg().index() > info.calleeSaveRegisters.at(i - 1).reg().index()));
-            record.calleeSaveRegisters[entry.reg().index() / 32] |= 1u << (entry.reg().index() % 32);
+            calleeSaveRegisters |= 1ULL << entry.reg().index();
         }
-        if (info.calleeSaveRegisters.registerCount())
-            record.offsetOfCalleeSaves = safeCast<int32_t>(info.calleeSaveRegisters.at(0).offset());
+        if (info.calleeSaveRegisters.registerCount()) {
+            ptrdiff_t offset = info.calleeSaveRegisters.at(0).offset();
+            RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))));
+            record.whereCalleeSavesStart = safeCast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
+        }
+        record.calleeSaveRegisters = ImageFunction::packRegisters(calleeSaveRegisters);
         record.numberOfCatchEntrypoints = info.catchEntrypoints.size();
         record.numberOfKnownCallees = info.knownCallees.size();
         record.hasSiteConstants = !numbersOfIdentifiers;
         record.usesStaticImports = info.usesStaticImports;
         record.startsCold = info.startsCold;
         record.quotes = quotesOfFunction[index];
-        record.constructSites = constructSitesOfFunction[index];
 
         ImageKey key = function.key;
         key.record = recordAt + 1;
@@ -940,11 +943,6 @@ Vector<uint8_t> ImageBuilder::finish()
 
         memcpy(records + recordAt, &record, sizeof(record));
         recordAt += sizeof(record);
-        for (auto& [bytecodeOffset, codeOffset] : info.catchEntrypoints) {
-            ImageCatchEntrypoint entrypoint { bytecodeOffset, codeOffset };
-            memcpy(records + recordAt, &entrypoint, sizeof(entrypoint));
-            recordAt += sizeof(entrypoint);
-        }
         memcpy(records + recordAt, info.sites.span().data(), info.sites.size() * sizeof(Site));
         recordAt += info.sites.size() * sizeof(Site);
         if (!numbersOfIdentifiers) {
@@ -961,6 +959,11 @@ Vector<uint8_t> ImageBuilder::finish()
             }
             memcpy(records + recordAt, &indexOfCallee, sizeof(indexOfCallee));
             recordAt += sizeof(indexOfCallee);
+        }
+        for (auto& [bytecodeOffset, codeOffset] : info.catchEntrypoints) {
+            ImageCatchEntrypoint entrypoint { bytecodeOffset, codeOffset };
+            memcpy(records + recordAt, &entrypoint, sizeof(entrypoint));
+            recordAt += sizeof(entrypoint);
         }
         memcpy(records + recordAt, info.plans.span().data(), info.plans.sizeInBytes());
         recordAt += info.plans.sizeInBytes();
@@ -1267,7 +1270,7 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + table[bucket].record - 1);
         size_t start = header.codeOffset + function.codeOffset;
         auto whereItIsGoingToBe = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
-        return Function { const_cast<uint8_t*>(m_address) + start + function.arityCheckOffset, reinterpret_cast<const CodeHeader*>(m_data.data() + start)->index,
+        return Function { const_cast<uint8_t*>(m_address) + start + function.arityCheckOffset(), reinterpret_cast<const CodeHeader*>(m_data.data() + start)->index,
             reinterpret_cast<const Site*>(whereItIsGoingToBe(function.sites())), reinterpret_cast<const ImageFunction*>(whereItIsGoingToBe(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants };
     }
     return std::nullopt;
@@ -1424,7 +1427,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         uint32_t index = reinterpret_cast<const CodeHeader*>(image->codeFor(*function))->index;
         if (instance->data[index] && FunctionRef { instance, index }.executable() != executable)
             return { };
-        if (const FunctionInfo& info = instance->infos[index]; info.executableAndKind && info.executable() != executable)
+        if (const FunctionInfo& info = instance->infos[index]; info.executable() && info.executable() != executable)
             return { };
     }
 
@@ -1443,12 +1446,6 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         }
     }
 
-    if (Options::aotValidateImage() && unlinkedCodeBlock) [[unlikely]] {
-        if (hashOfBytecode(unlinkedCodeBlock) != function->bytecodeHash) {
-            dataLogLn("AOT: the image's code for ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") was compiled from other bytecode");
-            return { };
-        }
-    }
     if (Options::aotVerbose()) [[unlikely]]
         dataLogLn("AOT: ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", function->codeSize, " hash ", hashOfCode({ image->codeFor(*function), function->codeSize }));
     return { image, function };
