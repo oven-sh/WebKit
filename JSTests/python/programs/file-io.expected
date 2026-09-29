@@ -214,7 +214,7 @@ FileIO('a\0b') => ValueError: embedded null byte
 FileIO(b'a\0b') => ValueError: embedded null byte
 FileIO(bytearray) => TypeError: expected str, bytes or os.PathLike object, not bytearray
 FileIO('\udc80') => FileNotFoundError: [Errno 2] No such file or directory: 'D/\udc80'
-FileIO('\ud800') => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 74: surrogates not allowed
+FileIO('\ud800') => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position len(D): surrogates not allowed
 what has __fspath__ => [('Path', None)]
 that returns an int => TypeError: expected Path.__fspath__() to return str or bytes, not int
 ---- by number

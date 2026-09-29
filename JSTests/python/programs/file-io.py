@@ -20,7 +20,8 @@ def t(label, f):
     try:
         r = f()
     except BaseException as e:
-        r = type(e).__name__ + ": " + str(e).replace(D, "D/")
+        # How long the name of the directory is has nothing to do with it.
+        r = type(e).__name__ + ": " + str(e).replace(D, "D/").replace("in position %d:" % len(D), "in position len(D):")
     print(label, "=>", (r if isinstance(r, str) else repr(r)).replace(D, "D/"))
 
 
