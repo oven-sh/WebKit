@@ -128,7 +128,10 @@ public:
     PyTuple* bases() const { return m_bases.get(); }
     PyTuple* mro() const { return m_mro.get(); }
     JSString* name() const { return m_name.get(); }
-    void setName(VM& vm, JSString* name) { m_name.set(vm, this, name); }
+    // type_set_name(): from then on it is all that the class is called, and what module it is in is no part of that.
+    void setName(VM&, JSString*);
+    // What CPython has as tp_name, for a class that is made as a class statement makes one and says there what module it is in.
+    void setDottedName(ASCIILiteral name) { m_dottedName = name; }
     // For C.__bases__ = ..., and for a metaclass that has an mro() of its own. See Python::setBases().
     void setBases(VM&, PyTuple* bases, PyType* base);
     void setOrder(VM&, PyTuple*);
@@ -162,6 +165,8 @@ public:
     // A built-in class that is derived from object and nothing else, and has no __new__ of its own, does not have object's either, though that is what
     // looking it up finds. Instances of it are made by other means: an iterator is what iter() gives.
     bool cannotBeInstantiated(VM&) const;
+    // Py_TPFLAGS_IMMUTABLETYPE: whether its attributes can be set. CPython says so of those that it has, some of which are written in C and can be added to all the same: ast.AST, typing.Generic, time.struct_time.
+    bool isImmutable() const { return m_isCPythons ? m_flagsForPython & (1ul << 8) : !hasFlag(IsHeapType); }
     // For a class of exceptions: which of JavaScript's kinds of Error its instances are.
     ErrorType errorType() const { return m_errorType; }
     void setErrorType(ErrorType errorType) { m_errorType = errorType; }

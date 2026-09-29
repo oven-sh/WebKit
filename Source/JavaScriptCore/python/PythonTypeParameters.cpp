@@ -834,8 +834,8 @@ void initializeTypeParameters(JSGlobalObject* globalObject)
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         PyType* type = asType(self);
-        if (!type->hasFlag(PyType::IsHeapType) || !value) {
-            raiseTypeError(globalObject, scope, concatenate("cannot "_s, type->hasFlag(PyType::IsHeapType) ? "delete"_s : "set"_s, " '__type_params__' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
+        if (type->isImmutable() || !value) {
+            raiseTypeError(globalObject, scope, concatenate("cannot "_s, !type->isImmutable() ? "delete"_s : "set"_s, " '__type_params__' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
             return;
         }
         type->setAttribute(vm, vm.pythonNames().dunder_type_params, value);

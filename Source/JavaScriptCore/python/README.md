@@ -241,6 +241,10 @@ made an instance of another. So a class has `__basicsize__`, `__itemsize__`, `__
 have them, taken from CPython for a built-in class and worked out as CPython does for the rest, and the same questions are answered
 from those in the same way. What is in a slot is a property under a private name that goes by where CPython would have the slot.
 
+**Whether a class can be added to** is one of those flags too, `Py_TPFLAGS_IMMUTABLETYPE`, and not whether it is written in C++ (`PyType::isImmutable()`). Most of what CPython writes in C cannot be. `ast.AST`, `typing.Generic`,
+`time.struct_time`, `os.stat_result` and a few more can, and programs do. Those of them that are derived from `tuple` are `IsDerivedFromBuiltin`, so that nothing is done to one as to a tuple without looking at what its
+class now has. Giving such a class a `__name__` is giving it all that it is called, as in CPython: what module it is in, which had been the first part of that, is `__module__` from then on.
+
 ### Names
 
 | | |

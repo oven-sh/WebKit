@@ -563,7 +563,7 @@ PYTHON_NATIVE(objectDelAttr)
 PYTHON_NATIVE(typeSetAttr)
 {
     NATIVE_PROLOGUE();
-    if (!asType(args[0])->hasFlag(PyType::IsHeapType)) {
+    if (asType(args[0])->isImmutable()) {
         String shown = repr(globalObject, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot set "_s, shown, " attribute of immutable type '"_s, asType(args[0])->nameString(globalObject), '\'')));
@@ -578,7 +578,7 @@ PYTHON_NATIVE(typeSetAttr)
 PYTHON_NATIVE(typeDelAttr)
 {
     NATIVE_PROLOGUE();
-    if (!asType(args[0])->hasFlag(PyType::IsHeapType)) {
+    if (asType(args[0])->isImmutable()) {
         String shown = repr(globalObject, args[1]);
         RETURN_IF_EXCEPTION(scope, { });
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot set "_s, shown, " attribute of immutable type '"_s, asType(args[0])->nameString(globalObject), '\'')));
@@ -1694,9 +1694,9 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     remember(type, names.dunder_delattr, Function::TypeDelAttr);
     // check_set_special_type_attr()
     static constexpr auto checkSetSpecial = [] (JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, JSValue value, ASCIILiteral name) {
-        if (type->hasFlag(PyType::IsHeapType) && value)
+        if (!type->isImmutable() && value)
             return audit(globalObject, "object.__setattr__"_s, type->object(), jsString(globalObject->vm(), String(name)), value);
-        raiseTypeError(globalObject, scope, concatenate("cannot "_s, type->hasFlag(PyType::IsHeapType) ? "delete"_s : "set"_s, " '"_s, name, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
+        raiseTypeError(globalObject, scope, concatenate("cannot "_s, !type->isImmutable() ? "delete"_s : "set"_s, " '"_s, name, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
         return false;
     };
     addGetSet(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->name(); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
@@ -1742,6 +1742,9 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addGetSet(globalObject, type, "__module__"_s, [] (JSGlobalObject* globalObject, JSValue self) {
         // A built-in class does not look in itself for it. `type` has there the very thing that is asking.
         if (!asType(self)->hasFlag(PyType::IsHeapType)) {
+            // Unless it is one that can be added to, and has been told.
+            if (JSValue own = asType(self)->isImmutable() ? JSValue() : asType(self)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_module))
+                return own;
             String module = asType(self)->moduleOfBuiltin();
             return JSValue(module.isNull() ? jsNontrivialString(globalObject->vm(), "builtins"_s) : jsString(globalObject->vm(), module));
         }

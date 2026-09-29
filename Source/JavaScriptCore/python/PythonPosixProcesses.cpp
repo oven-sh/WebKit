@@ -607,7 +607,7 @@ void initializePosixProcessTypes(JSGlobalObject* globalObject, PosixModuleState&
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
     auto makeSequence = [&] (WriteBarrier<PyType>& slot, ASCIILiteral name, std::initializer_list<ASCIILiteral> fields) {
-        PyType* type = createBuiltinType(globalObject, name, realm->typeTuple(), PyType::Layout::Tuple, PyType::IsSequence);
+        PyType* type = createBuiltinType(globalObject, name, realm->typeTuple(), PyType::Layout::Tuple, PyType::IsSequence | PyType::IsDerivedFromBuiltin);
         slot.set(vm, realm, type);
         makeStructSequenceType(globalObject, type, std::span(fields.begin(), fields.size()), static_cast<unsigned>(fields.size()));
     };

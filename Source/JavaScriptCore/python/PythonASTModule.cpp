@@ -52,15 +52,6 @@ namespace JSC { namespace Python {
 
 // ---- The class AST
 
-// tp_name. It is only AST itself that says what module it is in.
-static String nameOfClass(JSGlobalObject* globalObject, PyType* type)
-{
-    ASTState* state = astState(globalObject);
-    if (state && type == state->classFor(ASTClass::AST))
-        return "ast.AST"_s;
-    return type->nameString(globalObject);
-}
-
 // PyType_GenericNew(): whatever it is given is for __init__().
 PYTHON_NATIVE(astNew)
 {
@@ -114,7 +105,7 @@ PYTHON_NATIVE(astInit)
             bool wasRemaining = !!remaining->remove(globalObject, key);
             RETURN_IF_EXCEPTION(scope, { });
             if (!wasRemaining)
-                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(nameOfClass(globalObject, type), " got multiple values for argument "_s, repr(globalObject, key))));
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), " got multiple values for argument "_s, repr(globalObject, key))));
         } else {
             if (!attributes) {
                 attributes = getAttribute(globalObject, type, Identifier::fromString(vm, "_attributes"_s));
@@ -123,7 +114,7 @@ PYTHON_NATIVE(astInit)
             bool isAttribute = contains(globalObject, attributes, key);
             RETURN_IF_EXCEPTION(scope, { });
             if (!isAttribute) {
-                if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate(nameOfClass(globalObject, type), ".__init__ got an unexpected keyword argument "_s, repr(globalObject, key),
+                if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate(type->nameString(globalObject), ".__init__ got an unexpected keyword argument "_s, repr(globalObject, key),
                     ". Support for arbitrary keyword arguments is deprecated and will be removed in Python 3.15."_s)))
                     return { };
             }
@@ -149,7 +140,7 @@ PYTHON_NATIVE(astInit)
         JSValue fieldType = isDict(fieldTypes) ? asDict(fieldTypes)->get(globalObject, name) : JSValue();
         RETURN_IF_EXCEPTION(scope, { });
         if (!fieldType) {
-            if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate("Field "_s, repr(globalObject, name), " is missing from "_s, nameOfClass(globalObject, type), "._field_types. This will become an error in Python 3.15."_s)))
+            if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate("Field "_s, repr(globalObject, name), " is missing from "_s, type->nameString(globalObject), "._field_types. This will become an error in Python 3.15."_s)))
                 return { };
         } else if (isUnion(globalObject, fieldType)) {
             // It may be left out, and the class has None for it.
@@ -162,7 +153,7 @@ PYTHON_NATIVE(astInit)
             set(name, state->singletonFor(ASTClass::Load));
             RETURN_IF_EXCEPTION(scope, { });
         } else {
-            if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate(nameOfClass(globalObject, type), ".__init__ missing 1 required positional argument: "_s, repr(globalObject, name), ". This will become an error in Python 3.15."_s)))
+            if (!warn(globalObject, BuiltinType::DeprecationWarning, concatenate(type->nameString(globalObject), ".__init__ missing 1 required positional argument: "_s, repr(globalObject, name), ". This will become an error in Python 3.15."_s)))
                 return { };
         }
     }
@@ -231,7 +222,7 @@ static bool checkReplacement(JSGlobalObject* globalObject, JSValue self, JSValue
         bool wasExpected = !!expecting->remove(globalObject, args.keywordName(i));
         RETURN_IF_EXCEPTION(scope, false);
         if (!wasExpected) {
-            raiseTypeError(globalObject, scope, concatenate(nameOfClass(globalObject, type), ".__replace__ got an unexpected keyword argument "_s, repr(globalObject, args.keywordName(i)), '.'));
+            raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), ".__replace__ got an unexpected keyword argument "_s, repr(globalObject, args.keywordName(i)), '.'));
             return false;
         }
     }
@@ -268,7 +259,7 @@ static bool checkReplacement(JSGlobalObject* globalObject, JSValue self, JSValue
     StringBuilder joined;
     for (auto& name : names)
         joined.append(joined.isEmpty() ? ""_s : ", "_s, name);
-    raiseTypeError(globalObject, scope, concatenate(nameOfClass(globalObject, type), ".__replace__ missing "_s, names.size(), " keyword argument"_s, names.size() == 1 ? ""_s : "s"_s, ": "_s, joined.toString(), '.'));
+    raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), ".__replace__ missing "_s, names.size(), " keyword argument"_s, names.size() == 1 ? ""_s : "s"_s, ": "_s, joined.toString(), '.'));
     return false;
 }
 
@@ -351,7 +342,7 @@ static String reprOfNode(JSGlobalObject* globalObject, JSValue self, int depth)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, self);
-    String name = nameOfClass(globalObject, type);
+    String name = type->nameString(globalObject);
     if (depth <= 0)
         return concatenate(name, "(...)"_s);
     ReprGuard guard(globalObject, self.asCell());
@@ -487,6 +478,8 @@ static void initializeASTState(JSGlobalObject* globalObject, ASTState& state)
         deleteAttribute(globalObject, type, identifier("__slots__"_s));
         RETURN_IF_EXCEPTION(scope, void());
         state.classes[0].set(vm, realm, type);
+        // It is only AST itself that says what module it is in.
+        type->setDottedName("ast.AST"_s);
         using Kind = PyNativeFunction::Kind;
         // These are what object has, and it says so for itself.
         for (const Identifier* name : { &names.dunder_getattribute, &names.dunder_setattr, &names.dunder_delattr })

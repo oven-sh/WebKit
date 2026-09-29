@@ -284,6 +284,17 @@ PyType* PyType::createForJavaScript(VM& vm, JSGlobalObject* globalObject, JSObje
     return type;
 }
 
+void PyType::setName(VM& vm, JSString* name)
+{
+    if (!m_dottedName.isNull()) [[unlikely]] {
+        auto& module = vm.pythonNames().dunder_module;
+        if (!getDirect(vm, module))
+            putDirect(vm, module, jsString(vm, moduleOfBuiltin()));
+        m_dottedName = { };
+    }
+    m_name.set(vm, this, name);
+}
+
 String PyType::nameString(JSGlobalObject* globalObject) const
 {
     if (!m_dottedName.isNull()) [[unlikely]]

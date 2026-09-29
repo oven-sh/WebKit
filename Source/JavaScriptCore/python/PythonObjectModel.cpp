@@ -946,7 +946,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
     StringView attribute { name.uid() };
 
     // Nothing of a built-in class can be set, whatever there may be to set it with.
-    if (isType(value) && !asType(value)->hasFlag(PyType::IsHeapType)) {
+    if (isType(value) && asType(value)->isImmutable()) {
         raiseTypeError(globalObject, scope, concatenate("cannot set '"_s, attribute, "' attribute of immutable type '"_s, asType(value)->nameString(globalObject), '\''));
         return;
     }
@@ -961,7 +961,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
 
     if (isClass(value)) {
         auto* target = asType(value);
-        if (!target->hasFlag(PyType::IsHeapType)) {
+        if (target->isImmutable()) {
             raiseTypeError(globalObject, scope, concatenate("cannot set '"_s, attribute, "' attribute of immutable type '"_s, target->nameString(globalObject), '\''));
             return;
         }

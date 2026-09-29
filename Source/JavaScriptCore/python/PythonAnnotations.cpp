@@ -124,7 +124,7 @@ static bool checkIsHeapType(JSGlobalObject* globalObject, ThrowScope& scope, PyT
 
 static bool checkIsMutable(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, ASCIILiteral attribute)
 {
-    if (type->hasFlag(PyType::IsHeapType))
+    if (!type->isImmutable())
         return true;
     raiseTypeError(globalObject, scope, concatenate("cannot set '"_s, attribute, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
     return false;
