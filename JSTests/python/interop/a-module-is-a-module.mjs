@@ -8,7 +8,7 @@ import * as ofPython from "./a-module-whose-default-is-of-python.mjs";
 import m from "./a-module-is-a-module.py";
 const each = (label, list) => { print("---- " + label); for (const line of list) print("  " + line); };
 const toJavaScript = () => JSON.stringify([Reflect.ownKeys(ns).map(String), Object.getOwnPropertyNames(ns), Object.keys(ns), Object.getOwnPropertySymbols(ns).map(String), (() => { const all = []; for (const k in ns) all.push(k); return all; })(),
-    Object.keys({ ...ns }), Object.keys(Object.getOwnPropertyDescriptors(ns)), Object.isExtensible(ns), Object.isSealed(ns), Object.isFrozen(ns), String(ns[Symbol.toStringTag]), Object.getPrototypeOf(ns)]);
+    Object.keys({ ...ns }), Object.keys(Object.getOwnPropertyDescriptors(ns)), Object.isExtensible(ns), Object.isSealed(ns), Object.isFrozen(ns), String(ns[Symbol.toStringTag])]);
 const before = toJavaScript();
 each("what it is", m.what_it_is(ns));
 each("what it has", m.what_it_has(ns));

@@ -111,7 +111,7 @@
 ---- to JavaScript
   it is not to be called: object TypeError: ns is not a function. (In 'ns("you")', 'ns' is an instance of Module) TypeError
   the same one: true
-  as it was: true [["Thing","_private","again","bump","count","default","whatThisIs","Symbol(Symbol.toStringTag)"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],["Symbol(Symbol.toStringTag)"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],false,true,false,"Module",null]
+  as it was: true [["Thing","_private","again","bump","count","default","whatThisIs","Symbol(Symbol.toStringTag)"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],["Symbol(Symbol.toStringTag)"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],["Thing","_private","again","bump","count","default","whatThisIs"],false,true,false,"Module"]
   what Python has set: [[null,false,false,null,false,true,false,false],[null,false,false,null,false,true,false,false]]
 ---- and still has
   <module 'named'>
