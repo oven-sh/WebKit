@@ -1,0 +1,17 @@
+A None None new True TypeError: cannot delete '__doc__' attribute of immutable type 'A' new
+B doc None new True TypeError: cannot delete '__doc__' attribute of immutable type 'B' new
+C None None new True None The base c
+T None None new True TypeError: cannot delete '__doc__' attribute of immutable type 'T' new
+D d None new True TypeError: cannot delete '__doc__' attribute of immutable type 'D' new
+E None None new True TypeError: cannot delete '__doc__' attribute of immutable type 'E' new
+int ... TypeError: cannot set '__doc__' attribute of immutable type 'int' ... True TypeError: cannot set '__doc__' attribute of immutable type 'int' ...
+type ... TypeError: cannot set '__doc__' attribute of immutable type 'type' ... True TypeError: cannot set '__doc__' attribute of immutable type 'type' ...
+M None None new True TypeError: cannot delete '__doc__' attribute of immutable type 'M' new
+getset_descriptor None via the descriptor
+NoneType None NoneType None
+int 5 int 5
+list ['a'] list ['a']
+Descriptor from __get__ of NoneType, A Descriptor from __get__ of A, A
+property property property p
+None True
+[('object.__setattr__', 'A', '__doc__', 'told'), ('object.__setattr__', 'A', '__name__', 'Renamed'), ('object.__setattr__', 'Renamed', '__qualname__', 'Q')]

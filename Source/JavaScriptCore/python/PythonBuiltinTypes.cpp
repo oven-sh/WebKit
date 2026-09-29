@@ -1689,9 +1689,10 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     remember(type, names.dunder_getattribute, Function::TypeGetAttribute);
     remember(type, names.dunder_setattr, Function::TypeSetAttr);
     remember(type, names.dunder_delattr, Function::TypeDelAttr);
+    // check_set_special_type_attr()
     static constexpr auto checkSetSpecial = [] (JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, JSValue value, ASCIILiteral name) {
         if (type->hasFlag(PyType::IsHeapType) && value)
-            return true;
+            return audit(globalObject, "object.__setattr__"_s, type->object(), jsString(globalObject->vm(), String(name)), value);
         raiseTypeError(globalObject, scope, concatenate("cannot "_s, type->hasFlag(PyType::IsHeapType) ? "delete"_s : "set"_s, " '"_s, name, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
         return false;
     };
@@ -1789,6 +1790,12 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         // type_get_doc(): what the class itself has, and if that has a __get__() it is asked what it is for the class.
         JSValue own = getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_doc, jsUndefined());
         return bindDescriptor(globalObject, own, JSValue(), asType(self));
+    }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (!checkSetSpecial(globalObject, scope, asType(self), value, "__doc__"_s))
+            return;
+        asType(self)->setAttribute(vm, vm.pythonNames().dunder_doc, value);
     });
 
     addMethods(globalObject, realm->typeNoneType(), {
