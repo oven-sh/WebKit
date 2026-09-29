@@ -2067,6 +2067,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PyNativeFunction.h
     python/PyObjects.h
     python/PyRealm.h
+    python/PyStateObject.h
     python/PyTuple.h
     python/PyType.h
     python/PythonASDL.h
