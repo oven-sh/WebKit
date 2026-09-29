@@ -35,6 +35,7 @@
 #include "PythonLifecycle.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
+#include "TopExceptionScope.h"
 
 // The module atexit: Modules/atexitmodule.c of CPython.
 

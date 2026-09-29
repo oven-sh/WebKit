@@ -753,6 +753,7 @@ python/PythonASTModule.cpp
 python/PythonASTOptimizer.cpp
 python/PythonASTValidator.cpp
 python/PythonAnnotations.cpp
+python/PythonArrayModule.cpp
 python/PythonAsync.cpp
 python/PythonAtExitModule.cpp
 python/PythonBuiltinFunctions.cpp

@@ -32,6 +32,8 @@
 
 namespace JSC {
 
+class JSArrayBufferView;
+
 namespace Python {
 
 // What an instance of a class that is written in C++ has besides its attributes: what in CPython are the fields of the C struct after PyObject_HEAD. Each such class has a struct derived from this, and an instance
@@ -55,6 +57,15 @@ public:
     virtual void visitChildren(AbstractSlotVisitor&) { }
     // Which struct it is: something that no other has.
     virtual const void* kind() const = 0;
+
+    // For a class whose instances have bytes to show, as a bytearray has: one that has bf_getbuffer in CPython. The bytes are kept in a typed array, so that they are the collector's to account for and to free, and all of it is
+    // what there is to show. Nobody keeps where they are: see Python::Buffer. So it can be made longer or shorter at any time.
+    struct ExportedBytes {
+        JSArrayBufferView* storage;
+        char format; // What an item is, to a memoryview
+        unsigned itemSize;
+    };
+    virtual std::optional<ExportedBytes> exportedBytes() const { return std::nullopt; }
 };
 
 #define PYTHON_NATIVE_STATE(Name) \
@@ -98,6 +109,7 @@ public:
     }
     template<typename State>
     State* tryState() const { return m_state->kind() == State::staticKind() ? static_cast<State*>(m_state.get()) : nullptr; }
+    std::optional<Python::NativeState::ExportedBytes> exportedBytes() const { return m_state->exportedBytes(); }
 
 private:
     PyStateObject(VM& vm, Structure* structure, std::unique_ptr<Python::NativeState>&& state)

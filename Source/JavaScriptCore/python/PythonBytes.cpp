@@ -28,6 +28,7 @@
 
 #include "JSArrayBuffer.h"
 #include "JSGenericTypedArrayViewInlines.h"
+#include "PyStateObject.h"
 #include "PythonBuiltins.h"
 #include "PythonNumbers.h"
 #include "TopExceptionScope.h"
@@ -117,6 +118,12 @@ static JSValue newLike(JSGlobalObject* globalObject, JSValue self, const ByteVec
     return isBytes(self) ? newBytes(globalObject, content) : newByteArray(globalObject, content);
 }
 
+static std::optional<NativeState::ExportedBytes> exportedBytesOf(JSValue value)
+{
+    auto* object = dynamicDowncast<PyStateObject>(value);
+    return object ? object->exportedBytes() : std::nullopt;
+}
+
 std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue value)
 {
     if (!value || !value.isCell())
@@ -131,6 +138,8 @@ std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue value)
         return std::span<const uint8_t>(buffer->impl()->span());
     if (auto* memory = dynamicDowncast<PyMemoryView>(cell))
         return memory->isCContiguous() ? memory->span() : std::nullopt;
+    if (auto exported = exportedBytesOf(cell))
+        return std::span<const uint8_t>(exported->storage->span());
     return std::nullopt;
 }
 
@@ -1517,6 +1526,26 @@ static String hexWithArguments(JSGlobalObject* globalObject, ThrowScope& scope, 
     RELEASE_AND_RETURN(scope, textOrMemoryError(globalObject, hexOf(content.span(), separator, group)));
 }
 
+static unsigned itemSizeOf(char format);
+static char formatOf(TypedArrayType);
+
+unsigned itemSizeOfBuffer(const Buffer& buffer)
+{
+    JSValue object = buffer.storage();
+    if (auto* memory = dynamicDowncast<PyMemoryView>(object))
+        return memory->itemSize();
+    if (auto* view = dynamicDowncast<JSArrayBufferView>(object))
+        return itemSizeOf(formatOf(typedArrayType(view->type())));
+    if (auto exported = exportedBytesOf(object))
+        return exported->itemSize;
+    return 1;
+}
+
+void addBufferMethods(JSGlobalObject* globalObject, PyType* type)
+{
+    addMethods(globalObject, type, { { "__buffer__"_s, builtinGetBuffer }, { "__release_buffer__"_s, builtinReleaseBuffer } });
+}
+
 String hexOfBuffer(JSGlobalObject* globalObject, const NativeArguments& args, const Buffer& buffer)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -2239,8 +2268,18 @@ static T load(std::span<const uint8_t> bytes)
     return value;
 }
 
+// What has bytes to show can say that they are of a kind that a memoryview knows nothing of, as an array of characters does. It can be looked through, and cut up, but not looked into.
+static JSValue raiseFormatNotSupported(JSGlobalObject* globalObject, char format)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    return raise(globalObject, scope, BuiltinType::NotImplementedError, concatenate("memoryview: format "_s, format, " not supported"_s));
+}
+
+// Empty if it raised.
 static JSValue unpackItem(JSGlobalObject* globalObject, char format, std::span<const uint8_t> bytes)
 {
+    if (!itemSizeOf(format)) [[unlikely]]
+        return raiseFormatNotSupported(globalObject, format);
     switch (format) {
     case 'b':
         return jsNumber(load<int8_t>(bytes));
@@ -2294,6 +2333,10 @@ static bool packItem(JSGlobalObject* globalObject, char format, std::span<uint8_
         memcpy(bytes.data(), &number, sizeof(number));
         return true;
     };
+    if (!itemSizeOf(format)) [[unlikely]] {
+        raiseFormatNotSupported(globalObject, format);
+        return false;
+    }
     // fix_error_int(): what has gone wrong is put in this one's own words.
     auto fixError = [&] {
         if (catchException(globalObject, BuiltinType::TypeError))
@@ -2489,6 +2532,11 @@ static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, 
     if (auto* view = dynamicDowncast<JSArrayBufferView>(object))
         layout.format = formatOf(typedArrayType(view->type()));
     layout.itemSize = itemSizeOf(layout.format);
+    if (auto exported = exportedBytesOf(object)) {
+        // Without its format it is taken for bytes, though they are as far apart as they were.
+        layout.format = (flags & FormatBuffer) == FormatBuffer ? exported->format : 'B';
+        layout.itemSize = exported->itemSize;
+    }
     layout.isReadOnly = isBytes(object);
     return PyMemoryView::create(globalObject, object, layout, oneDimension(buffer->size() / layout.itemSize, layout.itemSize));
 }
@@ -2550,6 +2598,8 @@ PYTHON_NATIVE(builtinGetBuffer)
     }
     if ((*flags & WritableBuffer) && isBytes(self))
         return JSValue::encode(raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s));
+    if (exportedBytesOf(self))
+        RELEASE_AND_RETURN(scope, JSValue::encode(memoryViewOf(globalObject, self, *flags)));
     PyMemoryView::Layout layout;
     layout.isReadOnly = isBytes(self);
     return JSValue::encode(PyMemoryView::create(globalObject, self, layout, oneDimension(builtinBufferOf(self)->size(), 1)));
@@ -3058,6 +3108,8 @@ PYTHON_NATIVE(memoryEq)
     bool same = dimensions.size() == otherDimensions.size();
     for (size_t i = 0; same && i < dimensions.size() && (!i || dimensions[i - 1].length); ++i)
         same = dimensions[i].length == otherDimensions[i].length;
+    // What cannot be looked into is equal to nothing.
+    same = same && itemSizeOf(self->format()) && itemSizeOf(otherMemory->format());
     if (same) {
         forEachItem(dimensions, otherDimensions, false, [&] (int64_t distance, int64_t otherDistance) {
             auto a = self->itemAt(distance);

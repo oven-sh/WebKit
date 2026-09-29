@@ -98,6 +98,8 @@ public:
 
     // What CPython has as the `obj` of a Py_buffer: whose bytes they are.
     JS_EXPORT_PRIVATE JSValue object() const;
+    // What is asked where they are, which for a class of a program's is the memoryview that it gave.
+    JSValue storage() const { return m_object; }
     // All of it, one after another, even if it is a memoryview that skips some. That takes flags that allow for one.
     JS_EXPORT_PRIVATE void appendTo(ByteVector&) const;
 
@@ -177,6 +179,10 @@ Buffer bufferOrNothing(JSGlobalObject*, JSValue);
 // The same, raising TypeError if it has none: a bytes-like object is required, not 'str'.
 Buffer bufferOf(JSGlobalObject*, JSValue);
 
+// The `itemsize` of a Py_buffer, which is as it is whether or not the format was asked for
+unsigned itemSizeOfBuffer(const Buffer&);
+// __buffer__() and __release_buffer__(), for a class whose instances have bytes to show: see NativeState::exportedBytes().
+void addBufferMethods(JSGlobalObject*, PyType*);
 // _Py_strhex_bytes_with_sep(), for what is called as bytes.hex() is: (data, sep=<none>, bytes_per_sep=1). A character for each byte. Null if it raised.
 String hexOfBuffer(JSGlobalObject*, const NativeArguments&, const Buffer&);
 String reprOfBytes(std::span<const uint8_t>);

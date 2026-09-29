@@ -207,6 +207,9 @@ arguments first, and only then at how much there is of what it is a method of. A
 `PySlice::unpack()`, which can run anything, and `PySlice::adjust()`, which is told the length as it is afterwards. The end of `programs/buffer-protocol.py` has every
 method shrink what it is working on from within an argument.
 
+A class that is written in C++ and has bytes of its own to show, as `array.array` has, keeps them in a `Uint8Array` that no program ever has hold of, and says so: `NativeState::exportedBytes()`. So they are the collector's to
+account for and to free, `bytearray`'s way of being resized is theirs as well, and `builtinBufferOf()`, and so `Buffer` and `memoryview`, find them as they find anything else's, each time that they are asked.
+
 A `bytearray` is a `Uint8Array` like any other, and until something asks for its `ArrayBuffer` it owns the memory that it is in, and Python changes its length where it is: `JSArrayBufferView::reallocateOwnedStorage()`
 and what is beside it. What is taken from the front of a large one, `del a[:n]`, which is how what has been dealt with is taken out of what has come in, is not made up for by moving the rest. It begins further on, as
 in CPython, and how far on is its `byteOffset`, which is what that would be if it had an `ArrayBuffer`, and is if it is given one. What was given up is given back when it comes to more than what is left.
@@ -750,6 +753,13 @@ Floats are packed by `packFloat2()` and the rest, in `PythonNumbers.cpp`, which 
 
 Turning what is given into numbers can run anything, so `pack_into()` packs into bytes of its own and copies them afterwards, if there is still room where they were to go: see *Where the bytes are is not kept*.
 
+### `array`
+
+`PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see
+*Where the bytes are is not kept*. How many CPython would have room for is kept count of, by its own arithmetic, since `__sizeof__()` shows it.
+
+An array of characters says that its items are `w`, which a `memoryview` knows nothing of. It can be looked through and cut up, and cast to bytes, but not looked into.
+
 ### `binascii`
 
 `PythonBinasciiModule.cpp` is `Modules/binascii.c`. The tables for the two checksums are worked out from their polynomials when it is compiled. `b2a_qp()` goes through what it is given once, where CPython goes through it twice, the
@@ -1058,6 +1068,7 @@ There is nothing that is per process, nothing that is set after something is mad
 - **A set is in the order in which it was added to**, and not in the order of a hash table's slots. What sets do with one another is CPython's `Objects/setobject.c`, function for function: how long each takes, which of two keys that are equal
   is kept, and what is asked of the keys and how often (`programs/sets-with-one-another.py`). The one thing that is otherwise is for the sake of the order: `a ^ b` has what is only in `a` first.
 - **One NaN is another.** A float is a value and not an object, so `x is y` is true of two NaNs, and a set has room for one.
+- **An `array` can be resized while there is a `memoryview` of it**, as a `bytearray` can, where CPython raises `BufferError`. And one that is made shorter and then longer again has zeros where CPython has whatever was left there.
 - **What `struct` is packing into or unpacking from can be resized meanwhile**, as what a regular expression is going through can. If it has been made too short by the time that there is something to write or to read, that is
   `BufferError`.
 - **A NaN has 50 bits to be told from another by, and not 51.** The engine has other uses for some of what would be NaNs, and JavaScript never sees those, because every number that it reads out of memory is made the one NaN

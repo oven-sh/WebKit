@@ -1,0 +1,66 @@
+b 8 cleared => 0 8 8 IndexError: index out of bounds on dimension 1 IndexError: index out of bounds on dimension 1 0 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+b 8 cut to one => 1 8 8 0 IndexError: index out of bounds on dimension 1 1 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+b 8 popped => 7 8 8 0 IndexError: index out of bounds on dimension 1 7 0 [2, 3, 4, 5] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+b 8 added to => 100008 8 8 0 7 8 8 [2, 3, 4, 5] [7] None 8 True 16 8 (1,)
+b 8 cleared and filled again => 8 8 8 7 7 8 8 [7, 7, 7, 7] [7] None 8 True 16 8 (1,)
+b 8 doubled => 16 8 8 0 7 8 8 [2, 3, 4, 5] [7] None 8 True 16 8 (1,)
+b 8 reversed => 8 8 8 7 0 8 8 [5, 4, 3, 2] [0] None 8 True 16 8 (1,)
+b 5000 cleared => 0 5000 5000 IndexError: index out of bounds on dimension 1 IndexError: index out of bounds on dimension 1 0 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+b 5000 cut to one => 1 5000 5000 0 IndexError: index out of bounds on dimension 1 1 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+b 5000 popped => 4999 5000 5000 0 IndexError: index out of bounds on dimension 1 4999 0 [2, 3, 4, 5] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+b 5000 added to => 105000 5000 5000 0 7 5000 5000 [2, 3, 4, 5] [7] None 5000 True 10000 5000 (1,)
+b 5000 cleared and filled again => 8 5000 5000 7 IndexError: index out of bounds on dimension 1 8 0 [7, 7, 7, 7] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+b 5000 doubled => 10000 5000 5000 0 7 5000 5000 [2, 3, 4, 5] [7] None 5000 True 10000 5000 (1,)
+b 5000 reversed => 5000 5000 5000 7 0 5000 5000 [5, 4, 3, 2] [0] None 5000 True 10000 5000 (1,)
+i 8 cleared => 0 8 32 IndexError: index out of bounds on dimension 1 IndexError: index out of bounds on dimension 1 0 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+i 8 cut to one => 1 8 32 0 IndexError: index out of bounds on dimension 1 1 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+i 8 popped => 7 8 32 0 IndexError: index out of bounds on dimension 1 7 0 [2, 3, 4, 5] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+i 8 added to => 100008 8 32 0 7 8 32 [2, 3, 4, 5] [7] None 32 True 64 8 (0,)
+i 8 cleared and filled again => 8 8 32 7 7 8 32 [7, 7, 7, 7] [7] None 32 True 64 8 (0,)
+i 8 doubled => 16 8 32 0 7 8 32 [2, 3, 4, 5] [7] None 32 True 64 8 (0,)
+i 8 reversed => 8 8 32 7 0 8 32 [5, 4, 3, 2] [0] None 32 True 64 8 (0,)
+i 5000 cleared => 0 5000 20000 IndexError: index out of bounds on dimension 1 IndexError: index out of bounds on dimension 1 0 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+i 5000 cut to one => 1 5000 20000 0 IndexError: index out of bounds on dimension 1 1 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+i 5000 popped => 4999 5000 20000 0 IndexError: index out of bounds on dimension 1 4999 0 [2, 3, 4, 5] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+i 5000 added to => 105000 5000 20000 0 7 5000 20000 [2, 3, 4, 5] [7] None 20000 True 40000 5000 (0,)
+i 5000 cleared and filled again => 8 5000 20000 7 IndexError: index out of bounds on dimension 1 8 0 [7, 7, 7, 7] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+i 5000 doubled => 10000 5000 20000 0 7 5000 20000 [2, 3, 4, 5] [7] None 20000 True 40000 5000 (0,)
+i 5000 reversed => 5000 5000 20000 7 0 5000 20000 [5, 4, 3, 2] [0] None 20000 True 40000 5000 (0,)
+d 8 cleared => 0 8 64 IndexError: index out of bounds on dimension 1 IndexError: index out of bounds on dimension 1 0 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+d 8 cut to one => 1 8 64 0.0 IndexError: index out of bounds on dimension 1 1 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+d 8 popped => 7 8 64 0.0 IndexError: index out of bounds on dimension 1 7 0 [2.0, 3.0, 4.0, 5.0] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 8 bytes for unpacking 1 bytes at offset 7 (actual buffer size is 0)
+d 8 added to => 100008 8 64 0.0 7.0 8 64 [2.0, 3.0, 4.0, 5.0] [7.0] None 64 True 128 8 (0,)
+d 8 cleared and filled again => 8 8 64 7.0 7.0 8 64 [7.0, 7.0, 7.0, 7.0] [7.0] None 64 True 128 8 (64,)
+d 8 doubled => 16 8 64 0.0 7.0 8 64 [2.0, 3.0, 4.0, 5.0] [7.0] None 64 True 128 8 (0,)
+d 8 reversed => 8 8 64 7.0 0.0 8 64 [5.0, 4.0, 3.0, 2.0] [0.0] None 64 True 128 8 (64,)
+d 5000 cleared => 0 5000 40000 IndexError: index out of bounds on dimension 1 IndexError: index out of bounds on dimension 1 0 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+d 5000 cut to one => 1 5000 40000 0.0 IndexError: index out of bounds on dimension 1 1 0 [] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+d 5000 popped => 4999 5000 40000 0.0 IndexError: index out of bounds on dimension 1 4999 0 [2.0, 3.0, 4.0, 5.0] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+d 5000 added to => 105000 5000 40000 0.0 7.0 5000 40000 [2.0, 3.0, 4.0, 5.0] [7.0] None 40000 True 80000 5000 (0,)
+d 5000 cleared and filled again => 8 5000 40000 7.0 IndexError: index out of bounds on dimension 1 8 0 [7.0, 7.0, 7.0, 7.0] [] IndexError: index out of bounds on dimension 1 0 False 0 IndexError: index out of bounds on dimension 1 error: unpack_from requires a buffer of at least 5000 bytes for unpacking 1 bytes at offset 4999 (actual buffer size is 0)
+d 5000 doubled => 10000 5000 40000 0.0 7.0 5000 40000 [2.0, 3.0, 4.0, 5.0] [7.0] None 40000 True 80000 5000 (0,)
+d 5000 reversed => 5000 5000 40000 7.0 0.0 5000 40000 [5.0, 4.0, 3.0, 2.0] [0.0] None 40000 True 80000 5000 (64,)
+---- itself
+b None [1, 2, 3, 1, 2, 3] None [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3] None 24 None 27
+B None [1, 2, 3, 1, 2, 3] None [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3] None 24 None 27
+None [1, 2, 3, 1, 2, 3] None [1, 1, 2, 3, 1, 2, 3, 3, 1, 2, 3]
+---- while something is being written into it
+pack_into cleared => BufferError: the buffer was made shorter while it was being packed into 0 []
+through a view cleared => IndexError: index out of bounds on dimension 1 0 []
+readinto cleared => 8 8
+pack_into cut to one => BufferError: the buffer was made shorter while it was being packed into 1 [0]
+through a view cut to one => IndexError: index out of bounds on dimension 1 1 [0]
+readinto cut to one => 8 8
+pack_into popped => BufferError: the buffer was made shorter while it was being packed into 7 [5, 6]
+through a view popped => IndexError: index out of bounds on dimension 1 7 [5, 6]
+readinto popped => 8 8
+pack_into added to => None 100008 [5, 5]
+through a view added to => None 100008 [5, 5]
+readinto added to => 8 8
+---- a great many, so that there is collecting
+200 0 []
+---- what JavaScript sees
+object | 3 |  |  | 1,2,3 | 3 | array('i', [1, 2, 3]) | i | 4 | 3 | false
+1,2,3,4 array('i', [1, 2, 3, 4])
+i | 16 | 1,2,3,4
+an Int32Array is what it was: [('Int32Array', 'i', [5, 6], [5, 6], [5, 6], 'TypeError: a bytes-like object is required', None)]
