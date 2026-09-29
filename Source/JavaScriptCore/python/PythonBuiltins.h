@@ -205,6 +205,7 @@ JSObject* createHeapqModule(JSGlobalObject*);
 JSObject* createBisectModule(JSGlobalObject*);
 JSObject* createCMathModule(JSGlobalObject*);
 JSObject* createSymtableModule(JSGlobalObject*);
+JSObject* createCSVModule(JSGlobalObject*);
 JSObject* createArrayModule(JSGlobalObject*);
 JSObject* createBinasciiModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);

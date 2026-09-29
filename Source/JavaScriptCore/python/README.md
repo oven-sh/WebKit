@@ -826,6 +826,14 @@ the same from one run of CPython to the next, nor here.
 **What a `SyntaxError` is made of depends on what found it.** The parser and the code generator make one of what is wrong and where. `symtable.c` and `future.c` make one of what is wrong, and then tell it where by setting its
 attributes, so its `args` is the message alone, and so is what `repr()` shows. `FoundIn::WhatNamesReferTo` in `PythonCompiler.cpp` is those two.
 
+### `_csv`
+
+`PythonCSVModule.cpp` is `Modules/_csv.c`, which `csv` is written over. There is nothing in Python to take its place. What reads goes from one state to another a character at a time, just as there. A character is what Python
+takes for one, so what JavaScript has as two halves is one. CPython goes through each field twice to write it, once to find how much room it wants and whether it is to be quoted; here what was written is thrown away if it turns
+out that it was to be.
+
+`Dialect()` takes its arguments apart by something that does not say what it is called, so what is wrong with them is said of "function", or of "this function". A signature says so with `?` for the name.
+
 ### `array`
 
 `PythonArrayModule.cpp` is `Modules/arraymodule.c`. An array is one kind of cell whatever it is an array of, with a table of what is done for each kind of item, as in CPython. Its items are in a `Uint8Array` of its own: see

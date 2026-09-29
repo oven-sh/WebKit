@@ -338,6 +338,10 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
     }
 
     // _PyArg_UnpackKeywords() of CPython's Python/getargs.c
+    // What does not say what it is called, in what it takes its arguments apart by, is "function", or "this function" where something is said to have been done to it. A signature says so by "?" for the name.
+    bool isAnonymous = signature.functionName() == "?"_s;
+    String called = isAnonymous ? String("function"_s) : concatenate(name, "()"_s);
+    String subject = isAnonymous ? String("this function"_s) : called;
     auto& names = signature.names();
     unsigned positionalOnly = signature.positionalOnlyCount();
     unsigned minimumPositionalOnly = std::min(positionalOnly, minimum);
@@ -347,16 +351,16 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
 
     // zip_new() and map_new() take their keywords apart on their own, as those of something that is given nothing else.
     if (PyRealm* realm = globalObject->pyRealm(); keywordCount > 1 && function->takesArgumentsOfTheClass() && (function->owner() == realm->typeZip() || function->owner() == realm->typeMap()))
-        return fail(concatenate(name, "() takes at most 1 keyword argument ("_s, keywordCount, " given)"_s));
+        return fail(concatenate(called, " takes at most 1 keyword argument ("_s, keywordCount, " given)"_s));
     if (!hasVarPositional && !signature.hasVarKeywords() && given + keywordCount > total)
-        return fail(concatenate(name, "() takes at most "_s, total, given ? " "_s : " keyword "_s, "argument"_s, plural(total), " ("_s, given + keywordCount, " given)"_s));
+        return fail(concatenate(called, " takes at most "_s, total, given ? " "_s : " keyword "_s, "argument"_s, plural(total), " ("_s, given + keywordCount, " given)"_s));
     if (!hasVarPositional && given > maximum) {
         if (!maximum)
-            return fail(concatenate(name, "() takes no positional arguments"_s));
-        return fail(concatenate(name, "() takes "_s, minimum < maximum ? "at most "_s : "exactly "_s, maximum, " positional argument"_s, plural(maximum), " ("_s, given, " given)"_s));
+            return fail(concatenate(called, " takes no positional arguments"_s));
+        return fail(concatenate(called, " takes "_s, minimum < maximum ? "at most "_s : "exactly "_s, maximum, " positional argument"_s, plural(maximum), " ("_s, given, " given)"_s));
     }
     if (given < minimumPositionalOnly)
-        return fail(concatenate(name, "() takes "_s, hasVarPositional || minimumPositionalOnly < maximum ? "at least "_s : "exactly "_s, minimumPositionalOnly, " positional argument"_s, plural(minimumPositionalOnly), " ("_s, given, " given)"_s));
+        return fail(concatenate(called, " takes "_s, hasVarPositional || minimumPositionalOnly < maximum ? "at least "_s : "exactly "_s, minimumPositionalOnly, " positional argument"_s, plural(minimumPositionalOnly), " ("_s, given, " given)"_s));
 
     auto isGivenByName = [&] (const String& parameter) {
         for (unsigned k = 0; k < keywordCount; ++k) {
@@ -373,14 +377,14 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
             continue;
         }
         if (i < minimum || (maximum <= i && i < requiredLimit))
-            return fail(concatenate(name, "() missing required argument '"_s, names[i], "' (pos "_s, i + 1, ')'));
+            return fail(concatenate(called, " missing required argument '"_s, names[i], "' (pos "_s, i + 1, ')'));
     }
     if (!unmatched || signature.hasVarKeywords())
         return true;
 
     for (unsigned i = positionalOnly; i < byPosition; ++i) {
         if (isGivenByName(names[i]))
-            return fail(concatenate("argument for "_s, name, "() given by name ('"_s, names[i], "') and position ("_s, i + 1, ')'));
+            return fail(concatenate("argument for "_s, called, " given by name ('"_s, names[i], "') and position ("_s, i + 1, ')'));
     }
     Vector<String> candidates;
     for (unsigned i = positionalOnly; i < total; ++i)
@@ -391,10 +395,10 @@ bool checkArgumentsSlow(JSGlobalObject* globalObject, CallFrame* callFrame)
             continue;
         String suggestion = calculateSuggestion(candidates, keyword);
         if (!suggestion.isNull())
-            return fail(concatenate(name, "() got an unexpected keyword argument '"_s, keyword, "'. Did you mean '"_s, suggestion, "'?"_s));
-        return fail(concatenate(name, "() got an unexpected keyword argument '"_s, keyword, '\''));
+            return fail(concatenate(subject, " got an unexpected keyword argument '"_s, keyword, "'. Did you mean '"_s, suggestion, "'?"_s));
+        return fail(concatenate(subject, " got an unexpected keyword argument '"_s, keyword, '\''));
     }
-    return fail(concatenate("invalid keyword argument for "_s, name, "()"_s));
+    return fail(concatenate("invalid keyword argument for "_s, subject));
 }
 
 JSValue NativeArguments::givenByName(unsigned index) const

@@ -320,9 +320,9 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         return "Ellipsis"_s;
 
     if (type->isExceptionType()) {
-        // ValueError('message')
+        // ValueError('message'). _PyType_Name(): without where the class is from, which one that is written in C++ and is not in builtins has as part of what it is called.
         PyTuple* arguments = exceptionArguments(globalObject, value);
-        builder.append(type->nameString(globalObject), '(');
+        builder.append(type->nameWithoutModule(globalObject), '(');
         appendItems(globalObject, builder, arguments->length(), [&] (unsigned i) { return arguments->at(i); });
         RETURN_IF_EXCEPTION(scope, { });
         builder.append(')');
