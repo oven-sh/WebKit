@@ -402,7 +402,7 @@ PYTHON_NATIVE(objectNew)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("object.__new__("_s, type->nameString(globalObject), ") is not safe, use "_s, builtin->nameString(globalObject), ".__new__()"_s)));
     }
     if (hasExcessArguments(args)) {
-        if (type->lookup(vm, names.dunder_new).asCell() != realm->function(PyRealm::WellKnownFunction::ObjectNew))
+        if (!type->newIsThatOfObject(globalObject))
             return JSValue::encode(raiseTypeError(globalObject, scope, "object.__new__() takes exactly one argument (the type to instantiate)"_s));
         if (type->lookup(vm, names.dunder_init).asCell() == realm->function(PyRealm::WellKnownFunction::ObjectInit))
             return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), "() takes no arguments"_s)));
@@ -455,7 +455,7 @@ PYTHON_NATIVE(objectInit)
         PyType* type = typeOf(globalObject, args[0]);
         if (type->lookup(vm, names.dunder_init).asCell() != realm->function(PyRealm::WellKnownFunction::ObjectInit))
             return JSValue::encode(raiseTypeError(globalObject, scope, "object.__init__() takes exactly one argument (the instance to initialize)"_s));
-        if (!type->cannotBeInstantiated(vm) && type->lookup(vm, names.dunder_new).asCell() == realm->function(PyRealm::WellKnownFunction::ObjectNew))
+        if (!type->cannotBeInstantiated(vm) && type->newIsThatOfObject(globalObject))
             return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), ".__init__() takes exactly one argument (the instance to initialize)"_s)));
     }
     RETURN_NONE();
@@ -1889,6 +1889,7 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
             type->setFlag(PyType::IsAbstract);
         else
             type->clearFlag(PyType::IsAbstract);
+        type->constructionMayHaveChanged(vm);
     });
     addGetSet(globalObject, type, "__bases__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->bases(); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) { setBases(globalObject, asType(self), value); });
     addGetSet(globalObject, type, "__base__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->base() ? JSValue(asType(self)->base()->object()) : jsUndefined(); });

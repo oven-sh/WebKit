@@ -6382,6 +6382,10 @@ void SpeculativeJIT::compile(Node* node)
     case PyCheckPendingWork:
         compilePyCheckPendingWork(node);
         break;
+
+    case PyCheckInitializerResult:
+        compilePyCheckInitializerResult(node);
+        break;
     case PyFloorDiv:
     case PyMod:
         compilePyFloorDivOrMod(node);

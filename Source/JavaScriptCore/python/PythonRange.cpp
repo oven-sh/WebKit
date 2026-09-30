@@ -447,10 +447,29 @@ PYTHON_SHARED_NATIVE(sliceIndices)
     return JSValue::encode(PyTuple::create(globalObject, { start, stop, step }));
 }
 
+// range_vectorcall()
+static JSValue rangeVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    // All but always they are ints that are not BigInts, and the last of them is not 0.
+    if (!arguments.size() || arguments.size() > 3)
+        return { };
+    int32_t values[3] = { 0, 0, 1 };
+    for (unsigned i = 0; i < arguments.size(); ++i) {
+        Number number = classify(arguments.at(i));
+        if (number.kind != Number::Kind::Small || arguments.at(i).isBoolean())
+            return { };
+        values[arguments.size() == 1 ? 1 : i] = number.small;
+    }
+    if (!values[2])
+        return { };
+    return PyRange::create(globalObject, jsNumber(values[0]), jsNumber(values[1]), jsNumber(values[2]));
+}
+
 void initializeRangeType(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     PyType* range = globalObject->pyRealm()->typeRange();
+    range->setVectorcall(rangeVectorcall);
     range->setInstanceStructure(vm, PyRange::createStructure(vm, globalObject, range));
     addMethods(globalObject, range, {
         { "__new__"_s, rangeNew, PyNativeFunction::Kind::New },

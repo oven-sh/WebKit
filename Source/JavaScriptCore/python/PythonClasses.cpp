@@ -403,6 +403,7 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         return true;
     });
     RETURN_IF_EXCEPTION(scope, { });
+    type->updateWhetherNewIsLookedFor(vm);
 
     // The module is that of whoever is making the class, if the namespace does not say.
     if (!type->lookupOwn(vm, names.dunder_module)) {

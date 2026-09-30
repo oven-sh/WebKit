@@ -820,12 +820,108 @@ PYTHON_NATIVE(reversedNew)
 
 // ---- Setting them up
 
+// list_vectorcall()
+static JSValue listVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (arguments.size() > 1)
+        return { };
+    JSArray* list = newList(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (arguments.size()) {
+        listExtend(globalObject, list, arguments.at(0));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return list;
+}
+
+// tuple_vectorcall()
+static JSValue tupleVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    if (!arguments.size())
+        return globalObject->pyRealm()->emptyTuple();
+    if (arguments.size() == 1)
+        return tupleFromIterable(globalObject, arguments.at(0));
+    return { };
+}
+
+// dict_vectorcall(), with nothing to put in it.
+static JSValue dictVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    if (arguments.size())
+        return { };
+    return PyDict::create(globalObject->vm(), globalObject->pyRealm()->typeDict()->instanceStructure());
+}
+
+// set_vectorcall()
+static JSValue setVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    if (arguments.size() > 1)
+        return { };
+    return setFromIterable(globalObject, globalObject->pyRealm()->typeSet()->instanceStructure(), arguments.size() ? arguments.at(0) : JSValue());
+}
+
+// frozenset_vectorcall()
+static JSValue frozenSetVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    if (arguments.size() > 1)
+        return { };
+    // A frozenset of a frozenset is that one.
+    if (arguments.size() && isExactly(globalObject, arguments.at(0), BuiltinType::FrozenSet))
+        return arguments.at(0);
+    return setFromIterable(globalObject, globalObject->pyRealm()->typeFrozenSet()->instanceStructure(), arguments.size() ? arguments.at(0) : JSValue());
+}
+
+// enumerate_vectorcall(), from the beginning.
+static JSValue enumerateVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (arguments.size() != 1)
+        return { };
+    JSValue iterator = getIterator(globalObject, arguments.at(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    return PyIterator::create(globalObject, globalObject->pyRealm()->typeEnumerate()->instanceStructure(), PyIterator::Kind::Enumerate, iterator, JSValue(), 0);
+}
+
+// map_vectorcall(), of one thing.
+static JSValue mapVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (arguments.size() != 2)
+        return { };
+    JSValue iterator = getIterator(globalObject, arguments.at(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    PyTuple* iterators = PyTuple::create(globalObject, 1);
+    iterators->initializeAt(vm, 0, iterator);
+    return PyIterator::create(globalObject, globalObject->pyRealm()->type(BuiltinType::Map)->instanceStructure(), PyIterator::Kind::Map, arguments.at(0), iterators, false);
+}
+
+// filter_vectorcall()
+static JSValue filterVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (arguments.size() != 2)
+        return { };
+    JSValue iterator = getIterator(globalObject, arguments.at(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    return PyIterator::create(globalObject, globalObject->pyRealm()->type(BuiltinType::Filter)->instanceStructure(), PyIterator::Kind::Filter, arguments.at(0), iterator);
+}
+
 void initializeContainerTypes(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
     PyRealm* realm = globalObject->pyRealm();
     using Kind = PyNativeFunction::Kind;
+    realm->typeList()->setVectorcall(listVectorcall);
+    realm->typeTuple()->setVectorcall(tupleVectorcall);
+    realm->typeDict()->setVectorcall(dictVectorcall);
+    realm->typeSet()->setVectorcall(setVectorcall);
+    realm->typeFrozenSet()->setVectorcall(frozenSetVectorcall);
+    realm->typeEnumerate()->setVectorcall(enumerateVectorcall);
+    realm->type(BuiltinType::Map)->setVectorcall(mapVectorcall);
+    realm->type(BuiltinType::Filter)->setVectorcall(filterVectorcall);
     auto makeUnhashable = [&] (PyType* type) { type->putDirect(vm, names.dunder_hash, jsUndefined()); };
 
     PyType* list = realm->typeList();

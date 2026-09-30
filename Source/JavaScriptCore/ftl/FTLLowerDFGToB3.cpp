@@ -1855,6 +1855,9 @@ private:
         case CheckTraps:
             compileCheckTraps();
             break;
+        case PyCheckInitializerResult:
+            compilePyCheckInitializerResult();
+            break;
         case CreateRest:
             compileCreateRest();
             break;
@@ -20107,6 +20110,21 @@ IGNORE_CLANG_WARNINGS_END
             [=, &vm] (const Vector<Location>&) -> RefPtr<LazySlowPath::Generator> {
                 return createLazyCallGenerator(vm, operationHandleTraps, InvalidGPRReg, CCallHelpers::TrustedImmPtr(globalObject));
             });
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+    }
+
+    void compilePyCheckInitializerResult()
+    {
+        LBasicBlock isNotNone = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LValue value = lowJSValue(m_node->child1());
+        m_out.branch(m_out.equal(value, m_out.constInt64(JSValue::encode(jsUndefined()))), usually(continuation), rarely(isNotNone));
+
+        LBasicBlock lastNext = m_out.appendTo(isNotNone, continuation);
+        vmCall(Void, operationPyRaiseInitializerResult, weakPointer(m_graph.globalObjectFor(m_origin.semantic)), value);
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);

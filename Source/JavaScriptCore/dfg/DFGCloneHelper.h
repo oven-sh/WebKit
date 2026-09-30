@@ -353,6 +353,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(PyLeave, Common) \
     CLONE_STATUS(PyCheckNoFrameObject, Common) \
     CLONE_STATUS(PyCheckPendingWork, Common) \
+    CLONE_STATUS(PyCheckInitializerResult, Common) \
     CLONE_STATUS(PutClosureVar, Common) \
     CLONE_STATUS(PutGlobalVariable, Common) \
     CLONE_STATUS(PutInternalField, Common) \

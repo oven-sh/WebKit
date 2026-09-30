@@ -207,6 +207,8 @@ namespace JSC { namespace DFG {
     macro(PyCheckNoFrameObject, NodeMustGenerate) \
     /* Going round a loop again: what has been put off until now. */\
     macro(PyCheckPendingWork, NodeMustGenerate) \
+    /* Raises TypeError if what __init__() returned is not None. It has been called by then, so there is no leaving this for the baseline JIT to do again. */ \
+    macro(PyCheckInitializerResult, NodeMustGenerate) \
     /* What fixup makes of PyBinaryOp on Int32s. They round down, so that the remainder has the sign of what it is divided by. Dividing by 0, and what does not fit, are for the baseline JIT. */\
     macro(PyFloorDiv, NodeResultInt32) \
     macro(PyMod, NodeResultInt32) \

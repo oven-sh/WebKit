@@ -1,0 +1,39 @@
+---- C(5)
+as it stands => ('C', [('x', 5)]) THEN ('C', [('x', 5)])
+another __init__ => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+another in the base => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+none => ('C', [('x', 5)]) THEN TypeError: C() takes no arguments
+a __new__ => ('C', [('x', 5)]) THEN made otherwise
+one that returns something => ('C', [('x', 5)]) THEN TypeError: __init__() should return None, not 'int'
+one that raises => ('C', [('x', 5)]) THEN ZeroDivisionError: division by zero
+---- new C(5)
+as it stands => ('C', [('x', 5)]) THEN ('C', [('x', 5)])
+another __init__ => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+another in the base => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+none => ('C', [('x', 5)]) THEN TypeError: C() takes no arguments
+a __new__ => ('C', [('x', 5)]) THEN made otherwise
+one that returns something => ('C', [('x', 5)]) THEN TypeError: __init__() should return None, not 'int'
+one that raises => ('C', [('x', 5)]) THEN ZeroDivisionError: division by zero
+---- C.call(null, 5)
+as it stands => ('C', [('x', 5)]) THEN ('C', [('x', 5)])
+another __init__ => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+another in the base => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+none => ('C', [('x', 5)]) THEN TypeError: C() takes no arguments
+a __new__ => ('C', [('x', 5)]) THEN made otherwise
+one that returns something => ('C', [('x', 5)]) THEN TypeError: __init__() should return None, not 'int'
+one that raises => ('C', [('x', 5)]) THEN ZeroDivisionError: division by zero
+---- Reflect.construct(C, [5])
+as it stands => ('C', [('x', 5)]) THEN ('C', [('x', 5)])
+another __init__ => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+another in the base => ('C', [('x', 5)]) THEN ('C', [('other', 5)])
+none => ('C', [('x', 5)]) THEN TypeError: C() takes no arguments
+a __new__ => ('C', [('x', 5)]) THEN made otherwise
+one that returns something => ('C', [('x', 5)]) THEN TypeError: __init__() should return None, not 'int'
+one that raises => ('C', [('x', 5)]) THEN ZeroDivisionError: division by zero
+---- with nothing to be given
+as it stands => ('C', []) THEN ('C', [])
+an __init__ => ('C', []) THEN ('C', [('other', 0)])
+given something all the same => TypeError: C() takes no arguments THEN ('C', [('other', 1)])
+---- of which nothing is kept
+nothing is made of it => 4999 THEN ZeroDivisionError: division by zero
+only what it has => 4999 THEN None

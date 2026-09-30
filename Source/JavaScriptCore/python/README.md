@@ -274,6 +274,28 @@ from those in the same way. What is in a slot is a property under a private name
 `time.struct_time`, `os.stat_result` and a few more can, and programs do. Those of them that are derived from `tuple` are `IsDerivedFromBuiltin`, so that nothing is done to one as to a tuple without looking at what its
 class now has. Giving such a class a `__name__` is giving it all that it is called, as in CPython: what module it is in, which had been the first part of that, is `__module__` from then on.
 
+### Calling a class
+
+To JavaScript a class is a function that is written in C++, as `Map` and `Array` are, and `PyType` is an `InternalFunction` as their constructors are. So what calls one remembers it, and goes straight to `callType()`, in every tier.
+
+`C(...)` is `type(C).__call__(C, ...)`, which for nearly every class is `type.__call__()`: `__new__()`, and then `__init__()` (`instantiate()`). Both are looked for, and each is called from C++, which is a good deal to do for what a program does all the
+time. CPython has two ways round it, and so has this.
+
+- **`tp_new` and `tp_init`** are kept as they should be while a class and its bases are changed. `PyType::Construction` is what calling the class comes to where `tp_new` would be `object_new()`: an instance is made, with such a structure, and given to such a
+  function. It is worked out when it is first wanted, and forgotten when the class, or anything that it is derived from, is given a `__new__` or an `__init__` or has one taken away, has other bases, or has something left in it for others to do
+  (`constructionMayHaveChanged()`). A class of some other class than `type` has none.
+- **`tp_vectorcall`**: `int`, `str`, `float`, `bool`, `list`, `tuple`, `dict`, `set`, `frozenset`, `range`, `enumerate`, `map` and `filter` are called without either being looked for (`PyType::setVectorcall()`). A class that is derived from one is not. What is
+  here does what is ordinary, and leaves the rest to `__new__()` and `__init__()`, which is where it is said what is wrong with the arguments.
+- `object.__init__()` does nothing if the class has a `__new__()` of its own, whatever it is given, so it is not called.
+
+**The DFG goes by the first of those** (`handleConstantFunction()`). `P(x, y)` is a `NewObject`, a `Call` of `P.__init__` as one function calls another, and `PyCheckInitializerResult`, for as long as `Construction::isAsFound` holds. A `PyInstance` is a `JSFinalObject` in all
+but name, so what makes the one in line makes the other. If `__init__()` returns something, that cannot be left to the baseline JIT to say, which would call it again, so it is said there. It is so whichever language does the calling, so the FTL has all three.
+
+**`tp_new` stays `slot_tp_new()` once it has been that.** A class that is given a `__new__` and has it taken away again finds that of `object` when it looks. But `update_one_slot()` leaves `tp_new` as it is when what it finds is what a built-in class has, and
+`object.__new__()` goes by `tp_new` to tell whose the arguments are. So `C(5)` is then a `TypeError`, for that class and for whatever is derived from it, then or later: `PyType::NewIsLookedFor`.
+
+`programs/making-a-great-many.py` makes instances until what does so has been compiled, changes something that it depends on, and makes some more. `interop/classes-that-javascript-calls-often.py` is the same from JavaScript, often enough for the FTL.
+
 ### Names
 
 | | |
@@ -464,6 +486,8 @@ makes for itself does. It is by the table that JavaScriptCore knows whether ther
 - The operations that make a function when there is no room to do it in line are one for each structure that a function of JavaScript's can have, and were chosen without asking whose it is (`selectNewFunctionOperation()`). And the DFG made every generator one of
   JavaScript's (`JSGenerator::selectStructureForNewGenerator()`). `interop/what-is-made-by-code-that-is-run-often.py`
 - Until an `ArrayBuffer` has been detached, the DFG takes it that a view is as long as it ever was. A `bytearray` that is made longer or shorter where it is says that one has been (`JSArrayBufferView::didChangeOwnedStorage()`).
+- A `WatchpointSet` that a plan means to watch was kept only by whatever the plan kept, and a status does not keep what its variants have: it lets go of those that turn out not to matter, and the collector has it let go of those with something dead in
+  them. A class has another set in place of one that has fired, so the plan could be left asking something that was no longer there whether it still held, and then adding to it. `DesiredWatchpoints::addLazily(Ref<WatchpointSet>&&)`
 - What has been compiled and not yet installed kept from the collector whatever the function had in its variables when compiling was begun, for as long as it waited, which could be for good. It lets go of them when compiling is over, and refers weakly to what it
   will refer to weakly once it is installed: if any of that goes, so does it (`Plan::isKnownToBeLiveAfterGC()`).
 

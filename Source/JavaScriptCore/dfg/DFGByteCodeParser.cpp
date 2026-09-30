@@ -100,7 +100,9 @@
 #include "PropertyInlineCache.h"
 #include "PutByIdFlags.h"
 #include "PutByStatus.h"
+#include "PyInstance.h"
 #include "PyTuple.h"
+#include "PyType.h"
 #include "PythonOperations.h"
 #include "RegExpConstructor.h"
 #include "RegExpObjectInlines.h"
@@ -6751,6 +6753,38 @@ bool ByteCodeParser::handleConstantFunction(
     // unlikely that the result operand would be invalid - you'd have to call this via a setter call.
     if (!result.isValid())
         return false;
+
+    if (auto* type = dynamicDowncast<PyType>(function)) {
+        // PyType::Construction: an instance is made, and __init__() is called with it, as one function calls another.
+        if (kind != CodeSpecializationKind::CodeForCall || function->realm() != m_inlineStackTop->m_codeBlock->globalObject())
+            return false;
+        // What says that there are keywords among the arguments comes where `this` does.
+        Node* thisArgument = get(virtualRegisterForArgumentIncludingThis(0, registerOffset));
+        if (!thisArgument->isConstant() || !thisArgument->asJSValue().isUndefined())
+            return false;
+        RefPtr<PyType::Construction> construction = type->constructionConcurrently();
+        if (!construction || !construction->isAsFound->isStillValid())
+            return false;
+        // It takes none, and says so.
+        if (!construction->initializer && argumentCountIncludingThis > 1)
+            return false;
+        static_assert(sizeof(PyInstance) == sizeof(JSFinalObject));
+
+        insertChecks();
+        m_graph.watchpoints().addLazily(Ref { construction->isAsFound });
+        Node* instance = addToGraph(NewObject, OpInfo(m_graph.registerStructure(construction->structure)));
+        if (construction->initializer) {
+            addVarArgChild(weakJSConstant(construction->initializer));
+            addVarArgChild(jsConstant(jsUndefined()));
+            addVarArgChild(instance);
+            for (int i = 1; i < argumentCountIncludingThis; ++i)
+                addVarArgChild(get(virtualRegisterForArgumentIncludingThis(i, registerOffset)));
+            m_parameterSlots = std::max<size_t>(m_parameterSlots, Graph::parameterSlotsForArgCount(argumentCountIncludingThis + 1));
+            addToGraph(PyCheckInitializerResult, addToGraph(Node::VarArg, Call, OpInfo(), OpInfo(SpecOther)));
+        }
+        set(result, instance);
+        return true;
+    }
 
     if (function->classInfo() == ArrayConstructor::info()) {
         if (kind == CodeSpecializationKind::CodeForConstruct) {

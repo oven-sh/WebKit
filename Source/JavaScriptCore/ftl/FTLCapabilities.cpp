@@ -172,6 +172,7 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case AssertNotEmpty:
     case CheckIdent:
     case CheckTraps:
+    case PyCheckInitializerResult:
     case StringCharCodeAt:
     case StringCodePointAt:
     case StringFromCharCode:

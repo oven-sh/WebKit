@@ -85,6 +85,9 @@ public:
         IsDerivedFromBuiltin = 1 << 17,
         // What it has for __add__ and __mul__ is written in C++ and is what CPython has as sq_concat and sq_repeat, with nothing for a number. See isSequenceSlot().
         AddsAsSequence = 1 << 18,
+        // Its tp_new, in CPython, would be slot_tp_new(), which looks for __new__. It is so once a __new__ that a program wrote has been found for the class, and stays so if there comes to be none: update_one_slot() then
+        // leaves tp_new as it is. What object.__new__() and object.__init__() make of arguments goes by it.
+        NewIsLookedFor = 1 << 19,
 
         // What follows depends on the attributes of the class and of its bases, which can be set at any time. See hooks().
         HasCustomGetAttribute = 1 << 8, // __getattribute__ is not object's or type's.
@@ -126,7 +129,11 @@ public:
     JSObject* prototypeObject() { return m_javaScriptPrototype ? m_javaScriptPrototype.get() : this; }
 
     PyType* metatype() const { return m_metatype.get(); }
-    void setMetatype(VM& vm, PyType* metatype) { m_metatype.set(vm, this, metatype); }
+    void setMetatype(VM& vm, PyType* metatype)
+    {
+        m_metatype.set(vm, this, metatype);
+        constructionMayHaveChanged(vm);
+    }
     PyType* base() const { return m_base.get(); }
     PyTuple* bases() const { return m_bases.get(); }
     PyTuple* mro() const { return m_mro.get(); }
@@ -158,6 +165,11 @@ public:
     using Allocator = JSObject* (*)(VM&, Structure*);
     Allocator allocator() const { return m_allocator; }
     void setAllocator(Allocator allocator) { m_allocator = allocator; }
+
+    // tp_vectorcall: what calling the class does, for one that is built in and is called so often that CPython has that done without looking for __new__() and __init__(). A class that is derived from it does not have it.
+    // It is given what there is if none of it is by name, and comes back with nothing, and nothing raised, for what it leaves to those two. That is whatever is out of the ordinary, and all that is wrong.
+    using Vectorcall = JSValue (*)(JSGlobalObject*, const ArgList&);
+    void setVectorcall(Vectorcall vectorcall) { m_vectorcall = vectorcall; }
     int itemSize() const { return m_itemSize; }
     int dictOffset() const { return m_dictOffset; }
     int weakReferenceOffset() const { return m_weakReferenceOffset; }
@@ -224,6 +236,30 @@ public:
     // The same, for a class that is derived from `base`.
     static Structure* createInstanceStructure(VM&, JSGlobalObject*, PyType* base, JSObject* prototype);
 
+    // What calling the class comes to, where that is to make a plain instance and give it to a function: type_call(), for a class whose tp_new is object_new(). CPython keeps tp_new and tp_init as they should be while a
+    // class and its bases are changed, and this is kept so too. What is in it is kept by the class, for as long as it holds.
+    struct Construction : public ThreadSafeRefCounted<Construction> {
+        Construction(Structure* structure, JSObject* initializer)
+            : structure(structure)
+            , initializer(initializer)
+            , isAsFound(WatchpointSet::create(IsWatched))
+        {
+        }
+
+        Structure* const structure;
+        JSObject* const initializer; // The __init__ that the class has, which is a function. Null if it is that of object, which does nothing.
+        const Ref<WatchpointSet> isAsFound;
+    };
+    // Null if it is not so simple.
+    Construction* construction(JSGlobalObject*);
+    // From any thread. Null as well if nobody has yet had reason to find out.
+    RefPtr<Construction> constructionConcurrently();
+    void constructionMayHaveChanged(VM&);
+    // update_one_slot(), for tp_new: when the class has been made, and when it or something that it is derived from is given a __new__ or has one taken away.
+    void updateWhetherNewIsLookedFor(VM&);
+    // Whether tp_new would be object_new().
+    bool newIsThatOfObject(JSGlobalObject*) const;
+
     // What calling it does, for what has the arguments somewhere other than on the stack.
     JSValue call(JSGlobalObject*, const ArgList&, JSCellButterfly* keywordNames);
     // What JavaScript finds when it looks for a property of an instance and comes to the class, or looks for one of the class. See
@@ -257,6 +293,8 @@ private:
     Vector<Weak<PyType>> m_subclasses;
     size_t m_subclassCountToSweepAt { 0 };
     Ref<WatchpointSet> m_instanceAccessIsAsFound;
+    RefPtr<Construction> m_construction; // Set with the lock of the cell held, for constructionConcurrently().
+    bool m_knowsConstruction { false };
     Layout m_layout { Layout::Object };
     int m_basicSize { 0 };
     int m_itemSize { 0 };
@@ -264,6 +302,7 @@ private:
     int m_weakReferenceOffset { 0 };
     unsigned long m_flagsForPython { 0 };
     Allocator m_allocator { nullptr };
+    Vectorcall m_vectorcall { nullptr };
     bool m_isCPythons { false }; // It is built in, and is a class that CPython has, so that those are what CPython says of it.
     ErrorType m_errorType { ErrorType::Error };
     unsigned m_flags { 0 };
@@ -283,6 +322,11 @@ JSC_DECLARE_HOST_FUNCTION(pythonAsyncExitContext);
 namespace Python {
 JS_EXPORT_PRIVATE bool isJavaScriptClass(JSCell*);
 JS_EXPORT_PRIVATE PyType* classFor(JSObject* constructor);
+// PyType::construction()
+RefPtr<PyType::Construction> workOutConstruction(JSGlobalObject*, PyType*);
+JSValue construct(JSGlobalObject*, PyType*, const PyType::Construction&, const ArgList&, JSCellButterfly* keywordNames);
+// What is said if __init__() returns anything but None.
+void raiseInitializerResult(JSGlobalObject*, JSValue);
 }
 
 // Whether it is one of these cells. What a program has for a class need not be.

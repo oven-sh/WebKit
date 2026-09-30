@@ -1718,6 +1718,63 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, converted));
 }
 
+RefPtr<PyType::Construction> workOutConstruction(JSGlobalObject* globalObject, PyType* type)
+{
+    VM& vm = globalObject->vm();
+    auto& names = vm.pythonNames();
+    PyRealm* realm = globalObject->pyRealm();
+    using Function = PyRealm::WellKnownFunction;
+
+    // A class of some other class may be called in a way of its own, and there is no being told when that changes.
+    if (type->metatype() != realm->typeType() || type == realm->typeType())
+        return nullptr;
+    // What object_new() looks at.
+    Structure* structure = type->instanceStructure();
+    if (type->layout() != PyType::Layout::Object || !structure || structure->typeInfo().type() != PyInstanceType || type->hasFlag(PyType::IsAbstract) || type->cannotBeInstantiated(vm))
+        return nullptr;
+    if (!type->newIsThatOfObject(globalObject))
+        return nullptr;
+    JSValue initializer = type->lookup(vm, names.dunder_init);
+    if (!initializer || !initializer.isObject())
+        return nullptr;
+    if (initializer.asCell() == realm->function(Function::ObjectInit))
+        return adoptRef(*new PyType::Construction(structure, nullptr));
+    if (classifyDescriptor(globalObject, initializer).kind != DescriptorKind::Function)
+        return nullptr;
+    return adoptRef(*new PyType::Construction(structure, asObject(initializer)));
+}
+
+JSValue construct(JSGlobalObject* globalObject, PyType* type, const PyType::Construction& construction, const ArgList& arguments, KeywordNames* keywordNames)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // What is run here can change the class, and then there is no `construction`.
+    JSObject* initializer = construction.initializer;
+    // object_new(), and object_init() after it: whichever of them the class has of its own is taken to know what the arguments are for.
+    if (!initializer && arguments.size())
+        return raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), "() takes no arguments"_s));
+    PyInstance* instance = PyInstance::create(vm, construction.structure);
+    if (!initializer)
+        return instance;
+    MarkedArgumentBuffer withInstance;
+    withInstance.append(instance);
+    for (unsigned i = 0; i < arguments.size(); ++i)
+        withInstance.append(arguments.at(i));
+    JSValue result = callWithKeywords(globalObject, initializer, withInstance, keywordNames);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isNone(result)) [[unlikely]] {
+        raiseInitializerResult(globalObject, result);
+        return { };
+    }
+    return instance;
+}
+
+void raiseInitializerResult(JSGlobalObject* globalObject, JSValue result)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    raiseTypeError(globalObject, scope, concatenate("__init__() should return None, not '"_s, typeName(globalObject, result), '\''));
+}
+
 JSValue instantiate(JSGlobalObject* globalObject, PyType* type, const ArgList& arguments, KeywordNames* keywordNames)
 {
     VM& vm = globalObject->vm();
@@ -1778,6 +1835,9 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
     JSValue initializer = isContinuing ? instanceType->lookupFrom(vm, from, names.dunder_init) : instanceType->lookup(vm, names.dunder_init);
     if (!initializer || (isContinuing && initializer.asCell() == realm->function(PyRealm::WellKnownFunction::ObjectInit)))
         return instance;
+    // object_init(): the arguments are taken to have been for the __new__() that the class has of its own.
+    if (initializer.asCell() == realm->function(PyRealm::WellKnownFunction::ObjectInit) && !instanceType->cannotBeInstantiated(vm) && !instanceType->newIsThatOfObject(globalObject))
+        return instance;
     // slot_tp_init()
     JSValue self;
     initializer = bindSpecial(globalObject, instanceType, initializer, instance, self);
@@ -1790,8 +1850,10 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
     } else
         result = callWithKeywords(globalObject, initializer, arguments, keywordNames);
     RETURN_IF_EXCEPTION(scope, { });
-    if (!isNone(result))
-        return raiseTypeError(globalObject, scope, concatenate("__init__() should return None, not '"_s, typeName(globalObject, result), '\''));
+    if (!isNone(result)) {
+        raiseInitializerResult(globalObject, result);
+        return { };
+    }
     return instance;
 }
 

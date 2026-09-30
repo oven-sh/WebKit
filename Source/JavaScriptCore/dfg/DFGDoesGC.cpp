@@ -369,6 +369,7 @@ bool doesGC(Graph& graph, Node* node)
     case PyDelItem:
     case PyEnter:
     case PyCheckPendingWork:
+    case PyCheckInitializerResult:
     case GetByValWithThisMegamorphic:
     case GetDynamicVar:
     case HasIndexedProperty:

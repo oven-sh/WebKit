@@ -859,6 +859,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case PyDelItem:
     case PyEnter:
     case PyCheckPendingWork:
+    case PyCheckInitializerResult:
     case GetByValWithThisMegamorphic:
     case PutById:
     case PutByIdMegamorphic:

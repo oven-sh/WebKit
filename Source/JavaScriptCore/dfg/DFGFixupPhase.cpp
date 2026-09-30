@@ -4056,6 +4056,7 @@ private:
         case PyLeave:
         case PyCheckNoFrameObject:
         case PyCheckPendingWork:
+        case PyCheckInitializerResult:
         case CompareEqPtr:
         case GetGlobalThis:
         case ExtractValueFromWeakMapGet:

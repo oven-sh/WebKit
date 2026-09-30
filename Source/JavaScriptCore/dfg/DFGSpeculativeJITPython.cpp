@@ -415,6 +415,15 @@ void SpeculativeJIT::compilePyCheckPendingWork(Node* node)
     noResult(node);
 }
 
+void SpeculativeJIT::compilePyCheckInitializerResult(Node* node)
+{
+    JSValueOperand value(this, node->child1());
+    GPRReg valueGPR = value.gpr();
+    Jump isNotNone = branchIfNotUndefined(valueGPR);
+    addSlowPathGenerator(slowPathCall(isNotNone, this, operationPyRaiseInitializerResult, NoResult, LinkableConstant::globalObject(*this, node), valueGPR));
+    noResult(node);
+}
+
 void SpeculativeJIT::compilePyFloorDivOrMod(Node* node)
 {
 #if CPU(X86_64)

@@ -653,6 +653,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case PyLeave:
     case PyCheckNoFrameObject:
     case PyCheckPendingWork:
+    case PyCheckInitializerResult:
     case GetByValWithThisMegamorphic:
     case GetByIdFlush:
     case GetByIdDirect:

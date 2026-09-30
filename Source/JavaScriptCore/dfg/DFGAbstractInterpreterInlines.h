@@ -3884,6 +3884,7 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case PyDelItem:
     case PyEnter:
     case PyCheckPendingWork:
+    case PyCheckInitializerResult:
         clobberWorld();
         break;
 

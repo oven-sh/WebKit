@@ -1507,9 +1507,13 @@ private:
         }
             
         case ObjectCreate:
-        case CreateThis:
-        case NewObject: {
+        case CreateThis: {
             setPrediction(SpecFinalObject);
+            break;
+        }
+
+        case NewObject: {
+            setPrediction(speculationFromStructure(m_currentNode->structure().get()));
             break;
         }
 
@@ -1936,6 +1940,7 @@ private:
         case PyLeave:
         case PyCheckNoFrameObject:
         case PyCheckPendingWork:
+        case PyCheckInitializerResult:
         case PyCheckDivisor:
         case PutByIdWithThis:
         case PutByVal:

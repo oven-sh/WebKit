@@ -93,6 +93,7 @@
 #include "Operations.h"
 #include "ParseInt.h"
 #include "PyTuple.h"
+#include "PyType.h"
 #include "PythonOperations.h"
 #include "PythonOperators.h"
 #include "ReflectObject.h"
@@ -2665,6 +2666,17 @@ JSC_DEFINE_JIT_OPERATION(operationPyEnterSlow, size_t, (JSGlobalObject* globalOb
     else
         vm.updatePythonLimitUnlessWatched();
     OPERATION_RETURN(scope, static_cast<size_t>(false));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyRaiseInitializerResult, void, (JSGlobalObject* globalObject, EncodedJSValue encodedResult))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Python::raiseInitializerResult(globalObject, JSValue::decode(encodedResult));
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationPyDoPendingWork, void, (JSGlobalObject* globalObject))

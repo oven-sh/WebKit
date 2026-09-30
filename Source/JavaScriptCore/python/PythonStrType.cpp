@@ -1589,10 +1589,21 @@ PYTHON_NATIVE(strMakeTrans)
     return JSValue::encode(table);
 }
 
+// unicode_vectorcall()
+static JSValue strVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    if (!arguments.size())
+        return jsEmptyString(globalObject->vm());
+    if (arguments.size() == 1)
+        return strObject(globalObject, arguments.at(0));
+    return { };
+}
+
 void initializeStrType(JSGlobalObject* globalObject)
 {
     PyRealm* realm = globalObject->pyRealm();
     PyType* type = realm->typeStr();
+    type->setVectorcall(strVectorcall);
     using Kind = PyNativeFunction::Kind;
     addMethods(globalObject, type, {
         { "__new__"_s, strNew, Kind::New, 0, "(object='', encoding='utf-8', errors='strict')"_s, PyNativeFunction::Arguments::AreThoseOfTheClassButNotChecked },

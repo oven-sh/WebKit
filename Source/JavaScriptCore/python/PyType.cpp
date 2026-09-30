@@ -220,7 +220,7 @@ PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, J
     type->m_bases.set(vm, type, bases);
     type->m_layout = base->layout();
     type->m_errorType = base->m_errorType;
-    type->m_flags = IsHeapType | IsBaseType | (base->m_flags & (IsExceptionType | IsTypeSubclass | MatchesSelf | IsBytes | HasInstanceDict | HasWeakReferences));
+    type->m_flags = IsHeapType | IsBaseType | (base->m_flags & (IsExceptionType | IsTypeSubclass | MatchesSelf | IsBytes | HasInstanceDict | HasWeakReferences | NewIsLookedFor));
     type->m_basicSize = base->m_basicSize;
     type->m_itemSize = base->m_itemSize;
     type->m_dictOffset = base->m_dictOffset;
@@ -473,6 +473,7 @@ void PyType::setOrder(VM& vm, PyTuple* order)
     }
     // What it finds, and where, may all be different.
     m_knowsHooks = false;
+    constructionMayHaveChanged(vm);
     std::exchange(m_instanceAccessIsAsFound, WatchpointSet::create(IsWatched))->fireAll(vm, "The order in which the bases of a class are searched was changed");
 }
 
@@ -516,6 +517,64 @@ void PyType::attributeDidChange(VM& vm, PropertyName name)
     auto& names = vm.pythonNames();
     if (name == names.dunder_getattribute || name == names.dunder_getattr || name == names.dunder_setattr || name == names.dunder_delattr)
         forgetHooks();
+    if (name == names.dunder_new)
+        updateWhetherNewIsLookedFor(vm);
+    if (name == names.dunder_new || name == names.dunder_init)
+        constructionMayHaveChanged(vm);
+}
+
+void PyType::updateWhetherNewIsLookedFor(VM& vm)
+{
+    auto& name = vm.pythonNames().dunder_new;
+    JSValue found = lookup(vm, name);
+    auto* native = found && found.isCell() ? dynamicDowncast<PyNativeFunction>(found.asCell()) : nullptr;
+    if (!native || native->kind() != PyNativeFunction::Kind::New)
+        m_flags |= NewIsLookedFor;
+    // update_subclasses()
+    for (PyType* subclass : subclasses()) {
+        if (!subclass->lookupOwn(vm, name))
+            subclass->updateWhetherNewIsLookedFor(vm);
+    }
+}
+
+bool PyType::newIsThatOfObject(JSGlobalObject* globalObject) const
+{
+    if (hasFlag(NewIsLookedFor))
+        return false;
+    JSValue found = lookup(globalObject->vm(), globalObject->vm().pythonNames().dunder_new);
+    return found && found.asCell() == globalObject->pyRealm()->function(PyRealm::WellKnownFunction::ObjectNew);
+}
+
+PyType::Construction* PyType::construction(JSGlobalObject* globalObject)
+{
+    if (m_knowsConstruction) [[likely]]
+        return m_construction.get();
+    RefPtr<Construction> construction = Python::workOutConstruction(globalObject, this);
+    Locker locker { cellLock() };
+    m_construction = WTF::move(construction);
+    m_knowsConstruction = true;
+    return m_construction.get();
+}
+
+RefPtr<PyType::Construction> PyType::constructionConcurrently()
+{
+    Locker locker { cellLock() };
+    return m_construction;
+}
+
+void PyType::constructionMayHaveChanged(VM& vm)
+{
+    RefPtr<Construction> old;
+    {
+        Locker locker { cellLock() };
+        old = std::exchange(m_construction, nullptr);
+        m_knowsConstruction = false;
+    }
+    if (old)
+        old->isAsFound->fireAll(vm, "What calling a class comes to was changed");
+    // What is derived from it may have it from it.
+    for (PyType* subclass : subclasses())
+        subclass->constructionMayHaveChanged(vm);
 }
 
 void PyType::forgetHooks()
@@ -576,6 +635,15 @@ JSValue PyType::call(JSGlobalObject* globalObject, const ArgList& arguments, Pyt
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
     PyType* type = this;
+    if (Construction* construction = this->construction(globalObject))
+        RELEASE_AND_RETURN(scope, Python::construct(globalObject, type, *construction, arguments, keywordNames));
+    if (m_vectorcall && !keywordNames) {
+        JSValue result = m_vectorcall(globalObject, arguments);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (result)
+            return result;
+    }
+
     PyType* metatype = type->metatype();
     if (metatype != realm->typeType()) {
         JSValue function = metatype->lookup(vm, vm.pythonNames().dunder_call);

@@ -185,6 +185,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
 
     case EnumeratorNextUpdatePropertyName:
     case StrCat:
+    case PyCheckInitializerResult:
     case Call:
     case Construct:
     case CallVarargs:

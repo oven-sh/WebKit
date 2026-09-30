@@ -83,6 +83,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "PropertyInlineCache.h"
 #include "PropertyName.h"
 #include "PropertyNameInlines.h"
+#include "PyInstance.h"
 #include "PythonOperations.h"
 #include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
@@ -2999,6 +3000,9 @@ JSC_DEFINE_JIT_OPERATION(operationNewObject, JSCell*, (VM* vmPointer, Structure*
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // An instance of a class of Python's is a JSFinalObject in all but name, and what makes the one in line makes the other.
+    if (structure->typeInfo().type() == PyInstanceType) [[unlikely]]
+        OPERATION_RETURN(scope, PyInstance::create(vm, structure));
     OPERATION_RETURN(scope, constructEmptyObject(vm, structure));
 }
 

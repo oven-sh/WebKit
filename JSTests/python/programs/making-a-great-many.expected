@@ -1,0 +1,57 @@
+---- as it stands
+nothing to it => ('Empty', [])
+object => ('object', None)
+two things => ('Point', [('x', 1), ('y', 5)])
+one left out => ('Point', [('x', 1), ('y', 2)])
+by name => ('Point', [('x', 4), ('y', 3)])
+out of a list => ('Point', [('x', 7), ('y', 8)])
+what a base has => ('Derived', [('x', 1), ('y', 5)])
+that calls what its base has => ('Further', [('x', 3), ('y', -1), ('z', 6)])
+with places for them => ('Slotted', None) 3 ('AttributeError', "'Slotted' object has no attribute 'b'")
+each is another => 1000 True
+---- given what it cannot be
+too many => ('TypeError', 'Point.__init__() takes from 2 to 3 positional arguments but 4 were given')
+too few => ('TypeError', "Point.__init__() missing 1 required positional argument: 'x'")
+a name that there is not => ('TypeError', "Point.__init__() got an unexpected keyword argument 'z'")
+anything, that takes nothing => ('TypeError', 'Empty() takes no arguments')
+or by name => ('TypeError', 'Empty() takes no arguments')
+object, likewise => ('TypeError', 'object() takes no arguments')
+---- and then it is changed
+another __init__ => ('C', [('x', 5)]) THEN ('C', [('other', 5)]) []
+another in the base => ('C', [('x', 5)]) THEN ('C', [('other', 5)]) []
+one of its own, where it had the base's => ('C', [('x', 5)]) THEN ('C', [('other', 5)]) []
+none of its own any more => ('C', [('x', 0)]) THEN ('C', []) []
+nor any to be given anything => ('C', [('x', 5)]) THEN ('TypeError', 'C() takes no arguments') []
+none in the base => ('C', [('x', 5)]) THEN ('TypeError', 'C() takes no arguments') []
+a __new__ => ('C', [('x', 5)]) THEN ('str', None) []
+a __new__ in the base => ('C', [('x', 5)]) THEN ('str', None) []
+a __new__ that makes one all the same => ('C', [('x', 5)]) THEN ('C', [('x', 5)]) []
+a __new__, and then none => ('C', [('x', 5)]) THEN ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)') []
+other bases => ('C', [('x', 5)]) THEN ('C', [('elsewhere', 5)]) []
+a __new__ that is object's => ('C', [('x', 5)]) THEN ('C', [('x', 5)]) []
+a __new__ in the base, and then none => ('C', [('x', 5)]) THEN ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)') []
+derived from what has had one => ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)') THEN ('TypeError', 'object.__new__() takes exactly one argument (the type to instantiate)') []
+a class of another class => ('C', [('x', 5)]) THEN ('tuple', None) []
+one that returns something => ('C', [('x', 5)]) THEN ('TypeError', "__init__() should return None, not 'int'") []
+one that returns None after all => ('C', [('x', 5)]) THEN ('C', []) []
+one that raises => ('C', [('x', 5)]) THEN ('ZeroDivisionError', 'division by zero') []
+one that yields => ('C', [('x', 5)]) THEN ('TypeError', "__init__() should return None, not 'generator'") []
+one that is not a function => ('C', [('x', 5)]) THEN ('C', []) [('called with', 1)]
+one that says what it is when it is got => ('C', [('x', 5)]) THEN ('C', [('through', (5,))]) []
+a static one => ('C', [('x', 5)]) THEN ('C', []) [1]
+one for the class => ('C', [('x', 5)]) THEN ('C', []) [('C', 2)]
+one that is built in => ('C', [('x', 0)]) THEN ('C', []) []
+one that is built in, and something for it => ('C', [('x', 5)]) THEN ('TypeError', 'C() takes no arguments') []
+one of some other class that is built in => ('C', [('x', 5)]) THEN ('TypeError', "descriptor '__init__' requires a 'list' object but received a 'C'") []
+something that has nothing to do with it => ('C', [('x', 5)]) THEN ('C', [('x', 5)]) []
+something left for others to do => ('C', [('x', 5)]) THEN ('TypeError', "Can't instantiate abstract class C without an implementation for abstract method 'method'") []
+and then done => ('C', [('x', 5)]) THEN ('C', [('x', 5)]) []
+whose class says what calling it is, and then does not => ('tuple', None) THEN ('C', [('x', 5)]) []
+and says so again => ('tuple', None) THEN ('tuple', None) []
+---- from inside __init__
+what called it => [('Looks', [('back', '<module>'), ('caller', 'makes_one_that_looks'), ('line', 2), ('seen', 2)]), ('Looks', [('back', '<module>'), ('caller', 'makes_one_that_looks'), ('line', 2), ('seen', 699)])]
+what it changes there => ['by __init__', 'by __init__']
+what it raises => [(3, [('makes_one_that_fails', 4, [('i', 0), ('made', 3), ('n', 3)]), ('__init__', 2, [('local', 0), ('x', 0)])]), (30, [('makes_one_that_fails', 4, [('i', 0), ('made', 30), ('n', 30)]), ('__init__', 2, [('local', 0), ('x', 0)])])]
+which changes what it is => [('first',), ('second',)] 651
+one in another => {21}
+too many in one another => {('RecursionError', 'maximum recursion depth exceeded')} 51

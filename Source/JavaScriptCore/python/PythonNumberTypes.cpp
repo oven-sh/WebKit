@@ -875,10 +875,46 @@ PYTHON_NATIVE(boolInvert)
     RELEASE_AND_RETURN(scope, JSValue::encode(numberUnaryOperation(globalObject, UnaryOperator::Invert, args[0])));
 }
 
+// long_vectorcall()
+static JSValue intVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    if (!arguments.size())
+        return jsNumber(0);
+    if (arguments.size() == 1)
+        return numberLong(globalObject, arguments.at(0));
+    return { };
+}
+
+// float_vectorcall()
+static JSValue floatVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    if (!arguments.size())
+        return floatFromDouble(0);
+    if (arguments.size() != 1 || !classify(arguments.at(0)))
+        return { };
+    auto converted = toDouble(globalObject, arguments.at(0));
+    RETURN_IF_EXCEPTION(scope, { });
+    return floatFromDouble(*converted);
+}
+
+// bool_vectorcall()
+static JSValue boolVectorcall(JSGlobalObject* globalObject, const ArgList& arguments)
+{
+    if (!arguments.size())
+        return jsBoolean(false);
+    if (arguments.size() == 1)
+        return jsBoolean(isTrue(globalObject, arguments.at(0)));
+    return { };
+}
+
 void initializeNumberTypes(JSGlobalObject* globalObject)
 {
     PyRealm* realm = globalObject->pyRealm();
     using Kind = PyNativeFunction::Kind;
+    realm->typeInt()->setVectorcall(intVectorcall);
+    realm->typeFloat()->setVectorcall(floatVectorcall);
+    realm->typeBool()->setVectorcall(boolVectorcall);
 
     PyType* intType = realm->typeInt();
     addArithmetic(globalObject, intType, NumberType::Int);

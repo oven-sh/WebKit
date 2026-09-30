@@ -458,6 +458,7 @@ JSC_DECLARE_JIT_OPERATION(operationPyNewTuple, JSCell*, (JSGlobalObject*, void*,
 // Whether it is one frame too deep.
 JSC_DECLARE_JIT_OPERATION(operationPyEnterSlow, size_t, (JSGlobalObject*));
 JSC_DECLARE_JIT_OPERATION(operationPyDoPendingWork, void, (JSGlobalObject*));
+JSC_DECLARE_JIT_OPERATION(operationPyRaiseInitializerResult, void, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationThrowStaticError, void, (JSGlobalObject*, JSString*, uint32_t));
 
 JSC_DECLARE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject*, JSObject*, EncodedJSValue));
