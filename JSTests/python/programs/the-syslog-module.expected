@@ -1,0 +1,111 @@
+---- what there is
+[('LOG_EMERG', 0), ('LOG_ALERT', 1), ('LOG_CRIT', 2), ('LOG_ERR', 3), ('LOG_WARNING', 4), ('LOG_NOTICE', 5), ('LOG_INFO', 6), ('LOG_DEBUG', 7), ('LOG_PID', 1), ('LOG_CONS', 2), ('LOG_NDELAY', 8), ('LOG_ODELAY', 4), ('LOG_NOWAIT', 16), ('LOG_PERROR', 32), ('LOG_KERN', 0), ('LOG_USER', 8), ('LOG_MAIL', 16), ('LOG_DAEMON', 24), ('LOG_AUTH', 32), ('LOG_LPR', 48), ('LOG_LOCAL0', 128), ('LOG_LOCAL1', 136), ('LOG_LOCAL2', 144), ('LOG_LOCAL3', 152), ('LOG_LOCAL4', 160), ('LOG_LOCAL5', 168), ('LOG_LOCAL6', 176), ('LOG_LOCAL7', 184), ('LOG_SYSLOG', 40), ('LOG_CRON', 72), ('LOG_UUCP', 64), ('LOG_NEWS', 56), ('LOG_AUTHPRIV', 80), ('LOG_FTP', 88)]
+['LOG_MASK', 'LOG_UPTO', 'closelog', 'openlog', 'setlogmask', 'syslog'] None built-in {'int'}
+    openlog ($module, /, ident=<unrepresentable>, logoption=0,
+        facility=LOG_USER) syslog 'Set logging options of subsequent syslog() calls.'
+    closelog ($module, /) syslog 'Reset the syslog module values and call the system library closelog().'
+    syslog None syslog 'syslog([priority=LOG_INFO,] message)\nSend the string message to the system logger.'
+    setlogmask ($module, maskpri, /) syslog 'Set the priority mask to maskpri and return the previous mask value.'
+    LOG_MASK ($module, pri, /) syslog 'Calculates the mask for the individual priority pri.'
+    LOG_UPTO ($module, pri, /) syslog 'Calculates the mask for all priorities up to and including pri.'
+---- masks
+[1, 2, 128, 536870912, 1073741824, -2147483648, 1, 2, -2147483648, 1, 1073741824, 1, 1, 1, -2147483648, 2]
+[1, 3, 255, 1073741823, 2147483647, 0, 1, 3, 0, 1, 0, 2147483647, 1, 1, 1, 0, 3]
+LOG_MASK none => TypeError syslog.LOG_MASK() takes exactly one argument (0 given)
+LOG_MASK two => TypeError syslog.LOG_MASK() takes exactly one argument (2 given)
+LOG_MASK by name => TypeError syslog.LOG_MASK() takes no keyword arguments
+LOG_MASK a str => TypeError 'str' object cannot be interpreted as an integer
+LOG_MASK a float => TypeError 'float' object cannot be interpreted as an integer
+LOG_MASK None => TypeError 'NoneType' object cannot be interpreted as an integer
+LOG_MASK too great => OverflowError Python int too large to convert to C long
+LOG_MASK too little => OverflowError Python int too large to convert to C long
+LOG_MASK what says what it is => int
+LOG_UPTO none => TypeError syslog.LOG_UPTO() takes exactly one argument (0 given)
+LOG_UPTO two => TypeError syslog.LOG_UPTO() takes exactly one argument (2 given)
+LOG_UPTO by name => TypeError syslog.LOG_UPTO() takes no keyword arguments
+LOG_UPTO a str => TypeError 'str' object cannot be interpreted as an integer
+LOG_UPTO a float => TypeError 'float' object cannot be interpreted as an integer
+LOG_UPTO None => TypeError 'NoneType' object cannot be interpreted as an integer
+LOG_UPTO too great => OverflowError Python int too large to convert to C long
+LOG_UPTO too little => OverflowError Python int too large to convert to C long
+LOG_UPTO what says what it is => int
+setlogmask none => TypeError syslog.setlogmask() takes exactly one argument (0 given)
+setlogmask two => TypeError syslog.setlogmask() takes exactly one argument (2 given)
+setlogmask by name => TypeError syslog.setlogmask() takes no keyword arguments
+setlogmask a str => TypeError 'str' object cannot be interpreted as an integer
+setlogmask a float => TypeError 'float' object cannot be interpreted as an integer
+setlogmask None => TypeError 'NoneType' object cannot be interpreted as an integer
+setlogmask too great => OverflowError Python int too large to convert to C long
+setlogmask too little => OverflowError Python int too large to convert to C long
+setlogmask what says what it is => int
+255 31 31 8 True
+---- what the hooks are told
+openlog() => (None, [('syslog.openlog', ('the-syslog-module.py', 0, 8))])
+an ident => (None, [('syslog.openlog', ('ident', 0, 8))])
+all three => (None, [('syslog.openlog', ('ident', 1, 16))])
+by name => (None, [('syslog.openlog', ('é€😀', 8, 152))])
+an empty one => (None, [('syslog.openlog', ('', 0, 8))])
+a str of another class => (None, [('syslog.openlog', ('s', 0, 8))])
+great numbers => (None, [('syslog.openlog', ('i', 1099511627776, -1099511627776))])
+syslog(message) => (None, [('syslog.syslog', (6, 'a message'))])
+with a priority => (None, [('syslog.syslog', (7, 'a message'))])
+and a facility => (None, [('syslog.syslog', (135, 'é€😀 100% %s %n'))])
+nothing to say => (None, [('syslog.syslog', (6, ''))])
+closelog() => (None, [('syslog.closelog', ())])
+again => (None, [('syslog.closelog', ())])
+syslog() when it is not open => (None, [('syslog.syslog', (6, 'opens it')), ('syslog.openlog', ('the-syslog-module.py', 0, 8))])
+and again => (None, [('syslog.syslog', (6, 'it is open'))])
+setlogmask() => (255, [('syslog.setlogmask', (0,)), ('syslog.setlogmask', (255,))])
+with sys.argv ['/a/b/c.py'] => [('syslog.openlog', ('c.py', 0, 8))]
+with sys.argv ['c.py', 'x'] => [('syslog.openlog', ('c.py', 0, 8))]
+with sys.argv ['/a/b/'] => [('syslog.openlog', ('', 0, 8))]
+with sys.argv ['/'] => [('syslog.openlog', ('', 0, 8))]
+with sys.argv [''] => [('syslog.openlog', (None, 0, 8))]
+with sys.argv [] => [('syslog.openlog', (None, 0, 8))]
+with sys.argv [5] => [('syslog.openlog', (None, 0, 8))]
+with sys.argv [b'x'] => [('syslog.openlog', (None, 0, 8))]
+with sys.argv ('t.py',) => [('syslog.openlog', (None, 0, 8))]
+with sys.argv None => [('syslog.openlog', (None, 0, 8))]
+with sys.argv ['\xe9/\u20ac'] => [('syslog.openlog', ('€', 0, 8))]
+with sys.argv ['/x/s.py'] => [('syslog.openlog', ('s.py', 0, 8))]
+with none => (None, [('syslog.openlog', (None, 0, 8))])
+---- what will not do
+ident an int => (('TypeError', "openlog() argument 'ident' must be str, not int"), [])
+bytes => (('TypeError', "openlog() argument 'ident' must be str, not bytes"), [])
+None => (('TypeError', "openlog() argument 'ident' must be str, not None"), [])
+half a character => (('UnicodeEncodeError', "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"), [])
+with a zero in it => (None, [('syslog.openlog', ('a\x00b', 0, 8))])
+logoption a str => (('TypeError', "'str' object cannot be interpreted as an integer"), [])
+too great => (('OverflowError', 'Python int too large to convert to C long'), [])
+facility a float => (('TypeError', "'float' object cannot be interpreted as an integer"), [])
+four => (('TypeError', 'openlog() takes at most 3 arguments (4 given)'), [])
+something else => (('TypeError', "openlog() got an unexpected keyword argument 'other'"), [])
+ident twice => (('TypeError', "argument for openlog() given by name ('ident') and position (1)"), [])
+syslog() => (('TypeError', 'syslog.syslog requires 1 to 2 arguments'), [])
+three => (('TypeError', 'syslog.syslog requires 1 to 2 arguments'), [])
+by name => (('TypeError', 'syslog() takes no keyword arguments'), [])
+both by name => (('TypeError', 'syslog() takes no keyword arguments'), [])
+an int => (('TypeError', 'syslog() argument 1 must be str, not int'), [])
+bytes => (('TypeError', 'syslog() argument 1 must be str, not bytes'), [])
+None => (('TypeError', 'syslog() argument 1 must be str, not None'), [])
+with a zero in it => (('ValueError', 'embedded null character'), [])
+half a character => (('UnicodeEncodeError', "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"), [])
+the wrong way round => (('TypeError', "'str' object cannot be interpreted as an integer"), [])
+priority a float => (('TypeError', "'float' object cannot be interpreted as an integer"), [])
+priority None => (('TypeError', "'NoneType' object cannot be interpreted as an integer"), [])
+priority too great => (('OverflowError', 'signed integer is greater than maximum'), [])
+too little => (('OverflowError', 'signed integer is less than minimum'), [])
+far too great => (('OverflowError', 'Python int too large to convert to C long'), [])
+message an int => (('TypeError', 'syslog() argument 2 must be str, not int'), [])
+closelog(1) => (('TypeError', 'syslog.closelog() takes no arguments (1 given)'), [])
+a hook refuses openlog() => PermissionError syslog.openlog
+a hook refuses syslog() => PermissionError syslog.syslog
+a hook refuses closelog() => PermissionError syslog.closelog
+a hook refuses setlogmask() => PermissionError syslog.setlogmask
+---- what is written to the standard error as well
+['the ident'] 'a message'
+['the ident'] 'é€😀 100% %s %d %n'
+['the ident'] 'important enough'
+['the ident'] 'later'
+['another'] 'by another name'
+['program.py'] 'by the name of the program'

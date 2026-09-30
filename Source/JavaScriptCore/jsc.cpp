@@ -4517,6 +4517,7 @@ static void addPythonHostModules(Python::Configuration& configuration)
     configuration.builtinModules.append({ "termios"_s, Python::createTermiosModule });
     configuration.builtinModules.append({ "pwd"_s, Python::createPwdModule });
     configuration.builtinModules.append({ "grp"_s, Python::createGrpModule });
+    configuration.builtinModules.append({ "syslog"_s, Python::createSyslogModule });
 }
 
 // Whether this was started by a name that begins with "python", as by way of a link. It is `python` then, and the whole of the command line is Python's. It is how a program that is Python's starts another: it runs

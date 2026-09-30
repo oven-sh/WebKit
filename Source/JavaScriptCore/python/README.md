@@ -1298,6 +1298,14 @@ expected of that was taken on Linux only.
 `shutil.chown()` by name come down to them. `programs/the-user-database.py` says nothing of anyone but root, since who there is differs from one machine to the next. For the same reason they are not among the modules of `audits/native-modules.py`,
 whose reference has what everything returns: run by hand with only these two, none of its 3,328 lines differs.
 
+### `syslog`
+
+`PythonSyslogModule.cpp` is `Modules/syslogmodule.c`, and is for the host to list, as `posix` is. There is one log to a process, so what is kept of it is kept once, behind a lock. `openlog()` in C keeps hold of the name that it is given and makes no copy, so that
+is kept for as long as it may be looked at. `LOG_MASK()` and `LOG_UPTO()` are macros that shift by whatever they are given, and C says nothing of shifting by less than nothing or by more than there is room for. What comes of it where CPython is compiled is
+what comes of it here, but for `LOG_MASK(-1)`, which one compiler makes an error with no exception of.
+
+What is sent to the log is not to be had back. `programs/the-syslog-module.py` goes by what the hooks of `sys.addaudithook()` are told, and by what `LOG_PERROR` has written to the standard error as well.
+
 ### `time`
 
 `PythonTimeModule.cpp` is `Modules/timemodule.c`, and `PythonTime.cpp` what it wants of `Python/pytime.c`: a time is a number of nanoseconds, and how a float or an int is made one, rounded which way, and what is said if

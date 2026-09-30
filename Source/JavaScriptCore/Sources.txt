@@ -850,6 +850,7 @@ python/PythonSocketObject.cpp
 python/PythonSymbolTable.cpp
 python/PythonSymtableModule.cpp
 python/PythonSysModule.cpp
+python/PythonSyslogModule.cpp
 python/PythonTemplateStrings.cpp
 python/PythonTermiosModule.cpp
 python/PythonTraceback.cpp
