@@ -69,6 +69,8 @@ public:
     static PyFrame* forCallFrameIfExists(VM&, CallFrame*);
     // Null if it has finished and nothing had asked for its frame.
     static PyFrame* forGenerator(JSGlobalObject*, JSGenerator*);
+    // PyFrame_New(): of what has not been run and is not going to be. It is over from the first, and is taken to have got as far as the first thing that was written.
+    static PyFrame* forWhatIsNotRun(VM&, JSGlobalObject*, JSFunction*);
 
     // The frame is about to be no more.
     void leave(VM&, CallFrame*, BytecodeIndex);

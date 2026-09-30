@@ -29,8 +29,11 @@
 #include "CodeBlock.h"
 #include "FunctionCodeBlock.h"
 #include "FunctionExecutable.h"
+#include "PyDict.h"
 #include "PyFrame.h"
+#include "PythonCompiler.h"
 #include "PythonGenerators.h"
+#include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonUnicodeType.h"
 #include "SourceProvider.h"
@@ -67,6 +70,36 @@ void addTracebackEntry(JSGlobalObject* globalObject, JSValue exception, CallFram
         head = jsUndefined();
     JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, PyFrame::forCallFrame(vm, callFrame), JSC::jsNumber(bytecodeIndex.offset()), callFrame->codeBlock()->unlinkedCodeBlock());
     asObject(exception)->putDirect(vm, vm.pythonNames().private_traceback, entry);
+}
+
+void addTracebackEntry(JSGlobalObject* globalObject, ASCIILiteral functionName, ASCIILiteral filename, int line)
+{
+    VM& vm = globalObject->vm();
+    Exception* raised = takeRaisedException(vm);
+    if (!raised)
+        return;
+    // PyCode_NewEmpty(): code that does nothing, and says that it is that function. It is not run, so nothing is told of it.
+    FunctionExecutable* nothing = compileSource(globalObject, makeSource("pass\n"_s, SourceOrigin(), filename), CodeKind::Module, false, 0);
+    if (!nothing || !raised->value().isObject()) {
+        chainRaisedExceptions(globalObject, raised);
+        return;
+    }
+    auto info = nothing->unlinkedExecutable()->pythonInfo()->copy();
+    info->name = Identifier::fromString(vm, functionName);
+    info->qualifiedName = functionName;
+    info->lineDelta = line - static_cast<int>(info->firstLine);
+    // PyFrame_New(), with globals that have nothing in them
+    JSFunction* function = bindToGlobals(globalObject, cloneExecutable(globalObject, nothing, WTF::move(info)), PyDict::create(globalObject));
+    PyFrame* frame = PyFrame::forWhatIsNotRun(vm, globalObject, function);
+    // PyTraceBack_Here()
+    JSObject* exception = asObject(raised->value());
+    JSValue head = exception->getDirect(vm, vm.pythonNames().private_traceback);
+    if (!head || !isTraceback(globalObject, head))
+        head = jsUndefined();
+    auto* entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, frame, JSC::jsNumber(frame->bytecodeIndex(vm)->offset()));
+    entry->putDirect(vm, vm.pythonNames().private_line, JSC::jsNumber(line));
+    exception->putDirect(vm, vm.pythonNames().private_traceback, entry);
+    restoreRaisedException(globalObject, raised);
 }
 
 JSValue tracebackOf(VM& vm, JSValue exception)

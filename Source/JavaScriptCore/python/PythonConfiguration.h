@@ -128,6 +128,8 @@ struct Configuration {
     bool usesUTF8Mode { true };
     bool warnsOfDefaultEncoding { false }; // -X warn_default_encoding
     bool hasSafePath { false }; // -P
+    // PYTHONHASHSEED, unless it is "random": PyConfig.use_hash_seed and hash_seed. What a str hashes to does not go by it. See PyRealm::hashSecret().
+    std::optional<uint32_t> hashSeed;
     int maximumDigitsOfIntAsString { 4300 }; // -X int_max_str_digits
     bool threadsInheritContext { false }; // -X thread_inherit_context
     bool hasContextAwareWarnings { false }; // -X context_aware_warnings

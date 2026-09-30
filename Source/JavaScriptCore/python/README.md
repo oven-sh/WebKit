@@ -543,6 +543,10 @@ copied then. So a local variable is copied when it is loaded for later use: anyt
 **A frame that is one too deep does not begin.** When `op_py_enter` finds that, the frame is put back where it was before there was anything to be seen of it, at its first instruction.
 So it is in no traceback, nothing is told of it, and nothing in it catches the `RecursionError`, which matters for a generator that is resumed inside a `try`. What went wrong is the call.
 
+**What is written in C++ can put itself in a traceback**, as `pyexpat` does what calls a handler, so that what a handler raises is seen to have come by way of `StartElement` in `pyexpat.c`: `addTracebackEntry()` with a name, a file and a
+line, which is `_PyTraceback_Add()`. There it is a frame made for a code object that does nothing, `PyFrame_New()` of `PyCode_NewEmpty()`. Here it is too: `PyFrame::forWhatIsNotRun()`, which is over from the first, of code that is compiled and
+never run, so nothing that is told of what is run is told of it, and it is on no stack while the handler runs. The line follows from the code, since `traceback.py` goes by `co_positions()` and not by `tb_lineno`.
+
 **What prints an exception that gets away is the library's `traceback`**, as in CPython: `PyErr_Display()` imports it and calls `_print_exception_bltin()`. So what a program has done to `traceback` or to `linecache` shows,
 and so does the source of what was never in a file, which `linecache` is told of: what follows `python -c`, and what is typed.
 
@@ -1650,7 +1654,8 @@ There is nothing that is per process, nothing that is set after something is mad
   is a `FileIO`, and `write_through` is true. If it is to be kept back so as not to ask the system so often, it is for the host to keep back, in `FileOperations::write`, along with what JavaScript writes.
   `Configuration::buffersStandardStreams` is for a host that would sooner have it as CPython has it.
 - **Text is UTF-8 unless it is said to be something else**, whatever the locale: CPython's "UTF-8 mode", which is how it is to be from 3.15 on.
-- **`sys.flags.hash_randomization` is 0**, which is so: the hash of a `str` is what it is to JavaScript, and is the same each time that a program is run.
+- **`sys.flags.hash_randomization` is 0**, which is so: the hash of a `str` is what it is to JavaScript, and is the same each time that a program is run. `PYTHONHASHSEED` is gone by all the same by what has hashing of its own to do: `PyRealm::hashSecret()`
+  is `_Py_HashSecret`, byte for byte, for any seed. `pyexpat` gives Expat sixteen bytes of it.
 
 ## Tests
 

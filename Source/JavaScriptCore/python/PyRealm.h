@@ -368,6 +368,9 @@ public:
     const Python::Configuration& configuration() const { return m_configuration; }
     // For what works out where things are, as Python starts
     Python::Configuration& mutableConfiguration() { return m_configuration; }
+    // _Py_HashSecret: what is not to be guessed by whoever supplies what is hashed. It is nothing but zeros if PYTHONHASHSEED is 0, follows from the seed if it is anything else, and otherwise is not the same twice. Strings are hashed as
+    // JavaScript hashes them and do not go by it. What does is what a host hashes with a library of its own, as pyexpat does the names in a document.
+    JS_EXPORT_PRIVATE std::span<const uint8_t, 24> hashSecret();
     Python::ASTState& ast() { return m_ast; }
 
     // sys.modules
@@ -433,6 +436,7 @@ private:
     Python::IOModuleState m_ioModule;
     Python::PosixModuleState m_posixModule;
     Python::Configuration m_configuration;
+    std::optional<std::array<uint8_t, 24>> m_hashSecret;
     Python::ASTState m_ast;
     // By the string in the table of atoms, which the str keeps there.
     WeakGCMap<StringImpl*, JSString, PtrHash<StringImpl*>> m_internedStrings;

@@ -34,6 +34,7 @@
 #include "PythonBytes.h"
 #include "PythonContextVars.h"
 #include "PythonRuntimeFunctions.h"
+#include <wtf/CryptographicallyRandomNumber.h>
 
 namespace JSC {
 
@@ -144,6 +145,25 @@ bool PyRealm::isInterned(JSGlobalObject* globalObject, JSString* string)
 Structure* PyRealm::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
     return Structure::create(vm, globalObject, prototype, TypeInfo(ObjectType, StructureFlags | pythonCellFlags), info());
+}
+
+// _Py_HashRandomization_Init()
+std::span<const uint8_t, 24> PyRealm::hashSecret()
+{
+    if (!m_hashSecret) {
+        m_hashSecret.emplace();
+        m_hashSecret->fill(0);
+        if (!m_configuration.hashSeed)
+            cryptographicallyRandomValues(std::span<uint8_t>(*m_hashSecret));
+        else if (uint32_t x = *m_configuration.hashSeed) {
+            // lcg_urandom()
+            for (auto& byte : *m_hashSecret) {
+                x = x * 214013 + 2531011;
+                byte = static_cast<uint8_t>(x >> 16);
+            }
+        }
+    }
+    return *m_hashSecret;
 }
 
 PyRealm* PyRealm::create(VM& vm, JSGlobalObject* globalObject)

@@ -453,6 +453,9 @@ WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner); // Wher
 
 // Notes that an exception has come to a frame of Python code, by being raised in it or by coming out of what it called. The unwinder calls it.
 void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex);
+// _PyTraceback_Add(): the same of what has been raised, for something written in C++ that it has come to, which is to be found in the traceback as if it were a function of that name in that file. pyexpat does it
+// for what calls a handler.
+JS_EXPORT_PRIVATE void addTracebackEntry(JSGlobalObject*, ASCIILiteral functionName, ASCIILiteral filename, int line);
 // What it has for a traceback, as it is kept. Empty if it has none.
 JSValue tracebackOf(VM&, JSValue exception);
 // The frames of a traceback as JavaScript has a stack, which is from where it was raised outwards, for `owner` to keep.

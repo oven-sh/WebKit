@@ -557,13 +557,14 @@ Status Reader::readEnvironment()
     if (const char* directory = environment("PYTHONPLATLIBDIR"))
         config.platformLibraryDirectory = decodeArgument(directory);
 
-    // config_init_hash_seed(). It is looked at for the sake of saying what is wrong with it.
+    // config_init_hash_seed()
     if (const char* seed = environment("PYTHONHASHSEED"); seed && strcmp(seed, "random")) {
         char* end;
         errno = 0;
         unsigned long value = strtoul(seed, &end, 10);
         if (*end || value > 4294967295UL || (errno == ERANGE && value == ULONG_MAX))
             return Status::error("config_init_hash_seed"_s, "PYTHONHASHSEED must be \"random\" or an integer in range [0; 4294967295]"_s);
+        config.hashSeed = static_cast<uint32_t>(value);
     }
     if (environment("PYTHONSAFEPATH"))
         config.hasSafePath = true;

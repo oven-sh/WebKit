@@ -68,6 +68,16 @@ PyFrame* PyFrame::create(VM& vm, JSGlobalObject* globalObject, JSFunction* funct
     return frame;
 }
 
+PyFrame* PyFrame::forWhatIsNotRun(VM& vm, JSGlobalObject* globalObject, JSFunction* function)
+{
+    Python::ensureCodeDetails(vm, function->jsExecutable());
+    PyFrame* frame = create(vm, globalObject, function);
+    frame->m_isOver = true;
+    frame->m_scope.set(vm, frame, function->scope());
+    frame->m_bytecodeIndex = BytecodeIndex(unlinkedCodeBlockOf(vm, function->jsExecutable())->instructions().at(frame->details().enterOffset).next().offset());
+    return frame;
+}
+
 template<typename Visitor>
 void PyFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
