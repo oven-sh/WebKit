@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include <mutex>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
@@ -51,7 +52,12 @@ public:
 private:
 #if OS(DARWIN) || OS(FUCHSIA) || OS(WINDOWS)
 #elif OS(UNIX)
-    int m_fd { -1 }; // Stays -1 on Linux when getrandom(2) is the source.
+    void openURandom();
+
+    int m_fd { -1 };
+#if OS(LINUX)
+    std::once_flag m_openURandomOnce; // /dev/urandom is only opened once getrandom(2) has failed.
+#endif
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must

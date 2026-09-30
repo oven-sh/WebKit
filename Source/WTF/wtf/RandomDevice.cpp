@@ -93,14 +93,13 @@ NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void crashUnableToReadFromURandom()
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)
 RandomDevice::RandomDevice()
 {
-#if OS(LINUX)
-    // getrandom(2) reads the pool /dev/urandom reads, but needs neither the path nor a free descriptor.
-    // One success means the pool is initialized, so no later call can block. Any failure keeps
-    // /dev/urandom: EAGAIN (pool not initialized, where /dev/urandom does not block), ENOSYS, EPERM.
-    uint8_t probe;
-    if (syscall(SYS_getrandom, &probe, sizeof(probe), GRND_NONBLOCK) == 1)
-        return;
+#if !OS(LINUX)
+    openURandom();
 #endif
+}
+
+void RandomDevice::openURandom()
+{
     int ret = 0;
     do {
         ret = open("/dev/urandom", O_RDONLY | O_CLOEXEC, 0);
@@ -129,15 +128,28 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
     zx_cprng_draw(buffer.data(), buffer.size());
 #elif OS(UNIX)
     ssize_t amountRead = 0;
-    while (static_cast<size_t>(amountRead) < buffer.size()) {
-        ssize_t currentRead;
-        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if OS(LINUX)
-        if (m_fd < 0)
-            currentRead = syscall(SYS_getrandom, buffer.data() + amountRead, buffer.size() - amountRead, 0);
-        else
+    // getrandom(2) reads the pool /dev/urandom reads, but needs neither the path nor a free descriptor.
+    // Any failure reads the rest from /dev/urandom: EAGAIN (pool not initialized, where /dev/urandom
+    // does not block), ENOSYS, EPERM (a seccomp filter, which can be installed at any time).
+    while (static_cast<size_t>(amountRead) < buffer.size()) {
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        ssize_t currentRead = syscall(SYS_getrandom, buffer.data() + amountRead, buffer.size() - amountRead, GRND_NONBLOCK);
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+        if (currentRead > 0)
+            amountRead += currentRead;
+        else if (currentRead != -1 || errno != EINTR)
+            break;
+    }
+    if (static_cast<size_t>(amountRead) == buffer.size())
+        return;
+    std::call_once(m_openURandomOnce, [this] {
+        openURandom();
+    });
 #endif
-            currentRead = read(m_fd, buffer.data() + amountRead, buffer.size() - amountRead);
+    while (static_cast<size_t>(amountRead) < buffer.size()) {
+        WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+        ssize_t currentRead = read(m_fd, buffer.data() + amountRead, buffer.size() - amountRead);
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         // We need to check for both EAGAIN and EINTR since on some systems /dev/urandom
         // is blocking and on others it is non-blocking.
