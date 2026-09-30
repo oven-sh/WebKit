@@ -570,7 +570,9 @@ and compiled like anything else, which the DFG inlines: `pythonGeneratorNext()` 
   what is run, since what is told of a loop is told by `py_iter_next`. To the DFG it is whether it is a generator.
 - **What is being handled is where that function can get at it**: `PyRealm::handledExceptions()`, an `InternalFieldTuple`, and what a generator was handling when it yielded is a property under a name that it can name, `@pythonHandled`.
 - **It comes back with nothing at all when there is no more**, as `py_iter_next` does (`@emptyValue()`). Anything else would be taken for one of the things that the generator yields, and a loop through ints would no longer be known to be one. What a call
-  comes back with is taken by the DFG to be something, so if it has not inlined this one it is told otherwise: `PyValueOrNothing`, which goes by `PythonGeneratorNextIntrinsic`.
+  comes back with is taken by the DFG to be something, so if it has not inlined this one it is told otherwise: `PyValueOrNothing`, which goes by `PythonGeneratorNextIntrinsic`. That is what is put in the register, so it is what the register is said
+  to have as well (`MovHint`). When it was said to have what came of the call, nothing kept that past the end of the block, and the block ends there. So if what had been compiled was thrown away while the generator ran, which a generator can see to by
+  changing a variable of the loop's function and the collector by letting go of something, the loop went on with `None` and not with what had been yielded.
 - **What has been found to come of it is remembered in one place**, whichever way it is come by. The two instructions have the one `ValueProfile`, so there is not one in every loop that never sees anything.
 - What is out of the ordinary is for C++: a generator that is running or has come to an end (`pythonGeneratorNextSlow()`), and what is to come of an exception that gets out (`pythonGeneratorRaised()`).
 - `next()`, `send()`, `yield from` and `await` are from C++ still.
@@ -1638,6 +1640,9 @@ was wrong and had gone unnoticed:
 
 And three of JavaScriptCore's own say something else now, for what only Python does. A `Structure` may leave `OverridesGetCallData` out though its class has `getCallData()`: a tuple can be called only if it is of a class that a program has derived, and it is the
 `Structure`s of those that say so. A node of which two things come may be one that has to be generated (`PyLoadMethod`), which counts for one more use of it. And a function may have no source at all, being a module with nothing in it.
+
+**A test of what is run often looks at what comes of every run**, and not of the first and the last. What goes wrong on leaving compiled code goes wrong on the run after it was compiled, and it is compiled again less and less often. With assertions on, a
+register that is taken not to be needed on leaving is given something that can be mistaken for nothing else (`--poisonDeadOSRExitVariables`), where otherwise it is given `undefined`, which is `None`, and a program may well go on with that.
 
 **What is expected is what CPython 3.14.7 prints**, as it comes, on ARM64: `x.expected` on macOS. Where it prints something else on Linux, that is in `x.linux.expected`, which is what is gone by there. There are twenty or so:
 the system has other things in it, calls errors by other names, and its C library works some sums out to a different last digit. A program that is about what only one system has has only the one, and is passed over on

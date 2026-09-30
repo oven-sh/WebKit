@@ -14,12 +14,14 @@ collect = js.eval("() => { $vm.completeAllJITPlans(); fullGC(); }")
 
 
 def often(label, f):
-    "The first time, and after it has been compiled"
+    "The first time, and every time after that"
     first = f()
     for i in range(400):
-        f()
-    last = f()
-    print(label, "=>", first if first == last else ("AT FIRST", first, "AND THEN", last))
+        now = f()
+        if now != first:
+            print(label, "=>", ("AT FIRST", first, "AND THEN", now))
+            return
+    print(label, "=>", first)
 
 
 def raises():

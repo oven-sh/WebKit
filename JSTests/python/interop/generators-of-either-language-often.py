@@ -11,9 +11,11 @@ def show(label, f, *arguments):
             return type(e).__name__, str(e)
     first = outcome()
     for i in range(700):
-        outcome()
-    last = outcome()
-    print(label, "=>", first if first == last else ("AT FIRST", first, "AND THEN", last))
+        now = outcome()
+        if now != first:
+            print(label, "=>", ("AT FIRST", first, "AND THEN", now))
+            return
+    print(label, "=>", first)
 
 
 js_count = js.eval("(function* jsCount(n) { for (let i = 0; i < n; ++i) yield i; return 'returned'; })")

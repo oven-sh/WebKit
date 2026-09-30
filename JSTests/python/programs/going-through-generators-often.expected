@@ -35,6 +35,7 @@ what went on with it => ('asks_who', 1, 'says_who')
 whether it is running => ((True, True), False, None)
 while it waits => (False, None, 2, {'n': 4, 'i': 1})
 what it changes there => 3
+and what comes of it all the same => ['([100, 101, 102, 103], 3)']
 ---- one that goes through itself, all the way down
 a tree => 435
 too deep a one => ('RecursionError', 'maximum recursion depth exceeded', 'NoneType', 'NoneType')

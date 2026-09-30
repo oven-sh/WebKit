@@ -10711,8 +10711,12 @@ void ByteCodeParser::parseBlock(unsigned limit)
             if (!m_setLocalQueue.isEmpty() && (m_setLocalQueue.last().m_value->op() == Call || m_setLocalQueue.last().m_value->op() == DirectCall)) {
                 Node* result = m_setLocalQueue.last().m_value;
                 auto* callee = m_graph.child(result, 0)->dynamicCastConstant<JSFunction*>();
-                if (callee && callee->intrinsic() == PythonGeneratorNextIntrinsic)
-                    m_setLocalQueue.last().m_value = addToGraph(PyValueOrNothing, result);
+                if (callee && callee->intrinsic() == PythonGeneratorNextIntrinsic) {
+                    // What is put there and what is said to be there have to be the one thing. Past the end of the block nothing else keeps what is only said to be there.
+                    Node* value = addToGraph(PyValueOrNothing, result);
+                    addToGraph(MovHint, OpInfo(m_setLocalQueue.last().m_operand), value);
+                    m_setLocalQueue.last().m_value = value;
+                }
             }
             NEXT_OPCODE(op_call);
         }

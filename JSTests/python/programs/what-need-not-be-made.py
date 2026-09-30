@@ -3,7 +3,7 @@ import sys
 
 
 def show(label, f, *arguments):
-    "The first time, before anything has been compiled, and after it has been run a good many times"
+    "The first time, before anything has been compiled, and every time after that: what goes wrong may do so only on the run after it was compiled"
     def outcome():
         try:
             return f(*arguments)
@@ -11,9 +11,11 @@ def show(label, f, *arguments):
             return type(e).__name__, str(e)
     first = outcome()
     for i in range(700):
-        outcome()
-    last = outcome()
-    print(label, "=>", first if first == last else ("AT FIRST", first, "AND THEN", last))
+        now = outcome()
+        if now != first:
+            print(label, "=>", ("AT FIRST", first, "AND THEN", now))
+            return
+    print(label, "=>", first)
 
 
 class E:

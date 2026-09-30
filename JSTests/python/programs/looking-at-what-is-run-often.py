@@ -10,12 +10,14 @@ def line_of(frame):
 
 
 def show(label, f, *arguments):
-    "The first time, before anything has been compiled, and after it has been run a good many times"
+    "The first time, before anything has been compiled, and every time after that: what goes wrong may do so only on the run after it was compiled"
     first = f(*arguments)
     for i in range(400):
-        f(*arguments)
-    last = f(*arguments)
-    print(label, "=>", first if first == last else ("AT FIRST", first, "AND THEN", last))
+        now = f(*arguments)
+        if now != first:
+            print(label, "=>", ("AT FIRST", first, "AND THEN", now))
+            return
+    print(label, "=>", first)
 
 
 print("---- the variables of what called")

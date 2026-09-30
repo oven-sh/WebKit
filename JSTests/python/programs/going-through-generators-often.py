@@ -4,7 +4,7 @@ import sys
 
 
 def show(label, f, *arguments):
-    "The first time, before anything has been compiled, and after it has been run a good many times"
+    "The first time, before anything has been compiled, and every time after that: what goes wrong may do so only on the run after it was compiled"
     def outcome():
         try:
             return f(*arguments)
@@ -12,9 +12,11 @@ def show(label, f, *arguments):
             return type(e).__name__, str(e), type(e.__cause__).__name__, type(e.__context__).__name__
     first = outcome()
     for i in range(700):
-        outcome()
-    last = outcome()
-    print(label, "=>", first if first == last else ("AT FIRST", first, "AND THEN", last))
+        now = outcome()
+        if now != first:
+            print(label, "=>", ("AT FIRST", first, "AND THEN", now))
+            return
+    print(label, "=>", first)
 
 
 def count(n):
@@ -363,10 +365,25 @@ def changes_the_caller(n):
     return changed
 
 
+def changes_the_caller_that_keeps_what_comes(n):
+    def g():
+        for i in range(n):
+            sys._getframe(1).f_locals["changed"] = i
+            yield i + 100
+    changed = None
+    seen = []
+    for v in g():
+        seen.append(v)
+    return seen, changed
+
+
 show("what went on with it", asks_who, 3)
 show("whether it is running", is_it_running, 3)
 show("while it waits", waiting, 4)
 show("what it changes there", changes_the_caller, 4)
+# What the loop was compiled to is thrown away while the generator is being gone on with, and what it yields then is come back to by other code. That happens on the run after it was compiled and on few others, so it is
+# every run that is looked at.
+print("and what comes of it all the same =>", sorted({repr(changes_the_caller_that_keeps_what_comes(4)) for i in range(1500)}))
 
 print("---- one that goes through itself, all the way down")
 
