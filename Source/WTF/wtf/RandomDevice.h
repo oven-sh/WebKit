@@ -51,7 +51,7 @@ public:
 private:
 #if OS(DARWIN) || OS(FUCHSIA) || OS(WINDOWS)
 #elif OS(UNIX)
-    int m_fd { -1 };
+    int m_fd { -1 }; // Stays -1 on Linux when getrandom(2) is the source.
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must

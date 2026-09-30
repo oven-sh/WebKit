@@ -35,6 +35,13 @@
 #include <unistd.h>
 #endif
 
+#if OS(LINUX)
+#include <sys/syscall.h>
+#ifndef GRND_NONBLOCK
+#define GRND_NONBLOCK 0x0001
+#endif
+#endif
+
 #if OS(WINDOWS)
 #include <windows.h>
 #endif
@@ -86,9 +93,17 @@ NEVER_INLINE NO_RETURN_DUE_TO_CRASH static void crashUnableToReadFromURandom()
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)
 RandomDevice::RandomDevice()
 {
+#if OS(LINUX)
+    // getrandom(2) reads the pool /dev/urandom reads, but needs neither the path nor a free descriptor.
+    // One success means the pool is initialized, so no later call can block. Any failure keeps
+    // /dev/urandom: EAGAIN (pool not initialized, where /dev/urandom does not block), ENOSYS, EPERM.
+    uint8_t probe;
+    if (syscall(SYS_getrandom, &probe, sizeof(probe), GRND_NONBLOCK) == 1)
+        return;
+#endif
     int ret = 0;
     do {
-        ret = open("/dev/urandom", O_RDONLY, 0);
+        ret = open("/dev/urandom", O_RDONLY | O_CLOEXEC, 0);
     } while (ret == -1 && errno == EINTR);
     m_fd = ret;
     if (m_fd < 0)
@@ -99,7 +114,8 @@ RandomDevice::RandomDevice()
 #if !OS(DARWIN) && !OS(FUCHSIA) && !OS(WINDOWS)
 RandomDevice::~RandomDevice()
 {
-    close(m_fd);
+    if (m_fd >= 0)
+        close(m_fd);
 }
 #endif
 
@@ -114,8 +130,14 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
 #elif OS(UNIX)
     ssize_t amountRead = 0;
     while (static_cast<size_t>(amountRead) < buffer.size()) {
+        ssize_t currentRead;
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-        ssize_t currentRead = read(m_fd, buffer.data() + amountRead, buffer.size() - amountRead);
+#if OS(LINUX)
+        if (m_fd < 0)
+            currentRead = syscall(SYS_getrandom, buffer.data() + amountRead, buffer.size() - amountRead, 0);
+        else
+#endif
+            currentRead = read(m_fd, buffer.data() + amountRead, buffer.size() - amountRead);
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         // We need to check for both EAGAIN and EINTR since on some systems /dev/urandom
         // is blocking and on others it is non-blocking.
