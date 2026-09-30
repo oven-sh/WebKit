@@ -494,6 +494,10 @@ makes for itself does. It is by the table that JavaScriptCore knows whether ther
 - What has been compiled and not yet installed kept from the collector whatever the function had in its variables when compiling was begun, for as long as it waited, which could be for good. It lets go of them when compiling is over, and refers weakly to what it
   will refer to weakly once it is installed: if any of that goes, so does it (`Plan::isKnownToBeLiveAfterGC()`).
 
+**When it is compiled.** JavaScriptCore puts off compiling code again until three quarters of its `ValueProfile`s have seen something, up to five times, taking that for a sign of how much of the code has been run. It leaves out those of the arguments. Code in Python
+begins by giving its parameters what it was called with, and most of that is for what is out of the ordinary: too few, too many, some left to their defaults. In a small function that was enough for it to be put off all five times. What is found out
+there says what the parameters are, as the profiles of the arguments do, so it is left out with them: `CodeBlock::numberOfValueProfilesOfArgumentBinding()`.
+
 **The graph is looked over after every phase** (`--validateGraphAtEachPhase`) in the configuration in which the DFG compiles nearly everything. What that found: the register that the code of a module has its namespace in, if the module is a coroutine, was no variable, and
 so had nothing in it on the way back in; what is taken out of a tuple of results did not say that anything came of it until later; and `Return` and `PyGetTupleItem` were taken to be able to leave for the baseline JIT where nothing may.
 

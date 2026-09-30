@@ -250,7 +250,7 @@ try:
 
     print("---- the file system")
     v = posix.statvfs(".")
-    t("statvfs", lambda: (type(v).__name__, type(v).__module__, len(v), v.n_fields, [type(x).__name__ for x in v], type(v.f_fsid).__name__, v.f_namemax, v.f_bsize > 0, v.f_frsize > 0, v.f_blocks >= v.f_bfree >= 0, v == posix.statvfs(b"."), v.f_flag & ~3))
+    t("statvfs", lambda: (type(v).__name__, type(v).__module__, len(v), v.n_fields, [type(x).__name__ for x in v], type(v.f_fsid).__name__, v.f_namemax, v.f_bsize > 0, v.f_frsize > 0, v.f_blocks >= v.f_bfree >= 0, (lambda w: (v.f_bsize, v.f_frsize, v.f_blocks, v.f_flag, v.f_namemax, v.f_fsid) == (w.f_bsize, w.f_frsize, w.f_blocks, w.f_flag, w.f_namemax, w.f_fsid))(posix.statvfs(b".")), v.f_flag & ~3))
     t("of an open file", lambda: [(posix.statvfs(fd)[:3] == v[:3], posix.fstatvfs(fd)[:3] == v[:3], posix.close(fd)) for fd in [posix.open(".", 0)]])
     t("that fail", lambda: (attempt(lambda: posix.statvfs("absent")), attempt(lambda: posix.statvfs(9999)), attempt(lambda: posix.fstatvfs(9999)), attempt(lambda: posix.fstatvfs("a"))))
     t("pathconf", lambda: (posix.pathconf(".", "PC_NAME_MAX"), posix.pathconf(b".", posix.pathconf_names["PC_NAME_MAX"]), posix.pathconf(P("."), "PC_PATH_MAX"), posix.pathconf(path=".", name="PC_LINK_MAX") > 0, posix.pathconf(".", Index(posix.pathconf_names["PC_NAME_MAX"]))))

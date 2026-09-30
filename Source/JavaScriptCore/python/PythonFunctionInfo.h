@@ -114,6 +114,8 @@ struct CodeDetails {
     unsigned firstTraceableOffset { 0 };
     // Where op_py_enter is. What is thrown from before it is thrown from a frame that has not been counted.
     unsigned enterOffset { 0 };
+    // How many of its ValueProfiles are in what comes before that. See CodeBlock::numberOfValueProfilesOfArgumentBinding().
+    unsigned valueProfilesBeforeEnter { 0 };
 
     // A part of the code in which there is more to the frame than its variables: what CPython would have on its stack from one statement to the next. It is for frame.f_lineno = n, which has to know what there
     // is where it is and what there has to be where it is going. Each op_py_line says which it is in. See PythonFrameJump.cpp.

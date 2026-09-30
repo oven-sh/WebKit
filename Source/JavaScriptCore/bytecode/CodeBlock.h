@@ -901,6 +901,7 @@ public:
 
         FixedVector<VirtualRegister> m_registersSeenFromOutside;
         unsigned m_offsetFromWhichRegistersAreSeen { 0 };
+        unsigned m_numberOfValueProfilesOfArgumentBinding { 0 };
     };
 
     // The registers that something other than the code itself can look at, and set, while whatever the code has called is running. Code in Python has them: its variables and what goes with them, which a frame object shows.
@@ -1030,7 +1031,10 @@ private:
     template<typename Visitor> void stronglyVisitWeakReferences(const ConcurrentJSLocker&, Visitor&);
     template<typename Visitor> void visitOSRExitTargets(const ConcurrentJSLocker&, Visitor&);
 
-    unsigned numberOfNonArgumentValueProfiles() { return totalNumberOfValueProfiles() - numberOfArgumentValueProfiles(); }
+    // Code in Python begins by giving its parameters what it was called with, and most of that is for what is out of the ordinary: too few, too many, some left to their defaults. What is found out there says what the parameters
+    // are, as the profiles of the arguments do, and no more than those is it any sign of how much of the code has been run. They are the first so many.
+    unsigned numberOfValueProfilesOfArgumentBinding() const { return m_rareData ? m_rareData->m_numberOfValueProfilesOfArgumentBinding : 0; }
+    unsigned numberOfNonArgumentValueProfiles() { return totalNumberOfValueProfiles() - numberOfArgumentValueProfiles() - numberOfValueProfilesOfArgumentBinding(); }
     unsigned totalNumberOfValueProfiles() { return m_unlinkedCode->numberOfValueProfiles(); }
 
     Seconds timeSinceCreation()

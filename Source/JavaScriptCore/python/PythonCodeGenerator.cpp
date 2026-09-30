@@ -134,6 +134,7 @@ public:
     void emitEnter()
     {
         m_details->enterOffset = g.instructions().size();
+        m_details->valueProfilesBeforeEnter = g.m_codeBlock->metadata().numValueProfiles();
         // Until it has got this far there is no frame to be told of, nor to be seen in a traceback.
         if (m_details->firstTraceableOffset < m_details->enterOffset)
             m_details->firstTraceableOffset = m_details->enterOffset;

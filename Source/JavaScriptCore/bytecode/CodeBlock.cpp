@@ -363,6 +363,7 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
         m_rareData->m_exceptionHandlers = other.m_rareData->m_exceptionHandlers;
         m_rareData->m_registersSeenFromOutside = other.m_rareData->m_registersSeenFromOutside;
         m_rareData->m_offsetFromWhichRegistersAreSeen = other.m_rareData->m_offsetFromWhichRegistersAreSeen;
+        m_rareData->m_numberOfValueProfilesOfArgumentBinding = other.m_rareData->m_numberOfValueProfilesOfArgumentBinding;
     }
 }
 
@@ -449,7 +450,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     if (ownerExecutable->isPython()) {
         createRareDataIfNecessary();
-        m_rareData->m_registersSeenFromOutside = Python::registersThatFrameObjectSees(uncheckedDowncast<FunctionExecutable>(ownerExecutable), m_rareData->m_offsetFromWhichRegistersAreSeen);
+        m_rareData->m_registersSeenFromOutside = Python::registersThatFrameObjectSees(uncheckedDowncast<FunctionExecutable>(ownerExecutable), m_rareData->m_offsetFromWhichRegistersAreSeen, m_rareData->m_numberOfValueProfilesOfArgumentBinding);
     }
 
     ScriptExecutable* topLevelExecutable = ownerExecutable->topLevelExecutable();
@@ -3601,9 +3602,11 @@ void CodeBlock::updateAllNonLazyValueProfilePredictionsAndCountLiveness(unsigned
         samples = ValueProfileSamples::Record;
     else if (samples == ValueProfileSamples::Record && Options::useLazyValueProfilePredictions() && m_metadata && !m_metadata->valueProfilePredictions() && valueProfilePredictionsAreNeverRead())
         samples = ValueProfileSamples::Keep; // The Baseline plan asks for them whatever the code is.
+    unsigned firstOfTheRest = numberOfArgumentValueProfiles() + numberOfValueProfilesOfArgumentBinding();
     forEachValueProfile([&](auto& profile, bool isArgument) {
         using Profile = std::remove_reference_t<decltype(profile)>;
         static_assert(Profile::numberOfBuckets == 1);
+        isArgument |= index < firstOfTheRest;
         if constexpr (std::is_same_v<Profile, ValueProfileRef>) {
             if (samples != ValueProfileSamples::Record) {
                 // Nothing marks the cell in a bucket. Once it is dead the sample has to go.

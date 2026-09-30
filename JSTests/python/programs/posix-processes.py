@@ -212,7 +212,7 @@ try:
 
     print("---- signals")
     t("kill", lambda: [(posix.kill(pid, 0), posix.kill(pid, 15), posix.waitpid(pid, 0)[1], attempt(lambda: posix.kill(pid, 0))) for pid in [spawn("sleep 30")]])
-    t("killpg", lambda: [(posix.killpg(pid, 9), posix.waitpid(pid, 0)[1], attempt(lambda: posix.killpg(pid, 0))) for pid in [posix.posix_spawn(SH, ["sh", "-c", "sleep 30"], {}, setpgroup=0)]])
+    t("killpg", lambda: [(posix.killpg(pid, 9), posix.waitpid(pid, 0)[1], attempt(lambda: posix.killpg(pid, 0))) for pid in [posix.posix_spawn(SH, ["sh", "-c", "exec sleep 30"], {}, setpgroup=0)]])
     t("of this", lambda: (posix.kill(posix.getpid(), 0), posix.kill(0, 0), posix.killpg(posix.getpgrp(), 0)))
     for name, args in (("kill", (99999999, 0)), ("kill", (posix.getpid(), 999)), ("kill", ("a", 0)), ("kill", (0, "a")), ("kill", (0,)), ("kill", (1.5, 0)), ("kill", (2 ** 40, 0)), ("kill", (0, 2 ** 70)), ("killpg", (99999999, 0)), ("killpg", ("a", 0)), ("killpg", (0, "a")), ("killpg", (0, 2 ** 40)), ("killpg", (0,))):
         t("%s%r" % (name, tuple(a if a != posix.getpid() else "this" for a in args)), lambda: getattr(posix, name)(*args))

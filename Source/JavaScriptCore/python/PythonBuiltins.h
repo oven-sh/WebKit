@@ -269,7 +269,7 @@ JSObject* builtinsOfScope(VM&, JSScope*);
 // What is only known about code once it has been compiled, which it is now if it had not been.
 void ensureCodeDetails(VM&, FunctionExecutable*);
 // Of code that has been compiled: CodeBlock::registersSeenFromOutside(), and where in the code they begin to be.
-FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable*, unsigned& fromOffset);
+FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable*, unsigned& fromOffset, unsigned& valueProfilesBefore);
 // The bytecode, which is generated again if it has been thrown away. It comes out the same.
 UnlinkedCodeBlock* unlinkedCodeBlockOf(VM&, FunctionExecutable*);
 // function.__code__. There is one for each piece of code.

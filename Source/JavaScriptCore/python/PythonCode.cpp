@@ -101,11 +101,12 @@ void ensureCodeDetails(VM& vm, FunctionExecutable* executable)
     RELEASE_ASSERT(infoOf(executable).details);
 }
 
-FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable* executable, unsigned& fromOffset)
+FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable* executable, unsigned& fromOffset, unsigned& valueProfilesBefore)
 {
     const CodeDetails* details = infoOf(executable).details.get();
     RELEASE_ASSERT(details);
     fromOffset = details->enterOffset;
+    valueProfilesBefore = details->valueProfilesBeforeEnter;
     Vector<VirtualRegister, 16> registers;
     auto add = [&] (VirtualRegister virtualRegister) {
         if (virtualRegister.isValid() && !registers.contains(virtualRegister))
