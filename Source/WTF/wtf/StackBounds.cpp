@@ -195,7 +195,8 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
 #if OS(LINUX)
     // The main thread's stack grows on demand, so what is mapped now says nothing about its bound. The kernel
     // lets the mapping reach RLIMIT_STACK, measured from its end, which is above the argument and environment
-    // strings. The bound is that far below the end, less a guard page.
+    // strings. The bound is that far below the end, less a guard page. With no limit the kernel sets no bound,
+    // and the size assumed for the stack is measured from libc's origin, below the strings.
     if (getpid() == static_cast<pid_t>(syscall(SYS_gettid))) {
         rlimit limit;
         getrlimit(RLIMIT_STACK, &limit);
@@ -203,7 +204,7 @@ StackBounds StackBounds::currentThreadStackBoundsInternal()
         if (size == RLIM_INFINITY)
             size = 8 * MB;
         size_t pageSize = static_cast<size_t>(sysconf(_SC_PAGESIZE));
-        void* origin = mainThreadStackTop(pageSize, static_cast<size_t>(size));
+        void* origin = limit.rlim_cur == RLIM_INFINITY ? nullptr : mainThreadStackTop(pageSize, static_cast<size_t>(size));
         void* libcBound = nullptr;
         if (!origin) {
             // libc's origin is below the strings (glibc: the page above __libc_stack_end, musl: the page above the
