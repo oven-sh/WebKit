@@ -171,6 +171,8 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     bool hasDocstring { false };
     // It is in a class, though it is no part of the body of one, and what it does not find among its own names it looks for there first.
     bool canSeeClassScope { false };
+    // For what has the type parameters of a definition: where the statement is, the name of what it defines is said to be global.
+    bool definesWhatIsSaidToBeGlobal { false };
     OwnerKind owner { OwnerKind::None };
     Evaluates evaluates { Evaluates::Value };
     unsigned typeParameterIndex { 0 }; // For an Evaluator of a bound or a default: of which.
@@ -226,6 +228,7 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->isMethod = isMethod;
         result->hasDocstring = hasDocstring;
         result->canSeeClassScope = canSeeClassScope;
+        result->definesWhatIsSaidToBeGlobal = definesWhatIsSaidToBeGlobal;
         result->owner = owner;
         result->evaluates = evaluates;
         result->typeParameterIndex = typeParameterIndex;

@@ -860,7 +860,10 @@ private:
         OpCheckTdz::emit(&g, value, stringConstant(name));
     }
 
-    RegisterID* emitLoadClosure(RegisterID* dst, const Identifier& name, const Node& node)
+    enum class Checked : bool { No, Yes };
+
+    // If it is not checked, there may be nothing in what it is loaded into.
+    RegisterID* emitLoadClosure(RegisterID* dst, const Identifier& name, const Node& node, Checked checked = Checked::Yes)
     {
         Variable variable = g.variable(name);
         Reg scope = g.emitResolveScope(nullptr, variable);
@@ -874,8 +877,26 @@ private:
             g.moveEmptyValue(result.get());
             emitLabel(hasValue.get());
         }
-        emitCheckBound(result.get(), name, node);
+        if (checked == Checked::Yes)
+            emitCheckBound(result.get(), name, node);
         return result.get();
+    }
+
+    // A variable of this function's or of one that it is in, or the marker if there is nothing in it.
+    void emitLoadVariableOrMarker(RegisterID* dst, const Identifier& name, const Node& node)
+    {
+        Location location = locateAndNote(name);
+        if (location.where == Where::Register)
+            g.move(dst, location.local);
+        else {
+            RELEASE_ASSERT(location.where == Where::Closure);
+            emitLoadClosure(dst, name, node, Checked::No);
+        }
+        Ref<Label> hasValue = g.newLabel();
+        Reg isEmpty = g.newTemporary();
+        g.emitJumpIfFalse(g.emitIsEmpty(isEmpty.get(), dst), hasValue.get());
+        g.move(dst, marker());
+        emitLabel(hasValue.get());
     }
 
     // With no value, it is left with nothing in it.
@@ -1929,7 +1950,8 @@ private:
             OpPyCall::emit(&g, callee, argument ? argument : callee, static_cast<unsigned>(kind));
     }
 
-    // super() with no arguments means super(__class__, self), which only the compiler can know.
+    // super() with no arguments means super(__class__, self). In CPython it is `super` that finds those, in the frame of what called it. Here it is handed them, if `super` is what is called: implicitSuper().
+    // With no parameters there is nothing to hand it, and it says so itself.
     bool isImplicitSuper(Call& node)
     {
         auto* name = node.function->tryAs<Name>();
@@ -1937,10 +1959,7 @@ private:
             return false;
         if (!isFunctionLike() || m_info.parameterNames.isEmpty() || !m_info.positionalCount)
             return false;
-        if (locate(*name->id).where != Where::Global)
-            return false;
-        NameScope scope = m_block.scopeOf(m_names.dunder_class);
-        return scope == NameScope::Free || scope == NameScope::Cell;
+        return locate(*name->id).where == Where::Global;
     }
 
     RegisterID* emitCall(RegisterID* dst, Call& node)
@@ -1952,13 +1971,18 @@ private:
 
         if (isImplicitSuper(node)) {
             Reg function = emitToTemporary(node.function);
-            CallArguments call(g, nullptr, 2);
-            g.emitLoad(call.thisRegister(), jsUndefined());
-            emitLoadClosure(call.argumentRegister(0), m_names.dunder_class, node);
-            RegisterID* self = emitLoadName(call.argumentRegister(1), m_info.parameterNames[0], node);
-            if (self != call.argumentRegister(1))
-                g.move(call.argumentRegister(1), self);
-            return emitRawCall(destination(dst).get(), function.get(), call, 2, node);
+            NameScope scopeOfClass = m_block.scopeOf(m_names.dunder_class);
+            bool hasCell = scopeOfClass == NameScope::Free || scopeOfClass == NameScope::Cell;
+            Reg classInCell = g.newTemporary();
+            if (hasCell)
+                emitLoadVariableOrMarker(classInCell.get(), m_names.dunder_class, node);
+            else
+                g.move(classInCell.get(), marker());
+            Reg self = g.newTemporary();
+            emitLoadVariableOrMarker(self.get(), m_info.parameterNames[0], node);
+            mark(node);
+            emitTellOfCall(function.get(), nullptr, ToldArgument::None);
+            return emitRuntimeCall(dst, "implicitSuper"_s, { function.get(), constant(jsBoolean(hasCell)), classInCell.get(), self.get() }, node);
         }
 
         auto* attribute = node.function->tryAs<Attribute>();
@@ -2172,7 +2196,10 @@ private:
                 info->firstLine = m_info.firstLine;
         }
         info->name = name;
-        info->qualifiedName = qualifiedNameFor(name);
+        // What is said to be global where it is defined is called what it would be called there. What has its type parameters comes between, and is looked past.
+        bool isSaidToBeGlobal = (kind == CodeKind::Function || kind == CodeKind::Class)
+            && (m_info.kind == CodeKind::TypeParameters ? m_info.definesWhatIsSaidToBeGlobal : m_block.scopeOf(mangle(name)) == NameScope::GlobalExplicit);
+        info->qualifiedName = isSaidToBeGlobal ? name.string() : qualifiedNameFor(name);
         info->canSeeClassScope = block.canSeeClassScope;
         if (kind == CodeKind::Annotations || kind == CodeKind::TypeParameters || kind == CodeKind::Evaluator)
             info->qualifiedNamePrefix = ownQualifiedNamePrefix();
@@ -4465,8 +4492,8 @@ private:
         }
     }
 
-    // The function that runs the body of a class statement. It is given the namespace to fill in. It returns the environment that
-    // __class__ and __classdict__ are variables of, for the class to be put in once there is one, or None.
+    // The function that runs the body of a class statement. It is given the namespace to fill in. It leaves there the cells that __class__ and __classdict__ are,
+    // for type() to put the class in once there is one, and returns the first of them, or None.
     void generateClassBody(ClassDef& node)
     {
         m_namespace = parameterRegister(0);
@@ -4535,12 +4562,19 @@ private:
             emitNewTuple(tuple.get(), items);
             store(m_names.dunder_static_attributes, tuple.get());
         }
-        // What type() is handed the cells by, which here is what this returns.
-        if (m_block.needsClassDict)
-            noteName(Identifier::fromString(m_vm, "__classdictcell__"_s));
-        if (m_block.needsClassClosure)
-            noteName(Identifier::fromString(m_vm, "__classcell__"_s));
-        g.emitReturn(environment.get());
+        // Nobody wrote this, and it is on no line.
+        SetForScope isArtificial(m_isArtificial, true);
+        Reg cell = g.newTemporary();
+        if (m_block.needsClassDict) {
+            emitRuntimeCall(cell.get(), "cellOfVariable"_s, { environment.get(), stringConstant(m_names.dunder_classdict) }, node);
+            store(m_names.dunder_classdictcell, cell.get());
+        }
+        if (m_block.needsClassClosure) {
+            emitRuntimeCall(cell.get(), "cellOfVariable"_s, { environment.get(), stringConstant(m_names.dunder_class) }, node);
+            store(m_names.dunder_classcell, cell.get());
+        } else
+            g.emitLoad(cell.get(), jsUndefined());
+        g.emitReturn(cell.get());
     }
 
     // ---- Annotations
@@ -4795,6 +4829,7 @@ private:
         RELEASE_ASSERT(block);
         auto info = makeInfo(CodeKind::TypeParameters, Identifier::fromString(m_vm, concatenate("<generic parameters of "_s, name.string(), '>')), nullptr, *block, node);
         info->owner = owner;
+        info->definesWhatIsSaidToBeGlobal = m_block.scopeOf(mangle(name)) == NameScope::GlobalExplicit;
         if (owner == OwnerKind::Class)
             info->privateName = name;
         // The defaults of a function's parameters are evaluated where the statement is, and passed in.

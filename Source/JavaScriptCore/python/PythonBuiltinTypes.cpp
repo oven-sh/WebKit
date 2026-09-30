@@ -1603,6 +1603,32 @@ PYTHON_NATIVE(superInit)
     RETURN_NONE();
 }
 
+// super_init_without_args(). What there is nothing in is empty.
+JSValue implicitSuper(JSGlobalObject* globalObject, JSValue function, bool hasCell, JSValue classInCell, JSValue self)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // It is whatever goes by the name when it is called, and anything else is called as it was written.
+    if (function != JSValue(globalObject->pyRealm()->typeSuper()))
+        RELEASE_AND_RETURN(scope, call(globalObject, function));
+    if (!self)
+        return raise(globalObject, scope, BuiltinType::RuntimeError, "super(): arg[0] deleted"_s);
+    if (!hasCell)
+        return raise(globalObject, scope, BuiltinType::RuntimeError, "super(): __class__ cell not found"_s);
+    if (!classInCell)
+        return raise(globalObject, scope, BuiltinType::RuntimeError, "super(): empty __class__ cell"_s);
+    if (!isClass(classInCell))
+        return raise(globalObject, scope, BuiltinType::RuntimeError, concatenate("super(): __class__ is not a type ("_s, typeName(globalObject, classInCell), ')'));
+    PyType* type = asType(classInCell);
+    JSValue instance = isNone(self) ? JSValue() : self;
+    PyType* start = nullptr;
+    if (instance) {
+        start = superCheck(globalObject, type, instance);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return PyNativeObject::create(globalObject, BuiltinType::Super, type, instance, start ? JSValue(start) : JSValue());
+}
+
 PYTHON_NATIVE(superRepr)
 {
     NATIVE_PROLOGUE();

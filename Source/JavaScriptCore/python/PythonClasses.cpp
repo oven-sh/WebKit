@@ -386,6 +386,8 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     type->addToLayout(slots.size(), addsDict, addsWeakReferences);
 
     // ---- What is in the namespace
+    JSValue classCell;
+    JSValue classDictCell;
     type->putDirect(vm, names.private_qualname, name);
     namespaceDict->forEach(globalObject, [&] (JSValue key, JSValue value) {
         if (!key.isString()) {
@@ -401,6 +403,15 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
                 return false;
             }
             type->putDirect(vm, names.private_qualname, value);
+            return true;
+        }
+        // What the class is to be put in, and no attributes of it.
+        if (property == names.dunder_classcell) {
+            classCell = value;
+            return true;
+        }
+        if (property == names.dunder_classdictcell) {
+            classDictCell = value;
             return true;
         }
 
@@ -444,6 +455,17 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     // What says when two of them are equal, and not what their hash is, cannot be hashed.
     if (type->lookupOwn(vm, names.dunder_eq) && !type->lookupOwn(vm, names.dunder_hash))
         type->putDirect(vm, names.dunder_hash, jsUndefined());
+    // type_new_set_classcell() and type_new_set_classdictcell(). It is before anything of the program's is called that might use super(): mro(), __set_name__() and __init_subclass__().
+    if (classCell) {
+        if (!isCell(globalObject, classCell))
+            return raiseTypeError(globalObject, scope, concatenate("__classcell__ must be a nonlocal cell, not "_s, repr(globalObject, typeOf(globalObject, classCell))));
+        setContentsOfCell(vm, classCell, type);
+    }
+    if (classDictCell) {
+        if (!isCell(globalObject, classDictCell))
+            return raiseTypeError(globalObject, scope, concatenate("__classdictcell__ must be a nonlocal cell, not "_s, repr(globalObject, typeOf(globalObject, classDictCell))));
+        setContentsOfCell(vm, classDictCell, PyDict::backedBy(globalObject, type));
+    }
     if (metatype != realm->typeType()) {
         PyTuple* ownOrder = computeOrder(globalObject, type);
         RETURN_IF_EXCEPTION(scope, { });
@@ -597,7 +619,7 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue body, JSString* name, P
     if (!namespaceValue)
         namespaceValue = PyDict::create(globalObject);
 
-    JSValue environment = call(globalObject, body, namespaceValue);
+    JSValue cell = call(globalObject, body, namespaceValue);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (bases != originalBases) {
@@ -612,17 +634,19 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue body, JSString* name, P
     JSValue result = callWithKeywordDict(globalObject, metaclass, arguments, keywords);
     RETURN_IF_EXCEPTION(scope, { });
 
-    // Now that there is a class, the methods that use super() or __class__ can be told which it is.
-    if (auto* scopeObject = dynamicDowncast<JSLexicalEnvironment>(environment)) {
-        SymbolTableEntry::Fast entry = scopeObject->symbolTable()->get(names.dunder_class.impl());
-        if (!entry.isNull())
-            scopeObject->variableAt(entry.scopeOffset()).set(vm, scopeObject, result);
-        // And what looks in the class for names, as its annotations do, looks from now on in the class and not in what it was made from.
-        entry = scopeObject->symbolTable()->get(names.dunder_classdict.impl());
-        if (!entry.isNull() && isType(result)) {
-            JSValue dict = getAttribute(globalObject, result, names.dunder_dict);
+    // It is type() that tells the methods that use super() or __class__ which class it is, having been handed the cell in the namespace. A metaclass may have kept that from it.
+    if (isType(result) && isCell(globalObject, cell)) {
+        JSValue inCell = contentsOfCell(cell);
+        if (inCell != result) {
+            String nameShown = repr(globalObject, name);
             RETURN_IF_EXCEPTION(scope, { });
-            scopeObject->variableAt(entry.scopeOffset()).set(vm, scopeObject, dict);
+            String classShown = repr(globalObject, result);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!inCell)
+                return raise(globalObject, scope, BuiltinType::RuntimeError, concatenate("__class__ not set defining "_s, nameShown, " as "_s, classShown, ". Was __classcell__ propagated to type.__new__?"_s));
+            String inCellShown = repr(globalObject, inCell);
+            RETURN_IF_EXCEPTION(scope, { });
+            return raiseTypeError(globalObject, scope, concatenate("__class__ set to "_s, inCellShown, " defining "_s, nameShown, " as "_s, classShown));
         }
     }
     return result;

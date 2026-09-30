@@ -276,6 +276,15 @@ than its base has its base's. So a class derived from `Exception` can be given `
 `time.struct_time`, `os.stat_result` and a few more can, and programs do. Those of them that are derived from `tuple` are `IsDerivedFromBuiltin`, so that nothing is done to one as to a tuple without looking at what its
 class now has. Giving such a class a `__name__` is giving it all that it is called, as in CPython: what module it is in, which had been the first part of that, is `__module__` from then on.
 
+**How the methods come to know which class they are in.** `__class__` is a variable of the body of the class, which the methods are inside. As in CPython, the body leaves the cell that it is in the namespace, as `__classcell__`, and
+returns it. `type()` takes it out of the namespace and puts the class in it, before it calls anything of the program's that might use `super()`: `mro()`, `__set_name__()`, `__init_subclass__()`. `enum` makes the members of a class from
+`__set_name__()`, with a `__new__()` that may well call `super().__new__()`. `__build_class__()` looks afterwards whether the class that it got is what is in the cell, since a metaclass may have kept the cell back. `__classdictcell__` is the
+same for `__classdict__`, which is where annotations look for names.
+
+**`super()` with no arguments** is a call of whatever goes by the name of `super` at the time. In CPython it is `super` that finds the class and the first argument, in the frame of what called it. Here the compiler hands them to
+`implicitSuper()`, along with what is being called. If that is not `super` it is called as it was written, with nothing. If it is, this is `super_init_without_args()`, which has something to say about each thing that may be missing.
+`programs/the-cell-of-a-class.py`.
+
 ### Calling a class
 
 To JavaScript a class is a function that is written in C++, as `Map` and `Array` are, and `PyType` is an `InternalFunction` as their constructors are. So what calls one remembers it, and goes straight to `callType()`, in every tier.

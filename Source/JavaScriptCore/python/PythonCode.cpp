@@ -556,6 +556,7 @@ enum Bit : uint32_t {
     HasDocstring = 1 << 7,
     CanSeeClassScope = 1 << 8,
     IsSyntaxTree = 1 << 9, // The source is a tree, written out: PythonSyntaxTreeSource.h.
+    DefinesWhatIsSaidToBeGlobal = 1 << 10,
 };
 }
 
@@ -571,7 +572,7 @@ static ByteVector bytesOf(FunctionExecutable* executable)
     writer.byte(static_cast<uint8_t>(info.evaluates));
     writer.number((info.isGenerator ? CodeBit::IsGenerator : 0) | (info.isCoroutine ? CodeBit::IsCoroutine : 0) | (info.hasVariadic ? CodeBit::HasVariadic : 0)
         | (info.hasKeywordVariadic ? CodeBit::HasKeywordVariadic : 0) | (info.usesNamespace ? CodeBit::UsesNamespace : 0) | (info.isNested ? CodeBit::IsNested : 0)
-        | (info.isMethod ? CodeBit::IsMethod : 0) | (info.hasDocstring ? CodeBit::HasDocstring : 0) | (info.canSeeClassScope ? CodeBit::CanSeeClassScope : 0)
+        | (info.isMethod ? CodeBit::IsMethod : 0) | (info.hasDocstring ? CodeBit::HasDocstring : 0) | (info.canSeeClassScope ? CodeBit::CanSeeClassScope : 0) | (info.definesWhatIsSaidToBeGlobal ? CodeBit::DefinesWhatIsSaidToBeGlobal : 0)
         | (executable->source().provider()->isPythonSyntaxTree() ? CodeBit::IsSyntaxTree : 0));
     writer.number(info.typeParameterIndex);
     writer.number(info.futureFeatures);
@@ -708,6 +709,7 @@ static FunctionExecutable* executableFromBytes(JSGlobalObject* globalObject, std
     info->isMethod = bits & CodeBit::IsMethod;
     info->hasDocstring = bits & CodeBit::HasDocstring;
     info->canSeeClassScope = bits & CodeBit::CanSeeClassScope;
+    info->definesWhatIsSaidToBeGlobal = bits & CodeBit::DefinesWhatIsSaidToBeGlobal;
     info->typeParameterIndex = reader.number();
     info->futureFeatures = reader.number() & (FutureFeaturesMask | AllowTopLevelAwait | IsTypedAtPrompt);
     info->optimizationLevel = std::min<uint8_t>(reader.byte(), 2);

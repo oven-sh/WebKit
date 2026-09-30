@@ -1073,6 +1073,8 @@ JSObject* createSysModule(JSGlobalObject* globalObject)
     for (ASCIILiteral name : { "is_available"_s, "is_enabled"_s, "is_active"_s })
         addFunction(globalObject, jit, name, returnFalse);
     set("_jit"_s, jit);
+    // What it was built from, which `platform` looks at: whose it is, the branch and the revision. As with a CPython that was built from no checkout, there is nothing to say of the last two.
+    set("_git"_s, PyTuple::create(globalObject, { text("JavaScriptCore"_s), text(""_s), text(""_s) }));
     addMonitoring(globalObject, module);
     return module;
 }

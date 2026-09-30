@@ -704,6 +704,20 @@ PYTHON_RUNTIME_FUNCTION(takeReturnValue)
 
 // ---- Free variables that a function has as cells. See FunctionInfo::variablesGivenAsCells. The marker is for there being nothing in one.
 
+PYTHON_RUNTIME_FUNCTION(runtimeImplicitSuper)
+{
+    JSValue marker = globalObject->pyRealm()->boundArgumentsMarker();
+    auto orEmpty = [&] (JSValue value) { return value == marker ? JSValue() : value; };
+    return JSValue::encode(implicitSuper(globalObject, callFrame->uncheckedArgument(0), callFrame->uncheckedArgument(1).asBoolean(), orEmpty(callFrame->uncheckedArgument(2)), orEmpty(callFrame->uncheckedArgument(3))));
+}
+
+PYTHON_RUNTIME_FUNCTION(runtimeCellOfVariable)
+{
+    auto* environment = uncheckedDowncast<JSLexicalEnvironment>(callFrame->uncheckedArgument(0).asCell());
+    auto name = asString(callFrame->uncheckedArgument(1))->toIdentifier(globalObject);
+    return JSValue::encode(cellOfVariable(globalObject, environment, name.impl()));
+}
+
 PYTHON_RUNTIME_FUNCTION(runtimeCellGet)
 {
     JSValue value = contentsOfCell(callFrame->uncheckedArgument(0));
@@ -1249,6 +1263,8 @@ JSObject* createRuntimeFunctions(VM& vm, JSGlobalObject* globalObject)
     add("loadBuildClass"_s, loadBuildClass);
     add("matchExceptionGroup"_s, runtimeMatchExceptionGroup);
     add("prepareReraiseStar"_s, runtimePrepareReraiseStar);
+    add("implicitSuper"_s, runtimeImplicitSuper);
+    add("cellOfVariable"_s, runtimeCellOfVariable);
     add("cellGet"_s, runtimeCellGet);
     add("cellSet"_s, runtimeCellSet);
     add("wrapAsyncYield"_s, runtimeWrapAsyncYield);

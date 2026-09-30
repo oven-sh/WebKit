@@ -704,9 +704,6 @@ void frameIsReturning(JSGlobalObject* globalObject, CallFrame* callFrame, Byteco
     PyFrame* frame = PyFrame::forCallFrameIfExists(globalObject->vm(), callFrame);
     if (frame)
         frame->setLineOverride(frame->lastLine());
-    // The body of a class hands back the cell that __class__ is in, if anything in it wants that. Here it hands back the environment that has the variable.
-    if (pythonInfoOfFrame(callFrame)->kind == CodeKind::Class)
-        value = cellForClass(globalObject, value);
     fireAtOffset(*site, MonitoringEvent::PyReturn, value);
     if (frame)
         frame->setLineOverride(-1);

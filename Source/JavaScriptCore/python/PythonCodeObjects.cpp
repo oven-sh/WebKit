@@ -51,7 +51,7 @@ namespace CellField {
 enum Field : unsigned { Environment, Offset, Contents };
 }
 
-static bool isCell(JSGlobalObject* globalObject, JSValue value)
+bool isCell(JSGlobalObject* globalObject, JSValue value)
 {
     return tryNativeObject(value) && typeOf(globalObject, value) == globalObject->pyRealm()->typeCell();
 }
@@ -72,15 +72,11 @@ WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner)
     return &variableOfCell(cell);
 }
 
-JSValue cellForClass(JSGlobalObject* globalObject, JSValue returnedByBody)
+JSValue cellOfVariable(JSGlobalObject* globalObject, JSLexicalEnvironment* environment, UniquedStringImpl* name)
 {
-    auto* scope = dynamicDowncast<JSLexicalEnvironment>(returnedByBody);
-    if (!scope)
-        return jsUndefined();
-    SymbolTableEntry::Fast entry = scope->symbolTable()->get(globalObject->vm().pythonNames().dunder_class.impl());
-    if (entry.isNull())
-        return jsUndefined();
-    return PyNativeObject::create(globalObject, BuiltinType::Cell, scope, intFromUInt64(globalObject, entry.scopeOffset().offset()));
+    SymbolTableEntry::Fast entry = environment->symbolTable()->get(name);
+    RELEASE_ASSERT(!entry.isNull());
+    return PyNativeObject::create(globalObject, BuiltinType::Cell, environment, intFromUInt64(globalObject, entry.scopeOffset().offset()));
 }
 
 JSValue contentsOfCell(JSValue cell)

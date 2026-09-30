@@ -1,0 +1,80 @@
+---- the class is known before anything of the program's is called
+    ('mro', 'Derived')
+    ('__set_name__', 'd', 'Derived', 'Derived, then Base')
+    ('__init_subclass__', 'Derived', 'Derived, then Base')
+    Made 2
+---- __classcell__
+    {'__classdictcell__': 'cell'}
+    {'__classdictcell__': 'cell', '__classcell__': 'cell'}
+    {'__classdictcell__': 'cell', '__classcell__': 'cell'}
+    {'__classdictcell__': 'cell', '__classcell__': 'cell'}
+    True False False False {'x': T}
+    True ('__class__',) ('__class__',)
+    ['__module__', '__qualname__', '__firstlineno__', '__type_params__', 'a', 'f', '__annotate_func__', '__static_attributes__', '__classdictcell__', '__classcell__', '__orig_bases__']
+    with none to keep back: A
+    kept back from type() => RuntimeError __class__ not set defining 'B' as <class '__main__.keptBack.<locals>.B'>. Was __classcell__ propagated to type.__new__?
+    set in the body, and set again after it => A
+    not a cell: None => TypeError __classcell__ must be a nonlocal cell, not <class 'NoneType'>
+    not a cell: 5 => TypeError __classcell__ must be a nonlocal cell, not <class 'int'>
+    not a cell: 'cell' => TypeError __classcell__ must be a nonlocal cell, not <class 'str'>
+    not a cell: <class 'object'> => TypeError __classcell__ must be a nonlocal cell, not <class 'type'>
+    a cell of the program's => RuntimeError __class__ not set defining 'A' as <class '__main__.notACell.<locals>.A'>. Was __classcell__ propagated to type.__new__?
+    with no body to have made it => (True, False)
+    __classdictcell__ => ('dict', 1, False)
+    __classdictcell__ that is none => TypeError __classdictcell__ must be a nonlocal cell, not <class 'int'>
+    put in one class, and another handed back => TypeError __class__ set to <class '__main__.wrongClass.<locals>.A'> defining 'A' as <class '__main__.Second'>
+    what is made is no class => ['__classcell__', '__classdictcell__']
+---- __build_class__
+    [('Built', 'function', 'Built', 'Built', 0)] True
+---- super() with no arguments
+    no arguments => RuntimeError super(): no arguments
+    deleted, with no class => RuntimeError super(): arg[0] deleted
+    no class => RuntimeError super(): __class__ cell not found
+    noArguments => RuntimeError super(): no arguments
+    onlyStarred => RuntimeError super(): no arguments
+    onlyKeyword => RuntimeError super(): no arguments
+    deleted => RuntimeError super(): arg[0] deleted
+    deletedAndCaptured => RuntimeError super(): arg[0] deleted
+    another => TypeError super(type, obj): obj (instance of int) is not an instance or subtype of type (Errors).
+    none => <super: <class 'Errors'>, NULL>
+    captured => ('super', True)
+    inAComprehension => ['super', 'super']
+    inAGeneratorExpression => TypeError super(type, obj): obj (instance of range_iterator) is not an instance or subtype of type (Errors).
+    inALambda => RuntimeError super(): no arguments
+    inALambdaWithOne => super
+    inANestedFunction => super
+    inAGenerator => ['super']
+    isNoClass => RuntimeError super(): __class__ is not a type (int)
+    emptied => RuntimeError super(): empty __class__ cell
+    called from the body: super(): empty __class__ cell
+---- whatever goes by the name
+    the one that is built in => AttributeError 'super' object has no attribute 'msg'
+    called with ()
+    a global => not the one that is built in
+    called with (1, 2)
+    a global, with arguments => not the one that is built in
+    no longer => AttributeError 'super' object has no attribute 'msg'
+    called with ()
+    in the builtins => not the one that is built in
+    a local => a local
+---- what is said to be global is called what it would be there
+    GlobalClass
+    GlobalClass.Inner
+    GlobalClass.Inner.method
+    GlobalClass.method
+    GlobalClass.method.<locals>.inner
+    globalFunction
+    globalFunction.<locals>.Local
+    GlobalGeneric
+    GlobalGeneric.method
+    defines.<locals>.NotGlobal
+    AlsoGlobal
+    fromAMethod
+    globalFunction GlobalClass.method
+---- and what else is defined with its type parameters is not
+    G T generics.<locals>.T None generics.<locals>.T
+    g U None generics.<locals>.U generics.<locals>.U
+    generics.<locals>.L V generics.<locals>.V None generics.<locals>.V
+    generics.<locals>.<generic parameters of G>.<lambda> generics.<locals>.<lambda> generics.<locals>.<lambda>
+---- sys._git
+    tuple ['str', 'str', 'str']

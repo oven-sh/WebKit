@@ -392,6 +392,7 @@ JSValue newInterpolation(JSGlobalObject*, JSValue value, JSValue expression, JSV
 JSValue newTemplate(JSGlobalObject*, JSValue strings, JSValue interpolations);
 bool isSubclassOf(JSGlobalObject*, JSValue, JSValue classInfo);
 PyTuple* defaultOrder(JSGlobalObject*, PyType*); // What type.mro() gives.
+JSValue implicitSuper(JSGlobalObject*, JSValue function, bool hasCell, JSValue classInCell, JSValue self);
 PyType* superCheck(JSGlobalObject*, PyType*, JSValue object); // The class whose order super(type, object) searches. Null, having raised, if it makes no sense.
 void setBases(JSGlobalObject*, PyType*, JSValue); // C.__bases__ = ...
 bool areLaidOutAlike(JSGlobalObject*, PyType* oldType, PyType* newType); // Whether an instance of the one could be made an instance of the other.
@@ -444,8 +445,9 @@ CallFrame* callerOf(CallFrame*);
 CallFrame* innermostPythonFrame(VM&);
 // What is in a cell, which is empty if nothing is.
 JSValue contentsOfCell(JSValue cell);
-// The cell for __class__, from what the body of a class returned. None if there is none.
-JSValue cellForClass(JSGlobalObject*, JSValue returnedByBody);
+bool isCell(JSGlobalObject*, JSValue);
+// The cell that is a variable of an environment.
+JSValue cellOfVariable(JSGlobalObject*, JSLexicalEnvironment*, UniquedStringImpl* name);
 // Whether it is a generator whose code has CO_ITERABLE_COROUTINE, and so can be awaited.
 bool isIterableCoroutine(JSGlobalObject*, JSValue);
 void setContentsOfCell(VM&, JSValue cell, JSValue);
