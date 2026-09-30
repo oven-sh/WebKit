@@ -614,6 +614,8 @@ static const uint8_t* makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock
     return copy;
 }
 
+static const uint8_t* copyInCommon(std::span<const uint8_t>, size_t alignment); // One copy of what is the same, while there is an ArraysInCommon.
+
 static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t entryOffsetOfModule)
 {
     if (s_factsBeingBuilt.empty() || s_factsBeingBuilt[index])
@@ -696,10 +698,8 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecut
             Region::AllocationScope notInRegion(false);
             scalars = scalarsToMakeFunctionCodeFrom(*codeBlock);
         }
-        auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, scalars.size(), 1));
-        memcpySpan(std::span { copy, scalars.size() }, scalars.span());
         words[0] |= Facts::Scalars;
-        words.append(in(Region::Arena::Data, copy));
+        words.append(in(Region::Arena::Data, copyInCommon(scalars.span(), 1)));
         Region::AllocationScope notInRegion(false);
         scalars = { };
     }
@@ -711,7 +711,7 @@ static void fillFacts(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecut
 namespace {
 class ArraysInCommon {
 public:
-    const uint8_t* copyOf(std::span<const uint8_t> content)
+    const uint8_t* copyOf(std::span<const uint8_t> content, size_t alignment = sizeof(void*))
     {
         if (content.empty())
             return nullptr;
@@ -721,10 +721,10 @@ public:
         Region::AllocationScope notInRegion(false);
         auto& withHash = m_copies.add(hash | 1, Vector<std::span<const uint8_t>, 1> { }).iterator->value;
         for (auto& copy : withHash) {
-            if (equalSpans(copy, content))
+            if (equalSpans(copy, content) && !(std::bit_cast<uintptr_t>(copy.data()) % alignment))
                 return copy.data();
         }
-        auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, content.size(), sizeof(void*)));
+        auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, content.size(), alignment));
         memcpySpan(std::span { copy, content.size() }, content);
         withHash.append(std::span<const uint8_t> { copy, content.size() });
         return copy;
@@ -739,6 +739,18 @@ private:
     UncheckedKeyHashMap<uint64_t, Vector<std::span<const uint8_t>, 1>> m_copies;
 };
 ArraysInCommon* s_arraysBeingBuilt;
+}
+
+static const uint8_t* copyInCommon(std::span<const uint8_t> content, size_t alignment)
+{
+    if (s_arraysBeingBuilt)
+        return s_arraysBeingBuilt->copyOf(content, alignment);
+    auto* copy = static_cast<uint8_t*>(Region::allocate(Region::Arena::Data, content.size(), alignment));
+    memcpySpan(std::span { copy, content.size() }, content);
+    return copy;
+}
+
+namespace {
 std::span<const ReportableSitesOfFunction> s_whatTheCompilerSaysOfFunctions;
 static thread_local bool s_realmIsKnownToBeThatOfProgram;
 std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdentifiers.
