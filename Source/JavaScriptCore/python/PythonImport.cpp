@@ -297,6 +297,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_weakref"_s, createWeakrefModule },
     { "builtins"_s, nullptr },
     { "errno"_s, createErrnoModule },
+    { "gc"_s, createGCModule },
     { "itertools"_s, createItertoolsModule },
     { "marshal"_s, createMarshalModule },
     { "math"_s, createMathModule },

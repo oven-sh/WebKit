@@ -1051,6 +1051,20 @@ no table of what refers to what, and nothing that a reference costs an object th
 
 There can be one to whatever CPython allows one to, and to an object of JavaScript's. An array is a `list` and an `Error` is an exception, and there cannot be one to those.
 
+### `gc`
+
+CPython counts references, and has a collector besides for what refers to itself. `gc` is how a program talks to that one. Here there is the one collector, JavaScriptCore's, for everything of both languages, and it is not a program's
+to tune. So `PythonGCModule.cpp` is `Modules/gcmodule.c` as far as that goes:
+
+- **`collect()` collects**, all of it, or only what is new if it is asked for a generation that is not the last. What is to be told that something has gone has been told by the time that it comes back, as in CPython, and so have
+  `gc.callbacks`, before and after. It comes back with 0, since how many things there were that nothing could reach is not known.
+- **What a program sets it gets back, and nothing goes by it**: `enable()` and `disable()`, `set_threshold()`, `set_debug()`, `freeze()`. `timeit` and a good many programs turn the collector off for a while, and lose nothing by its going on.
+- **There is nothing in any generation**: `get_count()` is all zeros, `garbage` is empty, and `get_stats()` counts only how many times `collect()` has been called.
+- **`is_tracked()` is what CPython comes to**, once it has collected: a number, a string or `bytes` is not, and a tuple is if anything in it is, however far down.
+- **`get_objects()`, `get_referrers()` and `get_referents()` find nothing.** They are audited, and say what CPython says of what they are wrongly given, and come back with an empty list.
+
+`programs/the-gc-module.py`
+
 ### Locks
 
 `_thread.lock` is a cell with a word in it, and to wait for it is to wait for the word as `Atomics.wait()` does, by the same means (`WaiterListManager`). So the engine knows of a thread that is waiting, as it

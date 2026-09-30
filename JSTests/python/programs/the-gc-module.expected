@@ -1,0 +1,81 @@
+---- what there is
+names => ['DEBUG_COLLECTABLE', 'DEBUG_LEAK', 'DEBUG_SAVEALL', 'DEBUG_STATS', 'DEBUG_UNCOLLECTABLE', 'callbacks', 'collect', 'disable', 'enable', 'freeze', 'garbage', 'get_count', 'get_debug', 'get_freeze_count', 'get_objects', 'get_referents', 'get_referrers', 'get_stats', 'get_threshold', 'is_finalized', 'is_tracked', 'isenabled', 'set_debug', 'set_threshold', 'unfreeze']
+constants => [('DEBUG_COLLECTABLE', 2), ('DEBUG_LEAK', 38), ('DEBUG_SAVEALL', 32), ('DEBUG_STATS', 1), ('DEBUG_UNCOLLECTABLE', 4)]
+signatures => [('collect', '($module, /, generation=2)'), ('disable', '($module, /)'), ('enable', '($module, /)'), ('freeze', '($module, /)'), ('get_count', '($module, /)'), ('get_debug', '($module, /)'), ('get_freeze_count', '($module, /)'), ('get_objects', '($module, /, generation=None)'), ('get_referents', '($module, /, *objs)'), ('get_referrers', '($module, /, *objs)'), ('get_stats', '($module, /)'), ('get_threshold', '($module, /)'), ('is_finalized', '($module, obj, /)'), ('is_tracked', '($module, obj, /)'), ('isenabled', '($module, /)'), ('set_debug', '($module, flags, /)'), ('set_threshold', None), ('unfreeze', '($module, /)')]
+what inspect makes of them => ['(generation=2)', '(generation=None)', '(*objs)', '(obj, /)', '()']
+what they are for => [('collect', 259, 'Run the garbage collector.'), ('disable', 37, 'Disable automatic garbage collection.'), ('enable', 36, 'Enable automatic garbage collection.'), ('freeze', 270, 'Freeze all current tracked objects and ignore them for future collections.'), ('get_count', 54, 'Return a three-tuple of the current collection counts.'), ('get_debug', 43, 'Get the garbage collection debugging flags.'), ('get_freeze_count', 57, 'Return the number of objects in the permanent generation.'), ('get_objects', 244, 'Return a list of objects tracked by the collector (excluding the list returned).'), ('get_referents', 67, "Return the list of objects that are directly referred to by 'objs'."), ('get_referrers', 64, "Return the list of objects that directly refer to any of 'objs'."), ('get_stats', 67, 'Return a list of dictionaries containing per-generation statistics.'), ('get_threshold', 41, 'Return the current collection thresholds.'), ('is_finalized', 64, 'Returns true if the object has been already finalized by the GC.'), ('is_tracked', 105, 'Returns true if the object is tracked by the garbage collector.'), ('isenabled', 56, 'Returns true if automatic garbage collection is enabled.'), ('set_debug', 503, 'Set the garbage collection debugging flags.'), ('set_threshold', 162, 'set_threshold(threshold0, [threshold1, [threshold2]])'), ('unfreeze', 123, 'Unfreeze all objects in the permanent generation.')]
+the module => ('gc', 'built-in', 'BuiltinImporter', 1171, 'This module provides access to the garbage collector for reference cycles.', True, 'builtin_function_or_method', 'gc')
+---- to begin with
+state => (True, 0, (2000, 10, 10), [], [], 0)
+kinds => ('int', 'tuple', 3, ['int', 'int', 'int'], 'list', 'list')
+statistics => [(['collected', 'collections', 'uncollectable'], ['int', 'int', 'int']), (['collected', 'collections', 'uncollectable'], ['int', 'int', 'int']), (['collected', 'collections', 'uncollectable'], ['int', 'int', 'int'])]
+---- what it remembers
+disable and enable => (None, False, None, False, None, True, None, True)
+collect while disabled => (None, 'int', False, None)
+debug => (None, 32, None, -1, None, 1, None, 0)
+thresholds => (None, (5, 10, 10), None, (6, 7, 10), None, (1, 2, 3), None, (0, 2, 3), None, (-1, -2, -3), None, (2000, 10, 10))
+thresholds when one will not do => (None, (1, 2, 3))
+    the last => TypeError 'str' object cannot be interpreted as an integer
+    are as they were => ((1, 2, 3), None)
+put away and put back => [(True, None, False, None, True)]
+freeze => (None, 'int', None, 0)
+the lists are the module's own => (True, True, 'list', 'list')
+---- what will not do
+collect(3) => ValueError invalid generation
+collect(-1) => ValueError invalid generation
+collect('a') => TypeError 'str' object cannot be interpreted as an integer
+collect(1.5) => TypeError 'float' object cannot be interpreted as an integer
+collect(None) => TypeError 'NoneType' object cannot be interpreted as an integer
+collect(2 ** 40) => OverflowError Python int too large to convert to C int
+collect(1, 2) => TypeError collect() takes at most 1 argument (2 given)
+collect(gen=1) => TypeError collect() got an unexpected keyword argument 'gen'
+collect(True) => int
+get_objects(3) => ValueError generation parameter must be less than the number of available generations (3)
+get_objects(-1) => list
+get_objects(-2) => ValueError generation parameter cannot be negative
+get_objects('a') => TypeError argument should be integer or None, not 'str'
+get_objects(2 ** 70) => OverflowError cannot fit 'int' into an index-sized integer
+get_objects(generation=None) => list
+get_objects(0, 1) => TypeError get_objects() takes at most 1 argument (2 given)
+set_threshold() => TypeError gc.set_threshold requires 1 to 3 arguments
+set_threshold(1, 2, 3, 4) => TypeError gc.set_threshold requires 1 to 3 arguments
+set_threshold('a') => TypeError 'str' object cannot be interpreted as an integer
+set_threshold(1.5) => TypeError 'float' object cannot be interpreted as an integer
+set_threshold(2 ** 31) => OverflowError signed integer is greater than maximum
+set_threshold(threshold0=1) => TypeError set_threshold() takes no keyword arguments
+set_debug() => TypeError gc.set_debug() takes exactly one argument (0 given)
+set_debug(1, 2) => TypeError gc.set_debug() takes exactly one argument (2 given)
+set_debug('a') => TypeError 'str' object cannot be interpreted as an integer
+set_debug(2 ** 40) => OverflowError Python int too large to convert to C int
+set_debug(flags=1) => TypeError gc.set_debug() takes no keyword arguments
+is_tracked() => TypeError gc.is_tracked() takes exactly one argument (0 given)
+is_tracked(1, 2) => TypeError gc.is_tracked() takes exactly one argument (2 given)
+is_finalized() => TypeError gc.is_finalized() takes exactly one argument (0 given)
+enable(1) => TypeError gc.enable() takes no arguments (1 given)
+isenabled(1) => TypeError gc.isenabled() takes no arguments (1 given)
+get_count(1) => TypeError gc.get_count() takes no arguments (1 given)
+get_stats(1) => TypeError gc.get_stats() takes no arguments (1 given)
+freeze(1) => TypeError gc.freeze() takes no arguments (1 given)
+get_referrers(a=1) => TypeError gc.get_referrers() takes no keyword arguments
+get_referents(a=1) => TypeError gc.get_referents() takes no keyword arguments
+get_referrers() => []
+get_referents() => []
+---- who is told
+of each => [('start', ['collected', 'generation', 'uncollectable'], 2, 'int', 'int'), ('stop', ['collected', 'generation', 'uncollectable'], 2, 'int', 'int'), ('start', ['collected', 'generation', 'uncollectable'], 0, 'int', 'int'), ('stop', ['collected', 'generation', 'uncollectable'], 0, 'int', 'int'), ('start', ['collected', 'generation', 'uncollectable'], 1, 'int', 'int'), ('stop', ['collected', 'generation', 'uncollectable'], 1, 'int', 'int')]
+     => ValueError invalid generation
+not of what will not do => []
+twice over => ['start', 'start', 'stop', 'stop']
+one that collects => [('start', 0), ('stop', 0)]
+one that adds another => ['start', 'start', 'start', 'stop', 'stop', 'stop']
+one that raises, and one that cannot be called => ('int', ['start', 'stop'], [('KeyError', "'start'", 'Exception ignored while calling GC callback', None), ('TypeError', "'int' object is not callable", 'Exception ignored while calling GC callback 5', None), ('KeyError', "'stop'", 'Exception ignored while calling GC callback', None), ('TypeError', "'int' object is not callable", 'Exception ignored while calling GC callback 5', None)])
+the same dictionary for all => [(None, 0, True, False, None)]
+---- what could refer to itself
+is_tracked => [('int', False), ('int', False), ('float', False), ('str', False), ('bytes', False), ('NoneType', False), ('bool', False), ('tuple', False), ('tuple', True), ('tuple', True), ('list', True), ('dict', True), ('dict', True), ('set', True), ('frozenset', True), ('object', False), ('C', True), ('type', True), ('type', False), ('type', False), ('builtin_function_or_method', True), ('builtin_function_or_method', True), ('function', True), ('complex', False), ('range', False), ('slice', True), ('ellipsis', False), ('NotImplementedType', False), ('bytearray', False), ('list_iterator', True), ('generator', True), ('module', True), ('ValueError', True), ('property', True), ('memoryview', True)]
+tuples of tuples => [False, True, True, True, True, True, False]
+a long way down => ['bool', True]
+come to by a great many ways => ['bool', True]
+is_finalized => [False, False, False, False]
+---- what is audited
+events => [('gc.get_objects', (-1,)), ('gc.get_objects', (1,)), ('gc.get_objects', (-1,)), ('gc.get_referrers', ((1, 'a'),)), ('gc.get_referents', ((),))]
+before it is looked at => ValueError generation parameter must be less than the number of available generations (3)
+     => [('gc.get_objects', (7,))]

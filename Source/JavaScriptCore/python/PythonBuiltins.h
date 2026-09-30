@@ -201,6 +201,7 @@ JSObject* createSREModule(JSGlobalObject*);
 JSObject* createABCModule(JSGlobalObject*);
 JSObject* createOperatorModule(JSGlobalObject*);
 JSObject* createFunctoolsModule(JSGlobalObject*);
+JSObject* createGCModule(JSGlobalObject*);
 JSObject* createHeapqModule(JSGlobalObject*);
 JSObject* createBisectModule(JSGlobalObject*);
 JSObject* createCMathModule(JSGlobalObject*);
