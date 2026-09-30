@@ -217,7 +217,8 @@ public:
         auto* impl = key.impl();
         Locker locker { cellLock() }; // visitChildren iterates these
         forgetPrelinkedRecordsWithKey(impl);
-        m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
+        // Keyed by the specifier that was asked for, which resolve() may have turned into another key.
+        m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl || entry.value.m_module->moduleKey().impl() == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
         return m_moduleMap.removeIf([&](auto& entry) {
             if (entry.key.first != impl)
