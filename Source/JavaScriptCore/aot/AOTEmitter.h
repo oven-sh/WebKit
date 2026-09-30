@@ -116,6 +116,7 @@ protected:
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
     LValue keysOfObject(LValue object, LBasicBlock giveUp);
     LValue lowerCaseIfItIsAlready(LValue string, LBasicBlock giveUp);
+    void addFieldOfStruct(LValue object, LValue valueAsHeld, LValue slot, LBasicBlock giveUp);
     LValue isOriginalArray(LValue cell); // A boolean: see Instance::structureIDsOfOriginalArrays.
 
     B3::Procedure& m_proc;
@@ -132,6 +133,10 @@ protected:
 // The code of one of the Stub::Helper... stubs: what an Emitter says, compiled once for everybody. It is given what it works on in the argument registers and hands back what it
 // made, or nothing if it gave up, having done nothing that shows: then it is for whoever called to have the same done the long way. It calls nothing.
 void generateHelper(CCallHelpers&, Stub);
+
+// TEMPORARY: BUN_AOT_WITHOUT=mask leaves these to the runtime, as they used to be.
+enum Without : unsigned { WithoutNewArray = 1, WithoutNewArrayBuffer = 2, WithoutNewActivation = 4, WithoutSpread = 8, WithoutRest = 16, WithoutRopes = 32, WithoutSpecies = 64, WithoutPutByValDirect = 128, WithoutIteratorOpen = 256, WithoutIteratorEnd = 512, WithoutAddsOfFields = 1024, WithoutTypeof = 2048 };
+bool isWithout(Without);
 
 } } // namespace JSC::AOT
 

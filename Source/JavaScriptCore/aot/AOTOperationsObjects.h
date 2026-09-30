@@ -169,7 +169,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject*, 
 JSC_DECLARE_JIT_OPERATION(operationAOTSetFunctionName, void, (JSGlobalObject*, JSObject* function, EncodedJSValue name));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewInternalFieldObject, JSObject*, (JSGlobalObject*, uint32_t kind));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateInternalFieldObject, JSObject*, (JSGlobalObject*, JSObject* callee, uint32_t kind));
-JSC_DECLARE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (JSGlobalObject*, JSScope*, JSCell* symbolTable, EncodedJSValue initialValue, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (JSGlobalObject*, JSScope*, JSCell* symbolTable, EncodedJSValue initialValue, uint32_t numberOfVariables));
 JSC_DECLARE_JIT_OPERATION(operationAOTPushWithScope, JSObject*, (JSGlobalObject*, JSScope*, EncodedJSValue object));
 JSC_DECLARE_JIT_OPERATION(operationAOTResolveScopeForHoistingFuncDeclInEval, EncodedJSValue, (JSGlobalObject*, JSScope*, uint32_t identifierIndex));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateDirectArguments, JSObject*, (JSGlobalObject*, JSObject* callee, uint32_t count, EncodedJSValue* arguments, uint32_t numberOfParameters));

@@ -37,7 +37,6 @@ namespace AOT {
     v(CreateThis) \
     v(CreateThisWithProperties) \
     v(NewFunction) \
-    v(CreateLexicalEnvironment) \
     v(CompareStrictEq) \
     v(CompareEq) \
     v(InById) \
@@ -83,6 +82,22 @@ static constexpr unsigned sizeOfWhatAdapterSaves = 32;
 // Instance::granulesOfCode has an entry for each so many bytes of an image's code.
 static constexpr unsigned shiftOfGranuleOfCode = 8;
 
+// The operations that have a helper ahead of them, as others have a front end (AOTThunks.h): what calls the operation gets what the helper makes, if it makes anything. So code
+// that is not worth its size calls the one thing.
+#define FOR_EACH_AOT_OPERATION_BEHIND_HELPER(v) \
+    v(NewArray, operationAOTNewArray) \
+    v(NewArrayBuffer, operationAOTNewArrayBuffer) \
+    v(NewArrayWithSpread, operationAOTNewArrayWithSpread) \
+    v(NewArrayWithSpecies, operationAOTNewArrayWithSpecies) \
+    v(CreateRest, operationAOTCreateRest) \
+    v(CreateLexicalEnvironment, operationAOTCreateLexicalEnvironment) \
+    v(MakeRope2, operationMakeRope2) \
+    v(MakeRope3, operationMakeRope3) \
+    v(StringSliceWithEnd, operationStringSliceWithEnd) \
+    v(StringSubstringWithEnd, operationStringSubstringWithEnd) \
+    v(ToLowerCase, operationToLowerCase) \
+    v(ObjectKeysObject, operationObjectKeysObject) \
+
 #define FOR_EACH_AOT_HELPER(v) \
     v(HelperNewArray) \
     v(HelperNewArrayOfInt32) \
@@ -96,6 +111,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(HelperMakeRope3) \
     v(HelperToLowerCase) \
     v(HelperObjectKeys) \
+    v(HelperAddField) \
 
 #define FOR_EACH_AOT_STUB(v) \
     /* After the frame pointer is set up. T9 = the size of the frame. Checks that there is stack for it and sets the stack */ \
@@ -226,12 +242,23 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(FrontEndCreateThis) \
     v(FrontEndCreateThisWithProperties) \
     v(FrontEndNewFunction) \
-    v(FrontEndCreateLexicalEnvironment) \
     v(FrontEndCompareStrictEq) \
     v(FrontEndCompareEq) \
     v(FrontEndInById) \
     /* See generateHelper(). */ \
     FOR_EACH_AOT_HELPER(v) \
+    v(AheadOfNewArray) \
+    v(AheadOfNewArrayBuffer) \
+    v(AheadOfNewArrayWithSpread) \
+    v(AheadOfNewArrayWithSpecies) \
+    v(AheadOfCreateRest) \
+    v(AheadOfCreateLexicalEnvironment) \
+    v(AheadOfMakeRope2) \
+    v(AheadOfMakeRope3) \
+    v(AheadOfStringSliceWithEnd) \
+    v(AheadOfStringSubstringWithEnd) \
+    v(AheadOfToLowerCase) \
+    v(AheadOfObjectKeysObject) \
 
 enum class Stub : uint8_t {
 #define AOT_DEFINE_STUB(name) name,
@@ -240,7 +267,7 @@ enum class Stub : uint8_t {
     NumberOfStubs
 };
 static constexpr unsigned numberOfStubs = static_cast<unsigned>(Stub::NumberOfStubs);
-static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperObjectKeys; }
+static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddField; }
 
 static constexpr bool usesStubs =
 #if CPU(ARM64)

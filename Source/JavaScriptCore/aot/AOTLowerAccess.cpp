@@ -458,22 +458,17 @@ void Lowering::lowerPutById(Node* node)
             if (field->isOptional || field->mayBeEmpty || mayStandForSomethingElse) {
                 RELEASE_ASSERT(!mayStandForSomethingElse || field->isInObject());
                 LBasicBlock isThere = m_out.newBlock();
-                LBasicBlock isEmpty = (field->isOptional || field->mayBeEmpty) && field->isInObject() ? m_out.newBlock() : nullptr;
+                LBasicBlock isEmpty = (field->isOptional || field->mayBeEmpty) && field->isInObject() && !isWithout(WithoutAddsOfFields) ? m_out.newBlock() : nullptr;
                 m_out.branch(m_out.notZero64(m_out.load64(slotOfField)), unsure(isThere), isEmpty ? unsure(isEmpty) : rarely(otherwise));
                 if (isEmpty) {
                     // The object is given the field. What it is of afterwards is what the last of its kind to be given it was (Instance::addsOfFields).
                     m_out.appendTo(isEmpty);
                     if (mayStandForSomethingElse)
                         orElse(m_out.equal(structOfBase, base), otherwise);
-                    LValue structureID = m_out.load32(base, m_heaps.JSCell_structureID);
-                    static_assert(Instance::indexOfAddOfField(0x120, 3) == (((0x120u >> 4) ^ (3 * 0x9e5u)) & (Instance::numberOfAddsOfFields - 1)));
-                    LValue index = m_out.bitAnd(m_out.bitXor(m_out.lShr(structureID, m_out.constInt32(4)), m_out.constInt32(field->slot * 0x9e5u)), m_out.constInt32(Instance::numberOfAddsOfFields - 1));
-                    static_assert(sizeof(Instance::AddOfField) == 16);
-                    LValue entry = m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(4)), m_out.constIntPtr(Instance::offsetOfAddsOfFields())));
-                    orElse(m_out.equal(m_out.load32(TypedPointer(m_heaps.AOTInstance_whatChanges, entry)), structureID), otherwise);
-                    orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, slot))), m_out.constInt32(field->slot)), otherwise);
-                    m_out.store64(valueAsHeld, slotOfField);
-                    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, structureIDAfterwards))), base, m_heaps.JSCell_structureID);
+                    if (isCompact())
+                        orElse(m_out.notNull(callHelper(Stub::HelperAddField, { base, valueAsHeld, m_out.constInt32(field->slot) })), otherwise);
+                    else
+                        addFieldOfStruct(base, valueAsHeld, m_out.constInt32(field->slot), otherwise);
                     // (Whatever the value is: the object refers to another Structure now.)
                     storeBarrier(base);
                     m_out.jump(afterTypedStore);

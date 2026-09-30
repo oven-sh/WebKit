@@ -234,12 +234,9 @@ LValue Emitter::newActivation(LValue scope, LValue symbolTable, LValue initialVa
 
 LValue Emitter::isOriginalArray(LValue cell)
 {
-    // arrayIndexFromIndexingType()
-    LValue mode = m_out.load8ZeroExt32(cell, m_heaps.JSCell_indexingTypeAndMisc);
-    LValue shape = m_out.bitAnd(mode, m_out.constInt32(IndexingShapeMask));
-    LValue index = m_out.lShr(m_out.select(m_out.testNonZero32(mode, m_out.constInt32(CopyOnWrite)), m_out.add(shape, m_out.constInt32(SlowPutArrayStorageShape - UndecidedShape)), shape), m_out.constInt32(IndexingShapeShift));
+    LValue kind = m_out.bitAnd(m_out.lShr(m_out.load8ZeroExt32(cell, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(Instance::shiftOfKindOfArray)), m_out.constInt32(Instance::numberOfKindsOfArray - 1));
     LValue expected = m_out.load32(TypedPointer(m_heaps.AOTInstance_whatIsFixed,
-        m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(2)), m_out.constIntPtr(Instance::offsetOfStructureIDsOfOriginalArrays())))));
+        m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(kind), m_out.constInt32(2)), m_out.constIntPtr(Instance::offsetOfStructureIDsOfOriginalArrays())))));
     return m_out.equal(m_out.load32(cell, m_heaps.JSCell_structureID), expected);
 }
 
@@ -268,11 +265,20 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreT
     m_out.branch(m_out.below(index, limit), unsure(measureOne), unsure(measured));
 
     m_out.appendTo(measureOne);
+    LBasicBlock measureValue = m_out.newBlock();
+    LBasicBlock measureCell = m_out.newBlock();
+    LValue source = m_out.load64(m_out.baseIndex(m_heaps.variables, values, index));
+    m_out.branch(isToBeSpread(index), unsure(measureArray), unsure(measureValue));
+
+    // (What has been spread already is not a value, and is for the runtime to take apart.)
+    m_out.appendTo(measureValue);
     ValueFromBlock one = m_out.anchor(m_out.intPtrOne);
-    m_out.branch(isToBeSpread(index), unsure(measureArray), unsure(measureNext));
+    m_out.branch(isCell(source), unsure(measureCell), unsure(measureNext));
+    m_out.appendTo(measureCell);
+    ValueFromBlock oneCell = m_out.anchor(m_out.intPtrOne);
+    m_out.branch(isCellOfType(source, JSCellButterflyType), rarely(giveUp), usually(measureNext));
 
     m_out.appendTo(measureArray);
-    LValue source = m_out.load64(m_out.baseIndex(m_heaps.variables, values, index));
     orElse(isCell(source), giveUp);
     orElse(isOriginalArray(source), giveUp);
     LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(source, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
@@ -281,7 +287,7 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue whichAreT
     m_out.jump(measureNext);
 
     m_out.appendTo(measureNext);
-    m_out.addIncomingToPhi(lengthSoFar, m_out.anchor(m_out.add(lengthSoFar, m_out.phi(pointerType(), one, many))));
+    m_out.addIncomingToPhi(lengthSoFar, m_out.anchor(m_out.add(lengthSoFar, m_out.phi(pointerType(), one, oneCell, many))));
     m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.intPtrOne)));
     m_out.jump(measure);
 
@@ -587,6 +593,21 @@ LValue Emitter::keysOfObject(LValue object, LBasicBlock giveUp)
     return newArrayFromButterfly(cached, giveUp);
 }
 
+// A struct that has nothing in that slot, which is in the object, is given the field: what it is of afterwards is what the last of its kind to be given it was
+// (Instance::addsOfFields). The value is one that the slot holds. It is for whoever asks to tell the collector, whatever the value is: the object refers to another Structure now.
+void Emitter::addFieldOfStruct(LValue object, LValue valueAsHeld, LValue slot, LBasicBlock giveUp)
+{
+    LValue structureID = m_out.load32(object, m_heaps.JSCell_structureID);
+    static_assert(Instance::indexOfAddOfField(0x120, 3) == (((0x120u >> 4) ^ (3 * 0x9e5u)) & (Instance::numberOfAddsOfFields - 1)));
+    LValue index = m_out.bitAnd(m_out.bitXor(m_out.lShr(structureID, m_out.constInt32(4)), m_out.mul(slot, m_out.constInt32(0x9e5))), m_out.constInt32(Instance::numberOfAddsOfFields - 1));
+    static_assert(sizeof(Instance::AddOfField) == 16);
+    LValue entry = m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(4)), m_out.constIntPtr(Instance::offsetOfAddsOfFields())));
+    orElse(m_out.equal(m_out.load32(TypedPointer(m_heaps.AOTInstance_whatChanges, entry)), structureID), giveUp);
+    orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, slot))), slot), giveUp);
+    m_out.store64(valueAsHeld, TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object, m_out.add(m_out.shl(m_out.zeroExtPtr(slot), m_out.constInt32(3)), m_out.constIntPtr(JSObject::offsetOfInlineStorage())))));
+    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, structureIDAfterwards))), object, m_heaps.JSCell_structureID);
+}
+
 // ---- Helpers
 
 namespace {
@@ -650,6 +671,10 @@ public:
         case Stub::HelperObjectKeys:
             result = keysOfObject(arguments[0], giveUp);
             break;
+        case Stub::HelperAddField:
+            addFieldOfStruct(arguments[0], arguments[1], int32At(2), giveUp);
+            result = m_out.intPtrOne;
+            break;
         default:
             RELEASE_ASSERT_NOT_REACHED();
         }
@@ -660,6 +685,15 @@ public:
 };
 
 } // anonymous namespace
+
+bool isWithout(Without what)
+{
+    static const unsigned mask = [] {
+        const char* text = getenv("BUN_AOT_WITHOUT");
+        return text ? static_cast<unsigned>(strtoul(text, nullptr, 0)) : 0u;
+    }();
+    return mask & what;
+}
 
 void generateHelper(CCallHelpers& jit, Stub stub)
 {

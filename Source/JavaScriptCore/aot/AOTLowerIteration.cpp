@@ -90,7 +90,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     // An array as the realm makes them is gone through by its index, and there is no iterator: what the runtime would say (IterationMode::FastArray).
     std::optional<ValueFromBlock> iteratorOfArray;
     std::optional<ValueFromBlock> nextOfArray;
-    if (!isAsync && Options::useImmutableIntrinsics() && Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
+    if (!isAsync && !isWithout(WithoutIteratorOpen) && Options::useImmutableIntrinsics() && Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
         LBasicBlock isArray = m_out.newBlock();
         LBasicBlock isSomethingElse = m_out.newBlock();
         m_out.branch(isCellAnd(node->use(iterableRegister), iterable, [&](LValue cell) { return isOriginalArray(cell); }), unsure(isArray), unsure(isSomethingElse));
@@ -263,7 +263,7 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
     LValue isInBounds = m_out.bitAnd(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), m_out.notEqual(index, m_out.constInt32(std::numeric_limits<int32_t>::max())));
     LBasicBlock isAtTheEnd = m_out.newBlock();
-    m_out.branch(isInBounds, usually(inBounds), unsure(isAtTheEnd));
+    m_out.branch(isInBounds, usually(inBounds), isWithout(WithoutIteratorEnd) ? rarely(indexSlow) : unsure(isAtTheEnd));
 
     // That is all: JSArrayIterator::nextValueWithIndexInFrame().
     m_out.appendTo(isAtTheEnd);

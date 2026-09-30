@@ -209,10 +209,22 @@ namespace AOT {
     v(RawCreateThis) \
     v(RawCreateThisWithProperties) \
     v(RawNewFunction) \
-    v(RawCreateLexicalEnvironment) \
     v(RawCompareStrictEq) \
     v(RawCompareEq) \
     v(RawInById) \
+    /* FOR_EACH_AOT_OPERATION_BEHIND_HELPER */ \
+    v(BehindNewArray) \
+    v(BehindNewArrayBuffer) \
+    v(BehindNewArrayWithSpread) \
+    v(BehindNewArrayWithSpecies) \
+    v(BehindCreateRest) \
+    v(BehindCreateLexicalEnvironment) \
+    v(BehindMakeRope2) \
+    v(BehindMakeRope3) \
+    v(BehindStringSliceWithEnd) \
+    v(BehindStringSubstringWithEnd) \
+    v(BehindToLowerCase) \
+    v(BehindObjectKeysObject) \
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_ENTRY(name) name,
@@ -479,7 +491,11 @@ struct Instance {
     static constexpr unsigned numberOfReceivers = 16;
     uint32_t structureIDsOfReceivers[numberOfReceivers] { };
     static constexpr ptrdiff_t offsetOfStructureIDsOfReceivers() { return OBJECT_OFFSETOF(Instance, structureIDsOfReceivers); }
-    uint32_t structureIDsOfOriginalArrays[NumberOfArrayIndexingModes] { }; // JSGlobalObject::originalArrayStructureForIndexingType()
+    // JSGlobalObject::originalArrayStructureForIndexingType(), by the bits of the indexing type that say how the elements are kept and whose they are.
+    static constexpr unsigned shiftOfKindOfArray = 1;
+    static constexpr unsigned numberOfKindsOfArray = 16;
+    static_assert(((IndexingShapeMask | CopyOnWrite) >> shiftOfKindOfArray) == numberOfKindsOfArray - 1);
+    uint32_t structureIDsOfOriginalArrays[numberOfKindsOfArray] { };
     static constexpr ptrdiff_t offsetOfStructureIDsOfOriginalArrays() { return OBJECT_OFFSETOF(Instance, structureIDsOfOriginalArrays); }
     // What code makes for itself, with no need to have made one before: the Structure. Zero: it is for the runtime to make (JSGlobalObject::haveABadTime()).
     uint32_t structureIDOfNewArrayWithInt32 { 0 };

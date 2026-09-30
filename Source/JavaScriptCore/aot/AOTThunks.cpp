@@ -493,28 +493,6 @@ void generateFrontEndNewFunction(CCallHelpers& jit)
     tailCall(jit, Entry::RawNewFunction);
 }
 
-// (globalObject, scope, symbolTable, initialValue, cache)
-void generateFrontEndCreateLexicalEnvironment(CCallHelpers& jit)
-{
-    JumpList slowCases;
-    emitAllocateFromCache(jit, argument4, scratch3, slowCases);
-    jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
-    jit.storePtr(argument1, Address(scratch3, JSScope::offsetOfNext()));
-    jit.storePtr(argument2, Address(scratch3, JSSymbolTableObject::offsetOfSymbolTable()));
-    jit.load32(Address(argument4, OBJECT_OFFSETOF(Slot, offset)), scratch0);
-    jit.and32(TrustedImm32(Slot::offsetMask), scratch0);
-    Jump noVariables = jit.branchTest32(CCallHelpers::Zero, scratch0);
-    auto loop = jit.label();
-    jit.sub32(TrustedImm32(1), scratch0);
-    jit.store64(argument3, BaseIndex(scratch3, scratch0, CCallHelpers::TimesEight, JSLexicalEnvironment::offsetOfVariables()));
-    jit.branchTest32(CCallHelpers::NonZero, scratch0).linkTo(loop, &jit);
-    noVariables.link(&jit);
-    mutatorFence(jit, scratch0);
-    returnValue(jit, scratch3);
-    slowCases.link(&jit);
-    tailCall(jit, Entry::RawCreateLexicalEnvironment);
-}
-
 // (globalObject, base, identifierIndex). As AssemblyHelpers::hasMegamorphicProperty() does it, but for looking in one place only.
 void generateFrontEndInById(CCallHelpers& jit)
 {
@@ -565,7 +543,9 @@ void installOperationFrontEnds(VM& vm, void** entries)
         AOT_INSTALL_FRONT_END(CreateThis)
         AOT_INSTALL_FRONT_END(CreateThisWithProperties)
         AOT_INSTALL_FRONT_END(NewFunction)
-        AOT_INSTALL_FRONT_END(CreateLexicalEnvironment)
+#define AOT_INSTALL_HELPER(name, operation) install(Entry::operation, Entry::Behind##name, Stub::AheadOf##name);
+        FOR_EACH_AOT_OPERATION_BEHIND_HELPER(AOT_INSTALL_HELPER)
+#undef AOT_INSTALL_HELPER
     }
     if (!(disabled & 4096)) {
         AOT_INSTALL_FRONT_END(CompareStrictEq)

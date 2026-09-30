@@ -707,15 +707,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateInternalFieldObject, JSObject*, (JSGl
 }
 
 //     cache: for allocation. cache[0].offset: the number of variables.
-JSC_DEFINE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (JSGlobalObject* globalObject, JSScope* currentScope, JSCell* symbolTableCell, EncodedJSValue initialValue, Slot* cache))
+// (How many variables there are is for what stands ahead of this: Emitter::newActivation().)
+JSC_DEFINE_JIT_OPERATION(operationAOTCreateLexicalEnvironment, JSObject*, (JSGlobalObject* globalObject, JSScope* currentScope, JSCell* symbolTableCell, EncodedJSValue initialValue, uint32_t))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    auto* symbolTable = uncheckedDowncast<SymbolTable>(symbolTableCell);
-    JSLexicalEnvironment* result = JSLexicalEnvironment::create(vm, globalObject, currentScope, symbolTable, JSValue::decode(initialValue));
-    // As for functions.
-    if (symbolTable->singleton().hasBeenInvalidated())
-        fillAllocationCache(vm, callerData(globalObject, callFrame), cache, result->structure(), subspaceFor<JSLexicalEnvironment>(vm)->allocatorFor(JSLexicalEnvironment::allocationSize(symbolTable), AllocatorForMode::EnsureAllocator), symbolTable->scopeSize());
-    OPERATION_RETURN(scope, result);
+    OPERATION_RETURN(scope, JSLexicalEnvironment::create(vm, globalObject, currentScope, uncheckedDowncast<SymbolTable>(symbolTableCell), JSValue::decode(initialValue)));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPushWithScope, JSObject*, (JSGlobalObject* globalObject, JSScope* currentScope, EncodedJSValue encodedObject))
@@ -1101,7 +1097,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (JSGlobalObject* globalObje
     const Identifier& identifier = identifierAt(globalObject, callFrame, identifierIndex);
     UniquedStringImpl* uid = identifier.impl();
     JSObject* baseObject = asObject(base);
-    if ((Options::aotDisableFastPaths() & 1024) || parseIndex(*uid) || !vm.megamorphicCache())
+    // (An array has a length, and a function a name, that their Structures say nothing of.)
+    if ((Options::aotDisableFastPaths() & 1024) || parseIndex(*uid) || !vm.megamorphicCache() || uid == vm.propertyNames->length || uid == vm.propertyNames->name || uid == vm.propertyNames->prototype || uid == vm.propertyNames->underscoreProto)
         OPERATION_RETURN(scope, baseObject->hasProperty(globalObject, identifier));
 
     // What the other tiers do for a site that sees objects of all kinds: the answer is left where generateFrontEndInById() finds it.

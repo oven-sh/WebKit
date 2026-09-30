@@ -301,7 +301,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             areInt32 &= isSubtype(node->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)))->type, TInt32);
         LValue values = bytecode.m_argc ? storeToScratch(node, bytecode.m_argv, bytecode.m_argc) : m_out.intPtrZero;
         setJSValue(node, withHelper(areInt32 ? Stub::HelperNewArrayOfInt32 : Stub::HelperNewArray, { values, m_out.constInt32(bytecode.m_argc) }, [&] {
-            return vmCall(node, pointerType(), Entry::operationAOTNewArray, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(bytecode.m_recommendedIndexingType));
+            return vmCall(node, pointerType(), Entry::operationAOTNewArray, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(areInt32 ? ArrayWithInt32 : ArrayWithContiguous));
         }));
         return true;
     }
@@ -320,6 +320,7 @@ bool Lowering::tryLowerAllocation(Node* node)
         // (An op_spread that has been done away with stands for what it was to spread.)
         uint32_t yetToBeSpread = 0;
         bool someHaveBeenSpread = false;
+        const BitVector& whichAreSpread = code().codeBlock()->bitVector(bytecode.m_bitVector);
         Vector<Node*, 8> elements;
         for (unsigned i = 0; i < bytecode.m_argc; ++i) {
             Node* element = node->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)));
@@ -328,7 +329,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 yetToBeSpread |= 1u << i;
                 element = element->use(element->as<OpSpread>().m_argument);
             } else
-                someHaveBeenSpread |= element->isBytecode(op_spread);
+                someHaveBeenSpread |= whichAreSpread.get(i); // (Whatever the node is: what a register holds may have been put away and got out again.)
             elements.append(element);
         }
         for (unsigned i = 0; i < elements.size(); ++i)
@@ -337,7 +338,7 @@ bool Lowering::tryLowerAllocation(Node* node)
         auto theLongWay = [&] {
             return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread));
         };
-        if (yetToBeSpread && !someHaveBeenSpread && Options::useImmutableIntrinsics())
+        if (!someHaveBeenSpread && Options::useImmutableIntrinsics())
             setJSValue(node, withHelper(Stub::HelperNewArrayWithSpread, { values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread) }, theLongWay));
         else
             setJSValue(node, theLongWay());
@@ -424,7 +425,7 @@ bool Lowering::tryLowerAllocation(Node* node)
         LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
         unsigned scopeSize = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
         setJSValue(node, withHelper(Stub::HelperNewActivation, { scope, symbolTable, initialValue, m_out.constInt32(scopeSize) }, [&] {
-            return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_globalObject, scope, symbolTable, initialValue, slotAddress(allocateSlots(2)));
+            return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_globalObject, scope, symbolTable, initialValue, m_out.constInt32(scopeSize));
         }));
         return true;
     }
@@ -838,7 +839,7 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         LValue value = lowJSValue(valueNode);
         LBasicBlock slowCase = nullptr;
         LBasicBlock continuation = nullptr;
-        if (mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32) && !(Options::aotDisableFastPaths() & 8)) {
+        if (mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32) && !(Options::aotDisableFastPaths() & 8) && !isWithout(WithoutPutByValDirect)) {
             // An element of an array that keeps its elements as values, its own to write to, where there is room for it already: at the end as a rule, which is how
             // map() and the like fill in what they make.
             slowCase = m_out.newBlock();

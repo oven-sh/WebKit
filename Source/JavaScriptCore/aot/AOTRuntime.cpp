@@ -288,8 +288,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
             ofReceiver(Receiver::WeakSet) = idOf(globalObject->weakSetStructure());
             ofReceiver(Receiver::RegExp) = idOf(globalObject->regExpStructure());
             ofReceiver(Receiver::Date) = idOf(globalObject->dateStructure());
-            static_assert(sizeof(WriteBarrierStructureID) == sizeof(uint32_t));
-            memcpy(instance->structureIDsOfOriginalArrays, reinterpret_cast<char*>(globalObject) + JSGlobalObject::offsetOfOriginalArrayStructureForIndexingShape(), sizeof(instance->structureIDsOfOriginalArrays));
+            for (IndexingType type : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
+                instance->structureIDsOfOriginalArrays[(type & (IndexingShapeMask | CopyOnWrite)) >> Instance::shiftOfKindOfArray] = idOf(globalObject->originalArrayStructureForIndexingType(type));
         }
         if (!globalObject->isHavingABadTime()) {
             instance->structureIDOfNewArrayWithInt32 = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32));

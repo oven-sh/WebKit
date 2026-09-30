@@ -2668,6 +2668,80 @@ StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIn
 }
 
 
+// Called as the operation is, with what it takes. Has the helper try, with what setUp() makes of that; if it gives up, the operation gets what it was to be given.
+template<typename SetUp>
+static void generateAheadOf(CCallHelpers& jit, Entry operation, const SetUp& setUpAndCall)
+{
+    constexpr unsigned room = 6 * sizeof(void*);
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(room), CCallHelpers::stackPointerRegister);
+    jit.storePair64(A0, A1, Address(CCallHelpers::stackPointerRegister, 0));
+    jit.storePair64(A2, A3, Address(CCallHelpers::stackPointerRegister, 16));
+    jit.storePair64(A4, A5, Address(CCallHelpers::stackPointerRegister, 32));
+    setUpAndCall();
+    Jump gaveUp = jit.branchTestPtr(CCallHelpers::Zero, GPRInfo::returnValueGPR);
+    jit.move(TrustedImm32(0), GPRInfo::returnValueGPR2); // Nothing was thrown.
+    jit.emitFunctionEpilogue();
+    jit.ret();
+    gaveUp.link(&jit);
+    jit.loadPair64(Address(CCallHelpers::stackPointerRegister, 0), A0, A1);
+    jit.loadPair64(Address(CCallHelpers::stackPointerRegister, 16), A2, A3);
+    jit.loadPair64(Address(CCallHelpers::stackPointerRegister, 32), A4, A5);
+    jit.emitFunctionEpilogue();
+    jit.move(instanceGPR, T9);
+    jumpToEntry(jit, T9, operation);
+}
+
+// The helper takes what the operation does, but for the global object, which comes first.
+static void generateAheadOf(CCallHelpers& jit, Entry operation, Stub helper, unsigned argumentsOfHelper)
+{
+    generateAheadOf(jit, operation, [&] {
+        for (unsigned i = 0; i < argumentsOfHelper; ++i)
+            jit.move(GPRInfo::toArgumentRegister(i + 1), GPRInfo::toArgumentRegister(i));
+        callStubFromStub(jit, helper);
+    });
+}
+
+// (globalObject, values, count, indexingType)
+static void generateAheadOfNewArray(CCallHelpers& jit)
+{
+    generateAheadOf(jit, Entry::BehindNewArray, [&] {
+        jit.move(A1, A0);
+        jit.move(A2, A1);
+        Jump areInt32 = jit.branch32(CCallHelpers::Equal, A3, TrustedImm32(ArrayWithInt32));
+        callStubFromStub(jit, Stub::HelperNewArray);
+        Jump done = jit.jump();
+        areInt32.link(&jit);
+        callStubFromStub(jit, Stub::HelperNewArrayOfInt32);
+        done.link(&jit);
+    });
+}
+
+// (globalObject, count, arguments, skipped)
+static void generateAheadOfCreateRest(CCallHelpers& jit)
+{
+    generateAheadOf(jit, Entry::BehindCreateRest, [&] {
+        jit.zeroExtend32ToWord(A3, A3);
+        jit.getEffectiveAddress(CCallHelpers::BaseIndex(A2, A3, CCallHelpers::TimesEight), A0);
+        Jump some = jit.branch32(CCallHelpers::Above, A1, A3);
+        jit.move(A3, A1);
+        some.link(&jit);
+        jit.sub32(A3, A1);
+        callStubFromStub(jit, Stub::HelperNewArray);
+    });
+}
+
+static void generateAheadOfNewArrayBuffer(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindNewArrayBuffer, Stub::HelperNewArrayBuffer, 1); }
+static void generateAheadOfNewArrayWithSpread(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindNewArrayWithSpread, Stub::HelperNewArrayWithSpread, 3); }
+static void generateAheadOfNewArrayWithSpecies(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindNewArrayWithSpecies, Stub::HelperNewArrayWithSpecies, 2); }
+static void generateAheadOfCreateLexicalEnvironment(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindCreateLexicalEnvironment, Stub::HelperNewActivation, 4); }
+static void generateAheadOfMakeRope2(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindMakeRope2, Stub::HelperMakeRope2, 2); }
+static void generateAheadOfMakeRope3(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindMakeRope3, Stub::HelperMakeRope3, 3); }
+static void generateAheadOfStringSliceWithEnd(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindStringSliceWithEnd, Stub::HelperStringSlice, 3); }
+static void generateAheadOfStringSubstringWithEnd(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindStringSubstringWithEnd, Stub::HelperStringSubstring, 3); }
+static void generateAheadOfToLowerCase(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindToLowerCase, Stub::HelperToLowerCase, 1); }
+static void generateAheadOfObjectKeysObject(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindObjectKeysObject, Stub::HelperObjectKeys, 1); }
+
 #define AOT_GENERATE_HELPER(name) static void generate##name(CCallHelpers& jit) { generateHelper(jit, Stub::name); }
 FOR_EACH_AOT_HELPER(AOT_GENERATE_HELPER)
 #undef AOT_GENERATE_HELPER

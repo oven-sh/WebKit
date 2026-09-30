@@ -408,6 +408,31 @@ LValue Lowering::vmCall(Node* node, LType type, Entry function, Args... args)
 template<typename Slow>
 LValue Lowering::withHelper(Stub stub, const Vector<LValue, 4>& arguments, const Slow& slow)
 {
+    auto without = [&] {
+        switch (stub) {
+        case Stub::HelperNewArray:
+        case Stub::HelperNewArrayOfInt32:
+            return WithoutNewArray;
+        case Stub::HelperNewArrayBuffer:
+            return WithoutNewArrayBuffer;
+        case Stub::HelperNewActivation:
+            return WithoutNewActivation;
+        case Stub::HelperNewArrayWithSpread:
+            return WithoutSpread;
+        case Stub::HelperNewArrayWithSpecies:
+            return WithoutSpecies;
+        case Stub::HelperMakeRope2:
+        case Stub::HelperMakeRope3:
+            return WithoutRopes;
+        default:
+            return static_cast<Without>(0);
+        }
+    };
+    if (isWithout(without())) [[unlikely]]
+        return slow();
+    // Code that is not worth its size calls the operation, which has the helper ahead of it (FOR_EACH_AOT_OPERATION_BEHIND_HELPER).
+    if (isCompact())
+        return slow();
     LValue quick = callHelper(stub, arguments);
     LBasicBlock otherwise = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
