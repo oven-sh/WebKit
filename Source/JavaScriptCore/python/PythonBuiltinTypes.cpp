@@ -334,7 +334,7 @@ PYTHON_NATIVE(nativeConcatenate)
 {
     auto form = unpack<Form>(callFrame, 1);
     NATIVE_PROLOGUE();
-    JSValue result = builtinBinaryOperation(globalObject, BinaryOperator::Add, form == Form::InPlace, withoutBox(args[0]), withoutBox(args[1]));
+    JSValue result = builtinBinaryOperation(globalObject, BinaryOperator::Add, form == Form::InPlace, args[0], args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     if (result)
         return JSValue::encode(result);

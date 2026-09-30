@@ -155,7 +155,8 @@ JSValue builtinBinaryOperation(JSGlobalObject* globalObject, BinaryOperator op, 
             RELEASE_AND_RETURN(scope, jsString(globalObject, asString(left), asString(right)));
         if (JSArray* list = tryList(left)) {
             if (inPlace) {
-                listExtend(globalObject, list, right);
+                // As it was given: a class derived from str may go through itself in a way of its own.
+                listExtend(globalObject, list, givenRight);
                 RETURN_IF_EXCEPTION(scope, { });
                 return list;
             }

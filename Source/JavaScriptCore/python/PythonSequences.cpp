@@ -271,9 +271,7 @@ PySet* setFromIterable(JSGlobalObject* globalObject, Structure* structure, JSVal
     PySet* set = PySet::create(vm, structure);
     if (!iterable)
         return set;
-    forEach(globalObject, iterable, [&] (JSValue value) {
-        return set->add(globalObject, value);
-    });
+    setUpdate(globalObject, set, iterable);
     RETURN_IF_EXCEPTION(scope, nullptr);
     return set;
 }

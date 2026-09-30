@@ -345,9 +345,7 @@ PYTHON_RUNTIME_FUNCTION(setUpdate)
     PROLOGUE();
     auto* set = uncheckedDowncast<PySet>(argument(0).asCell());
     scope.release();
-    forEach(globalObject, argument(1), [&] (JSValue item) {
-        return set->add(globalObject, item);
-    });
+    setUpdate(globalObject, set, argument(1));
     return JSValue::encode(jsUndefined());
 }
 

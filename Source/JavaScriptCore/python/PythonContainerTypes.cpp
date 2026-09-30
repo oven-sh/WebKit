@@ -518,9 +518,8 @@ PYTHON_NATIVE(setInit)
     SET_PROLOGUE("__init__");
     self->clear(vm);
     if (args.size() > 1) {
-        forEach(globalObject, args[1], [&] (JSValue value) {
-            return self->add(globalObject, value);
-        });
+        scope.release();
+        setUpdate(globalObject, self, args[1]);
     }
     RETURN_NONE();
 }
