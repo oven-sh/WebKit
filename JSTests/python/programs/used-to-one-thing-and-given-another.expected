@@ -1,0 +1,631 @@
+==== add of ints toParameters 134 ab6addbeee967f5cd163a27030cfb5b1
+==== add of ints toVariables 134 ab6addbeee967f5cd163a27030cfb5b1
+==== add of ints toLoopVariables 134 ab6addbeee967f5cd163a27030cfb5b1
+==== add of floats toParameters 82 a2917d2a5d563b79e463d7216838de94
+==== add of floats toVariables 82 a2917d2a5d563b79e463d7216838de94
+==== add of floats toLoopVariables 82 a2917d2a5d563b79e463d7216838de94
+==== sub of ints toParameters 134 37b2060c5f66eb9ccfccf448b7f3c617
+==== sub of ints toVariables 134 37b2060c5f66eb9ccfccf448b7f3c617
+==== sub of ints toLoopVariables 134 37b2060c5f66eb9ccfccf448b7f3c617
+==== sub of floats toParameters 82 04e6690c4d232a375731d3b27ae33a24
+==== sub of floats toVariables 82 04e6690c4d232a375731d3b27ae33a24
+==== sub of floats toLoopVariables 82 04e6690c4d232a375731d3b27ae33a24
+==== mul of ints toParameters 134 f4f9e8b600b0dcc4df85a91f900e274f
+==== mul of ints toVariables 134 f4f9e8b600b0dcc4df85a91f900e274f
+==== mul of ints toLoopVariables 134 f4f9e8b600b0dcc4df85a91f900e274f
+==== mul of floats toParameters 82 b724afc3b594c5a2b2b0bf6ecd64e57d
+==== mul of floats toVariables 82 b724afc3b594c5a2b2b0bf6ecd64e57d
+==== mul of floats toLoopVariables 82 b724afc3b594c5a2b2b0bf6ecd64e57d
+==== truediv of ints toParameters 134 986d5ffb98edff5ba167b60f6612ddb7
+==== truediv of ints toVariables 134 986d5ffb98edff5ba167b60f6612ddb7
+==== truediv of ints toLoopVariables 134 986d5ffb98edff5ba167b60f6612ddb7
+==== truediv of floats toParameters 82 4b4ab6a25a43512605f317f0a00d638b
+==== truediv of floats toVariables 82 4b4ab6a25a43512605f317f0a00d638b
+==== truediv of floats toLoopVariables 82 4b4ab6a25a43512605f317f0a00d638b
+==== floordiv of ints toParameters 134 22970d5ed85564c0317b7f71f4bb6d51
+==== floordiv of ints toVariables 134 22970d5ed85564c0317b7f71f4bb6d51
+==== floordiv of ints toLoopVariables 134 22970d5ed85564c0317b7f71f4bb6d51
+==== floordiv of floats toParameters 82 08941e39b00fbe6c5d8b57b4145acc5c
+==== floordiv of floats toVariables 82 08941e39b00fbe6c5d8b57b4145acc5c
+==== floordiv of floats toLoopVariables 82 08941e39b00fbe6c5d8b57b4145acc5c
+==== mod of ints toParameters 134 47541496c619aa28e8f54ee725858813
+==== mod of ints toVariables 134 47541496c619aa28e8f54ee725858813
+==== mod of ints toLoopVariables 134 47541496c619aa28e8f54ee725858813
+==== mod of floats toParameters 82 e364c5972192c6b2cf1a662c574faa98
+==== mod of floats toVariables 82 e364c5972192c6b2cf1a662c574faa98
+==== mod of floats toLoopVariables 82 e364c5972192c6b2cf1a662c574faa98
+==== pow of ints toParameters 108 7aaa428f2469f016cca6dc6b8b35d0e9
+==== pow of ints toVariables 108 7aaa428f2469f016cca6dc6b8b35d0e9
+==== pow of ints toLoopVariables 108 7aaa428f2469f016cca6dc6b8b35d0e9
+==== pow of floats toParameters 56 b72e7c09ecfdb875568fcaf8a180a90a
+==== pow of floats toVariables 56 b72e7c09ecfdb875568fcaf8a180a90a
+==== pow of floats toLoopVariables 56 b72e7c09ecfdb875568fcaf8a180a90a
+==== lshift of ints toParameters 108 edb4a0a144e6ce2846c203b8e1da9f08
+==== lshift of ints toVariables 108 edb4a0a144e6ce2846c203b8e1da9f08
+==== lshift of ints toLoopVariables 108 edb4a0a144e6ce2846c203b8e1da9f08
+==== rshift of ints toParameters 134 3f8d62f8b1a1d2be49c7921790e9d8c3
+==== rshift of ints toVariables 134 3f8d62f8b1a1d2be49c7921790e9d8c3
+==== rshift of ints toLoopVariables 134 3f8d62f8b1a1d2be49c7921790e9d8c3
+==== and of ints toParameters 134 55446d536aa9514778d162f383008a74
+==== and of ints toVariables 134 55446d536aa9514778d162f383008a74
+==== and of ints toLoopVariables 134 55446d536aa9514778d162f383008a74
+==== or of ints toParameters 134 227f02de7e636586a96a98c748994952
+==== or of ints toVariables 134 227f02de7e636586a96a98c748994952
+==== or of ints toLoopVariables 134 227f02de7e636586a96a98c748994952
+==== xor of ints toParameters 134 a6ce433554761f0caa45d87fece85abb
+==== xor of ints toVariables 134 a6ce433554761f0caa45d87fece85abb
+==== xor of ints toLoopVariables 134 a6ce433554761f0caa45d87fece85abb
+==== lt of ints toParameters 134 6e309351412911df8f2ccd1379e2ffe0
+==== lt of ints toVariables 134 6e309351412911df8f2ccd1379e2ffe0
+==== lt of ints toLoopVariables 134 6e309351412911df8f2ccd1379e2ffe0
+==== lt of floats toParameters 82 67266770de28f40b863ba7b1b8f2dce1
+==== lt of floats toVariables 82 67266770de28f40b863ba7b1b8f2dce1
+==== lt of floats toLoopVariables 82 67266770de28f40b863ba7b1b8f2dce1
+==== le of ints toParameters 134 c4c751638bc17e1f928d4fad1304f6fb
+==== le of ints toVariables 134 c4c751638bc17e1f928d4fad1304f6fb
+==== le of ints toLoopVariables 134 c4c751638bc17e1f928d4fad1304f6fb
+==== le of floats toParameters 82 057320709471726048a8a0f2e78feacf
+==== le of floats toVariables 82 057320709471726048a8a0f2e78feacf
+==== le of floats toLoopVariables 82 057320709471726048a8a0f2e78feacf
+==== eq of ints toParameters 134 42aedde08f3663eb2b2f19b233213a3c
+==== eq of ints toVariables 134 42aedde08f3663eb2b2f19b233213a3c
+==== eq of ints toLoopVariables 134 42aedde08f3663eb2b2f19b233213a3c
+==== eq of floats toParameters 82 8e47422f60f61f8989ea68b8318e2e07
+==== eq of floats toVariables 82 8e47422f60f61f8989ea68b8318e2e07
+==== eq of floats toLoopVariables 82 8e47422f60f61f8989ea68b8318e2e07
+==== ne of ints toParameters 134 d09cccffcfd05945eaa9810ca2c81d92
+==== ne of ints toVariables 134 d09cccffcfd05945eaa9810ca2c81d92
+==== ne of ints toLoopVariables 134 d09cccffcfd05945eaa9810ca2c81d92
+==== ne of floats toParameters 82 dffd6a5de06099e1c4a090d9c645d886
+==== ne of floats toVariables 82 dffd6a5de06099e1c4a090d9c645d886
+==== ne of floats toLoopVariables 82 dffd6a5de06099e1c4a090d9c645d886
+==== gt of ints toParameters 134 f73bdf2e0841f86c5d2af1e162833e97
+==== gt of ints toVariables 134 f73bdf2e0841f86c5d2af1e162833e97
+==== gt of ints toLoopVariables 134 f73bdf2e0841f86c5d2af1e162833e97
+==== gt of floats toParameters 82 46e7967bde89d23920ef3b7b59671a2a
+==== gt of floats toVariables 82 46e7967bde89d23920ef3b7b59671a2a
+==== gt of floats toLoopVariables 82 46e7967bde89d23920ef3b7b59671a2a
+==== ge of ints toParameters 134 8d68c94276f6270d177aa178fffad036
+==== ge of ints toVariables 134 8d68c94276f6270d177aa178fffad036
+==== ge of ints toLoopVariables 134 8d68c94276f6270d177aa178fffad036
+==== ge of floats toParameters 82 1745bc3f05f8ba0663c22d512dfc7d22
+==== ge of floats toVariables 82 1745bc3f05f8ba0663c22d512dfc7d22
+==== ge of floats toLoopVariables 82 1745bc3f05f8ba0663c22d512dfc7d22
+==== is of ints toParameters 134 f6d03e2ee0304e16185f9951aa3a2e9e
+==== is of ints toVariables 134 f6d03e2ee0304e16185f9951aa3a2e9e
+==== is of ints toLoopVariables 134 f6d03e2ee0304e16185f9951aa3a2e9e
+==== is of floats toParameters 82 56b611520469e7a44055b9c19d23ec7b
+==== is of floats toVariables 82 56b611520469e7a44055b9c19d23ec7b
+==== is of floats toLoopVariables 82 56b611520469e7a44055b9c19d23ec7b
+==== divmod of ints toParameters 134 804a8cde4aafbf19e00f034edd526fd6
+==== divmod of ints toVariables 134 804a8cde4aafbf19e00f034edd526fd6
+==== divmod of ints toLoopVariables 134 804a8cde4aafbf19e00f034edd526fd6
+==== divmod of floats toParameters 82 bae8ce4c12adfad5165caa8b004a1636
+==== divmod of floats toVariables 82 bae8ce4c12adfad5165caa8b004a1636
+==== divmod of floats toLoopVariables 82 bae8ce4c12adfad5165caa8b004a1636
+==== min of ints toParameters 134 00e39439920008585277dfc92b66513f
+==== min of ints toVariables 134 00e39439920008585277dfc92b66513f
+==== min of ints toLoopVariables 134 00e39439920008585277dfc92b66513f
+==== min of floats toParameters 82 caccd17e5d8dfd04721178699bfc1225
+==== min of floats toVariables 82 caccd17e5d8dfd04721178699bfc1225
+==== min of floats toLoopVariables 82 caccd17e5d8dfd04721178699bfc1225
+==== max of ints toParameters 134 012a39497467920d74914117af9fefd0
+==== max of ints toVariables 134 012a39497467920d74914117af9fefd0
+==== max of ints toLoopVariables 134 012a39497467920d74914117af9fefd0
+==== max of floats toParameters 82 7596b3f06028b0e8b397062ff8b3bb99
+==== max of floats toVariables 82 7596b3f06028b0e8b397062ff8b3bb99
+==== max of floats toLoopVariables 82 7596b3f06028b0e8b397062ff8b3bb99
+==== += of ints toParameters 164 845ff4f682dd9a0f54423dfac9513ca4
+==== += of ints toVariables 164 845ff4f682dd9a0f54423dfac9513ca4
+==== += of ints toLoopVariables 164 845ff4f682dd9a0f54423dfac9513ca4
+==== += of strs toParameters 164 93018474bdab871cda0deddcb9b442b9
+==== += of strs toVariables 164 93018474bdab871cda0deddcb9b442b9
+==== += of strs toLoopVariables 164 93018474bdab871cda0deddcb9b442b9
+==== += of lists toParameters 164 b02751fe3672216f3ccbe1c2fa7c2fe2
+==== += of lists toVariables 164 b02751fe3672216f3ccbe1c2fa7c2fe2
+==== += of lists toLoopVariables 164 b02751fe3672216f3ccbe1c2fa7c2fe2
+==== *= of ints toParameters 138 8e0c13d3b5a311a66b96ed7edf78f2a2
+==== *= of ints toVariables 138 8e0c13d3b5a311a66b96ed7edf78f2a2
+==== *= of ints toLoopVariables 138 8e0c13d3b5a311a66b96ed7edf78f2a2
+==== add of strs toParameters 164 4ce0c3e50759bec1ba801c4dd720f55f
+==== add of strs toVariables 164 4ce0c3e50759bec1ba801c4dd720f55f
+==== add of strs toLoopVariables 164 4ce0c3e50759bec1ba801c4dd720f55f
+==== mod of a str toParameters 164 86c9ce176b9862963725f2852370d600
+==== mod of a str toVariables 164 86c9ce176b9862963725f2852370d600
+==== mod of a str toLoopVariables 164 86c9ce176b9862963725f2852370d600
+==== mul of a str toParameters 110 1749c0e936e167fe67be09f53d8c80ed
+==== mul of a str toVariables 110 1749c0e936e167fe67be09f53d8c80ed
+==== mul of a str toLoopVariables 110 1749c0e936e167fe67be09f53d8c80ed
+==== neg of an int toParameters 83 8b3d8aaf7b5741c9f6fbd0f44e253b40
+==== neg of an int toVariables 83 8b3d8aaf7b5741c9f6fbd0f44e253b40
+==== neg of an int toLoopVariables 83 8b3d8aaf7b5741c9f6fbd0f44e253b40
+==== neg of a float toParameters 48 547c552282729bea77c0d307fe0a3979
+==== neg of a float toVariables 48 547c552282729bea77c0d307fe0a3979
+==== neg of a float toLoopVariables 48 547c552282729bea77c0d307fe0a3979
+==== pos of an int toParameters 83 331f68a533f5b84e997d22f3ced5fae1
+==== pos of an int toVariables 83 331f68a533f5b84e997d22f3ced5fae1
+==== pos of an int toLoopVariables 83 331f68a533f5b84e997d22f3ced5fae1
+==== pos of a float toParameters 48 5fd02fa0c961956d479e1adbe38909eb
+==== pos of a float toVariables 48 5fd02fa0c961956d479e1adbe38909eb
+==== pos of a float toLoopVariables 48 5fd02fa0c961956d479e1adbe38909eb
+==== invert of an int toParameters 83 299a9a81f9817dd057cc9e599e5bfd3e
+==== invert of an int toVariables 83 299a9a81f9817dd057cc9e599e5bfd3e
+==== invert of an int toLoopVariables 83 299a9a81f9817dd057cc9e599e5bfd3e
+==== invert of a float toParameters 48 eea6cf05c82f7efccf51878e5381b861
+==== invert of a float toVariables 48 eea6cf05c82f7efccf51878e5381b861
+==== invert of a float toLoopVariables 48 eea6cf05c82f7efccf51878e5381b861
+==== not of an int toParameters 83 e1a6b2181d41daff14aebc50037cac80
+==== not of an int toVariables 83 e1a6b2181d41daff14aebc50037cac80
+==== not of an int toLoopVariables 83 e1a6b2181d41daff14aebc50037cac80
+==== not of a float toParameters 48 da6970737119a977b4f7aa40bc09e00b
+==== not of a float toVariables 48 da6970737119a977b4f7aa40bc09e00b
+==== not of a float toLoopVariables 48 da6970737119a977b4f7aa40bc09e00b
+==== bool of an int toParameters 83 eeaeed36a29ed7183b93ee034d297791
+==== bool of an int toVariables 83 eeaeed36a29ed7183b93ee034d297791
+==== bool of an int toLoopVariables 83 eeaeed36a29ed7183b93ee034d297791
+==== bool of a float toParameters 48 ce9562f0f935b7b8ffbc975268f4de3a
+==== bool of a float toVariables 48 ce9562f0f935b7b8ffbc975268f4de3a
+==== bool of a float toLoopVariables 48 ce9562f0f935b7b8ffbc975268f4de3a
+==== abs of an int toParameters 83 51dc9eb7c3afa3462a08feb4f5aea3a6
+==== abs of an int toVariables 83 51dc9eb7c3afa3462a08feb4f5aea3a6
+==== abs of an int toLoopVariables 83 51dc9eb7c3afa3462a08feb4f5aea3a6
+==== abs of a float toParameters 48 5ccbd87b837ac94c1f60a29247589e9e
+==== abs of a float toVariables 48 5ccbd87b837ac94c1f60a29247589e9e
+==== abs of a float toLoopVariables 48 5ccbd87b837ac94c1f60a29247589e9e
+==== if of an int toParameters 83 e6a5e5944dd5ffb83e05e48dc8e334f8
+==== if of an int toVariables 83 e6a5e5944dd5ffb83e05e48dc8e334f8
+==== if of an int toLoopVariables 83 e6a5e5944dd5ffb83e05e48dc8e334f8
+==== if of a float toParameters 48 3f028bdfa327e9272bd77c61142d5dd0
+==== if of a float toVariables 48 3f028bdfa327e9272bd77c61142d5dd0
+==== if of a float toLoopVariables 48 3f028bdfa327e9272bd77c61142d5dd0
+==== int of an int toParameters 83 02c4729800320acd36517bb0f9647f6b
+==== int of an int toVariables 83 02c4729800320acd36517bb0f9647f6b
+==== int of an int toLoopVariables 83 02c4729800320acd36517bb0f9647f6b
+==== int of a float toParameters 48 345ce2a6d50299c3f1bbdb3728064d3e
+==== int of a float toVariables 48 345ce2a6d50299c3f1bbdb3728064d3e
+==== int of a float toLoopVariables 48 345ce2a6d50299c3f1bbdb3728064d3e
+==== float of an int toParameters 83 141183ad6079614c1c80fa9b3100801d
+==== float of an int toVariables 83 141183ad6079614c1c80fa9b3100801d
+==== float of an int toLoopVariables 83 141183ad6079614c1c80fa9b3100801d
+==== float of a float toParameters 48 e690207bbd09d75097e24c7d5ca09e64
+==== float of a float toVariables 48 e690207bbd09d75097e24c7d5ca09e64
+==== float of a float toLoopVariables 48 e690207bbd09d75097e24c7d5ca09e64
+==== str of an int toParameters 83 864b54a0fb05815784aef5502251bfa2
+==== str of an int toVariables 83 864b54a0fb05815784aef5502251bfa2
+==== str of an int toLoopVariables 83 864b54a0fb05815784aef5502251bfa2
+==== str of a float toParameters 48 c10b162069ab676e6522ebf9a63687ae
+==== str of a float toVariables 48 c10b162069ab676e6522ebf9a63687ae
+==== str of a float toLoopVariables 48 c10b162069ab676e6522ebf9a63687ae
+==== hash is an int of an int toParameters 83 a9a27b4b81ba245a11867eb5ced2af3c
+==== hash is an int of an int toVariables 83 a9a27b4b81ba245a11867eb5ced2af3c
+==== hash is an int of an int toLoopVariables 83 a9a27b4b81ba245a11867eb5ced2af3c
+==== hash is an int of a float toParameters 48 429b974fa3c952ae72ec09f81de2c47d
+==== hash is an int of a float toVariables 48 429b974fa3c952ae72ec09f81de2c47d
+==== hash is an int of a float toLoopVariables 48 429b974fa3c952ae72ec09f81de2c47d
+==== while of an int toParameters 83 e5a6830f58c640986fd7182a3f48ea93
+==== while of an int toVariables 83 e5a6830f58c640986fd7182a3f48ea93
+==== while of an int toLoopVariables 83 e5a6830f58c640986fd7182a3f48ea93
+==== while of a float toParameters 48 3f02e4b93cf468a884e97a3514233f68
+==== while of a float toVariables 48 3f02e4b93cf468a884e97a3514233f68
+==== while of a float toLoopVariables 48 3f02e4b93cf468a884e97a3514233f68
+==== and of an int toParameters 83 b0829e0f32a0cbf25e08bf3cc5a152ec
+==== and of an int toVariables 83 b0829e0f32a0cbf25e08bf3cc5a152ec
+==== and of an int toLoopVariables 83 b0829e0f32a0cbf25e08bf3cc5a152ec
+==== and of a float toParameters 48 1ba763b3c88a88df5600747f9fac4b39
+==== and of a float toVariables 48 1ba763b3c88a88df5600747f9fac4b39
+==== and of a float toLoopVariables 48 1ba763b3c88a88df5600747f9fac4b39
+==== or of an int toParameters 83 24345d1f335b5f82c45d4778d7d58b9f
+==== or of an int toVariables 83 24345d1f335b5f82c45d4778d7d58b9f
+==== or of an int toLoopVariables 83 24345d1f335b5f82c45d4778d7d58b9f
+==== or of a float toParameters 48 3dbe73efc8db28c22b144cf94738d79d
+==== or of a float toVariables 48 3dbe73efc8db28c22b144cf94738d79d
+==== or of a float toLoopVariables 48 3dbe73efc8db28c22b144cf94738d79d
+==== is None of an int toParameters 83 c3cb75dd9aab41b89bf78bf0f419607a
+==== is None of an int toVariables 83 c3cb75dd9aab41b89bf78bf0f419607a
+==== is None of an int toLoopVariables 83 c3cb75dd9aab41b89bf78bf0f419607a
+==== is None of a float toParameters 48 a7852924902e18e429bb7e44020cf24d
+==== is None of a float toVariables 48 a7852924902e18e429bb7e44020cf24d
+==== is None of a float toLoopVariables 48 a7852924902e18e429bb7e44020cf24d
+==== is not None of an int toParameters 83 13487efffdc7f36658f0366335be67a7
+==== is not None of an int toVariables 83 13487efffdc7f36658f0366335be67a7
+==== is not None of an int toLoopVariables 83 13487efffdc7f36658f0366335be67a7
+==== is not None of a float toParameters 48 bd141c113f58a012c3418e8b6d7a023f
+==== is not None of a float toVariables 48 bd141c113f58a012c3418e8b6d7a023f
+==== is not None of a float toLoopVariables 48 bd141c113f58a012c3418e8b6d7a023f
+==== == 0 of an int toParameters 83 6cfc24d0e93a6e88d4089b61292ad5b4
+==== == 0 of an int toVariables 83 6cfc24d0e93a6e88d4089b61292ad5b4
+==== == 0 of an int toLoopVariables 83 6cfc24d0e93a6e88d4089b61292ad5b4
+==== == 0 of a float toParameters 48 23663d37cdfa377072619de2377e05a9
+==== == 0 of a float toVariables 48 23663d37cdfa377072619de2377e05a9
+==== == 0 of a float toLoopVariables 48 23663d37cdfa377072619de2377e05a9
+==== + 1 of an int toParameters 83 fa1644e88e898c5172092901f2811f60
+==== + 1 of an int toVariables 83 fa1644e88e898c5172092901f2811f60
+==== + 1 of an int toLoopVariables 83 fa1644e88e898c5172092901f2811f60
+==== + 1 of a float toParameters 48 4f55d30d767b0aeee8695c651c5eae67
+==== + 1 of a float toVariables 48 4f55d30d767b0aeee8695c651c5eae67
+==== + 1 of a float toLoopVariables 48 4f55d30d767b0aeee8695c651c5eae67
+==== - 1 of an int toParameters 83 33437410dbbe41850c667439a875638d
+==== - 1 of an int toVariables 83 33437410dbbe41850c667439a875638d
+==== - 1 of an int toLoopVariables 83 33437410dbbe41850c667439a875638d
+==== - 1 of a float toParameters 48 4a87bbe979f66f58a7900c6272b360f6
+==== - 1 of a float toVariables 48 4a87bbe979f66f58a7900c6272b360f6
+==== - 1 of a float toLoopVariables 48 4a87bbe979f66f58a7900c6272b360f6
+==== * 2 of an int toParameters 83 f7222c1143784773bdc8ff40bd13dbca
+==== * 2 of an int toVariables 83 f7222c1143784773bdc8ff40bd13dbca
+==== * 2 of an int toLoopVariables 83 f7222c1143784773bdc8ff40bd13dbca
+==== * 2 of a float toParameters 48 06085d3a143b5c2cf334ff54495cd19b
+==== * 2 of a float toVariables 48 06085d3a143b5c2cf334ff54495cd19b
+==== * 2 of a float toLoopVariables 48 06085d3a143b5c2cf334ff54495cd19b
+==== // 2 of an int toParameters 83 351d32e448bcdee3aab3c3a61b9d9d71
+==== // 2 of an int toVariables 83 351d32e448bcdee3aab3c3a61b9d9d71
+==== // 2 of an int toLoopVariables 83 351d32e448bcdee3aab3c3a61b9d9d71
+==== // 2 of a float toParameters 48 b0f63d95c213a074eae731c8c41faf60
+==== // 2 of a float toVariables 48 b0f63d95c213a074eae731c8c41faf60
+==== // 2 of a float toLoopVariables 48 b0f63d95c213a074eae731c8c41faf60
+==== % 2 of an int toParameters 83 4100f6bd1b27dd90c69710df75114922
+==== % 2 of an int toVariables 83 4100f6bd1b27dd90c69710df75114922
+==== % 2 of an int toLoopVariables 83 4100f6bd1b27dd90c69710df75114922
+==== % 2 of a float toParameters 48 c6f9c32f6f0a4fefbbe3a31fd93b668f
+==== % 2 of a float toVariables 48 c6f9c32f6f0a4fefbbe3a31fd93b668f
+==== % 2 of a float toLoopVariables 48 c6f9c32f6f0a4fefbbe3a31fd93b668f
+==== / 2 of an int toParameters 83 56ef9524431094e6893d5874543d44f2
+==== / 2 of an int toVariables 83 56ef9524431094e6893d5874543d44f2
+==== / 2 of an int toLoopVariables 83 56ef9524431094e6893d5874543d44f2
+==== / 2 of a float toParameters 48 6c61e51af6ba310305152f32c23fd50c
+==== / 2 of a float toVariables 48 6c61e51af6ba310305152f32c23fd50c
+==== / 2 of a float toLoopVariables 48 6c61e51af6ba310305152f32c23fd50c
+==== & 1 of an int toParameters 83 f2df98d3fe942bd4be3d1deb2856570b
+==== & 1 of an int toVariables 83 f2df98d3fe942bd4be3d1deb2856570b
+==== & 1 of an int toLoopVariables 83 f2df98d3fe942bd4be3d1deb2856570b
+==== & 1 of a float toParameters 48 404c620af3cdc877d4c2f287662fb4cc
+==== & 1 of a float toVariables 48 404c620af3cdc877d4c2f287662fb4cc
+==== & 1 of a float toLoopVariables 48 404c620af3cdc877d4c2f287662fb4cc
+==== >> 1 of an int toParameters 83 45c9ce7edb2081ceaabab4c9e5a29c2f
+==== >> 1 of an int toVariables 83 45c9ce7edb2081ceaabab4c9e5a29c2f
+==== >> 1 of an int toLoopVariables 83 45c9ce7edb2081ceaabab4c9e5a29c2f
+==== >> 1 of a float toParameters 48 918d7bf1c8d5b696bd664c3b8dd66c2d
+==== >> 1 of a float toVariables 48 918d7bf1c8d5b696bd664c3b8dd66c2d
+==== >> 1 of a float toLoopVariables 48 918d7bf1c8d5b696bd664c3b8dd66c2d
+==== << 1 of an int toParameters 83 89a3224cc8eaf8ba72f5adc8e5eb5eca
+==== << 1 of an int toVariables 83 89a3224cc8eaf8ba72f5adc8e5eb5eca
+==== << 1 of an int toLoopVariables 83 89a3224cc8eaf8ba72f5adc8e5eb5eca
+==== << 1 of a float toParameters 48 e9d22ad72a8d0a71a2cdcad91f9bcad6
+==== << 1 of a float toVariables 48 e9d22ad72a8d0a71a2cdcad91f9bcad6
+==== << 1 of a float toLoopVariables 48 e9d22ad72a8d0a71a2cdcad91f9bcad6
+==== ** 2 of an int toParameters 83 e984c401c5798f9698ab33099511dd46
+==== ** 2 of an int toVariables 83 e984c401c5798f9698ab33099511dd46
+==== ** 2 of an int toLoopVariables 83 e984c401c5798f9698ab33099511dd46
+==== ** 2 of a float toParameters 48 24ecbd4ac490b699915e0a97e35caf26
+==== ** 2 of a float toVariables 48 24ecbd4ac490b699915e0a97e35caf26
+==== ** 2 of a float toLoopVariables 48 24ecbd4ac490b699915e0a97e35caf26
+==== < 5 of an int toParameters 83 54137e56449e16ea8340618f3a097d22
+==== < 5 of an int toVariables 83 54137e56449e16ea8340618f3a097d22
+==== < 5 of an int toLoopVariables 83 54137e56449e16ea8340618f3a097d22
+==== < 5 of a float toParameters 48 596fa4168a7ac216ae71b8c3337e6a12
+==== < 5 of a float toVariables 48 596fa4168a7ac216ae71b8c3337e6a12
+==== < 5 of a float toLoopVariables 48 596fa4168a7ac216ae71b8c3337e6a12
+==== isinstance int of an int toParameters 83 a65a66f12aa2eb9377a2bd74ec3d203b
+==== isinstance int of an int toVariables 83 a65a66f12aa2eb9377a2bd74ec3d203b
+==== isinstance int of an int toLoopVariables 83 a65a66f12aa2eb9377a2bd74ec3d203b
+==== isinstance int of a float toParameters 48 42e6bdae4cddbd1bcbf5ddda229cb8d7
+==== isinstance int of a float toVariables 48 42e6bdae4cddbd1bcbf5ddda229cb8d7
+==== isinstance int of a float toLoopVariables 48 42e6bdae4cddbd1bcbf5ddda229cb8d7
+==== type of an int toParameters 83 175d4c91c12e9756434b99019b4dc9dd
+==== type of an int toVariables 83 175d4c91c12e9756434b99019b4dc9dd
+==== type of an int toLoopVariables 83 175d4c91c12e9756434b99019b4dc9dd
+==== type of a float toParameters 48 4d6008114911f4e4d0149e76735b9741
+==== type of a float toVariables 48 4d6008114911f4e4d0149e76735b9741
+==== type of a float toLoopVariables 48 4d6008114911f4e4d0149e76735b9741
+==== round of an int toParameters 83 2493e7e0074ff98f9c1b20340f8b328a
+==== round of an int toVariables 83 2493e7e0074ff98f9c1b20340f8b328a
+==== round of an int toLoopVariables 83 2493e7e0074ff98f9c1b20340f8b328a
+==== round of a float toParameters 48 1020561e7833c5aeeae68c9db3dadb0f
+==== round of a float toVariables 48 1020561e7833c5aeeae68c9db3dadb0f
+==== round of a float toLoopVariables 48 1020561e7833c5aeeae68c9db3dadb0f
+==== math.floor of an int toParameters 83 087a344951ba73fd7ab329d643f39b25
+==== math.floor of an int toVariables 83 087a344951ba73fd7ab329d643f39b25
+==== math.floor of an int toLoopVariables 83 087a344951ba73fd7ab329d643f39b25
+==== math.floor of a float toParameters 48 b2a3f45bf3de13733a175ef5017d3dc3
+==== math.floor of a float toVariables 48 b2a3f45bf3de13733a175ef5017d3dc3
+==== math.floor of a float toLoopVariables 48 b2a3f45bf3de13733a175ef5017d3dc3
+==== math.sqrt of an int toParameters 83 cc251db89e0086b2f214e120ff22e143
+==== math.sqrt of an int toVariables 83 cc251db89e0086b2f214e120ff22e143
+==== math.sqrt of an int toLoopVariables 83 cc251db89e0086b2f214e120ff22e143
+==== math.sqrt of a float toParameters 48 0a841423b49a972a856f8b5ad4e7b383
+==== math.sqrt of a float toVariables 48 0a841423b49a972a856f8b5ad4e7b383
+==== math.sqrt of a float toLoopVariables 48 0a841423b49a972a856f8b5ad4e7b383
+==== getitem of a list toParameters 83 73856c8a7862fb09f1188dbe586b8fc4
+==== getitem of a list toVariables 83 73856c8a7862fb09f1188dbe586b8fc4
+==== getitem of a list toLoopVariables 83 73856c8a7862fb09f1188dbe586b8fc4
+==== in a list toParameters 72 8b2b16d26e5f74eda1a9ea32def99293
+==== in a list toVariables 72 8b2b16d26e5f74eda1a9ea32def99293
+==== in a list toLoopVariables 72 8b2b16d26e5f74eda1a9ea32def99293
+==== getitem of a list of strs toParameters 83 17f6bfc7d2ea78a0c963290fb76ac51c
+==== getitem of a list of strs toVariables 83 17f6bfc7d2ea78a0c963290fb76ac51c
+==== getitem of a list of strs toLoopVariables 83 17f6bfc7d2ea78a0c963290fb76ac51c
+==== in a list of strs toParameters 72 ba846afeb861e25504c68c7c182fabf5
+==== in a list of strs toVariables 72 ba846afeb861e25504c68c7c182fabf5
+==== in a list of strs toLoopVariables 72 ba846afeb861e25504c68c7c182fabf5
+==== getitem of a tuple toParameters 83 3476830a8510d30312ae466857be0149
+==== getitem of a tuple toVariables 83 3476830a8510d30312ae466857be0149
+==== getitem of a tuple toLoopVariables 83 3476830a8510d30312ae466857be0149
+==== in a tuple toParameters 72 8b2b16d26e5f74eda1a9ea32def99293
+==== in a tuple toVariables 72 8b2b16d26e5f74eda1a9ea32def99293
+==== in a tuple toLoopVariables 72 8b2b16d26e5f74eda1a9ea32def99293
+==== getitem of a str toParameters 83 103c6aabaca09dca4111cb886a5d2e5d
+==== getitem of a str toVariables 83 103c6aabaca09dca4111cb886a5d2e5d
+==== getitem of a str toLoopVariables 83 103c6aabaca09dca4111cb886a5d2e5d
+==== in a str toParameters 72 becbb0d623f78cbf6956e2e927ae5cc7
+==== in a str toVariables 72 becbb0d623f78cbf6956e2e927ae5cc7
+==== in a str toLoopVariables 72 becbb0d623f78cbf6956e2e927ae5cc7
+==== getitem of bytes toParameters 83 4bb76a93bc27cb52a92f957f05ec53ce
+==== getitem of bytes toVariables 83 4bb76a93bc27cb52a92f957f05ec53ce
+==== getitem of bytes toLoopVariables 83 4bb76a93bc27cb52a92f957f05ec53ce
+==== in bytes toParameters 72 007234892f220769ed0aed813090dc06
+==== in bytes toVariables 72 007234892f220769ed0aed813090dc06
+==== in bytes toLoopVariables 72 007234892f220769ed0aed813090dc06
+==== getitem of a dict toParameters 83 5ea4cedd93b14ae3e4d947b0080686dd
+==== getitem of a dict toVariables 83 5ea4cedd93b14ae3e4d947b0080686dd
+==== getitem of a dict toLoopVariables 83 5ea4cedd93b14ae3e4d947b0080686dd
+==== in a dict toParameters 72 a3629a87bd264f183ef433fd1e8db6a6
+==== in a dict toVariables 72 a3629a87bd264f183ef433fd1e8db6a6
+==== in a dict toLoopVariables 72 a3629a87bd264f183ef433fd1e8db6a6
+==== getitem of a dict of strs toParameters 83 c4e2d1ab20c88dd029fc7ba5a4a424ca
+==== getitem of a dict of strs toVariables 83 c4e2d1ab20c88dd029fc7ba5a4a424ca
+==== getitem of a dict of strs toLoopVariables 83 c4e2d1ab20c88dd029fc7ba5a4a424ca
+==== in a dict of strs toParameters 72 f4624a226f128e10a7052e7daa92b37d
+==== in a dict of strs toVariables 72 f4624a226f128e10a7052e7daa92b37d
+==== in a dict of strs toLoopVariables 72 f4624a226f128e10a7052e7daa92b37d
+==== getitem of a range toParameters 83 c6256e4bc7101227c6b1ba648ebb6101
+==== getitem of a range toVariables 83 c6256e4bc7101227c6b1ba648ebb6101
+==== getitem of a range toLoopVariables 83 c6256e4bc7101227c6b1ba648ebb6101
+==== in a range toParameters 72 3c1a03f4b955952f39d0c3825244bfc6
+==== in a range toVariables 72 3c1a03f4b955952f39d0c3825244bfc6
+==== in a range toLoopVariables 72 3c1a03f4b955952f39d0c3825244bfc6
+==== setitem of a list toParameters 162 e31846397884a4788664c4212316e06e
+==== setitem of a list toVariables 162 e31846397884a4788664c4212316e06e
+==== setitem of a list toLoopVariables 162 e31846397884a4788664c4212316e06e
+==== delitem of a list toParameters 81 db069546cb5da9049416b98ba6898fa8
+==== delitem of a list toVariables 81 db069546cb5da9049416b98ba6898fa8
+==== delitem of a list toLoopVariables 81 db069546cb5da9049416b98ba6898fa8
+==== setitem of a list of strs toParameters 162 035d32047d1865be6067eb44620bc34a
+==== setitem of a list of strs toVariables 162 035d32047d1865be6067eb44620bc34a
+==== setitem of a list of strs toLoopVariables 162 035d32047d1865be6067eb44620bc34a
+==== delitem of a list of strs toParameters 81 17749dd792a083da37aa1eb0b9d615ba
+==== delitem of a list of strs toVariables 81 17749dd792a083da37aa1eb0b9d615ba
+==== delitem of a list of strs toLoopVariables 81 17749dd792a083da37aa1eb0b9d615ba
+==== setitem of a dict toParameters 162 9f8808fe98f9dce198e1f23849f6fc49
+==== setitem of a dict toVariables 162 9f8808fe98f9dce198e1f23849f6fc49
+==== setitem of a dict toLoopVariables 162 9f8808fe98f9dce198e1f23849f6fc49
+==== delitem of a dict toParameters 81 e4eb1e336083d94fbfdcf26138466378
+==== delitem of a dict toVariables 81 e4eb1e336083d94fbfdcf26138466378
+==== delitem of a dict toLoopVariables 81 e4eb1e336083d94fbfdcf26138466378
+==== setitem of a bytearray toParameters 162 3630bc90f831c0d97f9fcebe4348bb5b
+==== setitem of a bytearray toVariables 162 3630bc90f831c0d97f9fcebe4348bb5b
+==== setitem of a bytearray toLoopVariables 162 3630bc90f831c0d97f9fcebe4348bb5b
+==== delitem of a bytearray toParameters 81 c1fc243ff2f5f5cc51bd70bf77665483
+==== delitem of a bytearray toVariables 81 c1fc243ff2f5f5cc51bd70bf77665483
+==== delitem of a bytearray toLoopVariables 81 c1fc243ff2f5f5cc51bd70bf77665483
+==== slice toParameters 95 3312f9d765208011b479a8d83c0636a1
+==== slice toVariables 95 3312f9d765208011b479a8d83c0636a1
+==== slice toLoopVariables 95 3312f9d765208011b479a8d83c0636a1
+==== slice of a str toParameters 95 eb089009ed7248ece9d6737a1042953a
+==== slice of a str toVariables 95 eb089009ed7248ece9d6737a1042953a
+==== slice of a str toLoopVariables 95 eb089009ed7248ece9d6737a1042953a
+==== len of a list toParameters 84 5317d94baf2974400793e3b591f96d10
+==== len of a list toVariables 84 5317d94baf2974400793e3b591f96d10
+==== len of a list toLoopVariables 84 5317d94baf2974400793e3b591f96d10
+==== len of a tuple toParameters 43 b9ed3f82eadf88ffd96e4343f37d346f
+==== len of a tuple toVariables 43 b9ed3f82eadf88ffd96e4343f37d346f
+==== len of a tuple toLoopVariables 43 b9ed3f82eadf88ffd96e4343f37d346f
+==== iter of a list toParameters 84 5afe4755b097436076acc8beffc34d73
+==== iter of a list toVariables 84 747569de35529020f8a6b1b07139598b
+==== iter of a list toLoopVariables 84 747569de35529020f8a6b1b07139598b
+==== iter of a tuple toParameters 43 41e86107d644256f57ad368e3c5e6d73
+==== iter of a tuple toVariables 43 41e86107d644256f57ad368e3c5e6d73
+==== iter of a tuple toLoopVariables 43 41e86107d644256f57ad368e3c5e6d73
+==== for of a list toParameters 84 213d24922c27a74fadf912eb755a680b
+==== for of a list toVariables 84 06fc2024996c78349a9ce8e2dcf931eb
+==== for of a list toLoopVariables 84 06fc2024996c78349a9ce8e2dcf931eb
+==== for of a tuple toParameters 43 878e7389f2d388dad428c91eb78cfc0c
+==== for of a tuple toVariables 43 878e7389f2d388dad428c91eb78cfc0c
+==== for of a tuple toLoopVariables 43 878e7389f2d388dad428c91eb78cfc0c
+==== list of a list toParameters 84 5afe4755b097436076acc8beffc34d73
+==== list of a list toVariables 84 747569de35529020f8a6b1b07139598b
+==== list of a list toLoopVariables 84 747569de35529020f8a6b1b07139598b
+==== list of a tuple toParameters 43 41e86107d644256f57ad368e3c5e6d73
+==== list of a tuple toVariables 43 41e86107d644256f57ad368e3c5e6d73
+==== list of a tuple toLoopVariables 43 41e86107d644256f57ad368e3c5e6d73
+==== tuple of a list toParameters 84 25bd24dc59fdea7759225139c348203b
+==== tuple of a list toVariables 84 58d9648af9998dc3fde7ec5686debc48
+==== tuple of a list toLoopVariables 84 58d9648af9998dc3fde7ec5686debc48
+==== tuple of a tuple toParameters 43 be2591dae467d4685fb199c0c310e91c
+==== tuple of a tuple toVariables 43 be2591dae467d4685fb199c0c310e91c
+==== tuple of a tuple toLoopVariables 43 be2591dae467d4685fb199c0c310e91c
+==== unpack two of a list toParameters 84 23fb6d531049774c43c528a0758926e0
+==== unpack two of a list toVariables 84 a653dbc12c9eb4d3c3f92c79b99586fb
+==== unpack two of a list toLoopVariables 84 4321bea7bdf8ecb03a4bca979aa6fc16
+==== unpack two of a tuple toParameters 43 862f7e924a1be749bd627d65f3819c08
+==== unpack two of a tuple toVariables 43 e0f00f6cf16763d12891b0beaad96f51
+==== unpack two of a tuple toLoopVariables 43 2a01b3d63d3d54004bb5011f327df945
+==== a, b = of a list toParameters 84 267b74021806e4524ee95c34615d163a
+==== a, b = of a list toVariables 84 6cf95999216d0055921f1d0b06dfc564
+==== a, b = of a list toLoopVariables 84 6cf95999216d0055921f1d0b06dfc564
+==== a, b = of a tuple toParameters 43 5464b479e44cf7168491809b34821625
+==== a, b = of a tuple toVariables 43 5464b479e44cf7168491809b34821625
+==== a, b = of a tuple toLoopVariables 43 5464b479e44cf7168491809b34821625
+==== a, *b = of a list toParameters 84 2b10b2cbd016372731443e62d95c46c3
+==== a, *b = of a list toVariables 84 f087f24818de368258cbb36ee0a32b9d
+==== a, *b = of a list toLoopVariables 84 f087f24818de368258cbb36ee0a32b9d
+==== a, *b = of a tuple toParameters 43 f7859ad0052cf4d104f8ff2829eb1b63
+==== a, *b = of a tuple toVariables 43 f7859ad0052cf4d104f8ff2829eb1b63
+==== a, *b = of a tuple toLoopVariables 43 f7859ad0052cf4d104f8ff2829eb1b63
+==== sum of a list toParameters 84 07f8d0d130e2e1e021c9394950af81c5
+==== sum of a list toVariables 84 2522857f07a9ee03aa5dc2d808ff9e26
+==== sum of a list toLoopVariables 84 2522857f07a9ee03aa5dc2d808ff9e26
+==== sum of a tuple toParameters 43 ddd01b3cb0daaee3482e670247c28c98
+==== sum of a tuple toVariables 43 ddd01b3cb0daaee3482e670247c28c98
+==== sum of a tuple toLoopVariables 43 ddd01b3cb0daaee3482e670247c28c98
+==== sorted of a list toParameters 84 d463985f578b3d35b13614e1bad80d99
+==== sorted of a list toVariables 84 fadd45dc59552ef3d123805380540265
+==== sorted of a list toLoopVariables 84 fadd45dc59552ef3d123805380540265
+==== sorted of a tuple toParameters 43 baf01a0c92463da583b3c12aa50b8b05
+==== sorted of a tuple toVariables 43 baf01a0c92463da583b3c12aa50b8b05
+==== sorted of a tuple toLoopVariables 43 baf01a0c92463da583b3c12aa50b8b05
+==== reversed of a list toParameters 84 4170d5e7b0c15da4ef8e50c091b12fb1
+==== reversed of a list toVariables 84 4170d5e7b0c15da4ef8e50c091b12fb1
+==== reversed of a list toLoopVariables 84 4170d5e7b0c15da4ef8e50c091b12fb1
+==== reversed of a tuple toParameters 43 2722cac3953e93931c5179710e687a24
+==== reversed of a tuple toVariables 43 2722cac3953e93931c5179710e687a24
+==== reversed of a tuple toLoopVariables 43 2722cac3953e93931c5179710e687a24
+==== enumerate of a list toParameters 84 bb3a30c7df924e916e25badb88bba550
+==== enumerate of a list toVariables 84 ced15dd37927017247f4733456605582
+==== enumerate of a list toLoopVariables 84 ced15dd37927017247f4733456605582
+==== enumerate of a tuple toParameters 43 b64aae5b400c7af50d0e4d86fa827afa
+==== enumerate of a tuple toVariables 43 b64aae5b400c7af50d0e4d86fa827afa
+==== enumerate of a tuple toLoopVariables 43 b64aae5b400c7af50d0e4d86fa827afa
+==== zip of a list toParameters 84 3ca6f3bbd5e77ca7e570e06563383f0c
+==== zip of a list toVariables 84 97212a2abfe5a5cfa6ddb62e754cede2
+==== zip of a list toLoopVariables 84 97212a2abfe5a5cfa6ddb62e754cede2
+==== zip of a tuple toParameters 43 dca2d6287abaf2f7d7d92b755fed09d6
+==== zip of a tuple toVariables 43 dca2d6287abaf2f7d7d92b755fed09d6
+==== zip of a tuple toLoopVariables 43 dca2d6287abaf2f7d7d92b755fed09d6
+==== any of a list toParameters 84 0cad4b566734d6802dd053e3e1476451
+==== any of a list toVariables 84 0cad4b566734d6802dd053e3e1476451
+==== any of a list toLoopVariables 84 fc20abe0a916ec16d2644f6c8581931e
+==== any of a tuple toParameters 43 43d4e49e9c7ba6e003209f8e2d9626bc
+==== any of a tuple toVariables 43 43d4e49e9c7ba6e003209f8e2d9626bc
+==== any of a tuple toLoopVariables 43 43d4e49e9c7ba6e003209f8e2d9626bc
+==== all of a list toParameters 84 9fe7ee6ddb8335ca777acec787884760
+==== all of a list toVariables 84 9fe7ee6ddb8335ca777acec787884760
+==== all of a list toLoopVariables 84 9fe7ee6ddb8335ca777acec787884760
+==== all of a tuple toParameters 43 4530b851a5067ba7ba17c3d00e47ae2d
+==== all of a tuple toVariables 43 4530b851a5067ba7ba17c3d00e47ae2d
+==== all of a tuple toLoopVariables 43 4530b851a5067ba7ba17c3d00e47ae2d
+==== min of a list toParameters 84 d6d728e7b37c7963eaa7d575ae92a6f6
+==== min of a list toVariables 84 bdc528bfe7baf19be7e28d22d140cbb6
+==== min of a list toLoopVariables 84 bdc528bfe7baf19be7e28d22d140cbb6
+==== min of a tuple toParameters 43 c2ee9f821f46c71e1f0cef2eddb44668
+==== min of a tuple toVariables 43 c2ee9f821f46c71e1f0cef2eddb44668
+==== min of a tuple toLoopVariables 43 c2ee9f821f46c71e1f0cef2eddb44668
+==== max of a list toParameters 84 de0b22976a66c74f43d6ec2b15d36838
+==== max of a list toVariables 84 a4401f56b4ed480c91d0cb3206532391
+==== max of a list toLoopVariables 84 a4401f56b4ed480c91d0cb3206532391
+==== max of a tuple toParameters 43 7ec68db71e42c06f81314cfbb8ef1059
+==== max of a tuple toVariables 43 7ec68db71e42c06f81314cfbb8ef1059
+==== max of a tuple toLoopVariables 43 7ec68db71e42c06f81314cfbb8ef1059
+==== [*x] of a list toParameters 84 e660e7405b06d0a42f0c4c37abf31f1d
+==== [*x] of a list toVariables 84 93e34596ee300294e22a773cc48fb4d2
+==== [*x] of a list toLoopVariables 84 93e34596ee300294e22a773cc48fb4d2
+==== [*x] of a tuple toParameters 43 4bf804e54348e2dee757d87dd7e2d297
+==== [*x] of a tuple toVariables 43 4bf804e54348e2dee757d87dd7e2d297
+==== [*x] of a tuple toLoopVariables 43 4bf804e54348e2dee757d87dd7e2d297
+==== {**x} of a dict toParameters 84 cef0109a2fce2be2937b46696d68d3cd
+==== {**x} of a dict toVariables 84 cef0109a2fce2be2937b46696d68d3cd
+==== {**x} of a dict toLoopVariables 84 cef0109a2fce2be2937b46696d68d3cd
+==== f(**x) of a dict toParameters 84 fc667ac44176b1e91d26ea3881679d95
+==== f(**x) of a dict toVariables 84 fc667ac44176b1e91d26ea3881679d95
+==== f(**x) of a dict toLoopVariables 84 fc667ac44176b1e91d26ea3881679d95
+==== join of a list toParameters 84 fcd0a4223fe8c73d2da563fb9f5debb7
+==== join of a list toVariables 84 eb27e30f612eb2cf90ab2bba90e6e1bd
+==== join of a list toLoopVariables 84 eb27e30f612eb2cf90ab2bba90e6e1bd
+==== set of a list toParameters 84 d463985f578b3d35b13614e1bad80d99
+==== set of a list toVariables 84 fadd45dc59552ef3d123805380540265
+==== set of a list toLoopVariables 84 fadd45dc59552ef3d123805380540265
+==== set of a tuple toParameters 43 baf01a0c92463da583b3c12aa50b8b05
+==== set of a tuple toVariables 43 baf01a0c92463da583b3c12aa50b8b05
+==== set of a tuple toLoopVariables 43 baf01a0c92463da583b3c12aa50b8b05
+==== dict of a dict toParameters 84 8e6e7f84c30c584de69be0a5ec4da13e
+==== dict of a dict toVariables 84 8e6e7f84c30c584de69be0a5ec4da13e
+==== dict of a dict toLoopVariables 84 1aa66fd46424524eb5986bd4b8b4ae22
+==== bool of a list toParameters 84 d923e5dc06b2893d883e5ae068192f38
+==== bool of a list toVariables 84 d923e5dc06b2893d883e5ae068192f38
+==== bool of a list toLoopVariables 84 d923e5dc06b2893d883e5ae068192f38
+==== bool of a tuple toParameters 43 6528a21eee6ac6eedaf34e5474d039a5
+==== bool of a tuple toVariables 43 6528a21eee6ac6eedaf34e5474d039a5
+==== bool of a tuple toLoopVariables 43 6528a21eee6ac6eedaf34e5474d039a5
+==== not of a list toParameters 84 1af3d0b8f424a2f6efc6eda4002c4e3f
+==== not of a list toVariables 84 1af3d0b8f424a2f6efc6eda4002c4e3f
+==== not of a list toLoopVariables 84 1af3d0b8f424a2f6efc6eda4002c4e3f
+==== not of a tuple toParameters 43 865352a99d4141d3355f91f47be744fd
+==== not of a tuple toVariables 43 865352a99d4141d3355f91f47be744fd
+==== not of a tuple toLoopVariables 43 865352a99d4141d3355f91f47be744fd
+==== x[0] of a list toParameters 84 fe6965f352ea9118de1c423e32884589
+==== x[0] of a list toVariables 84 fe6965f352ea9118de1c423e32884589
+==== x[0] of a list toLoopVariables 84 fe6965f352ea9118de1c423e32884589
+==== x[0] of a tuple toParameters 43 186d2fe8bfc05277882721898bb0ed65
+==== x[0] of a tuple toVariables 43 186d2fe8bfc05277882721898bb0ed65
+==== x[0] of a tuple toLoopVariables 43 186d2fe8bfc05277882721898bb0ed65
+==== x[-1] of a list toParameters 84 e440f34fb138a5d0f81fba424b3f5ab5
+==== x[-1] of a list toVariables 84 e440f34fb138a5d0f81fba424b3f5ab5
+==== x[-1] of a list toLoopVariables 84 e440f34fb138a5d0f81fba424b3f5ab5
+==== x[-1] of a tuple toParameters 43 08fd0afef2480b39241cac5745100a9e
+==== x[-1] of a tuple toVariables 43 08fd0afef2480b39241cac5745100a9e
+==== x[-1] of a tuple toLoopVariables 43 08fd0afef2480b39241cac5745100a9e
+==== x[1:] of a list toParameters 84 5408e8ef0a8de5cf5d0a46eb64b0ec7e
+==== x[1:] of a list toVariables 84 5408e8ef0a8de5cf5d0a46eb64b0ec7e
+==== x[1:] of a list toLoopVariables 84 5408e8ef0a8de5cf5d0a46eb64b0ec7e
+==== x[1:] of a tuple toParameters 43 e72e52c31370787ae19efde20b4b23b1
+==== x[1:] of a tuple toVariables 43 e72e52c31370787ae19efde20b4b23b1
+==== x[1:] of a tuple toLoopVariables 43 e72e52c31370787ae19efde20b4b23b1
+==== o.x toParameters 83 6afa3eede8b6d04e23cde06db917c0e6
+==== o.x toVariables 83 6afa3eede8b6d04e23cde06db917c0e6
+==== o.x toLoopVariables 83 6afa3eede8b6d04e23cde06db917c0e6
+==== o.y toParameters 83 dd10aab4b989663e260861e9692d53dd
+==== o.y toVariables 83 dd10aab4b989663e260861e9692d53dd
+==== o.y toLoopVariables 83 dd10aab4b989663e260861e9692d53dd
+==== o.m() toParameters 83 b9a95d8fe54eb2385736bef65e534c35
+==== o.m() toVariables 83 b9a95d8fe54eb2385736bef65e534c35
+==== o.m() toLoopVariables 83 b9a95d8fe54eb2385736bef65e534c35
+==== o.x = v toParameters 91 167b907c7ef2080f25be3e563a1cecbe
+==== o.x = v toVariables 91 167b907c7ef2080f25be3e563a1cecbe
+==== o.x = v toLoopVariables 91 167b907c7ef2080f25be3e563a1cecbe
+==== del o.x toParameters 83 8b0a7109b3fac352581a08b210e287e5
+==== del o.x toVariables 83 d3988c100a96a423330cfcb657e3a721
+==== del o.x toLoopVariables 83 d3988c100a96a423330cfcb657e3a721
+==== getattr toParameters 90 27e11ac60c03a8a8dbbba61bbe00d53e
+==== getattr toVariables 90 27e11ac60c03a8a8dbbba61bbe00d53e
+==== getattr toLoopVariables 90 27e11ac60c03a8a8dbbba61bbe00d53e
+==== hasattr toParameters 83 b1b3bcba671d06775104b0d25759d24b
+==== hasattr toVariables 83 b1b3bcba671d06775104b0d25759d24b
+==== hasattr toLoopVariables 83 b1b3bcba671d06775104b0d25759d24b
+==== append toParameters 83 f76ab0fb92d0b436f9d626b84669af79
+==== append toVariables 83 f76ab0fb92d0b436f9d626b84669af79
+==== append toLoopVariables 83 f76ab0fb92d0b436f9d626b84669af79
+==== pop toParameters 83 9af791e9ac50a79a3032c4b4d797e947
+==== pop toVariables 83 9af791e9ac50a79a3032c4b4d797e947
+==== pop toLoopVariables 83 9af791e9ac50a79a3032c4b4d797e947
+==== get toParameters 164 2fd1097035444a13d0834a3ac8f1e96a
+==== get toVariables 164 2fd1097035444a13d0834a3ac8f1e96a
+==== get toLoopVariables 164 2fd1097035444a13d0834a3ac8f1e96a
+==== upper toParameters 83 c04e335fe4d3b33d197cee300ee485f7
+==== upper toVariables 83 c04e335fe4d3b33d197cee300ee485f7
+==== upper toLoopVariables 83 c04e335fe4d3b33d197cee300ee485f7
+==== call toParameters 83 ea02266bb258bb8fc796e9cd95432415
+==== call toVariables 83 ea02266bb258bb8fc796e9cd95432415
+==== call toLoopVariables 83 ea02266bb258bb8fc796e9cd95432415
+==== call with one toParameters 92 ccb141299547bdb64cfa3dd74bbcb8e9
+==== call with one toVariables 92 ccb141299547bdb64cfa3dd74bbcb8e9
+==== call with one toLoopVariables 92 ccb141299547bdb64cfa3dd74bbcb8e9
+==== range toParameters 69 9ff3da2cd551e99b738f2c9d46cef364
+==== range toVariables 69 9ff3da2cd551e99b738f2c9d46cef364
+==== range toLoopVariables 69 9ff3da2cd551e99b738f2c9d46cef364
+==== for in range toParameters 69 87144341c9fbc98137123d4d6579a452
+==== for in range toVariables 69 87144341c9fbc98137123d4d6579a452
+==== for in range toLoopVariables 69 87144341c9fbc98137123d4d6579a452
+==== chained comparison toParameters 245 3a34982a3360c569859139d060ed6aa6
+==== chained comparison toVariables 245 3a34982a3360c569859139d060ed6aa6
+==== chained comparison toLoopVariables 245 3a34982a3360c569859139d060ed6aa6
+==== f-string toParameters 83 19cdb4a96fc1f1817238f07fa30aaea9
+==== f-string toVariables 83 19cdb4a96fc1f1817238f07fa30aaea9
+==== f-string toLoopVariables 83 19cdb4a96fc1f1817238f07fa30aaea9
+==== conditional sum toParameters 82 733ed62a721662c05778d1e7986979c7
+==== conditional sum toVariables 82 733ed62a721662c05778d1e7986979c7
+==== conditional sum toLoopVariables 82 733ed62a721662c05778d1e7986979c7
+==== total toParameters 27 0495f63eb4a3d0e823bf95410f05ea7c
+==== total toVariables 27 da0c72ad0386518ce526e00ae4d18245
+==== total toLoopVariables 27 da0c72ad0386518ce526e00ae4d18245
+==== product toParameters 27 f75be5ffe3d53cae4545fc04321538a3
+==== product toVariables 27 00109157c6cb4c669fabb20f474093c7
+==== product toLoopVariables 27 00109157c6cb4c669fabb20f474093c7
+50421 surprises

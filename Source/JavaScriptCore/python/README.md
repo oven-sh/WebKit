@@ -496,6 +496,13 @@ timer while nothing at all is being called, in a loop that there is a way out of
 - What does not fit, dividing by 0, a place that is not in the list or is counted from the end of it: all are left to the baseline JIT, and where that has happened the operator is left as it is the next time.
 - **That a variable may have nothing in it is not held against it.** Every variable begins that way, and what goes through something has nothing left in the end, so it is among what is expected of most things. It is left out of account in deciding
   (`predictionIfBound()`): what has nothing in it is none of the kinds that are looked for.
+- **And whatever decides again has to leave it out of account too.** What is made a node of JavaScript's is then seen to as JavaScript's are, and that went by what the operands might be with nothing left out. So having been
+  found to be a list and an int, they were found not to be, and what JavaScript does when it cannot tell is right for JavaScript. `GetByVal` and `PutByVal` did what is done with any object and any key, to which a place before the
+  start of an array or past the end of it is a property like another: `items[-1]` was `None`, `items[-1] = x` did nothing that could be seen, `items[len(items)]` was `None` and not `IndexError`, and `items[len(items)] = x` made the list longer.
+  And what was made a double of was made one as JavaScript makes one of anything, so `None / 2` was `nan`. All in what had been run a few thousand times, with the variable of a loop, and in nothing else. Now how the array is got at is
+  settled from the same as it was decided from (`predictionForArrayMode()`), and it is asserted that it comes to the same. `programs/places-in-a-list-that-are-not-there.py`.
+- `programs/used-to-one-thing-and-given-another.py` does each of some two hundred things often enough with the usual operands to be compiled for them, and then with every other sort: fifty thousand in all, and all as in CPython.
+  It does each to the parameters of a function, to variables, and to the variables of loops, and it was only the last that found any of this.
 - **A list is not to become one that keeps floats as they are**, which is what JavaScript would make of a list of ints that is given a float, since it could not then be told which of them are whole. So that is not made a `PutByVal`.
 - `py_get_item` and `py_set_item` remember what kind of array they have been given, as `get_by_val` and `put_by_val` do, and their nodes have the same things in the same places, so that the one is made the other by saying so.
 - `a, b = b, a` makes no tuple.

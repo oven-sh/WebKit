@@ -40,6 +40,7 @@
 #include "PythonOperators.h"
 #include "RegExpConstructor.h"
 #include "TypeLocation.h"
+#include <wtf/SetForScope.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -1281,8 +1282,8 @@ private:
             node->setArrayMode(
                 node->arrayMode().refine(
                     m_graph, node,
-                    m_graph.varArgChild(node, 0)->prediction(),
-                    m_graph.varArgChild(node, 1)->prediction(),
+                    predictionForArrayMode(m_graph.varArgChild(node, 0).node()),
+                    predictionForArrayMode(m_graph.varArgChild(node, 1).node()),
                     SpecNone));
 
             switch (node->arrayMode().type()) {
@@ -1571,9 +1572,9 @@ private:
             node->setArrayMode(
                 node->arrayMode().refine(
                     m_graph, node,
-                    child1->prediction(),
-                    child2->prediction(),
-                    child3->prediction()));
+                    predictionForArrayMode(child1.node()),
+                    predictionForArrayMode(child2.node()),
+                    predictionForArrayMode(child3.node())));
 
             switch (node->arrayMode().type()) {
             case Array::BigInt64Array:
@@ -4346,6 +4347,8 @@ private:
     // What something is expected to be, if it is anything. Every variable of Python's begins with nothing in it, and what goes through something has nothing left in the end, so that is among what is expected of a good deal.
     // It is looked out for before anything is done with the value, and it is none of the kinds that are looked for here.
     static SpeculatedType predictionIfBound(Node* node) { return node->prediction() & ~SpecEmpty; }
+    // What GetByVal and PutByVal go by in settling how the array is got at. See fixupPyItemAccess().
+    SpeculatedType predictionForArrayMode(Node* node) const { return m_isFixingUpPyItemAccess ? predictionIfBound(node) : node->prediction(); }
     static bool isPredictedToBeInt32(Node* node) { return isInt32Speculation(predictionIfBound(node)); }
     static bool isPredictedToBeBoolean(Node* node) { return isBooleanSpeculation(predictionIfBound(node)); }
     static bool isPredictedToBeString(Node* node) { return isStringSpeculation(predictionIfBound(node)); }
@@ -4577,7 +4580,13 @@ private:
         if (isList()) {
             insertCheck<ArrayUse>(base);
             node->setOpAndDefaultFlags(isGet ? GetByVal : PutByVal);
-            fixupNode(node);
+            {
+                // It settles for itself how the array is got at, and has to come to what was come to above. Going by what the operands might be with nothing left out, it would as often as not
+                // give up and do whatever JavaScript does with any object and any key. To that, a place before the start or past the end is a property like another.
+                SetForScope isFixingUp(m_isFixingUpPyItemAccess, true);
+                fixupNode(node);
+            }
+            RELEASE_ASSERT(node->arrayMode().isJSArray() && node->arrayMode().isInBounds() && (node->arrayMode().type() == Array::Contiguous || node->arrayMode().type() == Array::Int32));
             return;
         }
         // Nothing else can be given anything. What is said of that is for the baseline JIT to say.
@@ -6468,8 +6477,10 @@ private:
                                 indexForChecks, SpecAnyIntAsDouble, DoubleRep, originForChecks,
                                 Edge(edge.node(), Int52RepUse));
                         } else {
+                            // That a variable has been seen with nothing in it says nothing of what is made a double of, since that is looked out for before the variable is used. Otherwise
+                            // what has only ever been a number would be taken for what might be anything, and undefined, which is Python's None, be made NaN of.
                             UseKind useKind;
-                            if (edge->shouldSpeculateNumber())
+                            if (isFullNumberSpeculation(predictionIfBound(edge.node())))
                                 useKind = NumberUse;
                             else
                                 useKind = NotCellNorBigIntUse;
@@ -6588,6 +6599,7 @@ private:
     Node* m_currentNode;
     InsertionSet m_insertionSet;
     bool m_profitabilityChanged;
+    bool m_isFixingUpPyItemAccess { false };
 };
     
 bool performFixup(Graph& graph)
