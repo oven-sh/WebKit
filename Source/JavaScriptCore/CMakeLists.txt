@@ -2084,6 +2084,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonConfiguration.h
     python/PythonFileOperations.h
     python/PythonFunctionInfo.h
+    python/PythonHashlib.h
     python/PythonIOState.h
     python/PythonImport.h
     python/PythonImportState.h

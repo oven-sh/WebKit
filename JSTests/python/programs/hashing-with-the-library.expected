@@ -1,0 +1,158 @@
+---- hashlib
+['blake2b', 'blake2s', 'md5', 'sha1', 'sha224', 'sha256', 'sha384', 'sha3_224', 'sha3_256', 'sha3_384', 'sha3_512', 'sha512', 'shake_128', 'shake_256'] True
+blake2b True blake2b 64 128 ece89845e1ee88f28a7489d75ee83b3e4474fdfb333c62dd2711cd22522ec769129243c9c075386615b5fd6bfa98787ac6a78e1fffc44faa08539aa1ffc51fd0
+blake2s True blake2s 32 64 ab6e69878ba67d4d0c6492d93b70ebc3f8a252f54a930c5ab2b4b91441868e6a
+md5 True md5 16 64 3ddb2804437b80c4499a95e704005706
+sha1 True sha1 20 64 7a696df157f7945d4a41862768fd685782adcaaa
+sha224 True sha224 28 64 4bd14cb14296cc545aa762b30af2bda55d1fd03ed07a1047d448a7d6
+sha256 True sha256 32 64 fd5bacc87777cccb482e36adf750a5ada25fcd22b6516c053868a1f8399c435e
+sha384 True sha384 48 128 f1b8f8d838d13ed79df5cbe1d6c35218ef38e9369271a20f144a0b6263f36f17bb989a04cc6dee22950b14ef3f926706
+sha3_224 True sha3_224 28 144 be5e3b9767ed5ecac387ded7a32a6226f2ee673131e1eee09950a0a9
+sha3_256 True sha3_256 32 136 4ec561ca3e846fdd0eaf18e1d79879c90e4f829ab47d7812ee99beacd2b0de83
+sha3_384 True sha3_384 48 104 2f9549d3f3c22a5d1a4896ac328db035bc77161e1ef0a5fc0ff52527d43f117defeec3194927ace0afaf4c00e41714b3
+sha3_512 True sha3_512 64 72 6ea20aeb99bedac532f442d78df2315863e19fe0ef720b7fc584510e8eb1ef1ebae46663d4e53e736b9a5e712de62d95bd111794ac39331cc32bb14376237493
+sha512 True sha512 64 128 4f2c5a2418d85b592d7202ab5036e1d77967cf5a3795922de46c2bea0f399c1ede8690c6998ccb02872364c53ce8bacdd9809fb6cc07493b102ae05e32d607b1
+shake_128 62450cc97f100c78aa57820587747416f042cd2b 62450cc97f100c78aa57820587747416f042cd2b 0 168
+shake_256 d5c88948c7faf6b8bd42c4fd907a1eaf17761c3f d5c88948c7faf6b8bd42c4fd907a1eaf17761c3f 0 136
+in capitals => 2d711642b726b044
+not for security => ['0909377a', 'ec308c07', '9dd4e461', '11f6ad8e', '54a2f7f9', '2d711642', 'd752c2c5', '63e6ceb2', '741efa31', '5abfc7bc', '0fdb2796', 'a4abd444']
+one that there is not => ValueError unsupported hash type sha1024
+a str => TypeError Strings must be encoded before hashing
+BLAKE2 by name, told things => d3b5abd99e28b1b037
+and by function => 555935c42a98709588
+---- of a file
+md5 => True
+sha256 => True
+sha3_256 => True
+blake2b => True
+with something that makes one => 27aa4238d2
+of this => True
+of text => '<_io.StringIO  is not a file-like object in binary reading mode.
+---- hmac
+blake2b 0 75249795ad06346124609f596b552413 True True True hmac-blake2b 64 128
+blake2b 3 804a0f9f2693e8fe511f1bb565a4c63d True True True hmac-blake2b 64 128
+blake2b 64 d1ce4af64dc40e50596eb6773765f927 True True True hmac-blake2b 64 128
+blake2b 65 a25975db09774bea3eec1d92eaa0eb4e True True True hmac-blake2b 64 128
+blake2b 128 80959141ca493872eaa32033dfad944c True True True hmac-blake2b 64 128
+blake2b 129 e5ad62c16407cf1d8dab3bcbc2860dbc True True True hmac-blake2b 64 128
+blake2b 144 db32f211a6c27d64d204af6827fb5587 True True True hmac-blake2b 64 128
+blake2b 145 65972f51e5013faa05b855773cca78fc True True True hmac-blake2b 64 128
+blake2b 1000 dac2211c1cca3479abefa3afa860f19c True True True hmac-blake2b 64 128
+blake2s 0 c4f5c13cffe29fedb570079bf66361f7 True True True hmac-blake2s 32 64
+blake2s 3 44128c5bf6e891f79d7e2be7e773fccd True True True hmac-blake2s 32 64
+blake2s 64 64a554f21c7437cde02617b74393ffbc True True True hmac-blake2s 32 64
+blake2s 65 fbb278bf60f2abf21a3c65e60e3690bc True True True hmac-blake2s 32 64
+blake2s 128 0131e537c94047eee6770303f2cb292e True True True hmac-blake2s 32 64
+blake2s 129 bcc5a59e8e4accdddc758d7dd904c772 True True True hmac-blake2s 32 64
+blake2s 144 6812d567539ab494c0c07b639a8f094b True True True hmac-blake2s 32 64
+blake2s 145 b1ca42e4ed328de8147fb197df5a12f0 True True True hmac-blake2s 32 64
+blake2s 1000 30d41abc275923b41d9bbeb176ba5376 True True True hmac-blake2s 32 64
+md5 0 7e3ae45f228d719103cd1c2cd923d385 True True True hmac-md5 16 64
+md5 3 4e6ae038fd7d248821595459800c3cb1 True True True hmac-md5 16 64
+md5 64 cdc8e0114a965f0d0137bce30f1886d5 True True True hmac-md5 16 64
+md5 65 472d0d40ed0a984553dc537474f5d85f True True True hmac-md5 16 64
+md5 128 0c357b1c3f6b046c5751128f3c64975e True True True hmac-md5 16 64
+md5 129 c29402ae737b25c60ad9b7bd7f23beb6 True True True hmac-md5 16 64
+md5 144 295849b0a7e71c9269a69b92140a46ee True True True hmac-md5 16 64
+md5 145 d6d084dc1ef8ae1b07836e34b54d5935 True True True hmac-md5 16 64
+md5 1000 752dfe09564e4cf88ec79e4673ce49a2 True True True hmac-md5 16 64
+sha1 0 0e490f1cba32340666bca96ce5395450 True True True hmac-sha1 20 64
+sha1 3 52de429713e0a926195287a01862698d True True True hmac-sha1 20 64
+sha1 64 d4775dd9e042d5ea7b756fa89aa65c1c True True True hmac-sha1 20 64
+sha1 65 709bac03ecd02b8d7612ed18a9fbf045 True True True hmac-sha1 20 64
+sha1 128 9486705fd0049229964a8d27ba88d29e True True True hmac-sha1 20 64
+sha1 129 f6d2033ad119635c4e13d12a0c28f510 True True True hmac-sha1 20 64
+sha1 144 a10bec7d18589b8ba254bfd88ad94e00 True True True hmac-sha1 20 64
+sha1 145 325e939543c924885a302c86a9467029 True True True hmac-sha1 20 64
+sha1 1000 15866bbf3d97e8ac7872c52ccb7929f2 True True True hmac-sha1 20 64
+sha224 0 99049275d764142cb30db48c43d7194c True True True hmac-sha224 28 64
+sha224 3 d1266a3680f4e99cb2dbafc6271fecef True True True hmac-sha224 28 64
+sha224 64 aebf0cec6e95322e9bbde62315618bdc True True True hmac-sha224 28 64
+sha224 65 c7e830812eca9a661bf1ff27fc57dfa2 True True True hmac-sha224 28 64
+sha224 128 cb29ba752e9a294647b18ed181d57e3d True True True hmac-sha224 28 64
+sha224 129 0b698a529474d087d17c3d972e721e8f True True True hmac-sha224 28 64
+sha224 144 74147f1415268511bb8c49c67f18e81d True True True hmac-sha224 28 64
+sha224 145 65a5b23a38b857fd65a1503b8410ff4a True True True hmac-sha224 28 64
+sha224 1000 b85ec4d93ad75e339e8c2231388dfedb True True True hmac-sha224 28 64
+sha256 0 19f4c25042d0f95146c82bbe0acb96f4 True True True hmac-sha256 32 64
+sha256 3 01eb9ad5a2a68079b90de2656ce16f5a True True True hmac-sha256 32 64
+sha256 64 00b28bd922f89a6293e1dacfa8d7293e True True True hmac-sha256 32 64
+sha256 65 95f2f7211aabb836dacf63c7e96bdae3 True True True hmac-sha256 32 64
+sha256 128 64e9a4cc00cc454e4cab178cb7e089bc True True True hmac-sha256 32 64
+sha256 129 502c3e1e9f2d6cc214fc83ba17813c76 True True True hmac-sha256 32 64
+sha256 144 586a1258b9d95ad02d9e85e26f43c448 True True True hmac-sha256 32 64
+sha256 145 bc732e6afe3012f9e759cd3d1427aa37 True True True hmac-sha256 32 64
+sha256 1000 231c3e6f386ebbadcda850d277a8ca1c True True True hmac-sha256 32 64
+sha384 0 c69cfb55c85b45b7cac66ba45d9b4477 True True True hmac-sha384 48 128
+sha384 3 7b51259499468a3cb14cf63473bf4b7d True True True hmac-sha384 48 128
+sha384 64 7de59a97db3f9eda72fcb4bb8a0b5b79 True True True hmac-sha384 48 128
+sha384 65 38551f4802171a3fb75d3d5b8b78c709 True True True hmac-sha384 48 128
+sha384 128 e6cc7db2130631b13d7cc7feb1767513 True True True hmac-sha384 48 128
+sha384 129 17c4d7986b8c14a2e8d712b77dae6bba True True True hmac-sha384 48 128
+sha384 144 3da5435eb315ae57160a397bc4ead24a True True True hmac-sha384 48 128
+sha384 145 e2ba6ba13cc93d993e8cb7c6f1c51020 True True True hmac-sha384 48 128
+sha384 1000 4c82f134e82762d9be6523af45ea0e47 True True True hmac-sha384 48 128
+sha3_224 0 a5dc8bbefdd745b1b9fe3af6ee301732 True True True hmac-sha3_224 28 144
+sha3_224 3 843537f860f74fc81474d77a5bdb7e40 True True True hmac-sha3_224 28 144
+sha3_224 64 783c14fe039a4520a9e3bb54c4ac8cdf True True True hmac-sha3_224 28 144
+sha3_224 65 beed36992c388c0f2f142d30485552c5 True True True hmac-sha3_224 28 144
+sha3_224 128 f484a7e92fadf84303e97dd7c3ca023b True True True hmac-sha3_224 28 144
+sha3_224 129 3aa0920ac729a093bb34b1ab7ca6a5d5 True True True hmac-sha3_224 28 144
+sha3_224 144 e7dee80335abbfd68c46c3bb63c9ad57 True True True hmac-sha3_224 28 144
+sha3_224 145 122a5a68c03e72246dfc7ecfbe74045d True True True hmac-sha3_224 28 144
+sha3_224 1000 805f6e191772592cdfc62df2a19adb6a True True True hmac-sha3_224 28 144
+sha3_256 0 d0ce0ceb6ce11e3d188963129175ea17 True True True hmac-sha3_256 32 136
+sha3_256 3 7bc94a89e8394c243ff9e50b991c0e15 True True True hmac-sha3_256 32 136
+sha3_256 64 7ec05bb6c14f1c2f77d58d6b7c418e56 True True True hmac-sha3_256 32 136
+sha3_256 65 aa9880b95c144b6478e99e0e2d933019 True True True hmac-sha3_256 32 136
+sha3_256 128 8939d31c776c762dbaf1bc6b44ab8ebd True True True hmac-sha3_256 32 136
+sha3_256 129 351ffdcb9bec5e79ff43b65bba65b2b4 True True True hmac-sha3_256 32 136
+sha3_256 144 12288ab8875b0b7b008bcc1029e189a8 True True True hmac-sha3_256 32 136
+sha3_256 145 4e91b3b0895172ad325851e832004848 True True True hmac-sha3_256 32 136
+sha3_256 1000 3c8fba72a0eb19868d95bb7266ef16a8 True True True hmac-sha3_256 32 136
+sha3_384 0 2c7fed9b64191087cd440bc91c22f62d True True True hmac-sha3_384 48 104
+sha3_384 3 502b6961ffeac00cb4d0fdd8e074a107 True True True hmac-sha3_384 48 104
+sha3_384 64 44d6c4a1e65a2014ebca11490a38ad82 True True True hmac-sha3_384 48 104
+sha3_384 65 513c063906c081349b9b55b5b90f347f True True True hmac-sha3_384 48 104
+sha3_384 128 d0bb14c2b8fe749e695add883b3498ae True True True hmac-sha3_384 48 104
+sha3_384 129 1f78516f9166cd39638c222b67102fc7 True True True hmac-sha3_384 48 104
+sha3_384 144 ac90fe6bbd04c14ff96fdfd12d496d10 True True True hmac-sha3_384 48 104
+sha3_384 145 a3ba39720186a18cf00a969360ab2684 True True True hmac-sha3_384 48 104
+sha3_384 1000 f4f88bd67ee73e319e9590fa64d0f32e True True True hmac-sha3_384 48 104
+sha3_512 0 1fffa8498c998d026b27b97c9fb56070 True True True hmac-sha3_512 64 72
+sha3_512 3 172c91e1fbf1f23f4092ddd7b2d0e9fd True True True hmac-sha3_512 64 72
+sha3_512 64 35944af57734c6c3763b0906bf5e98b4 True True True hmac-sha3_512 64 72
+sha3_512 65 a92de928b25f45401fbe65f30fb45a1f True True True hmac-sha3_512 64 72
+sha3_512 128 e759cff566da09004a9047d758cb727a True True True hmac-sha3_512 64 72
+sha3_512 129 02e9a558ed939fe48fc54d863695b18d True True True hmac-sha3_512 64 72
+sha3_512 144 62adf5b92fd5f80fea8ff7bc8afc060b True True True hmac-sha3_512 64 72
+sha3_512 145 95a01e6a9782d30757f1a905d77a59d9 True True True hmac-sha3_512 64 72
+sha3_512 1000 63cacaa44034bc0bf70c20fcc239bbbf True True True hmac-sha3_512 64 72
+sha512 0 3eec3a856309dfede46220dd6db18478 True True True hmac-sha512 64 128
+sha512 3 6e9831b13f35a18874d9ec3551ec1c4e True True True hmac-sha512 64 128
+sha512 64 51a06bf359ec6a8220dc02a514155265 True True True hmac-sha512 64 128
+sha512 65 487d365e5e59e5d4ed8cd94f2ff0747c True True True hmac-sha512 64 128
+sha512 128 cdaa58474041ad2fc12514a321d3249e True True True hmac-sha512 64 128
+sha512 129 42c6c0f815c29c069e5868f8a4430fed True True True hmac-sha512 64 128
+sha512 144 6f23286a576f4467a70c6637dd4ca347 True True True hmac-sha512 64 128
+sha512 145 f204dfe8b444fe6a64da6e3122825b21 True True True hmac-sha512 64 128
+sha512 1000 8b4cb160f4c0924973fb2cc728960178 True True True hmac-sha512 64 128
+given what makes one => b60090e3052297aeb5a080889ce2fc4bca957e756faeb4df7d31800ca1e771ec
+given a function of a module => 32316d7757d6fd7f9b8b834fabf2b4aa
+with none => TypeError Missing required argument 'digestmod'.
+with a str for a key => TypeError key: expected bytes or bytearray, but got 'str'
+with a str to hash => TypeError Strings must be encoded before hashing
+with one that there is not => ValueError unsupported hash type nothing
+compare_digest => [True, False, False, True, False, True]
+of a str and bytes => TypeError a bytes-like object is required, not 'str'
+of what is not ASCII => TypeError comparing strings with non-ASCII characters is not supported
+5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
+164b7a7bfcf819e2e395fbe73b56e0a387bd64222e831fd610270cd7ea2505549758bf75c05a994a6d034f65f8f0e6fdcaeab1a34d4a6b4b636e070a38bce737
+---- what goes by them
+6fa459ea-ee8a-3ca4-894e-db77e160355e 886313e1-3b8a-5372-9b90-0c9aee199e5d 10e1d6de-dc68-53f0-883a-30ec870dd739 e391f6d5-3075-3b09-a0ef-bab1c17a3eeb
+'a str' [171, 855, 346, 979, 742] 0.994596594999798
+b'bytes' [379, 628, 686, 149, 529] 0.10469944346527127
+bytearray(b'a bytear [854, 90, 412, 711, 795] 0.3565738183710335
+'' [983, 465, 609, 211, 397] 0.86435024986849
+'ééééééééééééééééééé [222, 881, 367, 79, 199] 0.44237928362796175
+0.9847709815742891 519095204663763583662

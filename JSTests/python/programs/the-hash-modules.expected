@@ -1,0 +1,828 @@
+---- what there is
+_md5 [('MD5Type', 'type'), ('_GIL_MINSIZE', 2048), ('md5', 'builtin_function_or_method')]
+    None built-in
+_sha1 [('SHA1Type', 'type'), ('_GIL_MINSIZE', 2048), ('sha1', 'builtin_function_or_method')]
+    None built-in
+_sha2 [('SHA224Type', 'type'), ('SHA256Type', 'type'), ('SHA384Type', 'type'), ('SHA512Type', 'type'), ('_GIL_MINSIZE', 2048), ('sha224', 'builtin_function_or_method'), ('sha256', 'builtin_function_or_method'), ('sha384', 'builtin_function_or_method'), ('sha512', 'builtin_function_or_method')]
+    None built-in
+_sha3 [('_GIL_MINSIZE', 2048), ('implementation', 'HACL'), ('sha3_224', 'type'), ('sha3_256', 'type'), ('sha3_384', 'type'), ('sha3_512', 'type'), ('shake_128', 'type'), ('shake_256', 'type')]
+    None built-in
+_blake2 [('BLAKE2B_MAX_DIGEST_SIZE', 64), ('BLAKE2B_MAX_KEY_SIZE', 64), ('BLAKE2B_PERSON_SIZE', 16), ('BLAKE2B_SALT_SIZE', 16), ('BLAKE2S_MAX_DIGEST_SIZE', 32), ('BLAKE2S_MAX_KEY_SIZE', 32), ('BLAKE2S_PERSON_SIZE', 8), ('BLAKE2S_SALT_SIZE', 8), ('_GIL_MINSIZE', 2048), ('blake2b', 'type'), ('blake2s', 'type')]
+    _blake2b provides BLAKE2b for hashlib
+ built-in
+md5 _md5 md5 (<class 'object'>,) 0x5380 ['block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    md5 16 64 [None, None, None] <_md5.md5 object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, obj, /)'] 
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha1 _sha1 sha1 (<class 'object'>,) 0x5380 ['block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha1 20 64 [None, None, None] <_sha1.sha1 object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, obj, /)'] 
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha224 _sha2 SHA224Type (<class 'object'>,) 0x5380 ['block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha224 28 64 [None, None, None] <_sha2.SHA224Type object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, obj, /)'] 
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha256 _sha2 SHA256Type (<class 'object'>,) 0x5380 ['block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha256 32 64 [None, None, None] <_sha2.SHA256Type object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, obj, /)'] 
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha384 _sha2 SHA384Type (<class 'object'>,) 0x5380 ['block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha384 48 128 [None, None, None] <_sha2.SHA384Type object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, obj, /)'] 
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha512 _sha2 SHA512Type (<class 'object'>,) 0x5380 ['block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha512 64 128 [None, None, None] <_sha2.SHA512Type object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, obj, /)'] 
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha3_224 _sha3 sha3_224 (<class 'object'>,) 0x5300 ['__new__', '_capacity_bits', '_rate_bits', '_suffix', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha3_224 28 144 [448, 1152, b'\x06'] <_sha3.sha3_224 object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, data, /)'] sha3_224([data], *, usedforsecurity=True) -> SHA3 object
+
+Re
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha3_256 _sha3 sha3_256 (<class 'object'>,) 0x5300 ['__new__', '_capacity_bits', '_rate_bits', '_suffix', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha3_256 32 136 [512, 1088, b'\x06'] <_sha3.sha3_256 object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, data, /)'] sha3_256([data], *, usedforsecurity=True) -> SHA3 object
+
+Re
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha3_384 _sha3 sha3_384 (<class 'object'>,) 0x5300 ['__new__', '_capacity_bits', '_rate_bits', '_suffix', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha3_384 48 104 [768, 832, b'\x06'] <_sha3.sha3_384 object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, data, /)'] sha3_384([data], *, usedforsecurity=True) -> SHA3 object
+
+Re
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+sha3_512 _sha3 sha3_512 (<class 'object'>,) 0x5300 ['__new__', '_capacity_bits', '_rate_bits', '_suffix', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    sha3_512 64 72 [1024, 576, b'\x06'] <_sha3.sha3_512 object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, data, /)'] sha3_512([data], *, usedforsecurity=True) -> SHA3 object
+
+Re
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+blake2b _blake2 blake2b (<class 'object'>,) 0x5300 ['MAX_DIGEST_SIZE', 'MAX_KEY_SIZE', 'PERSON_SIZE', 'SALT_SIZE', '__new__', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    blake2b 64 128 [None, None, None] <_blake2.blake2b object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, data, /)'] Return a new BLAKE2b hash object.
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+blake2s _blake2 blake2s (<class 'object'>,) 0x5300 ['MAX_DIGEST_SIZE', 'MAX_KEY_SIZE', 'PERSON_SIZE', 'SALT_SIZE', '__new__', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    blake2s 32 64 [None, None, None] <_blake2.blake2s object
+    ['(self, /)', '(self, /)', '(self, /)', '(self, data, /)'] Return a new BLAKE2s hash object.
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+shake_128 _sha3 shake_128 (<class 'object'>,) 0x5300 ['__new__', '_capacity_bits', '_rate_bits', '_suffix', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    shake_128 0 168 [256, 1344, b'\x1f'] <_sha3.shake_128 object
+    ['(self, /)', '(self, /, length)', '(self, /, length)', '(self, data, /)'] shake_128([data], *, usedforsecurity=True) -> SHAKE object
+
+
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+shake_256 _sha3 shake_256 (<class 'object'>,) 0x5300 ['__new__', '_capacity_bits', '_rate_bits', '_suffix', 'block_size', 'copy', 'digest', 'digest_size', 'hexdigest', 'name', 'update']
+    shake_256 0 136 [512, 1088, b'\x1f'] <_sha3.shake_256 object
+    ['(self, /)', '(self, /, length)', '(self, /, length)', '(self, data, /)'] shake_256([data], *, usedforsecurity=True) -> SHAKE object
+
+
+    ['Return a copy of the hash object.', 'Return the digest value as a bytes object.', 'Return the digest value as a string of hexadecimal', "Update this hash object's state with the provided ", '', '', '']
+md5 _md5 ($module, /, data=b'', *, usedforsecurity=True, string=None) Return a new MD5 hash object; optionally initialized with a string.
+sha1 _sha1 ($module, /, data=b'', *, usedforsecurity=True, string=None) Return a new SHA1 hash object; optionally initialized with a string.
+sha224 _sha2 ($module, /, data=b'', *, usedforsecurity=True, string=None) Return a new SHA-224 hash object; optionally initialized with a string.
+sha256 _sha2 ($module, /, data=b'', *, usedforsecurity=True, string=None) Return a new SHA-256 hash object; optionally initialized with a string.
+sha384 _sha2 ($module, /, data=b'', *, usedforsecurity=True, string=None) Return a new SHA-384 hash object; optionally initialized with a string.
+sha512 _sha2 ($module, /, data=b'', *, usedforsecurity=True, string=None) Return a new SHA-512 hash object; optionally initialized with a string.
+signature of sha3_224 => ValueError no signature found for builtin type <class '_sha3.sha3_224'>
+signature of shake_128 => ValueError no signature found for builtin type <class '_sha3.shake_128'>
+signature of blake2b => (data=b'', *, digest_size=64, key=b'', salt=b'', person=b'', fanout=1, depth=1, leaf_size=0, node_offset=0, node_depth=0, inner_size=0, last_node=False, usedforsecurity=True, string=None)
+signature of blake2s => (data=b'', *, digest_size=32, key=b'', salt=b'', person=b'', fanout=1, depth=1, leaf_size=0, node_offset=0, node_depth=0, inner_size=0, last_node=False, usedforsecurity=True, string=None)
+[('SALT_SIZE', 16), ('PERSON_SIZE', 16), ('MAX_KEY_SIZE', 64), ('MAX_DIGEST_SIZE', 64), ('SALT_SIZE', 8), ('PERSON_SIZE', 8), ('MAX_KEY_SIZE', 32), ('MAX_DIGEST_SIZE', 32)]
+---- of nothing, and of a little
+md5 d41d8cd98f00b204e9800998ecf8427e 900150983cd24fb0d6963f7d28e17f72
+sha1 da39a3ee5e6b4b0d3255bfef95601890afd80709 a9993e364706816aba3e25717850c26c9cd0d89d
+sha224 d14a028c2a3a2bc9476102bb288234c415a2b01f828ea62ac5b3e42f 23097d223405d8228642a477bda255b32aadbce4bda0b3f7e36c9da7
+sha256 e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+sha384 38b060a751ac96384cd9327eb1b1e36a21fdb71114be07434c0cc7bf63f6e1da274edebfe76f65fbd51ad2f14898b95b cb00753f45a35e8bb5a03d699ac65007272c32ab0eded1631a8b605a43ff5bed8086072ba1e7cc2358baeca134c825a7
+sha512 cf83e1357eefb8bdf1542850d66d8007d620e4050b5715dc83f4a921d36ce9ce47d0d13c5d85f2b0ff8318d2877eec2f63b931bd47417a81a538327af927da3e ddaf35a193617abacc417349ae20413112e6fa4e89a97ea20a9eeee64b55d39a2192992a274fc1a836ba3c23a3feebbd454d4423643ce80e2a9ac94fa54ca49f
+sha3_224 6b4e03423667dbb73b6e15454f0eb1abd4597f9a1b078e3f5b5a6bc7 e642824c3f8cf24ad09234ee7d3c766fc9a3a5168d0c94ad73b46fdf
+sha3_256 a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a 3a985da74fe225b2045c172d6bd390bd855f086e3e9d525b46bfe24511431532
+sha3_384 0c63a75b845e4f7d01107d852e4c2485c51a50aaaa94fc61995e71bbee983a2ac3713831264adb47fb6bd1e058d5f004 ec01498288516fc926459f58e2c6ad8df9b473cb0fc08c2596da7cf0e49be4b298d88cea927ac7f539f1edf228376d25
+sha3_512 a69f73cca23a9ac5c8b567dc185a756e97c982164fe25859e0d1dcc1475c80a615b2123af1f5f94c11e3e9402c3ac558f500199d95b6d3e301758586281dcd26 b751850b1a57168a5693cd924b6b096e08f621827444f70d884f5d0240d2712e10e116e9192af3c91a7ec57647e3934057340b4cf408d5a56592f8274eec53f0
+blake2b 786a02f742015903c6c6fd852552d272912f4740e15847618a86e217f71f5419d25e1031afee585313896444934eb04b903a685b1448b755d56f701afe9be2ce ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923
+blake2s 69217a3079908094e11121d042354a7c1f55b6482ca1a51e1b250dfd1ed0eef9 508c5e8c327c14e2e1a72ba34eeb452f37458b209ed63a294d999b4c86675982
+shake_128 7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26 5881092dd818bf5cf8a3ddb793fbcba74097d5c526a6d35f97b83351940f2cc8
+shake_256 46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762f 483366601360a8771c6863080cc4114d8db44530f8f1e1ee4f94ea37e78b5739
+---- of every length there is anything to go wrong at
+md5 3234790458
+sha1 752401582
+sha224 1806928204
+sha256 4064092488
+sha384 282486287
+sha512 3608191561
+sha3_224 1189488613
+sha3_256 378344561
+sha3_384 3061787003
+sha3_512 3940544930
+blake2b 918269808
+blake2s 434654624
+shake_128 1839110455
+shake_256 2511426124
+---- a piece at a time
+md5 True True
+sha1 True True
+sha224 True True
+sha256 True True
+sha384 True True
+sha512 True True
+sha3_224 True True
+sha3_256 True True
+sha3_384 True True
+sha3_512 True True
+blake2b True True
+blake2s True True
+shake_128 True True
+shake_256 True True
+---- asking does not end it
+md5 True True True
+sha1 True True True
+sha224 True True True
+sha256 True True True
+sha384 True True True
+sha512 True True True
+sha3_224 True True True
+sha3_256 True True True
+sha3_384 True True True
+sha3_512 True True True
+blake2b True True True
+blake2s True True True
+shake_128 True True True
+shake_256 True True True
+---- a copy goes its own way
+md5 True True True True md5 16
+sha1 True True True True sha1 20
+sha224 True True True True sha224 28
+sha256 True True True True sha256 32
+sha384 True True True True sha384 48
+sha512 True True True True sha512 64
+sha3_224 True True True True sha3_224 28
+sha3_256 True True True True sha3_256 32
+sha3_384 True True True True sha3_384 48
+sha3_512 True True True True sha3_512 64
+blake2b True True True True blake2b 64
+blake2s True True True True blake2s 32
+shake_128 True True True True shake_128 0
+shake_256 True True True True shake_256 0
+---- as much of a SHAKE as is asked for
+shake_128 ['', '0a', '0a59', '0a59be4814'] [470122429, 1036778200, 3023642557, 464870348, 3373858733, 3536582514, 2731409160, 3821972637, 580434828, 449420833] True
+    none => TypeError digest() missing required argument 'length' (pos 1)
+    negative => ValueError Cannot convert negative int
+    too much => ValueError length is too large
+    far too much => OverflowError Python int too large for C unsigned long
+    a float => TypeError 'float' object cannot be interpreted as an integer
+    a str => TypeError 'str' object cannot be interpreted as an integer
+    by name => 0a59be
+    True => 0a
+    just under => 1048576
+    hex negative => ValueError Cannot convert negative int
+    hex too much => ValueError length is too large
+    two => TypeError digest() takes at most 1 argument (2 given)
+shake_256 ['', '83', '8397', '839720023b'] [692537894, 704636066, 4064581082, 2746284483, 2328433509, 3756346528, 1449945610, 2760426103, 1315004901, 1206716453] True
+    none => TypeError digest() missing required argument 'length' (pos 1)
+    negative => ValueError Cannot convert negative int
+    too much => ValueError length is too large
+    far too much => OverflowError Python int too large for C unsigned long
+    a float => TypeError 'float' object cannot be interpreted as an integer
+    a str => TypeError 'str' object cannot be interpreted as an integer
+    by name => 839720
+    True => 83
+    just under => 1048576
+    hex negative => ValueError Cannot convert negative int
+    hex too much => ValueError length is too large
+    two => TypeError digest() takes at most 1 argument (2 given)
+---- what can be hashed
+md5
+    made with bytes => 900150983cd24fb0
+    given bytes => 900150983cd24fb0
+    made with bytearray => 900150983cd24fb0
+    given bytearray => 900150983cd24fb0
+    made with memoryview => 900150983cd24fb0
+    given memoryview => 900150983cd24fb0
+    made with part of one => 900150983cd24fb0
+    given part of one => 900150983cd24fb0
+    made with every other => BufferError memoryview: underlying buffer is not C-contiguous
+    given every other => BufferError memoryview: underlying buffer is not C-contiguous
+    made with array => ef9b2cd69d41fd8f
+    given array => ef9b2cd69d41fd8f
+    made with what exports => 0d46da78331b6847
+    given what exports => 0d46da78331b6847
+    made with str => TypeError Strings must be encoded before hashing
+    given str => TypeError Strings must be encoded before hashing
+    made with int => TypeError object supporting the buffer API required
+    given int => TypeError object supporting the buffer API required
+    made with None => TypeError object supporting the buffer API required
+    given None => TypeError object supporting the buffer API required
+    made with list => TypeError object supporting the buffer API required
+    given list => TypeError object supporting the buffer API required
+    made with tuple => TypeError object supporting the buffer API required
+    given tuple => TypeError object supporting the buffer API required
+    made with float => TypeError object supporting the buffer API required
+    given float => TypeError object supporting the buffer API required
+    made with Index => TypeError object supporting the buffer API required
+    given Index => TypeError object supporting the buffer API required
+sha256
+    made with bytes => ba7816bf8f01cfea
+    given bytes => ba7816bf8f01cfea
+    made with bytearray => ba7816bf8f01cfea
+    given bytearray => ba7816bf8f01cfea
+    made with memoryview => ba7816bf8f01cfea
+    given memoryview => ba7816bf8f01cfea
+    made with part of one => ba7816bf8f01cfea
+    given part of one => ba7816bf8f01cfea
+    made with every other => BufferError memoryview: underlying buffer is not C-contiguous
+    given every other => BufferError memoryview: underlying buffer is not C-contiguous
+    made with array => 047dbf5366372631
+    given array => 047dbf5366372631
+    made with what exports => 427da8ba22c9532a
+    given what exports => 427da8ba22c9532a
+    made with str => TypeError Strings must be encoded before hashing
+    given str => TypeError Strings must be encoded before hashing
+    made with int => TypeError object supporting the buffer API required
+    given int => TypeError object supporting the buffer API required
+    made with None => TypeError object supporting the buffer API required
+    given None => TypeError object supporting the buffer API required
+    made with list => TypeError object supporting the buffer API required
+    given list => TypeError object supporting the buffer API required
+    made with tuple => TypeError object supporting the buffer API required
+    given tuple => TypeError object supporting the buffer API required
+    made with float => TypeError object supporting the buffer API required
+    given float => TypeError object supporting the buffer API required
+    made with Index => TypeError object supporting the buffer API required
+    given Index => TypeError object supporting the buffer API required
+sha3_256
+    made with bytes => 3a985da74fe225b2
+    given bytes => 3a985da74fe225b2
+    made with bytearray => 3a985da74fe225b2
+    given bytearray => 3a985da74fe225b2
+    made with memoryview => 3a985da74fe225b2
+    given memoryview => 3a985da74fe225b2
+    made with part of one => 3a985da74fe225b2
+    given part of one => 3a985da74fe225b2
+    made with every other => BufferError memoryview: underlying buffer is not C-contiguous
+    given every other => BufferError memoryview: underlying buffer is not C-contiguous
+    made with array => 2366a1d2f645fc77
+    given array => 2366a1d2f645fc77
+    made with what exports => 28d57fe2cf5b5e73
+    given what exports => 28d57fe2cf5b5e73
+    made with str => TypeError Strings must be encoded before hashing
+    given str => TypeError Strings must be encoded before hashing
+    made with int => TypeError object supporting the buffer API required
+    given int => TypeError object supporting the buffer API required
+    made with None => TypeError object supporting the buffer API required
+    given None => TypeError object supporting the buffer API required
+    made with list => TypeError object supporting the buffer API required
+    given list => TypeError object supporting the buffer API required
+    made with tuple => TypeError object supporting the buffer API required
+    given tuple => TypeError object supporting the buffer API required
+    made with float => TypeError object supporting the buffer API required
+    given float => TypeError object supporting the buffer API required
+    made with Index => TypeError object supporting the buffer API required
+    given Index => TypeError object supporting the buffer API required
+blake2s
+    made with bytes => 508c5e8c327c14e2
+    given bytes => 508c5e8c327c14e2
+    made with bytearray => 508c5e8c327c14e2
+    given bytearray => 508c5e8c327c14e2
+    made with memoryview => 508c5e8c327c14e2
+    given memoryview => 508c5e8c327c14e2
+    made with part of one => 508c5e8c327c14e2
+    given part of one => 508c5e8c327c14e2
+    made with every other => BufferError memoryview: underlying buffer is not C-contiguous
+    given every other => BufferError memoryview: underlying buffer is not C-contiguous
+    made with array => 1c852d317c141492
+    given array => 1c852d317c141492
+    made with what exports => 65cac3edebd3e084
+    given what exports => 65cac3edebd3e084
+    made with str => TypeError Strings must be encoded before hashing
+    given str => TypeError Strings must be encoded before hashing
+    made with int => TypeError object supporting the buffer API required
+    given int => TypeError object supporting the buffer API required
+    made with None => TypeError object supporting the buffer API required
+    given None => TypeError object supporting the buffer API required
+    made with list => TypeError object supporting the buffer API required
+    given list => TypeError object supporting the buffer API required
+    made with tuple => TypeError object supporting the buffer API required
+    given tuple => TypeError object supporting the buffer API required
+    made with float => TypeError object supporting the buffer API required
+    given float => TypeError object supporting the buffer API required
+    made with Index => TypeError object supporting the buffer API required
+    given Index => TypeError object supporting the buffer API required
+---- how they are called
+md5
+    data= => 9dd4e461268c8034
+    string= => 9dd4e461268c8034
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 9dd4e461268c8034
+    usedforsecurity by position => TypeError md5() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 9dd4e461268c8034
+    something else => TypeError md5() got an unexpected keyword argument 'other'
+    update() => TypeError md5.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError md5.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError md5.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError copy() takes no arguments
+    digest(x=1) => TypeError md5.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_md5.md5' objects is not writable
+    something new => AttributeError '_md5.md5' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => TypeError cannot create '_md5.md5' instances
+    __new__ => TypeError cannot create '_md5.md5' instances
+    object.__new__ => TypeError cannot create '_md5.md5' instances
+    deriving => TypeError type '_md5.md5' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_md5.md5' objects doesn't apply to a '_sha1.sha1' object
+    a weak reference => TypeError cannot create weak reference to '_md5.md5' object
+    pickled => TypeError cannot pickle '_md5.md5' object
+    copy.copy => TypeError cannot pickle '_md5.md5' object
+sha1
+    data= => 11f6ad8ec52a2984
+    string= => 11f6ad8ec52a2984
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 11f6ad8ec52a2984
+    usedforsecurity by position => TypeError sha1() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 11f6ad8ec52a2984
+    something else => TypeError sha1() got an unexpected keyword argument 'other'
+    update() => TypeError sha1.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError sha1.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError sha1.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError copy() takes no arguments
+    digest(x=1) => TypeError sha1.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha1.sha1' objects is not writable
+    something new => AttributeError '_sha1.sha1' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => TypeError cannot create '_sha1.sha1' instances
+    __new__ => TypeError cannot create '_sha1.sha1' instances
+    object.__new__ => TypeError cannot create '_sha1.sha1' instances
+    deriving => TypeError type '_sha1.sha1' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha1.sha1' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha1.sha1' object
+    pickled => TypeError cannot pickle '_sha1.sha1' object
+    copy.copy => TypeError cannot pickle '_sha1.sha1' object
+sha224
+    data= => 54a2f7f92a5f975d
+    string= => 54a2f7f92a5f975d
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 54a2f7f92a5f975d
+    usedforsecurity by position => TypeError sha224() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 54a2f7f92a5f975d
+    something else => TypeError sha224() got an unexpected keyword argument 'other'
+    update() => TypeError SHA224Type.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError SHA224Type.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError SHA224Type.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError copy() takes no arguments
+    digest(x=1) => TypeError SHA224Type.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha2.SHA224Type' objects is not writable
+    something new => AttributeError '_sha2.SHA224Type' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => TypeError cannot create '_sha2.SHA224Type' instances
+    __new__ => TypeError cannot create '_sha2.SHA224Type' instances
+    object.__new__ => TypeError cannot create '_sha2.SHA224Type' instances
+    deriving => TypeError type '_sha2.SHA224Type' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha2.SHA224Type' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha2.SHA224Type' object
+    pickled => TypeError cannot pickle '_sha2.SHA224Type' object
+    copy.copy => TypeError cannot pickle '_sha2.SHA224Type' object
+sha256
+    data= => 2d711642b726b044
+    string= => 2d711642b726b044
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 2d711642b726b044
+    usedforsecurity by position => TypeError sha256() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 2d711642b726b044
+    something else => TypeError sha256() got an unexpected keyword argument 'other'
+    update() => TypeError SHA256Type.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError SHA256Type.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError SHA256Type.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError copy() takes no arguments
+    digest(x=1) => TypeError SHA256Type.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha2.SHA256Type' objects is not writable
+    something new => AttributeError '_sha2.SHA256Type' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => TypeError cannot create '_sha2.SHA256Type' instances
+    __new__ => TypeError cannot create '_sha2.SHA256Type' instances
+    object.__new__ => TypeError cannot create '_sha2.SHA256Type' instances
+    deriving => TypeError type '_sha2.SHA256Type' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha2.SHA256Type' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha2.SHA256Type' object
+    pickled => TypeError cannot pickle '_sha2.SHA256Type' object
+    copy.copy => TypeError cannot pickle '_sha2.SHA256Type' object
+sha384
+    data= => d752c2c51fba0e29
+    string= => d752c2c51fba0e29
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => d752c2c51fba0e29
+    usedforsecurity by position => TypeError sha384() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => d752c2c51fba0e29
+    something else => TypeError sha384() got an unexpected keyword argument 'other'
+    update() => TypeError SHA384Type.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError SHA384Type.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError SHA384Type.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError copy() takes no arguments
+    digest(x=1) => TypeError SHA384Type.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha2.SHA384Type' objects is not writable
+    something new => AttributeError '_sha2.SHA384Type' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => TypeError cannot create '_sha2.SHA384Type' instances
+    __new__ => TypeError cannot create '_sha2.SHA384Type' instances
+    object.__new__ => TypeError cannot create '_sha2.SHA384Type' instances
+    deriving => TypeError type '_sha2.SHA384Type' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha2.SHA384Type' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha2.SHA384Type' object
+    pickled => TypeError cannot pickle '_sha2.SHA384Type' object
+    copy.copy => TypeError cannot pickle '_sha2.SHA384Type' object
+sha512
+    data= => a4abd4448c49562d
+    string= => a4abd4448c49562d
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => a4abd4448c49562d
+    usedforsecurity by position => TypeError sha512() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => a4abd4448c49562d
+    something else => TypeError sha512() got an unexpected keyword argument 'other'
+    update() => TypeError SHA512Type.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError SHA512Type.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError SHA512Type.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError copy() takes no arguments
+    digest(x=1) => TypeError SHA512Type.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha2.SHA512Type' objects is not writable
+    something new => AttributeError '_sha2.SHA512Type' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => TypeError cannot create '_sha2.SHA512Type' instances
+    __new__ => TypeError cannot create '_sha2.SHA512Type' instances
+    object.__new__ => TypeError cannot create '_sha2.SHA512Type' instances
+    deriving => TypeError type '_sha2.SHA512Type' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha2.SHA512Type' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha2.SHA512Type' object
+    pickled => TypeError cannot pickle '_sha2.SHA512Type' object
+    copy.copy => TypeError cannot pickle '_sha2.SHA512Type' object
+sha3_224
+    data= => 63e6ceb28ad474fa
+    string= => 63e6ceb28ad474fa
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 63e6ceb28ad474fa
+    usedforsecurity by position => TypeError sha3_224() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 63e6ceb28ad474fa
+    something else => TypeError sha3_224() got an unexpected keyword argument 'other'
+    update() => TypeError sha3_224.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError sha3_224.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError sha3_224.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError sha3_224.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError sha3_224.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha3.sha3_224' objects is not writable
+    something new => AttributeError '_sha3.sha3_224' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => 63e6ceb28ad474fa
+    __new__ => 6b4e03423667dbb7
+    object.__new__ => TypeError object.__new__(_sha3.sha3_224) is not safe, use _sha3.sha3_224.__new__()
+    deriving => TypeError type '_sha3.sha3_224' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha3.sha3_224' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha3.sha3_224' object
+    pickled => TypeError cannot pickle '_sha3.sha3_224' object
+    copy.copy => TypeError cannot pickle '_sha3.sha3_224' object
+sha3_256
+    data= => 741efa311f976869
+    string= => 741efa311f976869
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 741efa311f976869
+    usedforsecurity by position => TypeError sha3_224() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 741efa311f976869
+    something else => TypeError sha3_224() got an unexpected keyword argument 'other'
+    update() => TypeError sha3_256.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError sha3_256.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError sha3_256.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError sha3_256.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError sha3_256.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha3.sha3_256' objects is not writable
+    something new => AttributeError '_sha3.sha3_256' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => 741efa311f976869
+    __new__ => a7ffc6f8bf1ed766
+    object.__new__ => TypeError object.__new__(_sha3.sha3_256) is not safe, use _sha3.sha3_256.__new__()
+    deriving => TypeError type '_sha3.sha3_256' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha3.sha3_256' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha3.sha3_256' object
+    pickled => TypeError cannot pickle '_sha3.sha3_256' object
+    copy.copy => TypeError cannot pickle '_sha3.sha3_256' object
+sha3_384
+    data= => 5abfc7bc2a09a612
+    string= => 5abfc7bc2a09a612
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 5abfc7bc2a09a612
+    usedforsecurity by position => TypeError sha3_224() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 5abfc7bc2a09a612
+    something else => TypeError sha3_224() got an unexpected keyword argument 'other'
+    update() => TypeError sha3_384.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError sha3_384.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError sha3_384.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError sha3_384.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError sha3_384.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha3.sha3_384' objects is not writable
+    something new => AttributeError '_sha3.sha3_384' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => 5abfc7bc2a09a612
+    __new__ => 0c63a75b845e4f7d
+    object.__new__ => TypeError object.__new__(_sha3.sha3_384) is not safe, use _sha3.sha3_384.__new__()
+    deriving => TypeError type '_sha3.sha3_384' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha3.sha3_384' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha3.sha3_384' object
+    pickled => TypeError cannot pickle '_sha3.sha3_384' object
+    copy.copy => TypeError cannot pickle '_sha3.sha3_384' object
+sha3_512
+    data= => 0fdb27960308c514
+    string= => 0fdb27960308c514
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 0fdb27960308c514
+    usedforsecurity by position => TypeError sha3_224() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 0fdb27960308c514
+    something else => TypeError sha3_224() got an unexpected keyword argument 'other'
+    update() => TypeError sha3_512.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError sha3_512.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError sha3_512.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError sha3_512.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError sha3_512.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_sha3.sha3_512' objects is not writable
+    something new => AttributeError '_sha3.sha3_512' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => 0fdb27960308c514
+    __new__ => a69f73cca23a9ac5
+    object.__new__ => TypeError object.__new__(_sha3.sha3_512) is not safe, use _sha3.sha3_512.__new__()
+    deriving => TypeError type '_sha3.sha3_512' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha3.sha3_512' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha3.sha3_512' object
+    pickled => TypeError cannot pickle '_sha3.sha3_512' object
+    copy.copy => TypeError cannot pickle '_sha3.sha3_512' object
+blake2b
+    data= => 0909377ad35110ca
+    string= => 0909377ad35110ca
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => 0909377ad35110ca
+    usedforsecurity by position => TypeError blake2b() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => 0909377ad35110ca
+    something else => TypeError blake2b() got an unexpected keyword argument 'other'
+    update() => TypeError blake2b.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError blake2b.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError blake2b.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError blake2b.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError blake2b.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_blake2.blake2b' objects is not writable
+    something new => AttributeError '_blake2.blake2b' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => 0909377ad35110ca
+    __new__ => 786a02f742015903
+    object.__new__ => TypeError object.__new__(_blake2.blake2b) is not safe, use _blake2.blake2b.__new__()
+    deriving => TypeError type '_blake2.blake2b' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_blake2.blake2b' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_blake2.blake2b' object
+    pickled => TypeError cannot pickle '_blake2.blake2b' object
+    copy.copy => TypeError cannot pickle '_blake2.blake2b' object
+blake2s
+    data= => ec308c07c83582c6
+    string= => ec308c07c83582c6
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => ec308c07c83582c6
+    usedforsecurity by position => TypeError blake2s() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => ec308c07c83582c6
+    something else => TypeError blake2s() got an unexpected keyword argument 'other'
+    update() => TypeError blake2s.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError blake2s.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError blake2s.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError blake2s.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError blake2s.digest() takes no keyword arguments
+    name =  => AttributeError attribute 'name' of '_blake2.blake2s' objects is not writable
+    something new => AttributeError '_blake2.blake2s' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => ec308c07c83582c6
+    __new__ => 69217a3079908094
+    object.__new__ => TypeError object.__new__(_blake2.blake2s) is not safe, use _blake2.blake2s.__new__()
+    deriving => TypeError type '_blake2.blake2s' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_blake2.blake2s' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_blake2.blake2s' object
+    pickled => TypeError cannot pickle '_blake2.blake2s' object
+    copy.copy => TypeError cannot pickle '_blake2.blake2s' object
+shake_128
+    data= => e472c5e394f30ff8
+    string= => e472c5e394f30ff8
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => e472c5e394f30ff8
+    usedforsecurity by position => TypeError sha3_224() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => e472c5e394f30ff8
+    something else => TypeError sha3_224() got an unexpected keyword argument 'other'
+    update() => TypeError shake_128.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError shake_128.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError shake_128.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError shake_128.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError digest() missing required argument 'length' (pos 1)
+    name =  => AttributeError attribute 'name' of '_sha3.shake_128' objects is not writable
+    something new => AttributeError '_sha3.shake_128' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => e472c5e394f30ff8
+    __new__ => 7f9c2ba4e88f827d
+    object.__new__ => TypeError object.__new__(_sha3.shake_128) is not safe, use _sha3.shake_128.__new__()
+    deriving => TypeError type '_sha3.shake_128' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha3.shake_128' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha3.shake_128' object
+    pickled => TypeError cannot pickle '_sha3.shake_128' object
+    copy.copy => TypeError cannot pickle '_sha3.shake_128' object
+shake_256
+    data= => c851121abe809597
+    string= => c851121abe809597
+    both => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    one of each => TypeError 'data' and 'string' are mutually exclusive and support for 'string' keyword parameter is slated for removal in a future version.
+    string=None => TypeError object supporting the buffer API required
+    data=None => TypeError object supporting the buffer API required
+    not for security => c851121abe809597
+    usedforsecurity by position => TypeError sha3_224() takes at most 1 positional argument (2 given)
+    usedforsecurity=[] => c851121abe809597
+    something else => TypeError sha3_224() got an unexpected keyword argument 'other'
+    update() => TypeError shake_256.update() takes exactly one argument (0 given)
+    update(a, b) => TypeError shake_256.update() takes exactly one argument (2 given)
+    update(obj=) => TypeError shake_256.update() takes no keyword arguments
+    update comes to => None
+    copy(1) => TypeError shake_256.copy() takes no arguments (1 given)
+    digest(x=1) => TypeError digest() missing required argument 'length' (pos 1)
+    name =  => AttributeError attribute 'name' of '_sha3.shake_256' objects is not writable
+    something new => AttributeError '_sha3.shake_256' object has no attribute 'other' and no __dict__ for setting new attributes
+    hash() => True
+    == => False
+    bool => True
+    the class => c851121abe809597
+    __new__ => 46b9dd2b0ba88d13
+    object.__new__ => TypeError object.__new__(_sha3.shake_256) is not safe, use _sha3.shake_256.__new__()
+    deriving => TypeError type '_sha3.shake_256' is not an acceptable base type
+    of another => TypeError descriptor 'update' for '_sha3.shake_256' objects doesn't apply to a '_md5.md5' object
+    a weak reference => TypeError cannot create weak reference to '_sha3.shake_256' object
+    pickled => TypeError cannot pickle '_sha3.shake_256' object
+    copy.copy => TypeError cannot pickle '_sha3.shake_256' object
+---- what BLAKE2 can be told
+blake2b
+    each size 3619322487 [1, 32, 64]
+    each length of key 1380763940
+    a key and nothing else a393a0e4093eea8bfd03ebe262849654 a393a0e4093eea8bfd03ebe262849654
+    each length of salt 1042826465
+    each length of person 2096376135
+    a tree 3735807329
+    all of it 6b1938a7deed3d78c6bb4b802b28bba792010d5908a4a9a8b9f7c8ee872dc081e8ada60a30a0afdfe23e78695f6601dbf57baa69f7f440485624efa73f
+    with a key, a piece at a time True
+    a copy has it too 5 True
+    digest_size=0 => ValueError digest_size for Blake2b must be between 1 and 64 bytes, here it is 0
+    digest_size too big => ValueError digest_size for Blake2b must be between 1 and 64 bytes, here it is 65
+    digest_size=-1 => ValueError digest_size for Blake2b must be between 1 and 64 bytes, here it is -1
+    digest_size a float => TypeError 'float' object cannot be interpreted as an integer
+    digest_size huge => OverflowError Python int too large to convert to C int
+    digest_size an Index => 3
+    key too long => ValueError maximum key length is 64 bytes
+    key a str => TypeError a bytes-like object is required, not 'str'
+    key None => TypeError a bytes-like object is required, not 'NoneType'
+    salt too long => ValueError maximum salt length is 16 bytes
+    salt a str => TypeError a bytes-like object is required, not 'str'
+    person too long => ValueError maximum person length is 16 bytes
+    person an int => TypeError a bytes-like object is required, not 'int'
+    fanout=-1 => ValueError fanout must be between 0 and 255
+    fanout=256 => ValueError fanout must be between 0 and 255
+    depth=0 => ValueError depth must be between 1 and 255
+    depth=256 => ValueError depth must be between 1 and 255
+    leaf_size=-1 => ValueError Cannot convert negative int
+    leaf_size too big => OverflowError leaf_size is too large
+    leaf_size huge => OverflowError Python int too large for C unsigned long
+    leaf_size a float => TypeError 'float' object cannot be interpreted as an integer
+    node_offset=-1 => ValueError Cannot convert negative int
+    node_offset 2**48 => a4b0bb33da1d0137
+    node_offset 2**64-1 => 5471689fe9233dcb
+    node_offset 2**64 => OverflowError Python int too large for C unsigned long long
+    node_depth=-1 => ValueError node_depth must be between 0 and 255
+    node_depth=256 => ValueError node_depth must be between 0 and 255
+    inner_size=-1 => ValueError inner_size must be between 0 and is 64
+    inner_size too big => ValueError inner_size must be between 0 and is 64
+    last_node=[] => 786a02f742015903
+    last_node='x' => 05cc8cc53183c6fb
+    key by position => TypeError blake2b() takes at most 1 positional argument (2 given)
+    a bytearray for each => c4edf32a6281643e
+    several wrong, which is said first => ValueError digest_size for Blake2b must be between 1 and 64 bytes, here it is 0
+    and again => ValueError maximum salt length is 16 bytes
+    and a str besides => ValueError digest_size for Blake2b must be between 1 and 64 bytes, here it is 0
+blake2s
+    each size 182755751 [1, 16, 32]
+    each length of key 1933267741
+    a key and nothing else e4db13614567e4ed83bed1b46d4d5171 e4db13614567e4ed83bed1b46d4d5171
+    each length of salt 3507041262
+    each length of person 828099922
+    a tree 1418528765
+    all of it a83e8cb5b76eddf41afa2501136075d12e6c1ad6545428814fa0c0b901
+    with a key, a piece at a time True
+    a copy has it too 5 True
+    digest_size=0 => ValueError digest_size for Blake2s must be between 1 and 32 bytes, here it is 0
+    digest_size too big => ValueError digest_size for Blake2s must be between 1 and 32 bytes, here it is 33
+    digest_size=-1 => ValueError digest_size for Blake2s must be between 1 and 32 bytes, here it is -1
+    digest_size a float => TypeError 'float' object cannot be interpreted as an integer
+    digest_size huge => OverflowError Python int too large to convert to C int
+    digest_size an Index => 3
+    key too long => ValueError maximum key length is 32 bytes
+    key a str => TypeError a bytes-like object is required, not 'str'
+    key None => TypeError a bytes-like object is required, not 'NoneType'
+    salt too long => ValueError maximum salt length is 8 bytes
+    salt a str => TypeError a bytes-like object is required, not 'str'
+    person too long => ValueError maximum person length is 8 bytes
+    person an int => TypeError a bytes-like object is required, not 'int'
+    fanout=-1 => ValueError fanout must be between 0 and 255
+    fanout=256 => ValueError fanout must be between 0 and 255
+    depth=0 => ValueError depth must be between 1 and 255
+    depth=256 => ValueError depth must be between 1 and 255
+    leaf_size=-1 => ValueError Cannot convert negative int
+    leaf_size too big => OverflowError leaf_size is too large
+    leaf_size huge => OverflowError Python int too large for C unsigned long
+    leaf_size a float => TypeError 'float' object cannot be interpreted as an integer
+    node_offset=-1 => ValueError Cannot convert negative int
+    node_offset 2**48 => OverflowError node_offset is too large
+    node_offset 2**64-1 => OverflowError node_offset is too large
+    node_offset 2**64 => OverflowError Python int too large for C unsigned long long
+    node_depth=-1 => ValueError node_depth must be between 0 and 255
+    node_depth=256 => ValueError node_depth must be between 0 and 255
+    inner_size=-1 => ValueError inner_size must be between 0 and is 32
+    inner_size too big => ValueError inner_size must be between 0 and is 32
+    last_node=[] => 69217a3079908094
+    last_node='x' => 24fc113c3dbe8c84
+    key by position => TypeError blake2s() takes at most 1 positional argument (2 given)
+    a bytearray for each => fd2027f1b2a47ab5
+    several wrong, which is said first => ValueError digest_size for Blake2s must be between 1 and 32 bytes, here it is 0
+    and again => ValueError maximum salt length is 8 bytes
+    and a str besides => ValueError digest_size for Blake2s must be between 1 and 32 bytes, here it is 0
+---- what is being hashed is changed meanwhile
+by usedforsecurity => ('e3b0c44298fc1c14', 0)
+of a BLAKE2, by last_node => ('6cec141c67e62c2a', 0)
+its key: that is got through
