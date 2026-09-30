@@ -63,6 +63,8 @@ public:
             // (In a slot of a struct that says what it holds.)
             if (areStructs())
                 result &= ~TInt32;
+            if (atoms)
+                result &= ~TOtherString;
             return result;
         }
     };

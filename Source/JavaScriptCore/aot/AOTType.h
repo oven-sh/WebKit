@@ -53,7 +53,11 @@ static constexpr Type TDouble = Type(1) << 1; // A number that is encoded as a d
 static constexpr Type TBoolean = Type(1) << 2;
 static constexpr Type TUndefined = Type(1) << 3;
 static constexpr Type TNull = Type(1) << 4;
-static constexpr Type TString = Type(1) << 5;
+// A string that is an atom: in one piece, and the only one there is that says what it says. So two of them are the same string if they are the same StringImpl. What the program
+// spells out is one, and so is what is in a field whose type is a union of such. It goes wherever types go: through parameters, results, variables.
+static constexpr Type TAtomString = Type(1) << 5;
+static constexpr Type TOtherString = Type(1) << 37;
+static constexpr Type TString = TAtomString | TOtherString;
 static constexpr Type TSymbol = Type(1) << 6;
 static constexpr Type TBigInt = Type(1) << 7;
 static constexpr unsigned numberOfTagBits = 40;

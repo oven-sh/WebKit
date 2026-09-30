@@ -757,8 +757,15 @@ private:
                 return operand;
             return unaryArithResult(operand);
         }
-        case op_to_string:
         case op_typeof:
+            return TAtomString; // SmallStrings
+        case op_to_string: {
+            // (A string is its own.)
+            Type operand = typeOf(node->as<OpToString>().m_operand);
+            if (!operand)
+                return TNone;
+            return isSubtype(operand, TString) ? operand : TString;
+        }
         case op_strcat:
             return TString;
         case op_to_primitive: {

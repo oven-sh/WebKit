@@ -17,6 +17,7 @@
 #include "JSCInlines.h"
 #include "PreciseJumpTargetsInlines.h"
 #include "UnlinkedCodeBlock.h"
+#include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
 
@@ -185,6 +186,290 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
     }
 }
 
+void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vector<StringCase, 16>& all, LBasicBlock defaultBlock, bool isKnownToBeCell)
+{
+    std::ranges::sort(all, [](const StringCase& a, const StringCase& b) {
+        if (a.says->length() != b.says->length())
+            return a.says->length() < b.says->length();
+        return memcmp(a.says->span8().data(), b.says->span8().data(), a.says->length()) < 0;
+    });
+    auto goesOnIf = [&](LValue condition, LBasicBlock otherwise) {
+        LBasicBlock next = m_out.newBlock();
+        m_out.branch(condition, usually(next), rarely(otherwise));
+        m_out.appendTo(next);
+    };
+    if (!isKnownToBeCell && !isSubtype(scrutinee->type, TCell))
+        goesOnIf(isCell(value), defaultBlock);
+    if (!isSubtype(scrutinee->type, TString | ~TCell))
+        goesOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
+
+    // There is only one atom for any content, and what the program spells out is one.
+    if (all.size() <= 8 && isAtomIfString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant; })) {
+        LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
+        for (auto& one : all) {
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(m_out.equal(impl, m_out.loadPtr(lowJSValue(one.constant), m_heaps.JSRopeString_fiber0)), unsure(one.target), unsure(next));
+            m_out.appendTo(next);
+        }
+        m_out.jump(defaultBlock);
+        return;
+    }
+
+    LBasicBlock theLongWay = newColdBlock();
+    LBasicBlock dispatch = m_out.newBlock();
+    LBasicBlock ifOfSuchALength = m_out.newBlock();
+    Vector<ValueFromBlock, 2> lengthsOtherwise;
+    auto [charactersAsItIs, lengthAsItIs] = narrowCharactersOf(value, ifOfSuchALength, lengthsOtherwise);
+    ValueFromBlock plainCharacters = m_out.anchor(charactersAsItIs);
+    ValueFromBlock plainLength = m_out.anchor(lengthAsItIs);
+    m_out.jump(dispatch);
+
+    // One that is in pieces, or has room for characters that none of these has. How long it is is plain all the same, and as a rule that settles it.
+    m_out.appendTo(ifOfSuchALength);
+    {
+        LValue itsLength = m_out.phi(Int32, lengthsOtherwise);
+        unsigned longest = all.isEmpty() ? 0 : all.last().says->length();
+        goesOnIf(m_out.belowOrEqual(itsLength, m_out.constInt32(longest)), defaultBlock);
+        if (longest < 64) {
+            uint64_t lengths = 0;
+            for (auto& one : all)
+                lengths |= 1ull << one.says->length();
+            m_graph.wideIntegerConstants.add(static_cast<int64_t>(lengths));
+            m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(lengths), itsLength), m_out.constInt64(1)), unsure(theLongWay), unsure(defaultBlock));
+        } else
+            m_out.jump(theLongWay);
+    }
+
+    // What is written in the program is an atom: so if it says the same as any of them, there is an atom that says so.
+    m_out.appendTo(theLongWay);
+    LValue atom = vmCall(place, pointerType(), Entry::operationAOTNarrowAtomThatSaysTheSame, m_globalObject, value);
+    goesOnIf(m_out.notNull(atom), defaultBlock);
+    ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
+    ValueFromBlock lengthOfAtom = m_out.anchor(m_out.load32(atom, m_heaps.StringImpl_length));
+    m_out.jump(dispatch);
+
+    m_out.appendTo(dispatch);
+    LValue characters = m_out.phi(pointerType(), plainCharacters, charactersOfAtom);
+    LValue length = m_out.phi(Int32, plainLength, lengthOfAtom);
+    Vector<FTL::SwitchCase> cases;
+    Vector<std::tuple<LBasicBlock, unsigned, unsigned>, 8> groups;
+    for (unsigned first = 0; first < all.size();) {
+        unsigned end = first;
+        while (end < all.size() && all[end].says->length() == all[first].says->length())
+            ++end;
+        LBasicBlock ofThatLength = m_out.newBlock();
+        cases.append(FTL::SwitchCase(m_out.constInt32(all[first].says->length()), ofThatLength, FTL::Weight()));
+        groups.append({ ofThatLength, first, end });
+        first = end;
+    }
+    m_out.switchInstruction(length, cases, defaultBlock, FTL::Weight());
+    for (auto [ofThatLength, first, end] : groups) {
+        m_out.appendTo(ofThatLength);
+        for (unsigned i = first; i < end; ++i) {
+            LBasicBlock next = i + 1 < end ? m_out.newBlock() : defaultBlock;
+            m_out.branch(m_out.isZero64(differenceFromWhatIsWritten(characters, all[i].says->span8())), unsure(all[i].target), unsure(next));
+            if (i + 1 < end)
+                m_out.appendTo(next);
+        }
+    }
+}
+
+void Lowering::findChainsOfComparisons()
+{
+    struct Comparison {
+        Node* value;
+        Node* constant;
+        BasicBlock* ifEqual;
+        BasicBlock* ifNot;
+    };
+    auto isOneOfThose = [&](Node* node) {
+        if (node->kind == NodeKind::Constant)
+            return node->constant && !node->constant.isCell();
+        return stringWrittenInProgram(node) && isAtomIfString(node);
+    };
+    auto comparisonAtTheEndOf = [&](BasicBlock* block) -> std::optional<Comparison> {
+        Node* terminal = block->terminal();
+        if (!terminal || terminal->kind != NodeKind::Bytecode || terminal->guard || terminal->guarded || block->endsWithGuard)
+            return std::nullopt;
+        if (block->successors.size() != 2 || block->successors[0] == block->successors[1])
+            return std::nullopt;
+        Node* left;
+        Node* right;
+        bool jumpsIfEqual = terminal->opcode == op_jstricteq;
+        if (jumpsIfEqual) {
+            auto bytecode = terminal->as<OpJstricteq>();
+            left = terminal->use(bytecode.m_lhs), right = terminal->use(bytecode.m_rhs);
+        } else if (terminal->opcode == op_jnstricteq) {
+            auto bytecode = terminal->as<OpJnstricteq>();
+            left = terminal->use(bytecode.m_lhs), right = terminal->use(bytecode.m_rhs);
+        } else
+            return std::nullopt;
+        if (isOneOfThose(left) == isOneOfThose(right))
+            return std::nullopt;
+        if (isOneOfThose(left))
+            std::swap(left, right);
+        return Comparison { left, right, block->successors[jumpsIfEqual ? 0 : 1], block->successors[jumpsIfEqual ? 1 : 0] };
+    };
+    for (BasicBlock* head : m_graph.m_rpo) {
+        if (m_blocksInsideChains.contains(head))
+            continue;
+        auto first = comparisonAtTheEndOf(head);
+        if (!first)
+            continue;
+        ChainOfComparisons chain;
+        chain.value = first->value;
+        chain.arms.append({ head, first->constant, first->ifEqual });
+        BasicBlock* next = first->ifNot;
+        while (chain.arms.size() < 256) {
+            if (next == head || next->predecessors.size() != 1 || !next->phis.isEmpty() || next->loweredAhead)
+                break;
+            if (next->isCatchEntrypoint || next->isLoopHeader || next->isPreHeader || next->isReentry)
+                break;
+            if (next->isGeneric != head->isGeneric || next->isSeldomReached != head->isSeldomReached || next->isInLoop != head->isInLoop || next->graph != head->graph)
+                break;
+            if (!std::ranges::all_of(next->nodes, [&](Node* node) { return node == next->terminal() || node->isElided; }))
+                break;
+            auto comparison = comparisonAtTheEndOf(next);
+            if (!comparison || comparison->value != chain.value)
+                break;
+            chain.arms.append({ next, comparison->constant, comparison->ifEqual });
+            next = comparison->ifNot;
+        }
+        if (chain.arms.size() < 3)
+            continue;
+        chain.otherwise = next;
+        for (unsigned i = 1; i < chain.arms.size(); ++i)
+            m_blocksInsideChains.add(chain.arms[i].block);
+        m_chainsByFirstBlock.add(head, m_chains.size());
+        m_chains.append(WTF::move(chain));
+    }
+}
+
+void Lowering::lowerChainOfComparisons(BasicBlock* head, const ChainOfComparisons& chain)
+{
+    Node* place = head->terminal();
+    Node* scrutinee = chain.value;
+    // Each arm leaves as from the block that it is written in: what the phis of where it goes are given depends on that.
+    struct Way {
+        BasicBlock* from;
+        BasicBlock* to;
+        LBasicBlock edge;
+    };
+    Vector<Way, 8> ways;
+    auto wayFrom = [&](BasicBlock* from, BasicBlock* to) -> LBasicBlock {
+        SetForScope asFrom(m_block, from);
+        if (to->phis.isEmpty())
+            return wayInto(to);
+        LBasicBlock edge = m_out.newBlock();
+        ways.append({ from, to, edge });
+        return edge;
+    };
+
+    // No two of them are the same thing, so in what order they are asked after is neither here nor there. (Of two that are, the second is never got to.)
+    Vector<StringCase, 16> strings;
+    Vector<FTL::SwitchCase> integers;
+    Vector<std::pair<double, LBasicBlock>, 4> fractions;
+    Vector<FTL::SwitchCase> others;
+    UncheckedKeyHashSet<const StringImpl*> stringsSeen;
+    UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> bitsSeen;
+    for (auto& arm : chain.arms) {
+        if (arm.constant->kind == NodeKind::ConstantCell) {
+            const StringImpl* says = asString(arm.constant->graph->codeBlock()->getConstant(arm.constant->reg))->tryGetValueImpl();
+            if (stringsSeen.add(says).isNewEntry)
+                strings.append({ says, wayFrom(arm.block, arm.target), arm.constant });
+            continue;
+        }
+        JSValue constant = arm.constant->constant;
+        if (!constant.isNumber()) {
+            if (bitsSeen.add(JSValue::encode(constant)).isNewEntry)
+                others.append(FTL::SwitchCase(m_out.constInt64(JSValue::encode(constant)), wayFrom(arm.block, arm.target), FTL::Weight()));
+            continue;
+        }
+        double number = constant.asNumber();
+        if (number != number)
+            continue; // Nothing is.
+        // (-0 is 0.)
+        if (number >= std::numeric_limits<int32_t>::min() && number <= std::numeric_limits<int32_t>::max() && number == static_cast<int32_t>(number)) {
+            if (bitsSeen.add(JSValue::encode(jsNumber(static_cast<int32_t>(number)))).isNewEntry)
+                integers.append(FTL::SwitchCase(m_out.constInt32(static_cast<int32_t>(number)), wayFrom(arm.block, arm.target), FTL::Weight()));
+        } else if (bitsSeen.add(JSValue::encode(jsDoubleNumber(number))).isNewEntry)
+            fractions.append({ number, wayFrom(arm.block, arm.target) });
+    }
+    LBasicBlock otherwise = wayFrom(chain.arms.last().block, chain.otherwise);
+
+    auto ofDouble = [&](LValue number) {
+        LBasicBlock isWhole = m_out.newBlock();
+        LBasicBlock isNot = m_out.newBlock();
+        LValue asInt = m_out.doubleToInt32(number);
+        m_out.branch(m_out.doubleEqual(m_out.intToDouble(asInt), number), unsure(isWhole), unsure(isNot));
+        m_out.appendTo(isWhole);
+        m_out.switchInstruction(asInt, integers, otherwise, FTL::Weight());
+        m_out.appendTo(isNot);
+        for (auto [fraction, target] : fractions) {
+            LBasicBlock next = m_out.newBlock();
+            m_out.branch(m_out.doubleEqual(number, m_out.constDouble(fraction)), unsure(target), unsure(next));
+            m_out.appendTo(next);
+        }
+        m_out.jump(otherwise);
+    };
+
+    Type type = scrutinee->type;
+    bool hasStrings = !strings.isEmpty() && mayBe(type, TString);
+    bool hasNumbers = (!integers.isEmpty() || !fractions.isEmpty()) && mayBe(type, TNumber);
+    bool hasOthers = !others.isEmpty() && mayBe(type, TOther | TBoolean);
+    if (scrutinee->rep() == Rep::Int32)
+        m_out.switchInstruction(lowInt32(scrutinee), integers, otherwise, FTL::Weight());
+    else if (scrutinee->rep() == Rep::Double)
+        ofDouble(lowDouble(scrutinee));
+    else {
+        LValue value = lowJSValue(scrutinee);
+        bool isDone = false;
+        if (hasStrings) {
+            if (hasNumbers || hasOthers) {
+                LBasicBlock cell = m_out.newBlock();
+                LBasicBlock notCell = m_out.newBlock();
+                m_out.branch(isCell(value), unsure(cell), unsure(notCell));
+                m_out.appendTo(cell);
+                dispatchOnString(place, scrutinee, value, strings, otherwise, true);
+                m_out.appendTo(notCell);
+            } else {
+                dispatchOnString(place, scrutinee, value, strings, otherwise);
+                isDone = true;
+            }
+        }
+        if (!isDone && hasNumbers) {
+            LBasicBlock isInt = m_out.newBlock();
+            LBasicBlock isNotInt = m_out.newBlock();
+            LBasicBlock isDouble = m_out.newBlock();
+            LBasicBlock rest = hasOthers ? m_out.newBlock() : otherwise;
+            m_out.branch(isInt32(value), unsure(isInt), unsure(isNotInt));
+            m_out.appendTo(isInt);
+            m_out.switchInstruction(unboxInt32(value), integers, otherwise, FTL::Weight());
+            m_out.appendTo(isNotInt);
+            m_out.branch(isNumber(value), unsure(isDouble), unsure(rest));
+            m_out.appendTo(isDouble);
+            ofDouble(unboxDouble(value));
+            if (hasOthers)
+                m_out.appendTo(rest);
+            else
+                isDone = true;
+        }
+        if (!isDone) {
+            if (hasOthers)
+                m_out.switchInstruction(value, others, otherwise, FTL::Weight());
+            else
+                m_out.jump(otherwise);
+        }
+    }
+
+    for (auto& way : ways) {
+        SetForScope asFrom(m_block, way.from);
+        m_out.appendTo(way.edge);
+        emitUpsilons(way.from, way.to);
+        m_out.jump(wayInto(way.to));
+    }
+}
+
 void Lowering::lowerSwitch(Node* node)
 {
     UnlinkedCodeBlock* codeBlock = code().codeBlock();
@@ -199,90 +484,15 @@ void Lowering::lowerSwitch(Node* node)
     if (node->opcode == op_switch_string) {
         auto bytecode = node->as<OpSwitchString>();
         const auto& table = codeBlock->unlinkedStringSwitchJumpTable(bytecode.m_tableIndex);
-        struct Case {
-            const StringImpl* says;
-            int32_t offset;
-        };
-        Vector<Case, 16> all;
+        Vector<StringCase, 16> all;
         bool allAreNarrow = true;
         for (auto& entry : table.m_offsetTable) {
             allAreNarrow &= entry.key->is8Bit();
-            all.append({ entry.key.get(), entry.value.m_branchOffset });
+            all.append({ entry.key.get(), blockFor(node, entry.value.m_branchOffset), nullptr });
         }
         if (allAreNarrow) {
-            std::ranges::sort(all, [](const Case& a, const Case& b) {
-                if (a.says->length() != b.says->length())
-                    return a.says->length() < b.says->length();
-                return memcmp(a.says->span8().data(), b.says->span8().data(), a.says->length()) < 0;
-            });
-            LBasicBlock defaultBlock = blockFor(node, table.m_defaultOffset);
             Node* scrutinee = node->use(bytecode.m_scrutinee);
-            LValue value = lowJSValue(scrutinee);
-            LBasicBlock theLongWay = newColdBlock();
-            LBasicBlock dispatch = m_out.newBlock();
-            auto goesOnIf = [&](LValue condition, LBasicBlock otherwise) {
-                LBasicBlock next = m_out.newBlock();
-                m_out.branch(condition, usually(next), rarely(otherwise));
-                m_out.appendTo(next);
-            };
-            if (!isSubtype(scrutinee->type, TCell))
-                goesOnIf(isCell(value), defaultBlock);
-            if (!isSubtype(scrutinee->type, TString | ~TCell))
-                goesOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
-            LBasicBlock ifOfSuchALength = m_out.newBlock();
-            Vector<ValueFromBlock, 2> lengthsOtherwise;
-            auto [charactersAsItIs, lengthAsItIs] = narrowCharactersOf(value, ifOfSuchALength, lengthsOtherwise);
-            ValueFromBlock plainCharacters = m_out.anchor(charactersAsItIs);
-            ValueFromBlock plainLength = m_out.anchor(lengthAsItIs);
-            m_out.jump(dispatch);
-
-            // One that is in pieces, or has room for characters that none of these has. How long it is is plain all the same, and as a rule that settles it.
-            m_out.appendTo(ifOfSuchALength);
-            {
-                LValue itsLength = m_out.phi(Int32, lengthsOtherwise);
-                unsigned longest = all.isEmpty() ? 0 : all.last().says->length();
-                goesOnIf(m_out.belowOrEqual(itsLength, m_out.constInt32(longest)), defaultBlock);
-                if (longest < 64) {
-                    uint64_t lengths = 0;
-                    for (auto& one : all)
-                        lengths |= 1ull << one.says->length();
-                    m_graph.wideIntegerConstants.add(static_cast<int64_t>(lengths));
-                    m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(lengths), itsLength), m_out.constInt64(1)), unsure(theLongWay), unsure(defaultBlock));
-                } else
-                    m_out.jump(theLongWay);
-            }
-
-            // What is written in the program is an atom: so if it says the same as any of them, there is an atom that says so.
-            m_out.appendTo(theLongWay);
-            LValue atom = vmCall(node, pointerType(), Entry::operationAOTNarrowAtomThatSaysTheSame, m_globalObject, value);
-            goesOnIf(m_out.notNull(atom), defaultBlock);
-            ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
-            ValueFromBlock lengthOfAtom = m_out.anchor(m_out.load32(atom, m_heaps.StringImpl_length));
-            m_out.jump(dispatch);
-
-            m_out.appendTo(dispatch);
-            LValue characters = m_out.phi(pointerType(), plainCharacters, charactersOfAtom);
-            LValue length = m_out.phi(Int32, plainLength, lengthOfAtom);
-            Vector<std::tuple<LBasicBlock, unsigned, unsigned>, 8> groups;
-            for (unsigned first = 0; first < all.size();) {
-                unsigned end = first;
-                while (end < all.size() && all[end].says->length() == all[first].says->length())
-                    ++end;
-                LBasicBlock ofThatLength = m_out.newBlock();
-                cases.append(FTL::SwitchCase(m_out.constInt32(all[first].says->length()), ofThatLength, FTL::Weight()));
-                groups.append({ ofThatLength, first, end });
-                first = end;
-            }
-            m_out.switchInstruction(length, cases, defaultBlock, FTL::Weight());
-            for (auto [ofThatLength, first, end] : groups) {
-                m_out.appendTo(ofThatLength);
-                for (unsigned i = first; i < end; ++i) {
-                    LBasicBlock next = i + 1 < end ? m_out.newBlock() : defaultBlock;
-                    m_out.branch(m_out.isZero64(differenceFromWhatIsWritten(characters, all[i].says->span8())), unsure(blockFor(node, all[i].offset)), unsure(next));
-                    if (i + 1 < end)
-                        m_out.appendTo(next);
-                }
-            }
+            dispatchOnString(node, scrutinee, lowJSValue(scrutinee), all, blockFor(node, table.m_defaultOffset));
             return;
         }
         LValue offset = vmCall(node, Int32, Entry::operationAOTSwitchString, m_globalObject, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex), m_out.constInt32(whoseBytecode(node)));

@@ -180,6 +180,8 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(LooseEqual) \
     /* A0, A1 = the operands. The result, a JSValue, in A0. */ \
     v(Add) \
+    v(IsStringThatSays) \
+    v(NarrowCharacters) \
     v(Mod) \
     v(Sub) \
     v(Mul) \

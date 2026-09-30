@@ -88,6 +88,10 @@ Type typeOfValue(JSValue value)
         return TNull;
     if (!value.isCell())
         return TTop;
+    if (value.isString()) {
+        const StringImpl* impl = asString(value)->tryGetValueImpl();
+        return impl && impl->isAtom() ? TAtomString : TOtherString;
+    }
     return typeOfCellOfType(value.asCell()->type());
 }
 
@@ -132,6 +136,8 @@ void dumpType(PrintStream& out, Type type)
     take(TUndefined, "Undefined"_s);
     take(TNull, "Null"_s);
     take(TString, "String"_s);
+    take(TAtomString, "AtomString"_s);
+    take(TOtherString, "OtherString"_s);
     take(TSymbol, "Symbol"_s);
     take(TBigInt, "BigInt"_s);
     take(TFunction, "Function"_s);

@@ -258,6 +258,31 @@ private:
         LValue length;
     };
     NarrowCharacters narrowCharactersOf(LValue string, LBasicBlock otherwise, Vector<ValueFromBlock, 2>& lengthOtherwise);
+    // Which of several strings that the program spells out a value is, if any: by how long it is, and then by what it says, a word at a time.
+    struct StringCase {
+        const StringImpl* says;
+        LBasicBlock target;
+        Node* constant; // If there is one.
+    };
+    void dispatchOnString(Node* place, Node* scrutinee, LValue value, Vector<StringCase, 16>&, LBasicBlock defaultBlock, bool isKnownToBeCell = false);
+    // Several blocks that do nothing but compare one value with one constant after another (===), each going on to the next if it is not that:
+    //     if (x === "a") ... else if (x === "b") ... else if (x === 3) ...        x === "a" || x === "b" || x === "c"
+    // Which it is is settled in the first of them, in one go, and the rest are not got to.
+    struct ArmOfChain {
+        BasicBlock* block;
+        Node* constant;
+        BasicBlock* target;
+    };
+    struct ChainOfComparisons {
+        Node* value { nullptr };
+        Vector<ArmOfChain, 8> arms;
+        BasicBlock* otherwise { nullptr };
+    };
+    Vector<ChainOfComparisons> m_chains;
+    UncheckedKeyHashMap<BasicBlock*, unsigned> m_chainsByFirstBlock;
+    UncheckedKeyHashSet<BasicBlock*> m_blocksInsideChains;
+    void findChainsOfComparisons();
+    void lowerChainOfComparisons(BasicBlock*, const ChainOfComparisons&);
     bool isFusedWithGetFromScope(Node*);
     LValue scopeToResolveFrom(Node* resolve);
     // A slot that a stub can be told about.

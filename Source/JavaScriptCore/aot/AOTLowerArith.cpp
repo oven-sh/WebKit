@@ -489,7 +489,7 @@ std::optional<String> Lowering::stringWrittenInProgram(Node* node)
 
 bool Lowering::isAtomIfString(Node* node, unsigned depth)
 {
-    if (node->type && !mayBe(node->type, TString))
+    if (node->type && !mayBe(node->type, TOtherString))
         return true;
     if (depth > 4)
         return false;
@@ -596,6 +596,18 @@ LValue Lowering::differenceFromWhatIsWritten(LValue characters, std::span<const 
 
 Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlock otherwise, Vector<ValueFromBlock, 2>& lengthOtherwise)
 {
+    if (isCompact()) {
+        PatchpointValue* both = callStub(Stub::NarrowCharacters, Int64, { { string, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
+        both->effects = Effects::none();
+        both->effects.reads = HeapRange::top();
+        LValue characters = m_out.bitAnd(both, m_out.constInt64((1ll << 48) - 1));
+        LValue length = m_out.castToInt32(m_out.lShr(both, m_out.constInt32(48)));
+        LBasicBlock continuation = m_out.newBlock();
+        lengthOtherwise.append(m_out.anchor(length));
+        m_out.branch(m_out.notZero64(characters), usually(continuation), rarely(otherwise));
+        m_out.appendTo(continuation);
+        return { characters, length };
+    }
     LBasicBlock inOnePiece = m_out.newBlock();
     LBasicBlock narrow = m_out.newBlock();
     LBasicBlock wide = m_out.newBlock();
@@ -716,6 +728,12 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     }
 
     if (isCompact()) {
+        if (strict || isSubtype(both, TString)) {
+            if (stringWrittenInProgram(right) && isAtomIfString(right))
+                return callStub(Stub::IsStringThatSays, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { });
+            if (stringWrittenInProgram(left) && isAtomIfString(left))
+                return callStub(Stub::IsStringThatSays, Int32, { { b, GPRInfo::argumentGPR0 }, { a, GPRInfo::argumentGPR1 } }, { });
+        }
         return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } },
             { });
     }

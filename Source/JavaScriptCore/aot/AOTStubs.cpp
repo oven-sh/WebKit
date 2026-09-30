@@ -458,6 +458,128 @@ static void generateEqual(CCallHelpers& jit, Entry operation)
 }
 
 static void generateStrictEqual(CCallHelpers& jit) { generateEqual(jit, Entry::operationAOTCompareStrictEq); }
+
+// Of the string in A0: where its characters are, in the low 48 bits, and how many there are (or 0xffff, if more) above them. No characters: it is in pieces, or they are wide.
+// A slice of a narrow string is looked at where it is. Changes T9 to T11 and nothing else.
+static void generateNarrowCharacters(CCallHelpers& jit)
+{
+    CCallHelpers::JumpList isNotForTheLooking;
+    jit.loadPtr(Address(A0, JSString::offsetOfValue()), T9);
+    Jump isRope = jit.branchIfRopeStringImpl(T9);
+    jit.load32(Address(T9, StringImpl::lengthMemoryOffset()), T10);
+    jit.load32(Address(T9, StringImpl::flagsOffset()), T11);
+    isNotForTheLooking.append(jit.branchTest32(CCallHelpers::Zero, T11, TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(T9, StringImpl::dataOffset()), A0);
+
+    CCallHelpers::Label pack = jit.label();
+    Jump fits = jit.branch32(CCallHelpers::BelowOrEqual, T10, TrustedImm32(0xffff));
+    jit.move(TrustedImm32(0xffff), T10);
+    fits.link(&jit);
+    jit.lshift64(TrustedImm32(48), T10);
+    jit.or64(T10, A0);
+    jit.ret();
+
+    isRope.link(&jit);
+    jit.load32(Address(A0, JSRopeString::offsetOfLength()), T10);
+    constexpr uintptr_t narrowSlice = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
+    jit.and64(TrustedImm32(narrowSlice), T9, T11);
+    isNotForTheLooking.append(jit.branch64(CCallHelpers::NotEqual, T11, TrustedImm32(narrowSlice)));
+    // (JSRopeString::CompactFibers. What it is a slice of is in one piece.)
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber1()), T9);
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber2()), T11);
+    jit.urshift64(TrustedImm32(32), T9);
+    jit.and64(TrustedImm32(0xffff), T11, A0);
+    jit.lshift64(TrustedImm32(32), A0);
+    jit.or64(T9, A0);
+    jit.urshift64(TrustedImm32(16), T11);
+    jit.loadPtr(Address(A0, JSString::offsetOfValue()), A0);
+    jit.loadPtr(Address(A0, StringImpl::dataOffset()), A0);
+    jit.add64(T11, A0);
+    jit.jump().linkTo(pack, &jit);
+
+    isNotForTheLooking.link(&jit);
+    jit.move(TrustedImm32(0), A0);
+    jit.jump().linkTo(pack, &jit);
+}
+
+// A0 === A1, where A1 is a string that the program spells out: in one piece, narrow, and an atom.
+static void generateIsStringThatSays(CCallHelpers& jit)
+{
+    CCallHelpers::JumpList isTrue;
+    CCallHelpers::JumpList isFalse;
+    CCallHelpers::JumpList slow;
+    isTrue.append(jit.branch64(CCallHelpers::Equal, A0, A1));
+    jit.move(CCallHelpers::TrustedImm64(JSValue::NotCellMask), T9);
+    isFalse.append(jit.branchTest64(CCallHelpers::NonZero, A0, T9));
+    jit.load8(Address(A0, JSCell::typeInfoTypeOffset()), T9);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, TrustedImm32(StringType)));
+    jit.loadPtr(Address(A0, JSString::offsetOfValue()), A2);
+    jit.loadPtr(Address(A1, JSString::offsetOfValue()), A3);
+    jit.load32(Address(A3, StringImpl::lengthMemoryOffset()), A4);
+    Jump isRope = jit.branchIfRopeStringImpl(A2);
+    isTrue.append(jit.branchPtr(CCallHelpers::Equal, A2, A3));
+    // How long it is settles it as a rule.
+    jit.load32(Address(A2, StringImpl::lengthMemoryOffset()), T9);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, A4));
+    jit.load32(Address(A2, StringImpl::flagsOffset()), T9);
+    // There is only one atom for any content.
+    isFalse.append(jit.branchTest32(CCallHelpers::NonZero, T9, TrustedImm32(StringImpl::flagIsAtom())));
+    slow.append(jit.branchTest32(CCallHelpers::Zero, T9, TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
+
+    // A4 characters at A2, and as many where A3 says.
+    CCallHelpers::Label compare = jit.label();
+    jit.loadPtr(Address(A3, StringImpl::dataOffset()), A3);
+    CCallHelpers::Label eightAtATime = jit.label();
+    Jump fewerThanEight = jit.branch32(CCallHelpers::Below, A4, TrustedImm32(8));
+    jit.load64(Address(A2), T9);
+    jit.load64(Address(A3), T11);
+    isFalse.append(jit.branch64(CCallHelpers::NotEqual, T9, T11));
+    jit.add64(TrustedImm32(8), A2);
+    jit.add64(TrustedImm32(8), A3);
+    jit.sub32(TrustedImm32(8), A4);
+    jit.jump().linkTo(eightAtATime, &jit);
+    fewerThanEight.link(&jit);
+    CCallHelpers::Label oneAtATime = jit.label();
+    isTrue.append(jit.branchTest32(CCallHelpers::Zero, A4));
+    jit.load8(Address(A2), T9);
+    jit.load8(Address(A3), T11);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, T11));
+    jit.add64(TrustedImm32(1), A2);
+    jit.add64(TrustedImm32(1), A3);
+    jit.sub32(TrustedImm32(1), A4);
+    jit.jump().linkTo(oneAtATime, &jit);
+
+    isRope.link(&jit);
+    jit.load32(Address(A0, JSRopeString::offsetOfLength()), T9);
+    isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, A4));
+    // A slice of a narrow string is looked at where it is: it is not made a string of its own for this. (JSRopeString::CompactFibers. What it is a slice of is in one piece.)
+    constexpr uintptr_t narrowSlice = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
+    jit.and64(TrustedImm32(narrowSlice), A2, T9);
+    slow.append(jit.branch64(CCallHelpers::NotEqual, T9, TrustedImm32(narrowSlice)));
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber1()), T9);
+    jit.load64(Address(A0, JSRopeString::offsetOfFiber2()), T11);
+    jit.urshift64(TrustedImm32(32), T9);
+    jit.and64(TrustedImm32(0xffff), T11, A2);
+    jit.lshift64(TrustedImm32(32), A2);
+    jit.or64(T9, A2);
+    jit.urshift64(TrustedImm32(16), T11);
+    jit.loadPtr(Address(A2, JSString::offsetOfValue()), A2);
+    jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
+    jit.add64(T11, A2);
+    jit.jump().linkTo(compare, &jit);
+
+    isTrue.link(&jit);
+    jit.move(TrustedImm32(1), A0);
+    jit.ret();
+    isFalse.link(&jit);
+    jit.move(TrustedImm32(0), A0);
+    jit.ret();
+
+    // In pieces, or with room for characters that the other has none of. (A0 and A1 are as they were.)
+    slow.link(&jit);
+    generateEqual(jit, Entry::operationAOTCompareStrictEq);
+}
 static void generateLooseEqual(CCallHelpers& jit) { generateEqual(jit, Entry::operationAOTCompareEq); }
 
 // operation(globalObject, A0, A1), for the call site in T10.

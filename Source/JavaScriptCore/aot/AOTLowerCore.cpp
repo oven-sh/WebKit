@@ -323,6 +323,7 @@ bool Lowering::run()
         }
     }
 
+    findChainsOfComparisons();
     for (BasicBlock* block : m_graph.m_rpo) {
         lowerBlock(block);
         if (m_graph.failed())
@@ -462,6 +463,7 @@ static bool mayLookAtStack(Stub stub)
     case Stub::PlainOperationWithVM:
     case Stub::WriteBarrier:
     case Stub::ToBoolean:
+    case Stub::NarrowCharacters:
         return false;
     default:
         return true;
@@ -1074,6 +1076,11 @@ void Lowering::emitUpsilons(BasicBlock* block, BasicBlock* successor)
 void Lowering::lowerBlock(BasicBlock* block)
 {
     m_block = block;
+    if (m_blocksInsideChains.contains(block)) {
+        m_out.appendTo(block->lowered);
+        m_out.unreachable();
+        return;
+    }
     m_out.setFrequency(block->isGeneric || block->isSeldomReached ? coldFrequency : 1);
     if (block->loweredAhead)
         viewArraysAheadOf(block);
@@ -1119,6 +1126,12 @@ void Lowering::lowerBlock(BasicBlock* block)
     if (terminal && terminal->kind == NodeKind::Guard) {
         setOrigin(terminal);
         lowerGuard(block, terminal);
+        setOrigin(nullptr);
+        return;
+    }
+    if (auto chain = m_chainsByFirstBlock.find(block); chain != m_chainsByFirstBlock.end()) {
+        setOrigin(terminal);
+        lowerChainOfComparisons(block, m_chains[chain->value]);
         setOrigin(nullptr);
         return;
     }
