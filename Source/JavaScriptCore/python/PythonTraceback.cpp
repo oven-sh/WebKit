@@ -45,6 +45,7 @@ namespace JSC { namespace Python {
 // ---- Tracebacks
 
 // A traceback is a PyNativeObject: the next one, the frame, and where the frame had got to, in the bytecode and in the source.
+// SourceOffset is the UnlinkedCodeBlock to find it in until it is asked for, which for most it never is. That is kept in any case by what the function of the frame is an instance of.
 enum TracebackField : unsigned { Next, Frame, BytecodeOffset, SourceOffset };
 
 static PyNativeObject* asNative(JSValue value) { return uncheckedDowncast<PyNativeObject>(value.asCell()); }
@@ -64,8 +65,7 @@ void addTracebackEntry(JSGlobalObject* globalObject, JSValue exception, CallFram
     JSValue head = asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback);
     if (!head || !isTraceback(globalObject, head))
         head = jsUndefined();
-    unsigned sourceOffset = callFrame->codeBlock()->expressionInfoForBytecodeIndex(bytecodeIndex).divot;
-    JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, PyFrame::forCallFrame(vm, callFrame), JSC::jsNumber(bytecodeIndex.offset()), JSC::jsNumber(sourceOffset));
+    JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, PyFrame::forCallFrame(vm, callFrame), JSC::jsNumber(bytecodeIndex.offset()), callFrame->codeBlock()->unlinkedCodeBlock());
     asObject(exception)->putDirect(vm, vm.pythonNames().private_traceback, entry);
 }
 
@@ -119,6 +119,11 @@ static int lineOf(JSValue traceback)
     if (JSValue line = entry->getDirect(entry->vm(), entry->vm().pythonNames().private_line))
         return line.asInt32();
     PyFrame* frame = asFrame(entry->field(TracebackField::Frame));
+    if (JSValue code = entry->field(TracebackField::SourceOffset); code.isCell()) {
+        // CodeBlock::expressionInfoForBytecodeIndex()
+        unsigned divot = uncheckedDowncast<UnlinkedCodeBlock>(code.asCell())->expressionInfoForBytecodeIndex(BytecodeIndex(entry->field(TracebackField::BytecodeOffset).asInt32())).divot;
+        entry->setField(entry->vm(), TracebackField::SourceOffset, JSC::jsNumber(divot + frame->executable()->source().startOffset()));
+    }
     return frame->executable()->source().provider()->documentLineColumnForOffset(entry->field(TracebackField::SourceOffset).asInt32()).line + frame->functionInfo().lineDelta;
 }
 

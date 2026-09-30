@@ -835,8 +835,11 @@ bool areLaidOutAlike(JSGlobalObject* globalObject, PyType* oldType, PyType* newT
     constexpr unsigned long haveGC = 1ul << 14;
     auto isLaidOutLikeItsBase = [] (PyType* child) {
         PyType* parent = child->base();
+        // The last thing that CPython asks is whether it is done away with as any class that a program makes is, or as its base is. Of the exceptions that are built in, each that has something more to keep has its own way, and
+        // is the larger for it. So one that is no larger than its base has its base's.
         return parent && child->basicSize() == parent->basicSize() && child->itemSize() == parent->itemSize() && child->dictOffset() == parent->dictOffset()
-            && child->weakReferenceOffset() == parent->weakReferenceOffset() && (child->flagsForPython() & haveGC) == (parent->flagsForPython() & haveGC) && child->hasFlag(PyType::IsHeapType);
+            && child->weakReferenceOffset() == parent->weakReferenceOffset() && (child->flagsForPython() & haveGC) == (parent->flagsForPython() & haveGC)
+            && (child->hasFlag(PyType::IsHeapType) || child->hasFlag(PyType::IsExceptionType));
     };
     auto addTheSameSlots = [&] (PyType* a, PyType* b) {
         if (!a->hasFlag(PyType::IsHeapType) || !b->hasFlag(PyType::IsHeapType))

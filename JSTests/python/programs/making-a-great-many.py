@@ -12,6 +12,8 @@ def outcome(f, *arguments):
 
 
 def describe(x):
+    if isinstance(x, BaseException):
+        return type(x).__name__, repr(x.args), str(x), sorted(vars(x).items())
     return type(x).__name__, sorted(vars(x).items()) if hasattr(x, "__dict__") else None
 
 
@@ -228,6 +230,82 @@ def with_meta():
 changed("whose class says what calling it is, and then does not", with_meta, lambda C: delattr(Meta, "__call__"), 5)
 Meta.__call__ = lambda cls, *arguments: ("said again", arguments)
 changed("and says so again", with_meta, lambda C: None, 5)
+
+print("---- exceptions, which are made more often than most things")
+
+
+def bare():
+    class E(Exception):
+        pass
+    return E
+
+
+def below():
+    class Base(ValueError):
+        pass
+    class E(Base):
+        pass
+    return E
+
+
+def with_init():
+    class E(Exception):
+        def __init__(self, x=0):
+            self.x = x
+    return E
+
+
+def calls_up():
+    class E(Exception):
+        def __init__(self, x=0):
+            super().__init__("said", x)
+            self.x = x
+    return E
+
+
+for label, source in (("built in", "ValueError"), ("the first of them all", "BaseException"), ("that has more to it", "OSError"), ("that has a __new__ of its own", "MemoryError"), ("that has an __init__ of its own", "KeyError"),
+                      ("that keeps what it is given", "StopIteration"), ("that takes some of it by name", "ImportError"), ("that wants more", "UnicodeDecodeError"), ("of several", "ExceptionGroup")):
+    for arguments in ("", "1", "'a', 2", "2, 'No such thing'", "x=1", "'a', name='n'", "'g', [ValueError(1)]"):
+        namespace = {}
+        exec("def make(): return %s(%s)" % (source, arguments), namespace)
+        print(label, arguments or "nothing", "=>", often(namespace["make"]))
+
+changed("nothing of its own", bare, lambda C: None, 5, "b")
+changed("an __init__", bare, set_on("__init__", other_init), 5)
+changed("an __init__ in what it is derived from", below, set_on("__init__", other_init, 1), 5)
+changed("a __new__", bare, set_on("__new__", lambda cls, *a: "made otherwise"), 5)
+changed("a __new__ that makes one all the same", bare, set_on("__new__", lambda cls, *a: Exception.__new__(cls, "from __new__")), 5)
+changed("a __new__, and then none", bare, lambda C: (setattr(C, "__new__", lambda cls, *a: 1), delattr(C, "__new__")), 5)
+changed("other bases", bare, lambda C: setattr(C, "__bases__", (KeyError,)), 5)
+for bases in ((KeyError,), (ValueError,), (OSError,), (BlockingIOError,), (StopIteration,), (Exception,), (BaseException,), (object,), (KeyError, ValueError), (OSError, ValueError)):
+    print("which it can have:", [b.__name__ for b in bases], "=>", outcome(lambda: (setattr(bare(), "__bases__", bases), "it can")[1]))
+class Blocked(BlockingIOError): pass
+print("and one that has more to it =>", [outcome(lambda: (setattr(Blocked, "__bases__", (b,)), b.__name__)[1]) for b in (OSError, ConnectionError, ValueError, BlockingIOError)])
+e = bare()(1)
+print("or be made an instance of =>", [outcome(lambda: (setattr(e, "__class__", c), type(e).__name__)[1]) for c in (bare(), below(), with_init(), ValueError, Blocked)])
+changed("no __init__ any more", with_init, delete_from("__init__"), 5)
+changed("another", with_init, set_on("__init__", other_init), 5)
+changed("one that returns something", with_init, set_on("__init__", lambda self, x=0: x), 5)
+changed("one that raises", with_init, set_on("__init__", lambda self, x=0: 1 // 0), 5)
+changed("that of BaseException", with_init, set_on("__init__", BaseException.__init__), 5)
+changed("that of object", with_init, set_on("__init__", object.__init__), 5)
+changed("that calls what it is derived from", calls_up, lambda C: None, 5)
+changed("too many", with_init, lambda C: None, 5, 6)
+print("each has its own =>", len({id(ValueError(i).args) for i in range(3)}) > 0, [ValueError(i).args for i in range(3)], ValueError(1) is not ValueError(1))
+
+
+def raised_and_caught(n):
+    total = 0
+    for i in range(n):
+        try:
+            raise KeyError(i, "x")
+        except KeyError as e:
+            total += e.args[0]
+            last = e
+    return total, last.args, last.__traceback__.tb_lineno - raised_and_caught.__code__.co_firstlineno, last.__traceback__.tb_next
+
+
+print("raised, and asked where =>", raised_and_caught(3), raised_and_caught(20000))
 
 print("---- from inside __init__")
 

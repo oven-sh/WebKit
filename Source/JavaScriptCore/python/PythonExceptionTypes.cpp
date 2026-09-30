@@ -85,6 +85,15 @@ PYTHON_NATIVE(exceptionInit)
     RETURN_NONE();
 }
 
+static bool isNative(JSValue value, NativeFunction function)
+{
+    auto* native = value && value.isCell() ? dynamicDowncast<PyNativeFunction>(value.asCell()) : nullptr;
+    return native && native->nativeFunction() == toTagged(function);
+}
+
+bool isNewOfBaseException(JSValue value) { return isNative(value, exceptionNew); }
+bool isInitOfBaseException(JSValue value) { return isNative(value, exceptionInit); }
+
 PYTHON_NATIVE(exceptionStr)
 {
     NATIVE_PROLOGUE();

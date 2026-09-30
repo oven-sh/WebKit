@@ -269,6 +269,8 @@ whether two classes can both be derived from, whether instances can be given `__
 made an instance of another. So a class has `__basicsize__`, `__itemsize__`, `__dictoffset__`, `__weakrefoffset__` and `__flags__` as CPython would
 have them, taken from CPython for a built-in class and worked out as CPython does for the rest, and the same questions are answered
 from those in the same way. What is in a slot is a property under a private name that goes by where CPython would have the slot.
+One thing that CPython asks cannot be seen from Python, which is whether a class is done away with as its base is (`tp_dealloc`). Of the exceptions that are built in, each that has something more to keep has its own way and is the larger for it, so one that is no larger
+than its base has its base's. So a class derived from `Exception` can be given `KeyError` for a base, and not `OSError`.
 
 **Whether a class can be added to** is one of those flags too, `Py_TPFLAGS_IMMUTABLETYPE`, and not whether it is written in C++ (`PyType::isImmutable()`). Most of what CPython writes in C cannot be. `ast.AST`, `typing.Generic`,
 `time.struct_time`, `os.stat_result` and a few more can, and programs do. Those of them that are derived from `tuple` are `IsDerivedFromBuiltin`, so that nothing is done to one as to a tuple without looking at what its
@@ -283,7 +285,8 @@ time. CPython has two ways round it, and so has this.
 
 - **`tp_new` and `tp_init`** are kept as they should be while a class and its bases are changed. `PyType::Construction` is what calling the class comes to where `tp_new` would be `object_new()`: an instance is made, with such a structure, and given to such a
   function. It is worked out when it is first wanted, and forgotten when the class, or anything that it is derived from, is given a `__new__` or an `__init__` or has one taken away, has other bases, or has something left in it for others to do
-  (`constructionMayHaveChanged()`). A class of some other class than `type` has none.
+  (`constructionMayHaveChanged()`). A class of some other class than `type` has none. It is the same for a class of exceptions whose `tp_new` would be `BaseException_new()`, which is most of those that are built in and nearly all that a program
+  derives from them: an exception is made, and keeps what it was given as `args`.
 - **`tp_vectorcall`**: `int`, `str`, `float`, `bool`, `list`, `tuple`, `dict`, `set`, `frozenset`, `range`, `enumerate`, `map` and `filter` are called without either being looked for (`PyType::setVectorcall()`). A class that is derived from one is not. What is
   here does what is ordinary, and leaves the rest to `__new__()` and `__init__()`, which is where it is said what is wrong with the arguments.
 - `object.__init__()` does nothing if the class has a `__new__()` of its own, whatever it is given, so it is not called.
@@ -1470,6 +1473,9 @@ either, and raises and catches exceptions as a matter of course, so for what it 
   `ErrorInstance` there is and asks nothing of how it was made. Until they are found there is nothing to keep.
 
 `interop/where-an-exception-has-been.py`
+
+**Nor is where it was in the source.** Each frame that an exception comes to is remembered in its traceback, with how far the frame had got. What line that is takes some working out, and is worked out when it is asked for (`lineOf()`). Until then the entry has
+the `UnlinkedCodeBlock` to find it in, which is kept in any case by what the function of the frame is an instance of.
 
 | Python | JavaScript |
 |---|---|

@@ -17,8 +17,8 @@ one that never was => asks < often
 and then thrown by JavaScript => raises < passes_on < caught < jsThrows < <lambda> < raised_later < often
 what it has said, it goes on saying => True
 ---- made by JavaScript
-where it was made => __new__ < ValueError < jsMakes < <lambda> < often
-and raised by Python => __new__ < ValueError < jsMakes < <lambda> < <lambda> < often
+where it was made => ValueError < jsMakes < <lambda> < often
+and raised by Python => ValueError < jsMakes < <lambda> < <lambda> < often
 ---- it is not what keeps anything
 thrown into JavaScript => True {'short_lived'}
 through something built in => True {'short_lived'}

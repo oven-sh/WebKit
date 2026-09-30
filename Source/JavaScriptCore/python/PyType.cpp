@@ -635,7 +635,8 @@ JSValue PyType::call(JSGlobalObject* globalObject, const ArgList& arguments, Pyt
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyRealm* realm = globalObject->pyRealm();
     PyType* type = this;
-    if (Construction* construction = this->construction(globalObject))
+    // What BaseException makes of what is given by name is for it to say.
+    if (Construction* construction = this->construction(globalObject); construction && !(keywordNames && construction->kind == Construction::Kind::Exception))
         RELEASE_AND_RETURN(scope, Python::construct(globalObject, type, *construction, arguments, keywordNames));
     if (m_vectorcall && !keywordNames) {
         JSValue result = m_vectorcall(globalObject, arguments);

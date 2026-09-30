@@ -238,16 +238,21 @@ public:
 
     // What calling the class comes to, where that is to make a plain instance and give it to a function: type_call(), for a class whose tp_new is object_new(). CPython keeps tp_new and tp_init as they should be while a
     // class and its bases are changed, and this is kept so too. What is in it is kept by the class, for as long as it holds.
+    //
+    // It is the same for a class of exceptions whose tp_new would be BaseException_new(), which besides keeps what it was given as `args`.
     struct Construction : public ThreadSafeRefCounted<Construction> {
-        Construction(Structure* structure, JSObject* initializer)
-            : structure(structure)
+        enum class Kind : uint8_t { Instance, Exception };
+        Construction(Kind kind, Structure* structure, JSObject* initializer)
+            : kind(kind)
+            , structure(structure)
             , initializer(initializer)
             , isAsFound(WatchpointSet::create(IsWatched))
         {
         }
 
+        const Kind kind;
         Structure* const structure;
-        JSObject* const initializer; // The __init__ that the class has, which is a function. Null if it is that of object, which does nothing.
+        JSObject* const initializer; // The __init__ that the class has, which is a function. Null if it is that of object, which does nothing, or of BaseException, which does again what its __new__ did.
         const Ref<WatchpointSet> isAsFound;
     };
     // Null if it is not so simple.
@@ -325,6 +330,9 @@ JS_EXPORT_PRIVATE PyType* classFor(JSObject* constructor);
 // PyType::construction()
 RefPtr<PyType::Construction> workOutConstruction(JSGlobalObject*, PyType*);
 JSValue construct(JSGlobalObject*, PyType*, const PyType::Construction&, const ArgList&, JSCellButterfly* keywordNames);
+// Whether it is BaseException.__new__, or what some class of exceptions that is built in has by that name and is the same thing. And so for __init__.
+bool isNewOfBaseException(JSValue);
+bool isInitOfBaseException(JSValue);
 // What is said if __init__() returns anything but None.
 void raiseInitializerResult(JSGlobalObject*, JSValue);
 }

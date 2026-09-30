@@ -6763,7 +6763,7 @@ bool ByteCodeParser::handleConstantFunction(
         if (!thisArgument->isConstant() || !thisArgument->asJSValue().isUndefined())
             return false;
         RefPtr<PyType::Construction> construction = type->constructionConcurrently();
-        if (!construction || !construction->isAsFound->isStillValid())
+        if (!construction || construction->kind != PyType::Construction::Kind::Instance || !construction->isAsFound->isStillValid())
             return false;
         // It takes none, and says so.
         if (!construction->initializer && argumentCountIncludingThis > 1)

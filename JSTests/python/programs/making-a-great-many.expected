@@ -48,6 +48,99 @@ something left for others to do => ('C', [('x', 5)]) THEN ('TypeError', "Can't i
 and then done => ('C', [('x', 5)]) THEN ('C', [('x', 5)]) []
 whose class says what calling it is, and then does not => ('tuple', None) THEN ('C', [('x', 5)]) []
 and says so again => ('tuple', None) THEN ('tuple', None) []
+---- exceptions, which are made more often than most things
+built in nothing => ('ValueError', '()', '', [])
+built in 1 => ('ValueError', '(1,)', '1', [])
+built in 'a', 2 => ('ValueError', "('a', 2)", "('a', 2)", [])
+built in 2, 'No such thing' => ('ValueError', "(2, 'No such thing')", "(2, 'No such thing')", [])
+built in x=1 => ('TypeError', 'ValueError() takes no keyword arguments')
+built in 'a', name='n' => ('TypeError', 'ValueError() takes no keyword arguments')
+built in 'g', [ValueError(1)] => ('ValueError', "('g', [ValueError(1)])", "('g', [ValueError(1)])", [])
+the first of them all nothing => ('BaseException', '()', '', [])
+the first of them all 1 => ('BaseException', '(1,)', '1', [])
+the first of them all 'a', 2 => ('BaseException', "('a', 2)", "('a', 2)", [])
+the first of them all 2, 'No such thing' => ('BaseException', "(2, 'No such thing')", "(2, 'No such thing')", [])
+the first of them all x=1 => ('TypeError', 'BaseException() takes no keyword arguments')
+the first of them all 'a', name='n' => ('TypeError', 'BaseException() takes no keyword arguments')
+the first of them all 'g', [ValueError(1)] => ('BaseException', "('g', [ValueError(1)])", "('g', [ValueError(1)])", [])
+that has more to it nothing => ('OSError', '()', '', [])
+that has more to it 1 => ('OSError', '(1,)', '1', [])
+that has more to it 'a', 2 => ('OSError', "('a', 2)", '[Errno a] 2', [])
+that has more to it 2, 'No such thing' => ('FileNotFoundError', "(2, 'No such thing')", '[Errno 2] No such thing', [])
+that has more to it x=1 => ('TypeError', 'OSError() takes no keyword arguments')
+that has more to it 'a', name='n' => ('TypeError', 'OSError() takes no keyword arguments')
+that has more to it 'g', [ValueError(1)] => ('OSError', "('g', [ValueError(1)])", '[Errno g] [ValueError(1)]', [])
+that has a __new__ of its own nothing => ('MemoryError', '()', '', [])
+that has a __new__ of its own 1 => ('MemoryError', '(1,)', '1', [])
+that has a __new__ of its own 'a', 2 => ('MemoryError', "('a', 2)", "('a', 2)", [])
+that has a __new__ of its own 2, 'No such thing' => ('MemoryError', "(2, 'No such thing')", "(2, 'No such thing')", [])
+that has a __new__ of its own x=1 => ('TypeError', 'MemoryError() takes no keyword arguments')
+that has a __new__ of its own 'a', name='n' => ('TypeError', 'MemoryError() takes no keyword arguments')
+that has a __new__ of its own 'g', [ValueError(1)] => ('MemoryError', "('g', [ValueError(1)])", "('g', [ValueError(1)])", [])
+that has an __init__ of its own nothing => ('KeyError', '()', '', [])
+that has an __init__ of its own 1 => ('KeyError', '(1,)', '1', [])
+that has an __init__ of its own 'a', 2 => ('KeyError', "('a', 2)", "('a', 2)", [])
+that has an __init__ of its own 2, 'No such thing' => ('KeyError', "(2, 'No such thing')", "(2, 'No such thing')", [])
+that has an __init__ of its own x=1 => ('TypeError', 'KeyError() takes no keyword arguments')
+that has an __init__ of its own 'a', name='n' => ('TypeError', 'KeyError() takes no keyword arguments')
+that has an __init__ of its own 'g', [ValueError(1)] => ('KeyError', "('g', [ValueError(1)])", "('g', [ValueError(1)])", [])
+that keeps what it is given nothing => ('StopIteration', '()', '', [])
+that keeps what it is given 1 => ('StopIteration', '(1,)', '1', [])
+that keeps what it is given 'a', 2 => ('StopIteration', "('a', 2)", "('a', 2)", [])
+that keeps what it is given 2, 'No such thing' => ('StopIteration', "(2, 'No such thing')", "(2, 'No such thing')", [])
+that keeps what it is given x=1 => ('TypeError', 'StopIteration() takes no keyword arguments')
+that keeps what it is given 'a', name='n' => ('TypeError', 'StopIteration() takes no keyword arguments')
+that keeps what it is given 'g', [ValueError(1)] => ('StopIteration', "('g', [ValueError(1)])", "('g', [ValueError(1)])", [])
+that takes some of it by name nothing => ('ImportError', '()', '', [])
+that takes some of it by name 1 => ('ImportError', '(1,)', '1', [])
+that takes some of it by name 'a', 2 => ('ImportError', "('a', 2)", "('a', 2)", [])
+that takes some of it by name 2, 'No such thing' => ('ImportError', "(2, 'No such thing')", "(2, 'No such thing')", [])
+that takes some of it by name x=1 => ('TypeError', "ImportError() got an unexpected keyword argument 'x'")
+that takes some of it by name 'a', name='n' => ('ImportError', "('a',)", 'a', [])
+that takes some of it by name 'g', [ValueError(1)] => ('ImportError', "('g', [ValueError(1)])", "('g', [ValueError(1)])", [])
+that wants more nothing => ('TypeError', 'function takes exactly 5 arguments (0 given)')
+that wants more 1 => ('TypeError', 'function takes exactly 5 arguments (1 given)')
+that wants more 'a', 2 => ('TypeError', 'function takes exactly 5 arguments (2 given)')
+that wants more 2, 'No such thing' => ('TypeError', 'function takes exactly 5 arguments (2 given)')
+that wants more x=1 => ('TypeError', 'UnicodeDecodeError() takes no keyword arguments')
+that wants more 'a', name='n' => ('TypeError', 'UnicodeDecodeError() takes no keyword arguments')
+that wants more 'g', [ValueError(1)] => ('TypeError', 'function takes exactly 5 arguments (2 given)')
+of several nothing => ('TypeError', 'BaseExceptionGroup.__new__() takes exactly 2 arguments (0 given)')
+of several 1 => ('TypeError', 'BaseExceptionGroup.__new__() takes exactly 2 arguments (1 given)')
+of several 'a', 2 => ('TypeError', 'second argument (exceptions) must be a sequence')
+of several 2, 'No such thing' => ('TypeError', 'BaseExceptionGroup.__new__() argument 1 must be str, not int')
+of several x=1 => ('TypeError', 'BaseExceptionGroup.__new__() takes exactly 2 arguments (0 given)')
+of several 'a', name='n' => ('TypeError', 'BaseExceptionGroup.__new__() takes exactly 2 arguments (1 given)')
+of several 'g', [ValueError(1)] => ('ExceptionGroup', "('g', [ValueError(1)])", 'g (1 sub-exception)', [])
+nothing of its own => ('E', "(5, 'b')", "(5, 'b')", []) THEN ('E', "(5, 'b')", "(5, 'b')", []) []
+an __init__ => ('E', '(5,)', '5', []) THEN ('E', '(5,)', '5', [('other', 5)]) []
+an __init__ in what it is derived from => ('E', '(5,)', '5', []) THEN ('E', '(5,)', '5', [('other', 5)]) []
+a __new__ => ('E', '(5,)', '5', []) THEN ('str', None) []
+a __new__ that makes one all the same => ('E', '(5,)', '5', []) THEN ('E', '(5,)', '5', []) []
+a __new__, and then none => ('E', '(5,)', '5', []) THEN ('E', '(5,)', '5', []) []
+other bases => ('E', '(5,)', '5', []) THEN ('E', '(5,)', '5', []) []
+which it can have: ['KeyError'] => it can
+which it can have: ['ValueError'] => it can
+which it can have: ['OSError'] => ('TypeError', "__bases__ assignment: 'OSError' object layout differs from 'Exception'")
+which it can have: ['BlockingIOError'] => ('TypeError', "__bases__ assignment: 'BlockingIOError' object layout differs from 'Exception'")
+which it can have: ['StopIteration'] => ('TypeError', "__bases__ assignment: 'StopIteration' object layout differs from 'Exception'")
+which it can have: ['Exception'] => it can
+which it can have: ['BaseException'] => it can
+which it can have: ['object'] => ('TypeError', "__bases__ assignment: 'object' deallocator differs from 'Exception'")
+which it can have: ['KeyError', 'ValueError'] => it can
+which it can have: ['OSError', 'ValueError'] => ('TypeError', "__bases__ assignment: 'OSError' object layout differs from 'Exception'")
+and one that has more to it => ['OSError', 'ConnectionError', ('TypeError', "__bases__ assignment: 'ValueError' object layout differs from 'ConnectionError'"), 'BlockingIOError']
+or be made an instance of => ['E', ('TypeError', "__class__ assignment: 'E' object layout differs from 'E'"), 'E', ('TypeError', '__class__ assignment only supported for mutable types or ModuleType subclasses'), ('TypeError', "__class__ assignment: 'Blocked' object layout differs from 'E'")]
+no __init__ any more => ('E', '(5,)', '5', [('x', 5)]) THEN ('E', '(5,)', '5', []) []
+another => ('E', '(5,)', '5', [('x', 5)]) THEN ('E', '(5,)', '5', [('other', 5)]) []
+one that returns something => ('E', '(5,)', '5', [('x', 5)]) THEN ('TypeError', "__init__() should return None, not 'int'") []
+one that raises => ('E', '(5,)', '5', [('x', 5)]) THEN ('ZeroDivisionError', 'division by zero') []
+that of BaseException => ('E', '(5,)', '5', [('x', 5)]) THEN ('E', '(5,)', '5', []) []
+that of object => ('E', '(5,)', '5', [('x', 5)]) THEN ('E', '(5,)', '5', []) []
+that calls what it is derived from => ('E', "('said', 5)", "('said', 5)", [('x', 5)]) THEN ('E', "('said', 5)", "('said', 5)", [('x', 5)]) []
+too many => ('TypeError', 'with_init.<locals>.E.__init__() takes from 1 to 2 positional arguments but 3 were given') THEN ('TypeError', 'with_init.<locals>.E.__init__() takes from 1 to 2 positional arguments but 3 were given') []
+each has its own => True [(0,), (1,), (2,)] True
+raised, and asked where => (3, (2, 'x'), 4, None) (199990000, (19999, 'x'), 4, None)
 ---- from inside __init__
 what called it => [('Looks', [('back', '<module>'), ('caller', 'makes_one_that_looks'), ('line', 2), ('seen', 2)]), ('Looks', [('back', '<module>'), ('caller', 'makes_one_that_looks'), ('line', 2), ('seen', 699)])]
 what it changes there => ['by __init__', 'by __init__']

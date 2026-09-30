@@ -1728,8 +1728,18 @@ RefPtr<PyType::Construction> workOutConstruction(JSGlobalObject* globalObject, P
     // A class of some other class may be called in a way of its own, and there is no being told when that changes.
     if (type->metatype() != realm->typeType() || type == realm->typeType())
         return nullptr;
-    // What object_new() looks at.
     Structure* structure = type->instanceStructure();
+    if (type->layout() == PyType::Layout::Exception && structure && !type->hasFlag(PyType::NewIsLookedFor) && !type->hasFlag(PyType::IsAbstract) && !type->cannotBeInstantiated(vm)) {
+        JSValue initializer = type->lookup(vm, names.dunder_init);
+        if (!isNewOfBaseException(type->lookup(vm, names.dunder_new)) || !initializer || !initializer.isObject())
+            return nullptr;
+        if (isInitOfBaseException(initializer))
+            return adoptRef(*new PyType::Construction(PyType::Construction::Kind::Exception, structure, nullptr));
+        if (classifyDescriptor(globalObject, initializer).kind != DescriptorKind::Function)
+            return nullptr;
+        return adoptRef(*new PyType::Construction(PyType::Construction::Kind::Exception, structure, asObject(initializer)));
+    }
+    // What object_new() looks at.
     if (type->layout() != PyType::Layout::Object || !structure || structure->typeInfo().type() != PyInstanceType || type->hasFlag(PyType::IsAbstract) || type->cannotBeInstantiated(vm))
         return nullptr;
     if (!type->newIsThatOfObject(globalObject))
@@ -1738,10 +1748,10 @@ RefPtr<PyType::Construction> workOutConstruction(JSGlobalObject* globalObject, P
     if (!initializer || !initializer.isObject())
         return nullptr;
     if (initializer.asCell() == realm->function(Function::ObjectInit))
-        return adoptRef(*new PyType::Construction(structure, nullptr));
+        return adoptRef(*new PyType::Construction(PyType::Construction::Kind::Instance, structure, nullptr));
     if (classifyDescriptor(globalObject, initializer).kind != DescriptorKind::Function)
         return nullptr;
-    return adoptRef(*new PyType::Construction(structure, asObject(initializer)));
+    return adoptRef(*new PyType::Construction(PyType::Construction::Kind::Instance, structure, asObject(initializer)));
 }
 
 JSValue construct(JSGlobalObject* globalObject, PyType* type, const PyType::Construction& construction, const ArgList& arguments, KeywordNames* keywordNames)
@@ -1750,10 +1760,21 @@ JSValue construct(JSGlobalObject* globalObject, PyType* type, const PyType::Cons
     auto scope = DECLARE_THROW_SCOPE(vm);
     // What is run here can change the class, and then there is no `construction`.
     JSObject* initializer = construction.initializer;
-    // object_new(), and object_init() after it: whichever of them the class has of its own is taken to know what the arguments are for.
-    if (!initializer && arguments.size())
-        return raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), "() takes no arguments"_s));
-    PyInstance* instance = PyInstance::create(vm, construction.structure);
+    JSObject* instance;
+    if (construction.kind == PyType::Construction::Kind::Exception) {
+        // BaseException_new()
+        ASSERT(!keywordNames);
+        PyTuple* given = PyTuple::create(globalObject, arguments.size());
+        for (unsigned i = 0; i < arguments.size(); ++i)
+            given->initializeAt(vm, i, arguments.at(i));
+        instance = PyException::create(vm, type);
+        instance->putDirect(vm, vm.pythonNames().private_args, given);
+    } else {
+        // object_new(), and object_init() after it: whichever of them the class has of its own is taken to know what the arguments are for.
+        if (!initializer && arguments.size())
+            return raiseTypeError(globalObject, scope, concatenate(type->nameString(globalObject), "() takes no arguments"_s));
+        instance = PyInstance::create(vm, construction.structure);
+    }
     if (!initializer)
         return instance;
     MarkedArgumentBuffer withInstance;
