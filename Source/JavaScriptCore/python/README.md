@@ -1292,6 +1292,12 @@ shows if the system has written more than it was given room for, as in CPython.
 `programs/fcntl-module.py` and `termios-module.py` are what can be tried with no terminal. `a-terminal.py` has the two ends of a pseudo-terminal: what goes through it a line at a time and raw, what is rubbed out, what is shown as it is typed, how big it is. What is
 expected of that was taken on Linux only.
 
+### `pwd` and `grp`
+
+`PythonUserDatabaseModules.cpp` is `Modules/pwdmodule.c` and `Modules/grpmodule.c`, which are as alike as what they are about, and are for the host to list, as `posix` is. `os.path.expanduser("~someone")`, `getpass.getuser()`, `Path.owner()` and
+`shutil.chown()` by name come down to them. `programs/the-user-database.py` says nothing of anyone but root, since who there is differs from one machine to the next. For the same reason they are not among the modules of `audits/native-modules.py`,
+whose reference has what everything returns: run by hand with only these two, none of its 3,328 lines differs.
+
 ### `time`
 
 `PythonTimeModule.cpp` is `Modules/timemodule.c`, and `PythonTime.cpp` what it wants of `Python/pytime.c`: a time is a number of nanoseconds, and how a float or an int is made one, rounded which way, and what is said if
