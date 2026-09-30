@@ -122,8 +122,13 @@ JSValue stringRepeat(JSGlobalObject* globalObject, JSString* string, int64_t cou
         if (characters.size() == 1)
             std::ranges::fill(all, characters[0]);
         else {
-            for (auto rest = all; !rest.empty(); rest = rest.subspan(characters.size()))
-                memcpySpan(rest, characters);
+            // What has been copied so far is copied again, so that there is twice as much each time.
+            memcpySpan(all, characters);
+            for (size_t copied = characters.size(); copied < all.size();) {
+                size_t more = std::min(copied, all.size() - copied);
+                memcpySpan(all.subspan(copied), all.first(more));
+                copied += more;
+            }
         }
         return jsString(vm, String(result.releaseNonNull()));
     };

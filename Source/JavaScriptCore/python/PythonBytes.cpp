@@ -973,12 +973,19 @@ static bool repeated(JSGlobalObject* globalObject, ThrowScope& scope, JSValue se
             raiseMemoryError(globalObject, scope);
         return false;
     }
-    if (!result.tryReserveCapacity(size * *count)) {
+    size_t total = size * *count;
+    if (!result.tryReserveCapacity(total)) {
         raiseMemoryError(globalObject, scope);
         return false;
     }
-    for (int64_t i = 0; i < *count; ++i)
-        result.append(content.span());
+    // _PyBytes_Repeat(): what has been copied so far is copied again, so that there is twice as much each time. There is room for it all, so nothing moves.
+    if (size == 1) {
+        result.appendFill(content.span()[0], total);
+        return true;
+    }
+    result.append(content.span());
+    while (result.size() < total)
+        result.append(result.span().first(std::min(result.size(), total - result.size())));
     return true;
 }
 

@@ -1,0 +1,13 @@
+6000 []
+b'ababab' bytearray(b'ababab') ababab b'aaaaa' €€€ b''  bytearray(b'ab') <class 'bytes'> True
+1 5000003 9e1af54d8f8413eb 9e1af54d8f8413eb
+3 1000001 7bc7353af41878cb 7bc7353af41878cb
+16 300007 6977c594dbde0cef 6977c594dbde0cef
+256 20011 ed62c415bdd3a366 ed62c415bdd3a366
+'a' 5000003 9e1af54d8f8413eb
+'abc' 1000001 7bc7353af41878cb
+'\u20acb' 700001 c71bd52165fd7927
+'\U0001f600' 300007 7315e7264f0d6169
+bytearray(b'abcabcabcabcabcabcabcabc') 24
+bytearray(b'abcabcabcabcabcabcabcabc')
+bytearray(b'') bytearray(b'')
