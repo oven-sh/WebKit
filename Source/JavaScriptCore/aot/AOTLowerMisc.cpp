@@ -360,7 +360,7 @@ bool Lowering::tryLowerMisc(Node* node)
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(m_out.testNonZero32(trapBits(), m_out.constInt32(VMTraps::AsyncEvents)), rarely(slowPath), usually(continuation));
         m_out.appendTo(slowPath, continuation);
-        coldCall(node, Entry::operationAOTHandleTraps);
+        coldCall(node, Entry::operationAOTHandleTraps, nullptr, nullptr, ColdCall::ChangesNothing);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return true;
@@ -369,6 +369,8 @@ bool Lowering::tryLowerMisc(Node* node)
         lowerCatch(node);
         return true;
     case op_get_scope:
+        if (Node* scope = code().scopeOfClosure; scope && !node->useCount)
+            return true;
         if (Node* scope = code().scopeOfClosure) {
             setJSValue(node, lowJSValue(scope));
             return true;
@@ -382,6 +384,10 @@ bool Lowering::tryLowerMisc(Node* node)
         setJSValue(node, m_out.loadPtr(callee(), m_heaps.JSCallee_scope));
         return true;
     case op_get_parent_scope:
+        if (node->scopeToStartFrom) {
+            setJSValue(node, scopeThatIsOutFrom(node->scopeToStartFrom, node->hopsFromThere));
+            return true;
+        }
         setJSValue(node, m_out.loadPtr(lowCell(node->use(node->as<OpGetParentScope>().m_scope)), m_heaps.JSScope_next));
         return true;
     case op_argument_count:
@@ -410,7 +416,8 @@ bool Lowering::tryLowerMisc(Node* node)
     }
     case op_type_tag: {
         Node* value = node->uses[0].node;
-        if (value->isKnownToBeBornWithin(node->firstLayout, node->lastLayout)) {
+        // (An array: it is taken to be one.)
+        if (node->narrowedTo || value->isKnownToBeBornWithin(node->firstLayout, node->lastLayout)) {
             noteShapeSite(Instance::ServedWithoutAssertion);
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
@@ -448,7 +455,7 @@ bool Lowering::tryLowerMisc(Node* node)
         emitTypeTests(value, jsValue, mask, continuation, slowPath);
 
         m_out.appendTo(slowPath, continuation);
-        coldCall(node, Entry::operationAOTCheckType, jsValue, m_out.constInt32(mask));
+        coldCall(node, Entry::operationAOTCheckType, jsValue, m_out.constInt32(mask), ColdCall::ChangesNothing);
         // Where the tests leave nothing open, what gets here is not coming back: and then nothing has to be kept for when it does,
         // which is what would have everything that is in use in a register that has to be saved.
         Type admitted = value->type & typeAdmittedByMask(mask);

@@ -43,6 +43,9 @@ struct Slot;
     v(operationAOTLinkTimeConstant) \
     v(operationAOTSettleWhatWasBorn) \
     v(operationAOTNewObjectOfFamily) \
+    v(operationAOTCloneObject) \
+    v(operationAOTNoteClass) \
+    v(operationAOTMakeAtom) \
     v(operationAOTNoteExit) \
     v(operationAOTNewFunction) \
     v(operationAOTSetFunctionName) \
@@ -143,6 +146,9 @@ enum class InternalFieldObjectKind : uint32_t {
 // Allocation.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject*, uint32_t inlineCapacity, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfFamily, JSObject*, (JSGlobalObject*, uint32_t family, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject*, EncodedJSValue source, uint32_t family));
+JSC_DECLARE_JIT_OPERATION(operationAOTNoteClass, void, (JSGlobalObject*, EncodedJSValue constructor, EncodedJSValue prototype, uint32_t family));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue)); // Lowering::asHeld()
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlobalObject*, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObject*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (JSGlobalObject*, JSObject* callee, uint32_t inlineCapacity));

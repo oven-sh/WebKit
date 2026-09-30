@@ -618,14 +618,15 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 
     auto* propertyList = m_list;
     RefPtr<RegisterID> newObject;
-    // (What is said of the literal is said of an op_new_object: what it makes may have to be laid out to suit its type, whatever it is a copy of.)
-    if ((propertyList->m_node->m_type & PropertyNode::Spread) && !typeTag()) {
+    // (What is said of the literal is said of the call that makes the copy: it may have to be laid out to suit its type, whatever it is a copy of.)
+    if (propertyList->m_node->m_type & PropertyNode::Spread) {
         // Only one element and it is spread.
         if (!propertyList->m_next) {
             RefPtr<RegisterID> function = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::cloneObject);
             RefPtr<RegisterID> src = generator.emitNode(static_cast<ObjectSpreadExpressionNode*>(propertyList->m_node->m_assign)->expression());
             CallArguments args(generator, nullptr, 0);
             generator.move(args.thisRegister(), src.get());
+            generator.emitTypeTag(typeTag());
             return generator.emitCall(generator.finalDestination(dst, function.get()), function.get(), NoExpectedFunction, args, position(), position(), position(), DebuggableCall::No);
         }
 
@@ -648,6 +649,7 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
             RefPtr<RegisterID> src = generator.emitNode(static_cast<ObjectSpreadExpressionNode*>(propertyList->m_node->m_assign)->expression());
             CallArguments args(generator, nullptr, 0);
             generator.move(args.thisRegister(), src.get());
+            generator.emitTypeTag(typeTag());
             newObject = generator.emitCall(generator.tempDestination(dst), function.get(), NoExpectedFunction, args, position(), position(), position(), DebuggableCall::No);
             propertyList = propertyList->m_next;
         }
@@ -5848,6 +5850,16 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
 
             generator.emitDirectPutById(constructor.get(), generator.propertyNames().builtinNames().instanceFieldInitializerPrivateName(), instanceFieldInitializer.get());
         }
+    }
+
+    // It has its methods, and nothing has had the chance to make an instance of it.
+    if (uint32_t tag = typeTag()) {
+        RefPtr<RegisterID> function = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::noteClass);
+        CallArguments args(generator, nullptr, 1);
+        generator.move(args.thisRegister(), constructor.get());
+        generator.move(args.argumentRegister(0), prototype.get());
+        generator.emitTypeTag(tag);
+        generator.emitCallIgnoreResult(generator.newTemporary(), function.get(), NoExpectedFunction, args, position(), position(), position(), DebuggableCall::No);
     }
 
     if (!m_name.isNull()) {

@@ -266,6 +266,16 @@ struct Node {
     bool calleeIsChecked { false };
     bool wasTakenNeverToBeReached { false }; // inferTypes(): nothing was found that it could give. For Options::aotVerifiesFacts().
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
+    // An op_get_by_id of a closed method whose value nothing wants: all that is left of it is that it throws if there is no object to read from.
+    bool isReadOnlyToBeCalled { false };
+    // promoteEnvironments(). An op_create_lexical_environment that is no object: its variables are the function's own.
+    bool isPromoted { false };
+    // An op_get_from_scope or op_put_to_scope of a variable of such an environment: which, and where in it.
+    Node* promotedEnvironment { nullptr };
+    unsigned offsetInEnvironment { 0 };
+    // An op_resolve_scope or op_get_parent_scope that gets to a scope that is an object by way of environments that are not: it is that many out from this.
+    Node* scopeToStartFrom { nullptr };
+    unsigned hopsFromThere { 0 };
     Escape escape { Escape::NotLookedAt }; // If it makes something (kindOfAllocation()).
     uint32_t fact { 0 }; // EXPERIMENT: Options::aotFacts().
     uint8_t iteratedFact { 0 }; // Likewise: it is an array. What an element holds, plus one.
@@ -275,6 +285,8 @@ struct Node {
     // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
     // op_create_this: how many properties the object is made with (NewObjectPlan). Their values are the uses at NewObjectPlan::registerOf().
     unsigned numberOfLiteralProperties { 0 };
+    // An op_get_by_val or op_get_length of an array, in a loop that changes no array: the header of the loop ahead of which the array is looked at (BasicBlock::arraysViewed).
+    BasicBlock* viewedAheadOf { nullptr };
     Node* storage { nullptr }; // A guard of an access to an element of a typed array: the GuardKind::TypedArrayStorage that goes for it.
 
     // Lowering state.
@@ -376,6 +388,11 @@ struct BasicBlock {
     Vector<Node*> valuesAtTail; // Indexed by Graph::registerIndex().
 
     B3::BasicBlock* lowered { nullptr };
+    // The header of a loop that is kept whole and changes no array: the arrays that it goes by, which are the same ones every time round. All ways in but the loop's own jumps back
+    // go by a block that looks at them.
+    Vector<Node*, 2> arraysViewed;
+    BitVector bodyOfLoop; // By block index.
+    B3::BasicBlock* loweredAhead { nullptr };
     B3::BasicBlock* loweredTail { nullptr }; // The B3 block that the block's last code went to.
 
     Node* terminal() const { return nodes.isEmpty() ? nullptr : nodes.last(); }
@@ -502,7 +519,18 @@ public:
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
     // TypeTable::hasStructs(): the field that an op_get_by_id or op_put_by_id gets at without asking, if it does.
     static std::optional<TypeTable::Field> fieldOfStructGotAtBy(const Node*);
+    // Of structs: the field of that name of the family that the value is proven to have been born into, if it is proven to have been born into one.
+    static std::optional<TypeTable::Field> fieldOfWhatIsBornAs(const Node* base, UniquedStringImpl* name);
     static uint16_t familyOfNewObject(const Node*); // TypeTable::hasStructs(): what an op_new_object makes is born as that. Zero: nothing.
+    // ---- Classes (ClassesOfProgram).
+    // A call of @noteClass: the type that says what class it is (TypeTable::isClass()). Zero: it is no such call, or nothing is said.
+    static uint32_t classNotedBy(const Node*);
+    void noteClassesDefined();
+    // An op_get_by_id that reads a closed method: the number of the function. It gives that and nothing else. Zero: it is not one.
+    static uint32_t closedMethodReadBy(const Node*);
+    // What `this` is born as in this code, which is that of a constructor, a method or an initializer of a class. Zero: there is no telling.
+    uint16_t familyOfThis() const;
+    Type typeOfThisOnEntry() const;
     static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }
     // The properties that an object literal starts out with: functor(index of the identifier, register the value is in).
     // An object literal: where the op_put_by_id are that make the object of an op_new_object what the literal says, as far as they
@@ -576,8 +604,10 @@ public:
     void noteWhatCannotBeToldOfVariables(VariableFacts&);
     Type typeOfArgumentOnEntry(unsigned indexIncludingThis) const
     {
-        if (!m_facts || !m_facts->isClosed || !indexIncludingThis || indexIncludingThis >= ProgramFacts::mostParameters)
+        if (!m_facts || !m_facts->isClosed || indexIncludingThis >= ProgramFacts::mostParameters)
             return TTop;
+        if (!indexIncludingThis)
+            return m_facts->thisType.load();
         return m_facts->parameterTypes[indexIncludingThis].load();
     }
     const CalleeHints* calleeHints() const { return m_hints; }
@@ -712,6 +742,7 @@ void optimizeLoops(Graph&);
 void simplify(Graph&);
 void inlineCalls(Graph&, const CodeOfProgram&);
 void analyzeEscapes(Graph&); // Node::escape
+void promoteEnvironments(Graph&); // Node::isPromoted
 // ProgramFacts::parametersThatEscape, going by what is said so far of the functions it calls (calleesConsulted).
 uint32_t parametersThatEscape(Graph&, Vector<const KnownFunction*>* calleesConsulted);
 void reportEscapeStatistics();

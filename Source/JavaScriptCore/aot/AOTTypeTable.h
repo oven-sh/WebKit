@@ -9,6 +9,8 @@
 
 #include "AOTType.h"
 #include "Identifier.h"
+#include "Structure.h"
+#include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 
@@ -43,9 +45,13 @@ public:
         // If not zero: what the bit for other objects stands for is objects born as one of these layouts, and no others.
         uint16_t first { 0 };
         uint16_t last { 0 };
+        // A string there is an atom: its type is a union of string literals. So two of them are the same string if they are the same StringImpl.
+        bool atoms { false };
+        static Holds from(uint32_t kinds, uint32_t families) { return { kinds & ~SlotsOfBornObjects::stringsAreAtoms, static_cast<uint16_t>(families >> 16), static_cast<uint16_t>(families), !!(kinds & SlotsOfBornObjects::stringsAreAtoms) }; }
+        uint16_t kindsAsHeld() const { return safeCast<uint16_t>(kinds | (atoms ? SlotsOfBornObjects::stringsAreAtoms : 0u)); } // SlotsOfBornObjects::Held::kinds
         bool saysSomething() const { return kinds; }
         unsigned kindsButForThoseBorn() const { return first ? kinds & ~MaskOtherObject : kinds; }
-        Holds kindsOnly() const { return { kinds, 0, 0 }; }
+        Holds kindsOnly() const { return { kinds, 0, 0, atoms }; }
         // What is read from such a slot, if anything is there.
         Type type() const
         {
@@ -77,6 +83,21 @@ public:
     };
     // Of a type that is a shape, if there are layouts that have it in a slot.
     std::optional<Field> fieldOf(uint32_t type, UniquedStringImpl* name) const;
+    // Of structs: what goes for every object of the family, whatever type it is looked at as.
+    std::optional<Field> fieldOfFamily(uint32_t family, UniquedStringImpl* name) const;
+
+    // What is said at the `{` of the body of a class. Its instances are born into that family (zero: into none). A method of it that is CLOSED is one that nothing gets hold of but
+    // reads that say so (classOfMethodGotAt()): so whoever calls it is known, all of them.
+    bool isArray(uint32_t type) const { auto words = record(type); return words.size() == 2 && words[0] == Array; }
+    bool isClass(uint32_t type) const { auto words = record(type); return words.size() >= 3 && words[0] == IsClass; }
+    uint16_t familyOfInstancesOf(uint32_t classType) const
+    {
+        auto words = record(classType);
+        return words.size() >= 3 && words[0] == IsClass && words[1] && isUsable(words[1]) ? safeCast<uint16_t>(words[1]) : uint16_t(0);
+    }
+    bool isClosedMethod(uint32_t classType, UniquedStringImpl* name) const;
+    // Of a type that is a shape: reading the property gives one method and no other, which is closed; this is the class that declares it. Zero: there is no telling.
+    uint32_t classOfMethodGotAt(uint32_t type, UniquedStringImpl* name) const;
 
     // Version 4 of the table: the objects are structs (SlotsOfBornObjects::Named). What an object was born as is the number of its family, so Field::first and
     // Field::last are that, as are those of Holds; every name of the family has a slot in every object of it, and an object that has no such property has nothing there.
@@ -97,7 +118,10 @@ public:
     };
     Family family(uint32_t number) const;
     bool isUsable(uint32_t family) const; // Its objects can be made.
-    unsigned inlineSlotsOf(uint32_t family) const { return m_words[m_families[family]] >> 16; }
+    unsigned inlineSlotsOf(uint32_t family) const { return m_words[m_families[family]] >> 16 & 0xff; }
+    bool isOpen(uint32_t family) const { return m_words[m_families[family]] >> 30 & 1; } // Code that knows nothing of the types may make objects of it.
+    // An object that is made with properties of these names, by whoever does not know what for, may yet be made one of a family: how many slots in the object that could take.
+    unsigned inlineSlotsWantedBy(std::span<UniquedStringImpl* const> names) const;
     // Of what an op_new_object is said to make: a layout, or a shape. Zero: none, or no structs.
     uint16_t familyOfWhatIsMade(uint32_t type) const
     {
@@ -135,7 +159,7 @@ public:
     }
 
 private:
-    enum Kind : uint32_t { Tags = 1, Shape, Array, Union, IsLayout };
+    enum Kind : uint32_t { Tags = 1, Shape, Array, Union, IsLayout, IsClass };
     static constexpr unsigned wordsOfField = 9;
     static constexpr unsigned wordsOfPropertyOfLayout = 4;
 
@@ -152,6 +176,7 @@ private:
     Vector<uint32_t> m_words;
     Vector<uint32_t> m_layouts; // By number: where it is.
     Vector<uint32_t> m_families; // Likewise.
+    UncheckedKeyHashMap<UniquedStringImpl*, Vector<uint32_t>> m_openFamiliesWithName; // In order.
     bool m_hasStructs { false };
     unsigned wordsBeforePropertiesOfLayout() const { return m_hasStructs ? 3 : 2; }
     Vector<uint32_t> m_types; // Likewise.

@@ -38,7 +38,9 @@ using CustomAccessorValueFunc = FunctionPtr<CustomAccessorPtrTag, bool(JSGlobalO
 
 class PutPropertySlot {
 public:
-    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor };
+    // ExistingFieldOfStruct: as ExistingProperty, but only what the slot holds may be stored there (SlotsOfBornObjects). Whoever remembers where it is has to look at what it stores.
+    // NewFieldOfStruct: likewise, as NewProperty.
+    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingFieldOfStruct, NewFieldOfStruct };
     enum Context : uint8_t { UnknownContext, PutById, PutByIdEval };
 
     PutPropertySlot(JSValue thisValue, bool isStrictMode = false, Context context = UnknownContext, bool isInitialization = false)
@@ -53,6 +55,24 @@ public:
         , m_cacheability(CachingAllowed)
     {
     }
+
+    // held: SlotsOfBornObjects::Held::kinds | first << 16.
+    void setExistingFieldOfStruct(JSObject* base, PropertyOffset offset, uint32_t held)
+    {
+        m_type = ExistingFieldOfStruct;
+        m_base = base;
+        m_offset = offset;
+        m_held = held;
+    }
+    void setNewFieldOfStruct(JSObject* base, PropertyOffset offset, uint32_t held)
+    {
+        m_type = NewFieldOfStruct;
+        m_base = base;
+        m_offset = offset;
+        m_held = held;
+    }
+    bool isCacheablePutOfFieldOfStruct() const { return isCacheable() && (m_type == ExistingFieldOfStruct || m_type == NewFieldOfStruct); }
+    uint32_t held() const { return m_held; }
 
     void setExistingProperty(JSObject* base, PropertyOffset offset)
     {
@@ -141,6 +161,7 @@ private:
     SUPPRESS_FORWARD_DECL_MEMBER JSObject* m_base;
     JSValue m_thisValue;
     PropertyOffset m_offset;
+    uint32_t m_held { 0 };
     bool m_isStrictMode : 1;
     bool m_isInitialization : 1;
     bool m_isTaintedByOpaqueObject : 1;

@@ -13,6 +13,7 @@
 #include "AOTBuiltins.h"
 #include "AOTProgram.h"
 #include "AOTStubs.h"
+#include "BuiltinNames.h"
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
 #include "JSCInlines.h"
@@ -618,6 +619,13 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isProven) const
             proven = true;
         }
     }
+    if ((!known || !proven) && functionsOfProgram() && (node->opcode == op_call || node->opcode == op_call_ignore_result || node->opcode == op_tail_call)) {
+        VirtualRegister calleeRegister = node->opcode == op_tail_call ? node->as<OpTailCall>().m_callee : operandsOfCall(node->instruction).callee;
+        if (const KnownFunction* method = functionsOfProgram()->function(closedMethodReadBy(node->use(calleeRegister))); method && method->forCall) {
+            known = method;
+            proven = true;
+        }
+    }
     // Whatever way it got there, if there is one function that it can be. (Whatever else it may be cannot be called: whoever makes the call
     // sees to that.)
     if ((!known || !proven) && Options::aotFollowsFunctions() && node->opcode != op_construct) {
@@ -812,6 +820,10 @@ bool Graph::passesNoFunctionObject(const Node* node)
     const KnownFunction* known = knownCallee(node, &isProven);
     if (!known || !isProven || !known->needsNoFunctionObject.load(std::memory_order_relaxed))
         return false;
+    if (closedMethodReadBy(node->use(calleeRegister))) {
+        usesStaticImports = true;
+        return true;
+    }
     if (!node->use(calleeRegister)->isBytecode(op_get_from_scope))
         return node->hasFact(FactDirect, 4);
     // The function goes by where the environment of its module is, so that had better be known here too. (This says that the code
@@ -895,17 +907,18 @@ void Graph::elideReadsOfCalleesNotPassed()
     UncheckedKeyHashMap<Node*, unsigned> wanted;
     Vector<Node*, 16> reads;
     auto note = [&](Node* user, const Use& use) {
-        if (!use.node->isBytecode(op_get_from_scope) && !((Options::aotFacts() & 4) && use.node->isBytecode(op_get_by_id)))
+        bool isMethod = closedMethodReadBy(use.node);
+        if (!use.node->isBytecode(op_get_from_scope) && !((Options::aotFacts() & 4) && use.node->isBytecode(op_get_by_id)) && !isMethod)
             return;
         bool wantsValue = true;
         if (user->isBytecode(op_check_tdz))
             wantsValue = mayBe(use.node->type, TEmpty);
         else if (user->isBytecode(op_call))
-            wantsValue = use.reg != user->as<OpCall>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
+            wantsValue = use.reg != user->as<OpCall>().m_callee || !passesNoFunctionObject(user) || !(isMethod || knownCallee(user)->isDeclaration);
         else if (user->isBytecode(op_call_ignore_result))
-            wantsValue = use.reg != user->as<OpCallIgnoreResult>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
+            wantsValue = use.reg != user->as<OpCallIgnoreResult>().m_callee || !passesNoFunctionObject(user) || !(isMethod || knownCallee(user)->isDeclaration);
         else if (user->isBytecode(op_tail_call))
-            wantsValue = use.reg != user->as<OpTailCall>().m_callee || !passesNoFunctionObject(user) || !knownCallee(user)->isDeclaration;
+            wantsValue = use.reg != user->as<OpTailCall>().m_callee || !passesNoFunctionObject(user) || !(isMethod || knownCallee(user)->isDeclaration);
         auto result = wanted.add(use.node, 0);
         if (result.isNewEntry)
             reads.append(use.node);
@@ -927,7 +940,11 @@ void Graph::elideReadsOfCalleesNotPassed()
         // Reading it does nothing that anybody can see: it holds the function, or is about to be given it (a declaration's is made
         // when it is first read).
         if (read->isBytecode(op_get_by_id)) {
-            read->isElided = true;
+            // (Reading a method of what is no object throws. Of an object it does nothing that anybody can see.)
+            if (closedMethodReadBy(read))
+                read->isReadOnlyToBeCalled = true;
+            else
+                read->isElided = true;
             continue;
         }
         bool isProven = false;
@@ -1364,16 +1381,144 @@ std::optional<TypeTable::Field> Graph::fieldOfStructGotAtBy(const Node* node)
     if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::areStructsToGoBy() || node->guard)
         return std::nullopt;
     uint32_t tag = typeTagOf(node);
-    if (!tag)
-        return std::nullopt;
     unsigned identifier;
-    if (node->isBytecode(op_get_by_id) && (Options::aotShapes() & 2))
+    VirtualRegister base;
+    if (node->isBytecode(op_get_by_id) && (Options::aotShapes() & 2)) {
         identifier = node->as<OpGetById>().m_property;
-    else if (node->isBytecode(op_put_by_id) && (Options::aotShapes() & 4))
+        base = node->as<OpGetById>().m_base;
+    } else if (node->isBytecode(op_put_by_id) && (Options::aotShapes() & 4)) {
         identifier = node->as<OpPutById>().m_property;
-    else
+        base = node->as<OpPutById>().m_base;
+    } else
         return std::nullopt;
-    return TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(identifier).impl());
+    UniquedStringImpl* name = node->graph->codeBlock()->identifier(identifier).impl();
+    if (tag) {
+        if (auto field = TypeTable::shared()->fieldOf(tag, name))
+            return field;
+    }
+    return fieldOfWhatIsBornAs(node->use(base), name);
+}
+
+std::optional<TypeTable::Field> Graph::fieldOfWhatIsBornAs(const Node* base, UniquedStringImpl* name)
+{
+    if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy() || !base->type || !isSubtype(base->type, TFinalObject))
+        return std::nullopt;
+    auto families = layoutsBornAs(base->type);
+    if (!families.lowest || families.lowest != families.highest)
+        return std::nullopt;
+    return TypeTable::shared()->fieldOfFamily(families.lowest, name);
+}
+
+uint32_t Graph::classNotedBy(const Node* node)
+{
+    if (!node->isBytecode(op_call_ignore_result) || !Options::aotTypesFields() || !TypeTable::areStructs())
+        return 0;
+    CallOperands operands = operandsOfCall(node->instruction);
+    if (operands.argc != 2 || linkTimeConstantOf(node->use(operands.callee)) != LinkTimeConstant::noteClass)
+        return 0;
+    uint32_t tag = typeTagOf(node);
+    return tag && TypeTable::shared()->isClass(tag) ? tag : 0;
+}
+
+static UnlinkedFunctionExecutable* functionMadeBy(const Node* node)
+{
+    if (node->kind != NodeKind::Bytecode)
+        return nullptr;
+    UnlinkedCodeBlock* code = node->graph->codeBlock();
+    switch (node->opcode) {
+    case op_new_func_exp:
+        return code->functionExpr(node->as<OpNewFuncExp>().m_functionDecl);
+    case op_new_generator_func_exp:
+        return code->functionExpr(node->as<OpNewGeneratorFuncExp>().m_functionDecl);
+    case op_new_async_func_exp:
+        return code->functionExpr(node->as<OpNewAsyncFuncExp>().m_functionDecl);
+    case op_new_async_generator_func_exp:
+        return code->functionExpr(node->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl);
+    default:
+        return nullptr;
+    }
+}
+
+void Graph::noteClassesDefined()
+{
+    ClassesOfProgram* classes = classesOfProgram();
+    const FunctionsOfProgram* functions = functionsOfProgram();
+    if (!classes || !functions)
+        return;
+    for (BasicBlock* block : m_rpo) {
+        for (Node* note : block->nodes) {
+            uint32_t classType = classNotedBy(note);
+            if (!classType)
+                continue;
+            CallOperands operands = operandsOfCall(note->instruction);
+            Node* constructor = note->use(operands.argument(0));
+            Node* prototype = note->use(operands.argument(1));
+            uint16_t family = TypeTable::shared()->familyOfInstancesOf(classType);
+            auto noteThisInCodeOf = [&](Node* value) -> uint32_t {
+                UnlinkedFunctionExecutable* made = functionMadeBy(value);
+                uint32_t number = made ? functions->numberOf(made) : 0;
+                if (const KnownFunction* function = functions->function(number)) {
+                    classes->noteThisIn(function->forCall, family);
+                    classes->noteThisIn(function->forConstruct, family);
+                }
+                return number;
+            };
+            noteThisInCodeOf(constructor);
+            for (BasicBlock* otherBlock : m_rpo) {
+                for (Node* node : otherBlock->nodes) {
+                    if (node->isBytecode(op_define_data_property)) {
+                        auto bytecode = node->as<OpDefineDataProperty>();
+                        if (node->use(bytecode.m_base) != prototype)
+                            continue;
+                        uint32_t number = noteThisInCodeOf(node->use(bytecode.m_value));
+                        Node* property = node->use(bytecode.m_property);
+                        if (!number || property->kind != NodeKind::ConstantCell || !property->reg.isConstant())
+                            continue;
+                        JSValue name = property->graph->codeBlock()->getConstant(property->reg);
+                        const StringImpl* impl = name && name.isString() ? asString(name)->tryGetValueImpl() : nullptr;
+                        if (!impl || !impl->isAtom())
+                            continue;
+                        auto* uid = static_cast<UniquedStringImpl*>(const_cast<StringImpl*>(impl));
+                        if (TypeTable::shared()->isClosedMethod(classType, uid))
+                            classes->noteClosedMethod(classType, uid, number);
+                    } else if (node->isBytecode(op_put_by_id)) {
+                        auto bytecode = node->as<OpPutById>();
+                        if (node->use(bytecode.m_base) == constructor && node->graph->codeBlock()->identifier(bytecode.m_property) == m_vm.propertyNames->builtinNames().instanceFieldInitializerPrivateName())
+                            noteThisInCodeOf(node->use(bytecode.m_value));
+                    }
+                }
+            }
+        }
+    }
+}
+
+uint32_t Graph::closedMethodReadBy(const Node* node)
+{
+    if (!node->isBytecode(op_get_by_id) || !Options::aotTypesFields() || !TypeTable::areStructsToGoBy() || !classesOfProgram())
+        return 0;
+    uint32_t tag = typeTagOf(node);
+    if (!tag)
+        return 0;
+    UniquedStringImpl* name = node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl();
+    uint32_t classType = TypeTable::shared()->classOfMethodGotAt(tag, name);
+    return classType ? classesOfProgram()->closedMethod(classType, name) : 0;
+}
+
+Type Graph::typeOfThisOnEntry() const
+{
+    // What gives an instance its fields is called by the constructor and by nothing else, on what has just been made.
+    if (m_codeBlock->parseMode() == SourceParseMode::ClassFieldInitializerMode) {
+        if (uint16_t family = familyOfThis())
+            return typeOfObjectBornAs(family);
+    }
+    return typeOfArgumentOnEntry(0);
+}
+
+uint16_t Graph::familyOfThis() const
+{
+    if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy() || !classesOfProgram())
+        return 0;
+    return classesOfProgram()->familyOfThisIn(m_codeBlock);
 }
 
 uint16_t Graph::familyOfNewObject(const Node* node)
@@ -1392,7 +1537,7 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
     std::optional<TypeTable::Layout> layout;
     if (uint32_t tag = typeTagOf(node); tag && (Options::aotShapes() & 1) && TypeTable::shared())
         layout = TypeTable::shared()->layoutOf(tag);
-    if ((count < 2 && !layout && !familyOfNewObject(node)) || count > KnownShape::maxProperties)
+    if ((!count && !layout && !familyOfNewObject(node)) || count > KnownShape::maxProperties)
         return std::nullopt;
     KnownShape shape;
     shape.inlineCapacity = KnownShape::inlineCapacityFor(count);
@@ -1423,7 +1568,8 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
             shape.inlineSlots = layout->inlineSlots;
             for (auto& property : layout->properties)
                 shape.slots.append(property.second);
-            shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->family ? layout->inlineSlots : layout->capacity);
+            // (An object of a closed family has room for what it can ever be given, which need not be all that the family has names for.)
+            shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->family ? std::min<unsigned>(layout->inlineSlots, layout->capacity) : layout->capacity);
             return shape;
         }
     }
@@ -1444,7 +1590,12 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
         shape.inlineCapacity = KnownShape::inlineCapacityFor(family.inlineSlots);
         return shape;
     }
-    if (count < 2)
+    // (Nobody says what it is for. It may turn out to be for something that wants more room than it takes to make it.)
+    if (Options::aotTypesFields() && TypeTable::areStructs()) {
+        if (unsigned wanted = TypeTable::shared()->inlineSlotsWantedBy(shape.names.span()); wanted > count)
+            shape.inlineCapacity = std::max(shape.inlineCapacity, KnownShape::inlineCapacityFor(wanted));
+    }
+    if (count < 2 && shape.inlineCapacity == KnownShape::inlineCapacityFor(count))
         return std::nullopt;
     return shape;
 }
@@ -2269,6 +2420,26 @@ private:
         return { TypeTable::shared()->familyOf(m_graph.typeTagAt(next)), base };
     }
 
+    // Likewise: where the base of the access after the op_type_tag there is, if it is said to be an array.
+    VirtualRegister arrayAssertedAt(unsigned offset)
+    {
+        if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy())
+            return { };
+        unsigned next = offset + m_instructions.at(offset)->size();
+        if (next >= m_instructions.size())
+            return { };
+        uint32_t tag = m_graph.typeTagAt(next);
+        if (!tag || !TypeTable::shared()->isArray(tag))
+            return { };
+        const JSInstruction* access = m_instructions.at(next).ptr();
+        VirtualRegister base;
+        if (access->opcodeID() == op_get_by_id)
+            base = access->as<OpGetById>().m_base;
+        else if (access->opcodeID() == op_get_length)
+            base = access->as<OpGetLength>().m_base;
+        return base.isValid() && !base.isConstant() ? base : VirtualRegister();
+    }
+
     // Options::aotTypesFields() with one copy of the code: an access that goes by the type of the base does so in a loop as anywhere else, and wants no guard.
     bool goesByTypeWhereverItIs(unsigned offset)
     {
@@ -2909,7 +3080,7 @@ private:
             for (unsigned i = 0; i < m_graph.numArguments(); ++i) {
                 Node* node = m_graph.addNode(NodeKind::Argument);
                 node->reg = virtualRegisterForArgumentIncludingThis(i);
-                node->type = m_graph.typeOfArgumentOnEntry(i);
+                node->type = i ? m_graph.typeOfArgumentOnEntry(i) : m_graph.typeOfThisOnEntry();
                 append(block, node);
                 set(block, node->reg, node);
             }
@@ -2949,7 +3120,12 @@ private:
                 // Of structs, it says more than that: what the next instruction gets at is of the family, or this does not go on. From here on whoever has the
                 // value in hand has something that is known for what it was born as, so it is a definition, as a check is.
                 auto [family, baseRegister] = familyAssertedAt(offset);
-                if (!family || !m_graph.isTracked(baseRegister))
+                bool isArray = false;
+                if (!family) {
+                    baseRegister = arrayAssertedAt(offset);
+                    isArray = baseRegister.isValid();
+                }
+                if ((!family && !isArray) || !m_graph.isTracked(baseRegister))
                     continue;
                 Node* base = get(block, baseRegister);
                 Node* node = m_graph.addNode(NodeKind::Bytecode);
@@ -2959,6 +3135,8 @@ private:
                 node->bytecodeIndex = BytecodeIndex(offset + instruction->size());
                 node->uses.append({ baseRegister, base });
                 node->firstLayout = node->lastLayout = family;
+                if (isArray)
+                    node->narrowedTo = TArray;
                 node->reg = baseRegister;
                 append(block, node);
                 for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
@@ -3046,7 +3224,8 @@ private:
             }
             case op_create_this: {
                 // A register that lives in memory is written where the instruction is.
-                if (m_graph.hasHomedRegisters() || block->isInLoop)
+                // (An instance of a class of structs has its fields where their names say, not one after the other: they are stored one by one, by stores that know where.)
+                if (m_graph.hasHomedRegisters() || block->isInLoop || m_graph.familyOfThis())
                     break;
                 m_planOfObject = NewObjectPlan::forCreateThis(m_instructions, offset);
                 if (m_planOfObject.stores.isEmpty() || m_planOfObject.stores.last().offset >= block->bytecodeEnd)

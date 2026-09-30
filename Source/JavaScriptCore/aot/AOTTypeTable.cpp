@@ -80,6 +80,13 @@ void TypeTable::load(VM& vm)
         at += word() * 4;
     }
     RELEASE_ASSERT(at == bytes.size());
+    for (uint32_t number = 1; number < table->m_families.size(); ++number) {
+        if (!table->isUsable(number) || !table->isOpen(number))
+            continue;
+        auto words = table->m_words.span().subspan(table->m_families[number]);
+        for (unsigned i = 0; i < words[1]; ++i)
+            table->m_openFamiliesWithName.add(table->m_names[words[2 + i * wordsOfPropertyOfLayout]].impl(), Vector<uint32_t> { }).iterator->value.append(number);
+    }
     RELEASE_ASSERT(table->numberOfLayouts() < std::numeric_limits<uint16_t>::max());
     s_shared = table.release();
 }
@@ -99,9 +106,53 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
         if (m_hasStructs && !isUsable(field[2]))
             return std::nullopt;
         bool isInherited = m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; });
-        return Field { static_cast<uint16_t>(field[1]), !!(bits & 1), m_hasStructs ? static_cast<uint8_t>(inlineSlotsOf(field[2])) : uint8_t(255), !!(bits & 8), safeCast<uint16_t>(field[2]), safeCast<uint16_t>(field[3]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[4]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[5]), field[6], Holds { field[7], static_cast<uint16_t>(field[8] >> 16), static_cast<uint16_t>(field[8]) } };
+        return Field { static_cast<uint16_t>(field[1]), !!(bits & 1), m_hasStructs ? static_cast<uint8_t>(inlineSlotsOf(field[2])) : uint8_t(255), !!(bits & 8), safeCast<uint16_t>(field[2]), safeCast<uint16_t>(field[3]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[4]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[5]), field[6], Holds::from(field[7], field[8]) };
     }
     return std::nullopt;
+}
+
+std::optional<TypeTable::Field> TypeTable::fieldOfFamily(uint32_t number, UniquedStringImpl* name) const
+{
+    if (!m_hasStructs || !number || number >= m_families.size() || !isUsable(number))
+        return std::nullopt;
+    auto words = m_words.span().subspan(m_families[number]);
+    for (unsigned i = 0; i < words[1]; ++i) {
+        auto entry = words.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+        if (m_names[entry[0]].impl() != name)
+            continue;
+        bool mayBeAbsent = !!(entry[1] >> 16);
+        // (An object that has no such property of its own has Object.prototype's.)
+        if (mayBeAbsent && m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; }))
+            return std::nullopt;
+        return Field { static_cast<uint16_t>(entry[1]), mayBeAbsent, static_cast<uint8_t>(inlineSlotsOf(number)), mayBeAbsent, safeCast<uint16_t>(number), safeCast<uint16_t>(number), 0, 0, 0,
+            Holds::from(entry[2], entry[3]) };
+    }
+    return std::nullopt;
+}
+
+bool TypeTable::isClosedMethod(uint32_t classType, UniquedStringImpl* name) const
+{
+    auto words = record(classType);
+    if (words.size() < 3 || words[0] != IsClass)
+        return false;
+    for (unsigned i = 0; i < words[2]; ++i) {
+        if (m_names[words[3 + i]].impl() == name)
+            return true;
+    }
+    return false;
+}
+
+uint32_t TypeTable::classOfMethodGotAt(uint32_t type, UniquedStringImpl* name) const
+{
+    auto words = record(type);
+    if (words.size() < 3 || words[0] != Shape)
+        return 0;
+    for (unsigned i = 0; i < words[2]; ++i) {
+        auto field = words.subspan(3 + i * wordsOfField, wordsOfField);
+        if (m_names[field[0]].impl() == name)
+            return (field[1] >> 16 & 16) && isClass(field[6]) ? field[6] : 0;
+    }
+    return 0;
 }
 
 std::optional<TypeTable::Layout> TypeTable::layoutOf(uint32_t type) const
@@ -117,12 +168,38 @@ std::optional<TypeTable::Layout> TypeTable::layoutOf(uint32_t type) const
         if (!isUsable(layout[2]))
             return std::nullopt;
         result.family = safeCast<uint16_t>(layout[2]);
-        result.inlineSlots = inlineSlotsOf(layout[2]);
+        // (What a literal has that the family has no slot for comes after the family's slots, in the object like them.)
+        result.inlineSlots = std::max<unsigned>(inlineSlotsOf(layout[2]), result.capacity);
     }
     for (unsigned i = 0; i < layout[1]; ++i) {
         auto property = layout.subspan(wordsBeforePropertiesOfLayout() + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
         result.properties.append({ m_names[property[0]].impl(), safeCast<uint16_t>(property[1]) });
-        result.holds.append(Holds { property[2], static_cast<uint16_t>(property[3] >> 16), static_cast<uint16_t>(property[3]) });
+        result.holds.append(Holds::from(property[2], property[3]));
+    }
+    return result;
+}
+
+unsigned TypeTable::inlineSlotsWantedBy(std::span<UniquedStringImpl* const> names) const
+{
+    if (names.empty() || m_openFamiliesWithName.isEmpty())
+        return 0;
+    const Vector<uint32_t>* fewest = nullptr;
+    for (UniquedStringImpl* name : names) {
+        auto it = m_openFamiliesWithName.find(name);
+        if (it == m_openFamiliesWithName.end())
+            return 0;
+        if (!fewest || it->value.size() < fewest->size())
+            fewest = &it->value;
+    }
+    unsigned result = 0;
+    for (uint32_t family : *fewest) {
+        if (inlineSlotsOf(family) <= result)
+            continue;
+        bool hasAll = true;
+        for (UniquedStringImpl* name : names)
+            hasAll &= std::ranges::binary_search(m_openFamiliesWithName.find(name)->value, family);
+        if (hasAll)
+            result = inlineSlotsOf(family);
     }
     return result;
 }
@@ -132,7 +209,7 @@ bool TypeTable::isUsable(uint32_t number) const
     if (!number || number >= m_families.size())
         return false;
     auto words = m_words.span().subspan(m_families[number]);
-    return (words[0] & 0xffff) <= 255 && (words[0] >> 16) <= std::min<unsigned>(JSFinalObject::maxInlineCapacity, 255) && words[1] <= 255;
+    return (words[0] & 0xffff) <= 255 && (words[0] >> 16 & 0xff) <= std::min<unsigned>(JSFinalObject::maxInlineCapacity, 255) && (words[0] & 0xffff) && words[1] <= 4095;
 }
 
 TypeTable::Family TypeTable::family(uint32_t number) const
@@ -142,10 +219,10 @@ TypeTable::Family TypeTable::family(uint32_t number) const
         return result;
     auto words = m_words.span().subspan(m_families[number]);
     result.capacity = words[0] & 0xffff;
-    result.inlineSlots = words[0] >> 16;
+    result.inlineSlots = words[0] >> 16 & 0xff;
     for (unsigned i = 0; i < words[1]; ++i) {
         auto name = words.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
-        result.names.append({ m_names[name[0]].impl(), static_cast<uint16_t>(name[1]), !!(name[1] >> 16), Holds { name[2], static_cast<uint16_t>(name[3] >> 16), static_cast<uint16_t>(name[3]) } });
+        result.names.append({ m_names[name[0]].impl(), static_cast<uint16_t>(name[1]), !!(name[1] >> 16), Holds::from(name[2], name[3]) });
     }
     return result;
 }
@@ -169,7 +246,7 @@ Vector<TypeTable::Holds, 8> TypeTable::holdsOfSlots(uint32_t number) const
     result.grow(layout[0]);
     for (unsigned i = 0; i < layout[1]; ++i) {
         auto property = layout.subspan(wordsBeforePropertiesOfLayout() + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
-        result[property[1]] = Holds { property[2], static_cast<uint16_t>(property[3] >> 16), static_cast<uint16_t>(property[3]) };
+        result[property[1]] = Holds::from(property[2], property[3]);
     }
     return result;
 }

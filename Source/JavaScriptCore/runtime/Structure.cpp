@@ -424,6 +424,8 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
             result->setMaxOffset(vm, newMaxOffset);
         });
     }
+    // (It is not the structure of an object that has been given nothing yet, which is what that says: copies of objects go by it.)
+    result->setDidTransition(!names.empty());
     return result;
 }
 
@@ -445,8 +447,8 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
             return nullptr;
         taken.set(slots[i]);
         // (for-in takes the property it comes to first to be the first in the object, and so on, unless it is told otherwise: as it is
-        // when a property has been taken out.)
-        if (slots[i] != i || numberOfSlots > inlineSlots)
+        // when a property has been taken out. Of structs it is told by canAccessPropertiesQuicklyForEnumeration().)
+        if ((slots[i] != i || numberOfSlots > inlineSlots) && !SlotsOfBornObjects::areStructs())
             result->setIsQuickPropertyAccessAllowedForEnumeration(false);
         // A property is put where one has been taken out of, if there is such a place, and in the last of them.
         table->addDeletedOffset(offsetOf(slots[i]));
@@ -474,6 +476,7 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
         ConcurrentJSLocker locker(result->m_lock);
         result->pin(locker, vm, table);
     }
+    result->setDidTransition(!names.empty());
     result->checkOffsetConsistency();
     return result;
 }
@@ -1315,16 +1318,42 @@ const SlotsOfBornObjects::Named* SlotsOfBornObjects::named(uint16_t bornAs, Uniq
     UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
     if (!identifiers)
         return nullptr;
+    struct Found {
+        UniquedStringImpl* name;
+        const Named* named;
+        uint16_t bornAs;
+    };
+    static thread_local Found recent[1024];
+    Found& found = recent[((std::bit_cast<uintptr_t>(name) >> 4) ^ bornAs) & 1023];
+    if (found.name == name && found.bornAs == bornAs)
+        return found.named;
+    const Named* result = nullptr;
     for (auto& entry : names) {
-        if (identifiers[entry.identifier] == name)
-            return &entry;
+        if (identifiers[entry.identifier] == name) {
+            result = &entry;
+            break;
+        }
     }
-    return nullptr;
+    found = { name, result, bornAs };
+    return result;
+}
+
+void SlotsOfBornObjects::makeAtomIfString(JSValue value)
+{
+    if (!value.isString())
+        return;
+    JSString* string = asString(value);
+    if (string->isDefinitelyAtom())
+        return;
+    // (All it wants of the realm is somewhere to say that there is no memory left, which is the end of the process here.)
+    JSGlobalObject* globalObject = string->vm().deprecatedVMEntryGlobalObject(nullptr);
+    RELEASE_ASSERT(globalObject);
+    string->toAtomString(globalObject);
 }
 
 bool SlotsOfBornObjects::admits(const Held& held, JSValue value)
 {
-    unsigned kinds = held.kinds;
+    unsigned kinds = held.kinds & ~stringsAreAtoms;
     if (held.first) {
         if (value.isCell()) {
             uint16_t bornAs = value.asCell()->structure()->bornAs();
@@ -1879,6 +1908,9 @@ bool Structure::canCachePropertyNameEnumerator(VM&) const
 bool Structure::canAccessPropertiesQuicklyForEnumeration() const
 {
     if (!isQuickPropertyAccessAllowedForEnumeration())
+        return false;
+    // (The properties of a struct are where their names say, not one after the other in the order they were added.)
+    if (bornAs() && SlotsOfBornObjects::areStructs())
         return false;
     if (hasAnyKindOfGetterSetterProperties())
         return false;

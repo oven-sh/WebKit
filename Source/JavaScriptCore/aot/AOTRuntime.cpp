@@ -1278,7 +1278,7 @@ void Data::visit(Visitor& visitor)
 
 static ALWAYS_INLINE bool hasTransition(const Slot& slot)
 {
-    return slot.structureID && slot.newStructureID && !slot.unused && !slot.hasPointer();
+    return slot.structureID && slot.newStructureID && !slot.held && !slot.hasPointer();
 }
 
 void Instance::noteTransitionCached(Slot* slot)
@@ -1469,6 +1469,20 @@ Structure* Instance::emptyStructureOfFamily(uint16_t family)
     return result;
 }
 
+Structure* Instance::emptyStructureOfFamily(uint16_t family, JSObject* prototype)
+{
+    unsigned capacity = SlotsOfBornObjects::numberOfSlots(family);
+    RELEASE_ASSERT(capacity);
+    DeferGC deferGC(*vm);
+    unsigned inlineSlots = SlotsOfBornObjects::inlineSlots(family);
+    Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, KnownShape::inlineCapacityFor(inlineSlots));
+    RELEASE_ASSERT(empty->inlineCapacity() >= inlineSlots);
+    Structure* result = Structure::createWithProperties(*vm, empty, { }, std::span<const uint16_t> { }, capacity, inlineSlots);
+    RELEASE_ASSERT(result);
+    result->setBornAs(family);
+    return result;
+}
+
 JSObject* Instance::newObjectOf(VM& vm, Structure* structure)
 {
     unsigned outOfLineCapacity = structure->outOfLineCapacity();
@@ -1497,6 +1511,9 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
     unsigned inlineSlots = SlotsOfBornObjects::inlineSlots(family);
     if (old->hasPolyProto())
         return no("of its prototype"_s);
+    // (Which private methods it has is for its Structure to say, and for no other.)
+    if (old->isBrandedStructure())
+        return no("it has private methods"_s);
     if (old->inlineCapacity() < inlineSlots)
         return no("it has no room"_s);
     if (!old->isStructureExtensible())
@@ -1513,9 +1530,12 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
         BitVector taken;
         unsigned next = capacity;
         bool isPlain = true;
+        bool hasTwoForOneSlot = false;
         old->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             isPlain &= !entry.attributes();
             auto* named = SlotsOfBornObjects::named(family, entry.key());
+            // (Two names have one slot if no type has both. Whichever of them was given it, whoever reads the other would get that.)
+            hasTwoForOneSlot |= named && taken.get(named->slot);
             unsigned slot = named && !taken.get(named->slot) ? named->slot : next++;
             taken.set(slot);
             names.append(entry.key());
@@ -1525,9 +1545,25 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
         });
         if (!isPlain)
             return no("it has a property that is not plain"_s);
+        if (hasTwoForOneSlot)
+            return no("it has two properties that no type has together"_s);
         for (auto& named : SlotsOfBornObjects::namesOf(family)) {
             if (!named.mayBeAbsent && !taken.get(named.slot))
                 return no("it lacks a property that the type says it has"_s);
+        }
+        // What it has no property of its own for it must not have from anywhere else: code that finds nothing in the slot looks no further.
+        if (JSValue prototype = old->storedPrototype(); prototype.isObject() && asObject(prototype) != old->globalObject()->objectPrototype()) {
+            UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
+            for (JSObject* holder = asObject(prototype); holder && holder != old->globalObject()->objectPrototype();) {
+                if (holder->type() != FinalObjectType && holder->type() != ObjectType)
+                    return no("of its prototype"_s);
+                for (auto& named : SlotsOfBornObjects::namesOf(family)) {
+                    if (!taken.get(named.slot) && isValidOffset(holder->structure()->get(vm, PropertyName(Identifier::fromUid(vm, identifiers[named.identifier])))))
+                        return no("it inherits a property that the type has"_s);
+                }
+                JSValue next = holder->structure()->storedPrototype(holder);
+                holder = next.isObject() ? asObject(next) : nullptr;
+            }
         }
     }
     // What is in it has to be what the slots hold. (Which may take making something else what it has to be.)
@@ -1662,7 +1698,7 @@ void Data::finalizeUnconditionally(VM& vm)
         if (!dead) {
             if (slot.offset & Slot::pointerIsCell)
                 dead = !vm.heap.isMarked(static_cast<JSCell*>(slot.pointer));
-            else if (!slot.hasPointer() && slot.newStructureID && !slot.unused) // A scope cache may have an untagged address here.
+            else if (!slot.hasPointer() && slot.newStructureID && !slot.held) // A scope cache may have an untagged address here.
                 dead = !vm.heap.isMarked(slot.newStructureID.decode());
         }
         if (dead) {

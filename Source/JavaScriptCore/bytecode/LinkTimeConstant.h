@@ -50,6 +50,7 @@ class JSGlobalObject;
     v(setPrototypeDirectOrThrow, nullptr) \
     v(copyDataProperties, nullptr) \
     v(cloneObject, nullptr) \
+    v(noteClass, nullptr) \
     v(resolvePromise, nullptr) \
     v(rejectPromise, nullptr) \
     v(fulfillPromise, nullptr) \

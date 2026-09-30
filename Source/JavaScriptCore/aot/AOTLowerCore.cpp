@@ -234,6 +234,8 @@ bool Lowering::run()
     for (BasicBlock* block : m_graph.m_rpo) {
         m_out.setFrequency(block->isGeneric ? coldFrequency : 1);
         block->lowered = m_out.newBlock();
+        if (!block->arraysViewed.isEmpty())
+            block->loweredAhead = m_out.newBlock();
     }
     m_out.setFrequency(1);
 
@@ -533,9 +535,15 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     return patchpoint;
 }
 
-B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry function, LValue first, LValue second)
+B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry function, LValue first, LValue second, ColdCall what)
 {
     PatchpointValue* patchpoint = m_out.patchpoint(type);
+    if (what == ColdCall::ChangesNothing) {
+        patchpoint->effects = Effects();
+        patchpoint->effects.reads = HeapRange::top();
+        patchpoint->effects.exitsSideways = true;
+        patchpoint->effects.controlDependent = true;
+    }
     if (first)
         patchpoint->append(ConstrainedValue(first, ValueRep::reg(GPRInfo::argumentGPR1)));
     if (second)
@@ -560,7 +568,7 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
     return patchpoint;
 }
 
-void Lowering::coldCall(Node* node, Entry function, LValue first, LValue second)
+void Lowering::coldCall(Node* node, Entry function, LValue first, LValue second, ColdCall what)
 {
     if (!Options::aotKeepsRegistersInColdCalls()) {
         if (second)
@@ -571,14 +579,14 @@ void Lowering::coldCall(Node* node, Entry function, LValue first, LValue second)
             vmCall(node, Void, function, m_globalObject);
         return;
     }
-    emitColdCall(node, Void, function, first, second);
+    emitColdCall(node, Void, function, first, second, what);
 }
 
-LValue Lowering::coldCallForValue(Node* node, Entry function, LValue first, LValue second)
+LValue Lowering::coldCallForValue(Node* node, Entry function, LValue first, LValue second, ColdCall what)
 {
     if (!Options::aotKeepsRegistersInColdCalls())
         return second ? vmCall(node, Int64, function, m_globalObject, first, second) : vmCall(node, Int64, function, m_globalObject, first);
-    return emitColdCall(node, Int64, function, first, second);
+    return emitColdCall(node, Int64, function, first, second, what);
 }
 
 LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)
@@ -994,7 +1002,51 @@ LBasicBlock Lowering::edgeTo(BasicBlock* successor)
         if (to == successor)
             return edge;
     }
+    return wayInto(successor);
+}
+
+// (From the block that is being lowered.)
+LBasicBlock Lowering::wayInto(BasicBlock* successor)
+{
+    if (successor->loweredAhead && !successor->bodyOfLoop.get(m_block->index))
+        return successor->loweredAhead;
     return successor->lowered;
+}
+
+const Lowering::ArrayView* Lowering::viewOf(Node* access, Node* base)
+{
+    if (!access->viewedAheadOf)
+        return nullptr;
+    for (auto& [header, array, view] : m_arrayViews) {
+        if (header == access->viewedAheadOf && array == base)
+            return &view;
+    }
+    return nullptr;
+}
+
+void Lowering::viewArraysAheadOf(BasicBlock* header)
+{
+    m_out.appendTo(header->loweredAhead);
+    for (Node* base : header->arraysViewed) {
+        LValue array = lowCell(base);
+        ArrayView view;
+        LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
+        view.butterfly = m_out.loadPtr(array, m_heaps.JSObject_butterfly);
+        // (Array.prototype is an array with no elements and nowhere to say how many.)
+        LBasicBlock hasElements = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        ValueFromBlock none = m_out.anchor(m_out.int64Zero);
+        m_out.branch(m_out.notZero32(shape), usually(hasElements), rarely(continuation));
+        m_out.appendTo(hasElements);
+        ValueFromBlock some = m_out.anchor(m_out.zeroExt(m_out.load32(view.butterfly, m_heaps.Butterfly_publicLength), Int64));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        view.length = m_out.phi(Int64, none, some);
+        // Int32Shape and ContiguousShape hold JSValues; DoubleShape sits between them.
+        view.limit = m_out.select(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), view.length, m_out.int64Zero);
+        m_arrayViews.append({ header, base, view });
+    }
+    m_out.jump(header->lowered);
 }
 
 void Lowering::emitUpsilons(BasicBlock* block, BasicBlock* successor)
@@ -1012,6 +1064,8 @@ void Lowering::lowerBlock(BasicBlock* block)
 {
     m_block = block;
     m_out.setFrequency(block->isGeneric || block->isSeldomReached ? coldFrequency : 1);
+    if (block->loweredAhead)
+        viewArraysAheadOf(block);
     m_out.appendTo(block->lowered);
     for (Node* phi : block->phis)
         m_out.m_block->append(phi->lowered);
@@ -1067,7 +1121,7 @@ void Lowering::lowerBlock(BasicBlock* block)
             emitUpsilons(block, successor);
             break;
         }
-        if (!successor->phis.isEmpty() && edgeTo(successor) == successor->lowered)
+        if (!successor->phis.isEmpty() && edgeTo(successor) == wayInto(successor))
             m_edges.append({ successor, m_out.newBlock() });
     }
     setOrigin(terminal);
@@ -1076,7 +1130,7 @@ void Lowering::lowerBlock(BasicBlock* block)
     for (auto& [successor, edge] : std::exchange(m_edges, { })) {
         m_out.appendTo(edge);
         emitUpsilons(block, successor);
-        m_out.jump(successor->lowered);
+        m_out.jump(wayInto(successor));
     }
 }
 

@@ -211,6 +211,8 @@ struct SlotsOfBornObjects {
         uint16_t last;
         uint16_t unused;
     };
+    // Among Held::kinds: a string there is an atom. Whoever stores one that is not makes it one, where it is (JSString::toAtomString()).
+    static constexpr unsigned stringsAreAtoms = 1u << 15;
     enum class Says : uint8_t { Nothing, Admits, Refuses };
     // With these the objects are structs: what one was born as is the number of a family, every name of the family has a slot that is its own in every object of
     // the family, whether or not the object has the property, and code reads and writes the slots without asking. So:
@@ -237,7 +239,7 @@ struct SlotsOfBornObjects {
     JS_EXPORT_PRIVATE static ASCIILiteral s_whyNotAdopted; // The last time.
     static bool areStructs() { return s_named; }
     JS_EXPORT_PRIVATE static const Named* named(uint16_t bornAs, UniquedStringImpl*);
-    static std::span<const Named> namesOf(uint16_t bornAs) { return s_named && bornAs < s_count ? std::span { s_named + (s_indexOfNamed[bornAs] >> 8), s_indexOfNamed[bornAs] & 0xff } : std::span<const Named> { }; }
+    static std::span<const Named> namesOf(uint16_t bornAs) { return s_named && bornAs < s_count ? std::span { s_named + (s_indexOfNamed[bornAs] >> 12), s_indexOfNamed[bornAs] & 0xfff } : std::span<const Named> { }; }
     static bool areThere() { return s_count; }
     // Of a slot in the object itself.
     static const Held* heldIn(uint16_t bornAs, unsigned slot)
@@ -252,7 +254,17 @@ struct SlotsOfBornObjects {
     }
     static unsigned numberOfSlots(uint16_t bornAs) { return bornAs < s_count ? s_index[bornAs] & 0xff : 0; }
     // Of structs: in a slot that says what it holds a number is encoded as a double, whatever its value, so that code that reads one has nothing to tell apart.
-    static JSValue asHeld(uint16_t bornAs, unsigned slot, JSValue value) { return value.isInt32() && heldIn(bornAs, slot) ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value; }
+    static JSValue asHeld(uint16_t bornAs, unsigned slot, JSValue value)
+    {
+        if (value.isInt32())
+            return heldIn(bornAs, slot) ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value;
+        if (value.isCell()) {
+            if (const Held* held = heldIn(bornAs, slot); held && (held->kinds & stringsAreAtoms)) [[unlikely]]
+                makeAtomIfString(value);
+        }
+        return value;
+    }
+    JS_EXPORT_PRIVATE static void makeAtomIfString(JSValue);
     JS_EXPORT_PRIVATE static bool admits(const Held&, JSValue);
     static Says says(uint16_t bornAs, unsigned slot, JSValue value)
     {

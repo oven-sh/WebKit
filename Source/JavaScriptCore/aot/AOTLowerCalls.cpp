@@ -115,8 +115,10 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     if ((takesList || how.result != m_howValuesArePassed.result) && mode == CallMode::TailCall)
         mode = CallMode::Call;
 
-    LValue callee = passesCallee || !known->isDeclaration ? lowJSValue(node->use(calleeRegister)) : nullptr;
-    if (!known->isDeclaration) {
+    // (A method that is closed is there from when its class is: there is nothing to see to but that there is an object to read it from, which the read does.)
+    bool isSurelyThere = known->isDeclaration || node->use(calleeRegister)->isReadOnlyToBeCalled;
+    LValue callee = passesCallee || !isSurelyThere ? lowJSValue(node->use(calleeRegister)) : nullptr;
+    if (!isSurelyThere) {
         // What is in the variable until it is initialized is not a function. (If it is the hole, that has been seen to.)
         LBasicBlock isNotInitialized = newColdBlock();
         LBasicBlock isInitialized = m_out.newBlock();
@@ -202,6 +204,19 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
 
     Node* calleeNode = node->use(calleeRegister);
     LValue callee = lowJSValue(calleeNode);
+    // A class that the types say something of has been defined.
+    if (uint32_t classType = Graph::classNotedBy(node)) {
+        if (uint16_t family = TypeTable::shared()->familyOfInstancesOf(classType))
+            vmCall(node, Void, Entry::operationAOTNoteClass, m_globalObject, arguments[0], arguments[1], m_out.constInt32(family));
+        return;
+    }
+    // { ...x }
+    if (mode == CallMode::Call && argc == 1 && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::cloneObject) {
+        LValue copy = vmCall(node, pointerType(), Entry::operationAOTCloneObject, m_globalObject, arguments[0], m_out.constInt32(Graph::familyOfNewObject(node)));
+        if (hasResult)
+            setJSValue(node, copy);
+        return;
+    }
     // @toLength() of an integer that is not negative is that integer, and of one that is, zero.
     if (mode == CallMode::Call && argc == 2 && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::toLength) {
         Node* argumentNode = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1));

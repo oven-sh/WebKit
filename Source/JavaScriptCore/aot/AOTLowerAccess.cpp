@@ -57,10 +57,16 @@ TypedPointer Lowering::cachedPropertyAddress(LValue object, LValue word, const A
 
 std::optional<TypeTable::Field> Lowering::fieldAccessedBy(Node* node, unsigned identifier)
 {
-    uint32_t tag = Graph::typeTagOf(node);
-    if (!tag || !TypeTable::shared())
+    if (!TypeTable::shared())
         return std::nullopt;
-    return TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(identifier).impl());
+    UniquedStringImpl* name = node->graph->codeBlock()->identifier(identifier).impl();
+    if (uint32_t tag = Graph::typeTagOf(node)) {
+        if (auto field = TypeTable::shared()->fieldOf(tag, name))
+            return field;
+    }
+    if (node->guard)
+        return std::nullopt;
+    return Graph::fieldOfWhatIsBornAs(node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base), name);
 }
 
 // TEMPORARY-SHAPE-COUNTS
@@ -102,6 +108,8 @@ TypedPointer Lowering::slotOfStruct(LValue object, const TypeTable::Field& field
 
 LValue Lowering::asHeld(Node* valueNode, LValue value, TypeTable::Holds holds)
 {
+    if (holds.atoms && TypeTable::areStructs())
+        makeAtomIfString(valueNode, value);
     if (!holds.saysSomething() || !TypeTable::areStructs() || !mayBe(valueNode->type, TInt32))
         return value;
     if (isSubtype(valueNode->type, TNumber))
@@ -109,8 +117,21 @@ LValue Lowering::asHeld(Node* valueNode, LValue value, TypeTable::Holds holds)
     return m_out.select(isInt32(value), boxDouble(m_out.intToDouble(unboxInt32(value))), value);
 }
 
+bool Lowering::isThisOfWhatAnybodyMayCall(Node* node)
+{
+    while (node->kind == NodeKind::Narrow || node->isBytecode(op_to_this) || node->isBytecode(op_check_type) || node->isBytecode(op_type_tag))
+        node = node->uses[0].node;
+    if (node->kind != NodeKind::Argument || node->reg != virtualRegisterForArgumentIncludingThis(0))
+        return false;
+    const ProgramFacts* facts = node->graph->facts();
+    return !facts || !facts->isClosed;
+}
+
 void Lowering::assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family)
 {
+    // Only typed code makes objects of a family that is closed, and only typed code gets to say that something is one: it is taken at its word.
+    if (!TypeTable::shared()->isOpen(family) && !isThisOfWhatAnybodyMayCall(valueNode))
+        return;
     LBasicBlock isNot = newColdBlock();
     LBasicBlock is = m_out.newBlock();
     if (!isSubtype(valueNode->type, TCell)) {
@@ -161,6 +182,20 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
+    // A closed method that is called with no need of the function object: which function it is is known, and all that reading it would do is throw if there is nothing to read it from.
+    if (node->isReadOnlyToBeCalled) {
+        if (!isSubtype(baseNode->type, TCell)) {
+            LValue base = lowJSValue(baseNode);
+            LBasicBlock isNone = newColdBlock();
+            LBasicBlock isSomething = m_out.newBlock();
+            m_out.branch(isCell(base), usually(isSomething), rarely(isNone));
+            m_out.appendTo(isNone);
+            coldCall(node, Entry::operationAOTCheckType, base, m_out.constInt32(MaskOtherObject), ColdCall::ChangesNothing);
+            m_out.unreachable();
+            m_out.appendTo(isSomething);
+        }
+        return;
+    }
     // A string has what String.prototype has, which is what that had to begin with. (Graph::findDirectMethods(): it may well be one.)
     if (unsigned method = std::exchange(node->directMethod, 0)) {
         unsigned number = intrinsicFoundOnPrimitive(TString, *node->graph->codeBlock()->identifier(bytecode.m_property).impl());
@@ -363,6 +398,10 @@ void Lowering::lowerPutById(Node* node)
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
+    // Of a struct, where code is spelled out: the value is one that the slot holds, and there is nothing in the slot.
+    LBasicBlock isAbsent = nullptr;
+    LValue valueAsHeld = nullptr;
+    std::optional<TypedPointer> slotThatIsEmpty;
     if (auto field = (Options::aotShapes() & 4) && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
         LBasicBlock cellCase = m_out.newBlock();
@@ -375,14 +414,19 @@ void Lowering::lowerPutById(Node* node)
             // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
             branchUnlessHeld(valueNode, value, field->holds, otherwise);
             TypedPointer slotOfField = slotOfStruct(base, *field);
+            valueAsHeld = asHeld(valueNode, value, field->holds);
             if (field->isOptional || field->mayBeEmpty) {
                 LBasicBlock isThere = m_out.newBlock();
-                m_out.branch(m_out.notZero64(m_out.load64(slotOfField)), usually(isThere), rarely(otherwise));
+                if (!isCompact()) {
+                    isAbsent = m_out.newBlock();
+                    slotThatIsEmpty = slotOfField;
+                }
+                m_out.branch(m_out.notZero64(m_out.load64(slotOfField)), unsure(isThere), isAbsent ? unsure(isAbsent) : rarely(otherwise));
                 m_out.appendTo(isThere);
             }
             noteShapeSite(Instance::WriteHas);
             countShape(Instance::WriteHas);
-            m_out.store64(asHeld(valueNode, value, field->holds), slotOfField);
+            m_out.store64(valueAsHeld, slotOfField);
             if (mayBe(valueNode->type, TCell))
                 storeBarrier(base);
             m_out.jump(afterTypedStore);
@@ -447,8 +491,15 @@ void Lowering::lowerPutById(Node* node)
     m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), lowHalf(m_out, word)), usually(hit), rarely(slowCase));
 
     m_out.appendTo(hit, transition);
+    LValue secondWord = m_out.load64(slotWord(slot, 1));
+    if (Options::aotTypesFields() && TypeTable::areStructs()) {
+        // (Slot::held: there is looking at the value to be done. The runtime does that.)
+        LBasicBlock isPlain = m_out.newBlock();
+        m_out.branch(m_out.isZero64(m_out.lShr(secondWord, m_out.constInt32(32))), usually(isPlain), rarely(slowCase));
+        m_out.appendTo(isPlain);
+    }
     m_out.store64(value, cachedPropertyAddress(base, word));
-    LValue newStructureID = lowHalf(m_out, m_out.load64(slotWord(slot, 1)));
+    LValue newStructureID = lowHalf(m_out, secondWord);
     m_out.branch(m_out.notZero32(newStructureID), unsure(transition), unsure(stored));
 
     m_out.appendTo(transition, stored);
@@ -459,6 +510,20 @@ void Lowering::lowerPutById(Node* node)
     if (mayBe(valueNode->type, TCell))
         storeBarrier(base);
     m_out.jump(continuation);
+
+    if (isAbsent) {
+        LBasicBlock isRemembered = m_out.newBlock();
+        LBasicBlock adds = m_out.newBlock();
+        m_out.appendTo(isAbsent);
+        m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), lowHalf(m_out, m_out.load64(slotWord(slot, 0)))), usually(isRemembered), rarely(slowCase));
+        m_out.appendTo(isRemembered);
+        LValue structureIDAfterwards = lowHalf(m_out, m_out.load64(slotWord(slot, 1)));
+        m_out.branch(m_out.notZero32(structureIDAfterwards), usually(adds), rarely(slowCase));
+        m_out.appendTo(adds);
+        m_out.store64(valueAsHeld, *slotThatIsEmpty);
+        m_out.store32(structureIDAfterwards, base, m_heaps.JSCell_structureID);
+        m_out.jump(stored);
+    }
 
     m_out.appendTo(slowCase, continuation);
     vmCall(node, Void, Entry::operationAOTPutById, m_globalObject, base, value, m_out.constInt32(numberOf(bytecode.m_property)), slotAddress(slot), m_out.constInt32(flags));
@@ -512,6 +577,24 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, beyond, element));
+        return;
+    }
+
+    if (auto* view = viewOf(node, baseNode)) {
+        LBasicBlock inBounds = m_out.newBlock();
+        LBasicBlock theLongWay = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue index = lowInt64(propertyNode);
+        m_out.branch(m_out.below(index, view->limit), usually(inBounds), rarely(theLongWay));
+        m_out.appendTo(inBounds);
+        LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, view->butterfly, index));
+        ValueFromBlock fast = m_out.anchor(element);
+        m_out.branch(m_out.notZero64(element), usually(continuation), rarely(theLongWay));
+        m_out.appendTo(theLongWay);
+        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, Entry::operationAOTGetByVal, base, lowJSValue(propertyNode), ColdCall::ChangesNothing));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, fast, slow));
         return;
     }
 
@@ -645,11 +728,36 @@ void Lowering::lowerPutByVal(Node* node)
 
 // ---- Scopes
 
+B3::Variable* Lowering::variableOfEnvironment(Node* environment, unsigned offset)
+{
+    auto& variables = m_variablesOfEnvironments.ensure(environment, [&] {
+        JSValue table = environment->graph->codeBlock()->getConstant(environment->as<OpCreateLexicalEnvironment>().m_symbolTable);
+        Vector<B3::Variable*> result;
+        for (unsigned i = uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize(); i--;)
+            result.append(m_proc.addVariable(Int64));
+        return result;
+    }).iterator->value;
+    RELEASE_ASSERT(offset < variables.size());
+    return variables[offset];
+}
+
+LValue Lowering::scopeThatIsOutFrom(Node* scope, unsigned hops)
+{
+    LValue current = lowCell(scope);
+    for (unsigned i = 0; i < hops; ++i)
+        current = m_out.loadPtr(current, m_heaps.JSScope_next);
+    return current;
+}
+
 void Lowering::lowerResolveScope(Node* node)
 {
     auto bytecode = node->as<OpResolveScope>();
     if (auto distance = m_graph.distanceOfEnvironmentResolvedTo(node)) {
         setJSValue(node, environmentAt(*distance));
+        return;
+    }
+    if (node->scopeToStartFrom) {
+        setJSValue(node, scopeThatIsOutFrom(node->scopeToStartFrom, node->hopsFromThere));
         return;
     }
     LValue scope = lowCell(node->use(bytecode.m_scope));
@@ -744,6 +852,10 @@ bool Lowering::isFusedWithGetFromScope(Node* node)
 void Lowering::lowerGetFromScope(Node* node)
 {
     auto bytecode = node->as<OpGetFromScope>();
+    if (node->promotedEnvironment) {
+        setJSValue(node, m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), variableOfEnvironment(node->promotedEnvironment, node->offsetInEnvironment)));
+        return;
+    }
     if (Node* resolveNode = node->use(bytecode.m_scope); isFusedWithGetFromScope(resolveNode)) {
         auto resolve = resolveNode->as<OpResolveScope>();
         LValue scope = lowCell(resolveNode->use(resolve.m_scope));
@@ -839,6 +951,10 @@ void Lowering::lowerGetFromScope(Node* node)
 void Lowering::lowerPutToScope(Node* node)
 {
     auto bytecode = node->as<OpPutToScope>();
+    if (node->promotedEnvironment) {
+        m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variableOfEnvironment(node->promotedEnvironment, node->offsetInEnvironment), lowJSValue(node->use(bytecode.m_value)));
+        return;
+    }
     auto distance = m_graph.distanceOfEnvironmentAccessed(node);
     LValue scope = distance ? environmentAt(*distance) : lowCell(node->use(bytecode.m_scope));
     Node* valueNode = node->use(bytecode.m_value);

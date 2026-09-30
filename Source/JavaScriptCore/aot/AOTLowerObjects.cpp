@@ -13,6 +13,7 @@
 #include "BytecodeStructs.h"
 #include "DirectArguments.h"
 #include "JSCInlines.h"
+#include "SymbolTable.h"
 #include "UnlinkedCodeBlock.h"
 
 namespace JSC { namespace AOT {
@@ -151,8 +152,23 @@ bool Lowering::tryLowerAllocation(Node* node)
                 values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
                 inSlotsOfLayout.append(node->use(NewObjectPlan::registerOf(i)));
             }
-            unsigned slot = allocateSlots(2);
             auto shapeOfThis = m_graph.shapeOfLiteral(node);
+            if (uint16_t family = Graph::familyOfNewObject(node); family && (!shapeOfThis || !shapeOfThis->family)) {
+                // It is of a family, and has something that the family has no slot for: it starts with nothing, and is given one thing after another.
+                noteShapeSite(Instance::LiteralWithLayout);
+                LValue object = vmCall(node, pointerType(), Entry::operationAOTNewObjectOfFamily, m_globalObject, m_out.constInt32(family), slotAddress(allocateSlots(2)));
+                auto& instructions = code().codeBlock()->instructions();
+                auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+                RELEASE_ASSERT(stores.size() >= count);
+                for (unsigned i = 0; i < count; ++i) {
+                    auto store = instructions.at(stores[i])->as<OpPutById>();
+                    uint32_t flags = (store.m_flags.isDirect() ? 1 : 0) | (store.m_flags.ecmaMode().isStrict() ? 2 : 0);
+                    vmCall(node, Void, Entry::operationAOTPutById, m_globalObject, object, values[i], m_out.constInt32(numberOf(store.m_property)), slotAddress(allocateSlot()), m_out.constInt32(flags));
+                }
+                setJSValue(node, object);
+                return true;
+            }
+            unsigned slot = allocateSlots(2);
             bool hasSlotsOutside = shapeOfThis && shapeOfThis->hasSlotsOutside();
             noteShapeSite(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
             countShape(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
@@ -165,7 +181,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                     nodesInSlots.fill(nullptr, shape->numberOfSlots());
                     auto holds = shape->family ? TypeTable::shared()->holdsOfSlotsOfFamily(shape->family) : Vector<TypeTable::Holds, 8> { };
                     for (unsigned i = 0; i < count; ++i) {
-                        inSlots[shape->slots[i]] = shape->family && Options::aotTypesFields() ? asHeld(inSlotsOfLayout[i], values[i], holds[shape->slots[i]]) : values[i];
+                        inSlots[shape->slots[i]] = shape->family && Options::aotTypesFields() && shape->slots[i] < holds.size() ? asHeld(inSlotsOfLayout[i], values[i], holds[shape->slots[i]]) : values[i];
                         nodesInSlots[shape->slots[i]] = inSlotsOfLayout[i];
                     }
                     values = WTF::move(inSlots);
@@ -376,6 +392,13 @@ bool Lowering::tryLowerAllocation(Node* node)
         return createInternalFieldObject(node->as<OpCreateAsyncGenerator>().m_callee, InternalFieldObjectKind::AsyncGenerator);
     case op_create_lexical_environment: {
         auto bytecode = node->as<OpCreateLexicalEnvironment>();
+        if (node->isPromoted) {
+            LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
+            JSValue table = code().codeBlock()->getConstant(bytecode.m_symbolTable);
+            for (unsigned i = uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize(); i--;)
+                m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variableOfEnvironment(node, i), initialValue);
+            return true;
+        }
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_globalObject, lowCell(node->use(bytecode.m_scope)),
             lowCell(node->use(bytecode.m_symbolTable)), lowJSValue(node->use(bytecode.m_initialValue)), slotAddress(allocateSlots(2))));
         return true;
@@ -598,21 +621,21 @@ void Lowering::lowerGetLength(Node* node)
     LValue base = lowJSValue(baseNode);
 
     if (isSubtype(baseNode->type, TArray) && baseNode->type) {
-        // It is where the elements are, if there is such a place. (Array.prototype has none.) One above what an int32 holds is for the runtime.
+        if (auto* view = viewOf(node, baseNode)) {
+            setInt64(node, view->length);
+            return;
+        }
+        // It is where the elements are, however they are kept, if there is such a place.
         LBasicBlock hasStorage = m_out.newBlock();
-        LBasicBlock theLongWay = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
-        m_out.branch(m_out.notNull(butterfly), usually(hasStorage), rarely(theLongWay));
+        ValueFromBlock none = m_out.anchor(m_out.int64Zero);
+        m_out.branch(m_out.notNull(butterfly), usually(hasStorage), rarely(continuation));
         m_out.appendTo(hasStorage);
-        LValue length = m_out.load32(butterfly, m_heaps.Butterfly_publicLength);
-        ValueFromBlock fast = m_out.anchor(boxInt32(length));
-        m_out.branch(m_out.greaterThanOrEqual(length, m_out.int32Zero), usually(continuation), rarely(theLongWay));
-        m_out.appendTo(theLongWay);
-        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, Entry::operationAOTGetLengthTheLongWay, base));
+        ValueFromBlock some = m_out.anchor(m_out.zeroExt(m_out.load32(butterfly, m_heaps.Butterfly_publicLength), Int64));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
-        setJSValue(node, m_out.phi(Int64, fast, slow));
+        setInt64(node, m_out.phi(Int64, none, some));
         return;
     }
 

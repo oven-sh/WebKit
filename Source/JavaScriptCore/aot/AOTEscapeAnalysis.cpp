@@ -547,6 +547,227 @@ private:
     UncheckedKeyHashMap<Node*, Escape> m_fates;
 };
 
+// ---- Environments that are no objects.
+//
+// A function whose inner functions use its variables keeps those in an environment record, on the heap, for the closures to find them in. Once the closures have all become part of the
+// function's own code (inlineCalls()) nothing is left that has to find anything: the variables are the function's own, like any that no closure uses.
+namespace {
+
+class Promoter {
+public:
+    Promoter(Graph& graph)
+        : m_graph(graph)
+    {
+    }
+
+    // Which scope a value is: `hops` out from `base`. An environment that is made here is its own base.
+    struct Where {
+        Node* base { nullptr };
+        unsigned hops { 0 };
+        bool isEnvironmentMadeHere() const { return !hops && base->isBytecode(op_create_lexical_environment); }
+    };
+
+    static Where out(Where from, unsigned hops, unsigned depth)
+    {
+        while (hops && from.isEnvironmentMadeHere()) {
+            from = whereIs(from.base->use(from.base->as<OpCreateLexicalEnvironment>().m_scope), depth + 1);
+            --hops;
+        }
+        from.hops += hops;
+        return from;
+    }
+
+    // As the lowering has it (lowerResolveScope() and the rest).
+    static Where whereIs(Node* scope, unsigned depth = 0)
+    {
+        if (depth > 24 || scope->kind != NodeKind::Bytecode)
+            return { scope, 0 };
+        switch (scope->opcode) {
+        case op_get_scope:
+            if (Node* closedOver = scope->graph->scopeOfClosure)
+                return whereIs(closedOver, depth + 1);
+            return { scope, 0 };
+        case op_get_parent_scope:
+            return out(whereIs(scope->use(scope->as<OpGetParentScope>().m_scope), depth + 1), 1, depth);
+        case op_resolve_scope: {
+            auto bytecode = scope->as<OpResolveScope>();
+            // (It is where it is, and the scope it is told to start from is not looked at.)
+            if (scope->graph->distanceOfEnvironmentResolvedTo(scope))
+                return { scope, 0 };
+            unsigned hops;
+            if (isStaticClosureVarResolveType(bytecode.m_resolveType))
+                hops = bytecode.m_localScopeDepth + staticClosureVarHops(bytecode.m_resolveType);
+            else {
+                if (bytecode.m_resolveType == Dynamic)
+                    return { scope, 0 };
+                auto variable = scope->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType);
+                if (!variable.isAtStaticDepth())
+                    return { scope, 0 };
+                hops = variable.depth;
+            }
+            return out(whereIs(scope->use(bytecode.m_scope), depth + 1), hops, depth);
+        }
+        default:
+            return { scope, 0 };
+        }
+    }
+
+    // Where in the environment that its scope is the instruction's variable is, if that is plain.
+    static std::optional<unsigned> offsetAccessedBy(Node* node)
+    {
+        if (node->graph->distanceOfEnvironmentAccessed(node))
+            return std::nullopt;
+        if (node->opcode == op_get_from_scope) {
+            auto bytecode = node->as<OpGetFromScope>();
+            ResolveType type = bytecode.m_getPutInfo.resolveType();
+            if (type == ResolvedClosureVar)
+                return bytecode.m_offset;
+            if (type == ResolvedLazyClosureVar || type == Dynamic)
+                return std::nullopt;
+            auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
+            if (variable.kind == Graph::StaticVariable::Closure && !variable.inModule)
+                return variable.offset.offset();
+            return std::nullopt;
+        }
+        auto bytecode = node->as<OpPutToScope>();
+        ResolveType type = bytecode.m_getPutInfo.resolveType();
+        if (type == ResolvedClosureVar)
+            return bytecode.m_offset;
+        if (type == Dynamic)
+            return std::nullopt;
+        auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_symbolTableOrScopeDepth.scopeDepth(), type);
+        if (variable.kind == Graph::StaticVariable::Closure && (!variable.isReadOnly || isInitialization(bytecode.m_getPutInfo.initializationMode())))
+            return variable.offset.offset();
+        return std::nullopt;
+    }
+
+    // Whether the node, which is handed the environment itself, makes do without there being one.
+    bool makesDoWithout(Node* user, const Use& use)
+    {
+        if (user->kind != NodeKind::Bytecode || user->guard || user->guarded)
+            return false;
+        switch (user->opcode) {
+        case op_get_scope: // (Of what has become part of this code: another name for it.)
+        case op_get_parent_scope:
+        case op_resolve_scope:
+            return true;
+        case op_get_from_scope:
+            return use.reg == user->as<OpGetFromScope>().m_scope && (user->graph->distanceOfEnvironmentAccessed(user) || offsetAccessedBy(user));
+        case op_put_to_scope:
+            return use.reg == user->as<OpPutToScope>().m_scope && (user->graph->distanceOfEnvironmentAccessed(user) || offsetAccessedBy(user));
+        case op_create_lexical_environment:
+            return use.reg == user->as<OpCreateLexicalEnvironment>().m_scope && m_candidates.contains(user);
+        default:
+            return false;
+        }
+    }
+
+    template<typename Functor> void forEachUser(const Functor& functor)
+    {
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* phi : block->phis)
+                functor(phi);
+            for (Node* node : block->nodes) {
+                if (!node->isElided)
+                    functor(node);
+            }
+        }
+    }
+
+    void run()
+    {
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (!node->isBytecode(op_create_lexical_environment) || node->isElided || block->isGeneric)
+                    continue;
+                JSValue table = node->graph->codeBlock()->getConstant(node->as<OpCreateLexicalEnvironment>().m_symbolTable);
+                if (table && table.isCell() && uncheckedDowncast<SymbolTable>(table.asCell())->scopeSize() <= 32)
+                    m_candidates.add(node);
+            }
+        }
+        if (m_candidates.isEmpty())
+            return;
+        for (bool changed = true; changed && !m_candidates.isEmpty();) {
+            changed = false;
+            forEachUser([&](Node* user) {
+                for (auto& use : user->uses) {
+                    Where where = whereIs(use.node);
+                    if (!where.isEnvironmentMadeHere() || !m_candidates.contains(where.base) || makesDoWithout(user, use))
+                        continue;
+                    m_candidates.remove(where.base);
+                    changed = true;
+                }
+            });
+        }
+        if (m_candidates.isEmpty())
+            return;
+        for (Node* environment : m_candidates)
+            environment->isPromoted = true;
+        forEachUser([&](Node* user) {
+            if (user->kind != NodeKind::Bytecode)
+                return;
+            switch (user->opcode) {
+            case op_get_from_scope:
+            case op_put_to_scope: {
+                if (user->graph->distanceOfEnvironmentAccessed(user))
+                    return;
+                Where where = whereIs(user->use(user->opcode == op_get_from_scope ? user->as<OpGetFromScope>().m_scope : user->as<OpPutToScope>().m_scope));
+                if (!where.isEnvironmentMadeHere() || !where.base->isPromoted)
+                    return;
+                user->promotedEnvironment = where.base;
+                user->offsetInEnvironment = *offsetAccessedBy(user);
+                return;
+            }
+            case op_get_scope:
+            case op_get_parent_scope:
+            case op_resolve_scope: {
+                Where where = whereIs(user);
+                if (where.base == user)
+                    return;
+                // Another name for an environment that is not there: whoever uses it makes do without.
+                if (where.isEnvironmentMadeHere() && where.base->isPromoted) {
+                    user->isElided = true;
+                    return;
+                }
+                if (user->opcode != op_get_scope) {
+                    user->scopeToStartFrom = where.base;
+                    user->hopsFromThere = where.hops;
+                    user->uses.append({ VirtualRegister(), where.base });
+                }
+                return;
+            }
+            default:
+                return;
+            }
+        });
+    }
+
+private:
+    Graph& m_graph;
+    UncheckedKeyHashSet<Node*> m_candidates;
+};
+
+} // anonymous namespace
+
+void promoteEnvironments(Graph& graph)
+{
+    // What a handler reads has to be in memory, and what a generator has in hand when it stops has to be kept for it.
+    UnlinkedCodeBlock* code = graph.codeBlock();
+    if (!graph.catchEntrypoints.isEmpty() || graph.hasHomedRegisters() || code->codeType() != FunctionCode)
+        return;
+    switch (code->parseMode()) {
+    case SourceParseMode::NormalFunctionMode:
+    case SourceParseMode::ArrowFunctionMode:
+    case SourceParseMode::MethodMode:
+    case SourceParseMode::GetterMode:
+    case SourceParseMode::SetterMode:
+        break;
+    default:
+        return;
+    }
+    Promoter(graph).run();
+}
+
 // TEMPORARY-ESCAPE-STATS
 static std::atomic<uint64_t> s_sites[numberOfAllocationKinds][static_cast<unsigned>(Escape::NumberOfThem)];
 

@@ -6,6 +6,9 @@
 #include "config.h"
 #include "AOTOperationsObjects.h"
 
+#include "ObjectAllocationProfileInlines.h"
+#include "ObjectConstructorInlines.h"
+
 #if ENABLE(FTL_JIT)
 
 #include "AOTGraph.h"
@@ -70,6 +73,45 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfFamily, JSObject*, (JSGlobalObje
     Structure* structure = Instance::ensure(globalObject).emptyStructureOfFamily(safeCast<uint16_t>(family));
     fillAllocationCache(vm, callerData(globalObject, callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator));
     OPERATION_RETURN(scope, Instance::newObjectOf(vm, structure));
+}
+
+// A class has been defined whose instances are structs of that family: they are born into it.
+JSC_DEFINE_JIT_OPERATION(operationAOTNoteClass, void, (JSGlobalObject* globalObject, EncodedJSValue encodedConstructor, EncodedJSValue encodedPrototype, uint32_t family))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    auto* constructor = dynamicDowncast<JSFunction>(JSValue::decode(encodedConstructor));
+    JSObject* prototype = JSValue::decode(encodedPrototype).getObject();
+    RELEASE_ASSERT(constructor && prototype && constructor->canUseAllocationProfiles());
+    FunctionRareData* rareData = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, SlotsOfBornObjects::inlineSlots(safeCast<uint16_t>(family)));
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    Structure* usual = rareData->objectAllocationStructure();
+    RELEASE_ASSERT(!usual->hasPolyProto() && usual->storedPrototypeObject() == prototype);
+    rareData->objectAllocationProfile()->replaceStructure(vm, rareData, Instance::ensure(globalObject).emptyStructureOfFamily(safeCast<uint16_t>(family), prototype));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue value))
+{
+    SlotsOfBornObjects::makeAtomIfString(JSValue::decode(value));
+}
+
+// { ...source }, which is to be of that family of structs, if of any. A copy of one of the family is one.
+JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue encodedSource, uint32_t family))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    JSValue source = JSValue::decode(encodedSource);
+    if (!family)
+        OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source));
+    if (source.isCell() && source.asCell()->type() == FinalObjectType) {
+        Structure* structure = source.asCell()->structure();
+        if (structure->bornAs() == family && structure->canPerformFastPropertyEnumerationCommon()) {
+            if (JSObject* copy = tryCreateObjectViaCloning(vm, globalObject, asObject(source)))
+                OPERATION_RETURN(scope, copy);
+        }
+        if (Options::aotVerbose()) [[unlikely]]
+            dataLogLn("AOT: a copy that is to be of family ", family, " is of what was born as ", structure->bornAs(), " and is made bit by bit");
+    }
+    OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, Instance::newObjectOf(vm, Instance::ensure(globalObject).emptyStructureOfFamily(safeCast<uint16_t>(family)))));
 }
 
 // An object literal: op_new_object and the op_put_by_id that follow it. values: what goes in each of the first `count` slots of the object:
@@ -149,8 +191,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
                 gcSafeZeroMemory(std::bit_cast<EncodedJSValue*>(butterfly->propertyStorage() - outOfLineCapacity), outOfLineCapacity * sizeof(EncodedJSValue));
             }
             JSObject* object = JSFinalObject::createWithButterfly(vm, structure, butterfly);
-            if (structure->bornAs() && SlotsOfBornObjects::areStructs())
-                inlineCapacity = SlotsOfBornObjects::inlineSlots(structure->bornAs());
             for (unsigned i = 0; i < count; ++i)
                 object->putDirectOffset(vm, offsetForPropertyNumber(slotOf(i), inlineCapacity), JSValue::decode(values[slotOf(i)]));
             if (numberOfSlots <= inlineCapacity)
@@ -196,7 +236,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlo
         ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacityInBytecode)->objectAllocationProfile();
         OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
         Structure* structure = allocationProfile->structure();
-        object = constructEmptyObject(vm, structure);
+        object = Instance::newObjectOf(vm, structure);
         if (structure->hasPolyProto()) {
             JSObject* prototype = allocationProfile->prototype();
             object->putDirectOffset(vm, knownPolyProtoOffset, prototype);
@@ -292,7 +332,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (Cal
         ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, 0)->objectAllocationProfile();
         RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
         Structure* structure = allocationProfile->structure();
-        thisObject = constructEmptyObject(vm, structure);
+        thisObject = Instance::newObjectOf(vm, structure);
         if (structure->hasPolyProto()) {
             JSObject* prototype = allocationProfile->prototype();
             thisObject->putDirectOffset(vm, knownPolyProtoOffset, prototype);
@@ -331,7 +371,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (JSGlobalObject* glo
         ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, inlineCapacity)->objectAllocationProfile();
         OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
         Structure* structure = allocationProfile->structure();
-        JSObject* result = constructEmptyObject(vm, structure);
+        JSObject* result = Instance::newObjectOf(vm, structure);
         if (structure->hasPolyProto()) {
             JSObject* prototype = allocationProfile->prototype();
             result->putDirectOffset(vm, knownPolyProtoOffset, prototype);

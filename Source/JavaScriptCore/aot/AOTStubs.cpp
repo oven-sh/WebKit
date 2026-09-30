@@ -1157,11 +1157,14 @@ static void generatePutById(CCallHelpers& jit)
     jit.load64(slotWord(A2, 0), T11);
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     miss.append(jit.branch32(CCallHelpers::NotEqual, T11, T12));
+    jit.load64(slotWord(A2, 1), T13);
+    jit.urshift64(T13, TrustedImm32(32), T14);
+    Jump saysWhatItHolds = jit.branchTest32(CCallHelpers::NonZero, T14);
+    CCallHelpers::Label isHeld = jit.label();
     locateCachedProperty(jit, A0, T11, T12);
     jit.store64(A1, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesEight));
-    jit.load32(slotWord(A2, 1), T11);
-    Jump sameStructure = jit.branchTest32(CCallHelpers::Zero, T11);
-    jit.store32(T11, Address(A0, JSCell::structureIDOffset()));
+    Jump sameStructure = jit.branchTest32(CCallHelpers::Zero, T13);
+    jit.store32(T13, Address(A0, JSCell::structureIDOffset()));
     sameStructure.link(&jit);
 
     CCallHelpers::Label stored = jit.label();
@@ -1180,6 +1183,64 @@ static void generatePutById(CCallHelpers& jit)
     jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
     jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
     jit.farJump(T9, OperationPtrTag);
+
+    // A field of a struct (Slot::held). T14: the kinds it holds, and above them the family of the objects among those. What is plainly one of them is stored;
+    // whatever takes more telling is for the runtime, which knows all of it.
+    {
+        saysWhatItHolds.link(&jit);
+        auto ifHolds = [&](unsigned kind) {
+            miss.append(jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(kind)));
+            jit.jump().linkTo(isHeld, &jit);
+        };
+        Jump isCell = jit.branchIfCell(A1, DoNotHaveTagRegisters);
+        Jump isNotNumber = jit.branchIfNotNumber(A1, DoNotHaveTagRegisters);
+        miss.append(jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(SoundTypeNumber)));
+        jit.branchIfNotInt32(A1, DoNotHaveTagRegisters).linkTo(isHeld, &jit);
+        // (A number there is encoded as a double.)
+        jit.convertInt32ToDouble(A1, FPRInfo::fpRegT0);
+        jit.moveDoubleTo64(FPRInfo::fpRegT0, A1);
+        jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T12);
+        jit.sub64(T12, A1);
+        jit.jump().linkTo(isHeld, &jit);
+
+        isNotNumber.link(&jit);
+        Jump isNotUndefined = jit.branch64(CCallHelpers::NotEqual, A1, CCallHelpers::TrustedImm64(JSValue::ValueUndefined));
+        ifHolds(SoundTypeUndefined);
+        isNotUndefined.link(&jit);
+        Jump isNotNull = jit.branch64(CCallHelpers::NotEqual, A1, CCallHelpers::TrustedImm64(JSValue::ValueNull));
+        ifHolds(SoundTypeNull);
+        isNotNull.link(&jit);
+        jit.and64(TrustedImm32(~1), A1, T12);
+        miss.append(jit.branch64(CCallHelpers::NotEqual, T12, CCallHelpers::TrustedImm64(JSValue::ValueFalse)));
+        ifHolds(SoundTypeBoolean);
+
+        isCell.link(&jit);
+        jit.load8(Address(A1, JSCell::typeInfoTypeOffset()), T12);
+        Jump isNotString = jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(StringType));
+        {
+            // (Where the strings are atoms, one that is not plainly an atom is for the runtime to make one of.)
+            Jump anyStringWillDo = jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(SlotsOfBornObjects::stringsAreAtoms));
+            jit.load8(Address(A1, JSCell::typeInfoFlagsOffset()), T12);
+            miss.append(jit.branchTest32(CCallHelpers::Zero, T12, TrustedImm32(TypeInfoPerCellBit)));
+            anyStringWillDo.link(&jit);
+        }
+        ifHolds(SoundTypeString);
+        isNotString.link(&jit);
+        Jump isNotArray = jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(ArrayType));
+        ifHolds(SoundTypeArray);
+        isNotArray.link(&jit);
+        miss.append(jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(FinalObjectType)));
+        miss.append(jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(SoundTypeOtherObject)));
+        jit.urshift32(T14, TrustedImm32(16), T12);
+        jit.branchTest32(CCallHelpers::Zero, T12).linkTo(isHeld, &jit);
+        loadInstance(jit, T9);
+        jit.load32(Address(A1, JSCell::structureIDOffset()), T10);
+        jit.loadPtr(Address(T9, Instance::offsetOfStructureIDBase()), T9);
+        jit.addPtr(T9, T10);
+        jit.load16(Address(T10, Structure::offsetOfBornAs()), T10);
+        jit.branch32(CCallHelpers::Equal, T10, T12).linkTo(isHeld, &jit);
+        miss.append(jit.jump());
+    }
 
     // A property that an object of a shape the compiler knew of has, all of which are plain ones that can be stored to.
     miss.link(&jit);

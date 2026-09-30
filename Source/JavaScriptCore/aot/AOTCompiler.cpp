@@ -673,6 +673,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     graph.elideReadsOfCalleesNotPassed();
     graph.findDirectMethods();
     graph.findListsOfArguments();
+    promoteEnvironments(graph);
     analyzeEscapes(graph);
     if (Options::aotDumpGraph()) [[unlikely]] {
         dataLogLn("AOT graph:");
@@ -890,6 +891,7 @@ bool noteUsesOfProvenFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBl
     if (!parseBytecode(graph))
         return false;
     graph.noteUsesOfProvenFunctions(factsOfExecutables);
+    graph.noteClassesDefined();
     if (variableFacts)
         graph.noteWhatCannotBeToldOfVariables(*variableFacts);
     return true;

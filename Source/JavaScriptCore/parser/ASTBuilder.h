@@ -217,6 +217,7 @@ public:
         return new (m_parserArena) PrivateIdentifierNode(location, ident);
     }
     void setTypeTag(ExpressionNode* node, uint32_t tag) { node->setTypeTag(tag); }
+    void setTypeTagOfClass(ClassExprNode* node, uint32_t tag) { node->setTypeTag(tag); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location) { return new (m_parserArena) ObjectLiteralNode(location); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location, PropertyListNode* properties) { return new (m_parserArena) ObjectLiteralNode(location, properties); }
 

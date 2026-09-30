@@ -13,6 +13,8 @@
 #include "AOTRuntime.h"
 #include "B3AbstractHeapRepository.h"
 #include "B3Procedure.h"
+#include "B3Variable.h"
+#include "B3VariableValue.h"
 #include "FTLAbbreviatedTypes.h"
 #include "FTLOutput.h"
 #include "FTLValueFromBlock.h"
@@ -68,6 +70,20 @@ private:
     bool tryLowerMisc(Node*);
 
     LBasicBlock blockFor(Node* branch, int relativeOffset);
+    // Node::isPromoted
+    B3::Variable* variableOfEnvironment(Node* environment, unsigned offset);
+    LValue scopeThatIsOutFrom(Node* scope, unsigned hops);
+    UncheckedKeyHashMap<Node*, Vector<B3::Variable*>> m_variablesOfEnvironments;
+    // See BasicBlock::arraysViewed.
+    struct ArrayView {
+        LValue butterfly { nullptr };
+        LValue length { nullptr }; // Int64.
+        LValue limit { nullptr }; // Int64: below this, an element is a JSValue where the elements are. Nothing, if that is not how the array keeps them.
+    };
+    const ArrayView* viewOf(Node* access, Node* base);
+    void viewArraysAheadOf(BasicBlock*);
+    LBasicBlock wayInto(BasicBlock* successor);
+    Vector<std::tuple<BasicBlock*, Node*, ArrayView>, 4> m_arrayViews;
     void unsupported(Node*);
 
     // Values.
@@ -177,6 +193,12 @@ private:
     void branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds, LBasicBlock otherwise);
     // What the node is, if it is a string that the program spells out, of characters that take a byte each.
     static std::optional<String> stringWrittenInProgram(Node*);
+    // If the value is a string at all it is an atom: it is written in the program, or comes from a slot whose strings are (TypeTable::Holds::atoms).
+    static bool isAtomIfString(Node*, unsigned depth = 0);
+    LValue areTheSameGivenThatStringsAreAtoms(Node* left, LValue, Node* right, LValue); // Neither is a number or a BigInt.
+    void makeAtomIfString(Node*, LValue);
+    // `this`, in the code of a function that is not closed.
+    static bool isThisOfWhatAnybodyMayCall(Node*);
     LValue isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
     // Options::aotTypesFields(): what has just been made as that layout, with those in its slots (null: nothing), is left with nothing in a slot that the slot does not hold.
     void settleWhatWasBorn(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values);
@@ -233,9 +255,11 @@ private:
     LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // No node: it does not throw.
     // Of an operation that takes the global object and these and gives nothing back, from where the code hardly ever gets. It is no reason for the function to have a
     // frame, or to keep anything anywhere but where it is.
-    void coldCall(Node*, Entry, LValue first = nullptr, LValue second = nullptr);
-    LValue coldCallForValue(Node*, Entry, LValue first, LValue second = nullptr);
-    B3::PatchpointValue* emitColdCall(Node*, LType, Entry, LValue first, LValue second);
+    // (ChangesNothing: it looks, or it throws. What has been loaded is as good afterwards.)
+    enum class ColdCall : uint8_t { MayDoAnything, ChangesNothing };
+    void coldCall(Node*, Entry, LValue first = nullptr, LValue second = nullptr, ColdCall = ColdCall::MayDoAnything);
+    LValue coldCallForValue(Node*, Entry, LValue first, LValue second = nullptr, ColdCall = ColdCall::MayDoAnything);
+    B3::PatchpointValue* emitColdCall(Node*, LType, Entry, LValue first, LValue second, ColdCall);
     // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
     // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);

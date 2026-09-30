@@ -996,14 +996,24 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     return JSValue::encode(target);
 }
 
+// What a class that the text says something of (ClassExprNode::typeTag()) calls once it is defined. It is for code that is compiled ahead of time, which does not call this.
+JSC_DEFINE_HOST_FUNCTION(globalFuncNoteClass, (JSGlobalObject*, CallFrame*))
+{
+    return JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(cloneObjectForSpread(globalObject, callFrame->thisValue()));
+}
+
+JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue, JSObject* into)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue sourceValue = callFrame->thisValue();
     if (sourceValue.isUndefinedOrNull())
-        RELEASE_AND_RETURN(scope, JSValue::encode(constructEmptyObject(globalObject)));
+        RELEASE_AND_RETURN(scope, into ? into : constructEmptyObject(globalObject));
 
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
@@ -1014,12 +1024,12 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
     }
 
     Structure* sourceStructure = source->structure();
-    if (sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
+    if (!into && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
-            return JSValue::encode(cloned);
+            return cloned;
     }
 
-    JSObject* target = constructEmptyObject(globalObject);
+    JSObject* target = into ? into : constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
 
     if (canPerformFastPropertyEnumerationForCopyDataProperties(sourceStructure)) [[likely]] {
@@ -1050,7 +1060,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
 
         target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
 
-        return JSValue::encode(target);
+        return target;
     }
 
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);
@@ -1076,7 +1086,7 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, C
         target->putDirectMayBeIndex(globalObject, propertyName, value);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    return JSValue::encode(target);
+    return target;
 }
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncHandleNegativeProxyHasTrapResult, (JSGlobalObject* globalObject, CallFrame* callFrame))

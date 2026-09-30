@@ -76,7 +76,11 @@ public:
         }
         // What was read, or made, only to be called. (Graph::elideReadsOfCalleesNotPassed() goes by who uses a read, and nobody does.)
         for (Node* read : m_calleesRead) {
-            if (!used.contains(read))
+            if (used.contains(read))
+                continue;
+            if (Graph::closedMethodReadBy(read))
+                read->isReadOnlyToBeCalled = true;
+            else
                 read->isElided = true;
         }
         // A closure that nothing wants but a call that is seldom made is made when that is. (Making one does nothing that anybody can see.)
@@ -182,6 +186,8 @@ private:
         UnlinkedFunctionCodeBlock* callee = nullptr;
         Node* scopeOfClosure = nullptr;
         unsigned intrinsicToCheckFor = 0;
+        // What it is called on is said to be an array, and Array.prototype is what it is: there is nothing to check for.
+        bool isCertainlyTheIntrinsic = false;
         // Options::aotVerbose(): why one of the engine's own functions does not become part of its caller.
         auto notTaken = [&](ASCIILiteral why) {
             dataLogLnIf(Options::aotVerbose(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
@@ -199,10 +205,11 @@ private:
             if (!callee || readsCallee(callee))
                 return notTaken(callee ? "it reads its callee"_s : "there is no code for it"_s);
             intrinsicToCheckFor = ImmutableIntrinsics::shared()->at(intrinsic).canonical;
+            isCertainlyTheIntrinsic = Options::aotTypesFields() && TypeTable::areStructsToGoBy() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
         } else {
             bool isProven = false;
             const KnownFunction* known = caller.knownCallee(call, &isProven);
-            if (!known || !isProven || !known->forCall || !known->isDeclaration || !caller.passesNoFunctionObject(call))
+            if (!known || !isProven || !known->forCall || !(known->isDeclaration || Graph::closedMethodReadBy(calleeNode)) || !caller.passesNoFunctionObject(call))
                 return false;
             callee = known->forCall;
         }
@@ -344,7 +351,7 @@ private:
         entry->predecessors.append(block);
         // If it is not the function it was taken for, the call is made after all.
         Node* callAfterAll = nullptr;
-        if (intrinsicToCheckFor) {
+        if (intrinsicToCheckFor && !isCertainlyTheIntrinsic) {
             Node* guard = m_graph.addNode(NodeKind::Guard);
             guard->graph = block->graph;
             guard->guardKind = GuardKind::IsIntrinsic;

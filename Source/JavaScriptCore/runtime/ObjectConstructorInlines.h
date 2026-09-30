@@ -158,7 +158,14 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
     if (!checkStructureForClone(targetStructure))
         return false;
 
-    if (targetStructure->transitionWatchpointSetIsStillValid()) {
+#if USE(BUN_JSC_ADDITIONS)
+    // What was born into a family (Structure::bornAs()) stays in it: it does not get to be whatever it is a copy of.
+    if (targetStructure->bornAs() && targetStructure->bornAs() != sourceStructure->bornAs())
+        return false;
+#endif
+
+    // (Nothing watches the structure of what has been born into a family and has nothing yet: only code that is compiled ahead of time makes such things.)
+    if (!targetStructure->bornAs() && targetStructure->transitionWatchpointSetIsStillValid()) {
         dataLogLnIf(verbose, "target transitionWatchpointSetIsStillValid");
         return false;
     }

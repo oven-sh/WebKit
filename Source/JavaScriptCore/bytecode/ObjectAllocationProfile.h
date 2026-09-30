@@ -47,6 +47,9 @@ public:
 
     void initializeProfile(VM&, JSGlobalObject*, JSCell* owner, JSObject* prototype, unsigned inferredInlineCapacity, JSFunction* constructor = nullptr, FunctionRareData* = nullptr);
 
+    // What is made from now on is of that structure, which has the prototype that the one it takes the place of has.
+    void replaceStructure(VM&, JSCell* owner, Structure*);
+
     Structure* structure()
     {
         Structure* structure = m_structure.get();

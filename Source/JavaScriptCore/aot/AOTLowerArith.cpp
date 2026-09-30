@@ -454,6 +454,94 @@ std::optional<String> Lowering::stringWrittenInProgram(Node* node)
     return said;
 }
 
+bool Lowering::isAtomIfString(Node* node, unsigned depth)
+{
+    if (node->type && !mayBe(node->type, TString))
+        return true;
+    if (depth > 4)
+        return false;
+    switch (node->kind) {
+    case NodeKind::ConstantCell: {
+        if (!node->reg.isConstant())
+            return false;
+        JSValue constant = node->graph->codeBlock()->getConstant(node->reg);
+        const StringImpl* impl = constant && constant.isString() ? asString(constant)->tryGetValueImpl() : nullptr;
+        return impl && impl->isAtom();
+    }
+    case NodeKind::Narrow:
+        return isAtomIfString(node->uses[0].node, depth + 1);
+    case NodeKind::Phi:
+        for (auto& use : node->uses) {
+            if (use.node != node && !isAtomIfString(use.node, depth + 1))
+                return false;
+        }
+        return true;
+    case NodeKind::Bytecode:
+        if (node->opcode == op_check_type)
+            return isAtomIfString(node->use(node->as<OpCheckType>().m_value), depth + 1);
+        if (node->opcode == op_check_tdz)
+            return isAtomIfString(node->uses[0].node, depth + 1);
+        if (node->opcode == op_get_by_id) {
+            auto field = Graph::fieldOfStructGotAtBy(node);
+            return field && field->holds.atoms;
+        }
+        return false;
+    default:
+        return false;
+    }
+}
+
+LValue Lowering::areTheSameGivenThatStringsAreAtoms(Node* left, LValue a, Node* right, LValue b)
+{
+    auto implOf = [&](LValue string) { return m_out.loadPtr(string, m_heaps.JSRopeString_fiber0); };
+    if (isSubtype(left->type, TString) && isSubtype(right->type, TString))
+        return m_out.equal(implOf(a), implOf(b));
+    LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 5> results;
+    // What is no string is the same as another thing if the two are the same bits.
+    auto goOnIf = [&](LValue condition) {
+        LBasicBlock next = m_out.newBlock();
+        results.append(m_out.anchor(m_out.equal(a, b)));
+        m_out.branch(condition, unsure(next), unsure(continuation));
+        m_out.appendTo(next);
+    };
+    for (auto [node, value] : { std::pair { left, a }, std::pair { right, b } }) {
+        if (isSubtype(node->type, TString))
+            continue;
+        if (!isSubtype(node->type, TCell))
+            goOnIf(isCell(value));
+        if (!isSubtype(node->type & TCell, TString))
+            goOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)));
+    }
+    results.append(m_out.anchor(m_out.equal(implOf(a), implOf(b))));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return m_out.phi(Int32, results);
+}
+
+void Lowering::makeAtomIfString(Node* node, LValue value)
+{
+    if (!mayBe(node->type, TString) || isAtomIfString(node))
+        return;
+    LBasicBlock isNot = newColdBlock();
+    LBasicBlock done = m_out.newBlock();
+    auto goOnIf = [&](LValue condition) {
+        LBasicBlock next = m_out.newBlock();
+        m_out.branch(condition, unsure(next), unsure(done));
+        m_out.appendTo(next);
+    };
+    if (!isSubtype(node->type, TCell))
+        goOnIf(isCell(value));
+    if (!isSubtype(node->type & TCell, TString))
+        goOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)));
+    // (JSString::isDefinitelyAtom(). One that is not marked may be one all the same: that is found out the long way.)
+    m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(TypeInfoPerCellBit)), usually(done), rarely(isNot));
+    m_out.appendTo(isNot);
+    plainCall(Void, Entry::operationAOTMakeAtom, value);
+    m_out.jump(done);
+    m_out.appendTo(done);
+}
+
 // value === theString, which says that.
 LValue Lowering::isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String& said, LValue theString)
 {
@@ -538,10 +626,12 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
         return m_out.equal(a, b);
 
     // (== of two strings is ===.)
-    if (Options::aotComparesWithStringsInPlace() && (strict || isSubtype(both, TString))) {
-        if (auto said = stringWrittenInProgram(right); said && (!isCompact() || isSubtype(left->type, TString | TOther)))
+    if ((strict || isSubtype(both, TString)) && !mayBe(both, TNumber | TBigInt) && isAtomIfString(left) && isAtomIfString(right))
+        return areTheSameGivenThatStringsAreAtoms(left, a, right, b);
+    if (Options::aotComparesWithStringsInPlace() && !isCompact() && (strict || isSubtype(both, TString))) {
+        if (auto said = stringWrittenInProgram(right))
             return isStringThatSays(node, left, a, *said, b);
-        if (auto said = stringWrittenInProgram(left); said && (!isCompact() || isSubtype(right->type, TString | TOther)))
+        if (auto said = stringWrittenInProgram(left))
             return isStringThatSays(node, right, b, *said, a);
     }
 

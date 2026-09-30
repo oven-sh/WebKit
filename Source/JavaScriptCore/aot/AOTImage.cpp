@@ -561,19 +561,20 @@ Vector<uint8_t> ImageBuilder::finish()
         RELEASE_ASSERT_WITH_MESSAGE(numbersOfIdentifiers, "Structs go by the numbers of the program's identifiers");
         for (uint32_t number = 0; number <= TypeTable::shared()->numberOfFamilies(); ++number) {
             auto family = TypeTable::shared()->family(number);
-            RELEASE_ASSERT(heldInSlots.size() < (1u << 24) && named.size() < (1u << 24));
+            RELEASE_ASSERT(heldInSlots.size() < (1u << 24) && named.size() < (1u << 20));
             indexOfHeldInSlots.append(static_cast<uint32_t>(heldInSlots.size()) << 8 | family.capacity);
             size_t start = heldInSlots.size();
             for (unsigned slot = 0; slot < family.capacity; ++slot)
                 heldInSlots.append({ 0, 0, 0, 0 });
             size_t startOfNamed = named.size();
             for (auto& name : family.names) {
-                heldInSlots[start + name.slot] = { safeCast<uint16_t>(name.holds.kinds), name.holds.first, name.holds.last, 0 };
+                heldInSlots[start + name.slot] = { name.holds.kindsAsHeld(), name.holds.first, name.holds.last, 0 };
                 // (A name that the program has no use for is not one that it can add a property by.)
                 if (auto it = numbersOfIdentifiers->find(name.name); it != numbersOfIdentifiers->end())
                     named.append({ it->value, name.slot, name.mayBeAbsent });
             }
-            indexOfNamed.append(static_cast<uint32_t>(startOfNamed) << 8 | (named.size() - startOfNamed));
+            RELEASE_ASSERT(named.size() - startOfNamed < (1u << 12));
+            indexOfNamed.append(static_cast<uint32_t>(startOfNamed) << 12 | (named.size() - startOfNamed));
             inlineSlotsOfFamilies.append(safeCast<uint8_t>(family.inlineSlots));
         }
     } else if (Options::aotTypesFields() && TypeTable::shared()) {

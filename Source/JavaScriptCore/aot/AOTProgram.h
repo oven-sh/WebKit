@@ -62,8 +62,12 @@ struct ProgramFacts {
         whyExposed.store(why, std::memory_order_relaxed);
         for (auto& type : parameterTypes)
             type.join(TTop);
+        thisType.join(TTop);
         return true;
     }
+    // If closed: everything that it is called on. (parameterTypes[0] says whether it is reached at all.)
+    AtomicType thisType;
+    bool isReached() const { return !isClosed || isExposed.load(std::memory_order_relaxed) || parameterTypes[0].load(); }
     // If closed: everything that is passed for each parameter, `this` being the first, from nothing up (see KnownFunction::returnType).
     // One that there are more of than this has nothing said of the rest.
     static constexpr unsigned mostParameters = 12;
@@ -235,6 +239,38 @@ private:
 };
 JS_EXPORT_PRIVATE void setFunctionsOfProgram(const FunctionsOfProgram*); // Not while anything is being compiled.
 const FunctionsOfProgram* functionsOfProgram();
+
+// With structs (TypeTable::hasStructs()): what the definitions of the program's classes come to. A class that the table of types says something of says so where it is defined
+// (@noteClass), and there its constructor and its methods are in plain sight. Functions go by their numbers (FunctionsOfProgram).
+class ClassesOfProgram {
+    WTF_MAKE_TZONE_ALLOCATED(ClassesOfProgram);
+    WTF_MAKE_NONCOPYABLE(ClassesOfProgram);
+public:
+    ClassesOfProgram() = default;
+
+    // While every piece of code has its say (Graph::noteClassesDefined()): any thread.
+    JS_EXPORT_PRIVATE void noteClosedMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function);
+    JS_EXPORT_PRIVATE void noteThisIn(UnlinkedCodeBlock*, uint16_t family);
+
+    // After that: any thread.
+    uint32_t closedMethod(uint32_t classType, UniquedStringImpl* name) const { return m_methods.get({ classType, name }); } // Zero: none.
+    bool isClosedMethod(uint32_t function) const { return function && m_closedMethods.contains(function); }
+    uint16_t familyOfThisIn(UnlinkedCodeBlock* code) const { return m_familyOfThis.get(code); } // Zero: there is no telling.
+    template<typename Functor> void forEachClosedMethod(const Functor& functor) const
+    {
+        for (uint32_t function : m_closedMethods)
+            functor(function);
+    }
+    unsigned numberOfClosedMethods() const { return m_closedMethods.size(); }
+
+private:
+    Lock m_lock;
+    UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint32_t> m_methods;
+    UncheckedKeyHashSet<uint32_t> m_closedMethods;
+    UncheckedKeyHashMap<UnlinkedCodeBlock*, uint16_t> m_familyOfThis;
+};
+JS_EXPORT_PRIVATE void setClassesOfProgram(ClassesOfProgram*); // Not while anything is being compiled.
+ClassesOfProgram* classesOfProgram();
 
 class CalleeHints;
 struct ModuleLinkage;

@@ -246,7 +246,7 @@ struct Slot {
         void* pointer; // Global variable caches: the address of the variable. Prototype hits: the holder.
         struct {
             StructureID newStructureID; // Transitions.
-            uint32_t unused;
+            uint32_t held; // op_put_by_id, if not zero: PutPropertySlot::held(). Only that may be stored.
         };
     };
 };
@@ -303,6 +303,7 @@ struct Instance {
     static Instance& ensure(JSGlobalObject*);
     static bool adopt(VM&, JSObject*, uint16_t family); // SlotsOfBornObjects::Adopt
     Structure* emptyStructureOfFamily(uint16_t family);
+    Structure* emptyStructureOfFamily(uint16_t family, JSObject* prototype); // A new one: whoever asks keeps it.
     static JSObject* newObjectOf(VM&, Structure*); // With nothing in it, and room outside it if the Structure has slots there.
     static void destroy(Instance*);
 

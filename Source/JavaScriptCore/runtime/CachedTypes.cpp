@@ -6368,6 +6368,9 @@ struct BytecodeLinkEncoder::Impl {
             AOT::setFunctionsOfProgram(&functionsOfProgram);
         }
         auto forgetFunctionsOfProgram = makeScopeExit([] { AOT::setFunctionsOfProgram(nullptr); });
+        AOT::ClassesOfProgram classesOfProgram;
+        AOT::setClassesOfProgram(&classesOfProgram);
+        auto forgetClassesOfProgram = makeScopeExit([] { AOT::setClassesOfProgram(nullptr); });
         {
             MonotonicTime before = MonotonicTime::now();
             for (auto& hintsOfModule : hints) {
@@ -6424,6 +6427,13 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
             RELEASE_ASSERT(!unreadable.load());
+            if (followsFunctions) {
+                classesOfProgram.forEachClosedMethod([&](uint32_t number) {
+                    const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                    function.needsNoFunctionObject.store(function.forCall && !AOT::needsFunctionObject(function.forCall), std::memory_order_relaxed);
+                });
+                dataLogLn("AOT: ", classesOfProgram.numberOfClosedMethods(), " methods are closed");
+            }
             if (followsFunctions) {
                 // Where a function goes is seen from where it is made: by an instruction, or when a module is set up, for a variable that whoever
                 // put the program together has kept an eye on. One that comes about in any other way is anybody's.
@@ -6800,8 +6810,16 @@ struct BytecodeLinkEncoder::Impl {
         codeOfProgram.builtins = &builtinsOfEngine;
         for (auto& job : jobs)
             codeOfProgram.all.add(job.codeBlock, AOT::CodeOfProgram::About { hints[job.module].get(), linkages[job.module].get(), factsOfCode.get(job.codeBlock), job.key });
+        std::atomic<uint64_t> functionsNeverReached { 0 };
+        std::atomic<uint64_t> bytecodeNeverReached { 0 };
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
+                // Whoever calls a closed function is known, all of them. One that nobody calls has no use for code.
+                if (const AOT::ProgramFacts* facts = factsOfCode.get(jobs[index].codeBlock); facts && !facts->isReached()) {
+                    functionsNeverReached++;
+                    bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
+                    continue;
+                }
                 if (Options::aotReportStats()) [[unlikely]] {
                     ASCIILiteral origin = "unknown"_s;
                     if (!(jobs[index].rank & 2))
@@ -7016,7 +7034,17 @@ struct BytecodeLinkEncoder::Impl {
                     }
                 });
             }
+            classesOfProgram.forEachClosedMethod([&](uint32_t number) {
+                const AOT::KnownFunction& function = *functionsOfProgram.function(number);
+                if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
+                    function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
+                    again = true;
+                }
+            });
+            dataLogLn("AOT: ", functionsNeverReached.load(), " closed functions that nothing reaches are left out (", bytecodeNeverReached.load(), " bytes of bytecode)");
             if (again) {
+                functionsNeverReached = 0;
+                bytecodeNeverReached = 0;
                 builder.clear();
                 declined.clear();
                 next = 0;

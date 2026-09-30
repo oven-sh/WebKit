@@ -501,6 +501,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!parseIndex(propertyName));
 
     bool isFieldOfStruct = false;
+    uint32_t heldByField = 0;
 #if USE(BUN_JSC_ADDITIONS)
     if (uint16_t bornAs = this->structure()->bornAs(); bornAs && SlotsOfBornObjects::areStructs()) [[unlikely]] {
         if (auto* named = SlotsOfBornObjects::named(bornAs, propertyName.uid())) {
@@ -514,6 +515,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             // (Nobody remembers how it went, so everybody who does not know the types gets here every time.)
             isFieldOfStruct = true;
             value = SlotsOfBornObjects::asHeld(bornAs, named->slot, value);
+            if (auto* held = SlotsOfBornObjects::heldIn(bornAs, named->slot))
+                heldByField = held->kinds | static_cast<uint32_t>(held->first) << 16;
         }
     } else if constexpr (mode == PutModeDefineOwnProperty) {
         if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && bornAs) [[unlikely]]
@@ -573,6 +576,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
                 if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+            } else if (isFieldOfStruct) {
+                if (heldByField)
+                    slot.setExistingFieldOfStruct(this, offset, heldByField);
+                else
+                    slot.setExistingProperty(this, offset);
             } else if (!slotSaysWhatItHolds) {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
                 slot.setExistingProperty(this, offset);
@@ -582,8 +590,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         validateOffset(offset);
         putDirectOffset(vm, offset, value);
-        if (!isFieldOfStruct)
-        slot.setNewProperty(this, offset);
+        if (heldByField)
+            slot.setNewFieldOfStruct(this, offset, heldByField);
+        else
+            slot.setNewProperty(this, offset);
         if (attributes & PropertyAttribute::ReadOnly)
             this->structure()->setContainsReadOnlyProperties();
         if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
@@ -610,8 +620,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             putDirectOffset(vm, offset, value);
             setStructure(vm, newStructure);
-            if (!isFieldOfStruct)
-        slot.setNewProperty(this, offset);
+            if (heldByField)
+                slot.setNewFieldOfStruct(this, offset, heldByField);
+            else
+                slot.setNewProperty(this, offset);
             if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
             return { };
@@ -647,6 +659,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
             if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+        } else if (isFieldOfStruct) {
+            if (heldByField)
+                slot.setExistingFieldOfStruct(this, offset, heldByField);
+            else
+                slot.setExistingProperty(this, offset);
         } else if (!slotSaysWhatItHolds) {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
             slot.setExistingProperty(this, offset);
@@ -680,7 +697,9 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
     putDirectOffset(vm, offset, value);
     setStructure(vm, newStructure);
-    if (!isFieldOfStruct)
+    if (heldByField)
+        slot.setNewFieldOfStruct(this, offset, heldByField);
+    else
         slot.setNewProperty(this, offset);
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();

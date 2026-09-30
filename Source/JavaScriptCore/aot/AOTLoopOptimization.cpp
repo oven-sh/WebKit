@@ -40,6 +40,71 @@ public:
         }
     }
 
+    // Loops that are kept whole. From the outside in, so that an array is looked at as seldom as will do.
+    void viewArrays()
+    {
+        computeDominators();
+        for (BasicBlock* header : m_graph.m_rpo) {
+            if (!header->graph->loopsAreNotSplit || header->isGeneric || header->isCatchEntrypoint)
+                continue;
+            Loop loop;
+            loop.header = header;
+            for (BasicBlock* predecessor : header->predecessors) {
+                if (header->dominates(predecessor))
+                    loop.latches.append(predecessor);
+            }
+            if (loop.latches.isEmpty() || loop.latches.size() == header->predecessors.size())
+                continue;
+            loop.body.ensureSize(m_graph.blocks.size());
+            loop.body.set(header->index);
+            Vector<BasicBlock*, 16> worklist;
+            for (BasicBlock* latch : loop.latches)
+                worklist.append(latch);
+            bool isProper = true;
+            while (!worklist.isEmpty()) {
+                BasicBlock* block = worklist.takeLast();
+                if (loop.body.get(block->index))
+                    continue;
+                isProper &= header->dominates(block) && !block->isGeneric && !block->endsWithGuard && !block->isCatchEntrypoint;
+                loop.body.set(block->index);
+                for (BasicBlock* predecessor : block->predecessors)
+                    worklist.append(predecessor);
+            }
+            if (!isProper)
+                continue;
+            m_isWhole = true;
+            bool isKnown = true;
+            for (BasicBlock* block : m_graph.m_rpo) {
+                if (!loop.body.get(block->index))
+                    continue;
+                loop.blocks.append(block);
+                for (Node* node : block->nodes)
+                    isKnown = isKnown && noteEffects(loop, node);
+            }
+            m_isWhole = false;
+            if (!isKnown || loop.writesIndexed)
+                continue;
+            for (BasicBlock* block : loop.blocks) {
+                for (Node* node : block->nodes) {
+                    if (node->kind != NodeKind::Bytecode || node->viewedAheadOf || node->guard)
+                        continue;
+                    Node* base = nullptr;
+                    if (node->opcode == op_get_by_val && node->use(node->as<OpGetByVal>().m_property)->isInteger())
+                        base = node->use(node->as<OpGetByVal>().m_base);
+                    else if (node->opcode == op_get_length)
+                        base = node->use(node->as<OpGetLength>().m_base);
+                    if (!base || !base->type || !isSubtype(base->type, TArray) || !isInvariant(loop, base))
+                        continue;
+                    node->viewedAheadOf = header;
+                    if (!header->arraysViewed.contains(base))
+                        header->arraysViewed.append(base);
+                }
+            }
+            if (!header->arraysViewed.isEmpty())
+                header->bodyOfLoop = loop.body;
+        }
+    }
+
 private:
     struct Loop {
         BasicBlock* preHeader { nullptr };
@@ -241,6 +306,29 @@ private:
         }
         if (node->guard)
             return true;
+
+        // What is not split off has its long way where it is. These have one that changes nothing: it looks, or it throws.
+        if (m_isWhole) {
+            switch (node->opcode) {
+            case op_get_by_val:
+                if (node->use(node->as<OpGetByVal>().m_base)->type && isSubtype(node->use(node->as<OpGetByVal>().m_base)->type, TArray) && isNumber(node->use(node->as<OpGetByVal>().m_property)))
+                    return true;
+                break;
+            case op_get_length:
+                if (node->use(node->as<OpGetLength>().m_base)->type && isSubtype(node->use(node->as<OpGetLength>().m_base)->type, TArray | TString))
+                    return true;
+                break;
+            case op_check_type:
+            case op_check_traps:
+            case op_stricteq:
+            case op_nstricteq:
+            case op_jstricteq:
+            case op_jnstricteq:
+                return true;
+            default:
+                break;
+            }
+        }
 
         auto bothNumbers = [&](VirtualRegister lhs, VirtualRegister rhs) { return isNumber(node->use(lhs)) && isNumber(node->use(rhs)); };
         auto bothForBits = [&](VirtualRegister lhs, VirtualRegister rhs) { return isSubtype(node->use(lhs)->type | node->use(rhs)->type, TNumber | TBoolean); };
@@ -685,16 +773,17 @@ private:
     }
 
     Graph& m_graph;
+    bool m_isWhole { false };
 };
 
 } // anonymous namespace
 
 void optimizeLoops(Graph& graph)
 {
-    if (!graph.hasGuards())
-        return;
     LoopOptimizer optimizer(graph);
-    optimizer.run();
+    if (graph.hasGuards())
+        optimizer.run();
+    optimizer.viewArrays();
 }
 
 } } // namespace JSC::AOT

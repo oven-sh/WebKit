@@ -165,6 +165,35 @@ Type VariableFacts::read(Variable variable, UniquedStringImpl* name, unsigned re
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(FunctionsOfProgram);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(ClassesOfProgram);
+
+static ClassesOfProgram* s_classesOfProgram;
+void setClassesOfProgram(ClassesOfProgram* classes) { s_classesOfProgram = classes; }
+ClassesOfProgram* classesOfProgram() { return s_classesOfProgram; }
+
+void ClassesOfProgram::noteClosedMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function)
+{
+    Locker locker { m_lock };
+    auto result = m_methods.add({ classType, name }, function);
+    // Twice: the text was copied, and there is no saying which copy is meant.
+    if (!result.isNewEntry && result.iterator->value != function) {
+        m_closedMethods.remove(result.iterator->value);
+        result.iterator->value = 0;
+        return;
+    }
+    if (result.iterator->value)
+        m_closedMethods.add(function);
+}
+
+void ClassesOfProgram::noteThisIn(UnlinkedCodeBlock* code, uint16_t family)
+{
+    if (!code)
+        return;
+    Locker locker { m_lock };
+    auto result = m_familyOfThis.add(code, family);
+    if (!result.isNewEntry && result.iterator->value != family)
+        result.iterator->value = 0;
+}
 
 static const FunctionsOfProgram* s_functionsOfProgram;
 void setFunctionsOfProgram(const FunctionsOfProgram* functions) { s_functionsOfProgram = functions; }

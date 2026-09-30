@@ -3177,6 +3177,7 @@ template <class TreeBuilder> TreeClassExpression Parser<LexerType>::parseClass(T
     const ConstructorKind constructorKind = parentClass ? ConstructorKind::Extends : ConstructorKind::Base;
 
     JSTextPosition classHeadEnd = lastTokenEndPosition();
+    uint32_t typeTagOfClass = m_token.m_typeTag;
     consumeOrFail(OPENBRACE, "Expected opening '{' at the start of a class body");
 
     AutoPopScope classScope(this, pushScope());
@@ -3453,7 +3454,9 @@ parseMethod:
     auto [classHeadEnvironment, classHeadFunctionDeclarations] = popScope(classHeadScope, TreeBuilder::NeedsFreeVariableInfo);
     ASSERT(functionDeclarations.isEmpty());
     ASSERT(classHeadFunctionDeclarations.isEmpty());
-    return context.createClassExpr(location, info, WTF::move(classHeadEnvironment), WTF::move(lexicalEnvironment), constructor, parentClass, classElements, start, divot, classHeadEnd);
+    auto classExpression = context.createClassExpr(location, info, WTF::move(classHeadEnvironment), WTF::move(lexicalEnvironment), constructor, parentClass, classElements, start, divot, classHeadEnd);
+    context.setTypeTagOfClass(classExpression, typeTagOfClass);
+    return classExpression;
 }
 
 template <typename LexerType>

@@ -66,13 +66,13 @@ public:
                 default:
                     break;
                 }
-                if (calleesGivenMore) {
+                if (calleesGivenMore && isReached()) {
                     noteArgumentsOf(node);
                     noteWhatIsPutInVariablesBy(node);
                 }
             }
         }
-        if (calleesGivenMore && Options::aotFollowsFunctions() && functionsOfProgram()) {
+        if (calleesGivenMore && Options::aotFollowsFunctions() && functionsOfProgram() && isReached()) {
             for (BasicBlock* block : m_graph.m_rpo) {
                 for (Node* phi : block->phis)
                     noteWhereValuesGoIn(phi);
@@ -95,6 +95,8 @@ public:
         }
     }
 
+    // Whether anything is seen to get to the code, so far. If not it does nothing, so far: it is looked at again if something turns out to.
+    bool isReached() const { return !m_graph.facts() || m_graph.facts()->isReached(); }
     Type returnType() const { return m_returnType; }
     Vector<const KnownFunction*>* calleesConsulted { nullptr };
     Vector<const KnownFunction*>* calleesGivenMore { nullptr };
@@ -244,6 +246,12 @@ private:
             return exposeAllBut(user->as<OpPutByVal>().m_base);
         case op_put_by_val_direct:
             return exposeAllBut(user->as<OpPutByValDirect>().m_base);
+        case op_define_data_property:
+            // A method that nothing gets hold of but reads that say which it is (Graph::closedMethodReadBy()).
+            if (auto* classes = classesOfProgram(); classes && classes->isClosedMethod(functionThatIs(user->use(user->as<OpDefineDataProperty>().m_value)->type)))
+                return exposeAllBut(user->as<OpDefineDataProperty>().m_value);
+            exposeWhatIsUsedBy(user);
+            return;
 
         // ---- The same thing by another name, if that is what is made of it.
         case op_check_type:
@@ -400,6 +408,11 @@ private:
             if (Options::aotFollowsFunctions() && functionsOfProgram())
                 noteJoin(before, type, ProgramFacts::OneOfSeveralInParameter);
         }
+        {
+            Type type = node->use(VirtualRegister(firstArgument))->type & TTop;
+            Type before = known->facts->thisType.join(type);
+            givesMore |= (before | type) != before;
+        }
         // (One with no parameters is reached all the same.)
         Type before = known->facts->parameterTypes[0].join(TTop);
         givesMore |= before != TTop;
@@ -428,6 +441,10 @@ private:
         } else
             return std::nullopt;
         Node* callee = node->use(calleeRegister);
+        if (argc == 1 && node->opcode == op_call && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::cloneObject) {
+            uint16_t family = Graph::familyOfNewObject(node);
+            return family ? typeOfObjectBornAs(family) : TFinalObject;
+        }
         if (argc == 2 && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::toLength) {
             Type argument = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1))->type;
             if (!argument)
@@ -704,6 +721,8 @@ private:
         case op_type_tag:
             if (Options::aotAuditsTypes()) [[unlikely]]
                 return node->uses[0].node->type;
+            if (node->narrowedTo)
+                return node->uses[0].node->type & node->narrowedTo;
             return node->uses[0].node->type & typeOfObjectBornAs(node->firstLayout);
         case op_urshift:
             return TInt32; // The bits of the result: the op_unsigned that follows makes the number of them. A BigInt throws.
@@ -789,7 +808,7 @@ private:
             return TBoolean;
 
         case op_new_object:
-            if (uint16_t family = Graph::familyOfNewObject(node); family && (!node->numberOfLiteralProperties || m_graph.shapeOfLiteral(node)))
+            if (uint16_t family = Graph::familyOfNewObject(node))
                 return typeOfObjectBornAs(family);
             if (Options::aotTypesFields() && node->numberOfLiteralProperties) {
                 if (auto shape = m_graph.shapeOfLiteral(node); shape && shape->number) {
@@ -800,6 +819,13 @@ private:
             }
             return TFinalObject;
         case op_get_by_id:
+            if (TypeTable::areStructsToGoBy() && Options::aotTypesFields()) {
+                if (uint32_t method = Graph::closedMethodReadBy(node))
+                    return typeOf(node->as<OpGetById>().m_base) ? typeOfFunction(method) : TNone;
+                // Of a struct: the slot holds that, and nothing else is looked at.
+                if (auto field = Graph::fieldOfStructGotAtBy(node); field && field->holds.saysSomething())
+                    return typeOf(node->as<OpGetById>().m_base) ? field->holds.type() | (field->isOptional ? TUndefined : TNone) : TNone;
+            }
             // What got past the guard is what the slot holds; or there is no such property.
             if (Node* guard = node->guard; guard && guard->guardKind == GuardKind::Field && guard->heldKinds) {
                 if (!typeOf(node->as<OpGetById>().m_base))
@@ -827,6 +853,9 @@ private:
         case op_create_promise:
             return TPromise;
         case op_create_this:
+            if (uint16_t family = node->graph->familyOfThis())
+                return typeOfObjectBornAs(family);
+            return TObject;
         case op_create_direct_arguments:
         case op_create_scoped_arguments:
         case op_create_cloned_arguments:
@@ -855,8 +884,11 @@ private:
             return isSubtype(operand, TAnyObject) ? operand : TAnyObject;
         }
         case op_super_construct:
-        case op_construct_varargs:
         case op_super_construct_varargs:
+            if (uint16_t family = node->graph->familyOfThis())
+                return typeOfObjectBornAs(family);
+            return TAnyObject;
+        case op_construct_varargs:
             return TAnyObject;
         case op_new_array:
         case op_new_array_buffer:

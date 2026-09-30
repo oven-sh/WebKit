@@ -223,7 +223,7 @@ void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
 
 static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
-    if (!base.isCell() || !slot.isCacheablePut() || slot.base() != base.asCell())
+    if (!base.isCell() || (!slot.isCacheablePut() && !slot.isCacheablePutOfFieldOfStruct()) || slot.base() != base.asCell())
         return false;
     // Objects that others inherit from have more depending on them than a store lets on.
     if (!oldStructure->propertyAccessesAreCacheable() || oldStructure->isDictionary() || oldStructure->mayBePrototype())
@@ -246,6 +246,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         cache->offset = *location | attempts | (structureAfterwards ? Slot::isIntricate : 0);
         cache->pointer = nullptr;
         cache->newStructureID = structureAfterwards ? structureAfterwards->id() : StructureID();
+        cache->held = slot.type() == PutPropertySlot::ExistingFieldOfStruct || slot.type() == PutPropertySlot::NewFieldOfStruct ? slot.held() : 0;
         WTF::storeStoreFence();
         cache->structureID = oldStructure->id();
         // For a transition the collector has to see it too, even if it has been by already.
@@ -254,7 +255,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         didFillSlot(vm, data);
     };
 
-    if (slot.type() == PutPropertySlot::ExistingProperty) {
+    if (slot.type() == PutPropertySlot::ExistingProperty || slot.type() == PutPropertySlot::ExistingFieldOfStruct) {
         if (newStructure != oldStructure || (Options::aotDisableFastPaths() & 2))
             return false;
         // Code that has folded the property to a constant has to hear about writes that go around the runtime.
