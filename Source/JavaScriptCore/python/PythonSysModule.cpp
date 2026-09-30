@@ -732,9 +732,8 @@ PYTHON_NATIVE(sysActivateStackTrampoline)
 
 PYTHON_NATIVE(sysGetCpuCountConfig)
 {
-    UNUSED_PARAM(globalObject);
     UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsNumber(-1));
+    return JSValue::encode(jsNumber(globalObject->pyRealm()->configuration().cpuCount));
 }
 
 PYTHON_NATIVE(returnTrue)

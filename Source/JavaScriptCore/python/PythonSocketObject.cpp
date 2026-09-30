@@ -36,6 +36,7 @@
 #include "PythonBytes.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
+#include "PythonSignatures.h"
 #include <sys/uio.h>
 
 // The class _socket.socket, of CPython's Modules/socketmodule.c
@@ -260,6 +261,23 @@ PYTHON_NATIVE(socketSetOption)
 {
     SOCKET_PROLOGUE();
     unsigned given = args.size() - 1;
+#ifdef AF_VSOCK
+    // "iiK:setsockopt". What is set is of 64 bits.
+    if (self.family == AF_VSOCK) {
+        if (given != 3)
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("setsockopt() takes exactly 3 arguments ("_s, given, " given)"_s)));
+        CONVERT(level, toCIntOfFormat(globalObject, args[1]));
+        CONVERT(option, toCIntOfFormat(globalObject, args[2]));
+        if (!typeOf(globalObject, args[3])->lookup(vm, vm.pythonNames().dunder_index))
+            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("setsockopt() argument 3 must be int, not "_s, typeNameOfArgument(globalObject, args[3]))));
+        JSValue integer = toInt(globalObject, args[3]);
+        RETURN_IF_EXCEPTION(scope, { });
+        uint64_t flag = lowBitsOfInt(integer);
+        if (setsockopt(self.descriptor, level, option, &flag, sizeof(flag)) < 0)
+            return JSValue::encode(raiseSocketError(globalObject, scope));
+        RETURN_NONE();
+    }
+#endif
     // Each way of calling it is tried in turn, and what is wrong with the last is what is said.
     int level = 0;
     int option = 0;
@@ -312,6 +330,17 @@ PYTHON_NATIVE(socketGetOption)
     CONVERT(option, toCIntOfFormat(globalObject, args[2]));
     CONVERT_INT_OR(givenLength, args.at(3), 0);
     socklen_t length = givenLength;
+#ifdef AF_VSOCK
+    if (self.family == AF_VSOCK) {
+        if (length)
+            return JSValue::encode(raiseOSErrorSaying(globalObject, scope, "getsockopt string buffer not allowed"_s));
+        uint64_t flag = 0;
+        socklen_t size = sizeof(flag);
+        if (getsockopt(self.descriptor, level, option, &flag, &size) < 0)
+            return JSValue::encode(raiseSocketError(globalObject, scope));
+        return JSValue::encode(intFromUInt64(globalObject, flag));
+    }
+#endif
     if (!length) {
         int flag = 0;
         socklen_t size = sizeof(flag);
@@ -366,6 +395,14 @@ PYTHON_NATIVE(socketAccept)
     int accepted = -1;
     auto accept = [&] {
 #if defined(SOCK_CLOEXEC) && OS(LINUX)
+#ifdef HAVE_SOCKADDR_ALG
+        // One of these cannot say who it is from, and if it is asked the kernel says that the connection was given up.
+        if (self.family == AF_ALG) {
+            length = 0;
+            accepted = ::accept4(self.descriptor, nullptr, nullptr, SOCK_CLOEXEC);
+            return accepted >= 0;
+        }
+#endif
         accepted = ::accept4(self.descriptor, &address.sa, &length, SOCK_CLOEXEC);
 #else
         accepted = ::accept(self.descriptor, &address.sa, &length);
@@ -380,7 +417,7 @@ PYTHON_NATIVE(socketAccept)
         return { };
     }
 #endif
-    JSValue from = makeSocketAddress(globalObject, &address.sa, length, self.protocol);
+    JSValue from = makeSocketAddress(globalObject, self.descriptor, &address.sa, length, self.protocol);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyTuple::create(globalObject, { jsNumber(accepted), from }));
 }
@@ -464,7 +501,7 @@ PYTHON_NATIVE(socketGetName)
     zeroBytes(address);
     if ((isPeer ? getpeername(self.descriptor, &address.sa, &length) : getsockname(self.descriptor, &address.sa, &length)) < 0)
         return JSValue::encode(raiseSocketError(globalObject, scope));
-    RELEASE_AND_RETURN(scope, JSValue::encode(makeSocketAddress(globalObject, &address.sa, length, self.protocol)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(makeSocketAddress(globalObject, self.descriptor, &address.sa, length, self.protocol)));
 }
 
 PYTHON_NATIVE(socketShutdown)
@@ -510,7 +547,7 @@ static std::optional<ssize_t> receive(JSGlobalObject* globalObject, Socket& self
     };
     if (!callSocket(globalObject, self, WaitingTo::Read, call))
         return std::nullopt;
-    *from = makeSocketAddress(globalObject, &address.sa, length, self.protocol);
+    *from = makeSocketAddress(globalObject, self.descriptor, &address.sa, length, self.protocol);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     return result;
 }
@@ -584,7 +621,8 @@ static bool hasControlSpace(const struct msghdr& message, const struct cmsghdr* 
 // get_cmsg_data_space(): how many bytes of the control buffer there are from where the data of `header` begins. Nothing if that is not in it.
 static std::optional<size_t> controlDataSpace(const struct msghdr& message, struct cmsghdr* header)
 {
-    auto* data = std::bit_cast<const char*>(CMSG_DATA(header));
+    // An array, in glibc
+    auto* data = std::bit_cast<const char*>(static_cast<const unsigned char*>(CMSG_DATA(header)));
     if (!data)
         return std::nullopt;
     size_t offset = data - static_cast<const char*>(message.msg_control);
@@ -693,7 +731,7 @@ static JSValue receiveMessage(JSGlobalObject* globalObject, Socket& self, const 
     }
     JSValue value = makeValue(received);
     CLOSE_AND_RETURN_IF_EXCEPTION();
-    JSValue from = makeSocketAddress(globalObject, &address.sa, std::min(message.msg_namelen, addressLength), self.protocol);
+    JSValue from = makeSocketAddress(globalObject, self.descriptor, &address.sa, std::min(message.msg_namelen, addressLength), self.protocol);
     CLOSE_AND_RETURN_IF_EXCEPTION();
 #undef CLOSE_AND_RETURN_IF_EXCEPTION
     return PyTuple::create(globalObject, { value, items, jsNumber(message.msg_flags), from });
@@ -977,6 +1015,131 @@ PYTHON_NATIVE(socketSendMessage)
     return JSValue::encode(intFromInt64(globalObject, sent));
 }
 
+#ifdef HAVE_SOCKADDR_ALG
+// sendmsg_afalg([msg], *, op[, iv[, assoclen[, flags]]])
+PYTHON_NATIVE(socketSendMessageToAlgorithm)
+{
+    SOCKET_PROLOGUE();
+    if (self.family != AF_ALG)
+        return JSValue::encode(raiseOSErrorSaying(globalObject, scope, "algset is only supported for AF_ALG"_s));
+    if (!checkArgumentsSlow(globalObject, callFrame))
+        return { };
+    // "|O$O!y*O!i:sendmsg_afalg"
+    auto mustBeInt = [&] (JSValue value, unsigned position) {
+        if (!value || isInstance(globalObject, value, realm->typeInt()))
+            return true;
+        raiseTypeError(globalObject, scope, concatenate("sendmsg_afalg() argument "_s, position, " must be int, not "_s, typeNameOfArgument(globalObject, value)));
+        return false;
+    };
+    JSValue givenParts = args.at(1);
+    JSValue givenOperation = args.at(2);
+    if (!mustBeInt(givenOperation, 2))
+        return { };
+    Buffer vector;
+    if (JSValue given = args.at(3)) {
+        vector = bufferOf(globalObject, given);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    JSValue givenAssociatedLength = args.at(4);
+    if (!mustBeInt(givenAssociatedLength, 4))
+        return { };
+    CONVERT_INT_OR(flags, args.at(5), 0);
+
+    int operation = -1;
+    if (givenOperation) {
+        if (auto converted = toCInt(globalObject, givenOperation))
+            operation = *converted;
+        else if (!scope.tryClearException())
+            return { };
+    }
+    if (operation < 0)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "Invalid or missing argument 'op'"_s));
+    int associatedLength = -1;
+    if (givenAssociatedLength) {
+        CONVERT(converted, toCInt(globalObject, givenAssociatedLength));
+        if (converted < 0)
+            return JSValue::encode(raiseTypeError(globalObject, scope, "assoclen must be positive"_s));
+        associatedLength = converted;
+    }
+
+    size_t controlLength = CMSG_SPACE(4);
+    if (vector)
+        controlLength += CMSG_SPACE(sizeof(struct af_alg_iv) + vector.size());
+    if (associatedLength >= 0)
+        controlLength += CMSG_SPACE(4);
+    Vector<uint8_t> control;
+    if (!control.tryGrow(controlLength))
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
+    zeroSpan(control.mutableSpan());
+    struct msghdr message;
+    zeroBytes(message);
+    message.msg_control = control.mutableSpan().data();
+    message.msg_controllen = controlLength;
+
+    // sock_sendmsg_iovec()
+    Buffers buffers(globalObject);
+    if (givenParts) {
+        PyTuple* parts = tupleFromIterable(globalObject, givenParts);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.tryClearException())
+                return { };
+            return JSValue::encode(raiseTypeError(globalObject, scope, "sendmsg() argument 1 must be an iterable"_s));
+        }
+        for (unsigned i = 0; i < parts->length(); ++i) {
+            Buffer buffer = bufferOf(globalObject, parts->at(i));
+            RETURN_IF_EXCEPTION(scope, { });
+            buffers.append(WTF::move(buffer));
+        }
+    }
+
+    auto put = [] (struct cmsghdr* header, int type, unsigned value) {
+        header->cmsg_level = SOL_ALG;
+        header->cmsg_type = type;
+        header->cmsg_len = CMSG_LEN(4);
+        memcpy(CMSG_DATA(header), &value, sizeof(value));
+    };
+    struct cmsghdr* header = CMSG_FIRSTHDR(&message);
+    if (!header)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "unexpected NULL result from CMSG_FIRSTHDR"_s));
+    put(header, ALG_SET_OP, static_cast<unsigned>(operation));
+    if (vector) {
+        header = CMSG_NXTHDR(&message, header);
+        if (!header)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "unexpected NULL result from CMSG_NXTHDR(iv)"_s));
+        header->cmsg_level = SOL_ALG;
+        header->cmsg_type = ALG_SET_IV;
+        header->cmsg_len = CMSG_SPACE(sizeof(struct af_alg_iv) + vector.size());
+        uint32_t vectorLength = static_cast<uint32_t>(vector.size());
+        static_assert(!offsetof(struct af_alg_iv, ivlen) && sizeof(vectorLength) == offsetof(struct af_alg_iv, iv));
+        memcpy(CMSG_DATA(header), &vectorLength, sizeof(vectorLength));
+        memcpy(CMSG_DATA(header) + sizeof(vectorLength), vector.data(), vector.size());
+    }
+    if (associatedLength >= 0) {
+        header = CMSG_NXTHDR(&message, header);
+        if (!header)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "unexpected NULL result from CMSG_NXTHDR(assoc)"_s));
+        put(header, ALG_SET_AEAD_ASSOCLEN, static_cast<unsigned>(associatedLength));
+    }
+
+    Vector<struct iovec> vectors;
+    ssize_t sent = 0;
+    auto call = [&] {
+        vectors.shrink(0);
+        for (size_t i = 0; i < buffers.size(); ++i) {
+            auto span = buffers.at(i);
+            vectors.append({ const_cast<uint8_t*>(span.data()), span.size() });
+        }
+        message.msg_iov = vectors.mutableSpan().data();
+        message.msg_iovlen = vectors.size();
+        sent = ::sendmsg(self.descriptor, &message, flags);
+        return sent >= 0;
+    };
+    if (!callSocket(globalObject, self, WaitingTo::Write, call))
+        return { };
+    return JSValue::encode(intFromInt64(globalObject, sent));
+}
+#endif
+
 // ---- The class
 
 void initializeSocketType(JSGlobalObject* globalObject, SocketModuleState& state)
@@ -1023,6 +1186,10 @@ void initializeSocketType(JSGlobalObject* globalObject, SocketModuleState& state
         { "recvmsg"_s, socketReceiveMessage, Kind::Method, 0, "($self, bufsize, ancbufsize=0, flags=0, /)"_s, byParseTuple },
         { "recvmsg_into"_s, socketReceiveMessageInto, Kind::Method, 0, "($self, buffers, ancbufsize=0, flags=0, /)"_s, byParseTuple },
         { "sendmsg"_s, socketSendMessage, Kind::Method, 0, "($self, buffers, ancdata=(), flags=0, address=None, /)"_s, byParseTuple },
+#ifdef HAVE_SOCKADDR_ALG
+        // It has something to say before it looks at them.
+        { "sendmsg_afalg"_s, socketSendMessageToAlgorithm, Kind::Method, 0, "($self, /, msg=None, *, op=None, iv=None, assoclen=None, flags=0)"_s, Arguments::AreNotChecked },
+#endif
     });
     addMember(globalObject, type, "family"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(stateOf<Socket>(self).family); });
     addMember(globalObject, type, "type"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(stateOf<Socket>(self).type); });

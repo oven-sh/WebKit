@@ -169,7 +169,7 @@ try:
         t("system(%r)" % (arg,), lambda: posix.system(arg))
     for args in (("absent", ["a"]), (".", ["a"]), (SH, "a"), (SH, []), (SH, ()), (SH, [""]), (SH, [5]), (SH, ["a\0"]), (SH,), (SH, ["a"], {}), (SH, iter(["a"])), (SH, None), ("", ["a"]), ("out", ["a"])):
         t("execv%r" % (tuple(a if not hasattr(a, "__next__") else "an iterator" for a in args),), lambda: posix.execv(*args))
-    for args in (("absent", ["a"], {}), (".", ["a"], {}), (SH, "a", {}), (SH, [], {}), (SH, [""], {}), (SH, [5], {}), (SH, ["a"], 5), (SH, ["a"], None), (SH, ["a"], [1]), (SH, ["a"], {"a=b": "c"}), (SH, ["a"], {"": "c"}), (SH, ["a"], {5: "c"}), (SH, ["a"], {"a": 5}), (SH, ["a"]), (5, ["a"], {}), ("out", ["a"], {})):
+    for args in (("absent", ["a"], {}), (".", ["a"], {}), (SH, "a", {}), (SH, [], {}), (SH, [""], {}), (SH, [5], {}), (SH, ["a"], 5), (SH, ["a"], None), (SH, ["a"], [1]), (SH, ["a"], {"a=b": "c"}), (SH, ["a"], {"": "c"}), (SH, ["a"], {5: "c"}), (SH, ["a"], {"a": 5}), (SH, ["a"]), (9999, ["a"], {}), ("out", ["a"], {})):
         t("execve%r" % (args,), lambda: posix.execve(*args))
     t("execve by name", lambda: posix.execve(path="absent", argv=["a"], env={}))
     t("execv, in what has been started", lambda: run("exec /bin/echo replaced"))
@@ -221,7 +221,7 @@ try:
     print("---- who is told")
     told = []
     listening = [True]
-    sys.addaudithook(lambda event, args: told.append((event, tuple(a if not isinstance(a, int) or a < 100 or a > 10 ** 7 else "a process" for a in args))) if listening[0] else None)
+    sys.addaudithook(lambda event, args: told.append((event, tuple(a if not isinstance(a, int) or (a not in (posix.getpid(), posix.getpgrp()) and (a < 100 or a > 10 ** 7)) else "a process" for a in args))) if listening[0] else None)
 
 
     def heard(f):

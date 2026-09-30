@@ -40,6 +40,19 @@
 #if OS(DARWIN)
 #include <copyfile.h>
 #endif
+#if OS(LINUX)
+#include <linux/limits.h>
+#include <linux/memfd.h>
+#include <linux/random.h>
+#include <linux/sched.h>
+#include <linux/wait.h>
+#include <sys/eventfd.h>
+#include <sys/mman.h>
+#include <sys/pidfd.h>
+#include <sys/timerfd.h>
+#include <sys/uio.h>
+#include <sys/xattr.h>
+#endif
 
 // The constants of posix, and the names that pathconf(), confstr() and sysconf() go by: all_ins() and the tables of Modules/posixmodule.c of CPython. Each is there if the system has it.
 
@@ -425,6 +438,9 @@ void addPosixConstants(JSGlobalObject* globalObject, JSObject* module)
     add("POSIX_SPAWN_OPEN"_s, 0);
     add("POSIX_SPAWN_CLOSE"_s, 1);
     add("POSIX_SPAWN_DUP2"_s, 2);
+#if OS(LINUX)
+    add("POSIX_SPAWN_CLOSEFROM"_s, 3);
+#endif
 #ifdef SCHED_OTHER
     add("SCHED_OTHER"_s, SCHED_OTHER);
 #endif

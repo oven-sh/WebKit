@@ -1,0 +1,469 @@
+---- what will do for a name
+lstat(a str) => 5
+stat(a str) => 5
+listdir(a str) => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+fspath(a str) => ('str', 'file')
+lstat(bytes) => 5
+stat(bytes) => 5
+listdir(bytes) => NotADirectoryError: errno=20 strerror='Not a directory' filename=b'file' filename2=None args=2
+fspath(bytes) => ('bytes', b'file')
+lstat(what has __fspath__) => 5
+stat(what has __fspath__) => 5
+listdir(what has __fspath__) => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+fspath(what has __fspath__) => ('str', 'file')
+lstat(that returns bytes) => 5
+stat(that returns bytes) => 5
+listdir(that returns bytes) => NotADirectoryError: errno=20 strerror='Not a directory' filename=b'file' filename2=None args=2
+fspath(that returns bytes) => ('bytes', b'file')
+lstat(derived from str) => 5
+stat(derived from str) => 5
+listdir(derived from str) => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+fspath(derived from str) => ('S', 'file')
+lstat(derived from bytes) => 5
+stat(derived from bytes) => 5
+listdir(derived from bytes) => NotADirectoryError: errno=20 strerror='Not a directory' filename=b'file' filename2=None args=2
+fspath(derived from bytes) => ('B', b'file')
+lstat(a bytearray) => TypeError: lstat: path should be string, bytes or os.PathLike, not bytearray
+stat(a bytearray) => TypeError: stat: path should be string, bytes, os.PathLike or integer, not bytearray
+listdir(a bytearray) => TypeError: listdir: path should be string, bytes, os.PathLike, integer or None, not bytearray
+fspath(a bytearray) => TypeError: expected str, bytes or os.PathLike object, not bytearray
+lstat(a memoryview) => TypeError: lstat: path should be string, bytes or os.PathLike, not memoryview
+stat(a memoryview) => TypeError: stat: path should be string, bytes, os.PathLike or integer, not memoryview
+listdir(a memoryview) => TypeError: listdir: path should be string, bytes, os.PathLike, integer or None, not memoryview
+fspath(a memoryview) => TypeError: expected str, bytes or os.PathLike object, not memoryview
+lstat(None) => TypeError: lstat: path should be string, bytes or os.PathLike, not NoneType
+stat(None) => TypeError: stat: path should be string, bytes, os.PathLike or integer, not NoneType
+listdir(None) => ['file']
+fspath(None) => TypeError: expected str, bytes or os.PathLike object, not NoneType
+lstat(an int) => TypeError: lstat: path should be string, bytes or os.PathLike, not int
+stat(an int) => an open file
+listdir(an int) => an open file
+fspath(an int) => TypeError: expected str, bytes or os.PathLike object, not int
+lstat(a float) => TypeError: lstat: path should be string, bytes or os.PathLike, not float
+stat(a float) => TypeError: stat: path should be string, bytes, os.PathLike or integer, not float
+listdir(a float) => TypeError: listdir: path should be string, bytes, os.PathLike, integer or None, not float
+fspath(a float) => TypeError: expected str, bytes or os.PathLike object, not float
+lstat(a list) => TypeError: lstat: path should be string, bytes or os.PathLike, not list
+stat(a list) => TypeError: stat: path should be string, bytes, os.PathLike or integer, not list
+listdir(a list) => TypeError: listdir: path should be string, bytes, os.PathLike, integer or None, not list
+fspath(a list) => TypeError: expected str, bytes or os.PathLike object, not list
+lstat(__fspath__ that returns an int) => TypeError: expected P.__fspath__() to return str or bytes, not int
+stat(__fspath__ that returns an int) => TypeError: expected P.__fspath__() to return str or bytes, not int
+listdir(__fspath__ that returns an int) => TypeError: expected P.__fspath__() to return str or bytes, not int
+fspath(__fspath__ that returns an int) => TypeError: expected P.__fspath__() to return str or bytes, not int
+lstat(that returns None) => TypeError: expected P.__fspath__() to return str or bytes, not NoneType
+stat(that returns None) => TypeError: expected P.__fspath__() to return str or bytes, not NoneType
+listdir(that returns None) => TypeError: expected P.__fspath__() to return str or bytes, not NoneType
+fspath(that returns None) => TypeError: expected P.__fspath__() to return str or bytes, not NoneType
+lstat(that returns what has __fspath__) => TypeError: expected P.__fspath__() to return str or bytes, not P
+stat(that returns what has __fspath__) => TypeError: expected P.__fspath__() to return str or bytes, not P
+listdir(that returns what has __fspath__) => TypeError: expected P.__fspath__() to return str or bytes, not P
+fspath(that returns what has __fspath__) => TypeError: expected P.__fspath__() to return str or bytes, not P
+lstat(that raises) => KeyError: 'k'
+stat(that raises) => KeyError: 'k'
+listdir(that raises) => KeyError: 'k'
+fspath(that raises) => KeyError: 'k'
+lstat(__fspath__ that is None) => TypeError: lstat: path should be string, bytes or os.PathLike, not NoneFspath
+stat(__fspath__ that is None) => TypeError: stat: path should be string, bytes, os.PathLike or integer, not NoneFspath
+listdir(__fspath__ that is None) => TypeError: listdir: path should be string, bytes, os.PathLike, integer or None, not NoneFspath
+fspath(__fspath__ that is None) => TypeError: expected str, bytes or os.PathLike object, not NoneFspath
+lstat(a zero in a str) => ValueError: lstat: embedded null character in path
+stat(a zero in a str) => ValueError: stat: embedded null character in path
+listdir(a zero in a str) => ValueError: listdir: embedded null character in path
+fspath(a zero in a str) => ('str', 'fi\x00le')
+lstat(a zero in bytes) => ValueError: lstat: embedded null character in path
+stat(a zero in bytes) => ValueError: stat: embedded null character in path
+listdir(a zero in bytes) => ValueError: listdir: embedded null character in path
+fspath(a zero in bytes) => ('bytes', b'fi\x00le')
+lstat('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+stat('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+listdir('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+fspath('') => ('str', '')
+lstat(a lone surrogate) => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+stat(a lone surrogate) => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+listdir(a lone surrogate) => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+fspath(a lone surrogate) => ('str', '\ud800')
+lstat(an escaped byte) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='\udcff' filename2=None args=2
+stat(an escaped byte) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='\udcff' filename2=None args=2
+listdir(an escaped byte) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='\udcff' filename2=None args=2
+fspath(an escaped byte) => ('str', '\udcff')
+lstat(not ASCII) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='é€😀' filename2=None args=2
+stat(not ASCII) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='é€😀' filename2=None args=2
+listdir(not ASCII) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='é€😀' filename2=None args=2
+fspath(not ASCII) => ('str', '\xe9\u20ac\U0001f600')
+stat(True) => RuntimeWarning: bool is used as a file descriptor
+stat(2147483648) => OverflowError: fd is greater than maximum
+stat(-2147483649) => OverflowError: fd is less than minimum
+stat(1180591620717411303424) => OverflowError: fd is greater than maximum
+stat(-1180591620717411303424) => OverflowError: fd is less than minimum
+stat(-1) => OSError: errno=14 strerror='Bad address' filename=-1 filename2=None args=2
+stat(Index(-1)) => OSError: errno=14 strerror='Bad address' filename=Index(-1) filename2=None args=2
+stat(Index(1099511627776)) => OverflowError: fd is greater than maximum
+rename(5, 'x') => TypeError: rename: src should be string, bytes or os.PathLike, not int
+rename('x', 5) => TypeError: rename: dst should be string, bytes or os.PathLike, not int
+replace('x\x00', 'y') => ValueError: replace: embedded null character in src
+replace('x', 'y\x00') => ValueError: replace: embedded null character in dst
+link(None, 'x') => TypeError: link: src should be string, bytes or os.PathLike, not NoneType
+link('x', None) => TypeError: link: dst should be string, bytes or os.PathLike, not NoneType
+symlink(5, 'x') => TypeError: symlink: src should be string, bytes or os.PathLike, not int
+symlink('x', b'\x00') => ValueError: symlink: embedded null character in dst
+mkdir(5,) => TypeError: mkdir: path should be string, bytes or os.PathLike, not int
+rmdir(5,) => TypeError: rmdir: path should be string, bytes or os.PathLike, not int
+unlink(5,) => TypeError: unlink: path should be string, bytes or os.PathLike, not int
+remove(5,) => TypeError: remove: path should be string, bytes or os.PathLike, not int
+readlink(5,) => TypeError: readlink: path should be string, bytes or os.PathLike, not int
+chdir(1.5,) => TypeError: chdir: path should be string, bytes, os.PathLike or integer, not float
+chmod(1.5, 0) => TypeError: chmod: path should be string, bytes, os.PathLike or integer, not float
+chown(1.5, 0, 0) => TypeError: chown: path should be string, bytes, os.PathLike or integer, not float
+access(5, 0) => TypeError: access: path should be string, bytes or os.PathLike, not int
+truncate(1.5, 0) => TypeError: truncate: path should be string, bytes, os.PathLike or integer, not float
+utime(1.5,) => TypeError: utime: path should be string, bytes, os.PathLike or integer, not float
+scandir(1.5,) => TypeError: scandir: path should be string, bytes, os.PathLike, integer or None, not float
+statvfs(1.5,) => TypeError: statvfs: path should be string, bytes, os.PathLike or integer, not float
+pathconf(1.5, 1) => TypeError: pathconf: path should be string, bytes, os.PathLike or integer, not float
+open(5, 0) => TypeError: open: path should be string, bytes or os.PathLike, not int
+mkfifo(5,) => TypeError: mkfifo: path should be string, bytes or os.PathLike, not int
+mknod(5,) => TypeError: mknod: path should be string, bytes or os.PathLike, not int
+lchown(5, 0, 0) => TypeError: lchown: path should be string, bytes or os.PathLike, not int
+chroot(5,) => TypeError: chroot: path should be string, bytes or os.PathLike, not int
+_path_normpath(5,) => TypeError: _path_normpath: path should be string, bytes or os.PathLike, not int
+_path_splitroot_ex(5,) => TypeError: _path_splitroot_ex: path should be string, bytes or os.PathLike, not int
+lchmod(5, 0) => AttributeError: module 'posix' has no attribute 'lchmod'
+chflags(5, 0) => AttributeError: module 'posix' has no attribute 'chflags'
+lchflags(5, 0) => AttributeError: module 'posix' has no attribute 'lchflags'
+execv(5, ['a']) => TypeError: execv: path should be string, bytes or os.PathLike, not int
+execve(5, ['a'], {}) => OSError: errno=9 strerror='Bad file descriptor' filename='an open file' filename2=None args=2
+---- stat
+stat('file') => [('0o100644', 5, 1)]
+lstat('file') => [('0o100644', 5)]
+stat('file', follow_symlinks=False) => 0o100644
+stat('dir') => [('0o40750', None, None)]
+lstat('dir') => [('0o40750', None)]
+stat('dir', follow_symlinks=False) => 0o40750
+stat('link') => [('0o100644', 5, 1)]
+lstat('link') => [('0o120777', 4)]
+stat('link', follow_symlinks=False) => 0o120777
+stat('dangling') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='dangling' filename2=None args=2
+lstat('dangling') => [('0o120777', 7)]
+stat('dangling', follow_symlinks=False) => 0o120777
+stat('dirlink') => [('0o40750', None, None)]
+lstat('dirlink') => [('0o120777', 3)]
+stat('dirlink', follow_symlinks=False) => 0o120777
+stat('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+lstat('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+stat('absent', follow_symlinks=False) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+stat('file/under') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file/under' filename2=None args=2
+lstat('file/under') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file/under' filename2=None args=2
+stat('file/under', follow_symlinks=False) => NotADirectoryError: errno=20 strerror='Not a directory' filename='file/under' filename2=None args=2
+what it is => ('stat_result', 'os', 10, 19, 10, 3, True, ('st_mode', 'st_ino', 'st_dev', 'st_nlink', 'st_uid', 'st_gid', 'st_size'))
+of what kinds => [('st_atime', 'float'), ('st_atime_ns', 'int'), ('st_blksize', 'int'), ('st_blocks', 'int'), ('st_ctime', 'float'), ('st_ctime_ns', 'int'), ('st_dev', 'int'), ('st_gid', 'int'), ('st_ino', 'int'), ('st_mode', 'int'), ('st_mtime', 'float'), ('st_mtime_ns', 'int'), ('st_nlink', 'int'), ('st_rdev', 'int'), ('st_size', 'int'), ('st_uid', 'int')]
+by position => (True, True, True, True, True, True, True, True, True, True, ['int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int'])
+the times agree => AttributeError: 'os.stat_result' object has no attribute 'st_birthtime'
+the same file => (True, True, True)
+repr => [(True, 10, True)]
+stat_result() => TypeError: structseq() missing required argument 'sequence' (pos 1)
+stat_result(1,) => TypeError: constructor requires a sequence
+stat_result((1, 2, 3),) => TypeError: os.stat_result() takes an at least 10-sequence (3-sequence given)
+stat_result(range(0, 9),) => TypeError: os.stat_result() takes an at least 10-sequence (9-sequence given)
+stat_result(range(0, 10),) => AttributeError: 'os.stat_result' object has no attribute 'st_flags'
+stat_result(range(0, 11),) => AttributeError: 'os.stat_result' object has no attribute 'st_flags'
+stat_result(range(0, 22),) => TypeError: os.stat_result() takes an at most 19-sequence (22-sequence given)
+stat_result(range(0, 23),) => TypeError: os.stat_result() takes an at most 19-sequence (23-sequence given)
+stat_result([None, None, None, None, None, None, None, None, None, None],) => AttributeError: 'os.stat_result' object has no attribute 'st_flags'
+stat_result(range(0, 10), {'st_atime': 1.5}) => AttributeError: 'os.stat_result' object has no attribute 'st_flags'
+stat_result(range(0, 10), {'st_flags': 7, 'other': 1}) => TypeError: os.stat_result() got duplicate or unexpected field name(s)
+stat_result(range(0, 10), 5) => TypeError: os.stat_result() takes a dict as second arg, if any
+stat_result('abcdefghij',) => AttributeError: 'os.stat_result' object has no attribute 'st_flags'
+__reduce__ => [(True, True, ['st_atime', 'st_atime_ns', 'st_blksize', 'st_blocks', 'st_ctime', 'st_ctime_ns', 'st_mtime', 'st_mtime_ns', 'st_rdev'])]
+__replace__ => TypeError: __replace__() is not supported for os.stat_result because it has unnamed field(s)
+cannot be set => AttributeError: readonly attribute
+stat('file', **{'dir_fd': 'a'}) => TypeError: argument should be integer or None, not str
+stat('file', **{'dir_fd': 1.5}) => TypeError: argument should be integer or None, not float
+stat('file', **{'dir_fd': 1099511627776}) => OverflowError: fd is greater than maximum
+stat('file', **{'dir_fd': -1099511627776}) => OverflowError: fd is less than minimum
+stat('file', **{'dir_fd': None}) => 5
+stat('file', **{'follow_symlinks': None}) => 5
+stat('file', **{'other': 1}) => TypeError: stat() got an unexpected keyword argument 'other'
+stat('file', **{'dir_fd': True}) => RuntimeWarning: bool is used as a file descriptor
+stat('file', None) => TypeError: stat() takes exactly 1 positional argument (2 given)
+stat() => TypeError: stat() missing required argument 'path' (pos 1)
+stat(path='file') => 5
+---- by way of an open directory
+stat => (5, '0o120777', '0o120777', 5)
+of an open file => (5, 5, True)
+both => ValueError: stat: can't specify dir_fd without matching path
+an open file, and not to follow links => ValueError: stat: cannot use fd and follow_symlinks together
+one that is not a directory => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+one that is not open => OSError: errno=9 strerror='Bad file descriptor' filename='file' filename2=None args=2
+the rest => (None, None, None, None, None, 'x', None, 2, None, None, True, None, '0o100600', None, None, 2.0, None, '0o10644', None, None)
+that fail => ["FileExistsError: errno=17 strerror='File exists' filename='dir' filename2=None args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2='b' args=2", "OSError: errno=22 strerror='Invalid argument' filename='file' filename2=None args=2", "FileExistsError: errno=17 strerror='File exists' filename='a' filename2='file' args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2='b' args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2"]
+listdir and scandir => (['dangling', 'dir', 'dirlink', 'file', 'link'], ['dangling', 'dir', 'dirlink', 'file', 'link'], ['dangling', 'dir', 'dirlink', 'file', 'link'], "NotADirectoryError: errno=20 strerror='Not a directory' filename='an open file' filename2=None args=2", "NotADirectoryError: errno=20 strerror='Not a directory' filename='an open file' filename2=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=None filename2=None args=2")
+chdir => (None, True, None, True, None, "NotADirectoryError: errno=20 strerror='Not a directory' filename='an open file' filename2=None args=2", "NotADirectoryError: errno=20 strerror='Not a directory' filename=None filename2=None args=2", 'ValueError: file descriptor cannot be a negative integer (-1)', 'TypeError: argument must be an int, or have a fileno() method.')
+---- making, moving and removing
+mkdir => (None, '0o40755', None, '0o40700', None, '0o40755', None, ['a', 'b', 'c', 'dangling', 'dir', 'dirlink', 'e', 'file', 'link'])
+mkdir('a',) => FileExistsError: errno=17 strerror='File exists' filename='a' filename2=None args=2
+mkdir('file',) => FileExistsError: errno=17 strerror='File exists' filename='file' filename2=None args=2
+mkdir('absent/x',) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent/x' filename2=None args=2
+mkdir('file/x',) => NotADirectoryError: errno=20 strerror='Not a directory' filename='file/x' filename2=None args=2
+mkdir('',) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+mkdir('a', 'x') => TypeError: 'str' object cannot be interpreted as an integer
+mkdir('z', 1099511627776) => OverflowError: Python int too large to convert to C int
+mkdir('z', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+rmdir('a') => OSError: errno=39 strerror='Directory not empty' filename='a' filename2=None args=2
+rmdir('file') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+rmdir('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+rmdir('link') => NotADirectoryError: errno=20 strerror='Not a directory' filename='link' filename2=None args=2
+rmdir('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+rmdir('.') => OSError: errno=22 strerror='Invalid argument' filename='.' filename2=None args=2
+unlink('a') => IsADirectoryError: errno=21 strerror='Is a directory' filename='a' filename2=None args=2
+remove('a') => IsADirectoryError: errno=21 strerror='Is a directory' filename='a' filename2=None args=2
+unlink('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+remove('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+unlink('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+remove('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+unlink('file/x') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file/x' filename2=None args=2
+remove('file/x') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file/x' filename2=None args=2
+rename => (None, None, None, b'1', None, b'1', None, b'1', None, None)
+rename('absent', 'x') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2='x' args=2
+replace of the same => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2='x' args=2
+rename('file', 'a') => IsADirectoryError: errno=21 strerror='Is a directory' filename='file' filename2='a' args=2
+replace of the same => IsADirectoryError: errno=21 strerror='Is a directory' filename='file' filename2='a' args=2
+rename('a', 'file') => NotADirectoryError: errno=20 strerror='Not a directory' filename='a' filename2='file' args=2
+replace of the same => NotADirectoryError: errno=20 strerror='Not a directory' filename='a' filename2='file' args=2
+rename('a', 'b/c/d') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='a' filename2='b/c/d' args=2
+replace of the same => FileNotFoundError: errno=2 strerror='No such file or directory' filename='a' filename2='b/c/d' args=2
+rename('a', 'a/sub') => OSError: errno=22 strerror='Invalid argument' filename='a' filename2='a/sub' args=2
+replace of the same => OSError: errno=22 strerror='Invalid argument' filename='a' filename2='a/sub' args=2
+rename('b', 'a') => OSError: errno=39 strerror='Directory not empty' filename='b' filename2='a' args=2
+replace of the same => OSError: errno=39 strerror='Directory not empty' filename='b' filename2='a' args=2
+rename(b'absent', 'x') => FileNotFoundError: errno=2 strerror='No such file or directory' filename=b'absent' filename2='x' args=2
+replace of the same => FileNotFoundError: errno=2 strerror='No such file or directory' filename=b'absent' filename2='x' args=2
+rename('absent', b'x') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=b'x' args=2
+replace of the same => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=b'x' args=2
+rename("P('absent')", "P(b'x')") => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=b'x' args=2
+replace of the same => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=b'x' args=2
+rename('', 'x') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2='x' args=2
+replace of the same => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2='x' args=2
+rename('file', '') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='file' filename2='' args=2
+replace of the same => FileNotFoundError: errno=2 strerror='No such file or directory' filename='file' filename2='' args=2
+link => (None, 2, True, None, 1)
+of a link => (None, '0o100644', None, '0o120777', None, '0o100644', None, None, None)
+link('absent', 'x') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2='x' args=2
+link('file', 'file') => FileExistsError: errno=17 strerror='File exists' filename='file' filename2='file' args=2
+link('dir', 'x') => PermissionError: errno=1 strerror='Operation not permitted' filename='dir' filename2='x' args=2
+link('file', 'absent/x') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='file' filename2='absent/x' args=2
+symlink and readlink => (None, 'target', b'target', 'target', b'target', None, '\udcff\udcfe', b'\xff\xfe', None, '\xe9', b'\xc3\xa9', None, None, None, None, None)
+symlink('x', 'file') => FileExistsError: errno=17 strerror='File exists' filename='x' filename2='file' args=2
+symlink('x', 'absent/y') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='x' filename2='absent/y' args=2
+symlink('', 's5') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2='s5' args=2
+symlink('x', '') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='x' filename2='' args=2
+readlink('file') => OSError: errno=22 strerror='Invalid argument' filename='file' filename2=None args=2
+readlink('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+readlink('dir') => OSError: errno=22 strerror='Invalid argument' filename='dir' filename2=None args=2
+readlink('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+names that are not text => (None, ['\udcff\udcfe.bin'], [b'\xff\xfe.bin'], b'x', None)
+names that are not ASCII => (None, 1, b'x', None)
+---- listdir and scandir
+listdir => (['a', 'b', 'c', 'dangling', 'dir', 'dirlink', 'e', 'file', 'link'], True, ['inside'], [b'inside'], ['inside'], [b'inside'], [], ['inside'], 'list')
+listdir('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+scandir('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+listdir('file') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+scandir('file') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+listdir('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+scandir('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+listdir('dangling') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='dangling' filename2=None args=2
+scandir('dangling') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='dangling' filename2=None args=2
+listdir('dirlink') => []
+scandir('dirlink') => []
+what scandir gives => ('ScandirIterator', 'posix', True, ['__del__', '__enter__', '__exit__', '__iter__', '__module__', '__next__', 'close'], "TypeError: cannot create 'posix.ScandirIterator' instances")
+gone through => (['a', 'b', 'c', 'dangling', 'dir', 'dirlink', 'e', 'file', 'link'], 'StopIteration: ', None, None, 'StopIteration: ')
+the entry for 'file' => ('file', './file', "<DirEntry 'file'>", True, False, False, False, True, False, './file', './file', True, '0o100644', '0o100644', True, True)
+the entry for 'dir' => ('dir', './dir', "<DirEntry 'dir'>", False, True, False, False, False, True, './dir', './dir', True, '0o40750', '0o40750', True, True)
+the entry for 'link' => ('link', './link', "<DirEntry 'link'>", True, False, True, False, False, False, './link', './link', True, '0o100644', '0o120777', True, True)
+the entry for 'dangling' => ('dangling', './dangling', "<DirEntry 'dangling'>", False, False, True, False, False, False, './dangling', './dangling', True, "FileNotFoundError: errno=2 strerror='No such file or directory' filename='./dangling' filename2=None args=2", '0o120777', "FileNotFoundError: errno=2 strerror='No such file or directory' filename='./dangling' filename2=None args=2", True)
+the entry for 'dirlink' => ('dirlink', './dirlink', "<DirEntry 'dirlink'>", False, True, True, False, False, False, './dirlink', './dirlink', True, '0o40750', '0o120777', True, True)
+what it is => ('DirEntry', 'posix', True, "TypeError: cannot create 'posix.DirEntry' instances", 'AttributeError: readonly attribute', "AttributeError: 'posix.DirEntry' object has no attribute 'x' and no __dict__ for setting new attributes", posix.DirEntry[int], True, True, True)
+is_dir(*(True,), **{}) => TypeError: is_dir() takes no positional arguments
+is_file(*(), **{'other': 1}) => TypeError: is_file() got an unexpected keyword argument 'other'
+stat(*(1,), **{}) => TypeError: stat() takes no positional arguments
+is_symlink(*(1,), **{}) => TypeError: is_symlink() takes no arguments
+is_symlink(*(), **{'a': 1}) => TypeError: is_symlink() takes no arguments
+inode(*(1,), **{}) => TypeError: DirEntry.inode() takes no arguments (1 given)
+is_junction(*(1,), **{}) => TypeError: DirEntry.is_junction() takes no arguments (1 given)
+__fspath__(*(1,), **{}) => TypeError: DirEntry.__fspath__() takes no arguments (1 given)
+stat(*(), **{'follow_symlinks': 0}) => stat_result
+what is asked once is kept => [(2, None, 2, 6, None, 2, True)]
+what has gone since => [(None, True, False, False, "FileNotFoundError: errno=2 strerror='No such file or directory' filename='./gone' filename2=None args=2")]
+a link to what has gone => [(False, False, True, "FileNotFoundError: errno=2 strerror='No such file or directory' filename='./dangling' filename2=None args=2")]
+paths => (['a/inside'], ['a/inside'], [b'a/inside'], ['a/inside'], ['./a//inside'], ["<DirEntry b'inside'>"], ['./a', './b'], ['./a', './b'], ['a/inside'])
+with => [(True, True, None, 'StopIteration: ', None, None)]
+close(1) => TypeError: ScandirIterator.close() takes no arguments (1 given)
+by an open directory => [([('inside', 'inside', True, 0)], None)]
+---- permissions, owners and times
+chmod => ['0o100000', '0o100777', '0o104755', '0o100644']
+of a link => NotImplementedError: chmod: follow_symlinks unavailable on this platform
+chmod('absent', 0) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+chmod('file', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+chmod('file', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+chmod('file', 1099511627776) => OverflowError: Python int too large to convert to C int
+chmod('file',) => TypeError: chmod() missing required argument 'mode' (pos 2)
+chmod('dangling', 0) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='dangling' filename2=None args=2
+access => [(True, True, False, False, True, True), (True, True, False, False, True, True), (True, True, False, False, True, True), (False, True, False, False, True, False), (True, True, False, False, True, True)]
+what cannot be read => (None, False, True, "PermissionError: errno=13 strerror='Permission denied' filename='file' filename2=None args=2", None)
+access('file',) => TypeError: access() missing required argument 'mode' (pos 2)
+access('file', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+access('file', 1099511627776) => OverflowError: Python int too large to convert to C int
+access('', 0) => False
+chown => (None, None, None, None, None)
+chown('absent', -1, -1) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+chown('file', 'a', -1) => TypeError: uid should be integer, not str
+chown('file', -1, 'a') => TypeError: gid should be integer, not str
+chown('file', 1.5, -1) => TypeError: uid should be integer, not float
+chown('file', -2, -1) => OverflowError: uid is less than minimum
+chown('file', -1, -2) => OverflowError: gid is less than minimum
+chown('file', 4294967296, -1) => OverflowError: uid is less than minimum
+chown('file', 4294967295, -1) => as -1 is
+chown('file', -1, 18446744073709551616) => OverflowError: gid is greater than maximum
+chown('file', 9223372036854775808, -1) => OverflowError: uid is greater than maximum
+chown('file', -1180591620717411303424, -1) => OverflowError: uid is less than minimum
+chown('file', None, None) => TypeError: uid should be integer, not NoneType
+chown('file', -1) => TypeError: chown() missing required argument 'gid' (pos 3)
+utime => [(1000000000, 2000000000, 1.0, 2.0), (1500000000, 2250000000, 1.5, 2.25), (0, 0, 0.0, 0.0), (1000000000000000000, 1000000000123456835, 1000000000.0, 1000000000.1234568), (1999999999, 2000000000, 1.9999999990000001, 2.0), (1000000000, 0, 1.0, 0.0), (-1500000000, -1000000000, -1.5, -1.0), (7000000000, 8000000000, 7.0, 8.0)]
+in nanoseconds => [(1, 2), (1000000001, 1999999999), (123456789012345678, 0), (-1, -1000000001), (1, 5)]
+now => (None, True, None, None, True)
+of a link => (None, None, 5.0, 9.0, None, 7.0, 9.0)
+of an open file => [(None, 4.0, None, 6, 'ValueError: utime: cannot use fd and follow_symlinks together', "ValueError: utime: can't specify dir_fd without matching path", None)]
+utime('file', *((1, 2),), **{'ns': (1, 2)}) => ValueError: utime: you may specify either 'times' or 'ns' but not both
+utime('file', *(None,), **{'ns': (1, 2)}) => None
+utime('file', *([1, 2],), **{}) => TypeError: utime: 'times' must be either a tuple of two ints or None
+utime('file', *((1,),), **{}) => TypeError: utime: 'times' must be either a tuple of two ints or None
+utime('file', *((1, 2, 3),), **{}) => TypeError: utime: 'times' must be either a tuple of two ints or None
+utime('file', *(5,), **{}) => TypeError: utime: 'times' must be either a tuple of two ints or None
+utime('file', *(('a', 1),), **{}) => TypeError: argument must be int or float, not str
+utime('file', *((1, None),), **{}) => TypeError: argument must be int or float, not NoneType
+utime('file', *((nan, 1),), **{}) => ValueError: Invalid value NaN (not a number)
+utime('file', *((inf, 1),), **{}) => OverflowError: timestamp out of range for platform time_t
+utime('file', *((1180591620717411303424, 1),), **{}) => OverflowError: timestamp out of range for platform time_t
+utime('file', *((1e+30, 1),), **{}) => OverflowError: timestamp out of range for platform time_t
+utime('file', *(), **{'ns': [1, 2]}) => TypeError: utime: 'ns' must be a tuple of two ints
+utime('file', *(), **{'ns': (1,)}) => TypeError: utime: 'ns' must be a tuple of two ints
+utime('file', *(), **{'ns': None}) => TypeError: utime: 'ns' must be a tuple of two ints
+utime('file', *(), **{'ns': (1.5, 1)}) => TypeError: 'float' object cannot be interpreted as an integer
+utime('file', *(), **{'ns': ('a', 1)}) => TypeError: unsupported operand type(s) for divmod(): 'str' and 'int'
+utime('file', *(), **{'ns': (1267650600228229401496703205376, 1)}) => OverflowError: timestamp out of range for platform time_t
+utime('file', *(), **{'ns': ('Divmod(5)', 1)}) => TypeError: Divmod.__divmod__() must return a 2-tuple, not int
+utime('file', *(), **{'ns': ('Divmod((1,))', 1)}) => TypeError: Divmod.__divmod__() must return a 2-tuple, not tuple
+utime('file', *(), **{'ns': ('Divmod((1, 2))', 1)}) => None
+utime('file', *(), **{'ns': ("Divmod(('a', 2))", 1)}) => TypeError: 'str' object cannot be interpreted as an integer
+utime('file', *(), **{'ns': ("Divmod((1, 'b'))", 1)}) => TypeError: 'str' object cannot be interpreted as an integer
+utime('file', *(), **{'ns': ('Divmod((1, 1180591620717411303424))', 1)}) => OverflowError: Python int too large to convert to C long
+utime('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+umask => ('0o22', None, '0o100600', None, '0o40700', '0o77', "TypeError: 'str' object cannot be interpreted as an integer", 'TypeError: posix.umask() takes exactly one argument (0 given)', 'TypeError: posix.umask() takes no keyword arguments')
+chflags => AttributeError: module 'posix' has no attribute 'chflags'
+truncate => (None, None, b'0123', None, b'0123\x00\x00', None, b'', "OSError: errno=22 strerror='Invalid argument' filename='tr' filename2=None args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2", "IsADirectoryError: errno=21 strerror='Is a directory' filename='dir' filename2=None args=2", "TypeError: 'str' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C long', "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: truncate() missing required argument 'length' (pos 2)")
+---- special files
+mkfifo => (None, '0o10644', None, '0o10600', "FileExistsError: errno=17 strerror='File exists' filename=None filename2=None args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename=None filename2=None args=2", "TypeError: 'str' object cannot be interpreted as an integer")
+mknod => (None, '0o100600', None, '0o100644', "FileExistsError: errno=17 strerror='File exists' filename=None filename2=None args=2", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "OverflowError: can't convert negative int to unsigned", 'OverflowError: int too big to convert', "OSError: errno=22 strerror='Invalid argument' filename=None filename2=None args=2")
+device numbers => [(0, 0), (0, 1), (0, 255), (1, 0), (0, 4096), (0, 4101), (0, 524288), (4095, 1048575), (-1, -1), (1, 44)]
+makedev => [0, 258, 68718493695, 65536, 68719476736, -1, 17592184996351, 257]
+major(-2,) => OverflowError: can't convert negative int to unsigned
+major(4294967296,) => 0
+major(18446744073709551616,) => OverflowError: int too big to convert
+major('a',) => TypeError: 'str' object cannot be interpreted as an integer
+major(1.5,) => TypeError: 'float' object cannot be interpreted as an integer
+minor(-2,) => OverflowError: can't convert negative int to unsigned
+minor(1180591620717411303424,) => OverflowError: int too big to convert
+makedev(4294967296, 0) => OverflowError: Python int too large to convert to C unsigned int
+makedev(0, 4294967296) => OverflowError: Python int too large to convert to C unsigned int
+makedev(-2, 0) => OverflowError: can't convert negative int to unsigned
+makedev('a', 0) => TypeError: 'str' object cannot be interpreted as an integer
+makedev(1,) => TypeError: makedev expected 2 arguments, got 1
+---- the file system
+statvfs => ('statvfs_result', 'os', 10, 11, ['int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int'], 'int', 255, True, True, True, True, 4100)
+of an open file => [(True, True, None)]
+that fail => ("FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=9999 filename2=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=None filename2=None args=2", "TypeError: 'str' object cannot be interpreted as an integer")
+pathconf => (255, 255, 4096, True, 255)
+of an open file => [(255, 255, None)]
+pathconf('.', 'PC_NOTHING') => ValueError: unrecognized configuration name
+pathconf('.', 99999) => OSError: errno=22 strerror='Invalid argument' filename=None filename2=None args=2
+pathconf('.', 1.5) => TypeError: configuration names must be strings or integers
+pathconf('.', None) => TypeError: configuration names must be strings or integers
+pathconf('.', b'PC_NAME_MAX') => TypeError: configuration names must be strings or integers
+pathconf('absent', 'PC_NAME_MAX') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+pathconf('.', 1099511627776) => OverflowError: Python int too large to convert to C int
+pathconf('.',) => TypeError: pathconf() missing required argument 'name' (pos 2)
+pathconf(9999, 'PC_NAME_MAX') => OSError: errno=9 strerror='Bad file descriptor' filename=9999 filename2=None args=2
+fpathconf(9999, 'PC_NAME_MAX') => OSError: errno=9 strerror='Bad file descriptor' filename=None filename2=None args=2
+fpathconf('a', 1) => TypeError: argument must be an int, or have a fileno() method.
+fpathconf(-1, 1) => ValueError: file descriptor cannot be a negative integer (-1)
+fpathconf(0, 'PC_NOTHING') => ValueError: unrecognized configuration name
+fpathconf(1.5, 1) => TypeError: argument must be an int, or have a fileno() method.
+names that a program has added => (None, 255, None, 'TypeError: configuration names must be strings or integers', 3, 'a')
+---- where this is
+getcwd => ('str', 'bytes', True, True, 'TypeError: posix.getcwd() takes no arguments (1 given)')
+chdir('absent') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2
+chdir('file') => NotADirectoryError: errno=20 strerror='Not a directory' filename='file' filename2=None args=2
+chdir('') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' filename2=None args=2
+chdir('dangling') => FileNotFoundError: errno=2 strerror='No such file or directory' filename='dangling' filename2=None args=2
+chdir => (None, 'dir', None, None, None, None, True)
+one that has gone => (None, None, None, "FileNotFoundError: errno=2 strerror='No such file or directory' filename=None filename2=None args=2", "FileNotFoundError: errno=2 strerror='No such file or directory' filename=None filename2=None args=2", None)
+chroot => ("FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' filename2=None args=2", "PermissionError: errno=1 strerror='Operation not permitted' filename='.' filename2=None args=2")
+---- what is only a matter of names
+_path_normpath('') => ('.', b'.', ('', '', ''), (b'', b'', b''))
+_path_normpath('.') => ('.', b'.', ('', '', '.'), (b'', b'', b'.'))
+_path_normpath('..') => ('..', b'..', ('', '', '..'), (b'', b'', b'..'))
+_path_normpath('/') => ('/', b'/', ('', '/', ''), (b'', b'/', b''))
+_path_normpath('//') => ('//', b'//', ('', '//', ''), (b'', b'//', b''))
+_path_normpath('///') => ('/', b'/', ('', '/', '//'), (b'', b'/', b'//'))
+_path_normpath('////') => ('/', b'/', ('', '/', '///'), (b'', b'/', b'///'))
+_path_normpath('a') => ('a', b'a', ('', '', 'a'), (b'', b'', b'a'))
+_path_normpath('a/') => ('a', b'a', ('', '', 'a/'), (b'', b'', b'a/'))
+_path_normpath('a//') => ('a', b'a', ('', '', 'a//'), (b'', b'', b'a//'))
+_path_normpath('/a') => ('/a', b'/a', ('', '/', 'a'), (b'', b'/', b'a'))
+_path_normpath('//a') => ('//a', b'//a', ('', '//', 'a'), (b'', b'//', b'a'))
+_path_normpath('///a') => ('/a', b'/a', ('', '/', '//a'), (b'', b'/', b'//a'))
+_path_normpath('a/b') => ('a/b', b'a/b', ('', '', 'a/b'), (b'', b'', b'a/b'))
+_path_normpath('a//b') => ('a/b', b'a/b', ('', '', 'a//b'), (b'', b'', b'a//b'))
+_path_normpath('a/./b') => ('a/b', b'a/b', ('', '', 'a/./b'), (b'', b'', b'a/./b'))
+_path_normpath('a/../b') => ('b', b'b', ('', '', 'a/../b'), (b'', b'', b'a/../b'))
+_path_normpath('a/b/..') => ('a', b'a', ('', '', 'a/b/..'), (b'', b'', b'a/b/..'))
+_path_normpath('a/b/../..') => ('.', b'.', ('', '', 'a/b/../..'), (b'', b'', b'a/b/../..'))
+_path_normpath('a/b/../../..') => ('..', b'..', ('', '', 'a/b/../../..'), (b'', b'', b'a/b/../../..'))
+_path_normpath('../a') => ('../a', b'../a', ('', '', '../a'), (b'', b'', b'../a'))
+_path_normpath('../../a') => ('../../a', b'../../a', ('', '', '../../a'), (b'', b'', b'../../a'))
+_path_normpath('/..') => ('/', b'/', ('', '/', '..'), (b'', b'/', b'..'))
+_path_normpath('/../a') => ('/a', b'/a', ('', '/', '../a'), (b'', b'/', b'../a'))
+_path_normpath('//..') => ('//', b'//', ('', '//', '..'), (b'', b'//', b'..'))
+_path_normpath('//../a') => ('//a', b'//a', ('', '//', '../a'), (b'', b'//', b'../a'))
+_path_normpath('/.') => ('/', b'/', ('', '/', '.'), (b'', b'/', b'.'))
+_path_normpath('/./') => ('/', b'/', ('', '/', './'), (b'', b'/', b'./'))
+_path_normpath('./') => ('.', b'.', ('', '', './'), (b'', b'', b'./'))
+_path_normpath('./a') => ('a', b'a', ('', '', './a'), (b'', b'', b'./a'))
+_path_normpath('././a') => ('a', b'a', ('', '', '././a'), (b'', b'', b'././a'))
+_path_normpath('.//a') => ('a', b'a', ('', '', './/a'), (b'', b'', b'.//a'))
+_path_normpath('a/.') => ('a', b'a', ('', '', 'a/.'), (b'', b'', b'a/.'))
+_path_normpath('a/./') => ('a', b'a', ('', '', 'a/./'), (b'', b'', b'a/./'))
+_path_normpath('a/..') => ('.', b'.', ('', '', 'a/..'), (b'', b'', b'a/..'))
+_path_normpath('..a') => ('..a', b'..a', ('', '', '..a'), (b'', b'', b'..a'))
+_path_normpath('a..') => ('a..', b'a..', ('', '', 'a..'), (b'', b'', b'a..'))
+_path_normpath('...') => ('...', b'...', ('', '', '...'), (b'', b'', b'...'))
+_path_normpath('.../a') => ('.../a', b'.../a', ('', '', '.../a'), (b'', b'', b'.../a'))
+_path_normpath('a/.../b') => ('a/.../b', b'a/.../b', ('', '', 'a/.../b'), (b'', b'', b'a/.../b'))
+_path_normpath('/a/b/c/../../d') => ('/a/d', b'/a/d', ('', '/', 'a/b/c/../../d'), (b'', b'/', b'a/b/c/../../d'))
+_path_normpath('a/b/c/../../../../d') => ('../d', b'../d', ('', '', 'a/b/c/../../../../d'), (b'', b'', b'a/b/c/../../../../d'))
+_path_normpath('./..') => ('..', b'..', ('', '', './..'), (b'', b'', b'./..'))
+_path_normpath('../.') => ('..', b'..', ('', '', '../.'), (b'', b'', b'../.'))
+_path_normpath('.././..') => ('../..', b'../..', ('', '', '.././..'), (b'', b'', b'.././..'))
+_path_normpath('a/\x00/b') => ('a/\x00/b', b'a/\x00/b', ('', '', 'a/\x00/b'), (b'', b'', b'a/\x00/b'))
+_path_normpath('\x00') => ('\x00', b'\x00', ('', '', '\x00'), (b'', b'', b'\x00'))
+_path_normpath('a\x00') => ('a\x00', b'a\x00', ('', '', 'a\x00'), (b'', b'', b'a\x00'))
+_path_normpath('\xe9/../\u20ac') => ('\u20ac', b'\xe2\x82\xac', ('', '', '\xe9/../\u20ac'), (b'', b'', b'\xc3\xa9/../\xe2\x82\xac'))
+_path_normpath('\U0001f600/./x') => ('\U0001f600/x', b'\xf0\x9f\x98\x80/x', ('', '', '\U0001f600/./x'), (b'', b'', b'\xf0\x9f\x98\x80/./x'))
+_path_normpath('/a/') => ('/a', b'/a', ('', '/', 'a/'), (b'', b'/', b'a/'))
+_path_normpath('//a//b//') => ('//a/b', b'//a/b', ('', '//', 'a//b//'), (b'', b'//', b'a//b//'))
+_path_normpath('a b/ c') => ('a b/ c', b'a b/ c', ('', '', 'a b/ c'), (b'', b'', b'a b/ c'))
+_path_normpath('.a/.b') => ('.a/.b', b'.a/.b', ('', '', '.a/.b'), (b'', b'', b'.a/.b'))
+_path_normpath('-/..') => ('.', b'.', ('', '', '-/..'), (b'', b'', b'-/..'))
+_path_normpath('\udcff/x/..') => ('\udcff', b'\xff', ('', '', '\udcff/x/..'), (b'', b'', b'\xff/x/..'))
+of other things => ('b', b'b', 'x/y', ('', '/', 'x'), ('', '//', 'x'), 'str', 'bytes')
+at random => 26802918

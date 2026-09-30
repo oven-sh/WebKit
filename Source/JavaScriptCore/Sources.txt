@@ -838,6 +838,7 @@ python/PythonStructMember.cpp
 python/PythonStructModule.cpp
 python/PythonStructSequence.cpp
 python/PythonSocketAddresses.cpp
+python/PythonSocketLinux.cpp
 python/PythonSocketModule.cpp @no-unify
 python/PythonSocketObject.cpp
 python/PythonSymbolTable.cpp
@@ -855,6 +856,7 @@ python/PythonPosixConstants.cpp
 python/PythonPosixDescriptors.cpp
 python/PythonPosixDirectories.cpp
 python/PythonPosixIdentity.cpp
+python/PythonPosixLinux.cpp
 python/PythonPosixModule.cpp
 python/PythonPosixPaths.cpp
 python/PythonPosixProcesses.cpp

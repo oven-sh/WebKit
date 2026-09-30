@@ -411,12 +411,18 @@ JSValue makeIPv6Address(JSGlobalObject* globalObject, const struct sockaddr_in6&
     return jsString(globalObject->vm(), String::fromLatin1(buffer));
 }
 
-JSValue makeSocketAddress(JSGlobalObject* globalObject, const struct sockaddr* address, size_t length, int protocol)
+JSValue makeSocketAddress(JSGlobalObject* globalObject, int descriptor, const struct sockaddr* address, size_t length, int protocol)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     // There is none, as when what is received is from what the socket is connected to.
     if (!length)
         return jsUndefined();
+#if OS(LINUX)
+    if (auto made = makeLinuxSocketAddress(globalObject, descriptor, address, protocol))
+        RELEASE_AND_RETURN(scope, *made);
+#else
+    UNUSED_PARAM(descriptor);
+#endif
 
     switch (address->sa_family) {
     case AF_INET: {
@@ -570,6 +576,10 @@ bool toSocketAddress(JSGlobalObject* globalObject, Socket& socket, JSValue value
         memcpy(address.sun_path, path.span().data(), path.size());
         return true;
     }
+#ifdef AF_RDS
+    // Its addresses are those of AF_INET.
+    case AF_RDS:
+#endif
     case AF_INET: {
         CString host;
         int port = 0;
@@ -659,6 +669,10 @@ bool toSocketAddress(JSGlobalObject* globalObject, Socket& socket, JSValue value
     }
 #endif
     default:
+#if OS(LINUX)
+        if (auto isDone = toLinuxSocketAddress(globalObject, socket, value, result, length, caller))
+            RELEASE_AND_RETURN(scope, *isDone);
+#endif
         raiseOSErrorSaying(globalObject, scope, concatenate(caller, "(): bad family"_s));
         return false;
     }
@@ -671,6 +685,9 @@ bool socketAddressLength(JSGlobalObject* globalObject, Socket& socket, socklen_t
     case AF_UNIX:
         length = sizeof(struct sockaddr_un);
         return true;
+#ifdef AF_RDS
+    case AF_RDS:
+#endif
     case AF_INET:
         length = sizeof(struct sockaddr_in);
         return true;
@@ -687,6 +704,12 @@ bool socketAddressLength(JSGlobalObject* globalObject, Socket& socket, socklen_t
         return false;
 #endif
     default:
+#if OS(LINUX)
+        if (auto known = linuxSocketAddressLength(socket.family)) {
+            length = *known;
+            return true;
+        }
+#endif
         raiseOSErrorSaying(globalObject, scope, "getsockaddrlen: bad family"_s);
         return false;
     }

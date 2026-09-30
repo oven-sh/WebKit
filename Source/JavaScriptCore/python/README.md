@@ -342,7 +342,8 @@ thing and taken for another. The nearest class to the one given whose `__new__` 
 
 The signatures, the docstrings, what kind of thing each attribute of a built-in class is, and how each built-in class is laid out are CPython's
 own. `lib/dump-builtin-descriptions.py`, run by CPython, writes them to `lib/builtin-descriptions.json`, which is put into a header when this is
-built. A module that is written in C++ is added to the list in that script. What CPython does not have gives its signature where it is
+built. That is on macOS. Run by CPython on Linux, and given that file, it writes only how Linux differs, which is `lib/builtin-descriptions-linux.json`:
+what there is only there, what is otherwise there, and what is not there at all. A module that is written in C++ is added to the list in that script. What CPython does not have gives its signature where it is
 defined, and so does what has one in CPython that a program cannot see. It can begin with what the function is called when its arguments are
 wrong, where that is neither its name nor its class's: `typevar(name, *constraints, ...)`.
 
@@ -542,7 +543,7 @@ is copied as it always was.
 - It is for a first string that is longer than a page. Sharing a buffer takes one more allocation than not sharing one, which is more than it costs to copy a short string, and adding to a short string once is among
   the commonest things that JavaScript does. Done for every rope, that took 23ns in place of 14ns with 10 characters, and made no difference that could be measured with 10,000. What is left by leaving short strings
   out is little: putting together a string of that length by copying it each time comes to a millisecond or so, once. As it is, a rope with a short first string is put to one comparison, which cannot be measured.
-- The first time, the buffer has no room to spare, so adding to a string once costs no memory. It is when what comes of that is added to in its turn that the buffer is made twice as large.
+- The first time, the buffer has no room to spare, so adding to a string once costs no memory. It is when what comes of that is added to in its turn that the buffer is made twice as large as the string.
 - A string says that it is such a piece in the low bit of the pointer that it has to the buffer, so it takes none of `StringImpl`'s flags.
 
 What Python has found out about the surrogate pairs of the first string is a start on the whole, whether or not they share a buffer, so it is handed on whenever a rope of 16 bit characters is made into a string:
@@ -682,6 +683,8 @@ what it goes by and a dozen functions to look at files with, runs it as Python s
 `python3.14._pth` and a build directory all mean what they mean to CPython. It is asked for with `Configuration::computesPaths`. A host that knows where things are says so instead.
 
 - It goes by where the program *really* is. A link named `python3` finds the library beside what it is a link to, and not beside itself.
+- CPython has built into it where `make install` was told to put it, and falls back on that if it cannot make out where it is from the name that it was started by. That is `<prefix>/bin/python3`, so here it is two
+  directories up from where the system says that the program is.
 - `sys` is made before this is known. `updateSysFromConfiguration()`, which is `_PySys_UpdateConfig()`, sets all of it that follows from the `Configuration`, when `sys` is made and again after this.
 
 **What an option is looked at by:**
@@ -768,9 +771,10 @@ what the handler raised would be shown and forgotten with the callback half run:
 
 ### Where an event loop of Python's waits
 
-`asyncio` is CPython's, as it is, event loop and all. It waits in one place, for what it is watching or until it has something to do: `select.kqueue.control()`. What it watches with is a descriptor that can itself be
+`asyncio` is CPython's, as it is, event loop and all. It waits in one place, for what it is watching or until it has something to do: `select.kqueue.control()`, or on Linux `select.epoll.poll()`. What it watches with is a descriptor that can itself be
 watched. So a host that has an event loop of its own is given that to watch, `Configuration::waitForDescriptor`, and goes on with its own meanwhile: JavaScript's timers and promises carry on while `asyncio.run()` does, and
 what they run is inside the loop, as any callback is. `control()` looks without waiting before and after, and sees to signals each time round. With no such host it waits in the system, as it did.
+Both go about it in the same way, so it is written once: `waitForEvents()`, which is given what looks.
 
 Nothing else that waits does this. What calls `time.sleep()` means nothing to happen meanwhile.
 
@@ -837,6 +841,17 @@ ended the program was a `KeyboardInterrupt` that nothing caught, the process is 
 
 What a program has for a signal can be a function of either language, and what it throws goes to whoever is next out, in either.
 
+**A signal that is sent to the process** is given by the system to any thread that is not keeping it back. CPython has the one thread, unless the program starts more. Here there are the collector's and the compilers', and
+the host's, of which a program knows nothing. It matters when the program keeps a signal back, to take it later with `sigwait()`, `sigpending()` or `sigwaitinfo()`: some other thread would be given it, and what is usually done
+about a signal is to end the process. `programs/signals-for-the-process.py` and `command-line/ended-by-a-signal.py` are about that.
+
+- The threads that WTF starts keep back every signal but those that tell a thread of a fault of its own: `Thread::establishHandle()`. So the system keeps the signal for the thread that Python runs in, along with who sent it.
+- A host may have threads that do not. So what the system calls sends the signal on to Python's thread if it finds itself in another. And while a signal is kept back that the program has said nothing about, or has said is
+  to be ignored, `keepForPythonThread()` is there to be called for it, which does the same. What the program said is done first, so that the system throws away what it would have thrown away, and is put back before the
+  signal is let through. On macOS one that is ignored, or that nothing is done about as a rule, is not kept though it is kept back, so nothing is done for those.
+- What is sent on comes from this process, so `sigwaitinfo()` says so. Linux lets a thread say who a signal is from only if it is sending it to itself.
+- `os.kill()` of the process itself sends to the thread that calls it. CPython relies on the signal having come by the time that `kill()` returns, which POSIX promises only if no other thread will have it.
+
 ### Weak references
 
 `weakref.ref` is a cell that has what it refers to and does not tell the collector, as `JSWeakObjectRef` is, and it lets go of it by the same means: when the collector has found what there is to keep, each
@@ -894,8 +909,8 @@ What `io.open_code()` does is the host's to say, if it wants to: `Configuration:
 ### `posix`
 
 `Modules/posixmodule.c`, in parts: `PythonPosixShared.cpp` has what turns arguments into names of files, descriptors and ids, and what raises; `Paths`, `Descriptors`, `Directories`, `Identity` and `Processes` have the
-functions; `Constants` has the constants, and the names that `sysconf()` and the like go by. It has everything that CPython's has on macOS but `fork()`, `forkpty()` and `register_at_fork()`: see *Where it differs*.
-What CPython has only on Linux is not written, and what is written for Linux has not been compiled.
+functions; `Constants` has the constants, and the names that `sysconf()` and the like go by. `Linux` has what there is only on Linux. It has everything that CPython's has on either but `fork()`, `forkpty()` and `register_at_fork()`: see *Where it differs*. `programs/posix-on-linux.py` lists what is in it,
+and every number, and tries what is only on Linux, of `signal` and `time` as well.
 
 **`_posixsubprocess`** (`PythonPosixSubprocess.cpp`), which is what `subprocess` starts a program with, does fork, though there is no `os.fork()`. What is wrong with forking is what is run afterwards, in a process that has this
 thread and none of the engine's others. Here that is `child_exec()`, which CPython wrote to be run in the middle of anything: it asks for no memory, locks nothing, and runs none of the engine, and then the process is another
@@ -982,7 +997,7 @@ out that it was to be.
 
 ### `_socket`
 
-`Modules/socketmodule.c`, which `socket` is written over, in three files and a header. `PythonSocketAddresses.cpp` has what raises, what waits, and addresses both ways. `PythonSocketObject.cpp` is the class. `PythonSocketModule.cpp`
+`Modules/socketmodule.c`, which `socket` is written over, in four files and a header. `PythonSocketAddresses.cpp` has what raises, what waits, and addresses both ways, and `PythonSocketLinux.cpp` the kinds of address that there are only on Linux. `PythonSocketObject.cpp` is the class. `PythonSocketModule.cpp`
 is the functions and what is in the module. It has to do with the world outside, so like `posix` it is one that the host lists.
 
 **Everything that can wait goes through `callSocket()`**, which is `sock_call_ex()`: it waits with `poll()` if there is a time to wait no longer than, calls what makes the system call, and goes round again if that was interrupted
@@ -998,8 +1013,9 @@ read, so that file is compiled by itself.
 
 What CPython does to find out whether `SOCK_CLOEXEC` and `accept4()` work is for Linux before 2.6.28. Where they are defined they are used.
 
-- **Only `AF_INET`, `AF_INET6` and `AF_UNIX` addresses can be read and written, and `PF_SYSTEM` on macOS.** The kinds that Linux has besides (`AF_NETLINK`, `AF_PACKET`, `AF_CAN`, `AF_VSOCK`, `AF_TIPC`, `AF_ALG`, `AF_QIPCRTR`,
-  `AF_RDS`, Bluetooth) are not written, and their names are left out of the module, as they are from a CPython that was built without their headers. What is for Linux alone has not been compiled.
+- **There is no Bluetooth.** Its names are left out of the module, as they are from a CPython that was built without its headers. Every other kind of address that CPython has on macOS or on Linux can be read and written.
+- **What a kernel has of the kinds that are Linux's depends on how it was built, and on who asks.** So `programs/socket-on-linux.py` tries how an address is taken apart with a socket that only says that it is of the family, and
+  what the kernel does with the real thing it looks at for itself, and is content if there is none. Where it was written there were `AF_NETLINK`, `AF_VSOCK`, `AF_TIPC`, `AF_CAN` and `AF_ALG`. `AF_PACKET` takes root, and was tried by hand.
 - **`bind()`, `listen()`, `_accept()` and `connect()` have only been seen to fail.** Where this was written nothing is allowed to bind a name or a port, in CPython either. All that can be tried between the two ends of a
   `socketpair()` has been, and everything that is said of an address that will not do. `programs/socket-module.py` is that.
 - Nothing is done in another thread, so looking up a name stops everything until it is done.
@@ -1018,11 +1034,11 @@ first time to find how long the result will be.
 
 ### `select`
 
-`PythonSelectModule.cpp` is `Modules/selectmodule.c`: `select()`, `poll`, and `kevent` and `kqueue` where there are those. `epoll`, which is Linux's, is not written, and `selectors` makes do with `poll`. Each of them begins again when
+`PythonSelectModule.cpp` is `Modules/selectmodule.c`: `select()`, `poll`, `kevent` and `kqueue` where there are those, and `epoll` where there is that. Each of them begins again when
 a signal has interrupted it and been seen to, for as long as is left. The fields of a `kevent` can be set, and are fields of a C struct, so what is stored is cut down to fit as C would, with a warning: `PythonStructMember.cpp` is
 `PyMember_SetOne()`, for whatever else has such fields.
 
-They stop the thread, as `time.sleep()` does. What waits for descriptors without stopping it is the host's event loop.
+They stop the thread, as `time.sleep()` does, but for the two that `asyncio` waits in: see *Where an event loop of Python's waits*.
 
 ### `time`
 
@@ -1377,12 +1393,20 @@ There is nothing that is per process, nothing that is set after something is mad
 
 | | |
 |---|---|
-| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in five configurations of the engine, and once by way of its syntax tree. What is expected was taken on macOS on ARM64, and a few of them show it |
+| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in five configurations of the engine, and once by way of its syntax tree |
 | `JSTests/python/run-interop.sh <jsc>` | the two languages together. There is nothing to compare these with: what is expected was read and found right |
 | `JSTests/python/audits/run-audits.sh <jsc> [n]` | not tests but measures of how far there is to go, over everything that is built in |
 | `JSTests/python/parser.js`, `symbol-table.js` | the first stages by themselves |
 
 All but the last need to be told where the part of the library that is written in Python is: `PYTHONPATH` is to name the `Lib` directory of CPython 3.14.
+
+**What is expected is what CPython 3.14.7 prints**, as it comes, on ARM64: `x.expected` on macOS. Where it prints something else on Linux, that is in `x.linux.expected`, which is what is gone by there. There are twenty or so:
+the system has other things in it, calls errors by other names, and its C library works some sums out to a different last digit. A program that is about what only one system has has only the one, and is passed over on
+the other. Nothing that is expected may depend on the machine: no name of a directory, no number of a process.
+
+- CPython is to have its modules built in, as they are here, or they say otherwise of themselves: `MODULE_BUILDTYPE=static ./configure --disable-test-modules`.
+- It is to be built with clang, as this is. On ARM64 it is up to the compiler whether `a * b + c` is rounded once or twice, and GCC does not choose as clang does.
+- It is run with `PYTHONUTF8=1 PYTHONHASHSEED=0 PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1`.
 
 Two of the audits are of what the built-in classes do, and not of what they have. `operations.py` tries every operator, in place and not, between every two of some hundred values, and the built-in functions
 of one and of two of them. `methods.py` calls every method of several instances of each class with no argument, with each of some ninety, with each two of some forty, with each three of a few, and by keyword, and the methods that the operators are made of as well.

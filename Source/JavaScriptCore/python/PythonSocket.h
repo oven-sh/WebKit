@@ -39,6 +39,96 @@
 #include <sys/kern_control.h>
 #include <sys/sys_domain.h>
 #endif
+// What CPython finds out when it is configured. A kind of address is there if there is a header that says what one is.
+#if OS(LINUX)
+#include <sys/ioctl.h>
+#if __has_include(<linux/netlink.h>)
+#define HAVE_LINUX_NETLINK_H 1
+#include <linux/netlink.h>
+#else
+#undef AF_NETLINK
+#endif
+#if __has_include(<linux/qrtr.h>)
+#define HAVE_LINUX_QRTR_H 1
+#include <linux/qrtr.h>
+#else
+#undef AF_QIPCRTR
+#endif
+#if __has_include(<netpacket/packet.h>)
+#define HAVE_NETPACKET_PACKET_H 1
+#include <netpacket/packet.h>
+#endif
+#if __has_include(<linux/tipc.h>)
+#define HAVE_LINUX_TIPC_H 1
+#include <linux/tipc.h>
+#endif
+#if __has_include(<linux/can.h>)
+#define HAVE_LINUX_CAN_H 1
+#include <linux/can.h>
+#else
+#undef AF_CAN
+#undef PF_CAN
+#endif
+#if __has_include(<linux/can/raw.h>)
+#define HAVE_LINUX_CAN_RAW_H 1
+#include <linux/can/raw.h>
+// They are not macros, so there is no asking. Linux has had them since 3.6 and 4.1.
+#define HAVE_LINUX_CAN_RAW_FD_FRAMES 1
+#define HAVE_LINUX_CAN_RAW_JOIN_FILTERS 1
+#endif
+#if __has_include(<linux/can/bcm.h>)
+#define HAVE_LINUX_CAN_BCM_H 1
+#include <linux/can/bcm.h>
+#endif
+#if __has_include(<linux/can/j1939.h>)
+#define HAVE_LINUX_CAN_J1939_H 1
+#include <linux/can/j1939.h>
+#endif
+#if __has_include(<linux/vm_sockets.h>)
+#define HAVE_LINUX_VM_SOCKETS_H 1
+#include <linux/vm_sockets.h>
+#else
+#undef AF_VSOCK
+#endif
+#if __has_include(<linux/netfilter_ipv4.h>)
+#define HAVE_LINUX_NETFILTER_IPV4_H 1
+#include <linux/netfilter_ipv4.h>
+#endif
+#if __has_include(<linux/if_alg.h>)
+#define HAVE_SOCKADDR_ALG 1
+#include <linux/if_alg.h>
+#ifndef AF_ALG
+#define AF_ALG 38
+#endif
+#ifndef SOL_ALG
+#define SOL_ALG 279
+#endif
+// Linux 3.19
+#ifndef ALG_SET_AEAD_ASSOCLEN
+#define ALG_SET_AEAD_ASSOCLEN 4
+#endif
+#ifndef ALG_SET_AEAD_AUTHSIZE
+#define ALG_SET_AEAD_AUTHSIZE 5
+#endif
+// Linux 4.8
+#ifndef ALG_SET_PUBKEY
+#define ALG_SET_PUBKEY 6
+#endif
+#ifndef ALG_OP_SIGN
+#define ALG_OP_SIGN 2
+#endif
+#ifndef ALG_OP_VERIFY
+#define ALG_OP_VERIFY 3
+#endif
+#endif
+#else
+// A system can have the number and nothing else.
+#undef AF_NETLINK
+#undef AF_QIPCRTR
+#undef AF_CAN
+#undef PF_CAN
+#undef AF_VSOCK
+#endif // OS(LINUX)
 
 // What the parts of _socket share: Modules/socketmodule.h of CPython, and what is at the top of Modules/socketmodule.c.
 
@@ -72,6 +162,29 @@ union SocketAddress {
     struct sockaddr_storage storage;
 #if OS(DARWIN)
     struct sockaddr_ctl ctl;
+#endif
+#if OS(LINUX)
+#ifdef AF_NETLINK
+    struct sockaddr_nl netlink;
+#endif
+#ifdef AF_QIPCRTR
+    struct sockaddr_qrtr router;
+#endif
+#ifdef AF_VSOCK
+    struct sockaddr_vm machine;
+#endif
+#ifdef HAVE_NETPACKET_PACKET_H
+    struct sockaddr_ll link;
+#endif
+#ifdef HAVE_LINUX_TIPC_H
+    struct sockaddr_tipc tipc;
+#endif
+#ifdef AF_CAN
+    struct sockaddr_can can;
+#endif
+#ifdef HAVE_SOCKADDR_ALG
+    struct sockaddr_alg algorithm;
+#endif
 #endif
 };
 
@@ -127,11 +240,17 @@ std::optional<int> setIPAddress(JSGlobalObject*, const char* name, struct sockad
 JSValue makeIPv4Address(JSGlobalObject*, const struct sockaddr_in&);
 JSValue makeIPv6Address(JSGlobalObject*, const struct sockaddr_in6&);
 // makesockaddr(): an address as a program has it. Empty if it raised.
-JSValue makeSocketAddress(JSGlobalObject*, const struct sockaddr*, size_t length, int protocol);
+JSValue makeSocketAddress(JSGlobalObject*, int descriptor, const struct sockaddr*, size_t length, int protocol);
 // getsockaddrarg(): an address as a program gave it, for the kind of socket. False if it raised.
 bool toSocketAddress(JSGlobalObject*, Socket&, JSValue, SocketAddress&, int& length, ASCIILiteral caller);
 // getsockaddrlen(). False if it raised.
 bool socketAddressLength(JSGlobalObject*, Socket&, socklen_t&);
+#if OS(LINUX)
+// The same three, for the kinds of address that there are only on Linux. Nothing if it is not one of those.
+std::optional<JSValue> makeLinuxSocketAddress(JSGlobalObject*, int descriptor, const struct sockaddr*, int protocol);
+std::optional<bool> toLinuxSocketAddress(JSGlobalObject*, Socket&, JSValue, SocketAddress&, int& length, ASCIILiteral caller);
+std::optional<socklen_t> linuxSocketAddressLength(int family);
+#endif
 
 // get_CMSG_LEN() and get_CMSG_SPACE(). Nothing if it is out of range.
 std::optional<size_t> controlMessageLength(size_t);

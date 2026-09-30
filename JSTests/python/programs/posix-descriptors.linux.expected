@@ -1,0 +1,246 @@
+---- open and close
+open => [('int', True, False, '0o100755', None)]
+with a mode => [('0o100600', None), ('0o100755', None), ('0o100000', None), ('0o100755', None)]
+open('absent', 0) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' args=2
+open('f', 192) => FileExistsError: errno=17 strerror='File exists' filename='f' args=2
+open('.', 1) => IsADirectoryError: errno=21 strerror='Is a directory' filename='.' args=2
+open('f/x', 0) => NotADirectoryError: errno=20 strerror='Not a directory' filename='f/x' args=2
+open('', 0) => FileNotFoundError: errno=2 strerror='No such file or directory' filename='' args=2
+open('f',) => TypeError: open() missing required argument 'flags' (pos 2)
+open('f', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+open('f', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+open('f', 1099511627776) => OverflowError: Python int too large to convert to C int
+open('f', 0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+open('f', 0, 1099511627776) => OverflowError: Python int too large to convert to C int
+open('f', 0, 0, 0) => TypeError: open() takes at most 3 positional arguments (4 given)
+open('f', 16384) => NotADirectoryError: errno=20 strerror='Not a directory' filename='f' args=2
+open('i', 0) => PermissionError: errno=13 strerror='Permission denied' filename='i' args=2
+close(9999) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+close(-1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+close('a') => TypeError: 'str' object cannot be interpreted as an integer
+close(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+close(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+close(1099511627776) => OverflowError: Python int too large to convert to C int
+close(-1099511627776) => OverflowError: Python int too large to convert to C int
+close(Index(9999)) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+close twice => [(None, "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2")]
+close(fd=) => None
+closerange => [(None, ["OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2"])]
+of a great many => [(200, 201, None, "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", 0, None)]
+of none => (None, None, None, None)
+closerange(1,) => TypeError: closerange expected 2 arguments, got 1
+closerange('a', 1) => TypeError: 'str' object cannot be interpreted as an integer
+closerange(1, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+closerange(1.5, 2) => TypeError: 'float' object cannot be interpreted as an integer
+closerange(1099511627776, 1099511627776) => OverflowError: Python int too large to convert to C int
+---- read and write
+write => (5, 4, 2, 0, 11)
+lseek => (0, 3, 5, 10, 100, 100, 1)
+read => (0, b'hello', b'', b' world', b'', 'bytes', 0, b'he')
+read('fd', -1) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+read('fd', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+read('fd', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+read('fd',) => TypeError: read expected 2 arguments, got 1
+read('fd', 1180591620717411303424) => OverflowError: Python int too large to convert to C ssize_t
+read(9999, 1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+read(-1, 1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+read('a', 1) => TypeError: 'str' object cannot be interpreted as an integer
+read('fd', None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+read('fd', 1, 2) => TypeError: read expected 2 arguments, got 3
+write('fd', 'a') => TypeError: a bytes-like object is required, not 'str'
+write('fd', 1) => TypeError: a bytes-like object is required, not 'int'
+write('fd', None) => TypeError: a bytes-like object is required, not 'NoneType'
+write('fd',) => TypeError: write expected 2 arguments, got 1
+write(9999, b'a') => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+write(-1, b'a') => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+write('a', b'a') => TypeError: 'str' object cannot be interpreted as an integer
+write('fd', [1]) => TypeError: a bytes-like object is required, not 'list'
+write of what is not one after another => BufferError: memoryview: underlying buffer is not C-contiguous
+lseek('fd', -1, 0) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+lseek('fd', 0, 9) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+lseek('fd', 0, -1) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+lseek('fd', 'a', 0) => TypeError: 'str' object cannot be interpreted as an integer
+lseek('fd', 0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+lseek('fd', 1.5, 0) => TypeError: 'float' object cannot be interpreted as an integer
+lseek('fd', 1180591620717411303424, 0) => OverflowError: Python int too large to convert to C long
+lseek('fd', 0) => TypeError: lseek expected 3 arguments, got 2
+lseek(9999, 0, 0) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+lseek('fd', -9223372036854775808, 0) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+lseek('fd', 9223372036854775807, 0) => 9223372036854775807
+SEEK_DATA and SEEK_HOLE => (0, 11, "OSError: errno=6 strerror='No such device or address' filename=None args=2")
+readinto => [(0, 4, b'hell', 2, b'ho l', 0, 5, 0)]
+readinto(fd, bytes) => TypeError: readinto() argument 2 must be read-write bytes-like object, not bytes
+readinto(fd, str) => TypeError: readinto() argument 2 must be read-write bytes-like object, not str
+readinto(fd, int) => TypeError: readinto() argument 2 must be read-write bytes-like object, not int
+readinto(fd, NoneType) => TypeError: readinto() argument 2 must be read-write bytes-like object, not None
+readinto(fd, memoryview) => TypeError: readinto() argument 2 must be read-write bytes-like object, not memoryview
+readinto(fd, memoryview) => TypeError: readinto() argument 2 must be read-write bytes-like object, not memoryview
+readinto that fails => ("OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", 'TypeError: readinto expected 2 arguments, got 1', "TypeError: 'str' object cannot be interpreted as an integer")
+pread and pwrite => (2, b'hello', b'world', b'', b'', 2, 2, 1, 0, 2, b'HEllo world!', 1, b'd!\x00\x00\x00z')
+pread('fd', -1, 0) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+pread('fd', 1, -1) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+pread('fd', 'a', 0) => TypeError: 'str' object cannot be interpreted as an integer
+pread('fd', 1, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+pread('fd', 1) => TypeError: pread expected 3 arguments, got 2
+pread(9999, 1, 0) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+pread('fd', 1, 1180591620717411303424) => OverflowError: Python int too large to convert to C long
+pread('fd', 4611686018427387904, 0) => MemoryError: 
+pwrite('fd', b'a', -1) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+pwrite('fd', 'a', 0) => TypeError: a bytes-like object is required, not 'str'
+pwrite('fd', b'a', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+pwrite('fd', b'a') => TypeError: pwrite expected 3 arguments, got 2
+pwrite(9999, b'a', 0) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+pwrite('fd', 5, 0) => TypeError: a bytes-like object is required, not 'int'
+what is open only to be read, or written => [("OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", None, None)]
+O_APPEND => [(0, 1, True, None)]
+a directory => [("IsADirectoryError: errno=21 strerror='Is a directory' filename=None args=2", None)]
+---- several at once
+writev => (None, 0, 6, 1, 0, 0, b'abcdefg')
+readv => [(0, 7, b'ab', b'cde', b'fg\x00\x00\x00\x00\x00\x00\x00\x00', 0, 0, 0, 4, b'aa', b'bcd')]
+preadv and pwritev => [(3, 5, b'aX', b'YZe', 0, 1, 3, b'\x00\x00!', 4)]
+readv('fd', 5) => TypeError: readv() arg 2 must be a sequence
+readv('fd', None) => TypeError: readv() arg 2 must be a sequence
+readv('fd', [b'ab']) => BufferError: Object is not writable.
+readv('fd', ['a']) => TypeError: a bytes-like object is required, not 'str'
+readv('fd', [5]) => TypeError: a bytes-like object is required, not 'int'
+readv('fd', {1: 2}) => TypeError: readv() arg 2 must be a sequence
+readv('fd', 'an iterator') => TypeError: readv() arg 2 must be a sequence
+readv('fd', bytearray(b'\x00\x00')) => TypeError: a bytes-like object is required, not 'int'
+readv(9999, [bytearray(b'\x00')]) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+readv('fd',) => TypeError: readv expected 2 arguments, got 1
+readv('a', []) => TypeError: 'str' object cannot be interpreted as an integer
+writev('fd', 5) => TypeError: writev() arg 2 must be a sequence
+writev('fd', ['a']) => TypeError: a bytes-like object is required, not 'str'
+writev('fd', [5]) => TypeError: a bytes-like object is required, not 'int'
+writev('fd', b'ab') => TypeError: a bytes-like object is required, not 'int'
+writev('fd', {b'a'}) => TypeError: writev() arg 2 must be a sequence
+writev(9999, [b'a']) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+writev('fd',) => TypeError: writev expected 2 arguments, got 1
+preadv('fd', 5, 0) => TypeError: preadv2() arg 2 must be a sequence
+preadv('fd', [bytearray(b'\x00')], -1) => 1
+preadv('fd', [bytearray(b'\x00')], 'a') => TypeError: 'str' object cannot be interpreted as an integer
+preadv('fd', [bytearray(b'\x00')], 0, 1) => 1
+preadv('fd', [bytearray(b'\x00')], 0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+preadv('fd', [bytearray(b'\x00')]) => TypeError: preadv expected at least 3 arguments, got 2
+preadv('fd', [b'a'], 0) => BufferError: Object is not writable.
+preadv('fd', 5, 0, 1) => TypeError: preadv2() arg 2 must be a sequence
+pwritev('fd', 5, 0) => TypeError: pwritev() arg 2 must be a sequence
+pwritev('fd', [b'a'], -1) => 1
+pwritev('fd', [b'a'], 'a') => TypeError: 'str' object cannot be interpreted as an integer
+pwritev('fd', [b'a'], 0, 1) => 1
+pwritev('fd', [b'a']) => TypeError: pwritev expected at least 3 arguments, got 2
+pwritev('fd', ['a'], 0) => TypeError: a bytes-like object is required, not 'str'
+pwritev(9999, [b'a'], 0) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+a sequence of a program's => (0, 4, 2, 'IndexError: list index out of range', "KeyError: 'len'", b'123456')
+---- what is asked of one, or done to one
+fstat => (True, True, 'stat_result', 1, '')
+fstat(9999) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+fstat(-1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+fstat('a') => TypeError: 'str' object cannot be interpreted as an integer
+fstat(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+fstat(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+fstat(1099511627776) => OverflowError: Python int too large to convert to C int
+fstat(File('open')) => TypeError: 'File' object cannot be interpreted as an integer
+ftruncate => (None, 3, None, b'123\x00\x00\x00\x00\x00\x00\x00', None, 0, None, 5)
+ftruncate('fd', -1) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+ftruncate('fd', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+ftruncate('fd', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+ftruncate('fd',) => TypeError: ftruncate expected 2 arguments, got 1
+ftruncate(9999, 0) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+ftruncate('fd', 1180591620717411303424) => OverflowError: Python int too large to convert to C long
+ftruncate('a', 0) => TypeError: 'str' object cannot be interpreted as an integer
+one that is open only to be read => [("OSError: errno=22 strerror='Invalid argument' filename=None args=2", "OSError: errno=22 strerror='Invalid argument' filename=None args=2", None)]
+dup => [(True, False, 3, 3, True, None, 5)]
+dup(9999) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+dup(-1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+dup('a') => TypeError: 'str' object cannot be interpreted as an integer
+dup(1.5) => TypeError: 'float' object cannot be interpreted as an integer
+dup(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+dup2 => [(50, True, 51, False, 52, True, 53, False, 50, True, None)]
+dup2(9999, 50) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+dup2('fd', -1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+dup2(-1, 50) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+dup2('a', 50) => TypeError: 'str' object cannot be interpreted as an integer
+dup2('fd', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+dup2('fd',) => TypeError: dup2() missing required argument 'fd2' (pos 2)
+dup2('fd', 100000000) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+dup2(9999, 9999) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+inheritable => (False, None, True, None, False, None, True, None)
+get_inheritable(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+get_inheritable('a',) => TypeError: 'str' object cannot be interpreted as an integer
+get_inheritable() => TypeError: posix.get_inheritable() takes exactly one argument (0 given)
+set_inheritable(9999, 1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+set_inheritable('fd', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+set_inheritable('fd', None) => TypeError: 'NoneType' object cannot be interpreted as an integer
+set_inheritable('fd',) => TypeError: set_inheritable expected 2 arguments, got 1
+set_inheritable('fd', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+get_blocking(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+get_blocking('a',) => TypeError: 'str' object cannot be interpreted as an integer
+set_blocking(9999, 1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+set_blocking('fd',) => TypeError: set_blocking expected 2 arguments, got 1
+set_blocking('a', 1) => TypeError: 'str' object cannot be interpreted as an integer
+isatty => (False, False, False, "TypeError: 'str' object cannot be interpreted as an integer", 'TypeError: posix.isatty() takes exactly one argument (0 given)', 'OverflowError: Python int too large to convert to C int', False)
+fsync => (None, None, None, None)
+fsync(9999) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+fsync(-1) => ValueError: file descriptor cannot be a negative integer (-1)
+fsync('a') => TypeError: argument must be an int, or have a fileno() method.
+fsync(1.5) => TypeError: argument must be an int, or have a fileno() method.
+fsync(None) => TypeError: argument must be an int, or have a fileno() method.
+fsync(File('a')) => TypeError: fileno() returned a non-integer
+fsync(File(-1)) => ValueError: file descriptor cannot be a negative integer (-1)
+fsync(File(None)) => TypeError: fileno() returned a non-integer
+fsync(File(KeyError('k'))) => KeyError: 'k'
+fsync(File(1099511627776)) => OverflowError: Python int too large to convert to C int
+fsync(File(9999)) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+fsync(1099511627776) => OverflowError: Python int too large to convert to C int
+fsync(True) => RuntimeWarning: bool is used as a file descriptor
+fsync(Index(3)) => TypeError: argument must be an int, or have a fileno() method.
+fchmod => (None, '0o100600', None, '0o100644', None, '0o100640', "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: fchmod() missing required argument 'mode' (pos 2)")
+fchown => (None, None, None, "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", 'TypeError: uid should be integer, not str', 'OverflowError: gid is less than minimum', "TypeError: fchown() missing required argument 'gid' (pos 3)", 'ValueError: chown: cannot use fd and follow_symlinks together', "ValueError: chown: can't specify both dir_fd and fd")
+lockf => (0, None, None, None, None, None, "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "OSError: errno=22 strerror='Invalid argument' filename=None args=2", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", 'TypeError: lockf expected 3 arguments, got 2')
+_fcopyfile => AttributeError: module 'posix' has no attribute '_fcopyfile'
+sendfile => [(3, "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", 'TypeError: sendfile() takes at most 4 arguments (5 given)', 'TypeError: sendfile() takes at most 4 arguments (6 given)', 'TypeError: sendfile() takes at most 4 arguments (5 given)', 'TypeError: sendfile() takes at most 4 arguments (7 given)', "TypeError: sendfile() missing required argument 'count' (pos 4)", 'TypeError: sendfile() takes at most 4 keyword arguments (7 given)', 'TypeError: sendfile() takes at most 4 arguments (5 given)', None)]
+---- pipes
+pipe => ('tuple', True, False, False, '0o10000', 7, b'thr', b'ough', False, 'TypeError: posix.pipe() takes no arguments (1 given)')
+cannot be sought in => ("OSError: errno=29 strerror='Illegal seek' filename=None args=2", "OSError: errno=29 strerror='Illegal seek' filename=None args=2", "OSError: errno=29 strerror='Illegal seek' filename=None args=2", "OSError: errno=22 strerror='Invalid argument' filename=None args=2")
+the wrong way => ("OSError: errno=9 strerror='Bad file descriptor' filename=None args=2", "OSError: errno=9 strerror='Bad file descriptor' filename=None args=2")
+blocking => (True, None, False, "BlockingIOError: errno=11 strerror='Resource temporarily unavailable' filename=None args=2", "BlockingIOError: errno=11 strerror='Resource temporarily unavailable' filename=None args=2", "BlockingIOError: errno=11 strerror='Resource temporarily unavailable' filename=None args=2", None, True, None, False, None, True)
+until it is full => [(None, None, None)]
+filled => (True, 0, "BlockingIOError: errno=11 strerror='Resource temporarily unavailable' filename=None args=2")
+the end of one => (None, True, [], b'', None)
+with no one to read it => left to what is done about SIGPIPE
+---- terminals
+of what is not one => [("OSError: errno=25 strerror='Inappropriate ioctl for device' filename=None args=2", None, None, "OSError: errno=25 strerror='Inappropriate ioctl for device' filename=None args=2", "OSError: errno=25 strerror='Inappropriate ioctl for device' filename=None args=2", "OSError: errno=25 strerror='Inappropriate ioctl for device' filename=None args=2", True, True, True, None)]
+ttyname(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+ttyname('a',) => TypeError: 'str' object cannot be interpreted as an integer
+ttyname() => TypeError: posix.ttyname() takes exactly one argument (0 given)
+device_encoding(9999,) => None
+device_encoding('a',) => TypeError: 'str' object cannot be interpreted as an integer
+get_terminal_size(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+get_terminal_size('a',) => TypeError: 'str' object cannot be interpreted as an integer
+get_terminal_size(1, 2) => TypeError: get_terminal_size expected at most 1 argument, got 2
+tcgetpgrp(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+tcgetpgrp('a',) => TypeError: 'str' object cannot be interpreted as an integer
+tcsetpgrp(9999, 1) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+tcsetpgrp(0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
+grantpt(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+grantpt('a',) => TypeError: argument must be an int, or have a fileno() method.
+grantpt(-1,) => ValueError: file descriptor cannot be a negative integer (-1)
+unlockpt(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+ptsname(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+ptsname(File(9999),) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+login_tty(9999,) => OSError: errno=9 strerror='Bad file descriptor' filename=None args=2
+login_tty('a',) => TypeError: argument must be an int, or have a fileno() method.
+posix_openpt('a',) => TypeError: 'str' object cannot be interpreted as an integer
+posix_openpt() => TypeError: posix.posix_openpt() takes exactly one argument (0 given)
+ctermid(1,) => TypeError: posix.ctermid() takes no arguments (1 given)
+openpty(1,) => TypeError: posix.openpty() takes no arguments (1 given)
+ctermid => /dev/tty
+terminal_size => [('terminal_size', 'os', 80, 24, (80, 24), 'os.terminal_size(columns=80, lines=24)', 2, 2)]
+terminal_size() => TypeError: structseq() missing required argument 'sequence' (pos 1)
+terminal_size((1,),) => TypeError: os.terminal_size() takes a 2-sequence (1-sequence given)
+terminal_size((1, 2, 3),) => TypeError: os.terminal_size() takes a 2-sequence (3-sequence given)
+terminal_size(5,) => TypeError: constructor requires a sequence
+terminal_size(('a', None),) => os.terminal_size(columns='a', lines=None)
+openpty => (True, True, False, False, True, 'utf-8', 'terminal_size', True, 3, b'hi\n')
+posix_openpt => (False, None, None, True, None, True)

@@ -31,6 +31,7 @@
 #if OS(UNIX)
 
 #include <fcntl.h>
+#include <sys/param.h> // NODEV, in glibc
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -44,6 +45,11 @@ void addPosixFileFunctions(JSGlobalObject*, JSObject* module);
 void addPosixProcessFunctions(JSGlobalObject*, JSObject* module);
 void initializePosixFileTypes(JSGlobalObject*, PosixModuleState&);
 void initializePosixProcessTypes(JSGlobalObject*, PosixModuleState&);
+#if OS(LINUX)
+void addPosixLinuxFunctions(JSGlobalObject*, JSObject* module);
+void initializePosixLinuxTypes(JSGlobalObject*, PosixModuleState&);
+bool convertSchedulerParameter(JSGlobalObject*, JSValue, struct sched_param&); // convert_sched_param(). False if it raised.
+#endif
 JSValue newResourceUsage(JSGlobalObject*, const struct rusage&); // A resource.struct_rusage
 
 static constexpr int defaultDirectoryDescriptor = AT_FDCWD; // DEFAULT_DIR_FD

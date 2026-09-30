@@ -43,6 +43,7 @@
 #include <pty.h>
 #include <sys/sendfile.h>
 #include <sys/sysmacros.h>
+#include <utmp.h>
 #endif
 
 #if OS(DARWIN)
@@ -352,8 +353,10 @@ PYTHON_NATIVE(posixVectorIO)
         return JSValue::encode(raiseTypeError(globalObject, scope, ifNotASequence));
     length(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
+#if !OS(LINUX)
     if (flags)
         return JSValue::encode(raiseArgumentUnavailable(globalObject, scope, isRead ? "preadv2"_s : "pwritev2"_s, "flags"_s));
+#endif
     Buffers kept(globalObject);
     Vector<struct iovec> buffers;
     if (!gatherBuffers(globalObject, args.at(1), ifNotASequence, isRead, kept, buffers))
@@ -364,12 +367,20 @@ PYTHON_NATIVE(posixVectorIO)
         switch (which) {
         case VectorIO::Readv:
             return ::readv(descriptor, buffers.span().data(), count);
-        case VectorIO::Preadv:
-            return ::preadv(descriptor, buffers.span().data(), count, offset);
         case VectorIO::Writev:
             return ::writev(descriptor, buffers.span().data(), count);
+#if OS(LINUX)
+        // HAVE_PREADV2 and HAVE_PWRITEV2. To these an offset of -1 is where the file is.
+        case VectorIO::Preadv:
+            return ::preadv2(descriptor, buffers.span().data(), count, offset, flags);
+        case VectorIO::Pwritev:
+            return ::pwritev2(descriptor, buffers.span().data(), count, offset, flags);
+#else
+        case VectorIO::Preadv:
+            return ::preadv(descriptor, buffers.span().data(), count, offset);
         case VectorIO::Pwritev:
             return ::pwritev(descriptor, buffers.span().data(), count, offset);
+#endif
         }
         RELEASE_ASSERT_NOT_REACHED();
     });

@@ -231,7 +231,7 @@ bool toSignalSet(JSGlobalObject* globalObject, JSValue given, sigset_t& mask)
     }
 }
 
-enum SpawnAction : long { SpawnOpen, SpawnClose, SpawnDup2 };
+enum SpawnAction : long { SpawnOpen, SpawnClose, SpawnDup2, SpawnCloseFrom };
 
 // parse_file_actions(). It has been initialized. False if it raised.
 static bool parseFileActions(JSGlobalObject* globalObject, JSValue given, posix_spawn_file_actions_t& actions)
@@ -316,6 +316,19 @@ static bool parseFileActions(JSGlobalObject* globalObject, JSValue given, posix_
                 return false;
             break;
         }
+#if OS(LINUX)
+        // HAVE_POSIX_SPAWN_FILE_ACTIONS_ADDCLOSEFROM_NP
+        case SpawnCloseFrom: {
+            constexpr auto message = "A closefrom file_action tuple must have 2 elements"_s;
+            if (!hasLength(2, message))
+                return false;
+            auto descriptor = toCIntOfFormat(globalObject, action->at(1));
+            RETURN_IF_EXCEPTION(scope, false);
+            if (failed(posix_spawn_file_actions_addclosefrom_np(&actions, *descriptor)))
+                return false;
+            break;
+        }
+#endif
         default:
             raiseTypeError(globalObject, scope, "Unknown file_actions identifier"_s);
             return false;
@@ -435,8 +448,27 @@ PYTHON_NATIVE(posixSpawn)
             return { };
         flags |= POSIX_SPAWN_SETSIGDEF;
     }
-    if (scheduler && !isNone(scheduler))
+    if (scheduler && !isNone(scheduler)) {
+#if OS(LINUX)
+        // POSIX_SPAWN_SETSCHEDULER
+        if (asTuple(scheduler)->length() != 2)
+            return JSValue::encode(raiseTypeError(globalObject, scope, "A scheduler tuple must have two elements"_s));
+        struct sched_param parameter;
+        if (!convertSchedulerParameter(globalObject, asTuple(scheduler)->at(1), parameter))
+            return { };
+        if (JSValue policy = asTuple(scheduler)->at(0); !isNone(policy)) {
+            CONVERT(number, toCInt(globalObject, policy));
+            if (failed(posix_spawnattr_setschedpolicy(&attributes, number)))
+                return { };
+            flags |= POSIX_SPAWN_SETSCHEDULER;
+        }
+        if (failed(posix_spawnattr_setschedparam(&attributes, &parameter)))
+            return { };
+        flags |= POSIX_SPAWN_SETSCHEDPARAM;
+#else
         return JSValue::encode(raise(globalObject, scope, BuiltinType::NotImplementedError, "The scheduler option is not supported in this system."_s));
+#endif
+    }
     if (failed(posix_spawnattr_setflags(&attributes, flags)))
         return { };
 

@@ -491,7 +491,7 @@ PYTHON_NATIVE(socketGetAddressInfo)
 
     JSArray* all = newList(globalObject);
     for (auto* entry = found; entry; entry = entry->ai_next) {
-        JSValue address = makeSocketAddress(globalObject, entry->ai_addr, entry->ai_addrlen, protocol);
+        JSValue address = makeSocketAddress(globalObject, -1, entry->ai_addr, entry->ai_addrlen, protocol);
         RETURN_IF_EXCEPTION(scope, { });
         JSValue canonicalName = stringFromUTF8(globalObject, entry->ai_canonname ? entry->ai_canonname : "");
         RETURN_IF_EXCEPTION(scope, { });
@@ -647,17 +647,6 @@ PYTHON_NATIVE(socketControlMessageSize)
 // ---- The module
 
 // Kinds of address that there is nothing here to read or write yet. In CPython each is there only if its header was found when it was built, so a program has to be ready for it not to be.
-#undef AF_NETLINK
-#undef AF_QIPCRTR
-#undef AF_VSOCK
-#undef AF_CAN
-#undef PF_CAN
-#undef AF_RDS
-#undef PF_RDS
-#undef AF_PACKET
-#undef PF_PACKET
-#undef AF_TIPC
-#undef AF_ALG
 #undef AF_BLUETOOTH
 #undef AF_DIVERT
 #undef PF_DIVERT

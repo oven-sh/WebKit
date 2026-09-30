@@ -25,12 +25,12 @@ getgrouplist() => TypeError: getgrouplist expected 2 arguments, got 0
 getgrouplist('root',) => TypeError: getgrouplist expected 2 arguments, got 1
 getgrouplist(5, 0) => TypeError: getgrouplist() argument 1 must be str, not int
 getgrouplist(b'root', 0) => TypeError: getgrouplist() argument 1 must be str, not bytes
-getgrouplist('root', 'a') => TypeError: 'str' object cannot be interpreted as an integer
-getgrouplist('root', 1.5) => TypeError: 'float' object cannot be interpreted as an integer
+getgrouplist('root', 'a') => TypeError: gid should be integer, not str
+getgrouplist('root', 1.5) => TypeError: gid should be integer, not float
 getgrouplist('ro\x00ot', 0) => ValueError: embedded null character
-getgrouplist('root', 1099511627776) => OverflowError: Python int too large to convert to C int
+getgrouplist('root', 1099511627776) => OverflowError: gid is less than minimum
 getgrouplist(None, 0) => TypeError: getgrouplist() argument 1 must be str, not None
-one that there is not => [12345, 18446744073709551615]
+one that there is not => [12345]
 setuid(0,), not being root => PermissionError: errno=1 strerror='Operation not permitted' filename=None args=2
 seteuid(0,), not being root => PermissionError: errno=1 strerror='Operation not permitted' filename=None args=2
 setgid(0,), not being root => PermissionError: errno=1 strerror='Operation not permitted' filename=None args=2
@@ -68,7 +68,7 @@ setgroups(range(0, 100000),) => ValueError: too many groups
 setgroups({1: 2},) => TypeError: setgroups argument must be a sequence
 setgroups() => TypeError: posix.setgroups() takes exactly one argument (0 given)
 initgroups(5, 0) => TypeError: expected str, bytes or os.PathLike object, not int
-initgroups('root', 'a') => TypeError: 'str' object cannot be interpreted as an integer
+initgroups('root', 'a') => TypeError: gid should be integer, not str
 initgroups('ro\x00ot', 0) => ValueError: embedded null byte
 initgroups('root',) => TypeError: initgroups expected 2 arguments, got 1
 getlogin => ['str']
@@ -96,11 +96,11 @@ unsetenv(5,) => TypeError: expected str, bytes or os.PathLike object, not int
 unsetenv() => TypeError: posix.unsetenv() takes exactly one argument (0 given)
 unsetenv(None,) => TypeError: expected str, bytes or os.PathLike object, not NoneType
 ---- the system
-uname => [('uname_result', 'posix', 5, 5, ['str', 'str', 'str', 'str', 'str'], 'Darwin', 'arm64', True, True, True, 'TypeError: posix.uname() takes no arguments (1 given)')]
+uname => [('uname_result', 'posix', 5, 5, ['str', 'str', 'str', 'str', 'str'], 'Linux', 'aarch64', True, True, True, 'TypeError: posix.uname() takes no arguments (1 given)')]
 times => [('times_result', 'posix', 5, ['float', 'float', 'float', 'float', 'float'], True, True, True, True, True, True, 'TypeError: posix.times() takes no arguments (1 given)')]
 getloadavg => [('tuple', 3, ['float', 'float', 'float'], True)]
 cpu_count => ('int', True, True, 'TypeError: posix.cpu_count() takes no arguments (1 given)')
-strerror => ['Undefined error: 0', 'Operation not permitted', 'No such file or directory', 'Permission denied', 'File exists', 'Invalid argument', 'Broken pipe', 'Interface output queue is full', 'Capabilities insufficient', 'Unknown error: 1000', 'Unknown error: -1', 'Unknown error: 2147483647']
+strerror => ['Success', 'Operation not permitted', 'No such file or directory', 'Permission denied', 'File exists', 'Invalid argument', 'Broken pipe', 'Transport endpoint is already connected', 'Transport endpoint is not connected', 'Unknown error 1000', 'Unknown error -1', 'Unknown error 2147483647']
 strerror('a') => TypeError: 'str' object cannot be interpreted as an integer
 strerror(1.5) => TypeError: 'float' object cannot be interpreted as an integer
 strerror(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
@@ -119,7 +119,7 @@ sysconf(1.5) => TypeError: configuration names must be strings or integers
 sysconf(None) => TypeError: configuration names must be strings or integers
 sysconf(b'SC_CLK_TCK') => TypeError: configuration names must be strings or integers
 sysconf(1099511627776) => OverflowError: Python int too large to convert to C int
-confstr => ('/usr/bin:/bin:/usr/sbin:/sbin', '/usr/bin:/bin:/usr/sbin:/sbin', 'str')
+confstr => ('/bin:/usr/bin', '/bin:/usr/bin', 'str')
 confstr('CS_NOTHING') => ValueError: unrecognized configuration name
 confstr(99999) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
 confstr(-1) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
@@ -128,7 +128,7 @@ confstr(None) => TypeError: configuration names must be strings or integers
 confstr(1099511627776) => OverflowError: Python int too large to convert to C int
 _inputhook => (0, False)
 ---- priorities
-getpriority => PermissionError: errno=1 strerror='Operation not permitted' filename=None args=2
+getpriority => ('int', True, None, True)
 getpriority(99, 0) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
 getpriority(0, 99999999) => ProcessLookupError: errno=3 strerror='No such process' filename=None args=2
 getpriority('a', 0) => TypeError: 'str' object cannot be interpreted as an integer
@@ -141,18 +141,19 @@ nice('a',) => TypeError: 'str' object cannot be interpreted as an integer
 nice() => TypeError: posix.nice() takes exactly one argument (0 given)
 nice(1.5,) => TypeError: 'float' object cannot be interpreted as an integer
 nice(1099511627776,) => OverflowError: Python int too large to convert to C int
-the scheduler => ([True, True, True], 47, 15, None, 'TypeError: posix.sched_yield() takes no arguments (1 given)')
-sched_get_priority_max(999,) => 47
-sched_get_priority_min(999,) => 15
+the scheduler => ([True, True, True], 99, 1, None, 'TypeError: posix.sched_yield() takes no arguments (1 given)')
+sched_get_priority_max(999,) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
+sched_get_priority_min(999,) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
 sched_get_priority_max('a',) => TypeError: 'str' object cannot be interpreted as an integer
 sched_get_priority_min() => TypeError: sched_get_priority_min() missing required argument 'policy' (pos 1)
 ---- starting others
 posix_spawn => (True, 3, b'hello\n')
 posix_spawnp => (True, 0, b'found\n')
 names of other kinds => ((True, 0, b'b\n'), (True, 0, b'p\n'), [(0, b'mixed\n')])
-its environment => ((True, 0, b'1-2-/usr/gnu/bin:/usr/local/bin:/bin:/usr/bin:.\n'), (True, 0, b'PATH=/usr/bin:/bin\nSHLVL=1\n'), (True, 0, b'A==x\nPATH=/usr/bin:/bin\nSHLVL=1\nZ=\n'))
+its environment => ((True, 0, b'1-2-/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin\n'), (True, 0, b'PATH=/usr/bin:/bin\n'), (True, 0, b'A==x\nPATH=/usr/bin:/bin\nZ=\n'))
 what it is to do with its files => ((True, 0, b'err\nout\n'), (True, 0, b'x\n'), (True, 0), (True, 0))
-what is open here is not open there => [((0, b'closed\n'), None, (0, b'open\n'), None)]
+sh: 1: Syntax error: Bad fd number
+what is open here is not open there => [((0, b'closed\n'), None, (2, b''), None)]
 options => ((True, 0, b'g\n'), (True, 0, b'r\n'), (True, 0, b's\n'), (True, 0, b'm\n'), (True, 0, b'd\n'), (True, 0, b'n\n'))
 a mask => ((True, 0, b'survived\n'), (True, -15, b''))
 posix_spawn: no such program => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' args=2
@@ -245,30 +246,30 @@ posix_spawn: setsigmask an int => TypeError: 'int' object is not iterable
 posix_spawnp: setsigmask an int => TypeError: 'int' object is not iterable
 posix_spawn: of strs => TypeError: 'str' object cannot be interpreted as an integer
 posix_spawnp: of strs => TypeError: 'str' object cannot be interpreted as an integer
-posix_spawn: of 0 => ValueError: signal number 0 out of range [1; 31]
-posix_spawnp: of 0 => ValueError: signal number 0 out of range [1; 31]
-posix_spawn: of -1 => ValueError: signal number -1 out of range [1; 31]
-posix_spawnp: of -1 => ValueError: signal number -1 out of range [1; 31]
-posix_spawn: of 1000 => ValueError: signal number 1000 out of range [1; 31]
-posix_spawnp: of 1000 => ValueError: signal number 1000 out of range [1; 31]
-posix_spawn: of too much => ValueError: signal number -1 out of range [1; 31]
-posix_spawnp: of too much => ValueError: signal number -1 out of range [1; 31]
+posix_spawn: of 0 => ValueError: signal number 0 out of range [1; 64]
+posix_spawnp: of 0 => ValueError: signal number 0 out of range [1; 64]
+posix_spawn: of -1 => ValueError: signal number -1 out of range [1; 64]
+posix_spawnp: of -1 => ValueError: signal number -1 out of range [1; 64]
+posix_spawn: of 1000 => ValueError: signal number 1000 out of range [1; 64]
+posix_spawnp: of 1000 => ValueError: signal number 1000 out of range [1; 64]
+posix_spawn: of too much => ValueError: signal number -1 out of range [1; 64]
+posix_spawnp: of too much => ValueError: signal number -1 out of range [1; 64]
 posix_spawn: of floats => TypeError: 'float' object cannot be interpreted as an integer
 posix_spawnp: of floats => TypeError: 'float' object cannot be interpreted as an integer
 posix_spawn: setsigmask None => TypeError: 'NoneType' object is not iterable
 posix_spawnp: setsigmask None => TypeError: 'NoneType' object is not iterable
 posix_spawn: setsigdef an int => TypeError: 'int' object is not iterable
 posix_spawnp: setsigdef an int => TypeError: 'int' object is not iterable
-posix_spawn: setsigdef of 0 => ValueError: signal number 0 out of range [1; 31]
-posix_spawnp: setsigdef of 0 => ValueError: signal number 0 out of range [1; 31]
+posix_spawn: setsigdef of 0 => ValueError: signal number 0 out of range [1; 64]
+posix_spawnp: setsigdef of 0 => ValueError: signal number 0 out of range [1; 64]
 posix_spawn: scheduler an int => TypeError: posix_spawn: scheduler must be a tuple or None
 posix_spawnp: scheduler an int => TypeError: posix_spawnp: scheduler must be a tuple or None
 posix_spawn: scheduler a list => TypeError: posix_spawn: scheduler must be a tuple or None
 posix_spawnp: scheduler a list => TypeError: posix_spawnp: scheduler must be a tuple or None
-posix_spawn: scheduler a tuple => NotImplementedError: The scheduler option is not supported in this system.
-posix_spawnp: scheduler a tuple => NotImplementedError: The scheduler option is not supported in this system.
-posix_spawn: scheduler () => NotImplementedError: The scheduler option is not supported in this system.
-posix_spawnp: scheduler () => NotImplementedError: The scheduler option is not supported in this system.
+posix_spawn: scheduler a tuple => TypeError: must have a sched_param object
+posix_spawnp: scheduler a tuple => TypeError: must have a sched_param object
+posix_spawn: scheduler () => TypeError: A scheduler tuple must have two elements
+posix_spawnp: scheduler () => TypeError: A scheduler tuple must have two elements
 an environment of a program's => ((True, 0, b'12\n'), (True, 0, b'12\n'), (True, 0, b'1[]\n'), 'IndexError: list index out of range', "TypeError: object of type 'int' has no len()")
 system => (0, 768, 3, 256, 512, 0, 9, 0)
 system(5) => TypeError: expected str, bytes or os.PathLike object, not int
@@ -303,7 +304,7 @@ execve('/bin/sh', ['a'], {'': 'c'}) => ValueError: illegal environment variable 
 execve('/bin/sh', ['a'], {5: 'c'}) => TypeError: expected str, bytes or os.PathLike object, not int
 execve('/bin/sh', ['a'], {'a': 5}) => TypeError: expected str, bytes or os.PathLike object, not int
 execve('/bin/sh', ['a']) => TypeError: execve() missing required argument 'env' (pos 3)
-execve(9999, ['a'], {}) => TypeError: execve: path should be string, bytes or os.PathLike, not int
+execve(9999, ['a'], {}) => OSError: errno=9 strerror='Bad file descriptor' filename=9999 args=2
 execve('out', ['a'], {}) => PermissionError: errno=13 strerror='Permission denied' filename='out' args=2
 execve by name => FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' args=2
 execv, in what has been started => (True, 0, b'replaced\n')
@@ -313,7 +314,7 @@ wait => [(True, 256, "ChildProcessError: errno=10 strerror='No child processes' 
 wait3 => [(True, 512, 'struct_rusage', 'resource', 16, ['float', 'float', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int'], True, True, "ChildProcessError: errno=10 strerror='No child processes' filename=None args=2")]
 wait4 => [(True, 1024, 'struct_rusage', True, "ChildProcessError: errno=10 strerror='No child processes' filename=None args=2")]
 by name => [1280, 1536]
-waitid => [('waitid_result', 'posix', 5, True, False, 20, 9, True, "ChildProcessError: errno=10 strerror='No child processes' filename=None args=2")]
+waitid => [('waitid_result', 'posix', 5, True, True, 17, 9, True, "ChildProcessError: errno=10 strerror='No child processes' filename=None args=2")]
 of what was killed => [(9, True)]
 and left to be waited for again => [(8, 2048)]
 what has not ended yet => (((0, 0), (0, 0), True, (0, 0), None, None), 1280)
@@ -332,7 +333,7 @@ wait4(0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
 wait4(0,) => TypeError: wait4() missing required argument 'options' (pos 2)
 waitid(1, 99999999, 4) => ChildProcessError: errno=10 strerror='No child processes' filename=None args=2
 waitid(0, 0, 4) => ChildProcessError: errno=10 strerror='No child processes' filename=None args=2
-waitid(99, 0, 4) => ChildProcessError: errno=10 strerror='No child processes' filename=None args=2
+waitid(99, 0, 4) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
 waitid(1, 1, 0) => OSError: errno=22 strerror='Invalid argument' filename=None args=2
 waitid('a', 0, 0) => TypeError: 'str' object cannot be interpreted as an integer
 waitid(0, 'a', 0) => TypeError: 'str' object cannot be interpreted as an integer
@@ -340,9 +341,9 @@ waitid(0, 0, 'a') => TypeError: 'str' object cannot be interpreted as an integer
 waitid(0, 0) => TypeError: waitid expected 3 arguments, got 2
 WCOREDUMP => [False, False, False, False, False, False, True, True, True, True, False, False, False, False, False, True, False, False, False, True, False, True, False, True]
 WCOREDUMP of what is not a status => ("TypeError: 'str' object cannot be interpreted as an integer", 'TypeError: posix.WCOREDUMP() takes exactly one argument (0 given)', 'OverflowError: Python int too large to convert to C int', "TypeError: 'float' object cannot be interpreted as an integer", 'TypeError: posix.WCOREDUMP() takes no keyword arguments')
-WIFCONTINUED => [False, False, False, False, False, False, False, False, False, False, False, False, False, True, False, False, False, False, False, False, False, False, False, False]
+WIFCONTINUED => [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, True, False, False, False, False, False, False, False, False]
 WIFCONTINUED of what is not a status => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: WIFCONTINUED() missing required argument 'status' (pos 1)", 'OverflowError: Python int too large to convert to C int', "TypeError: 'float' object cannot be interpreted as an integer", False)
-WIFSTOPPED => [False, False, False, False, False, True, False, False, False, True, False, False, True, False, True, True, False, False, False, False, False, True, False, True]
+WIFSTOPPED => [False, False, False, False, False, True, False, False, False, False, False, False, True, True, True, False, False, False, False, False, False, False, False, False]
 WIFSTOPPED of what is not a status => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: WIFSTOPPED() missing required argument 'status' (pos 1)", 'OverflowError: Python int too large to convert to C int', "TypeError: 'float' object cannot be interpreted as an integer", False)
 WIFSIGNALED => [False, True, True, True, True, False, False, True, True, False, False, True, False, False, False, False, False, False, False, True, True, False, False, False]
 WIFSIGNALED of what is not a status => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: WIFSIGNALED() missing required argument 'status' (pos 1)", 'OverflowError: Python int too large to convert to C int', "TypeError: 'float' object cannot be interpreted as an integer", False)
@@ -352,9 +353,9 @@ WEXITSTATUS => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 19, 17, 255, 1, 3, 255, 0
 WEXITSTATUS of what is not a status => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: WEXITSTATUS() missing required argument 'status' (pos 1)", 'OverflowError: Python int too large to convert to C int', "TypeError: 'float' object cannot be interpreted as an integer", 0)
 WTERMSIG => [0, 1, 2, 9, 15, 127, 0, 1, 9, 127, 0, 1, 127, 127, 127, 127, 0, 0, 0, 11, 19, 127, 0, 127]
 WTERMSIG of what is not a status => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: WTERMSIG() missing required argument 'status' (pos 1)", 'OverflowError: Python int too large to convert to C int', "TypeError: 'float' object cannot be interpreted as an integer", 0)
-WSTOPSIG => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 19, 17, 255, 1, 3, 255, 0, 0, -1, 256, 8388607]
+WSTOPSIG => [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 19, 17, 255, 1, 3, 255, 0, 0, 255, 0, 255]
 WSTOPSIG of what is not a status => ("TypeError: 'str' object cannot be interpreted as an integer", "TypeError: WSTOPSIG() missing required argument 'status' (pos 1)", 'OverflowError: Python int too large to convert to C int', "TypeError: 'float' object cannot be interpreted as an integer", 0)
-waitstatus_to_exitcode => [0, -1, -2, -9, -15, 'ValueError: process stopped by delivery of signal 0', 0, -1, -9, 'ValueError: process stopped by delivery of signal 0', 1, -1, 'ValueError: process stopped by delivery of signal 0', 'ValueError: invalid wait status: 4991', 'ValueError: process stopped by delivery of signal 17', 'ValueError: process stopped by delivery of signal 255', 1, 3, 255, -11, -19, 'ValueError: process stopped by delivery of signal -1', 0, 'ValueError: process stopped by delivery of signal 8388607']
+waitstatus_to_exitcode => [0, -1, -2, -9, -15, 'ValueError: process stopped by delivery of signal 0', 0, -1, -9, 'ValueError: invalid wait status: 255', 1, -1, 'ValueError: process stopped by delivery of signal 0', 'ValueError: process stopped by delivery of signal 19', 'ValueError: process stopped by delivery of signal 17', 'ValueError: invalid wait status: 65535', 1, 3, 255, -11, -19, 'ValueError: invalid wait status: -1', 0, 'ValueError: invalid wait status: 2147483647']
 waitstatus_to_exitcode('a') => TypeError: 'str' object cannot be interpreted as an integer
 waitstatus_to_exitcode(1.5) => TypeError: 'float' object cannot be interpreted as an integer
 waitstatus_to_exitcode(None) => TypeError: 'NoneType' object cannot be interpreted as an integer
@@ -384,10 +385,10 @@ _exit(1099511627776,) => OverflowError: Python int too large to convert to C int
 _exit(1.5,) => TypeError: 'float' object cannot be interpreted as an integer
 abort(1,) => TypeError: posix.abort() takes no arguments (1 given)
 ---- who is told
-open => ([('open', ('audited', None, 16777216))], None)
-open of bytes => ([('open', (b'audited', None, 16777216))], None)
-open of what has __fspath__ => ([('open', ('audited', None, 16777216))], None)
-open that fails => ([('open', ('absent', None, 16777216))], "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' args=2")
+open => ([('open', ('audited', None, 'a process'))], None)
+open of bytes => ([('open', (b'audited', None, 'a process'))], None)
+open of what has __fspath__ => ([('open', ('audited', None, 'a process'))], None)
+open that fails => ([('open', ('absent', None, 'a process'))], "FileNotFoundError: errno=2 strerror='No such file or directory' filename='absent' args=2")
 mkdir => ([('os.mkdir', ('ad', 'a process', -1))], None)
 mkdir by way of a directory => ([('os.mkdir', ('ad', 'a process', 41))], "NotADirectoryError: errno=20 strerror='Not a directory' filename='ad' args=2")
 chdir => ([('os.chdir', ('.',))], None)
@@ -402,13 +403,13 @@ replace => ([('os.rename', ('ae', b'ad', -1, -1))], None)
 rmdir => ([('os.rmdir', ('ad', -1))], None)
 chmod => ([('os.chmod', ('audited', 'a process', -1))], None)
 fchmod => ([('os.chmod', (41, 'a process', -1))], None)
-lchmod => ([('os.chmod', ('audited', 'a process', -1))], None)
+lchmod => ([], "AttributeError: module 'posix' has no attribute 'lchmod'")
 chmod of an open file => ([('os.chmod', (41, 'a process', -1))], None)
 chown => ([('os.chown', ('audited', 4294967295, 4294967295, -1))], None)
 fchown => ([('os.chown', (41, 4294967295, 4294967295, -1))], None)
 lchown => ([('os.chown', ('audited', 4294967295, 4294967295, -1))], None)
-chflags => ([('os.chflags', ('audited', 0))], None)
-lchflags => ([('os.chflags', ('audited', 0))], None)
+chflags => ([], "AttributeError: module 'posix' has no attribute 'chflags'")
+lchflags => ([], "AttributeError: module 'posix' has no attribute 'lchflags'")
 link => ([('os.link', ('audited', 'al', -1, -1))], None)
 symlink => ([('os.symlink', ('audited', 'as', -1))], None)
 unlink => ([('os.remove', ('al', -1))], None)

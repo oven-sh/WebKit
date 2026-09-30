@@ -55,6 +55,9 @@ PosixModuleState& posixState(JSGlobalObject* globalObject)
         return state;
     initializePosixFileTypes(globalObject, state);
     initializePosixProcessTypes(globalObject, state);
+#if OS(LINUX)
+    initializePosixLinuxTypes(globalObject, state);
+#endif
     return state;
 }
 
@@ -158,6 +161,9 @@ JSObject* createPosixModule(JSGlobalObject* globalObject)
     addPosixScandir(globalObject, module);
     addPosixIdentityFunctions(globalObject, module);
     addPosixProcessFunctions(globalObject, module);
+#if OS(LINUX)
+    addPosixLinuxFunctions(globalObject, module);
+#endif
     addFunction(globalObject, module, "pathconf"_s, posixPathconf);
     addFunction(globalObject, module, "fpathconf"_s, posixFpathconf);
     addFunction(globalObject, module, "confstr"_s, posixConfstr);
@@ -170,6 +176,9 @@ JSObject* createPosixModule(JSGlobalObject* globalObject)
     set("sysconf_names"_s, newPosixSysconfNames(globalObject));
     set("error"_s, realm->typeOSError());
     set("waitid_result"_s, state.waitidResult.get());
+#if OS(LINUX)
+    set("sched_param"_s, state.schedulerParameter.get());
+#endif
     set("stat_result"_s, state.statResult.get());
     set("statvfs_result"_s, state.statVFSResult.get());
     set("terminal_size"_s, state.terminalSize.get());

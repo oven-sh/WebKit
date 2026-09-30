@@ -393,6 +393,25 @@ PYTHON_NATIVE(timeClockGetRes)
     return JSValue::encode(floatFromDouble(timespecAsSeconds(resolution)));
 }
 
+#if OS(LINUX)
+// pthread_getcpuclockid(thread_id)
+PYTHON_NATIVE(timePthreadGetCPUClockID)
+{
+    NATIVE_PROLOGUE();
+    if (!args.checkNoKeywords(globalObject, scope, "pthread_getcpuclockid"_s) || !checkCount(globalObject, scope, args, "pthread_getcpuclockid"_s, 1, 1))
+        return { };
+    // "k"
+    if (!typeOf(globalObject, args[0])->lookup(vm, vm.pythonNames().dunder_index))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("pthread_getcpuclockid() argument 1 must be int, not "_s, typeNameOfArgument(globalObject, args[0]))));
+    JSValue integer = toInt(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    clockid_t clock;
+    if (int error = pthread_getcpuclockid(std::bit_cast<pthread_t>(static_cast<uintptr_t>(lowBitsOfInt(integer))), &clock))
+        return JSValue::encode(raiseOSError(globalObject, scope, error));
+    return JSValue::encode(jsNumber(clock));
+}
+#endif
+
 // sleep(seconds), and pysleep()
 PYTHON_NATIVE(timeSleep)
 {
@@ -621,6 +640,9 @@ JSObject* createTimeModule(JSGlobalObject* globalObject)
     addFunction(globalObject, module, "clock_settime"_s, timeClockSetTime, pack(false), any, Arguments::AreNotChecked);
     addFunction(globalObject, module, "clock_settime_ns"_s, timeClockSetTime, pack(true), any, Arguments::AreNotChecked);
     addFunction(globalObject, module, "clock_getres"_s, timeClockGetRes, 0, any, Arguments::AreNotChecked);
+#if OS(LINUX)
+    addFunction(globalObject, module, "pthread_getcpuclockid"_s, timePthreadGetCPUClockID, 0, any, Arguments::AreNotChecked);
+#endif
     addFunction(globalObject, module, "sleep"_s, timeSleep, 0, "($module, seconds, /)"_s);
     addFunction(globalObject, module, "gmtime"_s, timeBreakDown, pack(false), any, Arguments::AreNotChecked);
     addFunction(globalObject, module, "localtime"_s, timeBreakDown, pack(true), any, Arguments::AreNotChecked);

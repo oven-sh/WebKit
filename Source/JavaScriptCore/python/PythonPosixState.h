@@ -36,7 +36,7 @@ class PyType;
 namespace Python {
 
 #define FOR_EACH_PYTHON_POSIX_TYPE(v) \
-    v(statResult) v(statVFSResult) v(terminalSize) v(timesResult) v(unameResult) v(waitidResult) v(resourceUsage) v(dirEntry) v(scandirIterator)
+    v(statResult) v(statVFSResult) v(terminalSize) v(timesResult) v(unameResult) v(waitidResult) v(resourceUsage) v(schedulerParameter) v(dirEntry) v(scandirIterator)
 
 // What posix has for each realm: _posixstate of CPython's Modules/posixmodule.c.
 struct PosixModuleState {
