@@ -1,0 +1,24 @@
+---- thrown into JavaScript
+straight out => raises < <lambda> < often
+through another => raises < passes_on < <lambda> < often
+out of something built in => looks_up < <lambda> < often
+one language and then the other => raises < passes_on < jsCallsAgain < <lambda> < jsCalls < <lambda> < <lambda> < often
+with something to be done on the way => raises < passes_on < cleans_up < <lambda> < often
+caught and raised again => raises < passes_on < raises_it_again < <lambda> < often
+caught, and another raised => raises_another < <lambda> < often
+and what that one came of => raises < passes_on < raises_another
+---- caught by Python, and handed over
+one that has been raised => raises < passes_on < caught
+out of something built in => looks_up < caught
+that went through JavaScript => raises < passes_on < jsCalls < <lambda> < caught < <lambda> < often
+that went through something built in => raises < passes_on < <lambda> < sort < sorted < <lambda> < caught < <lambda> < often
+asked twice => True
+one that never was => asks < often
+and then thrown by JavaScript => raises < passes_on < caught < jsThrows < <lambda> < raised_later < often
+what it has said, it goes on saying => True
+---- made by JavaScript
+where it was made => __new__ < ValueError < jsMakes < <lambda> < often
+and raised by Python => __new__ < ValueError < jsMakes < <lambda> < <lambda> < often
+---- it is not what keeps anything
+thrown into JavaScript => True {'short_lived'}
+through something built in => True {'short_lived'}

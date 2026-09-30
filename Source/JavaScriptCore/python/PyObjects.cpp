@@ -123,7 +123,8 @@ Structure* PyException::createStructure(VM& vm, JSGlobalObject* globalObject, JS
 PyException* PyException::create(VM& vm, PyType* type)
 {
     auto* exception = new (NotNull, allocateCell<PyException>(vm)) PyException(vm, type->instanceStructure(), type->errorType());
-    exception->finishCreationForEmbedderError(vm);
+    // Most are made, raised and caught by code in Python, which goes by the traceback. See Exception::StackCaptureAction::CaptureStackWhenItIsSeen.
+    exception->finishCreationForEmbedderError(vm, vm.isPythonCodeRunning() ? StackCapture::Pending : StackCapture::Now);
     return exception;
 }
 

@@ -1356,13 +1356,35 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     return exceptionToThrow;
 }
 
+bool VM::isPythonCodeRunning() const
+{
+    EntryFrame* entryFrame = topEntryFrame;
+    for (CallFrame* frame = topCallFrame; frame; frame = frame->callerFrame(entryFrame)) {
+        if (frame->isNativeCalleeFrame())
+            return false;
+        if (CodeBlock* codeBlock = frame->codeBlock()) {
+#if ENABLE(DFG_JIT)
+            // It may be something that has been inlined there that is running.
+            if (JITCode::isOptimizingJIT(codeBlock->jitType())) {
+                if (InlineCallFrame* inlined = frame->codeOrigin().inlineCallFrame())
+                    codeBlock = inlined->baselineCodeBlock.get();
+            }
+#endif
+            return codeBlock->source().provider()->isPython();
+        }
+    }
+    return false;
+}
+
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
     if (exception)
         exception->setIsBeingRethrown(true);
-    else
-        exception = Exception::create(*this, thrownValue);
+    else {
+        // An exception in Python remembers the frames that it comes to as it comes to them, and is raised and caught as a matter of course.
+        exception = Exception::create(*this, thrownValue, isPythonCodeRunning() ? Exception::StackCaptureAction::CaptureStackWhenItIsSeen : Exception::StackCaptureAction::CaptureStack);
+    }
 
     return throwException(globalObject, exception);
 }

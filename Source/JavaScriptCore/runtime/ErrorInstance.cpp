@@ -28,6 +28,7 @@
 #include "Interpreter.h"
 #include "JSCInlines.h"
 #include "ParseInt.h"
+#include "PythonOperations.h"
 #include "StackFrame.h"
 #include "VM.h"
 #include <wtf/text/MakeString.h>
@@ -45,6 +46,7 @@ ErrorInstance::ErrorInstance(VM& vm, Structure* structure, ErrorType errorType)
     , m_stackPropertyAlreadyMaterialized(false)
     , m_nativeGetterTypeError(false)
     , m_parseError(false)
+    , m_isStackCapturePending(false)
 #if ENABLE(WEBASSEMBLY)
     , m_catchableFromWasm(true)
 #endif // ENABLE(WEBASSEMBLY)
@@ -253,19 +255,56 @@ void ErrorInstance::finishCreation(VM& vm, String&& message, LineColumn lineColu
         putDirect(vm, vm.propertyNames->cause, jsString(vm, WTF::move(cause)), static_cast<unsigned>(PropertyAttribute::DontEnum));
 }
 
-void ErrorInstance::finishCreationForEmbedderError(VM& vm)
+void ErrorInstance::finishCreationForEmbedderError(VM& vm, StackCapture stackCapture)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
-    std::unique_ptr<Vector<StackFrame>> stackTrace = getStackTrace(vm, this, /* useCurrentFrame */ true);
+    m_isStackCapturePending = true;
+    if (stackCapture == StackCapture::Now)
+        captureStackIfPending(vm);
+
+    // Deliberately add no own "message" / "cause" properties; the embedder exposes those itself.
+}
+
+void ErrorInstance::captureStackIfPending(VM& vm)
+{
+    captureStackIfPending(vm, { }, 0);
+}
+
+void ErrorInstance::captureStackIfPending(VM& vm, Vector<StackFrame>&& earlier, size_t framesToSkip)
+{
+    if (!m_isStackCapturePending)
+        return;
+    std::optional<unsigned> limit = realm()->stackTraceLimit();
+    if (!limit) {
+        setStackIfPending(vm, nullptr);
+        return;
+    }
+    auto stackTrace = makeUnique<Vector<StackFrame>>(WTF::move(earlier));
+    if (stackTrace->size() < *limit) {
+        Vector<StackFrame> live;
+        vm.interpreter.getStackTrace(this, live, framesToSkip, *limit - stackTrace->size());
+        stackTrace->appendVector(WTF::move(live));
+    } else
+        stackTrace->shrink(*limit);
+    setStackIfPending(vm, WTF::move(stackTrace));
+}
+
+void ErrorInstance::setStackIfPending(VM& vm, std::unique_ptr<Vector<StackFrame>>&& stackTrace)
+{
+    if (!m_isStackCapturePending)
+        return;
+    m_isStackCapturePending = false;
+    // It has been asked already, and has said that there is none.
+    if (m_errorInfoMaterialized)
+        return;
+    // It is held as one that was captured to begin with is: weakly, and made into strings by reconcileWeakReferencesAtGCEnd() when anything in it is about to go.
     {
         Locker locker { cellLock() };
         m_stackTrace = WTF::move(stackTrace);
     }
     vm.writeBarrier(this);
-
-    // Deliberately add no own "message" / "cause" properties; the embedder exposes those itself.
 }
 
 void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&& sourceURL, String&& stackString)
@@ -451,6 +490,18 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
 {
     if (m_errorInfoMaterialized)
         return false;
+
+    // It is an exception of Python's that has never left code in Python, and has been handed to whoever is asking. Where it went while it was raised is what there is to say. If it never was, this is as good a place as any.
+    if (m_isStackCapturePending) [[unlikely]] {
+        Vector<StackFrame> stackTrace = Python::stackOfTraceback(vm, this, Python::tracebackOf(vm, this));
+        if (stackTrace.isEmpty())
+            captureStackIfPending(vm);
+        else if (std::optional<unsigned> limit = realm()->stackTraceLimit()) {
+            stackTrace.shrink(std::min<size_t>(stackTrace.size(), *limit));
+            setStackIfPending(vm, makeUnique<Vector<StackFrame>>(WTF::move(stackTrace)));
+        } else
+            setStackIfPending(vm, nullptr);
+    }
 
 #if USE(BUN_JSC_ADDITIONS)
 

@@ -27,6 +27,7 @@
 #include "PythonBuiltins.h"
 
 #include "CodeBlock.h"
+#include "FunctionCodeBlock.h"
 #include "FunctionExecutable.h"
 #include "PyFrame.h"
 #include "PythonGenerators.h"
@@ -66,6 +67,30 @@ void addTracebackEntry(JSGlobalObject* globalObject, JSValue exception, CallFram
     unsigned sourceOffset = callFrame->codeBlock()->expressionInfoForBytecodeIndex(bytecodeIndex).divot;
     JSValue entry = PyNativeObject::create(globalObject, BuiltinType::Traceback, head, PyFrame::forCallFrame(vm, callFrame), JSC::jsNumber(bytecodeIndex.offset()), JSC::jsNumber(sourceOffset));
     asObject(exception)->putDirect(vm, vm.pythonNames().private_traceback, entry);
+}
+
+JSValue tracebackOf(VM& vm, JSValue exception)
+{
+    return exception.isObject() ? asObject(exception)->getDirect(vm, vm.pythonNames().private_traceback) : JSValue();
+}
+
+Vector<StackFrame> stackOfTraceback(VM& vm, JSCell* owner, JSValue traceback)
+{
+    Vector<StackFrame> stack;
+    for (JSValue cursor = traceback; cursor && cursor.isObject() && isTraceback(asObject(cursor)->realm(), cursor); cursor = asNative(cursor)->field(TracebackField::Next)) {
+        PyNativeObject* entry = asNative(cursor);
+        JSFunction* function = asFrame(entry->field(TracebackField::Frame))->function();
+        if (!function)
+            continue;
+        // What it was compiled into may have been thrown away since, and then all that there is to say is what it was called.
+        CodeBlock* codeBlock = function->jsExecutable()->codeBlockForCall();
+        if (codeBlock)
+            stack.append(StackFrame(vm, owner, function, codeBlock->baselineAlternative(), BytecodeIndex(entry->field(TracebackField::BytecodeOffset).asInt32())));
+        else
+            stack.append(StackFrame(vm, owner, function));
+    }
+    stack.reverse();
+    return stack;
 }
 
 void leaveFrame(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)

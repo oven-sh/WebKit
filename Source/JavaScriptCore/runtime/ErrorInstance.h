@@ -130,6 +130,14 @@ public:
     // still materialized lazily, exactly as they are for a captured stack trace.
     JS_EXPORT_PRIVATE void setErrorInfoForEmbedderError(LineColumn, String&& sourceURL, String&& stackString);
 
+    bool isStackCapturePending() const { return m_isStackCapturePending; }
+    // As things stand now.
+    JS_EXPORT_PRIVATE void captureStackIfPending(VM&);
+    // The same, less the first `framesToSkip` of it, after `earlier`: frames that it went through and that are no longer there.
+    JS_EXPORT_PRIVATE void captureStackIfPending(VM&, Vector<StackFrame>&& earlier, size_t framesToSkip);
+    // What the embedder has worked out for itself.
+    JS_EXPORT_PRIVATE void setStackIfPending(VM&, std::unique_ptr<Vector<StackFrame>>&&);
+
     void setStackPropertyAlreadyMaterialized()
     {
         if (!m_errorInfoMaterialized)
@@ -149,7 +157,10 @@ protected:
     // ErrorInstances but must not gain own "message" / "cause" properties; they expose those by
     // other means. A stack trace is still captured, so "stack" (and "line" / "column" /
     // "sourceURL") materialize lazily just like they do for a plain Error.
-    JS_EXPORT_PRIVATE void finishCreationForEmbedderError(VM&);
+    //
+    // An embedder whose errors are made far more often than anything asks where can put that off. It is then for the embedder to see that one of the two below is called before anything does ask.
+    enum class StackCapture : bool { Now, Pending };
+    JS_EXPORT_PRIVATE void finishCreationForEmbedderError(VM&, StackCapture = StackCapture::Now);
 
     JS_EXPORT_PRIVATE static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
     JS_EXPORT_PRIVATE static void getOwnSpecialPropertyNames(JSObject*, JSGlobalObject*, PropertyNameArrayBuilder&, DontEnumPropertiesMode);
@@ -172,6 +183,7 @@ protected:
     bool m_stackPropertyAlreadyMaterialized : 1;
     bool m_nativeGetterTypeError : 1;
     bool m_parseError : 1;
+    bool m_isStackCapturePending : 1;
 #if ENABLE(WEBASSEMBLY)
     bool m_catchableFromWasm : 1;
 #endif

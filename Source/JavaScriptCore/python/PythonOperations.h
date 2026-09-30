@@ -447,6 +447,10 @@ WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner); // Wher
 
 // Notes that an exception has come to a frame of Python code, by being raised in it or by coming out of what it called. The unwinder calls it.
 void addTracebackEntry(JSGlobalObject*, JSValue exception, CallFrame*, BytecodeIndex);
+// What it has for a traceback, as it is kept. Empty if it has none.
+JSValue tracebackOf(VM&, JSValue exception);
+// The frames of a traceback as JavaScript has a stack, which is from where it was raised outwards, for `owner` to keep.
+Vector<StackFrame> stackOfTraceback(VM&, JSCell* owner, JSValue traceback);
 // A frame of Python code is about to be no more. If it has a frame object, that outlives it. The unwinder calls it, and op_py_ret.
 void leaveFrame(VM&, CallFrame*, BytecodeIndex);
 // The slow path of op_py_enter: either it is too deep, and RecursionError is raised, or something is to be told that a frame has begun or been resumed.

@@ -1457,6 +1457,20 @@ gives what entering gave. A stack that `using` disposes of is told what was thro
 An exception is an `ErrorInstance`, in the way that is provided for errors that have their message by other means. So `Error.isError()` is true
 of it, and it has a `stack` with the frames of both languages in it in order.
 
+**Where it is is not found out until something may ask.** An `Error` goes through the stack when it is made, and what wraps whatever is thrown (`JSC::Exception`) goes through it again. Only making that into a string is put off. Code in Python makes nothing of
+either, and raises and catches exceptions as a matter of course, so for what it makes and what it throws (`VM::isPythonCodeRunning()`) both are put off: `ErrorInstance::StackCapture::Pending`, `Exception::StackCaptureAction::CaptureStackWhenItIsSeen`.
+
+- **It is done when the exception comes to code in JavaScript, or is on its way out to whatever is written in C++ and called all this** (`UnwindFunctor::captureStacksThatArePending()`). That is while it is unwinding, when nothing has been done yet to the
+  frames that it has been through, so what is found is what would have been found where it was raised. Code in JavaScript that has been inlined in code in Python counts, both here and in telling who is running.
+- **If it had been caught before that and thrown again**, by a `finally` or a `raise`, where it had been until then is gone. That is what its traceback had in it when the unwinding began, and it goes first. There was nothing but code in Python there, or
+  it would have been seen to already.
+- **If it never leaves code in Python, and is handed to JavaScript**, what it says is what its traceback says, which goes no further out than what caught it. One that was never raised says where it was when it was asked.
+- What JavaScript makes or throws is as it always was.
+- **It is kept as it always was.** The frames are referred to weakly, and are made into strings at the end of a collection in which any of them goes (`reconcileWeakReferencesAtGCEnd()`), whenever it was that they were found. That goes through every
+  `ErrorInstance` there is and asks nothing of how it was made. Until they are found there is nothing to keep.
+
+`interop/where-an-exception-has-been.py`
+
 | Python | JavaScript |
 |---|---|
 | `BaseException` | `Error` |

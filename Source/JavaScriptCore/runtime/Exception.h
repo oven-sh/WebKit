@@ -45,7 +45,10 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack
+        DoNotCaptureStack,
+        // It is thrown by code that makes nothing of where it was thrown from, and may well be caught by such code. The stack is captured if it comes to anything else, by captureStackIfPending(). That is while it
+        // is unwinding, when every frame that it has been through is still there.
+        CaptureStackWhenItIsSeen
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
 
@@ -62,6 +65,10 @@ public:
 
     JSValue value() const { return m_value.get(); }
     const Vector<StackFrame>& stack() const LIFETIME_BOUND { return m_stack; }
+    bool isStackCapturePending() const { return m_isStackCapturePending; }
+    void captureStackIfPending(VM&);
+    // What the stack is now, less the first `framesToSkip` of it, after `earlier`: frames that it went through and that are no longer there.
+    void captureStackIfPending(VM&, Vector<StackFrame>&& earlier, size_t framesToSkip);
     static size_t estimatedSize(JSCell*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -99,6 +106,7 @@ private:
     Vector<StackFrame> m_stack;
     bool m_didNotifyInspectorOfThrow { false };
     bool m_isBeingRethrown { false };
+    bool m_isStackCapturePending { false };
 
     friend class LLIntOffsetsExtractor;
 };

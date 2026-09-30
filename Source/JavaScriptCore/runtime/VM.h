@@ -316,6 +316,8 @@ public:
     bool isEntered() const { return !!entryScope; }
 
     inline CallFrame* topJSCallFrame() const;
+    // Whether the code that is running, or that called whatever is written in C++ and is running, is in Python.
+    JS_EXPORT_PRIVATE bool isPythonCodeRunning() const;
 
     // Global object in which execution began.
     JS_EXPORT_PRIVATE JSGlobalObject* NODELETE deprecatedVMEntryGlobalObject(JSGlobalObject*) const;

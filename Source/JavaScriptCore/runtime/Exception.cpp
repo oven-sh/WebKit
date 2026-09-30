@@ -67,6 +67,8 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContext);
 #endif
+    // captureStackIfPending()
+    Locker locker { thisObject->cellLock() };
     for (StackFrame& frame : thisObject->m_stack)
         frame.visitAggregate(visitor);
     visitor.reportExtraMemoryVisited(thisObject->m_stack.sizeInBytes());
@@ -97,6 +99,33 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
         vm.interpreter.getStackTrace(this, stackTrace, 0, Options::exceptionStackTraceLimit());
 
     m_stack = WTF::move(stackTrace);
+    m_isStackCapturePending = action == StackCaptureAction::CaptureStackWhenItIsSeen;
+    vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
+}
+
+void Exception::captureStackIfPending(VM& vm)
+{
+    captureStackIfPending(vm, { }, 0);
+}
+
+void Exception::captureStackIfPending(VM& vm, Vector<StackFrame>&& earlier, size_t framesToSkip)
+{
+    if (!m_isStackCapturePending) [[likely]]
+        return;
+    m_isStackCapturePending = false;
+    size_t limit = Options::exceptionStackTraceLimit();
+    Vector<StackFrame> stackTrace = WTF::move(earlier);
+    if (stackTrace.size() < limit) {
+        Vector<StackFrame> live;
+        vm.interpreter.getStackTrace(this, live, framesToSkip, limit - stackTrace.size());
+        stackTrace.appendVector(WTF::move(live));
+    } else
+        stackTrace.shrink(limit);
+    {
+        Locker locker { cellLock() };
+        m_stack = WTF::move(stackTrace);
+    }
+    vm.writeBarrier(this);
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 

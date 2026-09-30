@@ -829,8 +829,10 @@ public:
         , m_seenRemoteFunction(seenRemoteFunction)
         , m_thrownValue(thrownValue)
         , m_isInFrameThatRethrew(exception->isBeingRethrown())
-#if ENABLE(WEBASSEMBLY)
         , m_exception(exception)
+        , m_wasRethrown(exception->isBeingRethrown())
+        , m_tracebackBefore(Python::tracebackOf(vm, thrownValue))
+#if ENABLE(WEBASSEMBLY)
     {
 
         if (!m_isTermination) {
@@ -856,6 +858,17 @@ public:
 
     IterationStatus operator()(StackVisitor& visitor) const
     {
+#if ENABLE(DFG_JIT)
+        // Code in JavaScript that has been inlined in code in Python is passed over by what follows.
+        if (!m_isTermination && visitor->isInlinedDFGFrame()) {
+            for (InlineCallFrame* inlined = visitor->inlineCallFrame(); inlined; inlined = inlined->directCaller.inlineCallFrame()) {
+                if (!inlined->baselineCodeBlock->source().provider()->isPython()) {
+                    captureStacksThatArePending();
+                    break;
+                }
+            }
+        }
+#endif
         visitor.unwindToMachineCodeBlockFrame();
         m_callFrame = visitor->callFrame();
         m_codeBlock = visitor->codeBlock();
@@ -866,6 +879,8 @@ public:
                 // An exception in Python remembers each frame that it comes to. It has been in the one that throws it again.
                 // Not if it is in code that leaves this to the baseline JIT, which has it thrown again once the frame is as that would have had it: Graph::willCatchExceptionInMachineFrame().
                 bool isPython = m_codeBlock->source().provider()->isPython() && !JITCode::isOptimizingJIT(m_codeBlock->jitType());
+                if (!m_codeBlock->source().provider()->isPython())
+                    captureStacksThatArePending();
                 if (isPython && !m_isInFrameThatRethrew) [[unlikely]]
                     Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
                 if (isPython && m_vm.isPythonWatched()) [[unlikely]]
@@ -929,13 +944,30 @@ public:
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
 
         bool shouldStopUnwinding = visitor->callerIsEntryFrame();
-        if (shouldStopUnwinding)
+        if (shouldStopUnwinding) {
+            if (!m_isTermination)
+                captureStacksThatArePending();
             return IterationStatus::Done;
+        }
 
         return IterationStatus::Continue;
     }
 
 private:
+    // Exception::StackCaptureAction::CaptureStackWhenItIsSeen: it has come to code in JavaScript, or is on its way out to whatever is written in C++ and called all this. Nothing has been done to the frames that it has been
+    // through since it was thrown, so they are all found. If it had been caught before that, by code in Python, and thrown again, then where it had been until then is gone, and is what its traceback had in it when this began.
+    // There was nothing but code in Python there, or it would not have got this far without being looked at. What throws again what it caught is in that already.
+    void captureStacksThatArePending() const
+    {
+        auto* error = dynamicDowncast<ErrorInstance>(m_thrownValue);
+        if (!m_exception->isStackCapturePending() && !(error && error->isStackCapturePending())) [[likely]]
+            return;
+        size_t framesToSkip = m_wasRethrown && m_tracebackBefore;
+        m_exception->captureStackIfPending(m_vm, Python::stackOfTraceback(m_vm, m_exception, m_tracebackBefore), framesToSkip);
+        if (error)
+            error->captureStackIfPending(m_vm, Python::stackOfTraceback(m_vm, error, m_tracebackBefore), framesToSkip);
+    }
+
     // What is told may raise something, and then that is what is being thrown.
     void tellPython(StackVisitor& visitor, Python::ExceptionProgress progress) const
     {
@@ -943,9 +975,7 @@ private:
         if (!replacement)
             return;
         m_thrownValue = replacement->value();
-#if ENABLE(WEBASSEMBLY)
         m_exception = replacement;
-#endif
     }
 
     CallFrame*& m_callFrame;
@@ -956,8 +986,10 @@ private:
     mutable JSValue m_thrownValue;
     mutable bool m_isInFrameThatRethrew;
 
-#if ENABLE(WEBASSEMBLY)
     mutable Exception* m_exception;
+    bool m_wasRethrown;
+    JSValue m_tracebackBefore;
+#if ENABLE(WEBASSEMBLY)
     mutable RefPtr<const Wasm::Tag> m_wasmTag;
     bool m_catchableFromWasm { false };
 #endif
