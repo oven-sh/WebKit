@@ -97,6 +97,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(StringSubstringWithEnd, operationStringSubstringWithEnd) \
     v(ToLowerCase, operationToLowerCase) \
     v(ObjectKeysObject, operationObjectKeysObject) \
+    v(ValueAdd, operationAOTValueAdd) \
 
 #define FOR_EACH_AOT_HELPER(v) \
     v(HelperNewArray) \
@@ -112,6 +113,8 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(HelperToLowerCase) \
     v(HelperObjectKeys) \
     v(HelperAddField) \
+    v(HelperSetArrayLength) \
+    v(HelperAddStrings) \
 
 #define FOR_EACH_AOT_STUB(v) \
     /* After the frame pointer is set up. T9 = the size of the frame. Checks that there is stack for it and sets the stack */ \
@@ -177,6 +180,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(LooseEqual) \
     /* A0, A1 = the operands. The result, a JSValue, in A0. */ \
     v(Add) \
+    v(Mod) \
     v(Sub) \
     v(Mul) \
     v(BitAnd) \
@@ -259,6 +263,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(AheadOfStringSubstringWithEnd) \
     v(AheadOfToLowerCase) \
     v(AheadOfObjectKeysObject) \
+    v(AheadOfValueAdd) \
 
 enum class Stub : uint8_t {
 #define AOT_DEFINE_STUB(name) name,
@@ -267,7 +272,7 @@ enum class Stub : uint8_t {
     NumberOfStubs
 };
 static constexpr unsigned numberOfStubs = static_cast<unsigned>(Stub::NumberOfStubs);
-static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddField; }
+static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
 
 static constexpr bool usesStubs =
 #if CPU(ARM64)

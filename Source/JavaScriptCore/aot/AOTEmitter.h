@@ -114,8 +114,10 @@ protected:
     LValue sliceOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp); // As slice() and substring() take them, once they are integers.
     LValue substringOfString(LValue string, LValue start, LValue end, LBasicBlock giveUp);
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
+    LValue addStrings(LValue first, LValue second, LBasicBlock giveUp); // Of values, that may be anything.
     LValue keysOfObject(LValue object, LBasicBlock giveUp);
     LValue lowerCaseIfItIsAlready(LValue string, LBasicBlock giveUp);
+    void setLengthOfArray(LValue array, LValue length, LBasicBlock giveUp); // Both are values. To no more than it is.
     void addFieldOfStruct(LValue object, LValue valueAsHeld, LValue slot, LBasicBlock giveUp);
     LValue isOriginalArray(LValue cell); // A boolean: see Instance::structureIDsOfOriginalArrays.
 

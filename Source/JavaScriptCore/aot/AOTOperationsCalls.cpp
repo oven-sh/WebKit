@@ -250,7 +250,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (JSGlobalObject* glo
                     return;
                 std::optional<SiteInPlaceOfCallSite> where;
                 if (auto site = siteOfSpread(*function.info().function(), callSite, index))
-                    where.emplace(returnAddress, *site);
+                    where.emplace(*function.instance, returnAddress, *site);
                 JSCell* result = spread(globalObject, JSValue::decode(item));
                 if (scope.exception()) [[unlikely]] {
                     threw = true;

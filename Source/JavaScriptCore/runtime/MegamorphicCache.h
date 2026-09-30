@@ -374,6 +374,10 @@ public:
             clearEntries();
     }
 
+    // Instead of forgetting everything at every collection: what an entry goes by is looked at, once it is known what is left, and the entry goes if any of it has. For a VM that
+    // runs code from the static compiler, most of which has this and nothing else to remember what it found. (Whatever thread: nothing is released.)
+    JS_EXPORT_PRIVATE void reconcileWeakReferencesAtGCEnd(VM&);
+
 private:
     JS_EXPORT_PRIVATE void NODELETE clearEntries();
 
@@ -387,6 +391,7 @@ private:
     std::array<GetterEntry, getterCacheSecondarySize> m_getterCacheSecondaryEntries { };
     std::array<ConstructionEntry, constructionCacheSize> m_constructionEntries { };
     uint16_t m_epoch { 1 };
+    bool m_hasBeenReconciled { false }; // Since it was last aged.
 };
 
 } // namespace JSC

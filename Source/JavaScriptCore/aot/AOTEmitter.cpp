@@ -563,6 +563,13 @@ LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock 
     return m_out.phi(pointerType(), results);
 }
 
+LValue Emitter::addStrings(LValue first, LValue second, LBasicBlock giveUp)
+{
+    orElse(m_out.bitAnd(isCell(first), isCell(second)), giveUp);
+    orElse(m_out.bitAnd(isCellOfType(first, StringType), isCellOfType(second, StringType)), giveUp);
+    return makeRope(first, second, nullptr, giveUp);
+}
+
 // The string itself, if there is nothing in it for toLowerCase() to change.
 LValue Emitter::lowerCaseIfItIsAlready(LValue string, LBasicBlock giveUp)
 {
@@ -606,6 +613,24 @@ void Emitter::addFieldOfStruct(LValue object, LValue valueAsHeld, LValue slot, L
     orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, slot))), slot), giveUp);
     m_out.store64(valueAsHeld, TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object, m_out.add(m_out.shl(m_out.zeroExtPtr(slot), m_out.constInt32(3)), m_out.constIntPtr(JSObject::offsetOfInlineStorage())))));
     m_out.store32(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, structureIDAfterwards))), object, m_heaps.JSCell_structureID);
+}
+
+// array.length = n, of an array that keeps its elements as values and is at least that long: JSArray::setLength().
+void Emitter::setLengthOfArray(LValue array, LValue length, LBasicBlock giveUp)
+{
+    orElse(isCell(array), giveUp);
+    orElse(isInt32(length), giveUp);
+    LValue mode = m_out.bitAnd(m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IsArray | IndexingShapeMask | CopyOnWrite));
+    orElse(m_out.bitOr(m_out.equal(mode, m_out.constInt32(ArrayWithContiguous)), m_out.equal(mode, m_out.constInt32(ArrayWithInt32))), giveUp);
+    orElse(isCellOfType(array, ArrayType), giveUp);
+    LValue butterfly = m_out.loadPtr(array, m_heaps.JSObject_butterfly);
+    LValue before = m_out.load32(butterfly, m_heaps.Butterfly_publicLength);
+    LValue afterwards = unboxInt32(length);
+    orElse(m_out.belowOrEqual(afterwards, before), giveUp);
+    // (An array that is left with a great deal of room to spare is given less, which is for the runtime.)
+    orElse(m_out.belowOrEqual(m_out.sub(before, afterwards), m_out.constInt32(64)), giveUp);
+    splatWords(butterfly, afterwards, before, m_out.int64Zero, m_heaps.indexedContiguousProperties.atAnyIndex());
+    m_out.store32(afterwards, butterfly, m_heaps.Butterfly_publicLength);
 }
 
 // ---- Helpers
@@ -670,6 +695,13 @@ public:
             break;
         case Stub::HelperObjectKeys:
             result = keysOfObject(arguments[0], giveUp);
+            break;
+        case Stub::HelperAddStrings:
+            result = addStrings(arguments[0], arguments[1], giveUp);
+            break;
+        case Stub::HelperSetArrayLength:
+            setLengthOfArray(arguments[0], arguments[1], giveUp);
+            result = m_out.intPtrOne;
             break;
         case Stub::HelperAddField:
             addFieldOfStruct(arguments[0], arguments[1], int32At(2), giveUp);

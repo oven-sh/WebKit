@@ -36,6 +36,7 @@ ASCIILiteral cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* struc
 
 //     cache->structureID: the structure of the base. cache->pointer: the private name, or the brand.
 //     cache->offset: the location of the field, if this is about one.
+void noteCustomGetter(JSGlobalObject*, Instance&, JSObject* base, const Identifier&, const PropertySlot&); // Instance::customGetters
 void cachePrivateName(VM&, Data*, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset>);
 
 // A slot that rests on what the objects on the prototype chain have, or do not have, is told when that changes by the structures

@@ -820,6 +820,8 @@ void Heap::reconcileWeakReferencesAtGCEnd()
 #if ENABLE(FTL_JIT)
     for (AOT::Instance* instance : vm().m_aotInstances)
         instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
+    if (auto* cache = vm().megamorphicCache(); cache && !vm().m_aotInstances.isEmpty())
+        cache->reconcileWeakReferencesAtGCEnd(vm());
 #endif
 
     {

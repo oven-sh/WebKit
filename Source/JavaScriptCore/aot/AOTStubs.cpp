@@ -472,7 +472,7 @@ static void callBinaryOperation(CCallHelpers& jit, Entry operation)
     callAndCheckException(jit, T11, Returns::Value);
 }
 
-enum class Binary : uint8_t { Add, Sub, Mul, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Less, LessEq, Greater, GreaterEq };
+enum class Binary : uint8_t { Add, Sub, Mul, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Mod, Less, LessEq, Greater, GreaterEq };
 
 // A function that has no loop in it may well be called from one, so numbers are dealt with here. The rest is the runtime's.
 static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
@@ -532,6 +532,15 @@ static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
         break;
     case Binary::URShift:
         jit.urshift32(A0, A1, T11);
+        slow.append(jit.branch32(CCallHelpers::LessThan, T11, TrustedImm32(0))); // It is not negative, and too big for an int32.
+        boxInt32AndReturn();
+        break;
+    case Binary::Mod:
+        // Of what is not negative by what is positive: the rest has zeros with signs, and no answer at all, to think of.
+        slow.append(jit.branch32(CCallHelpers::LessThan, A0, TrustedImm32(0)));
+        slow.append(jit.branch32(CCallHelpers::LessThanOrEqual, A1, TrustedImm32(0)));
+        jit.div32(A0, A1, T11);
+        jit.multiplySub32(T11, A1, A0, T11);
         boxInt32AndReturn();
         break;
     case Binary::Less:
@@ -608,6 +617,7 @@ static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
 }
 
 static void generateAdd(CCallHelpers& jit) { generateBinary(jit, Binary::Add, Entry::operationAOTValueAdd); }
+static void generateMod(CCallHelpers& jit) { generateBinary(jit, Binary::Mod, Entry::operationAOTValueMod); }
 static void generateSub(CCallHelpers& jit) { generateBinary(jit, Binary::Sub, Entry::operationAOTValueSub); }
 static void generateMul(CCallHelpers& jit) { generateBinary(jit, Binary::Mul, Entry::operationAOTValueMul); }
 static void generateBitAnd(CCallHelpers& jit) { generateBinary(jit, Binary::BitAnd, Entry::operationAOTValueBitAnd); }
@@ -2740,6 +2750,7 @@ static void generateAheadOfMakeRope3(CCallHelpers& jit) { generateAheadOf(jit, E
 static void generateAheadOfStringSliceWithEnd(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindStringSliceWithEnd, Stub::HelperStringSlice, 3); }
 static void generateAheadOfStringSubstringWithEnd(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindStringSubstringWithEnd, Stub::HelperStringSubstring, 3); }
 static void generateAheadOfToLowerCase(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindToLowerCase, Stub::HelperToLowerCase, 1); }
+static void generateAheadOfValueAdd(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindValueAdd, Stub::HelperAddStrings, 2); }
 static void generateAheadOfObjectKeysObject(CCallHelpers& jit) { generateAheadOf(jit, Entry::BehindObjectKeysObject, Stub::HelperObjectKeys, 1); }
 
 #define AOT_GENERATE_HELPER(name) static void generate##name(CCallHelpers& jit) { generateHelper(jit, Stub::name); }

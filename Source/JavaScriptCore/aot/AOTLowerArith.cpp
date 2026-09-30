@@ -22,6 +22,7 @@ static std::optional<Stub> stubFor(OpcodeID opcode)
     case op_add: return Stub::Add;
     case op_sub: return Stub::Sub;
     case op_mul: return Stub::Mul;
+    case op_mod: return Stub::Mod;
     case op_bitand: return Stub::BitAnd;
     case op_bitor: return Stub::BitOr;
     case op_bitxor: return Stub::BitXor;
@@ -119,6 +120,25 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         setResult(node, result, narrow ? Rep::Int32 : Rep::Int64);
         return;
     }
+    // The remainder of one integer by another is an integer's work, if the one is not negative and the other is positive.
+    auto remainderOfInt32s = [&](LValue a, LValue b, LBasicBlock otherwise) {
+        orElse(m_out.bitAnd(m_out.greaterThanOrEqual(a, m_out.int32Zero), m_out.greaterThan(b, m_out.int32Zero)), otherwise);
+        return m_out.sub(a, m_out.mul(m_out.div(a, b), b));
+    };
+    if (opcode == op_mod && left->rep() == Rep::Int32 && right->rep() == Rep::Int32) {
+        LBasicBlock otherwise = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue a = lowInt32(left);
+        LValue b = lowInt32(right);
+        ValueFromBlock quick = m_out.anchor(m_out.intToDouble(remainderOfInt32s(a, b, otherwise)));
+        m_out.jump(continuation);
+        m_out.appendTo(otherwise);
+        ValueFromBlock slow = m_out.anchor(doubleOp(m_out.intToDouble(a), m_out.intToDouble(b)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setDouble(node, m_out.phi(Double, quick, slow));
+        return;
+    }
     if (isSubtype(left->type | right->type, TNumber)) {
         setDouble(node, doubleOp(lowDouble(left), lowDouble(right)));
         return;
@@ -151,14 +171,17 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 3> results;
 
-    bool hasIntCase = opcode == op_add || opcode == op_sub || opcode == op_mul;
+    bool hasIntCase = opcode == op_add || opcode == op_sub || opcode == op_mul || opcode == op_mod;
     if (hasIntCase)
         m_out.branch(m_out.bitAnd(isInt32(a), isInt32(b)), unsure(intCase), unsure(notBothInt));
     else
         m_out.jump(notBothInt);
 
     m_out.appendTo(intCase, notBothInt);
-    if (hasIntCase) {
+    if (opcode == op_mod) {
+        results.append(m_out.anchor(boxInt32(remainderOfInt32s(unboxInt32(a), unboxInt32(b), doubleCase))));
+        m_out.jump(continuation);
+    } else if (hasIntCase) {
         // In 64 bits none of these overflow, so whether the result is an int32 can be asked afterwards.
         LValue wideA = m_out.signExt32To64(unboxInt32(a));
         LValue wideB = m_out.signExt32To64(unboxInt32(b));
@@ -182,6 +205,12 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
+    if (opcode == op_add && mayBe(left->type, TString) && mayBe(right->type, TString)) {
+        LBasicBlock notStrings = newColdBlock();
+        results.append(m_out.anchor(addStrings(a, b, notStrings)));
+        m_out.jump(continuation);
+        m_out.appendTo(notStrings);
+    }
     results.append(m_out.anchor(vmCall(node, Int64, operationFor(opcode), m_globalObject, a, b)));
     m_out.jump(continuation);
 

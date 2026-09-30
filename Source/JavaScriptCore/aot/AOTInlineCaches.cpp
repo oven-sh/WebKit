@@ -198,6 +198,38 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JS
     return ""_s;
 }
 
+// As tryCacheGetBy() has it, for what it calls CustomAccessorGetter and CustomValueGetter.
+void noteCustomGetter(JSGlobalObject* globalObject, Instance& instance, JSObject* base, const Identifier& ident, const PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    if ((Options::aotDisableFastPaths() & 1) || !vm.megamorphicCache())
+        return;
+    Structure* structure = base->structure();
+    JSObject* holder = slot.slotBase();
+    if (base->type() == GlobalProxyType || !structure->propertyAccessesAreCacheable() || structure->isDictionary() || structure->needImpurePropertyWatchpoint() || structure->typeInfo().prohibitsPropertyCaching())
+        return;
+    if (holder->structure()->isDictionary())
+        return;
+    if (holder == base) {
+        if (!prepareChainForCaching(globalObject, holder, ident.impl(), holder))
+            return;
+    } else {
+        auto status = prepareChainForCaching(globalObject, base, ident.impl(), slot);
+        if (!status || status->flattenedDictionary || status->usesPolyProto)
+            return;
+        if (!generateConditionsForPrototypePropertyHitCustom(vm, globalObject, globalObject, structure, holder, ident.impl(), slot.attributes()).isValid())
+            return;
+        // It stays so for as long as nothing is done to what the object inherits from, up to where the property is.
+        if (!MegamorphicCache::noteDependenceOnPrototypes(structure->id(), holder))
+            return;
+    }
+    // (Which is all that the check that the function is given the right kind of object comes to, of an object of a Structure that is known.)
+    bool isGivenHolder = !(slot.attributes() & PropertyAttribute::CustomAccessor);
+    if (auto domAttribute = slot.domAttribute(); domAttribute && !(isGivenHolder ? holder : base)->inherits(domAttribute->classInfo))
+        return;
+    instance.customGetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epoch(), isGivenHolder, ident.impl(), std::bit_cast<void*>(slot.customGetter().taggedPtr()), holder };
+}
+
 void cachePrivateName(VM& vm, Data* data, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset> offset)
 {
     if ((Options::aotDisableFastPaths() & 1) || !name.isCell() || SharedData::contains(cache))

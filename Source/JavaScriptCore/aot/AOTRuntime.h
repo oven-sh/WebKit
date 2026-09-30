@@ -225,6 +225,7 @@ namespace AOT {
     v(BehindStringSubstringWithEnd) \
     v(BehindToLowerCase) \
     v(BehindObjectKeysObject) \
+    v(BehindValueAdd) \
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_ENTRY(name) name,
@@ -515,6 +516,8 @@ struct Instance {
     JSCell* emptyString { nullptr };
     JSCell* sentinelOfArrayIteration { nullptr }; // VM::fastArrayUnboxedSentinel()
     static constexpr ptrdiff_t offsetOfSentinelOfArrayIteration() { return OBJECT_OFFSETOF(Instance, sentinelOfArrayIteration); }
+    JSCell* sentinelString { nullptr }; // SmallStrings::sentinelString(): what op_enumerator_next gives when there are no more.
+    static constexpr ptrdiff_t offsetOfSentinelString() { return OBJECT_OFFSETOF(Instance, sentinelString); }
     uint32_t structureIDOfStrings { 0 };
     static constexpr ptrdiff_t offsetOfAuxiliarySpace() { return OBJECT_OFFSETOF(Instance, auxiliarySpace); }
     static constexpr ptrdiff_t offsetOfSpaceOfActivations() { return OBJECT_OFFSETOF(Instance, spaceOfActivations); }
@@ -537,6 +540,19 @@ struct Instance {
     AddOfField addsOfFields[numberOfAddsOfFields] { };
     static constexpr ptrdiff_t offsetOfAddsOfFields() { return OBJECT_OFFSETOF(Instance, addsOfFields); }
     void noteAddOfField(Structure* before, unsigned slot, Structure* afterwards);
+    // A property that a function of the runtime's answers for (PropertySlot::isCacheableCustom()): which function, by the Structure of the object and the name. The function is called
+    // every time. What is saved is finding it. On the conditions that the other tiers remember the same thing on (tryCacheGetBy()), and for as long as the megamorphic cache would.
+    struct CustomGetter {
+        uint32_t structureID;
+        uint16_t epoch; // MegamorphicCache::epoch()
+        bool isGivenHolder; // Not the object that was asked: PropertyAttribute::CustomAccessor is not set.
+        UniquedStringImpl* uid;
+        void* getter; // GetValueFunc
+        JSObject* holder;
+    };
+    static constexpr unsigned numberOfCustomGetters = 128;
+    CustomGetter customGetters[numberOfCustomGetters] { };
+    CustomGetter& customGetterFor(uint32_t structureID, UniquedStringImpl* uid) { return customGetters[((structureID >> 4) ^ static_cast<uint32_t>(std::bit_cast<uintptr_t>(uid) >> 4)) % numberOfCustomGetters]; }
     // Addresses in the code that have been asked about (FunctionRef::at(), placeAt()), and the answers, which are the same every time.
     struct PlaceAskedAbout {
         static constexpr uint32_t siteNotLookedFor = std::numeric_limits<uint32_t>::max();
@@ -549,6 +565,9 @@ struct Instance {
     PlaceAskedAbout placesAskedAbout[numberOfPlacesAskedAbout] { };
     PlaceAskedAbout& placeAskedAbout(const void* address) { return placesAskedAbout[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfPlacesAskedAbout]; }
     uint32_t operationsNotCounted { 0 }; // See countOperationOnBehalfOf().
+    // SiteInPlaceOfCallSite
+    const void* returnAddressWithSiteInPlace { nullptr };
+    uint32_t siteInPlace { 0 };
     // TEMPORARY-ESCAPE-STATS: Options::aotCountsAllocations(). By AllocationKind and Escape: how many, and how many bytes.
     static constexpr unsigned numberOfAllocationCounts = 4 * 32 * 2;
     uint64_t allocationCounts[numberOfAllocationCounts] { };

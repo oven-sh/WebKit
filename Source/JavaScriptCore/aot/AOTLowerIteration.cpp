@@ -13,6 +13,8 @@
 #include "BytecodeOperandsForCheckpoint.h"
 #include "BytecodeStructs.h"
 #include "JSArrayIterator.h"
+#include "JSPropertyNameEnumerator.h"
+#include "StructureRareData.h"
 #include "JSCInlines.h"
 #include "Watchpoint.h"
 
@@ -415,22 +417,113 @@ bool Lowering::tryLowerIteration(Node* node)
         lowerIteratorCloseCheck(node);
         return true;
 
-    case op_get_property_enumerator:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTGetPropertyEnumerator, m_globalObject, low(node->as<OpGetPropertyEnumerator>().m_base)));
+    case op_get_property_enumerator: {
+        // What the Structure of an object with no elements remembers having made for the last of its kind, if that goes for whatever the object inherits from as well.
+        Node* baseNode = node->use(node->as<OpGetPropertyEnumerator>().m_base);
+        LValue base = lowJSValue(baseNode);
+        LBasicBlock generic = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        if (!isSubtype(baseNode->type, TCell))
+            orElse(isCell(base), generic);
+        static_assert(NonArray <= ArrayWithUndecided && ArrayClass <= ArrayWithUndecided);
+        orElse(m_out.belowOrEqual(m_out.bitAnd(m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingTypeMask)), m_out.constInt32(ArrayWithUndecided)), generic);
+        LValue previousOrRareData = m_out.loadPtr(structureOf(base), m_heaps.Structure_previousOrRareData);
+        orElse(m_out.notNull(previousOrRareData), generic);
+        orElse(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), generic);
+        LValue cachedAndFlag = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_cachedPropertyNameEnumeratorAndFlag);
+        orElse(m_out.notNull(cachedAndFlag), generic);
+        orElse(m_out.testIsZeroPtr(cachedAndFlag, m_out.constIntPtr(StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag)), generic);
+        ValueFromBlock remembered = m_out.anchor(cachedAndFlag);
+        m_out.jump(continuation);
+        m_out.appendTo(generic);
+        ValueFromBlock made = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTGetPropertyEnumerator, m_globalObject, base));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(pointerType(), remembered, made));
         return true;
+    }
     case op_enumerator_next: {
         auto bytecode = node->as<OpEnumeratorNext>();
-        m_out.store64(low(bytecode.m_mode), scratchWord(0));
-        m_out.store64(low(bytecode.m_index), scratchWord(1));
-        LValue name = vmCall(node, pointerType(), Entry::operationAOTEnumeratorNext, m_globalObject, low(bytecode.m_base), low(bytecode.m_enumerator), scratchAddress());
-        setProj(node, bytecode.m_propertyName, name);
-        setProj(node, bytecode.m_mode, m_out.load64(scratchWord(0)));
-        setProj(node, bytecode.m_index, m_out.load64(scratchWord(1)));
+        Node* baseNode = node->use(bytecode.m_base);
+        LValue base = lowJSValue(baseNode);
+        LValue enumerator = low(bytecode.m_enumerator);
+        LValue mode = low(bytecode.m_mode);
+        LValue index = low(bytecode.m_index);
+        // The object is still of the Structure that the names were taken from, and has no elements: the next name is the next in the list. JSPropertyNameEnumerator::computeNext().
+        LBasicBlock generic = m_out.newBlock();
+        LBasicBlock hasOne = m_out.newBlock();
+        LBasicBlock isAtTheEnd = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        if (!isSubtype(baseNode->type, TCell))
+            orElse(isCell(base), generic);
+        orElse(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID)), generic);
+        orElse(m_out.isZero32(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_indexLength)), generic);
+        static_assert(!JSPropertyNameEnumerator::InitMode);
+        orElse(m_out.testIsZero32(unboxInt32(mode), m_out.constInt32(~JSPropertyNameEnumerator::OwnStructureMode)), generic);
+        LValue next = m_out.select(m_out.isZero32(unboxInt32(mode)), m_out.int32Zero, m_out.add(unboxInt32(index), m_out.int32One));
+        LValue end = m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex);
+        m_out.branch(m_out.below(next, end), usually(hasOne), unsure(isAtTheEnd));
+
+        m_out.appendTo(hasOne);
+        Vector<ValueFromBlock, 3> names;
+        Vector<ValueFromBlock, 3> modes;
+        Vector<ValueFromBlock, 3> indices;
+        LValue ownStructureMode = m_out.constInt64(JSValue::encode(jsNumber(static_cast<int32_t>(JSPropertyNameEnumerator::OwnStructureMode))));
+        names.append(m_out.anchor(m_out.loadPtr(m_out.baseIndex(m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVectorContents, m_out.loadPtr(enumerator, m_heaps.JSPropertyNameEnumerator_cachedPropertyNamesVector), m_out.zeroExtPtr(next)))));
+        modes.append(m_out.anchor(ownStructureMode));
+        indices.append(m_out.anchor(boxInt32(next)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(isAtTheEnd);
+        orElse(m_out.equal(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex), end), generic);
+        names.append(m_out.anchor(fixedPointer(Instance::offsetOfSentinelString())));
+        modes.append(m_out.anchor(ownStructureMode));
+        indices.append(m_out.anchor(boxInt32(next)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(generic);
+        m_out.store64(mode, scratchWord(0));
+        m_out.store64(index, scratchWord(1));
+        names.append(m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTEnumeratorNext, m_globalObject, base, enumerator, scratchAddress())));
+        modes.append(m_out.anchor(m_out.load64(scratchWord(0))));
+        indices.append(m_out.anchor(m_out.load64(scratchWord(1))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        setProj(node, bytecode.m_propertyName, m_out.phi(pointerType(), names));
+        setProj(node, bytecode.m_mode, m_out.phi(Int64, modes));
+        setProj(node, bytecode.m_index, m_out.phi(Int64, indices));
         return true;
     }
     case op_enumerator_get_by_val: {
         auto bytecode = node->as<OpEnumeratorGetByVal>();
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTEnumeratorGetByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator)));
+        Node* baseNode = node->use(bytecode.m_base);
+        LValue base = lowJSValue(baseNode);
+        LValue enumerator = low(bytecode.m_enumerator);
+        // The name is one of the object's own, and the object is as it was: how far down the list the name is says where the property is.
+        LBasicBlock generic = m_out.newBlock();
+        LBasicBlock isInObject = m_out.newBlock();
+        LBasicBlock isOutside = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        if (!isSubtype(baseNode->type, TCell))
+            orElse(isCell(base), generic);
+        orElse(m_out.equal(unboxInt32(low(bytecode.m_mode)), m_out.constInt32(JSPropertyNameEnumerator::OwnStructureMode)), generic);
+        orElse(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID)), generic);
+        LValue index = unboxInt32(low(bytecode.m_index));
+        LValue inlineCapacity = m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedInlineCapacity);
+        m_out.branch(m_out.below(index, inlineCapacity), unsure(isInObject), unsure(isOutside));
+        m_out.appendTo(isInObject);
+        ValueFromBlock inObject = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(base, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(3)), m_out.constIntPtr(JSObject::offsetOfInlineStorage()))))));
+        m_out.jump(continuation);
+        m_out.appendTo(isOutside);
+        LValue howFarOut = m_out.zeroExtPtr(m_out.sub(index, inlineCapacity));
+        ValueFromBlock outside = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(m_out.sub(m_out.loadPtr(base, m_heaps.JSObject_butterfly), m_out.shl(howFarOut, m_out.constInt32(3))), m_out.constIntPtr(static_cast<intptr_t>(offsetInButterfly(firstOutOfLineOffset)) * static_cast<intptr_t>(sizeof(EncodedJSValue)))))));
+        m_out.jump(continuation);
+        m_out.appendTo(generic);
+        ValueFromBlock found = m_out.anchor(vmCall(node, Int64, Entry::operationAOTEnumeratorGetByVal, m_globalObject, low(bytecode.m_base), low(bytecode.m_propertyName), low(bytecode.m_index), low(bytecode.m_mode), low(bytecode.m_enumerator)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, inObject, outside, found));
         return true;
     }
     case op_enumerator_in_by_val: {

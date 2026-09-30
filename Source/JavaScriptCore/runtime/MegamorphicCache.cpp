@@ -51,8 +51,49 @@ bool MegamorphicCache::noteDependenceOnPrototypes(StructureID structureID, JSCel
     }
 }
 
+void MegamorphicCache::reconcileWeakReferencesAtGCEnd(VM& vm)
+{
+    Heap& heap = vm.heap;
+    auto hasDied = [&](StructureID id) { return !heap.isMarked(id.decode()); };
+    auto reconcileLoads = [&](auto& entries) {
+        for (auto& entry : entries) {
+            if (entry.m_epoch != m_epoch)
+                continue;
+            bool hasHolder = entry.m_holder && entry.m_holder != JSCell::seenMultipleCalleeObjects();
+            if (hasDied(entry.m_structureID) || (hasHolder && !heap.isMarked(entry.m_holder)))
+                entry.m_epoch = invalidEpoch;
+        }
+    };
+    auto reconcileStores = [&](auto& entries) {
+        for (auto& entry : entries) {
+            if (entry.m_epoch == m_epoch && (hasDied(entry.m_oldStructureID) || hasDied(entry.m_newStructureID)))
+                entry.m_epoch = invalidEpoch;
+        }
+    };
+    auto reconcileHas = [&](auto& entries) {
+        for (auto& entry : entries) {
+            if (entry.m_epoch == m_epoch && hasDied(entry.m_structureID))
+                entry.m_epoch = invalidEpoch;
+        }
+    };
+    reconcileLoads(m_loadCachePrimaryEntries);
+    reconcileLoads(m_loadCacheSecondaryEntries);
+    reconcileLoads(m_getterCachePrimaryEntries);
+    reconcileLoads(m_getterCacheSecondaryEntries);
+    reconcileStores(m_storeCachePrimaryEntries);
+    reconcileStores(m_storeCacheSecondaryEntries);
+    reconcileHas(m_hasCachePrimaryEntries);
+    reconcileHas(m_hasCacheSecondaryEntries);
+    // (What these go by besides is not a cell.)
+    for (auto& entry : m_constructionEntries)
+        entry.m_epoch = invalidEpoch;
+    m_hasBeenReconciled = true;
+}
+
 void MegamorphicCache::age(CollectionScope collectionScope)
 {
+    if (std::exchange(m_hasBeenReconciled, false) && collectionScope == CollectionScope::Eden)
+        return;
     ++m_epoch;
     if (collectionScope == CollectionScope::Full || m_epoch == invalidEpoch) {
         for (auto& entry : m_loadCachePrimaryEntries) {

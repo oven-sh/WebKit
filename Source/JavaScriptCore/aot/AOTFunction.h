@@ -174,8 +174,10 @@ JS_EXPORT_PRIVATE InlineFrameOfImage inlineFrameOf(const ImageFunction&, unsigne
 class SiteInPlaceOfCallSite {
     WTF_MAKE_NONCOPYABLE(SiteInPlaceOfCallSite);
 public:
-    SiteInPlaceOfCallSite(const void* returnAddress, uint32_t site);
+    SiteInPlaceOfCallSite(Instance&, const void* returnAddress, uint32_t site);
     ~SiteInPlaceOfCallSite();
+private:
+    Instance& m_instance;
 };
 // Of a frame of code from the static compiler, or of a stub that such code called: whose realm's. The adapter that let the code in says.
 JS_EXPORT_PRIVATE Instance* instanceOfFrame(const void* frame);

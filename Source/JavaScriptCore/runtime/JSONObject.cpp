@@ -698,8 +698,6 @@ enum class FailureReason : uint8_t {
     Unknown,
 };
 
-static thread_local size_t s_lengthOfLastDynamicResult;
-
 template<typename CharType, BufferMode bufferMode>
 class FastStringifier {
 public:
@@ -909,13 +907,8 @@ inline FastStringifier<CharType, bufferMode>::FastStringifier(JSGlobalObject& gl
     if constexpr (bufferMode == BufferMode::StaticBuffer)
         m_capacity = m_length + usableBufferSize(staticBufferSize);
     else {
-        // Programs write out the same thing over and over, a little longer each time. Room for that from the start saves copying it all again each time it outgrows what it is in.
-        size_t initialSize = std::max<size_t>(dynamicBufferInlineCapacity, std::min<size_t>(s_lengthOfLastDynamicResult + s_lengthOfLastDynamicResult / 4, 64 * MB));
-        if (!m_dynamicBuffer.tryGrow(initialSize)) [[unlikely]] {
-            initialSize = dynamicBufferInlineCapacity;
-            m_dynamicBuffer.grow(initialSize);
-        }
-        m_capacity = initialSize;
+        m_dynamicBuffer.grow(dynamicBufferInlineCapacity);
+        m_capacity = dynamicBufferInlineCapacity;
         m_stackLimit = std::bit_cast<uint8_t*>(m_vm.softStackLimit());
     }
 }
@@ -940,7 +933,6 @@ inline String FastStringifier<CharType, bufferMode>::result()
     logOutcome("success"_s);
 #endif
     if constexpr (bufferMode == BufferMode::DynamicBuffer) {
-        s_lengthOfLastDynamicResult = m_length;
         m_dynamicBuffer.shrink(m_length);
         return StringImpl::adopt(WTF::move(m_dynamicBuffer));
     }

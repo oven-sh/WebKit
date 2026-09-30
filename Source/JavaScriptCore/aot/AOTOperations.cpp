@@ -243,10 +243,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue base = JSValue::decode(encodedBase);
     const Identifier& ident = identifierAt(globalObject, callFrame, identifierIndex);
+    Instance& instance = *globalObject->aotInstance();
+    if (base.isCell()) {
+        auto& known = instance.customGetterFor(base.asCell()->structureID().bits(), ident.impl());
+        if (known.uid == ident.impl() && known.structureID == base.asCell()->structureID().bits() && vm.megamorphicCache() && known.epoch == vm.megamorphicCache()->epoch()) {
+            auto getter = GetValueFunc(std::bit_cast<GetValueFunc::Ptr>(known.getter));
+            OPERATION_RETURN(scope, getter(known.holder->globalObject(), known.isGivenHolder ? JSValue::encode(known.holder) : encodedBase, ident));
+        }
+    }
     PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
     JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (slot.isCacheableCustom() && base.isObject() && base.asCell()->structure() == structureBefore)
+        noteCustomGetter(globalObject, instance, asObject(base), ident, slot);
     if (slot.isUnset() && structureBefore && structureBefore->knownShape())
         caller(globalObject, callFrame).instance->lookAtObjectPrototype();
     ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(globalObject, callFrame), base, structureBefore, ident, slot, cache);
@@ -267,7 +277,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
 
     PutPropertySlot slot(base, isStrict, putByIdContextOf(globalObject, callFrame));
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
-    if (isDirect)
+    if (isDirect && oldStructure->bornAs() && SlotsOfBornObjects::areStructs()) [[unlikely]] {
+        // (A field that a class declares and gives nothing to start with is undefined until the constructor gets to it. There is nothing in its slot until then.)
+        if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
+            throwTypeError(globalObject, scope, TypedFieldError);
+    } else if (isDirect)
         CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, value, slot, &oldStructure);
     else
         base.putInline(globalObject, ident, value, slot);
@@ -300,7 +314,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
         noteSlowPath(isDirect ? "put_by_id (direct), how"_s : "put_by_id, how"_s, JSValue(), nullptr, what);
         noteSlowPath("put_by_id, the site"_s, JSValue(), nullptr, SharedData::contains(cache) ? "has no slot of its own"_s : "has a slot"_s);
     }
-    if (!isDirect)
+    // (What makes a property come what may has done what any store would have, if nothing that the object inherits from has a say in the matter.)
+    if (!isDirect || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
     cachePutById(globalObject, callerData(globalObject, callFrame), base, oldStructure, ident, slot, isDirect, cache);
     OPERATION_RETURN(scope);

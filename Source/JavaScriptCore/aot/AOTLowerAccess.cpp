@@ -511,6 +511,16 @@ void Lowering::lowerPutById(Node* node)
         noteShapeSite(Instance::WriteUntyped);
         countShape(Instance::WriteUntyped);
     }
+    if (!afterTypedStore && !bytecode.m_flags.isDirect() && mayBe(baseNode->type, TArray) && mayBe(valueNode->type, TInt32) && code().codeBlock()->identifier(bytecode.m_property).impl() == m_graph.vm().propertyNames->length.impl()) {
+        LBasicBlock otherwise = m_out.newBlock();
+        afterTypedStore = m_out.newBlock();
+        if (isCompact())
+            orElse(m_out.notNull(callHelper(Stub::HelperSetArrayLength, { base, value })), otherwise);
+        else
+            setLengthOfArray(base, value, otherwise);
+        m_out.jump(afterTypedStore);
+        m_out.appendTo(otherwise);
+    }
     auto finish = makeScopeExit([&] {
         if (afterTypedStore) {
             m_out.jump(afterTypedStore);

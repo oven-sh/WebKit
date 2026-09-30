@@ -307,6 +307,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->allocatorOfRopeStrings = subspaceFor<JSRopeString>(vm)->allocatorFor(sizeof(JSRopeString), AllocatorForMode::EnsureAllocator).localAllocator();
         instance->singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
         instance->emptyString = vm.smallStrings.emptyString();
+        instance->sentinelString = vm.smallStrings.sentinelString();
         instance->sentinelOfArrayIteration = vm.fastArrayUnboxedSentinel();
         instance->structureIDOfStrings = idOf(vm.stringStructure.get());
     }
@@ -676,19 +677,17 @@ FunctionRef FunctionRef::at(Instance* instance, const void* address)
     return { instance, what.index };
 }
 
-static thread_local const void* s_returnAddressWithSiteInPlace;
-static thread_local uint32_t s_siteInPlace;
-
-SiteInPlaceOfCallSite::SiteInPlaceOfCallSite(const void* returnAddress, uint32_t site)
+SiteInPlaceOfCallSite::SiteInPlaceOfCallSite(Instance& instance, const void* returnAddress, uint32_t site)
+    : m_instance(instance)
 {
-    RELEASE_ASSERT(!s_returnAddressWithSiteInPlace);
-    s_returnAddressWithSiteInPlace = returnAddress;
-    s_siteInPlace = site;
+    RELEASE_ASSERT(!instance.returnAddressWithSiteInPlace);
+    instance.returnAddressWithSiteInPlace = returnAddress;
+    instance.siteInPlace = site;
 }
 
 SiteInPlaceOfCallSite::~SiteInPlaceOfCallSite()
 {
-    s_returnAddressWithSiteInPlace = nullptr;
+    m_instance.returnAddressWithSiteInPlace = nullptr;
 }
 
 static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
@@ -705,8 +704,8 @@ static FunctionRef::Place placeOfSite(FunctionRef function, uint32_t site)
 
 FunctionRef::Place FunctionRef::placeAt(const void* returnAddress) const
 {
-    if (returnAddress == s_returnAddressWithSiteInPlace) [[unlikely]]
-        return placeOfSite(*this, s_siteInPlace);
+    if (returnAddress == instance->returnAddressWithSiteInPlace) [[unlikely]]
+        return placeOfSite(*this, instance->siteInPlace);
     using Asked = Instance::PlaceAskedAbout;
     auto& asked = instance->placeAskedAbout(returnAddress);
     if (asked.address != returnAddress || asked.site == Asked::siteNotLookedFor) [[unlikely]] {
@@ -1753,6 +1752,7 @@ void Instance::finalizeUnconditionally(bool onlyWhatIsNew)
 {
     if (std::exchange(collections->hasAddsOfFields, false))
         zeroSpan(std::span { addsOfFields });
+    zeroSpan(std::span { customGetters });
     for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
         data->finalizeUnconditionally(*vm);
     for (Data* data : collections->filledSinceLastCollection)
