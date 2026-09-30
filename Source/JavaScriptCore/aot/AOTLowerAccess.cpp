@@ -520,7 +520,8 @@ void Lowering::lowerGetByVal(Node* node)
         return;
     }
 
-    LBasicBlock slowCase = m_out.newBlock();
+    bool isOfArray = isSubtype(baseNode->type, TArray);
+    LBasicBlock slowCase = isOfArray ? newColdBlock() : m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 3> results;
 
@@ -557,7 +558,9 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    if constexpr (usesStubs)
+    if (isOfArray)
+        results.append(m_out.anchor(coldCallForValue(node, Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
+    else if constexpr (usesStubs)
         results.append(m_out.anchor(callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode))));
     else
         results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetByVal, m_globalObject, base, lowJSValue(propertyNode))));

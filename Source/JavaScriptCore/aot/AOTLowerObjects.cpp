@@ -597,6 +597,25 @@ void Lowering::lowerGetLength(Node* node)
     Node* baseNode = node->use(node->as<OpGetLength>().m_base);
     LValue base = lowJSValue(baseNode);
 
+    if (isSubtype(baseNode->type, TArray) && baseNode->type) {
+        // It is where the elements are, if there is such a place. (Array.prototype has none.) One above what an int32 holds is for the runtime.
+        LBasicBlock hasStorage = m_out.newBlock();
+        LBasicBlock theLongWay = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+        m_out.branch(m_out.notNull(butterfly), usually(hasStorage), rarely(theLongWay));
+        m_out.appendTo(hasStorage);
+        LValue length = m_out.load32(butterfly, m_heaps.Butterfly_publicLength);
+        ValueFromBlock fast = m_out.anchor(boxInt32(length));
+        m_out.branch(m_out.greaterThanOrEqual(length, m_out.int32Zero), usually(continuation), rarely(theLongWay));
+        m_out.appendTo(theLongWay);
+        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, Entry::operationAOTGetLengthTheLongWay, base));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, fast, slow));
+        return;
+    }
+
     if (isCompact() && !isSubtype(baseNode->type, TString)) {
         setJSValue(node, callStub(Stub::GetLength, Int64, { { base, GPRInfo::argumentGPR0 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Length))), GPRInfo::argumentGPR1 } }, { }));
         return;

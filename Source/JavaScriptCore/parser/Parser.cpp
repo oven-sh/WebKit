@@ -3512,6 +3512,20 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                     loc.endOffset = initializerPosition->offset;
                     restoreLexerState(LexerState { initializerPosition->offset, static_cast<unsigned>(initializerPosition->lineStartOffset), loc, *initializerPosition, static_cast<unsigned>(initializerPosition->line), hasLineTerminatorBeforeToken, ERRORTOK });
                 }
+                // What the text says of the first token (Options::useTypeTags()) comes before where the token starts, which is where this reads from.
+                if (Options::useTypeTags() && initializerPosition->offset >= 7) [[unlikely]] {
+                    StringView text = m_source->provider()->source();
+                    unsigned at = initializerPosition->offset - 7;
+                    if (text[at] == 1) {
+                        uint64_t tag = 0;
+                        for (unsigned i = 1; i <= 6; ++i) {
+                            char16_t c = text[at + i];
+                            unsigned digit = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : c >= 'a' && c <= 'z' ? c - 'a' + 36 : c == '_' ? 62 : 63;
+                            tag = tag << 6 | digit;
+                        }
+                        m_token.m_typeTag = static_cast<uint32_t>(tag);
+                    }
+                }
                 // parseExpression() is more permissive way to parse AssignmentExpression than parseAssignmentExpression() that is used in parseClass().
                 // This is very intentional: we need to fail for `foo = 1, 2` but support reparsing `foo = (1, 2)`, which is tricky because open paren
                 // is skipped (meaning start offset points to `1`) by parsePrimaryExpression().

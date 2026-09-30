@@ -85,6 +85,7 @@ namespace AOT {
     v(operationAOTThrow) \
     v(operationAOTCheckType) \
     v(operationAOTAssertBornAs) \
+    v(operationAOTGetLengthTheLongWay) \
     v(operationAOTSettleStruct) \
     v(operationAOTVerifyFact) \
     v(operationAOTHandleTraps) \

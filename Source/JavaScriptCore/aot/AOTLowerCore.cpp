@@ -533,17 +533,11 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     return patchpoint;
 }
 
-void Lowering::coldCall(Node* node, Entry function, LValue first, LValue second)
+B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry function, LValue first, LValue second)
 {
-    if (!Options::aotKeepsRegistersInColdCalls()) {
-        if (second)
-            vmCall(node, Void, function, m_globalObject, first, second);
-        else
-            vmCall(node, Void, function, m_globalObject, first);
-        return;
-    }
-    PatchpointValue* patchpoint = m_out.patchpoint(Void);
-    patchpoint->append(ConstrainedValue(first, ValueRep::reg(GPRInfo::argumentGPR1)));
+    PatchpointValue* patchpoint = m_out.patchpoint(type);
+    if (first)
+        patchpoint->append(ConstrainedValue(first, ValueRep::reg(GPRInfo::argumentGPR1)));
     if (second)
         patchpoint->append(ConstrainedValue(second, ValueRep::reg(GPRInfo::argumentGPR2)));
     RegisterSet temporaries;
@@ -551,14 +545,40 @@ void Lowering::coldCall(Node* node, Entry function, LValue first, LValue second)
     temporaries.add(GPRInfo::regT10, IgnoreVectors);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobber(temporaries);
+    bool returnsValue = type != Void;
+    if (returnsValue)
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { callSiteBitsOf(node) };
-    patchpoint->setGenerator([graph = &m_graph, function, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([graph = &m_graph, function, site, returnsValue](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         bool isLeaf = hasNoFrame(*graph, params.proc().code());
         if (isLeaf)
             jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
-        graph->stubCalls.call(jit, isLeaf ? Stub::ColdOperationVoidOfLeaf : Stub::ColdOperationVoid, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)), site);
+        Stub stub = returnsValue ? (isLeaf ? Stub::ColdOperationValueOfLeaf : Stub::ColdOperationValue) : (isLeaf ? Stub::ColdOperationVoidOfLeaf : Stub::ColdOperationVoid);
+        graph->stubCalls.call(jit, stub, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)), site);
     });
+    return patchpoint;
+}
+
+void Lowering::coldCall(Node* node, Entry function, LValue first, LValue second)
+{
+    if (!Options::aotKeepsRegistersInColdCalls()) {
+        if (second)
+            vmCall(node, Void, function, m_globalObject, first, second);
+        else if (first)
+            vmCall(node, Void, function, m_globalObject, first);
+        else
+            vmCall(node, Void, function, m_globalObject);
+        return;
+    }
+    emitColdCall(node, Void, function, first, second);
+}
+
+LValue Lowering::coldCallForValue(Node* node, Entry function, LValue first, LValue second)
+{
+    if (!Options::aotKeepsRegistersInColdCalls())
+        return second ? vmCall(node, Int64, function, m_globalObject, first, second) : vmCall(node, Int64, function, m_globalObject, first);
+    return emitColdCall(node, Int64, function, first, second);
 }
 
 LValue Lowering::callOperationThroughStub(Node* node, LType type, Entry function, const Vector<LValue, 8>& arguments)

@@ -2242,6 +2242,18 @@ private:
         return TypeTable::shared()->fieldOf(tag, m_codeBlock->identifier(identifier).impl());
     }
 
+    bool isCheckThatAnAssertionMakesUpFor(unsigned offset, unsigned end)
+    {
+        const JSInstruction* instruction = m_instructions.at(offset).ptr();
+        if (instruction->opcodeID() != op_check_type || isFact(instruction->as<OpCheckType>().m_mask) || !(instruction->as<OpCheckType>().m_mask & MaskOtherObject) || Options::aotAuditsTypes())
+            return false;
+        unsigned next = offset + instruction->size();
+        if (next >= end || m_instructions.at(next)->opcodeID() != op_type_tag)
+            return false;
+        auto [family, base] = familyAssertedAt(next);
+        return family && base == instruction->as<OpCheckType>().m_value && m_graph.isTracked(base);
+    }
+
     // TypeTable::hasStructs(): the family that the base of the access after the op_type_tag there is said to be of, and where the base is.
     std::pair<uint16_t, VirtualRegister> familyAssertedAt(unsigned offset)
     {
@@ -2353,7 +2365,7 @@ private:
                             m_recentFunctions.append({ bytecode.m_dst, known });
                     }
                 }
-                bool isGuarded = canBeGuarded(instruction) && !goesByTypeWhereverItIs(offset);
+                bool isGuarded = canBeGuarded(instruction) && !goesByTypeWhereverItIs(offset) && !isCheckThatAnAssertionMakesUpFor(offset, block->bytecodeEnd);
                 if (isGuarded)
                     ofBlock.guards.append(offset);
                 OpcodeID opcode = instruction->opcodeID();
@@ -2955,14 +2967,9 @@ private:
                 }
                 continue;
             }
-            if (opcode == op_check_type && !isFact(instruction->as<OpCheckType>().m_mask) && (instruction->as<OpCheckType>().m_mask & MaskOtherObject) && !Options::aotAuditsTypes()) {
-                // What comes next lets less by.
-                unsigned next = offset + instruction->size();
-                if (next < block->bytecodeEnd && m_instructions.at(next)->opcodeID() == op_type_tag) {
-                    if (auto [family, base] = familyAssertedAt(next); family && base == instruction->as<OpCheckType>().m_value && m_graph.isTracked(base))
-                        continue;
-                }
-            }
+            // What comes next lets less by.
+            if (isCheckThatAnAssertionMakesUpFor(offset, block->bytecodeEnd))
+                continue;
             if (opcode == op_check_type && isFact(instruction->as<OpCheckType>().m_mask)) {
                 // It is taken out here, and nothing further on knows of it but by what it leaves on the node.
                 auto bytecode = instruction->as<OpCheckType>();

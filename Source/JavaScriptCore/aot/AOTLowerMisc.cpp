@@ -356,11 +356,11 @@ bool Lowering::tryLowerMisc(Node* node)
     case op_loop_hint:
         return true;
     case op_check_traps: {
-        LBasicBlock slowPath = m_out.newBlock();
+        LBasicBlock slowPath = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(m_out.testNonZero32(trapBits(), m_out.constInt32(VMTraps::AsyncEvents)), rarely(slowPath), usually(continuation));
         m_out.appendTo(slowPath, continuation);
-        vmCall(node, Void, Entry::operationAOTHandleTraps, m_globalObject);
+        coldCall(node, Entry::operationAOTHandleTraps);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return true;

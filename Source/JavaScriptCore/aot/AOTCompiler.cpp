@@ -594,9 +594,58 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
     jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const ProgramFacts* facts, VariableFacts* variableFacts, const CodeOfProgram* program)
+// Options::aotKeepsLoopsWhole(). Of a graph whose loops have not been split.
+static bool loopsWillDoWhole(Graph& graph)
+{
+    bool hasLoop = false;
+    for (BasicBlock* block : graph.m_rpo) {
+        if (!block->isInLoop)
+            continue;
+        hasLoop = true;
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode || !node->instruction)
+                continue;
+            switch (node->opcode) {
+            case op_get_by_val:
+                if (!node->use(node->as<OpGetByVal>().m_base)->type || !isSubtype(node->use(node->as<OpGetByVal>().m_base)->type, TArray) || !isSubtype(node->use(node->as<OpGetByVal>().m_property)->type, TNumber))
+                    return false;
+                break;
+            case op_get_length:
+                if (!isSubtype(node->use(node->as<OpGetLength>().m_base)->type, TArray | TString))
+                    return false;
+                break;
+            case op_get_by_id:
+            case op_put_by_id:
+                if (!Graph::fieldOfStructGotAtBy(node))
+                    return false;
+                break;
+            case op_put_by_val:
+            case op_iterator_open:
+            case op_iterator_next:
+            case op_call:
+            case op_call_ignore_result:
+                return false;
+            case op_resolve_scope:
+                if (!isStaticClosureVarResolveType(node->as<OpResolveScope>().m_resolveType))
+                    return false;
+                break;
+            case op_get_from_scope:
+                if (node->as<OpGetFromScope>().m_getPutInfo.resolveType() != ResolvedClosureVar)
+                    return false;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    return hasLoop;
+}
+
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const ProgramFacts* facts, VariableFacts* variableFacts, const CodeOfProgram* program, bool triesLoopsWhole = true)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
+    triesLoopsWhole &= Options::aotKeepsLoopsWhole() && Options::useImmutableIntrinsics() && !Options::aotAssertsTypes();
+    graph.loopsAreNotSplit = triesLoopsWhole;
     graph.setCalleeHints(hints);
     graph.setFacts(facts);
     graph.setVariableFacts(variableFacts);
@@ -617,6 +666,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (program)
         inlineCalls(graph, *program);
     inferTypes(graph);
+    if (triesLoopsWhole && !loopsWillDoWhole(graph))
+        return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts, program, false);
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();

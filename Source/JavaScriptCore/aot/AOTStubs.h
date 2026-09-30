@@ -131,6 +131,9 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     /* assembler's own are as they were. OfLeaf: the caller has no frame, and T10 = where it is to return to. It has one for the while. */ \
     v(ColdOperationVoid) \
     v(ColdOperationVoidOfLeaf) \
+    /* Likewise, and what comes back is where a value is returned. */ \
+    v(ColdOperationValue) \
+    v(ColdOperationValueOfLeaf) \
     v(PlainOperation) \
     v(PlainOperationWithGlobalObject) \
     v(PlainOperationWithVM) \

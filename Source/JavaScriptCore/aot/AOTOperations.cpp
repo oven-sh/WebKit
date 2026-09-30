@@ -626,6 +626,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthTheLongWay, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(encodedBase).get(globalObject, vm.propertyNames->length)));
+}
+
 // Comes back if the value is of the family by then.
 JSC_DEFINE_JIT_OPERATION(operationAOTAssertBornAs, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t family))
 {

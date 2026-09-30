@@ -247,7 +247,7 @@ static void generateOperation(CCallHelpers& jit, Returns returns, bool withGloba
     callAndCheckException(jit, T11, returns);
 }
 
-static void generateColdOperation(CCallHelpers& jit, bool ofLeaf)
+static void generateColdOperation(CCallHelpers& jit, bool ofLeaf, bool returnsValue = false)
 {
     constexpr GPRReg fp = GPRInfo::callFrameRegister;
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -271,8 +271,10 @@ static void generateColdOperation(CCallHelpers& jit, bool ofLeaf)
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
     jit.call(T11, OperationPtrTag);
-    jit.move(GPRInfo::returnValueGPR, scratch);
-    for (unsigned i = 0; i < numberOfGPRs; i += 2)
+    jit.move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
+    if (returnsValue)
+        jit.load64(Address(sp, 8), ARM64Registers::x1);
+    for (unsigned i = returnsValue ? 2 : 0; i < numberOfGPRs; i += 2)
         jit.loadPair64(sp, TrustedImm32(i * 8), static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1));
     for (unsigned i = 0; i < numberOfFPRs; ++i)
         jit.loadDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i));
@@ -290,6 +292,8 @@ static void generateColdOperation(CCallHelpers& jit, bool ofLeaf)
 }
 static void generateColdOperationVoid(CCallHelpers& jit) { generateColdOperation(jit, false); }
 static void generateColdOperationVoidOfLeaf(CCallHelpers& jit) { generateColdOperation(jit, true); }
+static void generateColdOperationValue(CCallHelpers& jit) { generateColdOperation(jit, false, true); }
+static void generateColdOperationValueOfLeaf(CCallHelpers& jit) { generateColdOperation(jit, true, true); }
 
 static void generateOperationValue(CCallHelpers& jit) { generateOperation(jit, Returns::Value, false); }
 static void generateOperationVoid(CCallHelpers& jit) { generateOperation(jit, Returns::Void, false); }
@@ -2588,7 +2592,7 @@ FOR_EACH_AOT_STUB(AOT_NO_STUB)
 static constexpr Stub stubsThatCallOperations[] = {
     Stub::OperationValue, Stub::OperationVoid, Stub::OperationDouble, Stub::OperationValueWithGlobalObject, Stub::OperationVoidWithGlobalObject, Stub::OperationDoubleWithGlobalObject,
     Stub::PlainOperation, Stub::PlainOperationWithGlobalObject, Stub::PlainOperationWithVM,
-    Stub::ColdOperationVoid, Stub::ColdOperationVoidOfLeaf,
+    Stub::ColdOperationVoid, Stub::ColdOperationVoidOfLeaf, Stub::ColdOperationValue, Stub::ColdOperationValueOfLeaf,
 };
 static constexpr Stub stubsThatCallFunctions[] = { Stub::Call, Stub::Construct };
 static constexpr unsigned numberOfCountsWithThunk = numberOfArgumentGPRs + 1; // From none to as many as there are registers for.

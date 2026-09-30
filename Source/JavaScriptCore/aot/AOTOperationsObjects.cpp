@@ -99,6 +99,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     Vector<unsigned, 32> identifiers;
     unsigned inlineCapacityInBytecode;
     uint32_t shape = function.siteConstantOf(cache);
+    if (Options::aotVerbose()) [[unlikely]]
+        dataLogLn("AOT: a literal of ", count, " is made by function ", function.index, " as shape ", shape, SharedData::contains(cache) ? " (with nobody's slots)" : "");
     std::span<const uint16_t> slots;
     if (shape)
         slots = function.instance->slotsOfKnownShape(shape);

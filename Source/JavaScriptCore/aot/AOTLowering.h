@@ -233,7 +233,9 @@ private:
     LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // No node: it does not throw.
     // Of an operation that takes the global object and these and gives nothing back, from where the code hardly ever gets. It is no reason for the function to have a
     // frame, or to keep anything anywhere but where it is.
-    void coldCall(Node*, Entry, LValue first, LValue second = nullptr);
+    void coldCall(Node*, Entry, LValue first = nullptr, LValue second = nullptr);
+    LValue coldCallForValue(Node*, Entry, LValue first, LValue second = nullptr);
+    B3::PatchpointValue* emitColdCall(Node*, LType, Entry, LValue first, LValue second);
     // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
     // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
