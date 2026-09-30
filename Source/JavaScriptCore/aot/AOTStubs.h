@@ -80,7 +80,7 @@ static constexpr ptrdiff_t offsetOfInstanceInAdapter = -32; // And there: the In
 static constexpr unsigned sizeOfWhatAdapterSaves = 32;
 
 // Instance::granulesOfCode has an entry for each so many bytes of an image's code.
-static constexpr unsigned shiftOfGranuleOfCode = 8;
+static constexpr unsigned shiftOfGranuleOfCode = 10;
 
 // The operations that have a helper ahead of them, as others have a front end (AOTThunks.h): what calls the operation gets what the helper makes, if it makes anything. So code
 // that is not worth its size calls the one thing.

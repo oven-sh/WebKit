@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "LLIntSlowPaths.h"
+#include "CompilerHooks.h"
 
 #include "AbortReason.h"
 #include "ArrayConstructor.h"
@@ -406,8 +407,7 @@ static inline bool jitCompileAndSetHeuristics(VM& vm, CodeBlock* codeBlock)
     }
 
     if (worklistState == JITWorklist::NotKnown) {
-        Ref<BaselineJITPlan> plan = adoptRef(*new BaselineJITPlan(codeBlock));
-        JITWorklist::ensureGlobalWorklist().enqueue(WTF::move(plan));
+        g_compilerHooks.enqueueBaselinePlan(codeBlock);
         return codeBlock->jitType() == JITType::BaselineJIT;
     }
 

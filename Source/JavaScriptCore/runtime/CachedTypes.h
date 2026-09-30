@@ -484,6 +484,7 @@ struct ReportableSitesOfFunction {
 // So every offset is final when it is written: a reference to something earlier is a plain delta, and a function
 // record's body slots and a code block's expression-info slot are filled in when their target is written, as in a
 // single-module payload. Every module's unlinked code stays alive until finish().
+void installImageCompiler();
 class BytecodeLinkEncoder {
     WTF_MAKE_NONCOPYABLE(BytecodeLinkEncoder);
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(BytecodeLinkEncoder, JS_EXPORT_PRIVATE);
@@ -527,6 +528,7 @@ public:
     JS_EXPORT_PRIVATE VM& vm() const;
 
 private:
+    friend void installImageCompiler(); // CompilerHooks.h
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };

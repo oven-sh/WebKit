@@ -1115,6 +1115,9 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint32_t> numbersOfFunctions;
     for (auto& function : m_functions)
         numbersOfFunctions.append(function.code.info.numberOfFunction);
+    // (Nobody else asks.)
+    if (!Options::aotVerifiesFacts())
+        numbersOfFunctions.clear();
     header.numbersOfFunctionsOffset = place(numbersOfFunctions.sizeInBytes());
     header.startsOfFunctionsOffset = place(startsOfFunctions.sizeInBytes());
     header.granulesOfCodeOffset = place(granulesOfCode.sizeInBytes());

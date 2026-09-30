@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "Options.h"
+#include "CompilerHooks.h"
 
 #include "CPU.h"
 #include "JITOperationValidation.h"
@@ -728,6 +729,8 @@ static inline void NODELETE disableAllWasmOptions()
     Options::useWasmTailCalls() = false;
 }
 
+CompilerHooks g_compilerHooks;
+
 static inline void NODELETE disableAllJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
@@ -884,6 +887,10 @@ void Options::notifyOptionsChanged()
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
+#if USE(BUN_JSC_ADDITIONS)
+    if (!g_compilerHooks.areInstalled())
+        Options::useJIT() = false;
+#endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
 #if OS(DARWIN)

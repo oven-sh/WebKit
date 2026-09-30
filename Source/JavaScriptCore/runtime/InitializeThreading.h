@@ -35,6 +35,8 @@
 namespace JSC {
 
 JS_EXPORT_PRIVATE void initialize();
+// Before that, or there is no JIT, and nothing that compiles ahead of time. See CompilerHooks.h.
+JS_EXPORT_PRIVATE void installCompilers();
 JS_EXPORT_PRIVATE void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCustomizationCallback);
 
 ALWAYS_INLINE void initialize(const Invocable<void()> auto& optionsCustomizationCallback)

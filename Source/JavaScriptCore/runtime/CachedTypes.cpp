@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CachedTypes.h"
+#include "CompilerHooks.h"
 #include <wtf/NumberOfCores.h>
 #include <wtf/Threading.h>
 #include <wtf/Deque.h>
@@ -7201,6 +7202,13 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
     m_impl->graphModuleOfEachAdd = WTF::move(graphModuleOfEachAdd);
 }
 
+void installImageCompiler()
+{
+#if ENABLE(FTL_JIT)
+    g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
+#endif
+}
+
 auto BytecodeLinkEncoder::finish() -> Result
 {
     static_assert(numberOfRegions == BytecodeLinkRegions::Count);
@@ -7243,8 +7251,10 @@ auto BytecodeLinkEncoder::finish() -> Result
         *module.entry->payloadSizeSlot() = payloadSize;
 #if ENABLE(FTL_JIT)
     // While the code is still rooted, and now that every module has its number.
-    if (m_impl->compilesAheadOfTime)
-        result.aotImage = m_impl->compileImage();
+    if (m_impl->compilesAheadOfTime) {
+        RELEASE_ASSERT_WITH_MESSAGE(g_compilerHooks.compileImage, "This executable was linked without the compilers: it cannot compile ahead of time.");
+        result.aotImage = g_compilerHooks.compileImage(m_impl.get());
+    }
     result.reportableSites = WTF::move(m_impl->reportableSites);
 #endif
     BytecodeCacheError error;

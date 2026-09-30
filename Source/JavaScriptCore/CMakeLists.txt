@@ -1230,6 +1230,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ConcatKeyAtomStringCache.h
     runtime/ConcatKeyAtomStringCacheInlines.h
     runtime/Concurrency.h
+    runtime/CompilerHooks.h
     runtime/ConcurrentJSLock.h
     runtime/ConfigFile.h
     runtime/ConsoleClient.h

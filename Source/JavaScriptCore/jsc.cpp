@@ -5092,6 +5092,7 @@ int jscmain(int argc, char** argv)
         processConfigFile(Options::configFile(), "jsc");
     }
 
+    JSC::installCompilers();
     JSC::initialize();
 #if ENABLE(JIT_OPERATION_VALIDATION)
     JSC::JITOperationList::populatePointersInEmbedder(&startOfJITOperationsInShell, &endOfJITOperationsInShell);

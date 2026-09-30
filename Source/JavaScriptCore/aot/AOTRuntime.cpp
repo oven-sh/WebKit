@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTRuntime.h"
+#include "CompilerHooks.h"
 
 #include "AOTBuiltins.h"
 #include "AOTGraph.h"
@@ -63,7 +64,7 @@ void* addressOfStub(Stub stub)
         return const_cast<void*>(inImage);
     // (They are made now, which takes somewhere to put them.)
     RELEASE_ASSERT_WITH_MESSAGE(Options::useJIT(), "There is no image with code in it, and no JIT to do without one.");
-    const StubBlob& blob = stubBlob();
+    const StubBlob& blob = *static_cast<const StubBlob*>(g_compilerHooks.stubBlobOfAOT());
     return static_cast<uint8_t*>(blob.inJITMemory) + blob.offsets[static_cast<unsigned>(stub)];
 }
 
