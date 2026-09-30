@@ -262,8 +262,8 @@ bool ScriptExecutable::hasClearableCode() const
         return false;
     if (inFull()->m_jitCodeForCall
         || inFull()->m_jitCodeForConstruct
-        || m_jitCodeForCallWithArityCheck
-        || m_jitCodeForConstructWithArityCheck)
+        || inFull()->m_jitCodeForCallWithArityCheck
+        || inFull()->m_jitCodeForConstructWithArityCheck)
         return true;
 
     if (structure()->classInfoForCells() == FunctionExecutable::info()) {

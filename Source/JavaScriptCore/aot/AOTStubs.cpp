@@ -2003,6 +2003,20 @@ static void dispatchCall(CCallHelpers& jit, CodeSpecializationKind kind, const L
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(T11, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), T11);
     hasExecutable.link(&jit);
+    // (One in the short form does not say. See ExecutableBase::wayIntoShortForm().)
+    Jump saysHowToGetIn = jit.branchIfNotType(T11, ShortFunctionExecutableType);
+    jit.loadPtr(Address(T11, FunctionExecutable::offsetOfAOTEntryFor(kind)), T12);
+    slow.append(jit.branchTestPtr(CCallHelpers::Zero, T12));
+    if (kind == CodeSpecializationKind::CodeForConstruct) {
+        jit.load32(Address(T11, FunctionExecutable::offsetOfAOTIndexFor(kind)), T11);
+        Jump doesNotConstructByCalling = jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(static_cast<int32_t>(FunctionExecutable::aotIndexOfWhatConstructsByCalling)));
+        jit.farJump(T12, JSEntryPtrTag);
+        doesNotConstructByCalling.link(&jit);
+    }
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T12);
+    jit.loadPtr(Address(T12, static_cast<unsigned>(isCall(kind) ? Entry::EnterStaticFunctionForCall : Entry::EnterStaticFunctionForConstruct) * sizeof(void*)), T12);
+    jit.farJump(T12, JSEntryPtrTag);
+    saysHowToGetIn.link(&jit);
     jit.loadPtr(Address(T11, ExecutableBase::offsetOfJITCodeWithArityCheckFor(kind)), T12);
     slow.append(jit.branchTestPtr(CCallHelpers::Zero, T12));
     Jump isNative = jit.branchIfNotType(T11, FunctionExecutableType);
@@ -2183,12 +2197,21 @@ static void generateCallBoundFunction(CCallHelpers& jit)
     Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, total, TrustedImm32(JSFunction::rareDataTag));
     jit.loadPtr(Address(total, FunctionRareData::offsetOfExecutable() - JSFunction::rareDataTag), total);
     hasExecutable.link(&jit);
+    // (One in the short form does not say. See ExecutableBase::wayIntoShortForm().)
+    Jump saysHowToGetIn = jit.branchIfNotType(total, ShortFunctionExecutableType);
+    jit.loadPtr(Address(total, FunctionExecutable::offsetOfAOTEntryFor(CodeSpecializationKind::CodeForCall)), scratch);
+    theLongWay.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
+    jit.loadPtr(Address(vm, VM::offsetOfAOTRuntimeTable()), scratch);
+    jit.loadPtr(Address(scratch, static_cast<unsigned>(Entry::EnterStaticFunctionForCall) * sizeof(void*)), scratch);
+    Jump knowsHowToGetIn = jit.jump();
+    saysHowToGetIn.link(&jit);
     jit.loadPtr(Address(total, ExecutableBase::offsetOfJITCodeWithArityCheckFor(CodeSpecializationKind::CodeForCall)), scratch);
     theLongWay.append(jit.branchTestPtr(CCallHelpers::Zero, scratch));
     Jump isNative = jit.branchIfNotType(total, FunctionExecutableType);
     jit.loadPtr(Address(total, FunctionExecutable::offsetOfCodeBlockForCall()), passed);
     jit.storePtr(passed, CCallHelpers::calleeFrameCodeBlockBeforeCall());
     isNative.link(&jit);
+    knowsHowToGetIn.link(&jit);
     jit.call(scratch, JSEntryPtrTag);
     jit.emitFunctionEpilogue();
     jit.ret();

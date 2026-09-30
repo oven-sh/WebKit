@@ -60,12 +60,12 @@ public:
         
     // The short form. A function that was compiled when the program was built, and has no other code and never will, has no use for
     // most of this: there is nothing to parse, nothing to compile, nothing to watch, and nothing that changes. Its executable
-    // (StaticHeap makes them) ends where ExecutableBase's m_jitCodeForCall would be, and says so by its type: what calls a function goes by
+    // (StaticHeap makes them) ends where ExecutableBase's m_jitCodeForCallWithArityCheck would be, and says so by its type: what calls a function goes by
     // what comes before that, and whatever tells a FunctionExecutable by FunctionExecutableType, to get at its CodeBlock, finds none.
     // The rest of what there is to say about it is in a table (StaticHeap::rowOf()), where whoever asks here looks:
     // its name, how many parameters it has, which module it is in, and an UnlinkedFunctionExecutable that says everything else, which it
     // shares with every function of which that is the same.
-    static constexpr size_t sizeOfShortForm = 48;
+    static constexpr size_t sizeOfShortForm = 32;
     inline static Structure* createStructureOfShortForm(VM&, JSGlobalObject*, JSValue);
 
     const FunctionExecutable* inFull() const { return WTF::opaque(this); }

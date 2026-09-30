@@ -53,11 +53,28 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 
 void FunctionExecutable::becomeStatic(VM& vm)
 {
-    static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_jitCodeForCall) == sizeOfShortForm);
+    static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_jitCodeForCallWithArityCheck) == sizeOfShortForm);
     // Which realm's it is remains to be seen (topLevelExecutable()), and there is going to be more than one function made of it, or
     // there may as well be.
     m_topLevelExecutable.clear();
     m_singleton.invalidate(vm, StringFireDetail("Made when the program was built"));
+}
+
+// AOT::Stub::EnterStaticFunctionForCall and AOT::Stub::EnterStaticFunctionForConstruct, once there is an AOT::RuntimeTable. (The interpreter goes by this as well: virtualThunkFor.)
+extern "C" {
+JS_EXPORT_PRIVATE void* g_aotWaysIntoStaticFunctions[2] { };
+}
+
+CodePtr<JSEntryPtrTag> ExecutableBase::wayIntoShortForm(CodeSpecializationKind kind) const
+{
+    unsigned which = static_cast<unsigned>(kind);
+    if (!m_aotEntry[which])
+        return nullptr;
+    // (See FunctionExecutable::aotIndexOfWhatConstructsByCalling.)
+    if (kind == CodeSpecializationKind::CodeForConstruct && m_aotIndex[which] == FunctionExecutable::aotIndexOfWhatConstructsByCalling)
+        return CodePtr<JSEntryPtrTag>::fromTaggedPtr(std::bit_cast<void*>(m_aotEntry[which]));
+    ASSERT(g_aotWaysIntoStaticFunctions[which]);
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(g_aotWaysIntoStaticFunctions[which]);
 }
 
 void FunctionExecutable::setAOTCode(CodeSpecializationKind kind, void* stub, uint64_t entry, uint32_t index)

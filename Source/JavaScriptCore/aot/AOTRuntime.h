@@ -177,6 +177,8 @@ namespace AOT {
     v(LookupExceptionHandler) \
     v(ThrowStackOverflowError) \
     v(NativeCallTrampoline) \
+    v(EnterStaticFunctionForCall) \
+    v(EnterStaticFunctionForConstruct) \
     v(MegamorphicCache) \
     /* Host functions that compiled code knows when it sees them (CallIntrinsic). */ \
     v(HostMathSqrt) \

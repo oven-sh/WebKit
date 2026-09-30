@@ -92,6 +92,8 @@ void* nearCallTargetFor(void* code)
     return result.iterator->value.code().untaggedPtr();
 }
 
+extern "C" void* g_aotWaysIntoStaticFunctions[2]; // FunctionExecutable.cpp
+
 RuntimeTable::RuntimeTable(VM& vm)
 {
     using namespace DFG; // FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS
@@ -111,6 +113,11 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
+    // What a FunctionExecutable in the short form has no room to say: ExecutableBase::wayIntoShortForm().
+    set(Entry::EnterStaticFunctionForCall, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForCall)));
+    set(Entry::EnterStaticFunctionForConstruct, tagCodePtr<JSEntryPtrTag>(addressOfStub(Stub::EnterStaticFunctionForConstruct)));
+    g_aotWaysIntoStaticFunctions[0] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForCall)];
+    g_aotWaysIntoStaticFunctions[1] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForConstruct)];
 
     auto addCallLinkInfo = [&](Entry entry, CallLinkInfo::CallType type) {
         auto info = makeUnique<VirtualCallInfo>();
