@@ -62,6 +62,36 @@ private:
     bool m_hadRunningLoop { false };
 };
 
+// Whether an event loop is in the middle of going round, further up the stack: one that the host is turning, or one that the program is running for itself.
+bool isEventLoopRunningHere(JSGlobalObject*);
+
+// For as long as something of Python's waits for the host to go on with its own event loop. Whatever the host then runs is as it might be in another thread: it is in no task, and in no loop, of what is waiting.
+//
+// What gets out of the loop that the host turns is as a rule the host's to report. It is KeyboardInterrupt or the like, since the loop sees to the rest. While this lasts it is for whoever is waiting.
+class WaitingForHost {
+    WTF_FORBID_HEAP_ALLOCATION;
+public:
+    explicit WaitingForHost(JSGlobalObject*);
+    ~WaitingForHost();
+
+    // What has got out of the loop meanwhile, which is then nobody else's. Empty if nothing has.
+    JSValue takeWhatGotOutOfTheLoop();
+
+private:
+    JSGlobalObject* m_globalObject;
+    JSObject* m_awaitable;
+    JSValue m_loop;
+    JSValue m_task;
+    bool m_loopIsOfStep { false };
+    bool m_isCounted { false };
+};
+
+// For the host, which is to leave off waiting: Configuration::waitForPromise.
+JS_EXPORT_PRIVATE bool hasSomethingGotOutOfTheLoop(JSGlobalObject*);
+// asyncio.Runner._on_sigint(), the first time: what is being run to its end is cancelled, if it is a task, so that it can tidy up. False if it is not one, or if it raised.
+bool cancelForInterrupt(JSGlobalObject*, JSObject* iterator);
+bool isCancelledError(JSGlobalObject*, JSValue);
+
 // The promise that JavaScript is given for a Future, which needs nothing to run it. Null if it is not one.
 JSPromise* promiseOfFuture(JSGlobalObject*, JSValue);
 

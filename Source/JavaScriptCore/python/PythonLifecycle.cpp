@@ -35,6 +35,7 @@
 #include "PythonCodecs.h"
 #include "PythonCompiler.h"
 #include "PythonConfiguration.h"
+#include "PythonGenerators.h"
 #include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonOperations.h"
@@ -459,7 +460,7 @@ static void runInMainModule(JSGlobalObject* globalObject, std::span<const uint8_
         JSFunction* function = compileModule(globalObject, source, module);
         RETURN_IF_EXCEPTION(scope, void());
         scope.release();
-        call(globalObject, function);
+        runModuleBody(globalObject, function);
     };
     run();
     flushStandardStreams(globalObject);
@@ -587,7 +588,7 @@ static int runCommand(JSGlobalObject* globalObject, const String& command)
         if (!audit(globalObject, "exec"_s, code))
             return;
         scope.release();
-        call(globalObject, function);
+        runModuleBody(globalObject, function);
     };
     run();
     return scope.exception() ? printExceptionAndGetStatus(globalObject) : 0;

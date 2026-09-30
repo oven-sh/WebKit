@@ -33,6 +33,7 @@
 #include "PythonAsyncio.h"
 #include "PythonContextVars.h"
 #include "PythonGenerators.h"
+#include "PythonIO.h"
 #include "PythonImport.h"
 #include "TopExceptionScope.h"
 
@@ -367,7 +368,7 @@ void resumeAwaitable(JSGlobalObject* globalObject, JSObject* iterator, JSValue r
     }
 }
 
-JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue settlement)
+JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue settlement, bool isWaitedForHere)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -379,6 +380,8 @@ JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue se
     if (JSPromise* ofFuture = promiseOfFuture(globalObject, awaitable))
         return ofFuture;
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+    if (isWaitedForHere)
+        promise->markAsHandled();
     // What goes on by itself is a coroutine, or is awaited by one: lib/_javascript_awaiting.py
     if (!settlement && typeOf(globalObject, awaitable) != globalObject->pyRealm()->typeCoroutine()) {
         JSValue wrap = importModuleAttribute(globalObject, "_javascript_awaiting"_s, "_wrap_awaitable"_s);
@@ -401,6 +404,79 @@ JSPromise* toPromise(JSGlobalObject* globalObject, JSValue awaitable, JSValue se
         asObject(iterator)->putDirect(vm, names.private_taskContext, copyCurrentContext(globalObject));
     resumeAwaitable(globalObject, asObject(iterator), jsUndefined(), false);
     return promise;
+}
+
+JSValue runToItsEnd(JSGlobalObject* globalObject, JSValue coroutine)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // An event loop goes round once at a time, and cannot go round again until what it is running has come back. So there is no waiting here for anything that it is to do.
+    if (isEventLoopRunningHere(globalObject)) {
+        generatorClose(globalObject, asGenerator(coroutine));
+        RETURN_IF_EXCEPTION(scope, { });
+        return raise(globalObject, scope, BuiltinType::RuntimeError, "what awaits at its top level cannot be run from inside a running event loop"_s);
+    }
+    JSPromise* promise = toPromise(globalObject, coroutine, JSValue(), true);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto wait = globalObject->pyRealm()->configuration().waitForPromise;
+    bool wasInterrupted = false;
+    while (promise->status() == JSPromise::Status::Pending) {
+        bool mayYetBeSettled = false;
+        JSValue gotOut;
+        {
+            WaitingForHost waiting(globalObject);
+            if (wait)
+                mayYetBeSettled = wait(globalObject, promise);
+            else
+                vm.drainMicrotasks();
+            gotOut = waiting.takeWhatGotOutOfTheLoop();
+        }
+        RETURN_IF_EXCEPTION(scope, { });
+        if (gotOut)
+            throwException(globalObject, scope, gotOut);
+        else
+            checkSignals(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            // As asyncio.run() has it: the first time, what is being run is cancelled, so that it can tidy up, and is waited for still.
+            if (wasInterrupted || !isInstance(globalObject, scope.exception()->value(), globalObject->pyRealm()->type(BuiltinType::KeyboardInterrupt)))
+                return { };
+            Exception* interrupt = takeRaisedException(vm);
+            RETURN_IF_EXCEPTION(scope, { });
+            bool isCancelled = cancelForInterrupt(globalObject, asObject(coroutine));
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!isCancelled) {
+                throwException(globalObject, scope, interrupt);
+                return { };
+            }
+            wasInterrupted = true;
+            continue;
+        }
+        if (!mayYetBeSettled)
+            break;
+    }
+    switch (promise->status()) {
+    case JSPromise::Status::Fulfilled:
+        return promise->result();
+    case JSPromise::Status::Rejected:
+        if (wasInterrupted && isCancelledError(globalObject, promise->result()))
+            return raise(globalObject, scope, BuiltinType::KeyboardInterrupt, emptyString());
+        throwException(globalObject, scope, promise->result());
+        return { };
+    case JSPromise::Status::Pending:
+        break;
+    }
+    return raise(globalObject, scope, BuiltinType::RuntimeError, "there is nothing left to do, and what is awaited at the top level is not done"_s);
+}
+
+void runModuleBody(JSGlobalObject* globalObject, JSFunction* function)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue result = call(globalObject, function);
+    RETURN_IF_EXCEPTION(scope, void());
+    if (!function->jsExecutable()->unlinkedExecutable()->pythonInfo()->isCoroutine)
+        return;
+    scope.release();
+    runToItsEnd(globalObject, result);
 }
 
 // ---- await

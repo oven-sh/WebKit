@@ -186,7 +186,7 @@ except TypeError as error:
     display(error)
 
 # ---- What is wrong with it is said as it is of source
-for source in ("return", "break", "x = *a", "def f():\n  nonlocal x", "def f(a, a): pass", "f(a=1, a=2)", "from __future__ import nope", "x = 1\nfrom __future__ import annotations", "await x", "yield", "class C: return", "def f():\n  x = 1\n  global x", "[(yield) for a in b]", "del f()" if 0 else "*a, *b = c"):
+for source in ("return", "break", "x = *a", "def f():\n  nonlocal x", "def f(a, a): pass", "f(a=1, a=2)", "from __future__ import nope", "x = 1\nfrom __future__ import annotations", "class C: await x", "yield", "class C: return", "def f():\n  x = 1\n  global x", "[(yield) for a in b]", "del f()" if 0 else "*a, *b = c"):
     def attempt():
         try:
             compile(parse(source), "<tree>", "exec")

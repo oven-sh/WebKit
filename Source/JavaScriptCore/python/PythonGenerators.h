@@ -78,7 +78,13 @@ bool warnOfThrowSignature(JSGlobalObject*, const NativeArguments&, ASCIILiteral 
 //
 // If `settlement` is true it is one step of an asynchronous iterator that is awaited, and the promise is for { value, done }. If it is an object, the promise is
 // for that, whatever the awaiting comes to.
-JS_EXPORT_PRIVATE JSPromise* toPromise(JSGlobalObject*, JSValue awaitable, JSValue settlement = JSValue());
+//
+// If it `isWaitedForHere`, what it is rejected with is somebody's business from the start, and is not to be reported as nobody's.
+JS_EXPORT_PRIVATE JSPromise* toPromise(JSGlobalObject*, JSValue awaitable, JSValue settlement = JSValue(), bool isWaitedForHere = false);
+// What a module that awaits is when it has been called: a coroutine. It is run to its end, with the host going on with its event loop meanwhile, and what it returned is returned. Empty if it raised.
+JSValue runToItsEnd(JSGlobalObject*, JSValue coroutine);
+// Runs what was compiled as a module, or as what is typed at a prompt, and has been bound to its globals: all of it, whether or not it awaits.
+void runModuleBody(JSGlobalObject*, JSFunction*);
 // What toPromise() began goes on: what it was waiting for has come to `settled`, or was rejected with it.
 // It has come to an end, and the promise that JavaScript has for it is settled: with what it returned, or with what it threw if that is not empty.
 void settleAwaitable(JSGlobalObject*, JSObject* iterator, JSValue returned, JSValue thrown);

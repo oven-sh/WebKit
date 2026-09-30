@@ -205,6 +205,12 @@ static FunctionExecutable* executableTakingCells(JSGlobalObject* globalObject, J
     FunctionExecutable* original = executableOfCode(code);
     auto info = infoOfExecutable(original).copy();
     info->variablesGivenAsCells = info->freeVariables;
+    // What compile() makes is given what its names are to be looked for in when it is run. A function is given nothing of the kind, and they are looked for in its globals: _PyFunction_Vectorcall(), of what is not CO_OPTIMIZED.
+    if (info->usesNamespace && (info->kind == CodeKind::Module || info->kind == CodeKind::Interactive || info->kind == CodeKind::Expression)) {
+        info->usesNamespace = false;
+        info->parameterNames.clear();
+        info->positionalCount = 0;
+    }
     FunctionExecutable* executable = cloneExecutable(globalObject, original, WTF::move(info));
     // It is what the function has for its __code__, and a frame of it for its f_code.
     executable->setPythonCodeObject(globalObject->vm(), asObject(code));
@@ -562,6 +568,8 @@ PYTHON_NATIVE(builtinCompile)
         return JSValue::encode(raiseValueError(globalObject, scope, flags & onlyAST ? "compile() mode must be 'exec', 'eval', 'single' or 'func_type'"_s : "compile() mode must be 'exec', 'eval' or 'single'"_s));
 
     unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait | DoNotImplyDedent | AllowIncompleteInput | TypeComments);
+    if (moduleKind == Module::Kind::Module || moduleKind == Module::Kind::Interactive)
+        futureFeatures |= AllowTopLevelAwait;
     if (inherits)
         futureFeatures |= futureFeaturesOfCaller(callFrame) & FutureFeaturesMask;
 
@@ -681,6 +689,11 @@ PYTHON_NATIVE(builtinExecOrEval)
     JSFunction* toRun = JSFunction::create(vm, globalObject, executableToRun, environment);
     JSValue result = info.usesNamespace ? call(globalObject, toRun, localsValue) : call(globalObject, toRun);
     RETURN_IF_EXCEPTION(scope, { });
+    // What awaits has not begun. eval() gives it to whoever asked, to await. exec() gives nothing, so in CPython nothing would ever come of it. Here it is run, which is how a module that awaits is imported.
+    if (!isEval && isWhatCompileMakes && info.isCoroutine) {
+        runToItsEnd(globalObject, result);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     return JSValue::encode(isEval ? result : jsUndefined());
 }
 

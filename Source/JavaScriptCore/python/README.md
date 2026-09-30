@@ -1046,6 +1046,26 @@ are destroyed, or with threads.
 - A program can get hold of the loop and run it for itself, with `run_until_complete()`. The host leaves it alone for as long as that lasts, and is asked to turn it again when `_set_running_loop(None)` says that it is over.
 - With no `watchEventLoop` there is no such loop, and a future that is yielded with no loop running is `RuntimeError: no running event loop`.
 
+### A module can await
+
+**`await`, `async for` and `async with` can be written at the top of a module**, and so can a comprehension that awaits. In CPython that is a `SyntaxError` unless `compile()` is given `PyCF_ALLOW_TOP_LEVEL_AWAIT`. Here what is compiled
+as a module, or as what is typed at a prompt, is always given it (`compileSource()`). An expression, which is what `eval()` compiles, still has to ask. A module that awaits nothing is compiled as it ever was.
+
+**What awaits is a coroutine when it is called, and it is run to its end before whoever ran it goes on**: `runToItsEnd()`. That is the program, and it is `exec()`, which gives nothing back, so that in CPython nothing would ever come of it.
+`importlib` runs a module with `exec()`, so `import` returns when the module is done, whoever imports it: a module that awaits, one that does not, a function, or JavaScript. `eval()` of such code gives the coroutine to be awaited, as in CPython.
+
+- It is begun as it would be if JavaScript awaited it, `toPromise()`, so all of "What JavaScript waits for, and asyncio" is so of it: it is in a loop with no `asyncio.run()` anywhere, and it is a task from when it first asks.
+- **The host goes on with its own event loop until the promise is settled** (`Configuration::waitForPromise`). With no host, what is waiting to be run is run and no more.
+- If the host has nothing left to stay for, what is awaited will never come, and that is `RuntimeError`.
+- **An event loop that is going round cannot wait for one.** It goes round once at a time, and cannot go round again until what it is running has come back. So a module that awaits cannot be imported by what a task of asyncio's
+  is running, once it is the loop that runs it, nor from inside `asyncio.run()`. That is `RuntimeError` too, as `require()` of a module that awaits is an error in JavaScript. What is imported before the first thing is awaited is not in that case.
+- **`KeyboardInterrupt` is as `asyncio.run()` has it.** The first cancels what is being run, if it is a task, so that it can tidy up, and it is waited for still. If it ends in `CancelledError` that is `KeyboardInterrupt`.
+  What gets out of the loop that the host turns is as a rule the host's to report. While something is waiting it is for that: `WaitingForHost`.
+
+What is given with `-c`, and what is typed at the prompt, is run in the same way: `runModuleBody()`.
+
+`interop/a-module-can-await.py` has what needs no event loop. What does is the host's to test.
+
 ### Signals
 
 `PythonSignals.cpp` is `Modules/signalmodule.c`. As in CPython, what the system calls when a signal comes does next to nothing, and what the program has for the signal is called later, by Python code, between one thing and
@@ -1721,6 +1741,7 @@ There is nothing that is per process, nothing that is set after something is mad
 - **In a syntax tree, what an `Interpolation` says its source is has to be what a constant can be.** CPython takes anything, and finds out when it comes to keep it, or never. And a node that says it is on a
   line before the first, or at a column before the first, is on line 0 or at column 0, where to CPython it is nowhere.
 - **A `BytesIO` can be written to while there is a view of it** from `getbuffer()`, where CPython raises `BufferError`. It is as it is for a `bytearray`, and for the same reason.
+- **A module can await.** `compile("await f()", name, "exec")` is a `SyntaxError` in CPython. See "A module can await".
 - **There is no `os.fork()`.** What it would leave in the new process is the one thread, and the collector and the compilers have threads of their own, which would be waited for and never answer. `os` has none on the
   systems where it cannot be had, so a program that can do without looks first, as the library does. `posix_spawn()`, `exec*()` and `system()` are there.
 - **`subprocess` does not take `preexec_fn`**, for the same reason: it would be called in the new process. It raises `RuntimeError`. `start_new_session`, `process_group`, `user`, `group`, `extra_groups` and `umask` are there for most of

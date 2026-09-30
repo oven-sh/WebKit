@@ -20,7 +20,7 @@ dead but wrong 'if 0:\n    return' !! SyntaxError 'return' outside function (f, 
 dead but wrong 'if 0:\n    break' !! SyntaxError 'break' outside loop (f, line 2)
 dead but wrong 'if 0:\n    continue' !! SyntaxError 'continue' not properly in loop (f, line 2)
 dead but wrong 'while 0:\n    yield' !! SyntaxError 'yield' outside function (f, line 2)
-dead but wrong 'if 0:\n    await x' !! SyntaxError 'await' outside function (f, line 2)
+dead but wrong 'class C:\n    if 0:\n        await x' !! SyntaxError 'await' outside function (f, line 3)
 dead but wrong 'if 0:\n    x = 1\n    global x' !! SyntaxError name 'x' is assigned to before global declaration (f, line 3)
 dead but wrong 'if 0:\n    nonlocal y' !! SyntaxError nonlocal declaration not allowed at module level (f, line 2)
 dead but wrong 'if 0:\n    from __future__ import nope' !! SyntaxError from __future__ imports must occur at the beginning of the file (f, line 2)

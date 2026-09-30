@@ -145,7 +145,7 @@ TypeError: unsupported operand type(s) for +: 'int' and 'NoneType'
 'f(a=1, a=2)' => ('SyntaxError', 'keyword argument repeated: a', '<tree>', 1, 8, 1, 11, None)
 'from __future__ import nope' => ('SyntaxError', 'future feature nope is not defined', '<source>', 1, 24, 1, 28, None)
 'x = 1\nfrom __future__ import annotations' => ('SyntaxError', 'from __future__ imports must occur at the beginning of the file', '<tree>', 2, 1, 2, 35, None)
-'await x' => ('SyntaxError', "'await' outside function", '<tree>', 1, 1, 1, 8, None)
+'class C: await x' => ('SyntaxError', "'await' outside function", '<tree>', 1, 10, 1, 17, None)
 'yield' => ('SyntaxError', "'yield' outside function", '<tree>', 1, 1, 1, 6, None)
 'class C: return' => ('SyntaxError', "'return' outside function", '<tree>', 1, 10, 1, 16, None)
 'def f():\n  x = 1\n  global x' => ('SyntaxError', "name 'x' is assigned to before global declaration", '<tree>', 3, 3, 3, 11, None)

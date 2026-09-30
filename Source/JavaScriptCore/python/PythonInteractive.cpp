@@ -33,6 +33,7 @@
 #include "PythonBytes.h"
 #include "PythonCodecs.h"
 #include "PythonCompiler.h"
+#include "PythonGenerators.h"
 #include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonImportState.h"
@@ -401,7 +402,7 @@ static Typed runOneTypedStatement(JSGlobalObject* globalObject, unsigned& future
         if (!audit(globalObject, "exec"_s, code))
             return;
         scope.release();
-        call(globalObject, bindToGlobals(globalObject, executable, module));
+        runModuleBody(globalObject, bindToGlobals(globalObject, executable, module));
     };
     run();
     if (!scope.exception()) {

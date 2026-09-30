@@ -102,6 +102,10 @@ struct Configuration {
     // after so long if a time is given, whichever is first, and not from inside this. Each call replaces the last. `hasSomethingToWatch` is whether the loop is watching for anything but its own being woken, and so
     // whether there is something to stay for though no time is given. A descriptor of -1 is to say that there is nothing to watch any longer, and what was being watched is about to be closed. Without this there is no such loop.
     void (*watchEventLoop)(JSGlobalObject*, int descriptor, std::optional<Seconds> wakeAfter, bool hasSomethingToWatch) { nullptr };
+    // Goes on with the host's own event loop until the promise is settled, or there is something that Python has to see to, such as a signal: whoever asks looks for itself, and asks again. False if there is nothing
+    // left that the loop is staying for, so that the promise never will be settled. It is how a module that awaits is run to its end before whatever imported it goes on. It may throw. Null is to run what is waiting
+    // to be run and no more.
+    bool (*waitForPromise)(JSGlobalObject*, JSPromise*) { nullptr };
     // Finds the module of JavaScript's that `import name` means, the name being the whole of it, dots and all. It is asked when nothing of Python's has been found by that name. `directories` is where Python looked:
     // sys.path, or the __path__ of what the module is below, which is what the host gave for it if that is JavaScript's too. Nothing if there is none, or if it threw. Null if none can be imported.
     std::optional<JavaScriptModule> (*findJavaScriptModule)(JSGlobalObject*, const String& name, std::span<const String> directories) { nullptr };

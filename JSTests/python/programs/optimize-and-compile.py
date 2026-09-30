@@ -74,7 +74,7 @@ show("dead lines", lambda: lines_of(compile(DEAD, "f", "exec")))
 show("dead constants", lambda: [c for c in consts_of(compile(DEAD, "f", "exec")) if isinstance(c, int) and c >= 1000])
 show("dead names run", lambda: sorted(run(DEAD)))
 show("dead functions", lambda: (lambda c: [x for x in c if x != 0])(consts_of(compile("if 0:\n    def f(): pass\n    class C: pass\ndef g(): pass\n", "f", "exec"))))
-for s in ("if 0:\n    return", "if 0:\n    break", "if 0:\n    continue", "while 0:\n    yield", "if 0:\n    await x", "if 0:\n    x = 1\n    global x", "if 0:\n    nonlocal y", "if 0:\n    from __future__ import nope", "def f():\n    if 0:\n        return\n    x: int = 1\n", "if 0:\n    (yield)", "if 0:\n    *a = 1", "if 0:\n    f(a=1, a=2)", "if 0:\n    def f(a, a): pass"):
+for s in ("if 0:\n    return", "if 0:\n    break", "if 0:\n    continue", "while 0:\n    yield", "class C:\n    if 0:\n        await x", "if 0:\n    x = 1\n    global x", "if 0:\n    nonlocal y", "if 0:\n    from __future__ import nope", "def f():\n    if 0:\n        return\n    x: int = 1\n", "if 0:\n    (yield)", "if 0:\n    *a = 1", "if 0:\n    f(a=1, a=2)", "if 0:\n    def f(a, a): pass"):
     show("dead but wrong " + repr(s), lambda: type(compile(s, "f", "exec")).__name__)
 def still_generator():
     if 0:

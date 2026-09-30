@@ -86,6 +86,11 @@ struct AsyncioState final : NativeState {
     WriteBarrier<Unknown> hostedLoop;
     bool isMakingHostedLoop { false };
     bool isBeingTurned { false };
+    // `runningLoop` is running only in that what JavaScript is running is told so: runningLoop(). Nothing is going round.
+    bool runningLoopIsOfStep { false };
+    // See WaitingForHost.
+    unsigned waitingForHost { 0 };
+    WriteBarrier<Unknown> gotOutOfTheLoop;
     // What it said when it came to where it would wait, this time round.
     bool hasNotedWait { false };
     bool hadEvents { false };
@@ -124,6 +129,7 @@ void AsyncioState::visit(Visitor& visitor)
     visitor.append(runningLoop);
     visitor.append(runningTask);
     visitor.append(hostedLoop);
+    visitor.append(gotOutOfTheLoop);
 }
 
 AsyncioState& asyncioState(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<AsyncioState>(); }
@@ -277,6 +283,7 @@ void turnHostedLoop(JSGlobalObject* globalObject)
     JSValue outerLoop = state.runningLoop.get();
     JSValue outerTask = state.runningTask.get();
     JSObject* outerAwaitable = realm->awaitableBeingRun();
+    SetForScope isOfStep(state.runningLoopIsOfStep, false);
     state.runningLoop.clear();
     state.runningTask.clear();
     realm->setAwaitableBeingRun(nullptr);
@@ -347,6 +354,7 @@ JSValue runningLoop(JSGlobalObject* globalObject)
         RETURN_IF_EXCEPTION(scope, { });
         // Until JavaScriptStep is over
         state.runningLoop.set(vm, realm, loop);
+        state.runningLoopIsOfStep = true;
     }
     if (!state.runningTask) {
         adopt(globalObject, awaitable, loop);
@@ -1604,6 +1612,7 @@ JavaScriptStep::~JavaScriptStep()
         return;
     // It has been at the loop that the host turns, and may have given it something to do. Or it may have closed it.
     state.runningLoop.clear();
+    state.runningLoopIsOfStep = false;
     if (state.hostedLoop)
         realm->configuration().watchEventLoop(m_globalObject, state.descriptor, 0_s, false);
 }
@@ -1657,6 +1666,88 @@ JSPromise* promiseOfFuture(JSGlobalObject* globalObject, JSValue value)
             promise->reject(vm, exception);
     }
     return promise;
+}
+
+bool isEventLoopRunningHere(JSGlobalObject* globalObject)
+{
+    if (!globalObject->pyRealm()->hasAsyncio())
+        return false;
+    auto& state = asyncioState(globalObject);
+    return state.isBeingTurned || (state.runningLoop && !state.runningLoopIsOfStep);
+}
+
+WaitingForHost::WaitingForHost(JSGlobalObject* globalObject)
+    : m_globalObject(globalObject)
+{
+    PyRealm* realm = globalObject->pyRealm();
+    m_awaitable = realm->awaitableBeingRun();
+    realm->setAwaitableBeingRun(nullptr);
+    if (!realm->hasAsyncio())
+        return;
+    auto& state = asyncioState(globalObject);
+    ++state.waitingForHost;
+    m_isCounted = true;
+    m_loop = state.runningLoop.get();
+    m_task = state.runningTask.get();
+    m_loopIsOfStep = state.runningLoopIsOfStep;
+    state.runningLoop.clear();
+    state.runningTask.clear();
+    state.runningLoopIsOfStep = false;
+}
+
+JSValue WaitingForHost::takeWhatGotOutOfTheLoop()
+{
+    if (!m_globalObject->pyRealm()->hasAsyncio())
+        return { };
+    auto& state = asyncioState(m_globalObject);
+    JSValue result = state.gotOutOfTheLoop.get();
+    state.gotOutOfTheLoop.clear();
+    return result;
+}
+
+bool hasSomethingGotOutOfTheLoop(JSGlobalObject* globalObject)
+{
+    return globalObject->pyRealm()->hasAsyncio() && asyncioState(globalObject).gotOutOfTheLoop;
+}
+
+bool cancelForInterrupt(JSGlobalObject* globalObject, JSObject* iterator)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PyRealm* realm = globalObject->pyRealm();
+    JSValue task = realm->hasAsyncio() ? iterator->getDirect(vm, vm.pythonNames().private_task) : JSValue();
+    if (!task)
+        return false;
+    callMethodNamed(globalObject, task, named(vm, "cancel"_s));
+    RETURN_IF_EXCEPTION(scope, false);
+    // The loop has been given something to do, from outside a turn.
+    auto& state = asyncioState(globalObject);
+    if (state.hostedLoop)
+        realm->configuration().watchEventLoop(globalObject, state.descriptor, 0_s, false);
+    return true;
+}
+
+bool isCancelledError(JSGlobalObject* globalObject, JSValue value)
+{
+    if (!globalObject->pyRealm()->hasAsyncio())
+        return false;
+    JSValue type = asyncioState(globalObject).cancelledError.get();
+    return type && isClass(type) && isInstance(globalObject, value, asType(type));
+}
+
+WaitingForHost::~WaitingForHost()
+{
+    VM& vm = m_globalObject->vm();
+    PyRealm* realm = m_globalObject->pyRealm();
+    realm->setAwaitableBeingRun(m_awaitable);
+    // If there has come to be asyncio meanwhile, there was nothing of it to put back.
+    if (!m_isCounted)
+        return;
+    auto& state = asyncioState(m_globalObject);
+    --state.waitingForHost;
+    setOrClear(vm, realm, state.runningLoop, m_loop);
+    setOrClear(vm, realm, state.runningTask, m_task);
+    state.runningLoopIsOfStep = m_loopIsOfStep;
 }
 
 bool isEventLoopBeingTurned(JSGlobalObject* globalObject)
@@ -1713,6 +1804,11 @@ void turnEventLoop(JSGlobalObject* globalObject)
         return;
     }
     turnHostedLoop(globalObject);
+    if (scope.exception() && state.waitingForHost) [[unlikely]] {
+        if (Exception* raised = takeRaisedException(vm))
+            state.gotOutOfTheLoop.set(vm, realm, raised->value());
+        RETURN_IF_EXCEPTION(scope, void());
+    }
     // Whatever got out of it, it goes on, unless something that it ran closed it.
     if (!state.hasNotedWait || !state.hostedLoop)
         return;
@@ -1777,6 +1873,10 @@ PYTHON_NATIVE(standInPromiseSettled)
         RETURN_NONE();
     callMethodNamed(globalObject, loop, named(vm, "call_soon_threadsafe"_s), PyBoundMethod::create(globalObject, asyncioState(globalObject).finishStandIn.get(), standIn));
     RETURN_IF_EXCEPTION(scope, { });
+    // That makes what the host is watching readable. But the host does not stay for that, unless the loop is watching for something, and the promise may have been all that it was staying for.
+    auto& state = asyncioState(globalObject);
+    if (state.hostedLoop && isIdentical(loop, state.hostedLoop.get()) && !state.isBeingTurned && !(state.runningLoop && !state.runningLoopIsOfStep))
+        realm->configuration().watchEventLoop(globalObject, state.descriptor, 0_s, false);
     RETURN_NONE();
 }
 
@@ -2014,6 +2114,7 @@ PYTHON_NATIVE(asyncioSetRunningLoop)
     NATIVE_PROLOGUE();
     UNUSED_PARAM(scope);
     auto& state = asyncioState(globalObject);
+    state.runningLoopIsOfStep = false;
     if (!isNone(args[0])) {
         state.runningLoop.set(vm, realm, args[0]);
         RETURN_NONE();

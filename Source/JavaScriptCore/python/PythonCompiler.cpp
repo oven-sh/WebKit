@@ -771,6 +771,9 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     unsigned optimizationLevel = givenOptimizationLevel ? *givenOptimizationLevel : configuredOptimizationLevel(globalObject);
     ASSERT(source.provider()->isPython());
 
+    // A module can await, and so can what is typed at a prompt. In CPython that has to be asked for. See "A module can await" in README.md.
+    if (kind == CodeKind::Module || kind == CodeKind::Interactive)
+        inheritedFutureFeatures |= AllowTopLevelAwait;
     unsigned parsingFlags = inheritedFutureFeatures & (DoNotImplyDedent | AllowIncompleteInput | TypeComments);
     inheritedFutureFeatures &= ~parsingFlags;
     unsigned futureFeatures = inheritedFutureFeatures;

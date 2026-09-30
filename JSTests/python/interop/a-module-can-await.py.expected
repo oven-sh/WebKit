@@ -1,0 +1,85 @@
+---- the program
+42 7 4
+async for 0
+async for 1
+async for 2
+enter
+inside 5
+exit <class 'ValueError'>
+[0, 1, 2] {0: 0, 1: 2, 2: 4} [0, 2, 4] {1, 2}
+caught JSError rejected
+caught unsupported operand type(s) for *: 'NoneType' and 'int'
+finally 6
+else
+__main__ ['Manager', 'Ready', 'ast', 'attempt', 'double', 'i', 'inspect', 'js', 'm', 'numbers', 'sys', 'types', 'value'] <module> True
+---- what is imported
+    the module begins
+    it has awaited once
+    it is done
+first 42 True
+True
+    the module begins
+    it has awaited once
+    it is done
+('first', 42)
+    the module begins
+    it has awaited once
+    it is done
+    in a function => 42
+    it raises => KeyError 'from a module that awaits'
+False
+---- compile(), exec() and eval()
+    'x = await f()' exec 0 coroutine 128
+    'x = await f()' exec 8192 coroutine 128
+    'x = 1' exec 0 not a coroutine 0
+    'x = 1' exec 8192 not a coroutine 0
+    'await f()' single 0 coroutine 128
+    'await f()' single 8192 coroutine 128
+    'await f()' eval 0 SyntaxError: 'await' outside function
+    'await f()' eval 8192 coroutine 128
+    'async for i in g(): pass' exec 0 coroutine 128
+    'async for i in g(): pass' exec 8192 coroutine 128
+    'async with m: pass' exec 0 coroutine 128
+    'async with m: pass' exec 8192 coroutine 128
+    '[i async for i in g()]' exec 0 coroutine 128
+    '[i async for i in g()]' exec 8192 coroutine 128
+    '[i async for i in g()]' eval 0 SyntaxError: asynchronous comprehension outside of an asynchronous function
+    '[i async for i in g()]' eval 8192 coroutine 128
+    '[await f() for i in x]' exec 0 coroutine 128
+    '[await f() for i in x]' exec 8192 coroutine 128
+    'def h():\n    await f()' exec 0 SyntaxError: 'await' outside async function
+    'def h():\n    await f()' exec 8192 SyntaxError: 'await' outside async function
+    'def h():\n    async with m: pass' exec 0 SyntaxError: 'async with' outside async function
+    'def h():\n    async with m: pass' exec 8192 SyntaxError: 'async with' outside async function
+    'lambda: await f()' exec 0 SyntaxError: 'await' outside async function
+    'lambda: await f()' exec 8192 SyntaxError: 'await' outside async function
+    'class C:\n    await f()' exec 0 SyntaxError: 'await' outside function
+    'class C:\n    await f()' exec 8192 SyntaxError: 'await' outside function
+    'class C:\n    x = [i async for i in g()]' exec 0 SyntaxError: asynchronous comprehension outside of an asynchronous function
+    'class C:\n    x = [i async for i in g()]' exec 8192 SyntaxError: asynchronous comprehension outside of an asynchronous function
+    'yield' exec 0 SyntaxError: 'yield' outside function
+    'yield' exec 8192 SyntaxError: 'yield' outside function
+    'return' exec 0 SyntaxError: 'return' outside function
+    'return' exec 8192 SyntaxError: 'return' outside function
+    'await' exec 0 SyntaxError: invalid syntax
+    'await' exec 8192 SyntaxError: invalid syntax
+    'async def h():\n    await f()' exec 0 not a coroutine 0
+    'async def h():\n    await f()' exec 8192 not a coroutine 0
+    '(await f() for i in x)' exec 0 not a coroutine 0
+    '(await f() for i in x)' exec 8192 not a coroutine 0
+    'await = 1' exec 0 SyntaxError: invalid syntax
+    'await = 1' exec 8192 SyntaxError: invalid syntax
+8 9
+{'z': 10} False
+coroutine <module> <module> False None 12
+    exec() of what raises => ZeroDivisionError division by zero
+    of what is rejected => JSError no
+    of what awaits nothing that will come => RuntimeError there is nothing left to do, and what is awaited at the top level is not done
+    exec() gives nothing => None
+    exec() in exec() => 28
+    of a syntax tree => 16
+18
+    single => None
+coroutine False None 20
+    a function made of what awaits nothing => (None, 11)
+    of an expression => 12

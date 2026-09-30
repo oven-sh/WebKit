@@ -46,7 +46,7 @@ show("two awaits", lambda: run("a = await A(1)\nb = await A(2)\nc = (a, b)", sen
 show("in a try", lambda: run("try:\n    x = await A(1)\n    raise ValueError(x)\nexcept ValueError as e:\n    y = e.args\nfinally:\n    z = await A(2)\n"))
 show("functions in it", lambda: run("async def f(): return await A(1)\nx = await f()\ndef g(): return 5\ny = g()"))
 show("single", lambda: (lambda c: hex(c.co_flags))(compile("await A(1)", "<t>", "single", ALLOW)))
-show("not allowed", lambda: [attempt(lambda: compile(s, "<t>", "exec")) for s in ("await x", "async for i in x: pass", "async with x: pass", "[i async for i in x]", "[await i for i in x]")])
+show("not allowed", lambda: [attempt(lambda: compile(s, "<t>", "eval")) for s in ("await x", "[i async for i in x]", "[await i for i in x]")])
 show("still not", lambda: [attempt(lambda: compile(s, "<t>", "exec", ALLOW)) for s in ("def f(): await x", "yield 1", "class C:\n    await x", "lambda: await x", "return 1", "def f():\n    async for i in x: pass")])
 show("names are the module's", lambda: run("x = 1\ny = await A(x)\ndel x\nglobal z\nz = 3"))
 def with_locals():
