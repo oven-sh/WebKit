@@ -440,7 +440,18 @@ bool Thread::establishHandle(NewThreadContext& context, StackAllocationSpecifica
         } } break;
     }
 
+    // A signal sent to the process is delivered to any thread that has not blocked it. A program that blocks one in its own thread, to collect it later with sigwait() or
+    // sigpending(), knows nothing of our threads, and one of them would take it: by default that terminates the process. So our threads leave the program's signals alone.
+    // A thread inherits the mask of its creator, so it is set here rather than in the new thread, which would be eligible until it got round to it.
+    // The signals that report a fault in the thread itself cannot usefully be blocked, and we handle some of them. sigThreadSuspendResume is unblocked by the new thread.
+    sigset_t signalsOfTheProgram;
+    sigset_t previousMask;
+    sigfillset(&signalsOfTheProgram);
+    for (int fault : { SIGSEGV, SIGBUS, SIGILL, SIGFPE, SIGTRAP, SIGABRT, SIGSYS })
+        sigdelset(&signalsOfTheProgram, fault);
+    pthread_sigmask(SIG_BLOCK, &signalsOfTheProgram, &previousMask);
     int error = pthread_create(&threadHandle, &attr, wtfThreadEntryPoint, &context);
+    pthread_sigmask(SIG_SETMASK, &previousMask, nullptr);
     pthread_attr_destroy(&attr);
     if (error) {
         LOG_ERROR("Failed to create pthread at entry point %p with context %p", wtfThreadEntryPoint, &context);
