@@ -2307,6 +2307,11 @@ tobytes('F') => b'\x00\x0c\x01\r\x02\x0e\x03\x0f\x04\x10\x05\x11\x06\x12\x07\x13
 tobytes([]) => TypeError: tobytes() argument 'order' must be str or None, not list
 tobytes('é') => ValueError: order must be 'C', 'F' or 'A'
 by keyword => b'\x00\x0c\x01\r\x02\x0e\x03\x0f\x04\x10\x05\x11\x06\x12\x07\x13\x08\x14\t\x15\n\x16\x0b\x17'
+half a character => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+half a character, of one that is released => UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+__exit__(a=1) => TypeError: memoryview.__exit__() takes no keyword arguments
+got first, and then called => TypeError: __exit__() takes no keyword arguments
+with whatever it is given => (None, None, None)
 flat.__buffer__(SIMPLE) => ('B', 1, 1, (24,), (1,), (), 24, True, True, True, True, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23])
 flat.__buffer__(WRITABLE) => BufferError: memoryview: underlying buffer is not writable
 flat.__buffer__(FORMAT) => BufferError: memoryview: cannot cast to unsigned bytes if the format flag is present

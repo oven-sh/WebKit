@@ -3008,13 +3008,9 @@ PYTHON_NATIVE(memoryToBytes)
     char order = 'C';
     String orderText;
     if (JSValue given = args.at(1); given && !isNone(given)) {
-        JSString* string = stringIn(given);
-        if (!string)
-            return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("tobytes() argument 'order' must be str or None, not "_s, typeName(globalObject, given))));
-        orderText = string->value(globalObject);
+        auto text = toTextArgument(globalObject, given, "tobytes"_s, "argument 'order'"_s, true);
         RETURN_IF_EXCEPTION(scope, { });
-        if (orderText.contains('\0'))
-            return JSValue::encode(raiseValueError(globalObject, scope, "embedded null character"_s));
+        orderText = *text;
     }
     PyMemoryView* self = asMemory(args.at(0));
     if (self->isReleased())
@@ -3394,7 +3390,7 @@ void initializeBytesTypes(JSGlobalObject* globalObject)
         { "index"_s, memoryIndex },
         { "_from_flags"_s, memoryFromFlags, Kind::ClassMethod },
         { "__enter__"_s, memoryEnter },
-        { "__exit__"_s, memoryRelease },
+        { "__exit__"_s, memoryRelease, Kind::Method, 0, { }, PyNativeFunction::Arguments::AreCheckedAsByParseTuple },
         { "release"_s, memoryRelease },
         { "tobytes"_s, memoryToBytes },
         { "tolist"_s, memoryToList },

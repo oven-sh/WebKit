@@ -148,6 +148,13 @@ for label, f in (("cast", lambda: m.cast("B")), ("cast to what is not a format",
 for order in ("", "c", "CC", "C\0", "\0", 1, b"C", MyStr("F"), [], "\xe9"):
     t("tobytes(%r)" % (order,), lambda: flat.cast("B", (2, 12)).tobytes(order))
 t("by keyword", lambda: flat.cast("B", (2, 12)).tobytes(order="F"))
+t("half a character", lambda: flat.tobytes("\ud800"))
+t("half a character, of one that is released", lambda: [m := memoryview(b"ab"), m.release(), m.tobytes("\ud800")])
+
+# ---- __exit__(), which is given a tuple in CPython, and is called what it is called according to how it was come by
+t("__exit__(a=1)", lambda: memoryview(b"ab").__exit__(a=1))
+t("got first, and then called", lambda: [f := memoryview(b"ab").__exit__, f(a=1)])
+t("with whatever it is given", lambda: (memoryview(b"ab").__exit__(), memoryview(b"ab").__exit__(1), memoryview(b"ab").__exit__(1, 2, 3, 4)))
 
 # ---- What is asked for with __buffer__()
 SIMPLE, WRITABLE, FORMAT, ND, STRIDES, C, F, ANY, INDIRECT = 0, 1, 4, 8, 0x18, 0x38, 0x58, 0x98, 0x118
