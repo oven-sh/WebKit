@@ -926,6 +926,9 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Module
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     auto* context = ModuleLoadingContext::create(vm, this, moduleRequest, WTF::move(scriptFetcher), flags);
+#if USE(BUN_JSC_ADDITIONS)
+    context->setEntry(vm, getRegisteredMayBeNull(moduleRequest.m_specifier, moduleRequest.type()));
+#endif
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());
     resultPromise->markAsHandled();
 
@@ -1060,7 +1063,17 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. If result is a normal completion, then
+#if USE(BUN_JSC_ADDITIONS)
+    // hostLoadImportedModule() reads the realm's [[LoadedModules]] as a cache of the registry, and removeEntry() and
+    // clearAll() purge the two together. A load that was in flight then ends here with a record the registry let go of.
+    auto isRegistered = [&](AbstractModuleRecord* record) {
+        ModuleRegistryEntry* entry = getRegisteredMayBeNull(record->moduleKey(), moduleRequest.type());
+        return entry && entry->record() == record;
+    };
+    if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result); resultRecord && (referrer.getModule() || isRegistered(*resultRecord))) {
+#else
     if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result)) {
+#endif
         JSCell* owner = nullptr;
 
         auto& loadedModules = [&] -> ModuleMap<AbstractModuleRecord::LoadedModuleRequest> & {

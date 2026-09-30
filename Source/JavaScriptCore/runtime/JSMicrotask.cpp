@@ -1192,6 +1192,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         }
 #if USE(BUN_JSC_ADDITIONS)
         }
+        context->setEntry(vm, context->loader()->getRegisteredMayBeNull(specifier, type));
 #endif
 
         JSPromise* statePromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -1262,6 +1263,16 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// A load that failed before it had an entry has not lost one to removeEntry() or clearAll().
+static ModuleRegistryEntry* entryOfLoad(ModuleLoadingContext* context, const Identifier& specifier, ScriptFetchParameters::Type type)
+{
+    if (ModuleRegistryEntry* entry = context->entry())
+        return entry;
+    return context->loader()->getRegisteredMayBeNull(specifier, type);
+}
+#endif
+
 static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::span<const JSValue, maxMicrotaskArguments> arguments, uint8_t payload)
 {
     // loadModule first overload: onLoadRejected
@@ -1278,7 +1289,11 @@ static void moduleLoadTopRejected(JSGlobalObject* globalObject, VM& vm, std::spa
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
+#if USE(BUN_JSC_ADDITIONS)
+        if (ModuleRegistryEntry* entry = entryOfLoad(context, specifier, type))
+#else
         if (ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type))
+#endif
             entry->setEvaluationError(globalObject, arguments[1]);
         resultPromise->reject(vm, arguments[1]);
     }
@@ -1433,7 +1448,11 @@ static void moduleLoadStoreError(JSGlobalObject* globalObject, std::span<const J
         auto type = context->moduleRequest().type();
         // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
         // Only set an error if the entry already exists.
+#if USE(BUN_JSC_ADDITIONS)
+        ModuleRegistryEntry* entry = entryOfLoad(context, specifier, type);
+#else
         ModuleRegistryEntry* entry = context->loader()->getRegisteredMayBeNull(specifier, type);
+#endif
         if (!entry)
             return;
         if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
