@@ -2216,8 +2216,8 @@ WEBKIT_ADD_SOURCE_DEPENDENCIES(${CMAKE_CURRENT_SOURCE_DIR}/python/PythonImport.c
 add_custom_command(
     OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonBuiltinDescriptions.h
     MAIN_DEPENDENCY ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/generate-builtin-descriptions.py
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/builtin-descriptions.json
-    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/generate-builtin-descriptions.py ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonBuiltinDescriptions.h ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/builtin-descriptions.json
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/builtin-descriptions.json ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/builtin-descriptions-linux.json
+    COMMAND ${PYTHON_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/generate-builtin-descriptions.py ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonBuiltinDescriptions.h ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/builtin-descriptions.json ${CMAKE_CURRENT_SOURCE_DIR}/python/lib/builtin-descriptions-linux.json
     VERBATIM)
 list(APPEND JavaScriptCore_HEADERS ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonBuiltinDescriptions.h)
 WEBKIT_ADD_SOURCE_DEPENDENCIES(${CMAKE_CURRENT_SOURCE_DIR}/python/PythonSignatures.cpp ${JavaScriptCore_DERIVED_SOURCES_DIR}/PythonBuiltinDescriptions.h)

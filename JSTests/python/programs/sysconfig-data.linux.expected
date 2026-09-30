@@ -1,0 +1,27 @@
+_sysconfigdata__linux_aarch64-linux-gnu aarch64-linux-gnu linux ''
+dict True
+ABIFLAGS '' ''
+EXE '' ''
+LDVERSION '3.14' '3.14'
+MACHDEP 'linux' 'linux'
+MULTIARCH 'aarch64-linux-gnu' 'aarch64-linux-gnu'
+PLATLIBDIR 'lib' 'lib'
+PYTHONFRAMEWORK '' ''
+Py_DEBUG 0 0
+Py_ENABLE_SHARED 0 0
+Py_GIL_DISABLED 0 0
+Py_TRACE_REFS 0 0
+TZPATH '/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo' '/usr/share/zoneinfo:/usr/lib/zoneinfo:/usr/share/lib/zoneinfo:/etc/zoneinfo'
+VERSION '3.14' '3.14'
+WITH_DOC_STRINGS 1 1
+None ['3.14', None]
+3.14 posix_prefix posix_prefix ['data', 'include', 'platlib', 'platstdlib', 'purelib', 'scripts', 'stdlib'] ['nt', 'nt_user', 'nt_venv', 'osx_framework_user', 'posix_home', 'posix_prefix', 'posix_user', 'posix_venv', 'venv']
+linux aarch64 False
+py_version '3.14.7'
+py_version_short '3.14'
+py_version_nodot '314'
+abiflags ''
+platlibdir 'lib'
+abi_thread ''
+implementation 'Python'
+implementation_lower 'python'

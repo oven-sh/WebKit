@@ -1,0 +1,25 @@
+complex * complex 721644631
+complex / complex 796109700
+float / complex 487163282
+int / complex 112931556
+complex * float 664380201
+complex / float 25089518
+abs(complex) 58296010
+complex ** 3 342008549
+complex ** -2 609929763
+complex ** complex 370389194
+complex ** float 529280083
+float ** complex 532904433
+negative float ** float 243927319
+float % float 585853559
+divmod 734800603
+float // float 426771936
+float ** float 982582821
+round to 3 656569014
+round to -2 152962242
+sum of floats 761274217
+sum of complex 287608629
+int / int 818786372
+as_integer_ratio 691456234
+hash 814025146
+formatted 760001508

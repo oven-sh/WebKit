@@ -1,0 +1,48 @@
+---- what there is
+the module => ('resource', '', 'BuiltinImporter', None, ['RLIMIT_AS', 'RLIMIT_CORE', 'RLIMIT_CPU', 'RLIMIT_DATA', 'RLIMIT_FSIZE', 'RLIMIT_MEMLOCK', 'RLIMIT_MSGQUEUE', 'RLIMIT_NICE', 'RLIMIT_NOFILE', 'RLIMIT_NPROC', 'RLIMIT_OFILE', 'RLIMIT_RSS', 'RLIMIT_RTPRIO', 'RLIMIT_RTTIME', 'RLIMIT_SIGPENDING', 'RLIMIT_STACK', 'RLIM_INFINITY', 'RUSAGE_CHILDREN', 'RUSAGE_SELF', 'RUSAGE_THREAD', 'error', 'getpagesize', 'getrlimit', 'getrusage', 'prlimit', 'setrlimit', 'struct_rusage'])
+RLIMIT_AS => 9
+RLIMIT_CORE => 4
+RLIMIT_CPU => 0
+RLIMIT_DATA => 2
+RLIMIT_FSIZE => 1
+RLIMIT_MEMLOCK => 8
+RLIMIT_MSGQUEUE => 12
+RLIMIT_NICE => 13
+RLIMIT_NOFILE => 7
+RLIMIT_NPROC => 6
+RLIMIT_OFILE => 7
+RLIMIT_RSS => 5
+RLIMIT_RTPRIO => 14
+RLIMIT_RTTIME => 15
+RLIMIT_SIGPENDING => 11
+RLIMIT_STACK => 3
+RLIM_INFINITY => -1
+RUSAGE_CHILDREN => -1
+RUSAGE_SELF => 0
+RUSAGE_THREAD => 1
+error => ('type', None, 'Base class for I/O related errors.', 'builtins')
+getpagesize => ('builtin_function_or_method', '($module, /)', None, 'resource')
+getrlimit => ('builtin_function_or_method', '($module, resource, /)', None, 'resource')
+getrusage => ('builtin_function_or_method', '($module, who, /)', None, 'resource')
+prlimit => ('builtin_function_or_method', '($module, pid, resource, limits=None, /)', None, 'resource')
+setrlimit => ('builtin_function_or_method', '($module, resource, limits, /)', None, 'resource')
+struct_rusage => ('type', None, 'struct_rusage: Result from getrusage.\n\nThis object may be accessed either as a tuple of\n    (utime,stime,maxrss,ixrss,idrss,isrss,minflt,majflt,\n    nswap,inblock,oublock,msgsnd,msgrcv,nsignals,nvcsw,nivcsw)\nor via the attributes ru_utime, ru_stime, ru_maxrss, and so on.', 'resource')
+error => True
+struct_rusage => ('struct_rusage', 'resource', 'struct_rusage', "<class 'resource.struct_rusage'>", ['struct_rusage', 'tuple', 'object'], 16, 16, 0, ('ru_utime', 'ru_stime', 'ru_maxrss', 'ru_ixrss', 'ru_idrss', 'ru_isrss', 'ru_minflt', 'ru_majflt', 'ru_nswap', 'ru_inblock', 'ru_oublock', 'ru_msgsnd', 'ru_msgrcv', 'ru_nsignals', 'ru_nvcsw', 'ru_nivcsw'), [('ru_idrss', 'member_descriptor', 'unshared data size'), ('ru_inblock', 'member_descriptor', 'block input operations'), ('ru_isrss', 'member_descriptor', 'unshared stack size'), ('ru_ixrss', 'member_descriptor', 'shared memory size'), ('ru_majflt', 'member_descriptor', 'page faults requiring I/O'), ('ru_maxrss', 'member_descriptor', 'max. resident set size'), ('ru_minflt', 'member_descriptor', 'page faults not requiring I/O'), ('ru_msgrcv', 'member_descriptor', 'IPC messages received'), ('ru_msgsnd', 'member_descriptor', 'IPC messages sent'), ('ru_nivcsw', 'member_descriptor', 'involuntary context switches'), ('ru_nsignals', 'member_descriptor', 'signals received'), ('ru_nswap', 'member_descriptor', 'number of swap outs'), ('ru_nvcsw', 'member_descriptor', 'voluntary context switches'), ('ru_oublock', 'member_descriptor', 'block output operations'), ('ru_stime', 'member_descriptor', 'system time used'), ('ru_utime', 'member_descriptor', 'user time used')], "TypeError: structseq() missing required argument 'sequence' (pos 1)", 'TypeError: resource.struct_rusage() takes a 16-sequence (15-sequence given)', 'TypeError: resource.struct_rusage() takes a 16-sequence (17-sequence given)', resource.struct_rusage(ru_utime=0, ru_stime=1, ru_maxrss=2, ru_ixrss=3, ru_idrss=4, ru_isrss=5, ru_minflt=6, ru_majflt=7, ru_nswap=8, ru_inblock=9, ru_oublock=10, ru_msgsnd=11, ru_msgrcv=12, ru_nsignals=13, ru_nvcsw=14, ru_nivcsw=15), 15, True)
+---- getrusage
+what it gives => [('struct_rusage', 16, ['float', 'float', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int'], True, True, True), ('struct_rusage', 16, ['float', 'float', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int', 'int'], True, True, True)]
+it goes up => True
+what os.wait4() gives is one => True
+what it is given => ['TypeError: resource.getrusage() takes exactly one argument (0 given)', 'ValueError: invalid who parameter', 'ValueError: invalid who parameter', 'ValueError: invalid who parameter', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'TypeError: resource.getrusage() takes exactly one argument (2 given)', 'TypeError: resource.getrusage() takes no keyword arguments', 'struct_rusage', 'struct_rusage']
+---- getrlimit
+what it gives => [('RLIMIT_AS', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_CORE', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_CPU', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_DATA', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_FSIZE', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_MEMLOCK', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_MSGQUEUE', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_NICE', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_NOFILE', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_NPROC', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_OFILE', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_RSS', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_RTPRIO', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_RTTIME', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_SIGPENDING', 'tuple', 2, ['int', 'int'], True, True), ('RLIMIT_STACK', 'tuple', 2, ['int', 'int'], True, True)]
+what it is given => ['TypeError: resource.getrlimit() takes exactly one argument (0 given)', 'ValueError: invalid resource specified', (-1, -1), 'ValueError: invalid resource specified', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'TypeError: resource.getrlimit() takes exactly one argument (2 given)', 'TypeError: resource.getrlimit() takes no keyword arguments', 'tuple', 'tuple']
+---- setrlimit
+set and read back => [(None, True), (None, True), (None, True), (None, True)]
+by what => [(None, 1), (None, 2), (None, 3), (None, 1), (None, 4), (None, 5)]
+what will not do => ['ValueError: expected a tuple of 2 integers', 'ValueError: expected a tuple of 2 integers', 'ValueError: expected a tuple of 2 integers', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: expected a tuple of 2 integers', "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", None, 'ValueError: Cannot convert negative int', 'ValueError: Cannot convert negative int', 'ValueError: Cannot convert negative int', 'ValueError: Cannot convert negative int', 'OverflowError: Python int too large to convert to C rlim_t', 'OverflowError: Python int too large to convert to C rlim_t', 'OverflowError: Python int too large to convert to C rlim_t', 'TypeError: __index__ returned non-int (type str)', 'ValueError: Cannot convert negative int', 'ValueError: current limit exceeds maximum limit']
+as much as can be written => no limit to go over
+what it is given => ['TypeError: setrlimit expected 2 arguments, got 0', 'TypeError: setrlimit expected 2 arguments, got 1', 'TypeError: setrlimit expected 2 arguments, got 3', 'ValueError: invalid resource specified', None, 'ValueError: invalid resource specified', 'OverflowError: Python int too large to convert to C int', "TypeError: 'str' object cannot be interpreted as an integer", 'TypeError: resource.setrlimit() takes no keyword arguments']
+what is told of it => ('resource.setrlimit', True, 'list', 'ValueError: expected a tuple of 2 integers', 'nonsense', 'ValueError: invalid resource specified', 2)
+---- getpagesize
+getpagesize => ('int', True, 0, 'TypeError: resource.getpagesize() takes no arguments (1 given)', 'TypeError: resource.getpagesize() takes no keyword arguments')

@@ -36,6 +36,7 @@
 #include "PythonImport.h"
 #include "PythonLifecycle.h"
 #include "SourceProvider.h"
+#include <fcntl.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/WallTime.h>
 

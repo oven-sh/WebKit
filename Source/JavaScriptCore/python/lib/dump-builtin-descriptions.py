@@ -25,8 +25,12 @@
 
 
 # dump-builtin-descriptions.py > builtin-descriptions.json
+# dump-builtin-descriptions.py builtin-descriptions.json > builtin-descriptions-linux.json
 #
-# To be run by CPython, of the version that this is an implementation of, whenever that changes or a module is added to MODULES.
+# To be run by CPython, of the version that this is an implementation of and as it comes, whenever that changes or a module is added to MODULES. The first on macOS, and the second on Linux.
+#
+# Not everything is the same everywhere: select.epoll is Linux's and select.kqueue is not, and os.sendfile() takes more on macOS. Given what was written on another system, this writes only how this one differs: the entries
+# that are not there or are not the same, and [key, null] for what is there and is not here.
 #
 # What is built into Python and written in C says what its arguments are, in __text_signature__, and what it is for, in __doc__. Both are part of the
 # language as programs see it: inspect.signature() and help() go by them, and what is said when the arguments are wrong follows from the first. Here
@@ -49,7 +53,7 @@ import sys
 # The modules that are written in C++ here.
 MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable", "_csv", "_socket", "_asyncio"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
-MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio")
+MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio", "signal")
 
 
 def generator():
@@ -133,7 +137,7 @@ def add_type(a_type):
 for value in vars(builtins).values():
     if isinstance(value, type):
         add_type(value)
-for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator", "_functools", "_csv", "_socket", "_asyncio"):
+for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator", "_functools", "_csv", "_socket", "_asyncio", "_signal"):
     for value in vars(__import__(name)).values():
         if isinstance(value, type):
             add_type(value)
@@ -209,6 +213,12 @@ for name in MODULES:
 for name in ("strict", "ignore", "replace", "xmlcharrefreplace", "backslashreplace", "namereplace", "surrogatepass", "surrogateescape"):
     value = __import__("_codecs").lookup_error(name)
     entries.append([":" + value.__name__, "builtin_function_or_method", text(value.__text_signature__), text(value.__doc__)])
+
+if len(sys.argv) > 1:
+    with open(sys.argv[1]) as file:
+        elsewhere = {entry[0]: entry for entry in json.load(file)}
+    here = {entry[0] for entry in entries}
+    entries = [entry for entry in entries if elsewhere.get(entry[0]) != entry] + [[key, None] for key in elsewhere if key not in here]
 
 entries.sort()
 print("[")

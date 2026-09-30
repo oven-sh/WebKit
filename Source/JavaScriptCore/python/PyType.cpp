@@ -156,7 +156,7 @@ void PyType::addToLayout(unsigned slots, bool addsDict, bool addsWeakReferences)
         m_flagsForPython |= cpythonManagedDict | (m_itemSize ? 0 : cpythonInlineValues);
     }
     if (addsWeakReferences) {
-        m_weakReferenceOffset = -24;
+        m_weakReferenceOffset = -32; // MANAGED_WEAKREF_OFFSET
         m_flags |= HasWeakReferences;
         m_flagsForPython |= cpythonManagedWeakReferences;
     }

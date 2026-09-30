@@ -6,6 +6,8 @@
 #
 #     python3.14 command-line/x.py > command-line/x.expected
 #
+# That is on macOS. Where CPython prints something else on Linux, that is in x.linux.expected, and is what is gone by there.
+#
 # Where things are is worked out from where the program is, so it is put where `make install` would put it: bin/python3, beside lib/python3.14.
 
 # The part of the library that is written in Python does not come with the engine. It is CPython's, as it is.
@@ -27,13 +29,16 @@ for entry in "$library"/*; do
     ln -s "$entry" "$home/lib/python3.14/"
 done
 
+system=$(uname -s | tr '[:upper:]' '[:lower:]')
 failures=0
 runs=0
 kept=${TMPDIR:-/tmp}/python-command-lines-that-failed
 for program in "$@"; do
     runs=$((runs + 1))
     "$home/bin/python3" "$program" > "$home/actual" 2>&1
-    if ! cmp -s "$home/actual" "${program%.py}.expected"; then
+    expected=${program%.py}.expected
+    [ -f "${program%.py}.$system.expected" ] && expected=${program%.py}.$system.expected
+    if ! cmp -s "$home/actual" "$expected"; then
         failures=$((failures + 1))
         mkdir -p "$kept"
         cp "$home/actual" "$kept/$program.txt"
