@@ -340,9 +340,40 @@ void computePathConfiguration(JSGlobalObject* globalObject, Configuration& confi
     set("os_name"_s, jsNontrivialString(vm, "posix"_s));
 #endif
     set("WITH_NEXT_FRAMEWORK"_s, jsNumber(0));
-    // Where it would be if it had been installed by `make install`. It has not been, and nothing is looked for there that is not found by where the program is.
-    set("PREFIX"_s, jsNontrivialString(vm, "/usr/local"_s));
-    set("EXEC_PREFIX"_s, jsNontrivialString(vm, "/usr/local"_s));
+    // What the system says that the process is running, where it can be asked.
+    Vector<char> program;
+#if OS(DARWIN)
+    {
+        uint32_t length = 256;
+        program.grow(length + 1);
+        if (_NSGetExecutablePath(program.mutableSpan().data(), &length)) {
+            program.grow(length + 1);
+            if (_NSGetExecutablePath(program.mutableSpan().data(), &length))
+                program[0] = '\0';
+        }
+    }
+#elif OS(LINUX)
+    {
+        program.grow(PATH_MAX + 1);
+        ssize_t length = readlink("/proc/self/exe", program.mutableSpan().data(), PATH_MAX);
+        program[std::max<ssize_t>(length, 0)] = '\0';
+    }
+#endif
+    if (program.isEmpty() || program[0] != '/')
+        program = { '\0' };
+    // Where `make install` was told to put it, which CPython has built into it and falls back on when it cannot make out where it is from the name that it was started by. That is <prefix>/bin/python3, so it is
+    // worked out from where the program is.
+    JSValue prefix = jsNontrivialString(vm, "/usr/local"_s);
+    if (auto path = unsafeSpan(program.span().data()); !path.empty()) {
+        for (unsigned i = 0; i < 2 && !path.empty(); ++i)
+            path = path.first(reverseFind(path, '/'));
+        if (!path.empty()) {
+            prefix = pathFrom(globalObject, path);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+    set("PREFIX"_s, prefix);
+    set("EXEC_PREFIX"_s, prefix);
     set("PYTHONPATH"_s, jsUndefined());
     set("VPATH"_s, jsUndefined());
     set("PLATLIBDIR"_s, jsNontrivialString(vm, "lib"_s));
@@ -361,21 +392,12 @@ void computePathConfiguration(JSGlobalObject* globalObject, Configuration& confi
     RETURN_IF_EXCEPTION(scope, void());
     unsetenv("__PYVENV_LAUNCHER__");
 
-    // progname_to_dict(): what the system says that the process is running, where it can be asked
+    // progname_to_dict(), which asks only where that is how it is done
     JSValue realExecutable = jsUndefined();
 #if OS(DARWIN)
-    {
-        uint32_t length = 256;
-        Vector<char> path(length + 1);
-        if (_NSGetExecutablePath(path.mutableSpan().data(), &length)) {
-            path.grow(length + 1);
-            if (_NSGetExecutablePath(path.mutableSpan().data(), &length))
-                path[0] = '\0';
-        }
-        if (path[0] == '/') {
-            realExecutable = pathFrom(globalObject, unsafeSpan(path.span().data()));
-            RETURN_IF_EXCEPTION(scope, void());
-        }
+    if (program[0]) {
+        realExecutable = pathFrom(globalObject, unsafeSpan(program.span().data()));
+        RETURN_IF_EXCEPTION(scope, void());
     }
 #endif
     set("real_executable"_s, realExecutable);

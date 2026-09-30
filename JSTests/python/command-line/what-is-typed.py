@@ -17,7 +17,7 @@ def tidy(text):
     text = re.sub(r" at 0x[0-9a-f]+", " at 0x", text)
     text = re.sub(r'(?m)^  File "(?:<frozen [\w.]+>|PREFIX/[^"]+)", line \d+, in .*\n(?:    .*\n)*', "  (in the library)\n", text)
     text = re.sub(r"(?:  \(in the library\)\n)+", "  (in the library)\n", text)
-    text = re.sub(r"(?m)^Python 3\.14\.\d+ .* on (\w+)$", r"Python 3.14.N on \1", text)
+    text = re.sub(r"(?m)^Python 3\.14\.\d+ .* on %s$" % sys.platform, "Python 3.14.N on this system", text)
     text = re.sub(r"(?m)^\S*/[Pp]ython[\d.]*: ", "PYTHON: ", text)
     return text
 

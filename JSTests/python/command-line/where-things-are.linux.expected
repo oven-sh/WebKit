@@ -1,0 +1,32 @@
+---- how it is started
+by all of its name => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+from where it is => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+from above where it is => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+by looking for it => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+by a name that is nowhere to be found => (0, "  PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+with dots in the way => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+by a link => (0, 'PREFIX PREFIX PREFIX/lib/python3.14 PREFIX/lib/python3.14/os.py\n', '')
+by a link to a link => (0, 'PREFIX PREFIX PREFIX/lib/python3.14 PREFIX/lib/python3.14/os.py\n', '')
+---- what it is told
+PYTHONHOME => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+PYTHONHOME, in two parts => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+PYTHONHOME, of which the second is nowhere => (0, "PYTHON PYTHON PREFIX /nowhere PREFIX /nowhere PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', '/nowhere/lib/python3.14/lib-dynload'] 1\n", '')
+PYTHONHOME, and -E => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+PYTHONPATH => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', '/a', 'HERE/b', 'HERE', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+PYTHONPATH, and -I => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+-S => (0, "PREFIX PREFIX PREFIX/lib/python3.14 PREFIX/lib/python3.14/os.py\nFalse ['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload']\n", '')
+-s => (0, "PYTHON PYTHON PREFIX PREFIX PREFIX PREFIX PREFIX/lib/python3.14 lib None\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+---- a virtual environment
+['bin', 'include', 'lib', 'lib64', 'pyvenv.cfg'] True ['home = BIN', 'include-system-site-packages = false', 'executable = PYTHON']
+its python => (0, "HERE/env/bin/python PYTHON HERE/env HERE/env PREFIX PREFIX PREFIX/lib/python3.14 lib BIN\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload', 'HERE/env/lib/python3.14/site-packages'] 1\n", '')
+-I => (0, "HERE/env/bin/python PYTHON HERE/env HERE/env PREFIX PREFIX PREFIX/lib/python3.14 lib BIN\n['PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload', 'HERE/env/lib/python3.14/site-packages'] 1\n", '')
+-S => (0, "HERE/env/bin/python PYTHON HERE/env HERE/env PREFIX PREFIX PREFIX/lib/python3.14 lib no _home\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 0\n", '')
+what it starts => (0, 'HERE/env HERE/env/bin/python\n\n', '')
+['HERE/env/lib/python3.14/site-packages']
+finds what is installed in it => (0, 'from the environment\n', '')
+and what is outside does not => (1, '', 'Traceback (most recent call last):\n  File "<string>", line 1, in <module>\n    import installed\nModuleNotFoundError: No module named \'installed\'\n')
+a .pth file => (0, "1 ['HERE/extra']\n", '')
+one that sees what is outside => (0, "HERE/open-env/bin/python PYTHON HERE/open-env HERE/open-env PREFIX PREFIX PREFIX/lib/python3.14 lib BIN\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload', 'HERE/open-env/lib/python3.14/site-packages'] 2\n", '')
+with nothing said but where home is => (0, "HERE/bare/bin/python PYTHON HERE/bare HERE/bare PREFIX PREFIX PREFIX/lib/python3.14 lib BIN\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
+with nothing said => (0, 'HERE/bare HERE/bare PREFIX/lib/python3.14 PREFIX/lib/python3.14/os.py\nHERE/bare/bin/python PREFIX None\n', '')
+said another way => (0, "HERE/bare/bin/python PYTHON HERE/bare HERE/bare PREFIX PREFIX PREFIX/lib/python3.14 lib BIN\n['', 'PREFIX/lib/python314.zip', 'PREFIX/lib/python3.14', 'PREFIX/lib/python3.14/lib-dynload'] 1\n", '')
