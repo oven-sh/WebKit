@@ -52,9 +52,12 @@
 #include <sys/event.h>
 #endif
 
+#if OS(LINUX)
+#define PYTHON_HAVE_EPOLL 1
+#include <sys/epoll.h>
+#endif
+
 // The module select: Modules/selectmodule.c of CPython.
-//
-// FIXME: epoll, which is Linux's, is not written. `selectors` makes do with poll().
 
 namespace JSC { namespace Python {
 
@@ -65,6 +68,7 @@ struct SelectModuleState final : NativeState {
     WriteBarrier<PyType> poll;
     WriteBarrier<PyType> kevent;
     WriteBarrier<PyType> kqueue;
+    WriteBarrier<PyType> epoll;
 };
 
 template<typename Visitor>
@@ -73,6 +77,7 @@ void SelectModuleState::visit(Visitor& visitor)
     visitor.append(poll);
     visitor.append(kevent);
     visitor.append(kqueue);
+    visitor.append(epoll);
 }
 
 SelectModuleState& selectState(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<SelectModuleState>(); }
@@ -160,6 +165,112 @@ template<typename Visitor> void PollState::visit(Visitor& visitor) { visitor.app
 
 // _PyLong_UnsignedShort_Converter(). Nothing if it raised.
 std::optional<unsigned short> toUnsignedShort(JSGlobalObject* globalObject, JSValue value) { return toUnsigned<unsigned short>(globalObject, value, "unsigned short"_s); }
+
+#if PYTHON_HAVE_KQUEUE || PYTHON_HAVE_EPOLL
+
+// How kqueue.control() and epoll.poll() wait, which is where an event loop of asyncio's waits. What each watches with is a descriptor that can itself be watched, and that is what a host is given.
+//
+// `look` asks the system. It is given for how many nanoseconds to wait, or nothing to wait for as long as it takes, and whether it is the host that is doing the waiting. It gives how many things there are to tell of, or
+// -1 and errno. `watched` is how many things it was asked to tell of at most: a selector asks for as many as it is watching for. This gives what `look` gave. Nothing if it raised.
+template<typename Look, typename RaiseClosed>
+std::optional<int> waitForEvents(JSGlobalObject* globalObject, const int& descriptor, int watched, std::optional<int64_t> timeout, const Look& look, const RaiseClosed& raiseClosed)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto inSeconds = [] (std::optional<int64_t> nanoseconds) { return nanoseconds ? std::optional { Seconds::fromNanoseconds(static_cast<double>(*nanoseconds)) } : std::nullopt; };
+    // An event loop that the host turns does not wait. It says how long it would have, and it is the host that waits, with nothing of Python's on the stack: turnEventLoop().
+    bool isBeingTurned = watched && isEventLoopBeingTurned(globalObject);
+    std::optional<Seconds> wouldHaveWaited = inSeconds(timeout);
+    if (isBeingTurned)
+        timeout = 0;
+    int64_t deadline = timeout ? deadlineAfter(*timeout) : 0;
+    int count;
+    // With a host that has things of its own to do, it is the host that waits: Configuration::waitForDescriptor. This looks, without waiting, before and after.
+    // There is no waiting if there is nothing to be told of, or no time to wait for.
+    auto wait = globalObject->pyRealm()->configuration().waitForDescriptor;
+    bool hostWaits = wait && watched && (!timeout || *timeout > 0);
+    while (hostWaits) {
+        // What the host ran meanwhile may have closed it.
+        if (descriptor < 0) {
+            raiseClosed();
+            return std::nullopt;
+        }
+        errno = 0;
+        count = look(0, true);
+        if (count && errno != EINTR)
+            break;
+        checkSignals(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (timeout) {
+            timeout = timeUntil(deadline);
+            if (*timeout <= 0) {
+                count = 0;
+                break;
+            }
+        }
+        wait(globalObject, descriptor, inSeconds(timeout));
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
+    while (!hostWaits) {
+        errno = 0;
+        count = look(timeout, false);
+        if (errno != EINTR)
+            break;
+        checkSignals(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+        if (!timeout)
+            continue;
+        timeout = timeUntil(deadline);
+        if (*timeout < 0) {
+            count = 0;
+            break;
+        }
+    }
+    if (count == -1) {
+        raiseOSError(globalObject, scope, errno);
+        return std::nullopt;
+    }
+    if (isBeingTurned) {
+        noteWaitOfEventLoop(globalObject, descriptor, watched, wouldHaveWaited, count);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
+    return count;
+}
+
+#endif // PYTHON_HAVE_KQUEUE || PYTHON_HAVE_EPOLL
+
+#if PYTHON_HAVE_EPOLL
+
+// ---- epoll
+
+struct EpollState final : NativeState {
+    PYTHON_NATIVE_STATE(EpollState);
+    // pyepoll_dealloc()
+    ~EpollState()
+    {
+        if (descriptor >= 0)
+            close(descriptor);
+    }
+    int descriptor { -1 };
+};
+
+template<typename Visitor> void EpollState::visit(Visitor&) { }
+
+JSValue raiseClosedEpoll(JSGlobalObject* globalObject, ThrowScope& scope) { return raiseValueError(globalObject, scope, "I/O operation on closed epoll object"_s); }
+
+// newPyEpoll_Object()
+JSValue newEpoll(JSGlobalObject* globalObject, PyType* type, int given)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int descriptor = given == -1 ? epoll_create1(EPOLL_CLOEXEC) : given;
+    if (descriptor < 0)
+        return raiseOSError(globalObject, scope, errno);
+    auto state = makeUnique<EpollState>();
+    state->descriptor = descriptor;
+    return PyStateObject::create(vm, type->instanceStructure(), WTF::move(state));
+}
+
+#endif // PYTHON_HAVE_EPOLL
 
 #if PYTHON_HAVE_KQUEUE
 
@@ -581,66 +692,19 @@ PYTHON_NATIVE(kqueueControl)
     Vector<struct kevent, 8> events;
     if (!events.tryGrow(static_cast<size_t>(*maximum)))
         return JSValue::encode(raiseMemoryError(globalObject, scope));
-    // An event loop that the host turns does not wait. It says how long it would have, and it is the host that waits, with nothing of Python's on the stack: turnEventLoop().
-    bool isBeingTurned = *maximum && isEventLoopBeingTurned(globalObject);
-    std::optional<Seconds> wouldHaveWaited = timePointer ? std::optional { Seconds::fromNanoseconds(static_cast<double>(timeout)) } : std::nullopt;
-    if (isBeingTurned) {
-        timeout = 0;
-        time = { 0, 0 };
-        timePointer = &time;
-    }
-    int64_t deadline = timePointer ? deadlineAfter(timeout) : 0;
-    int count;
-    // With a host that has things of its own to do, it is the host that waits: Configuration::waitForDescriptor. This looks, without waiting, before and after.
-    // There is no waiting if there is nothing to be told of, or no time to wait for.
-    auto wait = realm->configuration().waitForDescriptor;
-    bool hostWaits = wait && *maximum && (!timePointer || timeout > 0);
-    while (hostWaits) {
-        // What the host ran meanwhile may have closed it.
-        if (self.descriptor < 0)
-            return JSValue::encode(raiseClosedKqueue(globalObject, scope));
-        struct timespec noTime { 0, 0 };
-        errno = 0;
-        count = kevent(self.descriptor, changes.span().data(), static_cast<int>(changes.size()), events.mutableSpan().data(), *maximum, &noTime);
-        // They have been made, even if it was interrupted.
-        changes.clear();
-        if (count && errno != EINTR)
-            break;
-        checkSignals(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (timePointer) {
-            timeout = timeUntil(deadline);
-            if (timeout <= 0) {
-                count = 0;
-                break;
-            }
-        }
-        wait(globalObject, self.descriptor, timePointer ? std::optional { Seconds::fromNanoseconds(static_cast<double>(timeout)) } : std::nullopt);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    while (!hostWaits) {
-        errno = 0;
-        count = kevent(self.descriptor, changes.span().data(), static_cast<int>(changes.size()), events.mutableSpan().data(), *maximum, timePointer);
-        if (errno != EINTR)
-            break;
-        checkSignals(globalObject);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!timePointer)
-            continue;
-        timeout = timeUntil(deadline);
-        if (timeout < 0) {
-            count = 0;
-            break;
-        }
-        timeAsTimespec(globalObject, timeout, time);
-    }
-    if (count == -1)
-        return JSValue::encode(raiseOSError(globalObject, scope, errno));
-    if (isBeingTurned) {
-        // A selector asks to be told of as many things as it is watching for.
-        noteWaitOfEventLoop(globalObject, self.descriptor, *maximum, wouldHaveWaited, count);
-        RETURN_IF_EXCEPTION(scope, { });
-    }
+    auto counted = waitForEvents(globalObject, self.descriptor, *maximum, timePointer ? std::optional { timeout } : std::nullopt, [&] (std::optional<int64_t> nanoseconds, bool hostWaits) {
+        if (nanoseconds)
+            timeAsTimespec(globalObject, *nanoseconds, time);
+        int count = kevent(self.descriptor, changes.span().data(), static_cast<int>(changes.size()), events.mutableSpan().data(), *maximum, nanoseconds ? &time : nullptr);
+        // They have been made, even if it was interrupted, and it will be looking again whether or not it was.
+        if (hostWaits)
+            changes.clear();
+        return count;
+    }, [&] {
+        raiseClosedKqueue(globalObject, scope);
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    int count = *counted;
     MarkedArgumentBuffer result;
     Structure* structure = selectState(globalObject).kevent->instanceStructure();
     for (int i = 0; i < count; ++i) {
@@ -652,6 +716,151 @@ PYTHON_NATIVE(kqueueControl)
 }
 
 #endif // PYTHON_HAVE_KQUEUE
+
+#if PYTHON_HAVE_EPOLL
+
+// epoll(sizehint=-1, flags=0)
+PYTHON_NATIVE(epollNew)
+{
+    NATIVE_PROLOGUE();
+    int sizeHint = -1;
+    if (JSValue given = args.at(1)) {
+        auto converted = toCInt(globalObject, given);
+        RETURN_IF_EXCEPTION(scope, { });
+        sizeHint = *converted;
+    }
+    int flags = 0;
+    if (JSValue given = args.at(2)) {
+        auto converted = toCInt(globalObject, given);
+        RETURN_IF_EXCEPTION(scope, { });
+        flags = *converted;
+    }
+    // Nothing is made of either, but that they make sense.
+    if (sizeHint != -1 && sizeHint <= 0)
+        return JSValue::encode(raiseValueError(globalObject, scope, "negative sizehint"_s));
+    if (flags && flags != EPOLL_CLOEXEC)
+        return JSValue::encode(raise(globalObject, scope, BuiltinType::OSError, "invalid flags"_s));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newEpoll(globalObject, asType(args[0]), -1)));
+}
+
+// fromfd(fd, /)
+PYTHON_NATIVE(epollFromDescriptor)
+{
+    NATIVE_PROLOGUE();
+    auto descriptor = toCInt(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    RELEASE_AND_RETURN(scope, JSValue::encode(newEpoll(globalObject, asType(args[0]), *descriptor)));
+}
+
+PYTHON_NATIVE(epollClose)
+{
+    NATIVE_PROLOGUE();
+    // What goes wrong with closing it is not said: an errno is never less than nothing, which is what CPython looks for.
+    if (int descriptor = std::exchange(stateOf<EpollState>(args[0]).descriptor, -1); descriptor >= 0) {
+        noteClosingOfDescriptor(globalObject, descriptor);
+        close(descriptor);
+    }
+    RETURN_NONE();
+}
+
+PYTHON_NATIVE(epollFileno)
+{
+    NATIVE_PROLOGUE();
+    int descriptor = stateOf<EpollState>(args[0]).descriptor;
+    if (descriptor < 0)
+        return JSValue::encode(raiseClosedEpoll(globalObject, scope));
+    return JSValue::encode(jsNumber(descriptor));
+}
+
+// register(fd, eventmask=EPOLLIN | EPOLLPRI | EPOLLOUT), modify(fd, eventmask) and unregister(fd): pyepoll_internal_ctl()
+PYTHON_NATIVE(epollControl)
+{
+    NATIVE_PROLOGUE();
+    int operation = unpack<int>(callFrame, 0);
+    auto watched = toFileDescriptorOrFile(globalObject, args.at(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    struct epoll_event event { };
+    event.events = EPOLLIN | EPOLLPRI | EPOLLOUT;
+    event.data.fd = *watched;
+    if (JSValue mask = args.at(2)) {
+        // PyLong_AsUnsignedLongMask()
+        JSValue integer = toInt(globalObject, mask);
+        RETURN_IF_EXCEPTION(scope, { });
+        event.events = static_cast<uint32_t>(lowBitsOfInt(integer));
+    }
+    int descriptor = stateOf<EpollState>(args[0]).descriptor;
+    if (descriptor < 0)
+        return JSValue::encode(raiseClosedEpoll(globalObject, scope));
+    if (epoll_ctl(descriptor, operation, *watched, &event) < 0)
+        return JSValue::encode(raiseOSError(globalObject, scope, errno));
+    RETURN_NONE();
+}
+
+// poll(timeout=None, maxevents=-1)
+PYTHON_NATIVE(epollPoll)
+{
+    NATIVE_PROLOGUE();
+    auto& self = stateOf<EpollState>(args[0]);
+    // The arguments are seen to first, by what CPython generates.
+    int maximum = -1;
+    if (JSValue given = args.at(2)) {
+        auto converted = toCInt(globalObject, given);
+        RETURN_IF_EXCEPTION(scope, { });
+        maximum = *converted;
+    }
+    if (self.descriptor < 0)
+        return JSValue::encode(raiseClosedEpoll(globalObject, scope));
+    // What is less than nothing is to wait for as long as it takes, as None is.
+    std::optional<int64_t> timeout;
+    if (JSValue given = args.at(1); given && !isNone(given)) {
+        auto converted = timeFromSecondsObject(globalObject, given, TimeRounding::Timeout);
+        if (scope.exception()) [[unlikely]] {
+            if (catchException(globalObject, BuiltinType::TypeError))
+                raiseTypeError(globalObject, scope, "timeout must be an integer or None"_s);
+            return { };
+        }
+        int64_t milliseconds = divideTime(*converted, nanosecondsPerMillisecond, TimeRounding::Ceiling);
+        if (milliseconds < INT_MIN || milliseconds > INT_MAX)
+            return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "timeout is too large"_s));
+        if (*converted >= 0)
+            timeout = *converted;
+    }
+    if (maximum == -1)
+        maximum = FD_SETSIZE - 1;
+    else if (maximum < 1)
+        return JSValue::encode(raiseValueError(globalObject, scope, concatenate("maxevents must be greater than 0, got "_s, maximum)));
+    Vector<struct epoll_event, 8> events;
+    if (!events.tryGrow(static_cast<size_t>(maximum)))
+        return JSValue::encode(raiseMemoryError(globalObject, scope));
+    auto count = waitForEvents(globalObject, self.descriptor, maximum, timeout, [&] (std::optional<int64_t> nanoseconds, bool) {
+        // It goes by the millisecond, and is to wait for at least as long as it was asked to.
+        return epoll_wait(self.descriptor, events.mutableSpan().data(), maximum, nanoseconds ? static_cast<int>(divideTime(*nanoseconds, nanosecondsPerMillisecond, TimeRounding::Ceiling)) : -1);
+    }, [&] {
+        raiseClosedEpoll(globalObject, scope);
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    MarkedArgumentBuffer result;
+    for (int i = 0; i < *count; ++i)
+        result.append(PyTuple::create(globalObject, { jsNumber(events[i].data.fd), intFromInt64(globalObject, events[i].events) }));
+    return JSValue::encode(newList(globalObject, result));
+}
+
+PYTHON_NATIVE(epollEnter)
+{
+    NATIVE_PROLOGUE();
+    if (stateOf<EpollState>(args[0]).descriptor < 0)
+        return JSValue::encode(raiseClosedEpoll(globalObject, scope));
+    return JSValue::encode(args[0]);
+}
+
+// __exit__(exc_type=None, exc_value=None, exc_tb=None, /)
+PYTHON_NATIVE(epollExit)
+{
+    NATIVE_PROLOGUE();
+    RELEASE_AND_RETURN(scope, JSValue::encode(callMethodNamed(globalObject, args[0], Identifier::fromString(vm, "close"_s))));
+}
+
+#endif // PYTHON_HAVE_EPOLL
 
 JSObject* createSelectModule(JSGlobalObject* globalObject)
 {
@@ -713,6 +922,23 @@ JSObject* createSelectModule(JSGlobalObject* globalObject)
             { "control"_s, kqueueControl },
         });
         addGetSet(globalObject, kqueue, "closed"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsBoolean(stateOf<KqueueState>(self).descriptor < 0); });
+#endif
+#if PYTHON_HAVE_EPOLL
+        PyType* epoll = createType(state.epoll, "select.epoll"_s);
+        addMethods(globalObject, epoll, {
+            { "__new__"_s, epollNew, Kind::New, 0, "(sizehint=-1, flags=0)"_s, PyNativeFunction::Arguments::AreThoseOfTheClass },
+            { "fromfd"_s, epollFromDescriptor, Kind::ClassMethod },
+            { "close"_s, epollClose },
+            { "fileno"_s, epollFileno },
+            { "register"_s, epollControl, Kind::Method, pack(EPOLL_CTL_ADD) },
+            { "modify"_s, epollControl, Kind::Method, pack(EPOLL_CTL_MOD) },
+            { "unregister"_s, epollControl, Kind::Method, pack(EPOLL_CTL_DEL) },
+            { "poll"_s, epollPoll },
+            { "__enter__"_s, epollEnter },
+            { "__exit__"_s, epollExit },
+        });
+        addGenericGetAttribute(globalObject, epoll);
+        addGetSet(globalObject, epoll, "closed"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsBoolean(stateOf<EpollState>(self).descriptor < 0); });
 #endif
     }
 
@@ -811,6 +1037,28 @@ JSObject* createSelectModule(JSGlobalObject* globalObject)
     ADD(NOTE_LINKDOWN, NOTE_LINKDOWN);
     ADD(NOTE_LINKINV, NOTE_LINKINV);
 #endif
+#undef ADD
+#endif
+#if PYTHON_HAVE_EPOLL
+    add("epoll"_s, state.epoll.get());
+    // EPOLLET is the top bit of 32.
+#define ADD(name) add(#name ""_s, intFromInt64(globalObject, static_cast<int64_t>(static_cast<uint32_t>(name))))
+    ADD(EPOLLIN);
+    ADD(EPOLLOUT);
+    ADD(EPOLLPRI);
+    ADD(EPOLLERR);
+    ADD(EPOLLHUP);
+    ADD(EPOLLRDHUP);
+    ADD(EPOLLET);
+    ADD(EPOLLONESHOT);
+    ADD(EPOLLEXCLUSIVE);
+    ADD(EPOLLRDNORM);
+    ADD(EPOLLRDBAND);
+    ADD(EPOLLWRNORM);
+    ADD(EPOLLWRBAND);
+    ADD(EPOLLMSG);
+    ADD(EPOLLWAKEUP);
+    ADD(EPOLL_CLOEXEC);
 #undef ADD
 #endif
     return module;
