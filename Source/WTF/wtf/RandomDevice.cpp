@@ -129,6 +129,7 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
 #elif OS(UNIX)
     ssize_t amountRead = 0;
 #if OS(LINUX)
+#if defined(SYS_getrandom)
     // getrandom(2) reads the pool /dev/urandom reads, but needs neither the path nor a free descriptor.
     // Any failure reads the rest from /dev/urandom: EAGAIN (pool not initialized, where /dev/urandom
     // does not block), ENOSYS, EPERM (a seccomp filter, which can be installed at any time).
@@ -143,6 +144,7 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
     }
     if (static_cast<size_t>(amountRead) == buffer.size())
         return;
+#endif
     std::call_once(m_openURandomOnce, [this] {
         openURandom();
     });

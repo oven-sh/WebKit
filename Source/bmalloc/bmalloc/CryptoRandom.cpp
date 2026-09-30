@@ -124,7 +124,7 @@ void ARC4RandomNumberGenerator::stir()
     // TODO Generate random bytes - this appears to be unused when running libpas
     BCRASH();
 #else
-#if BOS(LINUX)
+#if BOS(LINUX) && defined(SYS_getrandom)
     // getrandom(2) reads the pool /dev/urandom reads, but needs neither the path nor a free descriptor.
     // It fills a request of up to 256 bytes whole or fails. Any failure reads /dev/urandom instead:
     // EAGAIN (pool not initialized, where /dev/urandom does not block), ENOSYS, EPERM.
