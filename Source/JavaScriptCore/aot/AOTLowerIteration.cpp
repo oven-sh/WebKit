@@ -85,6 +85,17 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     }
     LValue symbolIterator = lowJSValue(node->use(symbolIteratorRegister));
 
+    if (usesStubs && !isAsync) {
+        // Every loop has to be ready for anything, and how that is done is the same for all of them.
+        PatchpointValue* opened = callStub(Stub::IteratorOpen, m_proc.addTuple({ Int64, Int64 }),
+            { { iterable, GPRInfo::argumentGPR0 }, { symbolIterator, GPRInfo::argumentGPR1 }, { slotAddress(allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Next))), GPRInfo::argumentGPR2 } },
+            { });
+        opened->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1) };
+        setProj(node, iteratorRegister, m_out.extract(opened, 0));
+        setProj(node, nextRegister, m_out.extract(opened, 1));
+        return;
+    }
+
     LBasicBlock fastCase = m_out.newBlock();
     LBasicBlock genericCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -159,46 +170,17 @@ void Lowering::lowerIteratorNext(Node* node)
     }
 
     if constexpr (usesStubs) {
-        // Every loop over an array would have a copy of how that is done, and every loop has to be ready for anything else.
-        PatchpointValue* shortcut = callStub(Stub::IteratorNext, m_proc.addTuple({ Int64, Int64, Int64, Int32 }),
-            { { next, GPRInfo::argumentGPR0 }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 } },
+        // Every loop over an array would have a copy of how that is done, and every loop has to be ready for anything else: of which every loop would have a copy as well.
+        unsigned slotOfDone = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Done));
+        unsigned slotOfValue = allocateSite(node, static_cast<unsigned>(WellKnownIdentifier::Value));
+        RELEASE_ASSERT(slotOfValue == slotOfDone + 1);
+        PatchpointValue* result = callStub(Stub::IteratorNext, m_proc.addTuple({ Int64, Int64, Int64 }),
+            { { next, GPRInfo::argumentGPR0 }, { iterator, GPRInfo::argumentGPR1 }, { iterable, GPRInfo::argumentGPR2 }, { slotAddress(slotOfDone), GPRInfo::argumentGPR3 } },
             { });
-        shortcut->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1), ValueRep::reg(GPRInfo::argumentGPR2), ValueRep::reg(GPRInfo::regT9) };
-
-        LBasicBlock genericCase = m_out.newBlock();
-        LBasicBlock notDone = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        Vector<ValueFromBlock, 3> doneResults;
-        Vector<ValueFromBlock, 3> valueResults;
-        Vector<ValueFromBlock, 3> nextResults;
-        auto finish = [&](LValue done, LValue value, LValue newNext) {
-            doneResults.append(m_out.anchor(done));
-            valueResults.append(m_out.anchor(value));
-            nextResults.append(m_out.anchor(newNext));
-        };
-        auto getWellKnown = [&](LValue base, WellKnownIdentifier identifier) -> LValue {
-            return callStub(Stub::GetByIdWellKnown, Int64, { { base, GPRInfo::argumentGPR0 }, { slotAddress(allocateSite(node, static_cast<unsigned>(identifier))), GPRInfo::argumentGPR1 } }, { });
-        };
-
-        finish(m_out.extract(shortcut, 0), m_out.extract(shortcut, 1), m_out.extract(shortcut, 2));
-        m_out.branch(m_out.isZero32(m_out.extract(shortcut, 3)), usually(continuation), unsure(genericCase));
-
-        m_out.appendTo(genericCase, notDone);
-        LValue result = emitCall(node, next, Arguments { iterator });
-        checkIsObjectOrThrowIteratorResultIsNotObject(node, result);
-        LValue done = getWellKnown(result, WellKnownIdentifier::Done);
-        finish(done, m_out.constInt64(JSValue::encode(jsUndefined())), next);
-        LValue isDone = callStub(Stub::ToBoolean, Int32, { { done, GPRInfo::argumentGPR0 } }, { }, StubClobbers::Temporaries);
-        m_out.branch(isDone, unsure(continuation), unsure(notDone));
-
-        m_out.appendTo(notDone, continuation);
-        finish(done, getWellKnown(result, WellKnownIdentifier::Value), next);
-        m_out.jump(continuation);
-
-        m_out.appendTo(continuation);
-        setProj(node, bytecode.m_done, m_out.phi(Int64, doneResults));
-        setProj(node, bytecode.m_value, m_out.phi(Int64, valueResults));
-        setProj(node, bytecode.m_next, m_out.phi(Int64, nextResults));
+        result->resultConstraints = { ValueRep::reg(GPRInfo::argumentGPR0), ValueRep::reg(GPRInfo::argumentGPR1), ValueRep::reg(GPRInfo::argumentGPR2) };
+        setProj(node, bytecode.m_done, m_out.extract(result, 0));
+        setProj(node, bytecode.m_value, m_out.extract(result, 1));
+        setProj(node, bytecode.m_next, m_out.extract(result, 2));
         return;
     }
 
@@ -360,6 +342,11 @@ void Lowering::lowerIteratorCloseCheck(Node* node)
     LValue iterator = lowJSValue(iteratorNode);
     if (!mayBe(iteratorNode->type, TCellOther)) {
         setJSValue(node, iterator);
+        return;
+    }
+    if constexpr (usesStubs) {
+        setJSValue(node, callStub(Stub::IteratorCloseCheck, Int64,
+            { { iterator, GPRInfo::argumentGPR0 }, { lowJSValue(node->use(bytecode.m_iterable)), GPRInfo::argumentGPR1 }, { lowJSValue(node->use(bytecode.m_next)), GPRInfo::argumentGPR2 } }, { }));
         return;
     }
 

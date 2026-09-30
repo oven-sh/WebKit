@@ -840,6 +840,11 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
         LValue value = lowJSValue(valueNode);
         LBasicBlock slowCase = nullptr;
         LBasicBlock continuation = nullptr;
+        if (usesStubs && mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32)) {
+            callStub(Stub::PutByValDirect, Void, { { base, GPRInfo::argumentGPR0 }, { property, GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
+                { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() } });
+            return true;
+        }
         if (mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32) && !(Options::aotDisableFastPaths() & 8) && !isWithout(WithoutPutByValDirect)) {
             // An element of an array that keeps its elements as values, its own to write to, where there is room for it already: at the end as a rule, which is how
             // map() and the like fill in what they make.

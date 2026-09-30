@@ -200,6 +200,8 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(GetByVal) \
     /* A0 = base, A1 = property, A2 = value, A3 = whether the code is strict. */ \
     v(PutByVal) \
+    /* Likewise, as op_put_by_val_direct has them: the base is an object. */ \
+    v(PutByValDirect) \
     /* A0 = base, A1 = site, whose identifier is WellKnownIdentifier::Length. Result in A0. */ \
     v(GetLength) \
     /* op_resolve_scope and the op_get_from_scope it is for, in one. A0 = scope, A1 = the site of the first; the second's is */ \
@@ -221,9 +223,13 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(PutToScope) \
     /* As GetById, for a site whose identifier is a WellKnownIdentifier. */ \
     v(GetByIdWellKnown) \
-    /* A0 = next, A1 = iterator, A2 = iterable, as op_iterator_next has them. If T9 comes back zero, A0 = done, */ \
-    /* A1 = value, A2 = next. Else there is no shortcut: nothing was done, and A0-A2 are as they were. */ \
+    /* A0 = next, A1 = iterator, A2 = iterable, as op_iterator_next has them; A3 = two slots, one after the other, for done and value. */ \
+    /* Comes back with A0 = done, A1 = value, A2 = next. */ \
     v(IteratorNext) \
+    /* A0 = iterable, A1 = what its @@iterator is, as op_iterator_open has them; A2 = a slot, for next. Comes back with A0 = iterator, A1 = next. */ \
+    v(IteratorOpen) \
+    /* A0 = iterator, A1 = iterable, A2 = next, as op_iterator_close_check has them. Comes back with A0 = the iterator to close: see lowerIteratorCloseCheck(). */ \
+    v(IteratorCloseCheck) \
     /* What follows is what the JIT has thunks for, which there may not be a JIT to make. */ \
     /* Jumped to, in the frame of a function of the static compiler's in which, or in something called by which, an exception was */ \
     /* thrown, with the link register saying where it is at. Finds the handler and goes there. */ \

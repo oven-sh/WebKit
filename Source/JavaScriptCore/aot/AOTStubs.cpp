@@ -1036,6 +1036,52 @@ static void generatePutByVal(CCallHelpers& jit)
     callAndCheckException(jit, T11, Returns::Void);
 }
 
+static void generatePutByValDirect(CCallHelpers& jit)
+{
+    // An element of an array that keeps its elements as values, its own to write to, where there is room for it already: at the end as a rule.
+    CCallHelpers::JumpList slow;
+    jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T9);
+    slow.append(jit.branch64(CCallHelpers::Below, A1, T9));
+    jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T11);
+    jit.and32(TrustedImm32(IsArray | IndexingShapeMask | CopyOnWrite), T11);
+    slow.append(jit.branch32(CCallHelpers::NotEqual, T11, TrustedImm32(ArrayWithContiguous)));
+    jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T11);
+    jit.zeroExtend32ToWord(A1, T12);
+    slow.append(jit.branch32(CCallHelpers::AboveOrEqual, T12, Address(T11, Butterfly::offsetOfVectorLength())));
+    jit.store64(A2, CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight));
+    Jump isWithinLength = jit.branch32(CCallHelpers::Below, T12, Address(T11, Butterfly::offsetOfPublicLength()));
+    jit.add32(TrustedImm32(1), T12, T13);
+    jit.store32(T13, Address(T11, Butterfly::offsetOfPublicLength()));
+    isWithinLength.link(&jit);
+
+    Jump notCell = jit.branchIfNotCell(A2);
+    loadInstance(jit, T9);
+    jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
+    jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
+    jit.load32(Address(T12, VM::offsetOfHeapBarrierThreshold()), T13);
+    Jump barrier = jit.branch32(CCallHelpers::BelowOrEqual, T11, T13);
+    notCell.link(&jit);
+    jit.ret();
+
+    barrier.link(&jit);
+    jit.move(A0, A1);
+    jit.move(T12, A0);
+    jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), T9);
+    jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTWriteBarrier) * sizeof(void*)), T9);
+    jit.farJump(T9, OperationPtrTag);
+
+    slow.link(&jit);
+    loadInstance(jit, T11);
+    jit.move(A3, A4);
+    jit.move(A2, A3);
+    jit.move(A1, A2);
+    jit.move(A0, A1);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTPutByValDirect) * sizeof(void*)), T11);
+    callAndCheckException(jit, T11, Returns::Void);
+}
+
 // ---- Sites
 
 // A site is passed as the address of its slot: the function has its Data at hand, and this way what is looked at first is one load
@@ -2569,12 +2615,62 @@ static void generateTailCallVarargs(CCallHelpers& jit) { generateCallVarargsTo(j
 static void generateCallList(CCallHelpers& jit) { generateCallListTo(jit, CodeSpecializationKind::CodeForCall); }
 static void generateConstructList(CCallHelpers& jit) { generateCallListTo(jit, CodeSpecializationKind::CodeForConstruct); }
 
+// In a frame of the stub's. A0 = an object, A1 = a slot for the property of it that goes by that name. Leaves what that is in A0. This is the quick way of generateGetByIdWith(), and then
+// the operation, which is told the name: there is no site to ask, and no finding it either, by what the link register says.
+static void getWellKnownInFrameOfStub(CCallHelpers& jit, WellKnownIdentifier identifier, CCallHelpers::JumpList& exception)
+{
+    jit.load64(slotWord(A1, 0), T11);
+    jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
+    Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);
+    Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+    jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
+    Jump found = jit.jump();
+
+    isOfAnotherStructure.link(&jit);
+    isIntricate.link(&jit);
+    jit.move(A1, A3);
+    jit.move(A0, A1);
+    jit.move(TrustedImm32(static_cast<uint32_t>(identifier)), A2);
+    loadInstance(jit, T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTGetByIdWellKnown) * sizeof(void*)), T11);
+    jit.call(T11, OperationPtrTag);
+    exception.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2));
+    found.link(&jit);
+}
+
+// Likewise in a frame of the stub's: calls calleeGPR on thisGPR with nothing, and sees that an object came back, which is left in A0.
+static void callForObjectInFrameOfStub(CCallHelpers& jit, CCallHelpers::JumpList& notObject)
+{
+    jit.move(TrustedImm32(0), countGPR);
+    callStubFromStub(jit, Stub::Call);
+    static_assert(GPRInfo::returnValueGPR == A0);
+    notObject.append(jit.branchIfNotCell(A0));
+    notObject.append(jit.branchIfNotObject(A0));
+}
+
+// Where those two end up when it does not work out. The frame is the stub's still.
+static void throwFromFrameOfStub(CCallHelpers& jit, CCallHelpers::JumpList& notObject, CCallHelpers::JumpList& exception)
+{
+    notObject.link(&jit);
+    loadInstance(jit, T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTThrowIteratorResultIsNotObject) * sizeof(void*)), T11);
+    jit.call(T11, OperationPtrTag);
+    exception.link(&jit);
+    jit.emitFunctionEpilogue();
+    loadInstance(jit, T9);
+    jumpToEntry(jit, T9, Entry::HandleException);
+}
+
 static void generateIteratorNext(CCallHelpers& jit)
 {
     CCallHelpers::JumpList generic;
     CCallHelpers::JumpList indexSlow;
     auto handled = [&] {
-        jit.move(TrustedImm32(0), T9);
         jit.ret();
     };
     // value: what an operation behind a shortcut handed back, which is nothing at the end. Leaves done in A0.
@@ -2645,9 +2741,132 @@ static void generateIteratorNext(CCallHelpers& jit)
     generic.append(jit.branchIfNotType(A0, SentinelType));
     callKeeping(Entry::operationAOTIteratorNextTryFast, A0, [&] { });
 
+    // There is no shortcut. result = next.call(iterator); done = result.done; value = done ? (nothing anybody looks at) : result.value.
     generic.link(&jit);
-    jit.move(TrustedImm32(1), T9);
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    constexpr int32_t keptNext = 0;
+    constexpr int32_t keptSlots = 8;
+    constexpr int32_t keptResult = 16;
+    constexpr int32_t keptDone = 24;
+    CCallHelpers::JumpList notObject;
+    CCallHelpers::JumpList exception;
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(32), sp);
+    jit.store64(A0, Address(sp, keptNext));
+    jit.storePtr(A3, Address(sp, keptSlots));
+    jit.move(A1, thisGPR);
+    jit.move(A0, calleeGPR);
+    callForObjectInFrameOfStub(jit, notObject);
+    jit.store64(A0, Address(sp, keptResult));
+    jit.loadPtr(Address(sp, keptSlots), A1);
+    getWellKnownInFrameOfStub(jit, WellKnownIdentifier::Done, exception);
+    jit.store64(A0, Address(sp, keptDone));
+    callStubFromStub(jit, Stub::ToBoolean);
+    Jump isDone = jit.branchTest32(CCallHelpers::NonZero, A0);
+    jit.load64(Address(sp, keptResult), A0);
+    jit.loadPtr(Address(sp, keptSlots), A1);
+    jit.addPtr(TrustedImm32(sizeof(Slot)), A1);
+    getWellKnownInFrameOfStub(jit, WellKnownIdentifier::Value, exception);
+    jit.move(A0, A1);
+    Jump hasValue = jit.jump();
+    isDone.link(&jit);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), A1);
+    hasValue.link(&jit);
+    jit.load64(Address(sp, keptDone), A0);
+    jit.load64(Address(sp, keptNext), A2);
+    jit.emitFunctionEpilogue();
     jit.ret();
+
+    throwFromFrameOfStub(jit, notObject, exception);
+}
+
+// iterator = symbolIterator.call(iterable); next = iterator.next. Unless the runtime knows a shortcut for the iterable, in which case next is a marker: see lowerIteratorOpen().
+static void generateIteratorOpen(CCallHelpers& jit)
+{
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    // An array as the realm makes them is gone through by its index, and there is no iterator: what the runtime would say (IterationMode::FastArray).
+    if (Options::useImmutableIntrinsics() && Options::useUnboxedFastArrayIteration()) {
+        Jump isNotCell = jit.branchIfNotCell(A0);
+        // Emitter::isOriginalArray()
+        jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T11);
+        jit.urshift32(TrustedImm32(Instance::shiftOfKindOfArray), T11);
+        jit.and32(TrustedImm32(Instance::numberOfKindsOfArray - 1), T11);
+        loadInstance(jit, T12);
+        jit.addPtr(TrustedImm32(Instance::offsetOfStructureIDsOfOriginalArrays()), T12, T13);
+        jit.load32(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesFour), T11);
+        jit.load32(Address(A0, JSCell::structureIDOffset()), T13);
+        Jump isSomethingElse = jit.branch32(CCallHelpers::NotEqual, T11, T13);
+        jit.loadPtr(Address(T12, Instance::offsetOfSentinelOfArrayIteration()), A0);
+        jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNumber(0))), A1);
+        jit.ret();
+        isNotCell.link(&jit);
+        isSomethingElse.link(&jit);
+    }
+
+    constexpr int32_t keptNext = 0; // What the operation says next is.
+    constexpr int32_t keptSlot = 8;
+    constexpr int32_t keptIterable = 16; // And then the iterator.
+    constexpr int32_t keptSymbolIterator = 24;
+    CCallHelpers::JumpList notObject;
+    CCallHelpers::JumpList exception;
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(32), sp);
+    jit.storePtr(A2, Address(sp, keptSlot));
+    jit.store64(A0, Address(sp, keptIterable));
+    jit.store64(A1, Address(sp, keptSymbolIterator));
+    jit.move(A1, A2);
+    jit.move(A0, A1);
+    jit.addPtr(TrustedImm32(keptNext), sp, A3);
+    loadInstance(jit, T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTIteratorOpenTryFast) * sizeof(void*)), T11);
+    jit.call(T11, OperationPtrTag);
+    exception.append(jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2));
+    Jump isGeneric = jit.branchTest64(CCallHelpers::Zero, A0);
+    jit.load64(Address(sp, keptNext), A1);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    isGeneric.link(&jit);
+    jit.load64(Address(sp, keptIterable), thisGPR);
+    jit.load64(Address(sp, keptSymbolIterator), calleeGPR);
+    callForObjectInFrameOfStub(jit, notObject);
+    jit.store64(A0, Address(sp, keptIterable));
+    jit.loadPtr(Address(sp, keptSlot), A1);
+    getWellKnownInFrameOfStub(jit, WellKnownIdentifier::Next, exception);
+    jit.move(A0, A1);
+    jit.load64(Address(sp, keptIterable), A0);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+
+    throwFromFrameOfStub(jit, notObject, exception);
+}
+
+static void generateIteratorCloseCheck(CCallHelpers& jit)
+{
+    Jump isNotCell = jit.branchIfNotCell(A0);
+    Jump isNotMarked = jit.branchIfNotType(A0, SentinelType);
+    // Lowering::inlineWatchpointSetIsStillValid()
+    loadInstance(jit, T11);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), T12);
+    jit.loadPtr(Address(T12, JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet() + InlineWatchpointSet::offsetOfData()), T12);
+    Jump isInvalidated = jit.branchPtr(CCallHelpers::Equal, T12, CCallHelpers::TrustedImmPtr(InlineWatchpointSet::encodeState(IsInvalidated)));
+    Jump isThin = jit.branchTestPtr(CCallHelpers::NonZero, T12, TrustedImm32(InlineWatchpointSet::IsThinFlag));
+    jit.load8(Address(T12, WatchpointSet::offsetOfState()), T12);
+    Jump isInvalidatedToo = jit.branch32(CCallHelpers::Equal, T12, TrustedImm32(IsInvalidated));
+    isThin.link(&jit);
+    isNotCell.link(&jit);
+    isNotMarked.link(&jit);
+    jit.ret();
+
+    // Somebody gave array iterators a return method: closing one can be noticed, so there has to be one.
+    isInvalidated.link(&jit);
+    isInvalidatedToo.link(&jit);
+    jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
+    jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
+    jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTMaterializeArrayIterator) * sizeof(void*)), T11);
+    callAndCheckException(jit, T11, Returns::Value);
 }
 
 static void generateCall(CCallHelpers& jit) { generateCallTo(jit, CodeSpecializationKind::CodeForCall, std::nullopt); }
@@ -3146,7 +3365,7 @@ static constexpr unsigned firstThunkOfIntrinsics = firstThunkOfPrologue + bigges
 // takesOperandAnywhere(). These have all that is quick about them over again for each register...
 static constexpr Stub stubsThatTakeOperandAnywhere[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     // ... and these are got to by way of a move.
-    Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope };
+    Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope };
 // And so are these, which are got to by way of something that says which operation as it is.
 struct OperationThatTakesOperandAnywhere {
     Stub stub;
