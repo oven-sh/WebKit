@@ -15,7 +15,11 @@ seen = []
 
 
 def handler(number, frame):
-    seen.append((number, frame and frame.f_code.co_name))
+    seen.append((signal.Signals(number).name, frame and frame.f_code.co_name))
+
+
+def name(number):
+    return signal.Signals(number).name
 
 
 def took():

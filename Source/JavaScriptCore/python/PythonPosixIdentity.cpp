@@ -485,7 +485,12 @@ PYTHON_NATIVE(posixKill)
     CONVERT(signal, toSsize(globalObject, args.at(1)));
     if (!audit(globalObject, "os.kill"_s, jsNumber(process), intFromInt64(globalObject, signal)))
         return { };
-    if (::kill(process, static_cast<int>(signal)) == -1)
+    // A process that sends itself a signal has it by the time that it has been sent, where there is the one thread. Here it might be given to a thread of the engine's, which would have to be woken to send it on:
+    // see keepForPythonThread(). So it is sent to this thread, which is all that there is of the process as far as the program can tell.
+    if (process == getpid() && signal > 0 && signal <= std::numeric_limits<int>::max()) {
+        if (int error = pthread_kill(pthread_self(), static_cast<int>(signal)))
+            return JSValue::encode(raiseOSError(globalObject, scope, error));
+    } else if (::kill(process, static_cast<int>(signal)) == -1)
         return JSValue::encode(raisePosixError(globalObject, scope));
     // It may have been sent to this process.
     if (!checkSignals(globalObject))

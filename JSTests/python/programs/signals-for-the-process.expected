@@ -1,0 +1,20 @@
+---- kept back, with nothing said of what is to be done with it
+it is there to be asked after, and to be waited for => ([], None, ['SIGUSR2'], 'SIGUSR2', [], ['SIGUSR2'])
+what is to be done with it is as it was said to be => (set(), 'SIG_DFL', None, 'SIG_DFL')
+two of them => (set(), None, None, ['SIGUSR1', 'SIGUSR2'], ['SIGUSR1', 'SIGUSR2'], [], ['SIGUSR1', 'SIGUSR2'])
+with all that are kept back said at once => ([], None, ['SIGUSR2'], 'SIGUSR2', ['SIGUSR2'])
+---- kept back, with a function to be called
+it is not called until it is let through => (set(), None, [], ['SIGUSR1'], None, ['SIGUSR1'], [])
+or it is waited for, and is not called at all => (set(), None, 'SIGUSR1', None, [])
+not kept back => (None, ['SIGUSR1'])
+the function is said while it is kept back => (set(), None, 'SIG_DFL', [], None, ['SIGUSR2'])
+and is taken away while it is kept back => (set(), True, None, ['SIGUSR2'], 'SIGUSR2', None, [])
+---- kept back, and to be ignored
+said first => ('SIG_DFL', set(), None, [], None, [], 'SIG_IGN')
+said afterwards => ('SIG_IGN', set(), None, ['SIGUSR2'], 'SIG_DFL', [], None, 'still here')
+---- sent by another process
+kept back, with nothing said of what is to be done with it => (set(), 0, 'SIGUSR2', [], None)
+kept back, with a function to be called => (set(), 0, None, [], None, ['SIGUSR1'])
+which is not called if it is waited for => (set(), 0, 'SIGUSR1', None, None, [])
+not kept back => (0, ['SIGUSR1'])
+it interrupts what is waiting => [(True, None, ['SIGUSR1'], 0)]

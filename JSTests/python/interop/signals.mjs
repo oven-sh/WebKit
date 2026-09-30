@@ -14,7 +14,7 @@ show("raised from JavaScript, with no Python on the stack: there is no frame", (
 show("with Python further out, it is that frame", () => (m.call(() => m.raise_signal(m.USR1)), m.took()));
 
 const calls = [];
-function inJavaScript(number, frame) { calls.push([number, frame === undefined ? "no frame" : frame.f_code.co_name]); }
+function inJavaScript(number, frame) { calls.push([m.name(number), frame === undefined ? "no frame" : frame.f_code.co_name]); }
 show("a function of JavaScript's", () => (m.set_handler(m.USR1, inJavaScript) === m.handler));
 show("is what there is for it", () => m.get_handler(m.USR1) === inJavaScript);
 show("and is called", () => (m.raise_signal(m.USR1), m.call(m.raise_signal, m.USR1), JSON.stringify(calls.splice(0))));

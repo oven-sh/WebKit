@@ -1,0 +1,152 @@
+---- what there is
+the module => ('_signal', '', 'BuiltinImporter', 'This module provides mechanisms to use signal handlers in Python.\n\nFunctions:\n\nalarm() -- cause SIGALRM after a specified time [Unix only]\nsetitimer() -- cause a signal (described below) after a specified\n               float time and the timer may restart then [Unix only]\ngetitimer() -- get current value of timer [Unix only]\nsignal() -- set the action for a given signal\ngetsignal() -- get the signal action for a given signal\npause() -- wait until a signal arrives [Unix only]\ndefault_int_handler() -- default SIGINT handler\n\nsignal constants:\nSIG_DFL -- used to refer to the system default handler\nSIG_IGN -- used to ignore the signal\nNSIG -- number of defined signals\nSIGINT, SIGTERM, etc. -- signal numbers\n\nitimer constants:\nITIMER_REAL -- decrements in real time, and delivers SIGALRM upon\n               expiration\nITIMER_VIRTUAL -- decrements only when the process is executing,\n               and delivers SIGVTALRM upon expiration\nITIMER_PROF -- decrements both when the process is executing and\n               when the system is executing on behalf of the process.\n               Coupled with ITIMER_VIRTUAL, this timer is usually\n               used to profile the time spent by the application\n               in user and kernel space. SIGPROF is delivered upon\n               expiration.\n\n\n*** IMPORTANT NOTICE ***\nA signal handler function is called with two arguments:\nthe first is the signal number, the second is the interrupted stack frame.', ['ITIMER_PROF', 'ITIMER_REAL', 'ITIMER_VIRTUAL', 'ItimerError', 'NSIG', 'SIGABRT', 'SIGALRM', 'SIGBUS', 'SIGCHLD', 'SIGCLD', 'SIGCONT', 'SIGFPE', 'SIGHUP', 'SIGILL', 'SIGINT', 'SIGIO', 'SIGIOT', 'SIGKILL', 'SIGPIPE', 'SIGPOLL', 'SIGPROF', 'SIGPWR', 'SIGQUIT', 'SIGRTMAX', 'SIGRTMIN', 'SIGSEGV', 'SIGSTKFLT', 'SIGSTOP', 'SIGSYS', 'SIGTERM', 'SIGTRAP', 'SIGTSTP', 'SIGTTIN', 'SIGTTOU', 'SIGURG', 'SIGUSR1', 'SIGUSR2', 'SIGVTALRM', 'SIGWINCH', 'SIGXCPU', 'SIGXFSZ', 'SIG_BLOCK', 'SIG_DFL', 'SIG_IGN', 'SIG_SETMASK', 'SIG_UNBLOCK', 'alarm', 'default_int_handler', 'getitimer', 'getsignal', 'pause', 'pidfd_send_signal', 'pthread_kill', 'pthread_sigmask', 'raise_signal', 'set_wakeup_fd', 'setitimer', 'siginterrupt', 'signal', 'sigpending', 'sigtimedwait', 'sigwait', 'sigwaitinfo', 'strsignal', 'struct_siginfo', 'valid_signals'])
+ITIMER_PROF => (2, 'int')
+ITIMER_REAL => (0, 'int')
+ITIMER_VIRTUAL => (1, 'int')
+NSIG => (65, 'int')
+SIGABRT => (6, 'int')
+SIGALRM => (14, 'int')
+SIGBUS => (7, 'int')
+SIGCHLD => (17, 'int')
+SIGCLD => (17, 'int')
+SIGCONT => (18, 'int')
+SIGFPE => (8, 'int')
+SIGHUP => (1, 'int')
+SIGILL => (4, 'int')
+SIGINT => (2, 'int')
+SIGIO => (29, 'int')
+SIGIOT => (6, 'int')
+SIGKILL => (9, 'int')
+SIGPIPE => (13, 'int')
+SIGPOLL => (29, 'int')
+SIGPROF => (27, 'int')
+SIGPWR => (30, 'int')
+SIGQUIT => (3, 'int')
+SIGRTMAX => (64, 'int')
+SIGRTMIN => (34, 'int')
+SIGSEGV => (11, 'int')
+SIGSTKFLT => (16, 'int')
+SIGSTOP => (19, 'int')
+SIGSYS => (31, 'int')
+SIGTERM => (15, 'int')
+SIGTRAP => (5, 'int')
+SIGTSTP => (20, 'int')
+SIGTTIN => (21, 'int')
+SIGTTOU => (22, 'int')
+SIGURG => (23, 'int')
+SIGUSR1 => (10, 'int')
+SIGUSR2 => (12, 'int')
+SIGVTALRM => (26, 'int')
+SIGWINCH => (28, 'int')
+SIGXCPU => (24, 'int')
+SIGXFSZ => (25, 'int')
+SIG_BLOCK => (0, 'int')
+SIG_DFL => (0, 'int')
+SIG_IGN => (1, 'int')
+SIG_SETMASK => (2, 'int')
+SIG_UNBLOCK => (1, 'int')
+alarm => ('builtin_function_or_method', '($module, seconds, /)', 'Arrange for SIGALRM to arrive after the given number of seconds.', '_signal')
+default_int_handler => ('builtin_function_or_method', '($module, signalnum, frame, /)', 'The default handler for SIGINT installed by Python.\n\nIt raises KeyboardInterrupt.', '_signal')
+getitimer => ('builtin_function_or_method', '($module, which, /)', 'Returns current value of given itimer.', '_signal')
+getsignal => ('builtin_function_or_method', '($module, signalnum, /)', 'Return the current action for the given signal.\n\nThe return value can be:\n  SIG_IGN -- if the signal is being ignored\n  SIG_DFL -- if the default action for the signal is in effect\n  None    -- if an unknown handler is in effect\n  anything else -- the callable Python object used as a handler', '_signal')
+pause => ('builtin_function_or_method', '($module, /)', 'Wait until a signal arrives.', '_signal')
+pidfd_send_signal => ('builtin_function_or_method', '($module, pidfd, signalnum, siginfo=None, flags=0, /)', 'Send a signal to a process referred to by a pid file descriptor.', '_signal')
+pthread_kill => ('builtin_function_or_method', '($module, thread_id, signalnum, /)', 'Send a signal to a thread.', '_signal')
+pthread_sigmask => ('builtin_function_or_method', '($module, how, mask, /)', 'Fetch and/or change the signal mask of the calling thread.', '_signal')
+raise_signal => ('builtin_function_or_method', '($module, signalnum, /)', 'Send a signal to the executing process.', '_signal')
+set_wakeup_fd => ('builtin_function_or_method', '($module, fd, /, *, warn_on_full_buffer=True)', 'Sets the fd to be written to (with the signal number) when a signal comes in.\n\nA library can use this to wakeup select or poll.\nThe previous fd or -1 is returned.\n\nThe fd must be non-blocking.', '_signal')
+setitimer => ('builtin_function_or_method', '($module, which, seconds, interval=0.0, /)', 'Sets given itimer (one of ITIMER_REAL, ITIMER_VIRTUAL or ITIMER_PROF).\n\nThe timer will fire after value seconds and after that every interval\nseconds.  The itimer can be cleared by setting seconds to zero.\n\nReturns old values as a tuple: (delay, interval).', '_signal')
+siginterrupt => ('builtin_function_or_method', '($module, signalnum, flag, /)', 'Change system call restart behaviour.\n\nIf flag is False, system calls will be restarted when interrupted by\nsignal sig, else system calls will be interrupted.', '_signal')
+signal => ('builtin_function_or_method', '($module, signalnum, handler, /)', 'Set the action for the given signal.\n\nThe action can be SIG_DFL, SIG_IGN, or a callable Python object.\nThe previous action is returned.  See getsignal() for possible return\nvalues.\n\n*** IMPORTANT NOTICE ***\nA signal handler function is called with two arguments: the first is\nthe signal number, the second is the interrupted stack frame.', '_signal')
+sigpending => ('builtin_function_or_method', '($module, /)', 'Examine pending signals.\n\nReturns a set of signal numbers that are pending for delivery to\nthe calling thread.', '_signal')
+sigtimedwait => ('builtin_function_or_method', '($module, sigset, timeout, /)', 'Like sigwaitinfo(), but with a timeout.\n\nThe timeout is specified in seconds, with floating-point numbers allowed.', '_signal')
+sigwait => ('builtin_function_or_method', '($module, sigset, /)', 'Wait for a signal.\n\nSuspend execution of the calling thread until the delivery of one of the\nsignals specified in the signal set sigset.  The function accepts the\nsignal and returns the signal number.', '_signal')
+sigwaitinfo => ('builtin_function_or_method', '($module, sigset, /)', 'Wait synchronously until one of the signals in *sigset* is delivered.\n\nReturns a struct_siginfo containing information about the signal.', '_signal')
+strsignal => ('builtin_function_or_method', '($module, signalnum, /)', 'Return the system description of the given signal.\n\nReturns the description of signal *signalnum*, such as "Interrupt"\nfor :const:`SIGINT`. Returns :const:`None` if *signalnum* has no\ndescription. Raises :exc:`ValueError` if *signalnum* is invalid.', '_signal')
+valid_signals => ('builtin_function_or_method', '($module, /)', 'Return a set of valid signal numbers on this platform.\n\nThe signal numbers returned by this function can be safely passed to\nfunctions like `pthread_sigmask`.', '_signal')
+ItimerError => ('ItimerError', 'signal', 'ItimerError', ['ItimerError', 'OSError', 'Exception', 'BaseException', 'object'], ['__doc__', '__module__', '__weakref__'], None, "<class 'signal.ItimerError'>", "ItimerError(1, 'x')", 2, 'ItimerError', True, True)
+as it is at first => {'SIGKILL': 0, 'SIGPIPE': 1, 'SIGALRM': 0, 'SIGTERM': 0, 'SIGSTOP': 0, 'SIGTSTP': 0, 'SIGCONT': 0, 'SIGCHLD': 0, 'SIGXFSZ': 1, 'SIGVTALRM': 0, 'SIGPROF': 0, 'SIGWINCH': 0, 'SIGUSR1': 0, 'SIGUSR2': 0}
+valid_signals => ([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64], 'set', 'TypeError: _signal.valid_signals() takes no arguments (1 given)')
+strsignal => [(1, 'Hangup'), (2, 'Interrupt'), (3, 'Quit'), (4, 'Illegal instruction'), (5, 'Trace/breakpoint trap'), (6, 'Aborted'), (7, 'Bus error'), (8, 'Floating point exception'), (9, 'Killed'), (10, 'User defined signal 1'), (11, 'Segmentation fault'), (12, 'User defined signal 2'), (13, 'Broken pipe'), (14, 'Alarm clock'), (15, 'Terminated'), (16, 'Stack fault'), (17, 'Child exited'), (18, 'Continued'), (19, 'Stopped (signal)'), (20, 'Stopped'), (21, 'Stopped (tty input)'), (22, 'Stopped (tty output)'), (23, 'Urgent I/O condition'), (24, 'CPU time limit exceeded'), (25, 'File size limit exceeded'), (26, 'Virtual timer expired'), (27, 'Profiling timer expired'), (28, 'Window changed'), (29, 'I/O possible'), (30, 'Power failure'), (31, 'Bad system call'), (32, None), (33, None), (34, 'Real-time signal 0'), (35, 'Real-time signal 1'), (36, 'Real-time signal 2'), (37, 'Real-time signal 3'), (38, 'Real-time signal 4'), (39, 'Real-time signal 5'), (40, 'Real-time signal 6'), (41, 'Real-time signal 7'), (42, 'Real-time signal 8'), (43, 'Real-time signal 9'), (44, 'Real-time signal 10'), (45, 'Real-time signal 11'), (46, 'Real-time signal 12'), (47, 'Real-time signal 13'), (48, 'Real-time signal 14'), (49, 'Real-time signal 15'), (50, 'Real-time signal 16'), (51, 'Real-time signal 17'), (52, 'Real-time signal 18'), (53, 'Real-time signal 19'), (54, 'Real-time signal 20'), (55, 'Real-time signal 21'), (56, 'Real-time signal 22'), (57, 'Real-time signal 23'), (58, 'Real-time signal 24'), (59, 'Real-time signal 25'), (60, 'Real-time signal 26'), (61, 'Real-time signal 27'), (62, 'Real-time signal 28'), (63, 'Real-time signal 29'), (64, 'Real-time signal 30')]
+the enums => (<Signals.SIGINT: 2>, '<Signals.SIGINT: 2>', <Handlers.SIG_DFL: 0>, '<Handlers.SIG_IGN: 1>', '<Sigmasks.SIG_BLOCK: 0>', 'SIGINT', <Handlers.SIG_IGN: 1>, [<Signals.SIGHUP: 1>, <Signals.SIGINT: 2>, <Signals.SIGQUIT: 3>], 'Terminated')
+---- what will not do
+getsignal => ['TypeError: _signal.getsignal() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'ValueError: signal number out of range', 'ValueError: signal number out of range', 'ValueError: signal number out of range', 0, 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', "TypeError: 'list' object cannot be interpreted as an integer", 0, 'TypeError: _signal.getsignal() takes exactly one argument (2 given)', 'TypeError: _signal.getsignal() takes no keyword arguments']
+strsignal => ['TypeError: _signal.strsignal() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'ValueError: signal number out of range', 'ValueError: signal number out of range', 'ValueError: signal number out of range', 'Real-time signal 30', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', "TypeError: 'list' object cannot be interpreted as an integer", 'Hangup', 'TypeError: _signal.strsignal() takes exactly one argument (2 given)', 'TypeError: _signal.strsignal() takes no keyword arguments']
+raise_signal => ['TypeError: _signal.raise_signal() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OSError: [Errno 22] Invalid argument', 'OSError: [Errno 22] Invalid argument', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', 'OverflowError: Python int too large to convert to C int', "TypeError: 'list' object cannot be interpreted as an integer", 'TypeError: _signal.raise_signal() takes exactly one argument (2 given)', 'TypeError: _signal.raise_signal() takes no keyword arguments']
+signal => ['TypeError: signal expected 2 arguments, got 0', 'TypeError: signal expected 2 arguments, got 1', 'TypeError: signal expected 2 arguments, got 3', "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: signal number out of range', 'ValueError: signal number out of range', 'ValueError: signal number out of range', 'OverflowError: Python int too large to convert to C int', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'OSError: [Errno 22] Invalid argument', 'OSError: [Errno 22] Invalid argument', 'OSError: [Errno 22] Invalid argument', "TypeError: 'float' object cannot be interpreted as an integer", 'TypeError: _signal.signal() takes no keyword arguments']
+an int of a derived class is neither => ['TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object', 'TypeError: signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object']
+siginterrupt => ['TypeError: siginterrupt expected 2 arguments, got 0', 'TypeError: siginterrupt expected 2 arguments, got 1', 'TypeError: siginterrupt expected 2 arguments, got 3', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: signal number out of range', 'ValueError: signal number out of range', "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OSError: [Errno 22] Invalid argument', None, None, None, None]
+alarm => ['TypeError: _signal.alarm() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'TypeError: _signal.alarm() takes exactly one argument (2 given)', 0]
+default_int_handler => ['TypeError: default_int_handler expected 2 arguments, got 0', 'TypeError: default_int_handler expected 2 arguments, got 1', 'KeyboardInterrupt: ', 'TypeError: default_int_handler expected 2 arguments, got 3', "TypeError: 'str' object cannot be interpreted as an integer", 'KeyboardInterrupt: ', 'OverflowError: Python int too large to convert to C int']
+pause and sigpending => ('TypeError: _signal.pause() takes no arguments (1 given)', 'TypeError: _signal.sigpending() takes no arguments (1 given)', 'TypeError: _signal.sigpending() takes no keyword arguments')
+getitimer => ['TypeError: _signal.getitimer() takes exactly one argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", 'ItimerError: [Errno 22] Invalid argument', 'ItimerError: [Errno 22] Invalid argument', "TypeError: 'float' object cannot be interpreted as an integer", 'TypeError: _signal.getitimer() takes exactly one argument (2 given)', 'OverflowError: Python int too large to convert to C int', "TypeError: 'NoneType' object cannot be interpreted as an integer", (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]
+setitimer => ['TypeError: setitimer expected at least 2 arguments, got 0', 'TypeError: setitimer expected at least 2 arguments, got 1', 'TypeError: setitimer expected at most 3 arguments, got 4', "TypeError: 'str' object cannot be interpreted as an integer", 'ItimerError: [Errno 22] Invalid argument', 'ItimerError: [Errno 22] Invalid argument', "TypeError: 'str' object cannot be interpreted as an integer or float", "TypeError: 'NoneType' object cannot be interpreted as an integer or float", "TypeError: 'str' object cannot be interpreted as an integer or float", "TypeError: 'NoneType' object cannot be interpreted as an integer or float", 'ValueError: Invalid value NaN (not a number)', 'OverflowError: timestamp out of range for C PyTime_t', 'OverflowError: timestamp out of range for C PyTime_t', 'ItimerError: [Errno 22] Invalid argument', 'ItimerError: [Errno 22] Invalid argument', 'OverflowError: timestamp out of range for C PyTime_t', "TypeError: 'list' object cannot be interpreted as an integer or float", (0.0, 0.0), (0.0, 0.0), (0.0, 0.0)]
+sigwait => ['TypeError: _signal.sigwait() takes exactly one argument (0 given)', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: signal number 0 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', 'ValueError: signal number 65 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", 'TypeError: _signal.sigwait() takes exactly one argument (2 given)']
+pthread_sigmask => ['TypeError: pthread_sigmask expected 2 arguments, got 1', "TypeError: 'int' object is not iterable", "TypeError: 'NoneType' object is not iterable", "TypeError: 'str' object cannot be interpreted as an integer", 'ValueError: signal number 0 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', 'ValueError: signal number 65 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', 'ValueError: signal number -1 out of range [1; 64]', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'str' object cannot be interpreted as an integer", set(), set(), set(), set(), set(), set(), 'TypeError: pthread_sigmask expected 2 arguments, got 0', 'OSError: [Errno 22] Invalid argument', 'OSError: [Errno 22] Invalid argument', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'TypeError: pthread_sigmask expected 2 arguments, got 3']
+pthread_kill => ['TypeError: pthread_kill expected 2 arguments, got 0', 'TypeError: pthread_kill expected 2 arguments, got 1', 'TypeError: pthread_kill expected 2 arguments, got 3', 'TypeError: pthread_kill() argument 1 must be int, not str', 'TypeError: pthread_kill() argument 1 must be int, not None', 'TypeError: pthread_kill() argument 1 must be int, not float', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'OSError: [Errno 22] Invalid argument', 'OSError: [Errno 22] Invalid argument', None]
+set_wakeup_fd => ['TypeError: set_wakeup_fd() takes exactly 1 positional argument (0 given)', "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'NoneType' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: Python int too large to convert to C int', 'OSError: [Errno 9] Bad file descriptor', 'OSError: [Errno 9] Bad file descriptor', -1, 'TypeError: set_wakeup_fd() takes exactly 1 positional argument (2 given)', -1, "TypeError: set_wakeup_fd() got an unexpected keyword argument 'other'", 'TypeError: set_wakeup_fd() takes exactly 1 positional argument (0 given)', -1]
+---- a function for a signal
+signal returns what there was => (0, True, True, True, 1, 0, True)
+raise_signal => (None, [(10, 'frame', '<lambda>', 2)])
+the frame is where it was => [(10, 'frame', 'within', 6)]
+os.kill => (None, [(10, 'frame', '<lambda>', 11)])
+pthread_kill => (None, [(10, 'frame', '<lambda>', 12)])
+ignored => (True, None, [], 1)
+both, the lower number first => (0, {1}, None, None, None, [], [10, 12], [1, 10, 12], [10, 12], [])
+anything that can be called => [(None, 'TypeError: len() takes exactly one argument (2 given)'), (None, "TypeError: 'frame' object cannot be interpreted as an integer"), (None, None), (None, None), [2, 'called'], None]
+---- what it raises
+it is raised where the signal was seen to => (True, 'ValueError: from the handler of 10', 'ValueError: from the handler of 10')
+and the rest are for later => (None, {1}, None, None, 'ValueError: from the handler of 10', [12], [1])
+SystemExit and KeyboardInterrupt => [(None, 'SystemExit: 3'), (None, 'KeyboardInterrupt: '), (None, 'GeneratorExit: '), (None, 'StopIteration: 1')]
+SIGINT => (True, 'KeyboardInterrupt: ', 'KeyboardInterrupt: ', 'KeyboardInterrupt: ')
+in a loop that does nothing => KeyboardInterrupt: 
+---- _thread.interrupt_main
+goes by what there is for the signal => (None, [10], None, None, [], 1, None, [], 0, ['ValueError: signal number out of range', 'ValueError: signal number out of range', 'ValueError: signal number out of range', None, "TypeError: 'str' object cannot be interpreted as an integer", "TypeError: 'float' object cannot be interpreted as an integer", 'OverflowError: signed integer is greater than maximum'])
+what is none of Python's business => (0, None, [])
+---- masks
+pthread_sigmask => ([1], [1, 10], [1, 10, 12], [10], [], 'set')
+what cannot be kept back => ([], [10])
+signal-module.py:135: RuntimeWarning: invalid signal number 32, please use valid_signals()
+  t("all of them", lambda: (sorted(_signal.pthread_sigmask(_signal.SIG_BLOCK, range(1, _signal.NSIG))), sorted(_signal.pthread_sigmask(_signal.SIG_SETMASK, [])) == sorted(_signal.valid_signals() - {_signal.SIGKILL, _signal.SIGSTOP})))
+signal-module.py:135: RuntimeWarning: invalid signal number 33, please use valid_signals()
+  t("all of them", lambda: (sorted(_signal.pthread_sigmask(_signal.SIG_BLOCK, range(1, _signal.NSIG))), sorted(_signal.pthread_sigmask(_signal.SIG_SETMASK, [])) == sorted(_signal.valid_signals() - {_signal.SIGKILL, _signal.SIGSTOP})))
+all of them => ([], True)
+sigwait => (set(), None, 12, None, 10, [], [], [10, 12], [])
+signal's own => (set(), {<Signals.SIGUSR1: 10>}, set())
+---- timers
+setitimer => ((0.0, 0.0), [14], (0.0, 0.0))
+over and over => ((0.0, 0.0), [14, 14, 14], 0.005, (0.0, 0.0))
+what there was => ((0.0, 0.0), [(True, 50.0)], [(True, 2.25)], None)
+rounded up => ((0.0, 0.0), 1e-06, None, 1.000001)
+of the time that the process uses => ((0.0, 0.0), [26], (0.0, 0.0), [27])
+alarm => (0, 100, 50, 0)
+sleep goes on afterwards => [((0.0, 0.0), None, True, [14])]
+unless the function raises => [(None, (0.0, 0.0), 'ValueError: from the handler of 14', True, None)]
+pause => ((0.0, 0.0), None, [14])
+reading is begun again => [((0.0, 0.0), None, b'done', [14, 14, 14], None, None, None)]
+---- set_wakeup_fd
+it must not block => ValueError: the fd N must be in non-blocking mode
+what is written => (-1, None, None, None, [10, 12, 10], [10, 12, 10], True, None, 'BlockingIOError: [Errno 11] Resource temporarily unavailable', None, -1)
+interrupt_main writes too => (-1, None, [12], None, True)
+not for what is ignored => (-1, None, None, 'BlockingIOError: [Errno 11] Resource temporarily unavailable', 1, True)
+Exception ignored while trying to write to the signal wakeup fd:
+Traceback (most recent call last):
+  File "signal-module.py", line 78, in handler
+    def handler(number, frame):
+BlockingIOError: [Errno 11] Resource temporarily unavailable
+when there is no room it is said => (-1, None, None)
+unless it is not to be => (True, None, None, True)
+Exception ignored while trying to write to the signal wakeup fd:
+Traceback (most recent call last):
+  File "signal-module.py", line 78, in handler
+    def handler(number, frame):
+BrokenPipeError: [Errno 32] Broken pipe
+what else goes wrong is said whatever => (-1, None, None, True)
+---- what is told of
+pthread_kill => (None, None, 'OSError: [Errno 22] Invalid argument', [('signal.pthread_kill', (10,)), ('signal.pthread_kill', (999,))])
+---- signal.py
+signal => (True, <Handlers.SIG_IGN: 1>, <Handlers.SIG_DFL: 0>, True, True, True, <Handlers.SIG_DFL: 0>)
+sigwait => (set(), None, {<Signals.SIGUSR1: 10>}, <Signals.SIGUSR1: 10>, {<Signals.SIGUSR1: 10>})
+---- the end
+SIGTERM, and then the program goes on
+as it does

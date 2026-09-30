@@ -1,0 +1,7 @@
+let through => (["it is still there ['SIGUSR2']"], '', 'SIGUSR2')
+with all that are kept back said at once => (["it is still there ['SIGUSR2']"], '', 'SIGUSR2')
+another => (["it is still there ['SIGTERM']"], '', 'SIGTERM')
+a function was to be called, and no longer is => (["it is still there ['SIGUSR2']"], '', 'SIGUSR2')
+one that nothing is done about as a rule => (["it is still there ['SIGCHLD']", 'it has been let through'], '', 0)
+one that is to be ignored => (["it is still there ['SIGUSR2']", 'it has been let through'], '', 0)
+some other is let through => (["it is still there ['SIGUSR2']", 'it has been let through'], '', 0)

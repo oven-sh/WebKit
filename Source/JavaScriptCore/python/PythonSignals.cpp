@@ -37,6 +37,7 @@
 #include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonOperations.h"
+#include "PythonPosix.h"
 #include "PythonTime.h"
 #include <fcntl.h>
 #include <pthread.h>
@@ -44,6 +45,9 @@
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <unistd.h>
+#if OS(LINUX)
+#include <sys/syscall.h>
+#endif
 
 // Signals, and the module _signal: Modules/signalmodule.c of CPython.
 
@@ -61,6 +65,13 @@ constexpr int signalCount = NSIG;
 struct ArrivedSignals {
     std::array<std::atomic<bool>, signalCount> isTripped { };
     std::atomic<VM*> vm { nullptr }; // Whose Python code is to see to them.
+    std::atomic<pthread_t> thread { }; // The thread that it runs in, which means something for as long as there is a `vm`.
+#if OS(LINUX)
+    std::atomic<pid_t> threadID { 0 }; // The same, as the kernel knows it
+#endif
+    // What is to be done with a signal that is being kept for that thread: see keepForPythonThread().
+    enum class Kept : uint8_t { No, ToDoTheUsual, ToBeIgnored };
+    std::array<std::atomic<Kept>, signalCount> kept { };
     std::atomic<unsigned> handlersRunning { 0 }; // How many threads are somewhere between looking at `vm` and having done with it.
     std::atomic<int> wakeupDescriptor { -1 };
     std::atomic<bool> warnsOnFullBuffer { true };
@@ -104,15 +115,40 @@ void tripSignal(int signal)
     arrived.handlersRunning.fetch_sub(1);
 }
 
+// From a thread that a signal has come to, to the thread that Python runs in.
+void sendOnToPythonThread(int signal, siginfo_t* information)
+{
+    auto& arrived = arrivedSignals();
+#if OS(LINUX)
+    // With what came with it, which says who sent it: sigwaitinfo() tells of that. A process may say what it likes of a signal that it sends itself.
+    if (information && !syscall(SYS_rt_tgsigqueueinfo, getpid(), arrived.threadID.load(), signal, information))
+        return;
+#else
+    UNUSED_PARAM(information);
+#endif
+    pthread_kill(arrived.thread.load(), signal);
+}
+
 // signal_handler()
-void signalHandler(int signal)
+void signalHandler(int signal, siginfo_t* information, void*)
 {
     int savedError = errno;
-    tripSignal(signal);
+    // A signal that is for the process is given to any thread that will have it, and the engine and its host have threads that CPython has not. It is for the thread that Python runs in, and is sent on. If that
+    // thread has said that it is not to have it yet, with pthread_sigmask(), it is kept for it until it will. And what that thread is waiting in the system for is interrupted, as it would not be otherwise.
+    auto& arrived = arrivedSignals();
+    arrived.handlersRunning.fetch_add(1);
+    bool isElsewhere = arrived.vm.load() && !pthread_equal(pthread_self(), arrived.thread.load());
+    if (isElsewhere)
+        sendOnToPythonThread(signal, information);
+    arrived.handlersRunning.fetch_sub(1);
+    if (!isElsewhere)
+        tripSignal(signal);
     errno = savedError;
 }
 
 using Handler = void (*)(int);
+// What is told what came with the signal: SA_SIGINFO
+using InformedHandler = void (*)(int, siginfo_t*, void*);
 
 // PyOS_getsig() and PyOS_setsig()
 Handler getSystemHandler(int signal)
@@ -135,6 +171,92 @@ Handler setSystemHandler(int signal, Handler handler)
     return previous.sa_handler;
 }
 
+Handler setSystemHandler(int signal, InformedHandler handler)
+{
+    struct sigaction action;
+    struct sigaction previous;
+    action.sa_sigaction = handler;
+    sigemptyset(&action.sa_mask);
+    action.sa_flags = SA_ONSTACK | SA_SIGINFO;
+    if (sigaction(signal, &action, &previous) == -1)
+        return SIG_ERR;
+    return previous.sa_handler;
+}
+
+// A thread can say that a signal is not to come to it yet, with pthread_sigmask(), and later ask what has come, with sigpending(), or wait for it, with sigwait(). But a signal that is for the process is given to any
+// thread that will have it, and the engine and its host have threads that CPython has not. One of those would do with it what is to be done: nothing, or the usual, which as a rule is to end the process.
+//
+// So for as long as the thread that Python runs in is keeping a signal back, and no function is to be called for it, this is what is done with it. It is sent on to that thread, and is kept for it there.
+void keepForPythonThread(int signal, siginfo_t* information, void*)
+{
+    int savedError = errno;
+    auto& arrived = arrivedSignals();
+    arrived.handlersRunning.fetch_add(1);
+    if (arrived.vm.load() && !pthread_equal(pthread_self(), arrived.thread.load()))
+        sendOnToPythonThread(signal, information);
+    else if (arrived.kept[signal].load() == ArrivedSignals::Kept::ToDoTheUsual) {
+        // It has come to that thread after all, between this being arranged and the signal being kept back. It comes again when this returns.
+        setSystemHandler(signal, SIG_DFL);
+        ::raise(signal);
+    }
+    arrived.handlersRunning.fetch_sub(1);
+    errno = savedError;
+}
+
+// What a program can say is to be done with a signal
+enum class ToBeDone : uint8_t { TheUsual, Nothing, CallAFunction };
+
+// What the program has said is to be done with a signal is done, but that one that its thread is keeping back is kept for it. SIG_ERR, and errno, if it cannot be.
+Handler setHandlerOfProgram(int signal, ToBeDone toBeDone, bool isKeptBack)
+{
+    auto& kept = arrivedSignals().kept[signal];
+    kept.store(ArrivedSignals::Kept::No);
+    if (toBeDone == ToBeDone::CallAFunction)
+        return setSystemHandler(signal, signalHandler);
+    Handler handler = toBeDone == ToBeDone::TheUsual ? SIG_DFL : SIG_IGN;
+    // To say that one is to be ignored is to be rid of any that has come already, which the system sees to.
+    Handler previous = setSystemHandler(signal, handler);
+    if (previous == SIG_ERR || !isKeptBack)
+        return previous;
+#if OS(LINUX)
+    bool isKept = true;
+#else
+    // One that is to be ignored is not kept at all, though it is being kept back, and no more is one that nothing is done about as a rule: SA_IGNORE, in the kernels that come from BSD.
+    bool isKept = handler == SIG_DFL && signal != SIGURG && signal != SIGCONT && signal != SIGCHLD && signal != SIGIO && signal != SIGWINCH && signal != SIGINFO;
+#endif
+    if (isKept) {
+        kept.store(handler == SIG_DFL ? ArrivedSignals::Kept::ToDoTheUsual : ArrivedSignals::Kept::ToBeIgnored);
+        setSystemHandler(signal, keepForPythonThread);
+    }
+    return previous;
+}
+
+bool isKeptBack(int signal)
+{
+    sigset_t mask;
+    return !pthread_sigmask(SIG_BLOCK, nullptr, &mask) && sigismember(&mask, signal) == 1;
+}
+
+// The thread that Python runs in is about to keep back the signals in `next`, and no others.
+void arrangeForSignalsKeptBack(const sigset_t& next)
+{
+    auto& arrived = arrivedSignals();
+    for (int signal = 1; signal < signalCount; ++signal) {
+        bool willBeKeptBack = sigismember(&next, signal) == 1;
+        auto kept = arrived.kept[signal].load();
+        if (kept != ArrivedSignals::Kept::No) {
+            if (!willBeKeptBack)
+                setHandlerOfProgram(signal, kept == ArrivedSignals::Kept::ToDoTheUsual ? ToBeDone::TheUsual : ToBeDone::Nothing, false);
+            continue;
+        }
+        if (!willBeKeptBack)
+            continue;
+        // What is somebody else's is left alone. SIGKILL and SIGSTOP cannot be kept back, or have anything done about them, and it is not said.
+        if (Handler handler = getSystemHandler(signal); handler == SIG_DFL || handler == SIG_IGN)
+            setHandlerOfProgram(signal, handler == SIG_DFL ? ToBeDone::TheUsual : ToBeDone::Nothing, true);
+    }
+}
+
 // ---- What the program has said is to be done
 
 struct SignalState final : NativeState {
@@ -144,6 +266,7 @@ struct SignalState final : NativeState {
     bool isMain { false }; // Whether it is this realm that the signals are for.
     std::array<WriteBarrier<Unknown>, signalCount> handlers; // SIG_DFL, SIG_IGN, None for what is none of Python's business, or something to call. Empty until _signal is imported.
     WriteBarrier<PyType> itimerError;
+    WriteBarrier<PyType> information; // struct_siginfo
 };
 
 template<typename Visitor>
@@ -152,6 +275,7 @@ void SignalState::visit(Visitor& visitor)
     for (auto& handler : handlers)
         visitor.append(handler);
     visitor.append(itimerError);
+    visitor.append(information);
 }
 
 SignalState& signalState(JSGlobalObject* globalObject) { return globalObject->pyRealm()->moduleState<SignalState>(); }
@@ -174,6 +298,8 @@ SignalState::~SignalState()
         arrived.isTripped[signal].store(false);
         if (isCalled(handlers[signal].get()))
             setSystemHandler(signal, SIG_DFL);
+        else if (auto kept = arrived.kept[signal].exchange(ArrivedSignals::Kept::No); kept != ArrivedSignals::Kept::No)
+            setSystemHandler(signal, kept == ArrivedSignals::Kept::ToDoTheUsual ? SIG_DFL : SIG_IGN);
     }
     arrived.wakeupDescriptor.store(-1);
     arrived.vm.store(nullptr);
@@ -338,6 +464,11 @@ void initializeSignals(JSGlobalObject* globalObject, bool installsHandlers)
     VM* none = nullptr;
     if (!arrived.vm.compare_exchange_strong(none, &vm))
         return;
+    // Nothing looks at it until there is a function to be called, and there is none yet.
+    arrived.thread.store(pthread_self());
+#if OS(LINUX)
+    arrived.threadID.store(static_cast<pid_t>(syscall(SYS_gettid)));
+#endif
     signalState(globalObject).isMain = true;
     for (int signal = 1; signal < signalCount; ++signal)
         arrived.isTripped[signal].store(false);
@@ -405,19 +536,19 @@ PYTHON_NATIVE(signalSignal)
         return JSValue::encode(raiseValueError(globalObject, scope, "signal only works in main thread of the main interpreter"_s));
     if (!checkSignalNumber(globalObject, scope, *signal))
         return { };
-    Handler function;
+    ToBeDone function;
     if (isCallable(globalObject, handler))
-        function = signalHandler;
+        function = ToBeDone::CallAFunction;
     else if (isHandler(handler, ignoreHandler()))
-        function = SIG_IGN;
+        function = ToBeDone::Nothing;
     else if (isHandler(handler, defaultHandler()))
-        function = SIG_DFL;
+        function = ToBeDone::TheUsual;
     else
         return JSValue::encode(raiseTypeError(globalObject, scope, "signal handler must be signal.SIG_IGN, signal.SIG_DFL, or a callable object"_s));
     // What has come already is dealt with as it was to be.
     checkSignals(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-    if (setSystemHandler(*signal, function) == SIG_ERR)
+    if (setHandlerOfProgram(*signal, function, isKeptBack(*signal)) == SIG_ERR)
         return JSValue::encode(raiseOSError(globalObject, scope, errno));
     auto& slot = signalState(globalObject).handlers[*signal];
     JSValue previous = slot.get();
@@ -541,6 +672,18 @@ PYTHON_NATIVE(signalPthreadSigmask)
     toSignalSet(globalObject, args[1], mask);
     RETURN_IF_EXCEPTION(scope, { });
     sigset_t previous;
+    if (canHandleSignals(globalObject) && (*how == SIG_BLOCK || *how == SIG_UNBLOCK || *how == SIG_SETMASK) && !pthread_sigmask(SIG_BLOCK, nullptr, &previous)) {
+        sigset_t next = *how == SIG_SETMASK ? mask : previous;
+        for (int signal = 1; signal < signalCount && *how != SIG_SETMASK; ++signal) {
+            if (sigismember(&mask, signal) != 1)
+                continue;
+            if (*how == SIG_BLOCK)
+                sigaddset(&next, signal);
+            else
+                sigdelset(&next, signal);
+        }
+        arrangeForSignalsKeptBack(next);
+    }
     if (int error = pthread_sigmask(*how, &mask, &previous))
         return JSValue::encode(raiseOSError(globalObject, scope, error));
     // What was being kept back has come.
@@ -570,6 +713,95 @@ PYTHON_NATIVE(signalSigWait)
         return JSValue::encode(raiseOSError(globalObject, scope, error));
     return JSValue::encode(jsNumber(signal));
 }
+
+#if OS(LINUX)
+
+// fill_siginfo()
+static JSValue signalInformation(JSGlobalObject* globalObject, const siginfo_t& information)
+{
+    MarkedArgumentBuffer values;
+    values.append(jsNumber(information.si_signo));
+    values.append(jsNumber(information.si_code));
+    values.append(jsNumber(information.si_errno));
+    values.append(jsNumber(information.si_pid));
+    values.append(intFromUserID(globalObject, information.si_uid));
+    values.append(jsNumber(information.si_status));
+    values.append(intFromInt64(globalObject, information.si_band));
+    return newStructSequence(globalObject, signalState(globalObject).information.get(), values);
+}
+
+// sigwaitinfo(sigset, /)
+PYTHON_NATIVE(signalSigWaitInfo)
+{
+    NATIVE_PROLOGUE();
+    sigset_t mask;
+    toSignalSet(globalObject, args[0], mask);
+    RETURN_IF_EXCEPTION(scope, { });
+    siginfo_t information;
+    while (sigwaitinfo(&mask, &information) == -1) {
+        if (errno != EINTR)
+            return JSValue::encode(raiseOSError(globalObject, scope, errno));
+        checkSignals(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(signalInformation(globalObject, information)));
+}
+
+// sigtimedwait(sigset, timeout, /)
+PYTHON_NATIVE(signalSigTimedWait)
+{
+    NATIVE_PROLOGUE();
+    sigset_t mask;
+    toSignalSet(globalObject, args[0], mask);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto converted = timeFromSecondsObject(globalObject, args[1], TimeRounding::Ceiling);
+    RETURN_IF_EXCEPTION(scope, { });
+    int64_t timeout = *converted;
+    if (timeout < 0)
+        return JSValue::encode(raiseValueError(globalObject, scope, "timeout must be non-negative"_s));
+    int64_t deadline = deadlineAfter(timeout);
+    siginfo_t information;
+    while (true) {
+        struct timespec time;
+        if (!timeAsTimespec(globalObject, timeout, time))
+            return { };
+        if (sigtimedwait(&mask, &information, &time) != -1)
+            break;
+        if (errno == EAGAIN)
+            RETURN_NONE();
+        if (errno != EINTR)
+            return JSValue::encode(raiseOSError(globalObject, scope, errno));
+        checkSignals(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        timeout = timeUntil(deadline);
+        if (timeout < 0)
+            break;
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(signalInformation(globalObject, information)));
+}
+
+// pidfd_send_signal(pidfd, signalnum, siginfo=None, flags=0, /)
+PYTHON_NATIVE(signalPidfdSendSignal)
+{
+    NATIVE_PROLOGUE();
+    auto descriptor = toCInt(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto signal = toCInt(globalObject, args[1]);
+    RETURN_IF_EXCEPTION(scope, { });
+    int flags = 0;
+    if (JSValue given = args.at(3)) {
+        auto number = toCInt(globalObject, given);
+        RETURN_IF_EXCEPTION(scope, { });
+        flags = *number;
+    }
+    if (JSValue information = args.at(2); information && !isNone(information))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "siginfo must be None"_s));
+    if (syscall(SYS_pidfd_send_signal, *descriptor, *signal, nullptr, flags) < 0)
+        return JSValue::encode(raiseOSError(globalObject, scope, errno));
+    RETURN_NONE();
+}
+
+#endif // OS(LINUX)
 
 PYTHON_NATIVE(signalValidSignals)
 {
@@ -625,6 +857,18 @@ JSObject* createSignalModule(JSGlobalObject* globalObject)
     addFunction(globalObject, module, "sigpending"_s, signalSigPending);
     addFunction(globalObject, module, "sigwait"_s, signalSigWait);
     addFunction(globalObject, module, "valid_signals"_s, signalValidSignals);
+#if OS(LINUX)
+    addFunction(globalObject, module, "sigwaitinfo"_s, signalSigWaitInfo);
+    addFunction(globalObject, module, "sigtimedwait"_s, signalSigTimedWait);
+    addFunction(globalObject, module, "pidfd_send_signal"_s, signalPidfdSendSignal);
+    if (!state.information) {
+        static constexpr ASCIILiteral fields[] = { "si_signo"_s, "si_code"_s, "si_errno"_s, "si_pid"_s, "si_uid"_s, "si_status"_s, "si_band"_s };
+        PyType* type = createBuiltinType(globalObject, "signal.struct_siginfo"_s, realm->typeTuple(), PyType::Layout::Tuple, PyType::IsSequence | PyType::IsDerivedFromBuiltin);
+        state.information.set(vm, realm, type);
+        makeStructSequenceType(globalObject, type, std::span(fields), std::size(fields));
+    }
+    module->putDirect(vm, Identifier::fromString(vm, "struct_siginfo"_s), state.information->object());
+#endif
 
     // PyErr_NewException("signal.ItimerError", PyExc_OSError, NULL)
     if (!state.itimerError) {
@@ -696,6 +940,9 @@ JSObject* createSignalModule(JSGlobalObject* globalObject)
 #ifdef SIGSTKFLT
     ADD(SIGSTKFLT);
 #endif
+#undef ADD
+    // An enum, in glibc
+#define ADD(name) add(#name ""_s, jsNumber(static_cast<int>(name)))
     ADD(ITIMER_REAL);
     ADD(ITIMER_VIRTUAL);
     ADD(ITIMER_PROF);

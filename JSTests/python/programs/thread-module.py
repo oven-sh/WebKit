@@ -233,8 +233,11 @@ def interrupted():
 
 t("is raised there and then", interrupted)
 t("by number", lambda: _thread.interrupt_main(2))
-t("some other signal", lambda: _thread.interrupt_main(30))
-for a in (0, -1, 31, 32, 1000, 2 ** 40, -2 ** 40, 2 ** 70):
+t("some other signal", lambda: _thread.interrupt_main(__import__("_signal").SIGUSR1))
+NSIG = __import__("_signal").NSIG
+t("the last signal that there is", lambda: _thread.interrupt_main(NSIG - 1))
+t("one more than that", lambda: _thread.interrupt_main(NSIG))
+for a in (0, -1, 1000, 2 ** 40, -2 ** 40, 2 ** 70):
     t("interrupt_main(%d)" % a, lambda: _thread.interrupt_main(a))
 t("interrupt_main('a')", lambda: _thread.interrupt_main("a"))
 
