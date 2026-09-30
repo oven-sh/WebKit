@@ -1,0 +1,61 @@
+---- what it is
+a terminal => (True, True, True, True, False, False)
+as it comes => ((['ICRNL', 'IXON'], 0), (['OPOST', 'ONLCR'], 0), (['CS8', 'CREAD'], 0), (['ECHO', 'ECHOE', 'ECHOK', 'ICANON', 'IEXTEN', 'ISIG', 'ECHOCTL', 'ECHOKE'], 0), True, True)
+what tcgetattr() gives => [('list', 7, ['int', 'int', 'int', 'int', 'int', 'int', 'list'], True, ['bytes'], True)]
+the characters => [('VINTR', b'\x03'), ('VQUIT', b'\x1c'), ('VERASE', b'\x7f'), ('VKILL', b'\x15'), ('VEOF', b'\x04'), ('VSTART', b'\x11'), ('VSTOP', b'\x13'), ('VSUSP', b'\x1a'), ('VEOL', b'\x00'), ('VREPRINT', b'\x12'), ('VWERASE', b'\x17'), ('VLNEXT', b'\x16'), ('VMIN', b'\x01'), ('VTIME', b'\x00')]
+each time another list => (True, True, True)
+something with fileno() => [True]
+---- setting it
+no echo => (None, (['ECHOE', 'ECHOK', 'ICANON', 'IEXTEN', 'ISIG', 'ECHOCTL', 'ECHOKE'], 0))
+when => [(None, True), (None, True), (None, True), "termios.error: (22, 'Invalid argument')", "termios.error: (22, 'Invalid argument')", "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C int']
+how fast => [(None, True), (None, True), (None, True), (None, True)]
+at no speed that there is => ["termios.error: (22, 'Invalid argument')", "termios.error: (22, 'Invalid argument')", None, "termios.error: (22, 'Invalid argument')", "termios.error: (22, 'Invalid argument')", None]
+not a line at a time => (None, [('int', 1), ('int', 0)], ['bytes', 'int'])
+how many, and how long => (None, 3, 7, None, 2, 0)
+a character => [(None, b'\x01'), (None, b'\x02'), (None, b'\xff'), (None, b'\x00'), (None, b'\x01'), (None, b'\xff'), (None, b'\x01'), ('builtins.TypeError: tcsetattr: elements of attributes must be bytes objects of length 1 or integers', b'\x01'), ('builtins.TypeError: tcsetattr: elements of attributes must be bytes objects of length 1 or integers', b'\x01'), ('builtins.TypeError: tcsetattr: elements of attributes must be bytes objects of length 1 or integers', b'\x01'), ('builtins.TypeError: tcsetattr: elements of attributes must be bytes objects of length 1 or integers', b'\x01'), ('builtins.TypeError: tcsetattr: elements of attributes must be bytes objects of length 1 or integers', b'\x01'), ('builtins.TypeError: tcsetattr: elements of attributes must be bytes objects of length 1 or integers', b'\x01'), ('builtins.OverflowError: Python int too large to convert to C long', b'\x01'), ('builtins.TypeError: tcsetattr: elements of attributes must be bytes objects of length 1 or integers', b'\x01'), (None, b'\x07'), (None, b'\x08')]
+what is not seven things => ['builtins.TypeError: tcsetattr, arg 3: must be 7 element list', 'builtins.TypeError: tcsetattr, arg 3: must be 7 element list', 'builtins.TypeError: tcsetattr, arg 3: must be 7 element list', 'builtins.TypeError: tcsetattr, arg 3: must be 7 element list', 'builtins.TypeError: tcsetattr, arg 3: must be 7 element list', 'builtins.TypeError: tcsetattr, arg 3: must be 7 element list', 'builtins.TypeError: tcsetattr, arg 3: must be 7 element list', None]
+what is not a number => ["builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", "builtins.TypeError: 'float' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C long', "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", "builtins.TypeError: 'float' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C long', "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", "builtins.TypeError: 'float' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C long', "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", "builtins.TypeError: 'float' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C long', "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", "builtins.TypeError: 'float' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C long', "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", "builtins.TypeError: 'float' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C long']
+numbers that are too much are cut down => [(None, True), (None, True), (None, True), (None, True)]
+not the right number of characters => ['builtins.TypeError: tcsetattr: attributes[6] must be 32 element list', 'builtins.TypeError: tcsetattr: attributes[6] must be 32 element list', 'builtins.TypeError: tcsetattr: attributes[6] must be 32 element list', 'builtins.TypeError: tcsetattr: attributes[6] must be 32 element list', 'builtins.TypeError: tcsetattr: attributes[6] must be 32 element list', 'builtins.TypeError: tcsetattr: attributes[6] must be 32 element list']
+it is as it was => True
+---- tty
+raw => (True, (([], 0), (['ONLCR'], 0), (['CS8', 'CREAD'], 0), (['ECHOCTL', 'ECHOKE'], 0), True, True), 1, 0)
+a character at a time => (True, ((['ICRNL', 'IXON'], 0), (['OPOST', 'ONLCR'], 0), (['CS8', 'CREAD'], 0), (['ECHOE', 'ECHOK', 'IEXTEN', 'ISIG', 'ECHOCTL', 'ECHOKE'], 0), True, True), 1, 0)
+worked out and not set => [(None, (([], 0), (['ONLCR'], 0), (['CS8', 'CREAD'], 0), (['ECHOCTL', 'ECHOKE'], 0), True, True), None, ((['ICRNL', 'IXON'], 0), (['OPOST', 'ONLCR'], 0), (['CS8', 'CREAD'], 0), (['ECHOE', 'ECHOK', 'IEXTEN', 'ISIG', 'ECHOCTL', 'ECHOKE'], 0), True, True), True)]
+---- what goes through it
+a line at a time, and shown as it is typed => (3, b'hel', [], 3, b'lo\r\n', b'hello\n')
+with what is rubbed out => (7, b'abcx\x08 \x08d\r\n', b'abcd\n')
+the whole line rubbed out => (7, b'de\n', None)
+the end of it => (3, b'ab', 1, b'', b'ab')
+what is written to it => (9, b'one\r\ntwo\r\r\n')
+raw: as it is => (6, b'a\x7f\x03\r\n\x04', [], 4, b'one\n')
+---- what is waiting
+how much => (8, b'waiting\r\n', True, 8)
+thrown away => (None, 0, [])
+either way, and both => [None, None, None, "termios.error: (22, 'Invalid argument')", "termios.error: (22, 'Invalid argument')", "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C int']
+held up and let go => [None, None, "termios.error: (22, 'Invalid argument')", "termios.error: (22, 'Invalid argument')", "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer"]
+until it has gone => (1, None, b'x')
+a break => (None, "builtins.TypeError: 'str' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C int')
+---- how big it is
+as it comes => ((0, 0), (0, 0), 'tuple', os.terminal_size(columns=0, lines=0))
+set => (None, (24, 80), (24, 80), os.terminal_size(columns=80, lines=24), (80, 24))
+anything with two things in it => [(None, (1, 2)), (None, (3, 4)), (None, (5, 6)), (None, (7, 8)), (None, (1, 0)), (None, (65535, 0))]
+what will not do => ['builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', 'builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', 'builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', 'builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', 'builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', "builtins.TypeError: 'str' object cannot be interpreted as an integer", 'builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', 'builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', 'builtins.TypeError: tcsetwinsize, arg 2: must be a two-item sequence', 'builtins.OverflowError: winsize value(s) out of range.', 'builtins.OverflowError: winsize value(s) out of range.', 'builtins.OverflowError: winsize value(s) out of range.', "builtins.TypeError: 'str' object cannot be interpreted as an integer", "builtins.TypeError: 'NoneType' object cannot be interpreted as an integer", "builtins.TypeError: 'float' object cannot be interpreted as an integer", 'builtins.OverflowError: Python int too large to convert to C long', (65535, 0)]
+the rest of it is left as it was => (b'\n\x00\x14\x00\x1e\x00(\x00', None, (11, 21, 30, 40))
+---- ioctl(), given somewhere to write
+bytes are copied => [(b'\x0b\x00\x15\x00\x1e\x00(\x00', b'\x00\x00\x00\x00\x00\x00\x00\x00')]
+a bytearray is written in => [(0, b'\x0b\x00\x15\x00\x1e\x00(\x00')]
+unless it is said not to be => [(b'\x0b\x00\x15\x00\x1e\x00(\x00', b'\x00\x00\x00\x00\x00\x00\x00\x00')]
+or it is said to be => [(0, b'\x0b\x00\x15\x00\x1e\x00(\x00'), b'\x0b\x00\x15\x00\x1e\x00(\x00']
+a memoryview, and an array => [(0, b'\x0b\x00\x15\x00\x1e\x00(\x00'), (0, [11, 21, 30, 40])]
+more room than is wanted => [(0, b'\x0b\x00\x15\x00\x1e\x00(\x00\xff\xff', 2000), (b'\x0b\x00\x15\x00\x1e\x00(\x00\xff\xff', 1024), 'builtins.ValueError: ioctl argument 3 is too long']
+a str => b'\x0b\x00\x15\x00\x1e\x00(\x00'
+of what is no terminal => [[('builtins.OSError: [Errno 25] Inappropriate ioctl for device', "termios.error: (25, 'Inappropriate ioctl for device')", "termios.error: (25, 'Inappropriate ioctl for device')", "termios.error: (25, 'Inappropriate ioctl for device')", "termios.error: (25, 'Inappropriate ioctl for device')", None, None)]]
+---- fcntl()
+whether it waits => (0, 0, True, False, 'builtins.BlockingIOError: [Errno 11] Resource temporarily unavailable', None, 0)
+whether it is passed on => (1, 0, True, 0, False)
+---- whose it is
+no one's => ('builtins.OSError: [Errno 25] Inappropriate ioctl for device', 'builtins.OSError: [Errno 25] Inappropriate ioctl for device')
+---- when the other end has gone
+nothing more comes => termios.error: (5, 'Input/output error')
+nor is there anything to ask => ("termios.error: (9, 'Bad file descriptor')", "termios.error: (9, 'Bad file descriptor')", 'builtins.OSError: [Errno 9] Bad file descriptor', 'builtins.OSError: [Errno 9] Bad file descriptor', False)

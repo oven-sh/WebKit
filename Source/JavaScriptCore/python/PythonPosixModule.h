@@ -44,5 +44,7 @@ JS_EXPORT_PRIVATE JSObject* createPosixSubprocessModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* createSelectModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* createResourceModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* createSocketModule(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createFcntlModule(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createTermiosModule(JSGlobalObject*);
 
 } } // namespace JSC::Python

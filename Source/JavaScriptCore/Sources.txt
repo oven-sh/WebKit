@@ -747,6 +747,7 @@ python/PyLock.cpp
 python/PyStateObject.cpp
 python/PyWeakReference.cpp
 python/PythonConstantFolding.cpp
+python/PythonFcntlModule.cpp
 python/PythonFrameJump.cpp
 python/PythonABCModule.cpp
 python/PythonASTDumper.cpp
@@ -845,6 +846,7 @@ python/PythonSymbolTable.cpp
 python/PythonSymtableModule.cpp
 python/PythonSysModule.cpp
 python/PythonTemplateStrings.cpp
+python/PythonTermiosModule.cpp
 python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp
 python/PythonUnicodeData.cpp
