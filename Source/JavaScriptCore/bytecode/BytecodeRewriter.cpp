@@ -132,7 +132,7 @@ void BytecodeRewriter::adjustJumpTargets()
             ++currentInsertion;
         }
 
-        offset += before;
+        offset += before + after;
 
         if (!remove) {
             auto instruction = m_writer.ref(i);
@@ -144,8 +144,6 @@ void BytecodeRewriter::adjustJumpTargets()
             offset -= remove;
             i += remove;
         }
-
-        offset += after;
     }
 }
 

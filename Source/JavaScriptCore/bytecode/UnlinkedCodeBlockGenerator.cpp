@@ -129,12 +129,12 @@ void UnlinkedCodeBlockGenerator::applyModification(BytecodeRewriter& rewriter)
     }
 
     for (size_t i = 0; i < m_opProfileControlFlowBytecodeOffsets.size(); ++i)
-        m_opProfileControlFlowBytecodeOffsets[i] = rewriter.adjustAbsoluteOffset(m_opProfileControlFlowBytecodeOffsets[i]);
+        m_opProfileControlFlowBytecodeOffsets[i] = rewriter.adjustInstructionOffset(m_opProfileControlFlowBytecodeOffsets[i]);
 
     if (!m_typeProfilerInfoMap.isEmpty()) {
         UncheckedKeyHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> adjustedTypeProfilerInfoMap;
         for (auto& entry : m_typeProfilerInfoMap)
-            adjustedTypeProfilerInfoMap.set(rewriter.adjustAbsoluteOffset(entry.key), entry.value);
+            adjustedTypeProfilerInfoMap.set(rewriter.adjustInstructionOffset(entry.key), entry.value);
         m_typeProfilerInfoMap.swap(adjustedTypeProfilerInfoMap);
     }
 

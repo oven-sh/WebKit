@@ -164,6 +164,10 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, enableWasmDebugger, false, Normal, nullptr) \
     v(Bool, verboseWasmTypeCleanup, false, Normal, "Log per-invocation counts from Wasm::TypeInformation::tryCleanup (scanned / live / reclaimed)."_s) \
     v(Bool, dumpBytecodesBeforeGeneratorification, false, Normal, nullptr) \
+    v(Bool, useGeneratorFramePruning, true, Normal, "generators and async functions save only the locals an activation may have written, and restore only the ones it may read") \
+    v(Bool, useGeneratorFrameWriteThrough, true, Normal, "with useGeneratorFramePruning, store a local in the generator frame where it is defined when that takes fewer instructions than saving it where the function suspends") \
+    v(Bool, forceGeneratorFrameWriteThrough, false, Normal, "for testing: store every local that can be stored where it is defined that way, whatever it costs") \
+    v(Bool, dumpGeneratorFrameStatistics, false, Normal, nullptr) \
     v(Unsigned, switchJumpTableAmountThreshold, 15, Normal, nullptr) \
     \
     v(Bool, useFunctionDotArguments, true, Normal, nullptr) \
