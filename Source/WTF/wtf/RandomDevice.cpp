@@ -145,9 +145,8 @@ void RandomDevice::cryptographicallyRandomValues(std::span<uint8_t> buffer)
     if (static_cast<size_t>(amountRead) == buffer.size())
         return;
 #endif
-    std::call_once(m_openURandomOnce, [this] {
+    if (m_fd < 0)
         openURandom();
-    });
 #endif
     while (static_cast<size_t>(amountRead) < buffer.size()) {
         WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

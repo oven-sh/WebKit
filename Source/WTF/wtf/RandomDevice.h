@@ -26,7 +26,6 @@
 
 #pragma once
 
-#include <mutex>
 #include <wtf/FastMalloc.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/StdLibExtras.h>
@@ -54,10 +53,7 @@ private:
 #elif OS(UNIX)
     void openURandom();
 
-    int m_fd { -1 };
-#if OS(LINUX)
-    std::once_flag m_openURandomOnce; // /dev/urandom is only opened once getrandom(2) has failed.
-#endif
+    int m_fd { -1 }; // On Linux, /dev/urandom is only opened once getrandom(2) has failed.
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must
