@@ -35,6 +35,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+class PyType;
+
 // An object property condition set is used to represent the set of additional conditions
 // that need to be met for some heap access to be valid. The set can have the following
 // interesting states:
@@ -170,6 +172,8 @@ ObjectPropertyConditionSet generateConditionsForPropertySetterMiss(
     VM&, JSCell* owner, JSGlobalObject*, Structure* headStructure, UniquedStringImpl* uid);
 ObjectPropertyConditionSet generateConditionsForIndexedMiss(VM&, JSCell* owner, JSGlobalObject*, Structure* headStructure);
 ObjectPropertyConditionSet generateConditionsForPrototypePropertyHit(VM&, JSCell* owner, JSGlobalObject*, Structure* headStructure, JSObject* prototype, UniquedStringImpl* uid);
+// What Python finds in a class it finds by going through the classes in the order of resolution, which is not what the prototype of each is. Those that come before `holder` have nothing by the name, and it has.
+ObjectPropertyConditionSet generateConditionsForPythonClassAttribute(VM&, JSCell* owner, PyType*, PyType* holder, UniquedStringImpl* uid);
 ObjectPropertyConditionSet generateConditionsForPrototypePropertyHitCustom(
     VM&, JSCell* owner, JSGlobalObject*, Structure* headStructure, JSObject* prototype,
     UniquedStringImpl* uid, unsigned attributes);

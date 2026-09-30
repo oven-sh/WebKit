@@ -33,9 +33,9 @@ namespace JSC {
 ProxyableAccessCase::ProxyableAccessCase(VM& vm, JSCell* owner, AccessType accessType, CacheableIdentifier identifier, PropertyOffset offset, Structure* structure,
     const ObjectPropertyConditionSet& conditionSet, bool viaGlobalProxy, WatchpointSet* additionalSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain)
     : Base(vm, owner, accessType, identifier, offset, structure, conditionSet, WTF::move(prototypeAccessChain))
-    , m_additionalSet(additionalSet)
 {
     m_viaGlobalProxy = viaGlobalProxy;
+    m_additionalSet = additionalSet;
 }
 
 Ref<AccessCase> ProxyableAccessCase::create(VM& vm, JSCell* owner, AccessType type, CacheableIdentifier identifier, PropertyOffset offset, Structure* structure, const ObjectPropertyConditionSet& conditionSet, bool viaGlobalProxy, WatchpointSet* additionalSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain)

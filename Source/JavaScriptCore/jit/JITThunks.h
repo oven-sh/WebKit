@@ -66,6 +66,7 @@ class NativeExecutable;
     macro(PolymorphicTopTierThunkForClosure, polymorphicTopTierThunkForClosure) \
     macro(ReturnFromBaseline, returnFromBaselineGenerator) \
     macro(GetByIdLoadOwnPropertyHandler, getByIdLoadOwnPropertyHandler) \
+    macro(PyLoadMethodLoadOwnPropertyHandler, pyLoadMethodLoadOwnPropertyHandler) \
     macro(GetByIdLoadPrototypePropertyHandler, getByIdLoadPrototypePropertyHandler) \
     macro(GetByIdMissHandler, getByIdMissHandler) \
     macro(GetByIdGetterHandler, getByIdGetterHandler) \

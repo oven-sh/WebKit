@@ -43,6 +43,8 @@ enum class GetByKind {
     ByValWithThis,
     PrivateName,
     PrivateNameById,
+    PyGetAttr,
+    PyLoadMethod,
 };
 
 enum class PutByKind {
@@ -77,6 +79,9 @@ CacheableIdentifier nonStringPrimitiveKeyForSubscript(VM&, JSValue subscript);
 
 void repatchArrayGetByVal(JSGlobalObject*, CodeBlock*, JSValue base, JSValue index, PropertyInlineCache&, GetByKind);
 void repatchGetBy(JSGlobalObject*, CodeBlock*, JSValue, CacheableIdentifier, const PropertySlot&, PropertyInlineCache&, GetByKind, bool isNonStringPrimitiveKey);
+// getattr() has been done, or setattr(). These look for themselves at what came of it.
+void repatchPyGetAttr(JSGlobalObject*, CodeBlock*, JSValue, CacheableIdentifier, PropertyInlineCache&, GetByKind);
+void repatchPySetAttr(JSGlobalObject*, CodeBlock*, JSValue, Structure* oldStructure, CacheableIdentifier, PropertyInlineCache&);
 void repatchArrayPutByVal(JSGlobalObject*, CodeBlock*, JSValue base, JSValue index, PropertyInlineCache&, PutByKind);
 void repatchPutBy(JSGlobalObject*, CodeBlock*, JSValue, Structure*, CacheableIdentifier, const PutPropertySlot&, PropertyInlineCache&, PutByKind, bool isNonStringPrimitiveKey);
 void repatchDeleteBy(JSGlobalObject*, CodeBlock*, DeletePropertySlot&, JSValue, Structure*, CacheableIdentifier, PropertyInlineCache&, DelByKind, ECMAMode);
@@ -97,6 +102,7 @@ void resetHasPrivateBrand(CodeBlock*, PropertyInlineCache&);
 void resetInstanceOf(CodeBlock*, PropertyInlineCache&);
 void resetCheckPrivateBrand(CodeBlock*, PropertyInlineCache&);
 void resetSetPrivateBrand(CodeBlock*, PropertyInlineCache&);
+void resetPySetAttr(CodeBlock*, PropertyInlineCache&);
 
 void repatchGetBySlowPathCall(CodeBlock*, PropertyInlineCache&, GetByKind);
 void repatchPutBySlowPathCall(CodeBlock*, PropertyInlineCache&, PutByKind);

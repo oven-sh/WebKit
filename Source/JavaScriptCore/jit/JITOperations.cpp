@@ -83,6 +83,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include "PropertyInlineCache.h"
 #include "PropertyName.h"
 #include "PropertyNameInlines.h"
+#include "PythonOperations.h"
 #include "RegExpObjectInlines.h"
 #include "RepatchInlines.h"
 #include "ShadowChicken.h"
@@ -539,6 +540,119 @@ JSC_DEFINE_JIT_OPERATION(operationGetByIdOptimize, EncodedJSValue, (EncodedJSVal
             repatchGetBy(globalObject, codeBlock, baseValue, identifier, slot, *propertyCache, GetByKind::ById, /* isNonStringPrimitiveKey */ false);
         return found ? slot.getValue(globalObject, identifier) : jsUndefined();
     })));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyGetAttrGaveUp, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    propertyCache->tookSlowPath = true;
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::getAttribute(globalObject, JSValue::decode(base), propertyCache->identifier().uid())));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyGetAttrOptimize, EncodedJSValue, (EncodedJSValue base, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    CacheableIdentifier identifier = propertyCache->identifier();
+    JSValue baseValue = JSValue::decode(base);
+    JSValue result = Python::getAttribute(globalObject, baseValue, identifier.uid());
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, baseValue.structureOrNull(), identifier))
+        repatchPyGetAttr(globalObject, codeBlock, baseValue, identifier, *propertyCache, GetByKind::PyGetAttr);
+    OPERATION_RETURN(scope, JSValue::encode(result));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyLoadMethodGaveUp, UGPRPair, (EncodedJSValue base, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    propertyCache->tookSlowPath = true;
+
+    JSValue self;
+    JSValue result = Python::loadMethod(globalObject, JSValue::decode(base), propertyCache->identifier().uid(), self);
+    OPERATION_RETURN(scope, makeUGPRPair(JSValue::encode(result), JSValue::encode(self)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyLoadMethodOptimize, UGPRPair, (EncodedJSValue base, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    CacheableIdentifier identifier = propertyCache->identifier();
+    JSValue baseValue = JSValue::decode(base);
+    JSValue self;
+    JSValue result = Python::loadMethod(globalObject, baseValue, identifier.uid(), self);
+    OPERATION_RETURN_IF_EXCEPTION(scope, makeUGPRPair(0, 0));
+
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, baseValue.structureOrNull(), identifier))
+        repatchPyGetAttr(globalObject, codeBlock, baseValue, identifier, *propertyCache, GetByKind::PyLoadMethod);
+    OPERATION_RETURN(scope, makeUGPRPair(JSValue::encode(result), JSValue::encode(self)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPySetAttrGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    propertyCache->tookSlowPath = true;
+
+    Python::setAttribute(globalObject, JSValue::decode(encodedBase), propertyCache->identifier().uid(), JSValue::decode(encodedValue));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPySetAttrOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache* propertyCache))
+{
+    SuperSamplerScope superSamplerScope(false);
+
+    JSGlobalObject* globalObject = propertyCache->globalObject();
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    ICSlowPathCallFrameTracer tracer(vm, callFrame, propertyCache);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    CacheableIdentifier identifier = propertyCache->identifier();
+    JSValue baseValue = JSValue::decode(encodedBase);
+    Structure* oldStructure = baseValue.structureOrNull();
+    Python::setAttribute(globalObject, baseValue, identifier.uid(), JSValue::decode(encodedValue));
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    if (propertyCache->considerRepatchingCacheBy(vm, codeBlock, oldStructure, identifier))
+        repatchPySetAttr(globalObject, codeBlock, baseValue, oldStructure, identifier, *propertyCache);
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationGetByIdWithThisGaveUp, EncodedJSValue, (EncodedJSValue base, EncodedJSValue thisEncoded, PropertyInlineCache* propertyCache))

@@ -338,6 +338,7 @@ private:
 };
 
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdLoadOwnPropertyHandler();
+MacroAssemblerCodeRef<JITThunkPtrTag> pyLoadMethodLoadOwnPropertyHandler();
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdLoadPrototypePropertyHandler();
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdMissHandler();
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdCustomAccessorHandler(VM&);

@@ -229,7 +229,11 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
 
             if (access.usesPolyProto())
                 return PutByStatus(JSC::slowVersion(summary), *propertyCache);
-            
+
+            // It holds only for as long as something that a variant has no way to say holds. An inline cache can.
+            if (access.additionalSet())
+                return PutByStatus(JSC::slowVersion(summary), *propertyCache);
+
             switch (access.type()) {
             case AccessCase::Replace: {
                 Structure* structure = access.structure();

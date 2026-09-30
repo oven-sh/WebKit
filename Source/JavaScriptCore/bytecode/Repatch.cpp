@@ -61,6 +61,9 @@
 #include "ModuleNamespaceAccessCase.h"
 #include "PropertyInlineCache.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
+#include "PyTuple.h"
+#include "PyType.h"
+#include "PythonOperations.h"
 #include "RegExpObject.h"
 #include "ScopedArguments.h"
 #include "ScratchRegisterAllocator.h"
@@ -443,6 +446,10 @@ inline CodePtr<CFunctionPtrTag> NODELETE appropriateGetByOptimizeFunction(GetByK
         return operationGetPrivateNameOptimize;
     case GetByKind::PrivateNameById:
         return operationGetPrivateNameByIdOptimize;
+    case GetByKind::PyGetAttr:
+        return operationPyGetAttrOptimize;
+    case GetByKind::PyLoadMethod:
+        return operationPyLoadMethodOptimize;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -464,6 +471,10 @@ inline CodePtr<CFunctionPtrTag> NODELETE appropriateGetByGaveUpFunction(GetByKin
         return operationGetPrivateNameGaveUp;
     case GetByKind::PrivateNameById:
         return operationGetPrivateNameByIdGaveUp;
+    case GetByKind::PyGetAttr:
+        return operationPyGetAttrGaveUp;
+    case GetByKind::PyLoadMethod:
+        return operationPyLoadMethodGaveUp;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -783,6 +794,135 @@ void repatchGetBy(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue ba
     case AttemptToCache:
         break;
     }
+}
+
+// A class that has been given a great many things, or has had some taken away, keeps them in a way that says nothing of what it has not got.
+static bool flattenPythonClassesForCaching(VM& vm, PyType* type, PyType* holder, bool& didFlatten)
+{
+    for (auto& entry : type->mro()->span()) {
+        PyType* ancestor = asType(entry.get());
+        if (Structure* structure = ancestor->structure(); structure->isDictionary()) {
+            if (structure->hasBeenFlattenedBefore())
+                return false;
+            structure->flattenDictionaryStructure(vm, ancestor);
+            didFlatten = true;
+        }
+        if (ancestor == holder)
+            break;
+    }
+    return true;
+}
+
+static InlineCacheAction tryCachePyGetAttr(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue baseValue, CacheableIdentifier propertyName, PropertyInlineCache& propertyCache, GetByKind kind)
+{
+    VM& vm = globalObject->vm();
+    AccessGenerationResult result;
+
+    {
+        GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
+
+        if (forceICFailure(globalObject) || !baseValue.isCell())
+            return GiveUpOnCache;
+        JSCell* baseCell = baseValue.asCell();
+        InlineCacheAction action = actionForCell(vm, baseCell);
+        if (action != AttemptToCache)
+            return action;
+
+        using Kind = Python::AttributeLocation::Kind;
+        Python::AttributeLocation location = Python::locateAttribute(globalObject, baseValue, propertyName.uid());
+        Structure* structure = baseCell->structure();
+        ObjectPropertyConditionSet conditionSet;
+        switch (location.kind) {
+        case Kind::Unknown:
+            return GiveUpOnCache;
+        case Kind::Own:
+            break;
+        case Kind::InClass:
+        case Kind::Method: {
+            // What is got is a method that remembers the object, which has to be made. What is to be called has no need of one. And what is loaded from a class for that is taken to be a method.
+            if ((location.kind == Kind::Method) != (kind == GetByKind::PyLoadMethod))
+                return GiveUpOnCache;
+            // That the object has nothing by the name is for its structure to say.
+            if (structure->isDictionary()) {
+                if (structure->hasBeenFlattenedBefore())
+                    return GiveUpOnCache;
+                structure->flattenDictionaryStructure(vm, asObject(baseCell));
+                return RetryCacheLater;
+            }
+            bool didFlatten = false;
+            if (!flattenPythonClassesForCaching(vm, location.type, location.holder, didFlatten))
+                return GiveUpOnCache;
+            if (didFlatten)
+                return RetryCacheLater;
+            conditionSet = generateConditionsForPythonClassAttribute(vm, codeBlock, location.type, location.holder, propertyName.uid());
+            if (!conditionSet.isValid())
+                return GiveUpOnCache;
+            break;
+        }
+        }
+
+        auto newCase = ProxyableAccessCase::create(vm, codeBlock, AccessCase::Load, propertyName, location.offset, structure, conditionSet, /* viaGlobalProxy */ false, &location.type->instanceAccessIsAsFound());
+        result = propertyCache.addAccessCase(locker, globalObject, codeBlock, ECMAMode::strict(), propertyName, WTF::move(newCase));
+    }
+
+    fireWatchpointsAndClearStubIfNeeded(vm, propertyCache, codeBlock, result);
+    return result.shouldGiveUpNow() ? GiveUpOnCache : RetryCacheLater;
+}
+
+void repatchPyGetAttr(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue baseValue, CacheableIdentifier propertyName, PropertyInlineCache& propertyCache, GetByKind kind)
+{
+    SuperSamplerScope superSamplerScope(false);
+    if (tryCachePyGetAttr(globalObject, codeBlock, baseValue, propertyName, propertyCache, kind) == GiveUpOnCache)
+        repatchSlowPathCall(codeBlock, propertyCache, appropriateGetByGaveUpFunction(kind));
+}
+
+static InlineCacheAction tryCachePySetAttr(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue baseValue, Structure* oldStructure, CacheableIdentifier propertyName, PropertyInlineCache& propertyCache)
+{
+    VM& vm = globalObject->vm();
+    AccessGenerationResult result;
+
+    {
+        GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
+
+        if (forceICFailure(globalObject) || !baseValue.isObject() || !oldStructure->propertyAccessesAreCacheable())
+            return GiveUpOnCache;
+        PyType* type = Python::classIfAttributeIsSetAsProperty(globalObject, baseValue, propertyName.uid());
+        if (!type)
+            return GiveUpOnCache;
+
+        Structure* structure = baseValue.asCell()->structure();
+        RefPtr<AccessCase> newCase;
+        if (structure == oldStructure) {
+            unsigned attributes;
+            PropertyOffset offset = structure->get(vm, propertyName.uid(), attributes);
+            if (!isValidOffset(offset) || attributes)
+                return GiveUpOnCache;
+            structure->didCachePropertyReplacement(vm, offset);
+            newCase = AccessCase::createReplace(vm, codeBlock, propertyName, offset, structure, /* viaGlobalProxy */ false, &type->instanceAccessIsAsFound());
+        } else {
+            // One structure, one object: it will not happen again.
+            if (oldStructure->isDictionary())
+                return RetryCacheLater;
+            PropertyOffset offset;
+            Structure* newStructure = Structure::addPropertyTransitionToExistingStructureConcurrently(oldStructure, propertyName.uid(), static_cast<unsigned>(PropertyAttribute::None), offset);
+            if (!newStructure || newStructure != structure || !newStructure->propertyAccessesAreCacheable())
+                return GiveUpOnCache;
+            ASSERT(newStructure->previousID() == oldStructure);
+            newCase = AccessCase::createTransition(vm, codeBlock, propertyName, offset, oldStructure, newStructure, { }, nullptr, propertyCache, &type->instanceAccessIsAsFound());
+        }
+
+        result = propertyCache.addAccessCase(locker, globalObject, codeBlock, ECMAMode::strict(), propertyName, WTF::move(newCase));
+    }
+
+    fireWatchpointsAndClearStubIfNeeded(vm, propertyCache, codeBlock, result);
+    return result.shouldGiveUpNow() ? GiveUpOnCache : RetryCacheLater;
+}
+
+void repatchPySetAttr(JSGlobalObject* globalObject, CodeBlock* codeBlock, JSValue baseValue, Structure* oldStructure, CacheableIdentifier propertyName, PropertyInlineCache& propertyCache)
+{
+    SuperSamplerScope superSamplerScope(false);
+    if (tryCachePySetAttr(globalObject, codeBlock, baseValue, oldStructure, propertyName, propertyCache) == GiveUpOnCache)
+        repatchSlowPathCall(codeBlock, propertyCache, operationPySetAttrGaveUp);
 }
 
 // Mainly used to transition from megamorphic case to generic case.
@@ -1117,6 +1257,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
 
                 if (propertyCache.cacheType() == CacheType::Unset
                     && InlineAccess::canGenerateSelfPropertyReplace(propertyCache, slot.cachedOffset())
+                    && !slot.watchpointSet()
                     && !oldStructure->needImpurePropertyWatchpoint()
                     && !isGlobalProxy) {
 
@@ -1129,7 +1270,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                     }
                 }
 
-                newCase = AccessCase::createReplace(vm, codeBlock, propertyName, slot.cachedOffset(), oldStructure, isGlobalProxy);
+                newCase = AccessCase::createReplace(vm, codeBlock, propertyName, slot.cachedOffset(), oldStructure, isGlobalProxy, slot.watchpointSet());
             } else {
                 ASSERT(!isGlobalProxy);
                 ASSERT(slot.type() == PutPropertySlot::NewProperty);
@@ -1200,7 +1341,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
                     break;
                 }
 
-                newCase = AccessCase::createTransition(vm, codeBlock, propertyName, offset, oldStructure, newStructure, conditionSet, WTF::move(prototypeAccessChain), propertyCache);
+                newCase = AccessCase::createTransition(vm, codeBlock, propertyName, offset, oldStructure, newStructure, conditionSet, WTF::move(prototypeAccessChain), propertyCache, slot.watchpointSet());
             }
         } else if (!newCase && (slot.isCacheableCustom() || slot.isCacheableSetter())) {
             if (slot.isCacheableCustom()) {
@@ -2186,6 +2327,12 @@ void resetPutBy(CodeBlock* codeBlock, PropertyInlineCache& propertyCache, PutByK
     }
 
     repatchSlowPathCall(codeBlock, propertyCache, optimizedFunction);
+    propertyCache.resetStubAsJumpInAccess(codeBlock);
+}
+
+void resetPySetAttr(CodeBlock* codeBlock, PropertyInlineCache& propertyCache)
+{
+    repatchSlowPathCall(codeBlock, propertyCache, operationPySetAttrOptimize);
     propertyCache.resetStubAsJumpInAccess(codeBlock);
 }
 

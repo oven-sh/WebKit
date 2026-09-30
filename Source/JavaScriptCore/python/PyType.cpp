@@ -65,6 +65,12 @@ Structure* PyType::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue
     return Structure::create(vm, globalObject, prototype, TypeInfo(PyTypeType, StructureFlags | pythonCellFlags), info());
 }
 
+bool PyType::instancesAreWhatLiteralsMake(JSValue prototype)
+{
+    auto* type = dynamicDowncast<PyType>(prototype);
+    return type && type->instancesAreWhatLiteralsMake();
+}
+
 Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, Layout layout, JSObject* prototype, unsigned additionalFlags)
 {
     switch (layout) {
@@ -339,6 +345,24 @@ JSValue PyType::lookup(VM& vm, PropertyName name) const
     return { };
 }
 
+JSValue PyType::lookup(VM& vm, PropertyName name, PyType*& holder) const
+{
+    holder = nullptr;
+    if (Python::isIndexLike(name)) [[unlikely]]
+        return lookup(vm, name);
+    for (auto& entry : m_mro->span()) {
+        if (JSValue value = asObject(entry.get())->getDirect(vm, name)) {
+            holder = asType(entry.get());
+            return value;
+        }
+        if (JSObject* prototype = asType(entry.get())->javaScriptPrototype(); prototype && name != vm.propertyNames->constructor) [[unlikely]] {
+            if (JSValue value = prototype->getDirect(vm, name))
+                return value;
+        }
+    }
+    return { };
+}
+
 JSValue PyType::lookupOnClass(VM& vm, PropertyName name, bool& isStatic, PyType* from) const
 {
     isStatic = false;
@@ -450,8 +474,7 @@ void PyType::setOrder(VM& vm, PyTuple* order)
     }
     // What it finds, and where, may all be different.
     m_knowsHooks = false;
-    if (m_instanceAccessIsAsFound->isStillValid())
-        m_instanceAccessIsAsFound->fireAll(vm, "The order in which the bases of a class are searched was changed");
+    std::exchange(m_instanceAccessIsAsFound, WatchpointSet::create(IsWatched))->fireAll(vm, "The order in which the bases of a class are searched was changed");
 }
 
 Vector<PyType*> PyType::subclasses() const
@@ -466,9 +489,7 @@ Vector<PyType*> PyType::subclasses() const
 
 void PyType::instanceAccessMayHaveChanged(VM& vm)
 {
-    if (!m_instanceAccessIsAsFound->isStillValid())
-        return;
-    m_instanceAccessIsAsFound->fireAll(vm, "A class was given something that comes before the attributes of its instances");
+    std::exchange(m_instanceAccessIsAsFound, WatchpointSet::create(IsWatched))->fireAll(vm, "A class was given something that changes how the attributes of its instances are found");
     for (PyType* subclass : subclasses())
         subclass->instanceAccessMayHaveChanged(vm);
 }
@@ -476,9 +497,10 @@ void PyType::instanceAccessMayHaveChanged(VM& vm)
 void PyType::setAttribute(VM& vm, PropertyName name, JSValue value)
 {
     auto& names = vm.pythonNames();
+    JSValue previous = lookupOwn(vm, name);
     Python::putStoredAttribute(vm, this, name, value);
     attributeDidChange(vm, name);
-    if (name == names.dunder_getattribute || name == names.dunder_setattr || name == names.dunder_delattr || Python::isDataDescriptor(globalObject(), value))
+    if (name == names.dunder_getattribute || name == names.dunder_setattr || name == names.dunder_delattr || Python::isDataDescriptor(globalObject(), value) || (previous && !Python::isGotFromInstanceInTheSameWay(globalObject(), previous, value)))
         instanceAccessMayHaveChanged(vm);
 }
 

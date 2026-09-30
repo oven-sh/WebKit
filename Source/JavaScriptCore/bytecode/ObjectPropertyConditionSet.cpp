@@ -27,6 +27,8 @@
 #include "ObjectPropertyConditionSet.h"
 
 #include "JSCInlines.h"
+#include "PyTuple.h"
+#include "PyType.h"
 #include <wtf/ListDump.h>
 
 namespace JSC {
@@ -417,6 +419,28 @@ ObjectPropertyConditionSet generateConditionsForPrototypePropertyHit(
             conditions.append(result);
             return true;
         });
+}
+
+ObjectPropertyConditionSet generateConditionsForPythonClassAttribute(VM& vm, JSCell* owner, PyType* type, PyType* holder, UniquedStringImpl* uid)
+{
+    Vector<ObjectPropertyCondition, 8> conditions;
+    for (auto& entry : type->mro()->span()) {
+        PyType* ancestor = asType(entry.get());
+        // What a class of JavaScript's defines is in another object.
+        if (ancestor->javaScriptPrototype())
+            return ObjectPropertyConditionSet::invalid();
+        bool isHolder = ancestor == holder;
+        // Nothing can be given to a class that is built in.
+        if (!isHolder && ancestor->isImmutable())
+            continue;
+        ObjectPropertyCondition condition = generateCondition(vm, owner, ancestor, ancestor->structure(), uid, isHolder ? PropertyCondition::Presence : PropertyCondition::Absence, Concurrency::MainThread);
+        if (!condition)
+            return ObjectPropertyConditionSet::invalid();
+        conditions.append(condition);
+        if (isHolder)
+            return ObjectPropertyConditionSet::create(WTF::move(conditions));
+    }
+    return ObjectPropertyConditionSet::invalid();
 }
 
 ObjectPropertyConditionSet generateConditionsForPrototypePropertyHitCustom(

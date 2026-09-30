@@ -165,7 +165,8 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
     }
     case PyBoxedValueType:
         RELEASE_AND_RETURN(scope, builtinRepr(globalObject, uncheckedDowncast<PyBoxedValue>(cell)->value()));
-    case PyTupleType: {
+    case PyTupleType:
+    case PyDerivedTupleType: {
         auto* tuple = uncheckedDowncast<PyTuple>(cell);
         ReprGuard guard(globalObject, cell);
         if (guard.isRecursive())
@@ -176,7 +177,8 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         builder.append(tuple->length() == 1 ? ",)"_s : ")"_s);
         return builder.tryFinish();
     }
-    case PyDictType: {
+    case PyDictType:
+    case PyDerivedDictType: {
         auto* dict = uncheckedDowncast<PyDict>(cell);
         ReprGuard guard(globalObject, cell);
         if (guard.isRecursive())
@@ -198,7 +200,8 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         builder.append('}');
         return builder.tryFinish();
     }
-    case PySetType: {
+    case PySetType:
+    case PyDerivedSetType: {
         auto* set = uncheckedDowncast<PySet>(cell);
         String name = type->nameString(globalObject);
         bool isPlainSet = type == realm->typeSet();

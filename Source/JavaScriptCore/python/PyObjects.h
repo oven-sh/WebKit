@@ -337,6 +337,12 @@ public:
     // Another that is where this one is, and goes on from there by itself.
     PyIterator* copy(JSGlobalObject*) const;
 
+    static constexpr ptrdiff_t offsetOfKind() { return OBJECT_OFFSETOF(PyIterator, m_kind); }
+    static constexpr ptrdiff_t offsetOfA() { return OBJECT_OFFSETOF(PyIterator, m_a); }
+    static constexpr ptrdiff_t offsetOfIndex() { return OBJECT_OFFSETOF(PyIterator, m_index); }
+    static constexpr ptrdiff_t offsetOfStop() { return OBJECT_OFFSETOF(PyIterator, m_stop); }
+    static constexpr ptrdiff_t offsetOfStep() { return OBJECT_OFFSETOF(PyIterator, m_step); }
+
 private:
     PyIterator(VM& vm, Structure* structure, Kind kind, JSValue a, JSValue b, int64_t index, int64_t stop, int64_t step)
         : Base(vm, structure)

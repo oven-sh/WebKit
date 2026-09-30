@@ -1,0 +1,11 @@
+a property afterwards => ((1, 2, 19999900000), 'the property', 'the property', [3, 4, 4, 4], {'x': 199999}, 'the property', 'the property', [3, 4, 4, 4])
+a property with no setter => (2, "threw AttributeError: property '<lambda>' of 'fresh.<locals>.C' object has no setter", {'x': 2})
+a property in a base => ((1, 2), "the base's", "threw AttributeError: property '<lambda>' of 'a_property_in_a_base.<locals>.C' object has no setter")
+__setattr__ afterwards => (2, 2, [('x', 3), ('x', 3)], 4, 5)
+__getattribute__ afterwards => (1, 'asked for x', 1)
+what is added => ({'a': 199999, 'b': 200000, 'c': 'c'}, {'a': 1, 'c': 'c'}, 'the property', [1, 2])
+with slots => (1, 1, "threw AttributeError: 'S' object has no attribute 'y' and no __dict__ for setting new attributes")
+another dict => ((2, 2), 'shared', 'set by one', 'set by one', {'x': 'set by one'})
+another class => ((2, 2), "B's property", "B's property", {'x': 2})
+what kind of number => [('int', 1), ('float', 1.0), ('float', 1.5), ('int', 2147483648), ('int', 1099511627776), ('float', -0.0), ('bool', True), ('NoneType', None), ('str', 's')]
+by both => [('js', 'js', 'py', 'py'), ('the property', 'the property', 'the property', {'x': 'py'})]

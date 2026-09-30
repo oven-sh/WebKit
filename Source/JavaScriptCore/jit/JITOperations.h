@@ -191,6 +191,13 @@ JSC_DECLARE_JIT_OPERATION(operationGetByIdMegamorphicGeneric, EncodedJSValue, (J
 
 JSC_DECLARE_JIT_OPERATION(operationGetByIdDirectOptimize, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetByIdDirectGaveUp, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationPyGetAttrOptimize, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationPyGetAttrGaveUp, EncodedJSValue, (EncodedJSValue, PropertyInlineCache*));
+// What is to be called, and what it is to be given first, which is empty if there is nothing.
+JSC_DECLARE_JIT_OPERATION(operationPyLoadMethodOptimize, UGPRPair, (EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationPyLoadMethodGaveUp, UGPRPair, (EncodedJSValue, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationPySetAttrOptimize, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache*));
+JSC_DECLARE_JIT_OPERATION(operationPySetAttrGaveUp, void, (EncodedJSValue encodedValue, EncodedJSValue encodedBase, PropertyInlineCache*));
 JSC_DECLARE_JIT_OPERATION(operationGetByIdDirectGeneric, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uintptr_t));
 
 JSC_DECLARE_JIT_OPERATION(operationGetByIdWithThisOptimize, EncodedJSValue, (EncodedJSValue, EncodedJSValue, PropertyInlineCache*));

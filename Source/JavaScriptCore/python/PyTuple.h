@@ -77,6 +77,9 @@ public:
 
     std::span<WriteBarrier<Unknown>> span() { return { values(), m_length }; }
 
+    static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(PyTuple, m_length); }
+    static constexpr ptrdiff_t offsetOfValues() { return sizeof(PyTuple); }
+
     // To JavaScript it is like an array that cannot be changed.
     PYTHON_DECLARE_EXOTIC_METHODS
     PYTHON_OVERLOADS_OPERATORS
@@ -96,7 +99,7 @@ private:
     unsigned m_length;
 };
 
-inline bool isTuple(JSValue value) { return value.isCell() && value.asCell()->type() == PyTupleType; }
+inline bool isTuple(JSValue value) { return value.isCell() && (value.asCell()->type() == PyTupleType || value.asCell()->type() == PyDerivedTupleType); }
 
 inline PyTuple* asTuple(JSValue value) { return uncheckedDowncast<PyTuple>(value.asCell()); }
 

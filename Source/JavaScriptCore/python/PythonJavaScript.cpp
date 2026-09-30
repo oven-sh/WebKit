@@ -602,8 +602,11 @@ static bool asksClassFirst(JSCell* cell)
     switch (cell->type()) {
     case PyInstanceType:
     case PyDictType:
+    case PyDerivedDictType:
     case PySetType:
+    case PyDerivedSetType:
     case PyTupleType:
+    case PyDerivedTupleType:
     case PyBoxedValueType:
         return true;
     default:
@@ -994,8 +997,12 @@ bool setPropertyFromJavaScript(JSGlobalObject* globalObject, JSValue receiver, P
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // FIXME: Setting an attribute that the class has nothing to say about could be remembered, if a PutPropertySlot could say what has to hold,
-    // as a PropertySlot can.
+    // If the class has nothing to say about the attribute, it is a property like any other. That it has nothing to say can be relied on until it is given something.
+    if (PyType* type = classIfAttributeIsSetAsProperty(globalObject, receiver, name)) {
+        asObject(receiver)->putDirect(vm, name, value, slot);
+        slot.setWatchpointSet(type->instanceAccessIsAsFound());
+        return true;
+    }
     slot.disableCaching();
     if (!isPythonObject(globalObject, receiver))
         RELEASE_AND_RETURN(scope, JSObject::definePropertyOnReceiver(globalObject, name, value, slot));

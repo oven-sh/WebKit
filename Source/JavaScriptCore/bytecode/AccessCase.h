@@ -216,7 +216,7 @@ public:
         Structure* = nullptr, const ObjectPropertyConditionSet& = ObjectPropertyConditionSet(), RefPtr<PolyProtoAccessChain>&& = nullptr);
 
     static RefPtr<AccessCase> createTransition(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure,
-        Structure* newStructure, const ObjectPropertyConditionSet&, RefPtr<PolyProtoAccessChain>&&, const PropertyInlineCache&);
+        Structure* newStructure, const ObjectPropertyConditionSet&, RefPtr<PolyProtoAccessChain>&&, const PropertyInlineCache&, WatchpointSet* additionalSet = nullptr);
 
     static Ref<AccessCase> createDelete(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure, Structure* newStructure);
 
@@ -224,7 +224,7 @@ public:
 
     static Ref<AccessCase> createSetPrivateBrand(VM&, JSCell* owner, CacheableIdentifier, Structure* oldStructure, Structure* newStructure);
 
-    static Ref<AccessCase> createReplace(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure, bool viaGlobalProxy);
+    static Ref<AccessCase> createReplace(VM&, JSCell* owner, CacheableIdentifier, PropertyOffset, Structure* oldStructure, bool viaGlobalProxy, WatchpointSet* additionalSet = nullptr);
     
     static RefPtr<AccessCase> fromPropertyInlineCache(VM&, JSCell* owner, CacheableIdentifier, PropertyInlineCache&);
 
@@ -268,7 +268,8 @@ public:
 
     JSObject* tryGetAlternateBase() const;
 
-    WatchpointSet* additionalSet() const;
+    // What has to hold besides, that neither the structure nor the conditions say: PropertySlot::watchpointSet(), PutPropertySlot::watchpointSet().
+    WatchpointSet* additionalSet() const { return m_additionalSet.get(); }
     bool viaGlobalProxy() const { return m_viaGlobalProxy; }
 
     bool doesCalls(VM&) const;
@@ -356,6 +357,7 @@ protected:
         , m_conditionSet(WTF::move(other.m_conditionSet))
         , m_polyProtoAccessChain(WTF::move(other.m_polyProtoAccessChain))
         , m_identifier(WTF::move(other.m_identifier))
+        , m_additionalSet(WTF::move(other.m_additionalSet))
     { }
 
     AccessCase(const AccessCase& other)
@@ -366,11 +368,11 @@ protected:
         , m_conditionSet(other.m_conditionSet)
         , m_polyProtoAccessChain(other.m_polyProtoAccessChain)
         , m_identifier(other.m_identifier)
+        , m_additionalSet(other.m_additionalSet)
     { }
 
     AccessCase& operator=(const AccessCase&) = delete;
 
-    WatchpointSet* additionalSetImpl() const { return nullptr; }
     JSObject* tryGetAlternateBaseImpl() const;
     void dumpImpl(PrintStream&, CommaPrinter&, Indenter&) const { }
 
@@ -412,6 +414,9 @@ private:
     RefPtr<PolyProtoAccessChain> m_polyProtoAccessChain;
 
     CacheableIdentifier m_identifier;
+
+protected:
+    RefPtr<WatchpointSet> m_additionalSet;
 };
 
 } // namespace JSC

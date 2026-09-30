@@ -274,6 +274,26 @@ enum class AttributeAccess : uint8_t { Get, Set };
 bool classComesBeforeInstance(JSGlobalObject*, PyType*, PropertyName, AttributeAccess);
 // Whether it has __set__ or __delete__.
 bool isDataDescriptor(JSGlobalObject*, JSValue);
+// Whether two things that a class may have by some name come to an instance in the same way: as they are, or as a method of it, and so on.
+bool isGotFromInstanceInTheSameWay(JSGlobalObject*, JSValue, JSValue);
+
+// Where getattr() finds an attribute, for what is compiled to find it there again without looking. It goes for whatever has the structure that the object has, for as long as type->instanceAccessIsAsFound() holds. If it is in
+// a class, it goes for as long besides as the class has it there and those that come before it have nothing by the name: generateConditionsForPythonClassAttribute().
+struct AttributeLocation {
+    enum class Kind : uint8_t {
+        Unknown, // Nothing that can be relied on.
+        Own, // A property of the object.
+        InClass, // A property of `holder`, that is to an instance what it is.
+        Method, // A property of `holder`, that is a function which takes the instance for its first argument.
+    };
+    Kind kind { Kind::Unknown };
+    PropertyOffset offset { invalidOffset };
+    PyType* type { nullptr }; // What the object is an instance of.
+    PyType* holder { nullptr };
+};
+AttributeLocation locateAttribute(JSGlobalObject*, JSValue, PropertyName);
+// The class of an object for which setattr() by that name comes to setting a property of the object that anyone can see and set, and to nothing else. It goes for as long as the same. Null if it is not so.
+PyType* classIfAttributeIsSetAsProperty(JSGlobalObject*, JSValue, PropertyName);
 
 // Whether it is Python that made the call that a frame is for: code in Python, or something of Python's that is written in C++ and calls what it is given.
 JS_EXPORT_PRIVATE bool isCalledByPython(VM&, CallFrame*);

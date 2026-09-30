@@ -171,12 +171,19 @@ public:
     ErrorType errorType() const { return m_errorType; }
     void setErrorType(ErrorType errorType) { m_errorType = errorType; }
 
+    // Whether what an operator does with what a literal or a built-in function makes, without asking, it does with an instance of this. Not if a program derived the class, which can then have a method of its own.
+    bool instancesAreWhatLiteralsMake() const { return !hasFlag(IsHeapType) && !hasFlag(IsDerivedFromBuiltin); }
+    // The same, of what has that for a prototype. A class of JavaScript's can be derived from tuple, and then that is no class.
+    static bool instancesAreWhatLiteralsMake(JSValue prototype);
+
     // What instances are made with. Null if there is no making one but by the type's own __new__.
     Structure* instanceStructure() const { return m_instanceStructure.get(); }
     void setInstanceStructure(VM& vm, Structure* structure) { m_instanceStructure.set(vm, this, structure); }
 
     // The attribute as it is stored, in this class or the first after it in the order of resolution that has it. Empty if none has.
     JSValue lookup(VM&, PropertyName) const;
+    // The same, and which class has it. That is null if it is what a class of JavaScript's defines for its instances, which is not a property of the class.
+    JSValue lookup(VM&, PropertyName, PyType*& holder) const;
     // The same, beginning after `after`, which is what super() does.
     JSValue lookupAfter(VM&, PyType* after, PropertyName) const;
     // The same, beginning with `from`.
@@ -202,6 +209,11 @@ public:
     // it: a descriptor of that name with __set__ or __delete__, or its own __getattribute__, __setattr__ or __delattr__. Whether it has is
     // looked into when the attribute is first asked for, and what is found holds for as long as this does. It stops holding when the class,
     // or one that it is derived from, is given such a thing after it was made, which hardly ever happens.
+    //
+    // So with what an instance has from its class: whether that is simply what it is, or a function that takes the instance, or something else again. It stops holding when the class has something put in the place of
+    // something that is not the same in that respect. A number in the place of a number is nothing.
+    //
+    // There is another in its place from then on, so that what is found the next time can be relied on in its turn. It is to be asked for on the main thread. Whoever keeps it refers to it.
     WatchpointSet& instanceAccessIsAsFound() { return m_instanceAccessIsAsFound.get(); }
 
     // The structure that instances of a class with this layout and this class for a prototype have.
@@ -248,7 +260,7 @@ private:
     WriteBarrier<JSObject> m_javaScriptPrototype;
     Vector<Weak<PyType>> m_subclasses;
     size_t m_subclassCountToSweepAt { 0 };
-    const Ref<WatchpointSet> m_instanceAccessIsAsFound;
+    Ref<WatchpointSet> m_instanceAccessIsAsFound;
     Layout m_layout { Layout::Object };
     int m_basicSize { 0 };
     int m_itemSize { 0 };

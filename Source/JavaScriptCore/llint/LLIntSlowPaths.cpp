@@ -1200,6 +1200,7 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
     if (Options::useLLIntICs()
         && baseValue.isCell()
         && slot.isCacheablePut()
+        && !slot.watchpointSet() // What is remembered here has no way to be forgotten when it fires.
         && oldStructure->propertyAccessesAreCacheable()
         && !oldStructure->mayBePrototype()) {
         {

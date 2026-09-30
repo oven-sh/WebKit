@@ -95,7 +95,7 @@ int64_t PyHashTable::hashOfKey(JSGlobalObject* globalObject, JSValue key)
         return 0;
     String reason = Python::str(globalObject, error);
     RETURN_IF_EXCEPTION(scope, 0);
-    Python::raiseTypeError(globalObject, scope, Python::concatenate("cannot use '"_s, Python::typeName(globalObject, key), type() == PyDictType ? "' as a dict key ("_s : "' as a set element ("_s, reason, ')'));
+    Python::raiseTypeError(globalObject, scope, Python::concatenate("cannot use '"_s, Python::typeName(globalObject, key), isDict(this) ? "' as a dict key ("_s : "' as a set element ("_s, reason, ')'));
     return 0;
 }
 
@@ -372,7 +372,7 @@ PyDict* PyDict::create(JSGlobalObject* globalObject)
 
 Structure* PyDict::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned additionalFlags)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyDictType, StructureFlags | pythonCellFlags | additionalFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyType::instancesAreWhatLiteralsMake(prototype) ? PyDictType : PyDerivedDictType, StructureFlags | pythonCellFlags | additionalFlags), info());
 }
 
 template<typename Visitor>
@@ -614,7 +614,7 @@ PySet* PySet::create(JSGlobalObject* globalObject)
 
 Structure* PySet::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned additionalFlags)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PySetType, StructureFlags | pythonCellFlags | additionalFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyType::instancesAreWhatLiteralsMake(prototype) ? PySetType : PyDerivedSetType, StructureFlags | pythonCellFlags | additionalFlags), info());
 }
 
 } // namespace JSC

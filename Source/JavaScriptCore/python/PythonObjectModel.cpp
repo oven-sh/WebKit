@@ -465,8 +465,11 @@ Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
     case HeapBigIntType:
     case SymbolType:
     case PyTupleType:
+    case PyDerivedTupleType:
     case PyDictType:
+    case PyDerivedDictType:
     case PySetType:
+    case PyDerivedSetType:
     case PyTypeType:
     case PyBoundMethodType:
         return { };
@@ -738,9 +741,19 @@ String messageForNoModuleAttribute(JSGlobalObject* globalObject, JSObject* modul
     return plain;
 }
 
-JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, PropertyName name)
+// An AttributeError that says what was looked for and in what, for whoever wants to suggest what may have been meant: _PyObject_SetAttributeErrorContext().
+void raiseAttributeErrorAbout(JSGlobalObject* globalObject, ThrowScope& scope, const String& message, JSValue value, PropertyName name)
 {
     VM& vm = globalObject->vm();
+    JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeAttributeError(), message);
+    exception->putDirect(vm, vm.pythonNames().field_name, nameAsString(vm, name));
+    exception->putDirect(vm, vm.pythonNames().field_object, value);
+    setContext(globalObject, exception);
+    throwException(globalObject, scope, exception);
+}
+
+JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, PropertyName name)
+{
     StringView attribute { name.uid() };
     String message;
     if (isClass(value))
@@ -751,11 +764,7 @@ JSValue raiseNoAttribute(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     }
     if (message.isNull())
         message = concatenate('\'', typeName(globalObject, value), "' object has no attribute '"_s, attribute, '\'');
-    JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeAttributeError(), message);
-    exception->putDirect(vm, vm.pythonNames().field_name, jsString(vm, attribute.toString()));
-    exception->putDirect(vm, vm.pythonNames().field_object, value);
-    setContext(globalObject, exception);
-    throwException(globalObject, scope, exception);
+    raiseAttributeErrorAbout(globalObject, scope, message, value, name);
     return { };
 }
 
@@ -926,6 +935,91 @@ bool classComesBeforeInstance(JSGlobalObject* globalObject, PyType* type, Proper
         return true;
     JSValue attribute = type->lookup(globalObject->vm(), name);
     return attribute && isDataDescriptor(globalObject, attribute);
+}
+
+bool isGotFromInstanceInTheSameWay(JSGlobalObject* globalObject, JSValue a, JSValue b)
+{
+    Descriptor first = classifyDescriptor(globalObject, a);
+    Descriptor second = classifyDescriptor(globalObject, b);
+    // What has a __get__() of its own does whatever that does.
+    return first.kind == second.kind && first.isData == second.isData && first.kind != DescriptorKind::General;
+}
+
+// Whether what class it is of can be told from its structure. Which kind of built-in function something is, and which kind of Error JavaScript made, are said in the cell.
+static bool classGoesWithStructure(JSCell* cell, PyType* type)
+{
+    switch (cell->type()) {
+    case JSFunctionType:
+    case InternalFunctionType:
+        return false;
+    case ErrorInstanceType:
+        return cell->structure()->hasMonoProto() && cell->structure()->storedPrototype() == JSValue(type);
+    default:
+        return !cell->isObject() || cell->structure()->hasMonoProto();
+    }
+}
+
+// Whether its attributes are found and set as object.__getattribute__() and object.__setattr__() do it, with nothing of JavaScript's to be asked.
+static bool isOrdinaryForAttributes(JSGlobalObject* globalObject, JSValue value, PyType* type, PropertyName name)
+{
+    if (isIndexLike(name) || !classGoesWithStructure(value.asCell(), type) || isClass(value))
+        return false;
+    return type->layout() != PyType::Layout::JavaScript && !isJavaScriptObject(value, type) && value.asCell()->type() != ModuleNamespaceObjectType && type != globalObject->pyRealm()->typeSuper();
+}
+
+AttributeLocation locateAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name)
+{
+    VM& vm = globalObject->vm();
+    if (!value.isCell())
+        return { };
+    PyType* type = typeOf(globalObject, value);
+    if (!isOrdinaryForAttributes(globalObject, value, type, name) || (type->hooks(globalObject) & PyType::HasCustomGetAttribute) || type->hasFlag(PyType::MayHaveForeignDict))
+        return { };
+
+    PyType* holder = nullptr;
+    JSValue attribute = type->lookup(vm, name, holder);
+    Descriptor descriptor;
+    if (attribute) {
+        descriptor = classifyDescriptor(globalObject, attribute);
+        if (descriptor.isData)
+            return { };
+    }
+    unsigned attributes;
+    if (attributeStorage(globalObject, value, type)) {
+        PropertyOffset offset = value.asCell()->structure()->get(vm, name, attributes);
+        if (isValidOffset(offset)) {
+            // What is hidden is not an attribute. There is nothing to be gained by remembering what is found instead.
+            if (attributes & (PropertyAttribute::DontEnum | PropertyAttribute::AccessorOrCustomAccessorOrValue))
+                return { };
+            return { AttributeLocation::Kind::Own, offset, type, nullptr };
+        }
+    }
+    if (!attribute || !holder)
+        return { };
+    PropertyOffset offset = holder->structure()->get(vm, name, attributes);
+    if (!isValidOffset(offset))
+        return { };
+    switch (descriptor.kind) {
+    case DescriptorKind::Plain:
+        return { AttributeLocation::Kind::InClass, offset, type, holder };
+    case DescriptorKind::Function:
+        return { AttributeLocation::Kind::Method, offset, type, holder };
+    default:
+        return { };
+    }
+}
+
+PyType* classIfAttributeIsSetAsProperty(JSGlobalObject* globalObject, JSValue value, PropertyName name)
+{
+    if (!value.isObject())
+        return nullptr;
+    PyType* type = typeOf(globalObject, value);
+    // What is not a cell of Python's, JavaScript may have frozen, or may have made the property something else.
+    if (!isOrdinaryForAttributes(globalObject, value, type, name) || !asObject(value)->structure()->typeInfo().overloadsOperators())
+        return nullptr;
+    if (classComesBeforeInstance(globalObject, type, name, AttributeAccess::Set) || attributeStorage(globalObject, value, type) != asObject(value))
+        return nullptr;
+    return type;
 }
 
 // descriptor.__set__(value, newValue), or __delete__ if `newValue` is empty, for a descriptor that has such a thing. False if it has not.
@@ -1120,7 +1214,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         }
         if (!getStoredAttribute(vm, storage, name)) {
             // Whatever it is: a module says no more of itself than anything else does.
-            raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''));
+            raiseAttributeErrorAbout(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''), value, name);
             return;
         }
         if (!mayDeleteStoredAttribute(vm, storage, name)) [[unlikely]]
@@ -1138,7 +1232,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         return;
     }
     // Deleting is setting to nothing, and is spoken of as setting.
-    raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, "' and no __dict__ for setting new attributes"_s));
+    raiseAttributeErrorAbout(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, "' and no __dict__ for setting new attributes"_s), value, name);
 }
 
 void setAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name, JSValue newValue)

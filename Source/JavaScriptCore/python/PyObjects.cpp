@@ -446,7 +446,7 @@ PyTuple* PyTuple::createFromArguments(JSGlobalObject* globalObject, MarkedArgume
 
 Structure* PyTuple::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned additionalFlags)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTupleType, StructureFlags | pythonCellFlags | additionalFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyType::instancesAreWhatLiteralsMake(prototype) ? PyTupleType : PyDerivedTupleType, StructureFlags | pythonCellFlags | additionalFlags), info());
 }
 
 bool PyTuple::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)

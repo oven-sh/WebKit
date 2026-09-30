@@ -43,11 +43,7 @@ public:
 protected:
     ProxyableAccessCase(VM&, JSCell*, AccessType, CacheableIdentifier, PropertyOffset, Structure*, const ObjectPropertyConditionSet&, bool viaGlobalProxy, WatchpointSet* additionalSet, RefPtr<PolyProtoAccessChain>&&);
 
-    WatchpointSet* additionalSetImpl() const { return m_additionalSet.get(); }
     void dumpImpl(PrintStream&, CommaPrinter&, Indenter&) const;
-
-private:
-    const RefPtr<WatchpointSet> m_additionalSet;
 };
 
 } // namespace JSC

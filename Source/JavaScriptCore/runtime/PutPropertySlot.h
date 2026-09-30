@@ -130,6 +130,10 @@ public:
         return m_offset;
     }
 
+    // What has to hold for it to be done the same way another time, that the structure does not say. As with PropertySlot::setWatchpointSet().
+    WatchpointSet* watchpointSet() const { return m_watchpointSet; }
+    void setWatchpointSet(WatchpointSet& set) { m_watchpointSet = &set; }
+
     void disableCaching()
     {
         m_cacheability = CachingDisallowed;
@@ -148,6 +152,7 @@ private:
     Context m_context;
     CacheabilityType m_cacheability;
     CustomAccessorValueFunc m_putFunction;
+    SUPPRESS_FORWARD_DECL_MEMBER WatchpointSet* m_watchpointSet { nullptr };
 };
 
 } // namespace JSC

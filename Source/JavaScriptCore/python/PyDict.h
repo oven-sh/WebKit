@@ -294,8 +294,8 @@ void PyDict::forEach(JSGlobalObject* globalObject, const Function& function)
     }
 }
 
-inline bool isDict(JSValue value) { return value.isCell() && value.asCell()->type() == PyDictType; }
+inline bool isDict(JSValue value) { return value.isCell() && (value.asCell()->type() == PyDictType || value.asCell()->type() == PyDerivedDictType); }
 inline PyDict* asDict(JSValue value) { return uncheckedDowncast<PyDict>(value.asCell()); }
-inline bool isSet(JSValue value) { return value.isCell() && value.asCell()->type() == PySetType; }
+inline bool isSet(JSValue value) { return value.isCell() && (value.asCell()->type() == PySetType || value.asCell()->type() == PyDerivedSetType); }
 
 } // namespace JSC

@@ -362,8 +362,47 @@ subscripts, iteration, unpacking, globals, returning. One opcode serves a family
 the interpreter reads at compile time. Everything else is an existing opcode, or a call to a function of the runtime. Those are the
 properties of one object, which is a link time constant.
 
-`py_ret` and `py_load_global` are done in the interpreter and the baseline JIT. The rest call C++. Python code is not yet compiled by the DFG
-or FTL.
+In the interpreter `py_ret`, `py_load_global` and what looks at the one word (see "Being told of what is run") are done in place, and the rest call C++. Python code is not yet compiled by the DFG or FTL.
+
+### The baseline JIT
+
+`jit/JITPython.cpp`. It does for itself what is most often wanted, and leaves the rest to the same C++ that the interpreter calls, which with `TaggedArithmetic.h` is the definition of what is to come of it.
+
+- **Numbers.** What is done to two ints that are not BigInts is done in line: `+ - * // % & | ^ << >>`, the comparisons, `-x`, `~x`. Whatever does not fit is for C++, which makes a BigInt. What is done to floats is compiled too, out of line, where a
+  slow case goes: `+ - *`, the comparisons. `/` gives a float whatever it is given, so there is one way to do it.
+  - An int32 is boxed by putting the tag over it, so there is to be nothing above its 32 bits. One that has had its sign extended comes out with `WholeFloatMark`, and is a float.
+  - A double that JavaScript made can have the value of an int32, and then it is an int. So what adds floats looks (`branchIfDoubleIsNotTaggedInteger()`). Which of two numbers is the greater does not depend on it, nor does what one divided by the other is.
+- **`x is None`** is a comparison with two bit patterns, and `x is y` of two cells with one. `if x:` of `True`, `False`, an int or `None` is done in place.
+- **What is in a list or a tuple, by a number**, from either end, and setting what is in a list. Only what is simply there: see `loadPythonListItem()`. A list that shares what is in it with the literal that it came from is not written to here.
+- **Going through** a `range`, a list or a tuple. **Taking apart** a tuple of the right length.
+- **Whether it is a tuple, or of a class derived from tuple that may have a `__getitem__()` of its own, is said by the type of the cell**: `PyTupleType` and `PyDerivedTupleType`, and so for `dict` and `set`, as JavaScriptCore has `ArrayType` and
+  `DerivedArrayType`. Which it is goes by `PyType::instancesAreWhatLiteralsMake()`, which is what the operators in C++ go by.
+
+**Attributes are remembered as properties are**, by the same inline caches. `AccessType::PyGetAttr`, `PyLoadMethod` and `PySetAttr` are used as `GetById` and `PutById` are: the same registers, and the same handlers, since what they have to do is the same, which is to
+check a structure and load or store at an offset, in the object or in some other. What is Python's own is what is called when nothing is remembered (`operationPyGetAttrOptimize()` and its like), and what may be remembered (`tryCachePyGetAttr()`,
+`tryCachePySetAttr()` in `Repatch.cpp`). Those ask `locateAttribute()` and `classIfAttributeIsSetAsProperty()`, which look at how things stand once it has been done, and say nothing of what cannot be relied on.
+
+| | is remembered as | for as long as |
+|---|---|---|
+| what the object itself has | `Load`, `Replace`, `Transition` | the class has nothing to say about it |
+| what it has from a class, that is to an instance what it is | `Load`, from the class | the same, and the class has it there, and those before it have nothing by the name |
+| a method that is to be called | the same | the same |
+
+- **That the class has nothing to say** is `PyType::instanceAccessIsAsFound()`. It stops holding when the class or a base of it is given a descriptor with `__set__`, or a `__getattribute__` or the like, or other bases. There is another in its place from then on, so a class that
+  is made in stages, as some libraries make them, is none the worse for it afterwards.
+- **What a class has can be changed for another of the same kind and nothing is forgotten**, since what is remembered is where it is and not what: `C.count += 1`, or one function for another. If it is changed for what comes to an instance in another way, a number for a
+  function, that fires the same thing (`isGotFromInstanceInTheSameWay()`).
+- **Where a class has it, and that those before it have not**, are conditions on the classes, as for a property that is found in a prototype. But they are those of the order of resolution, which is not what the prototype of each is:
+  `generateConditionsForPythonClassAttribute()`. A class that is built in cannot be given anything, so nothing is asked of it. `"abc".upper()` checks a structure and nothing else holds it up.
+- **`py_load_method` has two things come of it.** What the function is to be given first is in a register that nothing of `GetById`'s touches, and is the object to begin with. So what loads from some other object, as it is, is what loads a method. What loads what the
+  object itself has clears it (`pyLoadMethodLoadOwnPropertyHandler()`), as `module.function()` needs.
+- Not remembered: what has a `__get__()` of its own, a property, one of `__slots__`, a method that is got and not called, which has to be made, an attribute of a class, and anything of an object of JavaScript's.
+
+**What that took of JavaScriptCore is there for JavaScript too.** An `AccessCase` of any kind can now have a `WatchpointSet` besides its conditions, where only those that load could, and a `PutPropertySlot` can name one as a `PropertySlot` can. So `object.x = 1` in JavaScript, of
+something of Python's, is remembered like any other. What has no way to be told that it has fired does not remember: the interpreter's own caches, and what the DFG works out from a `PutByStatus`.
+
+`programs/code-that-is-run-often.py` has every operator on every pair of some forty values that are near where one way of doing it gives way to another. `programs/attributes-that-are-remembered.py` does each thing many times over, changes something, and does it again.
+`interop/attributes-that-javascript-remembers.py` is the same for JavaScript, often enough for the FTL.
 
 ### Exceptions, tracebacks and frames
 

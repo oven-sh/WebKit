@@ -217,7 +217,7 @@ Ref<AccessCase> AccessCase::create(VM& vm, JSCell* owner, AccessType type, Cache
 
 RefPtr<AccessCase> AccessCase::createTransition(
     VM& vm, JSCell* owner, CacheableIdentifier identifier, PropertyOffset offset, Structure* oldStructure, Structure* newStructure,
-    const ObjectPropertyConditionSet& conditionSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain, const PropertyInlineCache& propertyCache)
+    const ObjectPropertyConditionSet& conditionSet, RefPtr<PolyProtoAccessChain>&& prototypeAccessChain, const PropertyInlineCache& propertyCache, WatchpointSet* additionalSet)
 {
     RELEASE_ASSERT(oldStructure == newStructure->previousID());
 
@@ -250,7 +250,9 @@ RefPtr<AccessCase> AccessCase::createTransition(
             return nullptr;
     }
 
-    return adoptRef(*new AccessCase(vm, owner, Transition, identifier, offset, newStructure, conditionSet, WTF::move(prototypeAccessChain)));
+    auto result = adoptRef(*new AccessCase(vm, owner, Transition, identifier, offset, newStructure, conditionSet, WTF::move(prototypeAccessChain)));
+    result->m_additionalSet = additionalSet;
+    return result;
 }
 
 void AccessCase::convertToNonStringPrimitiveKeyAccessType(AccessType newType)
@@ -294,10 +296,11 @@ Ref<AccessCase> AccessCase::createSetPrivateBrand(
     return adoptRef(*new AccessCase(vm, owner, SetPrivateBrand, identifier, invalidOffset, newStructure, { }, { }));
 }
 
-Ref<AccessCase> AccessCase::createReplace(VM& vm, JSCell* owner, CacheableIdentifier identifier, PropertyOffset offset, Structure* oldStructure, bool viaGlobalProxy)
+Ref<AccessCase> AccessCase::createReplace(VM& vm, JSCell* owner, CacheableIdentifier identifier, PropertyOffset offset, Structure* oldStructure, bool viaGlobalProxy, WatchpointSet* additionalSet)
 {
     auto result = adoptRef(*new AccessCase(vm, owner, Replace, identifier, offset, oldStructure, { }, { }));
     result->m_viaGlobalProxy = viaGlobalProxy;
+    result->m_additionalSet = additionalSet;
     return result;
 }
 
@@ -1830,15 +1833,6 @@ void AccessCase::operator delete(AccessCase* accessCase, std::destroying_delete_
         std::destroy_at(accessCase);
         std::decay_t<decltype(*accessCase)>::freeAfterDestruction(accessCase);
     });
-}
-
-WatchpointSet* AccessCase::additionalSet() const
-{
-    WatchpointSet* result = nullptr;
-    const_cast<AccessCase*>(this)->runWithDowncast([&](auto* accessCase) {
-        result = accessCase->additionalSetImpl();
-    });
-    return result;
 }
 
 JSObject* AccessCase::tryGetAlternateBase() const

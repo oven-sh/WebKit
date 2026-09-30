@@ -293,6 +293,15 @@ void PropertyInlineCache::reset(const ConcurrentJSLockerBase& locker, CodeBlock*
     case AccessType::GetByIdDirect:
         resetGetBy(codeBlock, *this, GetByKind::ByIdDirect);
         break;
+    case AccessType::PyGetAttr:
+        resetGetBy(codeBlock, *this, GetByKind::PyGetAttr);
+        break;
+    case AccessType::PyLoadMethod:
+        resetGetBy(codeBlock, *this, GetByKind::PyLoadMethod);
+        break;
+    case AccessType::PySetAttr:
+        resetPySetAttr(codeBlock, *this);
+        break;
     case AccessType::GetByVal:
         resetGetBy(codeBlock, *this, GetByKind::ByVal);
         break;
@@ -600,6 +609,12 @@ static CodePtr<OperationPtrTag> NODELETE slowOperationFromUnlinkedPropertyInline
         return operationGetByIdOptimize;
     case AccessType::GetByIdDirect:
         return operationGetByIdDirectOptimize;
+    case AccessType::PyGetAttr:
+        return operationPyGetAttrOptimize;
+    case AccessType::PyLoadMethod:
+        return operationPyLoadMethodOptimize;
+    case AccessType::PySetAttr:
+        return operationPySetAttrOptimize;
     case AccessType::GetByIdWithThis:
         return operationGetByIdWithThisOptimize;
     case AccessType::GetByValWithThis:
@@ -697,6 +712,8 @@ PropertyInlineCache::Registers PropertyInlineCache::registers() const
     case AccessType::GetByIdDirect:
     case AccessType::GetById:
     case AccessType::GetPrivateNameById:
+    case AccessType::PyGetAttr:
+    case AccessType::PyLoadMethod:
         registers.baseGPR = BaselineJITRegisters::GetById::baseGPR;
         registers.valueGPR = BaselineJITRegisters::GetById::resultGPR;
         registers.propertyCacheGPR = BaselineJITRegisters::GetById::propertyCacheGPR;
@@ -721,6 +738,7 @@ PropertyInlineCache::Registers PropertyInlineCache::registers() const
     case AccessType::PutByIdDirectSloppy:
     case AccessType::DefinePrivateNameById:
     case AccessType::SetPrivateNameById:
+    case AccessType::PySetAttr:
         registers.baseGPR = BaselineJITRegisters::PutById::baseGPR;
         registers.valueGPR = BaselineJITRegisters::PutById::valueGPR;
         registers.propertyCacheGPR = BaselineJITRegisters::PutById::propertyCacheGPR;

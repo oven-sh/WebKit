@@ -82,6 +82,10 @@ class PolymorphicAccess;
     macro(GetPrivateNameById) \
     macro(CheckPrivateBrand) \
     macro(SetPrivateBrand) \
+    /* Python's getattr() and setattr(), of a name that is written out, and getattr() of what is to be called at once. See python/README.md. */ \
+    macro(PyGetAttr) \
+    macro(PyLoadMethod) \
+    macro(PySetAttr) \
 
 
 enum class AccessType : int8_t {
@@ -691,6 +695,8 @@ inline auto appropriateGetByIdOptimizeFunction(AccessType type) -> decltype(&ope
         return operationGetByIdDirectOptimize;
     case AccessType::GetPrivateNameById:
         return operationGetPrivateNameByIdOptimize;
+    case AccessType::PyGetAttr:
+        return operationPyGetAttrOptimize;
     case AccessType::GetByIdWithThis:
     default:
         ASSERT_NOT_REACHED();
@@ -729,6 +735,8 @@ inline auto appropriatePutByIdOptimizeFunction(AccessType type) -> decltype(&ope
         return operationPutByIdDefinePrivateFieldStrictOptimize;
     case AccessType::SetPrivateNameById:
         return operationPutByIdSetPrivateFieldStrictOptimize;
+    case AccessType::PySetAttr:
+        return operationPySetAttrOptimize;
     default:
         break;
     }
@@ -771,6 +779,9 @@ inline bool hasConstantIdentifier(AccessType accessType)
     case AccessType::PutByIdDirectSloppy:
     case AccessType::DefinePrivateNameById:
     case AccessType::SetPrivateNameById:
+    case AccessType::PyGetAttr:
+    case AccessType::PyLoadMethod:
+    case AccessType::PySetAttr:
         return true;
     }
     return false;

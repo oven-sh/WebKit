@@ -157,6 +157,18 @@ namespace GetById {
     static_assert(noOverlap(baseGPR, propertyCacheGPR, scratch1GPR, scratch2GPR, scratch3GPR, scratch4GPR, scratch5GPR), "Required for HandlerIC");
 }
 
+// As GetById, with something more that comes of it: what the function is to be given first, which is the base if it is a method of it and is otherwise empty. It is the base to begin with, and nothing that GetById has
+// touches it. So what loads a property of some other object, as it does for GetById, is what loads a method.
+namespace PyLoadMethod {
+    using GetById::resultGPR;
+    using GetById::baseGPR;
+    using GetById::propertyCacheGPR;
+    using GetById::scratch1GPR;
+    using GetById::scratch2GPR;
+    static constexpr GPRReg selfGPR { GetById::scratch3GPR };
+    static_assert(noOverlap(resultGPR, selfGPR));
+}
+
 namespace GetByIdWithThis {
     // Registers used on both Fast and Slow paths
     using SlowOperation = decltype(operationGetByIdWithThisOptimize);

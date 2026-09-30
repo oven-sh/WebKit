@@ -163,9 +163,13 @@ namespace JSC {
     /* What Python has and JavaScript does not. See python/README.md. */ \
     macro(PyTypeType, SpecObjectOther) \
     macro(PyInstanceType, SpecObjectOther) \
+    /* One of a class that is derived from tuple, which can have a __getitem__() of its own, is not what a literal makes. As with DerivedArrayType, compiled code can tell by this. */ \
     macro(PyTupleType, SpecObjectOther) \
+    macro(PyDerivedTupleType, SpecObjectOther) \
     macro(PyDictType, SpecObjectOther) \
+    macro(PyDerivedDictType, SpecObjectOther) \
     macro(PySetType, SpecObjectOther) \
+    macro(PyDerivedSetType, SpecObjectOther) \
     macro(PyRangeType, SpecObjectOther) \
     macro(PySliceType, SpecObjectOther) \
     macro(PyBoundMethodType, SpecObjectOther) \

@@ -1462,6 +1462,37 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> getByIdSlowPathCodeGenerator(VM& vm
     return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "get_by_id_slow"_s, "DataIC get_by_id_slow");
 }
 
+static MacroAssemblerCodeRef<JITThunkPtrTag> pyLoadMethodSlowPathCodeGenerator(VM& vm)
+{
+    CCallHelpers jit;
+
+    using SlowOperation = decltype(operationPyLoadMethodOptimize);
+
+    using BaselineJITRegisters::PyLoadMethod::baseGPR;
+    using BaselineJITRegisters::PyLoadMethod::propertyCacheGPR;
+    using BaselineJITRegisters::PyLoadMethod::resultGPR;
+    using BaselineJITRegisters::PyLoadMethod::selfGPR;
+
+    InlineCacheCompiler::emitDataICPrologue(jit);
+
+    InlineCacheCompiler::emitDataICPrepareForCall(jit);
+    jit.prepareCallOperation(vm);
+    jit.setupArguments<SlowOperation>(baseGPR, propertyCacheGPR);
+    static_assert(preferredArgumentGPR<SlowOperation, 1>() == propertyCacheGPR, "Needed for branch to slow operation via PropertyCache");
+    jit.call(CCallHelpers::Address(propertyCacheGPR, HandlerPropertyInlineCache::offsetOfSlowOperation()), OperationPtrTag);
+    InlineCacheCompiler::emitDataICRestoreAfterCall(jit);
+
+    jit.emitNonPatchableExceptionCheck(vm).linkThunk(CodeLocationLabel(vm.getCTIStub(CommonJITThunkID::HandleException).retaggedCode<NoPtrTag>()), &jit);
+
+    static_assert(resultGPR == GPRInfo::returnValueGPR);
+    jit.move(GPRInfo::returnValueGPR2, selfGPR);
+    InlineCacheCompiler::emitDataICEpilogue(jit);
+    jit.ret();
+
+    LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::InlineCache);
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "py_load_method_slow"_s, "DataIC py_load_method_slow");
+}
+
 static MacroAssemblerCodeRef<JITThunkPtrTag> getByIdWithThisSlowPathCodeGenerator(VM& vm)
 {
     CCallHelpers jit;
@@ -1750,13 +1781,18 @@ MacroAssemblerCodeRef<JITThunkPtrTag> InlineCacheCompiler::generateSlowPathCode(
     case AccessType::GetById:
     case AccessType::GetByIdDirect:
     case AccessType::InById:
-    case AccessType::GetPrivateNameById: {
+    case AccessType::GetPrivateNameById:
+    case AccessType::PyGetAttr: {
         using ArgumentTypes = FunctionTraits<decltype(operationGetByIdOptimize)>::ArgumentTypes;
+        static_assert(std::same_as<FunctionTraits<decltype(operationPyGetAttrOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationGetByIdDirectOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationInByIdOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationGetPrivateNameByIdOptimize)>::ArgumentTypes, ArgumentTypes>);
         return vm.getCTIStub(getByIdSlowPathCodeGenerator);
     }
+
+    case AccessType::PyLoadMethod:
+        return vm.getCTIStub(pyLoadMethodSlowPathCodeGenerator);
 
     case AccessType::GetByIdWithThis:
         return vm.getCTIStub(getByIdWithThisSlowPathCodeGenerator);
@@ -1790,8 +1826,10 @@ MacroAssemblerCodeRef<JITThunkPtrTag> InlineCacheCompiler::generateSlowPathCode(
     case AccessType::PutByIdDirectStrict:
     case AccessType::PutByIdDirectSloppy:
     case AccessType::DefinePrivateNameById:
-    case AccessType::SetPrivateNameById: {
+    case AccessType::SetPrivateNameById:
+    case AccessType::PySetAttr: {
         using ArgumentTypes = FunctionTraits<decltype(operationPutByIdStrictOptimize)>::ArgumentTypes;
+        static_assert(std::same_as<FunctionTraits<decltype(operationPySetAttrOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdSloppyOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdDirectStrictOptimize)>::ArgumentTypes, ArgumentTypes>);
         static_assert(std::same_as<FunctionTraits<decltype(operationPutByIdDirectSloppyOptimize)>::ArgumentTypes, ArgumentTypes>);
@@ -5288,6 +5326,34 @@ MacroAssemblerCodeRef<JITThunkPtrTag> getByIdLoadPrototypePropertyHandler()
     return getByIdLoadHandlerImpl<ownProperty>();
 }
 
+// What the object itself has by the name is called as it is.
+MacroAssemblerCodeRef<JITThunkPtrTag> pyLoadMethodLoadOwnPropertyHandler()
+{
+    CCallHelpers jit;
+
+    using BaselineJITRegisters::PyLoadMethod::baseGPR;
+    using BaselineJITRegisters::PyLoadMethod::scratch1GPR;
+    using BaselineJITRegisters::PyLoadMethod::scratch2GPR;
+    using BaselineJITRegisters::PyLoadMethod::resultGPR;
+    using BaselineJITRegisters::PyLoadMethod::selfGPR;
+
+    InlineCacheCompiler::emitDataICPrologue(jit);
+
+    CCallHelpers::JumpList fallThrough;
+
+    fallThrough.append(InlineCacheCompiler::emitDataICCheckStructure(jit, baseGPR, scratch1GPR));
+    loadHandlerImpl</* ownProperty */ true>(jit, baseGPR, resultGPR, scratch1GPR, scratch2GPR);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::encode(JSValue())), selfGPR);
+    InlineCacheCompiler::emitDataICEpilogue(jit);
+    jit.ret();
+
+    fallThrough.link(&jit);
+    InlineCacheCompiler::emitDataICJumpNextHandler(jit);
+
+    LinkBuffer patchBuffer(jit, GLOBAL_THUNK_ID, LinkBuffer::Profile::InlineCache);
+    return FINALIZE_THUNK(patchBuffer, JITThunkPtrTag, "PyLoadMethod Load handler"_s, "PyLoadMethod Load handler");
+}
+
 // FIXME: We may need to implement it in offline asm eventually to share it with non JIT environment.
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdMissHandler()
 {
@@ -7237,9 +7303,24 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
             Vector<ObjectPropertyCondition, 64> watchedConditions;
             Vector<ObjectPropertyCondition, 64> checkingConditions;
             switch (m_propertyCache.accessType) {
+            case AccessType::PyLoadMethod: {
+                // Nothing else knows that there are two things to come of it.
+                RELEASE_ASSERT(accessCase.m_type == AccessCase::Load && !accessCase.viaGlobalProxy());
+                collectConditions(accessCase, watchedConditions, checkingConditions);
+                if (!checkingConditions.isEmpty())
+                    return AccessGenerationResult::GaveUp;
+                JSObject* holder = accessCase.tryGetAlternateBase();
+                (holder ? holder->structure() : accessCase.structure())->startWatchingPropertyForReplacements(vm, accessCase.offset());
+                auto code = vm.getCTIStub(holder ? CommonJITThunkID::GetByIdLoadPrototypePropertyHandler : CommonJITThunkID::PyLoadMethodLoadOwnPropertyHandler).retagged<JITStubRoutinePtrTag>();
+                auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
+                connectWatchpointSets(stub.get(), WTF::move(watchedConditions), WTF::move(additionalWatchpointSets));
+                return finishPreCompiledCodeGeneration(WTF::move(stub), holder ? CacheType::GetByIdPrototype : CacheType::Unset);
+            }
+
             case AccessType::GetById:
             case AccessType::GetByIdDirect:
-            case AccessType::GetPrivateNameById: {
+            case AccessType::GetPrivateNameById:
+            case AccessType::PyGetAttr: {
                 switch (accessCase.m_type) {
                 case AccessCase::GetGetter:
                 case AccessCase::Load: {
@@ -7375,7 +7456,8 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
             case AccessType::PutByIdSloppy:
             case AccessType::PutByIdDirectSloppy:
             case AccessType::DefinePrivateNameById:
-            case AccessType::SetPrivateNameById: {
+            case AccessType::SetPrivateNameById:
+            case AccessType::PySetAttr: {
                 bool isStrict = m_propertyCache.accessType == AccessType::PutByIdDirectStrict || m_propertyCache.accessType == AccessType::PutByIdStrict || m_propertyCache.accessType == AccessType::DefinePrivateNameById || m_propertyCache.accessType == AccessType::SetPrivateNameById;
                 switch (accessCase.m_type) {
                 case AccessCase::Replace: {
@@ -7384,7 +7466,7 @@ AccessGenerationResult InlineCacheCompiler::compileOneAccessCaseHandler(const Ve
                     if (!accessCase.viaGlobalProxy()) {
                         auto code = vm.getCTIStub(CommonJITThunkID::PutByIdReplaceHandler).retagged<JITStubRoutinePtrTag>();
                         auto stub = createPreCompiledICJITStubRoutine(WTF::move(code), vm, codeBlock);
-                        connectWatchpointSets(stub.get(), { }, { });
+                        connectWatchpointSets(stub.get(), { }, WTF::move(additionalWatchpointSets));
                         return finishPreCompiledCodeGeneration(WTF::move(stub), CacheType::PutByIdReplace);
                     }
                     break;

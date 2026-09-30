@@ -71,7 +71,7 @@ static bool isExact(JSGlobalObject* globalObject, JSValue value)
     if (!value.isObject())
         return true;
     PyType* type = typeOf(globalObject, value);
-    return !type->hasFlag(PyType::IsHeapType) && !type->hasFlag(PyType::IsDerivedFromBuiltin);
+    return type->instancesAreWhatLiteralsMake();
 }
 
 // ---- Binary operators
@@ -784,10 +784,13 @@ bool isTrue(JSGlobalObject* globalObject, JSValue value)
     if (isExact(globalObject, value)) {
         switch (cell->type()) {
         case PyTupleType:
+        case PyDerivedTupleType:
             return uncheckedDowncast<PyTuple>(cell)->length();
         case PyDictType:
+        case PyDerivedDictType:
             return uncheckedDowncast<PyDict>(cell)->size();
         case PySetType:
+        case PyDerivedSetType:
             return uncheckedDowncast<PySet>(cell)->size();
         case PyRangeType:
             return !uncheckedDowncast<PyRange>(cell)->isEmpty();
@@ -1152,15 +1155,18 @@ std::optional<bool> builtinContains(JSGlobalObject* globalObject, JSValue contai
             return findCharacters(haystack, needle) != notFound;
         }
         case PyDictType:
+        case PyDerivedDictType:
             RELEASE_AND_RETURN(scope, uncheckedDowncast<PyDict>(cell)->contains(globalObject, value));
-        case PySetType: {
+        case PySetType:
+        case PyDerivedSetType: {
             value = keyToLookForInSet(globalObject, value);
             RETURN_IF_EXCEPTION(scope, false);
             int entry = uncheckedDowncast<PySet>(cell)->find(globalObject, value);
             RETURN_IF_EXCEPTION(scope, false);
             return entry >= 0;
         }
-        case PyTupleType: {
+        case PyTupleType:
+        case PyDerivedTupleType: {
             auto* tuple = uncheckedDowncast<PyTuple>(cell);
             for (unsigned i = 0; i < tuple->length(); ++i) {
                 bool same = isEqual(globalObject, tuple->at(i), value);
@@ -1567,10 +1573,13 @@ int64_t builtinLength(JSGlobalObject* globalObject, JSValue value)
     case StringType:
         return stringLength(globalObject, uncheckedDowncast<JSString>(cell));
     case PyTupleType:
+    case PyDerivedTupleType:
         return uncheckedDowncast<PyTuple>(cell)->length();
     case PyDictType:
+    case PyDerivedDictType:
         return uncheckedDowncast<PyDict>(cell)->size();
     case PySetType:
+    case PyDerivedSetType:
         return uncheckedDowncast<PySet>(cell)->size();
     case PyRangeType:
         return rangeLength(globalObject, uncheckedDowncast<PyRange>(cell));
@@ -1668,7 +1677,8 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
     }
 
     switch (cell->type()) {
-    case PyTupleType: {
+    case PyTupleType:
+    case PyDerivedTupleType: {
         auto* tuple = uncheckedDowncast<PyTuple>(cell);
         if (auto* slice = trySlice(key)) {
             auto indices = slice->indices(globalObject, tuple->length());
@@ -1689,7 +1699,8 @@ JSValue builtinGetItem(JSGlobalObject* globalObject, JSValue base, JSValue key)
     }
     case StringType:
         RELEASE_AND_RETURN(scope, stringGetItem(globalObject, uncheckedDowncast<JSString>(cell), key));
-    case PyDictType: {
+    case PyDictType:
+    case PyDerivedDictType: {
         auto* dict = uncheckedDowncast<PyDict>(cell);
         JSValue value = dict->get(globalObject, key);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1778,7 +1789,7 @@ bool builtinSetItem(JSGlobalObject* globalObject, JSValue base, JSValue key, JSV
         return false;
     JSCell* cell = base.asCell();
 
-    if (cell->type() == PyDictType) {
+    if (isDict(cell)) {
         auto* dict = uncheckedDowncast<PyDict>(cell);
         if (value) {
             scope.release();
@@ -1906,10 +1917,13 @@ JSValue builtinGetIterator(JSGlobalObject* globalObject, JSValue value)
         return PyIterator::create(globalObject, view->containsOnlyASCII() ? Kind::AsciiStr : Kind::Str, value);
     }
     case PyTupleType:
+    case PyDerivedTupleType:
         return PyIterator::create(globalObject, Kind::Tuple, value);
     case PyDictType:
+    case PyDerivedDictType:
         return PyIterator::create(globalObject, Kind::DictKeys, uncheckedDowncast<PyDict>(cell));
     case PySetType:
+    case PyDerivedSetType:
         return PyIterator::create(globalObject, Kind::Set, value, JSValue(), 0, uncheckedDowncast<PySet>(cell)->size());
     case PyRangeType: {
         return rangeIterator(globalObject, uncheckedDowncast<PyRange>(cell));
