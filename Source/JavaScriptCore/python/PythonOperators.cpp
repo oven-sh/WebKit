@@ -470,7 +470,14 @@ JSValue sequenceItem(JSGlobalObject* globalObject, JSValue sequence, int64_t ind
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     checkIsIndexable(globalObject, sequence);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, getItem(globalObject, sequence, intFromInt64(globalObject, index)));
+    RELEASE_AND_RETURN(scope, itemInGoingThrough(globalObject, sequence, index));
+}
+
+JSValue itemInGoingThrough(JSGlobalObject* globalObject, JSValue sequence, int64_t index)
+{
+    if (auto* object = dynamicDowncast<PyStateObject>(sequence); object && typeOf(globalObject, sequence)->hasFlag(PyType::HasSequenceItemOfItsOwn)) [[unlikely]]
+        return object->sequenceItem(globalObject, index);
+    return getItem(globalObject, sequence, intFromInt64(globalObject, index));
 }
 
 // PyNumber_Absolute()

@@ -1,0 +1,296 @@
+---- what there is
+[] True None built-in True True
+[('ACCESS_DEFAULT', 0), ('ACCESS_READ', 1), ('ACCESS_WRITE', 2), ('ACCESS_COPY', 3), ('PROT_READ', 1), ('PROT_WRITE', 2), ('PROT_EXEC', 4), ('MAP_SHARED', 1), ('MAP_PRIVATE', 2), ('MADV_NORMAL', 0), ('MADV_RANDOM', 1), ('MADV_SEQUENTIAL', 2), ('MADV_WILLNEED', 3), ('MADV_DONTNEED', 4)]
+mmap mmap ['object'] 0x5700 Windows: mmap(fileno, length[, tagname[, None
+    __buffer__ wrapper_descriptor ($self, flags, /) 'Return a buffer object that exposes the underlyin
+    __delitem__ wrapper_descriptor ($self, key, /) 'Delete self[key].'
+    __doc__ str None "str(object='') -> str\nstr(bytes_or_buffer[, enco
+    __enter__ method_descriptor ($self, /) None
+    __exit__ method_descriptor ($self, exc_type, exc_value, traceback, /) None
+    __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+    __getitem__ wrapper_descriptor ($self, key, /) 'Return self[key].'
+    __len__ wrapper_descriptor ($self, /) 'Return len(self).'
+    __module__ str None "str(object='') -> str\nstr(bytes_or_buffer[, enco
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(type) f
+    __release_buffer__ wrapper_descriptor ($self, buffer, /) 'Release the buffer object that exposes the underl
+    __repr__ wrapper_descriptor ($self, /) 'Return repr(self).'
+    __setitem__ wrapper_descriptor ($self, key, value, /) 'Set self[key] to value.'
+    close method_descriptor ($self, /) None
+    closed getset_descriptor None None
+    find method_descriptor ($self, view, start=None, end=None, /) None
+    flush method_descriptor ($self, offset=0, size=None, /) None
+    madvise method_descriptor ($self, option, start=0, length=None, /) None
+    move method_descriptor ($self, dest, src, count, /) None
+    read method_descriptor ($self, n=None, /) None
+    read_byte method_descriptor ($self, /) None
+    readline method_descriptor ($self, /) None
+    resize method_descriptor ($self, newsize, /) None
+    rfind method_descriptor ($self, view, start=None, end=None, /) None
+    seek method_descriptor ($self, pos, whence=0, /) None
+    seekable method_descriptor ($self, /) None
+    size method_descriptor ($self, /) None
+    tell method_descriptor ($self, /) None
+    write method_descriptor ($self, bytes, /) None
+    write_byte method_descriptor ($self, byte, /) None
+---- reading
+16 0 False True 16 b'0123' 4 52 b'' b'56789abcdef' 16 b'' b'' ('ValueError', 'read byte out of range') 0 b'0123456789abcdef' 2 b'23456789abcdef'
+48 102 b'345' b'0123456789abcdef' b'02468ace' b'fedcba9876543210' b'' b'' b'def' b'16b' 49 <mmap.mmap closed=False, access=ACCESS_DEFAULT, length=16, pos=16, offset=0> 0 <mmap.mmap closed=False, access=ACCESS_DEFAULT, length=16, pos=0, offset=0>
+b'one\n' b'two\n' b'\n' b'last' b'' 13
+[0, 9, 15, 0, -1, -1] 5 [-1, 5, 9, 5] [-1, 5, 9, 16] 0 -1 10 10 10 -1 16 16 -1 10 10 10 10 10
+0 6 3 -1 4 5 -1 0 1 4
+    m[16] => IndexError mmap index out of range
+    m[-17] => IndexError mmap index out of range
+    m['a'] => TypeError mmap indices must be integers
+    m[1.0] => TypeError mmap indices must be integers
+    m[None] => TypeError mmap indices must be integers
+    m[2 ** 70] => IndexError cannot fit 'int' into an index-sized integer
+    m[::0] => ValueError slice step cannot be zero
+    read('1') => TypeError argument should be integer or None, not 'str'
+    read(1.0) => TypeError argument should be integer or None, not 'float'
+    read(1, 2) => TypeError read expected at most 1 argument, got 2
+    read(2 ** 70) => OverflowError cannot fit 'int' into an index-sized integer
+    read_byte(1) => TypeError mmap.read_byte() takes no arguments (1 given)
+    readline(1) => TypeError mmap.readline() takes no arguments (1 given)
+    find() => TypeError find expected at least 1 argument, got 0
+    find('a') => TypeError a bytes-like object is required, not 'str'
+    find(5) => TypeError a bytes-like object is required, not 'int'
+    find(b'a', 'x') => TypeError 'str' object cannot be interpreted as an integer
+    find(b'a', 0, 'x') => TypeError 'str' object cannot be interpreted as an integer
+    find(b'a', None, 'x') => 10
+    find(b'a', 1.0) => TypeError 'float' object cannot be interpreted as an integer
+    find(b'a', 2 ** 70) => OverflowError Python int too large to convert to C ssize_t
+    find(b'a', 0, 0, 0) => TypeError find expected at most 3 arguments, got 4
+    find(view=b'a') => TypeError mmap.find() takes no keyword arguments
+    tell(1) => TypeError mmap.tell() takes no arguments (1 given)
+    size(1) => TypeError mmap.size() takes no arguments (1 given)
+    seekable(1) => TypeError mmap.seekable() takes no arguments (1 given)
+    iter => [b'a', b'b']
+    in => (True, False)
+    an int in => False
+    bytes(m) => b'0123456789abcdef'
+    hash => int
+    == => (True, False, False)
+    + => TypeError unsupported operand type(s) for +: 'mmap.mmap' and 'bytes'
+    * 2 => TypeError unsupported operand type(s) for *: 'mmap.mmap' and 'int'
+    an attribute => AttributeError 'mmap.mmap' object has no attribute 'x' and no __dict__ for setting new attributes
+    closed = 1 => AttributeError attribute 'closed' of 'mmap.mmap' objects is not writable
+    bool => True
+---- where it is
+    seek(3) => (3, 3)
+    seek(2, 1) => (5, 5)
+    seek(-1, 1) => (4, 4)
+    seek(-2, 2) => (14, 14)
+    seek(0, 2) => (16, 16)
+    seek(16) => 16
+    seek(17) => ValueError seek out of range
+    seek(-1) => ValueError seek out of range
+    seek(1, 2) => ValueError seek out of range
+    seek(-17, 2) => ValueError seek out of range
+    seek(0, 3) => ValueError unknown seek type
+    seek(0, -1) => ValueError unknown seek type
+    seek(2 ** 63 - 1, 1) => ValueError seek out of range
+    seek(2 ** 63 - 1, 2) => ValueError seek out of range
+    seek(2 ** 63) => OverflowError Python int too large to convert to C ssize_t
+    seek('1') => TypeError 'str' object cannot be interpreted as an integer
+    seek(0, '1') => TypeError 'str' object cannot be interpreted as an integer
+    seek() => TypeError seek expected at least 1 argument, got 0
+    seek(0, 0, 0) => TypeError seek expected at most 2 arguments, got 3
+    seek(pos=0) => TypeError mmap.seek() takes no keyword arguments
+    and it has not moved => 16
+---- writing
+2 2 1 1 0 None None 6 b'ABCDE\xff67'
+b'xyzD--67192b3de\x00' None None None None
+b'xyzD--67192b3de\x00'
+None b'192b--67192b3de\x00' None b'19192b--67193de\x00' None None None
+4 b'2b--2b--67193de\x00' 2 6 b'2b2b--2b67193de\x00'
+    past the end => ValueError data out of range
+    and it has not moved => 14
+    write_byte() at the end => ValueError write byte out of range
+    write('a') => TypeError a bytes-like object is required, not 'str'
+    write(5) => TypeError a bytes-like object is required, not 'int'
+    write() => TypeError mmap.write() takes exactly one argument (0 given)
+    write(bytes=b'') => TypeError mmap.write() takes no keyword arguments
+    write_byte(256) => OverflowError unsigned byte integer is greater than maximum
+    write_byte(-1) => OverflowError unsigned byte integer is less than minimum
+    write_byte('a') => TypeError 'str' object cannot be interpreted as an integer
+    write_byte(b'a') => TypeError 'bytes' object cannot be interpreted as an integer
+    write_byte(1.0) => TypeError 'float' object cannot be interpreted as an integer
+    write_byte(2 ** 70) => OverflowError Python int too large to convert to C long
+    write_byte() => TypeError mmap.write_byte() takes exactly one argument (0 given)
+    m[0] = 256 => ValueError mmap item value must be in range(0, 256)
+    = -1 => ValueError mmap item value must be in range(0, 256)
+    = 2 ** 70 => TypeError cannot fit 'int' into an index-sized integer
+    = 'a' => TypeError mmap item value must be an int
+    = b'a' => TypeError mmap item value must be an int
+    = 1.0 => TypeError mmap item value must be an int
+    = None => TypeError mmap item value must be an int
+    = True => 1
+    m[16] = 0 => IndexError mmap index out of range
+    m[-17] = 0 => IndexError mmap index out of range
+    m['a'] = 0 => TypeError mmap indices must be integer
+    m[1.0] = 0 => TypeError mmap indices must be integer
+    too long => IndexError mmap slice assignment is wrong size
+    too short => IndexError mmap slice assignment is wrong size
+    a str => TypeError a bytes-like object is required, not 'str'
+    an int => TypeError a bytes-like object is required, not 'int'
+    backwards => b'ZYXW'
+    no step => ValueError slice step cannot be zero
+    del m[0] => TypeError mmap doesn't support item deletion
+    del m[0:1] => TypeError mmap object doesn't support slice deletion
+    del m['a'] => TypeError mmap indices must be integer
+    del m[100] => IndexError mmap index out of range
+    move(-1, 0, 1) => ValueError source, destination, or count out of range
+    move(0, -1, 1) => ValueError source, destination, or count out of range
+    move(0, 0, -1) => ValueError source, destination, or count out of range
+    move(0, 0, 17) => ValueError source, destination, or count out of range
+    move(16, 0, 1) => ValueError source, destination, or count out of range
+    move(0, 16, 1) => ValueError source, destination, or count out of range
+    move(0, 0, 2 ** 63 - 1) => ValueError source, destination, or count out of range
+    move(0, 0) => TypeError move expected 3 arguments, got 2
+    move('0', 0, 0) => TypeError 'str' object cannot be interpreted as an integer
+    move(2 ** 70, 0, 0) => OverflowError Python int too large to convert to C ssize_t
+    flush(17) => ValueError flush values out of range
+    flush(-1) => ValueError flush values out of range
+    flush(0, 17) => ValueError flush values out of range
+    flush(0, -1) => ValueError flush values out of range
+    flush(16, 1) => ValueError flush values out of range
+    flush('0') => TypeError 'str' object cannot be interpreted as an integer
+    flush(0, '0') => TypeError 'str' object cannot be interpreted as an integer
+    flush(0, 0, 0) => TypeError flush expected at most 2 arguments, got 3
+    flush(None) => TypeError 'NoneType' object cannot be interpreted as an integer
+---- how it may be used
+<mmap.mmap closed=False, access=ACCESS_DEFAULT, length=10, pos=0, offset=0> 2 None None None None b'ABCDEFAB89' None False None ('TypeError', "mmap doesn't support item deletion")
+    in the file: b'ABCDEFAB8Z'
+<mmap.mmap closed=False, access=ACCESS_READ, length=10, pos=0, offset=0> ('TypeError', "mmap can't modify a readonly memory map.") ('TypeError', "mmap can't modify a readonly memory map.") ('TypeError', "mmap can't modify a readonly memory map.") ('TypeError', "mmap can't modify a readonly memory map.") ('TypeError', "mmap can't modify a readonly memory map.") b'0123456789' None True ('TypeError', 'cannot modify read-only memory') ('TypeError', "mmap can't modify a readonly memory map.")
+    in the file: b'0123456789'
+<mmap.mmap closed=False, access=ACCESS_WRITE, length=10, pos=0, offset=0> 2 None None None None b'ABCDEFAB89' None False None ('TypeError', "mmap doesn't support item deletion")
+    in the file: b'ABCDEFAB8Z'
+<mmap.mmap closed=False, access=ACCESS_COPY, length=10, pos=0, offset=0> 2 None None None None b'ABCDEFAB89' None False None ('TypeError', "mmap doesn't support item deletion")
+    in the file: b'0123456789'
+    PROT_READ <mmap.mmap closed=False, access=ACCESS_READ, length=16, pos=0, offset=0> ('TypeError', "mmap can't modify a readonly memory map.")
+    PROT_WRITE <mmap.mmap closed=False, access=ACCESS_WRITE, length=16, pos=0, offset=0> 1
+    both <mmap.mmap closed=False, access=ACCESS_DEFAULT, length=16, pos=0, offset=0> 1
+    private <mmap.mmap closed=False, access=ACCESS_DEFAULT, length=16, pos=0, offset=0> 1
+    private, to read <mmap.mmap closed=False, access=ACCESS_READ, length=16, pos=0, offset=0> ('TypeError', "mmap can't modify a readonly memory map.")
+b'0123456789' b'012' PermissionError PermissionError
+---- making one
+True 5 True True 7 3 4 <mmap.mmap closed=False, access=ACCESS_DEFAULT, length=1, pos=0, offset=PAGESIZE>
+    mmap() => TypeError function missing required argument 'fileno' (pos 1)
+    one argument => TypeError function missing required argument 'length' (pos 2)
+    a str => TypeError 'str' object cannot be interpreted as an integer
+    the file itself => TypeError '_io.BufferedRandom' object cannot be interpreted as an integer
+    length a str => TypeError 'str' object cannot be interpreted as an integer
+    length -1 => OverflowError memory mapped length must be positive
+    length 2 ** 70 => OverflowError Python int too large to convert to C ssize_t
+    longer than the file => ValueError mmap length is greater than file size
+    offset -1 => OverflowError memory mapped offset must be positive
+    offset past the end => ValueError mmap offset is greater than file size
+    offset at the end => ValueError mmap offset is greater than file size
+    offset and length past the end => ValueError mmap length is greater than file size
+    offset not of a page => OSError
+    offset a str => TypeError 'str' object cannot be interpreted as an integer
+    offset 2 ** 70 => OverflowError Python int too large to convert to C long
+    access 4 => ValueError mmap invalid access parameter.
+    access -1 => ValueError mmap invalid access parameter.
+    access a str => TypeError 'str' object cannot be interpreted as an integer
+    access and flags => ValueError mmap can't specify both access and flags, prot.
+    access and prot => ValueError mmap can't specify both access and flags, prot.
+    access, and what flags and prot are anyway => 3
+    trackfd not by name => TypeError function takes at most 6 positional arguments (7 given)
+    a name that there is not => TypeError this function got an unexpected keyword argument 'nothing'
+    no such descriptor => OSError
+    -2 => OSError
+    a class derived from it => [1, '<M closed=False, access=ACCESS_DEFAULT, length=3, pos=0, offset=0>']
+    a file with nothing in it => ValueError cannot mmap an empty file
+    and a length => ValueError mmap length is greater than file size
+of no file
+100 b'\x00\x00\x00\x00\x00' 5 b'hello\x00\x00' <mmap.mmap closed=False, access=ACCESS_DEFAULT, length=100, pos=5, offset=0> OSError None 2 False
+    nothing => OSError
+    to read => [b'\x00\x00', ('TypeError', "mmap can't modify a readonly memory map.")]
+    a copy => [1, b'a\x00']
+    private => 10
+    large => [268435456, 0, None, 7, None]
+    an offset => True
+the descriptor
+b'012' 10 b'012' OSError ('ValueError', "mmap can't resize with trackfd=False.") 2 b'AB2'
+---- what else can look at it
+10 B 1 False True b'234' 48 [48, 49, 50] True (10,) (1,)
+b'ABCD4' b'ABCD4' True bytearray(b'ABCD') b'ABCD456789AB' 16706 1 10 b'ABCD456789'
+(4, 6) (16961,) None b'BAC' 10 10 False
+True ('BufferError', 'Object is not writable.') ('TypeError', 'argument must be read-write bytes-like object, not mmap.mmap') ('TypeError', 'readinto() argument must be read-write bytes-like object, not mmap.mmap') b'012'
+---- advice
+None None None None None None None
+    madvise() => TypeError madvise expected at least 1 argument, got 0
+    a str => TypeError 'str' object cannot be interpreted as an integer
+    start -1 => ValueError madvise start out of bounds
+    start at the end => ValueError madvise start out of bounds
+    length -1 => ValueError madvise length invalid
+    too long => OverflowError madvise length too large
+    start a str => TypeError 'str' object cannot be interpreted as an integer
+    length a str => TypeError 'str' object cannot be interpreted as an integer
+    no such advice => OSError
+    not from where a page begins => OSError
+    four => TypeError madvise expected at most 3 arguments, got 4
+    by name => TypeError mmap.madvise() takes no keyword arguments
+---- another size
+    resize(-1) => ValueError new size out of range
+    resize(2 ** 63 - 1) => True
+    resize('1') => TypeError 'str' object cannot be interpreted as an integer
+    resize() => TypeError mmap.resize() takes exactly one argument (0 given)
+    resize(2 ** 70) => OverflowError Python int too large to convert to C ssize_t
+    resize(newsize=1) => TypeError mmap.resize() takes no keyword arguments
+    to read => TypeError mmap can't resize a readonly or copy-on-write memory map.
+    a copy => TypeError mmap can't resize a readonly or copy-on-write memory map.
+---- closed
+False None True None <mmap.mmap closed=True>
+    read => ValueError mmap closed or invalid
+    read_byte => ValueError mmap closed or invalid
+    readline => ValueError mmap closed or invalid
+    write => ValueError mmap closed or invalid
+    write_byte => ValueError mmap closed or invalid
+    find => ValueError mmap closed or invalid
+    rfind => ValueError mmap closed or invalid
+    seek => ValueError mmap closed or invalid
+    tell => ValueError mmap closed or invalid
+    size => ValueError mmap closed or invalid
+    flush => ValueError mmap closed or invalid
+    move => ValueError mmap closed or invalid
+    resize => ValueError mmap closed or invalid
+    madvise => ValueError mmap closed or invalid
+    __len__ => ValueError mmap closed or invalid
+    __getitem__ => ValueError mmap closed or invalid
+    __getitem__ => ValueError mmap closed or invalid
+    __setitem__ => ValueError mmap closed or invalid
+    __setitem__ => ValueError mmap closed or invalid
+    __delitem__ => ValueError mmap closed or invalid
+    __enter__ => ValueError mmap closed or invalid
+    __exit__ => None
+    __buffer__ => ValueError mmap closed or invalid
+    seekable => True
+    memoryview => ValueError mmap closed or invalid
+    bytes => ValueError mmap closed or invalid
+    bytearray => ValueError mmap closed or invalid
+    in => ValueError mmap closed or invalid
+    iter => ValueError mmap closed or invalid
+    join => TypeError sequence item 0: expected a bytes-like object, mmap.mmap found
+    find(m) => ValueError mmap closed or invalid
+    write(m) => ValueError mmap closed or invalid
+False b'01'
+True ('ValueError', 'mmap closed or invalid') ('TypeError', '__exit__ expected 3 arguments, got 0') ('TypeError', '__exit__ expected 3 arguments, got 2') ('TypeError', 'mmap.close() takes no arguments (1 given)')
+    closed while it is asked: m[x] => ValueError mmap closed or invalid
+    closed while it is asked: m[x:] => ValueError mmap closed or invalid
+    closed while it is asked: m[x] = 0 => ValueError mmap closed or invalid
+    closed while it is asked: m[0] = x => ValueError mmap closed or invalid
+    closed while it is asked: m[x:0] = b'' => ValueError mmap closed or invalid
+    closed while it is asked: find(b'', x) => ValueError mmap closed or invalid
+    closed while it is asked: find(b'', 0, x) => ValueError mmap closed or invalid
+    closed while it is asked: madvise(0, 0, x) => ValueError mmap closed or invalid
+    closed while it is asked: seek(x) => ValueError mmap closed or invalid
+    closed while it is asked: read(x) => ValueError mmap closed or invalid
+    closed while it is asked: move(x, 0, 0) => ValueError mmap closed or invalid
+---- what is told to whoever is listening
+[('mmap.__new__', (0, 1, 0)), ('mmap.__new__', (10, 0, 0))]
+---- two of the same file
+b'A12' b'AB2' b'A12'
+---- a great many, none of them kept
+done

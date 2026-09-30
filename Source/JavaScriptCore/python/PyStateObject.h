@@ -64,8 +64,14 @@ public:
         JSArrayBufferView* storage;
         char format; // What an item is, to a memoryview
         unsigned itemSize;
+        bool isReadOnly { false };
     };
     virtual std::optional<ExportedBytes> exportedBytes() const { return std::nullopt; }
+    // It is about to be asked for them, and may raise: what bf_getbuffer does before it fills anything in.
+    virtual void willExportBytes(JSGlobalObject*) const { }
+
+    // What PySequence_GetItem() gives, for a class that has the flag HasSequenceItemOfItsOwn. Empty if it raised.
+    virtual JSValue sequenceItem(JSGlobalObject*, int64_t) const { return { }; }
 
     // How much memory it keeps that is not the collector's, if that is a good deal: what a library has allocated for it. Nothing is freed until the collector runs, and how soon it runs goes by how much it takes there to
     // be. It is asked when the object is made, and by the collector while the program is running, so it is to be something that can be read at any time.
@@ -115,6 +121,8 @@ public:
     template<typename State>
     State* tryState() const { return m_state->kind() == State::staticKind() ? static_cast<State*>(m_state.get()) : nullptr; }
     std::optional<Python::NativeState::ExportedBytes> exportedBytes() const { return m_state->exportedBytes(); }
+    void willExportBytes(JSGlobalObject* globalObject) const { m_state->willExportBytes(globalObject); }
+    JSValue sequenceItem(JSGlobalObject* globalObject, int64_t index) const { return m_state->sequenceItem(globalObject, index); }
 
 private:
     PyStateObject(VM& vm, Structure* structure, std::unique_ptr<Python::NativeState>&& state)

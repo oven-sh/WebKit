@@ -136,6 +136,15 @@ static std::optional<NativeState::ExportedBytes> exportedBytesOf(JSValue value)
     return object ? object->exportedBytes() : std::nullopt;
 }
 
+// Whether what it has to show is not to be written to
+static bool showsWhatIsNotToBeWritten(JSValue value)
+{
+    if (isBytes(value))
+        return true;
+    auto exported = exportedBytesOf(value);
+    return exported && exported->isReadOnly;
+}
+
 std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue value)
 {
     if (!value || !value.isCell())
@@ -213,7 +222,11 @@ Buffer tryBufferOf(JSGlobalObject* globalObject, JSValue value, int flags)
     }
     if (!builtinBufferOf(value))
         return { };
-    if ((flags & WritableBuffer) && isBytes(value)) {
+    if (auto* object = dynamicDowncast<PyStateObject>(value)) {
+        object->willExportBytes(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    if ((flags & WritableBuffer) && showsWhatIsNotToBeWritten(value)) {
         raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s);
         return { };
     }
@@ -2591,7 +2604,11 @@ static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, 
         raiseTypeError(globalObject, scope, concatenate("memoryview: a bytes-like object is required, not '"_s, typeName(globalObject, object), '\''));
         return nullptr;
     }
-    if ((flags & WritableBuffer) && isBytes(object)) {
+    if (auto* exporter = dynamicDowncast<PyStateObject>(object)) {
+        exporter->willExportBytes(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    if ((flags & WritableBuffer) && showsWhatIsNotToBeWritten(object)) {
         raise(globalObject, scope, BuiltinType::BufferError, "Object is not writable."_s);
         return nullptr;
     }
@@ -2604,7 +2621,7 @@ static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, 
         layout.format = (flags & FormatBuffer) == FormatBuffer ? exported->format : 'B';
         layout.itemSize = exported->itemSize;
     }
-    layout.isReadOnly = isBytes(object);
+    layout.isReadOnly = showsWhatIsNotToBeWritten(object);
     return PyMemoryView::create(globalObject, object, layout, oneDimension(buffer->size() / layout.itemSize, layout.itemSize));
 }
 

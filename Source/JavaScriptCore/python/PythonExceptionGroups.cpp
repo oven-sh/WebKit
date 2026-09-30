@@ -60,7 +60,7 @@ bool isSequence(JSGlobalObject* globalObject, JSValue value)
         PyType* base = asType(entry.get());
         if (!base->getDirect(vm, vm.pythonNames().dunder_getitem))
             continue;
-        return base->hasFlag(PyType::IsHeapType) || base->hasFlag(PyType::IsSequence) || base == realm->typeStr() || base == realm->typeBytes() || base == realm->typeByteArray() || base->hasFlag(PyType::IsJavaScript);
+        return base->hasFlag(PyType::IsHeapType) || base->hasFlag(PyType::IsSequence) || base->hasFlag(PyType::HasSequenceItemOfItsOwn) || base == realm->typeStr() || base == realm->typeBytes() || base == realm->typeByteArray() || base->hasFlag(PyType::IsJavaScript);
     }
     return false;
 }

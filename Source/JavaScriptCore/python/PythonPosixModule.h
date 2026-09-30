@@ -49,5 +49,6 @@ JS_EXPORT_PRIVATE JSObject* createTermiosModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* createPwdModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* createGrpModule(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSObject* createSyslogModule(JSGlobalObject*);
+JS_EXPORT_PRIVATE JSObject* createMmapModule(JSGlobalObject*);
 
 } } // namespace JSC::Python

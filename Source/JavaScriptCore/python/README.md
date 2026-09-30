@@ -1309,6 +1309,17 @@ what comes of it here, but for `LOG_MASK(-1)`, which one compiler makes an error
 
 What is sent to the log is not to be had back. `programs/the-syslog-module.py` goes by what the hooks of `sys.addaudithook()` are told, and by what `LOG_PERROR` has written to the standard error as well.
 
+### `mmap`
+
+`PythonMmapModule.cpp` is `Modules/mmapmodule.c`, and is for the host to list, as `posix` is. What is mapped is an `ArrayBuffer`'s, which is how anything here has bytes to show: `NativeState::exportedBytes()`. So a `memoryview` of it is of the pages themselves, the
+collector counts them as it does any `ArrayBuffer`'s, and they are unmapped when the `ArrayBuffer` is detached or freed. `mremap()` may put them somewhere else, and an `ArrayBuffer`'s are where they are, so `resize()` makes another.
+
+Three things were wanted of the engine. What is shown may be not to be written to (`ExportedBytes::isReadOnly`): `ACCESS_READ` maps pages that cannot be. What has bytes to show may refuse when it is asked for them (`NativeState::willExportBytes()`), as `bf_getbuffer` can: one that is closed does.
+And a class may have an `sq_item` besides its `mp_subscript` that does not come to the same (`PyType::HasSequenceItemOfItsOwn`, `NativeState::sequenceItem()`): `m[0]` is an int, and going through `m` gives a `bytes` of each.
+
+**CPython counts who is looking, and will not `close()` or `resize()` while anybody is.** Nobody is counted here, of this or of a `bytearray`, since when a `memoryview` is done with is for the collector to find. To close it is to detach the `ArrayBuffer`, and then whatever was looking has
+nothing to look at. Nothing keeps where the bytes are: see `Python::Buffer`.
+
 ### `_lsprof`, and so `cProfile`
 
 `PythonLsprofModule.cpp` is `Modules/_lsprof.c`. It is told of calls and returns by `sys.monitoring`, which it asks as a program would, so there is nothing for it in the engine.

@@ -1040,7 +1040,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         return { };
     }
     case Kind::Sequence: {
-        JSValue value = Python::getItem(globalObject, m_a.get(), Python::intFromInt64(globalObject, m_index));
+        JSValue value = Python::itemInGoingThrough(globalObject, m_a.get(), m_index);
         if (scope.exception()) [[unlikely]] {
             if (Python::catchException(globalObject, BuiltinType::IndexError) || Python::catchException(globalObject, BuiltinType::StopIteration))
                 finish();
@@ -1054,7 +1054,7 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             finish();
             return { };
         }
-        JSValue value = Python::getItem(globalObject, m_a.get(), Python::intFromInt64(globalObject, m_index));
+        JSValue value = Python::itemInGoingThrough(globalObject, m_a.get(), m_index);
         if (scope.exception()) [[unlikely]] {
             if (Python::catchException(globalObject, BuiltinType::IndexError) || Python::catchException(globalObject, BuiltinType::StopIteration))
                 finish();

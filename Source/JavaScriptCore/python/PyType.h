@@ -88,6 +88,8 @@ public:
         // Its tp_new, in CPython, would be slot_tp_new(), which looks for __new__. It is so once a __new__ that a program wrote has been found for the class, and stays so if there comes to be none: update_one_slot() then
         // leaves tp_new as it is. What object.__new__() and object.__init__() make of arguments goes by it.
         NewIsLookedFor = 1 << 19,
+        // It is written in C++, and in CPython has an sq_item as well as an mp_subscript, which do not come to the same. So it can be gone through, and what that gives is not what x[i] gives. See NativeState::sequenceItem().
+        HasSequenceItemOfItsOwn = 1 << 20,
 
         // What follows depends on the attributes of the class and of its bases, which can be set at any time. See hooks().
         HasCustomGetAttribute = 1 << 8, // __getattribute__ is not object's or type's.

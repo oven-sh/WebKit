@@ -541,6 +541,7 @@ JSValue absolute(JSGlobalObject*, JSValue); // abs()
 JSValue sequenceConcatenate(JSGlobalObject*, bool inPlace, JSValue, JSValue); // PySequence_Concat() and PySequence_InPlaceConcat()
 int64_t sequenceSize(JSGlobalObject*, JSValue); // PySequence_Size()
 JSValue sequenceItem(JSGlobalObject*, JSValue, int64_t index); // PySequence_GetItem()
+JSValue itemInGoingThrough(JSGlobalObject*, JSValue, int64_t index); // The same, of what is known to be a sequence: what iter() and reversed() go by when there is no __iter__() or __reversed__()
 void checkIsIndexable(JSGlobalObject*, JSValue); // What that looks at before it gets anything. It may raise.
 JSValue compare(JSGlobalObject*, ComparisonOperator, JSValue, JSValue);
 bool isTrue(JSGlobalObject*, JSValue);
