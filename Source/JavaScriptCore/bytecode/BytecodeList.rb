@@ -852,6 +852,17 @@ op :jneq_ptr,
         hasJumped: bool,
     }
 
+# dst is empty when there is no more.
+op :py_iter_next,
+    args: {
+        dst: VirtualRegister,
+        iterator: VirtualRegister,
+        valueProfile: unsigned,
+    },
+    metadata: {
+        mayHaveRunSomething: bool, # See PyIterator::runsNothing().
+    }
+
 # Opcodes without metadata are last
 op :get_argument,
     args: {
@@ -1432,14 +1443,6 @@ op :py_get_iter,
     args: {
         dst: VirtualRegister,
         iterable: VirtualRegister,
-    }
-
-# dst is empty when there is no more.
-op :py_iter_next,
-    args: {
-        dst: VirtualRegister,
-        iterator: VirtualRegister,
-        valueProfile: unsigned,
     }
 
 # a, b, *c, d = iterable. The targets are argc registers from argv down. starIndex is which of them is starred, or -1.

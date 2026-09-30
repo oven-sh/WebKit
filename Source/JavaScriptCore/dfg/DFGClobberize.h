@@ -645,6 +645,35 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(InternalState);
         return;
 
+    case PyIterNext:
+        if (!node->iteratorRunsNothing()) {
+            clobberTop();
+            return;
+        }
+        read(PyIteratorFields);
+        write(PyIteratorFields);
+        read(JSCell_indexingType);
+        read(JSObject_butterfly);
+        read(Butterfly_publicLength);
+        read(IndexedInt32Properties);
+        read(IndexedDoubleProperties);
+        read(IndexedContiguousProperties);
+        read(IndexedArrayStorageProperties);
+        // An int that is too big to be anything else.
+        read(HeapObjectCount);
+        write(HeapObjectCount);
+        return;
+
+    case PyCheckPendingWork:
+        if (!node->leavesPendingWorkToBaseline()) {
+            clobberTop();
+            return;
+        }
+        // As CheckTraps is: it stays where it is, and nothing else is any the different for it.
+        read(InternalState);
+        write(InternalState);
+        return;
+
     case PyLeave:
         read(InternalState);
         write(InternalState);
@@ -848,7 +877,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case PyCompareOp:
     case PyGetAttr:
     case PyGetItem:
-    case PyIterNext:
     case PyLoadGlobal:
     case PyToBool:
     case PyLoadMethod:
@@ -859,7 +887,6 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case PySetItem:
     case PyDelItem:
     case PyEnter:
-    case PyCheckPendingWork:
     case PyCheckInitializerResult:
     case GetByValWithThisMegamorphic:
     case PutById:

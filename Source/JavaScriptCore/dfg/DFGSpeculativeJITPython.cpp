@@ -289,8 +289,10 @@ void SpeculativeJIT::compilePyIterNext(Node* node)
 
     JumpList done;
     JumpList slow;
-    slow.append(branchIfNotCell(iteratorGPR));
-    slow.append(branchIfNotType(iteratorGPR, PyIteratorType));
+    // Not one of the kinds that are gone through here.
+    JumpList isOfAnotherKind;
+    isOfAnotherKind.append(branchIfNotCell(iteratorGPR));
+    isOfAnotherKind.append(branchIfNotType(iteratorGPR, PyIteratorType));
     load8(Address(iteratorGPR, PyIterator::offsetOfKind()), scratchGPR);
     load64(Address(iteratorGPR, PyIterator::offsetOfIndex()), indexGPR);
 
@@ -323,7 +325,7 @@ void SpeculativeJIT::compilePyIterNext(Node* node)
     Jump gotItem = jump();
 
     isNotList.link(this);
-    slow.append(branch32(NotEqual, scratchGPR, TrustedImm32(static_cast<int32_t>(Kind::Tuple))));
+    isOfAnotherKind.append(branch32(NotEqual, scratchGPR, TrustedImm32(static_cast<int32_t>(Kind::Tuple))));
     slow.append(branch32(AboveOrEqual, indexGPR, Address(sequenceGPR, PyTuple::offsetOfLength())));
     load64(BaseIndex(sequenceGPR, indexGPR, TimesEight, PyTuple::offsetOfValues()), resultGPR);
 
@@ -332,6 +334,11 @@ void SpeculativeJIT::compilePyIterNext(Node* node)
     store64(indexGPR, Address(iteratorGPR, PyIterator::offsetOfIndex()));
     done.link(this);
 
+    // What is called for one of these kinds runs nothing either.
+    if (node->iteratorRunsNothing())
+        speculationCheck(ExoticObjectMode, JSValueSource(iteratorGPR), node->child1().node(), isOfAnotherKind);
+    else
+        slow.append(isOfAnotherKind);
     addSlowPathGenerator(slowPathCall(slow, this, operationPyIterNext, resultGPR, LinkableConstant::globalObject(*this, node), iteratorGPR));
     jsValueResult(resultGPR, node);
 }
@@ -411,7 +418,10 @@ void SpeculativeJIT::compilePyCheckNoFrameObject(Node* node)
 void SpeculativeJIT::compilePyCheckPendingWork(Node* node)
 {
     Jump hasWork = branchTest32(Zero, AbsoluteAddress(vm().addressOfPythonLimitUnlessWatched()));
-    addSlowPathGenerator(slowPathCall(hasWork, this, operationPyDoPendingWork, NoResult, LinkableConstant::globalObject(*this, node)));
+    if (node->leavesPendingWorkToBaseline())
+        speculationCheck(PythonHasSomethingToSeeTo, JSValueSource(), nullptr, hasWork);
+    else
+        addSlowPathGenerator(slowPathCall(hasWork, this, operationPyDoPendingWork, NoResult, LinkableConstant::globalObject(*this, node)));
     noResult(node);
 }
 

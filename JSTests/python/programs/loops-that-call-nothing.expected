@@ -1,0 +1,46 @@
+---- what is gone through changes on the way
+it grows => [1, 2, 3, 10, 20, 30]
+a great deal => (45150, 301)
+it shrinks => ([1, 2, 3], [1, 2, 3])
+it is emptied => ([1, 2], [])
+and filled again afterwards => ([1, 2, 3], [7, 8])
+something of another kind is put in it => [1, 2, 2.5, 's', None]
+what is next is changed => [1, 2, 4, 8]
+it is put in order => ([3, 2, 3], [1, 2, 3])
+one is put in front => ([1, 1, 1, 1, 2], [0, 0, 0, 1, 2])
+---- what goes through it is used elsewhere too
+taken from inside the loop => [(0, 1), (2, 3), (4, 5), (6, 'no more')]
+two loops => ([0, 1, 2], [3, 4, 5], [])
+one that has run out => ([1, 2], [], [1, 2, 3])
+one loop inside another => [(0, 1), (0, 2), (0, 3), (4, 5), (4, 6), (7, 8), (7, 9)]
+how far it has got => ([3, 2, 1, 0], 0)
+---- numbers that get big
+upward => ([2147483645, 2147483646, 2147483647, 2147483648, 2147483649, 2147483650], ['int', 'int', 'int', 'int', 'int', 'int'])
+downward => [-2147483646, -2147483647, -2147483648, -2147483649, -2147483650, -2147483651]
+in big steps => [0, 2147483647, 4294967294, 6442450941, 8589934588]
+nothing at all => []
+the wrong way => []
+---- given something else to go through
+after nothing but ranges => [6, 9, 13, 17, 6, 0, 3, 3, 3, 3, 2, 2.0, 1099511627776, 4294967295, (3, [(0, None), (2, 2), (3, 1), (3, 0)]), (1000, [(None, None), (None, None), (None, None)]), "'int' object is not iterable", "'NoneType' object is not iterable", "unsupported operand type(s) for +=: 'int' and 'str'", 6, 9, 13, 17, 6, 0, 3, 3, 3, 3, 2, 2.0, 1099511627776, 4294967295, (3, [(0, None), (2, 2), (3, 1), (3, 0)]), (1000, [(None, None), (None, None), (None, None)]), "'int' object is not iterable", "'NoneType' object is not iterable", "unsupported operand type(s) for +=: 'int' and 'str'"]
+---- a signal
+once => (30, [('counts', 27)], True)
+time and again => (60, [('counts', 5), ('counts', 10), ('counts', 15), ('counts', 20), ('counts', 25), ('counts', 30), ('counts', 35), ('counts', 40), ('counts', 45), ('counts', 50), ('counts', 55)], True)
+whose handler changes a variable => True
+whose handler raises => ('KeyError', "'from the handler'")
+whose handler looks at what need not have been made => (435, [('E', 12)])
+in a long loop => 400000 [('counts', 399990)]
+sent from outside => (30, [('counts_and_is_sent_one', 27)], True)
+time and again => (60, [('counts_and_is_sent_one', 5), ('counts_and_is_sent_one', 10), ('counts_and_is_sent_one', 15), ('counts_and_is_sent_one', 20), ('counts_and_is_sent_one', 25), ('counts_and_is_sent_one', 30), ('counts_and_is_sent_one', 35), ('counts_and_is_sent_one', 40), ('counts_and_is_sent_one', 45), ('counts_and_is_sent_one', 50), ('counts_and_is_sent_one', 55)], True)
+whose handler changes a variable => True
+whose handler raises => ('KeyError', "'from the handler'")
+a loop that calls nothing is interrupted => waits_for_it [(True, (('waits_for_it', True),))]
+a loop that calls nothing is interrupted => waits_with_while [(True, (('waits_with_while', True),))]
+a loop that there is no way out of is interrupted => ["'goes_round_for_ever'"]
+a loop that there is no way out of is interrupted => ["'counts_for_ever'"]
+a loop that there is no way out of is interrupted => ["'goes_round_inside_for_ever'"]
+---- what has been found out is still so
+an attribute is changed => 911
+to another kind => [1, 1, 0.5, 's', 's']
+there is another attribute => (25, ['x', 'y'])
+it is another object => 101
+a list is changed => 480.25

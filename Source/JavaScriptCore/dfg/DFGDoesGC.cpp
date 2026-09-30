@@ -369,7 +369,6 @@ bool doesGC(Graph& graph, Node* node)
     case PySetItem:
     case PyDelItem:
     case PyEnter:
-    case PyCheckPendingWork:
     case PyCheckInitializerResult:
     case GetByValWithThisMegamorphic:
     case GetDynamicVar:
@@ -574,6 +573,9 @@ bool doesGC(Graph& graph, Node* node)
     case GlobalIsFinite:
     case GlobalIsNaN:
         return node->child1().useKind() == UntypedUse;
+
+    case PyCheckPendingWork:
+        return !node->leavesPendingWorkToBaseline();
 
     case DataViewGetInt:
         return node->dataViewData().byteSize == 8;

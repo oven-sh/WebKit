@@ -1294,6 +1294,20 @@ public:
         m_flags |= NodeMiscFlag1;
     }
 
+    // Whether a PyCheckPendingWork leaves it to the baseline JIT to see to what there is, which is to say that it runs nothing. It does until that has been seen to happen there.
+    bool leavesPendingWorkToBaseline()
+    {
+        ASSERT(op() == PyCheckPendingWork);
+        return m_opInfo.as<bool>();
+    }
+
+    // PyIterator::runsNothing(), of what a PyIterNext goes on with. It is left for the baseline JIT if it is not so.
+    bool iteratorRunsNothing()
+    {
+        ASSERT(op() == PyIterNext);
+        return m_opInfo.as<bool>();
+    }
+
     unsigned pythonOperator()
     {
         ASSERT(hasPythonOperator());

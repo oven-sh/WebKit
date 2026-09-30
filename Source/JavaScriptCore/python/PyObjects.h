@@ -320,6 +320,8 @@ public:
     Kind kind() const { return m_kind; }
     // Of a class that a program derived from enumerate or the like, which may have a __next__() of its own.
     bool isOfDerivedClass() const { return m_isOfDerivedClass; }
+    // Going on with it runs no code of anyone's, so nothing can look at what is going through it, nor change anything, meanwhile.
+    bool runsNothing() const { return m_kind == Kind::Range || m_kind == Kind::List || m_kind == Kind::Tuple; }
     // Empty when there is no more. This is the __next__() of the built-in class.
     JSValue next(JSGlobalObject*);
 

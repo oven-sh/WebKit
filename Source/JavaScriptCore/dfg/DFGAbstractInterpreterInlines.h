@@ -3859,7 +3859,8 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
 
     case PyIterNext:
-        clobberWorld();
+        if (!node->iteratorRunsNothing())
+            clobberWorld();
         // Empty, when there is no more.
         makeBytecodeTopForNode(node);
         break;
@@ -3883,9 +3884,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
     case PySetItem:
     case PyDelItem:
     case PyEnter:
-    case PyCheckPendingWork:
     case PyCheckInitializerResult:
         clobberWorld();
+        break;
+
+    case PyCheckPendingWork:
+        if (!node->leavesPendingWorkToBaseline())
+            clobberWorld();
         break;
 
     case PyLeave:

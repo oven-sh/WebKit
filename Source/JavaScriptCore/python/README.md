@@ -454,6 +454,22 @@ against it (`ExitKind::PythonFrameObjectExists`).
 **Nothing is being told of what is run, or this would not be what is running.** `py_line`, `py_call`, `py_branch` and `py_jump` come to nothing. That holds for as long as `VM::pythonIsNotWatched()` does, which fires when the first thing asks to be told, and
 there is another in its place when the last has done. While anything is being told, nothing of Python's is compiled by the DFG. What has been put off (a signal) is seen to on the way into a function and on the way round a loop.
 
+**A loop that calls nothing is taken to call nothing.** Every trip round a loop passes two things that may run code of a program's: going on with what is gone through (`PyIterNext`), and looking whether anything has been put off (`PyCheckPendingWork`).
+Neither does as a rule. If they are taken to, then each time round every variable that has changed is stored for whoever may look, what had been found out about the heap is forgotten, and nothing that is made in the loop can be done without. So
+each is compiled at first so as to run nothing, and to leave for the baseline JIT if it would have to. If that has been seen to happen there, it is compiled the other way, which is JavaScriptCore's usual arrangement.
+
+- `PyIterNext` runs nothing if what it goes on with is what goes through a range, a list or a tuple (`PyIterator::runsNothing()`). Whether it has been given anything else is kept by the interpreter and the baseline JIT beside the instruction, and
+  by the exit if it was given it after it was compiled (`ExoticObjectMode`).
+- `PyCheckPendingWork` leaves with `PythonHasSomethingToSeeTo`. One signal costs nothing that matters. A program that is sent one a hundred times a second would spend its time getting back to what had been compiled, some 5 ms each time, so those exits
+  are counted like any others, and after five in a loop it is compiled again so as to call the handler from where it is.
+- **What says that something has been put off is written by a signal handler, at any time**, and B3 takes what nothing that it can see writes to be what it was when it was last read. With a call in the loop it could see something. Without, `while True:
+  pass` went by what was read on the way into the function, and there was no stopping it. So in the FTL it is read by what is said to write it too (`pythonLimitUnlessWatched()`). The DFG's own code motion is kept off by `InternalState`, as for `CheckTraps`.
+- The call that goes on with a generator is in the same loop as the `py_iter_next` that does for everything else, and has what is seen to come of it in common with it. If it has never been made it is left out (`ForceOSRExit`), or it would be the one
+  thing in the loop that can change anything.
+
+`programs/loops-that-call-nothing.py`: what is gone through changes on the way; something else is given to go through after nothing but ranges, which looks at the variables of what is going through it, or changes them; a signal comes from outside, or from a
+timer while nothing at all is being called, in a loop that there is a way out of and in one that there is not. It is 1.1 to 1.8 times as quick where something in the loop can now be kept, and no different where there was nothing to keep.
+
 **Where it can be told what the operands are, an operator is what JavaScript's own would be** (`fixupPyBinaryOp()` and its like, in `DFGFixupPhase.cpp`), and everything that the DFG knows how to do with those is done.
 
 | | on | becomes |

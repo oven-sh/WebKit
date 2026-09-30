@@ -64,6 +64,7 @@
 #include "LLIntExceptions.h"
 #include "MathCommon.h"
 #include "ObjectConstructor.h"
+#include "PyObjects.h"
 #include "PythonOperations.h"
 #include "ScopedArguments.h"
 #include "TypeProfilerLog.h"
@@ -1973,7 +1974,11 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_iter_next)
     if (vm.isPythonWatched()) [[unlikely]]
         Python::forgetCaughtStopIteration(globalObject);
     JSValue returnedByGenerator;
-    JSValue result = Python::iteratorNext(globalObject, GET_C(bytecode.m_iterator).jsValue(), &returnedByGenerator);
+    JSValue iterator = GET_C(bytecode.m_iterator).jsValue();
+    auto* builtIn = dynamicDowncast<PyIterator>(iterator);
+    if (!builtIn || !builtIn->runsNothing())
+        bytecode.metadata(codeBlock).m_mayHaveRunSomething = true;
+    JSValue result = Python::iteratorNext(globalObject, iterator, &returnedByGenerator);
     if (vm.isPythonWatched()) [[unlikely]] {
         CHECK_EXCEPTION();
         BytecodeIndex index(codeBlock->bytecodeOffset(pc));

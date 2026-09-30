@@ -91,6 +91,7 @@ namespace JSC { namespace DFG {
     macro(Watchpoint_fire) \
     /* Use these for reads only, just to indicate that if the world got clobbered, then this operation will not work. */\
     macro(MiscFields) \
+    macro(PyIteratorFields) \
     /* Use this for writes only, just to indicate that hoisting the node is invalid. This works because we don't hoist anything that has any side effects at all. */\
     macro(SideState)
 
@@ -354,6 +355,7 @@ public:
         case DOMState:
         case Watchpoint_fire:
         case MiscFields:
+        case PyIteratorFields:
             return Heap;
         }
 

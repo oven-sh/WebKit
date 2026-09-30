@@ -20193,6 +20193,23 @@ IGNORE_CLANG_WARNINGS_END
     // Python's nodes. See "The FTL" in python/README.md.
 
     LValue pythonGlobalObject() { return weakPointer(m_graph.globalObjectFor(m_origin.semantic)); }
+
+    // VM::m_pythonLimitUnlessWatched, as it is now. A signal handler writes it, or another thread, at any time. B3 takes what nothing that it can see writes to be what it was when it was last read, so a loop that calls nothing would go by
+    // what was read on the way into the function, for ever. So this is said to write it as well as to read it, and nothing else, which leaves the rest of what is in the loop as it was. It is an ordinary load.
+    LValue pythonLimitUnlessWatched()
+    {
+        const void* address = vm().addressOfPythonLimitUnlessWatched();
+        LValue pointer = m_out.constIntPtr(address);
+        PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+        patchpoint->append(pointer, ValueRep::SomeRegister);
+        patchpoint->effects = Effects::none();
+        m_heaps.decoratePatchpointRead(&m_heaps.absolute[address], patchpoint);
+        m_heaps.decoratePatchpointWrite(&m_heaps.absolute[address], patchpoint);
+        patchpoint->setGenerator([] (CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.load32(CCallHelpers::Address(params[1].gpr()), params[0].gpr());
+        });
+        return patchpoint;
+    }
     LValue pythonIdentifier() { return m_out.constIntPtr(m_node->cacheableIdentifier().rawBits()); }
 
     void compilePyBinaryOp()
@@ -20469,10 +20486,20 @@ IGNORE_CLANG_WARNINGS_END
         LBasicBlock slow = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(isCell(iterator, provenType(m_node->child1())), usually(cellCase), rarely(slow));
+        // What is called for one of the kinds that are gone through here runs nothing either.
+        bool runsNothing = m_node->iteratorRunsNothing();
+        auto unlessOfAnotherKind = [&] (LValue isOfThisKind, LBasicBlock next) {
+            if (runsNothing) {
+                speculate(ExoticObjectMode, jsValueValue(iterator), m_node->child1().node(), m_out.logicalNot(isOfThisKind));
+                m_out.jump(next);
+            } else
+                m_out.branch(isOfThisKind, usually(next), rarely(slow));
+        };
+
+        unlessOfAnotherKind(isCell(iterator, provenType(m_node->child1())), cellCase);
 
         LBasicBlock lastNext = m_out.appendTo(cellCase, iteratorCase);
-        m_out.branch(hasPythonCellType(iterator, PyIteratorType), usually(iteratorCase), rarely(slow));
+        unlessOfAnotherKind(hasPythonCellType(iterator, PyIteratorType), iteratorCase);
 
         m_out.appendTo(iteratorCase, rangeCase);
         LValue kind = m_out.load8ZeroExt32(iterator, m_heaps.PyIterator_kind);
@@ -20512,7 +20539,7 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(gotItem);
 
         m_out.appendTo(notListCase, tupleCase);
-        m_out.branch(m_out.equal(kind, m_out.constInt32(static_cast<int32_t>(Kind::Tuple))), unsure(tupleCase), unsure(slow));
+        unlessOfAnotherKind(m_out.equal(kind, m_out.constInt32(static_cast<int32_t>(Kind::Tuple))), tupleCase);
 
         m_out.appendTo(tupleCase, tupleInBounds);
         m_out.branch(m_out.aboveOrEqual(place, m_out.load32(sequence, m_heaps.PyTuple_length)), rarely(slow), usually(tupleInBounds));
@@ -20594,12 +20621,18 @@ IGNORE_CLANG_WARNINGS_END
 
     void compilePyCheckPendingWork()
     {
-        LBasicBlock hasWork = m_out.newBlock();
+        LValue hasWork = m_out.isZero32(pythonLimitUnlessWatched());
+        if (m_node->leavesPendingWorkToBaseline()) {
+            speculate(PythonHasSomethingToSeeTo, noValue(), nullptr, hasWork);
+            return;
+        }
+
+        LBasicBlock slow = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
-        m_out.branch(m_out.isZero32(m_out.load32(m_out.absolute(vm().addressOfPythonLimitUnlessWatched()))), rarely(hasWork), usually(continuation));
+        m_out.branch(hasWork, rarely(slow), usually(continuation));
 
-        LBasicBlock lastNext = m_out.appendTo(hasWork, continuation);
+        LBasicBlock lastNext = m_out.appendTo(slow, continuation);
         vmCall(Void, operationPyDoPendingWork, pythonGlobalObject());
         m_out.jump(continuation);
 

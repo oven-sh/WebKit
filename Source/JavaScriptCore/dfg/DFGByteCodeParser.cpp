@@ -9380,7 +9380,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_py_iter_next: {
             auto bytecode = currentInstruction->as<OpPyIterNext>();
             SpeculatedType prediction = getPrediction();
-            set(bytecode.m_dst, addToGraph(PyIterNext, OpInfo(), OpInfo(prediction), get(bytecode.m_iterator)));
+            bool runsNothing = !bytecode.metadata(codeBlock).m_mayHaveRunSomething && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, ExoticObjectMode);
+            set(bytecode.m_dst, addToGraph(PyIterNext, OpInfo(runsNothing), OpInfo(prediction), get(bytecode.m_iterator)));
             NEXT_OPCODE(op_py_iter_next);
         }
 
@@ -9426,7 +9427,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             auto bytecode = currentInstruction->as<OpPyLine>();
             // Nothing is being told of what is run, or this would not be what is running. What has been put off is seen to where CPython would: on the way into a function, and on the way round a loop.
             if (static_cast<Python::LineKind>(bytecode.m_kind) == Python::LineKind::AfterBackwardJump)
-                addToGraph(PyCheckPendingWork);
+                addToGraph(PyCheckPendingWork, OpInfo(!m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, PythonHasSomethingToSeeTo)));
             else
                 addToGraph(Check); // So that there is something for a jump to come to.
             NEXT_OPCODE(op_py_line);
@@ -10705,6 +10706,15 @@ void ByteCodeParser::parseBlock(unsigned limit)
         }
 
         case op_call: {
+            {
+                // What has never been run is left out, and it is by nothing having been seen to come of it that that is known. This has what is seen to come of it in common with the py_iter_next that is the other way of doing
+                // the same thing, so it is asked whether the call has ever been made: of the baseline JIT's code, since what has been compiled from this before says what it made of the call and not whether it was made. Left in, it would be something in
+                // the loop that can change anything.
+                auto* callee = get(currentInstruction->as<OpCall>().m_callee)->dynamicCastConstant<JSFunction*>();
+                if (callee && callee->intrinsic() == PythonGeneratorNextIntrinsic
+                    && !CallLinkStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_currentIndex, m_inlineStackTop->m_baselineMap).isSet())
+                    addToGraph(ForceOSRExit);
+            }
             handleCall<OpCall>(currentInstruction, Call, CallMode::Regular, nextOpcodeIndex(), nullptr);
             ASSERT_WITH_MESSAGE(m_currentInstruction == currentInstruction, "handleCall, which may have inlined the callee, trashed m_currentInstruction");
             // If it has been inlined, what comes of it is known for what it is. If not, what comes of the call is waiting to be put where it goes.
