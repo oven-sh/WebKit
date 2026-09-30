@@ -3072,6 +3072,11 @@ public:
 
     SymbolTable* decode(Decoder& decoder) const
     {
+#if USE(BUN_JSC_ADDITIONS)
+        // It goes where what may not be kept goes, like a function: most turn out to say what some other says (StaticHeap::keepOneOfEachSymbolTable()).
+        if (decoder.isForStaticHeap()) [[unlikely]]
+            StaticHeap::willAllocateUnlinkedFunction();
+#endif
         SymbolTable* symbolTable = SymbolTable::create(decoder.vm());
 #if USE(BUN_JSC_ADDITIONS)
         // Whether it only ever has one scope is not to be found out by writing to it.
@@ -3996,12 +4001,22 @@ public:
 
     UnlinkedFunctionExecutable::RareData* decode(Decoder& decoder) const
     {
+        // The names of a wrapper's parameters and the private names around the function are for BytecodeGenerator and nothing else. (What eval() wants to know of private names it gets
+        // from the scopes. How many elements a class has is what its instances are given room by: FunctionRareData::initializeObjectAllocationProfile().)
+        bool isForGeneratingCode = true;
+#if USE(BUN_JSC_ADDITIONS)
+        if (decoder.isForStaticHeap() && StaticHeap::keepsNothingForGeneratingCode()) [[unlikely]] {
+            isForGeneratingCode = false;
+            if (!(m_header & (HasClassSource | HasClassElementDefinitions)))
+                return nullptr;
+        }
+#endif
         UnlinkedFunctionExecutable::RareData* rareData = new UnlinkedFunctionExecutable::RareData { };
-        if (auto* p = tailField(HasWrapperParameterNames))
+        if (auto* p = isForGeneratingCode ? tailField(HasWrapperParameterNames) : nullptr)
             reinterpret_cast<const CachedVector<CachedIdentifier>*>(p)->decode(decoder, rareData->m_generatorOrAsyncWrapperFunctionParameterNames);
         if (auto* p = tailField(HasClassElementDefinitions))
             reinterpret_cast<const CachedVector<CachedClassElementDefinition>*>(p)->decode(decoder, rareData->m_classElementDefinitions);
-        if (auto* p = tailField(HasParentPrivateNameEnvironment))
+        if (auto* p = isForGeneratingCode ? tailField(HasParentPrivateNameEnvironment) : nullptr)
             reinterpret_cast<const CachedPrivateNameEnvironment*>(p)->decode(decoder, rareData->m_parentPrivateNameEnvironment);
         if (auto* p = tailField(HasClassSource)) {
             VarintReader reader(p);
@@ -5188,7 +5203,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         m_members.live().parentScopeTDZVariables = v.tdz->decode(decoder);
     if (v.rareData) {
         m_members.live().rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
-        ASSERT_WITH_MESSAGE(m_members.live().rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
+        ASSERT_WITH_MESSAGE(!m_members.live().rareData || m_members.live().rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
     }
     m_firstLineOffset = scalars.firstLineOffset;
     m_lineCount = scalars.lineCount;
@@ -6623,6 +6638,7 @@ struct BytecodeLinkEncoder::Impl {
                         "used by"_s, "passed to who knows what"_s, "passed as this"_s, "passed beyond the parameters"_s, "called in some other way (a list of arguments, or the callee may be something else)"_s, "returned to who knows whom"_s,
                         "one of several in a phi"_s, "one of several in a homed register"_s, "one of several in a variable"_s, "one of several in a parameter"_s, "one of several returned"_s, "lost by what hands it on"_s,
                         "put in a variable of a module that can be got at"_s, "put in a variable that was given up on"_s, "put who knows where"_s, "put in a variable of a name that is read from who knows where"_s, "read in a way that is not proven"_s };
+                    AOT::dumpWhatFunctionsArePassedTo();
                     UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> reasons;
                     for (uint32_t number = 1; number <= functionsOfProgram.size(); ++number) {
                         if (uint32_t why = functionsOfProgram.function(number)->facts->whyExposed.load())

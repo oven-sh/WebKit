@@ -182,6 +182,43 @@ static uint64_t readVarint(const uint8_t*& at)
     }
 }
 
+static Compress s_compress;
+static Decompress s_decompress;
+
+void setCodec(Compress compress, Decompress decompress)
+{
+    s_compress = compress;
+    s_decompress = decompress;
+}
+
+String Image::textOfQuote(uint64_t start, size_t length) const
+{
+    const uint8_t* text = this->at<uint8_t>(header().textOfQuotesOffset);
+    size_t sizeOfBlock = header().sizeOfBlockOfTextOfQuotes;
+    if (!sizeOfBlock)
+        return String::fromUTF8(std::span { reinterpret_cast<const char8_t*>(text) + start, length });
+    if (!s_decompress)
+        return { };
+    const uint32_t* words = reinterpret_cast<const uint32_t*>(text);
+    size_t numberOfBlocks = words[0];
+    size_t sizeOfLast = words[1];
+    const uint32_t* starts = words + 2;
+    const uint8_t* blocks = reinterpret_cast<const uint8_t*>(starts + numberOfBlocks + 1);
+    Vector<uint8_t> unpacked(sizeOfBlock);
+    Vector<uint8_t> bytes;
+    for (size_t block = start / sizeOfBlock; block * sizeOfBlock < start + length; ++block) {
+        RELEASE_ASSERT(block < numberOfBlocks);
+        size_t size = block + 1 == numberOfBlocks ? sizeOfLast : sizeOfBlock;
+        if (!s_decompress(blocks + starts[block], starts[block + 1] - starts[block], unpacked.mutableSpan().data(), size))
+            return { };
+        size_t first = block * sizeOfBlock;
+        size_t from = std::max<size_t>(start, first) - first;
+        size_t to = std::min<size_t>(start + length, first + size) - first;
+        bytes.append(unpacked.span().subspan(from, to - from));
+    }
+    return String::fromUTF8(bytes.span());
+}
+
 // How many there are. Then for each, in order: how much further on in the bytecode it is than the one before; how much further on in
 // the text of quotes it starts than the one before did, which may be less than nothing; and how long it is, with its Quote::Kind.
 std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& function, unsigned bytecodeOffset) const
@@ -200,7 +237,9 @@ std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& funct
             continue;
         if (offset > bytecodeOffset)
             break;
-        String text = String::fromUTF8(std::span { this->at<char8_t>(header().textOfQuotesOffset) + start, static_cast<size_t>(lengthAndKind >> 2) });
+        String text = textOfQuote(start, static_cast<size_t>(lengthAndKind >> 2));
+        if (text.isNull())
+            return std::nullopt;
         auto kind = static_cast<Quote::Kind>(lengthAndKind & 3);
         if (kind == Quote::Call)
             text = makeString(text, "...)"_s);
@@ -1004,6 +1043,33 @@ Vector<uint8_t> ImageBuilder::finish()
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: ", numberOfQuotes, " places that an error message may quote: ", quotes.size(), " bytes, and ", textOfQuotes.size(), " of text in ", whereItIs.size(), " pieces");
     }
+    uint32_t sizeOfBlockOfTextOfQuotes = 0;
+    if (s_compress && s_decompress && textOfQuotes.size() >= 4 * KB) {
+        constexpr size_t sizeOfBlock = 64 * KB;
+        size_t numberOfBlocks = (textOfQuotes.size() + sizeOfBlock - 1) / sizeOfBlock;
+        Vector<uint32_t> words;
+        words.append(safeCast<uint32_t>(numberOfBlocks));
+        words.append(safeCast<uint32_t>(textOfQuotes.size() - (numberOfBlocks - 1) * sizeOfBlock));
+        Vector<uint8_t> blocks;
+        Vector<uint8_t> packed(2 * sizeOfBlock);
+        bool ok = true;
+        for (size_t block = 0; block < numberOfBlocks && ok; ++block) {
+            auto source = textOfQuotes.span().subspan(block * sizeOfBlock, std::min(sizeOfBlock, textOfQuotes.size() - block * sizeOfBlock));
+            size_t size = s_compress(source.data(), source.size(), packed.mutableSpan().data(), packed.size());
+            ok = !!size;
+            words.append(safeCast<uint32_t>(blocks.size()));
+            blocks.append(packed.span().first(size));
+        }
+        words.append(safeCast<uint32_t>(blocks.size()));
+        if (ok) {
+            if (Options::aotReportStats()) [[unlikely]]
+                dataLogLn("AOT: the text of quotes is packed into ", words.sizeInBytes() + blocks.size(), " bytes");
+            textOfQuotes.clear();
+            textOfQuotes.append(asBytes(words.span()));
+            textOfQuotes.appendVector(blocks);
+            sizeOfBlockOfTextOfQuotes = sizeOfBlock;
+        }
+    }
 
     // Code that goes by the tables of a static heap is no use without one, and that says which function nearly every executable is.
     // So it is for whoever makes it to keep the keys of the rest (StaticHeap::keysOfImage()): the table comes after the image.
@@ -1040,6 +1106,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.dispatchOffset = place(dispatch.sizeInBytes());
     header.quotesOffset = place(quotes.size());
     header.textOfQuotesOffset = place(textOfQuotes.size());
+    header.sizeOfBlockOfTextOfQuotes = sizeOfBlockOfTextOfQuotes;
     header.numberOfIdentifiersOfProgram = m_numberOfIdentifiersOfProgram;
     header.numberOfConstantsOfProgram = m_numberOfConstantsOfProgram;
     header.regExpsOffset = place(imageRegExps.sizeInBytes());

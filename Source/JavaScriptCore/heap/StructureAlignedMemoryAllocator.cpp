@@ -116,7 +116,12 @@ public:
             // across 4GB granules. Otherwise, the top 32 bits of the address may not be constant for all
             // addresses in the range. The top 32 bits being constant is an invariant that we rely on in
             // order to encode StructureIDs.
-            g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages));
+            g_jscConfig.startOfStructureHeap = reinterpret_cast<uintptr_t>(OSAllocator::tryReserveUncommittedAligned(mappedHeapSize, mappedHeapSize, OSAllocator::StructureAllocatorPages
+#if USE(BUN_JSC_ADDITIONS)
+                // Right after bmalloc::StaticRegion, if that is to be had: code from the static compiler takes it to be there (AOT::structureIDBaseOfImages).
+                , reinterpret_cast<void*>(bmalloc::StaticRegion::base + bmalloc::StaticRegion::reservation)
+#endif
+                ));
             if (g_jscConfig.startOfStructureHeap)
                 break;
             mappedHeapSize /= 2;

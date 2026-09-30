@@ -740,6 +740,14 @@ bool Lowering::tryLowerMisc(Node* node)
             m_sameAs = nullptr;
             return true;
         }
+        {
+            // TEMPORARY: 1 a parameter, 2 what a call gives, 3 a property, 4 a variable, 5 a phi, 6 an element, 7 anything else.
+            Node* origin = value;
+            while (origin->kind == NodeKind::Narrow || origin->isBytecode(op_check_type) || origin->isBytecode(op_check_tdz) || origin->isBytecode(op_type_tag))
+                origin = origin->uses[0].node;
+            isLoweredThisWay(origin->kind == NodeKind::Argument ? 1 : origin->kind == NodeKind::Phi ? 5 : origin->kind != NodeKind::Bytecode ? 7
+                : origin->opcode == op_call || origin->opcode == op_construct || origin->opcode == op_call_varargs ? 2 : origin->opcode == op_get_by_id ? 3 : origin->opcode == op_get_from_scope ? 4 : origin->opcode == op_get_by_val ? 6 : 7);
+        }
         assertBornAs(node, value, jsValue, node->firstLayout);
         setJSValue(node, jsValue);
         return true;

@@ -441,8 +441,8 @@ LValue Lowering::storeToScratch(Node* node, VirtualRegister first, unsigned coun
 
 LValue Emitter::structureOf(LValue cell)
 {
-    // A structure's ID is the low half of its address. The high half is the same for all of them, and this process's own.
-    return m_out.bitOr(m_out.zeroExtPtr(m_out.load32(cell, m_heaps.JSCell_structureID)), entry(Entry::StructureIDBase));
+    // A structure's ID is the low half of its address. The high half is the same for all of them.
+    return structureWithID(m_out.load32(cell, m_heaps.JSCell_structureID));
 }
 
 LValue Emitter::entry(Entry which)

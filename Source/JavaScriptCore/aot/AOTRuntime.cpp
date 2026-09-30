@@ -278,6 +278,7 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->missesForEightSlots = Options::aotMissesForEightSlots();
     instance->missesToSpare = Options::aotMissesToSpare();
     instance->structureIDBase = JSC::structureIDBase();
+    RELEASE_ASSERT_WITH_MESSAGE(!Image::withCode() || instance->structureIDBase == structureIDBaseOfImages, "Structures are not where the program's code takes them to be: the addresses were taken.");
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };
         if (Options::useImmutableIntrinsics()) {

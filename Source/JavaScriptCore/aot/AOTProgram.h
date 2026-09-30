@@ -423,6 +423,7 @@ const NumbersOfIdentifiers* numbersOfIdentifiersOfProgram();
 // (a string that says the same, a number) is there once. For each such function, the number of each of its constants, or
 // notAConstantOfProgram for one that is empty.
 static constexpr uint32_t notAConstantOfProgram = std::numeric_limits<uint32_t>::max();
+JS_EXPORT_PRIVATE void dumpWhatFunctionsArePassedTo(); // TEMPORARY statistics
 using NumbersOfConstants = UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<uint32_t>>;
 JS_EXPORT_PRIVATE void setNumbersOfConstantsOfProgram(const NumbersOfConstants*); // Not while anything is being compiled.
 const Vector<uint32_t>* numbersOfConstantsOfProgramFor(UnlinkedCodeBlock*); // Null: the function has its own.

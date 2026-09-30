@@ -24,6 +24,7 @@
 #include "RegisterAtOffsetList.h"
 #include "StructureID.h"
 #include <wtf/TZoneMalloc.h>
+#include <bmalloc/StaticRegion.h>
 
 namespace JSC {
 
@@ -275,6 +276,11 @@ RuntimeTable& runtimeTable(VM&);
 // (Data::finalizeUnconditionally()), and a cached transition keeps the new structure alive while the old one is
 // (CodeBlock::propagateTransitions()). So such a slot has to say what its second word is, which it does in the bits of offset
 // that a PropertyOffset has no use for. A slot without a structureID is nobody's business but its owner's.
+// What a StructureID is the low half of an address with. Structures are where StructureMemoryManager asks for them to be, which is right after the static region: as with that, whoever
+// is there first gets in the way of the program running at all.
+static constexpr uintptr_t structureIDBaseOfImages = bmalloc::StaticRegion::base + bmalloc::StaticRegion::reservation;
+static_assert(!(structureIDBaseOfImages & 0xffffffff));
+
 struct Slot {
     static constexpr unsigned offsetBits = 24;
     static constexpr uint32_t offsetMask = (1u << offsetBits) - 1;

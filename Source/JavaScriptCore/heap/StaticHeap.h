@@ -169,6 +169,9 @@ public:
     // A cell is halfway between two multiples of 16: this far past one.
     static constexpr size_t sizeOfCellHeader = 8;
 
+    // While it is being built: the program is going to run without its bytecode, and no function's code is ever going to be generated.
+    JS_EXPORT_PRIVATE static bool keepsNothingForGeneratingCode();
+
     // While the region is being built, on a thread that has a bmalloc::StaticRegion::AllocationScope; or the place that
     // placeNextCell() said. Null otherwise.
     JS_EXPORT_PRIVATE static void* tryAllocateCellSlow(VM&, size_t); // If Heap::m_placeOfNextCell.

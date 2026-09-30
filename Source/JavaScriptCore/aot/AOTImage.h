@@ -78,6 +78,9 @@ struct ImageHeader {
     uint32_t dispatchSize; // In entries.
     uint32_t quotesOffset; // What ImageFunction::quotes is from. See Image::quoteAt().
     uint32_t textOfQuotesOffset; // UTF-8.
+    // Not zero: it is in blocks of so many bytes, each packed by itself (setCodec()). What is there is then: how many blocks; how many bytes the last one unpacks to; where each
+    // starts, and where the last ends, from the first; and the blocks.
+    uint32_t sizeOfBlockOfTextOfQuotes;
     uint32_t numberOfIdentifiersOfProgram; // Not zero: see NumbersOfIdentifiers.
     uint32_t numberOfConstantsOfProgram; // See NumbersOfConstants.
     uint32_t regExpsOffset; // ImageRegExp, in the order of their hashes.
@@ -231,6 +234,7 @@ public:
     static Image& of(const ImageFunction&); // The one it is in.
     // What the source says where the function is at that offset in its bytecode: the text, and whether it is exactly that.
     std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
+    String textOfQuote(uint64_t start, size_t length) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
     uint32_t selectorNamed(const StringImpl&) const; // Zero: none.

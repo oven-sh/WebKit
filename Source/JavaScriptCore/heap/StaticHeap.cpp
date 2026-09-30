@@ -199,6 +199,11 @@ static UncheckedKeyHashSet<void*> s_cellsInScratch;
 static Vector<std::span<const WriteBarrier<UnlinkedFunctionExecutable>>> s_listsOfFunctionsInFunctions;
 const StaticHeap::RowOfFunction* StaticHeap::s_rowsOfFunctions;
 
+bool StaticHeap::keepsNothingForGeneratingCode()
+{
+    return s_functionsAreMadeInScratch;
+}
+
 void StaticHeap::willAllocateUnlinkedFunctionSlow()
 {
     s_nextCellIsOfAFunction = true;
@@ -1324,6 +1329,47 @@ void StaticHeap::keepWhatIsWantedOfFunctions(VM& vm, Header& header)
         dataLogLn("StaticHeap: of ", s_executablesInScratch.size(), " FunctionExecutables ", inShortForm.size(), " are in the short form, with ", shared.size(), " UnlinkedFunctionExecutables between them and ", rows.size_bytes(), " bytes of rows; ", inFull.size(), " are kept in full; ", foundBy, " more UnlinkedFunctionExecutables are kept for what finds a function by one; ", inFunctionsWithoutCode, " functions are in functions that there is no code for");
 }
 
+// The tables of the variables of scopes are made in Arena::Scratch too (CachedSymbolTable::decode()). By now the names that nothing looks up are gone from them
+// (forgetNamesThatNothingLooksUp()), and what is left of most is how many variables there are and what kind of scope it is. Nothing writes to them, and nothing tells one from another
+// that says the same. Whatever refers to one is a word that has its address.
+static void keepOneOfEachSymbolTable()
+{
+    Region::AllocationScope notInRegion(false);
+    UncheckedKeyHashMap<String, uintptr_t> kept;
+    UncheckedKeyHashMap<uintptr_t, uintptr_t> moved;
+    // (In the order they were made in, so that the same program comes to the same bytes.)
+    Vector<uintptr_t> tables;
+    for (void* cell : s_cellsInScratch) {
+        if (dynamicDowncast<SymbolTable>(static_cast<JSCell*>(cell)))
+            tables.append(std::bit_cast<uintptr_t>(cell));
+    }
+    std::ranges::sort(tables);
+    for (uintptr_t table : tables) {
+        std::span bytes { std::bit_cast<const Latin1Character*>(table), sizeof(SymbolTable) };
+        moved.add(table, kept.ensure(String { bytes }, [&] {
+            void* cell = Region::allocate(Region::Arena::Cells, sizeof(SymbolTable), 16, StaticHeap::sizeOfCellHeader);
+            memcpy(cell, bytes.data(), bytes.size());
+            s_cellsBeingBuilt[0].append({ cell, sizeof(SymbolTable) });
+            return std::bit_cast<uintptr_t>(cell);
+        }).iterator->value);
+    }
+    uint64_t references = 0;
+    uintptr_t startOfScratch = Region::startOf(Region::Arena::Scratch);
+    size_t usedOfScratch = Region::used(Region::Arena::Scratch);
+    for (auto arena : { Region::Arena::Data, Region::Arena::Malloc, Region::Arena::Cells, Region::Arena::MutableCells, Region::Arena::MutableMalloc }) {
+        for (auto& word : std::span { std::bit_cast<uintptr_t*>(Region::startOf(arena)), Region::used(arena) / sizeof(uintptr_t) }) {
+            if (word - startOfScratch >= usedOfScratch)
+                continue;
+            if (auto found = moved.find(word); found != moved.end()) {
+                word = found->value;
+                ++references;
+            }
+        }
+    }
+    if (Options::aotReportStats()) [[unlikely]]
+        dataLogLn("StaticHeap: of ", tables.size(), " tables of the variables of scopes ", kept.size(), " are kept, and ", references, " references go to those");
+}
+
 Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions)
 {
     s_whatTheCompilerSaysOfFunctions = whatTheCompilerSaysOfFunctions;
@@ -1641,7 +1687,8 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
         Thread::currentSingleton().setCurrentAtomStringTable(usualAtoms);
         {
             using StaticAtoms = AtomStringTable::StaticAtoms;
-            size_t capacity = atoms->table().capacity();
+            // (No more than half full. What it is made from was given room in advance, and a lot of it.)
+            size_t capacity = WTF::roundUpToPowerOfTwo(std::max<size_t>(2 * atoms->table().size(), 8));
             RELEASE_ASSERT(hasOneBitSet(capacity) && capacity > atoms->table().size());
             std::span<uint32_t> entries { static_cast<uint32_t*>(Region::allocate(Region::Arena::Data, capacity * sizeof(uint32_t), pageSizeOfImage)), capacity };
             zeroSpan(entries);
@@ -1665,8 +1712,10 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
             dataLogLn("StaticHeap: ", s_symbolRegistriesBeingBuilt[0]->size(), " registered symbols, ", s_symbolRegistriesBeingBuilt[1]->size(), " private ones");
     }
 
-    if (s_functionsAreMadeInScratch)
+    if (s_functionsAreMadeInScratch) {
         keepWhatIsWantedOfFunctions(vm, header);
+        keepOneOfEachSymbolTable();
+    }
 
     // What the collector never looks at must not be all that keeps something alive.
     {

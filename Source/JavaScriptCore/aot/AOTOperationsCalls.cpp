@@ -472,7 +472,7 @@ void dumpGettersCalled(PrintStream& out)
             out.println("NATIVE\t", count, "\t", native->name());
     }
     for (auto& [function, count] : closuresMade())
-        out.println("CLOSURE\t", count, "\t", function->name().string(), " @", function->firstLine(), ":", function->startColumn(), " params ", function->parameterCount(), " ", function->source().provider()->sourceURL());
+        out.println("CLOSURE\t", count, "\t@", function->sourceID(), ":", function->firstLine(), ":", function->startColumn(), " params ", function->parameterCount()); // (Most are in the short form, which has no more to say.)
     {
         // How many probes come from sites that have seen so many structures; and how many the two structures a site sees most would have accounted for.
         constexpr unsigned most = 9;

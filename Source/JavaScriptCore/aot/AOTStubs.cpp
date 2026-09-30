@@ -1089,8 +1089,7 @@ static Address slotOfFrameBeingMade(CallFrameSlot slot, ptrdiff_t offset = 0)
 static void findInDispatchTable(CCallHelpers& jit, GPRReg slot, GPRReg selector, CCallHelpers::JumpList& notOfKnownShape, CCallHelpers::JumpList& notOwn)
 {
     jit.load32(Address(A0, JSCell::structureIDOffset()), T11);
-    jit.loadPtr(Address(T9, Instance::offsetOfStructureIDBase()), T12);
-    jit.addPtr(T12, T11);
+    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T11);
     jit.load16(Address(T11, Structure::offsetOfKnownShape()), T11);
     notOfKnownShape.append(jit.branchTest32(CCallHelpers::Zero, T11));
     loadInfo(jit, T9, T12);
@@ -1352,8 +1351,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         // It has no such property of its own. See Instance::lookAtObjectPrototype().
         notOwn.link(&jit);
         jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
-        jit.loadPtr(Address(T9, Instance::offsetOfStructureIDBase()), T13);
-        jit.addPtr(T13, T12);
+        jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T12);
         jit.loadPtr(Address(T12, Structure::prototypeOffset()), T12);
         jit.loadPtr(Address(T9, Instance::offsetOfObjectPrototype()), T13);
         notInTable.append(jit.branchPtr(CCallHelpers::NotEqual, T12, T13));
@@ -1516,8 +1514,7 @@ static void generatePutById(CCallHelpers& jit)
         jit.branchTest32(CCallHelpers::Zero, T12).linkTo(isHeld, &jit);
         loadInstance(jit, T9);
         jit.load32(Address(A1, JSCell::structureIDOffset()), T10);
-        jit.loadPtr(Address(T9, Instance::offsetOfStructureIDBase()), T9);
-        jit.addPtr(T9, T10);
+        jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T10);
         jit.load16(Address(T10, Structure::offsetOfBornAs()), T10);
         jit.branch32(CCallHelpers::Equal, T10, T12).linkTo(isHeld, &jit);
         miss.append(jit.jump());

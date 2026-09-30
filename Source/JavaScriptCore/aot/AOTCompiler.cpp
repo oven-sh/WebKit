@@ -722,7 +722,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         if (!value->hasInt64())
             continue;
         uint64_t bits = value->asInt64();
-        if (bits >= 4 * GB && bits < (1ULL << 47) && !graph.wideIntegerConstants.contains(static_cast<int64_t>(bits))) {
+        // (But for where structures are, which is the same in every process: structureIDBaseOfImages.)
+        if (bits >= 4 * GB && bits < (1ULL << 47) && bits != structureIDBaseOfImages && !graph.wideIntegerConstants.contains(static_cast<int64_t>(bits))) {
             graph.fail("an address in the code"_s);
             return declined();
         }

@@ -37,6 +37,12 @@ struct ImageFunction;
 struct Instance;
 struct Slot;
 
+// How to pack what is seldom wanted (the text that error messages quote), and unpack it. Without it nothing is packed, and an image in which something is cannot be quoted from.
+// compress: how many bytes it came to, or zero. decompress: whether it came to exactly `size` bytes.
+using Compress = size_t (*)(const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t capacity);
+using Decompress = bool (*)(const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t size);
+JS_EXPORT_PRIVATE void setCodec(Compress, Decompress);
+
 // Where an object is made together with its first properties: which they are. It is what the bytecode says, for whoever makes the
 // object the long way, without the bytecode. One word, and then one for each property.
 struct AllocationPlan {
