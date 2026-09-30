@@ -168,8 +168,9 @@ public:
     // payload is opaque to callers and is either a ModuleGraphLoadingState* (graph load) or a ModuleLoaderPayload* (top-level dynamic import).
     void finishLoadingImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, ModuleCompletion result, RefPtr<ScriptFetcher>);
 
-    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap);
-    JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
+    // The entry is the load's own, when it has one already: loadModule() by name gives it one.
+    JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap, ModuleRegistryEntry* = nullptr);
+    JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, ModuleRegistryEntry* = nullptr);
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
@@ -210,6 +211,10 @@ public:
         return nullptr;
     }
     const ModuleMap<WriteBarrier<ModuleRegistryEntry>>& moduleMap() const { return m_moduleMap; }
+    // The module map of the specification only grows, and upstream's loader counts on it: a load names its entry by
+    // key for as long as it runs. These two take entries out, at any time, so here a load holds on to its entry
+    // instead (ModuleLoadingContext::entry()). One that is in flight goes on with the entry that was taken out, for
+    // whoever is waiting on it, and the next load of the key starts over.
     bool removeEntry(const Identifier& key)
     {
         // Bun's registry is conceptually flat (one entry per specifier), so
@@ -217,7 +222,6 @@ public:
         auto* impl = key.impl();
         Locker locker { cellLock() }; // visitChildren iterates these
         forgetPrelinkedRecordsWithKey(impl);
-        m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
         return m_moduleMap.removeIf([&](auto& entry) {
             if (entry.key.first != impl)
@@ -230,7 +234,6 @@ public:
     {
         Locker locker { cellLock() };
         forgetPrelinkedRecordsWithKey(nullptr);
-        m_loadedModules.clear();
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();

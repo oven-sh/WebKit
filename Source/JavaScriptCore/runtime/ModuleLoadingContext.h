@@ -71,8 +71,7 @@ public:
     JSCell* payload() const { return m_payload.get(); }
     ModuleRegistryEntry* entry() const { return m_entry.get(); }
 #if USE(BUN_JSC_ADDITIONS)
-    // A loadModule() context has none until the load has one. What the load then stores, it stores there: removeEntry()
-    // and clearAll() can leave another load's entry, or none, under the key while this one is in flight.
+    // See JSModuleLoader::removeEntry().
     void setEntry(VM& vm, ModuleRegistryEntry* entry) { m_entry.setMayBeNull(vm, this, entry); }
 #endif
     ScriptFetcher* scriptFetcher() const { return m_scriptFetcher.get(); }
