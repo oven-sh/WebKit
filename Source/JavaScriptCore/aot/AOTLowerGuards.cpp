@@ -226,6 +226,13 @@ void Lowering::emitGuard(Node* guard)
     case GuardKind::Callee:
         checkCallee(guard);
         return;
+    case GuardKind::IsIntrinsicOfArray:
+        exitUnless(m_out.equal(lowJSValue(guard->uses[0].node), m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[guard->intrinsic])));
+        if (Node* array = guard->uses[1].node; !isSubtype(array->type, TArray)) {
+            static_assert(ArrayType + 1 == DerivedArrayType);
+            exitUnless(isCellAnd(array, lowJSValue(array), [&](LValue cell) { return m_out.belowOrEqual(m_out.sub(cellType(cell), m_out.constInt32(ArrayType)), m_out.int32One); }));
+        }
+        return;
     case GuardKind::IsIntrinsic:
         exitUnless(m_out.equal(lowJSValue(guard->uses[0].node), m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[guard->intrinsic])));
         return;

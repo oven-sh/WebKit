@@ -962,7 +962,7 @@ private:
                         return TNumber;
                 }
             }
-            return TAll;
+            return node->graph->readsElementsOrEmpty ? TAll | TEmpty : TAll;
         case op_call:
             // In the fast copy of a loop, where all that gets past the guard is the function that it is taken for.
             if (node->guard) {

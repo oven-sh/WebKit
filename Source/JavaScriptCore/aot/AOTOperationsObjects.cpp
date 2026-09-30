@@ -609,6 +609,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSettleWhatWasBorn, void, (Instance
     instance->shapeCounts[Instance::TakenOutAtBirth] += object->takeOutWhatItsSlotsDoNotHold(*instance->vm);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTIteratorMethodOfArray, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* array))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    OPERATION_RETURN(scope, JSValue::encode(JSValue(array).get(globalObject, vm.propertyNames->iteratorSymbol)));
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance* instance, uint32_t which))
 {
     EncodedJSValue result = JSValue::encode(instance->globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(which)));

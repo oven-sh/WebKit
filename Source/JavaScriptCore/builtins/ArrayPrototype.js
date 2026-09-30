@@ -345,3 +345,99 @@ function at(index)
 
     return (k >= 0 && k < length) ? array[k] : @undefined;
 }
+
+// ---- Forms of the above that the static compiler makes part of whoever calls one of them (AOT::Inliner), and that nothing else ever runs. |this| is an array, and all that is passed
+// is a function: so there is nothing to convert, nothing to check and no thisArg. In these, and only as that compiler has it, what is read where there is no element is empty
+// (Graph::readsElementsOrEmpty): so whether there is one need not be asked apart.
+
+function forEachOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+function mapOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    var result = @newArrayWithSpecies(length, this);
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        @putByValDirect(result, i, callback(value, i, this));
+    }
+    return result;
+}
+
+function filterOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    var result = @newArrayWithSpecies(0, this);
+    var nextIndex = 0;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (callback(value, i, this)) {
+            @putByValDirect(result, nextIndex, value);
+            ++nextIndex;
+        }
+    }
+    return result;
+}
+
+function someOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (callback(value, i, this))
+            return true;
+    }
+    return false;
+}
+
+function everyOfArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (!callback(value, i, this))
+            return false;
+    }
+    return true;
+}
+
+function reduceOfArray(callback, initialValue)
+{
+    "use strict";
+
+    var length = this.length;
+    var accumulator = initialValue;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        accumulator = callback(accumulator, value, i, this);
+    }
+    return accumulator;
+}

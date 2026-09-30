@@ -186,7 +186,6 @@ private:
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
     Vector<ReportableSitesOfFunction> reportableSites();
-    void shareWhatIsDoneTheSameWay(StubBlob&, Vector<uint32_t>& whereShared);
     Vector<ReportableSitesOfFunction> m_reportableSites;
     struct RegExpCode {
         String pattern;

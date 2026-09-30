@@ -48,6 +48,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (JSGlobalObject*,
 JSC_DECLARE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint32_t identifierIndex, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue value, uint32_t identifierIndex, Slot*, uint32_t flags));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (JSGlobalObject*, EncodedJSValue array, EncodedJSValue index));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByVal, void, (JSGlobalObject*, EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (JSGlobalObject*, JSScope*, uint32_t identifierIndex, Slot*, uint32_t localScopeDepth));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (JSGlobalObject*, JSObject* scope, uint32_t identifierIndex, Slot*, uint32_t getPutInfo));

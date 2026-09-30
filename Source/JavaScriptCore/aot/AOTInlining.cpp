@@ -10,6 +10,7 @@
 
 #include "AOTCompiler.h"
 #include "AOTProgram.h"
+#include "BuiltinExecutables.h"
 #include "BytecodeStructs.h"
 #include "ImmutableIntrinsics.h"
 #include "JSCInlines.h"
@@ -188,6 +189,8 @@ private:
         unsigned intrinsicToCheckFor = 0;
         // What it is called on is said to be an array, and Array.prototype is what it is: there is nothing to check for.
         bool isCertainlyTheIntrinsic = false;
+        // It is a form of the method that will only do for an array.
+        bool isLeanForm = false;
         // Options::aotVerbose(): why one of the engine's own functions does not become part of its caller.
         auto notTaken = [&](ASCIILiteral why) {
             dataLogLnIf(Options::aotVerbose(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
@@ -205,6 +208,12 @@ private:
             if (!callee || readsCallee(callee))
                 return notTaken(callee ? "it reads its callee"_s : "there is no code for it"_s);
             intrinsicToCheckFor = ImmutableIntrinsics::shared()->at(intrinsic).canonical;
+            if (auto lean = leanFormOf(calleeNode->graph->codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, call->opcode != op_call_ignore_result)) {
+                if (UnlinkedFunctionCodeBlock* code = m_program.codeOfBuiltin(static_cast<unsigned>(*lean)); code && !readsCallee(code)) {
+                    callee = code;
+                    isLeanForm = true;
+                }
+            }
             isCertainlyTheIntrinsic = Options::aotTypesFields() && TypeTable::areStructsToGoBy() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
         } else {
             bool isProven = false;
@@ -236,6 +245,7 @@ private:
         inlinee->setVariableFacts(m_graph.variableFacts());
         inlinee->setLinkage(about->linkage, declaredNamesFor(callee));
         inlinee->loopsAreNotSplit = !!intrinsicToCheckFor;
+        inlinee->isBuiltinThatIsPartOfCaller = !!intrinsicToCheckFor;
         if (!scopeOfClosure && !intrinsicToCheckFor && (inlinee->needsFunctionObject() || !inlinee->scopeIsEnvironmentOfModule()))
             return false;
         if (!parseBytecode(*inlinee) || !inlinee->catchEntrypoints.isEmpty() || inlinee->hasHomedRegisters())
@@ -274,6 +284,51 @@ private:
 
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         BasicBlock* entry = inlinee->root;
+        // What it is called on, known for an array: a guard has seen to that or, if the type says it is one and there is no guard, it is seen to here (and what is none is not let by).
+        Node* receiverOfLeanForm = nullptr;
+        if (isLeanForm) {
+            inlinee->readsElementsOrEmpty = true;
+            receiverOfLeanForm = m_graph.addNode(NodeKind::Narrow);
+            receiverOfLeanForm->narrowedTo = TArray;
+            receiverOfLeanForm->uses.append({ VirtualRegister(), call->use(VirtualRegister(firstArgument)) });
+            if (isCertainlyTheIntrinsic) {
+                receiverOfLeanForm->checksWhatItIsNarrowedTo = true;
+                receiverOfLeanForm->graph = call->graph;
+                receiverOfLeanForm->opcode = call->opcode;
+                receiverOfLeanForm->instruction = call->instruction;
+                receiverOfLeanForm->bytecodeIndex = call->bytecodeIndex;
+            } else {
+                receiverOfLeanForm->graph = inlinee.get();
+                receiverOfLeanForm->block = entry;
+            }
+            // An element that has been found not to be empty is known not to be.
+            for (BasicBlock* itsBlock : inlinee->m_rpo) {
+                Node* terminal = itsBlock->terminal();
+                if (!terminal || !terminal->isBytecode(op_jtrue) || itsBlock->successors.size() != 2)
+                    continue;
+                Node* test = terminal->use(terminal->as<OpJtrue>().m_condition);
+                BasicBlock* isThere = itsBlock->successors[1];
+                if (!test->isBytecode(op_is_empty) || isThere->predecessors.size() != 1)
+                    continue;
+                Node* element = test->use(test->as<OpIsEmpty>().m_operand);
+                Node* known = m_graph.addNode(NodeKind::Narrow);
+                known->graph = inlinee.get();
+                known->block = isThere;
+                known->narrowedTo = TAll & ~TEmpty;
+                for (BasicBlock* other : inlinee->m_rpo) {
+                    for (Node* node : other->nodes) {
+                        if (node == test)
+                            continue;
+                        for (auto& use : node->uses) {
+                            if (use.node == element)
+                                use.node = known;
+                        }
+                    }
+                }
+                known->uses.append({ VirtualRegister(), element });
+                isThere->nodes.insert(0, known);
+            }
+        }
         // (What it is called as is at hand, or nothing reads it: a copy that goes by the function's name and is never looked at.)
         auto isReadOfCallee = [&](Node* node) {
             if (node->kind != NodeKind::Argument || node->reg != VirtualRegister(CallFrameSlot::callee))
@@ -288,9 +343,11 @@ private:
                 return true;
             RELEASE_ASSERT(node->reg.isArgument());
             unsigned argument = node->reg.toArgument();
-            node->replacement = argument < argc ? call->use(VirtualRegister(firstArgument + static_cast<int>(argument))) : m_graph.constant(jsUndefined());
+            node->replacement = !argument && receiverOfLeanForm ? receiverOfLeanForm : argument < argc ? call->use(VirtualRegister(firstArgument + static_cast<int>(argument))) : m_graph.constant(jsUndefined());
             return true;
         });
+        if (receiverOfLeanForm && !isCertainlyTheIntrinsic)
+            entry->nodes.insert(0, receiverOfLeanForm);
         for (BasicBlock* itsBlock : inlinee->m_rpo) {
             itsBlock->nodes.removeAllMatching([&](Node* node) {
                 if (isReadOfCallee(node))
@@ -340,6 +397,10 @@ private:
         }
         block->nodes.shrink(index);
         block->bytecodeEnd = call->bytecodeIndex.offset();
+        if (receiverOfLeanForm && isCertainlyTheIntrinsic) {
+            receiverOfLeanForm->block = block;
+            block->nodes.append(receiverOfLeanForm);
+        }
         continuation->successors = std::exchange(block->successors, { });
         for (BasicBlock* successor : continuation->successors) {
             for (auto& predecessor : successor->predecessors) {
@@ -354,13 +415,15 @@ private:
         if (intrinsicToCheckFor && !isCertainlyTheIntrinsic) {
             Node* guard = m_graph.addNode(NodeKind::Guard);
             guard->graph = block->graph;
-            guard->guardKind = GuardKind::IsIntrinsic;
+            guard->guardKind = isLeanForm ? GuardKind::IsIntrinsicOfArray : GuardKind::IsIntrinsic;
             guard->intrinsic = intrinsicToCheckFor;
             guard->opcode = call->opcode;
             guard->instruction = call->instruction;
             guard->bytecodeIndex = call->bytecodeIndex;
             guard->block = block;
             guard->uses.append({ VirtualRegister(), calleeNode });
+            if (isLeanForm)
+                guard->uses.append({ VirtualRegister(), call->use(VirtualRegister(firstArgument)) });
             block->nodes.append(guard);
             block->endsWithGuard = true;
 
@@ -408,9 +471,15 @@ private:
             call->replacement = phi;
         }
         if (block->isInLoop) {
-            for (BasicBlock* itsBlock : inlinee->m_rpo)
+            // (The loop is one of the engine's own function's, and that was in none itself. Or the caller is there for the same reason.)
+            bool isForBuiltin = block->isOnlyInLoopOfBuiltin || (caller.isBuiltinThatIsPartOfCaller && !caller.wasCalledInLoop);
+            for (BasicBlock* itsBlock : inlinee->m_rpo) {
+                if (isForBuiltin && !itsBlock->isInLoop)
+                    itsBlock->isOnlyInLoopOfBuiltin = true;
                 itsBlock->isInLoop = true;
+            }
         }
+        inlinee->wasCalledInLoop = block->isInLoop && !block->isOnlyInLoopOfBuiltin;
         if (!callAfterAll)
             m_calleesRead.append(calleeNode);
         // (One that is part of another keeps what there is to say about all of its sites.)
@@ -424,6 +493,32 @@ private:
 
     // The name a method is called by is a reason to have the code for it, and no more: whether it is that one is looked at when the call
     // is made. It is worth it when what is passed is a closure made for the occasion, which then need not be made at all.
+    // The form of a method of arrays that will do for an array as the realm makes them, if all that it is passed is a function (builtins/ArrayPrototype.js). argc counts `this`.
+    static std::optional<BuiltinCodeIndex> leanFormOf(UniquedStringImpl* name, unsigned argc, bool resultIsWanted)
+    {
+        // TEMPORARY: for telling whether something is this one's doing.
+        static const bool isOff = [] { const char* text = getenv("BUN_AOT_LEAN_BUILTINS"); return text && !strcmp(text, "0"); }();
+        if (isOff)
+            return std::nullopt;
+        StringView method { name };
+        if (argc == 3)
+            return method == "reduce"_s ? std::optional { BuiltinCodeIndex::arrayPrototypeReduceOfArrayCode } : std::nullopt;
+        if (argc != 2)
+            return std::nullopt;
+        if (method == "forEach"_s)
+            return BuiltinCodeIndex::arrayPrototypeForEachOfArrayCode;
+        // (An array that nobody wants is not made.)
+        if (method == "map"_s)
+            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeMapOfArrayCode : BuiltinCodeIndex::arrayPrototypeForEachOfArrayCode;
+        if (method == "filter"_s)
+            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeFilterOfArrayCode : BuiltinCodeIndex::arrayPrototypeForEachOfArrayCode;
+        if (method == "some"_s)
+            return BuiltinCodeIndex::arrayPrototypeSomeOfArrayCode;
+        if (method == "every"_s)
+            return BuiltinCodeIndex::arrayPrototypeEveryOfArrayCode;
+        return std::nullopt;
+    }
+
     unsigned methodOfArraysThatMayWellBeCalled(Node* call, Node* calleeNode, unsigned argc, unsigned argv)
     {
         if (!Options::aotInlinesBuiltins() || !Options::useImmutableIntrinsics() || !calleeNode->isBytecode(op_get_by_id) || argc < 2)

@@ -732,6 +732,7 @@ bool Lowering::tryLowerMisc(Node* node)
         countShape(Instance::AssertionMade);
         LValue jsValue = lowJSValue(value);
         if (!node->isTakenAtItsWord) {
+            isLoweredThisWay(2);
             LValue view = viewFoundFor(value, node->firstLayout);
             m_views.set(node, view ? view : viewAs(node, value, jsValue, node->firstLayout));
             m_sameAs = value;
@@ -762,6 +763,14 @@ bool Lowering::tryLowerMisc(Node* node)
         // Only what the value can still be is tested for, the cheapest first. Whatever that does not settle (a callable object
         // that is not a function, say) and every failure is for the runtime, which either comes back or throws.
         LValue jsValue = lowJSValue(value);
+        {
+            // TEMPORARY: 1 a parameter, 2 what a call gives, 3 a property, 4 a variable, 5 a phi, 6 an element, 7 anything else.
+            Node* origin = value;
+            while (origin->kind == NodeKind::Narrow || origin->isBytecode(op_check_type) || origin->isBytecode(op_check_tdz) || origin->isBytecode(op_type_tag))
+                origin = origin->uses[0].node;
+            isLoweredThisWay(origin->kind == NodeKind::Argument ? 1 : origin->kind == NodeKind::Phi ? 5 : origin->kind != NodeKind::Bytecode ? 7
+                : origin->opcode == op_call || origin->opcode == op_construct || origin->opcode == op_call_varargs ? 2 : origin->opcode == op_get_by_id ? 3 : origin->opcode == op_get_from_scope ? 4 : origin->opcode == op_get_by_val ? 6 : 7);
+        }
         LBasicBlock slowPath = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         emitTypeTests(value, jsValue, mask, continuation, slowPath);

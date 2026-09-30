@@ -93,9 +93,13 @@ public:
                         base = node->use(node->as<OpGetByVal>().m_base);
                     else if (node->opcode == op_get_length)
                         base = node->use(node->as<OpGetLength>().m_base);
-                    if (!base || !base->type || !isSubtype(base->type, TArray) || !isInvariant(loop, base))
+                    if (!base || !base->type || !isSubtype(base->type, TArray))
+                        continue;
+                    base = asItComesTo(loop, base);
+                    if (!base || !base->type || !isSubtype(base->type, TArray))
                         continue;
                     node->viewedAheadOf = header;
+                    node->arrayViewed = base;
                     if (!header->arraysViewed.contains(base))
                         header->arraysViewed.append(base);
                 }
@@ -469,6 +473,47 @@ private:
         if (!node->block)
             return true; // A constant.
         return !loop.body.get(node->block->index);
+    }
+
+    static bool handsOnWhatItIsGiven(Node* node)
+    {
+        return node->kind == NodeKind::Narrow || node->isBytecode(op_type_tag) || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz);
+    }
+
+    // The value, if it is the same one every time round: as it is ahead of the loop. To say a type of a variable, or to check it, is to define it again, and a variable that is
+    // defined in a loop has a phi at the top of it. It is none the less the value that came in.
+    Node* asItComesTo(const Loop& loop, Node* node)
+    {
+        for (unsigned steps = 0; steps < 64; ++steps) {
+            if (isInvariant(loop, node))
+                return node;
+            if (handsOnWhatItIsGiven(node)) {
+                node = node->uses[0].node;
+                continue;
+            }
+            if (node->kind != NodeKind::Phi || node->block != loop.header || node->uses.size() != loop.header->predecessors.size())
+                return nullptr;
+            Node* comesIn = nullptr;
+            for (unsigned i = 0; i < node->uses.size(); ++i) {
+                Node* input = node->uses[i].node;
+                if (!loop.body.get(loop.header->predecessors[i]->index)) {
+                    if (comesIn && comesIn != input)
+                        return nullptr;
+                    comesIn = input;
+                    continue;
+                }
+                // (Round an inner loop as well, it may be. That is asking too much.)
+                for (unsigned inner = 0; input != node; ++inner) {
+                    if (inner == 64 || !handsOnWhatItIsGiven(input))
+                        return nullptr;
+                    input = input->uses[0].node;
+                }
+            }
+            if (!comesIn)
+                return nullptr;
+            node = comesIn;
+        }
+        return nullptr;
     }
 
     bool inputsAreInvariant(const Loop& loop, Node* node)

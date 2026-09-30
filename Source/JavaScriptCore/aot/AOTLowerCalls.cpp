@@ -205,8 +205,10 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     if (mode == CallMode::TailCall && ((Options::aotDisableFastPaths() & 128) || argc - 1 > numberOfArgumentGPRs || !node->graph->isInTailPosition))
         mode = CallMode::Call;
     Arguments arguments = lowerArguments(node, argc, argv);
+    isLoweredThisWay(1);
     if (lowerCallToKnownFunction(node, calleeRegister, argv, arguments, mode, hasResult))
         return;
+    isLoweredThisWay(0);
     // (Whatever else is called hands back a boxed value.)
     if (m_howValuesArePassed.result != Rep::JSValue && mode == CallMode::TailCall)
         mode = CallMode::Call;

@@ -5229,24 +5229,28 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
             Ref<LabelScope> scope = newLabelScope(LabelScope::Loop);
             RefPtr<RegisterID> value = newTemporary();
 
+            // (Asked once on the way in, and then at the bottom: one jump each time round, and it is plain from the jump how far the index can have got.)
+            {
+                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
+                emitJumpIfFalse(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopDone.get());
+            }
             Ref<Label> loopStart = newLabel();
             emitLabel(loopStart.get());
-            emitLabel(*scope->continueTarget());
             emitLoopHint();
 
             RELEASE_ASSERT(forLoopNode->isForOfNode());
             prepareLexicalScopeForNextForLoopIteration(forLoopNode, forLoopSymbolTable);
             emitDebugHook(forLoopNode->lexpr());
 
-            {
-                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
-                emitJumpIfFalse(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopDone.get());
-            }
             emitGetByVal(value.get(), array.get(), index.get());
             emitInc(index.get());
 
             callBack(*this, value.get());
-            emitJump(loopStart.get());
+            emitLabel(*scope->continueTarget());
+            {
+                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
+                emitJumpIfTrue(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopStart.get());
+            }
 
             if (scope->breakTargetMayBeBound())
                 emitLabel(scope->breakTarget());

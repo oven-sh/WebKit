@@ -384,6 +384,7 @@ void Lowering::lowerGetById(Node* node)
         return;
     }
     if (node->builtinCalled) {
+        isLoweredThisWay(3);
         lowerReadOfBuiltin(node, baseNode);
         return;
     }
@@ -396,6 +397,7 @@ void Lowering::lowerGetById(Node* node)
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
             // The property is in its slot, or the object has none.
             auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
+            isLoweredThisWay(mayStandForSomethingElse ? 2 : 1);
             countShape(Instance::ReadHas);
             if (!mayStandForSomethingElse) {
                 m_nodeLeavesFieldsAlone = true;
@@ -609,6 +611,7 @@ void Lowering::lowerPutById(Node* node)
         afterTypedStore = m_out.newBlock();
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
             auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
+            isLoweredThisWay(mayStandForSomethingElse ? 2 : 1);
             // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
             bool mayNotBeHeld = branchUnlessHeld(valueNode, value, field->holds, otherwise);
             TypedPointer slotOfField = slotOfStruct(structOfBase, *field);
@@ -779,6 +782,7 @@ void Lowering::lowerGetByVal(Node* node)
     Node* baseNode = node->use(bytecode.m_base);
     Node* propertyNode = node->use(bytecode.m_property);
     LValue base = lowJSValue(baseNode);
+    bool emptyWillDo = node->graph->readsElementsOrEmpty;
 
     if (node->hasFact(FactElement, 32)) {
         LBasicBlock inBounds = m_out.newBlock();
@@ -804,21 +808,32 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.appendTo(inBounds);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, view->butterfly, index));
         ValueFromBlock fast = m_out.anchor(element);
-        m_out.branch(m_out.notZero64(element), usually(continuation), rarely(theLongWay));
+        // (An array that keeps its elements this way has nothing at an index where it keeps nothing: what it inherits from has no elements, or it would keep them another way.)
+        if (emptyWillDo)
+            m_out.jump(continuation);
+        else
+            m_out.branch(m_out.notZero64(element), usually(continuation), rarely(theLongWay));
         m_out.appendTo(theLongWay);
-        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, Entry::operationAOTGetByVal, base, lowJSValue(propertyNode), ColdCall::ChangesNothing));
+        ValueFromBlock slow = m_out.anchor(coldCallForValue(node, emptyWillDo ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode), ColdCall::ChangesNothing));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setJSValue(node, m_out.phi(Int64, fast, slow));
         return;
     }
 
-    if (isCompact()) {
+    if (isCompact() && !emptyWillDo) {
         setJSValue(node, callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode)));
         return;
     }
 
     bool isOfArray = isSubtype(baseNode->type, TArray);
+    // (Of what is not known for an array, nothing is made of there being nothing where an element would be kept: it is asked.)
+    bool nothingKeptIsNothingThere = emptyWillDo && isOfArray;
+    if (emptyWillDo && !isOfArray && (Options::aotVerbose() || Options::aotReportStats())) [[unlikely]] {
+        dataLog("AOT: LEAN an element is read from what is not known for an array: ");
+        baseNode->dump(WTF::dataFile());
+        dataLogLn(m_block->isGeneric ? " (in the second copy of a loop)" : "", m_block->isInLoop ? " (in a loop)" : "");
+    }
     LBasicBlock slowCase = isOfArray ? newColdBlock() : m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 3> results;
@@ -851,13 +866,18 @@ void Lowering::lowerGetByVal(Node* node)
         m_out.appendTo(inBounds, slowCase);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
         results.append(m_out.anchor(element));
-        m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
+        if (nothingKeptIsNothingThere)
+            m_out.jump(continuation);
+        else
+            m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
     } else
         m_out.jump(slowCase);
 
     m_out.appendTo(slowCase, continuation);
-    if (isOfArray)
-        results.append(m_out.anchor(coldCallForValue(node, Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
+    if (emptyWillDo && !isOfArray)
+        results.append(m_out.anchor(vmCall(node, Int64, Entry::operationAOTGetElementOrEmpty, m_globalObject, base, lowJSValue(propertyNode))));
+    else if (isOfArray)
+        results.append(m_out.anchor(coldCallForValue(node, emptyWillDo ? Entry::operationAOTGetElementOrEmpty : Entry::operationAOTGetByVal, base, lowJSValue(propertyNode))));
     else if constexpr (usesStubs)
         results.append(m_out.anchor(callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode))));
     else

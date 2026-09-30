@@ -100,7 +100,8 @@ uint32_t Lowering::callSiteBitsOf(Node* node)
 {
     // (A function that may end up as part of another keeps what there is to say about all of its sites: noteEverySiteOf().)
     if (node->graph->isOutermost()) {
-        if (mayBeQuoted(m_graph, node))
+        // (A Narrow that checks goes by where a call is, and is none.)
+        if (node->kind != NodeKind::Narrow && mayBeQuoted(m_graph, node))
             m_graph.quotableSites.append(node->bytecodeIndex.offset());
         m_graph.callSites.append(node->bytecodeIndex.offset());
     }
@@ -1031,8 +1032,9 @@ const Lowering::ArrayView* Lowering::viewOf(Node* access, Node* base)
 {
     if (!access->viewedAheadOf)
         return nullptr;
+    UNUSED_PARAM(base);
     for (auto& [header, array, view] : m_arrayViews) {
-        if (header == access->viewedAheadOf && array == base)
+        if (header == access->viewedAheadOf && array == access->arrayViewed)
             return &view;
     }
     return nullptr;
@@ -1115,7 +1117,10 @@ void Lowering::lowerBlock(BasicBlock* block)
     auto setOrigin = [&](Node* node) {
         m_node = node && node->instruction ? node : nullptr;
         m_code = node ? node->graph : block->graph;
-        unsigned tag = !node ? 0 : node->kind == NodeKind::Bytecode ? node->opcode + 1 : numOpcodeIDs + 1 + static_cast<unsigned>(node->kind);
+        // (What is for no node in particular, but is the lowering's doing: one more than there are kinds. Above that: which sort of block.)
+        unsigned tag = !node ? numOpcodeIDs + 13 : node->kind == NodeKind::Bytecode ? node->opcode + 1 : numOpcodeIDs + 1 + static_cast<unsigned>(node->kind);
+        tag |= (block->isGeneric ? 2 : block->isInLoop ? 1 : 0) << 12;
+        m_tagOfOrigin = tag;
         m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(tag) << 4));
     };
     for (m_nodeIndex = 0; m_nodeIndex < block->nodes.size(); ++m_nodeIndex) {
@@ -1194,8 +1199,21 @@ void Lowering::lowerNode(Node* node)
         return;
     case NodeKind::Narrow:
         // The guard that the block ends in sees to these. Or, if it comes after one, has.
-        if (node->narrowedTo)
-            setJSValue(node, lowJSValue(node->uses[0].node));
+        if (node->narrowedTo) {
+            Node* valueNode = node->uses[0].node;
+            LValue value = lowJSValue(valueNode);
+            if (node->checksWhatItIsNarrowedTo && !isSubtype(valueNode->type, node->narrowedTo)) {
+                RELEASE_ASSERT(node->narrowedTo == TArray);
+                LBasicBlock isThat = m_out.newBlock();
+                LBasicBlock isNot = newColdBlock();
+                emitTypeTests(valueNode, value, MaskArray, isThat, isNot);
+                m_out.appendTo(isNot);
+                coldCall(node, Entry::operationAOTCheckType, value, m_out.constInt32(MaskArray));
+                m_out.unreachable();
+                m_out.appendTo(isThat);
+            }
+            setJSValue(node, value);
+        }
         return;
     case NodeKind::Argument:
         if (node->reg == VirtualRegister(CallFrameSlot::callee))

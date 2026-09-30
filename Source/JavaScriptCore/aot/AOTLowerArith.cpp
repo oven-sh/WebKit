@@ -692,6 +692,21 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
 {
     Node* left = node->use(lhs);
     Node* right = node->use(rhs);
+    // array[Symbol.iterator] === Array.prototype.values (Graph::elideReadsOfIteratorMethodsOfArrays()). An array as the realm makes them has no such property of its own, and inherits
+    // from Array.prototype, whose own cannot be changed. Of any other array it is asked.
+    if (Node* read = left->isElided ? left : right->isElided ? right : nullptr) {
+        RELEASE_ASSERT(strict && Graph::isReadOfIteratorMethodOfArray(read));
+        LValue array = lowJSValue(read->use(read->as<OpGetById>().m_base));
+        LBasicBlock isSomeOtherArray = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        ValueFromBlock itIs = m_out.anchor(m_out.booleanTrue);
+        m_out.branch(isOriginalArray(array), usually(continuation), rarely(isSomeOtherArray));
+        m_out.appendTo(isSomeOtherArray);
+        ValueFromBlock asked = m_out.anchor(m_out.equal(vmCall(read, Int64, Entry::operationAOTIteratorMethodOfArray, m_globalObject, array), lowJSValue(read == left ? right : left)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return m_out.phi(Int32, itIs, asked);
+    }
     Type both = left->type | right->type;
 
     if (left->rep() == Rep::Int32 && right->rep() == Rep::Int32)

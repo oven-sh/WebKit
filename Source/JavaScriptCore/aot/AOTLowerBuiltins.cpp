@@ -13,14 +13,53 @@
 #include "DateInstance.h"
 #include "JSCInlines.h"
 #include "MathCommon.h"
+#include <wtf/FileSystem.h>
+#include <wtf/NeverDestroyed.h>
+#include <wtf/text/MakeString.h>
 
 namespace JSC { namespace AOT {
 
 using namespace B3;
 
+// BUN_AOT_OVERRIDDEN_METHODS: a file that says what the classes of the program that extend one of the language's own have for themselves of what they inherit, a line each: Map.set.
+static const char* pathOfOverriddenMethods()
+{
+    static const char* path = getenv("BUN_AOT_OVERRIDDEN_METHODS");
+    return path;
+}
+
+// Whether some class of the program that extends that one may have the method for itself. (Without the file: for all anybody knows.)
+static bool mayBeOverridden(ASCIILiteral nameOfClass, Node* read)
+{
+    static const NeverDestroyed<std::optional<UncheckedKeyHashSet<String>>> all = [] () -> std::optional<UncheckedKeyHashSet<String>> {
+        const char* path = pathOfOverriddenMethods();
+        if (!path)
+            return std::nullopt;
+        auto contents = FileSystem::readEntireFile(String::fromUTF8(path));
+        if (!contents) {
+            dataLogLn("AOT: ", path, " cannot be read");
+            return std::nullopt;
+        }
+        UncheckedKeyHashSet<String> result;
+        for (auto line : String::fromUTF8(contents->span()).split('\n'))
+            result.add(line);
+        return result;
+    }();
+    if (!all.get() || !read || !read->isBytecode(op_get_by_id))
+        return true;
+    UniquedStringImpl* name = read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
+    if (name->isSymbol())
+        return true;
+    return all.get()->contains(makeString(nameOfClass, '.', StringView(name))) || all.get()->contains(makeString(nameOfClass, ".*"_s));
+}
+
 // Null: it is, for certain.
 LValue Lowering::isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiver receiver)
 {
+    // What is known to be one of these is one whose method is the language's, unless a class has it for itself. (What has been done to the one object is not reckoned with.)
+    static constexpr ASCIILiteral namesOfClasses[] = { ""_s, "String"_s, "Array"_s, "Map"_s, "Set"_s, "WeakMap"_s, "WeakSet"_s, "RegExp"_s, "Date"_s, "Number"_s };
+    if (receiver >= Receiver::Map && receiver <= Receiver::Date && baseNode->type && isSubtype(baseNode->type, typeOf(receiver)) && !mayBeOverridden(namesOfClasses[static_cast<unsigned>(receiver)], read))
+        return nullptr;
     switch (receiver) {
     case Receiver::None:
         break;
@@ -33,7 +72,7 @@ LValue Lowering::isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiv
         return isCellAnd(baseNode, base, [&](LValue cell) { return isCellOfType(cell, StringType); });
     case Receiver::Array:
         // (The types are taken at their word, as they are by whoever inlines what is written in JavaScript.)
-        if (isSubtype(baseNode->type, TArray) && Options::aotTypesFields() && TypeTable::areStructsToGoBy() && TypeTable::shared()->isArray(Graph::typeTagOf(read)))
+        if (isSubtype(baseNode->type, TArray) && Options::aotTypesFields() && TypeTable::areStructsToGoBy() && TypeTable::shared()->isArray(Graph::typeTagOf(read)) && (!pathOfOverriddenMethods() || !mayBeOverridden("Array"_s, read)))
             return nullptr;
         return isCellAnd(baseNode, base, [&](LValue cell) { return isOriginalArray(cell); });
     case Receiver::Map:

@@ -78,6 +78,7 @@ namespace AOT {
     v(operationAOTGetById) \
     v(operationAOTPutById) \
     v(operationAOTGetByVal) \
+    v(operationAOTGetElementOrEmpty) \
     v(operationAOTPutByVal) \
     v(operationAOTResolveScope) \
     v(operationAOTGetFromScope) \
@@ -731,6 +732,9 @@ struct CompiledFunctionInfo {
         bool isTailCall;
     };
     Vector<InlineFrame> inlineFrames; // Graph::inlineFrames
+    // The functions that are written in it as expressions: nothing makes one of those but an instruction of its bytecode. And the functions that its code, as compiled, makes.
+    Vector<ImageKey> functionExpressionsWritten;
+    Vector<ImageKey> functionsMade;
     bool isOnlyCalledDirectly { false }; // ProgramFacts::isClosed: by a call instruction that goes to it, and in no other way.
     uint32_t numberOfFunction { 0 }; // ProgramFacts::number
     unsigned frameSizeInBytes { 0 };

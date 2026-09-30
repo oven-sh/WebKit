@@ -264,7 +264,12 @@ private:
     // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
     // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
-    bool isCompact() const { return (!m_block->isInLoop && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
+    // TEMPORARY: for saying what the code's bytes went to. What is made for the node from here on is put down to this way of lowering it (1 to 7).
+    unsigned m_tagOfOrigin { 0 };
+    void isLoweredThisWay(unsigned way) { m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(m_tagOfOrigin | way << 14) << 4)); }
+    // TEMPORARY: BUN_AOT_CALLBACKS_SPELLED_OUT=1, as it used to be.
+    static bool callbacksAreCompact() { static const bool result = [] { const char* text = getenv("BUN_AOT_CALLBACKS_SPELLED_OUT"); return !text || strcmp(text, "1"); }(); return result; }
+    bool isCompact() const { return ((!m_block->isInLoop || (m_block->isOnlyInLoopOfBuiltin && callbacksAreCompact())) && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     LValue differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written);
     // The characters of a string, and how many, if they are narrow and are to be had for the looking: it is all in one piece, or is a slice of one that is (which is left a slice).

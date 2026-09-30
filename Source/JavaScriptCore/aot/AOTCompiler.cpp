@@ -46,6 +46,8 @@ struct Statistics {
     UncheckedKeyHashMap<String, unsigned> reasons;
     // By origin (see Lowering::lowerBlock): how many nodes, and how many bytes of code.
     Vector<std::pair<uint64_t, uint64_t>> byOrigin;
+    uint64_t bySortOfBlock[4] { };
+    UncheckedKeyHashMap<unsigned, uint64_t> byWay;
     uint64_t scopeReads[5] { }; // op_get_from_scope by name, by Graph::StaticVariable::Kind.
     uint64_t scopeReadsInGlobalScopes { 0 };
     uint64_t slots { 0 };
@@ -671,6 +673,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
+    graph.elideReadsOfIteratorMethodsOfArrays();
     graph.findBuiltinsCalled();
     graph.findListsOfArguments();
     promoteEnvironments(graph);
@@ -805,6 +808,20 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
     info.isOnlyCalledDirectly = facts && facts->isClosed;
+    if (program) {
+        auto noteKeysOf = [&](UnlinkedFunctionExecutable* executable, Vector<ImageKey>& keys) {
+            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
+                if (UnlinkedFunctionCodeBlock* code = executable->codeBlockIfThereIsOne(kind)) {
+                    if (auto about = program->about(code))
+                        keys.append(about->key);
+                }
+            }
+        };
+        for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); ++i)
+            noteKeysOf(unlinkedCodeBlock->functionExpr(i), info.functionExpressionsWritten);
+        for (UnlinkedFunctionExecutable* executable : graph.functionsMade)
+            noteKeysOf(executable, info.functionsMade);
+    }
     info.numberOfFunction = facts ? facts->number : 0;
     for (auto& frame : graph.inlineFrames)
         info.inlineFrames.append({ frame.parent, frame.callSite, frame.knownCallee, frame.isTailCall });
@@ -837,6 +854,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             unsigned begin = offsetOf(ranges[i].label);
             unsigned end = i + 1 < ranges.size() ? offsetOf(ranges[i + 1].label) : info.codeSize;
             uintptr_t tag = std::bit_cast<uintptr_t>(ranges[i].origin.dfgOrigin()) >> 4;
+            stats.bySortOfBlock[tag >> 12 & 3] += end - begin;
+            if (unsigned way = tag >> 14 & 7)
+                stats.byWay.add((tag & 0xfff) << 3 | way, 0).iterator->value += end - begin;
+            tag &= 0xfff;
             stats.byOrigin[tag].second += end - begin;
             accounted += end - begin;
         }
@@ -972,10 +993,15 @@ void reportStatistics()
         auto [count, bytes] = stats.byOrigin[tag];
         if (!count && !bytes)
             continue;
-        static constexpr ASCIILiteral kinds[] = { "Bytecode"_s, "Constant"_s, "ConstantCell"_s, "Intrinsic"_s, "Argument"_s, "Phi"_s, "Proj"_s, "GetStack"_s, "SetStack"_s, "Guard"_s, "Narrow"_s };
+        static constexpr ASCIILiteral kinds[] = { "Bytecode"_s, "Constant"_s, "ConstantCell"_s, "Intrinsic"_s, "LinkTimeConstant"_s, "Argument"_s, "Phi"_s, "Proj"_s, "GetStack"_s, "SetStack"_s, "Guard"_s, "Narrow"_s, "(between operations)"_s, "?"_s, "?"_s };
         ASCIILiteral name = !tag ? "(function)"_s : tag <= numOpcodeIDs ? opcodeNames[tag - 1] : kinds[tag - numOpcodeIDs - 1];
         dataLogLn("  SIZE ", name, " ", count, " ", bytes);
     }
+    for (auto& [key, bytes] : stats.byWay)
+        dataLogLn("  SIZEWAY ", (key >> 3) <= numOpcodeIDs ? opcodeNames[(key >> 3) - 1] : "?"_s, " ", key & 7, " ", bytes);
+    dataLogLn("  SIZEIN what is in no loop, and what is for no block ", stats.bySortOfBlock[0]);
+    dataLogLn("  SIZEIN loops ", stats.bySortOfBlock[1]);
+    dataLogLn("  SIZEIN second copies of loops ", stats.bySortOfBlock[2]);
 }
 
 } } // namespace JSC::AOT

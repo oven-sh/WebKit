@@ -330,6 +330,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     OPERATION_RETURN(scope);
 }
 
+// Graph::readsElementsOrEmpty. index: a number that is not negative, and whole.
+JSC_DEFINE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedArray, EncodedJSValue encodedIndex))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    JSObject* array = JSValue::decode(encodedArray).toObject(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    PropertySlot slot(array, PropertySlot::InternalMethodType::Get);
+    double index = JSValue::decode(encodedIndex).asNumber();
+    bool has = index <= MAX_ARRAY_INDEX ? array->getPropertySlot(globalObject, static_cast<unsigned>(index), slot) : array->getPropertySlot(globalObject, Identifier::from(vm, index), slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (!has)
+        OPERATION_RETURN(scope, encodedJSValue());
+    OPERATION_RETURN(scope, JSValue::encode(index <= MAX_ARRAY_INDEX ? slot.getValue(globalObject, static_cast<unsigned>(index)) : slot.getValue(globalObject, Identifier::from(vm, index))));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_PROLOGUE(globalObject);

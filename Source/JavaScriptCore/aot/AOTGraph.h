@@ -88,6 +88,7 @@ enum class GuardKind : uint8_t {
     Callee, // That the callee is what the call takes it for.
     KnownCallee, // That the callee (uses[0]) is a closure of the function that the call was compiled for (Graph::knownCallee()).
     TypedArrayStorage, // That the typed array (uses[0]) is of a fixed length. It is where the length and the storage are loaded.
+    IsIntrinsicOfArray, // IsIntrinsic, and that uses[1] is an array. Made by inlineCalls().
     IsIntrinsic, // That uses[0] is the one of the realm's ImmutableIntrinsics that Node::intrinsic says. Made by inlineCalls().
     // Options::aotAssertsTypes(). Of an op_get_by_id or an op_put_by_id whose base has a type (TypeTable): that the base was born with the property in
     // Node::slotOfField (as one of firstLayout to lastLayout), and that it is still there. It does what the instruction does. After
@@ -217,6 +218,7 @@ struct Node {
     Node* guard { nullptr }; // An instruction that is only got to when this has found that there is a short way to do it.
     Node* guarded { nullptr }; // The other way round.
     Node* target { nullptr }; // NodeKind::Narrow: the phi of the loop's header that the value is on its way to.
+    bool checksWhatItIsNarrowedTo { false }; // NodeKind::Narrow with narrowedTo: nothing has seen to it. It does, and what is not that is not let by (a TypeError).
     Type narrowedTo { TNone }; // NodeKind::Narrow, if there is no target: what a GuardKind::Field found the value to be.
     uint16_t slotOfField { 0 }; // GuardKind::Field
     uint16_t firstLayout { 0 }; // Likewise, and the Narrow that comes after it.
@@ -293,6 +295,7 @@ struct Node {
     unsigned numberOfLiteralProperties { 0 };
     // An op_get_by_val or op_get_length of an array, in a loop that changes no array: the header of the loop ahead of which the array is looked at (BasicBlock::arraysViewed).
     BasicBlock* viewedAheadOf { nullptr };
+    Node* arrayViewed { nullptr }; // Which of those it is: what the base is, as it comes to the loop.
     Node* storage { nullptr }; // A guard of an access to an element of a typed array: the GuardKind::TypedArrayStorage that goes for it.
 
     // Lowering state.
@@ -359,6 +362,8 @@ struct BasicBlock {
     bool isReachable { false };
     bool isLoopHeader { false };
     bool isInLoop { false };
+    // It is, but only for being part of a function that one of the engine's own calls each time round a loop of its own (inlineCalls()). How often that is is anybody's guess.
+    bool isOnlyInLoopOfBuiltin { false };
     // There are two copies of the code of a loop. The fast one does not have the long way of doing anything in it: where that would
     // be, a block ends in a guard, whose successors are the rest of the fast copy and the same instruction in the generic copy.
     // So nothing that the long ways can do (which is anything) has to be reckoned with in the fast copy: what it has loaded and
@@ -455,6 +460,11 @@ public:
     bool isInTailPosition { true };
     // Its loops are left as they are: what they call is going to be part of them (see BasicBlock::isGeneric).
     bool loopsAreNotSplit { false };
+    Vector<UnlinkedFunctionExecutable*> functionsMade; // Of the outermost: what the code that comes of it makes a function object of.
+    // One of the forms of a method of arrays that are only ever part of a caller (builtins/ArrayPrototype.js): an op_get_by_val gives nothing at all (JSValue()) where there is no element.
+    bool readsElementsOrEmpty { false };
+    bool isBuiltinThatIsPartOfCaller { false }; // One of the engine's own functions.
+    bool wasCalledInLoop { false }; // Part of a caller: the call was in a loop.
     unsigned numberOfNodes() const { return m_nodes.size(); }
     Node* lastNode() { return &m_nodes.last(); }
     const ScopeChain& scopeChain() const { return m_scopeChain; }
@@ -567,6 +577,10 @@ public:
     uint32_t distanceOfEnvironmentOfModule();
     // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
     void elideReadsOfCalleesNotPassed();
+    // array[Symbol.iterator] === something, and nothing else is done with it: the read is not made (Node::isElided), and whoever compares sees to it (Lowering::lowerEquality()).
+    void elideReadsOfIteratorMethodsOfArrays();
+    static bool isReadOfIteratorMethodOfArray(const Node*);
+    static bool isIteratorMethodOfAnyArray(const Node*); // Array.prototype.values, which is Array.prototype[Symbol.iterator].
     void findBuiltinsCalled(); // Node::directMethod. Once the types are known.
     bool hasTwoCopiesOfAll { false }; // Options::aotAssertsTypes(): not just of its loops.
     // See ProgramFacts.

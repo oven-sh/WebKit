@@ -905,6 +905,63 @@ void Graph::findBuiltinsCalled()
     }
 }
 
+bool Graph::isReadOfIteratorMethodOfArray(const Node* node)
+{
+    if (!node->isBytecode(op_get_by_id) || node->guard || !Options::useImmutableIntrinsics())
+        return false;
+    auto bytecode = node->as<OpGetById>();
+    Type base = node->use(bytecode.m_base)->type;
+    return base && isSubtype(base, TArray) && node->graph->codeBlock()->identifier(bytecode.m_property).impl() == node->graph->vm().propertyNames->iteratorSymbol.impl();
+}
+
+bool Graph::isIteratorMethodOfAnyArray(const Node* node)
+{
+    if (node->kind == NodeKind::LinkTimeConstant)
+        return static_cast<LinkTimeConstant>(node->intrinsic) == LinkTimeConstant::arrayProtoValues;
+    if (node->kind != NodeKind::Intrinsic)
+        return false;
+    auto number = intrinsicForLinkTimeConstant(jsNumber(static_cast<int32_t>(LinkTimeConstant::arrayProtoValues)));
+    return number && node->intrinsic == *number;
+}
+
+void Graph::elideReadsOfIteratorMethodsOfArrays()
+{
+    UncheckedKeyHashMap<Node*, unsigned> otherUses;
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            if (isReadOfIteratorMethodOfArray(node))
+                otherUses.add(node, 0);
+        }
+    }
+    if (otherUses.isEmpty())
+        return;
+    auto note = [&](Node* user, const Use& use) {
+        auto found = otherUses.find(use.node);
+        if (found == otherUses.end())
+            return;
+        bool compares = user->isBytecode(op_jstricteq) || user->isBytecode(op_jnstricteq) || user->isBytecode(op_stricteq) || user->isBytecode(op_nstricteq);
+        if (compares) {
+            for (auto& other : user->uses)
+                compares &= other.node == use.node ? &other == &use : isIteratorMethodOfAnyArray(other.node);
+        }
+        found->value += !compares;
+    };
+    for (BasicBlock* block : m_rpo) {
+        for (Node* node : block->nodes) {
+            for (auto& use : node->uses)
+                note(node, use);
+        }
+        for (Node* phi : block->phis) {
+            for (auto& use : phi->uses)
+                note(phi, use);
+        }
+    }
+    for (auto& [read, count] : otherUses) {
+        if (!count)
+            read->isElided = true;
+    }
+}
+
 void Graph::elideReadsOfCalleesNotPassed()
 {
     // How many of a read's uses want the value.
@@ -1902,6 +1959,9 @@ void Node::dump(PrintStream& out) const
             break;
         case GuardKind::TypedArrayStorage:
             out.print("GuardTypedArrayStorage");
+            break;
+        case GuardKind::IsIntrinsicOfArray:
+            out.print("IsIntrinsicOfArray ", intrinsic, " ");
             break;
         case GuardKind::IsIntrinsic:
             out.print("IsIntrinsic ", intrinsic, " ");
