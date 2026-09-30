@@ -404,25 +404,21 @@ JSPromise* JSModuleLoader::loadModule(JSGlobalObject* globalObject, const Identi
         return JSPromise::rejectedPromise(globalObject, createTypeError(globalObject, "Module type not supported by environment"_s));
 
     if (ModuleRegistryEntry* entry = getRegisteredMayBeNull(specifier, type)) {
-        if (entry->fetchError())
-            removeFailedFetchEntry(entry);
-        else {
-            JSValue error = entry->error(globalObject);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            if (error)
-                return JSPromise::rejectedPromise(globalObject, error);
+        JSValue error = entry->error(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (error)
+            return JSPromise::rejectedPromise(globalObject, error);
 
-            if (entry->status() != ModuleRegistryEntry::Status::New) {
-                promise = entry->ensureFetchPromise(globalObject);
-                entryOfLoad = entry;
+        if (entry->status() != ModuleRegistryEntry::Status::New) {
+            promise = entry->ensureFetchPromise(globalObject);
+            entryOfLoad = entry;
 #if USE(BUN_JSC_ADDITIONS)
-                // require(esm) of a module whose fetch an import already started.
-                if (vm.m_synchronousModuleQueue && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
-                    fetchSynchronously(globalObject, promise, specifier, referrer, parameters.copyRef(), scriptFetcher.copyRef());
-                    RETURN_IF_EXCEPTION(scope, nullptr);
-                }
-#endif
+            // require(esm) of a module whose fetch an import already started.
+            if (vm.m_synchronousModuleQueue && entry->status() == ModuleRegistryEntry::Status::Fetching && promise->status() == JSPromise::Status::Pending) {
+                fetchSynchronously(globalObject, promise, specifier, referrer, parameters.copyRef(), scriptFetcher.copyRef());
+                RETURN_IF_EXCEPTION(scope, nullptr);
             }
+#endif
         }
     }
 
@@ -1295,7 +1291,6 @@ int64_t JSModuleLoader::asyncEvaluationOrderForKey(const Identifier& key)
 
 void JSModuleLoader::removeFailedFetchEntry(ModuleRegistryEntry* entry)
 {
-    // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
     ASSERT(entry->status() == ModuleRegistryEntry::Status::FetchFailed);
     ModuleMapKey moduleMapKey { entry->key().impl(), entry->moduleType() };
     auto iter = m_moduleMap.find(moduleMapKey);

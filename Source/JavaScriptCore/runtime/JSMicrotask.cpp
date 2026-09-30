@@ -1229,17 +1229,13 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
         const Identifier& specifier = context->moduleRequest().m_specifier;
         auto type = context->moduleRequest().type();
         JSValue errorValue = arguments[1];
-        if (auto* error = dynamicDowncast<ErrorInstance>(errorValue)) {
-            auto failure = JSModuleLoader::getErrorInfo(globalObject, error);
-            // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
-            // Don't keep the module registered unless it's an evaluation error.
-            if (failure.isEvaluationError(specifier, type))
-                entry->setEvaluationError(globalObject, error);
-        }
-        if (entry->status() == ModuleRegistryEntry::Status::Fetching)
+        auto* error = dynamicDowncast<ErrorInstance>(errorValue);
+        // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
+        // Don't keep the module registered unless it's an evaluation error.
+        if (error && JSModuleLoader::getErrorInfo(globalObject, error).isEvaluationError(specifier, type))
+            entry->setEvaluationError(globalObject, error);
+        else
             entry->setFetchError(globalObject, errorValue);
-        if (entry->fetchError())
-            context->loader()->removeFailedFetchEntry(entry);
         intermediatePromise->reject(vm, errorValue);
     }
 }

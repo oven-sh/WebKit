@@ -199,6 +199,9 @@ void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue er
     if (m_status == Status::New && m_fetchPromise)
         m_fetchPromise->reject(vm, error);
     setStatus(Status::FetchFailed);
+    // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
+    // The loads that have the entry get its error, and the next load of the name fetches again.
+    m_loader->removeFailedFetchEntry(this);
 }
 
 void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JSValue error)

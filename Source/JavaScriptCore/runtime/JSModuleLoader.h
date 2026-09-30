@@ -265,8 +265,7 @@ public:
     }
 #endif
 
-    // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
-    void removeFailedFetchEntry(ModuleRegistryEntry*);
+    void removeFailedFetchEntry(ModuleRegistryEntry*); // For ModuleRegistryEntry::setFetchError().
 
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
 
