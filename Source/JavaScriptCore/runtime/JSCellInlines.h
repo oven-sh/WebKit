@@ -205,7 +205,7 @@ ALWAYS_INLINE TriState JSCell::isCallableWithConcurrency()
         return TriState::False;
     // JSFunction and InternalFunction assert during construction that derived classes don't override getCallData,
     // which guarantees that CallData::Type::None is never returned.
-    if (type() == JSFunctionType || type() == InternalFunctionType)
+    if (type() == JSFunctionType || type() == InternalFunctionType || type() == PyTypeType)
         return TriState::True;
     if (inlineTypeFlags() & OverridesGetCallData) {
         if constexpr (concurrency == Concurrency::MainThread)
@@ -224,7 +224,7 @@ inline TriState JSCell::isConstructorWithConcurrency()
         return (methodTable()->getConstructData(this).type != CallData::Type::None) ? TriState::True : TriState::False;
     // We know that both getConstructData of both types are concurrency aware. Plus, derived classes of JSFunction and InternalFunction
     // never override getConstructData (this is ensured by ASSERT in JSFunction and InternalFunction).
-    if (type() == JSFunctionType || type() == InternalFunctionType)
+    if (type() == JSFunctionType || type() == InternalFunctionType || type() == PyTypeType)
         return (methodTable()->getConstructData(this).type != CallData::Type::None) ? TriState::True : TriState::False;
     return TriState::Indeterminate;
 }

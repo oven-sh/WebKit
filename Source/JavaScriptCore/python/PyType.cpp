@@ -52,7 +52,6 @@ void PyType::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_base);
     visitor.append(thisObject->m_bases);
     visitor.append(thisObject->m_mro);
-    visitor.append(thisObject->m_name);
     visitor.append(thisObject->m_instanceStructure);
     visitor.append(thisObject->m_javaScriptConstructor);
     visitor.append(thisObject->m_javaScriptPrototype);
@@ -107,7 +106,7 @@ PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral
         type->m_dottedName = name;
         name = ASCIILiteral::fromLiteralUnsafe(name.characters() + dot + 1);
     }
-    type->m_name.set(vm, type, jsString(vm, String(name)));
+    type->m_originalName.set(vm, type, jsString(vm, String(name)));
     type->m_base.setMayBeNull(vm, type, base);
     type->m_layout = layout;
     type->m_flags = flags;
@@ -216,7 +215,7 @@ PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, J
     auto* type = new (NotNull, allocateCell<PyType>(vm)) PyType(vm, structure);
     type->finishCreation(vm);
     type->m_metatype.set(vm, type, metatype);
-    type->m_name.set(vm, type, name);
+    type->m_originalName.set(vm, type, name);
     type->m_base.set(vm, type, base);
     type->m_bases.set(vm, type, bases);
     type->m_layout = base->layout();
@@ -268,7 +267,7 @@ PyType* PyType::createForJavaScript(VM& vm, JSGlobalObject* globalObject, JSObje
     type->m_javaScriptConstructor.set(vm, type, constructor);
     type->m_javaScriptPrototype.set(vm, type, prototype);
     type->m_metatype.set(vm, type, base->metatype());
-    type->m_name.set(vm, type, jsString(vm, getCalculatedDisplayName(vm, constructor)));
+    type->m_originalName.set(vm, type, jsString(vm, getCalculatedDisplayName(vm, constructor)));
     type->m_base.set(vm, type, base);
     type->m_bases.set(vm, type, PyTuple::create(globalObject, { base->object() }));
     type->m_layout = base->layout();
@@ -302,14 +301,14 @@ void PyType::setName(VM& vm, JSString* name)
             putDirect(vm, module, jsString(vm, moduleOfBuiltin()));
         m_dottedName = { };
     }
-    m_name.set(vm, this, name);
+    m_originalName.set(vm, this, name);
 }
 
 String PyType::nameString(JSGlobalObject* globalObject) const
 {
     if (!m_dottedName.isNull()) [[unlikely]]
         return m_dottedName;
-    return m_name->value(globalObject);
+    return m_originalName->value(globalObject);
 }
 
 String PyType::moduleOfBuiltin() const
@@ -321,7 +320,7 @@ String PyType::moduleOfBuiltin() const
 
 String PyType::nameWithoutModule(JSGlobalObject* globalObject) const
 {
-    return m_name->value(globalObject);
+    return m_originalName->value(globalObject);
 }
 
 JSValue PyType::lookup(VM& vm, PropertyName name) const
@@ -718,22 +717,10 @@ bool PyType::customHasInstance(JSObject* object, JSGlobalObject* globalObject, J
     return Python::isInstanceOf(globalObject, value, object);
 }
 
-CallData PyType::getCallData(JSCell*)
+PyType::PyType(VM& vm, Structure* structure)
+    : Base(vm, structure, callType, constructType)
+    , m_instanceAccessIsAsFound(WatchpointSet::create(IsWatched))
 {
-    CallData callData;
-    callData.type = CallData::Type::Native;
-    callData.native.function = callType;
-    callData.native.isBoundFunction = false;
-    callData.native.isWasm = false;
-    return callData;
-}
-
-// new C(...) in JavaScript is C(...).
-CallData PyType::getConstructData(JSCell* cell)
-{
-    CallData constructData = getCallData(cell);
-    constructData.native.function = constructType;
-    return constructData;
 }
 
 } // namespace JSC

@@ -628,6 +628,7 @@ const ObjectType = constexpr ObjectType
 const FinalObjectType = constexpr FinalObjectType
 const JSFunctionType = constexpr JSFunctionType
 const InternalFunctionType = constexpr InternalFunctionType
+const PyTypeType = constexpr PyTypeType
 const ArrayType = constexpr ArrayType
 const DerivedArrayType = constexpr DerivedArrayType
 const ProxyObjectType = constexpr ProxyObjectType
@@ -2786,7 +2787,9 @@ macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internal
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
 .notJSFunction:
-    bbneq JSCell::m_type[t0], InternalFunctionType, slowCase
+    loadb JSCell::m_type[t0], t5
+    subi InternalFunctionType, t5
+    bia t5, PyTypeType - InternalFunctionType, slowCase
     jmp internalFunctionTrampoline
 end
 

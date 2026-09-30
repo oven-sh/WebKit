@@ -312,7 +312,7 @@ static MacroAssemblerCodeRef<JITThunkPtrTag> virtualThunkFor(VM& vm, CallMode mo
 
     // NullSetterFunctionType does not get the fast path support. But it is OK since using NullSetterFunctionType is extremely rare.
     notJSFunction.link(&jit);
-    slowCase.append(jit.branchIfNotType(GPRInfo::regT0, InternalFunctionType));
+    slowCase.append(jit.branchIfNotType(GPRInfo::regT0, JSTypeRange { InternalFunctionType, PyTypeType }));
     void* executableAddress = vm.getCTIInternalFunctionTrampolineFor(kind).taggedPtr();
     jit.move(CCallHelpers::TrustedImmPtr(executableAddress), GPRInfo::regT4);
     jit.jump().linkTo(dispatchLabel, &jit);

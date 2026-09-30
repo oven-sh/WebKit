@@ -26,7 +26,7 @@
 #pragma once
 
 #include "ErrorType.h"
-#include "JSObject.h"
+#include "InternalFunction.h"
 #include "PyTuple.h"
 #include "Watchpoint.h"
 #include "Weak.h"
@@ -41,10 +41,13 @@ namespace JSC {
 // A class that JavaScript made is a class to Python as it is: a constructor, and the object that is the prototype of what it makes. Nothing is made of it
 // that a program can see. But there is as much to know about it as about any class, and that is kept in one of these, which the constructor has under a
 // private name, as a function has its FunctionRareData. What a program is given for such a class is the constructor: object().
-class PyType final : public JSNonFinalObject {
+//
+// To JavaScript a class is a function that is written in C++, as Map and Array are, and it is called as they are: what calls it remembers it, and goes straight to callType().
+class PyType final : public InternalFunction {
 public:
-    using Base = JSNonFinalObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData | ImplementsHasInstance | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | GetOwnPropertySlotIsImpureForPropertyAbsence;
+    using Base = InternalFunction;
+    // x instanceof C is for customHasInstance().
+    static constexpr unsigned StructureFlags = (Base::StructureFlags & ~ImplementsDefaultHasInstance) | OverridesGetOwnPropertySlot | OverridesGetOwnPropertyNames | OverridesPut | GetOwnPropertySlotIsImpureForPropertyAbsence;
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
 
@@ -127,7 +130,7 @@ public:
     PyType* base() const { return m_base.get(); }
     PyTuple* bases() const { return m_bases.get(); }
     PyTuple* mro() const { return m_mro.get(); }
-    JSString* name() const { return m_name.get(); }
+    JSString* name() const { return m_originalName.get(); }
     // type_set_name(): from then on it is all that the class is called, and what module it is in is no part of that.
     void setName(VM&, JSString*);
     // What CPython has as tp_name, for a class that is made as a class statement makes one and says there what module it is in.
@@ -221,7 +224,6 @@ public:
     // The same, for a class that is derived from `base`.
     static Structure* createInstanceStructure(VM&, JSGlobalObject*, PyType* base, JSObject* prototype);
 
-    static CallData getCallData(JSCell*);
     // What calling it does, for what has the arguments somewhere other than on the stack.
     JSValue call(JSGlobalObject*, const ArgList&, JSCellButterfly* keywordNames);
     // What JavaScript finds when it looks for a property of an instance and comes to the class, or looks for one of the class. See
@@ -234,14 +236,9 @@ public:
     static bool preventExtensions(JSObject*, JSGlobalObject*);
     // x instanceof C is isinstance(x, C).
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
-    static CallData getConstructData(JSCell*);
 
 private:
-    PyType(VM& vm, Structure* structure)
-        : Base(vm, structure)
-        , m_instanceAccessIsAsFound(WatchpointSet::create(IsWatched))
-    {
-    }
+    PyType(VM&, Structure*);
 
     void addSubclass(PyType*);
     void removeSubclass(PyType*);
@@ -253,7 +250,6 @@ private:
     WriteBarrier<PyType> m_base;
     WriteBarrier<PyTuple> m_bases;
     WriteBarrier<PyTuple> m_mro;
-    WriteBarrier<JSString> m_name;
     ASCIILiteral m_dottedName; // Null unless it is such a one.
     WriteBarrier<Structure> m_instanceStructure;
     WriteBarrier<JSObject> m_javaScriptConstructor;

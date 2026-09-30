@@ -48,7 +48,7 @@ InternalFunction::InternalFunction(VM& vm, Structure* structure, NativeFunction 
     // JSCell::{getCallData,getConstructData} relies on the following conditions.
     ASSERT(methodTable()->getCallData == InternalFunction::info()->methodTable.getCallData);
     ASSERT(methodTable()->getConstructData == InternalFunction::info()->methodTable.getConstructData);
-    ASSERT(type() == InternalFunctionType || type() == NullSetterFunctionType);
+    ASSERT(type() == InternalFunctionType || type() == PyTypeType || type() == NullSetterFunctionType);
 }
 
 void InternalFunction::finishCreation(VM& vm, unsigned length, const String& name, PropertyAdditionMode nameAdditionMode)
