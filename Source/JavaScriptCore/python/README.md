@@ -1309,6 +1309,18 @@ what comes of it here, but for `LOG_MASK(-1)`, which one compiler makes an error
 
 What is sent to the log is not to be had back. `programs/the-syslog-module.py` goes by what the hooks of `sys.addaudithook()` are told, and by what `LOG_PERROR` has written to the standard error as well.
 
+### The codecs for Chinese, Japanese and Korean
+
+`Modules/cjkcodecs` of CPython is 23,000 lines. 17,000 are tables. 3,200 are the codecs, which are written with the macros of `cjkcodecs.h` and have to do with Python in two places: where a character is read and where one is written.
+**`lib/convert-cjk-codecs.py` converts both**, as other scripts there do the tables of `unicodedata` and the engine of `re`. It changes what C allows and C++ does not, each thing so many times and no other, so that it is noticed if CPython comes to
+be written otherwise. `PythonCJKCodecs.h` has the macros, and `PythonCJKCodecs*.cpp` and `PythonCJKMappings*.h` are what is made, which is not to be changed by hand. Each is compiled by itself, since each says with macros what it wants of that header.
+
+A codec reads a `CodePoints` and writes to a `TextWriter`, as those of `PythonCodecs.h` do. `PythonMultibyteCodecModule.cpp` is `multibytecodec.c`, which runs them, and is written by hand.
+
+One of these modules wants tables that another has, and comes by them as in CPython: it imports the module and takes what is there by the name, which is a capsule. So a capsule can have a pointer in it (`capsulePointer()`).
+
+`programs/the-cjk-codecs.py` puts every character through every codec and every two bytes back, cuts what each makes of a sample everywhere, and has handlers of errors do what they should not.
+
 ### `mmap`
 
 `PythonMmapModule.cpp` is `Modules/mmapmodule.c`, and is for the host to list, as `posix` is. What is mapped is an `ArrayBuffer`'s, which is how anything here has bytes to show: `NativeState::exportedBytes()`. So a `memoryview` of it is of the pages themselves, the

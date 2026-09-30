@@ -110,7 +110,7 @@ ErrorHandler errorHandlerNamed(const String& errors)
 }
 
 // The exception is told where the trouble is now: PyUnicodeDecodeError_SetStart() and the rest.
-static void setWhere(JSGlobalObject* globalObject, JSValue exception, size_t start, size_t end, ASCIILiteral reason)
+void setWhereUnicodeErrorIs(JSGlobalObject* globalObject, JSValue exception, size_t start, size_t end, ASCIILiteral reason)
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
@@ -158,7 +158,7 @@ bool DecodeErrors::handle(ASCIILiteral encoding, ASCIILiteral reason, size_t sta
         m_exception = call(globalObject, globalObject->pyRealm()->typeUnicodeDecodeError(), arguments);
         RETURN_IF_EXCEPTION(scope, false);
     } else
-        setWhere(globalObject, m_exception, start, end, reason);
+        setWhereUnicodeErrorIs(globalObject, m_exception, start, end, reason);
 
     JSValue result = call(globalObject, m_handler, m_exception);
     RETURN_IF_EXCEPTION(scope, false);
@@ -202,7 +202,7 @@ bool EncodeErrors::makeException(ASCIILiteral encoding, ASCIILiteral reason, siz
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (m_exception) {
-        setWhere(globalObject, m_exception, start, end, reason);
+        setWhereUnicodeErrorIs(globalObject, m_exception, start, end, reason);
         return true;
     }
     MarkedArgumentBuffer arguments;

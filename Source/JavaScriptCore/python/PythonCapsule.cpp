@@ -32,7 +32,7 @@
 #include "PyStateObject.h"
 #include "PythonOperations.h"
 
-// PyCapsule: Objects/capsule.c of CPython. It is how one module written in C hands another a pointer. Nothing here is handed one that way, but a program can see that a module has one, and what it is called.
+// PyCapsule: Objects/capsule.c of CPython. It is how one module written in C hands another a pointer. Most of what has one here has it only so that a program can see that it does, and what it is called. The codecs for Chinese, Japanese and Korean do hand one another tables in them.
 
 namespace JSC { namespace Python {
 
@@ -47,11 +47,13 @@ template<typename Visitor> void CapsuleTypeState::visit(Visitor& visitor) { visi
 
 struct CapsuleState final : NativeState {
     PYTHON_NATIVE_STATE(CapsuleState);
-    explicit CapsuleState(ASCIILiteral name)
+    CapsuleState(ASCIILiteral name, const void* pointer)
         : name(name)
+        , pointer(pointer)
     {
     }
     ASCIILiteral name;
+    const void* pointer;
 };
 
 template<typename Visitor> void CapsuleState::visit(Visitor&) { }
@@ -65,7 +67,7 @@ PYTHON_NATIVE(capsuleRepr)
     RELEASE_AND_RETURN(scope, JSValue::encode(strOrMemoryError(globalObject, concatenate("<capsule object \""_s, stateOf<CapsuleState>(args[0]).name, "\" at "_s, addressOf(args[0].asCell()), '>'))));
 }
 
-JSValue newCapsule(JSGlobalObject* globalObject, ASCIILiteral name)
+JSValue newCapsule(JSGlobalObject* globalObject, ASCIILiteral name, const void* pointer)
 {
     VM& vm = globalObject->vm();
     PyRealm* realm = globalObject->pyRealm();
@@ -76,7 +78,14 @@ JSValue newCapsule(JSGlobalObject* globalObject, ASCIILiteral name)
         state.type.set(vm, realm, type);
         addMethods(globalObject, type, { { "__repr__"_s, capsuleRepr } });
     }
-    return PyStateObject::create(vm, state.type->instanceStructure(), makeUnique<CapsuleState>(name));
+    return PyStateObject::create(vm, state.type->instanceStructure(), makeUnique<CapsuleState>(name, pointer));
+}
+
+const void* capsulePointer(JSValue value, ASCIILiteral name)
+{
+    auto* object = dynamicDowncast<PyStateObject>(value);
+    auto* state = object ? object->tryState<CapsuleState>() : nullptr;
+    return state && state->name == name ? state->pointer : nullptr;
 }
 
 } } // namespace JSC::Python

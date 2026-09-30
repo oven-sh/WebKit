@@ -806,6 +806,12 @@ python/PythonBinasciiModule.cpp
 python/PythonBisectModule.cpp
 python/PythonBufferedIO.cpp
 python/PythonBytesIO.cpp
+python/PythonCJKCodecsCN.cpp @no-unify
+python/PythonCJKCodecsHK.cpp @no-unify
+python/PythonCJKCodecsISO2022.cpp @no-unify
+python/PythonCJKCodecsJP.cpp @no-unify
+python/PythonCJKCodecsKR.cpp @no-unify
+python/PythonCJKCodecsTW.cpp @no-unify
 python/PythonFileIO.cpp
 python/PythonFileOperations.cpp
 python/PythonIOBase.cpp
@@ -821,6 +827,7 @@ python/PythonExceptionDisplay.cpp
 python/PythonExceptionGroups.cpp
 python/PythonMmapModule.cpp
 python/PythonMonitoring.cpp
+python/PythonMultibyteCodecModule.cpp
 python/PythonNumberTypes.cpp
 python/PythonNumbers.cpp
 python/PythonObjectModel.cpp

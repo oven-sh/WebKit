@@ -1,0 +1,570 @@
+---- which modules come with which
+    big5 ['_codecs_tw']
+    big5hkscs ['_codecs_hk']
+    cp932 ['_codecs_jp']
+    cp949 ['_codecs_kr']
+    cp950 []
+    euc_jis_2004 []
+    euc_jisx0213 []
+    euc_jp []
+    euc_kr []
+    gb18030 ['_codecs_cn']
+    gb2312 []
+    gbk []
+    hz []
+    iso2022_jp ['_codecs_iso2022']
+    iso2022_jp_1 []
+    iso2022_jp_2 []
+    iso2022_jp_2004 []
+    iso2022_jp_3 []
+    iso2022_jp_ext []
+    iso2022_kr []
+    johab []
+    shift_jis []
+    shift_jis_2004 []
+    shift_jisx0213 []
+---- what there is
+built-in None ['MultibyteIncrementalDecoder', 'MultibyteIncrementalEncoder', 'MultibyteStreamReader', 'MultibyteStreamWriter', '__create_codec']
+builtin_function_or_method ($module, arg, /) None
+MultibyteCodec _multibytecodec MultibyteCodec ['object'] 0x5380 None None
+    __doc__ NoneType None 'The type of the None singleton.'
+    __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+    __module__ str None _multibytecodec
+    decode method_descriptor ($self, /, input, errors=None) "Decodes 'input'.\n\n'errors' may be given to s"
+    encode method_descriptor ($self, /, input, errors=None) "Return an encoded string version of 'input'."
+MultibyteIncrementalEncoder _multibytecodec MultibyteIncrementalEncoder ['object'] 0x5700 None None
+    __doc__ NoneType None 'The type of the None singleton.'
+    __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for a'
+    __module__ str None _multibytecodec
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(ty'
+    encode method_descriptor ($self, /, input, final=False) ''
+    errors getset_descriptor None 'how to treat errors'
+    getstate method_descriptor ($self, /) ''
+    reset method_descriptor ($self, /) ''
+    setstate method_descriptor ($self, state, /) ''
+MultibyteIncrementalDecoder _multibytecodec MultibyteIncrementalDecoder ['object'] 0x5700 None None
+    __doc__ NoneType None 'The type of the None singleton.'
+    __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for a'
+    __module__ str None _multibytecodec
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(ty'
+    decode method_descriptor ($self, /, input, final=False) ''
+    errors getset_descriptor None 'how to treat errors'
+    getstate method_descriptor ($self, /) ''
+    reset method_descriptor ($self, /) ''
+    setstate method_descriptor ($self, state, /) ''
+MultibyteStreamReader _multibytecodec MultibyteStreamReader ['object'] 0x5700 None None
+    __doc__ NoneType None 'The type of the None singleton.'
+    __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for a'
+    __module__ str None _multibytecodec
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(ty'
+    errors getset_descriptor None 'how to treat errors'
+    read method_descriptor ($self, sizeobj=None, /) ''
+    readline method_descriptor ($self, sizeobj=None, /) ''
+    readlines method_descriptor ($self, sizehintobj=None, /) ''
+    reset method_descriptor ($self, /) ''
+    stream member_descriptor None ''
+MultibyteStreamWriter _multibytecodec MultibyteStreamWriter ['object'] 0x5700 None None
+    __doc__ NoneType None 'The type of the None singleton.'
+    __getattribute__ wrapper_descriptor ($self, name, /) 'Return getattr(self, name).'
+    __init__ wrapper_descriptor ($self, /, *args, **kwargs) 'Initialize self.  See help(type(self)) for a'
+    __module__ str None _multibytecodec
+    __new__ builtin_function_or_method ($type, *args, **kwargs) 'Create and return a new object.  See help(ty'
+    errors getset_descriptor None 'how to treat errors'
+    reset method_descriptor ($self, /) ''
+    stream member_descriptor None ''
+    write method_descriptor ($self, strobj, /) ''
+    writelines method_descriptor ($self, lines, /) ''
+_codecs_cn built-in None ['__map_gb18030ext', '__map_gb2312', '__map_gbcommon', '__map_gbkext', 'getcodec'] builtin_function_or_method ($self, object, /) None
+_codecs_hk built-in None ['__map_big5hkscs', '__map_big5hkscs_bmp', '__map_big5hkscs_nonbmp', 'getcodec'] builtin_function_or_method ($self, object, /) None
+_codecs_iso2022 built-in None ['getcodec'] builtin_function_or_method ($self, object, /) None
+_codecs_jp built-in None ['__map_cp932ext', '__map_jisx0208', '__map_jisx0212', '__map_jisx0213_1_bmp', '__map_jisx0213_1_emp', '__map_jisx0213_2_bmp', '__map_jisx0213_2_emp', '__map_jisx0213_bmp', '__map_jisx0213_emp', '__map_jisx0213_pair', '__map_jisxcommon', 'getcodec'] builtin_function_or_method ($self, object, /) None
+_codecs_kr built-in None ['__map_cp949', '__map_cp949ext', '__map_ksx1001', 'getcodec'] builtin_function_or_method ($self, object, /) None
+_codecs_tw built-in None ['__map_big5', '__map_cp950ext', 'getcodec'] builtin_function_or_method ($self, object, /) None
+<capsule object "multibytecodec.map" at 0x> PyCapsule <_multibytecodec.MultibyteCodec object at 0x>
+    getcodec() => TypeError '_codecs_tw.getcodec() takes exactly one argument (0 given)'
+    of a name that there is not => LookupError 'no such codec is supported.'
+    of another module's => LookupError 'no such codec is supported.'
+    of bytes => TypeError 'encoding name must be a string.'
+    of half a character => UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+    of BIG5 => LookupError 'no such codec is supported.'
+    of what has a null in it => 'MultibyteCodec'
+    of what begins with one => LookupError 'no such codec is supported.'
+    of a str of another class => 'MultibyteCodec'
+    two are not the same => False
+    __create_codec() => TypeError '_multibytecodec.__create_codec() takes exactly one argument (0 given)'
+    of what is not a capsule => ValueError 'argument type invalid'
+    of a capsule of another kind => ValueError 'argument type invalid'
+    MultibyteCodec() => TypeError "cannot create '_multibytecodec.MultibyteCodec' instances"
+    derived from it => TypeError "type '_multibytecodec.MultibyteCodec' is not an acceptable base type"
+    an attribute of it => AttributeError "'_multibytecodec.MultibyteCodec' object has no attribute 'x' and no __dict__ for setting new attributes"
+    an attribute of the class => TypeError "cannot set 'x' attribute of immutable type '_multibytecodec.MultibyteCodec'"
+    an encoder with no codec => AttributeError "type object '_multibytecodec.MultibyteIncrementalEncoder' has no attribute 'codec'"
+    with one that is not one => TypeError 'codec is unexpected type'
+    a reader with no codec => AttributeError "type object '_multibytecodec.MultibyteStreamReader' has no attribute 'codec'"
+---- every character, and every two bytes
+    big5 (27540, '88ff5663875e') (41127, '5cd501f61305') (12542, 'a15383b865b6') (224564, 'ec16de67d3f5') (113858, 'ed44ff44b639') (379, 'f348f128cc9e') (99789, '25c2756fc0f4') (126851, 'e5f57a5c2308') (151517, 'b2740eee744f')
+    big5hkscs (36900, '927aee1e9c32') (56797, '79f6d9b618e7') (12681, 'f42378d59861') (210537, '9ccd9ec1dd48') (137739, 'b324e8a32f07') (371, '3e2cfbe39325') (94472, 'a073763ba7db') (113936, '195bf2987ea7') (127760, '1619f5783234')
+    cp932 (18620, '68513879c09b') (27845, '98028745f6e1') (12567, 'f866d5140c9e') (224609, 'e66fa10e5a16') (193016, 'abd2e59cafed') (430, '1c8367f237e0') (102541, '781df9519c34') (129737, 'f8a9c39d0bd4') (133383, '78089723c70f')
+    cp949 (34224, '9d621aff4523') (51101, 'a12d44843663') (12758, '10f62937995c') (207463, 'aa3888c3f825') (127117, '0f44eab22177') (328, '047f43d7c2de') (91313, '4bc5ba697ea8') (98490, '1f72c192461a') (104362, '05032fae465d')
+    cp950 (27630, 'bfcbd70da309') (41263, 'b84ef406f4e5') (12574, '5d45bb60fe3a') (224536, '89a5537c4f0e') (113896, '749ff053bc40') (376, 'da40f84d2ef8') (99728, '8daf8cf22c90') (126729, '1ac697b0edfa') (151315, '59957fa29d70')
+    euc_jis_2004 (34580, '05dc84eb7f2b') (43216, '5783acc1f211') (13217, 'adcaf35544e2') (234946, '8dff314a64af') (92110, '4fce848fba2f') (368, '1687f70a4459') (102207, '8e3ada5baf41') (122773, 'c74bf2ffe604') (145326, '071e8748af5a')
+    euc_jisx0213 (34560, '9f11f4cee3fc') (43185, '1f617a1dab87') (13217, 'adcaf35544e2') (234945, '7a8a70a22313') (92079, 'cff4325c2c8d') (368, '1687f70a4459') (102207, '4002a9cc646c') (122773, 'b122242dbe4b') (145426, 'cdfdb06bd4c5')
+    euc_jp (32212, 'fa88dc9a2d48') (38766, 'ae0fe8d495ee') (13050, '476b4e9709f0') (236614, '2fe3085f4a19') (90892, '973951f5fd26') (397, 'c4ef92391d87') (105483, 'a2a1707f4913') (130944, 'f8453122b239') (158626, '05a74cf2d3db')
+    euc_kr (87156, '599bed3960ee') (51104, '0e59dd1cec63') (12758, '10f62937995c') (235674, 'a22f14c73958') (91776, '4572112db018') (376, 'f43a694afb4c') (103462, 'a11e296be10d') (126411, '551d7559ed96') (150953, 'bbcd2e1291ed')
+    gb18030 (732024, 'a5102cf58d1d') (714624, '1314e7f327ad') (47820, '5d7f6158a87c') (194196, '6f23422c4a8f') (147216, 'c4f51ffa708a') (322, 'f1204b10e234') (85559, '528c2fac8143') (91139, '896d5c9560ed') (92109, 'a7a0887110d8')
+    gb2312 (15018, '711305b27291') (22314, 'd37afa4c2d7c') (12635, '4aadf513ea44') (236372, 'e3a1d71e8f37') (91076, 'aeb9d10c2957') (388, '660ad6539b9e') (104723, '392d371b8cf2') (129558, '756ce03db814') (156174, '834d9a106fb6')
+    gbk (43710, 'f443cb4e97d2') (65344, '0b751306f0c1') (12734, '6ea30f6a3854') (199664, '4619c37be3a0') (142676, '4b432e355d77') (340, 'c942d428f910') (87952, 'ee2e09a78166') (96139, '467eb1da3bca') (100451, '9654d325a0a1')
+    hz (15023, '3182bc105b71') (22314, 'd37afa4c2d7c') (12936, 'ed5f9df44c95') (264230, 'c03b51d0fedd') (64694, '63c37d6b80ac') (514, 'e599c698641e') (121480, 'c19fc44bad8b') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    iso2022_jp (13906, 'b0f97e1caf94') (20645, 'd82618fca179') (13000, '81f657f81bc6') (257290, 'e13987b4465c') (75259, '7a2ae4a83c19') (512, '0f1a0d9c96b6') (119218, 'b7cfd2cafa4d') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    iso2022_jp_1 (46343, 'd9a78bf6ff14') (38580, '36da7fa5e8ae') (13436, 'ff9635426a48') (257290, 'e13987b4465c') (75259, '7a2ae4a83c19') (512, '0f1a0d9c96b6') (119218, 'b7cfd2cafa4d') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    iso2022_jp_2 (63545, '6ea3741c502a') (55528, 'dea8e3ee8818') (13986, '299a7dcc9ee6') (257286, '960147350e05') (75255, '8db67c8bf4c9') (512, '0f1a0d9c96b6') (119216, '6f568b7e6faa') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    iso2022_jp_2004 (39399, '168c5accd02f') (33649, '563e3e0314d7') (14363, 'c40801676171') (257290, 'e13987b4465c') (75259, '7a2ae4a83c19') (512, '0f1a0d9c96b6') (119218, 'b7cfd2cafa4d') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    iso2022_jp_3 (39317, 'df377a0e5852') (33618, 'dcb7c19f7b97') (14363, 'a0b4c4b81282') (257290, 'e13987b4465c') (75259, '7a2ae4a83c19') (512, '0f1a0d9c96b6') (119218, 'b7cfd2cafa4d') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    iso2022_jp_ext (46412, '3565acabd015') (38769, '428c441bd812') (13436, 'ff9635426a48') (257290, 'e13987b4465c') (75259, '7a2ae4a83c19') (512, '0f1a0d9c96b6') (119218, 'b7cfd2cafa4d') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    iso2022_kr (16586, 'e3b0c89918c4') (24633, '001d2288896f') (12982, 'fee4c85eba81') (256344, '716c01051e9e') (74313, '18e9ab954b9f') (510, 'c25cb6804081') (118806, '3f89bd45be2d') (180000, '6819484ac0da') (240000, 'ba68d705d1ee')
+    johab (34224, '1ad0966aa147') (51101, 'a12d44843663') (12758, '5da3e8ba3fa0') (207959, 'fed301de1399') (131675, '2ad8550ce3e5') (356, '2f84f3d4a226') (93666, '3111de323281') (109188, '3ee173d71622') (122176, '1d549e4dfe92')
+    shift_jis (13951, 'f53359308458') (20831, '14b61508375e') (12520, '3b80d2242607') (233920, 'c94be6e33a2a') (180838, 'c7a58b1e6961') (455, '9e254acd4da6') (107240, 'b82c78425046') (140721, '81b67756acdd') (151827, '8dff1273973c')
+    shift_jis_2004 (22607, '8e6ada483324') (33840, '1189a49803ba') (13019, '447adac011f8') (221498, 'bf294b326e81') (189986, '31eb86210009') (424, '13ae12c3541e') (100967, '9e4bc1e047e2') (124091, '5f2b273f95f6') (126734, '2493b2031ae5')
+    shift_jisx0213 (22587, '2c152a6ed340') (33809, '9bce811d378e') (13019, '447adac011f8') (221496, '61d17c423bf1') (189951, '0be858161e0a') (424, '13ae12c3541e') (100965, 'a3e3204831d6') (124091, 'ffb2ac399875') (126849, '6b5231c2b387')
+{'big5hkscs': 'f967f8ebc9fe', 'euc_jis_2004': '5a2925ee61a1', 'gb18030': '482bcfac54bb', 'iso2022_jp_2004': 'a3bd598cea7c', 'shift_jisx0213': '05ee79f7a182', 'johab': '7162435ab8b5', 'hz': '3300c2f718ca', 'iso2022_kr': 'bd723b469ba8'}
+(599188, '36859f8f5a3a') (81015, 'c23ac0b6418a')
+[b'\xa4\xf7', b'\xa4\xf7x', b'\xa4\xf7?', b'\x82\xf5', b'\x82\xf5x', b'\x82\xf5?', b'\x1b$(Q$w\x1b(B', b'\x1b$(Q$w\x1b(Bx', b'\x1b$(Q$w\x1b(B?'] [b'\x88b\x88d\x88f', "'\\xca\\u0304\\xca\\u030c\\xca'"]
+---- a piece at a time, cut everywhere
+    big5 b'\xa4\xa4\xa4\xe5 abc \xb4\xfa\xb8\xd5' [] (55, '957c0caa5692') True True
+    big5hkscs b'\xa4\xa4\xa4\xe5 \x88b \x9cq' [] (64, '8f74d4181912') True True
+    cp932 b'\x93\xfa\x96{\x8c\xea \xb6\xc5 \x87@' [] (69, '2da7850041ea') True True
+    cp949 b'\xc7\xd1\xb1\xdb \x8cc\xb9\xe6' [] (69, '254f41d6fd9e') True True
+    cp950 b'\xa4\xa4\xa4\xe5 \xa3\xe1' [] (41, 'dd70fefe0673') True True
+    euc_jis_2004 b'\xc6\xfc\xcb\xdc \xa4\xf7 \x8f\xa1\xa1' [] (99, '3f7837469e51') True True
+    euc_jisx0213 b'\xc6\xfc\xcb\xdc \xa4\xf7' [] (67, '688b022d4aed') True True
+    euc_jp b'\xc6\xfc\xcb\xdc\xb8\xec \x8e\xb6 \x8f\xb0\xa1' [] (101, '5f54d7306f4d') True True
+    euc_kr b'\xc7\xd1\xb1\xdb abc' [] (41, 'b99d6b3e3f21') True True
+    gb18030 b'\xd6\xd0\xce\xc4 \xa2\xe3 \x949\xfc6 \xa8\xa6' [] (117, '88e91fb8918d') True True
+    gb2312 b'\xd6\xd0\xce\xc4 abc' [] (41, '6a1420b6c109') True True
+    gbk b'\xd6\xd0\xce\xc4 \xba\xda' [] (55, '4c603c9d4424') True True
+    hz b'ab ~{VPND~} ~~ cd ~{::~}' [] (83, 'aac9f72bf08e') True True
+    iso2022_jp b'abc \x1b$BF|K\\\x1b(B def \x1b$B8l\x1b(B' [] (183, 'e1d02d88eb04') True True
+    iso2022_jp_1 b'\x1b$BF|K\\\x1b(B \x1b$(D0!\x1b(B x' [] (271, '3a18eab16113') True True
+    iso2022_jp_2 b'\x1b$BF|K\\\x1b(B \x1b$(CGQ\x1b(B \x1b$BCf\x1b(B \x1b$(D+1\x1b(B \x1b$B&A\x1b(B' [] (388, 'bcb27393daef') True True
+    iso2022_jp_2004 b'\x1b$BF|\x1b(B \x1b$(Q$w\x1b(B \x1b$(P!!\x1b(B' [] (353, '68685631eea1') True True
+    iso2022_jp_3 b'\x1b$BF|K\\\x1b(B \x1b$(O$w\x1b(B' [] (287, 'f58c3b78bca6') True True
+    iso2022_jp_ext b'\x1b$BF|\x1b(B \x1b(I6\x1b(B \x1b$(D0!\x1b(B' [] (341, '548ea34f043d') True True
+    iso2022_kr b'ab \x1b$)C\x0eGQ1[\x0f cd' [] (188, '0843bcf4c94c') True True
+    johab b'\xd0e\x8bi \x88A' [] (55, 'f12f7d65d294') True True
+    shift_jis b'\x93\xfa\x96{\x8c\xea \xb6\xc5 \\~' [] (55, 'b03809bd8f94') True True
+    shift_jis_2004 b'\x93\xfa \x82\xf5 \xf0@' [] (67, 'ed50f0376be7') True True
+    shift_jisx0213 b'\x93\xfa\x96{ \x82\xf5' [] (67, '66a0192608d4') True True
+---- what cannot be encoded or decoded
+    big5 ('UnicodeEncodeError', 'big5', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'big5', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'big5', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'big5', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'big5', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'big5', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    big5hkscs ('UnicodeEncodeError', 'big5hkscs', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'big5hkscs', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'big5hkscs', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'big5hkscs', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'big5hkscs', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'big5hkscs', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    cp932 ('UnicodeEncodeError', 'cp932', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'cp932', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'cp932', '\ud800', 0, 1, 'illegal multibyte sequence') ab ('UnicodeDecodeError', 'cp932', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'cp932', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    cp949 ('UnicodeEncodeError', 'cp949', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'cp949', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'cp949', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'cp949', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'cp949', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'cp949', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    cp950 ('UnicodeEncodeError', 'cp950', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'cp950', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'cp950', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'cp950', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'cp950', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'cp950', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    euc_jis_2004 ('UnicodeEncodeError', 'euc_jis_2004', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_jis_2004', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_jis_2004', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_jis_2004', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_jis_2004', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'euc_jis_2004', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    euc_jisx0213 ('UnicodeEncodeError', 'euc_jisx0213', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_jisx0213', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_jisx0213', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_jisx0213', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_jisx0213', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'euc_jisx0213', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    euc_jp ('UnicodeEncodeError', 'euc_jp', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_jp', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_jp', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_jp', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_jp', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'euc_jp', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    euc_kr ('UnicodeEncodeError', 'euc_kr', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_kr', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'euc_kr', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_kr', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'euc_kr', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'euc_kr', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    gb18030 b'a\x812\xce9b' b'ab\xe32\x9a5' ('UnicodeEncodeError', 'gb18030', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'gb18030', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'gb18030', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'gb18030', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    gb2312 ('UnicodeEncodeError', 'gb2312', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'gb2312', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'gb2312', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'gb2312', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'gb2312', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'gb2312', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    gbk ('UnicodeEncodeError', 'gbk', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'gbk', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'gbk', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'gbk', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'gbk', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'gbk', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    hz ('UnicodeEncodeError', 'hz', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'hz', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'hz', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'hz', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'hz', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'hz', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ('UnicodeDecodeError', 'hz', b'~', 0, 1, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'hz', b'~{!', 2, 3, 'incomplete multibyte sequence') !
+    iso2022_jp ('UnicodeEncodeError', 'iso2022_jp', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp', b'\x81 ', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp', b'\x1b$', 0, 2, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp', b'\x1b$Zab', 0, 3, 'illegal multibyte sequence') ~ ~{! !
+    iso2022_jp_1 ('UnicodeEncodeError', 'iso2022_jp_1', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_1', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_1', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_1', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_1', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_1', b'\x81 ', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_1', b'\x1b$', 0, 2, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_1', b'\x1b$Zab', 0, 3, 'illegal multibyte sequence') ~ ~{! !
+    iso2022_jp_2 ('UnicodeEncodeError', 'iso2022_jp_2', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_2', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_2', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2', b'\x81 ', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2', b'\x1b$', 0, 2, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2', b'\x1b$Zab', 0, 3, 'illegal multibyte sequence') ~ ~{! !
+    iso2022_jp_2004 ('UnicodeEncodeError', 'iso2022_jp_2004', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_2004', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_2004', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2004', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2004', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2004', b'\x81 ', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2004', b'\x1b$', 0, 2, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_2004', b'\x1b$Zab', 0, 3, 'illegal multibyte sequence') ~ ~{! !
+    iso2022_jp_3 ('UnicodeEncodeError', 'iso2022_jp_3', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_3', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_3', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_3', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_3', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_3', b'\x81 ', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_3', b'\x1b$', 0, 2, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_3', b'\x1b$Zab', 0, 3, 'illegal multibyte sequence') ~ ~{! !
+    iso2022_jp_ext ('UnicodeEncodeError', 'iso2022_jp_ext', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_ext', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_jp_ext', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_ext', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_ext', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_ext', b'\x81 ', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_ext', b'\x1b$', 0, 2, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'iso2022_jp_ext', b'\x1b$Zab', 0, 3, 'illegal multibyte sequence') ~ ~{! !
+    iso2022_kr ('UnicodeEncodeError', 'iso2022_kr', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_kr', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'iso2022_kr', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_kr', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_kr', b'ab\x81', 2, 3, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_kr', b'\x81 ', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'iso2022_kr', b'\x1b$', 0, 2, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'iso2022_kr', b'\x1b$Zab', 0, 3, 'illegal multibyte sequence') ~ ~{! !
+    johab ('UnicodeEncodeError', 'johab', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'johab', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'johab', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'johab', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'johab', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'johab', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    shift_jis ('UnicodeEncodeError', 'shift_jis', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'shift_jis', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'shift_jis', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'shift_jis', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'shift_jis', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'shift_jis', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ~ ~{! !
+    shift_jis_2004 ('UnicodeEncodeError', 'shift_jis_2004', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'shift_jis_2004', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'shift_jis_2004', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'shift_jis_2004', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'shift_jis_2004', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'shift_jis_2004', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ‾ ‾{! !
+    shift_jisx0213 ('UnicodeEncodeError', 'shift_jisx0213', 'a\u0e01b', 1, 2, 'illegal multibyte sequence') ('UnicodeEncodeError', 'shift_jisx0213', 'ab\U0010ffff', 2, 3, 'illegal multibyte sequence') ('UnicodeEncodeError', 'shift_jisx0213', '\ud800', 0, 1, 'illegal multibyte sequence') ('UnicodeDecodeError', 'shift_jisx0213', b'a\xffb', 1, 2, 'illegal multibyte sequence') ('UnicodeDecodeError', 'shift_jisx0213', b'ab\x81', 2, 3, 'incomplete multibyte sequence') ('UnicodeDecodeError', 'shift_jisx0213', b'\x81 ', 0, 1, 'illegal multibyte sequence') $ $Zab ‾ ‾{! !
+    'ignore'  b'a\xd6\xd0b' 'a\u4e65' b'a\x1b$BCf\x1b(Bb' 'ab' b'a~{VP~}b' 'ab'
+    'replace'  b'a??\xd6\xd0b' 'a\ufffd\u4e65\ufffd' b'a??\x1b$BCf\x1b(Bb' 'a\ufffd\ufffdb\ufffd' b'a??~{VP~}b' 'a\ufffd\ufffdb\ufffd'
+    'backslashreplace'  b'a\\u0e01\\U0001f600\xd6\xd0b' 'a\\xff\u4e65\\x80' b'a\\u0e01\\U0001f600\x1b$BCf\x1b(Bb' 'a\\xff\\x81b\\x80' b'a\\u0e01\\U0001f600~{VP~}b' 'a\\xff\\x81b\\x80'
+    'xmlcharrefreplace'  b'a&#3585;&#128512;\xd6\xd0b' TypeError b'a&#3585;&#128512;\x1b$BCf\x1b(Bb' TypeError b'a&#3585;&#128512;~{VP~}b' TypeError
+    'namereplace'  b'a\\N{THAI CHARACTER KO KAI}\\N{GRINNING FACE}\xd6\xd0b' TypeError b'a\\N{THAI CHARACTER KO KAI}\\N{GRINNING FACE}\x1b$BCf\x1b(Bb' TypeError b'a\\N{THAI CHARACTER KO KAI}\\N{GRINNING FACE}~{VP~}b' TypeError
+    'surrogateescape'  UnicodeEncodeError 'a\udcff\u4e65\udc80' UnicodeEncodeError 'a\udcff\udc81b\udc80' UnicodeEncodeError 'a\udcff\udc81b\udc80'
+    'surrogatepass'  UnicodeEncodeError UnicodeDecodeError UnicodeEncodeError UnicodeDecodeError UnicodeEncodeError UnicodeDecodeError
+    'strict'  UnicodeEncodeError UnicodeDecodeError UnicodeEncodeError UnicodeDecodeError UnicodeEncodeError UnicodeDecodeError
+    'nothing of the name'  LookupError LookupError LookupError LookupError LookupError LookupError
+    ''  LookupError LookupError LookupError LookupError LookupError LookupError
+    'a\x00b'  ValueError ValueError ValueError ValueError ValueError ValueError
+    str: encode => b'a<\xd6\xd0>bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    str: decode => 'a<\u4e2d>bc'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    str: encode, iso2022 => b'\x1b$BF|\x1b(B<\x1b$BCf\x1b(B>\x1b$BK\\\x1b(Bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    bytes: encode => b'a<!>bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    bytes: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    bytes: encode, iso2022 => b'\x1b$BF|<!>K\\\x1b(Bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    str that cannot be: encode => UnicodeEncodeError "'gbk' codec can't encode character '\\u0e01' in position 0: illegal multibyte sequence"
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    str that cannot be: decode => 'a\u0e01bc'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    str that cannot be: encode, iso2022 => UnicodeEncodeError "'iso2022_jp' codec can't encode character '\\u0e01' in position 0: illegal multibyte sequence"
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    empty: encode => b'abc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    empty: decode => 'abc'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    empty: encode, iso2022 => b'\x1b$BF|K\\\x1b(Bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    from the end: encode => b'a?c'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    from the end: decode => 'a?c'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    from the end: encode, iso2022 => b'\x1b$BF|\x1b(B?c'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    at the end: encode => b'a?'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    at the end: decode => 'a?'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    at the end: encode, iso2022 => b'\x1b$BF|\x1b(B?'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    past the end: encode => IndexError 'position 5 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    past the end: decode => IndexError 'position 5 from error handler out of bounds'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    past the end: encode, iso2022 => IndexError 'position 5 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    before the beginning: encode => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    before the beginning: decode => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    before the beginning: encode, iso2022 => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    back to the beginning: encode => b'a?a?a!'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    back to the beginning: decode => 'a?a?a!'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    back to the beginning: encode, iso2022 => b'\x1b$BF|\x1b(B?\x1b$BF|\x1b(B?\x1b$BF|\x1b(B!'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    2 ** 70: encode => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    2 ** 70: decode => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    2 ** 70: encode, iso2022 => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    -2 ** 70: encode => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    -2 ** 70: decode => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    -2 ** 70: encode, iso2022 => IndexError 'position -1 from error handler out of bounds'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    True: encode => b'a??!'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    True: decode => 'a??!'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    True: encode, iso2022 => b'\x1b$BF|\x1b(B??!'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence'), ('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a float: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a float: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    a float: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a list: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a list: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    a list: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    three: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    three: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    three: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    one: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    one: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    one: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    None: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    None: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    None: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    an int first: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    an int first: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    an int first: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a bytearray: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a bytearray: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    a bytearray: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a tuple of another class: encode => b'a?bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a tuple of another class: decode => 'a?bc'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    a tuple of another class: encode, iso2022 => b'\x1b$BF|\x1b(B?\x1b$BK\\\x1b(Bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a str of another class: encode => b'a?bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    a str of another class: decode => 'a?bc'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    a str of another class: encode, iso2022 => b'\x1b$BF|\x1b(B?\x1b$BK\\\x1b(Bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    an int of another class: encode => b'a?bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    an int of another class: decode => 'a?bc'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    an int of another class: encode, iso2022 => b'\x1b$BF|\x1b(B?\x1b$BK\\\x1b(Bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    what has __index__: encode => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    what has __index__: decode => TypeError 'decoding error handler must return (str, int) tuple'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    what has __index__: encode, iso2022 => TypeError 'encoding error handler must return (str, int) tuple'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it raises: encode => ZeroDivisionError 'division by zero'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it raises: decode => ZeroDivisionError 'division by zero'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    it raises: encode, iso2022 => ZeroDivisionError 'division by zero'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it raises what it was given: encode => UnicodeEncodeError "'gbk' codec can't encode character '\\u0e01' in position 1: illegal multibyte sequence"
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it raises what it was given: decode => UnicodeDecodeError "'gbk' codec can't decode byte 0xff in position 1: illegal multibyte sequence"
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    it raises what it was given: encode, iso2022 => UnicodeEncodeError "'iso2022_jp' codec can't encode character '\\u0e01' in position 1: illegal multibyte sequence"
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it changes where: encode => b'a?c'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it changes where: decode => 'a?c'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    it changes where: encode, iso2022 => b'\x1b$BF|\x1b(B?c'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it changes what: encode => b'a?bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+    it changes what: decode => 'a?bc'
+        [('UnicodeDecodeError', 1, 2, 'illegal multibyte sequence')]
+    it changes what: encode, iso2022 => b'\x1b$BF|\x1b(B?\x1b$BK\\\x1b(Bc'
+        [('UnicodeEncodeError', 1, 2, 'illegal multibyte sequence')]
+b'?a?b?' 1 ?a?b? 2
+    what is being decoded is changed meanwhile => ('a?zc', bytearray(b'xyzc'))
+    a piece at a time => ('a?zc', bytearray(b'xyzc'))
+    with something kept => ('', '??bc', bytearray(b'xyz'))
+---- MultibyteCodec.encode() and decode()
+    encode => (b'\xd6\xd0a', 2)
+    decode => ('\u4e2da', 3)
+    nothing => ((b'', 0), ('', 0))
+    by name => ((b'a', 1), ('a', 1))
+    encode() => TypeError "encode() missing required argument 'input' (pos 1)"
+    decode() => TypeError "decode() missing required argument 'input' (pos 1)"
+    encode(5) => (b'5', 1)
+    encode(None) => (b'None', 4)
+    encode(bytes) => (b"b'ab'", 5)
+    of what has __str__ => (b'\xd6\xd0', 1)
+    whose __str__ raises => ZeroDivisionError 'division by zero'
+    whose __str__ gives no str => TypeError '__str__ returned non-string (type int)'
+    a str of another class => (b'\xd6\xd0', 1)
+    decode('a') => TypeError "a bytes-like object is required, not 'str'"
+    decode(5) => TypeError "a bytes-like object is required, not 'int'"
+    decode(bytearray) => ('\u4e2d', 2)
+    decode(memoryview) => ('\u4e2d', 2)
+    decode(every other byte) => BufferError 'memoryview: underlying buffer is not C-contiguous'
+    errors=5 => TypeError "encode() argument 'errors' must be str or None, not int"
+    errors=b'strict' => TypeError "decode() argument 'errors' must be str or None, not bytes"
+    errors with a null => ValueError 'embedded null character'
+    errors of half a character => UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+    errors that there are not, and no need => (b'a', 1)
+    and need => LookupError "unknown error handler name 'nothing'"
+    three => TypeError 'encode() takes at most 2 arguments (3 given)'
+    a name that there is not => TypeError "encode() got an unexpected keyword argument 'nothing'"
+    how many characters, not units => (b'\x949\xfc6a', 2)
+    half a character in it => (b'a\x80', 2)
+---- the four that keep something
+[['IncrementalEncoder', 'MultibyteIncrementalEncoder', 'IncrementalEncoder', 'object'], ['IncrementalDecoder', 'MultibyteIncrementalDecoder', 'IncrementalDecoder', 'object'], ['StreamReader', 'Codec', 'MultibyteStreamReader', 'StreamReader', 'Codec', 'object'], ['StreamWriter', 'Codec', 'MultibyteStreamWriter', 'StreamWriter', 'Codec', 'object']]
+    errors => ['strict', 'strict', 'strict', 'strict']
+    given => ['ignore', 'replace', 'x', 'y']
+    None => TypeError 'IncrementalEncoder() argument 1 must be str, not None'
+    5 => TypeError 'IncrementalDecoder() argument 1 must be str, not int'
+    a null in it => ValueError 'embedded null character'
+    half a character => UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+    two => TypeError 'IncrementalEncoder() takes at most 1 argument (2 given)'
+    a name that there is not => TypeError "IncrementalDecoder() got an unexpected keyword argument 'nothing'"
+    Reader() => TypeError "StreamReader() missing required argument 'stream' (pos 1)"
+    Reader(s, None) => TypeError 'StreamReader() argument 2 must be str, not None'
+    Writer(s, 5) => TypeError 'StreamWriter() argument 2 must be str, not int'
+    three => TypeError 'StreamWriter() takes at most 2 arguments (3 given)'
+    a stream that is anything => (5, None)
+    __init__ takes anything => (None, None)
+    errors = 'ignore' => (None, 'ignore', b'a')
+    = 'mine' => (None, 'mine', True)
+    = 5 => TypeError 'errors must be a string'
+    = None => TypeError 'errors must be a string'
+    del => AttributeError 'cannot delete attribute'
+    = a null in it => (None, 'ign')
+    = 'ignore' and a null => (None, 'ignore')
+    = half a character => UnicodeEncodeError "'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+    = a str of another class => (None, 'str')
+    stream = 1 => AttributeError 'readonly attribute'
+    an attribute => (None, 1)
+    of one that is not derived => None
+---- MultibyteIncrementalEncoder
+4342272 b'a' 4342272 b'\x1b$BF|' 4375040 b'\x1b(Bb' 4342272 b'\x1b$BF|' b'\x1b(B' 4342272 b'\x1b$BF|' None 4342272 b'a' b'\x1b$BF|\x1b(B'
+b'' 2340545283 b'\xa4\xf7' 0 b'' b'\xa4\xabx' b'' b'\xa4\xab' b'' None b'x' b'' 2340545283 None ('UnicodeEncodeError', 'euc_jis_2004', '゚', 0, 1, 'illegal multibyte sequence')
+    encode() => TypeError "encode() missing required argument 'input' (pos 1)"
+    encode(5) => b'5'
+    encode(bytes) => b"b'a'"
+    final whatever is true => b'\xa4\xab'
+    three => TypeError 'encode() takes at most 2 arguments (3 given)'
+    strict, and then again => [b'', ('UnicodeEncodeError', 'euc_jis_2004', '\u304b\u0e01', 1, 2, 'illegal multibyte sequence'), 2340545283, b'\xa4\xf7']
+    setstate() => TypeError 'MultibyteIncrementalEncoder.setstate() takes exactly one argument (0 given)'
+    setstate('a') => TypeError 'setstate() argument must be int, not str'
+    setstate(1.0) => TypeError 'setstate() argument must be int, not float'
+    setstate(True) => (None, 1)
+    setstate(-1) => OverflowError "can't convert negative int to unsigned"
+    setstate(2 ** 136) => OverflowError 'int too big to convert'
+    setstate(2 ** 136 - 1) => UnicodeError 'pending buffer too large'
+    setstate(9) => UnicodeError 'pending buffer too large'
+    setstate(8, of nothing) => (None, 8)
+    what is not UTF-8 => UnicodeDecodeError "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte"
+    half of something => UnicodeDecodeError "'utf-8' codec can't decode byte 0xe3 in position 0: unexpected end of data"
+    three characters => (None, 1667391747, b'abcd')
+    eight of them => (None, 1925912137781162959112, b'abcdefgh')
+    an int of another class => (None, 0)
+    getstate(1) => TypeError 'MultibyteIncrementalEncoder.getstate() takes no arguments (1 given)'
+    reset(1) => TypeError 'MultibyteIncrementalEncoder.reset() takes no arguments (1 given)'
+---- MultibyteIncrementalDecoder
+(b'', 4342338) a  (b'\x1b', 4342338)  (b'\x1b$', 4342338)  (b'', 4342466)  (b'F', 4342466) '\u65e5' (b'', 4342466) None (b'', 4342338) F| 
+    cut short at the end => ('UnicodeDecodeError', 'iso2022_jp', b'\x1b$BF', 3, 4, 'incomplete multibyte sequence')
+    and what was kept is kept => ['', ('UnicodeDecodeError', 'iso2022_jp', b'F', 0, 1, 'incomplete multibyte sequence'), (b'F', 4342466), "'\\u65e5'"]
+    ignored => ''
+    replaced => '\ufffd'
+    decode() => TypeError "decode() missing required argument 'input' (pos 1)"
+    decode('a') => TypeError "a bytes-like object is required, not 'str'"
+    decode(bytearray) => 'a'
+    three => TypeError 'decode() takes at most 2 arguments (3 given)'
+    setstate() => TypeError 'MultibyteIncrementalDecoder.setstate() takes exactly one argument (0 given)'
+    setstate(5) => TypeError 'setstate() argument must be tuple, not int'
+    setstate([]) => TypeError 'setstate() argument must be tuple, not list'
+    setstate(()) => TypeError 'setstate(): illegal state argument'
+    one => TypeError 'setstate(): illegal state argument'
+    three => TypeError 'setstate(): illegal state argument'
+    a str => TypeError 'setstate(): illegal state argument'
+    a bytearray => TypeError 'setstate(): illegal state argument'
+    a float => TypeError 'setstate(): illegal state argument'
+    -1 => OverflowError "can't convert negative int to unsigned"
+    2 ** 64 => OverflowError 'int too big to convert'
+    2 ** 64 - 1 => (None, (b'', 18446744073709551615))
+    eight kept => (None, (b'12345678', 0))
+    nine => ('UnicodeDecodeError', 'iso2022_jp', b'123456789', 0, 9, 'pending buffer too large')
+    True => (None, (b'', 1))
+    a tuple of another class => (None, (b'a', 0))
+    bytes of another class => (None, (b'a', 0))
+    more kept than there is room for => [None, '\x1b\x1b\x1b\x1b\x1b\x1b\x1b\x1b\x1b\x1b']
+    getstate(1) => TypeError 'MultibyteIncrementalDecoder.getstate() takes no arguments (1 given)'
+    reset(1) => TypeError 'MultibyteIncrementalDecoder.reset() takes no arguments (1 given)'
+["''", "''", "''", "'\\U0001f600'", "''", "'\\xe9'", "''", "'\\u4e2d'", "'a'"] (b'', 0)
+---- MultibyteStreamReader
+    read() => 'abc \u65e5\u672c\u8a9e\ndef \u8a9e\n\nlast \u65e5'
+    read(None) => 'abc \u65e5\u672c\u8a9e\ndef \u8a9e\n\nlast \u65e5'
+    read(-1) => 'abc \u65e5\u672c\u8a9e\ndef \u8a9e\n\nlast \u65e5'
+    read(-5) => 'abc \u65e5\u672c\u8a9e\ndef \u8a9e\n\nlast \u65e5'
+    read(0) => ''
+    read(1) over and over => ['a', 'b', 'c', ' ', '\u65e5', '\u672c', '\u8a9e', '\n', 'd', 'e', 'f', ' ', '\u8a9e', '\n', '\n', 'l', 'a', 's', 't', ' ', '\u65e5', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '', '']
+    read(5) => ['abc ', '\u65e5', '\u672c\u8a9e', '\ndef', ' ', '\u8a9e\n', '\nlast', ' ', '\u65e5']
+    readline() => ['abc \u65e5\u672c\u8a9e\n', 'def \u8a9e\n', '\n', 'last \u65e5', '', '']
+    readline(3) => ['abc', ' ', '\u65e5', '\u672c', '\u8a9e', '\n', 'def', ' ', '\u8a9e', '\n', '\n', 'las', 't ', '\u65e5']
+    readlines() => ['abc \u65e5\u672c\u8a9e\n', 'def \u8a9e\n', '\n', 'last \u65e5']
+    readlines(6) => [['abc '], ['\u65e5\u672c'], ['\u8a9e\n', 'd'], ['ef '], ['\u8a9e\n'], ['\n', 'last '], ['\u65e5'], []]
+    readlines(0) => []
+    gone through => ['abc \u65e5\u672c\u8a9e\n', 'def \u8a9e\n', '\n', 'last \u65e5']
+    read('a') => TypeError 'arg 1 must be an integer'
+    read(1.0) => TypeError 'arg 1 must be an integer'
+    read(True) => 'a'
+    read(2 ** 70) => OverflowError 'Python int too large to convert to C ssize_t'
+    read(2 ** 40) => ''
+    read(1, 2) => TypeError 'read expected at most 1 argument, got 2'
+    read(sizeobj=1) => TypeError 'StreamReader.read() takes no keyword arguments'
+    readline('a') => TypeError 'arg 1 must be an integer'
+    readlines('a') => TypeError 'arg 1 must be an integer'
+    cut short => ('UnicodeDecodeError', 'iso2022_jp', 40, 39, 40, 'incomplete multibyte sequence')
+    cut short, a little at a time => ('UnicodeDecodeError', 'iso2022_jp', b'F', 0, 1, 'incomplete multibyte sequence')
+    cut short and replaced => 'abc \ufffd'
+    reset() => ['abc ', None, 'F|K\\']
+    a stream with no read => AttributeError "'int' object has no attribute 'read'"
+    that gives a str => TypeError 'stream function returned a non-bytes object (str)'
+    that gives a bytearray => TypeError 'stream function returned a non-bytes object (bytearray)'
+    that gives None => TypeError 'stream function returned a non-bytes object (NoneType)'
+    that raises => ZeroDivisionError 'division by zero'
+    what it is asked for => []
+    bytes of another class => 'ab'
+[('read',), ('read', 7), ('readline',), ('readline', 3), ('read',), ('read', 9), ('read', -2147483643)]
+---- MultibyteStreamWriter
+    write() => (b'a\x1b$BF|K\\\x1b(Bb', [None, None, None])
+    and reset() => (b'a\x1b$BF|K\\', [None, None, None, None, None])
+    writelines() => (b'a\x1b$BF|\x1b(Bb', None)
+    a tuple => (b'\x1b$BF|K\\', None)
+    a str => (b'a\x1b$BF|', None)
+    none => (b'', None)
+    what is gone through and no more => TypeError 'arg must be a sequence object'
+    a set => TypeError 'arg must be a sequence object'
+    a dict => TypeError 'arg must be a sequence object'
+    5 => TypeError 'arg must be a sequence object'
+    with what is not a str in it => (b'a5None', None)
+    write(5) => (b'5', None)
+    write(bytes) => (b"b'a'", None)
+    write() => TypeError 'write() takes exactly 1 positional argument (0 given)'
+    write('a', 'b') => TypeError 'write() takes at most 1 argument (2 given)'
+    write(strobj='a') => TypeError 'write() takes exactly 1 positional argument (0 given)'
+    reset(1) => TypeError 'reset() takes no arguments'
+    what cannot be => ('UnicodeEncodeError', 'iso2022_jp', 'a\u0e01', 1, 2, 'illegal multibyte sequence')
+    ignored => (b'ab', None)
+    something kept => (b'\xa4\xf7\xa4\xab\xa4\xabx', [None, None, None, None, None, None])
+    a list that grows => (b'abzzz', None)
+    whose length raises => ZeroDivisionError 'division by zero'
+    a stream with no write => AttributeError "'int' object has no attribute 'write'"
+    that raises => ZeroDivisionError 'division by zero'
+    what it is given => [b'\xd6\xd0', b'', b'a']
+---- what is written over them
+    big5 74 True True 14 5 True 4
+    big5hkscs 59 True True 11 5 True 4
+    cp932 69 True True 13 6 True 4
+    cp949 54 True True 10 5 True 4
+    cp950 44 True True 8 5 True 4
+    euc_jis_2004 64 True True 12 5 True 4
+    euc_jisx0213 44 True True 8 5 True 4
+    euc_jp 74 True True 14 6 True 4
+    euc_kr 49 True True 9 5 True 4
+    gb18030 84 True True 16 5 True 4
+    gb2312 49 True True 9 5 True 4
+    gbk 44 True True 8 5 True 4
+    hz 127 True True 25 36893488147419103237 True 4
+    iso2022_jp 141 True True 160203995535087573890236444 160203995535087573890236419 True 4
+    iso2022_jp_1 119 True True 160203995535087573890236439 160203995535087573890236427 True 4
+    iso2022_jp_2 234 True True 160203995535087573890236465 160203995535087573890236427 True 4
+    iso2022_jp_2004 140 True True 160203995535087573890236445 340282367079554997763207175273678110733 True 4
+    iso2022_jp_3 100 True True 160203995535087573890236437 160203995535087573890236427 True 4
+    iso2022_jp_ext 130 True True 160203995535087573890236443 160204253789504605823959053 True 4
+    iso2022_kr 73 True True 161422366087667942355370001 161422366087667942355369987 True 4
+    johab 44 True True 8 5 True 4
+    shift_jis 69 True True 13 6 True 4
+    shift_jis_2004 49 True True 9 340282367079394788491903282618856112131 True 4
+    shift_jisx0213 44 True True 8 5 True 4
+b'\x1b$BF|K\\\x1b(Babc\x1b$B8l' '\u65e5\u672cabc\u8a9e'
+    codecs.open(): readlines() => TypeError 'readlines expected at most 1 argument, got 2'
+    readline() => TypeError 'readline expected at most 1 argument, got 2'
+    read() => '\u65e5\u672c\n\u8a9e'
+'\u65e5\u672c' b'\xc6\xfc\xcb\xdc' '\ud55c' '\u4e2d' cp932 cp932 iso2022_jp cp949 gb2312
+'\u65e5\u672c\n\u8a9e' '\u65e5' [b'\x1b$BF|', b'K\\', b'\x1b(B']
+=?iso-2022-jp?b?GyRCRnxLXDhsJE43b0w+GyhC?= [(b'\x1b$BF|K\\8l$N7oL>\x1b(B', 'iso-2022-jp')] '=?euc-kr?b?x9Gx2w==?='
+text/plain; charset="iso-2022-jp" 7bit b'\x1b$BF|K\\8l$NK\\J8\x1b(B\n' '\u65e5\u672c\u8a9e\u306e\u672c\u6587\n'
+b'\xd6\xd0\xce\xc4,"a,b"\r\n\x949\xfc6,\xa8\xa6\r\n' [['\u4e2d\u6587', 'a,b'], ['\U0001f600', '\xe9']] '\u4e2d'
+'\u65e5\u672c'

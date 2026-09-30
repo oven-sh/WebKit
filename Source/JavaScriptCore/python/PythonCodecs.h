@@ -353,5 +353,6 @@ JSValue decodeTextWithCodec(JSGlobalObject*, JSValue object, const String& encod
 void registerErrorHandler(JSGlobalObject*, const String& name, JSValue handler); // PyCodec_RegisterError()
 std::optional<bool> unregisterErrorHandler(JSGlobalObject*, const String& name); // _PyCodec_UnregisterError()
 JSValue lookupErrorHandler(JSGlobalObject*, const String& name); // PyCodec_LookupError(). A null String is "strict".
+void setWhereUnicodeErrorIs(JSGlobalObject*, JSValue exception, size_t start, size_t end, ASCIILiteral reason); // PyUnicodeDecodeError_SetStart() and the rest, and the same for UnicodeEncodeError
 
 } } // namespace JSC::Python

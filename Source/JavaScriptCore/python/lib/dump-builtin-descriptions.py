@@ -51,9 +51,9 @@ import json
 import sys
 
 # The modules that are written in C++ here, or that a host is to write.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable", "_csv", "_socket", "_asyncio", "fcntl", "termios", "gc", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "_scproxy", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd"]
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable", "_csv", "_socket", "_asyncio", "fcntl", "termios", "gc", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "_scproxy", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
-MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio", "signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "ssl", "sqlite3", "compression.zstd")
+MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio", "signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw", "ssl", "sqlite3", "compression.zstd", "_multibytecodec")
 
 
 def generator():
@@ -137,7 +137,7 @@ def add_type(a_type):
 for value in vars(builtins).values():
     if isinstance(value, type):
         add_type(value)
-for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator", "_functools", "_csv", "_socket", "_asyncio", "_signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd"):
+for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator", "_functools", "_csv", "_socket", "_asyncio", "_signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "pyexpat", "pwd", "grp", "syslog", "_lsprof", "_ssl", "_sqlite3", "mmap", "_zstd", "_multibytecodec", "_codecs_cn", "_codecs_hk", "_codecs_iso2022", "_codecs_jp", "_codecs_kr", "_codecs_tw"):
     for value in vars(__import__(name)).values():
         if isinstance(value, type):
             add_type(value)
@@ -155,6 +155,7 @@ add_type(type(iter(__import__("array").array("b"))))
 add_type(type(__import__("abc").ABC._abc_impl))
 add_type(type(__import__("functools").cmp_to_key(len)))
 add_type(type(__import__("sqlite3").connect(":memory:")("select 1")))
+add_type(type(__import__("_codecs_tw").getcodec("big5")))
 
 
 class Loop:

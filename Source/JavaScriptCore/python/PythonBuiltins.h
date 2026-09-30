@@ -223,11 +223,20 @@ JSObject* createBinasciiModule(JSGlobalObject*);
 JSObject* createStringModule(JSGlobalObject*);
 JSObject* createStructModule(JSGlobalObject*);
 JSObject* createUnicodeDataModule(JSGlobalObject*);
+JSObject* createMultibyteCodecModule(JSGlobalObject*);
+JSObject* createCodecsCNModule(JSGlobalObject*);
+JSObject* createCodecsHKModule(JSGlobalObject*);
+JSObject* createCodecsISO2022Module(JSGlobalObject*);
+JSObject* createCodecsJPModule(JSGlobalObject*);
+JSObject* createCodecsKRModule(JSGlobalObject*);
+JSObject* createCodecsTWModule(JSGlobalObject*);
 JSObject* createTokenizeModule(JSGlobalObject*);
 JSValue getObjectState(JSGlobalObject*, JSValue); // _PyObject_GetState()
 // {Py_tp_getattro, PyObject_GenericGetAttr}: the class has a __getattribute__ in its own name, which does what object's does.
-// PyCapsule_New(), with no pointer in it
-JSValue newCapsule(JSGlobalObject*, ASCIILiteral name);
+// PyCapsule_New(). What is pointed at is to last as long as the realm.
+JSValue newCapsule(JSGlobalObject*, ASCIILiteral name, const void* pointer = nullptr);
+// PyCapsule_GetPointer(), if PyCapsule_IsValid(): null unless it is a capsule of that name.
+const void* capsulePointer(JSValue, ASCIILiteral name);
 void addGenericGetAttribute(JSGlobalObject*, PyType*);
 // The same for PyObject_GenericSetAttr in tp_setattro: a __setattr__ and a __delattr__ of its own.
 void addGenericSetAttribute(JSGlobalObject*, PyType*);
