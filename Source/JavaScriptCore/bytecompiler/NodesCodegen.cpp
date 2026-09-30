@@ -6234,9 +6234,10 @@ void ObjectPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs)
                     if (target.pattern->isAssignmentElementNode())
                         targetBaseAndPropertyName = static_cast<AssignmentElementNode*>(target.pattern)->emitNodesForDestructuring(generator);
                     std::optional<uint32_t> optionalIndex = parseIndex(target.propertyName);
-                    if (!optionalIndex)
+                    if (!optionalIndex) {
+                        generator.emitTypeTag(target.typeTag);
                         generator.emitGetById(temp.get(), rhs, target.propertyName);
-                    else {
+                    } else {
                         RefPtr<RegisterID> propertyIndex = generator.emitLoad(nullptr, jsNumber(optionalIndex.value()));
                         generator.emitGetByVal(temp.get(), rhs, propertyIndex.get());
                     }

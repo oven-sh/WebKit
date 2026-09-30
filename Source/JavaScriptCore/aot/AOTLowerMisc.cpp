@@ -340,6 +340,14 @@ void Lowering::findChainsOfComparisons()
         chain.otherwise = next;
         for (unsigned i = 1; i < chain.arms.size(); ++i)
             m_blocksInsideChains.add(chain.arms[i].block);
+        if (Options::aotReportStats()) [[unlikely]] {
+            static std::atomic<uint64_t> chains;
+            static std::atomic<uint64_t> arms;
+            static std::once_flag once;
+            std::call_once(once, [] { atexit([] { dataLogLn("AOT: ", chains.load(), " chains of comparisons, of ", arms.load(), " in all"); }); });
+            chains++;
+            arms += chain.arms.size();
+        }
         m_chainsByFirstBlock.add(head, m_chains.size());
         m_chains.append(WTF::move(chain));
     }

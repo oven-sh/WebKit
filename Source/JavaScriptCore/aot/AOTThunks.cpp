@@ -104,7 +104,7 @@ void returnVoid(CCallHelpers& jit)
 
 void branchIfNotObjectValue(CCallHelpers& jit, GPRReg value, JumpList& slowCases)
 {
-    slowCases.append(jit.branchIfNotCell(value, DoNotHaveTagRegisters));
+    slowCases.append(jit.branchIfNotCell(value));
     slowCases.append(jit.branchIfNotObject(value));
 }
 
@@ -126,7 +126,7 @@ void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
 // The name that a value is, if it is a string that is an atom: those are the names the megamorphic cache knows.
 void loadAtomName(CCallHelpers& jit, GPRReg value, GPRReg result, JumpList& slowCases)
 {
-    slowCases.append(jit.branchIfNotCell(value, DoNotHaveTagRegisters));
+    slowCases.append(jit.branchIfNotCell(value));
     slowCases.append(jit.branchIfNotString(value));
     jit.loadPtr(Address(value, JSString::offsetOfValue()), result);
     slowCases.append(jit.branchIfRopeStringImpl(result));
@@ -252,7 +252,7 @@ static void generateCompareEq(CCallHelpers& jit, bool strict)
     JumpList isTrue;
 
     jit.or64(left, right, scratch0);
-    Jump notBothCells = jit.branchIfNotCell(scratch0, DoNotHaveTagRegisters);
+    Jump notBothCells = jit.branchIfNotCell(scratch0);
 
     // From here on it takes two values of the same kind that are equal by content, or, for ==, a conversion.
     jit.load8(Address(left, JSCell::typeInfoTypeOffset()), scratch0);
@@ -291,11 +291,11 @@ static void generateCompareEq(CCallHelpers& jit, bool strict)
 
     notBothCells.link(&jit);
     JumpList notBothNumbers;
-    notBothNumbers.append(jit.branchIfNotNumber(left, DoNotHaveTagRegisters));
-    notBothNumbers.append(jit.branchIfNotNumber(right, DoNotHaveTagRegisters));
+    notBothNumbers.append(jit.branchIfNotNumber(left));
+    notBothNumbers.append(jit.branchIfNotNumber(right));
     auto toDouble = [&](GPRReg value, FPRReg result) {
-        Jump isInt32 = jit.branchIfInt32(value, DoNotHaveTagRegisters);
-        jit.unboxDoubleWithoutAssertions(value, scratch0, result, DoNotHaveTagRegisters);
+        Jump isInt32 = jit.branchIfInt32(value);
+        jit.unboxDoubleWithoutAssertions(value, scratch0, result);
         Jump done = jit.jump();
         isInt32.link(&jit);
         jit.convertInt32ToDouble(value, result);
@@ -313,7 +313,7 @@ static void generateCompareEq(CCallHelpers& jit, bool strict)
         // undefined and null are equal to each other, to objects that pass themselves off as undefined, and to nothing else.
         auto compareWithOther = [&](GPRReg value) {
             isTrue.append(jit.branchIfOther(value, scratch0));
-            isFalse.append(jit.branchIfNotCell(value, DoNotHaveTagRegisters));
+            isFalse.append(jit.branchIfNotCell(value));
             isFalse.append(jit.branchTest8(CCallHelpers::Zero, Address(value, JSCell::typeInfoFlagsOffset()), TrustedImm32(MasqueradesAsUndefined)));
             slowCases.append(jit.jump());
         };

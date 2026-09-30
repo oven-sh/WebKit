@@ -2600,14 +2600,14 @@ namespace JSC {
             Element,
             RestElement
         };
-        void appendEntry(const JSTokenLocation&, const Identifier& identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
+        void appendEntry(const JSTokenLocation&, const Identifier& identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType, uint32_t typeTag = 0)
         {
-            m_targetPatterns.append(Entry{ identifier, nullptr, wasString, pattern, defaultValue, bindingType });  
+            m_targetPatterns.append(Entry{ identifier, nullptr, wasString, pattern, defaultValue, bindingType, typeTag });
         }
 
         void appendEntry(VM& vm, const JSTokenLocation&, ExpressionNode* propertyExpression, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
         {
-            m_targetPatterns.append(Entry{ vm.propertyNames->nullIdentifier, propertyExpression, false, pattern, defaultValue, bindingType });
+            m_targetPatterns.append(Entry{ vm.propertyNames->nullIdentifier, propertyExpression, false, pattern, defaultValue, bindingType, 0 });
         }
         
         void setContainsRestElement(bool containsRestElement)
@@ -2631,6 +2631,7 @@ namespace JSC {
             DestructuringPatternNode* pattern;
             ExpressionNode* defaultValue;
             BindingType bindingType;
+            uint32_t typeTag; // JSToken::m_typeTag of the name of the property: what is said of a.b goes for { b } = a.
         };
         bool m_containsRestElement { false };
         bool m_containsComputedProperty { false };

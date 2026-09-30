@@ -405,7 +405,7 @@ static void generateToBoolean(CCallHelpers& jit)
     answer(false);
 
     notNumber.link(&jit);
-    Jump isCell = jit.branchIfCell(A0, DoNotHaveTagRegisters);
+    Jump isCell = jit.branchIfCell(A0);
     answer(false); // undefined, null.
 
     isCell.link(&jit);
@@ -509,8 +509,7 @@ static void generateIsStringThatSays(CCallHelpers& jit)
     CCallHelpers::JumpList isFalse;
     CCallHelpers::JumpList slow;
     isTrue.append(jit.branch64(CCallHelpers::Equal, A0, A1));
-    jit.move(CCallHelpers::TrustedImm64(JSValue::NotCellMask), T9);
-    isFalse.append(jit.branchTest64(CCallHelpers::NonZero, A0, T9));
+    isFalse.append(jit.branchIfNotCell(A0));
     jit.load8(Address(A0, JSCell::typeInfoTypeOffset()), T9);
     isFalse.append(jit.branch32(CCallHelpers::NotEqual, T9, TrustedImm32(StringType)));
     jit.loadPtr(Address(A0, JSString::offsetOfValue()), A2);
@@ -777,7 +776,7 @@ static void generateGetByVal(CCallHelpers& jit)
     jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T9);
     Jump notInt32 = jit.branch64(CCallHelpers::Below, A1, T9);
     CCallHelpers::Label haveIndex = jit.label();
-    slow.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    slow.append(jit.branchIfNotCell(A0));
     jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T13);
     jit.and32(TrustedImm32(IndexingShapeMask), T13);
     Jump noButterfly = jit.branchTest32(CCallHelpers::Zero, T13);
@@ -896,9 +895,9 @@ static void generateGetByVal(CCallHelpers& jit)
 
     // A name: a string that is an atom, or a symbol.
     notNumber.link(&jit);
-    slow.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    slow.append(jit.branchIfNotCell(A0));
     slow.append(jit.branchIfNotObject(A0));
-    slow.append(jit.branchIfNotCell(A1, DoNotHaveTagRegisters));
+    slow.append(jit.branchIfNotCell(A1));
     Jump isSymbol = jit.branchIfSymbol(A1);
     slow.append(jit.branchIfNotString(A1));
     jit.loadPtr(Address(A1, JSString::offsetOfValue()), A2);
@@ -920,7 +919,7 @@ static void generatePutByVal(CCallHelpers& jit)
     CCallHelpers::JumpList slow;
     jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T9);
     slow.append(jit.branch64(CCallHelpers::Below, A1, T9));
-    slow.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    slow.append(jit.branchIfNotCell(A0));
     jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T11);
     jit.and32(TrustedImm32(IndexingShapeMask | CopyOnWrite), T11);
     Jump isContiguous = jit.branch32(CCallHelpers::Equal, T11, TrustedImm32(ContiguousShape));
@@ -976,7 +975,7 @@ static void generatePutByVal(CCallHelpers& jit)
     inBounds.link(&jit);
     jit.store64(A2, CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight));
 
-    Jump notCell = jit.branchIfNotCell(A2, DoNotHaveTagRegisters);
+    Jump notCell = jit.branchIfNotCell(A2);
     loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
     jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
@@ -1192,11 +1191,24 @@ static void generateGetByIdWellKnown(CCallHelpers& jit) { generateGetByIdWith(ji
 static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
 {
     CCallHelpers::JumpList miss;
-    miss.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    // (Whoever calls this is code that keeps the tags where they belong.)
+    miss.append(jit.branchIfNotCell(A0));
     jit.load64(slotWord(A1, 0), T11);
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     miss.append(jit.branch32(CCallHelpers::NotEqual, T11, T12));
-    // In the base, or in an object that every base of this structure inherits it from.
+    // In the object itself, which is what it comes to more often than not.
+    Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+#if CPU(ARM64)
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+#else
+    jit.urshift64(TrustedImm32(32), T11);
+    jit.and32(TrustedImm32(Slot::offsetMask), T11);
+#endif
+    jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
+    jit.ret();
+
+    isIntricate.link(&jit);
+    // Outside it, or in an object that every base of this structure inherits it from.
     jit.loadPtr(slotWord(A1, 1), T12);
     jit.moveConditionallyTest64(CCallHelpers::NonZero, T12, T12, T12, A0, T12);
     Jump isGetter = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isGetter) << 32));
@@ -1217,7 +1229,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         CCallHelpers::JumpList notOwn;
         loadInstanceAndDataOfSlot(jit, A1, T9, T10);
         countMissOfSlot(jit, T9, T10);
-        notInTable.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        notInTable.append(jit.branchIfNotCell(A0));
         findInDispatchTable(jit, A1, A2, notInTable, notOwn);
         Jump isOutOfLine = jit.branch64(CCallHelpers::LessThan, T12, TrustedImm32(0));
         fillEmptySlotFromDispatchTable(jit, A1);
@@ -1251,7 +1263,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
 
         // See branchIfSlotIsStillOfUse() (AOTThunks.cpp).
         CCallHelpers::JumpList notFound;
-        notFound.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        notFound.append(jit.branchIfNotCell(A0));
         notFound.append(jit.branchIfNotObject(A0));
         jit.load32(Address(A1, OBJECT_OFFSETOF(Slot, offset)), T11);
         jit.and32(TrustedImm32(Slot::attemptsMask), T11);
@@ -1286,7 +1298,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
 static void generatePutById(CCallHelpers& jit)
 {
     CCallHelpers::JumpList miss;
-    miss.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    miss.append(jit.branchIfNotCell(A0));
     jit.load64(slotWord(A2, 0), T11);
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     miss.append(jit.branch32(CCallHelpers::NotEqual, T11, T12));
@@ -1301,7 +1313,7 @@ static void generatePutById(CCallHelpers& jit)
     sameStructure.link(&jit);
 
     CCallHelpers::Label stored = jit.label();
-    Jump notCell = jit.branchIfNotCell(A1, DoNotHaveTagRegisters);
+    Jump notCell = jit.branchIfNotCell(A1);
     CCallHelpers::Label storedAndMayBeOfAnotherStructure = jit.label();
     loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
@@ -1326,10 +1338,10 @@ static void generatePutById(CCallHelpers& jit)
             miss.append(jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(kind)));
             jit.jump().linkTo(isHeld, &jit);
         };
-        Jump isCell = jit.branchIfCell(A1, DoNotHaveTagRegisters);
-        Jump isNotNumber = jit.branchIfNotNumber(A1, DoNotHaveTagRegisters);
+        Jump isCell = jit.branchIfCell(A1);
+        Jump isNotNumber = jit.branchIfNotNumber(A1);
         miss.append(jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(SoundTypeNumber)));
-        jit.branchIfNotInt32(A1, DoNotHaveTagRegisters).linkTo(isHeld, &jit);
+        jit.branchIfNotInt32(A1).linkTo(isHeld, &jit);
         // (A number there is encoded as a double.)
         jit.convertInt32ToDouble(A1, FPRInfo::fpRegT0);
         jit.moveDoubleTo64(FPRInfo::fpRegT0, A1);
@@ -1384,7 +1396,7 @@ static void generatePutById(CCallHelpers& jit)
     countMissOfSlot(jit, T9, T10);
     // (Not where a slot says what it holds: the table does not say which do. See SlotsOfBornObjects.)
     if (!Options::aotTypesFields()) {
-        notInTable.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        notInTable.append(jit.branchIfNotCell(A0));
         findInDispatchTable(jit, A2, A3, notInTable, notInTable);
         Jump isOutOfLine = jit.branch64(CCallHelpers::LessThan, T12, TrustedImm32(0));
         fillEmptySlotFromDispatchTable(jit, A2);
@@ -1401,7 +1413,7 @@ static void generatePutById(CCallHelpers& jit)
         // (A field of a struct that says what it holds is never remembered there: PutPropertySlot::isCacheablePut().)
         CCallHelpers::JumpList notFound;
         constexpr GPRReg cache = GPRInfo::argumentGPR7;
-        notFound.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        notFound.append(jit.branchIfNotCell(A0));
         notFound.append(jit.branchIfNotObject(A0));
         loadInstanceAndDataOfSlot(jit, A2, T9, T10);
         siteOfSlot(jit, T10, A2, T13);
@@ -1428,7 +1440,7 @@ static void generatePutById(CCallHelpers& jit)
 // The caches for private names are for a structure and a name, which is a cell that the slot points to.
 static void checkPrivateNameCache(CCallHelpers& jit, GPRReg slot, CCallHelpers::JumpList& miss)
 {
-    miss.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    miss.append(jit.branchIfNotCell(A0));
     jit.load64(slotWord(slot, 0), T11);
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     miss.append(jit.branch32(CCallHelpers::NotEqual, T11, T12));
@@ -1466,7 +1478,7 @@ static void generatePutPrivateName(CCallHelpers& jit)
     locateCachedProperty(jit, A0, T11, T12);
     jit.store64(A2, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesEight));
 
-    Jump notCell = jit.branchIfNotCell(A2, DoNotHaveTagRegisters);
+    Jump notCell = jit.branchIfNotCell(A2);
     loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
     jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
@@ -1581,7 +1593,7 @@ static void generatePutToScope(CCallHelpers& jit)
     jit.and32(TrustedImm32(Slot::offsetMask), T11);
     jit.store64(A1, CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight, JSLexicalEnvironment::offsetOfVariables()));
 
-    Jump notCell = jit.branchIfNotCell(A1, DoNotHaveTagRegisters);
+    Jump notCell = jit.branchIfNotCell(A1);
     loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
     jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
@@ -1645,7 +1657,7 @@ static void generateGetLength(CCallHelpers& jit)
 {
     CCallHelpers::JumpList generic;
     jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T9);
-    generic.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+    generic.append(jit.branchIfNotCell(A0));
 
     // An array that has storage of some kind has its length there. One above what an int32 holds is for the runtime.
     jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T11);
@@ -2363,16 +2375,16 @@ static void generateIteratorNext(CCallHelpers& jit)
         jumpToEntry(jit, T9, Entry::HandleException);
     };
 
-    Jump nextIsCell = jit.branchIfCell(A0, DoNotHaveTagRegisters);
+    Jump nextIsCell = jit.branchIfCell(A0);
 
     // Then, and only then, iterator may be a sentinel instead of an object: iterable is an array, and next the index to visit.
-    generic.append(jit.branchIfNotCell(A1, DoNotHaveTagRegisters));
+    generic.append(jit.branchIfNotCell(A1));
     generic.append(jit.branchIfNotType(A1, SentinelType));
 
     // An element that is there, in storage that holds JSValues. The end, holes and everything else are the runtime's.
     jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T9);
     indexSlow.append(jit.branch64(CCallHelpers::Below, A0, T9));
-    indexSlow.append(jit.branchIfNotCell(A2, DoNotHaveTagRegisters));
+    indexSlow.append(jit.branchIfNotCell(A2));
     indexSlow.append(jit.branchIfNotType(A2, ArrayType));
     jit.load8(Address(A2, JSCell::indexingTypeAndMiscOffset()), T11);
     jit.and32(TrustedImm32(IndexingShapeMask), T11);
@@ -2452,7 +2464,7 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
     // Its hash, if it is its own normal form: a number that is not an int32 may not be, and what a BigInt is is more than its address.
     CCallHelpers::JumpList hashed;
     CCallHelpers::JumpList plain;
-    Jump notCell = jit.branchIfNotCell(key, DoNotHaveTagRegisters);
+    Jump notCell = jit.branchIfNotCell(key);
     Jump isString = jit.branchIfType(key, StringType);
     otherwise.append(jit.branchIfType(key, HeapBigIntType));
     plain.append(jit.jump());
@@ -2465,7 +2477,7 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
     hashed.append(jit.jump());
     notCell.link(&jit);
     Jump notNumber = jit.branchTest64(CCallHelpers::Zero, key, CCallHelpers::TrustedImm64(JSValue::NumberTag));
-    otherwise.append(jit.branchIfNotInt32(key, DoNotHaveTagRegisters));
+    otherwise.append(jit.branchIfNotInt32(key));
     notNumber.link(&jit);
     plain.link(&jit);
     jit.move(key, hash);
@@ -2497,8 +2509,8 @@ static void findInMapOrSet(CCallHelpers& jit, CCallHelpers::JumpList& otherwise,
     found.append(jit.branch64(CCallHelpers::Equal, entryKey, key));
     // Both are their own normal forms. If they are not the same thing, they are the same key only if both are strings that say
     // the same.
-    next.append(jit.branchIfNotCell(entryKey, DoNotHaveTagRegisters));
-    next.append(jit.branchIfNotCell(key, DoNotHaveTagRegisters));
+    next.append(jit.branchIfNotCell(entryKey));
+    next.append(jit.branchIfNotCell(key));
     next.append(jit.branchIfNotType(entryKey, StringType));
     next.append(jit.branchIfNotType(key, StringType));
     jit.loadPtr(Address(entryKey, JSString::offsetOfValue()), entryImpl);
@@ -2542,7 +2554,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
     CCallHelpers::JumpList* ifNotTheCallee = &otherwise;
     auto checkCallee = [&](Entry function) {
         CCallHelpers::JumpList& otherwise = *ifNotTheCallee;
-        otherwise.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        otherwise.append(jit.branchIfNotCell(A0));
         otherwise.append(jit.branchIfNotType(A0, JSFunctionType));
         jit.loadPtr(Address(A0, JSFunction::offsetOfExecutableOrRareData()), T11);
         Jump hasExecutable = jit.branchTestPtr(CCallHelpers::Zero, T11, TrustedImm32(JSFunction::rareDataTag));
@@ -2556,7 +2568,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
     };
     auto loadThisOfType = [&](JSType type) {
         jit.move(argument(0), A1);
-        otherwise.append(jit.branchIfNotCell(A1, DoNotHaveTagRegisters));
+        otherwise.append(jit.branchIfNotCell(A1));
         otherwise.append(jit.branchIfNotType(A1, type));
     };
     auto returnInt32 = [&](GPRReg value) {
@@ -2573,7 +2585,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
         jit.loadPtr(Address(A1, JSString::offsetOfValue()), T13);
         otherwise.append(jit.branchTestPtr(CCallHelpers::NonZero, T13, TrustedImm32(JSString::isRopeInPointer)));
         jit.move(argument(1), A2);
-        otherwise.append(jit.branchIfNotInt32(A2, DoNotHaveTagRegisters));
+        otherwise.append(jit.branchIfNotInt32(A2));
         checkCallee(intrinsic == StubIntrinsic::CharCodeAt ? Entry::HostStringCharCodeAt : intrinsic == StubIntrinsic::CodePointAt ? Entry::HostStringCodePointAt : Entry::HostStringCharAt);
         jit.zeroExtend32ToWord(A2, A2);
         jit.load32(Address(T13, StringImpl::lengthMemoryOffset()), A3);
@@ -2614,10 +2626,10 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
         jit.move(argument(1), A2);
         Jump holdsValues = jit.branch32(CCallHelpers::Equal, A3, TrustedImm32(ContiguousShape));
         otherwise.append(jit.branch32(CCallHelpers::NotEqual, A3, TrustedImm32(Int32Shape)));
-        otherwise.append(jit.branchIfNotInt32(A2, DoNotHaveTagRegisters));
+        otherwise.append(jit.branchIfNotInt32(A2));
         Jump isInt32 = jit.jump();
         holdsValues.link(&jit);
-        Jump notCell = jit.branchIfNotCell(A2, DoNotHaveTagRegisters);
+        Jump notCell = jit.branchIfNotCell(A2);
         jit.load8(Address(A1, JSCell::cellStateOffset()), T11);
         loadInstance(jit, T12);
         jit.loadPtr(Address(T12, Instance::offsetOfVM()), T12);
@@ -2659,7 +2671,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
     case StubIntrinsic::IsArray: {
         jit.move(argument(1), A1);
         checkCallee(Entry::HostArrayIsArray);
-        Jump notCell = jit.branchIfNotCell(A1, DoNotHaveTagRegisters);
+        Jump notCell = jit.branchIfNotCell(A1);
         jit.load8(Address(A1, JSCell::typeInfoTypeOffset()), A2);
         // What a proxy is is what it stands for, which is the function's to find out.
         otherwise.append(jit.branch32(CCallHelpers::Equal, A2, TrustedImm32(ProxyObjectType)));
@@ -2690,7 +2702,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
         jit.move(argument(1), A2);
         if (hasValue)
             jit.move(argument(2), A3);
-        putBack.append(jit.branchIfNotCell(A1, DoNotHaveTagRegisters));
+        putBack.append(jit.branchIfNotCell(A1));
         Jump isSet;
         if (isOfSet)
             putBack.append(jit.branchIfNotType(A1, JSSetType));
@@ -2727,7 +2739,7 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
                 break;
             default: {
                 // The value goes where the one before it was, if the collector need not be told.
-                Jump notCell = jit.branchIfNotCell(A3, DoNotHaveTagRegisters);
+                Jump notCell = jit.branchIfNotCell(A3);
                 jit.loadPtr(Address(A1, JSMap::offsetOfStorage()), T11);
                 jit.load8(Address(T11, JSCell::cellStateOffset()), T11);
                 loadInstance(jit, T12);

@@ -1045,9 +1045,9 @@ public:
         return new (m_parserArena) ObjectPatternNode();
     }
 
-    void appendObjectPatternEntry(ObjectPattern node, const JSTokenLocation& location, bool wasString, const Identifier& identifier, DestructuringPattern pattern, ExpressionNode* defaultValue)
+    void appendObjectPatternEntry(ObjectPattern node, const JSTokenLocation& location, bool wasString, const Identifier& identifier, DestructuringPattern pattern, ExpressionNode* defaultValue, uint32_t typeTag)
     {
-        node->appendEntry(location, identifier, wasString, pattern, defaultValue, ObjectPatternNode::BindingType::Element);
+        node->appendEntry(location, identifier, wasString, pattern, defaultValue, ObjectPatternNode::BindingType::Element, typeTag);
         tryInferNameInPattern(pattern, defaultValue);
     }
 

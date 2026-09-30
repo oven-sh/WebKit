@@ -1371,6 +1371,7 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
             TreeExpression propertyExpression = 0;
             TreeDestructuringPattern innerPattern = 0;
             JSTokenLocation location = m_token.location();
+            uint32_t typeTag = m_token.m_typeTag;
             bool escapedKeyword = match(ESCAPED_KEYWORD);
             if (escapedKeyword || matchSpecIdentifier()) {
                 bool letMatched = match(LET);
@@ -1443,7 +1444,7 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
                 context.setContainsComputedProperty(objectPattern, true);
             } else {
                 ASSERT(propertyName);
-                context.appendObjectPatternEntry(objectPattern, location, wasString, *propertyName, innerPattern, defaultValue);
+                context.appendObjectPatternEntry(objectPattern, location, wasString, *propertyName, innerPattern, defaultValue, typeTag);
             }
         } while (consume(COMMA));
 

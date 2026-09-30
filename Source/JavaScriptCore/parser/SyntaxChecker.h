@@ -372,7 +372,7 @@ public:
     {
         return ObjectDestructuring;
     }
-    void appendObjectPatternEntry(ObjectPattern, const JSTokenLocation&, bool, const Identifier&, DestructuringPattern, int)
+    void appendObjectPatternEntry(ObjectPattern, const JSTokenLocation&, bool, const Identifier&, DestructuringPattern, int, uint32_t)
     {
     }
     void appendObjectPatternEntry(VM&, ObjectPattern, const JSTokenLocation&, Expression, DestructuringPattern, Expression)

@@ -285,6 +285,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
         CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, value, slot, &oldStructure);
     else
         base.putInline(globalObject, ident, value, slot);
+    if (scope.exception()) [[unlikely]] {
+        // BUN_AOT_LOG_REFUSED=1: which store it was that a struct would not have. (The error says neither, and whoever catches it may say still less.)
+        static const bool logs = !!getenv("BUN_AOT_LOG_REFUSED");
+        if (logs && oldStructure && oldStructure->bornAs()) {
+            dataLog("AOT: REFUSED: .", ident.impl(), isDirect ? " (direct)" : "", " of what was born as ", oldStructure->bornAs(), " is given ");
+            dumpType(WTF::dataFile(), typeOfValue(value));
+            dataLogLn();
+        }
+    }
     OPERATION_RETURN_IF_EXCEPTION(scope);
     if (Options::aotReportSlowPaths()) [[unlikely]] { // TEMPORARY-SLOT-STATS
         bool tookRoom = base.isCell() && oldStructure && base.asCell()->structure()->outOfLineCapacity() != oldStructure->outOfLineCapacity();
