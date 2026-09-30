@@ -1,0 +1,27 @@
+binascii.b2a_hex => (b'61:62:63:64', b'61:62:63:64', b'6162-6364-6566')
+binascii.hexlify => (b'61:62:63:64', b'6162.6364.6566')
+binascii.a2b_qp => (b'a bA', b'a_bA', b'=')
+binascii.b2a_qp => (b'a_b\t=3D', b'a=20b=09=3D', b'a=0D=0Ab')
+math.isclose => (True, False, True, True, False)
+math.isclose with one missing => TypeError isclose() missing required argument 'a' (pos 1)
+math.isclose of the wrong kind => TypeError must be real number, not str
+memoryview._from_flags => (b'abc', False)
+memoryview._from_flags of the wrong kind => TypeError memoryview: a bytes-like object is required, not 'int'
+_opcode.has_arg => [False, True, True, False, False, False, False, False, False, False, False, True, False, False, False, False, True, False, False, False, False]
+_opcode.stack_effect => (-2, -2)
+_opcode.get_executor => TypeError expected a code object, not 'int'
+_opcode.get_executor of the wrong kind => TypeError 'str' object cannot be interpreted as an integer
+_sre.compile => ('(?P<letters>[a-z]+)(\\d+)', 2, {'letters': 1}, ('ab', '12'), {'letters': 'ab'})
+_sre.compile of the wrong kind => TypeError compile() argument 'code' must be list, not int
+Pattern.match and the like => [(1, 5), (1, 5), ('ab', '12')]
+Pattern.findall => [('ab', '12')]
+Pattern.finditer => [(1, 5), (5, 8)]
+Pattern.scanner => ('ab', '12')
+Pattern.split => ['-', 'ab', '1', '-cd2-']
+Pattern.sub => ('<1> cd2', 'AB CD', (' ', 2))
+Pattern.sub with one missing => TypeError sub() missing required argument 'repl' (pos 1)
+Match.expand => 12-ab
+Struct.unpack_from => ((513,), (513,))
+struct.unpack_from => ((513,), (513,))
+mappingproxy => {'a': 1}
+mappingproxy of the wrong kind => TypeError mappingproxy() argument must be a mapping, not int

@@ -197,6 +197,8 @@ public:
 
     // The attribute as it is stored, in this class or the first after it in the order of resolution that has it. Empty if none has.
     JSValue lookup(VM&, PropertyName) const;
+    // The same, for where nothing may be allocated: getCallData(), which what has been compiled takes to set off no collection. The name is not one that looks like an index.
+    JSValue lookupWithoutAllocating(UniquedStringImpl*) const;
     // The same, and which class has it. That is null if it is what a class of JavaScript's defines for its instances, which is not a property of the class.
     JSValue lookup(VM&, PropertyName, PyType*& holder) const;
     // The same, beginning after `after`, which is what super() does.

@@ -2695,9 +2695,9 @@ PYTHON_NATIVE(builtinReleaseBuffer)
 PYTHON_NATIVE(memoryFromFlags)
 {
     NATIVE_PROLOGUE();
-    auto flags = toCInt(globalObject, args[2]);
+    auto flags = toCInt(globalObject, args.at(2));
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(memoryViewOf(globalObject, args[1], *flags)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(memoryViewOf(globalObject, args.at(1), *flags)));
 }
 
 PYTHON_NATIVE(memoryRepr)

@@ -1618,12 +1618,26 @@ There is nothing that is per process, nothing that is set after something is mad
 
 | | |
 |---|---|
-| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in five configurations of the engine, and once by way of its syntax tree |
+| `JSTests/python/run-programs.sh <jsc>` | programs whose output is CPython's, byte for byte, each in eight configurations of the engine, and once by way of its syntax tree |
 | `JSTests/python/run-interop.sh <jsc>` | the two languages together. There is nothing to compare these with: what is expected was read and found right |
 | `JSTests/python/audits/run-audits.sh <jsc> [n]` | not tests but measures of how far there is to go, over everything that is built in |
 | `JSTests/python/parser.js`, `symbol-table.js` | the first stages by themselves |
 
 All but the last need to be told where the part of the library that is written in Python is: `PYTHONPATH` is to name the `Lib` directory of CPython 3.14.
+
+**They are to be run with the engine's assertions on as well**: `-DENABLE_ASSERTS=ON`, with everything else as it is for a release, which is quick enough to run all of it. The first time that was done half of the programs stopped at one. Some of what was found
+was wrong and had gone unnoticed:
+
+- What is written in C++ has `args[i]` for an argument that there has to be, and it was taken from where it would be had it been given by position. Nineteen functions have one that can be given by name, so `binascii.b2a_hex(sep=":", data=b"ab")` took the separator for
+  the data. It is looked for by name now if it was not given by position. `programs/arguments-by-name-in-any-order.py`
+- `x << 0`, of an `x` that is a `JSBigInt`, looked at the first digit of a zero, which has none.
+- What `functools` marks the keywords in a key with was a cell of one class with the `Structure` of another.
+- An instance of a class derived from `_thread.RLock` that has `__call__()` could not be called from JavaScript.
+- `continue` in `while 0:` went to a label that was nowhere.
+- **There is no such thing as a property that has nothing.** What an object keeps under a name of its own was given the empty value for it to be kept no longer. `putDirectOrRemove()`
+
+And three of JavaScriptCore's own say something else now, for what only Python does. A `Structure` may leave `OverridesGetCallData` out though its class has `getCallData()`: a tuple can be called only if it is of a class that a program has derived, and it is the
+`Structure`s of those that say so. A node of which two things come may be one that has to be generated (`PyLoadMethod`), which counts for one more use of it. And a function may have no source at all, being a module with nothing in it.
 
 **What is expected is what CPython 3.14.7 prints**, as it comes, on ARM64: `x.expected` on macOS. Where it prints something else on Linux, that is in `x.linux.expected`, which is what is gone by there. There are twenty or so:
 the system has other things in it, calls errors by other names, and its C library works some sums out to a different last digit. A program that is about what only one system has has only the one, and is passed over on

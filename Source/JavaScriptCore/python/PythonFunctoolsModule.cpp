@@ -29,6 +29,7 @@
 
 #include "JSCInlines.h"
 #include "PyDict.h"
+#include "PyInstance.h"
 #include "PyObjects.h"
 #include "PyRealm.h"
 #include "PyStateObject.h"
@@ -826,7 +827,7 @@ JSObject* createFunctoolsModule(JSGlobalObject* globalObject)
             slot.set(vm, realm, type);
             return type;
         };
-        state.keywordMark.set(vm, realm, PyNativeObject::create(globalObject, BuiltinType::Object));
+        state.keywordMark.set(vm, realm, PyInstance::create(vm, realm->structureFor(BuiltinType::Object)));
 
         PyType* placeholderType = make(state.placeholderType, "functools._PlaceholderType"_s);
         addMethods(globalObject, placeholderType, {

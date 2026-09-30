@@ -31,6 +31,7 @@
 #include "JSGenericTypedArrayViewInlines.h"
 #include "PyDict.h"
 #include "PyInstance.h"
+#include "PyLock.h"
 #include "PyNativeFunction.h"
 #include "PythonOperations.h"
 #include "PythonSignatures.h"
@@ -232,7 +233,7 @@ static CallData callDataOfInstance(JSCell* cell)
     CallData callData;
     JSObject* object = asObject(cell);
     VM& vm = cell->vm();
-    if (Python::typeOf(object->globalObject(), object)->lookup(vm, vm.pythonNames().dunder_call)) {
+    if (Python::typeOf(object->globalObject(), object)->lookupWithoutAllocating(vm.pythonNames().dunder_call.impl())) {
         callData.type = CallData::Type::Native;
         callData.native.function = callInstance;
         callData.native.isBoundFunction = false;
@@ -262,6 +263,7 @@ CallData PyException::getCallData(JSCell* cell) { return callDataOfInstance(cell
 CallData PyBoxedValue::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
 CallData PyComplex::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
 CallData PyIterator::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyLock::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
 
 // ---- PyNativeFunction
 

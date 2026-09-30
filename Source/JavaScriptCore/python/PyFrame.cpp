@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PyFrame.h"
 
+#include "BytecodeStructs.h"
 #include "CodeBlock.h"
 #include "FunctionExecutable.h"
 #include "JSCInlines.h"

@@ -89,7 +89,7 @@ PYTHON_NATIVE(opcodeHas)
 {
     auto flag = unpack<uint16_t>(callFrame, 0);
     NATIVE_PROLOGUE();
-    auto opcode = toCInt(globalObject, args[0]);
+    auto opcode = toCInt(globalObject, args.at(0));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsBoolean(isValidOpcode(*opcode) && (!flag || metadata[*opcode].flags & flag)));
 }
@@ -97,7 +97,7 @@ PYTHON_NATIVE(opcodeHas)
 PYTHON_NATIVE(opcodeHasExc)
 {
     NATIVE_PROLOGUE();
-    auto opcode = toCInt(globalObject, args[0]);
+    auto opcode = toCInt(globalObject, args.at(0));
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsBoolean(isValidOpcode(*opcode) && isBlockPush(*opcode)));
 }
@@ -147,10 +147,10 @@ PYTHON_NATIVE(opcodeGetNames)
 PYTHON_NATIVE(opcodeGetExecutor)
 {
     NATIVE_PROLOGUE();
-    toCInt(globalObject, args[1]);
+    toCInt(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
-    if (!isCode(globalObject, args[0]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("expected a code object, not '"_s, typeName(globalObject, args[0]), '\'')));
+    if (!isCode(globalObject, args.at(0)))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("expected a code object, not '"_s, typeName(globalObject, args.at(0)), '\'')));
     return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "Executors are not available in this build"_s));
 }
 

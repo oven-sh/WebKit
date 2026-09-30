@@ -77,7 +77,7 @@ Structure* JSFunction::selectStructureForNewFuncExp(JSGlobalObject* globalObject
     ASSERT(!executable->isHostFunction());
     // A function of Python's inherits from the class `function`, and from Function.prototype by way of that.
     if (executable->isPython()) [[unlikely]]
-        return globalObject->pyRealm()->structureFor(BuiltinType::Function);
+        return globalObject->pyRealmInitializedOnMainThread()->structureFor(BuiltinType::Function);
     bool isBuiltin = executable->isBuiltinFunction();
     // Arrow functions will never have a prototype, so no need to check
     if (executable->isArrowFunction())

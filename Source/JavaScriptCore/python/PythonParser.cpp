@@ -2709,6 +2709,7 @@ private:
         const Identifier* source = nullptr;
         unsigned debugEndLine = 0;
         unsigned debugEndColumn = 0;
+        unsigned debugEnd = 0;
 
         int conversion = -1;
         bool hasConversion = at(TokenKind::Exclamation);
@@ -2732,6 +2733,7 @@ private:
             source = exclamation.expressionSource;
             debugEndLine = name.line;
             debugEndColumn = name.column;
+            debugEnd = name.start;
         }
 
         Expression* formatSpecification = nullptr;
@@ -2744,6 +2746,7 @@ private:
                 source = colon.expressionSource;
                 debugEndLine = formatSpecification->line;
                 debugEndColumn = formatSpecification->column + 1;
+                debugEnd = formatSpecification->start + 1;
             }
         } else if (isDebug && conversion == -1)
             conversion = 'r';
@@ -2757,6 +2760,7 @@ private:
             source = close.expressionSource;
             debugEndLine = close.endLine;
             debugEndColumn = close.endColumn;
+            debugEnd = close.end;
         }
 
         Expression* result;
@@ -2793,6 +2797,7 @@ private:
             text->start = start.start + 1;
             text->endLine = debugEndLine;
             text->endColumn = debugEndColumn - 1;
+            text->end = debugEnd - 1;
             values.append(text);
         }
         values.append(result);

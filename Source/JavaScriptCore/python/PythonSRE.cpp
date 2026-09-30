@@ -481,7 +481,7 @@ PYTHON_NATIVE(patternMatch)
     NATIVE_PROLOGUE();
     PyStateObject* self = asPattern(args[0]);
     auto& pattern = self->state<PatternState>();
-    JSValue string = args[1];
+    JSValue string = args.at(1);
     int64_t pos = 0;
     int64_t endpos = std::numeric_limits<int64_t>::max();
     if (!toPosition(globalObject, args.at(2), pos) || !toPosition(globalObject, args.at(3), endpos))
@@ -506,7 +506,7 @@ PYTHON_NATIVE(patternFindAll)
 {
     NATIVE_PROLOGUE();
     auto& pattern = stateOf<PatternState>(args[0]);
-    JSValue string = args[1];
+    JSValue string = args.at(1);
     int64_t pos = 0;
     int64_t endpos = std::numeric_limits<int64_t>::max();
     if (!toPosition(globalObject, args.at(2), pos) || !toPosition(globalObject, args.at(3), endpos))
@@ -560,7 +560,7 @@ PYTHON_NATIVE(patternSplit)
 {
     NATIVE_PROLOGUE();
     auto& pattern = stateOf<PatternState>(args[0]);
-    JSValue string = args[1];
+    JSValue string = args.at(1);
     int64_t maxSplit = 0;
     if (!toPosition(globalObject, args.at(2), maxSplit))
         return { };
@@ -719,8 +719,8 @@ PYTHON_NATIVE(patternSub)
     NATIVE_PROLOGUE();
     PyStateObject* self = asPattern(args[0]);
     auto& pattern = self->state<PatternState>();
-    JSValue replacement = args[1];
-    JSValue string = args[2];
+    JSValue replacement = args.at(1);
+    JSValue string = args.at(2);
     int64_t count = 0;
     if (!toPosition(globalObject, args.at(3), count))
         return { };
@@ -1243,19 +1243,19 @@ JSValue raiseBadArgument(JSGlobalObject* globalObject, ThrowScope& scope, ASCIIL
 PYTHON_NATIVE(sreCompile)
 {
     NATIVE_PROLOGUE();
-    JSValue source = args[0];
-    auto flags = toCInt(globalObject, args[1]);
+    JSValue source = args.at(0);
+    auto flags = toCInt(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
-    if (!isList(args[2]))
-        return JSValue::encode(raiseBadArgument(globalObject, scope, "compile"_s, "argument 'code'"_s, "list"_s, args[2]));
-    auto groups = toSsize(globalObject, args[3]);
+    if (!isList(args.at(2)))
+        return JSValue::encode(raiseBadArgument(globalObject, scope, "compile"_s, "argument 'code'"_s, "list"_s, args.at(2)));
+    auto groups = toSsize(globalObject, args.at(3));
     RETURN_IF_EXCEPTION(scope, { });
-    if (!isDict(args[4]))
-        return JSValue::encode(raiseBadArgument(globalObject, scope, "compile"_s, "argument 'groupindex'"_s, "dict"_s, args[4]));
-    if (!isTuple(args[5]))
-        return JSValue::encode(raiseBadArgument(globalObject, scope, "compile"_s, "argument 'indexgroup'"_s, "tuple"_s, args[5]));
+    if (!isDict(args.at(4)))
+        return JSValue::encode(raiseBadArgument(globalObject, scope, "compile"_s, "argument 'groupindex'"_s, "dict"_s, args.at(4)));
+    if (!isTuple(args.at(5)))
+        return JSValue::encode(raiseBadArgument(globalObject, scope, "compile"_s, "argument 'indexgroup'"_s, "tuple"_s, args.at(5)));
 
-    auto* list = uncheckedDowncast<JSArray>(args[2].asCell());
+    auto* list = uncheckedDowncast<JSArray>(args.at(2).asCell());
     unsigned length = list->length();
     auto fields = makeUnique<PatternState>();
     if (!fields->code.tryReserveInitialCapacity(length))
@@ -1285,10 +1285,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     auto* object = PyStateObject::create(vm, moduleState(globalObject).pattern->instanceStructure(), WTF::move(fields));
     auto& pattern = object->state<PatternState>();
     pattern.pattern.set(vm, object, source);
-    if (asDict(args[4])->size()) {
-        pattern.groupIndex.set(vm, object, args[4]);
-        if (asTuple(args[5])->length())
-            pattern.indexGroup.set(vm, object, args[5]);
+    if (asDict(args.at(4))->size()) {
+        pattern.groupIndex.set(vm, object, args.at(4));
+        if (asTuple(args.at(5))->length())
+            pattern.indexGroup.set(vm, object, args.at(5));
     }
     return JSValue::encode(object);
 }
@@ -1413,7 +1413,7 @@ PYTHON_NATIVE(matchExpand)
 {
     NATIVE_PROLOGUE();
     auto& match = stateOf<MatchState>(args[0]);
-    JSValue filter = compileTemplate(globalObject, match.pattern.get(), args[1]);
+    JSValue filter = compileTemplate(globalObject, match.pattern.get(), args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(expandTemplate(globalObject, stateOf<TemplateState>(filter), match)));
 }
@@ -1589,7 +1589,7 @@ PYTHON_NATIVE(patternScanner)
     int64_t endpos = std::numeric_limits<int64_t>::max();
     if (!toPosition(globalObject, args.at(2), pos) || !toPosition(globalObject, args.at(3), endpos))
         return { };
-    PyStateObject* scanner = newScanner(globalObject, asPattern(args[0]), args[1], pos, endpos);
+    PyStateObject* scanner = newScanner(globalObject, asPattern(args[0]), args.at(1), pos, endpos);
     RETURN_IF_EXCEPTION(scope, { });
     if (!isIterator)
         return JSValue::encode(scanner);

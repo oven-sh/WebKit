@@ -3355,6 +3355,8 @@ private:
                     mark(*node.test);
                     NestedBlock block(*this, node);
                     emitNeverComeTo(node.body);
+                    // A `continue` in it is never come to either, but it has to go somewhere.
+                    emitLabel(*scope.continueTarget());
                     return;
                 }
                 Ref<Label> otherwise = g.newLabel();

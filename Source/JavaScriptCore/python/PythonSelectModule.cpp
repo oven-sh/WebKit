@@ -549,7 +549,7 @@ PYTHON_NATIVE(keventInit)
         RETURN_IF_EXCEPTION(scope, { });
         event.udata = std::bit_cast<void*>(static_cast<uintptr_t>(lowBitsOfInt(integer)));
     }
-    JSValue identifier = args[1];
+    JSValue identifier = args.at(1);
     if (hasIndex(identifier)) {
         // PyLong_AsNativeBytes(), of what is not to be less than nothing
         auto value = toUnsigned<uintptr_t>(globalObject, identifier, "kqueue event identifier"_s);

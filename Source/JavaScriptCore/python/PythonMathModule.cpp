@@ -1036,9 +1036,9 @@ PYTHON_NATIVE(mathClassify)
 PYTHON_NATIVE(mathIsClose)
 {
     NATIVE_PROLOGUE();
-    auto a = toDouble(globalObject, args[0]);
+    auto a = toDouble(globalObject, args.at(0));
     RETURN_IF_EXCEPTION(scope, { });
-    auto b = toDouble(globalObject, args[1]);
+    auto b = toDouble(globalObject, args.at(1));
     RETURN_IF_EXCEPTION(scope, { });
     double relativeTolerance = 1e-09;
     if (JSValue given = args.at(2)) {

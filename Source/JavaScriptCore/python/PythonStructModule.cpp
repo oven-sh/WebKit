@@ -799,7 +799,7 @@ PYTHON_NATIVE(structNew)
 PYTHON_NATIVE(structInit)
 {
     NATIVE_PROLOGUE();
-    JSValue format = args[1];
+    JSValue format = args.at(1);
     if (stringIn(format)) {
         // PyUnicode_AsASCIIString()
         format = encodeStringToObject(globalObject, format, "ascii"_s, "strict"_s);
@@ -823,7 +823,7 @@ PYTHON_NATIVE(structUnpack)
 PYTHON_NATIVE(structUnpackFrom)
 {
     NATIVE_PROLOGUE();
-    RELEASE_AND_RETURN(scope, JSValue::encode(unpackFromOffset(globalObject, stateOf<StructState>(args[0]), args[1], args.at(2))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(unpackFromOffset(globalObject, stateOf<StructState>(args[0]), args.at(1), args.at(2))));
 }
 
 // iter_unpack(buffer, /)
@@ -976,7 +976,7 @@ PYTHON_NATIVE(structModuleUnpackFrom)
     NATIVE_PROLOGUE();
     JSValue object = structFor(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(unpackFromOffset(globalObject, stateOf<StructState>(object), args[1], args.at(2))));
+    RELEASE_AND_RETURN(scope, JSValue::encode(unpackFromOffset(globalObject, stateOf<StructState>(object), args.at(1), args.at(2))));
 }
 
 // iter_unpack(format, buffer, /)

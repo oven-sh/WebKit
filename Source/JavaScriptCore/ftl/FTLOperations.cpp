@@ -147,7 +147,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationPopulateObjectInOSR, void, (JSGlobalO
 
 
     case PhantomNewObject: {
-        JSFinalObject* object = uncheckedDowncast<JSFinalObject>(JSValue::decode(*encodedValue));
+        // A JSFinalObject, or a PyInstance, which is one in all but name.
+        JSObject* object = asObject(JSValue::decode(*encodedValue));
         Structure* structure = object->structure();
 
         // Figure out what the heck to populate the object with. Use

@@ -10854,7 +10854,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
             auto addFlushDirect = [&] (InlineCallFrame* inlineCallFrame, Operand operand) {
                 // We don't need to flush anything here since that should be handled by the terminal of the not-taken block.
                 UNUSED_PARAM(inlineCallFrame);
-                ASSERT_UNUSED(operand, unmapOperand(inlineCallFrame, operand).isArgument() || operand == m_graph.m_codeBlock->scopeRegister());
+                ASSERT_UNUSED(operand, unmapOperand(inlineCallFrame, operand).isArgument() || operand == m_graph.m_codeBlock->scopeRegister() || m_graph.isSeenFromOutside(operand));
             };
             auto addPhantomLocalDirect = [&] (InlineCallFrame*, Operand operand) { phantomLocalDirect(operand); };
             // The addPhantomLocalDirect part of flushForTerminal happens to be exactly what we want so let's just call that.

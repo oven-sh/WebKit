@@ -640,7 +640,7 @@ public:
 
     void null() { emit(jsUndefined()); }
     void identifier(const Identifier& identifier) { emit(jsString(m_vm, identifier.string())); }
-    void unicodePrefix() { emit(jsNontrivialString(m_vm, "u"_s)); }
+    void unicodePrefix() { emit(jsSingleCharacterString(m_vm, static_cast<Latin1Character>('u'))); }
 
     void text(const Text& text)
     {

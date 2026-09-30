@@ -47,7 +47,8 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
     , m_unlinkedExecutable(unlinkedExecutable, WriteBarrierEarlyInit)
 {
     RELEASE_ASSERT(!source.isNull());
-    ASSERT(source.length());
+    // A module of Python's is a function, and there may be nothing in it.
+    ASSERT(source.length() || source.provider()->isPython());
 }
 
 void FunctionExecutable::destroy(JSCell* cell)

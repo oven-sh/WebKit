@@ -98,7 +98,7 @@ private:
 
     static constexpr unsigned specialShift = commonBits;
 
-    static constexpr unsigned nodeOpBits = 9;
+    static constexpr unsigned nodeOpBits = 10;
     static constexpr unsigned nodeOpMask = (1 << nodeOpBits) - 1;
     static constexpr unsigned nodeOpShift = commonBits;
 

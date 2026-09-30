@@ -386,7 +386,7 @@ PYTHON_NATIVE(binasciiCRC32)
 PYTHON_NATIVE(binasciiB2AHex)
 {
     NATIVE_PROLOGUE();
-    Buffer buffer = bufferOf(globalObject, args[0]);
+    Buffer buffer = bufferOf(globalObject, args.at(0));
     RETURN_IF_EXCEPTION(scope, { });
     String text = hexOfBuffer(globalObject, args, buffer);
     RETURN_IF_EXCEPTION(scope, { });
@@ -418,7 +418,7 @@ PYTHON_NATIVE(binasciiA2BQP)
 {
     NATIVE_PROLOGUE();
     Bytes data;
-    if (!toASCIIBuffer(globalObject, args[0], data))
+    if (!toASCIIBuffer(globalObject, args.at(0), data))
         return { };
     auto isHeader = toBoolArgument(globalObject, args.at(1), false);
     RETURN_IF_EXCEPTION(scope, { });
@@ -462,7 +462,7 @@ PYTHON_NATIVE(binasciiB2AQP)
 {
     NATIVE_PROLOGUE();
     Bytes data;
-    if (!toBuffer(globalObject, args[0], data))
+    if (!toBuffer(globalObject, args.at(0), data))
         return { };
     auto quotesTabs = toBoolArgument(globalObject, args.at(1), false);
     RETURN_IF_EXCEPTION(scope, { });

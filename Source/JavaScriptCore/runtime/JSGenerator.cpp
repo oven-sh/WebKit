@@ -38,7 +38,7 @@ Structure* JSGenerator::selectStructureForNewGenerator(JSGlobalObject* globalObj
 {
     // One of Python's inherits from the class `generator`, and from %GeneratorPrototype% by way of that.
     if (executable->isPython()) [[unlikely]]
-        return globalObject->pyRealm()->structureFor(BuiltinType::Generator);
+        return globalObject->pyRealmInitializedOnMainThread()->structureFor(BuiltinType::Generator);
     return globalObject->generatorStructure();
 }
 

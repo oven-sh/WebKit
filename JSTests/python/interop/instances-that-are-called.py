@@ -1,3 +1,4 @@
+import _thread
 import js
 
 
@@ -11,7 +12,7 @@ def derived(base, *args):
 
 # Each is a kind of cell of its own.
 with_call = [derived(object), derived(int, 5), derived(float, 1.5), derived(complex, 1j), derived(str, "text"), derived(bytes, b"ab"), derived(bytearray, b"ab"), derived(tuple, (1, 2)), derived(list, [1, 2]), derived(dict, {"a": 1}),
-             derived(set, [1]), derived(frozenset, [1]), derived(ValueError, "message"), derived(enumerate, []), derived(zip)]
+             derived(set, [1]), derived(frozenset, [1]), derived(ValueError, "message"), derived(enumerate, []), derived(zip), derived(_thread.RLock)]
 without = [type("Plain_" + type(x).__mro__[1].__name__, (type(x).__mro__[1],), {})() for x in with_call if type(x).__mro__[1] not in (enumerate,)]
 built_in = [(1, 2), {"a": 1}, {1}, frozenset([1]), 1j, ValueError("message"), enumerate([]), b"ab", bytearray(b"ab"), [1, 2]]
 

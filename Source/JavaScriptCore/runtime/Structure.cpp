@@ -174,7 +174,10 @@ void Structure::validateFlags()
     const MethodTable& methodTable = m_classInfo->methodTable;
 
     bool overridesGetCallData = methodTable.getCallData != JSCell::getCallData;
-    RELEASE_ASSERT(overridesGetCallData == typeInfo().overridesGetCallData());
+    // Not the other way about. A tuple or a dict of Python's can be called only if it is of a class that a program has derived, which may have __call__(), and it is the Structures
+    // of those that say so. Nothing is to be asked of any other to find that it cannot. See PyType::createInstanceStructure().
+    if (typeInfo().overridesGetCallData())
+        RELEASE_ASSERT(overridesGetCallData);
 
     bool overridesGetOwnPropertySlot =
         methodTable.getOwnPropertySlot != JSObject::getOwnPropertySlot

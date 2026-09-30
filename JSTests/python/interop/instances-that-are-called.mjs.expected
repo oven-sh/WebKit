@@ -29,6 +29,8 @@ From_enumerate => function | From_enumerate called with () {} | From_enumerate c
     as a constructor => JavaScript caught TypeError: function is not a constructor (evaluating 'new x()')
 From_zip => function | From_zip called with () {} | From_zip called with (1, 'a') {} | From_zip called with (5,) {} | From_zip called with (6,) {} | From_zip called with (7,) {} | From_zip called with (8,) {} | From_zip called with (1,) {'k': 2} | true
     as a constructor => JavaScript caught TypeError: function is not a constructor (evaluating 'new x()')
+From_RLock => function | From_RLock called with () {} | From_RLock called with (1, 'a') {} | From_RLock called with (5,) {} | From_RLock called with (6,) {} | From_RLock called with (7,) {} | From_RLock called with (8,) {} | From_RLock called with (1,) {'k': 2} | true
+    as a constructor => JavaScript caught TypeError: function is not a constructor (evaluating 'new x()')
 what Function.prototype has => 0
 still what they were => true,2,true,true,message
 given to what wants a function => 3,true,1
@@ -47,6 +49,7 @@ Plain_set => object,false
 Plain_frozenset => object,false
 Plain_ValueError => object,false
 Plain_zip => object,false
+Plain_RLock => object,false
 called => JavaScript caught TypeError: m.without[7] is not a function. (In 'm.without[7]()', 'm.without[7]' is an instance of tuple)
 called by Python => JavaScript caught TypeError: 'Plain_tuple' object is not callable
 ---- what is built in

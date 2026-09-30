@@ -344,6 +344,24 @@ JSValue PyType::lookup(VM& vm, PropertyName name) const
     return { };
 }
 
+JSValue PyType::lookupWithoutAllocating(UniquedStringImpl* name) const
+{
+    // JSObject::getDirect() makes the Structure a table of its properties if it has none just now.
+    auto get = [&] (JSObject* object) -> JSValue {
+        PropertyOffset offset = object->structure()->getConcurrently(name);
+        return offset == invalidOffset ? JSValue() : object->getDirect(offset);
+    };
+    for (auto& entry : m_mro->span()) {
+        if (JSValue value = get(asObject(entry.get())))
+            return value;
+        if (JSObject* prototype = asType(entry.get())->javaScriptPrototype()) [[unlikely]] {
+            if (JSValue value = get(prototype))
+                return value;
+        }
+    }
+    return { };
+}
+
 JSValue PyType::lookup(VM& vm, PropertyName name, PyType*& holder) const
 {
     holder = nullptr;
@@ -698,8 +716,14 @@ bool PyType::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, 
         bool found = Base::getOwnPropertySlot(object, globalObject, name, slot);
         RETURN_IF_EXCEPTION(scope, false);
         // As with what is defined in a class of JavaScript's, it is not gone through by `for (name in instance)`.
-        if (found && !slot.isVMInquiry() && slot.isValue())
-            slot.setValue(object, slot.attributes() | PropertyAttribute::DontEnum, slot.getPureResult());
+        if (found && !slot.isVMInquiry() && slot.isValue()) {
+            unsigned attributes = slot.attributes() | PropertyAttribute::DontEnum;
+            JSValue value = slot.getPureResult();
+            if (slot.isCacheableValue())
+                slot.setValue(object, attributes, value, slot.cachedOffset());
+            else
+                slot.setValue(object, attributes, value);
+        }
         return found;
     }
 

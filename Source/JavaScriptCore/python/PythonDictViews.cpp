@@ -265,9 +265,9 @@ static bool isProxy(JSGlobalObject* globalObject, JSValue value) { return isView
 PYTHON_NATIVE(proxyNew)
 {
     NATIVE_PROLOGUE();
-    if (!typeOf(globalObject, args[1])->lookup(vm, names.dunder_getitem) || isList(args[1]) || isTuple(args[1]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, args[1]))));
-    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::MappingProxy, args[1]));
+    if (!typeOf(globalObject, args.at(1))->lookup(vm, names.dunder_getitem) || isList(args.at(1)) || isTuple(args.at(1)))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("mappingproxy() argument must be a mapping, not "_s, typeName(globalObject, args.at(1)))));
+    return JSValue::encode(PyNativeObject::create(globalObject, BuiltinType::MappingProxy, args.at(1)));
 }
 
 PYTHON_NATIVE(proxyGetItem)

@@ -102,7 +102,7 @@ PYTHON_NATIVE(propertyInit)
         property->setField(vm, i, function && !isNone(function) ? function : JSValue());
     }
     property->setField(vm, PropertyField::Doc, JSValue());
-    property->putDirect(vm, names.private_propertyName, JSValue());
+    putDirectOrRemove(globalObject, property, names.private_propertyName, JSValue());
 
     // If it is given no docstring and the getter has one, that is it.
     bool isGettersDoc = false;
@@ -148,7 +148,7 @@ PYTHON_NATIVE(propertyWith)
     JSValue copy = call(globalObject, typeOf(globalObject, original)->object(), arguments);
     RETURN_IF_EXCEPTION(scope, { });
     if (isInstance(globalObject, copy, realm->typeProperty()))
-        asObject(copy)->putDirect(vm, names.private_propertyName, original->getDirect(vm, names.private_propertyName));
+        putDirectOrRemove(globalObject, asObject(copy), names.private_propertyName, original->getDirect(vm, names.private_propertyName));
     return JSValue::encode(copy);
 }
 
@@ -239,7 +239,7 @@ void initializeProperty(JSGlobalObject* globalObject)
             return raise(globalObject, scope, BuiltinType::AttributeError, "'property' object has no attribute '__name__'"_s);
         return name;
     }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
-        asNativeObject(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().private_propertyName, value);
+        putDirectOrRemove(globalObject, asNativeObject(self), globalObject->vm().pythonNames().private_propertyName, value);
     });
     addGetSet(globalObject, property, "__isabstractmethod__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
         VM& vm = globalObject->vm();

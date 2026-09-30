@@ -651,7 +651,7 @@ static JSValue intBinaryOperation(JSGlobalObject* globalObject, ThrowScope& scop
         break;
     case BinaryOperator::LShift:
         // By more than there could be room for anywhere: CPython keeps count of the bits of an int in an int64_t.
-        if (!a->isZero() && !b->sign() && (b->length() > 1 || b->digit(0) >= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - bitLengthOfInt(classify(JSValue(a)))))
+        if (!a->isZero() && !b->sign() && (b->length() > 1 || (b->length() && b->digit(0) >= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) - bitLengthOfInt(classify(JSValue(a))))))
             return raise(globalObject, scope, BuiltinType::OverflowError, "too many digits in integer"_s);
         result = JSBigInt::leftShift(globalObject, a, b);
         break;

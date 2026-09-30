@@ -75,7 +75,7 @@ static void setFunctionAnnotate(JSGlobalObject* globalObject, JSValue self, JSVa
         return;
     asObject(self)->putDirect(vm, names.private_annotate, value);
     if (!isNone(value))
-        asObject(self)->putDirect(vm, names.private_annotations, JSValue());
+        putDirectOrRemove(globalObject, asObject(self), names.private_annotations, JSValue());
 }
 
 static JSValue getFunctionAnnotations(JSGlobalObject* globalObject, JSValue self)
@@ -108,8 +108,8 @@ static void setFunctionAnnotations(JSGlobalObject* globalObject, JSValue self, J
         raiseTypeError(globalObject, scope, "__annotations__ must be set to a dict object"_s);
         return;
     }
-    asObject(self)->putDirect(vm, names.private_annotations, value);
-    asObject(self)->putDirect(vm, names.private_annotate, JSValue());
+    putDirectOrRemove(globalObject, asObject(self), names.private_annotations, value);
+    putDirectOrRemove(globalObject, asObject(self), names.private_annotate, JSValue());
 }
 
 // ---- Classes

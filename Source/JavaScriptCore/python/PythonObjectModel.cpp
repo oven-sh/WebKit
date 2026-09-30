@@ -866,6 +866,17 @@ JSValue getModuleAttribute(JSGlobalObject* globalObject, JSValue module, Propert
     return raiseNoAttribute(globalObject, scope, module, name);
 }
 
+void putDirectOrRemove(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue value)
+{
+    if (value) {
+        object->putDirect(globalObject->vm(), name, value);
+        return;
+    }
+    // Not what the class of the object makes of deleting an attribute.
+    DeletePropertySlot slot;
+    JSObject::deleteProperty(object, globalObject, name, slot);
+}
+
 JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name)
 {
     VM& vm = globalObject->vm();

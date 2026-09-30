@@ -981,14 +981,11 @@ SpeculatedType speculationFromString(StringView speculation)
 {
     static constexpr SortedArrayMap map { WTF::toArray<std::pair<ComparableASCIILiteral, SpeculatedType>>({
         { "SpecAnyIntAsDouble"_s, SpecAnyIntAsDouble },
-        { "SpecInt32AsDouble"_s, SpecInt32AsDouble },
-        { "SpecNonInt32AnyIntAsDouble"_s, SpecNonInt32AnyIntAsDouble },
         { "SpecArray"_s, SpecArray },
         { "SpecBigInt"_s, SpecBigInt },
         { "SpecBigInt64Array"_s, SpecBigInt64Array },
         { "SpecBigUint64Array"_s, SpecBigUint64Array },
         { "SpecBoolInt32"_s, SpecBoolInt32 },
-        { "SpecWholeFloat"_s, SpecWholeFloat },
         { "SpecBoolean"_s, SpecBoolean },
         { "SpecBytecodeDouble"_s, SpecBytecodeDouble },
         { "SpecBytecodeNumber"_s, SpecBytecodeNumber },
@@ -1019,6 +1016,7 @@ SpeculatedType speculationFromString(StringView speculation)
         { "SpecHeapTop"_s, SpecHeapTop },
         { "SpecInt16Array"_s, SpecInt16Array },
         { "SpecInt32Array"_s, SpecInt32Array },
+        { "SpecInt32AsDouble"_s, SpecInt32AsDouble },
         { "SpecInt32AsInt52"_s, SpecInt32AsInt52 },
         { "SpecInt32Only"_s, SpecInt32Only },
         { "SpecInt52Any"_s, SpecInt52Any },
@@ -1027,6 +1025,7 @@ SpeculatedType speculationFromString(StringView speculation)
         { "SpecMapObject"_s, SpecMapObject },
         { "SpecMisc"_s, SpecMisc },
         { "SpecNonBoolInt32"_s, SpecNonBoolInt32 },
+        { "SpecNonInt32AnyIntAsDouble"_s, SpecNonInt32AnyIntAsDouble },
         { "SpecNonInt32AsInt52"_s, SpecNonInt32AsInt52 },
         { "SpecNonIntAsDouble"_s, SpecNonIntAsDouble },
         { "SpecNone"_s, SpecNone },
@@ -1051,6 +1050,7 @@ SpeculatedType speculationFromString(StringView speculation)
         { "SpecUint8ClampedArray"_s, SpecUint8ClampedArray },
         { "SpecWeakMapObject"_s, SpecWeakMapObject },
         { "SpecWeakSetObject"_s, SpecWeakSetObject },
+        { "SpecWholeFloat"_s, SpecWholeFloat },
     }) };
     auto result = map.tryGet(speculation);
     RELEASE_ASSERT(result);

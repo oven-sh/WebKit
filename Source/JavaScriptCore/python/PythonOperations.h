@@ -137,6 +137,9 @@ JSValue exceptionValue(JSGlobalObject*, JSValue thrown);
 
 // ---- Attributes
 
+// What an object keeps for itself, under a name that no program can name. If it is nothing, the object keeps it no longer: there is no such thing as a property that has nothing.
+void putDirectOrRemove(JSGlobalObject*, JSObject*, PropertyName, JSValue);
+
 JS_EXPORT_PRIVATE JSValue getAttribute(JSGlobalObject*, JSValue, PropertyName);
 // Empty, and nothing raised, if there is no such attribute.
 JSValue getAttributeIfPresent(JSGlobalObject*, JSValue, PropertyName);
@@ -702,11 +705,12 @@ public:
             return JSValue::decode(m_values[index]);
         return m_keywordNames ? givenByName(index) : JSValue();
     }
-    // One that is known to have been given by position.
+    // One that there has to be, so that it is known to have been given, by position or by name.
     JSValue operator[](unsigned index) const
     {
-        ASSERT(index < m_positionalCount);
-        return JSValue::decode(m_values[index]);
+        JSValue value = at(index);
+        ASSERT(value);
+        return value;
     }
     // All of them but the first so many, to pass on: what was given by position, and then what was given by name.
     ArgList allFrom(unsigned index) const

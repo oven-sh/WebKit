@@ -49,6 +49,8 @@ public:
 
     DECLARE_EXPORT_INFO;
     PYTHON_OVERLOADS_OPERATORS
+    // RLock can be derived from. See PyType::createInstanceStructure().
+    static CallData getCallData(JSCell*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static PyLock* create(VM&, Structure*);
 
