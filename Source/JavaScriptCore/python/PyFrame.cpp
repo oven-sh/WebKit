@@ -357,9 +357,13 @@ unsigned PyFrame::line(VM& vm)
     if (m_lineOverride >= 0)
         return m_lineOverride;
     auto index = bytecodeIndex(vm);
-    // Until what was written has begun, it is where it says that it begins.
-    if (!index || index->offset() <= details().enterOffset)
-        return functionInfo().firstLine + functionInfo().lineDelta;
+    // Until what was written has begun, it is where it says that it begins. So is what is from nowhere in the source, as co_lines() has it.
+    if (!index || index->offset() <= details().enterOffset || index->offset() < offsetWhereSourceBegins(details(), unlinkedCodeBlockOf(vm, executable()))) {
+        // A module is on the line before its first, as co_lines() has it.
+        CodeKind kind = functionInfo().kind;
+        bool isWhole = kind == CodeKind::Module || kind == CodeKind::Interactive || kind == CodeKind::Expression;
+        return functionInfo().firstLine + functionInfo().lineDelta - (index && isWhole);
+    }
     return lineAt(vm, *index);
 }
 

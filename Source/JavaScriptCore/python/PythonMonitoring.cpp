@@ -456,7 +456,7 @@ static bool finishPendingCall(JSGlobalObject* globalObject, CallFrame* callFrame
     if (!site)
         return true;
     // The frame has gone on since, and is told of as if it had not.
-    frame->setLineOverride(frame->lineAt(vm, index));
+    frame->setLineOverride(frame->lineAt(vm, index), index.offset());
     bool succeeded = fire(*site, hasRaised ? MonitoringEvent::CRaise : MonitoringEvent::CReturn, intFromUInt64(globalObject, site->offset), callable, argument, frame->pendingCallTools());
     frame->setLineOverride(-1);
     return succeeded;
@@ -534,8 +534,11 @@ std::optional<BytecodeIndex> frameIsAtLine(JSGlobalObject* globalObject, CallFra
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     PyFrame* frame = PyFrame::forCallFrame(vm, callFrame);
     if (kind == LineKind::OfHandledException) {
-        if (JSValue exception = globalObject->pyRealm()->handledException())
-            frame->setLastLine(lineOfTracebackFor(globalObject, exception, frame));
+        if (JSValue exception = globalObject->pyRealm()->handledException()) {
+            int offset;
+            int line = lineOfTracebackFor(globalObject, exception, frame, offset);
+            frame->setLastLine(line, offset);
+        }
         return std::nullopt;
     }
     // What is told can have it go on from some other line, and then it is there, and there is no more to tell of here. If what is told raises, that comes to nothing.
@@ -544,14 +547,14 @@ std::optional<BytecodeIndex> frameIsAtLine(JSGlobalObject* globalObject, CallFra
         auto place = frame->takeWhereItGoesOnFrom();
         if (!place || scope.exception())
             return std::nullopt;
-        frame->setLastLine(place->line);
+        frame->setLastLine(place->line, place->offset);
         // To go back to where it begins is to begin again, which is told of.
         if (callFrame->codeBlock()->instructions().at(place->offset)->is<OpPyEnter>()) {
             frame->setLastLine(-1);
             SetForScope isNotToldFromLine(state.isToldFromLine, false);
             Site beginning = *site;
             beginning.offset = place->offset;
-            frame->setLineOverride(place->line);
+            frame->setLineOverride(place->line, place->offset);
             fireAtOffset(beginning, MonitoringEvent::PyStart);
             frame->setLineOverride(-1);
             frame->takeWhereItGoesOnFrom();
@@ -563,7 +566,7 @@ std::optional<BytecodeIndex> frameIsAtLine(JSGlobalObject* globalObject, CallFra
     bool isAfterBackwardJump = kind == LineKind::AfterBackwardJump;
     int line = frame->line(vm);
     int previous = frame->lastLine();
-    frame->setLastLine(line);
+    frame->setLastLine(line, site->offset);
     if (line != previous)
         fire(*site, MonitoringEvent::Line, jsNumber(line));
     else if (isAfterBackwardJump && (toolsFor(*site, MonitoringEvent::Line) >> traceTool & 1)) {
@@ -703,7 +706,7 @@ void frameIsReturning(JSGlobalObject* globalObject, CallFrame* callFrame, Byteco
     // that there was.
     PyFrame* frame = PyFrame::forCallFrameIfExists(globalObject->vm(), callFrame);
     if (frame)
-        frame->setLineOverride(frame->lastLine());
+        frame->setLineOverride(frame->lastLine(), frame->lastLineOffset());
     fireAtOffset(*site, MonitoringEvent::PyReturn, value);
     if (frame)
         frame->setLineOverride(-1);
@@ -810,7 +813,7 @@ Exception* tellOfException(VM& vm, CallFrame* callFrame, BytecodeIndex index, JS
         // What throws something again on its way out was not written, and is on no line of its own.
         PyFrame* frame = progress == ExceptionProgress::LeavesFrame ? PyFrame::forCallFrameIfExists(vm, callFrame) : nullptr;
         if (frame)
-            frame->setLineOverride(frame->lastLine());
+            frame->setLineOverride(frame->lastLine(), frame->lastLineOffset());
         // It came out of what the frame was calling.
         if (finishPendingCall(globalObject, callFrame, index))
             fireAtOffset(*site, event, thrown);

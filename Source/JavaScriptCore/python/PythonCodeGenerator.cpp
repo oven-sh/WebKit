@@ -153,6 +153,7 @@ public:
         case CodeKind::Function: {
             auto& node = *static_cast<FunctionDef*>(root);
             collectDeletedNames(node.body);
+            m_whereItBegins = &node;
             generateFunction([&] {
                 emit(m_block.hasDocstring ? node.body.subspan(1) : node.body);
                 m_endIsNeverComeTo = alwaysLeave(node.body);
@@ -223,6 +224,12 @@ private:
         // What is never come to is nowhere.
         if (m_isNeverComeTo)
             return;
+        // What was made of something else, and is nowhere in the source, is where whatever came before it is. That is where the function begins, if nothing has.
+        if (!node.line || node.line == static_cast<unsigned>(-1)) {
+            if (!m_numberOfLines && m_whereItBegins && !m_isArtificial)
+                mark(*m_whereItBegins);
+            return;
+        }
         // This is the first thing to be done in a statement, so the statement is on its line. That holds though it be something that was not written, since where a thing is has to be said in the order that things are in.
         if (m_lineOfStatement) {
             g.emitExpressionInfo(*std::exchange(m_lineOfStatement, std::nullopt), JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
@@ -4280,6 +4287,10 @@ private:
                         mark(*handler->type);
                         emitCompare(matches.get(), ComparisonOperator::ExceptionMatch, exception, type.get());
                         g.emitJumpIfFalse(matches.get(), next.get());
+                    } else {
+                        // `except:` has nothing to work out, but it is a line that is come to.
+                        JumpBlock matching(*this, CodeDetails::JumpBlock::Kind::Matching);
+                        markWhereItCanBeGoneOnFrom(*handler);
                     }
                     NestedBlock block(*this, *handler);
                     if (handler->name) {
@@ -4552,6 +4563,11 @@ private:
             OpPySetItem::emit(&g, m_namespace.get(), stringConstant(name), value);
         };
         {
+            // What comes first is where the class says that it begins, which is at the first of its decorators. That may be no part of what this is compiled from, and what is from nowhere is there.
+            emitLine(LineKind::Line);
+            ++m_numberOfLines;
+            m_lastMarkedLine = m_info.firstLine;
+            SetForScope isArtificial(m_isArtificial, true);
             noteName(m_names.dunder_name);
             Reg moduleName = g.newTemporary();
             emitRuntimeCall(moduleName.get(), "loadName"_s, { m_namespace.get(), m_globals.get(), m_builtins.get(), stringConstant(m_names.dunder_name) }, node);
@@ -5133,6 +5149,11 @@ private:
         }
         emit(module.body);
         m_endIsNeverComeTo = alwaysLeave(module.body);
+        // With nothing in it, it is on the line before its first from beginning to end, and that is a line like another.
+        if (!m_numberOfLines && module.body.empty()) {
+            emitLine(LineKind::Line);
+            ++m_numberOfLines;
+        }
         if (m_functionGeneratedLast)
             noteConstant({ CodeDetails::Constant::Kind::Code, 10, false, *m_functionGeneratedLast });
         emitReturnAtEnd();
@@ -5175,6 +5196,7 @@ private:
     unsigned m_comprehensionElementLine { 0 };
     Node m_lastMarked;
     const Node* m_tupleThatIsUnpacked { nullptr };
+    const Node* m_whereItBegins { nullptr }; // The `def` statement, in a function.
     bool m_isArtificial { true }; // In what has to be done that nobody wrote, which is on no line. So it is until what was written begins.
     unsigned m_decoratorLine { 0 }; // Of the first decorator of the definition that is being made, if it has any.
     CommonNames& m_names;

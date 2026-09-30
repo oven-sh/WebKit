@@ -160,13 +160,17 @@ static int lineOf(JSValue traceback)
     return frame->executable()->source().provider()->documentLineColumnForOffset(entry->field(TracebackField::SourceOffset).asInt32()).line + frame->functionInfo().lineDelta;
 }
 
-int lineOfTracebackFor(JSGlobalObject* globalObject, JSValue exception, PyFrame* frame)
+int lineOfTracebackFor(JSGlobalObject* globalObject, JSValue exception, PyFrame* frame, int& offset)
 {
     VM& vm = globalObject->vm();
+    offset = -1;
     JSValue traceback = getAttributeIfPresent(globalObject, exception, vm.pythonNames().dunder_traceback);
     for (JSValue cursor = traceback; cursor && !isNone(cursor); cursor = asNative(cursor)->field(TracebackField::Next)) {
-        if (asNative(cursor)->field(TracebackField::Frame) == JSValue(frame))
-            return lineOf(cursor);
+        if (asNative(cursor)->field(TracebackField::Frame) != JSValue(frame))
+            continue;
+        if (JSValue instruction = asNative(cursor)->field(TracebackField::BytecodeOffset); instruction && instruction.isInt32())
+            offset = instruction.asInt32();
+        return lineOf(cursor);
     }
     return -1;
 }
@@ -332,6 +336,8 @@ static void setFrameLine(JSGlobalObject* globalObject, JSValue self, JSValue val
 
 static JSValue getFrameLastInstruction(JSGlobalObject* globalObject, JSValue self)
 {
+    if (int offset = asFrame(self)->offsetOverride(); offset >= 0)
+        return intFromUInt64(globalObject, offset);
     // A generator that has not started has been made, which is the beginning of its code.
     auto index = asFrame(self)->bytecodeIndex(globalObject->vm());
     return intFromUInt64(globalObject, index ? index->offset() : 0);

@@ -160,6 +160,10 @@ that when they are wanted, and can be thrown away and made again.
   `types.coroutine()` sets. It makes another executable for the same source. All else follows from `co_code` and can be given only as what it is.
 - `co_lines()` and `co_positions()` are read out of the engine's `ExpressionInfo`, which has where in the source each instruction is from. Every statement says where it is, `pass` is a `nop`,
   and a constant that has a line to itself says so.
+- **`f_lineno` is the line that `co_lines()` has for `f_lasti`**, whatever is being told of the frame. CPython's tests of tracing look whether it is at every frame that they are told of, the library's among them. Where the line is
+  not the one that the instruction is from, as when several `return` statements share what does the returning, `f_lasti` is where the line was last found to be that one (`PyFrame::setLineOverride()`). What comes before the first
+  instruction that says for itself where it is from is on the line that the code says it begins on, which is that of the first decorator, and for a module the line before its first: `offsetWhereSourceBegins()`, for both.
+  What was made of something else and is nowhere in the source, as the pieces of `'_%s__' % (name,)` are, begins no line. `programs/the-line-and-the-instruction-agree.py`, `programs/what-line-a-frame-is-on.py`.
 - `co_consts` is put together as CPython puts it together: what is written out in the source and the code of what is defined in it, as they are first come to, then what was worked out from that, and then what
   nothing loads is taken out again, but for the first. It has none of the ints from 0 to 255, which CPython has an instruction for. What is not there is what CPython's own instructions need and these do not: the
   names of the keywords of a call, what `import` is given, the name of a class in its body, how long a sequence has to be in a `match`.

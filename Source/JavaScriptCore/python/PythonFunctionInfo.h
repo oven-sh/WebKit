@@ -112,6 +112,9 @@ struct CodeDetails {
     // Where what was written begins. Before it the arguments are being given to the parameters, and to Python there is no frame yet: what
     // is raised there is raised by the call.
     unsigned firstTraceableOffset { 0 };
+    // The first instruction from there on that says for itself where in the source it is from. What comes before it is from nowhere, and is on the line that the code says it begins on. It is found when it is
+    // first wanted: offsetWhereSourceBegins().
+    mutable std::optional<unsigned> offsetWhereSourceBegins;
     // Where op_py_enter is. What is thrown from before it is thrown from a frame that has not been counted.
     unsigned enterOffset { 0 };
     // How many of its ValueProfiles are in what comes before that. See CodeBlock::numberOfValueProfilesOfArgumentBinding().

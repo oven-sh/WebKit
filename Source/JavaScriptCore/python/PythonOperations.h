@@ -480,7 +480,7 @@ enum class LineKind : uint8_t {
 };
 std::optional<BytecodeIndex> frameIsAtLine(JSGlobalObject*, CallFrame*, BytecodeIndex, LineKind); // What to run next, if that is not what comes next.
 void setTracesOpcodes(JSGlobalObject*, PyFrame*, bool); // Whether sys.settrace() is told of each instruction of the frame's code.
-int lineOfTracebackFor(JSGlobalObject*, JSValue exception, PyFrame*); // The line that an exception came to a frame on, or -1.
+int lineOfTracebackFor(JSGlobalObject*, JSValue exception, PyFrame*, int& offset); // The line that an exception came to a frame on, or -1.
 enum class ToldArgument : uint8_t { None, First, ListOfPositional };
 void frameIsCalling(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue callable, JSValue argument, ToldArgument);
 void frameIsBranching(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isTaken);

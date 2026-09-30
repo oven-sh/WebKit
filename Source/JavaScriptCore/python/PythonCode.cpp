@@ -370,19 +370,34 @@ static Place placeOf(SourceProvider& provider, unsigned offset, int lineDelta)
     return { provider.documentLineColumnForOffset(offset).line + lineDelta, column };
 }
 
+unsigned offsetWhereSourceBegins(const CodeDetails& details, UnlinkedCodeBlock* codeBlock)
+{
+    if (!details.offsetWhereSourceBegins) {
+        details.offsetWhereSourceBegins = std::numeric_limits<unsigned>::max();
+        for (const auto& instruction : codeBlock->instructions()) {
+            unsigned offset = instruction.offset();
+            if (offset < details.firstTraceableOffset)
+                continue;
+            auto entry = codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(offset));
+            if (entry.instPC == offset && entry.endOffset) {
+                details.offsetWhereSourceBegins = offset;
+                break;
+            }
+        }
+    }
+    return *details.offsetWhereSourceBegins;
+}
+
 // Calls the function with where each instruction is, and the part of the source that it is from. What comes before what was written, giving the arguments to the
-// parameters, is from nowhere.
+// parameters, is from nowhere. Nor is what comes before the first that says where it is from.
 template<typename Function>
 static void forEachInstruction(const CompiledCode& compiled, const Function& function)
 {
-    unsigned firstTraceableOffset = compiled.info->details->firstTraceableOffset;
-    // Nor is what comes before the first that says where it is from.
-    bool hasBegun = false;
+    unsigned begins = offsetWhereSourceBegins(*compiled.info->details, compiled.codeBlock);
     for (const auto& instruction : compiled.codeBlock->instructions()) {
         unsigned offset = instruction.offset();
         auto entry = compiled.codeBlock->expressionInfoForBytecodeIndex(BytecodeIndex(offset));
-        hasBegun |= offset >= firstTraceableOffset && entry.instPC == offset && entry.endOffset;
-        if (!hasBegun) {
+        if (offset < begins) {
             function(offset, std::nullopt);
             continue;
         }

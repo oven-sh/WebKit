@@ -114,11 +114,21 @@ public:
 
     JSValue trace() const { return m_trace.get(); }
     void setTrace(VM& vm, JSValue trace) { m_trace.set(vm, this, trace); }
-    // The line that it was last found to be on, by op_py_line, or -1.
+    // The line that it was last found to be on, by op_py_line, or -1, and where that was.
     int lastLine() const { return m_lastLine; }
-    void setLastLine(int line) { m_lastLine = line; }
-    // What f_lineno is to be for the time being, or -1 for it to be worked out.
-    void setLineOverride(int line) { m_lineOverride = line; }
+    int lastLineOffset() const { return m_lastLineOffset; }
+    void setLastLine(int line, int offset = -1)
+    {
+        m_lastLine = line;
+        m_lastLineOffset = offset;
+    }
+    // What f_lineno is to be for the time being, or -1 for it to be worked out, and what f_lasti is to be, which is somewhere that is on that line: what co_lines() says of the one is the other.
+    void setLineOverride(int line, int offset = -1)
+    {
+        m_lineOverride = line;
+        m_offsetOverride = line >= 0 ? offset : -1;
+    }
+    int offsetOverride() const { return m_offsetOverride; }
     // A call that has been told of, of what is not written in Python, and where it was made. When it is over that is told of too, which is done at the next thing that is told of the
     // frame, nothing being told of it in between.
     JSValue pendingCallable() const { return m_pendingCallable.get(); }
@@ -184,6 +194,8 @@ private:
     unsigned m_variableCount;
     int m_lastLine { -1 };
     int m_lineOverride { -1 };
+    int m_lastLineOffset { -1 };
+    int m_offsetOverride { -1 };
     std::optional<GoesOnFrom> m_goesOnFrom;
     unsigned m_pendingCallOffset { 0 };
     uint8_t m_pendingCallTools { 0 };

@@ -289,6 +289,7 @@ void ensureCodeDetails(VM&, FunctionExecutable*);
 FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable*, unsigned& fromOffset, unsigned& valueProfilesBefore);
 // The bytecode, which is generated again if it has been thrown away. It comes out the same.
 UnlinkedCodeBlock* unlinkedCodeBlockOf(VM&, FunctionExecutable*);
+unsigned offsetWhereSourceBegins(const CodeDetails&, UnlinkedCodeBlock*);
 // function.__code__. There is one for each piece of code.
 JSObject* codeObjectFor(JSGlobalObject*, FunctionExecutable*);
 // One of the co_consts of the code that a function is compiled to. See PyCodeConstant.h.
