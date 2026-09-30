@@ -706,16 +706,20 @@ public:
     // table's is known to the code that uses it.)
     void keepOnlyNames(const UncheckedKeyHashSet<UniquedStringImpl*>& names)
     {
+        keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry&) { return names.contains(name); });
+    }
+    void keepOnly(const Invocable<bool(UniquedStringImpl*, const SymbolTableEntry&)> auto& isKept)
+    {
         Map kept;
         unsigned count = 0;
         for (auto& entry : m_map)
-            count += names.contains(entry.key.get());
+            count += isKept(entry.key.get(), entry.value);
         if (count == m_map.size())
             return;
         if (count)
             kept.reserveInitialCapacity(count);
         for (auto& entry : m_map) {
-            if (names.contains(entry.key.get()))
+            if (isKept(entry.key.get(), entry.value))
                 kept.add(entry.key, WTF::move(entry.value));
         }
         m_map = WTF::move(kept);

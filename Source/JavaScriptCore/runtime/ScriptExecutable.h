@@ -164,11 +164,11 @@ public:
 
     bool hasJITCodeForCall() const
     {
-        return m_jitCodeForCall;
+        return !isShortForm() && inFull()->m_jitCodeForCall;
     }
     bool hasJITCodeForConstruct() const
     {
-        return m_jitCodeForConstruct;
+        return !isShortForm() && inFull()->m_jitCodeForConstruct;
     }
 
     // This function has an interesting GC story. Callers of this function are asking us to create a CodeBlock
@@ -232,9 +232,6 @@ protected:
     JS_EXPORT_PRIVATE LexicallyScopedFeatures lexicallyScopedFeaturesOfShortForm() const;
     JS_EXPORT_PRIVATE DerivedContextType derivedContextTypeOfShortForm() const;
 
-    // Of a FunctionExecutable: see aotEntryFor(). (Here, because this is as far as the short form goes.)
-    uint64_t m_aotEntry[2] { }; // AOT::EntryWord
-    uint32_t m_aotIndex[2] { };
     SourceCode m_source;
     Intrinsic m_intrinsic { NoIntrinsic };
     bool m_didTryToEnterInLoop { false };

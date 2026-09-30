@@ -123,7 +123,7 @@ public:
     }
 
     // To keep hold of while it runs. Code that was compiled when the program was built stays, and has none.
-    JSC::JITCode* jitCodeIfAnyFor(CodeSpecializationKind kind) const { return (kind == CodeSpecializationKind::CodeForCall ? m_jitCodeForCall : m_jitCodeForConstruct).get(); }
+    JSC::JITCode* jitCodeIfAnyFor(CodeSpecializationKind kind) const { return isShortFunctionExecutable() ? nullptr : (kind == CodeSpecializationKind::CodeForCall ? WTF::opaque(this)->m_jitCodeForCall : WTF::opaque(this)->m_jitCodeForConstruct).get(); } // (opaque(): or it may be read before it is known to be there.)
 
     void* generatedJITCodeAddressForCall() const
     {
@@ -258,10 +258,14 @@ public:
     void dump(PrintStream&) const;
         
 protected:
-    RefPtr<JSC::JITCode> m_jitCodeForCall;
-    RefPtr<JSC::JITCode> m_jitCodeForConstruct;
     CodePtr<JSEntryPtrTag> m_jitCodeForCallWithArityCheck;
     CodePtr<JSEntryPtrTag> m_jitCodeForConstructWithArityCheck;
+    // Of a FunctionExecutable: see aotEntryFor().
+    uint64_t m_aotEntry[2] { }; // AOT::EntryWord
+    uint32_t m_aotIndex[2] { };
+    // This is as far as the short form of a FunctionExecutable goes (FunctionExecutable::sizeOfShortForm): nothing below is to be asked of one.
+    RefPtr<JSC::JITCode> m_jitCodeForCall;
+    RefPtr<JSC::JITCode> m_jitCodeForConstruct;
 };
 
 } // namespace JSC

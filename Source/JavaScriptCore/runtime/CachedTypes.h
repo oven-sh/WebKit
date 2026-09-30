@@ -502,6 +502,9 @@ public:
         RefPtr<CachedBytecode> payload;
         Vector<uint32_t> entryOffsets; // per addModule call, in call order
         Vector<uint32_t> entryOffsetsOfModules; // Of those, what StaticHeap::build() takes.
+        // For each of those, if setPrelinkedModuleGraph() said: where in its environment the variables are that something other than its code asks for by name (ScopeOffset::offset()):
+        // what it exports, and the namespaces that it imports.
+        Vector<std::optional<Vector<uint32_t>>> variablesExportedByModules;
         Vector<ReportableSitesOfFunction> reportableSites; // Likewise. By the numbers that the functions have in aotImage.
         unsigned namedHotFunctions { 0 }; // of Hints::hotFunctions, how many name a function of this link
         unsigned placedHotFunctions { 0 }; // functions of this link that went to HOT

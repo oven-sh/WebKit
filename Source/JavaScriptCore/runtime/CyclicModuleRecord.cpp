@@ -475,11 +475,13 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 21. For each element d of varDeclarations, do
     // While the symbol table's entries are still in the bytecode cache nothing watches them, and where the variables are is known
     // without their names.
-    bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending();
+    // (Likewise with a table that was made when the program was built. That may not so much as have the names: StaticHeap keeps those that something can ask for.)
+    bool isTableOfStaticHeap = StaticHeap::contains(symbolTable);
+    bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending() || isTableOfStaticHeap;
     if (initializeVarsByOffset) {
         for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)
             env->variableAt(ScopeOffset(unlinkedCodeBlock->firstVarScopeOffset() + i)).setUndefined();
-        if (Options::validatePrelinkedModuleInfo()) [[unlikely]] {
+        if (Options::validatePrelinkedModuleInfo() && !isTableOfStaticHeap) [[unlikely]] {
             unsigned found = 0;
             for (const auto& variable : unlinkedCodeBlock->variableDeclarations()) {
                 SymbolTableEntry::Fast entry = symbolTable->get(variable.key.get());
@@ -532,8 +534,10 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         FunctionExecutable* executableThereIsForGood = unlinkedCodeBlock->executableOfFunctionDecl(i);
         UnlinkedFunctionExecutable* unlinkedFunctionExecutable = executableThereIsForGood ? nullptr : unlinkedCodeBlock->functionDecl(i);
         const Identifier& name = executableThereIsForGood ? executableThereIsForGood->name() : unlinkedFunctionExecutable->name();
-        SymbolTableEntry::Fast entry = symbolTable->get(name.impl());
-        VarOffset offset = entry.varOffset();
+        std::optional<ScopeOffset> whereItIs;
+        if (auto* slots = isTableOfStaticHeap ? unlinkedCodeBlock->heapAllocatedFunctionDeclSlots() : nullptr; slots && i < slots->size())
+            whereItIs = slots->at(i);
+        VarOffset offset = whereItIs ? VarOffset(*whereItIs) : symbolTable->get(name.impl()).varOffset();
         ASSERT(!offset.isStack() || i >= unlinkedCodeBlock->numberOfHeapAllocatedFunctionDecls());
         if (!offset.isStack()) {
             ASSERT(!name.isEmpty());
@@ -557,6 +561,10 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
                 function = JSFunction::create(vm, globalObject, executable, env);
             RETURN_IF_EXCEPTION(scope, void());
             // 24.a.iii.2. Perform ! env.InitializeBinding(dn, fo).
+            if (whereItIs) {
+                env->variableAt(*whereItIs).set(vm, env, function);
+                continue;
+            }
             bool putResult = false;
             symbolTablePutTouchWatchpointSet(env, globalObject, name, function, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
             RETURN_IF_EXCEPTION(scope, void());

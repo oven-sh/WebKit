@@ -1853,9 +1853,10 @@ const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
     static Lock lock;
     static NeverDestroyed<UncheckedKeyHashMap<uint64_t, Vector<std::unique_ptr<RegisterAtOffsetList>, 1>>> lists;
 
-    uint64_t mask = ImageFunction::unpackRegisters(function.calleeSaveRegisters);
-    ptrdiff_t offsetOfFirst = -static_cast<ptrdiff_t>(function.whereCalleeSavesStart * sizeof(CPURegister));
-    uint64_t key = (static_cast<uint64_t>(function.whereCalleeSavesStart) << 32 | function.calleeSaveRegisters) * 2 + 1; // Not one of the two that a table has a use for.
+    const ImageFrame& frame = Image::of(function).frameOf(function);
+    uint64_t mask = ImageFunction::unpackRegisters(frame.calleeSaveRegisters);
+    ptrdiff_t offsetOfFirst = -static_cast<ptrdiff_t>(frame.whereCalleeSavesStart * sizeof(CPURegister));
+    uint64_t key = (static_cast<uint64_t>(frame.whereCalleeSavesStart) << 32 | frame.calleeSaveRegisters) * 2 + 1; // Not one of the two that a table has a use for.
     auto isThat = [&](const RegisterAtOffsetList& list) {
         uint64_t registers = 0;
         for (unsigned i = 0; i < list.registerCount(); ++i)
@@ -1903,6 +1904,8 @@ CodePtr<JSEntryPtrTag> JITCode::addressForCall(ArityCheckMode)
 void* JITCode::executableAddressAtOffset(size_t offset) { return static_cast<uint8_t*>(m_code) + offset; }
 void* JITCode::dataAddressAtOffset(size_t offset) { return static_cast<uint8_t*>(m_code) + offset; }
 unsigned JITCode::offsetOf(void* pointer) { return static_cast<uint8_t*>(pointer) - static_cast<uint8_t*>(m_code); }
+unsigned JITCode::codeSize() const { return Image::of(*m_function).sizeOfCodeOf(*m_function); }
+unsigned JITCode::frameSizeInBytes() const { return Image::of(*m_function).frameOf(*m_function).frameSizeInBytes(); }
 size_t JITCode::size() { return codeSize(); }
 
 bool JITCode::contains(void* address)

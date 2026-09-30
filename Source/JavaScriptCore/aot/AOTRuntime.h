@@ -787,32 +787,39 @@ struct ImageCatchEntrypoint {
     uint32_t codeOffset;
 };
 
-// Followed by numSlots Site, then perhaps numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero
-// for none), then numberOfKnownCallees uint32_t, then numberOfCatchEntrypoints ImageCatchEntrypoint, then CompiledFunctionInfo::plans.
-// The way in is where the code starts.
-struct ImageFunction {
-    uint32_t codeOffset; // In the code.
-    uint32_t codeSize;
-    uint32_t numSlots;
-    uint32_t numberOfKnownCallees : 29;
-    uint32_t hasSiteConstants : 1; // If not, see FunctionInfo::sitesHaveTheirConstants.
-    uint32_t usesStaticImports : 1; // See Graph::usesStaticImports.
-    uint32_t startsCold : 1; // See CompiledFunctionInfo::startsCold.
-    uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none. See Image::quoteAt(), and after that Image::constructsAt().
-    // The registers that the function saves (packRegisters()). They are next to each other in the frame, in the order of
+// What the frame of a function is like. A program has a few thousand of these between all its functions.
+struct ImageFrame {
+    // The registers that the function saves (ImageFunction::packRegisters()). They are next to each other in the frame, in the order of
     // Reg::index(), the way Air::Code puts them: the first is this many registers below what the frame pointer points at.
     uint32_t calleeSaveRegisters;
     uint16_t whereCalleeSavesStart;
     uint16_t frameSizeInUnits; // Of stackAlignmentBytes().
+
+    unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
+    uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(whereCalleeSavesStart) << 16 | frameSizeInUnits; }
+};
+static_assert(sizeof(ImageFrame) == 8);
+
+// Followed by numSlots Site, then perhaps numSlots uint32_t (CompiledFunctionInfo::siteConstants, as the image numbers them: zero
+// for none), then numberOfKnownCallees uint32_t, then numberOfCatchEntrypoints ImageCatchEntrypoint, then CompiledFunctionInfo::plans.
+// The way in is where the code starts.
+struct ImageFunction {
+    // Which function it is: they are numbered in the order their code is in. Where that starts, and so where it ends, is for ImageHeader::startsOfFunctionsOffset to say (Image::codeFor()).
+    uint32_t index;
+    uint32_t numSlots;
+    uint32_t quotes; // From ImageHeader::quotesOffset. Zero: none. See Image::quoteAt(), and after that Image::constructsAt().
+    uint32_t callSites; // From ImageHeader::callSitesOffset: see callSiteAt(). Zero: none.
+    uint32_t numberOfKnownCallees : 17;
+    uint32_t frame : 15; // Which ImageFrame (Image::frameOf()).
     uint16_t numberOfCatchEntrypoints;
     uint8_t numberOfParameters; // Convention::numberOfParameters
     uint8_t takesList : 1; // Signature::List
     uint8_t hasInlineFrames : 1; // Its call sites are PackedSites.
-    uint32_t callSites; // From ImageHeader::callSitesOffset: see callSiteAt(). Zero: none.
-    uint32_t index; // Which function it is: they are numbered in the order their code is in.
+    uint8_t hasSiteConstants : 1; // If not, see FunctionInfo::sitesHaveTheirConstants.
+    uint8_t usesStaticImports : 1; // See Graph::usesStaticImports.
+    uint8_t startsCold : 1; // See CompiledFunctionInfo::startsCold.
 
     Convention convention() const { return { takesList ? Signature::List : Signature::Registers, numberOfParameters, true }; }
-    unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
     // A bit for each by Reg::index(), in half the room: no callee saves any of the rest.
 #if CPU(ARM64)
     static constexpr unsigned firstGPRSaid = 16;
@@ -837,7 +844,7 @@ struct ImageFunction {
     static constexpr uint32_t noSuchFunction = std::numeric_limits<uint32_t>::max();
 };
 
-static_assert(sizeof(ImageFunction) == 40);
+static_assert(sizeof(ImageFunction) == 24);
 
 inline const ImageFunction* FunctionInfo::function() const
 {
@@ -864,8 +871,8 @@ public:
     const RegisterAtOffsetList* calleeSaveRegisters() const { return m_calleeSaveRegisters; }
     const ImageFunction* imageFunction() const { return m_function; }
     uint32_t index() const { return m_function->index; }
-    unsigned codeSize() const { return m_function->codeSize; }
-    unsigned frameSizeInBytes() const { return m_function->frameSizeInBytes(); }
+    unsigned codeSize() const;
+    unsigned frameSizeInBytes() const;
     unsigned numSlots() const { return m_function->numSlots; }
     const Site* sites() const { return m_function->sites(); }
     const void* start() const { return m_code; }

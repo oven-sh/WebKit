@@ -948,7 +948,8 @@ static bool isLookedUpByName(ResolveType type)
 }
 
 // Adds what the code, and the code of the functions in it, looks up. Nothing else can see the scopes that the code makes.
-static void forgetNamesThatNothingLooksUp(UnlinkedCodeBlock* codeBlock, NamesLookedUp& lookedUp, uint64_t& tables, uint64_t& tablesWithNames)
+// exportedByModule: of the code of a module, where the variables are that it exports, if that is known.
+static void forgetNamesThatNothingLooksUp(UnlinkedCodeBlock* codeBlock, NamesLookedUp& lookedUp, uint64_t& tables, uint64_t& tablesWithNames, const Vector<uint32_t>* exportedByModule = nullptr)
 {
     NamesLookedUp own;
     {
@@ -994,10 +995,23 @@ static void forgetNamesThatNothingLooksUp(UnlinkedCodeBlock* codeBlock, NamesLoo
     for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
         inside(codeBlock->functionExpr(i));
 
-    // The environment of a module is looked in by name by whoever asks the module for what it exports.
+    // The environment of a module is looked in by name by whoever asks the module for what it exports, and by the engine for names of its own.
     SymbolTable* ofModule = nullptr;
     if (auto* moduleCode = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock))
         ofModule = dynamicDowncast<SymbolTable>(moduleCode->constantRegister(VirtualRegister(moduleCode->moduleEnvironmentSymbolTableConstantRegisterOffset())).get());
+    if (ofModule && exportedByModule && !own.mayBeAny) {
+        UncheckedKeyHashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> exported;
+        {
+            Region::AllocationScope notInRegion(false);
+            for (uint32_t offset : *exportedByModule)
+                exported.add(offset);
+        }
+        ofModule->keepOnly([&](UniquedStringImpl* name, const SymbolTableEntry& entry) {
+            return name->isSymbol() || own.names.contains(name) || (entry.varOffset().isScope() && exported.contains(entry.scopeOffset().offset()));
+        });
+        Region::AllocationScope notInRegion(false);
+        exported.clear();
+    }
     for (auto& constant : codeBlock->constantRegisters()) {
         auto* table = constant.get().isCell() ? dynamicDowncast<SymbolTable>(constant.get().asCell()) : nullptr;
         if (!table || table == ofModule)
@@ -1370,7 +1384,7 @@ static void keepOneOfEachSymbolTable()
         dataLogLn("StaticHeap: of ", tables.size(), " tables of the variables of scopes ", kept.size(), " are kept, and ", references, " references go to those");
 }
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions)
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
 {
     s_whatTheCompilerSaysOfFunctions = whatTheCompilerSaysOfFunctions;
     s_identifiersOfProgram = { };
@@ -1566,8 +1580,14 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                         }
                         if (decoder.leavesFunctionCodeInPayload() && Options::staticHeapForgetsNamesOfVariables()) {
                             NamesLookedUp lookedUp;
-                            if (codeBlock)
-                                forgetNamesThatNothingLooksUp(codeBlock, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames);
+                            if (codeBlock) {
+                                const Vector<uint32_t>* exported = nullptr;
+                                for (size_t index = 0; index < variablesExportedByModules.size() && index < entryOffsetsOfModules.size(); ++index) {
+                                    if (entryOffsetsOfModules[index] == sortedOffsets[i] && variablesExportedByModules[index])
+                                        exported = &*variablesExportedByModules[index];
+                                }
+                                forgetNamesThatNothingLooksUp(codeBlock, lookedUp, numberOfSymbolTables, numberOfSymbolTablesWithNames, exported);
+                            }
                             else if (builtinFunction) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                                     if (auto* code = builtinFunction->codeBlockIfThereIsOne(kind))

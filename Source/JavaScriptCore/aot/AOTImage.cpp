@@ -1122,6 +1122,35 @@ Vector<uint8_t> ImageBuilder::finish()
     header.startsOfFunctionsOffset = place(startsOfFunctions.sizeInBytes());
     header.granulesOfCodeOffset = place(granulesOfCode.sizeInBytes());
     header.callSitesOffset = place(callSites.size());
+    // What the frames are like: one of each.
+    Vector<ImageFrame> frames;
+    Vector<uint16_t> frameOfFunction;
+    {
+        UncheckedKeyHashMap<uint64_t, uint16_t, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> numbers;
+        for (auto& function : m_functions) {
+            auto& info = function.code.info;
+            RELEASE_ASSERT(!(info.frameSizeInBytes % stackAlignmentBytes()));
+            ImageFrame frame { 0, 0, safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes()) };
+            uint64_t calleeSaveRegisters = 0;
+            for (unsigned i = 0; i < info.calleeSaveRegisters.registerCount(); ++i) {
+                const RegisterAtOffset& entry = info.calleeSaveRegisters.at(i);
+                RELEASE_ASSERT(entry.reg().index() < 64 && entry.offset() == info.calleeSaveRegisters.at(0).offset() + static_cast<ptrdiff_t>(i * sizeof(CPURegister)) && (!i || entry.reg().index() > info.calleeSaveRegisters.at(i - 1).reg().index()));
+                calleeSaveRegisters |= 1ULL << entry.reg().index();
+            }
+            if (info.calleeSaveRegisters.registerCount()) {
+                ptrdiff_t offset = info.calleeSaveRegisters.at(0).offset();
+                RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))));
+                frame.whereCalleeSavesStart = safeCast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
+            }
+            frame.calleeSaveRegisters = ImageFunction::packRegisters(calleeSaveRegisters);
+            frameOfFunction.append(numbers.ensure(frame.bits(), [&] {
+                RELEASE_ASSERT(frames.size() < 1u << 15);
+                frames.append(frame);
+                return static_cast<uint16_t>(frames.size() - 1);
+            }).iterator->value);
+        }
+    }
+    header.framesOffset = place(frames.sizeInBytes());
     header.endOfFunctions = safeCast<uint32_t>(endOfFunctions);
     header.sizeOfStubs = safeCast<uint32_t>(stubs.bytes.size());
     for (unsigned i = 0; i < 4; ++i)
@@ -1192,6 +1221,7 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.startsOfFunctionsOffset, startsOfFunctions.span().data(), startsOfFunctions.sizeInBytes());
     memcpy(base + header.granulesOfCodeOffset, granulesOfCode.span().data(), granulesOfCode.sizeInBytes());
     memcpy(base + header.callSitesOffset, callSites.span().data(), callSites.size());
+    memcpy(base + header.framesOffset, frames.span().data(), frames.sizeInBytes());
     for (auto& [table, at] : tablesOfRegExps) {
         for (auto& regExp : m_regExps) {
             bool copied = false;
@@ -1237,29 +1267,16 @@ Vector<uint8_t> ImageBuilder::finish()
         auto [codeAt, stubsForThis] = placement[index];
 
         ImageFunction record { };
-        record.codeOffset = codeAt;
-        record.codeSize = function.code.bytes.size();
-        RELEASE_ASSERT(!(info.frameSizeInBytes % stackAlignmentBytes()));
+        RELEASE_ASSERT(startsOfFunctions[index] == codeAt);
         record.index = safeCast<uint32_t>(index);
+        record.frame = frameOfFunction[index];
         record.numberOfParameters = info.convention.numberOfParameters;
         record.takesList = info.convention.signature == Signature::List;
         record.hasInlineFrames = !info.inlineFrames.isEmpty();
         record.callSites = callSitesOfFunction[index];
-        record.frameSizeInUnits = safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes());
         record.numSlots = info.numSlots;
-        uint64_t calleeSaveRegisters = 0;
-        for (unsigned i = 0; i < info.calleeSaveRegisters.registerCount(); ++i) {
-            const RegisterAtOffset& entry = info.calleeSaveRegisters.at(i);
-            RELEASE_ASSERT(entry.reg().index() < 64 && entry.offset() == info.calleeSaveRegisters.at(0).offset() + static_cast<ptrdiff_t>(i * sizeof(CPURegister)) && (!i || entry.reg().index() > info.calleeSaveRegisters.at(i - 1).reg().index()));
-            calleeSaveRegisters |= 1ULL << entry.reg().index();
-        }
-        if (info.calleeSaveRegisters.registerCount()) {
-            ptrdiff_t offset = info.calleeSaveRegisters.at(0).offset();
-            RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))));
-            record.whereCalleeSavesStart = safeCast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
-        }
-        record.calleeSaveRegisters = ImageFunction::packRegisters(calleeSaveRegisters);
-        record.numberOfCatchEntrypoints = info.catchEntrypoints.size();
+        record.numberOfCatchEntrypoints = safeCast<uint16_t>(info.catchEntrypoints.size());
+        RELEASE_ASSERT(info.knownCallees.size() < 1u << 17);
         record.numberOfKnownCallees = info.knownCallees.size();
         record.hasSiteConstants = !numbersOfIdentifiers;
         record.usesStaticImports = info.usesStaticImports;
@@ -1745,7 +1762,7 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         if (!table[bucket].sameFunction(key))
             continue;
         auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + table[bucket].record - 1);
-        size_t start = header.codeOffset + function.codeOffset;
+        size_t start = header.codeOffset + reinterpret_cast<const uint32_t*>(m_data.data() + header.startsOfFunctionsOffset)[function.index];
         auto whereItIsGoingToBe = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
         return Function { EntryWord::encode(m_address + start, function.convention()), function.index,
             reinterpret_cast<const Site*>(whereItIsGoingToBe(function.sites())), reinterpret_cast<const ImageFunction*>(whereItIsGoingToBe(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants };
@@ -1927,7 +1944,7 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     }
 
     if (Options::aotVerbose()) [[unlikely]]
-        dataLogLn("AOT: ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", function->codeSize, " hash ", hashOfCode({ image->codeFor(*function), function->codeSize }));
+        dataLogLn("AOT: ", nameForLogging(executable), " (module ", key.module, " start ", key.start, " kind ", key.kind, ") is at ", RawPointer(image->codeFor(*function)), " size ", image->sizeOfCodeOf(*function), " hash ", hashOfCode({ image->codeFor(*function), image->sizeOfCodeOf(*function) }));
     return { image, function };
 }
 

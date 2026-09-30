@@ -91,6 +91,7 @@ struct ImageHeader {
     uint32_t startsOfFunctionsOffset; // uint32_t, by index, which is the order they are in: where each starts, in the code. And one more, which is beyond everything.
     uint32_t granulesOfCodeOffset; // uint32_t: for each 1 << shiftOfGranuleOfCode bytes of the code, the last function to start no later than they do.
     uint32_t callSitesOffset; // See callSiteAt().
+    uint32_t framesOffset; // ImageFrame, by ImageFunction::frame.
     uint32_t endOfFunctions; // In the code.
     uint32_t sizeOfStubs;
     uint32_t numberOfCopiesOfStubs;
@@ -239,7 +240,14 @@ public:
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
     uint32_t selectorNamed(const StringImpl&) const; // Zero: none.
 
-    const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + function.codeOffset; }
+    const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + at<uint32_t>(header().startsOfFunctionsOffset)[function.index]; }
+    // (Up to where the next one starts: what is in between, if anything, is nobody's.)
+    size_t sizeOfCodeOf(const ImageFunction& function) const
+    {
+        const uint32_t* starts = at<uint32_t>(header().startsOfFunctionsOffset);
+        return (function.index + 1 < header().numberOfFunctions ? starts[function.index + 1] : header().endOfFunctions) - starts[function.index];
+    }
+    const ImageFrame& frameOf(const ImageFunction& function) const { return at<ImageFrame>(header().framesOffset)[function.frame]; }
     const ImageHeader& header() const { return *reinterpret_cast<const ImageHeader*>(m_data.data()); }
 
 private:

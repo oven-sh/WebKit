@@ -258,8 +258,10 @@ void ScriptExecutable::installAOTCode(VM& vm, CodeSpecializationKind kind, Ref<J
 
 bool ScriptExecutable::hasClearableCode() const
 {
-    if (m_jitCodeForCall
-        || m_jitCodeForConstruct
+    if (isShortForm())
+        return false;
+    if (inFull()->m_jitCodeForCall
+        || inFull()->m_jitCodeForConstruct
         || m_jitCodeForCallWithArityCheck
         || m_jitCodeForConstructWithArityCheck)
         return true;

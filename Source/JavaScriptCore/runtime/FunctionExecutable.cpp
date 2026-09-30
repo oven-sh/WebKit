@@ -53,7 +53,7 @@ FunctionExecutable::FunctionExecutable(VM& vm, ScriptExecutable* topLevelExecuta
 
 void FunctionExecutable::becomeStatic(VM& vm)
 {
-    static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_source) == sizeOfShortForm);
+    static_assert(OBJECT_OFFSETOF(FunctionExecutable, m_jitCodeForCall) == sizeOfShortForm);
     // Which realm's it is remains to be seen (topLevelExecutable()), and there is going to be more than one function made of it, or
     // there may as well be.
     m_topLevelExecutable.clear();

@@ -6174,6 +6174,60 @@ struct BytecodeLinkEncoder::Impl {
         }
         return result;
     }
+    // Where the variables are that the module exports, going by the graph; and those that whoever links it puts something in by name.
+    std::optional<Vector<uint32_t>> variablesExportedBy(unsigned index)
+    {
+        using Graph = PrelinkedModuleGraph;
+        auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
+        if (!codeBlock || index >= graphModuleOfEachAdd.size() || prelinkedGraph.size() < sizeof(Graph::Header))
+            return std::nullopt;
+        auto& header = *reinterpret_cast<const Graph::Header*>(prelinkedGraph.data());
+        RELEASE_ASSERT(header.magic == Graph::magic && header.version == Graph::currentVersion);
+        uint32_t graphModule = graphModuleOfEachAdd[index];
+        if (graphModule >= header.moduleCount)
+            return std::nullopt;
+        RELEASE_ASSERT(header.modulesOffset <= prelinkedGraph.size() && header.moduleCount <= (prelinkedGraph.size() - header.modulesOffset) / sizeof(Graph::Module));
+        RELEASE_ASSERT(header.exportsOffset <= prelinkedGraph.size() && header.exportCount <= (prelinkedGraph.size() - header.exportsOffset) / sizeof(Graph::Export));
+        auto& module = reinterpret_cast<const Graph::Module*>(prelinkedGraph.data() + header.modulesOffset)[graphModule];
+        RELEASE_ASSERT(module.firstExport <= header.exportCount && module.exportCount <= header.exportCount - module.firstExport);
+        auto* exports = reinterpret_cast<const Graph::Export*>(prelinkedGraph.data() + header.exportsOffset) + module.firstExport;
+        auto* symbolTable = uncheckedDowncast<SymbolTable>(codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell());
+        Vector<uint32_t> result;
+        for (unsigned i = 0; i < module.exportCount; ++i) {
+            // (What it hands on from another module is one of that module's.)
+            if (exports[i].kind() != Graph::ExportKind::Local)
+                continue;
+            uint32_t sid = exports[i].localOrImportSid;
+            // (The engine's own names are kept anyway.)
+            if (sid == Graph::starDefaultSid)
+                continue;
+            if (sid >= prelinkedGraphStringSlots.size())
+                return std::nullopt;
+            String string = strings->stringForSlot(prelinkedGraphStringSlots[sid]);
+            if (string.isNull())
+                return std::nullopt;
+            SymbolTableEntry::Fast entry = symbolTable->get(Identifier::fromString(vm, string).impl());
+            if (!entry.isNull() && entry.varOffset().isScope())
+                result.append(entry.scopeOffset().offset());
+        }
+        // What is imported is somebody else's variable, unless it is a namespace: that is put in a variable of the module's own, by name, when the module is linked
+        // (CyclicModuleRecord::initializeEnvironment()). Whether it is one is not always known by now.
+        RELEASE_ASSERT(header.importsOffset <= prelinkedGraph.size() && header.importCount <= (prelinkedGraph.size() - header.importsOffset) / sizeof(Graph::Import));
+        RELEASE_ASSERT(module.firstImport <= header.importCount && module.importCount <= header.importCount - module.firstImport);
+        auto* imports = reinterpret_cast<const Graph::Import*>(prelinkedGraph.data() + header.importsOffset) + module.firstImport;
+        for (unsigned i = 0; i < module.importCount; ++i) {
+            uint32_t sid = imports[i].localSid;
+            if (sid >= prelinkedGraphStringSlots.size())
+                return std::nullopt;
+            String string = strings->stringForSlot(prelinkedGraphStringSlots[sid]);
+            if (string.isNull())
+                return std::nullopt;
+            SymbolTableEntry::Fast entry = symbolTable->get(Identifier::fromString(vm, string).impl());
+            if (!entry.isNull() && entry.varOffset().isScope())
+                result.append(entry.scopeOffset().offset());
+        }
+        return result;
+    }
     Vector<Identifier> namesOfLinkage; // Keeps what the linkages are keyed on.
     Vector<AOT::ImageEnvironment> environmentsOfLink;
     size_t environmentsSizeOfLink { 0 };
@@ -7264,11 +7318,14 @@ auto BytecodeLinkEncoder::finish() -> Result
     result.namedHotFunctions = encoder.namedHotFunctions();
     result.placedHotFunctions = encoder.placedHotFunctions();
     result.functionsWithoutName = encoder.functionsWithoutName();
-    for (auto& module : m_impl->modules) {
+    for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
+        auto& module = m_impl->modules[index];
         if (!module.isOfEngine)
             result.entryOffsets.append(module.entryOffset);
-        if (module.root->classInfo() != UnlinkedFunctionExecutable::info() || Options::staticHeapHasBuiltinFunctions())
+        if (module.root->classInfo() != UnlinkedFunctionExecutable::info() || Options::staticHeapHasBuiltinFunctions()) {
             result.entryOffsetsOfModules.append(module.entryOffset);
+            result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));
+        }
     }
     m_impl->modules.clear();
     m_impl->isFinished = true;
