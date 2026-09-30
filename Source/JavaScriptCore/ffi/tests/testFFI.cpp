@@ -2447,8 +2447,8 @@ static void testFixtureTable()
 }
 
 // The kernel can only deliver an overflow of the native stack on an alternate signal stack. The
-// signal handler that JSC registers with the first VM asks for that stack. ASan builds keep the
-// handler on the thread's own stack, so they are not tested.
+// signal handler that JSC registers with the first VM asks for that stack, and a thread that WTF
+// creates has one. ASan builds keep the handler on the thread's own stack, so they are not tested.
 #if OS(UNIX) && !ASAN_ENABLED
 
 static constexpr int nativeStackOverflowWasReported = 42;
@@ -2466,7 +2466,7 @@ static NEVER_INLINE int overflowTheNativeStack(int depth)
 IGNORE_WARNINGS_END
 
 // Runs in a process of its own: what an embedder with a crash handler does, then the overflow.
-static int runNativeStackOverflowChild()
+static int runNativeStackOverflowChild(const char* thread)
 {
     // The failure of this test is a crash. It leaves no core file.
     struct rlimit noCoreFile { 0, 0 };
@@ -2492,21 +2492,27 @@ static int runNativeStackOverflowChild()
     // The first VM registers the signal handlers of JSC. They chain to the handler above.
     RefPtr vm = VM::create();
 
-    // Without a limit, the stack of the main thread grows until the memory is used up.
-    struct rlimit stackLimit;
-    if (getrlimit(RLIMIT_STACK, &stackLimit))
-        return EXIT_FAILURE;
-    stackLimit.rlim_cur = std::min<rlim_t>(stackLimit.rlim_cur, 8 * MB);
-    if (setrlimit(RLIMIT_STACK, &stackLimit))
-        return EXIT_FAILURE;
-    overflowTheNativeStack(0);
+    if (!strcmp(thread, "main")) {
+        // Without a limit, the stack of the main thread grows until the memory is used up.
+        struct rlimit stackLimit;
+        if (getrlimit(RLIMIT_STACK, &stackLimit))
+            return EXIT_FAILURE;
+        stackLimit.rlim_cur = std::min<rlim_t>(stackLimit.rlim_cur, 8 * MB);
+        if (setrlimit(RLIMIT_STACK, &stackLimit))
+            return EXIT_FAILURE;
+        overflowTheNativeStack(0);
+    } else {
+        Thread::create("NativeStackOverflow"_s, [] {
+            overflowTheNativeStack(0);
+        })->waitForCompletion();
+    }
     return EXIT_FAILURE;
 }
 
 // The exit code of the child, or the negated number of the signal that killed it.
-static int runInChildProcess(const char* option)
+static int runInChildProcess(const char* option, const char* argument = nullptr)
 {
-    char* arguments[] = { const_cast<char*>(s_programPath), const_cast<char*>(option), nullptr };
+    char* arguments[] = { const_cast<char*>(s_programPath), const_cast<char*>(option), const_cast<char*>(argument), nullptr };
     pid_t child;
     if (posix_spawnp(&child, s_programPath, nullptr, nullptr, arguments, environ))
         return EXIT_FAILURE;
@@ -2521,7 +2527,40 @@ static int runInChildProcess(const char* option)
 
 static void testNativeStackOverflowIsReported()
 {
-    FFI_CHECK_EQ(runInChildProcess(nativeStackOverflowOption), nativeStackOverflowWasReported);
+    FFI_CHECK_EQ(runInChildProcess(nativeStackOverflowOption, "main"), nativeStackOverflowWasReported);
+    FFI_CHECK_EQ(runInChildProcess(nativeStackOverflowOption, "WTF"), nativeStackOverflowWasReported);
+}
+
+static void testThreadHasAlternateSignalStack()
+{
+    stack_t alternateStack { };
+    int result = -1;
+    Thread::create("AlternateSignalStack"_s, [&] {
+        result = sigaltstack(nullptr, &alternateStack);
+    })->waitForCompletion();
+    FFI_CHECK(!result);
+    FFI_CHECK(!(alternateStack.ss_flags & SS_DISABLE));
+#if !OS(ANDROID)
+    // bionic gives every thread a smaller one, and that one stays.
+    FFI_CHECK_EQ(alternateStack.ss_size, 512 * KB);
+#endif
+
+#if OS(LINUX)
+    // The stack goes away with its thread.
+    auto numberOfMappings = [] {
+        size_t lines = 0;
+        if (FILE* maps = fopen("/proc/self/maps", "r")) {
+            for (int character = fgetc(maps); character != EOF; character = fgetc(maps))
+                lines += character == '\n';
+            fclose(maps);
+        }
+        return lines;
+    };
+    size_t mappingsBefore = numberOfMappings();
+    for (unsigned i = 0; i < 1000; ++i)
+        Thread::create("AlternateSignalStack"_s, [] { })->waitForCompletion();
+    FFI_CHECK(numberOfMappings() < mappingsBefore + 100);
+#endif
 }
 
 // Darwin suspends a thread through Mach, without a signal.
@@ -2636,6 +2675,7 @@ static int runAll()
 
 #if OS(UNIX) && !ASAN_ENABLED
     RUN(testNativeStackOverflowIsReported());
+    RUN(testThreadHasAlternateSignalStack());
 #if !OS(DARWIN)
     RUN(testSuspendOnAlternateSignalStack());
 #endif
@@ -2663,8 +2703,8 @@ int main(int argc, char** argv)
 #if USE(BUN_JSC_ADDITIONS) && ENABLE(JIT) && (CPU(X86_64) || CPU(ARM64))
 #if OS(UNIX) && !ASAN_ENABLED
     s_programPath = argv[0];
-    if (argc == 2 && !strcmp(argv[1], nativeStackOverflowOption))
-        return runNativeStackOverflowChild();
+    if (argc == 3 && !strcmp(argv[1], nativeStackOverflowOption))
+        return runNativeStackOverflowChild(argv[2]);
 #if !OS(DARWIN)
     if (argc == 2 && !strcmp(argv[1], suspendOnAlternateSignalStackOption))
         return runSuspendOnAlternateSignalStackChild();
