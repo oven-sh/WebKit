@@ -682,6 +682,11 @@ public:
     Ref<StringImpl> lastAtomizedIdentifierStringImpl { *StringImpl::empty() };
     Ref<AtomStringImpl> lastAtomizedIdentifierAtomStringImpl { *static_cast<AtomStringImpl*>(StringImpl::empty()) };
     JSONAtomStringCache jsonAtomStringCache;
+    // Of the last big result of JSON.stringify. A program that makes one is likely to make another much like it.
+    struct {
+        uint32_t length { 0 };
+        bool isWide { false };
+    } jsonStringifyHints;
     KeyAtomStringCache keyAtomStringCache;
     // Bytecode-cache decode: one lazy [class(c0)<<6|class(c1)] -> atom table for the bulk of minified identifiers, shared by every Decoder. The 64 classes are the ASCII identifier characters (Decoder::atomForInlineString).
     static constexpr unsigned cachedBytecodeTwoCharacterAtomsSize = 64 * 64;

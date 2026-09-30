@@ -82,10 +82,110 @@ ALWAYS_INLINE static bool appendOneEscapedJSONCharacter(std::span<OutputCharacte
     return true;
 }
 
+#if CPU(ARM64) && COMPILER(CLANG)
+// For eight characters, of which the mask says which are to have a backslash put before them: where each character of what comes of it is from. Up to 7: the characters. From 8: what
+// each is written as after its backslash. 16: a backslash.
+struct JSONEscapeExpansion {
+    alignas(16) uint8_t shuffle[256][16];
+    uint8_t length[256];
+};
+inline constexpr JSONEscapeExpansion jsonEscapeExpansion = [] {
+    JSONEscapeExpansion result { };
+    for (unsigned mask = 0; mask < 256; ++mask) {
+        unsigned length = 0;
+        for (unsigned i = 0; i < 8; ++i) {
+            if (mask >> i & 1) {
+                result.shuffle[mask][length++] = 16;
+                result.shuffle[mask][length++] = 8 + i;
+            } else
+                result.shuffle[mask][length++] = i;
+        }
+        result.length[mask] = length;
+        while (length < 16)
+            result.shuffle[mask][length++] = 0xff;
+    }
+    return result;
+}();
+
+// As many whole vectors as there are in the first `count` characters. Text has a line break every few dozen characters: whether a vector has something to escape in it is not to be
+// guessed, so nothing hangs on it. skipsWhatIsClean: for text that has next to nothing to escape, where it is.
+template<bool skipsWhatIsClean, typename OutputCharacterType>
+ALWAYS_INLINE static void appendEscapedJSONVectors(std::span<OutputCharacterType>& output, std::span<const Latin1Character>& input, size_t count)
+{
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    alignas(16) static constexpr uint8_t shortForms[16] = { 0, 0, 0, 0, 0, 0, 0, 0, 'b', 't', 'n', 0, 'f', 'r', 0, 0 };
+    alignas(16) static constexpr uint8_t weights[16] = { 1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128 };
+    const auto backslashes = simde_vdupq_n_u8('\\');
+    const auto forms = simde_vld1q_u8(shortForms);
+    const auto weight = simde_vld1q_u8(weights);
+    const uint8_t* from = std::bit_cast<const uint8_t*>(input.data());
+    const uint8_t* end = from + (count & ~static_cast<size_t>(15));
+    OutputCharacterType* to = output.data();
+    auto put = [&](simde_uint8x16_t characters) ALWAYS_INLINE_LAMBDA {
+        if constexpr (sizeof(OutputCharacterType) == 1)
+            simde_vst1q_u8(std::bit_cast<uint8_t*>(to), characters);
+        else
+            simde_vst2q_u8(std::bit_cast<uint8_t*>(to), (simde_uint8x16x2_t { characters, simde_vdupq_n_u8(0) }));
+    };
+    for (; from != end; from += 16) {
+        auto characters = simde_vld1q_u8(from);
+        auto controls = simde_vcltq_u8(characters, simde_vdupq_n_u8(' '));
+        auto escaped = simde_vorrq_u8(simde_vorrq_u8(simde_vceqq_u8(characters, simde_vdupq_n_u8('"')), simde_vceqq_u8(characters, backslashes)), controls);
+        auto bits = simde_vandq_u8(escaped, weight);
+        unsigned low = simde_vaddv_u8(simde_vget_low_u8(bits));
+        unsigned high = simde_vaddv_u8(simde_vget_high_u8(bits));
+        if constexpr (skipsWhatIsClean) {
+            if (!(low | high)) {
+                put(characters);
+                to += 16;
+                continue;
+            }
+        }
+        // What each is written as after a backslash: itself, or the letter that stands for it. (There is none for most of what is below a space.)
+        auto written = simde_vbslq_u8(controls, simde_vqtbl1q_u8(forms, characters), characters);
+        if (simde_vmaxvq_u8(simde_vandq_u8(controls, simde_vceqzq_u8(written)))) [[unlikely]] {
+            std::span<OutputCharacterType> room { to, 16 * 6 };
+            std::span<const Latin1Character> these { std::bit_cast<const Latin1Character*>(from), 16 };
+            while (!these.empty())
+                appendOneEscapedJSONCharacter(room, these);
+            to = room.data();
+            continue;
+        }
+        put(simde_vqtbl2q_u8((simde_uint8x16x2_t { simde_vcombine_u8(simde_vget_low_u8(characters), simde_vget_low_u8(written)), backslashes }), simde_vld1q_u8(jsonEscapeExpansion.shuffle[low])));
+        to += jsonEscapeExpansion.length[low];
+        put(simde_vqtbl2q_u8((simde_uint8x16x2_t { simde_vcombine_u8(simde_vget_high_u8(characters), simde_vget_high_u8(written)), backslashes }), simde_vld1q_u8(jsonEscapeExpansion.shuffle[high])));
+        to += jsonEscapeExpansion.length[high];
+    }
+    skip(output, to - output.data());
+    skip(input, from - std::bit_cast<const uint8_t*>(input.data()));
+    WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+}
+#endif
+
 // The output has room for six characters for each one of the input.
 template<typename OutputCharacterType, typename InputCharacterType>
 ALWAYS_INLINE static bool appendEscapedJSONStringContent(std::span<OutputCharacterType>& output, std::span<const InputCharacterType> input)
 {
+#if CPU(ARM64) && COMPILER(CLANG)
+    if constexpr (sizeof(InputCharacterType) == 1) {
+        // (How the last stretch was says how the next is likely to be.)
+        bool hasMuchToEscape = false;
+        while (input.size() >= 16) {
+            size_t count = std::min<size_t>(input.size(), 512);
+            size_t before = input.size();
+            auto* start = output.data();
+            if (hasMuchToEscape)
+                appendEscapedJSONVectors<false>(output, input, count);
+            else
+                appendEscapedJSONVectors<true>(output, input, count);
+            size_t taken = before - input.size();
+            hasMuchToEscape = (static_cast<size_t>(output.data() - start) - taken) * 64 > taken;
+        }
+        while (!input.empty())
+            appendOneEscapedJSONCharacter(output, input);
+        return true;
+    }
+#endif
 #if (CPU(ARM64) || CPU(X86_64)) && COMPILER(CLANG)
     // Text that has something to escape in it is still mostly text that goes as it is. That is copied a vector at a time, up to the next character that wants looking at.
     using InputLane = SameSizeUnsignedInteger<InputCharacterType>;
