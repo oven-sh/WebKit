@@ -61,7 +61,7 @@ public:
     };
 
     static ModuleLoadingContext* create(VM&, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, const AbstractModuleRecord::ModuleRequest&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    static ModuleLoadingContext* create(VM&, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
+    static ModuleLoadingContext* create(VM&, JSModuleLoader*, const AbstractModuleRecord::ModuleRequest&, ModuleRegistryEntry*, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1);
 
     Step step() const { return m_step; }
     void setStep(Step s) { m_step = s; }
@@ -70,10 +70,6 @@ public:
     const AbstractModuleRecord::ModuleRequest& moduleRequest() const { return m_moduleRequest; }
     JSCell* payload() const { return m_payload.get(); }
     ModuleRegistryEntry* entry() const { return m_entry.get(); }
-#if USE(BUN_JSC_ADDITIONS)
-    // See JSModuleLoader::removeEntry().
-    void setEntry(VM& vm, ModuleRegistryEntry* entry) { m_entry.setMayBeNull(vm, this, entry); }
-#endif
     ScriptFetcher* scriptFetcher() const { return m_scriptFetcher.get(); }
     AbstractModuleRecord* module() const { return m_module.get(); }
     void module(VM& vm, AbstractModuleRecord* mod) { m_module.set(vm, this, mod); }
@@ -89,7 +85,7 @@ public:
 
 private:
     ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, Step, const JSModuleLoader::ModuleReferrer&, AbstractModuleRecord::ModuleRequest&&, JSCell* payload, ModuleRegistryEntry*, RefPtr<ScriptFetcher>);
-    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
+    ModuleLoadingContext(VM&, Structure*, JSModuleLoader*, AbstractModuleRecord::ModuleRequest&&, ModuleRegistryEntry*, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder);
 
     Step m_step { Step::Main };
     AbstractModuleRecord::ModuleRequest m_moduleRequest;
