@@ -829,6 +829,8 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
     auto& names = vm.pythonNames();
     PyType* type = typeOf(globalObject, value);
     unsigned hooks = type->hooks(globalObject);
+    // slot_tp_getattr_hook() has hold of it before anything is run, which may take it away.
+    JSValue fallback = hooks & PyType::HasGetAttr ? type->lookup(vm, names.dunder_getattr) : JSValue();
 
     JSValue result;
     if (hooks & PyType::HasCustomGetAttribute) [[unlikely]]
@@ -849,10 +851,10 @@ JSValue getAttributeIfPresent(JSGlobalObject* globalObject, JSValue value, Prope
         result = askModuleForAttribute(globalObject, value, name, IfModuleSaysNo::GoOn);
         RETURN_IF_EXCEPTION(scope, { });
     }
-    if (result || !(hooks & PyType::HasGetAttr))
+    if (result || !fallback)
         return result;
 
-    result = callSpecial(globalObject, type, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name));
+    result = callSpecial(globalObject, type, fallback, value, nameAsString(vm, name));
     if (scope.exception()) [[unlikely]] {
         catchException(globalObject, BuiltinType::AttributeError);
         return { };
@@ -895,6 +897,8 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
     auto& names = vm.pythonNames();
     PyType* type = typeOf(globalObject, value);
     unsigned hooks = type->hooks(globalObject);
+    // slot_tp_getattr_hook() has hold of it before anything is run, which may take it away.
+    JSValue fallback = hooks & PyType::HasGetAttr ? type->lookup(vm, names.dunder_getattr) : JSValue();
 
     JSValue result;
     if (hooks & PyType::HasCustomGetAttribute) [[unlikely]]
@@ -903,20 +907,20 @@ JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName n
         result = genericGetAttribute(globalObject, value, name);
 
     if (scope.exception()) [[unlikely]] {
-        if (!(hooks & PyType::HasGetAttr) || !catchException(globalObject, BuiltinType::AttributeError))
+        if (!fallback || !catchException(globalObject, BuiltinType::AttributeError))
             return { };
         result = { };
     }
     if (result) [[likely]]
         return result;
     if (!(hooks & PyType::HasCustomGetAttribute)) {
-        result = askModuleForAttribute(globalObject, value, name, hooks & PyType::HasGetAttr ? IfModuleSaysNo::GoOn : IfModuleSaysNo::Raise);
+        result = askModuleForAttribute(globalObject, value, name, fallback ? IfModuleSaysNo::GoOn : IfModuleSaysNo::Raise);
         RETURN_IF_EXCEPTION(scope, { });
         if (result)
             return result;
     }
-    if (hooks & PyType::HasGetAttr)
-        RELEASE_AND_RETURN(scope, callSpecial(globalObject, type, type->lookup(vm, names.dunder_getattr), value, nameAsString(vm, name)));
+    if (fallback)
+        RELEASE_AND_RETURN(scope, callSpecial(globalObject, type, fallback, value, nameAsString(vm, name)));
     return raiseNoAttribute(globalObject, scope, value, name);
 }
 
@@ -1858,8 +1862,10 @@ JSValue instantiateFrom(JSGlobalObject* globalObject, PyType* type, PyType* from
 
     if (type->cannotBeInstantiated(vm))
         return raiseTypeError(globalObject, scope, concatenate("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
-    JSValue constructor = type->lookupFrom(vm, from, names.dunder_new);
-    ASSERT(constructor);
+    // A metaclass can put the classes in any order with mro(), so the class itself need not come first, and object need not be there.
+    JSValue constructor = isContinuing ? type->lookupFrom(vm, from, names.dunder_new) : type->lookup(vm, names.dunder_new);
+    if (!constructor)
+        return raiseTypeError(globalObject, scope, concatenate("cannot create '"_s, type->nameString(globalObject), "' instances"_s));
     // slot_tp_new(): it is what the class has by that name, as `type.__new__` would find it. A function is a static method whether or not it says so, and whatever else has a __get__() is asked.
     constructor = bindDescriptor(globalObject, constructor, JSValue(), type);
     RETURN_IF_EXCEPTION(scope, { });

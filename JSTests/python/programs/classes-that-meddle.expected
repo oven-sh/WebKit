@@ -1,0 +1,22 @@
+---- a metaclass puts the classes in an order of its own
+['object', 'A', 'C', 'B', 'D', 'X'] A X True True ['D', 'B', 'C', 'A', 'object'] C
+    object comes first, so its __new__() is the one => {}
+    and it takes no arguments => TypeError object.__new__() takes exactly one argument (the type to instantiate)
+    without object => TypeError cannot create 'Z' instances
+    nothing at all => TypeError type MRO must not be empty
+    what is not a class => TypeError mro() returned a non-class ('int')
+    what is not a list => TypeError 'int' object is not iterable
+    a class that has nothing to do with it => TypeError mro() returned base with unsuitable layout ('int')
+    it raises => ZeroDivisionError division by zero
+---- __getattr__() is taken away by __getattribute__()
+    it had been got hold of => from __getattr__(): attr
+    and now there is none => AttributeError attr
+    hasattr() => False
+    by a property => from __getattr__(): p
+    and now there is none => AttributeError 'Evil2' object has no attribute 'q'
+    getattr() with something to fall back on => ('put back: p', 'fallen back on')
+---- __bases__ is set while __bases__ is being set
+    round in a ring => TypeError a __bases__ item causes an inheritance cycle
+['B1', 'Base', 'object'] ['B2', 'Base', 'object'] (<class '__main__.Base'>,) (<class '__main__.Base'>,)
+    itself => TypeError a __bases__ item causes an inheritance cycle
+    what is derived from it => TypeError a __bases__ item causes an inheritance cycle

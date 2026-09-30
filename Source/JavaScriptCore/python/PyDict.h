@@ -268,11 +268,17 @@ public:
     bool addWithHash(JSGlobalObject* globalObject, JSValue key, uint32_t hash) { return Base::addWithHash(globalObject, key, hash, JSValue(), nullptr, false); }
     bool add(JSGlobalObject* globalObject, JSValue key, bool* wasAdded = nullptr) { return Base::add(globalObject, key, JSValue(), wasAdded, false); }
 
+    // The hash of a frozenset, once it has been worked out, or -1, which no hash is. A frozenset of frozensets of frozensets would otherwise be gone through once for every way down to each.
+    int64_t hashOnceWorkedOut() const { return m_hash; }
+    void setHashOnceWorkedOut(int64_t hash) { m_hash = hash; }
+
 private:
     PySet(VM& vm, Structure* structure)
         : Base(vm, structure, 1)
     {
     }
+
+    int64_t m_hash { -1 };
 };
 
 template<typename Function>

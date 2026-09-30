@@ -1,0 +1,45 @@
+---- what has itself in it
+    dict == dict => RecursionError
+    dict != dict => RecursionError
+    list == list => RecursionError
+    list < list => RecursionError
+    list >= list => RecursionError
+    a tuple in a list => RecursionError
+    a list in a dict => RecursionError
+    deque == deque => RecursionError
+    in => RecursionError
+    index() => RecursionError
+    count() => RecursionError
+    remove() => RecursionError
+    sorted() => RecursionError
+    max() => RecursionError
+    the very same is equal => (True, True, 0, 1)
+    repr() => ('[[...]]', "{'a': {...}}")
+    dict values => RecursionError
+    dict items => RecursionError
+---- what is very deep
+    list == ends
+    tuple == ends
+    dict == ends
+    slice == ends
+    list < ends
+    sorted() ends
+    repr() of a list ends
+    of a tuple ends
+    of a dict ends
+    hash() of a frozenset ends
+    of a slice ends
+    filter() ends
+    enumerate() ends
+    islice() ends
+    isinstance() of a tuple ends
+    issubclass() of a tuple ends
+    SimpleNamespace == ends
+    staticmethod ends
+    a generator ends
+---- and afterwards all is as it was
+True True True True [1] True
+---- the hash of a frozenset is worked out once
+60 60 True True True
+True 0 True True
+True True None False True

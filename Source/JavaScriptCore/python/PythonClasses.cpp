@@ -676,7 +676,11 @@ void setBases(JSGlobalObject* globalObject, PyType* type, JSValue value)
             raiseTypeError(globalObject, scope, concatenate(name, ".__bases__ must be tuple of classes, not '"_s, typeName(globalObject, entry.get()), '\''));
             return;
         }
-        if (asType(entry.get())->isSubtypeOf(type)) {
+        // The order of a class is worked out by mro(), which can set the bases of another before this one's order has been changed. What each is chiefly derived from has been by then: type_is_subtype_base_chain().
+        bool goesRound = asType(entry.get())->isSubtypeOf(type);
+        for (PyType* ancestor = asType(entry.get()); ancestor && !goesRound; ancestor = ancestor->base())
+            goesRound = ancestor == type;
+        if (goesRound) {
             raiseTypeError(globalObject, scope, "a __bases__ item causes an inheritance cycle"_s);
             return;
         }
@@ -797,6 +801,12 @@ static bool checkClassInfo(JSGlobalObject* globalObject, JSValue value, JSValue 
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = vm.pythonNames();
     PyRealm* realm = globalObject->pyRealm();
+
+    // A tuple may have a tuple in it: object_recursive_isinstance() and recursive_issubclass().
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        raise(globalObject, scope, BuiltinType::RecursionError, isInstanceCheck ? "maximum recursion depth exceeded in __instancecheck__"_s : "maximum recursion depth exceeded in __subclasscheck__"_s);
+        return false;
+    }
 
     // A union is as a tuple of what is in it.
     if (isUnion(globalObject, classInfo))

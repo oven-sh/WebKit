@@ -1081,6 +1081,10 @@ JSValue compare(JSGlobalObject* globalObject, ComparisonOperator op, JSValue lef
         break;
     }
 
+    // What has itself in it is compared with what is in it, and so on for ever: PyObject_RichCompare().
+    if (!vm.isSafeToRecurse()) [[unlikely]]
+        return raise(globalObject, scope, BuiltinType::RecursionError, "maximum recursion depth exceeded in comparison"_s);
+
     if (isExact(globalObject, left) && isExact(globalObject, right)) {
         JSValue result = builtinCompare(globalObject, op, left, right);
         RETURN_IF_EXCEPTION(scope, { });
@@ -1306,6 +1310,8 @@ static int64_t hashOfFrozenSet(JSGlobalObject* globalObject, PySet* set)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (set->hashOnceWorkedOut() != -1)
+        return set->hashOnceWorkedOut();
     auto shuffle = [] (uint64_t h) { return ((h ^ 89869747ULL) ^ (h << 16)) * 3644798167ULL; };
     uint64_t result = 0;
     for (unsigned entry = 0; entry < set->entryCount(); ++entry) {
@@ -1321,6 +1327,9 @@ static int64_t hashOfFrozenSet(JSGlobalObject* globalObject, PySet* set)
     result = result * 69069U + 907133923ULL;
     if (result == static_cast<uint64_t>(-1))
         result = 590923713ULL;
+    // Not of what can be added to, should one ever be asked for its hash.
+    if (typeOf(globalObject, set)->isSubtypeOf(globalObject->pyRealm()->typeFrozenSet()))
+        set->setHashOnceWorkedOut(static_cast<int64_t>(result));
     return static_cast<int64_t>(result);
 }
 
@@ -1354,6 +1363,11 @@ int64_t hash(JSGlobalObject* globalObject, JSValue value)
         break;
     }
 
+    // The hash of what has things in it is made of theirs. CPython goes on until it stops.
+    if (!vm.isSafeToRecurse()) [[unlikely]] {
+        raiseRecursionError(globalObject);
+        return -1;
+    }
     PyRealm* realm = globalObject->pyRealm();
     PyType* type = typeOf(globalObject, value);
     if (type == realm->typeTuple())
@@ -2070,6 +2084,11 @@ JSValue iteratorNextKeepingStopIteration(JSGlobalObject* globalObject, JSValue i
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (auto* native = tryIterator(iterator); native && !native->isOfDerivedClass()) {
+        // A map of a map of a map asks each in turn. CPython goes on until it stops.
+        if (!vm.isSafeToRecurse()) [[unlikely]] {
+            raiseRecursionError(globalObject);
+            return { };
+        }
         JSValue value = native->next(globalObject);
         // What it gives when something that it called threw is not to be relied on to be empty.
         RETURN_IF_EXCEPTION(scope, { });
