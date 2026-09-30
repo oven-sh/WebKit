@@ -217,6 +217,7 @@ public:
         auto* impl = key.impl();
         Locker locker { cellLock() }; // visitChildren iterates these
         forgetPrelinkedRecordsWithKey(impl);
+        m_loadedModules.removeIf([&](auto& entry) { return entry.key.first == impl; });
         m_resolutionFailures.removeIf([&](auto& entry) { return entry.key.first == impl || entry.key.second == impl; });
         return m_moduleMap.removeIf([&](auto& entry) {
             if (entry.key.first != impl)
@@ -229,6 +230,7 @@ public:
     {
         Locker locker { cellLock() };
         forgetPrelinkedRecordsWithKey(nullptr);
+        m_loadedModules.clear();
         m_moduleMap.clear();
         m_nonJavaScriptEntryCount = 0;
         m_resolutionFailures.clear();
@@ -295,6 +297,9 @@ private:
         UNUSED_PARAM(type);
 #endif
     }
+
+    // Corresponds to RealmRecord.[[LoadedModules]].
+    ModuleMap<AbstractModuleRecord::LoadedModuleRequest> m_loadedModules;
 
     WriteBarrier<JSScope> m_moduleScope;
 #if USE(BUN_JSC_ADDITIONS)

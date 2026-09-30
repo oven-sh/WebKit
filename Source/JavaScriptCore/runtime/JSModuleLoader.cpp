@@ -283,6 +283,8 @@ void JSModuleLoader::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(moduleMapValues.begin(), moduleMapValues.end());
     auto resolutionFailuresValues = thisObject->m_resolutionFailures.values();
     visitor.append(resolutionFailuresValues.begin(), resolutionFailuresValues.end());
+    for (auto& [key, loadedModule] : thisObject->m_loadedModules)
+        visitor.append(loadedModule.m_module);
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_prelinkedRecords.begin(), thisObject->m_prelinkedRecords.end());
 #endif
@@ -733,10 +735,31 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
 
-    // A load with the realm as its referrer names its module by registry key: requestImportModule() and
-    // loadAndEvaluateModule() have resolved it. So the registry is the realm's [[LoadedModules]], and there is no
-    // second table that removeEntry() and clearAll() would have to keep in step with it.
-    if (specifier.isSymbol() || referrer.isRealm())
+    // HostLoadImportedModule is required to be idempotent for the same
+    // (referrer, moduleRequest) pair. referrer.[[LoadedModules]] is that cache;
+    // FinishLoadingImportedModule populates it, and innerModuleLoading consults it,
+    // but top-level loadModule (dynamic import) reaches here without checking.
+    // Consult it now so we can skip the host resolve() hook for repeat imports.
+    {
+        auto& loadedModules = record ? record->loadedModules() : m_loadedModules;
+        if (auto iter = loadedModules.find(moduleMapKey); iter != loadedModules.end()) {
+            AbstractModuleRecord* loaded = iter->value.m_module.get();
+            ModuleRegistryEntry* loadedEntry = getRegisteredMayBeNull(loaded->moduleKey(), type);
+            ASSERT(loadedEntry);
+            ASSERT(loadedEntry->record() == loaded);
+#if USE(BUN_JSC_ADDITIONS)
+            JSPromise* loadedPromise = loadedEntry->loadedPromise(globalObject);
+#else
+            JSPromise* loadedPromise = loadedEntry->loadPromise();
+#endif
+            ASSERT(loadedPromise);
+            finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, loaded, scriptFetcher);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            return loadedPromise;
+        }
+    }
+
+    if (specifier.isSymbol())
         mapEntry = getRegisteredMayBeNull(specifier, type);
 
     ResolutionMapKey resolutionKey { referrerKey.impl(), specifier.impl() };
@@ -1037,10 +1060,30 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // 1. If result is a normal completion, then
-    // (The realm's [[LoadedModules]] is the registry: see hostLoadImportedModule().)
-    CyclicModuleRecord* owner = referrer.getModule();
-    if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result); resultRecord && owner) {
-        auto& loadedModules = owner->loadedModules();
+#if USE(BUN_JSC_ADDITIONS)
+    // hostLoadImportedModule() relies on the realm's [[LoadedModules]] holding only what the registry holds. removeEntry()
+    // and clearAll() take a module out of both, and a load of it that was in flight then must not put it back into one.
+    auto isRegistered = [&](AbstractModuleRecord* record) {
+        ModuleRegistryEntry* entry = getRegisteredMayBeNull(record->moduleKey(), moduleRequest.type());
+        return entry && entry->record() == record;
+    };
+    if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result); resultRecord && (!referrer.isRealm() || isRegistered(*resultRecord))) {
+#else
+    if (auto* resultRecord = std::get_if<AbstractModuleRecord*>(&result)) {
+#endif
+        JSCell* owner = nullptr;
+
+        auto& loadedModules = [&] -> ModuleMap<AbstractModuleRecord::LoadedModuleRequest> & {
+            if (CyclicModuleRecord* module = referrer.getModule()) {
+                owner = module;
+                return module->loadedModules();
+            }
+            ASSERT(referrer.isRealm());
+            owner = this;
+            return m_loadedModules;
+        }();
+
+        ASSERT(owner);
 
         // 1.a. If referrer.[[LoadedModules]] contains a LoadedModuleRequest Record record such that ModuleRequestsEqual(record, moduleRequest) is true, then
         if (auto iter = loadedModules.find(ModuleMapKey { moduleRequest.m_specifier.impl(), moduleRequest.type() }); iter != loadedModules.end()) {
