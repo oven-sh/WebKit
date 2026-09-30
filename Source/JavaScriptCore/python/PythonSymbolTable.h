@@ -136,6 +136,7 @@ struct Block {
     // Whether there is an import statement in it, which goes by the globals of the code that it is in.
     bool hasImport { false };
     bool hasClassDefinition { false }; // Which is made by what the builtins have as __build_class__.
+    bool hasGlobalInComprehension { false }; // A comprehension that has become part of it names something global, whatever this has by the name.
     Block* annotationBlock { nullptr };
 
     struct Directive {

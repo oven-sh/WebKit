@@ -225,7 +225,9 @@ public:
 private:
 
     bool hasFutureAnnotations() const { return m_table.m_futureFeatures & FutureAnnotations; }
-    bool allowsTopLevelAwait() const { return (m_table.m_futureFeatures & AllowTopLevelAwait) && m_current->type == BlockType::Module; }
+    // What a definition is written with that is no part of what it defines, its defaults and decorators and bases, is part of what the definition is in. When what it defines is compiled by itself those are there
+    // to be gone over, and whether they may await was settled when what they are part of was compiled.
+    bool allowsTopLevelAwait() const { return m_current == m_fragmentTop ? !!m_fragmentTop : (m_table.m_futureFeatures & AllowTopLevelAwait) && m_current->type == BlockType::Module; }
     bool isInAsyncFunction() const { return m_current->type == BlockType::Function && m_current->isCoroutine; }
 
     // ---- Blocks
@@ -1251,12 +1253,15 @@ private:
         bool removeClass = false;
         bool removeClassDict = false;
         bool removeConditionalAnnotations = false;
+        block.hasGlobalInComprehension |= comprehension.hasGlobalInComprehension;
         for (Symbol& symbol : comprehension.symbols) {
             if (symbol.flags & DefParameter)
                 continue;
             const Identifier& identifier = *symbol.name;
             UniquedStringImpl* name = identifier.impl();
             NameScope scope = symbol.scope;
+            if (scope == NameScope::GlobalImplicit || scope == NameScope::GlobalExplicit)
+                block.hasGlobalInComprehension = true;
             if (scope == NameScope::Cell || (symbol.flags & DefComprehensionCell))
                 inlinedCells.add(name);
             // These do not go through a class unless something further in needs them.

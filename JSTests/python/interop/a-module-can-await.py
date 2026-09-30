@@ -124,3 +124,28 @@ made = function()
 print(type(made).__name__, "s" in namespace, await made, namespace["s"])
 attempt("a function made of what awaits nothing", lambda: (types.FunctionType(compile("r = 11", "<test>", "exec"), namespace)(), namespace["r"]))
 attempt("of an expression", lambda: types.FunctionType(compile("r + 1", "<test>", "eval"), namespace)())
+
+print("---- in what a definition is written with")
+
+
+def withDefaults(a=await double(1), *, b=await double(2)):
+    return a, b
+
+
+async def asynchronous(a=await double(3)):
+    return a
+
+
+aLambda = lambda a=await double(4): a
+
+
+@(await js.Promise.resolve(lambda f: f))
+def decorated():
+    return "decorated"
+
+
+class Based((await js.Promise.resolve(object))):
+    x = 5
+
+
+print(withDefaults(), await asynchronous(), aLambda(), decorated(), Based.x)

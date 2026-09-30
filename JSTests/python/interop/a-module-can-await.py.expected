@@ -83,3 +83,5 @@ coroutine <module> <module> False None 12
 coroutine False None 20
     a function made of what awaits nothing => (None, 11)
     of an expression => 12
+---- in what a definition is written with
+(2, 4) 6 8 decorated 5

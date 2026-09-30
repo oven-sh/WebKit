@@ -828,6 +828,24 @@ private:
                 return { Where::Register, iterator->value.get(), false };
             return { Where::Closure };
         }
+        // And what else is named in one is what it would be if the comprehension were a function, as it once was, whatever what it is now part of has by the name: push_inlined_comprehension_state(). That
+        // may be the variable of another comprehension that is over. And what is in a class does not see what the class has.
+        if (!m_comprehensionBlocks.isEmpty()) {
+            switch (m_comprehensionBlocks.last()->scopeOf(name)) {
+            case NameScope::GlobalExplicit:
+                return { Where::Global };
+            case NameScope::GlobalImplicit:
+                if (isFunctionLike() || m_info.kind == CodeKind::Class)
+                    return { Where::Global };
+                break;
+            case NameScope::Free:
+                if (m_info.kind == CodeKind::Class)
+                    return { Where::Closure };
+                break;
+            default:
+                break;
+            }
+        }
         bool isClass = m_info.usesNamespace;
         // What is in a class without being part of its body looks there for what is not its own.
         bool looksInClass = isClass || m_info.canSeeClassScope;
@@ -977,8 +995,11 @@ private:
         case Where::Global:
             g.emitDirectPutById(m_globals.get(), name, value);
             return;
-        case Where::Namespace:
+        // What is free in a class is looked for in the class first. But it is given a value only if the class says that it is `nonlocal`, and then it is the variable that is.
         case Where::NamespaceOrClosure:
+            emitStoreClosure(name, value, node);
+            return;
+        case Where::Namespace:
             mark(node);
             OpPySetItem::emit(&g, m_namespace.get(), stringConstant(name), value);
             return;
@@ -994,7 +1015,8 @@ private:
             emitCheckBound(location.local, name, node);
             g.moveEmptyValue(location.local);
             return;
-        case Where::Closure: {
+        case Where::Closure:
+        case Where::NamespaceOrClosure: {
             emitLoadClosure(nullptr, name, node);
             emitStoreClosure(name, nullptr, node);
             return;
@@ -1003,7 +1025,6 @@ private:
             emitRuntimeCall(nullptr, "deleteGlobal"_s, { m_globals.get(), stringConstant(name) }, node);
             return;
         case Where::Namespace:
-        case Where::NamespaceOrClosure:
             emitRuntimeCall(nullptr, "deleteName"_s, { m_namespace.get(), stringConstant(name) }, node);
             return;
         }
@@ -2208,7 +2229,9 @@ private:
         else if (m_private)
             info->privateName = *m_private;
         for (Symbol& symbol : block.symbols) {
-            if (symbol.scope != NameScope::Free)
+            // A class may have something of its own by the name of what is free in one of its methods. It is on its way through, all the same: what is in the class is compiled by itself, and this is how it
+            // knows what there is outside.
+            if (symbol.scope != NameScope::Free && !(symbol.flags & DefFreeClass))
                 continue;
             info->freeVariables.append(*symbol.name);
             // What this has as a cell, what is in it finds as a cell.
@@ -2553,7 +2576,7 @@ private:
 
     bool usesGlobals()
     {
-        if (!isFunctionLike() || m_block.hasImport || m_block.hasClassDefinition)
+        if (!isFunctionLike() || m_block.hasImport || m_block.hasClassDefinition || m_block.hasGlobalInComprehension)
             return true;
         // What evaluates the annotations of a module looks among the globals for which of them have been come to, and that is not a name that is written in it.
         if (m_info.kind == CodeKind::Annotations && (m_info.owner == OwnerKind::Module || m_info.owner == OwnerKind::Interactive))
@@ -2934,6 +2957,7 @@ private:
         }
         emitPushCells(cells);
         m_comprehensionScopes.append(WTF::move(scope));
+        m_comprehensionBlocks.append(block);
 
         Reg result = g.newTemporary();
         {
@@ -2945,6 +2969,7 @@ private:
         }
 
         m_comprehensionScopes.removeLast();
+        m_comprehensionBlocks.removeLast();
         emitPopCells(cells);
         return finish(dst, result.get());
     }
@@ -5168,6 +5193,7 @@ private:
     HashSet<UniquedStringImpl*> m_alwaysBound;
     HashSet<UniquedStringImpl*> m_deletedNames;
     Vector<ComprehensionScope, 2> m_comprehensionScopes;
+    Vector<Block*, 2> m_comprehensionBlocks; // What each of those is the variables of.
     Vector<std::unique_ptr<VariableEnvironment>> m_environments;
     Vector<RegisterID*, 4> m_handledExceptions;
     Reg m_globals;

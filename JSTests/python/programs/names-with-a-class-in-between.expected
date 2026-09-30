@@ -1,0 +1,39 @@
+global in the class, free in the method => 8
+a method of the same name => ('var', 'method', 'global')
+at the top => ('var', 'method')
+nonlocal in the class => (1, False)
+bound in the class => (1, 5)
+read and then bound in the class => (0, 7, 7, 1)
+ module top [('test', 'G', 'L', ''), ('x', 'G', '', '')]
+   annotation __annotate__ [('.format', '', 'L', '')]
+   function test [('x', '', 'L', ''), ('Foo', '', 'L', '')]
+     class Foo [('x', 'G', '', ''), ('__call__', '', 'L', '')]
+       annotation __annotate__ [('.format', '', 'L', ''), ('__classdict__', '', '', 'F')]
+       function __call__ [('self', '', 'L', ''), ('y', '', 'L', ''), ('x', '', '', 'F')]
+---- what the code objects say
+('x',) c ('x',) ('x',) [1]
+---- deeper
+('a', 'b', 'c!') ('One.a', 'global b', 'c!') ('a', 'b', 'c!') ('a', 'b', 'c!') ('a', 'b', 'c!') ['a']
+deleted by the class => NameError cannot access free variable 'x' where it is not associated with a value in enclosing scope
+lambdas => (1, [1], 2)
+generator expressions => ([1], [2], [(1, 2)])
+---- a comprehension in a class does not see what the class has
+    first ['global y']
+    iterable ["the class's y"]
+    both [("the class's y", 'global y')]
+    nested [[("the class's y", 'global y', 'global y')]]
+    conditions ['a']
+    aSet {'global y'}
+    aDict {'global y': 'global y'}
+    inALambda ['global y']
+    (["the function's y"], [("the class's y", "the function's y")], [[("the class's y", "the function's y", "the function's y", 'global z')]])
+    (["the function's y"], 'set by the class') set by the class
+    (['set by the class'], 'in the namespace', 'set by the class')
+    True ['a']
+---- the variable of one comprehension is nothing to the next
+in a function => ['global x']
+with a variable of the name => (['local x'], 'local x')
+in a class => (['global x'], "the class's x")
+in the module => (['global x'], 'global x')
+in exec() => [3]
+nested, in a class => []

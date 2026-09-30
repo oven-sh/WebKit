@@ -1,0 +1,6 @@
+((1, 2), 3, 4, 'decorated', 5)
+'def f():\n    def g(a=await x): pass' 'await' outside async function 2 13
+'def f():\n    @(await x)\n    def g(): pass' 'await' outside async function 2 7
+'def f():\n    class C((await x)): pass' 'await' outside async function 2 14
+'async def f():\n    def g():\n        def h(a=await x): pass' 'await' outside async function 3 17
+'async def f():\n    g = lambda: (lambda a=await x: a)' 'await' outside async function 2 27

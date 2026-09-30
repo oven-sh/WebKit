@@ -320,6 +320,18 @@ but name, so what makes the one in line makes the other, and what puts one back 
 **A module is an instance of the class `module`, and its properties are the global variables of the code in it.** So `globals()`,
 `vars(module)` and `module.__dict__` are one dict, JavaScript sees an object with properties, and a class can be derived from `module`.
 
+**What is inside something is compiled by itself, later, and is told what there is outside**: the names that are free in it (`FunctionInfo::freeVariables`), which it takes to be the variables of a function that it is in.
+What each name means is worked out as in `symtable.c`, once for all of the source and again for each piece. So whatever the first time round knows that the second cannot find out has to be handed on.
+
+- A class may have something of its own by the name of what is free in one of its methods, or say that it is `global`. That is nothing to the method, which means the variable of the function that the class is in. It is on
+  its way through the class all the same (`DefFreeClass`), and is among what is free in the class, as it is in `co_freevars`. Left out, the method found nothing outside by the name and took it for a global.
+- What a class says is `nonlocal` is looked for in the class first, but it is the variable that is given a value.
+- **A comprehension is part of what it is in, and what is named in it is what it would be if it were a function, as it once was**: `push_inlined_comprehension_state()`. So what the comprehension makes of a name comes before what
+  the block that it is in makes of it (`m_comprehensionBlocks`). In a class it does not see what the class has. And the variable of one comprehension, which is a variable of the function from then on, is nothing to the next.
+- The defaults, decorators and bases of a definition are part of what the definition is in. They are there to be gone over when what it defines is compiled, and whether they may `await` was settled before.
+
+`programs/names-with-a-class-in-between.py`.
+
 Code finds its globals and its builtins in two variables, `.globals` and `.builtins`, of the outermost environment of its scope chain. Which
 builtins is settled when it is given its globals, from their `__builtins__`, as in CPython.
 
