@@ -236,6 +236,8 @@ private:
     // For one declared NOEXCEPT.
     template<typename... Args> LValue plainCall(LType, Entry, Args...);
     void storeBarrier(LValue owner);
+    // Of what is being lowered: whether anything but what comes right after it uses it. (Nearly everything is a call. So what is wanted for longer than that is kept where calls leave it alone.)
+    bool isWantedAfterWhatFollows(Node*) const;
 
     // Calls to stubs (AOTStubs.h).
     struct StubArgument {
@@ -430,6 +432,7 @@ private:
 
     HowValuesArePassed m_howValuesArePassed; // This function.
     LValue m_dataOnEntry { nullptr }; // Of a function that starts cold: m_data, but for in a loop.
+    B3::Variable* m_dataInLoops { nullptr }; // And there, if it has any: what was found at the top of the loop, the last time round.
     LValue m_callFrame { nullptr };
     LValue m_data { nullptr };
     LValue m_dataOrNothing { nullptr };

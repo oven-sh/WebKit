@@ -377,6 +377,10 @@ bool operandMayBeIn(Stub, GPRReg);
 // Whether the way in leaves whereOperandIsTaken() as it was.
 bool leavesAloneWhereOperandIsTaken(Stub);
 unsigned thunkForOperandIn(Stub, std::optional<uint32_t> valueOfT9, GPRReg);
+// Likewise the first two things it is given, which it takes in the first two argument registers. (Not in T9 to T15. Anywhere else will do: if there is no way in for it, they are moved.)
+bool takesTwoOperandsAnywhere(Stub);
+// And what it hands back: in a register that calls leave alone, which is where it would be copied to if it is wanted for long. (It cannot be had in one that the call clobbers.)
+bool givesResultAnywhere(Stub, std::optional<uint32_t> valueOfT9);
 
 struct StubBlob {
     Vector<uint8_t> bytes;
@@ -476,6 +480,8 @@ public:
     void call(CCallHelpers&, Stub, CallSite);
     void call(CCallHelpers&, Stub, uint32_t valueOfT9, CallSite);
     void callWithOperandIn(CCallHelpers&, Stub, std::optional<uint32_t> valueOfT9, GPRReg, CallSite); // takesOperandAnywhere()
+    void callWithOperandsIn(CCallHelpers&, Stub, GPRReg first, GPRReg second, CallSite); // takesTwoOperandsAnywhere()
+    void callForResultIn(CCallHelpers&, Stub, uint32_t valueOfT9, GPRReg operand, GPRReg result, CallSite); // givesResultAnywhere(). operand: where the first is, which is where it is taken unless takesOperandAnywhere().
     void tailCall(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub, uint32_t valueOfT9);
     void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);

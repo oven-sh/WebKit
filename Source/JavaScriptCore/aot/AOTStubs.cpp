@@ -213,7 +213,7 @@ enum class Returns : uint8_t { Value, Void, Double };
 
 // The function is in `function`, its arguments are in place. The stub has a frame of its own for the while, as everything here does that
 // calls what may look at the stack: what it is to go back to is where the calling function is at (see frameAt()).
-static void callAndCheckException(CCallHelpers& jit, GPRReg function, Returns returns)
+static void callAndCheckException(CCallHelpers& jit, GPRReg function, Returns returns, GPRReg result = GPRInfo::returnValueGPR)
 {
     jit.emitFunctionPrologue();
     jit.call(function, OperationPtrTag);
@@ -232,20 +232,21 @@ static void callAndCheckException(CCallHelpers& jit, GPRReg function, Returns re
         exception = jit.branchTestPtr(CCallHelpers::NonZero, Address(T9, VM::exceptionOffset()));
         break;
     }
+    jit.move(GPRInfo::returnValueGPR, result);
     jit.ret();
     exception.link(&jit);
     loadInstance(jit, T9);
     jumpToEntry(jit, T9, Entry::HandleException);
 }
 
-static void generateOperation(CCallHelpers& jit, Returns returns, bool withGlobalObject)
+static void generateOperation(CCallHelpers& jit, Returns returns, bool withGlobalObject, GPRReg result = GPRInfo::returnValueGPR)
 {
     loadInstance(jit, T11);
     if (withGlobalObject)
         jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
-    callAndCheckException(jit, T11, returns);
+    callAndCheckException(jit, T11, returns, result);
 }
 
 static void generateColdOperation(CCallHelpers& jit, bool ofLeaf, bool returnsValue = false)
@@ -3365,7 +3366,8 @@ static constexpr unsigned firstThunkOfIntrinsics = firstThunkOfPrologue + bigges
 // takesOperandAnywhere(). These have all that is quick about them over again for each register...
 static constexpr Stub stubsThatTakeOperandAnywhere[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     // ... and these are got to by way of a move.
-    Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope };
+    Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
+    Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringThatSays, Stub::GetLength, Stub::HelperAddField };
 // And so are these, which are got to by way of something that says which operation as it is.
 struct OperationThatTakesOperandAnywhere {
     Stub stub;
@@ -3380,6 +3382,8 @@ static constexpr OperationThatTakesOperandAnywhere operationsThatTakeOperandAnyw
     { Stub::OperationValueWithGlobalObject, Entry::operationAOTToString },
     { Stub::OperationValueWithGlobalObject, Entry::operationAOTToThis },
     { Stub::OperationValueWithGlobalObject, Entry::operationAOTCreateLexicalEnvironment },
+    { Stub::OperationValueWithGlobalObject, Entry::operationAOTCloneObject },
+    { Stub::OperationValueWithGlobalObject, Entry::operationAOTReadLazyClosureVar },
     { Stub::OperationVoidWithGlobalObject, Entry::operationAOTThrow },
     { Stub::OperationVoidWithGlobalObject, Entry::operationAOTThrowNotAFunction },
     { Stub::PlainOperationWithGlobalObject, Entry::operationAOTToBoolean },
@@ -3388,14 +3392,36 @@ static constexpr OperationThatTakesOperandAnywhere operationsThatTakeOperandAnyw
 static constexpr unsigned numberOfRegistersForOperand = 30;
 static constexpr unsigned firstThunkOfOperands = firstThunkOfIntrinsics + numberOfStubIntrinsics;
 static constexpr unsigned firstThunkOfOperandsOfOperations = firstThunkOfOperands + std::size(stubsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
-static constexpr unsigned numberOfThunks = firstThunkOfOperandsOfOperations + std::size(operationsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
+// takesTwoOperandsAnywhere(): got to by way of two moves.
+static constexpr Stub stubsThatTakeTwoOperandsAnywhere[] = { Stub::StrictEqual, Stub::LooseEqual, Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::PutByValDirect, Stub::HelperAddField };
+static constexpr unsigned numberOfRegistersForPair = 16; // x0 to x8, x19 to x25
+// givesResultAnywhere(). All of Stub::OperationValueWithGlobalObject, of which there is one for each register.
+struct OperationThatGivesResultAnywhere {
+    Entry operation;
+    bool takesOperandAnywhere; // It is among operationsThatTakeOperandAnywhere.
+};
+static constexpr OperationThatGivesResultAnywhere operationsThatGiveResultAnywhere[] = {
+    { Entry::operationAOTNewFunction, true }, { Entry::operationAOTToString, true }, { Entry::operationAOTToThis, true }, { Entry::operationAOTCreateLexicalEnvironment, true },
+    { Entry::operationAOTCloneObject, true }, { Entry::operationAOTReadLazyClosureVar, true },
+    { Entry::operationAOTNewObjectLiteral, false }, { Entry::operationAOTNewInternalFieldObject, false }, { Entry::operationAOTNewObject, false }, { Entry::operationAOTNewArray, false },
+    { Entry::operationAOTNewArrayWithSpecies, false }, { Entry::operationMakeRope2, false }, { Entry::operationMakeRope3, false },
+};
+static constexpr unsigned numberOfRegistersForResult = 7; // x19 to x25
+static constexpr unsigned firstThunkOfPairs = firstThunkOfOperandsOfOperations + std::size(operationsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
+static constexpr unsigned firstThunkOfResults = firstThunkOfPairs + std::size(stubsThatTakeTwoOperandsAnywhere) * numberOfRegistersForPair * numberOfRegistersForPair;
+static constexpr unsigned numberOfThunks = firstThunkOfResults + std::size(operationsThatGiveResultAnywhere) * numberOfRegistersForResult * numberOfRegistersForOperand;
 static_assert(numberOfThunks < std::numeric_limits<uint16_t>::max());
+
+static bool thereAreNoWaysInByRegister()
+{
+    // (What counts which way the stubs go only counts in the stubs themselves.)
+    static const bool result = !usesStubs || getenv("BUN_AOT_COUNTS_STUB_PATHS") || getenv("BUN_AOT_OPERANDS_ARE_MOVED");
+    return result;
+}
 
 static std::optional<unsigned> firstThunkForOperandOf(Stub stub, std::optional<uint32_t> valueOfT9)
 {
-    // (What counts which way the stubs go only counts in the stubs themselves.)
-    static const bool isOff = !usesStubs || getenv("BUN_AOT_COUNTS_STUB_PATHS") || getenv("BUN_AOT_OPERANDS_ARE_MOVED");
-    if (isOff)
+    if (thereAreNoWaysInByRegister())
         return std::nullopt;
     if (!valueOfT9) {
         for (unsigned i = 0; i < std::size(stubsThatTakeOperandAnywhere); ++i) {
@@ -3468,6 +3494,49 @@ unsigned thunkForOperandIn(Stub stub, std::optional<uint32_t> valueOfT9, GPRReg 
     return *firstThunkForOperandOf(stub, valueOfT9) + static_cast<unsigned>(reg);
 }
 
+bool takesTwoOperandsAnywhere(Stub stub)
+{
+    if (thereAreNoWaysInByRegister())
+        return false;
+    for (Stub other : stubsThatTakeTwoOperandsAnywhere) {
+        if (other == stub)
+            return true;
+    }
+    return false;
+}
+
+// Which of the registers that there are ways in for it is, if any.
+static std::optional<unsigned> numberAmongRegistersForPair(GPRReg reg)
+{
+    unsigned number = static_cast<unsigned>(reg);
+    if (number <= 8)
+        return number;
+    if (number >= 19 && number <= 25)
+        return number - 10;
+    return std::nullopt;
+}
+
+static GPRReg registerForPair(unsigned number)
+{
+    return static_cast<GPRReg>(number <= 8 ? number : number + 10);
+}
+
+static std::optional<unsigned> whichThatGivesResultAnywhere(Stub stub, std::optional<uint32_t> valueOfT9)
+{
+    if (thereAreNoWaysInByRegister() || stub != Stub::OperationValueWithGlobalObject || !valueOfT9)
+        return std::nullopt;
+    for (unsigned i = 0; i < std::size(operationsThatGiveResultAnywhere); ++i) {
+        if (static_cast<unsigned>(operationsThatGiveResultAnywhere[i].operation) * sizeof(void*) == *valueOfT9)
+            return i;
+    }
+    return std::nullopt;
+}
+
+bool givesResultAnywhere(Stub stub, std::optional<uint32_t> valueOfT9)
+{
+    return !!whichThatGivesResultAnywhere(stub, valueOfT9);
+}
+
 std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
 {
     if constexpr (!usesStubs)
@@ -3487,6 +3556,24 @@ std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
         return firstThunkOfIntrinsics + valueOfT9 - 1;
     }
     return std::nullopt;
+}
+
+// first to A0 and second to A1, whichever of those either is in.
+static void moveToFirstTwoArguments(CCallHelpers& jit, GPRReg first, GPRReg second)
+{
+    constexpr GPRReg a0 = GPRInfo::argumentGPR0;
+    constexpr GPRReg a1 = GPRInfo::argumentGPR1;
+    if (second == a0 && first == a1) {
+        jit.swap(a0, a1);
+        return;
+    }
+    if (second == a0) {
+        jit.move(second, a1);
+        jit.move(first, a0);
+        return;
+    }
+    jit.move(first, a0);
+    jit.move(second, a1);
 }
 
 const StubBlob& stubBlob()
@@ -3593,6 +3680,36 @@ const StubBlob& stubBlob()
                     jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
                 }
             }
+            for (Stub stub : stubsThatTakeTwoOperandsAnywhere) {
+                for (unsigned i = 0; i < numberOfRegistersForPair; ++i) {
+                    for (unsigned j = 0; j < numberOfRegistersForPair; ++j) {
+                        thunkLabels.append(jit.label());
+                        moveToFirstTwoArguments(jit, registerForPair(i), registerForPair(j));
+                        jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
+                    }
+                }
+            }
+            CCallHelpers::Label handsBackIn[numberOfRegistersForResult];
+            for (unsigned i = 0; i < numberOfRegistersForResult; ++i) {
+                jit.align();
+                handsBackIn[i] = jit.label();
+                generateOperation(jit, Returns::Value, true, static_cast<GPRReg>(static_cast<unsigned>(ARM64Registers::x19) + i));
+            }
+            for (auto& [operation, takesOperandAnywhere] : operationsThatGiveResultAnywhere) {
+                for (unsigned i = 0; i < numberOfRegistersForResult; ++i) {
+                    for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
+                        if (!takesOperandAnywhere && number) {
+                            thunkLabels.append(thunkLabels.last());
+                            continue;
+                        }
+                        thunkLabels.append(jit.label());
+                        if (takesOperandAnywhere)
+                            jit.move(static_cast<GPRReg>(number), GPRInfo::argumentGPR1);
+                        jit.move(CCallHelpers::TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), GPRInfo::regT9);
+                        jit.jump().linkTo(handsBackIn[i], &jit);
+                    }
+                }
+            }
 #endif
             RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
         }
@@ -3654,6 +3771,16 @@ const StubBlob& stubBlob()
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number)
                     dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "#", static_cast<unsigned>(operation), "OfX", number, " ", blob->thunkOffsets[thunk++]);
             }
+            for (Stub stub : stubsThatTakeTwoOperandsAnywhere) {
+                for (unsigned i = 0; i < numberOfRegistersForPair * numberOfRegistersForPair; ++i)
+                    dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "OfPair", i, " ", blob->thunkOffsets[thunk++]);
+            }
+            for (auto& [operation, takesOperandAnywhere] : operationsThatGiveResultAnywhere) {
+                for (unsigned i = 0; i < numberOfRegistersForResult * numberOfRegistersForOperand; ++i, ++thunk) {
+                    if (takesOperandAnywhere || !(i % numberOfRegistersForOperand))
+                        dataLogLn("AOT: stub OperationValueWithGlobalObject#", static_cast<unsigned>(operation), "ToX", 19 + i / numberOfRegistersForOperand, "OfX", i % numberOfRegistersForOperand, " ", blob->thunkOffsets[thunk]);
+                }
+            }
             dataLogLn("AOT: stub End ", size);
         }
     });
@@ -3686,6 +3813,52 @@ void StubCalls::callWithOperandIn(CCallHelpers& jit, Stub stub, std::optional<ui
     }
     m_pending.append({ jit.nearCall(), stub, false, site.bits });
     m_pending.last().thunk = safeCast<uint16_t>(thunkForOperandIn(stub, valueOfT9, operand) + 1);
+}
+
+void StubCalls::callWithOperandsIn(CCallHelpers& jit, Stub stub, GPRReg first, GPRReg second, CallSite site)
+{
+    if (second == GPRInfo::argumentGPR1 && (first == GPRInfo::argumentGPR0 || (takesOperandAnywhere(stub, std::nullopt) && operandMayBeIn(stub, first)))) {
+        callWithOperandIn(jit, stub, std::nullopt, first, site);
+        return;
+    }
+    auto numberOfFirst = numberAmongRegistersForPair(first);
+    auto numberOfSecond = numberAmongRegistersForPair(second);
+    if (!numberOfFirst || !numberOfSecond) {
+        // (Compared with nought as a rule, which is in a register of its own: that is moved, and the other stays.)
+        if (first != GPRInfo::argumentGPR1 && takesOperandAnywhere(stub, std::nullopt) && operandMayBeIn(stub, first)) {
+            jit.move(second, GPRInfo::argumentGPR1);
+            callWithOperandIn(jit, stub, std::nullopt, first, site);
+            return;
+        }
+        moveToFirstTwoArguments(jit, first, second);
+        call(jit, stub, site);
+        return;
+    }
+    for (unsigned i = 0; i < std::size(stubsThatTakeTwoOperandsAnywhere); ++i) {
+        if (stubsThatTakeTwoOperandsAnywhere[i] != stub)
+            continue;
+        m_pending.append({ jit.nearCall(), stub, false, site.bits });
+        m_pending.last().thunk = safeCast<uint16_t>(firstThunkOfPairs + (i * numberOfRegistersForPair + *numberOfFirst) * numberOfRegistersForPair + *numberOfSecond + 1);
+        return;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+void StubCalls::callForResultIn(CCallHelpers& jit, Stub stub, uint32_t valueOfT9, GPRReg operand, GPRReg result, CallSite site)
+{
+    if (result == GPRInfo::returnValueGPR) {
+        if (operand == whereOperandIsTaken(stub))
+            call(jit, stub, valueOfT9, site);
+        else
+            callWithOperandIn(jit, stub, valueOfT9, operand, site);
+        return;
+    }
+    unsigned which = *whichThatGivesResultAnywhere(stub, valueOfT9);
+    unsigned numberOfResult = static_cast<unsigned>(result) - static_cast<unsigned>(ARM64Registers::x19);
+    RELEASE_ASSERT(numberOfResult < numberOfRegistersForResult);
+    RELEASE_ASSERT(operationsThatGiveResultAnywhere[which].takesOperandAnywhere ? operandMayBeIn(stub, operand) : operand == whereOperandIsTaken(stub));
+    m_pending.append({ jit.nearCall(), stub, false, site.bits });
+    m_pending.last().thunk = safeCast<uint16_t>(firstThunkOfResults + (which * numberOfRegistersForResult + numberOfResult) * numberOfRegistersForOperand + static_cast<unsigned>(operand) + 1);
 }
 
 void StubCalls::tailCall(CCallHelpers& jit, Stub stub)

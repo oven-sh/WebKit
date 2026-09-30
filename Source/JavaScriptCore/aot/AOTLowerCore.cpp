@@ -255,6 +255,10 @@ bool Lowering::run()
         // It has none until it has shown that it is worth one.
         m_data = m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
         m_dataOnEntry = m_data;
+        if (std::ranges::any_of(m_graph.m_rpo, [](BasicBlock* block) { return block->isLoopHeader; })) {
+            m_dataInLoops = m_proc.addVariable(pointerType());
+            m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_dataInLoops, m_data);
+        }
         m_constants = wordByIndex(m_out.loadPtr(m_instance, m_heaps.AOTInstance_infos), FunctionInfo::offsetOfConstants(), sizeof(FunctionInfo), false);
     } else
         m_dataOrNothing = own.data;
@@ -473,6 +477,22 @@ static bool mayLookAtStack(Stub stub)
     }
 }
 
+bool Lowering::isWantedAfterWhatFollows(Node* node) const
+{
+    if (m_nodeIndex >= m_block->nodes.size() || m_block->nodes[m_nodeIndex] != node)
+        return true;
+    for (unsigned i = m_nodeIndex + 1; i < m_block->nodes.size(); ++i) {
+        Node* next = m_block->nodes[i];
+        if (next->isElided)
+            continue;
+        unsigned usesOfIt = 0;
+        for (auto& use : next->uses)
+            usesOfIt += use.node == node;
+        return node->useCount > usesOfIt;
+    }
+    return node->useCount;
+}
+
 PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgument, 8>& arguments, const Vector<StubImmediate, 2>& immediates, StubClobbers clobbers, Node* place)
 {
     m_graph.emitsCalls = true;
@@ -498,6 +518,11 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     }
     bool operandStaysWhereItIs = !type.isTuple() && !arguments.isEmpty() && arguments[0].reg.isGPR() && takesOperandAnywhere(stub, valueOfT9) && arguments[0].reg.gpr() == whereOperandIsTaken(stub)
         && arguments[0].value->opcode() != SlotBase;
+    auto isAddressOfSlot = [&](LValue value) { return value->opcode() == Add && value->child(0) == m_data && value->child(1)->hasIntPtr(); };
+    bool secondStaysWhereItIsToo = operandStaysWhereItIs && clobbers == StubClobbers::WhatCallsDo && arguments.size() >= 2 && takesTwoOperandsAnywhere(stub) && arguments[1].reg == Reg(GPRInfo::argumentGPR1)
+        && arguments[1].value->opcode() != SlotBase && !isAddressOfSlot(arguments[1].value);
+    // What is handed back is handed back where it is going to be kept, if it is what is being lowered comes to and is going to be kept.
+    bool resultGoesWhereItIsKept = type == Int64 && clobbers == StubClobbers::WhatCallsDo && givesResultAnywhere(stub, valueOfT9) && m_node && place == m_node && isWantedAfterWhatFollows(m_node);
     RegisterSet writtenOnTheWay;
     for (auto& argument : arguments) {
         LValue value = argument.value;
@@ -513,6 +538,11 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         }
         if (operandStaysWhereItIs && &argument == &arguments[0]) {
             RELEASE_ASSERT(!patchpoint->numChildren());
+            patchpoint->append(ConstrainedValue(value, ValueRep::SomeRegister));
+            continue;
+        }
+        if (secondStaysWhereItIsToo && &argument == &arguments[1]) {
+            RELEASE_ASSERT(patchpoint->numChildren() == 1);
             patchpoint->append(ConstrainedValue(value, ValueRep::SomeRegister));
             continue;
         }
@@ -532,7 +562,7 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         RegisterSet mayNotHoldIt;
         for (unsigned i = 0; i < 16; ++i) {
             GPRReg reg = static_cast<GPRReg>(static_cast<unsigned>(ARM64Registers::x0) + i);
-            if (!operandMayBeIn(stub, reg))
+            if (!operandMayBeIn(stub, reg) || (secondStaysWhereItIsToo && i >= 9))
                 mayNotHoldIt.add(reg, IgnoreVectors);
         }
         patchpoint->clobberEarly(mayNotHoldIt);
@@ -563,9 +593,9 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     else if (type.isTuple()) {
         // Whoever asked for several results says where they are.
     } else if (type != Void)
-        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+        patchpoint->resultConstraints = { resultGoesWhereItIsKept ? ValueRep::SomeRegister : ValueRep::reg(GPRInfo::returnValueGPR) };
     unsigned whichIsOperand = type == Void ? 0 : 1;
-    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, slotArgument, slotsOfFrame, operandStaysWhereItIs, whichIsOperand, valueOfT9, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, slotArgument, slotsOfFrame, operandStaysWhereItIs, secondStaysWhereItIsToo, resultGoesWhereItIsKept, whichIsOperand, valueOfT9, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (slotArgument)
             jit.addPtr(CCallHelpers::TrustedImm32(slotArgument->second), params[params.size() - 1].gpr(), slotArgument->first);
@@ -575,7 +605,11 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
             if (immediate.reg != GPRInfo::regT9)
                 jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
         }
-        if (operandStaysWhereItIs)
+        if (resultGoesWhereItIsKept)
+            stubCalls->callForResultIn(jit, stub, *valueOfT9, operandStaysWhereItIs ? params[whichIsOperand].gpr() : whereOperandIsTaken(stub), params[0].gpr(), site);
+        else if (secondStaysWhereItIsToo)
+            stubCalls->callWithOperandsIn(jit, stub, params[whichIsOperand].gpr(), params[whichIsOperand + 1].gpr(), site);
+        else if (operandStaysWhereItIs)
             stubCalls->callWithOperandIn(jit, stub, valueOfT9, params[whichIsOperand].gpr(), site);
         else if (valueOfT9)
             stubCalls->call(jit, stub, *valueOfT9, site);
@@ -1153,9 +1187,13 @@ void Lowering::lowerBlock(BasicBlock* block)
     // for again each time: it is given caches of its own once it has done without often enough, and that may well be on the way round.
     if (m_dataOnEntry) {
         m_data = m_dataOnEntry;
-        if (block->isInLoop) {
-            OwnData own = ownData();
-            m_data = m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+        if (block->isInLoop && m_dataInLoops) {
+            if (block->isLoopHeader) {
+                OwnData own = ownData();
+                m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_dataInLoops,
+                    m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData)));
+            }
+            m_data = m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), m_dataInLoops);
         }
     }
     if (block->endsWithGuard)
