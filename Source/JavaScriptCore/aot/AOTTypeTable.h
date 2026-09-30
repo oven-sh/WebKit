@@ -160,6 +160,12 @@ public:
     unsigned numberOfLayouts() const { return m_layouts.size() - 1; }
     Vector<Holds, 8> holdsOfSlots(uint32_t layout) const; // By slot.
     Vector<Holds, 8> holdsOfSlotsOfFamily(uint32_t family) const; // Likewise.
+    // What the object is that is got at, if the source says it is one of the language's own: a Receiver. It is a guess as far as the compiler is concerned. Zero: nothing is said.
+    unsigned receiverHintOf(uint32_t type) const
+    {
+        auto words = record(type);
+        return words.size() == 2 && words[0] == Tags && (words[1] >> 31) ? words[1] >> 10 & 15 : 0;
+    }
     // TEMPORARY-SHAPE-COUNTS: why nothing is made of an access that has this for a type, as a number. Zero: nothing is said.
     unsigned reasonOf(uint32_t type) const
     {

@@ -272,6 +272,34 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
     else
         base.putInline(globalObject, ident, value, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (Options::aotReportSlowPaths()) [[unlikely]] { // TEMPORARY-SLOT-STATS
+        bool tookRoom = base.isCell() && oldStructure && base.asCell()->structure()->outOfLineCapacity() != oldStructure->outOfLineCapacity();
+        bool isBorn = oldStructure && oldStructure->bornAs();
+        ASCIILiteral what = "?"_s;
+        switch (slot.type()) {
+        case PutPropertySlot::Uncachable:
+            what = !base.isObject() ? "uncacheable: no object"_s : oldStructure->isDictionary() ? "uncacheable: a dictionary"_s : isBorn ? "uncacheable, of a struct"_s : "uncacheable"_s;
+            break;
+        case PutPropertySlot::ExistingProperty:
+            what = isBorn ? "there already, of a struct but no field"_s : "there already"_s;
+            break;
+        case PutPropertySlot::NewProperty:
+            what = tookRoom ? "new, and took room"_s : isBorn ? "new, of a struct but no field"_s : "new"_s;
+            break;
+        case PutPropertySlot::ExistingFieldOfStruct:
+            what = "a field that is there already"_s;
+            break;
+        case PutPropertySlot::NewFieldOfStruct:
+            what = "a new field"_s;
+            break;
+        default:
+            what = "a setter or the like"_s;
+            break;
+        }
+        noteSlowPath("put_by_id"_s, base, ident.impl(), what);
+        noteSlowPath(isDirect ? "put_by_id (direct), how"_s : "put_by_id, how"_s, JSValue(), nullptr, what);
+        noteSlowPath("put_by_id, the site"_s, JSValue(), nullptr, SharedData::contains(cache) ? "has no slot of its own"_s : "has a slot"_s);
+    }
     if (!isDirect)
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
     cachePutById(globalObject, callerData(globalObject, callFrame), base, oldStructure, ident, slot, isDirect, cache);

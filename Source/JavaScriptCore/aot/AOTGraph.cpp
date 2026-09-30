@@ -881,6 +881,8 @@ void Graph::findBuiltinsCalled()
                 uint32_t tag = TypeTable::shared() ? typeTagOf(callee) : 0;
                 if (tag && TypeTable::shared()->isArray(tag) && mayBe(base->type, TArray))
                     receiver = Receiver::Array;
+                else if (Receiver hinted = tag ? static_cast<Receiver>(TypeTable::shared()->receiverHintOf(tag)) : Receiver::None; hinted != Receiver::None && hinted != Receiver::Number && mayBe(base->type, typeOf(hinted)))
+                    receiver = hinted;
                 else if (!tag || !TypeTable::shared()->isShape(tag))
                     receiver = receiverLikelyToHave(base->type, name);
             }
