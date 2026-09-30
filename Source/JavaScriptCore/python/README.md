@@ -1045,6 +1045,15 @@ a signal has interrupted it and been seen to, for as long as is left. The fields
 
 They stop the thread, as `time.sleep()` does, but for the two that `asyncio` waits in: see *Where an event loop of Python's waits*.
 
+### `fcntl` and `termios`
+
+`PythonFcntlModule.cpp` and `PythonTermiosModule.cpp` are `Modules/fcntlmodule.c` and `Modules/termios.c`, and are for the host to list, as `posix` is. `tty` and `pty` are written over them, and `getpass`, `mailbox` and `asyncio` want one or the other. The
+constants of each are CPython's own list, each on the condition that CPython has it on: `lib/convert-fcntl-constants.py`, `lib/convert-termios-constants.py`. What `fcntl()` and `ioctl()` give the system to write in is a copy with something after it that
+shows if the system has written more than it was given room for, as in CPython.
+
+`programs/fcntl-module.py` and `termios-module.py` are what can be tried with no terminal. `a-terminal.py` has the two ends of a pseudo-terminal: what goes through it a line at a time and raw, what is rubbed out, what is shown as it is typed, how big it is. What is
+expected of that was taken on Linux only.
+
 ### `time`
 
 `PythonTimeModule.cpp` is `Modules/timemodule.c`, and `PythonTime.cpp` what it wants of `Python/pytime.c`: a time is a number of nanoseconds, and how a float or an int is made one, rounded which way, and what is said if
@@ -1161,6 +1170,18 @@ would in JavaScript. `import js` is the global object, and a module is a module:
   (`callConstructorWithoutNew`), so no call that works pays for it. What can be both called and constructed with is called, and `.new()` constructs.
 - **What a class of Python's says that is derived from one of JavaScript's, Python goes by and JavaScript does not.** An instance of `class Counter(js.Map)` is a `Map`, made by `Map`, and a `Map` is not asked what `+` does with it or whether
   it can be called. Python asks the class, so `counter + 1` and `counter()` are `__add__()` and `__call__()` there. Calling it is asked only where there was nothing left to do but raise: `callWhatOnlyPythonCalls()`.
+- **Neither language is to leave to the other what the other leaves to it.** Such an instance inherits from classes of both. `js.Object` has `__str__()`, `__iter__()`, `__len__()` and the like, which ask JavaScript. And a class of Python's, being among
+  what the instance inherits from, offers JavaScript `Symbol.toPrimitive`, `Symbol.iterator`, `length` and the like, which ask Python. With nothing more said, `print(counter)` went round for ever. So what Python offers JavaScript it
+  offers only if it has something of its own to go by: if the first class to have the special method, in the order of resolution, is not one of JavaScript's (`has()`, in `getPropertyForJavaScript()`). Otherwise JavaScript looks
+  further and finds what `Map`, `Array` or `Date` has. `Symbol.toPrimitive` stands for several methods at once, so it is there that it hands on what it has nothing for.
+- **What such an instance has of its own is what it was given as an attribute, and then what JavaScript gave it**: how long an `Array` is, the message of an `Error`, what was defined on it with a getter. Those are found, set and deleted as
+  JavaScript does with what is an object's *own*. What it inherits is for the classes, in Python's order, and JavaScript is not asked, since it would ask the class. Its `__dict__` is a dict that can be changed, as that of any instance of a class of
+  Python's is. An `Error` is no exception to this, though one that JavaScript makes for a class that is built in, as `new TypeError()`, is an object of JavaScript's altogether.
+- **What is set on a class of JavaScript's is a property of its prototype, and is as what is written in a class there is**: it does not show in `for (key in instance)`. `copy.copy()` sets `__slotnames__` on the class of whatever it is given.
+  A function of Python's that is set on one is a method: got by way of an instance it takes the instance as its first argument.
+
+`interop/javascript-classes.py` has all of that.
+
 - JavaScript's methods are not attributes of a `list` or a `str`. `hasattr(x, "keys")` is how Python tells a mapping.
 - **A `list` is any `Array`, and JavaScript can make some that Python cannot.** A hole is `None`. An element that is not simply there to be read or written
   is read and written as JavaScript would in strict code: a getter is run, and an array that is frozen raises `TypeError` and stays as it was

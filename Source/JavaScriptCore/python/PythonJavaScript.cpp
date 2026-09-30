@@ -280,6 +280,8 @@ static JSValue getFunctionFunc(JSGlobalObject* globalObject, JSValue self)
     return raise(globalObject, scope, BuiltinType::AttributeError, "'JSFunction' object has no attribute '__func__'"_s);
 }
 
+static JSC_DECLARE_HOST_FUNCTION(javaScriptClassInit);
+
 void initializeJavaScriptTypes(JSGlobalObject* globalObject)
 {
     PyRealm* realm = globalObject->pyRealm();
@@ -307,6 +309,13 @@ void initializeJavaScriptTypes(JSGlobalObject* globalObject)
     realm->typeJSObject()->setJavaScriptClass(vm, globalObject->objectConstructor(), globalObject->objectPrototype());
     realm->typeJSFunction()->setJavaScriptClass(vm, globalObject->functionConstructor(), globalObject->functionPrototype());
     realm->typeJSPromise()->setJavaScriptClass(vm, globalObject->promiseConstructor(), globalObject->promisePrototype());
+    // They are there from the start, and are made as any other class of JavaScript's is: see classFor(). Nothing can be derived from Function.
+    for (PyType* type : { realm->typeJSObject(), realm->typeJSPromise() }) {
+        addMethods(globalObject, type, {
+            { "__new__"_s, javaScriptClassNew, Kind::New, 0, "($type, /, *args, **kwargs)"_s, PyNativeFunction::Arguments::AreNotChecked },
+            { "__init__"_s, javaScriptClassInit, Kind::Wrapper, 0, "($self, /, *args, **kwargs)"_s, PyNativeFunction::Arguments::AreNotChecked },
+        });
+    }
     addGetSet(globalObject, realm->typeJSObject(), "__dict__"_s, getInstanceDictOrProxy, setInstanceDict);
     // There can be a WeakRef to any object, and so can there be a weakref.ref.
     addGetSet(globalObject, realm->typeJSObject(), "__weakref__"_s, getWeakReferences);
@@ -536,6 +545,26 @@ JSC_DEFINE_HOST_FUNCTION(javaScriptToPrimitive, (JSGlobalObject* globalObject, C
             return JSValue::encode(result);
         }
     }
+    // What a constructor of JavaScript's made, for a class of Python's that is derived from Map, say, and has no __str__() of its own. Then str() of it is String() of it, which is what is being worked out. Python has
+    // nothing to say, and it is for what JavaScript has beyond the classes of Python's: a Date has something of its own here, and a Map has toString().
+    PyRealm* realm = globalObject->pyRealm();
+    PyType* type = typeOf(globalObject, self);
+    if (self.isObject() && type->layout() == PyType::Layout::JavaScript && type->lookup(vm, names.dunder_str) == realm->typeJSObject()->lookup(vm, names.dunder_str)) {
+        for (auto& ancestor : type->mro()->span()) {
+            JSObject* prototype = asType(ancestor.get())->javaScriptPrototype();
+            if (!prototype)
+                continue;
+            JSValue method = prototype->get(globalObject, vm.propertyNames->toPrimitiveSymbol);
+            RETURN_IF_EXCEPTION(scope, { });
+            // A class of JavaScript's can be derived from one of Python's in its turn, and then this is what is found, and the next is asked.
+            if (method.isCallable() && method != JSValue(callFrame->jsCallee())) {
+                MarkedArgumentBuffer arguments;
+                arguments.append(hint);
+                RELEASE_AND_RETURN(scope, JSValue::encode(JSC::call(globalObject, method, JSC::getCallData(method), self, arguments)));
+            }
+        }
+        RELEASE_AND_RETURN(scope, JSValue::encode(asObject(self)->ordinaryToPrimitive(globalObject, wantsString ? PreferString : PreferNumber)));
+    }
     String text = str(globalObject, self);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(jsString(vm, text));
@@ -590,6 +619,17 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     PyRealm* realm = globalObject->pyRealm();
     PyType* type = typeOf(globalObject, receiver);
     auto function = [&] (ASCIILiteral which) { return realm->javaScriptFunctions()->getDirect(vm, Identifier::fromString(vm, which)); };
+    // Whether Python has that to go by. What a constructor of JavaScript's made, for a class of Python's that is derived from Array, say, is an instance of classes of both. What Python wants of an object of JavaScript's,
+    // as __iter__(), js.Object has, and it asks JavaScript, which is who is asking now. So it is a matter of whose class is the first to have it.
+    auto has = [&] (const Identifier& special) {
+        if (type->layout() != PyType::Layout::JavaScript) [[likely]]
+            return !!type->lookup(vm, special);
+        for (auto& ancestor : type->mro()->span()) {
+            if (asType(ancestor.get())->lookupOwn(vm, special))
+                return !asType(ancestor.get())->javaScriptConstructor();
+        }
+        return false;
+    };
 
     // A generator is one to JavaScript already, and inherits what it does with one. All but how it is told to stop.
     bool isGenerator = type == realm->typeGenerator() && !isClass(receiver);
@@ -601,17 +641,17 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     }
 
     if (name.isSymbol()) {
-        if (name == vm.propertyNames->iteratorSymbol && !isClass(receiver) && (type->lookup(vm, names.dunder_iter) || type->lookup(vm, names.dunder_getitem)))
+        if (name == vm.propertyNames->iteratorSymbol && !isClass(receiver) && (has(names.dunder_iter) || has(names.dunder_getitem)))
             return function("iterator"_s);
-        if (name == vm.propertyNames->asyncIteratorSymbol && !isClass(receiver) && type->lookup(vm, names.dunder_aiter))
+        if (name == vm.propertyNames->asyncIteratorSymbol && !isClass(receiver) && has(names.dunder_aiter))
             return function("asyncIterator"_s);
         // An exception is left to Error.prototype, as it is for toString().
         if (name == vm.propertyNames->toPrimitiveSymbol && !isClass(receiver) && !type->isExceptionType())
             return function("toPrimitive"_s);
         // A context manager is what `using` can be used with.
-        if (name == vm.propertyNames->disposeSymbol && !isClass(receiver) && type->lookup(vm, names.dunder_exit))
+        if (name == vm.propertyNames->disposeSymbol && !isClass(receiver) && has(names.dunder_exit))
             return globalObject->linkTimeConstant(LinkTimeConstant::pythonExitContext);
-        if (name == vm.propertyNames->asyncDisposeSymbol && !isClass(receiver) && type->lookup(vm, names.dunder_aexit))
+        if (name == vm.propertyNames->asyncDisposeSymbol && !isClass(receiver) && has(names.dunder_aexit))
             return globalObject->linkTimeConstant(LinkTimeConstant::pythonAsyncExitContext);
         return { };
     }
@@ -656,15 +696,15 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
     if (name == vm.propertyNames->toJSON && (isMapping || isSet || type->hasFlag(PyType::IsSequence) || type->layout() == PyType::Layout::Boxed))
         return function("toJSON"_s);
     // How many: an array has a length, and a Map and a Set have a size.
-    if (name == ((isMapping || isSet) ? vm.propertyNames->size : vm.propertyNames->length) && type->lookup(vm, names.dunder_len)) {
+    if (name == ((isMapping || isSet) ? vm.propertyNames->size : vm.propertyNames->length) && has(names.dunder_len)) {
         int64_t count = length(globalObject, receiver);
         RETURN_IF_EXCEPTION(scope, { });
         return intFromInt64(globalObject, count);
     }
-    if (name == vm.propertyNames->next && type->lookup(vm, names.dunder_next))
+    if (name == vm.propertyNames->next && has(names.dunder_next))
         return function("next"_s);
     // What can be awaited is what JavaScript calls a thenable, so that it waits for it: `await`, Promise.all() and the rest go by `then`.
-    if (type->lookup(vm, names.dunder_await)) {
+    if (has(names.dunder_await)) {
         if (name == vm.propertyNames->then)
             return function("then"_s);
         if (name == vm.propertyNames->catchKeyword)
@@ -672,7 +712,7 @@ JSValue getPropertyForJavaScript(JSGlobalObject* globalObject, JSValue receiver,
         if (name == vm.propertyNames->finallyKeyword)
             return function("finally"_s);
     }
-    if (type->lookup(vm, names.dunder_anext)) {
+    if (has(names.dunder_anext)) {
         if (name == vm.propertyNames->next)
             return function("asyncNext"_s);
         if (name == vm.propertyNames->returnKeyword)

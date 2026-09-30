@@ -1,0 +1,19 @@
+Error => JSError 366 things tried
+TypeError => TypeError 366 things tried
+RangeError => ValueError 366 things tried
+SyntaxError => SyntaxError 447 things tried
+ReferenceError => NameError 375 things tried
+EvalError => JSError 366 things tried
+URIError => JSError 366 things tried
+AggregateError => JSError 366 things tried
+extends Error => JSError 366 things tried
+extends TypeError => TypeError 366 things tried
+no message => JSError 366 things tried
+with a cause => JSError 366 things tried
+thrown by the engine => TypeError 366 things tried
+too deep => RecursionError 366 things tried
+a syntax error => SyntaxError 447 things tried
+frozen => JSError 366 things tried
+message not a string => JSError 366 things tried
+with args => JSError 366 things tried
+6759 in all, and it is still here

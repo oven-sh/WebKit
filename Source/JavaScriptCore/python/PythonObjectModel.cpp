@@ -353,11 +353,34 @@ JSValue exceptionValue(JSGlobalObject*, JSValue thrown)
 // ---- Attributes
 
 // A TypeError that JavaScript made is an instance of Python's TypeError, there being one such class. It is none the less an object of JavaScript's.
+// Not so an instance of a class that Python derives from js.Error, though it is JavaScript that makes it. That is as an instance of one that is derived from js.Map is: the class is among what it inherits from, so
+// to ask JavaScript for a property of it is to ask the class, which would be asking JavaScript.
 bool isJavaScriptObject(JSValue value, PyType* type)
 {
     if (!value.isObject())
         return false;
-    return type->hasFlag(PyType::IsJavaScript) || (value.asCell()->type() == ErrorInstanceType && !value.asCell()->structure()->typeInfo().overloadsOperators());
+    if (type->hasFlag(PyType::IsJavaScript))
+        return true;
+    return value.asCell()->type() == ErrorInstanceType && !value.asCell()->structure()->typeInfo().overloadsOperators() && type->layout() != PyType::Layout::JavaScript;
+}
+
+// What a constructor of JavaScript's made for a class of Python's, as `class Counter(js.Map)` has. Its attributes are kept as those of any instance of a class of Python's are. But it has besides what JavaScript gave
+// it: how long an Array is, the message of an Error and where it was made. Those are hidden, or worked out when they are asked for, or got by a getter, and are its own. So they are found, set and deleted as
+// JavaScript does with what is an object's own. What it inherits is for the classes to say, and JavaScript is not asked: the class is among what it inherits from, and would be asked in its turn.
+static bool isMadeByJavaScriptForPython(JSValue value, PyType* type)
+{
+    return type->layout() == PyType::Layout::JavaScript && !type->hasFlag(PyType::IsJavaScript) && value.isObject();
+}
+
+static JSValue getOwnJavaScriptProperty(JSGlobalObject* globalObject, JSObject* object, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
+    bool isThere = object->methodTable()->getOwnPropertySlot(object, globalObject, name, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!isThere)
+        return { };
+    RELEASE_AND_RETURN(scope, slot.getValue(globalObject, name));
 }
 
 // Where an object's own attributes are, if it can have any. They are the properties of this.
@@ -612,8 +635,11 @@ static JSValue getJavaScriptProperty(JSGlobalObject* globalObject, JSObject* obj
     auto* function = dynamicDowncast<JSFunction>(value);
     if (!function || function->inherits<JSBoundFunction>() || function->inherits<PyNativeFunction>())
         return value;
-    if (!function->isHostOrBuiltinFunction() && (function->jsExecutable()->isClassConstructorFunction() || isPythonFunction(function)))
+    if (!function->isHostOrBuiltinFunction() && function->jsExecutable()->isClassConstructorFunction())
         return value;
+    // One of Python's takes the object as its first argument, and has no `this`: js.Shape.area = lambda self: ...
+    if (!function->isHostOrBuiltinFunction() && isPythonFunction(function))
+        return PyBoundMethod::create(globalObject, function, object);
     RELEASE_AND_RETURN(scope, JSBoundFunction::bind(globalObject, vm.topCallFrame, function, object, ArgList()));
 }
 
@@ -655,6 +681,12 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
         }
         if (JSValue own = getStoredAttribute(vm, storage, name))
             return own;
+        if (isMadeByJavaScriptForPython(value, type)) [[unlikely]] {
+            JSValue own = getOwnJavaScriptProperty(globalObject, asObject(value), name);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (own)
+                return own;
+        }
     }
     if (attribute)
         RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, value, type));
@@ -1039,7 +1071,15 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
             // not, and stays where it is.
             JSObject* holder = constructor->getDirect(vm, name) ? constructor : target->javaScriptPrototype();
             if (newValue) {
+                bool isThere = holder->hasOwnProperty(globalObject, name);
+                RETURN_IF_EXCEPTION(scope, void());
                 scope.release();
+                if (!isThere) {
+                    // As what is written in a class of JavaScript's is: it does not show in `for (key in instance)`. The library sets such things where no one is looking, as copy.copy() does __slotnames__.
+                    PropertyDescriptor descriptor(newValue, static_cast<unsigned>(PropertyAttribute::DontEnum));
+                    holder->methodTable()->defineOwnProperty(holder, globalObject, name, descriptor, true);
+                    return;
+                }
                 PutPropertySlot slot(holder, true);
                 holder->methodTable()->put(holder, globalObject, name, newValue, slot);
                 return;
@@ -1067,6 +1107,12 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         // What a module of JavaScript's exports is for it alone to set.
         if (auto* module = dynamicDowncast<JSModuleNamespaceObject>(value); module && module->hasExport(name)) [[unlikely]]
             RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, value, name, !newValue));
+        if (isMadeByJavaScriptForPython(value, type) && !getStoredAttribute(vm, storage, name)) [[unlikely]] {
+            bool isJavaScripts = asObject(value)->hasOwnProperty(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (isJavaScripts)
+                RELEASE_AND_RETURN(scope, setJavaScriptProperty(globalObject, asObject(value), type, name, newValue));
+        }
         if (newValue) {
             if (!tryPutStoredAttribute(vm, storage, name, newValue)) [[unlikely]]
                 RELEASE_AND_RETURN(scope, raiseCannotSetAttribute(globalObject, value, name, false));
@@ -1144,6 +1190,9 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
             auto scope = DECLARE_THROW_SCOPE(vm);
             JSValue property = getJavaScriptProperty(globalObject, asObject(base), name, InheritedFunctions::LeaveAsFound);
             RETURN_IF_EXCEPTION(scope, { });
+            // But a function of Python's that the class has takes it as its first argument.
+            if (property && property == attribute && classifyDescriptor(globalObject, attribute).kind == DescriptorKind::Function)
+                self = base;
             if (property)
                 return property;
         }

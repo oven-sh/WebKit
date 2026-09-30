@@ -425,7 +425,7 @@ PYTHON_NATIVE(exceptionReduce)
     NATIVE_PROLOGUE();
     JSValue dict = dictOfException(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(reducedException(globalObject, args[0], asObject(args[0])->getDirect(vm, names.private_args), dict));
+    return JSValue::encode(reducedException(globalObject, args[0], exceptionArguments(globalObject, args[0]), dict));
 }
 
 PYTHON_NATIVE(exceptionSetState)
@@ -480,7 +480,7 @@ static JSValue stateOfAttributeError(JSGlobalObject* globalObject, JSValue excep
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
     // Not `obj`, which is unlikely to be something that can be pickled.
-    return stateWithFields(globalObject, exception, { { "name"_s, fieldOfException(vm, exception, names.field_name) }, { "args"_s, asObject(exception)->getDirect(vm, names.private_args) } });
+    return stateWithFields(globalObject, exception, { { "name"_s, fieldOfException(vm, exception, names.field_name) }, { "args"_s, exceptionArguments(globalObject, exception) } });
 }
 
 PYTHON_NATIVE(attributeErrorGetState)
@@ -496,7 +496,7 @@ PYTHON_NATIVE(attributeErrorReduce)
     NATIVE_PROLOGUE();
     JSValue state = stateOfAttributeError(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(reducedException(globalObject, args[0], asObject(args[0])->getDirect(vm, names.private_args), state ? state : jsUndefined()));
+    return JSValue::encode(reducedException(globalObject, args[0], exceptionArguments(globalObject, args[0]), state ? state : jsUndefined()));
 }
 
 PYTHON_NATIVE(importErrorReduce)
@@ -504,13 +504,13 @@ PYTHON_NATIVE(importErrorReduce)
     NATIVE_PROLOGUE();
     JSValue state = stateWithFields(globalObject, args[0], { { "name"_s, fieldOfException(vm, args[0], names.field_name) }, { "path"_s, fieldOfException(vm, args[0], names.field_path) }, { "name_from"_s, fieldOfException(vm, args[0], names.field_nameFrom) } });
     RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(reducedException(globalObject, args[0], asObject(args[0])->getDirect(vm, names.private_args), state));
+    return JSValue::encode(reducedException(globalObject, args[0], exceptionArguments(globalObject, args[0]), state));
 }
 
 PYTHON_NATIVE(osErrorReduce)
 {
     NATIVE_PROLOGUE();
-    JSValue arguments = asObject(args[0])->getDirect(vm, names.private_args);
+    JSValue arguments = exceptionArguments(globalObject, args[0]);
     // The file names were taken out of the arguments, and are put back.
     JSValue filename = fieldOfException(vm, args[0], names.field_filename);
     if (asTuple(arguments)->length() == 2 && filename) {
