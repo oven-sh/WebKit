@@ -199,9 +199,6 @@ void ModuleRegistryEntry::setFetchError(JSGlobalObject* globalObject, JSValue er
     if (m_status == Status::New && m_fetchPromise)
         m_fetchPromise->reject(vm, error);
     setStatus(Status::FetchFailed);
-    // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
-    // The loads that have the entry get its error, and the next load of the name fetches again.
-    m_loader->removeFailedFetchEntry(this);
 }
 
 void ModuleRegistryEntry::setInstantiationError(JSGlobalObject* globalObject, JSValue error)
@@ -239,22 +236,14 @@ void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSSourceCod
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(isWaitingForFetch());
+    ASSERT(m_status == Status::New);
 
     ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
     scope.release();
-    // A fetch that is under way was pipeFrom()'d into the promise, which took the guarded fulfill() for itself.
-    if (std::exchange(m_status, Status::Fetching) == Status::Fetching)
-        m_fetchPromise->fulfillPromise(vm, jsSourceCode);
-    else
-        m_fetchPromise->fulfill(vm, jsSourceCode);
-}
-
-bool ModuleRegistryEntry::isWaitingForFetch() const
-{
-    return m_status == Status::New || (m_status == Status::Fetching && m_fetchPromise && m_fetchPromise->status() == JSPromise::Status::Pending);
+    m_status = Status::Fetching;
+    m_fetchPromise->fulfill(vm, jsSourceCode);
 }
 
 #if USE(BUN_JSC_ADDITIONS)

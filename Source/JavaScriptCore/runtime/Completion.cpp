@@ -243,7 +243,7 @@ JSPromise* loadAndEvaluateModule(JSGlobalObject* globalObject, SourceCode&& sour
     ScriptFetchParameters::Type type = getSourceType(source);
 
     // Insert the given source code to the ModuleLoader registry as the fetched registry entry.
-    ModuleRegistryEntry* entry = globalObject->moduleLoader()->provideFetch(globalObject, key, type, WTF::move(source));
+    globalObject->moduleLoader()->provideFetch(globalObject, key, type, WTF::move(source));
     RETURN_IF_EXCEPTION(scope, rejectPromise(scope, globalObject));
 
     JSPromise* statePromise = JSPromise::create(vm, globalObject->promiseStructure());
@@ -253,7 +253,7 @@ JSPromise* loadAndEvaluateModule(JSGlobalObject* globalObject, SourceCode&& sour
 
     AbstractModuleRecord::ModuleRequest request { WTF::move(key), ScriptFetchParameters::create(type) };
 
-    JSPromise* promise = globalObject->moduleLoader()->loadModule(globalObject, entry, request, graphLoadingState, WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
+    JSPromise* promise = globalObject->moduleLoader()->loadModule(globalObject, globalObject, request, graphLoadingState, WTF::move(scriptFetcher), { ModuleLoadFlag::Evaluate });
     RETURN_IF_EXCEPTION(scope, rejectPromise(scope, globalObject));
 
     JSPromise* resultPromise = JSPromise::create(vm, globalObject->promiseStructure());

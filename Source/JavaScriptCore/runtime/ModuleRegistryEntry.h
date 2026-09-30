@@ -79,7 +79,6 @@ public:
     JSValue error(JSGlobalObject*) const;
     JSValue fetchError() const;
     Status status() const;
-    bool isWaitingForFetch() const; // provideFetch() is that fetch, also when the embedder's own is under way.
 
     void setRecord(VM&, AbstractModuleRecord*);
     void setLoadPromise(VM&, JSPromise*);

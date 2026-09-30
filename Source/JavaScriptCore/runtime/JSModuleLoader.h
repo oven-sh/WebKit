@@ -100,8 +100,8 @@ public:
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
     // APIs to control the module loader.
-    ModuleRegistryEntry* provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
-    ModuleRegistryEntry* provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
+    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, SourceCode&&);
+    void provideFetch(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, JSSourceCode*);
     JSPromise* loadModule(JSGlobalObject*, const Identifier& moduleName, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>, int64_t referrerAsyncOrder = -1, const String& referrer = { });
     JSPromise* linkAndEvaluateModule(JSGlobalObject*, const Identifier& moduleKey, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>);
     JSPromise* requestImportModule(JSGlobalObject*, const Identifier& moduleName, const Identifier& referrer, RefPtr<ScriptFetchParameters>, RefPtr<ScriptFetcher>, bool deferred = false, int64_t referrerAsyncOrder = -1);
@@ -168,12 +168,8 @@ public:
     // payload is opaque to callers and is either a ModuleGraphLoadingState* (graph load) or a ModuleLoaderPayload* (top-level dynamic import).
     void finishLoadingImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, ModuleCompletion result, RefPtr<ScriptFetcher>);
 
-    // The registry says which entry a name stands for at the moment. A load asks it once, at its start: loadModule() by
-    // name, provideFetch(), and hostLoadImportedModule() for what a module imports. Everything after that is given the
-    // entry (loadEntry(), loadModule() of an entry, ModuleLoadingContext::entry()) and does not go back to the registry.
     JSPromise* hostLoadImportedModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, bool useImportMap);
-    JSPromise* loadEntry(JSGlobalObject*, ModuleRegistryEntry*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>);
-    JSPromise* loadModule(JSGlobalObject*, ModuleRegistryEntry*, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
+    JSPromise* loadModule(JSGlobalObject*, const ModuleReferrer&, const ModuleRequest&, JSCell* payload, RefPtr<ScriptFetcher>, OptionSet<ModuleLoadFlag>);
     void continueModuleLoading(JSGlobalObject*, ModuleGraphLoadingState*, ModuleCompletion result);
     void continueDynamicImport(JSGlobalObject*, ModuleLoaderPayload*, ModuleCompletion, RefPtr<ScriptFetcher>);
     JSPromise* loadRequestedModules(JSGlobalObject*, AbstractModuleRecord*, RefPtr<ScriptFetcher>);
@@ -192,7 +188,7 @@ public:
     static bool attachErrorInfo(JSGlobalObject*, ThrowScope&, AbstractModuleRecord* source, const Identifier& key, ScriptFetchParameters::Type, ModuleFailure::Kind);
     static void attachErrorInfo(JSGlobalObject*, ErrorInstance*, AbstractModuleRecord* source, const Identifier& key, ScriptFetchParameters::Type, ModuleFailure::Kind);
 
-    ModuleRegistryEntry* ensureRegistered(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type, RefPtr<ScriptFetcher> = nullptr);
+    ModuleRegistryEntry* ensureRegistered(JSGlobalObject*, const Identifier& key, ScriptFetchParameters::Type);
 
 #if USE(BUN_JSC_ADDITIONS)
     ModuleRegistryEntry* registryEntry(const Identifier& key)
@@ -214,8 +210,6 @@ public:
         return nullptr;
     }
     const ModuleMap<WriteBarrier<ModuleRegistryEntry>>& moduleMap() const { return m_moduleMap; }
-    // These two unbind names, at any time. A load in flight has its entry already (see hostLoadImportedModule()) and goes
-    // on with it, for whoever is waiting on it; the next load of the name starts over.
     bool removeEntry(const Identifier& key)
     {
         // Bun's registry is conceptually flat (one entry per specifier), so
@@ -265,7 +259,8 @@ public:
     }
 #endif
 
-    void removeFailedFetchEntry(ModuleRegistryEntry*); // For ModuleRegistryEntry::setFetchError().
+    // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1.2.
+    void removeFailedFetchEntry(ModuleRegistryEntry*);
 
     ModuleRegistryEntry* getRegisteredMayBeNull(const Identifier& key, ScriptFetchParameters::Type);
 
