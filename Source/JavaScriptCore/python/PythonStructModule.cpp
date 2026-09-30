@@ -69,11 +69,7 @@ StructModuleState& structModuleState(JSGlobalObject* globalObject) { return glob
 // struct.error
 JSValue raiseStructError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message)
 {
-    JSObject* exception = createException(globalObject, structModuleState(globalObject).error.get(), jsString(globalObject->vm(), message));
-    RETURN_IF_EXCEPTION(scope, { });
-    setContext(globalObject, exception);
-    throwException(globalObject, scope, exception);
-    return { };
+    return raise(globalObject, scope, structModuleState(globalObject).error.get(), message);
 }
 
 // ---- What is done for each character of a format
@@ -1028,12 +1024,9 @@ JSObject* createStructModule(JSGlobalObject* globalObject)
             { "__length_hint__"_s, unpackIteratorLengthHint, Kind::Method, 0, "($self, /)"_s },
         });
 
-        // PyErr_NewException("struct.error", NULL, NULL)
-        PyDict* contents = PyDict::create(globalObject);
-        contents->setString(globalObject, "__module__"_s, jsNontrivialString(vm, "struct"_s));
-        JSValue error = newType(globalObject, realm->typeType(), jsNontrivialString(vm, "error"_s), PyTuple::create(globalObject, { realm->type(BuiltinType::Exception) }), contents, nullptr);
+        PyType* error = newException(globalObject, "struct"_s, "error"_s, realm->type(BuiltinType::Exception));
         RETURN_IF_EXCEPTION(scope, nullptr);
-        state.error.set(vm, realm, asType(error));
+        state.error.set(vm, realm, error);
     }
     JSObject* module = newBuiltinModule(globalObject, "_struct"_s);
     constexpr auto anyOfModule = "($module, /, *args)"_s;

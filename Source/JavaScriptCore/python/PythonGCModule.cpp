@@ -34,7 +34,6 @@
 #include "PyTuple.h"
 #include "PyType.h"
 #include "PythonBytes.h"
-#include "PythonIO.h"
 #include "PythonOperations.h"
 #include "PythonSequences.h"
 #include "TopExceptionScope.h"

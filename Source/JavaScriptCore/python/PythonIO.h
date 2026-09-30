@@ -68,11 +68,6 @@ bool checkSignals(JSGlobalObject*);
 
 // PyNumber_AsOff_t(). If it does not fit, `overflow` is raised, or if there is none it is the most or the least that does.
 std::optional<int64_t> toOffset(JSGlobalObject*, JSValue, std::optional<BuiltinType> overflow);
-// _Py_convert_optional_to_ssize_t(): an argument that is an int or None, or was not given.
-std::optional<int64_t> toOptionalSsize(JSGlobalObject*, JSValue, int64_t defaultValue);
-// The `str` and `str(accept={str, NoneType})` of Argument Clinic: text with no zero in it. A null String is None, where that will do. Nothing if it raised.
-// `argument` is what to call it: "argument", "argument 1" or "argument 'mode'".
-std::optional<String> toTextArgument(JSGlobalObject*, JSValue, ASCIILiteral function, ASCIILiteral argument, bool mayBeNone = false);
 // `Py_buffer(accept={rwbuffer})`
 Buffer writableBufferArgument(JSGlobalObject*, JSValue, ASCIILiteral function, ASCIILiteral argument = "argument"_s);
 inline std::span<uint8_t> mutableSpanOf(const Buffer& buffer)

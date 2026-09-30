@@ -836,6 +836,10 @@ What is up to the host is asked of it as JavaScript asks it, through `GlobalObje
 the like, and what there is to import besides what the engine has, `builtinModules` and `frozenModules`, which are `PyImport_AppendInittab()` and `PyImport_FrozenModules`. `posix` is one: it is what a program reaches the
 system with, so whether there is such a module is the host's to say. It is written here all the same (`createPosixModule()`, which the host lists or does not), since otherwise each host would write it again.
 
+**A module that CPython writes over a library is the host's to write**, if it has the library: `_hashlib` over OpenSSL, `zlib`, `pyexpat`, `_ssl`, `_sqlite3`. The engine has none of those libraries and is not to want them. Such a module is written as the
+ones here are, with what they are written with, all of which is in headers that a host can include: `PythonBuiltins.h`, `PythonOperations.h`, `PyStateObject.h`, `PythonBytes.h`. What its functions take and what they are for come from the same table as
+everything else's, since that is about CPython and not about who wrote what: it is added to `MODULES` in `lib/dump-builtin-descriptions.py`.
+
 What is done to an open file is asked of the host too, if it wants to be asked: `Configuration::files`, a `FileOperations`, which is `open`, `close`, `read`, `write` and the few others that `io.FileIO` is made of.
 `FileIO` and the functions of `posix` that do the same go through it. That is so that what Python writes to the standard output can go the way that what JavaScript writes there goes, and the two come out in the
 order in which they were written. Left alone, it is the system calls.
@@ -943,6 +947,9 @@ What is ported from CPython is CPython's authors' work made over, and is under C
 An instance of such a class has what in CPython is a C struct. Here it is a struct as well, derived from `NativeState`, and one kind of cell holds any of them: `PyStateObject`. So a class that is ported does not
 take a cell type, a subspace and a destructor of its own, only what it has and what of that the collector is to be told of. Where CPython leaves making the instance to `object.__new__()` and its `tp_alloc`, so that
 one can be had that `__init__()` has never been called on, the class says how one is made: `PyType::setAllocator()`.
+
+What such a struct keeps that the collector did not allocate, it says how much of: `NativeState::memoryOutsideTheHeap()`. A `zlib.compressobj()` is a few words to the collector and a quarter of a megabyte to the process. In CPython it is freed when the
+last reference to it goes. Here it is freed when the collector next runs, and how soon that is goes by how much the collector takes there to be, as it does for an `ArrayBuffer`.
 
 Besides that there is what the front end itself is easier said in Python for: `lib/_framelocals.py`, which is frozen, is imported when a realm is made, and is in no traceback. It is a class that CPython writes in C, and
 is to be written in C++.

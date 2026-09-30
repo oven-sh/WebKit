@@ -50,10 +50,10 @@ import builtins
 import json
 import sys
 
-# The modules that are written in C++ here.
-MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable", "_csv", "_socket", "_asyncio", "fcntl", "termios", "gc", "_md5", "_sha1", "_sha2", "_sha3", "_blake2"]
+# The modules that are written in C++ here, or that a host is to write.
+MODULES = ["builtins", "sys", "sys._jit", "sys.monitoring", "math", "time", "posix", "_typing", "_contextvars", "_warnings", "_ast", "_weakref", "_thread", "_imp", "marshal", "_io", "_codecs", "errno", "itertools", "_collections", "_sre", "_tokenize", "_opcode", "_string", "atexit", "_signal", "_posixsubprocess", "select", "_random", "_struct", "unicodedata", "binascii", "array", "_abc", "_operator", "_functools", "_heapq", "_bisect", "cmath", "resource", "_symtable", "_csv", "_socket", "_asyncio", "fcntl", "termios", "gc", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib", "_scproxy"]
 # Those whose classes are made when the module is, as a class statement makes one, and are written in C all the same.
-MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio", "signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2")
+MODULES_OF_CLASSES = ("sys", "typing", "_typing", "_thread", "_io", "os", "posix", "resource", "itertools", "collections", "re", "_sre", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_abc", "operator", "functools", "_csv", "_socket", "_asyncio", "signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib")
 
 
 def generator():
@@ -137,7 +137,7 @@ def add_type(a_type):
 for value in vars(builtins).values():
     if isinstance(value, type):
         add_type(value)
-for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator", "_functools", "_csv", "_socket", "_asyncio", "_signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2"):
+for name in ("_typing", "_weakref", "_thread", "_io", "posix", "resource", "itertools", "_collections", "_tokenize", "time", "select", "_random", "_struct", "unicodedata", "array", "_operator", "_functools", "_csv", "_socket", "_asyncio", "_signal", "_md5", "_sha1", "_sha2", "_sha3", "_blake2", "_hashlib", "zlib"):
     for value in vars(__import__(name)).values():
         if isinstance(value, type):
             add_type(value)
@@ -147,6 +147,8 @@ add_type(type(__import__("_codecs").charmap_build("\0a")))
 add_type(type(__import__("_string").formatter_parser("")))
 add_type(type(__import__("_string").formatter_field_name_split("")[1]))
 add_type(type(__import__("select").poll()))
+add_type(type(__import__("zlib").compressobj()))
+add_type(type(__import__("zlib").decompressobj()))
 add_type(type(__import__("_struct").iter_unpack("b", b"")))
 add_type(type(__import__("unicodedata")._ucnhash_CAPI))
 add_type(type(iter(__import__("array").array("b"))))
@@ -198,7 +200,11 @@ for name, a_type in types.items():
             entries.append([name + "." + attribute, kind, None, text(value.__doc__)])
 
 for name in MODULES:
-    module = __import__(name.partition(".")[0])
+    try:
+        module = __import__(name.partition(".")[0])
+    except ImportError:
+        # Not every system has every one: _scproxy is macOS's.
+        continue
     for part in name.split(".")[1:]:
         module = getattr(module, part)
     entries.append([name + ":", "module", None, text(module.__doc__)])

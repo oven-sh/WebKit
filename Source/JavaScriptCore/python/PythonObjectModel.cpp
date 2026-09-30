@@ -305,6 +305,17 @@ JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, BuiltinType type,
     return raise(globalObject, scope, type, jsString(globalObject->vm(), message));
 }
 
+JSValue raise(JSGlobalObject* globalObject, ThrowScope& scope, PyType* type, const String& message)
+{
+    if (message.isNull()) [[unlikely]]
+        return raiseMemoryError(globalObject, scope);
+    JSObject* exception = createException(globalObject, type, jsString(globalObject->vm(), message));
+    RETURN_IF_EXCEPTION(scope, { });
+    setContext(globalObject, exception);
+    throwException(globalObject, scope, exception);
+    return { };
+}
+
 JSValue raiseNameError(JSGlobalObject* globalObject, ThrowScope& scope, const String& name)
 {
     JSObject* exception = createException(globalObject, globalObject->pyRealm()->typeNameError(), concatenate("name '"_s, name, "' is not defined"_s));

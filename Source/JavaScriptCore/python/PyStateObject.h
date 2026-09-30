@@ -66,6 +66,10 @@ public:
         unsigned itemSize;
     };
     virtual std::optional<ExportedBytes> exportedBytes() const { return std::nullopt; }
+
+    // How much memory it keeps that is not the collector's, if that is a good deal: what a library has allocated for it. Nothing is freed until the collector runs, and how soon it runs goes by how much it takes there to
+    // be. It is asked when the object is made, and by the collector while the program is running, so it is to be something that can be read at any time.
+    virtual size_t memoryOutsideTheHeap() const { return 0; }
 };
 
 #define PYTHON_NATIVE_STATE(Name) \
@@ -94,6 +98,7 @@ public:
 
     DECLARE_EXPORT_INFO;
     DECLARE_VISIT_CHILDREN;
+    static size_t estimatedSize(JSCell*, VM&);
     PYTHON_OVERLOADS_OPERATORS
     JS_EXPORT_PRIVATE static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
     static CallData getCallData(JSCell*);

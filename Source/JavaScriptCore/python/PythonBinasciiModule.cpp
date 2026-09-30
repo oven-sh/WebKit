@@ -58,11 +58,7 @@ void BinasciiModuleState::visit(Visitor& visitor)
 // binascii.Error
 JSValue raiseBinasciiError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message)
 {
-    JSObject* exception = createException(globalObject, globalObject->pyRealm()->moduleState<BinasciiModuleState>().error.get(), jsString(globalObject->vm(), message));
-    RETURN_IF_EXCEPTION(scope, { });
-    setContext(globalObject, exception);
-    throwException(globalObject, scope, exception);
-    return { };
+    return raise(globalObject, scope, globalObject->pyRealm()->moduleState<BinasciiModuleState>().error.get(), message);
 }
 
 using Bytes = Vector<uint8_t, 128>;
@@ -120,15 +116,6 @@ std::optional<bool> toBoolArgument(JSGlobalObject* globalObject, JSValue value, 
     bool truth = isTrue(globalObject, value);
     RETURN_IF_EXCEPTION(scope, std::nullopt);
     return truth;
-}
-
-// `unsigned_int(bitwise=True)` of Argument Clinic: PyLong_AsUnsignedLongMask(). Nothing if it raised.
-std::optional<uint32_t> toUnsignedIntMask(JSGlobalObject* globalObject, JSValue value)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue integer = toInt(globalObject, value);
-    RETURN_IF_EXCEPTION(scope, std::nullopt);
-    return static_cast<uint32_t>(lowBitsOfInt(integer));
 }
 
 JSValue bytesOrMemoryError(JSGlobalObject* globalObject, const Bytes& bytes) { return newBytes(globalObject, bytes.span()); }
@@ -542,17 +529,9 @@ JSObject* createBinasciiModule(JSGlobalObject* globalObject)
     PyRealm* realm = globalObject->pyRealm();
     auto& state = realm->moduleState<BinasciiModuleState>();
     if (!state.error) {
-        // PyErr_NewException()
-        auto newException = [&] (ASCIILiteral name, BuiltinType base) -> PyType* {
-            PyDict* contents = PyDict::create(globalObject);
-            contents->setString(globalObject, "__module__"_s, jsNontrivialString(vm, "binascii"_s));
-            JSValue type = newType(globalObject, realm->typeType(), jsNontrivialString(vm, name), PyTuple::create(globalObject, { realm->type(base) }), contents, nullptr);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-            return asType(type);
-        };
-        PyType* error = newException("Error"_s, BuiltinType::ValueError);
+        PyType* error = newException(globalObject, "binascii"_s, "Error"_s, realm->type(BuiltinType::ValueError));
         RETURN_IF_EXCEPTION(scope, nullptr);
-        PyType* incomplete = newException("Incomplete"_s, BuiltinType::Exception);
+        PyType* incomplete = newException(globalObject, "binascii"_s, "Incomplete"_s, realm->type(BuiltinType::Exception));
         RETURN_IF_EXCEPTION(scope, nullptr);
         state.error.set(vm, realm, error);
         state.incomplete.set(vm, realm, incomplete);

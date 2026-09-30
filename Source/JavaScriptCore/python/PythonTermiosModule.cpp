@@ -255,12 +255,9 @@ JSObject* createTermiosModule(JSGlobalObject* globalObject)
     PyRealm* realm = globalObject->pyRealm();
     auto& state = realm->moduleState<TermiosModuleState>();
     if (!state.error) {
-        // PyErr_NewException("termios.error", NULL, NULL)
-        PyDict* contents = PyDict::create(globalObject);
-        contents->setString(globalObject, "__module__"_s, jsNontrivialString(vm, "termios"_s));
-        JSValue error = newType(globalObject, realm->typeType(), jsNontrivialString(vm, "error"_s), PyTuple::create(globalObject, { realm->type(BuiltinType::Exception) }), contents, nullptr);
+        PyType* error = newException(globalObject, "termios"_s, "error"_s, realm->type(BuiltinType::Exception));
         RETURN_IF_EXCEPTION(scope, nullptr);
-        state.error.set(vm, realm, asType(error));
+        state.error.set(vm, realm, error);
     }
     JSObject* module = newBuiltinModule(globalObject, "termios"_s);
     module->putDirect(vm, Identifier::fromString(vm, "error"_s), state.error->object());

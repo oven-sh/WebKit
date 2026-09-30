@@ -35,6 +35,7 @@
 #include "PyNativeFunction.h"
 #include "PyObjects.h"
 #include "PythonCharacters.h"
+#include "PythonCodecs.h"
 #include "PythonGenerators.h"
 #include "PythonNumbers.h"
 #include "PythonSequences.h"
@@ -1512,6 +1513,56 @@ std::optional<int> toCInt(JSGlobalObject* globalObject, JSValue value)
         return std::nullopt;
     }
     return static_cast<int>(*result);
+}
+
+std::optional<uint32_t> toUnsignedIntMask(JSGlobalObject* globalObject, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue integer = toInt(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    return static_cast<uint32_t>(lowBitsOfInt(integer));
+}
+
+std::optional<int64_t> toOptionalSsize(JSGlobalObject* globalObject, JSValue value, int64_t defaultValue)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!value || isNone(value))
+        return defaultValue;
+    if (!classify(value).isInt() && !typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_index)) {
+        raiseTypeError(globalObject, scope, concatenate("argument should be integer or None, not '"_s, typeName(globalObject, value), '\''));
+        return std::nullopt;
+    }
+    RELEASE_AND_RETURN(scope, toIndexOrOverflow(globalObject, value));
+}
+
+std::optional<String> toTextArgument(JSGlobalObject* globalObject, JSValue value, ASCIILiteral function, ASCIILiteral argument, bool mayBeNone)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (mayBeNone && (!value || isNone(value)))
+        return String();
+    JSString* string = stringIn(value);
+    if (!string) {
+        raiseTypeError(globalObject, scope, concatenate(function, "() "_s, argument, " must be str"_s, mayBeNone ? " or None"_s : ""_s, ", not "_s, typeNameOfArgument(globalObject, value)));
+        return std::nullopt;
+    }
+    String text = string->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    if (text.contains(static_cast<char16_t>(0))) {
+        raiseValueError(globalObject, scope, "embedded null character"_s);
+        return std::nullopt;
+    }
+    // It is as UTF-8 that C has it, which is not to be had of half a character.
+    for (unsigned i = 0; !text.is8Bit() && i < text.length(); ++i) {
+        if (U16_IS_SURROGATE(text[i]) && !(U16_IS_LEAD(text[i]) && i + 1 < text.length() && U16_IS_TRAIL(text[i + 1]))) {
+            encodeString(globalObject, string, "utf-8"_s, "strict"_s);
+            RETURN_IF_EXCEPTION(scope, std::nullopt);
+        }
+        if (U16_IS_LEAD(text[i]))
+            ++i;
+    }
+    return text.isNull() ? emptyString() : text;
 }
 
 std::optional<int64_t> toSliceIndex(JSGlobalObject* globalObject, JSValue value, bool mayBeNone)

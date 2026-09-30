@@ -873,13 +873,10 @@ JSObject* createSignalModule(JSGlobalObject* globalObject)
     module->putDirect(vm, Identifier::fromString(vm, "struct_siginfo"_s), state.information->object());
 #endif
 
-    // PyErr_NewException("signal.ItimerError", PyExc_OSError, NULL)
     if (!state.itimerError) {
-        PyDict* contents = PyDict::create(globalObject);
-        contents->setString(globalObject, "__module__"_s, jsNontrivialString(vm, "signal"_s));
-        JSValue type = newType(globalObject, realm->typeType(), jsNontrivialString(vm, "ItimerError"_s), PyTuple::create(globalObject, { realm->typeOSError() }), contents, nullptr);
+        PyType* type = newException(globalObject, "signal"_s, "ItimerError"_s, realm->typeOSError());
         RETURN_IF_EXCEPTION(scope, nullptr);
-        state.itimerError.set(vm, realm, asType(type));
+        state.itimerError.set(vm, realm, type);
     }
 
     // signal_add_constants()

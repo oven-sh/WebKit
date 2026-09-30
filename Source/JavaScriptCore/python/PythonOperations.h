@@ -102,6 +102,7 @@ JSObject* createException(JSGlobalObject*, PyType*, JSValue argument);
 // These throw, and return an empty value for the caller to return.
 JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, const String& message);
 JSValue raise(JSGlobalObject*, ThrowScope&, BuiltinType, JSValue argument);
+JSValue raise(JSGlobalObject*, ThrowScope&, PyType*, const String& message); // One of a module's own
 inline JSValue raiseTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::TypeError, message); }
 inline JSValue raiseValueError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message) { return raise(globalObject, scope, BuiltinType::ValueError, message); }
 inline JSValue raiseMemoryError(JSGlobalObject* globalObject, ThrowScope& scope) { return raise(globalObject, scope, BuiltinType::MemoryError, JSValue()); }
@@ -352,6 +353,8 @@ JSValue buildClass(JSGlobalObject*, JSValue body, JSString* name, PyTuple* bases
 PyType* calculateMetaclass(JSGlobalObject*, PyType* metatype, PyTuple* bases);
 // type.__new__(metatype, name, bases, namespace, **keywords)
 JSValue newType(JSGlobalObject*, PyType* metatype, JSString* name, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords);
+// PyErr_NewException("module.name", base, NULL): a class made as a class statement in that module would make it. Null if it raised.
+PyType* newException(JSGlobalObject*, ASCIILiteral module, ASCIILiteral name, PyType* base);
 // isinstance() and issubclass(), which a class can have its own idea of.
 bool isInstanceOf(JSGlobalObject*, JSValue, JSValue classInfo);
 
@@ -674,6 +677,13 @@ std::optional<int64_t> toSsize(JSGlobalObject*, JSValue);
 std::optional<int64_t> toCLong(JSGlobalObject*, JSValue);
 std::optional<long long> toCLongLong(JSGlobalObject*, JSValue);
 std::optional<int> toCInt(JSGlobalObject*, JSValue);
+// `unsigned_int(bitwise=True)` of Argument Clinic: PyLong_AsUnsignedLongMask(). Nothing if it raised.
+std::optional<uint32_t> toUnsignedIntMask(JSGlobalObject*, JSValue);
+// _Py_convert_optional_to_ssize_t(): an argument that is an int or None, or was not given.
+std::optional<int64_t> toOptionalSsize(JSGlobalObject*, JSValue, int64_t defaultValue);
+// The `str` and `str(accept={str, NoneType})` of Argument Clinic: text with no zero in it. A null String is None, where that will do. Nothing if it raised.
+// `argument` is what to call it: "argument", "argument 1" or "argument 'mode'".
+std::optional<String> toTextArgument(JSGlobalObject*, JSValue, ASCIILiteral function, ASCIILiteral argument, bool mayBeNone = false);
 // _PyEval_SliceIndex(), and _PyEval_SliceIndexNotNone(): where something begins or ends, clamped. Whether it is None is for the caller to have seen to: `mayBeNone` is only for what is said.
 std::optional<int64_t> toSliceIndex(JSGlobalObject*, JSValue, bool mayBeNone);
 // The value of an int, a bool or a float, or of what has __float__ or __index__.

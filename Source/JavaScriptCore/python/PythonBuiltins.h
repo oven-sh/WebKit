@@ -256,6 +256,7 @@ JSValue getInstanceDict(JSGlobalObject*, JSValue self);
 JSValue getInstanceDictOrProxy(JSGlobalObject*, JSValue self);
 void setInstanceDict(JSGlobalObject*, JSValue self, JSValue value);
 JSValue getWeakReferences(JSGlobalObject*, JSValue self);
+JSC_DECLARE_HOST_FUNCTION(operatorCompareDigest); // _operator._compare_digest(), and _hashlib.compare_digest()
 JSC_DECLARE_HOST_FUNCTION(sliceIndices);
 
 inline JSFunction* asFunction(JSValue value) { return uncheckedDowncast<JSFunction>(value.asCell()); }

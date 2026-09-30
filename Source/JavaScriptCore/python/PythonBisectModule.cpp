@@ -29,7 +29,6 @@
 
 #include "JSCInlines.h"
 #include "PyRealm.h"
-#include "PythonIO.h"
 #include "PythonNumbers.h"
 #include "PythonOperations.h"
 #include "PythonOperators.h"

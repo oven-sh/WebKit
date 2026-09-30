@@ -1,4 +1,7 @@
 [
+["_scproxy:", null],
+["_scproxy:_get_proxies", null],
+["_scproxy:_get_proxy_settings", null],
 ["_signal:pidfd_send_signal", "builtin_function_or_method", "($module, pidfd, signalnum, siginfo=None, flags=0, /)", "Send a signal to a process referred to by a pid file descriptor."],
 ["_signal:sigtimedwait", "builtin_function_or_method", "($module, sigset, timeout, /)", "Like sigwaitinfo(), but with a timeout.\n\nThe timeout is specified in seconds, with floating-point numbers allowed."],
 ["_signal:sigwaitinfo", "builtin_function_or_method", "($module, sigset, /)", "Wait synchronously until one of the signals in *sigset* is delivered.\n\nReturns a struct_siginfo containing information about the signal."],

@@ -51,7 +51,14 @@ PyStateObject* PyStateObject::create(VM& vm, Structure* structure, std::unique_p
     ASSERT(state);
     auto* object = new (NotNull, allocateCell<PyStateObject>(vm)) PyStateObject(vm, structure, WTF::move(state));
     object->finishCreation(vm);
+    if (size_t size = object->m_state->memoryOutsideTheHeap())
+        vm.heap.reportExtraMemoryAllocated(object, size);
     return object;
+}
+
+size_t PyStateObject::estimatedSize(JSCell* cell, VM& vm)
+{
+    return Base::estimatedSize(cell, vm) + uncheckedDowncast<PyStateObject>(cell)->m_state->memoryOutsideTheHeap();
 }
 
 void PyStateObject::destroy(JSCell* cell)
@@ -71,6 +78,7 @@ void PyStateObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     thisObject->m_state->visitChildren(visitor);
+    visitor.reportExtraMemoryVisited(thisObject->m_state->memoryOutsideTheHeap());
 }
 
 DEFINE_VISIT_CHILDREN(PyStateObject);

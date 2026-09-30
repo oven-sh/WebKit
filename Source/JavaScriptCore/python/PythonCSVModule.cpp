@@ -77,11 +77,7 @@ CSVModuleState& csvModuleState(JSGlobalObject* globalObject) { return globalObje
 // _csv.Error
 JSValue raiseCSVError(JSGlobalObject* globalObject, ThrowScope& scope, const String& message)
 {
-    JSObject* exception = createException(globalObject, csvModuleState(globalObject).error.get(), jsString(globalObject->vm(), message));
-    RETURN_IF_EXCEPTION(scope, { });
-    setContext(globalObject, exception);
-    throwException(globalObject, scope, exception);
-    return { };
+    return raise(globalObject, scope, csvModuleState(globalObject).error.get(), message);
 }
 
 String stringOf(std::span<const char32_t> characters)

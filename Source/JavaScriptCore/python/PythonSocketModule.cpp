@@ -660,18 +660,12 @@ JSObject* createSocketModule(JSGlobalObject* globalObject)
     constexpr auto byParseTuple = Arguments::AreCheckedAsByParseTuple;
     auto& state = socketModuleState(globalObject);
     if (!state.socketType) {
-        // PyErr_NewException("socket.herror", PyExc_OSError, NULL), and the other
-        auto newError = [&] (WriteBarrier<PyType>& slot, ASCIILiteral name) {
-            PyDict* contents = PyDict::create(globalObject);
-            contents->setString(globalObject, "__module__"_s, jsNontrivialString(vm, "socket"_s));
-            JSValue error = newType(globalObject, realm->typeType(), jsNontrivialString(vm, name), PyTuple::create(globalObject, { realm->type(BuiltinType::OSError) }), contents, nullptr);
-            RETURN_IF_EXCEPTION(scope, void());
-            slot.set(vm, realm, asType(error));
-        };
-        newError(state.hostError, "herror"_s);
+        PyType* hostError = newException(globalObject, "socket"_s, "herror"_s, realm->type(BuiltinType::OSError));
         RETURN_IF_EXCEPTION(scope, nullptr);
-        newError(state.addressInfoError, "gaierror"_s);
+        state.hostError.set(vm, realm, hostError);
+        PyType* addressInfoError = newException(globalObject, "socket"_s, "gaierror"_s, realm->type(BuiltinType::OSError));
         RETURN_IF_EXCEPTION(scope, nullptr);
+        state.addressInfoError.set(vm, realm, addressInfoError);
         initializeSocketType(globalObject, state);
     }
 

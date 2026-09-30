@@ -239,7 +239,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 }
 
-PYTHON_NATIVE(operatorCompareDigest)
+// _hashlib has it too, under another name.
+PYTHON_SHARED_NATIVE(operatorCompareDigest)
 {
     NATIVE_PROLOGUE();
     JSString* a = stringIn(args[0]);
