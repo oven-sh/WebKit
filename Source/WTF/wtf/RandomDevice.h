@@ -51,7 +51,9 @@ public:
 private:
 #if OS(DARWIN) || OS(FUCHSIA) || OS(WINDOWS)
 #elif OS(UNIX)
-    int m_fd { -1 };
+    void openURandom();
+
+    int m_fd { -1 }; // On Linux, /dev/urandom is only opened once getrandom(2) has failed.
 #else
 #error "This configuration doesn't have a strong source of randomness."
 // WARNING: When adding new sources of OS randomness, the randomness must
