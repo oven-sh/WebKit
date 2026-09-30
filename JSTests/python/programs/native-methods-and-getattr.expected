@@ -1,0 +1,53 @@
+deque: called at once                        deque.rotate() takes no keyword arguments
+deque: got first                             deque.rotate() takes no keyword arguments
+deque: too many                              rotate expected at most 1 argument, got 3
+deque: none wanted                           deque.clear() takes no arguments (1 given)
+deque: one wanted                            deque.append() takes exactly one argument (0 given)
+deque: of the class                          deque.rotate() takes no keyword arguments
+deque: as it should be                       (None, None, None, [1, 2], 1)
+Plain: called at once                        deque.rotate() takes no keyword arguments
+Plain: got first                             Plain.rotate() takes no keyword arguments
+Plain: too many                              rotate expected at most 1 argument, got 3
+Plain: none wanted                           deque.clear() takes no arguments (1 given)
+Plain: one wanted                            deque.append() takes exactly one argument (0 given)
+Plain: of the class                          deque.rotate() takes no keyword arguments
+Plain: as it should be                       (None, None, None, [1, 2], 1)
+WithGetattr: called at once                  WithGetattr.rotate() takes no keyword arguments
+WithGetattr: got first                       WithGetattr.rotate() takes no keyword arguments
+WithGetattr: too many                        rotate expected at most 1 argument, got 3
+WithGetattr: none wanted                     WithGetattr.clear() takes no arguments (1 given)
+WithGetattr: one wanted                      WithGetattr.append() takes exactly one argument (0 given)
+WithGetattr: of the class                    deque.rotate() takes no keyword arguments
+WithGetattr: as it should be                 (None, None, None, [1, 2], 1)
+Further: called at once                      Further.rotate() takes no keyword arguments
+Further: got first                           Further.rotate() takes no keyword arguments
+Further: too many                            rotate expected at most 1 argument, got 3
+Further: none wanted                         Further.clear() takes no arguments (1 given)
+Further: one wanted                          Further.append() takes exactly one argument (0 given)
+Further: of the class                        deque.rotate() takes no keyword arguments
+Further: as it should be                     (None, None, None, [1, 2], 1)
+WithGetattribute: called at once             WithGetattribute.rotate() takes no keyword arguments
+WithGetattribute: got first                  WithGetattribute.rotate() takes no keyword arguments
+WithGetattribute: too many                   rotate expected at most 1 argument, got 3
+WithGetattribute: none wanted                WithGetattribute.clear() takes no arguments (1 given)
+WithGetattribute: one wanted                 WithGetattribute.append() takes exactly one argument (0 given)
+WithGetattribute: of the class               deque.rotate() takes no keyword arguments
+WithGetattribute: as it should be            (None, None, None, [1, 2], 1)
+one of its own                               WithGetattr.mine() missing 1 required positional argument: 'a'
+one of its own, further on                   WithGetattr.mine() takes 2 positional arguments but 3 were given
+[]
+399980000 []
+after that                                   WithGetattr.append() takes exactly one argument (0 given)
+and of its own                               WithGetattr.mine() missing 1 required positional argument: 'a'
+after that                                   WithGetattr.append() takes exactly one argument (0 given)
+and of its own                               WithGetattr.mine() missing 1 required positional argument: 'a'
+after that                                   WithGetattr.append() takes exactly one argument (0 given)
+and of its own                               WithGetattr.mine() missing 1 required positional argument: 'a'
+before                                       deque.append() takes exactly one argument (0 given)
+with                                         Plain.append() takes exactly one argument (0 given)
+what there is not                            5
+with, still                                  Plain.append() takes exactly one argument (0 given)
+without                                      deque.append() takes exactly one argument (0 given)
+['nothing']
+the instance's own                           "the instance's"
+and without it                               WithGetattr.append() takes exactly one argument (0 given)

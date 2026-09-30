@@ -989,6 +989,13 @@ static bool isOrdinaryForAttributes(JSGlobalObject* globalObject, JSValue value,
     return type->layout() != PyType::Layout::JavaScript && !isJavaScriptObject(value, type) && value.asCell()->type() != ModuleNamespaceObjectType && type != globalObject->pyRealm()->typeSuper();
 }
 
+// In CPython instance.method(...) makes no bound method only if the class finds attributes as object does, which one that has __getattr__() does not. It can be told only of a method that is written in C++, which says
+// what it is called by the class that it was got by way of. So the rest are spared it.
+static bool isGotBoundToBeCalled(JSGlobalObject* globalObject, PyType* type, JSValue method)
+{
+    return (type->hooks(globalObject) & PyType::HasGetAttr) && dynamicDowncast<PyNativeFunction>(method);
+}
+
 AttributeLocation locateAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name)
 {
     VM& vm = globalObject->vm();
@@ -1025,6 +1032,8 @@ AttributeLocation locateAttribute(JSGlobalObject* globalObject, JSValue value, P
     case DescriptorKind::Plain:
         return { AttributeLocation::Kind::InClass, offset, type, holder };
     case DescriptorKind::Function:
+        if (isGotBoundToBeCalled(globalObject, type, attribute))
+            return { };
         return { AttributeLocation::Kind::Method, offset, type, holder };
     default:
         return { };
@@ -1315,7 +1324,7 @@ JSValue loadMethod(JSGlobalObject* globalObject, JSValue base, PropertyName name
         return getAttribute(globalObject, base, name);
     }
     DescriptorKind kind = attribute ? classifyDescriptor(globalObject, attribute).kind : DescriptorKind::Plain;
-    if (kind != DescriptorKind::Function && kind != DescriptorKind::JavaScriptFunction)
+    if ((kind != DescriptorKind::Function && kind != DescriptorKind::JavaScriptFunction) || isGotBoundToBeCalled(globalObject, type, attribute))
         return getAttribute(globalObject, base, name);
     // What the instance itself has by that name comes first.
     if (JSObject* storage = attributeStorage(globalObject, base, type)) {
