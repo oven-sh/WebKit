@@ -93,6 +93,10 @@ JSValue raisePathError(JSGlobalObject*, ThrowScope&, const PathArgument&, const 
 JSValue raisePathObjectError(JSGlobalObject*, ThrowScope&, JSValue path);
 // argument_unavailable_error()
 JSValue raiseArgumentUnavailable(JSGlobalObject*, ThrowScope&, ASCIILiteral function, ASCIILiteral argument);
+// path_and_dir_fd_invalid(), dir_fd_and_fd_invalid() and fd_and_follow_symlinks_invalid(): ValueError, if the two are not to be given together.
+void checkPathAndDirectory(JSGlobalObject*, ThrowScope&, ASCIILiteral function, const PathArgument&, int directory);
+void checkDirectoryAndDescriptor(JSGlobalObject*, ThrowScope&, ASCIILiteral function, int directory, int descriptor);
+void checkDescriptorAndFollowing(JSGlobalObject*, ThrowScope&, ASCIILiteral function, int descriptor, bool followsSymlinks);
 
 // Each is nothing if it raised.
 std::optional<int> toDescriptor(JSGlobalObject*, JSValue); // _fd_converter()

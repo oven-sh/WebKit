@@ -83,6 +83,24 @@ JSValue raiseArgumentUnavailable(JSGlobalObject* globalObject, ThrowScope& scope
     return raise(globalObject, scope, BuiltinType::NotImplementedError, concatenate(function.isNull() ? ""_s : function, function.isNull() ? ""_s : ": "_s, argument, " unavailable on this platform"_s));
 }
 
+void checkPathAndDirectory(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, const PathArgument& path, int directory)
+{
+    if (!path.hasNarrow && directory != defaultDirectoryDescriptor)
+        raiseValueError(globalObject, scope, concatenate(function, ": can't specify dir_fd without matching path"_s));
+}
+
+void checkDirectoryAndDescriptor(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, int directory, int descriptor)
+{
+    if (directory != defaultDirectoryDescriptor && descriptor != -1)
+        raiseValueError(globalObject, scope, concatenate(function, ": can't specify both dir_fd and fd"_s));
+}
+
+void checkDescriptorAndFollowing(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, int descriptor, bool followsSymlinks)
+{
+    if (descriptor >= 0 && !followsSymlinks)
+        raiseValueError(globalObject, scope, concatenate(function, ": cannot use fd and follow_symlinks together"_s));
+}
+
 // ---- Converters
 
 static bool hasIndex(JSGlobalObject* globalObject, JSValue value)

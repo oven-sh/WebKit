@@ -175,6 +175,9 @@ public:
     int weakReferenceOffset() const { return m_weakReferenceOffset; }
     // type.__flags__, as CPython would have it. What is gone by here is flags().
     unsigned long flagsForPython() const;
+    // Two of the bits of that, Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING, which __abc_tpflags__ is written in as well.
+    static constexpr unsigned long cpythonSequence = 1ul << 5;
+    static constexpr unsigned long cpythonMapping = 1ul << 6;
     // For a class that is being made: it has so many __slots__, and its instances have these where those of its base have not.
     void addToLayout(unsigned slots, bool addsDict, bool addsWeakReferences);
     // A built-in class that is derived from object and nothing else, and has no __new__ of its own, does not have object's either, though that is what

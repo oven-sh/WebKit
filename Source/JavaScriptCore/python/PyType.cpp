@@ -136,8 +136,6 @@ PyType* PyType::createBuiltin(VM& vm, JSGlobalObject* globalObject, ASCIILiteral
 static constexpr unsigned long cpythonInlineValues = 1ul << 2;
 static constexpr unsigned long cpythonManagedWeakReferences = 1ul << 3;
 static constexpr unsigned long cpythonManagedDict = 1ul << 4;
-static constexpr unsigned long cpythonSequence = 1ul << 5;
-static constexpr unsigned long cpythonMapping = 1ul << 6;
 static constexpr unsigned long cpythonHeapType = 1ul << 9;
 static constexpr unsigned long cpythonBaseType = 1ul << 10;
 static constexpr unsigned long cpythonHaveVectorcall = 1ul << 11;

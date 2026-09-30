@@ -338,14 +338,6 @@ PYTHON_NATIVE(posixGetrandom)
 
 // ---- What is kept with a file besides what is in it
 
-static bool descriptorAndFollowingAreInvalid(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, int descriptor, bool followsSymlinks)
-{
-    if (descriptor < 0 || followsSymlinks)
-        return false;
-    raiseValueError(globalObject, scope, concatenate(function, ": cannot use fd and follow_symlinks together"_s));
-    return true;
-}
-
 // getxattr(path, attribute, *, follow_symlinks=True)
 PYTHON_NATIVE(posixGetxattr)
 {
@@ -353,8 +345,8 @@ PYTHON_NATIVE(posixGetxattr)
     CONVERT_PATH(path, args.at(0), "getxattr"_s, "path"_s, PathArgument::AllowsDescriptor);
     CONVERT_PATH(attribute, args.at(1), "getxattr"_s, "attribute"_s, 0);
     CONVERT_BOOL(followsSymlinks, args.at(2), true);
-    if (descriptorAndFollowingAreInvalid(globalObject, scope, "getxattr"_s, path.descriptor, followsSymlinks))
-        return { };
+    checkDescriptorAndFollowing(globalObject, scope, "getxattr"_s, path.descriptor, followsSymlinks);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!audit(globalObject, "os.getxattr"_s, path.object, attribute.object))
         return { };
     for (size_t size : { static_cast<size_t>(128), static_cast<size_t>(XATTR_SIZE_MAX) }) {
@@ -381,8 +373,8 @@ PYTHON_NATIVE(posixSetxattr)
     RETURN_IF_EXCEPTION(scope, { });
     CONVERT_INT_OR(flags, args.at(3), 0);
     CONVERT_BOOL(followsSymlinks, args.at(4), true);
-    if (descriptorAndFollowingAreInvalid(globalObject, scope, "setxattr"_s, path.descriptor, followsSymlinks))
-        return { };
+    checkDescriptorAndFollowing(globalObject, scope, "setxattr"_s, path.descriptor, followsSymlinks);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!audit(globalObject, "os.setxattr"_s, path.object, attribute.object, newBytes(globalObject, value.span()), jsNumber(flags)))
         return { };
     int result = path.descriptor > -1 ? ::fsetxattr(path.descriptor, attribute.narrow(), value.data(), value.size(), flags)
@@ -399,8 +391,8 @@ PYTHON_NATIVE(posixRemovexattr)
     CONVERT_PATH(path, args.at(0), "removexattr"_s, "path"_s, PathArgument::AllowsDescriptor);
     CONVERT_PATH(attribute, args.at(1), "removexattr"_s, "attribute"_s, 0);
     CONVERT_BOOL(followsSymlinks, args.at(2), true);
-    if (descriptorAndFollowingAreInvalid(globalObject, scope, "removexattr"_s, path.descriptor, followsSymlinks))
-        return { };
+    checkDescriptorAndFollowing(globalObject, scope, "removexattr"_s, path.descriptor, followsSymlinks);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!audit(globalObject, "os.removexattr"_s, path.object, attribute.object))
         return { };
     int result = path.descriptor > -1 ? ::fremovexattr(path.descriptor, attribute.narrow()) : followsSymlinks ? ::removexattr(path.narrow(), attribute.narrow()) : ::lremovexattr(path.narrow(), attribute.narrow());
@@ -415,8 +407,8 @@ PYTHON_NATIVE(posixListxattr)
     NATIVE_PROLOGUE();
     CONVERT_PATH(path, args.at(0) ? args.at(0) : jsUndefined(), "listxattr"_s, "path"_s, PathArgument::AllowsDescriptor | PathArgument::Nullable);
     CONVERT_BOOL(followsSymlinks, args.at(1), true);
-    if (descriptorAndFollowingAreInvalid(globalObject, scope, "listxattr"_s, path.descriptor, followsSymlinks))
-        return { };
+    checkDescriptorAndFollowing(globalObject, scope, "listxattr"_s, path.descriptor, followsSymlinks);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!audit(globalObject, "os.listxattr"_s, path.object ? path.object : jsUndefined()))
         return { };
     const char* name = path.narrow() ? path.narrow() : ".";

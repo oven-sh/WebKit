@@ -75,37 +75,16 @@ static constexpr unsigned nullable = PathArgument::Nullable;
 
 static JSValue auditedDirectory(int directory) { return jsNumber(directory == defaultDirectoryDescriptor ? -1 : directory); }
 
-// path_and_dir_fd_invalid(), dir_fd_and_fd_invalid() and fd_and_follow_symlinks_invalid(). Each is true if it raised.
-static bool pathAndDirectoryAreInvalid(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, const PathArgument& path, int directory)
-{
-    if (path.hasNarrow || directory == defaultDirectoryDescriptor)
-        return false;
-    raiseValueError(globalObject, scope, concatenate(function, ": can't specify dir_fd without matching path"_s));
-    return true;
-}
-
-static bool directoryAndDescriptorAreInvalid(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, int directory, int descriptor)
-{
-    if (directory == defaultDirectoryDescriptor || descriptor == -1)
-        return false;
-    raiseValueError(globalObject, scope, concatenate(function, ": can't specify both dir_fd and fd"_s));
-    return true;
-}
-
-static bool descriptorAndFollowingAreInvalid(JSGlobalObject* globalObject, ThrowScope& scope, ASCIILiteral function, int descriptor, bool followsSymlinks)
-{
-    if (descriptor < 0 || followsSymlinks)
-        return false;
-    raiseValueError(globalObject, scope, concatenate(function, ": cannot use fd and follow_symlinks together"_s));
-    return true;
-}
-
 // posix_do_stat()
 static JSValue doStat(JSGlobalObject* globalObject, const PathArgument& path, int directory, bool followsSymlinks)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (pathAndDirectoryAreInvalid(globalObject, scope, "stat"_s, path, directory) || directoryAndDescriptorAreInvalid(globalObject, scope, "stat"_s, directory, path.descriptor) || descriptorAndFollowingAreInvalid(globalObject, scope, "stat"_s, path.descriptor, followsSymlinks))
-        return { };
+    checkPathAndDirectory(globalObject, scope, "stat"_s, path, directory);
+    RETURN_IF_EXCEPTION(scope, { });
+    checkDirectoryAndDescriptor(globalObject, scope, "stat"_s, directory, path.descriptor);
+    RETURN_IF_EXCEPTION(scope, { });
+    checkDescriptorAndFollowing(globalObject, scope, "stat"_s, path.descriptor, followsSymlinks);
+    RETURN_IF_EXCEPTION(scope, { });
     struct stat status;
     int result;
     if (path.descriptor != -1)
@@ -253,8 +232,10 @@ PYTHON_NATIVE(posixChown)
     CONVERT(group, toGroupID(globalObject, args.at(2)));
     CONVERT(directory, toDirectoryDescriptor(globalObject, args.at(3)));
     CONVERT_BOOL(followsSymlinks, args.at(4), true);
-    if (directoryAndDescriptorAreInvalid(globalObject, scope, "chown"_s, directory, path.descriptor) || descriptorAndFollowingAreInvalid(globalObject, scope, "chown"_s, path.descriptor, followsSymlinks))
-        return { };
+    checkDirectoryAndDescriptor(globalObject, scope, "chown"_s, directory, path.descriptor);
+    RETURN_IF_EXCEPTION(scope, { });
+    checkDescriptorAndFollowing(globalObject, scope, "chown"_s, path.descriptor, followsSymlinks);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!audit(globalObject, "os.chown"_s, path.object, intFromInt64(globalObject, user), intFromInt64(globalObject, group), auditedDirectory(directory)))
         return { };
     int result;
@@ -602,8 +583,12 @@ PYTHON_NATIVE(posixUtime)
             return { };
     } else
         isNow = true;
-    if (pathAndDirectoryAreInvalid(globalObject, scope, "utime"_s, path, directory) || directoryAndDescriptorAreInvalid(globalObject, scope, "utime"_s, directory, path.descriptor) || descriptorAndFollowingAreInvalid(globalObject, scope, "utime"_s, path.descriptor, followsSymlinks))
-        return { };
+    checkPathAndDirectory(globalObject, scope, "utime"_s, path, directory);
+    RETURN_IF_EXCEPTION(scope, { });
+    checkDirectoryAndDescriptor(globalObject, scope, "utime"_s, directory, path.descriptor);
+    RETURN_IF_EXCEPTION(scope, { });
+    checkDescriptorAndFollowing(globalObject, scope, "utime"_s, path.descriptor, followsSymlinks);
+    RETURN_IF_EXCEPTION(scope, { });
     if (!audit(globalObject, "os.utime"_s, path.object, times, nanoseconds ? nanoseconds : jsUndefined(), auditedDirectory(directory)))
         return { };
     const struct timespec* given = isNow ? nullptr : values;

@@ -235,9 +235,6 @@ bool computeAbstractMethods(JSGlobalObject* globalObject, JSValue self)
 }
 
 constexpr unsigned collectionFlags = PyType::IsSequence | PyType::IsMapping;
-// Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING, which is what __abc_tpflags__ is written in
-constexpr long cpythonSequence = 1 << 5;
-constexpr long cpythonMapping = 1 << 6;
 
 // _PyType_SetFlagsRecursive(): of a class and of all that are derived from it, but for what cannot be changed, and what is so already, and what is derived from those.
 void setCollectionFlagRecursively(PyType* type, PyType::Flag flag)
@@ -352,11 +349,11 @@ PYTHON_NATIVE(abcInit)
         RETURN_NONE();
     auto value = toCLong(globalObject, flags);
     RETURN_IF_EXCEPTION(scope, { });
-    if ((*value & (cpythonSequence | cpythonMapping)) == (cpythonSequence | cpythonMapping))
+    if ((*value & (PyType::cpythonSequence | PyType::cpythonMapping)) == (PyType::cpythonSequence | PyType::cpythonMapping))
         return JSValue::encode(raiseTypeError(globalObject, scope, "__abc_tpflags__ cannot be both Py_TPFLAGS_SEQUENCE and Py_TPFLAGS_MAPPING"_s));
-    if (*value & cpythonSequence)
+    if (*value & PyType::cpythonSequence)
         type->setFlag(PyType::IsSequence);
-    if (*value & cpythonMapping)
+    if (*value & PyType::cpythonMapping)
         type->setFlag(PyType::IsMapping);
     RETURN_NONE();
 }
