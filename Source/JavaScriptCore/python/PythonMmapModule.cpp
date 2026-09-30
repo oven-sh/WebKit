@@ -76,7 +76,9 @@ struct MmapState final : NativeState {
     PYTHON_NATIVE_STATE(MmapState);
     ~MmapState() final
     {
-        // What is mapped goes with the ArrayBuffer.
+        // What is mapped goes with the ArrayBuffer, if it is one's.
+        if (ownsPages && data)
+            munmap(data, static_cast<size_t>(size));
         if (descriptor >= 0)
             ::close(descriptor);
     }
@@ -92,6 +94,8 @@ struct MmapState final : NativeState {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         if (!data)
             raiseValueError(globalObject, scope, "mmap closed or invalid"_s);
+        else if (ownsPages)
+            raise(globalObject, scope, BuiltinType::BufferError, concatenate("no more than "_s, static_cast<uint64_t>(MAX_ARRAY_BUFFER_SIZE), " bytes can be shown at once, and the mmap has "_s, size));
     }
 
     // mmap_item(): a bytes of the one, where m[i] is an int.
@@ -109,6 +113,7 @@ struct MmapState final : NativeState {
 
     WriteBarrier<JSUint8Array> storage;
     Box<bool> pagesHaveMoved; // mremap() has them somewhere else, so that they are not the ArrayBuffer's to unmap.
+    bool ownsPages { false }; // There are more than an ArrayBuffer can have. All can be done with them but to show them to something else.
     uint8_t* data { nullptr }; // Null once it is closed
     int64_t size { 0 };
     int64_t position { 0 }; // From where the mapping begins
@@ -129,17 +134,27 @@ void adopt(JSGlobalObject* globalObject, JSCell* owner, MmapState& self, void* a
     self.size = size;
     size_t length = static_cast<size_t>(size);
     self.pagesHaveMoved = Box<bool>::create(false);
+    Structure* structure = globalObject->pyRealm()->structureFor(BuiltinType::ByteArray);
+    self.ownsPages = length > MAX_ARRAY_BUFFER_SIZE;
+    if (self.ownsPages) {
+        // It still has bytes to show, as far as anybody can tell who does not ask for them: see willExportBytes().
+        self.storage.set(vm, owner, JSUint8Array::create(globalObject, structure, 0));
+        return;
+    }
     auto buffer = ArrayBuffer::createFromBytes(std::span<const uint8_t>(self.data, length), createSharedTask<void(void*)>([length, haveMoved = self.pagesHaveMoved](void* pages) {
         if (!*haveMoved)
             munmap(pages, length);
     }));
-    self.storage.set(vm, owner, JSUint8Array::create(globalObject, globalObject->pyRealm()->structureFor(BuiltinType::ByteArray), WTF::move(buffer), 0, length));
+    self.storage.set(vm, owner, JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, length));
 }
 
 // Nothing is mapped any longer, and whatever was looking at it has nothing to look at.
 void unmap(VM& vm, MmapState& self)
 {
     // It still has bytes to show, as far as anybody can tell who does not ask for them: see willExportBytes().
+    if (self.ownsPages && !*self.pagesHaveMoved)
+        munmap(self.data, static_cast<size_t>(self.size));
+    self.ownsPages = false;
     self.data = nullptr;
     if (JSUint8Array* storage = self.storage.get(); storage && !storage->isDetached())
         storage->possiblySharedBuffer()->detach(vm);

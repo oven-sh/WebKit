@@ -294,3 +294,10 @@ True ('ValueError', 'mmap closed or invalid') ('TypeError', '__exit__ expected 3
 b'A12' b'AB2' b'A12'
 ---- a great many, none of them kept
 done
+---- more than 4 GB, of which nearly all is nothing
+4294967302 4294967302 b'  DEARdear  ' 114 68 b'Ada' 4294967296 4294967292 -1 4294967290 b'  DE' 4294967294 65 4294967300 b'  ' 0 b'\x00\x00\x00' <mmap.mmap closed=False, access=ACCESS_READ, length=4294967302, pos=3, offset=0>
+4294967302 4294967302 b'  DEARdear  ' 114 68 b'Ada' 4294967296 4294967292 -1 4294967290 b'  DE' 4294967294 65 4294967300 b'  ' 0 b'\x00\x00\x00' <mmap.mmap closed=False, access=ACCESS_WRITE, length=4294967302, pos=3, offset=0>
+2 b'abcdARdear !' None b'ARdeARdear !' None
+4294967302 4294967302 b'  DEARdear  ' 114 68 b'Ada' 4294967296 4294967292 -1 4294967290 b'  DE' 4294967294 65 4294967300 b'  ' 0 b'\x00\x00\x00' <mmap.mmap closed=False, access=ACCESS_COPY, length=4294967302, pos=3, offset=0>
+2 b'abcdARdear !' None b'ARdeARdear !' None
+6 4294967302 b'dear  ' b'dear  '

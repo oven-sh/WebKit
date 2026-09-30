@@ -225,3 +225,47 @@ for i in range(2000):
 gc.collect()
 print("done")
 directory.cleanup()
+
+print("---- more than 4 GB, of which nearly all is nothing")
+with tempfile.TemporaryDirectory() as directory:
+    path = os.path.join(directory, "large")
+    tail = b"  DEARdear  "
+    start = (1 << 32) - len(tail) // 2
+    with open(path, "w+b") as f:
+        f.seek(start)
+        f.write(tail)
+        f.flush()
+        for access in (mmap.ACCESS_READ, mmap.ACCESS_WRITE, mmap.ACCESS_COPY):
+            with mmap.mmap(f.fileno(), 0, access=access) as m:
+                print(len(m), m.size(), m[start:start + len(tail)], m[-3], m[start + 2], m[-8:-2:2], m.find(b"dear", start - 100), m.rfind(b"DEAR"), m.find(b"DEAR", 0, 1000), m.seek(start), m.read(4), m.tell(), m.read_byte(), m.seek(-2, 2), m.read(), m.seek(0), m.read(3), repr(m))
+                if access != mmap.ACCESS_READ:
+                    m[start:start + 2] = b"ab"
+                    m[-1] = 33
+                    m.seek(start + 2)
+                    print(m.write(b"cd"), m[start:], m.move(start, start + 4, 4), m[start:], m.flush())
+                    m[start:] = tail
+                try:
+                    import _javascript
+                except ImportError:
+                    pass
+                else:
+                    # There is no such thing here as so many bytes in one piece, so that is what cannot be had.
+                    for f2 in (lambda: memoryview(m), lambda: bytes(m), lambda: __import__("re").search(b"DEAR", m), lambda: m[:]):
+                        try:
+                            f2()
+                            raise SystemExit("it was to be refused")
+                        except (BufferError, MemoryError, OverflowError, TypeError):
+                            pass
+        with mmap.mmap(f.fileno(), 0, offset=1 << 32, access=mmap.ACCESS_READ) as m:
+            print(len(m), m.size(), m[:], bytes(memoryview(m)))
+    if sys.platform == "linux":
+        with open(path, "r+b") as f, mmap.mmap(f.fileno(), 0) as m:
+            m.resize(100)
+            view = memoryview(m)
+            assert (len(m), len(view)) == (100, 100)
+            view.release()
+            m.resize((1 << 32) + 100)
+            m[-1] = 7
+            assert (len(m), m[-1], m[50]) == ((1 << 32) + 100, 7, 0)
+            m.resize(10)
+            assert bytes(m) == bytes(10)
