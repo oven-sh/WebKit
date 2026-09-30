@@ -235,7 +235,8 @@ struct Node {
             if (node->firstLayout >= first && node->lastLayout <= last)
                 return true;
         }
-        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::aotAuditsTypes())
+        // (Of a family that is open it says no such thing: Lowering::structToLookIn().)
+        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::aotAuditsTypes() && isTakenAtItsWord)
             return true;
         return type && isSubtype(type, TCell) && isBornWithinIfCell(first, last);
     }
@@ -259,8 +260,10 @@ struct Node {
     unsigned expectedMask { 0 }; // op_get_by_val: the mask of the op_check_type that what it gets goes to next, if it does.
     GuardKind guardKind { GuardKind::Whole };
     uint16_t intrinsic { 0 }; // NodeKind::Intrinsic: its number.
-    // A call: the DirectMethod that it is a call of if what it is made on is a string, and what it is passed what that takes. The read of what is called: likewise.
-    uint8_t directMethod { 0 };
+    // A call: the function of the language that it is a call of, by its number (ImmutableIntrinsics), if what it is made on is a Receiver of that kind. (None: whatever it is made on.)
+    // The read of what is called: likewise. See Graph::findBuiltinsCalled().
+    uint16_t builtinCalled { 0 };
+    uint8_t receiverOfBuiltin { 0 };
     bool structureIsChecked { false }; // A guard of a property access: another guard has seen to the base's structure.
     bool slotIsPlain { false }; // Likewise: another guard has seen to that.
     bool calleeIsChecked { false };
@@ -268,6 +271,7 @@ struct Node {
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
     // An op_get_by_id of a closed method whose value nothing wants: all that is left of it is that it throws if there is no object to read from.
     bool isReadOnlyToBeCalled { false };
+    bool isTakenAtItsWord { false }; // op_type_tag of a family: what it is given is of the family (TypeTable::isTakenAtItsWord()). If not, it may be anything: Lowering::structToLookIn().
     // promoteEnvironments(). An op_create_lexical_environment that is no object: its variables are the function's own.
     bool isPromoted { false };
     // An op_get_from_scope or op_put_to_scope of a variable of such an environment: which, and where in it.
@@ -276,6 +280,8 @@ struct Node {
     // An op_resolve_scope or op_get_parent_scope that gets to a scope that is an object by way of environments that are not: it is that many out from this.
     Node* scopeToStartFrom { nullptr };
     unsigned hopsFromThere { 0 };
+    // Of an op_resolve_scope: that is not what it gives, only where it starts looking, which is this many scopes out from where it says to. (Those are not there. What it looks for is in none of them.)
+    unsigned environmentsPassedOver { 0 };
     Escape escape { Escape::NotLookedAt }; // If it makes something (kindOfAllocation()).
     uint32_t fact { 0 }; // EXPERIMENT: Options::aotFacts().
     uint8_t iteratedFact { 0 }; // Likewise: it is an array. What an element holds, plus one.
@@ -519,6 +525,7 @@ public:
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
     // TypeTable::hasStructs(): the field that an op_get_by_id or op_put_by_id gets at without asking, if it does.
     static std::optional<TypeTable::Field> fieldOfStructGotAtBy(const Node*);
+    static bool isThisOfWhatAnybodyMayCall(const Node*);
     // Of structs: the field of that name of the family that the value is proven to have been born into, if it is proven to have been born into one.
     static std::optional<TypeTable::Field> fieldOfWhatIsBornAs(const Node* base, UniquedStringImpl* name);
     static uint16_t familyOfNewObject(const Node*); // TypeTable::hasStructs(): what an op_new_object makes is born as that. Zero: nothing.
@@ -560,7 +567,7 @@ public:
     uint32_t distanceOfEnvironmentOfModule();
     // What is read only to be called, by calls that do not pass it, is not read (Node::isElided).
     void elideReadsOfCalleesNotPassed();
-    void findDirectMethods(); // Node::directMethod. Once the types are known.
+    void findBuiltinsCalled(); // Node::directMethod. Once the types are known.
     bool hasTwoCopiesOfAll { false }; // Options::aotAssertsTypes(): not just of its loops.
     // See ProgramFacts.
     void noteUsesOfProvenFunctions(const FactsOfExecutables&);

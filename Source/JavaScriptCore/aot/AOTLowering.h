@@ -8,6 +8,7 @@
 #if ENABLE(FTL_JIT)
 
 #include "AOTBuiltins.h"
+#include "AOTEmitter.h"
 #include "AOTGraph.h"
 #include "AOTTypeTable.h"
 #include "AOTRuntime.h"
@@ -23,22 +24,13 @@
 
 namespace JSC { namespace AOT {
 
-using FTL::LBasicBlock;
-using FTL::LType;
-using FTL::LValue;
-using FTL::TypedPointer;
-using FTL::ValueFromBlock;
-using FTL::rarely;
-using FTL::unsure;
-using FTL::usually;
-
 // AOT IR -> B3. Implemented in AOTLowerCore.cpp (structure, values, calls into C++), AOTLowerArith.cpp, AOTLowerAccess.cpp
 // (properties and scopes), AOTLowerObjects.cpp (allocation, conversions, the rarer kinds of property access),
 // AOTLowerIteration.cpp (for-of and for-in), AOTLowerCalls.cpp and AOTLowerVarargs.cpp (every call that is not a plain one).
 void noteShapeSite(Instance::ShapeCount); // TEMPORARY-SHAPE-COUNTS
 void reportShapeStatistics();
 
-class Lowering {
+class Lowering : public Emitter {
     WTF_MAKE_NONCOPYABLE(Lowering);
 public:
     Lowering(Graph&, B3::Procedure&);
@@ -149,29 +141,10 @@ private:
     // For an instruction that defines several registers: the value of one of them.
     void setProj(Node*, VirtualRegister, LValue, Rep = Rep::JSValue);
 
-    LValue isInt32(LValue v) { return m_out.aboveOrEqual(v, m_numberTag); }
-    LValue isNotInt32(LValue v) { return m_out.below(v, m_numberTag); }
-    LValue isNumber(LValue v) { return m_out.testNonZero64(v, m_numberTag); }
-    LValue isNotNumber(LValue v) { return m_out.testIsZero64(v, m_numberTag); }
-    LValue isCell(LValue v) { return m_out.testIsZero64(v, m_notCellMask); }
-    LValue isNotCell(LValue v) { return m_out.testNonZero64(v, m_notCellMask); }
-    LValue isBoolean(LValue v) { return m_out.testIsZero64(m_out.bitXor(v, m_out.constInt64(JSValue::ValueFalse)), m_out.constInt64(~1)); }
-    LValue isOther(LValue v) { return m_out.equal(m_out.bitAnd(v, m_out.constInt64(~JSValue::UndefinedTag)), m_out.constInt64(JSValue::ValueNull)); }
-    LValue unboxInt32(LValue v) { return m_out.castToInt32(v); }
-    LValue boxInt32(LValue v) { return m_out.add(m_out.zeroExt(v, B3::Int64), m_numberTag); }
-    LValue unboxDouble(LValue v) { return m_out.bitCast(m_out.add(v, m_numberTag), B3::Double); }
-    LValue boxDouble(LValue v) { return m_out.sub(m_out.bitCast(v, B3::Int64), m_numberTag); }
-    LValue unboxBoolean(LValue v) { return m_out.notZero64(m_out.bitAnd(v, m_out.constInt64(1))); }
-    LValue boxBoolean(LValue v) { return m_out.select(v, m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::ValueFalse)); }
-    LValue numberToDouble(LValue jsNumber); // A boxed value known to be a number.
     LValue doubleToInt32(LValue); // ToInt32.
     LValue toBoolean(Node*);
-    LValue cellType(LValue cell) { return m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoType); }
-    LValue isCellOfType(LValue cell, JSType type) { return m_out.equal(cellType(cell), m_out.constInt32(type)); }
-    LValue isObjectCell(LValue cell) { return m_out.aboveOrEqual(cellType(cell), m_out.constInt32(ObjectType)); }
 
     TypedPointer addressFor(VirtualRegister); // Where a register that lives in memory does (Graph::isHomed()).
-    LValue registerOnEntry(Reg); // What was in it when the function was called.
     LValue wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool mayChange);
     void lowerEntry();
     // Of a function with Signature::List.
@@ -188,7 +161,17 @@ private:
     TypedPointer slotOfStruct(LValue object, const TypeTable::Field&);
     LValue asHeld(Node* valueNode, LValue value, TypeTable::Holds); // The value as a slot of a struct has it: a number is encoded as a double.
     Node* m_sameAs { nullptr }; // setResult(): the node is this one by another name.
-    void assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family); // Goes on if it is of the family: if need be, made so.
+    void assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family); // Of a family that is closed. Goes on if it is of the family.
+    // Where the slots are that typed code reads and writes. Of a family that is open that may be a struct with nothing in it, which stands for whatever is not one of the
+    // family and cannot be made one: so whoever finds nothing in a slot, and pointer is not the object, goes the long way.
+    struct StructToLookIn {
+        LValue pointer;
+        bool mayStandForSomethingElse;
+    };
+    StructToLookIn structToLookIn(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t family);
+    LValue viewAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family);
+    LValue viewFoundFor(Node* valueNode, uint16_t family); // Null: none has been made of it.
+    UncheckedKeyHashMap<Node*, LValue> m_views; // By op_type_tag.
     UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_layoutsBornAs; // What that gave, and in which block.
     void branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds, LBasicBlock otherwise);
     // What the node is, if it is a string that the program spells out, of characters that take a byte each.
@@ -228,12 +211,10 @@ private:
     TypedPointer scratchWord(unsigned index);
     LValue scratchAddress() { return m_scratch; }
     LValue storeToScratch(Node*, VirtualRegister first, unsigned count); // The registers first, first - 1, ... in that order.
-    LValue structureOf(LValue cell);
     LValue isSentinelCell(LValue cell) { return isCellOfType(cell, SentinelType); }
     template<typename Functor> LValue isCellAnd(Node*, LValue jsValue, const Functor&); // False for what is not a cell.
 
     // Calls into C++.
-    LValue entry(Entry);
     // For an operation declared with JSC_DECLARE_JIT_OPERATION: hands back the result, having checked for an exception.
     template<typename... Args> LValue vmCall(Node*, LType, Entry, Args...);
     // For one declared NOEXCEPT.
@@ -253,6 +234,10 @@ private:
     // place: where the function is to be said to be meanwhile, if not at what is being lowered.
     B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::WhatCallsDo, Node* place = nullptr);
     LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // No node: it does not throw.
+    // What one of the helpers makes of those (generateHelper()). Null: it gave up.
+    LValue callHelper(Stub, const Vector<LValue, 4>& arguments);
+    // The same, or what `slow` gives if it gave up.
+    template<typename Slow> LValue withHelper(Stub, const Vector<LValue, 4>& arguments, const Slow&);
     // Of an operation that takes the global object and these and gives nothing back, from where the code hardly ever gets. It is no reason for the function to have a
     // frame, or to keep anything anywhere but where it is.
     // (ChangesNothing: it looks, or it throws. What has been loaded is as good afterwards.)
@@ -265,7 +250,16 @@ private:
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
     bool isCompact() const { return (!m_block->isInLoop && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
+    LValue differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written);
+    // The characters of a string, and how many, if they are narrow and are to be had for the looking: it is all in one piece, or is a slice of one that is (which is left a slice).
+    // If not, how long it is all the same, at `otherwise`.
+    struct NarrowCharacters {
+        LValue characters;
+        LValue length;
+    };
+    NarrowCharacters narrowCharactersOf(LValue string, LBasicBlock otherwise, Vector<ValueFromBlock, 2>& lengthOtherwise);
     bool isFusedWithGetFromScope(Node*);
+    LValue scopeToResolveFrom(Node* resolve);
     // A slot that a stub can be told about.
     // What the code says for one of the function's identifiers. See AOT::NumbersOfIdentifiers.
     unsigned numberOf(Graph& graph, unsigned identifier)
@@ -373,26 +367,23 @@ private:
     void finishCall(B3::PatchpointValue*, CallMode, Rep result = Rep::JSValue);
     LBasicBlock leaveIfFunction(Node* calleeNode, LValue callee);
 
+    // AOTLowerBuiltins.cpp
+    LValue isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiver);
+    void lowerReadOfBuiltin(Node*, Node* baseNode);
+    bool lowerCallOfBuiltin(Node*, Node* calleeNode, unsigned argc, unsigned argv, const Arguments&, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results);
+    UncheckedKeyHashMap<Node*, LValue> m_receiverChecks; // By the read of what is called: what isSuchAReceiver() gave.
+
     Graph& m_graph;
-    B3::Procedure& m_proc;
-    B3::AbstractHeapRepository m_heaps;
-    FTL::Output m_out;
 
     HowValuesArePassed m_howValuesArePassed; // This function.
     LValue m_dataOnEntry { nullptr }; // Of a function that starts cold: m_data, but for in a loop.
     LValue m_callFrame { nullptr };
-    LValue m_instance { nullptr };
     LValue m_data { nullptr };
     LValue m_dataOrNothing { nullptr };
     LValue m_constants { nullptr }; // Of a function that starts cold: FunctionInfo::constants.
     LValue m_calleeSlot { nullptr };
     LValue m_listSlot { nullptr }; // Signature::List: how many arguments were passed, and where they are.
     LValue m_homes { nullptr };
-    LValue m_vm { nullptr };
-    LValue m_globalObject { nullptr };
-    LValue m_table { nullptr };
-    LValue m_numberTag { nullptr };
-    LValue m_notCellMask { nullptr };
     LValue m_scratch { nullptr };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;
@@ -412,6 +403,21 @@ template<typename... Args>
 LValue Lowering::vmCall(Node* node, LType type, Entry function, Args... args)
 {
     return callOperationThroughStub(node, type, function, { args... });
+}
+
+template<typename Slow>
+LValue Lowering::withHelper(Stub stub, const Vector<LValue, 4>& arguments, const Slow& slow)
+{
+    LValue quick = callHelper(stub, arguments);
+    LBasicBlock otherwise = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    ValueFromBlock made = m_out.anchor(quick);
+    m_out.branch(m_out.notNull(quick), usually(continuation), rarely(otherwise));
+    m_out.appendTo(otherwise);
+    ValueFromBlock madeTheLongWay = m_out.anchor(slow());
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return m_out.phi(B3::pointerType(), made, madeTheLongWay);
 }
 
 template<typename Functor>

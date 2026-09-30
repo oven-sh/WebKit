@@ -6,6 +6,7 @@
 #include "config.h"
 #include "AOTRuntime.h"
 
+#include "AOTBuiltins.h"
 #include "AOTGraph.h"
 #include <bmalloc/StaticRegion.h>
 #include <sys/mman.h>
@@ -168,6 +169,7 @@ struct Instance::Collections {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Collections);
     Vector<Data*> all;
     Vector<Data*> filledSinceLastCollection;
+    bool hasAddsOfFields { false }; // Instance::addsOfFields
     Vector<ScriptExecutable*> executablesWithoutData; // That the collector has to be told of.
     // The slots that have, or have had, a transition. The collector goes over them again and again while it marks, and they are few.
     Vector<Slot*> transitions;
@@ -176,6 +178,8 @@ struct Instance::Collections {
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
     // Instance::adopt(): what an object of a Structure turns into when it is made one of a family. Null: it cannot be. (Both are kept.)
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> adoptions;
+    // Those that were turned down for what their Structure says. (Not kept: if another Structure comes to be where one of these was, its objects are read the long way, is all.)
+    UncheckedKeyHashSet<std::pair<Structure*, uint16_t>> turnedDown;
     UncheckedKeyHashMap<uint32_t, Structure*> emptyOfFamilies;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
@@ -274,6 +278,38 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
     instance->missesForEightSlots = Options::aotMissesForEightSlots();
     instance->missesToSpare = Options::aotMissesToSpare();
     instance->structureIDBase = JSC::structureIDBase();
+    {
+        auto idOf = [](Structure* structure) { return structure->id().bits(); };
+        if (Options::useImmutableIntrinsics()) {
+            auto ofReceiver = [&](Receiver receiver) -> uint32_t& { return instance->structureIDsOfReceivers[static_cast<unsigned>(receiver)]; };
+            ofReceiver(Receiver::Map) = idOf(globalObject->mapStructure());
+            ofReceiver(Receiver::Set) = idOf(globalObject->setStructure());
+            ofReceiver(Receiver::WeakMap) = idOf(globalObject->weakMapStructure());
+            ofReceiver(Receiver::WeakSet) = idOf(globalObject->weakSetStructure());
+            ofReceiver(Receiver::RegExp) = idOf(globalObject->regExpStructure());
+            ofReceiver(Receiver::Date) = idOf(globalObject->dateStructure());
+            static_assert(sizeof(WriteBarrierStructureID) == sizeof(uint32_t));
+            memcpy(instance->structureIDsOfOriginalArrays, reinterpret_cast<char*>(globalObject) + JSGlobalObject::offsetOfOriginalArrayStructureForIndexingShape(), sizeof(instance->structureIDsOfOriginalArrays));
+        }
+        if (!globalObject->isHavingABadTime()) {
+            instance->structureIDOfNewArrayWithInt32 = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32));
+            instance->structureIDOfNewArrayWithContiguous = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
+            instance->structureIDsOfNewCopyOnWriteArrays[0] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithInt32));
+            instance->structureIDsOfNewCopyOnWriteArrays[1] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithDouble));
+            instance->structureIDsOfNewCopyOnWriteArrays[2] = idOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(CopyOnWriteArrayWithContiguous));
+        }
+        // (The other tiers want to be told of the first of each kind that is made, and the second. If there are none, nobody does.)
+        if (!Options::useJIT())
+            instance->structureIDOfActivation = idOf(globalObject->activationStructure());
+        instance->auxiliarySpace = &vm.auxiliarySpace();
+        instance->spaceOfActivations = subspaceFor<JSLexicalEnvironment>(vm);
+        instance->allocatorOfArrays = subspaceFor<JSArray>(vm)->allocatorFor(sizeof(JSArray), AllocatorForMode::EnsureAllocator).localAllocator();
+        instance->allocatorOfRopeStrings = subspaceFor<JSRopeString>(vm)->allocatorFor(sizeof(JSRopeString), AllocatorForMode::EnsureAllocator).localAllocator();
+        instance->singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
+        instance->emptyString = vm.smallStrings.emptyString();
+        instance->sentinelOfArrayIteration = vm.fastArrayUnboxedSentinel();
+        instance->structureIDOfStrings = idOf(vm.stringStructure.get());
+    }
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
     // (putDirect() does as it is told.)
     for (unsigned number = 1; number < globalObject->immutableIntrinsics().size(); ++number) {
@@ -1278,7 +1314,8 @@ void Data::visit(Visitor& visitor)
 
 static ALWAYS_INLINE bool hasTransition(const Slot& slot)
 {
-    return slot.structureID && slot.newStructureID && !slot.held && !slot.hasPointer();
+    // (A scope cache may have an untagged address there.)
+    return slot.structureID && slot.newStructureID && (!slot.held || (slot.offset & Slot::saysWhatIsHeld)) && !slot.hasPointer();
 }
 
 void Instance::noteTransitionCached(Slot* slot)
@@ -1319,9 +1356,28 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
         visitor.appendUnbarriered(executable);
 }
 
+// TEMPORARY-SHAPE-COUNTS
+static Vector<std::pair<ASCIILiteral, uint64_t>>& viewsNoted()
+{
+    static NeverDestroyed<Vector<std::pair<ASCIILiteral, uint64_t>>> views;
+    return views;
+}
+void Instance::noteView(ASCIILiteral whatCameOfIt)
+{
+    for (auto& entry : viewsNoted()) {
+        if (entry.first.characters() == whatCameOfIt.characters()) {
+            entry.second++;
+            return;
+        }
+    }
+    viewsNoted().append({ whatCameOfIt, 1 });
+}
+
 // TEMPORARY-SLOT-STATS
 void Instance::dumpSlotStatistics(PrintStream& out)
 {
+    for (auto& entry : viewsNoted())
+        out.println("SHAPECOUNT\t", entry.second, "\tlooked at the long way: ", entry.first);
     static constexpr unsigned numberOfBuckets = 7;
     static constexpr unsigned upTo[numberOfBuckets] = { 0, 4, 8, 16, 32, 64, UINT_MAX };
     uint64_t count[numberOfBuckets] = { }, slotsOf[numberOfBuckets] = { }, filledOf[numberOfBuckets] = { };
@@ -1521,6 +1577,13 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
     if (old->isDictionary() && old->isUncacheableDictionary())
         return no("it has been through too much (a dictionary)"_s);
     Instance& instance = ensure(old->globalObject());
+    if (instance.collections->turnedDown.contains({ old, family }))
+        return no("its like was turned down before"_s);
+    auto noneOfItsLike = [&](ASCIILiteral why) {
+        if (!old->isDictionary() && instance.collections->turnedDown.size() < 4096)
+            instance.collections->turnedDown.add({ old, family });
+        return no(why);
+    };
     // What the family has no slot for comes after the family's: in the object if all the family's are, and there is room; if not, outside.
     Vector<std::pair<PropertyOffset, uint16_t>, 16> moves; // From where to which slot, in the order the properties are in.
     Vector<UniquedStringImpl*, 16> names;
@@ -1544,12 +1607,12 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
             return true;
         });
         if (!isPlain)
-            return no("it has a property that is not plain"_s);
+            return noneOfItsLike("it has a property that is not plain"_s);
         if (hasTwoForOneSlot)
-            return no("it has two properties that no type has together"_s);
+            return noneOfItsLike("it has two properties that no type has together"_s);
         for (auto& named : SlotsOfBornObjects::namesOf(family)) {
             if (!named.mayBeAbsent && !taken.get(named.slot))
-                return no("it lacks a property that the type says it has"_s);
+                return noneOfItsLike("it lacks a property that the type says it has"_s);
         }
         // What it has no property of its own for it must not have from anywhere else: code that finds nothing in the slot looks no further.
         if (JSValue prototype = old->storedPrototype(); prototype.isObject() && asObject(prototype) != old->globalObject()->objectPrototype()) {
@@ -1670,8 +1733,26 @@ Structure* Instance::structureOfLiteral(Structure* empty, std::span<UniquedStrin
 template void Instance::visit(AbstractSlotVisitor&, bool);
 template void Instance::visit(SlotVisitor&, bool);
 
+void Instance::didHaveABadTime()
+{
+    structureIDOfNewArrayWithInt32 = 0;
+    structureIDOfNewArrayWithContiguous = 0;
+    zeroSpan(std::span { structureIDsOfNewCopyOnWriteArrays });
+}
+
+void Instance::noteAddOfField(Structure* before, unsigned slot, Structure* afterwards)
+{
+    AddOfField& entry = addsOfFields[indexOfAddOfField(before->id().bits(), slot)];
+    entry.structureID = before->id().bits();
+    entry.slot = slot;
+    entry.structureIDAfterwards = afterwards->id().bits();
+    collections->hasAddsOfFields = true;
+}
+
 void Instance::finalizeUnconditionally(bool onlyWhatIsNew)
 {
+    if (std::exchange(collections->hasAddsOfFields, false))
+        zeroSpan(std::span { addsOfFields });
     for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
         data->finalizeUnconditionally(*vm);
     for (Data* data : collections->filledSinceLastCollection)
@@ -1698,7 +1779,7 @@ void Data::finalizeUnconditionally(VM& vm)
         if (!dead) {
             if (slot.offset & Slot::pointerIsCell)
                 dead = !vm.heap.isMarked(static_cast<JSCell*>(slot.pointer));
-            else if (!slot.hasPointer() && slot.newStructureID && !slot.held) // A scope cache may have an untagged address here.
+            else if (!slot.hasPointer() && slot.newStructureID && (!slot.held || (slot.offset & Slot::saysWhatIsHeld))) // A scope cache may have an untagged address here.
                 dead = !vm.heap.isMarked(slot.newStructureID.decode());
         }
         if (dead) {

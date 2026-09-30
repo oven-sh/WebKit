@@ -119,18 +119,13 @@ LValue Lowering::asHeld(Node* valueNode, LValue value, TypeTable::Holds holds)
 
 bool Lowering::isThisOfWhatAnybodyMayCall(Node* node)
 {
-    while (node->kind == NodeKind::Narrow || node->isBytecode(op_to_this) || node->isBytecode(op_check_type) || node->isBytecode(op_type_tag))
-        node = node->uses[0].node;
-    if (node->kind != NodeKind::Argument || node->reg != virtualRegisterForArgumentIncludingThis(0))
-        return false;
-    const ProgramFacts* facts = node->graph->facts();
-    return !facts || !facts->isClosed;
+    return Graph::isThisOfWhatAnybodyMayCall(node);
 }
 
 void Lowering::assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family)
 {
-    // Only typed code makes objects of a family that is closed, and only typed code gets to say that something is one: it is taken at its word.
-    if (!TypeTable::shared()->isOpen(family) && !isThisOfWhatAnybodyMayCall(valueNode))
+    // Only what is born gets to be of the type: it is taken at its word.
+    if (!isThisOfWhatAnybodyMayCall(valueNode))
         return;
     LBasicBlock isNot = newColdBlock();
     LBasicBlock is = m_out.newBlock();
@@ -144,6 +139,53 @@ void Lowering::assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uin
     coldCall(onBehalfOf, Entry::operationAOTAssertBornAs, value, m_out.constInt32(family));
     m_out.jump(is);
     m_out.appendTo(is);
+}
+
+LValue Lowering::viewFoundFor(Node* node, uint16_t family)
+{
+    for (;;) {
+        if (node->isBytecode(op_type_tag) && node->firstLayout == family) {
+            if (auto it = m_views.find(node); it != m_views.end())
+                return it->value;
+        }
+        if (node->kind != NodeKind::Narrow && !node->isBytecode(op_check_type) && !node->isBytecode(op_check_tdz) && !node->isBytecode(op_type_tag))
+            return nullptr;
+        node = node->uses[0].node;
+    }
+}
+
+// (What an object was born as is for life, so this is good for as long as the value is.)
+LValue Lowering::viewAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family)
+{
+    LBasicBlock isNot = newColdBlock();
+    LBasicBlock done = m_out.newBlock();
+    if (!isSubtype(valueNode->type, TCell)) {
+        LBasicBlock cellCase = m_out.newBlock();
+        m_out.branch(isCell(value), usually(cellCase), rarely(isNot));
+        m_out.appendTo(cellCase);
+    }
+    ValueFromBlock itself = m_out.anchor(value);
+    m_out.branch(m_out.equal(layoutBornAs(value), m_out.constInt32(family)), usually(done), rarely(isNot));
+    m_out.appendTo(isNot);
+    ValueFromBlock whatItIsSeenAs = m_out.anchor(coldCallForValue(onBehalfOf, Entry::operationAOTViewAs, value, m_out.constInt32(family)));
+    m_out.jump(done);
+    m_out.appendTo(done);
+    return m_out.phi(Int64, itself, whatItIsSeenAs);
+}
+
+Lowering::StructToLookIn Lowering::structToLookIn(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t family)
+{
+    if (baseNode->isKnownToBeBornWithin(family, family))
+        return { base, false };
+    // (An access whose base is in a register that is not followed has no op_type_tag ahead of it, and says so itself.)
+    uint32_t tag = Graph::typeTagOf(onBehalfOf);
+    if (!TypeTable::shared()->isOpen(family) || (tag && TypeTable::shared()->isTakenAtItsWord(tag) && TypeTable::shared()->familyOf(tag) == family && !isThisOfWhatAnybodyMayCall(baseNode))) {
+        assertBornAs(onBehalfOf, baseNode, base, family);
+        return { base, false };
+    }
+    if (LValue view = viewFoundFor(baseNode, family))
+        return { view, true };
+    return { viewAs(onBehalfOf, baseNode, base, family), true };
 }
 
 // Zero for what is not a cell. It is for life, so once it has been asked of a value it need not be asked again: not after a call, and not after a store.
@@ -196,28 +238,8 @@ void Lowering::lowerGetById(Node* node)
         }
         return;
     }
-    // A string has what String.prototype has, which is what that had to begin with. (Graph::findDirectMethods(): it may well be one.)
-    if (unsigned method = std::exchange(node->directMethod, 0)) {
-        unsigned number = intrinsicFoundOnPrimitive(TString, *node->graph->codeBlock()->identifier(bytecode.m_property).impl());
-        RELEASE_ASSERT(number);
-        LValue ofStrings = m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[number]);
-        if (isSubtype(baseNode->type, TString)) {
-            setJSValue(node, ofStrings);
-            node->directMethod = method;
-            return;
-        }
-        LBasicBlock otherwise = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        LValue isString = isCellAnd(baseNode, lowJSValue(baseNode), [&](LValue cell) { return isCellOfType(cell, StringType); });
-        ValueFromBlock quick = m_out.anchor(ofStrings);
-        m_out.branch(isString, unsure(continuation), unsure(otherwise));
-        m_out.appendTo(otherwise);
-        lowerGetById(node);
-        ValueFromBlock found = m_out.anchor(lowJSValue(node));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        setJSValue(node, m_out.phi(Int64, quick, found));
-        node->directMethod = method;
+    if (node->builtinCalled) {
+        lowerReadOfBuiltin(node, baseNode);
         return;
     }
     // (With Options::aotAssertsTypes() that is for the guards of the first copy. What gets here is the other.)
@@ -228,11 +250,33 @@ void Lowering::lowerGetById(Node* node)
         noteShapeSite(Instance::ReadHas);
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
             // The property is in its slot, or the object has none.
-            if (!baseNode->isKnownToBeBornWithin(field->first, field->last))
-                assertBornAs(node, baseNode, base, field->first);
+            auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
             countShape(Instance::ReadHas);
-            LValue whatIsThere = m_out.load64(slotOfStruct(base, *field));
+            LValue whatIsThere = m_out.load64(slotOfStruct(structOfBase, *field));
             bool undefinedWillDo = field->isOptional || !field->holds.saysSomething() || (field->holds.kinds & MaskUndefined);
+            if (mayStandForSomethingElse) {
+                RELEASE_ASSERT(field->isInObject());
+                LBasicBlock theLongWay = newColdBlock();
+                LBasicBlock continuation = m_out.newBlock();
+                Vector<ValueFromBlock, 3> results;
+                results.append(m_out.anchor(whatIsThere));
+                if ((field->isOptional || field->mayBeEmpty) && undefinedWillDo) {
+                    LBasicBlock nothingIsThere = m_out.newBlock();
+                    m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(nothingIsThere));
+                    m_out.appendTo(nothingIsThere);
+                    results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
+                    m_out.branch(m_out.equal(structOfBase, base), usually(continuation), rarely(theLongWay));
+                } else
+                    m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(theLongWay));
+                m_out.appendTo(theLongWay);
+                // (What comes next takes it for what the slot holds. So it is that, or this does not come back.)
+                uint64_t which = static_cast<uint64_t>(numberOf(bytecode.m_property)) | static_cast<uint64_t>(field->first) << 32 | static_cast<uint64_t>(field->slot) << 48 | static_cast<uint64_t>(undefinedWillDo) << 56 | 1ull << 63; // (The last so that it is not taken for an address.)
+                results.append(m_out.anchor(coldCallForValue(node, Entry::operationAOTGetFieldTheLongWay, base, m_out.constInt64(which))));
+                m_out.jump(continuation);
+                m_out.appendTo(continuation);
+                setJSValue(node, m_out.phi(Int64, results));
+                return;
+            }
             if (field->isOptional || (field->mayBeEmpty && undefinedWillDo))
                 whatIsThere = m_out.select(m_out.isZero64(whatIsThere), m_out.constInt64(JSValue::encode(jsUndefined())), whatIsThere);
             else if (field->mayBeEmpty) {
@@ -398,10 +442,6 @@ void Lowering::lowerPutById(Node* node)
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
-    // Of a struct, where code is spelled out: the value is one that the slot holds, and there is nothing in the slot.
-    LBasicBlock isAbsent = nullptr;
-    LValue valueAsHeld = nullptr;
-    std::optional<TypedPointer> slotThatIsEmpty;
     if (auto field = (Options::aotShapes() & 4) && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
         LBasicBlock cellCase = m_out.newBlock();
@@ -409,19 +449,35 @@ void Lowering::lowerPutById(Node* node)
         LBasicBlock otherwise = Options::aotTypesFields() && TypeTable::areStructs() ? newColdBlock() : m_out.newBlock();
         afterTypedStore = m_out.newBlock();
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
-            if (!baseNode->isKnownToBeBornWithin(field->first, field->last))
-                assertBornAs(node, baseNode, base, field->first);
+            auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
             // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
             branchUnlessHeld(valueNode, value, field->holds, otherwise);
-            TypedPointer slotOfField = slotOfStruct(base, *field);
-            valueAsHeld = asHeld(valueNode, value, field->holds);
-            if (field->isOptional || field->mayBeEmpty) {
+            TypedPointer slotOfField = slotOfStruct(structOfBase, *field);
+            LValue valueAsHeld = asHeld(valueNode, value, field->holds);
+            // (What is no struct is seen as one with nothing in it, and nothing is ever put there.)
+            if (field->isOptional || field->mayBeEmpty || mayStandForSomethingElse) {
+                RELEASE_ASSERT(!mayStandForSomethingElse || field->isInObject());
                 LBasicBlock isThere = m_out.newBlock();
-                if (!isCompact()) {
-                    isAbsent = m_out.newBlock();
-                    slotThatIsEmpty = slotOfField;
+                LBasicBlock isEmpty = (field->isOptional || field->mayBeEmpty) && field->isInObject() ? m_out.newBlock() : nullptr;
+                m_out.branch(m_out.notZero64(m_out.load64(slotOfField)), unsure(isThere), isEmpty ? unsure(isEmpty) : rarely(otherwise));
+                if (isEmpty) {
+                    // The object is given the field. What it is of afterwards is what the last of its kind to be given it was (Instance::addsOfFields).
+                    m_out.appendTo(isEmpty);
+                    if (mayStandForSomethingElse)
+                        orElse(m_out.equal(structOfBase, base), otherwise);
+                    LValue structureID = m_out.load32(base, m_heaps.JSCell_structureID);
+                    static_assert(Instance::indexOfAddOfField(0x120, 3) == (((0x120u >> 4) ^ (3 * 0x9e5u)) & (Instance::numberOfAddsOfFields - 1)));
+                    LValue index = m_out.bitAnd(m_out.bitXor(m_out.lShr(structureID, m_out.constInt32(4)), m_out.constInt32(field->slot * 0x9e5u)), m_out.constInt32(Instance::numberOfAddsOfFields - 1));
+                    static_assert(sizeof(Instance::AddOfField) == 16);
+                    LValue entry = m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(4)), m_out.constIntPtr(Instance::offsetOfAddsOfFields())));
+                    orElse(m_out.equal(m_out.load32(TypedPointer(m_heaps.AOTInstance_whatChanges, entry)), structureID), otherwise);
+                    orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, slot))), m_out.constInt32(field->slot)), otherwise);
+                    m_out.store64(valueAsHeld, slotOfField);
+                    m_out.store32(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, structureIDAfterwards))), base, m_heaps.JSCell_structureID);
+                    // (Whatever the value is: the object refers to another Structure now.)
+                    storeBarrier(base);
+                    m_out.jump(afterTypedStore);
                 }
-                m_out.branch(m_out.notZero64(m_out.load64(slotOfField)), unsure(isThere), isAbsent ? unsure(isAbsent) : rarely(otherwise));
                 m_out.appendTo(isThere);
             }
             noteShapeSite(Instance::WriteHas);
@@ -510,20 +566,6 @@ void Lowering::lowerPutById(Node* node)
     if (mayBe(valueNode->type, TCell))
         storeBarrier(base);
     m_out.jump(continuation);
-
-    if (isAbsent) {
-        LBasicBlock isRemembered = m_out.newBlock();
-        LBasicBlock adds = m_out.newBlock();
-        m_out.appendTo(isAbsent);
-        m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), lowHalf(m_out, m_out.load64(slotWord(slot, 0)))), usually(isRemembered), rarely(slowCase));
-        m_out.appendTo(isRemembered);
-        LValue structureIDAfterwards = lowHalf(m_out, m_out.load64(slotWord(slot, 1)));
-        m_out.branch(m_out.notZero32(structureIDAfterwards), usually(adds), rarely(slowCase));
-        m_out.appendTo(adds);
-        m_out.store64(valueAsHeld, *slotThatIsEmpty);
-        m_out.store32(structureIDAfterwards, base, m_heaps.JSCell_structureID);
-        m_out.jump(stored);
-    }
 
     m_out.appendTo(slowCase, continuation);
     vmCall(node, Void, Entry::operationAOTPutById, m_globalObject, base, value, m_out.constInt32(numberOf(bytecode.m_property)), slotAddress(slot), m_out.constInt32(flags));
@@ -749,6 +791,13 @@ LValue Lowering::scopeThatIsOutFrom(Node* scope, unsigned hops)
     return current;
 }
 
+LValue Lowering::scopeToResolveFrom(Node* resolve)
+{
+    if (resolve->environmentsPassedOver)
+        return scopeThatIsOutFrom(resolve->scopeToStartFrom, resolve->hopsFromThere);
+    return lowCell(resolve->use(resolve->as<OpResolveScope>().m_scope));
+}
+
 void Lowering::lowerResolveScope(Node* node)
 {
     auto bytecode = node->as<OpResolveScope>();
@@ -756,15 +805,16 @@ void Lowering::lowerResolveScope(Node* node)
         setJSValue(node, environmentAt(*distance));
         return;
     }
-    if (node->scopeToStartFrom) {
+    if (node->scopeToStartFrom && !node->environmentsPassedOver) {
         setJSValue(node, scopeThatIsOutFrom(node->scopeToStartFrom, node->hopsFromThere));
         return;
     }
-    LValue scope = lowCell(node->use(bytecode.m_scope));
+    LValue scope = scopeToResolveFrom(node);
 
     auto walk = [&](unsigned depth) {
+        RELEASE_ASSERT(depth >= node->environmentsPassedOver);
         LValue current = scope;
-        for (unsigned i = 0; i < depth; ++i)
+        for (unsigned i = node->environmentsPassedOver; i < depth; ++i)
             current = m_out.loadPtr(current, m_heaps.JSScope_next);
         return current;
     };
@@ -858,7 +908,7 @@ void Lowering::lowerGetFromScope(Node* node)
     }
     if (Node* resolveNode = node->use(bytecode.m_scope); isFusedWithGetFromScope(resolveNode)) {
         auto resolve = resolveNode->as<OpResolveScope>();
-        LValue scope = lowCell(resolveNode->use(resolve.m_scope));
+        LValue scope = scopeToResolveFrom(resolveNode);
         unsigned site = allocateSite(resolveNode, numberOf(resolve.m_var), code().extraOfResolveScope(resolve));
         unsigned siteOfGet = allocateSite(node, numberOf(bytecode.m_var), code().extraOfGetFromScope(bytecode));
         RELEASE_ASSERT(siteOfGet == site + 1);

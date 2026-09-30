@@ -649,8 +649,10 @@ public:
         switch (user->opcode) {
         case op_get_scope: // (Of what has become part of this code: another name for it.)
         case op_get_parent_scope:
-        case op_resolve_scope:
             return true;
+        case op_resolve_scope:
+            // (What is not found until the code runs is in none of the environments that the code says it makes: it starts looking further out.)
+            return user->as<OpResolveScope>().m_resolveType != Dynamic;
         case op_get_from_scope:
             return use.reg == user->as<OpGetFromScope>().m_scope && (user->graph->distanceOfEnvironmentAccessed(user) || offsetAccessedBy(user));
         case op_put_to_scope:
@@ -722,8 +724,21 @@ public:
             case op_get_parent_scope:
             case op_resolve_scope: {
                 Where where = whereIs(user);
-                if (where.base == user)
+                if (where.base == user) {
+                    if (user->opcode != op_resolve_scope || user->graph->distanceOfEnvironmentResolvedTo(user))
+                        return;
+                    Where start = whereIs(user->use(user->as<OpResolveScope>().m_scope));
+                    unsigned passedOver = 0;
+                    for (; start.isEnvironmentMadeHere() && start.base->isPromoted; ++passedOver)
+                        start = out(start, 1, 0);
+                    if (!passedOver)
+                        return;
+                    user->scopeToStartFrom = start.base;
+                    user->hopsFromThere = start.hops;
+                    user->environmentsPassedOver = passedOver;
+                    user->uses.append({ VirtualRegister(), start.base });
                     return;
+                }
                 // Another name for an environment that is not there: whoever uses it makes do without.
                 if (where.isEnvironmentMadeHere() && where.base->isPromoted) {
                     user->isElided = true;

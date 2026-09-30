@@ -838,7 +838,7 @@ uint32_t Graph::distanceOfEnvironmentOfModule()
     return m_linkage->distanceOfEnvironment;
 }
 
-void Graph::findDirectMethods()
+void Graph::findBuiltinsCalled()
 {
     if (!Options::aotCallsMethodsDirectly() || !Options::useImmutableIntrinsics() || !ImmutableIntrinsics::shared())
         return;
@@ -849,54 +849,50 @@ void Graph::findDirectMethods()
             if (node->opcode != op_call && node->opcode != op_call_ignore_result && node->opcode != op_tail_call)
                 continue;
             VirtualRegister calleeRegister;
-            unsigned argc;
             unsigned argv;
             if (node->opcode == op_call) {
                 auto bytecode = node->as<OpCall>();
-                calleeRegister = bytecode.m_callee, argc = bytecode.m_argc, argv = bytecode.m_argv;
+                calleeRegister = bytecode.m_callee, argv = bytecode.m_argv;
             } else if (node->opcode == op_call_ignore_result) {
                 auto bytecode = node->as<OpCallIgnoreResult>();
-                calleeRegister = bytecode.m_callee, argc = bytecode.m_argc, argv = bytecode.m_argv;
+                calleeRegister = bytecode.m_callee, argv = bytecode.m_argv;
             } else {
                 auto bytecode = node->as<OpTailCall>();
-                calleeRegister = bytecode.m_callee, argc = bytecode.m_argc, argv = bytecode.m_argv;
+                calleeRegister = bytecode.m_callee, argv = bytecode.m_argv;
             }
             Node* callee = node->use(calleeRegister);
-            if (!callee->isBytecode(op_get_by_id) || callee->guard || callee->guarded || callee->isElided)
+            // Math.floor(): what it is has been settled.
+            if (callee->kind == NodeKind::Intrinsic) {
+                if (builtinThatIs(callee->intrinsic) != Builtin::None)
+                    node->builtinCalled = callee->intrinsic;
+                continue;
+            }
+            if (!callee->isBytecode(op_get_by_id) || callee->guard || callee->guarded || callee->isElided || callee->isReadOnlyToBeCalled)
                 continue;
             auto read = callee->as<OpGetById>();
             Node* base = callee->use(read.m_base);
             int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
-            if (node->use(VirtualRegister(firstArgument)) != base || !mayBe(base->type, TString))
+            if (node->use(VirtualRegister(firstArgument)) != base || !base->type)
                 continue;
             const StringImpl& name = *callee->graph->codeBlock()->identifier(read.m_property).impl();
-            unsigned method = directMethodOfStrings(name, argc);
-            if (!method || !intrinsicFoundOnPrimitive(TString, name))
-                continue;
-            // Not if what is passed is plainly something else.
-            auto mayBeAt = [&](unsigned argument, Type type) { return mayBe(node->use(VirtualRegister(firstArgument + static_cast<int>(argument)))->type, type); };
-            bool mayFit = true;
-            switch (directMethod(method).takes) {
-            case DirectMethod::Takes::Nothing:
-            case DirectMethod::Takes::NothingAndZero:
-                break;
-            case DirectMethod::Takes::String:
-                mayFit = mayBeAt(1, TString);
-                break;
-            case DirectMethod::Takes::Int32:
-                mayFit = mayBeAt(1, TInt32);
-                break;
-            case DirectMethod::Takes::StringAndInt32:
-                mayFit = mayBeAt(1, TString) && mayBeAt(2, TInt32);
-                break;
-            case DirectMethod::Takes::Int32AndInt32:
-                mayFit = mayBeAt(1, TInt32) && mayBeAt(2, TInt32);
-                break;
+            Receiver receiver = receiverOfType(base->type);
+            if (receiver == Receiver::None) {
+                // What the source says it is, or, if it says nothing, what has a method of that name.
+                uint32_t tag = TypeTable::shared() ? typeTagOf(callee) : 0;
+                if (tag && TypeTable::shared()->isArray(tag) && mayBe(base->type, TArray))
+                    receiver = Receiver::Array;
+                else if (!tag || !TypeTable::shared()->isShape(tag))
+                    receiver = receiverLikelyToHave(base->type, name);
             }
-            if (!mayFit)
+            if (receiver == Receiver::None)
                 continue;
-            node->directMethod = method;
-            callee->directMethod = method;
+            unsigned number = intrinsicFoundOn(receiver, name);
+            if (!number || builtinThatIs(number) == Builtin::None)
+                continue;
+            node->builtinCalled = number;
+            node->receiverOfBuiltin = static_cast<uint8_t>(receiver);
+            callee->builtinCalled = number;
+            callee->receiverOfBuiltin = static_cast<uint8_t>(receiver);
         }
     }
 }
@@ -1376,6 +1372,16 @@ void Graph::notePlanOfSite(unsigned firstSlot, Vector<uint32_t, 16>&& words)
     plans.appendVector(words);
 }
 
+bool Graph::isThisOfWhatAnybodyMayCall(const Node* node)
+{
+    while (node->kind == NodeKind::Narrow || node->isBytecode(op_to_this) || node->isBytecode(op_check_type) || node->isBytecode(op_type_tag))
+        node = node->uses[0].node;
+    if (node->kind != NodeKind::Argument || node->reg != virtualRegisterForArgumentIncludingThis(0))
+        return false;
+    const ProgramFacts* facts = node->graph->facts();
+    return !facts || !facts->isClosed;
+}
+
 std::optional<TypeTable::Field> Graph::fieldOfStructGotAtBy(const Node* node)
 {
     if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::areStructsToGoBy() || node->guard)
@@ -1443,7 +1449,7 @@ void Graph::noteClassesDefined()
 {
     ClassesOfProgram* classes = classesOfProgram();
     const FunctionsOfProgram* functions = functionsOfProgram();
-    if (!classes || !functions)
+    if (!classes || !functions || !TypeTable::areStructsToGoBy())
         return;
     for (BasicBlock* block : m_rpo) {
         for (Node* note : block->nodes) {
@@ -1557,7 +1563,8 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
         shape.names.append(name);
     }
     // (If it is still the literal that was looked at.)
-    if (layout && layout->properties.size() == count && (layout->family || layout->capacity <= JSFinalObject::maxInlineCapacity)) {
+    // (All of it is in the object, what the family has no slot for coming after what it has. One that there is no room for like that is given what it has bit by bit.)
+    if (layout && layout->properties.size() == count && layout->capacity <= JSFinalObject::maxInlineCapacity) {
         bool isAsWritten = true;
         for (unsigned i = 0; i < count; ++i)
             isAsWritten &= layout->properties[i].first == shape.names[i];
@@ -1813,6 +1820,12 @@ void Node::dump(PrintStream& out) const
         out.print(opcode, " bc#", bytecodeIndex.offset());
         if (uint32_t tag = Graph::typeTagOf(this))
             out.print(" type#", tag);
+        if (isBytecode(op_get_by_id))
+            out.print(" .", graph->codeBlock()->identifier(as<OpGetById>().m_property).impl(), Graph::closedMethodReadBy(this) ? " (a closed method)" : "", isReadOnlyToBeCalled ? " (only to be called)" : "");
+        else if (isBytecode(op_put_by_id))
+            out.print(" .", graph->codeBlock()->identifier(as<OpPutById>().m_property).impl());
+        if (wasTakenNeverToBeReached)
+            out.print(" (taken never to be reached)");
         break;
     case NodeKind::Constant:
         out.print("Constant(", constant, ")");
@@ -3135,6 +3148,9 @@ private:
                 node->bytecodeIndex = BytecodeIndex(offset + instruction->size());
                 node->uses.append({ baseRegister, base });
                 node->firstLayout = node->lastLayout = family;
+                // (What a function that anybody may call is called on is whatever they please.)
+                if (family)
+                    node->isTakenAtItsWord = TypeTable::shared()->isTakenAtItsWord(m_graph.typeTagAt(offset + instruction->size())) && !(TypeTable::shared()->isOpen(family) && Graph::isThisOfWhatAnybodyMayCall(base));
                 if (isArray)
                     node->narrowedTo = TArray;
                 node->reg = baseRegister;
@@ -3206,7 +3222,7 @@ private:
             case op_new_object: {
                 VirtualRegister reg = instruction->as<OpNewObject>().m_dst;
                 // A register that lives in memory is written where the instruction is.
-                if (!m_graph.isTracked(reg) || m_graph.isHomed(reg))
+                if (!m_graph.isTracked(reg) || m_graph.isHomed(reg) || (Options::aotDisableFastPaths() & 8192))
                     break;
                 auto stores = Graph::storesOfLiteral(m_instructions, offset);
                 while (!stores.isEmpty() && stores.last() >= block->bytecodeEnd)

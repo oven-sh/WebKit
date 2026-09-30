@@ -6818,6 +6818,8 @@ struct BytecodeLinkEncoder::Impl {
                 if (const AOT::ProgramFacts* facts = factsOfCode.get(jobs[index].codeBlock); facts && !facts->isReached()) {
                     functionsNeverReached++;
                     bytecodeNeverReached += jobs[index].codeBlock->instructionsSize();
+                    if (Options::aotVerbose()) [[unlikely]]
+                        dataLogLn("AOT: left out: `", jobs[index].executableForStatistics ? jobs[index].executableForStatistics->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
                     continue;
                 }
                 if (Options::aotReportStats()) [[unlikely]] {

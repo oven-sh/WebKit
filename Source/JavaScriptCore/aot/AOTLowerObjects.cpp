@@ -296,20 +296,30 @@ bool Lowering::tryLowerAllocation(Node* node)
     }
     case op_new_array: {
         auto bytecode = node->as<OpNewArray>();
-        LValue values = storeToScratch(node, bytecode.m_argv, bytecode.m_argc);
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArray, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(bytecode.m_recommendedIndexingType)));
+        bool areInt32 = !!bytecode.m_argc;
+        for (unsigned i = 0; i < bytecode.m_argc; ++i)
+            areInt32 &= isSubtype(node->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)))->type, TInt32);
+        LValue values = bytecode.m_argc ? storeToScratch(node, bytecode.m_argv, bytecode.m_argc) : m_out.intPtrZero;
+        setJSValue(node, withHelper(areInt32 ? Stub::HelperNewArrayOfInt32 : Stub::HelperNewArray, { values, m_out.constInt32(bytecode.m_argc) }, [&] {
+            return vmCall(node, pointerType(), Entry::operationAOTNewArray, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(bytecode.m_recommendedIndexingType));
+        }));
         return true;
     }
     case op_new_array_with_size:
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSize, m_globalObject, lowJSValue(node->use(node->as<OpNewArrayWithSize>().m_length))));
         return true;
-    case op_new_array_buffer:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayBuffer, m_globalObject, lowCell(node->use(node->as<OpNewArrayBuffer>().m_immutableButterfly))));
+    case op_new_array_buffer: {
+        LValue butterfly = lowCell(node->use(node->as<OpNewArrayBuffer>().m_immutableButterfly));
+        setJSValue(node, withHelper(Stub::HelperNewArrayBuffer, { butterfly }, [&] {
+            return vmCall(node, pointerType(), Entry::operationAOTNewArrayBuffer, m_globalObject, butterfly);
+        }));
         return true;
+    }
     case op_new_array_with_spread: {
         auto bytecode = node->as<OpNewArrayWithSpread>();
         // (An op_spread that has been done away with stands for what it was to spread.)
         uint32_t yetToBeSpread = 0;
+        bool someHaveBeenSpread = false;
         Vector<Node*, 8> elements;
         for (unsigned i = 0; i < bytecode.m_argc; ++i) {
             Node* element = node->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)));
@@ -317,18 +327,28 @@ bool Lowering::tryLowerAllocation(Node* node)
                 RELEASE_ASSERT(i < 32);
                 yetToBeSpread |= 1u << i;
                 element = element->use(element->as<OpSpread>().m_argument);
-            }
+            } else
+                someHaveBeenSpread |= element->isBytecode(op_spread);
             elements.append(element);
         }
         for (unsigned i = 0; i < elements.size(); ++i)
             m_out.store64(lowJSValue(elements[i]), scratchWord(i));
         LValue values = m_scratch;
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread)));
+        auto theLongWay = [&] {
+            return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpread, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread));
+        };
+        if (yetToBeSpread && !someHaveBeenSpread && Options::useImmutableIntrinsics())
+            setJSValue(node, withHelper(Stub::HelperNewArrayWithSpread, { values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(yetToBeSpread) }, theLongWay));
+        else
+            setJSValue(node, theLongWay());
         return true;
     }
     case op_new_array_with_species: {
         auto bytecode = node->as<OpNewArrayWithSpecies>();
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpecies, m_globalObject, lowJSValue(node->use(bytecode.m_length)), lowCell(node->use(bytecode.m_array))));
+        LValue length = lowJSValue(node->use(bytecode.m_length));
+        LValue array = lowCell(node->use(bytecode.m_array));
+        auto theLongWay = [&] { return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSpecies, m_globalObject, length, array); };
+        setJSValue(node, Options::useImmutableIntrinsics() ? withHelper(Stub::HelperNewArrayWithSpecies, { length, array }, theLongWay) : theLongWay());
         return true;
     }
     case op_spread:
@@ -399,8 +419,13 @@ bool Lowering::tryLowerAllocation(Node* node)
                 m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variableOfEnvironment(node, i), initialValue);
             return true;
         }
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_globalObject, lowCell(node->use(bytecode.m_scope)),
-            lowCell(node->use(bytecode.m_symbolTable)), lowJSValue(node->use(bytecode.m_initialValue)), slotAddress(allocateSlots(2))));
+        LValue scope = lowCell(node->use(bytecode.m_scope));
+        LValue symbolTable = lowCell(node->use(bytecode.m_symbolTable));
+        LValue initialValue = lowJSValue(node->use(bytecode.m_initialValue));
+        unsigned scopeSize = uncheckedDowncast<SymbolTable>(code().codeBlock()->getConstant(bytecode.m_symbolTable).asCell())->scopeSize();
+        setJSValue(node, withHelper(Stub::HelperNewActivation, { scope, symbolTable, initialValue, m_out.constInt32(scopeSize) }, [&] {
+            return vmCall(node, pointerType(), Entry::operationAOTCreateLexicalEnvironment, m_globalObject, scope, symbolTable, initialValue, slotAddress(allocateSlots(2)));
+        }));
         return true;
     }
     case op_push_with_scope: {
@@ -422,9 +447,15 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_create_cloned_arguments:
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateClonedArguments, m_globalObject, callee(), numberOfArgumentsPassed(), argumentsPassed()));
         return true;
-    case op_create_rest:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_globalObject, numberOfArgumentsPassed(), argumentsPassed(), m_out.constInt32(node->as<OpCreateRest>().m_numParametersToSkip)));
+    case op_create_rest: {
+        unsigned skipped = node->as<OpCreateRest>().m_numParametersToSkip;
+        LValue passed = numberOfArgumentsPassed();
+        LValue count = m_out.select(m_out.above(passed, m_out.constInt32(skipped)), m_out.sub(passed, m_out.constInt32(skipped)), m_out.int32Zero);
+        setJSValue(node, withHelper(Stub::HelperNewArray, { m_out.add(argumentsPassed(), m_out.constIntPtr(skipped * sizeof(EncodedJSValue))), count }, [&] {
+            return vmCall(node, pointerType(), Entry::operationAOTCreateRest, m_globalObject, passed, argumentsPassed(), m_out.constInt32(skipped));
+        }));
         return true;
+    }
     default:
         return false;
     }
@@ -569,14 +600,52 @@ bool Lowering::tryLowerConversion(Node* node)
         setJSValue(node, plainCall(pointerType(), Entry::operationAOTTypeof, m_globalObject, lowJSValue(node->use(node->as<OpTypeof>().m_value))));
         return true;
     case op_typeof_is_object:
-        // Null is one, a function is not, and it takes a closer look to tell what other objects are.
-        return test(node->use(node->as<OpTypeofIsObject>().m_operand), TNull | TArray, (TPrimitive & ~TNull) | TFunction, [&](LValue value) {
-            return plainCall(Int64, Entry::operationAOTTypeofIsObject, m_globalObject, value);
-        });
-    case op_typeof_is_function:
-        return test(node->use(node->as<OpTypeofIsFunction>().m_operand), TFunction, TPrimitive | TArray, [&](LValue value) {
-            return plainCall(Int64, Entry::operationAOTTypeofIsFunction, m_globalObject, value);
-        });
+    case op_typeof_is_function: {
+        // Null is an object, a function is not, and it takes a closer look to tell what the objects are that say for themselves whether they can be called.
+        bool wantsObject = node->opcode == op_typeof_is_object;
+        Node* valueNode = node->use(wantsObject ? node->as<OpTypeofIsObject>().m_operand : node->as<OpTypeofIsFunction>().m_operand);
+        Type yes = wantsObject ? TNull | TArray : TFunction;
+        Type no = wantsObject ? (TPrimitive & ~TNull) | TFunction : TPrimitive | TArray;
+        if (isSubtype(valueNode->type, yes)) {
+            setBoolean(node, m_out.booleanTrue);
+            return true;
+        }
+        if (isSubtype(valueNode->type, no)) {
+            setBoolean(node, m_out.booleanFalse);
+            return true;
+        }
+        LValue value = lowJSValue(valueNode);
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock notFunctionCase = m_out.newBlock();
+        LBasicBlock slowPath = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 5> results;
+        results.append(m_out.anchor(wantsObject ? m_out.equal(value, m_out.constInt64(JSValue::ValueNull)) : m_out.booleanFalse));
+        m_out.branch(isCell(value), unsure(cellCase), unsure(continuation));
+
+        m_out.appendTo(cellCase);
+        LValue type = cellType(value);
+        if (wantsObject) {
+            LBasicBlock objectCase = m_out.newBlock();
+            results.append(m_out.anchor(m_out.booleanFalse));
+            m_out.branch(m_out.aboveOrEqual(type, m_out.constInt32(ObjectType)), unsure(objectCase), unsure(continuation));
+            m_out.appendTo(objectCase);
+        }
+        results.append(m_out.anchor(wantsObject ? m_out.booleanFalse : m_out.booleanTrue));
+        m_out.branch(m_out.equal(type, m_out.constInt32(JSFunctionType)), unsure(continuation), unsure(notFunctionCase));
+
+        m_out.appendTo(notFunctionCase);
+        results.append(m_out.anchor(wantsObject ? m_out.booleanTrue : m_out.booleanFalse));
+        m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(MasqueradesAsUndefined | OverridesGetCallData)), rarely(slowPath), usually(continuation));
+
+        m_out.appendTo(slowPath);
+        results.append(m_out.anchor(m_out.notZero64(plainCall(Int64, wantsObject ? Entry::operationAOTTypeofIsObject : Entry::operationAOTTypeofIsFunction, m_globalObject, value))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation);
+        setBoolean(node, m_out.phi(Int32, results));
+        return true;
+    }
     case op_is_callable:
         return test(node->use(node->as<OpIsCallable>().m_operand), TFunction, TPrimitive | TArray, [&](LValue value) {
             return plainCall(Int64, Entry::operationAOTIsCallable, value);
@@ -587,6 +656,25 @@ bool Lowering::tryLowerConversion(Node* node)
         });
     case op_strcat: {
         auto bytecode = node->as<OpStrcat>();
+        // Strings are strung together as they are: two or three at a time.
+        bool areStrings = bytecode.m_count >= 2 && bytecode.m_count <= 5;
+        for (unsigned i = 0; i < bytecode.m_count; ++i)
+            areStrings &= isSubtype(node->use(VirtualRegister(bytecode.m_src.offset() - static_cast<int>(i)))->type, TString);
+        if (areStrings) {
+            auto at = [&](unsigned i) { return lowCell(node->use(VirtualRegister(bytecode.m_src.offset() - static_cast<int>(i)))); };
+            LValue soFar = at(0);
+            for (unsigned i = 1; i < bytecode.m_count;) {
+                LValue first = soFar;
+                LValue second = at(i++);
+                if (i < bytecode.m_count) {
+                    LValue third = at(i++);
+                    soFar = withHelper(Stub::HelperMakeRope3, { first, second, third }, [&] { return vmCall(node, pointerType(), Entry::operationMakeRope3, m_globalObject, first, second, third); });
+                } else
+                    soFar = withHelper(Stub::HelperMakeRope2, { first, second }, [&] { return vmCall(node, pointerType(), Entry::operationMakeRope2, m_globalObject, first, second); });
+            }
+            setJSValue(node, soFar);
+            return true;
+        }
         LValue values = storeToScratch(node, bytecode.m_src, bytecode.m_count);
         setJSValue(node, vmCall(node, Int64, Entry::operationAOTStrcat, m_globalObject, values, m_out.constInt32(bytecode.m_count)));
         return true;
@@ -742,7 +830,44 @@ bool Lowering::tryLowerPropertyVariant(Node* node)
     }
     case op_put_by_val_direct: {
         auto bytecode = node->as<OpPutByValDirect>();
-        vmCall(node, Void, Entry::operationAOTPutByValDirect, m_globalObject, low(bytecode.m_base), low(bytecode.m_property), low(bytecode.m_value), strictness(bytecode.m_ecmaMode));
+        Node* baseNode = node->use(bytecode.m_base);
+        Node* propertyNode = node->use(bytecode.m_property);
+        Node* valueNode = node->use(bytecode.m_value);
+        LValue base = lowJSValue(baseNode);
+        LValue property = lowJSValue(propertyNode);
+        LValue value = lowJSValue(valueNode);
+        LBasicBlock slowCase = nullptr;
+        LBasicBlock continuation = nullptr;
+        if (mayBe(baseNode->type, TArray) && mayBe(propertyNode->type, TInt32) && !(Options::aotDisableFastPaths() & 8)) {
+            // An element of an array that keeps its elements as values, its own to write to, where there is room for it already: at the end as a rule, which is how
+            // map() and the like fill in what they make.
+            slowCase = m_out.newBlock();
+            continuation = m_out.newBlock();
+            if (!isSubtype(propertyNode->type, TInt32))
+                orElse(isInt32(property), slowCase);
+            LValue index = unboxInt32(property);
+            LValue mode = m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc);
+            orElse(m_out.equal(m_out.bitAnd(mode, m_out.constInt32(IsArray | IndexingShapeMask | CopyOnWrite)), m_out.constInt32(ArrayWithContiguous)), slowCase);
+            LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+            orElse(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_vectorLength)), slowCase);
+            m_out.store64(value, m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
+            LBasicBlock isBeyondTheEnd = m_out.newBlock();
+            LBasicBlock stored = m_out.newBlock();
+            m_out.branch(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), unsure(stored), unsure(isBeyondTheEnd));
+            m_out.appendTo(isBeyondTheEnd);
+            m_out.store32(m_out.add(index, m_out.int32One), butterfly, m_heaps.Butterfly_publicLength);
+            m_out.jump(stored);
+            m_out.appendTo(stored);
+            if (mayBe(valueNode->type, TCell))
+                storeBarrier(base);
+            m_out.jump(continuation);
+            m_out.appendTo(slowCase);
+        }
+        vmCall(node, Void, Entry::operationAOTPutByValDirect, m_globalObject, base, property, value, strictness(bytecode.m_ecmaMode));
+        if (continuation) {
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+        }
         return true;
     }
     case op_in_by_id: {

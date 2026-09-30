@@ -40,6 +40,7 @@ namespace AOT {
     v(CreateLexicalEnvironment) \
     v(CompareStrictEq) \
     v(CompareEq) \
+    v(InById) \
 
 // A call of something that was found under one of these names, with as many arguments as the function of that name takes. If the
 // callee turns out to be that function, and `this` and the arguments what it has a quick way with, a stub does what the function
@@ -81,6 +82,20 @@ static constexpr unsigned sizeOfWhatAdapterSaves = 32;
 
 // Instance::granulesOfCode has an entry for each so many bytes of an image's code.
 static constexpr unsigned shiftOfGranuleOfCode = 8;
+
+#define FOR_EACH_AOT_HELPER(v) \
+    v(HelperNewArray) \
+    v(HelperNewArrayOfInt32) \
+    v(HelperNewArrayBuffer) \
+    v(HelperNewActivation) \
+    v(HelperNewArrayWithSpread) \
+    v(HelperNewArrayWithSpecies) \
+    v(HelperStringSlice) \
+    v(HelperStringSubstring) \
+    v(HelperMakeRope2) \
+    v(HelperMakeRope3) \
+    v(HelperToLowerCase) \
+    v(HelperObjectKeys) \
 
 #define FOR_EACH_AOT_STUB(v) \
     /* After the frame pointer is set up. T9 = the size of the frame. Checks that there is stack for it and sets the stack */ \
@@ -214,6 +229,9 @@ static constexpr unsigned shiftOfGranuleOfCode = 8;
     v(FrontEndCreateLexicalEnvironment) \
     v(FrontEndCompareStrictEq) \
     v(FrontEndCompareEq) \
+    v(FrontEndInById) \
+    /* See generateHelper(). */ \
+    FOR_EACH_AOT_HELPER(v) \
 
 enum class Stub : uint8_t {
 #define AOT_DEFINE_STUB(name) name,
@@ -222,6 +240,7 @@ enum class Stub : uint8_t {
     NumberOfStubs
 };
 static constexpr unsigned numberOfStubs = static_cast<unsigned>(Stub::NumberOfStubs);
+static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperObjectKeys; }
 
 static constexpr bool usesStubs =
 #if CPU(ARM64)

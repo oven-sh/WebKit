@@ -282,6 +282,7 @@ UnlinkedFunctionCodeBlock* UnlinkedFunctionExecutable::unlinkedCodeBlockFor(
             return kept;
         UnlinkedFunctionCodeBlock* result = nullptr;
         if (StaticHeap::payloadIsLeftOut() && source.provider()->hasNoText()) {
+            dataLogLn("AOT: there is no code to run `", name().string(), "` from (it starts at ", source.startOffset(), ", for ", isCall(specializationKind) ? "a call" : "construction", ")");
             error = ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), "This code was compiled ahead of time, and the program was built without its source text. The compiled code cannot be used here, and there is nothing else to run it from."_s, source.firstLine().oneBasedInt());
             return nullptr;
         }

@@ -2903,6 +2903,11 @@ void JSGlobalObject::haveABadTime(VM& vm)
     if (isHavingABadTime())
         return;
 
+#if ENABLE(FTL_JIT)
+    if (m_aotInstance)
+        m_aotInstance->didHaveABadTime();
+#endif
+
     DeferGC deferGC(vm);
 
     // Consider the following objects and prototype chains:

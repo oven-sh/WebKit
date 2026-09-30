@@ -164,9 +164,8 @@ void noteEverySiteOf(Graph& graph)
 using namespace B3;
 
 Lowering::Lowering(Graph& graph, Procedure& proc)
-    : m_graph(graph)
-    , m_proc(proc)
-    , m_out(proc)
+    : Emitter(proc)
+    , m_graph(graph)
 {
 }
 
@@ -372,7 +371,7 @@ Lowering::OwnData Lowering::ownData()
     return { m_out.aboveOrEqual(state, m_out.constIntPtr(Instance::leastStateWithData)), m_out.add(m_instance, m_out.shl(state, m_out.constInt32(Instance::shiftOfStateWithData))) };
 }
 
-LValue Lowering::registerOnEntry(Reg reg)
+LValue Emitter::registerOnEntry(Reg reg)
 {
     return m_out.m_block->appendNew<ArgumentRegValue>(m_proc, Origin(), reg);
 }
@@ -437,13 +436,13 @@ LValue Lowering::storeToScratch(Node* node, VirtualRegister first, unsigned coun
     return m_scratch;
 }
 
-LValue Lowering::structureOf(LValue cell)
+LValue Emitter::structureOf(LValue cell)
 {
     // A structure's ID is the low half of its address. The high half is the same for all of them, and this process's own.
     return m_out.bitOr(m_out.zeroExtPtr(m_out.load32(cell, m_heaps.JSCell_structureID)), entry(Entry::StructureIDBase));
 }
 
-LValue Lowering::entry(Entry which)
+LValue Emitter::entry(Entry which)
 {
     LValue result = m_out.loadPtr(m_out.address(m_table, m_heaps.AOTRuntimeTable[static_cast<unsigned>(which)]));
     static_cast<MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
@@ -453,6 +452,8 @@ LValue Lowering::entry(Entry which)
 // Whether anybody could ask, while the stub is at it, where the function that called it has got to.
 static bool mayLookAtStack(Stub stub)
 {
+    if (isHelper(stub))
+        return false;
     switch (stub) {
     case Stub::Prologue:
     case Stub::LinkFunction:
@@ -533,6 +534,15 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
             stubCalls->call(jit, stub, site);
     });
     return patchpoint;
+}
+
+LValue Lowering::callHelper(Stub stub, const Vector<LValue, 4>& arguments)
+{
+    RELEASE_ASSERT(isHelper(stub));
+    Vector<StubArgument, 8> placed;
+    for (unsigned i = 0; i < arguments.size(); ++i)
+        placed.append({ arguments[i], GPRInfo::toArgumentRegister(i) });
+    return callStub(stub, pointerType(), placed, { });
 }
 
 B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry function, LValue first, LValue second, ColdCall what)
@@ -638,7 +648,8 @@ unsigned Lowering::allocateSite(Node*, unsigned identifier, unsigned extra)
 
 unsigned Lowering::sharedSite(Node* node, unsigned identifier, unsigned extra)
 {
-    if (!node->graph->hasGuards())
+    // (What a site remembers may be how far out from where it starts what it looks for is.)
+    if (!node->graph->hasGuards() || node->environmentsPassedOver)
         return allocateSite(node, identifier, extra);
     return m_sharedSites.ensure((static_cast<uint64_t>(node->bytecodeIndex.offset()) << 32 | identifier) ^ static_cast<uint64_t>(node->graph->inlineFrame()) << 56, [&] {
         return allocateSite(node, identifier, extra);
@@ -668,7 +679,7 @@ void Lowering::storeBarrier(LValue owner)
 
 // ---- Values
 
-LValue Lowering::numberToDouble(LValue value)
+LValue Emitter::numberToDouble(LValue value)
 {
     // Both are computed and one is picked: cheaper than a branch that does not predict.
     return m_out.select(isInt32(value), m_out.intToDouble(unboxInt32(value)), unboxDouble(value));

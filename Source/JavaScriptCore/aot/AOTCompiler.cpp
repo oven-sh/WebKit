@@ -671,11 +671,29 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideReadsOfCalleesNotPassed();
-    graph.findDirectMethods();
+    graph.findBuiltinsCalled();
     graph.findListsOfArguments();
     promoteEnvironments(graph);
     analyzeEscapes(graph);
-    if (Options::aotDumpGraph()) [[unlikely]] {
+    // BUN_AOT_DUMP_WITH=name: of a big program, only the functions that have that among their identifiers.
+    static const char* dumpsWith = getenv("BUN_AOT_DUMP_WITH");
+    bool dumpsThis = Options::aotDumpGraph();
+    if (dumpsWith) [[unlikely]] {
+        for (auto& identifier : unlinkedCodeBlock->identifiers())
+            dumpsThis |= identifier.string() == StringView::fromLatin1(dumpsWith);
+    }
+    // BUN_AOT_DUMP_CALL_GIVES=family: only those in which a call is taken to give an object born into that.
+    static const char* dumpsCallsThatGive = getenv("BUN_AOT_DUMP_CALL_GIVES");
+    if (dumpsCallsThatGive) [[unlikely]] {
+        Type wanted = typeOfObjectBornAs(atoi(dumpsCallsThatGive));
+        for (BasicBlock* block : graph.m_rpo) {
+            for (Node* node : block->nodes)
+                dumpsThis |= ((node->isBytecode(op_call) || node->isBytecode(op_call_ignore_result)) && node->type == wanted) || (node->isBytecode(op_ret) && node->uses[0].node->type == wanted);
+        }
+    }
+    if (dumpsThis) [[unlikely]] {
+        static Lock lock;
+        Locker locker { lock };
         dataLogLn("AOT graph:");
         graph.dump(WTF::dataFile());
     }

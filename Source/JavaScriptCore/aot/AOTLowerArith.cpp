@@ -128,6 +128,10 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
     LValue a = lowJSValue(left);
     LValue b = lowJSValue(right);
     bool mayBeNumbers = mayBe(left->type, TNumber) && mayBe(right->type, TNumber);
+    if (opcode == op_add && left->type && right->type && isSubtype(left->type | right->type, TString)) {
+        setJSValue(node, withHelper(Stub::HelperMakeRope2, { a, b }, [&] { return vmCall(node, pointerType(), Entry::operationMakeRope2, m_globalObject, a, b); }));
+        return;
+    }
     if (!mayBeNumbers) {
         setJSValue(node, vmCall(node, Int64, operationFor(opcode), m_globalObject, a, b));
         return;
@@ -542,6 +546,69 @@ void Lowering::makeAtomIfString(Node* node, LValue value)
     m_out.appendTo(done);
 }
 
+// Zero if those are the characters, of which there are known to be as many.
+LValue Lowering::differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written)
+{
+    LValue difference = m_out.int64Zero;
+    for (unsigned at = 0; at < written.size();) {
+        unsigned left = written.size() - at;
+        unsigned width = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
+        uint64_t expected = 0;
+        memcpy(&expected, written.data() + at, width);
+        // (It is not an address, whatever it looks like.)
+        m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
+        TypedPointer address = m_out.address(m_heaps.characters8.atAnyIndex(), characters, at);
+        LValue loaded = width == 8 ? m_out.load64(address) : m_out.zeroExt(width == 4 ? m_out.load32(address) : width == 2 ? m_out.load16ZeroExt32(address) : m_out.load8ZeroExt32(address), Int64);
+        difference = m_out.bitOr(difference, m_out.bitXor(loaded, m_out.constInt64(expected)));
+        at += width;
+    }
+    return difference;
+}
+
+Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlock otherwise, Vector<ValueFromBlock, 2>& lengthOtherwise)
+{
+    LBasicBlock inOnePiece = m_out.newBlock();
+    LBasicBlock narrow = m_out.newBlock();
+    LBasicBlock wide = m_out.newBlock();
+    LBasicBlock rope = m_out.newBlock();
+    LBasicBlock slice = m_out.newBlock();
+    LBasicBlock inPieces = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    LValue fiber = m_out.loadPtr(string, m_heaps.JSRopeString_fiber0);
+    m_out.branch(m_out.testNonZeroPtr(fiber, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(rope), usually(inOnePiece));
+
+    m_out.appendTo(inOnePiece);
+    LValue lengthOfImpl = m_out.load32(fiber, m_heaps.StringImpl_length);
+    m_out.branch(m_out.testNonZero32(m_out.load32(fiber, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), usually(narrow), rarely(wide));
+    m_out.appendTo(narrow);
+    ValueFromBlock charactersOfImpl = m_out.anchor(m_out.loadPtr(fiber, m_heaps.StringImpl_data));
+    ValueFromBlock lengthOfNarrow = m_out.anchor(lengthOfImpl);
+    m_out.jump(continuation);
+    m_out.appendTo(wide);
+    lengthOtherwise.append(m_out.anchor(lengthOfImpl));
+    m_out.jump(otherwise);
+
+    m_out.appendTo(rope);
+    LValue lengthOfRope = m_out.load32(string, m_heaps.JSRopeString_length);
+    constexpr uintptr_t narrowSlice = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
+    m_out.branch(m_out.equal(m_out.bitAnd(fiber, m_out.constIntPtr(narrowSlice)), m_out.constIntPtr(narrowSlice)), unsure(slice), unsure(inPieces));
+    m_out.appendTo(slice);
+    // (JSRopeString::CompactFibers. What it is a slice of is in one piece.)
+    LValue lengthAndLowOfBase = m_out.load64(string, m_heaps.JSRopeString_fiber1);
+    LValue highOfBaseAndOffset = m_out.load64(string, m_heaps.JSRopeString_fiber2);
+    LValue base = m_out.bitOr(m_out.lShr(lengthAndLowOfBase, m_out.constInt32(32)), m_out.shl(m_out.bitAnd(highOfBaseAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
+    LValue offset = m_out.lShr(highOfBaseAndOffset, m_out.constInt32(16));
+    ValueFromBlock charactersOfSlice = m_out.anchor(m_out.add(m_out.loadPtr(m_out.loadPtr(base, m_heaps.JSString_value), m_heaps.StringImpl_data), offset));
+    ValueFromBlock lengthOfSlice = m_out.anchor(lengthOfRope);
+    m_out.jump(continuation);
+    m_out.appendTo(inPieces);
+    lengthOtherwise.append(m_out.anchor(lengthOfRope));
+    m_out.jump(otherwise);
+
+    m_out.appendTo(continuation);
+    return { m_out.phi(pointerType(), charactersOfImpl, charactersOfSlice), m_out.phi(Int32, lengthOfNarrow, lengthOfSlice) };
+}
+
 // value === theString, which says that.
 LValue Lowering::isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String& said, LValue theString)
 {
@@ -560,33 +627,17 @@ LValue Lowering::isStringThatSays(Node* comparison, Node* valueNode, LValue valu
         isSettledIf(isNotCell(value), false);
     if (!isSubtype(valueNode->type, TString | ~TCell))
         isSettledIf(m_out.notEqual(cellType(value), m_out.constInt32(StringType)), false);
-    LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
-    {
-        LBasicBlock next = m_out.newBlock();
-        m_out.branch(m_out.testNonZeroPtr(impl, m_out.constIntPtr(JSString::isRopeInPointer)), rarely(slowCase), usually(next));
-        m_out.appendTo(next);
-    }
-    isSettledIf(m_out.notEqual(m_out.load32(impl, m_heaps.StringImpl_length), m_out.constInt32(said.length())), false, true);
-    {
-        LBasicBlock next = m_out.newBlock();
-        m_out.branch(m_out.testIsZero32(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), rarely(slowCase), usually(next));
-        m_out.appendTo(next);
-    }
-    LValue characters = m_out.loadPtr(impl, m_heaps.StringImpl_data);
-    auto span = said.span8();
-    LValue difference = m_out.int64Zero;
-    for (unsigned at = 0; at < span.size();) {
-        unsigned left = span.size() - at;
-        unsigned width = left >= 8 ? 8 : left >= 4 ? 4 : left >= 2 ? 2 : 1;
-        uint64_t expected = 0;
-        memcpy(&expected, span.data() + at, width);
-        TypedPointer address = m_out.address(m_heaps.characters8.atAnyIndex(), characters, at);
-        LValue loaded = width == 8 ? m_out.load64(address) : m_out.zeroExt(width == 4 ? m_out.load32(address) : width == 2 ? m_out.load16ZeroExt32(address) : m_out.load8ZeroExt32(address), Int64);
-        difference = m_out.bitOr(difference, m_out.bitXor(loaded, m_out.constInt64(expected)));
-        at += width;
-    }
-    results.append(m_out.anchor(m_out.isZero64(difference)));
+    LBasicBlock notForTheLooking = m_out.newBlock();
+    Vector<ValueFromBlock, 2> lengthsOtherwise;
+    auto [characters, length] = narrowCharactersOf(value, notForTheLooking, lengthsOtherwise);
+    isSettledIf(m_out.notEqual(length, m_out.constInt32(said.length())), false, true);
+    results.append(m_out.anchor(m_out.isZero64(differenceFromWhatIsWritten(characters, said.span8()))));
     m_out.jump(continuation);
+
+    // (How long it is settles it as a rule, whatever it takes to look at it.)
+    m_out.appendTo(notForTheLooking);
+    results.append(m_out.anchor(m_out.booleanFalse));
+    m_out.branch(m_out.notEqual(m_out.phi(Int32, lengthsOtherwise), m_out.constInt32(said.length())), usually(continuation), rarely(slowCase));
 
     m_out.appendTo(slowCase);
     results.append(m_out.anchor(m_out.notZero64(vmCall(comparison, Int64, Entry::operationAOTCompareStrictEq, m_globalObject, value, theString))));

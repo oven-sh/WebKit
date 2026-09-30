@@ -8,6 +8,7 @@
 
 #if ENABLE(FTL_JIT)
 
+#include "AOTEmitter.h"
 #include "AOTImage.h"
 #include "AOTRuntime.h"
 #include "AOTThunks.h"
@@ -1169,6 +1170,7 @@ static void generatePutById(CCallHelpers& jit)
 
     CCallHelpers::Label stored = jit.label();
     Jump notCell = jit.branchIfNotCell(A1, DoNotHaveTagRegisters);
+    CCallHelpers::Label storedAndMayBeOfAnotherStructure = jit.label();
     loadInstance(jit, T9);
     jit.load8(Address(A0, JSCell::cellStateOffset()), T11);
     jit.loadPtr(Address(T9, Instance::offsetOfVM()), T12);
@@ -1263,6 +1265,31 @@ static void generatePutById(CCallHelpers& jit)
     }
 
     notInTable.link(&jit);
+    {
+        // (A field of a struct that says what it holds is never remembered there: PutPropertySlot::isCacheablePut().)
+        CCallHelpers::JumpList notFound;
+        constexpr GPRReg cache = GPRInfo::argumentGPR7;
+        notFound.append(jit.branchIfNotCell(A0, DoNotHaveTagRegisters));
+        notFound.append(jit.branchIfNotObject(A0));
+        loadInstanceAndDataOfSlot(jit, A2, T9, T10);
+        siteOfSlot(jit, T10, A2, T13);
+        loadInfo(jit, T9, T10);
+        jit.loadPtr(Address(T10, FunctionInfo::offsetOfSites()), T11);
+        jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T12);
+        // (One that defines the property, whatever the object inherits, is not what is remembered.)
+        notFound.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(1u << Site::identifierBits)));
+        jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), T12);
+        jit.loadPtr(Address(T10, FunctionInfo::offsetOfIdentifiers()), T11);
+        jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A3);
+        jit.loadPtr(Address(T9, Instance::offsetOfRuntimeTable()), cache);
+        jit.loadPtr(Address(cache, static_cast<unsigned>(Entry::MegamorphicCache) * sizeof(void*)), cache);
+        notFound.append(jit.branchTestPtr(CCallHelpers::Zero, cache));
+        auto [slow, reallocating] = jit.storeMegamorphicProperty(CCallHelpers::MegamorphicCacheLocation(cache), A0, A3, nullptr, A1, T11, T12, T13);
+        jit.jump().linkTo(storedAndMayBeOfAnotherStructure, &jit);
+        slow.link(&jit);
+        reallocating.link(&jit);
+        notFound.link(&jit);
+    }
     missAtSite(jit, Entry::operationAOTPutById, 2, Returns::Void);
 }
 
@@ -2640,6 +2667,10 @@ StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIn
     return StubIntrinsic::None;
 }
 
+
+#define AOT_GENERATE_HELPER(name) static void generate##name(CCallHelpers& jit) { generateHelper(jit, Stub::name); }
+FOR_EACH_AOT_HELPER(AOT_GENERATE_HELPER)
+#undef AOT_GENERATE_HELPER
 
 #else // CPU(ARM64)
 

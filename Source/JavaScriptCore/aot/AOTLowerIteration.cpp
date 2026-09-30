@@ -12,6 +12,7 @@
 #include "B3ValueInlines.h"
 #include "BytecodeOperandsForCheckpoint.h"
 #include "BytecodeStructs.h"
+#include "JSArrayIterator.h"
 #include "JSCInlines.h"
 #include "Watchpoint.h"
 
@@ -86,6 +87,20 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     LBasicBlock genericCase = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
 
+    // An array as the realm makes them is gone through by its index, and there is no iterator: what the runtime would say (IterationMode::FastArray).
+    std::optional<ValueFromBlock> iteratorOfArray;
+    std::optional<ValueFromBlock> nextOfArray;
+    if (!isAsync && Options::useImmutableIntrinsics() && Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
+        LBasicBlock isArray = m_out.newBlock();
+        LBasicBlock isSomethingElse = m_out.newBlock();
+        m_out.branch(isCellAnd(node->use(iterableRegister), iterable, [&](LValue cell) { return isOriginalArray(cell); }), unsure(isArray), unsure(isSomethingElse));
+        m_out.appendTo(isArray);
+        iteratorOfArray = m_out.anchor(fixedPointer(Instance::offsetOfSentinelOfArrayIteration()));
+        nextOfArray = m_out.anchor(m_out.constInt64(JSValue::encode(jsNumber(0))));
+        m_out.jump(continuation);
+        m_out.appendTo(isSomethingElse);
+    }
+
     LValue fastIterator = vmCall(node, Int64, isAsync ? Entry::operationAOTAsyncIteratorOpenTryFast : Entry::operationAOTIteratorOpenTryFast, m_globalObject, iterable, symbolIterator, scratchAddress());
     m_out.branch(m_out.notZero64(fastIterator), unsure(fastCase), unsure(genericCase));
 
@@ -103,8 +118,14 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    setProj(node, iteratorRegister, m_out.phi(Int64, fastIteratorResult, genericIteratorResult));
-    setProj(node, nextRegister, m_out.phi(Int64, fastNextResult, genericNextResult));
+    Vector<ValueFromBlock, 3> iterators { fastIteratorResult, genericIteratorResult };
+    Vector<ValueFromBlock, 3> nexts { fastNextResult, genericNextResult };
+    if (iteratorOfArray) {
+        iterators.append(*iteratorOfArray);
+        nexts.append(*nextOfArray);
+    }
+    setProj(node, iteratorRegister, m_out.phi(Int64, iterators));
+    setProj(node, nextRegister, m_out.phi(Int64, nexts));
 }
 
 // result = next.call(iterator); done = result.done; value = done ? (nothing anybody looks at) : result.value. Or the shortcut.
@@ -241,7 +262,13 @@ void Lowering::lowerIteratorNext(Node* node)
     m_out.appendTo(rightShape, inBounds);
     LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
     LValue isInBounds = m_out.bitAnd(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), m_out.notEqual(index, m_out.constInt32(std::numeric_limits<int32_t>::max())));
-    m_out.branch(isInBounds, usually(inBounds), rarely(indexSlow));
+    LBasicBlock isAtTheEnd = m_out.newBlock();
+    m_out.branch(isInBounds, usually(inBounds), unsure(isAtTheEnd));
+
+    // That is all: JSArrayIterator::nextValueWithIndexInFrame().
+    m_out.appendTo(isAtTheEnd);
+    finish(m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt64(JSValue::encode(jsNumber(JSArrayIterator::doneIndex))));
+    m_out.jump(continuation);
 
     m_out.appendTo(inBounds, indexFast);
     LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));

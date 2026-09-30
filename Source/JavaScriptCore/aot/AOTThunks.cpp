@@ -515,6 +515,34 @@ void generateFrontEndCreateLexicalEnvironment(CCallHelpers& jit)
     tailCall(jit, Entry::RawCreateLexicalEnvironment);
 }
 
+// (globalObject, base, identifierIndex). As AssemblyHelpers::hasMegamorphicProperty() does it, but for looking in one place only.
+void generateFrontEndInById(CCallHelpers& jit)
+{
+    using HasEntry = MegamorphicCache::HasEntry;
+    JumpList slowCases;
+    branchIfNotObjectValue(jit, argument1, slowCases);
+    loadIdentifier(jit, argument2, scratch0);
+    loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
+    jit.load32(Address(argument1, JSCell::structureIDOffset()), scratch1);
+    jit.extractUnsignedBitfield32(scratch1, TrustedImm32(MegamorphicCache::structureIDHashShift1), TrustedImm32(32 - MegamorphicCache::structureIDHashShift1), scratch2);
+    jit.xorUnsignedRightShift32(scratch2, scratch1, TrustedImm32(MegamorphicCache::structureIDHashShift6), scratch3);
+    jit.load32(Address(scratch0, UniquedStringImpl::flagsOffset()), scratch2);
+    jit.addUnsignedRightShift32(scratch3, scratch2, TrustedImm32(StringImpl::s_flagCount), scratch3);
+    jit.and32(TrustedImm32(MegamorphicCache::hasCachePrimaryMask), scratch3);
+    static_assert(hasOneBitSet(sizeof(HasEntry)));
+    jit.lshift32(TrustedImm32(getLSBSet(sizeof(HasEntry))), scratch3);
+    jit.addPtr(cacheGPR, scratch3);
+    jit.addPtr(TrustedImm32(MegamorphicCache::offsetOfHasCachePrimaryEntries()), scratch3);
+    jit.load16(Address(cacheGPR, MegamorphicCache::offsetOfEpoch()), scratch2);
+    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch1, Address(scratch3, HasEntry::offsetOfStructureID())));
+    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, Address(scratch3, HasEntry::offsetOfUid()), scratch0));
+    slowCases.append(jit.branch32WithMemory16(CCallHelpers::NotEqual, Address(scratch3, HasEntry::offsetOfEpoch()), scratch2));
+    jit.load16(Address(scratch3, HasEntry::offsetOfResult()), scratch2);
+    returnValue(jit, scratch2);
+    slowCases.link(&jit);
+    tailCall(jit, Entry::RawInById);
+}
+
 void installOperationFrontEnds(VM& vm, void** entries)
 {
     auto install = [&](Entry entry, Entry raw, Stub stub) {
@@ -529,6 +557,7 @@ void installOperationFrontEnds(VM& vm, void** entries)
         AOT_INSTALL_FRONT_END(GetByVal)
         AOT_INSTALL_FRONT_END(PutById)
         AOT_INSTALL_FRONT_END(PutByVal)
+        AOT_INSTALL_FRONT_END(InById)
     }
     if (!(disabled & 2048)) {
         AOT_INSTALL_FRONT_END(NewObject)

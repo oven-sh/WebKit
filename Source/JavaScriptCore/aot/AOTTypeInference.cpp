@@ -723,6 +723,9 @@ private:
                 return node->uses[0].node->type;
             if (node->narrowedTo)
                 return node->uses[0].node->type & node->narrowedTo;
+            // What is of a type of a family that is open may be any object that has what the type says, made by anybody. It is what it was.
+            if (!node->isTakenAtItsWord)
+                return node->uses[0].node->type;
             return node->uses[0].node->type & typeOfObjectBornAs(node->firstLayout);
         case op_urshift:
             return TInt32; // The bits of the result: the op_unsigned that follows makes the number of them. A BigInt throws.

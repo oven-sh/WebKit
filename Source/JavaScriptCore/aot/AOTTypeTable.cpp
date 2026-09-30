@@ -124,7 +124,8 @@ std::optional<TypeTable::Field> TypeTable::fieldOfFamily(uint32_t number, Unique
         // (An object that has no such property of its own has Object.prototype's.)
         if (mayBeAbsent && m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; }))
             return std::nullopt;
-        return Field { static_cast<uint16_t>(entry[1]), mayBeAbsent, static_cast<uint8_t>(inlineSlotsOf(number)), mayBeAbsent, safeCast<uint16_t>(number), safeCast<uint16_t>(number), 0, 0, 0,
+        // (Whatever the types say has to be there: what is known only for its family may be an object that is still being given what it is to have.)
+        return Field { static_cast<uint16_t>(entry[1]), mayBeAbsent, static_cast<uint8_t>(inlineSlotsOf(number)), true, safeCast<uint16_t>(number), safeCast<uint16_t>(number), 0, 0, 0,
             Holds::from(entry[2], entry[3]) };
     }
     return std::nullopt;

@@ -1098,7 +1098,37 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (JSGlobalObject* globalObje
         throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
         OPERATION_RETURN(scope, false);
     }
-    OPERATION_RETURN(scope, asObject(base)->hasProperty(globalObject, identifierAt(globalObject, callFrame, identifierIndex)));
+    const Identifier& identifier = identifierAt(globalObject, callFrame, identifierIndex);
+    UniquedStringImpl* uid = identifier.impl();
+    JSObject* baseObject = asObject(base);
+    if ((Options::aotDisableFastPaths() & 1024) || parseIndex(*uid) || !vm.megamorphicCache())
+        OPERATION_RETURN(scope, baseObject->hasProperty(globalObject, identifier));
+
+    // What the other tiers do for a site that sees objects of all kinds: the answer is left where generateFrontEndInById() finds it.
+    PropertySlot slot(base, PropertySlot::InternalMethodType::HasProperty);
+    JSObject* object = baseObject;
+    bool cacheable = true;
+    while (true) {
+        if (TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && object->type() != ArrayType && object->type() != JSFunctionType && object != globalObject->arrayPrototype()) [[unlikely]]
+            OPERATION_RETURN(scope, object->getNonIndexPropertySlot(globalObject, uid, slot));
+        Structure* structure = object->structure();
+        bool hasProperty = object->getOwnNonIndexPropertySlot(vm, structure, uid, slot);
+        structure = object->structure(); // (What is made of a static table when it is first asked for changes it.)
+        cacheable &= structure->propertyAccessesAreCacheable();
+        if (hasProperty) {
+            if (cacheable && slot.isCacheable() && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary()))
+                vm.megamorphicCache()->initAsHasHit(baseObject->structureID(), uid);
+            OPERATION_RETURN(scope, true);
+        }
+        cacheable &= structure->propertyAccessesAreCacheableForAbsence() && structure->hasMonoProto();
+        JSValue prototype = object->getPrototypeDirect();
+        if (!prototype.isObject()) {
+            if (cacheable && !baseObject->structure()->isDictionary())
+                vm.megamorphicCache()->initAsHasMiss(baseObject->structureID(), uid);
+            OPERATION_RETURN(scope, false);
+        }
+        object = asObject(prototype);
+    }
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTInByVal, size_t, (JSGlobalObject* globalObject, EncodedJSValue base, EncodedJSValue property))

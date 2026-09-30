@@ -10,7 +10,9 @@
 #include "BytecodeIndex.h"
 #include "LineColumn.h"
 #include "AOTFunction.h"
+#include "AOTOperationsBuiltins.h"
 #include "AOTOperationsObjects.h"
+#include "IndexingType.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTStubs.h"
 #include "CallLinkInfo.h"
@@ -85,6 +87,9 @@ namespace AOT {
     v(operationAOTThrow) \
     v(operationAOTCheckType) \
     v(operationAOTAssertBornAs) \
+    v(operationAOTViewAs) \
+    v(operationAOTNarrowAtomThatSaysTheSame) \
+    v(operationAOTGetFieldTheLongWay) \
     v(operationAOTGetLengthTheLongWay) \
     v(operationAOTSettleStruct) \
     v(operationAOTVerifyFact) \
@@ -97,6 +102,7 @@ namespace AOT {
     v(operationAOTPow) \
     v(operationAOTDoubleToInt32) \
     FOR_EACH_AOT_OBJECT_OPERATION(v) \
+    FOR_EACH_AOT_BUILTIN_OPERATION(v) \
     FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
 
 // What the DFG and the FTL call for a method whose receiver and arguments they know the types of (DirectMethod).
@@ -118,6 +124,42 @@ namespace AOT {
     v(operationToLowerCase) \
     v(operationToUpperCase) \
     v(operationStringLocaleCompare) \
+    v(operationStringReplaceStringString) \
+    v(operationStringProtoFuncReplaceRegExpString) \
+    v(operationStringProtoFuncReplaceAllRegExpString) \
+    v(operationStringSplit) \
+    v(operationStringSplitRegExp) \
+    v(operationStringMatchRegExp) \
+    v(operationStringSearchRegExp) \
+    v(operationStringFromCharCode) \
+    v(operationToString) \
+    v(operationInt32ToStringWithValidRadix) \
+    v(operationDoubleToStringWithValidRadix) \
+    v(operationParseIntStringNoRadix) \
+    v(operationParseIntDoubleNoRadix) \
+    v(operationParseIntString) \
+    v(operationObjectKeysObject) \
+    v(operationObjectGetOwnPropertyNamesObject) \
+    v(operationObjectGetOwnPropertySymbolsObject) \
+    v(operationGetPrototypeOfObject) \
+    v(operationObjectCreate) \
+    v(operationObjectAssignUntyped) \
+    v(operationHasOwnProperty) \
+    v(operationSameValue) \
+    v(operationArrayShift) \
+    v(operationArrayUnshift) \
+    v(operationArraySplice) \
+    v(operationArraySpliceIgnoreResult) \
+    v(operationArrayConcatAppendOne) \
+    v(operationArrayJoin) \
+    v(operationArrayJoinGeneric) \
+    v(operationArrayIndexOfValueInt32OrContiguous) \
+    v(operationArrayIncludesValueInt32OrContiguous) \
+    v(operationRegExpTestString) \
+    v(operationRegExpExecString) \
+    v(operationDateNow) \
+    v(operationMakeRope2) \
+    v(operationMakeRope3) \
 
 #define FOR_EACH_AOT_THUNK(v) \
     v(HandleException) \
@@ -170,6 +212,7 @@ namespace AOT {
     v(RawCreateLexicalEnvironment) \
     v(RawCompareStrictEq) \
     v(RawCompareEq) \
+    v(RawInById) \
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_ENTRY(name) name,
@@ -227,6 +270,7 @@ struct Slot {
     static constexpr uint32_t attemptsMask = maxAttempts << attemptsShift;
     static constexpr uint32_t isIntricate = 1u << 28; // op_get_by_id, op_put_by_id: there is more to it than a load or a store at that place in the base itself.
     static constexpr uint32_t isGetter = 1u << 29; // op_get_by_id: what is at that place is a GetterSetter, whose getter has the answer.
+    static constexpr uint32_t saysWhatIsHeld = 1u << 29; // op_put_by_id: what is above newStructureID is `held`, and not the rest of an address.
     static constexpr uint32_t pointerIsNotCell = 1u << 30; // pointer: something that is there for as long as the VM is.
     static constexpr uint32_t pointerIsCell = 1u << 31; // pointer: a cell. Neither: newStructureID, which may be none.
     static constexpr uint32_t resolvesByDepth = 1u << 31; // op_resolve_scope: the rest of offset is how many scopes out it is.
@@ -401,6 +445,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfRowsOfSelectors() { return OBJECT_OFFSETOF(Instance, rowsOfSelectors); }
 
     JS_EXPORT_PRIVATE void dumpSlotStatistics(PrintStream&); // TEMPORARY-SLOT-STATS
+    static void noteView(ASCIILiteral whatCameOfIt); // TEMPORARY-SHAPE-COUNTS: operationAOTViewAs()
 
     void** runtimeTable;
     JSGlobalObject* globalObject;
@@ -415,6 +460,67 @@ struct Instance {
     const uint8_t* code;
     const uint32_t* granulesOfCode;
     const uint32_t* startsOfFunctionsAfterFirst;
+    // (What code gets at comes first, where a load reaches it as it is. What is big, and is only looked at by the runtime, comes last.)
+    const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
+    uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
+    uint32_t missesToSpare;
+    uintptr_t structureIDBase; // What a StructureID is added to.
+    const uint32_t* dispatch; // The image's: see ImageDispatchEntry.
+    const uint32_t* rowsOfSelectors;
+    JSObject* objectPrototype; // The realm's, which keeps it.
+    uint8_t* selectorsOnObjectPrototype; // A bit for each selector, as of when its Structure was the one below.
+    uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
+    // The realm's (JSGlobalObject::immutableIntrinsics()), where code gets at them with one load.
+    EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
+    // The realm's (JSGlobalObject::linkTimeConstant()), which keeps them: those that code has asked for. It makes each when it is first wanted. Zero: not yet.
+    EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
+    // The Structure that the realm makes such an object with (Receiver). One that still has it has been given nothing of its own, and inherits from what the realm made for it,
+    // which stays as it is (Options::useImmutableIntrinsics()): so what a method of it is is known. Zero: there is none to go by.
+    static constexpr unsigned numberOfReceivers = 16;
+    uint32_t structureIDsOfReceivers[numberOfReceivers] { };
+    static constexpr ptrdiff_t offsetOfStructureIDsOfReceivers() { return OBJECT_OFFSETOF(Instance, structureIDsOfReceivers); }
+    uint32_t structureIDsOfOriginalArrays[NumberOfArrayIndexingModes] { }; // JSGlobalObject::originalArrayStructureForIndexingType()
+    static constexpr ptrdiff_t offsetOfStructureIDsOfOriginalArrays() { return OBJECT_OFFSETOF(Instance, structureIDsOfOriginalArrays); }
+    // What code makes for itself, with no need to have made one before: the Structure. Zero: it is for the runtime to make (JSGlobalObject::haveABadTime()).
+    uint32_t structureIDOfNewArrayWithInt32 { 0 };
+    uint32_t structureIDOfNewArrayWithContiguous { 0 };
+    uint32_t structureIDsOfNewCopyOnWriteArrays[3] { }; // Int32, Double, Contiguous.
+    uint32_t structureIDOfActivation { 0 };
+    static constexpr ptrdiff_t offsetOfStructureIDOfNewArrayWithInt32() { return OBJECT_OFFSETOF(Instance, structureIDOfNewArrayWithInt32); }
+    static constexpr ptrdiff_t offsetOfStructureIDOfNewArrayWithContiguous() { return OBJECT_OFFSETOF(Instance, structureIDOfNewArrayWithContiguous); }
+    static constexpr ptrdiff_t offsetOfStructureIDsOfNewCopyOnWriteArrays() { return OBJECT_OFFSETOF(Instance, structureIDsOfNewCopyOnWriteArrays); }
+    static constexpr ptrdiff_t offsetOfStructureIDOfActivation() { return OBJECT_OFFSETOF(Instance, structureIDOfActivation); }
+    // What the VM has that code allocates from and hands out. They are where they are for as long as there is a VM.
+    void* auxiliarySpace { nullptr }; // CompleteSubspace*: where arrays keep their elements.
+    void* spaceOfActivations { nullptr }; // CompleteSubspace*
+    void* allocatorOfArrays { nullptr }; // LocalAllocator*
+    void* allocatorOfRopeStrings { nullptr };
+    void* singleCharacterStrings { nullptr }; // JSString*[]
+    JSCell* emptyString { nullptr };
+    JSCell* sentinelOfArrayIteration { nullptr }; // VM::fastArrayUnboxedSentinel()
+    static constexpr ptrdiff_t offsetOfSentinelOfArrayIteration() { return OBJECT_OFFSETOF(Instance, sentinelOfArrayIteration); }
+    uint32_t structureIDOfStrings { 0 };
+    static constexpr ptrdiff_t offsetOfAuxiliarySpace() { return OBJECT_OFFSETOF(Instance, auxiliarySpace); }
+    static constexpr ptrdiff_t offsetOfSpaceOfActivations() { return OBJECT_OFFSETOF(Instance, spaceOfActivations); }
+    static constexpr ptrdiff_t offsetOfAllocatorOfArrays() { return OBJECT_OFFSETOF(Instance, allocatorOfArrays); }
+    static constexpr ptrdiff_t offsetOfAllocatorOfRopeStrings() { return OBJECT_OFFSETOF(Instance, allocatorOfRopeStrings); }
+    static constexpr ptrdiff_t offsetOfSingleCharacterStrings() { return OBJECT_OFFSETOF(Instance, singleCharacterStrings); }
+    static constexpr ptrdiff_t offsetOfEmptyString() { return OBJECT_OFFSETOF(Instance, emptyString); }
+    static constexpr ptrdiff_t offsetOfStructureIDOfStrings() { return OBJECT_OFFSETOF(Instance, structureIDOfStrings); }
+    JS_EXPORT_PRIVATE void didHaveABadTime();
+    // A struct is given a field it did not have: what it is of afterwards, by what it was of and which slot. Whoever finds it here has seen to it that the slot holds the value.
+    // (Forgotten at every collection: nothing is kept for being here.)
+    struct AddOfField {
+        uint32_t structureID;
+        uint32_t slot;
+        uint32_t structureIDAfterwards;
+        uint32_t unused;
+    };
+    static constexpr unsigned numberOfAddsOfFields = 1024;
+    static constexpr unsigned indexOfAddOfField(uint32_t structureID, unsigned slot) { return ((structureID >> 4) ^ (slot * 0x9e5u)) & (numberOfAddsOfFields - 1); }
+    AddOfField addsOfFields[numberOfAddsOfFields] { };
+    static constexpr ptrdiff_t offsetOfAddsOfFields() { return OBJECT_OFFSETOF(Instance, addsOfFields); }
+    void noteAddOfField(Structure* before, unsigned slot, Structure* afterwards);
     // Addresses in the code that have been asked about (FunctionRef::at(), placeAt()), and the answers, which are the same every time.
     struct PlaceAskedAbout {
         static constexpr uint32_t siteNotLookedFor = std::numeric_limits<uint32_t>::max();
@@ -440,19 +546,6 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfCountsOfSites() { return OBJECT_OFFSETOF(Instance, countsOfSites); }
     static constexpr ptrdiff_t offsetOfReadsForReason() { return OBJECT_OFFSETOF(Instance, readsForReason); }
     static constexpr ptrdiff_t offsetOfShapeCounts() { return OBJECT_OFFSETOF(Instance, shapeCounts); }
-    const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
-    uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
-    uint32_t missesToSpare;
-    uintptr_t structureIDBase; // What a StructureID is added to.
-    const uint32_t* dispatch; // The image's: see ImageDispatchEntry.
-    const uint32_t* rowsOfSelectors;
-    JSObject* objectPrototype; // The realm's, which keeps it.
-    uint8_t* selectorsOnObjectPrototype; // A bit for each selector, as of when its Structure was the one below.
-    uint32_t structureIDOfObjectPrototype; // Zero: nobody has looked, or there is no telling from its Structure.
-    // The realm's (JSGlobalObject::immutableIntrinsics()), where code gets at them with one load.
-    EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
-    // The realm's (JSGlobalObject::linkTimeConstant()), which keeps them: those that code has asked for. It makes each when it is first wanted. Zero: not yet.
-    EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     // By the index of the function. Reading one is enough to have the page it is on, so they are small.
     //     Less than leastStateWithData: it has no Data of its own (SharedData). The low half is how often a slot has failed it, and
     //     isLinkedWithoutData whether it has been linked in this realm: one that only those call who know what they are calling need not be.

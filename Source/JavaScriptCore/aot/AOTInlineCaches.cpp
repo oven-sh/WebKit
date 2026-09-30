@@ -215,6 +215,12 @@ static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* old
 
 void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
+    // A struct has been given a field. The next of its kind to be given that one need not come here, wherever it is done (Instance::addsOfFields).
+    if (slot.type() == PutPropertySlot::NewFieldOfStruct && base.isCell() && slot.base() == base.asCell() && isInlineOffset(slot.cachedOffset())) {
+        Structure* newStructure = base.asCell()->structure();
+        if (newStructure->previousID() == oldStructure && !newStructure->isDictionary() && !oldStructure->mayBePrototype() && oldStructure->outOfLineCapacity() == newStructure->outOfLineCapacity())
+            globalObject->aotInstance()->noteAddOfField(oldStructure, slot.cachedOffset(), newStructure);
+    }
     if (SharedData::contains(cache))
         return;
     if (!tryCachePutById(globalObject, data, base, oldStructure, ident, slot, isDirect, cache))
@@ -243,10 +249,11 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         uint32_t attempts = cache->offset & Slot::attemptsMask;
         cache->structureID = StructureID();
         WTF::storeStoreFence();
-        cache->offset = *location | attempts | (structureAfterwards ? Slot::isIntricate : 0);
+        uint32_t held = slot.type() == PutPropertySlot::ExistingFieldOfStruct || slot.type() == PutPropertySlot::NewFieldOfStruct ? slot.held() : 0;
+        cache->offset = *location | attempts | (structureAfterwards ? Slot::isIntricate : 0) | (held ? Slot::saysWhatIsHeld : 0);
         cache->pointer = nullptr;
         cache->newStructureID = structureAfterwards ? structureAfterwards->id() : StructureID();
-        cache->held = slot.type() == PutPropertySlot::ExistingFieldOfStruct || slot.type() == PutPropertySlot::NewFieldOfStruct ? slot.held() : 0;
+        cache->held = held;
         WTF::storeStoreFence();
         cache->structureID = oldStructure->id();
         // For a transition the collector has to see it too, even if it has been by already.

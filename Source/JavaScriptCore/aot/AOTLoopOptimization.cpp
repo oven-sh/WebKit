@@ -346,9 +346,9 @@ private:
             loop.changesStructures |= !node->uses[0].node->isKnownToBeBornWithin(node->firstLayout, node->lastLayout);
             return true;
         }
-        if (auto field = Graph::fieldOfStructGotAtBy(node)) {
+        // (What is not known to be a struct may be anything, with getters and setters: it is an access like any other.)
+        if (auto field = Graph::fieldOfStructGotAtBy(node); field && node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base)->isKnownToBeBornWithin(field->first, field->last)) {
             bool isRead = node->opcode == op_get_by_id;
-            loop.changesStructures |= !node->use(isRead ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base)->isKnownToBeBornWithin(field->first, field->last);
             if (isRead)
                 return true;
             // (What the slot does not hold is stored the long way, which runs no code either: the property is plain.)

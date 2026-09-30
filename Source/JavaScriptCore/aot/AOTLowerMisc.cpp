@@ -199,7 +199,93 @@ void Lowering::lowerSwitch(Node* node)
     if (node->opcode == op_switch_string) {
         auto bytecode = node->as<OpSwitchString>();
         const auto& table = codeBlock->unlinkedStringSwitchJumpTable(bytecode.m_tableIndex);
-        LValue offset = vmCall(node, Int32, Entry::operationAOTSwitchString, m_globalObject, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex));
+        struct Case {
+            const StringImpl* says;
+            int32_t offset;
+        };
+        Vector<Case, 16> all;
+        bool allAreNarrow = true;
+        for (auto& entry : table.m_offsetTable) {
+            allAreNarrow &= entry.key->is8Bit();
+            all.append({ entry.key.get(), entry.value.m_branchOffset });
+        }
+        if (allAreNarrow) {
+            std::ranges::sort(all, [](const Case& a, const Case& b) {
+                if (a.says->length() != b.says->length())
+                    return a.says->length() < b.says->length();
+                return memcmp(a.says->span8().data(), b.says->span8().data(), a.says->length()) < 0;
+            });
+            LBasicBlock defaultBlock = blockFor(node, table.m_defaultOffset);
+            Node* scrutinee = node->use(bytecode.m_scrutinee);
+            LValue value = lowJSValue(scrutinee);
+            LBasicBlock theLongWay = newColdBlock();
+            LBasicBlock dispatch = m_out.newBlock();
+            auto goesOnIf = [&](LValue condition, LBasicBlock otherwise) {
+                LBasicBlock next = m_out.newBlock();
+                m_out.branch(condition, usually(next), rarely(otherwise));
+                m_out.appendTo(next);
+            };
+            if (!isSubtype(scrutinee->type, TCell))
+                goesOnIf(isCell(value), defaultBlock);
+            if (!isSubtype(scrutinee->type, TString | ~TCell))
+                goesOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
+            LBasicBlock ifOfSuchALength = m_out.newBlock();
+            Vector<ValueFromBlock, 2> lengthsOtherwise;
+            auto [charactersAsItIs, lengthAsItIs] = narrowCharactersOf(value, ifOfSuchALength, lengthsOtherwise);
+            ValueFromBlock plainCharacters = m_out.anchor(charactersAsItIs);
+            ValueFromBlock plainLength = m_out.anchor(lengthAsItIs);
+            m_out.jump(dispatch);
+
+            // One that is in pieces, or has room for characters that none of these has. How long it is is plain all the same, and as a rule that settles it.
+            m_out.appendTo(ifOfSuchALength);
+            {
+                LValue itsLength = m_out.phi(Int32, lengthsOtherwise);
+                unsigned longest = all.isEmpty() ? 0 : all.last().says->length();
+                goesOnIf(m_out.belowOrEqual(itsLength, m_out.constInt32(longest)), defaultBlock);
+                if (longest < 64) {
+                    uint64_t lengths = 0;
+                    for (auto& one : all)
+                        lengths |= 1ull << one.says->length();
+                    m_graph.wideIntegerConstants.add(static_cast<int64_t>(lengths));
+                    m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(lengths), itsLength), m_out.constInt64(1)), unsure(theLongWay), unsure(defaultBlock));
+                } else
+                    m_out.jump(theLongWay);
+            }
+
+            // What is written in the program is an atom: so if it says the same as any of them, there is an atom that says so.
+            m_out.appendTo(theLongWay);
+            LValue atom = vmCall(node, pointerType(), Entry::operationAOTNarrowAtomThatSaysTheSame, m_globalObject, value);
+            goesOnIf(m_out.notNull(atom), defaultBlock);
+            ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
+            ValueFromBlock lengthOfAtom = m_out.anchor(m_out.load32(atom, m_heaps.StringImpl_length));
+            m_out.jump(dispatch);
+
+            m_out.appendTo(dispatch);
+            LValue characters = m_out.phi(pointerType(), plainCharacters, charactersOfAtom);
+            LValue length = m_out.phi(Int32, plainLength, lengthOfAtom);
+            Vector<std::tuple<LBasicBlock, unsigned, unsigned>, 8> groups;
+            for (unsigned first = 0; first < all.size();) {
+                unsigned end = first;
+                while (end < all.size() && all[end].says->length() == all[first].says->length())
+                    ++end;
+                LBasicBlock ofThatLength = m_out.newBlock();
+                cases.append(FTL::SwitchCase(m_out.constInt32(all[first].says->length()), ofThatLength, FTL::Weight()));
+                groups.append({ ofThatLength, first, end });
+                first = end;
+            }
+            m_out.switchInstruction(length, cases, defaultBlock, FTL::Weight());
+            for (auto [ofThatLength, first, end] : groups) {
+                m_out.appendTo(ofThatLength);
+                for (unsigned i = first; i < end; ++i) {
+                    LBasicBlock next = i + 1 < end ? m_out.newBlock() : defaultBlock;
+                    m_out.branch(m_out.isZero64(differenceFromWhatIsWritten(characters, all[i].says->span8())), unsure(blockFor(node, all[i].offset)), unsure(next));
+                    if (i + 1 < end)
+                        m_out.appendTo(next);
+                }
+            }
+            return;
+        }
+        LValue offset = vmCall(node, Int32, Entry::operationAOTSwitchString, m_globalObject, lowJSValue(node->use(bytecode.m_scrutinee)), m_out.constInt32(bytecode.m_tableIndex), m_out.constInt32(whoseBytecode(node)));
         for (auto& entry : table.m_offsetTable)
             addCase(entry.value.m_branchOffset, entry.value.m_branchOffset);
         m_out.switchInstruction(offset, cases, blockFor(node, table.m_defaultOffset), FTL::Weight());
@@ -427,6 +513,14 @@ bool Lowering::tryLowerMisc(Node* node)
         noteShapeSite(Instance::AssertionMade);
         countShape(Instance::AssertionMade);
         LValue jsValue = lowJSValue(value);
+        if (!node->isTakenAtItsWord) {
+            LValue view = viewFoundFor(value, node->firstLayout);
+            m_views.set(node, view ? view : viewAs(node, value, jsValue, node->firstLayout));
+            m_sameAs = value;
+            setResult(node, lowRaw(value), value->rep());
+            m_sameAs = nullptr;
+            return true;
+        }
         assertBornAs(node, value, jsValue, node->firstLayout);
         setJSValue(node, jsValue);
         return true;

@@ -630,6 +630,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 return target;
         }
         // (Whoever compiled the program has seen to it that there is code for what is called like that.)
+        dataLogLn("AOT: there is no code for @", key.module, ":", key.start, ":", key.kind, ", which something calls without asking");
         RELEASE_ASSERT_NOT_REACHED();
         return std::nullopt;
     };

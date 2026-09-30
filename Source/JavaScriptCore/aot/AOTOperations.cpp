@@ -655,6 +655,41 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAssertBornAs, void, (JSGlobalObject* global
     OPERATION_RETURN(scope);
 }
 
+// What stands for whatever is of a type of a family and is not one of the family. Nobody writes to it.
+alignas(16) static const EncodedJSValue s_structWithNothingInIt[2 + 256] = { };
+
+// Where typed code is to look for what the value has: in the value, if it is of the family by now.
+JSC_DEFINE_JIT_OPERATION(operationAOTViewAs, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t family))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.isObject() && (asObject(value)->structure()->bornAs() == family || Instance::adopt(vm, asObject(value), safeCast<uint16_t>(family)))) {
+        Instance::noteView("made one of the family"_s);
+        OPERATION_RETURN(scope, encodedValue);
+    }
+    Instance::noteView(value.isObject() ? SlotsOfBornObjects::s_whyNotAdopted : value.isUndefinedOrNull() ? "it is undefined or null"_s : "it is no object"_s);
+    if (SlotsOfBornObjects::audits() && !value.isUndefinedOrNull()) [[unlikely]]
+        SlotsOfBornObjects::audit(value.isObject() ? SlotsOfBornObjects::s_whyNotAdopted : "it is no object"_s, safeCast<uint16_t>(family), value);
+    OPERATION_RETURN(scope, static_cast<EncodedJSValue>(std::bit_cast<uintptr_t>(&s_structWithNothingInIt[0])));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint64_t which))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    uint16_t family = static_cast<uint16_t>(which >> 32);
+    unsigned slot = which >> 48 & 0xff;
+    bool undefinedWillDo = which >> 56 & 1;
+    JSValue value = JSValue::decode(encodedBase).get(globalObject, Identifier::fromUid(vm, StaticHeap::identifiersOfProgram()[static_cast<uint32_t>(which)]));
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (value.isUndefined() && undefinedWillDo)
+        OPERATION_RETURN(scope, JSValue::encode(value));
+    if (SlotsOfBornObjects::says(family, slot, value) == SlotsOfBornObjects::Says::Refuses) {
+        throwTypeError(globalObject, scope, "Type check failed: a property is not what the type of the object says it is"_s);
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
+    OPERATION_RETURN(scope, JSValue::encode(SlotsOfBornObjects::asHeld(family, slot, value)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTSettleStruct, void, (JSGlobalObject* globalObject, JSObject* object))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
@@ -720,7 +755,39 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
     dumpType(WTF::dataFile(), actual);
     if (auto* function = (actual & TFunctionTag) ? dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()) : nullptr; function && !function->isHostOrBuiltinFunction())
         dataLog(" (index ", function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall), ", entry ", RawHex(function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)), ")");
+    dataLog(" (bits ", RawHex(static_cast<uint64_t>(encodedValue)));
+    if (static_cast<uint64_t>(encodedValue) == std::bit_cast<uintptr_t>(&s_structWithNothingInIt[0]))
+        dataLog(": the struct with nothing in it");
+    else if (JSValue value = JSValue::decode(encodedValue); value && value.isCell())
+        dataLog(", a cell of type ", static_cast<unsigned>(value.asCell()->type()), value.isObject() ? " " : "", value.isObject() ? asObject(value)->classInfo()->className : ""_s);
+    dataLog(")");
     dataLogLn();
+    if (JSValue value = JSValue::decode(encodedValue); value && value.isCell() && !value.asCell()->type() && static_cast<uint64_t>(encodedValue) != std::bit_cast<uintptr_t>(&s_structWithNothingInIt[0])) {
+        // What is left of a cell, or what is not one yet.
+        JSCell* cell = value.asCell();
+        auto* words = std::bit_cast<const uint64_t*>(cell);
+        dataLog("    words:");
+        for (unsigned i = 0; i < 12; ++i)
+            dataLog(" ", RawHex(words[i]));
+        dataLogLn();
+        dataLog("    before it:");
+        for (int i = -8; i < 0; ++i)
+            dataLog(" ", RawHex(words[i]));
+        dataLogLn();
+        if (StructureID id = cell->structureID()) {
+            Structure* structure = id.decode();
+            auto* ofStructure = std::bit_cast<const uint64_t*>(structure);
+            dataLog("    its structure ", RawPointer(structure), ":");
+            for (unsigned i = 0; i < 6; ++i)
+                dataLog(" ", RawHex(ofStructure[i]));
+            dataLogLn("; blob ", RawHex(structure->typeInfoBlob()), ", type ", static_cast<unsigned>(structure->typeInfo().type()), ", born as ", structure->bornAs(), ", inline capacity ", structure->inlineCapacity(), StaticHeap::contains(structure) ? " (static)" : "",
+                !StaticHeap::contains(structure) ? (structure->markedBlock().handle().isLive(structure) ? ", live" : ", NOT LIVE") : "");
+        }
+        if (!cell->isPreciseAllocation() && !StaticHeap::contains(cell)) {
+            MarkedBlock& block = cell->markedBlock();
+            dataLogLn("    in a block of cells of ", block.handle().cellSize(), " bytes; marked: ", block.isMarked(cell), ", newly allocated: ", block.isNewlyAllocated(cell), ", live: ", block.handle().isLive(cell), ", free-listed: ", block.handle().isFreeListed());
+        }
+    }
     // Where that is, the way anything that goes wrong in a program says where it went wrong.
     JSObject* error = createError(globalObject, "the stack:"_s);
     JSValue stack = error->get(globalObject, vm.propertyNames->stack);
@@ -760,8 +827,17 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer)
     return exception;
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTNarrowAtomThatSaysTheSame, StringImpl*, (JSGlobalObject* globalObject, JSString* string))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    auto atom = string->toExistingAtomString(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr); // Out of memory resolving a rope.
+    StringImpl* impl = atom.data;
+    OPERATION_RETURN(scope, impl && impl->is8Bit() ? impl : nullptr);
+}
+
 // The jump offset, relative to the switch; 0 for the default.
-JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t tableIndex))
+JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t tableIndex, uint32_t whose))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue value = JSValue::decode(encodedValue);
@@ -769,7 +845,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject* glo
         OPERATION_RETURN(scope, 0);
     auto string = asString(value)->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0); // Out of memory resolving a rope.
-    const UnlinkedStringJumpTable& table = functionOfBytecodeOfCaller(globalObject, callFrame).stringSwitchJumpTable(tableIndex);
+    const UnlinkedStringJumpTable& table = functionOfBytecodeOfCaller(globalObject, callFrame, whose).stringSwitchJumpTable(tableIndex);
     OPERATION_RETURN(scope, table.offsetForValue(string.data.impl()));
 }
 

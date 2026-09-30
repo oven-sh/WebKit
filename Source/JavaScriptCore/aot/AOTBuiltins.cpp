@@ -116,6 +116,8 @@ struct Tables {
     unsigned booleanPrototype { 0 };
     unsigned symbolPrototype { 0 };
     unsigned bigIntPrototype { 0 };
+    unsigned prototypesOfReceivers[16] { };
+    Vector<Builtin> builtins; // By number.
 };
 
 const Tables* tables()
@@ -154,6 +156,22 @@ const Tables* tables()
         result->booleanPrototype = find("Boolean.prototype"_s);
         result->symbolPrototype = find("Symbol.prototype"_s);
         result->bigIntPrototype = find("BigInt.prototype"_s);
+        auto prototypeOf = [&](Receiver receiver) -> unsigned& { return result->prototypesOfReceivers[static_cast<unsigned>(receiver)]; };
+        prototypeOf(Receiver::String) = result->stringPrototype;
+        prototypeOf(Receiver::Number) = result->numberPrototype;
+        prototypeOf(Receiver::Array) = find("Array.prototype"_s);
+        prototypeOf(Receiver::Map) = find("Map.prototype"_s);
+        prototypeOf(Receiver::Set) = find("Set.prototype"_s);
+        prototypeOf(Receiver::WeakMap) = find("WeakMap.prototype"_s);
+        prototypeOf(Receiver::WeakSet) = find("WeakSet.prototype"_s);
+        prototypeOf(Receiver::RegExp) = find("RegExp.prototype"_s);
+        prototypeOf(Receiver::Date) = find("Date.prototype"_s);
+        result->builtins.fill(Builtin::None, intrinsics->count());
+#define AOT_FIND_BUILTIN(name, path) \
+        if (unsigned number = find(path ## _s); number && result->builtins[number] == Builtin::None) \
+            result->builtins[number] = Builtin::name;
+        FOR_EACH_AOT_BUILTIN(AOT_FIND_BUILTIN)
+#undef AOT_FIND_BUILTIN
     });
     return &result.get();
 }
@@ -201,48 +219,110 @@ unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name)
     return intrinsics->at(number).canonical;
 }
 
-namespace {
-using Takes = DirectMethod::Takes;
-using Returns = DirectMethod::Returns;
-#define AOT_ENTRY(name) static_cast<uint16_t>(Entry::name)
-const DirectMethod directMethods[] = {
-    { "startsWith"_s, Takes::String, Returns::Boolean, AOT_ENTRY(operationStringStartsWith) },
-    { "startsWith"_s, Takes::StringAndInt32, Returns::Boolean, AOT_ENTRY(operationStringStartsWithWithIndex) },
-    { "endsWith"_s, Takes::String, Returns::Boolean, AOT_ENTRY(operationStringEndsWith) },
-    { "endsWith"_s, Takes::StringAndInt32, Returns::Boolean, AOT_ENTRY(operationStringEndsWithWithEndPosition) },
-    { "indexOf"_s, Takes::String, Returns::Int32, AOT_ENTRY(operationStringIndexOf) },
-    { "indexOf"_s, Takes::StringAndInt32, Returns::Int32, AOT_ENTRY(operationStringIndexOfWithIndex) },
-    { "includes"_s, Takes::String, Returns::WhetherIndex, AOT_ENTRY(operationStringIndexOf) },
-    { "includes"_s, Takes::StringAndInt32, Returns::WhetherIndex, AOT_ENTRY(operationStringIndexOfWithIndex) },
-    { "lastIndexOf"_s, Takes::String, Returns::Int32, AOT_ENTRY(operationStringLastIndexOf) },
-    { "slice"_s, Takes::Int32, Returns::String, AOT_ENTRY(operationStringSlice) },
-    { "slice"_s, Takes::Int32AndInt32, Returns::String, AOT_ENTRY(operationStringSliceWithEnd) },
-    { "substring"_s, Takes::Int32, Returns::String, AOT_ENTRY(operationStringSubstring) },
-    { "substring"_s, Takes::Int32AndInt32, Returns::String, AOT_ENTRY(operationStringSubstringWithEnd) },
-    { "trim"_s, Takes::Nothing, Returns::String, AOT_ENTRY(operationStringTrim) },
-    { "trimStart"_s, Takes::Nothing, Returns::String, AOT_ENTRY(operationStringTrimStart) },
-    { "trimEnd"_s, Takes::Nothing, Returns::String, AOT_ENTRY(operationStringTrimEnd) },
-    // (They are told how far somebody has looked already.)
-    { "toLowerCase"_s, Takes::NothingAndZero, Returns::String, AOT_ENTRY(operationToLowerCase) },
-    { "toUpperCase"_s, Takes::NothingAndZero, Returns::String, AOT_ENTRY(operationToUpperCase) },
-    { "localeCompare"_s, Takes::String, Returns::Int32, AOT_ENTRY(operationStringLocaleCompare) },
-};
-#undef AOT_ENTRY
+Builtin builtinThatIs(unsigned number)
+{
+    const Tables* all = tables();
+    if (!all || number >= all->builtins.size())
+        return Builtin::None;
+    return all->builtins[number];
 }
 
-unsigned directMethodOfStrings(const StringImpl& name, unsigned argumentCountIncludingThis)
+Type typeOf(Receiver receiver)
 {
-    for (unsigned i = 0; i < std::size(directMethods); ++i) {
-        if (directMethods[i].argumentCountIncludingThis() == argumentCountIncludingThis && WTF::equal(&name, directMethods[i].name.span8()))
-            return i + 1;
+    switch (receiver) {
+    case Receiver::None:
+        return TNone;
+    case Receiver::String:
+        return TString;
+    case Receiver::Array:
+        return TArray;
+    case Receiver::Map:
+        return TMap;
+    case Receiver::Set:
+        return TSet;
+    case Receiver::WeakMap:
+        return TWeakMap;
+    case Receiver::WeakSet:
+        return TWeakSet;
+    case Receiver::RegExp:
+        return TRegExp;
+    case Receiver::Date:
+        return TDate;
+    case Receiver::Number:
+        return TNumber;
     }
-    return 0;
+    return TNone;
 }
 
-const DirectMethod& directMethod(unsigned number)
+JSType cellTypeOf(Receiver receiver)
 {
-    RELEASE_ASSERT(number && number <= std::size(directMethods));
-    return directMethods[number - 1];
+    switch (receiver) {
+    case Receiver::String:
+        return StringType;
+    case Receiver::Array:
+        return ArrayType;
+    case Receiver::Map:
+        return JSMapType;
+    case Receiver::Set:
+        return JSSetType;
+    case Receiver::WeakMap:
+        return JSWeakMapType;
+    case Receiver::WeakSet:
+        return JSWeakSetType;
+    case Receiver::RegExp:
+        return RegExpObjectType;
+    case Receiver::Date:
+        return JSDateType;
+    case Receiver::None:
+    case Receiver::Number:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return CellType;
+}
+
+unsigned intrinsicFoundOn(Receiver receiver, const StringImpl& name)
+{
+    const Tables* all = tables();
+    if (!all)
+        return 0;
+    unsigned prototype = all->prototypesOfReceivers[static_cast<unsigned>(receiver)];
+    if (!prototype)
+        return 0;
+    const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
+    unsigned number = intrinsics->find(prototype, name);
+    if (!number || !intrinsics->at(number).isCell)
+        return 0;
+    return intrinsics->at(number).canonical;
+}
+
+static constexpr Receiver receiversThereAre[] = { Receiver::String, Receiver::Array, Receiver::Map, Receiver::Set, Receiver::WeakMap, Receiver::WeakSet, Receiver::RegExp, Receiver::Date, Receiver::Number };
+
+Receiver receiverOfType(Type type)
+{
+    if (!type)
+        return Receiver::None;
+    for (Receiver receiver : receiversThereAre) {
+        if (isSubtype(type, typeOf(receiver)))
+            return receiver;
+    }
+    return Receiver::None;
+}
+
+Receiver receiverLikelyToHave(Type type, const StringImpl& name)
+{
+    // The only one that it may be, of those that have a method of that name that there is something to be done with.
+    Receiver found = Receiver::None;
+    for (Receiver receiver : receiversThereAre) {
+        if (receiver == Receiver::Number || !mayBe(type, typeOf(receiver)))
+            continue;
+        if (builtinThatIs(intrinsicFoundOn(receiver, name)) == Builtin::None)
+            continue;
+        if (found != Receiver::None)
+            return Receiver::None;
+        found = receiver;
+    }
+    return found;
 }
 
 } } // namespace JSC::AOT

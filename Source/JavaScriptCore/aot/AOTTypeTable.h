@@ -89,6 +89,7 @@ public:
     // What is said at the `{` of the body of a class. Its instances are born into that family (zero: into none). A method of it that is CLOSED is one that nothing gets hold of but
     // reads that say so (classOfMethodGotAt()): so whoever calls it is known, all of them.
     bool isArray(uint32_t type) const { auto words = record(type); return words.size() == 2 && words[0] == Array; }
+    bool isShape(uint32_t type) const { auto words = record(type); return words.size() >= 3 && words[0] == Shape; }
     bool isClass(uint32_t type) const { auto words = record(type); return words.size() >= 3 && words[0] == IsClass; }
     uint16_t familyOfInstancesOf(uint32_t classType) const
     {
@@ -120,6 +121,14 @@ public:
     bool isUsable(uint32_t family) const; // Its objects can be made.
     unsigned inlineSlotsOf(uint32_t family) const { return m_words[m_families[family]] >> 16 & 0xff; }
     bool isOpen(uint32_t family) const { return m_words[m_families[family]] >> 30 & 1; } // Code that knows nothing of the types may make objects of it.
+    // Of a type that is a shape: whatever is of it was born into its family. So it is if the family is closed; and in one that is open, if nothing that came from elsewhere is seen to get to be of this type.
+    bool isTakenAtItsWord(uint32_t type) const
+    {
+        auto words = record(type);
+        if (!m_hasStructs || words.size() < 3 || words[0] != Shape || !isUsable(words[1] >> 16))
+            return false;
+        return !isOpen(words[1] >> 16) || (words[1] & 2);
+    }
     // An object that is made with properties of these names, by whoever does not know what for, may yet be made one of a family: how many slots in the object that could take.
     unsigned inlineSlotsWantedBy(std::span<UniquedStringImpl* const> names) const;
     // Of what an op_new_object is said to make: a layout, or a shape. Zero: none, or no structs.

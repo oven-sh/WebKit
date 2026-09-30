@@ -49,7 +49,10 @@ aot/AOTCompiler.cpp
 aot/AOTGraph.cpp
 aot/AOTImage.cpp
 aot/AOTInlineCaches.cpp
+aot/AOTEmitter.cpp @no-unify
 aot/AOTEscapeAnalysis.cpp @no-unify
+aot/AOTLowerBuiltins.cpp @no-unify
+aot/AOTOperationsBuiltins.cpp @no-unify
 aot/AOTTypeTable.cpp @no-unify
 aot/AOTInlining.cpp
 aot/AOTLoopOptimization.cpp
