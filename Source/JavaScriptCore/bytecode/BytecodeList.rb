@@ -1384,6 +1384,13 @@ op :py_to_bool,
         operand: VirtualRegister,
     }
 
+# Whether an iterator is a generator that is better gone on with by calling pythonGeneratorNext() than by py_iter_next, which does as well. It is if this has been compiled and nothing is being told of what is run.
+op :py_is_resumed_by_call,
+    args: {
+        dst: VirtualRegister,
+        operand: VirtualRegister,
+    }
+
 op :py_get_attr,
     args: {
         dst: VirtualRegister,

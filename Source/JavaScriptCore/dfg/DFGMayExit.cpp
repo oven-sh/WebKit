@@ -91,10 +91,13 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case Jump:
     case EntrySwitch:
     case Branch:
+    case Return:
     case Unreachable:
     case DoubleRep:
     case ValueRep:
     case BoxTaggedFloat:
+    case PyValueOrNothing:
+    case PyGetTupleItem:
     case PurifyNaN:
     case ExtractOSREntryLocal:
     case ExtractCatchLocal:

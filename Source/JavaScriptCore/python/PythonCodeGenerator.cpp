@@ -613,6 +613,33 @@ private:
 
     // ---- Python's opcodes
 
+    // The next thing that an iterator has, or on to `exhausted`. A generator is gone on with by code that is compiled as this is, so that the one calls the other: pythonGeneratorNext() of builtins/GeneratorPrototype.js. What has
+    // been found to come of it is remembered in one place, whichever way it is come by, since it is the one thing.
+    void emitIteratorNext(RegisterID* value, RegisterID* iterator, Label& exhausted, const Node& node)
+    {
+        unsigned valueProfile = g.nextValueProfileIndex();
+        Ref<Label> isNoGenerator = g.newLabel();
+        Ref<Label> hasIt = g.newLabel();
+        Reg test = g.newTemporary();
+        OpPyIsResumedByCall::emit(&g, test.get(), iterator);
+        g.emitJumpIfFalse(test.get(), isNoGenerator.get());
+        {
+            Reg function = g.newTemporary();
+            g.moveLinkTimeConstant(function.get(), LinkTimeConstant::pythonGeneratorNext);
+            CallArguments call(g, nullptr, 1);
+            g.emitLoad(call.thisRegister(), jsUndefined());
+            g.move(call.argumentRegister(0), iterator);
+            g.emitExpressionInfo(JSTextPosition(node.start), JSTextPosition(node.start), JSTextPosition(node.end));
+            OpCall::emit(&g, value, function.get(), call.argumentCountIncludingThis(), call.stackOffset(), valueProfile);
+        }
+        g.emitJump(hasIt.get());
+        emitLabel(isNoGenerator.get());
+        OpPyIterNext::emit(&g, value, iterator, valueProfile);
+        emitLabel(hasIt.get());
+        g.emitIsEmpty(test.get(), value);
+        g.emitJumpIfTrue(test.get(), exhausted);
+    }
+
     RegisterID* emitBinaryOperation(RegisterID* dst, BinaryOperator op, bool inPlace, RegisterID* left, RegisterID* right)
     {
         OpPyBinaryOp::emit(&g, dst, left, right, static_cast<unsigned>(op) | (inPlace ? inPlaceOperatorFlag : 0), g.nextValueProfileIndex());
@@ -2519,6 +2546,9 @@ private:
             m_globals = g.addVar();
             m_builtins = g.addVar();
         }
+        // A frame object looks there as it does at the variables.
+        if (m_namespaceIsLoaded)
+            m_namespace = g.addVar();
         if (hasLocalVariables == HasLocalVariables::No)
             return;
         HashSet<UniquedStringImpl*> parameters;
@@ -2819,12 +2849,8 @@ private:
             mark(*generator.iterable);
             if (generator.isAsync)
                 emitAsyncNext(value.get(), iterator.get(), end.get(), *generator.iterable);
-            else {
-                OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
-                Reg isEmpty = g.newTemporary();
-                g.emitIsEmpty(isEmpty.get(), value.get());
-                g.emitJumpIfTrue(isEmpty.get(), end.get());
-            }
+            else
+                emitIteratorNext(value.get(), iterator.get(), end.get(), *generator.iterable);
             emitAssign(generator.target, value.get());
         }
         Ref<Label> again = g.newLabel();
@@ -3984,12 +4010,8 @@ private:
                 mark(*node.iterable);
                 if (node.isAsync)
                     emitAsyncNext(value.get(), iterator.get(), exhausted.get(), *node.iterable);
-                else {
-                    OpPyIterNext::emit(&g, value.get(), iterator.get(), g.nextValueProfileIndex());
-                    Reg isEmpty = g.newTemporary();
-                    g.emitIsEmpty(isEmpty.get(), value.get());
-                    g.emitJumpIfTrue(isEmpty.get(), exhausted.get());
-                }
+                else
+                    emitIteratorNext(value.get(), iterator.get(), exhausted.get(), *node.iterable);
                 if (local)
                     g.move(local, value.get());
                 else
@@ -5001,11 +5023,12 @@ private:
     {
         // With an `await` in it that is in no function, which compile() can be told to allow, running it makes a coroutine.
         if (m_info.isCoroutine) {
+            m_namespaceIsLoaded = m_info.usesNamespace;
             generateFunction([&] {
-                if (m_info.usesNamespace)
-                    m_namespace = emitLoadClosure(nullptr, m_info.parameterNames[0], m_block.location);
-                if (m_info.usesNamespace)
+                if (m_info.usesNamespace) {
+                    emitLoadClosure(m_namespace.get(), m_info.parameterNames[0], m_block.location);
                     m_details->namespaceRegister = m_namespace->virtualRegister();
+                }
                 emitModuleBody(module);
             });
             return;
@@ -5112,6 +5135,7 @@ private:
     Reg m_globals;
     Reg m_builtins;
     Reg m_namespace;
+    bool m_namespaceIsLoaded { false }; // It is not what the code was called with, but is got from where that was put: the code of a module that is a coroutine.
 };
 
 // ---- ScopeNode

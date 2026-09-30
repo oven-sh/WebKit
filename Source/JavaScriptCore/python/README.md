@@ -292,7 +292,7 @@ time. CPython has two ways round it, and so has this.
 - `object.__init__()` does nothing if the class has a `__new__()` of its own, whatever it is given, so it is not called.
 
 **The DFG goes by the first of those** (`handleConstantFunction()`). `P(x, y)` is a `NewObject`, a `Call` of `P.__init__` as one function calls another, and `PyCheckInitializerResult`, for as long as `Construction::isAsFound` holds. A `PyInstance` is a `JSFinalObject` in all
-but name, so what makes the one in line makes the other. If `__init__()` returns something, that cannot be left to the baseline JIT to say, which would call it again, so it is said there. It is so whichever language does the calling, so the FTL has all three.
+but name, so what makes the one in line makes the other, and what puts one back together that was never made, because nothing was seen to need it, does too (`PyInstance::createWithButterfly()`). If `__init__()` returns something, that cannot be left to the baseline JIT to say, which would call it again, so it is said there. It is so whichever language does the calling, so the FTL has all three.
 
 **`tp_new` stays `slot_tp_new()` once it has been that.** A class that is given a `__new__` and has it taken away again finds that of `object` when it looks. But `update_one_slot()` leaves `tp_new` as it is when what it finds is what a built-in class has, and
 `object.__new__()` goes by `tp_new` to tell whose the arguments are. So `C(5)` is then a `TypeError`, for that class and for whatever is derived from it, then or later: `PyType::NewIsLookedFor`.
@@ -494,6 +494,9 @@ makes for itself does. It is by the table that JavaScriptCore knows whether ther
 - What has been compiled and not yet installed kept from the collector whatever the function had in its variables when compiling was begun, for as long as it waited, which could be for good. It lets go of them when compiling is over, and refers weakly to what it
   will refer to weakly once it is installed: if any of that goes, so does it (`Plan::isKnownToBeLiveAfterGC()`).
 
+**The graph is looked over after every phase** (`--validateGraphAtEachPhase`) in the configuration in which the DFG compiles nearly everything. What that found: the register that the code of a module has its namespace in, if the module is a coroutine, was no variable, and
+so had nothing in it on the way back in; what is taken out of a tuple of results did not say that anything came of it until later; and `Return` and `PyGetTupleItem` were taken to be able to leave for the baseline JIT where nothing may.
+
 `programs/what-was-expected-and-then-was-not.py` runs each operator with one kind of thing until it has been compiled for that, and then gives it every kind. `programs/looking-at-what-is-run-often.py` looks at, and changes, what has been compiled: its variables,
 what an exception remembers of it, a frame that is kept, being told of what is run beginning in the middle of it. The runners have a configuration in which the DFG compiles nearly everything, with next to nothing known of it.
 
@@ -530,6 +533,22 @@ one line of source for each frame, read from the file, with nothing under it. `s
 
 **`BaseExceptionGroup`, and what `except*` is compiled into calls of** (`PythonExceptionGroups.cpp`), are `Objects/exceptions.c` and `_PyEval_ExceptionGroupMatch()`, function for function.
 `ExceptionGroup` has two bases, and is made when a realm is as a class statement would make it, as in CPython.
+
+### Going through a generator
+
+`for x in generator` goes on with the generator each time round. From C++ that is `resumeGenerator()`, which enters the VM to do it. So once a loop has been compiled it is done as JavaScript does it for its own, by a function that is written in JavaScript
+and compiled like anything else, which the DFG inlines: `pythonGeneratorNext()` in `builtins/GeneratorPrototype.js`. One piece of compiled code calls another. A generator of JavaScript's is gone on with in the same way, so it does for both.
+
+- **`py_is_resumed_by_call` says which way it is to be.** Both ways come to the same thing, so it is a matter of which is better. The interpreter says not: it would be interpreting all that. The baseline JIT says so of a generator unless something is being told of
+  what is run, since what is told of a loop is told by `py_iter_next`. To the DFG it is whether it is a generator.
+- **What is being handled is where that function can get at it**: `PyRealm::handledExceptions()`, an `InternalFieldTuple`, and what a generator was handling when it yielded is a property under a name that it can name, `@pythonHandled`.
+- **It comes back with nothing at all when there is no more**, as `py_iter_next` does (`@emptyValue()`). Anything else would be taken for one of the things that the generator yields, and a loop through ints would no longer be known to be one. What a call
+  comes back with is taken by the DFG to be something, so if it has not inlined this one it is told otherwise: `PyValueOrNothing`, which goes by `PythonGeneratorNextIntrinsic`.
+- **What has been found to come of it is remembered in one place**, whichever way it is come by. The two instructions have the one `ValueProfile`, so there is not one in every loop that never sees anything.
+- What is out of the ordinary is for C++: a generator that is running or has come to an end (`pythonGeneratorNextSlow()`), and what is to come of an exception that gets out (`pythonGeneratorRaised()`).
+- `next()`, `send()`, `yield from` and `await` are from C++ still.
+
+`programs/going-through-generators-often.py`, `interop/generators-of-either-language-often.py`
 
 ### Throwing into a generator
 

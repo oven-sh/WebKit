@@ -500,6 +500,7 @@ namespace JSC {
         void emit_op_py_compare_op(const JSInstruction*);
         void emitSlow_op_py_compare_op(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emit_op_py_to_bool(const JSInstruction*);
+        void emit_op_py_is_resumed_by_call(const JSInstruction*);
         void emitSlow_op_py_to_bool(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);
         void emit_op_py_get_attr(const JSInstruction*);
         void emitSlow_op_py_get_attr(const JSInstruction*, Vector<SlowCaseEntry>::iterator&);

@@ -72,6 +72,7 @@ namespace JSC {
     macro(ArrayJoinIntrinsic) \
     macro(ArraySortIntrinsic) \
     macro(ArrayValuesIntrinsic) \
+    macro(PythonGeneratorNextIntrinsic) \
     macro(ArrayKeysIntrinsic) \
     macro(ArrayEntriesIntrinsic) \
     macro(ArrayConstructorOfIntrinsic) \

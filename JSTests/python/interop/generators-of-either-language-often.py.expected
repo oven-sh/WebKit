@@ -1,0 +1,17 @@
+---- a loop in Python, a generator of JavaScript's
+what it yields => [0, 1, 2, 3, 4]
+added up => 1225
+gone through again => ([0, 1, 2], [])
+what gets out of it => ('ValueError', 'from JavaScript')
+caught => ([0, 1, 2], 'ValueError', 'from JavaScript', False)
+left on the way => (1, [], 2, [])
+that calls back, while something is being handled => ([('KeyError', 'KeyError'), ('KeyError', 'KeyError')], 'KeyError')
+---- one language and then the other
+Python, JavaScript, Python => [0, 1, 2, 3]
+and JavaScript again => 20
+by way of yield* => [0, 1, 2]
+what gets out, all the way => ('ValueError', 'from Python')
+a StopIteration => ('RuntimeError', 'generator raised StopIteration')
+---- a loop in JavaScript, a generator of Python's
+added up => 1225
+what gets out of it => ('ValueError', 'from Python')

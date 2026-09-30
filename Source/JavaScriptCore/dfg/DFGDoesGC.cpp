@@ -109,6 +109,7 @@ bool doesGC(Graph& graph, Node* node)
     case CheckNotWholeFloat:
     case CheckTaggedFloat:
     case BoxTaggedFloat:
+    case PyValueOrNothing:
     case IsTaggedInt:
     case PyGetTupleItem:
     case PyFloorDiv:

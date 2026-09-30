@@ -1577,6 +1577,11 @@ llintOpWithReturn(op_is_cell_with_type, OpIsCellWithType, macro (size, get, disp
 end)
 
 
+llintOpWithReturn(op_py_is_resumed_by_call, OpPyIsResumedByCall, macro (size, get, dispatch, return)
+    return(ValueFalse)
+end)
+
+
 llintOpWithReturn(op_has_structure_with_flags, OpHasStructureWithFlags, macro (size, get, dispatch, return)
     getu(size, OpHasStructureWithFlags, m_flags, t0)
     get(m_operand, t1)

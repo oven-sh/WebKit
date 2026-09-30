@@ -57,6 +57,7 @@ enum class LinkTimeConstant : int32_t;
     macro(getWrapForValidIteratorInternalField) \
     macro(getDisposableStackInternalField) \
     macro(idWithProfile) \
+    macro(emptyValue) \
     macro(isAsyncDisposableStack) \
     macro(isObject) \
     macro(isCallable) \

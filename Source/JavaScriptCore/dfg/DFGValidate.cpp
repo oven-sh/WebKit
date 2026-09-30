@@ -35,6 +35,7 @@
 #include "DFGDominators.h"
 #include "DFGMayExit.h"
 #include "DFGOSRAvailabilityAnalysisPhase.h"
+#include "PyInstance.h"
 #include <wtf/Assertions.h>
 
 namespace JSC { namespace DFG {
@@ -353,10 +354,11 @@ public:
                     break;
                 case MaterializeNewObject:
                     for (RegisteredStructure structure : node->structureSet()) {
-                        // This only supports structures that are JSFinalObject or JSArray.
+                        // This only supports structures that are JSFinalObject or JSArray, or PyInstance, which is a JSFinalObject in all but name.
                         VALIDATE(
                             (node),
                             structure->classInfoForCells() == JSFinalObject::info()
+                            || structure->classInfoForCells() == PyInstance::info()
                             || structure->classInfoForCells() == JSArray::info());
 
                         // We only support certain indexing shapes.

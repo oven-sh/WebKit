@@ -230,6 +230,12 @@ private:
             break;
         }
             
+        case PyValueOrNothing: {
+            if (SpeculatedType prediction = node->child1()->prediction())
+                changed |= mergePrediction(prediction | SpecEmpty);
+            break;
+        }
+
         case SetLocal: {
             VariableAccessData* variableAccessData = node->variableAccessData();
             changed |= variableAccessData->predict(node->child1()->prediction());
@@ -1789,6 +1795,7 @@ private:
 
         case GetLocal:
         case SetLocal:
+        case PyValueOrNothing:
         case UInt32ToNumber:
         case ValueNegate:
         case ValueAdd:

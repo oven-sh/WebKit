@@ -2045,6 +2045,13 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_toThis(BytecodeGenerator& gene
     return generator.move(dst, generator.emitToThis(src.get()));
 }
 
+// What a variable has in it before it is given anything. It is how it is said in Python's opcodes that there is nothing, where any value at all could be what there is.
+RegisterID* BytecodeIntrinsicNode::emit_intrinsic_emptyValue(BytecodeGenerator& generator, RegisterID* dst)
+{
+    ASSERT(!m_args->m_listNode);
+    return generator.moveEmptyValue(generator.finalDestination(dst));
+}
+
 RegisterID* BytecodeIntrinsicNode::emit_intrinsic_idWithProfile(BytecodeGenerator& generator, RegisterID* dst)
 {
     ArgumentListNode* node = m_args->m_listNode;

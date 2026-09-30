@@ -167,6 +167,9 @@ class JSGlobalObject;
     v(pythonEnterContext, nullptr) \
     v(pythonExitContext, nullptr) \
     v(pythonAsyncExitContext, nullptr) \
+    v(pythonHandledExceptions, nullptr) \
+    v(pythonGeneratorNextSlow, nullptr) \
+    v(pythonGeneratorRaised, nullptr) \
 
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
 enum class LinkTimeConstant : int32_t {

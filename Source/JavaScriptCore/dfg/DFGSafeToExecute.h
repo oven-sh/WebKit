@@ -245,6 +245,7 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case CheckNotWholeFloat:
     case CheckTaggedFloat:
     case BoxTaggedFloat:
+    case PyValueOrNothing:
     case IsTaggedInt:
     case PyGetTupleItem:
     case PyFloorDiv:

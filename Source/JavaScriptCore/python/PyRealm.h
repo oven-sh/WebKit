@@ -25,6 +25,8 @@
 
 #pragma once
 
+#include "Exception.h"
+#include "InternalFieldTuple.h"
 #include "JSObject.h"
 #include "PyStateObject.h"
 #include "PyType.h"
@@ -376,12 +378,14 @@ public:
     // The exception that is being handled: what sys.exception() gives, a bare `raise` raises again, and a new exception has for its context.
     // A generator has its own, which is put away with it when it yields. While it has none, it is that of whatever resumed it.
     // As it was thrown, so that a bare `raise` throws that again, and not a copy that has forgotten where it was first thrown.
-    Exception* handledThrown() const { return m_handledException ? m_handledException.get() : m_outerHandledException.get(); }
+    // They are kept where what resumes a generator can get at them, which is written in JavaScript as what resumes one of JavaScript's is: pythonGeneratorNext() in builtins/GeneratorPrototype.js. Undefined is none.
+    Exception* handledThrown() const { return ownHandledException() ? ownHandledException() : outerHandledException(); }
     JSValue handledException() const { return handledThrown() ? handledThrown()->value() : JSValue(); }
-    Exception* ownHandledException() const { return m_handledException.get(); }
-    void setOwnHandledException(VM& vm, Exception* exception) { m_handledException.setMayBeNull(vm, this, exception); }
-    Exception* outerHandledException() const { return m_outerHandledException.get(); }
-    void setOuterHandledException(VM& vm, Exception* exception) { m_outerHandledException.setMayBeNull(vm, this, exception); }
+    Exception* ownHandledException() const { return handled(InternalFieldTuple::Field::Slot0); }
+    void setOwnHandledException(VM& vm, Exception* exception) { setHandled(vm, InternalFieldTuple::Field::Slot0, exception); }
+    Exception* outerHandledException() const { return handled(InternalFieldTuple::Field::Slot1); }
+    void setOuterHandledException(VM& vm, Exception* exception) { setHandled(vm, InternalFieldTuple::Field::Slot1, exception); }
+    InternalFieldTuple* handledExceptions() const { return m_handledExceptions.get(); }
 
     // What the iterator that a `yield from` was going through returned, on its way from the runtime to the code that wants it.
     // What JavaScript is waiting for and is running now, if it is: Python::JavaScriptStep, which has it on the stack.
@@ -437,8 +441,14 @@ private:
     WriteBarrier<Unknown> m_asyncGeneratorFinalizerHook;
     WriteBarrier<JSObject> m_modules;
     WriteBarrier<JSObject> m_sysModule;
-    WriteBarrier<Exception> m_handledException;
-    WriteBarrier<Exception> m_outerHandledException;
+    Exception* handled(InternalFieldTuple::Field field) const
+    {
+        JSValue value = m_handledExceptions->internalField(field).get();
+        return value.isCell() ? uncheckedDowncast<Exception>(value.asCell()) : nullptr;
+    }
+    void setHandled(VM& vm, InternalFieldTuple::Field field, Exception* exception) { m_handledExceptions->internalField(field).set(vm, m_handledExceptions.get(), exception ? JSValue(exception) : jsUndefined()); }
+
+    WriteBarrier<InternalFieldTuple> m_handledExceptions; // Its own, and that of whatever resumed it.
     WriteBarrier<Unknown> m_returnValue;
     JSObject* m_awaitableBeingRun { nullptr };
     bool m_hasAsyncio { false };

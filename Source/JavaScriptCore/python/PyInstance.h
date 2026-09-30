@@ -131,6 +131,8 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     static PyInstance* create(VM&, Structure*);
+    // As JSFinalObject has it, for what puts back together an object that was never made because nothing was seen to need it.
+    static PyInstance* createWithButterfly(VM&, Structure*, Butterfly*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, unsigned inlineCapacity = defaultInlineCapacity);
 
     // It can be called if its class has __call__.
@@ -141,8 +143,8 @@ public:
     PYTHON_OVERLOADS_OPERATORS
 
 private:
-    PyInstance(VM& vm, Structure* structure, size_t inlineCapacity)
-        : Base(vm, structure, nullptr)
+    PyInstance(VM& vm, Structure* structure, Butterfly* butterfly, size_t inlineCapacity)
+        : Base(vm, structure, butterfly)
     {
         memset(inlineStorageUnsafe(), 0, inlineCapacity * sizeof(EncodedJSValue));
     }

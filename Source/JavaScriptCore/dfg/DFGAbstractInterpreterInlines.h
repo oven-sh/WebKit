@@ -4912,6 +4912,13 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
 
+    case PyValueOrNothing: {
+        AbstractValue value = forNode(node->child1());
+        value.merge(SpecEmpty);
+        setForNode(node, value);
+        break;
+    }
+
     case BoxTaggedFloat: {
         JSValue child = forNode(node->child1()).value();
         if (child && child.isNumber()) {

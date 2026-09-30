@@ -49,6 +49,50 @@ function generatorResume(generator, state, value, resumeMode)
     return { value, done };
 }
 
+// What `for x in generator` does each time round, in Python: resumeGenerator() of python/PythonGenerators.cpp, for when there is nothing to send or to throw. It is here so that one piece of compiled code calls another.
+// A generator of JavaScript's is gone through in the same way. What comes back is what was yielded, or nothing at all if there is no more.
+@intrinsic=PythonGeneratorNextIntrinsic
+@linkTimeConstant
+function pythonGeneratorNext(generator)
+{
+    "use strict";
+
+    var state = @getGeneratorInternalField(generator, @generatorFieldState);
+    if (state < 0)
+        return @pythonGeneratorNextSlow(generator);
+
+    // What it was handling when it yielded, it is handling again, and beyond that whatever is being handled here.
+    var handled = @pythonHandledExceptions;
+    var callersOwn = @getInternalField(handled, 0);
+    var callersOuter = @getInternalField(handled, 1);
+    var generatorsOwn = @getByIdDirectPrivate(generator, "pythonHandled");
+    @putInternalField(handled, 1, callersOwn === @undefined ? callersOuter : callersOwn);
+    @putInternalField(handled, 0, generatorsOwn);
+
+    @putGeneratorInternalField(generator, @generatorFieldState, @GeneratorStateExecuting);
+    try {
+        var value = @getGeneratorInternalField(generator, @generatorFieldNext).@call(@getGeneratorInternalField(generator, @generatorFieldThis), generator, state, @undefined, @GeneratorResumeModeNormal, @getGeneratorInternalField(generator, @generatorFieldFrame));
+    } catch (error) {
+        @putInternalField(handled, 0, callersOwn);
+        @putInternalField(handled, 1, callersOuter);
+        @putGeneratorInternalField(generator, @generatorFieldState, @GeneratorStateCompleted);
+        @pythonGeneratorRaised(generator, error);
+    }
+
+    var nowHandling = @getInternalField(handled, 0);
+    if (nowHandling !== generatorsOwn)
+        @putByIdDirectPrivate(generator, "pythonHandled", nowHandling);
+    @putInternalField(handled, 0, callersOwn);
+    @putInternalField(handled, 1, callersOuter);
+
+    // If it yielded, it said where to go on from.
+    if (@getGeneratorInternalField(generator, @generatorFieldState) === @GeneratorStateExecuting) {
+        @putGeneratorInternalField(generator, @generatorFieldState, @GeneratorStateCompleted);
+        return @emptyValue();
+    }
+    return value;
+}
+
 function next(value)
 {
     "use strict";

@@ -275,6 +275,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case CheckNotWholeFloat:
     case CheckTaggedFloat:
     case BoxTaggedFloat:
+    case PyValueOrNothing:
     case IsObject:
     case CheckInBounds:
     case CheckInBoundsInt52:

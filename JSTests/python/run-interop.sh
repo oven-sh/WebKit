@@ -17,7 +17,7 @@ cd "$(dirname "$0")/interop" || exit 2
 
 eager="--thresholdForJITAfterWarmUp=1 --thresholdForJITSoon=1"
 # And the DFG, of nearly everything and with next to nothing known of it, so that it is left again and again.
-eagerDFG="$eager --thresholdForOptimizeAfterWarmUp=5 --thresholdForOptimizeAfterLongWarmUp=5 --thresholdForOptimizeSoon=5 --useConcurrentJIT=0"
+eagerDFG="$eager --thresholdForOptimizeAfterWarmUp=5 --thresholdForOptimizeAfterLongWarmUp=5 --thresholdForOptimizeSoon=5 --useConcurrentJIT=0 --validateGraphAtEachPhase=1"
 failures=0
 runs=0
 kept=${TMPDIR:-/tmp}/python-interop-that-failed

@@ -55,6 +55,7 @@
 #include "JSSetIterator.h"
 #include "JSStringIterator.h"
 #include "JSWrapForValidIterator.h"
+#include "PyInstance.h"
 #include "RegExpObject.h"
 #include "ResourceExhaustion.h"
 #include "VMTrapsInlines.h"
@@ -393,7 +394,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationMaterializeObjectInOSR, HeapCell*, (J
         }
         RELEASE_ASSERT(structure);
 
-        JSFinalObject* result = JSFinalObject::create(vm, structure);
+        JSObject* result = structure->typeInfo().type() == PyInstanceType ? static_cast<JSObject*>(PyInstance::create(vm, structure)) : JSFinalObject::create(vm, structure);
 
         // The real values will be put subsequently by
         // operationPopulateNewObjectInOSR. We can't fill them in

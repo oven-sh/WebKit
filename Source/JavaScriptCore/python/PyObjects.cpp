@@ -54,8 +54,13 @@ DEFINE_VISIT_CHILDREN(PyInstance);
 
 PyInstance* PyInstance::create(VM& vm, Structure* structure)
 {
+    return createWithButterfly(vm, structure, nullptr);
+}
+
+PyInstance* PyInstance::createWithButterfly(VM& vm, Structure* structure, Butterfly* butterfly)
+{
     size_t inlineCapacity = structure->inlineCapacity();
-    auto* instance = new (NotNull, allocateCell<PyInstance>(vm, allocationSize(inlineCapacity))) PyInstance(vm, structure, inlineCapacity);
+    auto* instance = new (NotNull, allocateCell<PyInstance>(vm, allocationSize(inlineCapacity))) PyInstance(vm, structure, butterfly, inlineCapacity);
     instance->finishCreation(vm);
     return instance;
 }

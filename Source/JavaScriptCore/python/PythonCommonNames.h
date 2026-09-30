@@ -62,7 +62,7 @@ namespace Python {
 
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
-    v(weakReferences) v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(handled) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
+    v(weakReferences) v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
     v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc) v(line) v(fieldNames) v(hiddenFields) v(defaultFactory) v(isDictOfDerivedClass) v(hasHooks) v(finalizer) v(origin) v(groupMessage) v(groupExceptions) v(groupExceptionsRepr) v(taskContext) v(task)
 
 // The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.
@@ -87,6 +87,7 @@ struct CommonNames {
 #define DECLARE(name) const Identifier private_##name;
     FOR_EACH_PYTHON_PRIVATE_NAME(DECLARE)
 #undef DECLARE
+    const Identifier private_handled; // What a generator was handling when it yielded. It is @pythonHandled to what is written in JavaScript.
 #define DECLARE(name, attribute) const Identifier field_##name;
     FOR_EACH_PYTHON_EXCEPTION_FIELD(DECLARE)
 #undef DECLARE

@@ -4055,6 +4055,7 @@ private:
         case PyEnter:
         case PyLeave:
         case PyCheckNoFrameObject:
+        case PyValueOrNothing:
         case PyCheckPendingWork:
         case PyCheckInitializerResult:
         case CompareEqPtr:

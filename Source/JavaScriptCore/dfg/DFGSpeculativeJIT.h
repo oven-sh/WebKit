@@ -1412,6 +1412,7 @@ public:
     void compilePyLeave(Node*);
     void compilePyCheckNoFrameObject(Node*);
     void compilePyCheckPendingWork(Node*);
+    void compilePyValueOrNothing(Node*);
     void compilePyCheckInitializerResult(Node*);
     void compilePyFloorDivOrMod(Node*);
     void compilePyCheckDivisor(Node*);

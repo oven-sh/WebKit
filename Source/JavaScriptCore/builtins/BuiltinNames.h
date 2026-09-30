@@ -237,6 +237,10 @@ namespace JSC {
     macro(pythonEnterContext) \
     macro(pythonExitContext) \
     macro(pythonAsyncExitContext) \
+    macro(pythonHandled) \
+    macro(pythonHandledExceptions) \
+    macro(pythonGeneratorNextSlow) \
+    macro(pythonGeneratorRaised) \
 
 
 namespace Symbols {

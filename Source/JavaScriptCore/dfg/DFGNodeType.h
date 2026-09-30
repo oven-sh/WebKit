@@ -206,6 +206,8 @@ namespace JSC { namespace DFG {
     /* Before returning: if there is a frame object, it is for the baseline JIT to tell it. */\
     macro(PyCheckNoFrameObject, NodeMustGenerate) \
     /* Going round a loop again: what has been put off until now. */\
+    /* What it is given, of which it is not to be taken that there is anything. What a call comes back with is taken to be something, and pythonGeneratorNext() comes back with nothing when there is no more. */ \
+    macro(PyValueOrNothing, NodeResultJS) \
     macro(PyCheckPendingWork, NodeMustGenerate) \
     /* Raises TypeError if what __init__() returned is not None. It has been called by then, so there is no leaving this for the baseline JIT to do again. */ \
     macro(PyCheckInitializerResult, NodeMustGenerate) \

@@ -83,8 +83,7 @@ void PyRealm::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_auditHooks);
     visitor.append(thisObject->m_asyncGeneratorFirstIterationHook);
     visitor.append(thisObject->m_asyncGeneratorFinalizerHook);
-    visitor.append(thisObject->m_handledException);
-    visitor.append(thisObject->m_outerHandledException);
+    visitor.append(thisObject->m_handledExceptions);
     visitor.append(thisObject->m_returnValue);
 }
 
@@ -151,8 +150,10 @@ PyRealm* PyRealm::create(VM& vm, JSGlobalObject* globalObject)
 {
     // Before there is a cell for it: making a Structure can set off a collection, which is not to come upon a cell that nothing has been put in.
     Structure* structure = createStructure(vm, globalObject, jsNull());
+    InternalFieldTuple* handledExceptions = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), jsUndefined(), jsUndefined());
     auto* realm = new (NotNull, allocateCell<PyRealm>(vm)) PyRealm(vm, structure);
     realm->finishCreation(vm);
+    realm->m_handledExceptions.set(vm, realm, handledExceptions);
     return realm;
 }
 

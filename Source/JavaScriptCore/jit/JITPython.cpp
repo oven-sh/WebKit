@@ -443,6 +443,21 @@ void JIT::emitSlow_op_py_compare_op(const JSInstruction* currentInstruction, Vec
     done.link(this);
 }
 
+void JIT::emit_op_py_is_resumed_by_call(const JSInstruction* currentInstruction)
+{
+    auto bytecode = currentInstruction->as<OpPyIsResumedByCall>();
+    emitGetVirtualRegister(bytecode.m_operand, regT0);
+    move(TrustedImm32(JSValue::ValueFalse), regT1);
+    JumpList done;
+    done.append(branchIfNotCell(regT0));
+    done.append(branchIfNotType(regT0, JSGeneratorType));
+    // What is told of a loop is told by py_iter_next.
+    done.append(branchTest32(Zero, AbsoluteAddress(vm().addressOfPythonLimitUnlessWatched())));
+    move(TrustedImm32(JSValue::ValueTrue), regT1);
+    done.link(this);
+    emitPutVirtualRegister(bytecode.m_dst, regT1);
+}
+
 void JIT::emit_op_py_to_bool(const JSInstruction* currentInstruction)
 {
     auto bytecode = currentInstruction->as<OpPyToBool>();

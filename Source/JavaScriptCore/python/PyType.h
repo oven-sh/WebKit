@@ -323,6 +323,10 @@ JSC_DECLARE_HOST_FUNCTION(pythonEnterContext);
 JSC_DECLARE_HOST_FUNCTION(pythonExitContext);
 // manager[Symbol.asyncDispose](wasThrown, thrown): a promise for the same of manager.__aexit__(...).
 JSC_DECLARE_HOST_FUNCTION(pythonAsyncExitContext);
+// For pythonGeneratorNext() of builtins/GeneratorPrototype.js. What next() does with a generator that is running or has come to an end.
+JSC_DECLARE_HOST_FUNCTION(pythonGeneratorNextSlow);
+// pythonGeneratorRaised(generator, exception): throws what is to come of an exception that has got out of a generator.
+JSC_DECLARE_HOST_FUNCTION(pythonGeneratorRaised);
 
 namespace Python {
 JS_EXPORT_PRIVATE bool isJavaScriptClass(JSCell*);

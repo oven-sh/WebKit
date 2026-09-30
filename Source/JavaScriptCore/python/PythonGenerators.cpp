@@ -37,6 +37,31 @@ namespace JSC { namespace Python {
 // What generatorResume() of builtins/GeneratorPrototype.js does.
 static bool isThrowArguments(JSValue value) { return value.isCell() && value.asCell()->type() == JSCellButterflyType; }
 
+static ASCIILiteral nameOf(GeneratorKind kind)
+{
+    return kind == GeneratorKind::Generator ? "generator"_s : kind == GeneratorKind::Coroutine ? "coroutine"_s : "async generator"_s;
+}
+
+// A StopIteration that gets out of a generator would look like the end of whatever is iterating it.
+static bool wouldLookLikeTheEnd(JSGlobalObject* globalObject, GeneratorKind kind, JSValue raised)
+{
+    PyRealm* realm = globalObject->pyRealm();
+    return isInstance(globalObject, raised, realm->typeStopIteration()) || (kind == GeneratorKind::AsyncGenerator && isInstance(globalObject, raised, realm->typeStopAsyncIteration()));
+}
+
+// What is raised in its place.
+static JSObject* errorForStopIteration(JSGlobalObject* globalObject, GeneratorKind kind, JSValue raised)
+{
+    VM& vm = globalObject->vm();
+    PyRealm* realm = globalObject->pyRealm();
+    bool isStop = isInstance(globalObject, raised, realm->typeStopIteration());
+    JSObject* error = createException(globalObject, realm->typeRuntimeError(), concatenate(nameOf(kind), isStop ? " raised StopIteration"_s : " raised StopAsyncIteration"_s));
+    error->putDirect(vm, vm.pythonNames().private_cause, raised);
+    error->putDirect(vm, vm.pythonNames().private_context, raised);
+    error->putDirect(vm, vm.pythonNames().private_suppressContext, jsBoolean(true));
+    return error;
+}
+
 JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JSValue sent, JSGenerator::ResumeMode mode, JSValue& returned)
 {
     VM& vm = globalObject->vm();
@@ -95,7 +120,7 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
         }
     }
     GeneratorKind kind = generatorKindOf(globalObject, generator);
-    ASCIILiteral what = kind == GeneratorKind::Generator ? "generator"_s : kind == GeneratorKind::Coroutine ? "coroutine"_s : "async generator"_s;
+    ASCIILiteral what = nameOf(kind);
     if (state == static_cast<int32_t>(JSGenerator::State::Executing))
         return raiseValueError(globalObject, scope, concatenate(what, " already executing"_s));
     if (state == static_cast<int32_t>(JSGenerator::State::Completed)) {
@@ -149,17 +174,10 @@ JSValue resumeGenerator(JSGlobalObject* globalObject, JSGenerator* generator, JS
         Exception* exception = scope.exception();
         // What is thrown into one that has not begun is thrown before anything of it has run, and comes out as it went in.
         bool hadBegun = state != static_cast<int32_t>(JSGenerator::State::Init) || mode != JSGenerator::ResumeMode::ThrowMode;
-        bool isStop = hadBegun && !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopIteration());
-        bool isAsyncStop = hadBegun && !isStop && kind == GeneratorKind::AsyncGenerator && !vm.isTerminationException(exception) && isInstance(globalObject, exception->value(), globalObject->pyRealm()->typeStopAsyncIteration());
-        if (isStop || isAsyncStop) {
-            JSValue cause = exception->value();
-            if (scope.tryClearException()) {
-                JSObject* error = createException(globalObject, globalObject->pyRealm()->typeRuntimeError(), concatenate(what, isStop ? " raised StopIteration"_s : " raised StopAsyncIteration"_s));
-                error->putDirect(vm, vm.pythonNames().private_cause, cause);
-                error->putDirect(vm, vm.pythonNames().private_context, cause);
-                error->putDirect(vm, vm.pythonNames().private_suppressContext, jsBoolean(true));
-                throwException(globalObject, scope, error);
-            }
+        if (hadBegun && !vm.isTerminationException(exception) && wouldLookLikeTheEnd(globalObject, kind, exception->value())) {
+            JSValue raised = exception->value();
+            if (scope.tryClearException())
+                throwException(globalObject, scope, errorForStopIteration(globalObject, kind, raised));
         }
         return { };
     }
@@ -330,4 +348,23 @@ JSValue generatorClose(JSGlobalObject* globalObject, JSGenerator* generator)
     return returned;
 }
 
-} } // namespace JSC::Python
+} // namespace Python
+
+JSC_DEFINE_HOST_FUNCTION(pythonGeneratorNextSlow, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return JSValue::encode(Python::iteratorNext(globalObject, callFrame->argument(0)));
+}
+
+JSC_DEFINE_HOST_FUNCTION(pythonGeneratorRaised, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue raised = callFrame->argument(1);
+    auto kind = Python::generatorKindOf(globalObject, uncheckedDowncast<JSGenerator>(callFrame->argument(0).asCell()));
+    if (Python::wouldLookLikeTheEnd(globalObject, kind, raised))
+        raised = Python::errorForStopIteration(globalObject, kind, raised);
+    throwException(globalObject, scope, raised);
+    return { };
+}
+
+} // namespace JSC

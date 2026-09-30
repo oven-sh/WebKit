@@ -9292,7 +9292,9 @@ void ByteCodeParser::parseBlock(unsigned limit)
             }
             Node* tuple = addToGraph(PyLoadMethod, OpInfo(pythonIdentifier(bytecode.m_property)), OpInfo(prediction), base);
             Node* function = addToGraph(ExtractFromTuple, OpInfo(0), tuple);
+            function->setResult(NodeResultJS);
             Node* self = addToGraph(ExtractFromTuple, OpInfo(1), tuple);
+            self->setResult(NodeResultJS);
             set(bytecode.m_dst, function);
             set(bytecode.m_self, self);
             NEXT_OPCODE(op_py_load_method);
@@ -9514,6 +9516,13 @@ void ByteCodeParser::parseBlock(unsigned limit)
 #else
             RELEASE_ASSERT_NOT_REACHED();
 #endif
+        }
+
+        case op_py_is_resumed_by_call: {
+            // Nothing is being told of what is run, or this would not be what is running.
+            auto bytecode = currentInstruction->as<OpPyIsResumedByCall>();
+            set(bytecode.m_dst, addToGraph(IsCellWithType, OpInfo(JSTypeRange { JSGeneratorType, JSGeneratorType }), get(bytecode.m_operand)));
+            NEXT_OPCODE(op_py_is_resumed_by_call);
         }
 
         case op_is_cell_with_type: {
@@ -10689,10 +10698,18 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_catch);
         }
 
-        case op_call:
+        case op_call: {
             handleCall<OpCall>(currentInstruction, Call, CallMode::Regular, nextOpcodeIndex(), nullptr);
             ASSERT_WITH_MESSAGE(m_currentInstruction == currentInstruction, "handleCall, which may have inlined the callee, trashed m_currentInstruction");
+            // If it has been inlined, what comes of it is known for what it is. If not, what comes of the call is waiting to be put where it goes.
+            if (!m_setLocalQueue.isEmpty() && (m_setLocalQueue.last().m_value->op() == Call || m_setLocalQueue.last().m_value->op() == DirectCall)) {
+                Node* result = m_setLocalQueue.last().m_value;
+                auto* callee = m_graph.child(result, 0)->dynamicCastConstant<JSFunction*>();
+                if (callee && callee->intrinsic() == PythonGeneratorNextIntrinsic)
+                    m_setLocalQueue.last().m_value = addToGraph(PyValueOrNothing, result);
+            }
             NEXT_OPCODE(op_call);
+        }
 
         case op_tail_call: {
             flushForReturn();

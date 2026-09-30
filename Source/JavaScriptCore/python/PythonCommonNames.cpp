@@ -27,6 +27,7 @@
 #include "PythonCommonNames.h"
 #include "PythonText.h"
 
+#include "BuiltinNames.h"
 #include "VM.h"
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/SymbolImpl.h>
@@ -47,6 +48,7 @@ CommonNames::CommonNames(VM& vm)
 #define INITIALIZE(name) private_##name(Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, "py" #name ""_s))),
     FOR_EACH_PYTHON_PRIVATE_NAME(INITIALIZE)
 #undef INITIALIZE
+    private_handled(vm.propertyNames->builtinNames().pythonHandledPrivateName()),
 #define INITIALIZE(name, attribute) field_##name(Identifier::fromUid(PrivateName(PrivateName::PrivateSymbol, attribute ""_s))),
     FOR_EACH_PYTHON_EXCEPTION_FIELD(INITIALIZE)
 #undef INITIALIZE

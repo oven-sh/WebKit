@@ -1775,6 +1775,13 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_compare_op)
     RETURN_PROFILED(result);
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_is_resumed_by_call)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpPyIsResumedByCall>();
+    RETURN(jsBoolean(false));
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_to_bool)
 {
     BEGIN();
@@ -1971,7 +1978,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_iter_next)
         CHECK_EXCEPTION();
         BytecodeIndex index(codeBlock->bytecodeOffset(pc));
         if (!result) {
-            if (returnedByGenerator)
+            // gen_iternext(): there is a StopIteration only if there is something for it to say.
+            if (returnedByGenerator && !returnedByGenerator.isUndefined())
                 Python::generatorHasReturnedTo(globalObject, callFrame, index, returnedByGenerator);
             else
                 Python::tellOfCaughtStopIteration(globalObject, callFrame, index);

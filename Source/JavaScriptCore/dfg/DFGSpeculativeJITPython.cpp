@@ -415,6 +415,14 @@ void SpeculativeJIT::compilePyCheckPendingWork(Node* node)
     noResult(node);
 }
 
+void SpeculativeJIT::compilePyValueOrNothing(Node* node)
+{
+    JSValueOperand value(this, node->child1());
+    GPRTemporary result(this, Reuse, value);
+    move(value.gpr(), result.gpr());
+    jsValueResult(result.gpr(), node);
+}
+
 void SpeculativeJIT::compilePyCheckInitializerResult(Node* node)
 {
     JSValueOperand value(this, node->child1());

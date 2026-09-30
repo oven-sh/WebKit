@@ -336,6 +336,7 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_binary_op);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_unary_op);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_compare_op);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_to_bool);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_is_resumed_by_call);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_get_attr);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_set_attr);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_del_attr);

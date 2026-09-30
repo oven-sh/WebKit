@@ -1,0 +1,44 @@
+---- what it yields
+numbers => 190
+all sorts => (['int', 'float', 'str', 'NoneType', 'tuple'], 20)
+one in another => (15, (5, 4))
+by way of another => [4, ('got', 'returned')]
+what it returns => 5
+nothing => []
+in a comprehension => ([0, 2, 4, 6, 8], {0, 1, 2}, {0: 0, 1: 1}, [0, 1, 2], 25)
+---- when it has come to an end, or has not begun, or is running
+gone through again => ([0, 1, 2], [], [])
+left, and gone on with => ([0, 1, 2], 3, [4, 5], 'no more')
+from inside itself => ('ValueError', 'generator already executing', 'NoneType', 'NoneType')
+closed on the way => (0, [])
+sent something on the way => [(0, None), (1, None), (2, 'sent'), (3, None)]
+thrown something on the way => [0, 1, ('caught', "'thrown'"), 2, 3]
+---- what gets out of it
+an exception => ([0, 1, 2], 'ValueError', 'x', 'NoneType')
+StopIteration => ([0, 1, 2], 'RuntimeError', 'generator raised StopIteration', 'StopIteration')
+one derived from it => ([0, 1, 2], 'RuntimeError', 'generator raised StopIteration', 'Mine')
+StopAsyncIteration => ([0, 1, 2], 'StopAsyncIteration', 'w', 'NoneType')
+and it is over => ([], None, False)
+where it has been => [('traced_back', 8), ('outer', 1), ('inner', 2)]
+not caught here => ('KeyError', "'k'", 'NoneType', 'NoneType')
+---- what is being handled
+nothing => ([None, None, None], None)
+what whoever goes through it is handling => (['ValueError', 'ValueError', 'ValueError'], 'ValueError')
+its own, and only while it runs => ([('KeyError', None), ('KeyError', None), (None, None), ('KeyError', None), ('KeyError', None), (None, None)], None)
+its own, before that of whoever goes through it => ([('KeyError', 'ValueError'), ('KeyError', 'ValueError'), ('ValueError', 'ValueError'), ('KeyError', 'ValueError'), ('KeyError', 'ValueError'), ('ValueError', 'ValueError')], 'ValueError')
+raised again after something else has been => ("'first'", 'NoneType', 'KeyError')
+what a new one has for its context => ('ValueError', 'KeyError')
+two at once => ([('KeyError', None), ('KeyError', None), (None, None), ('KeyError', None), ('KeyError', None), (None, None)], None)
+left in the middle of it => ('KeyError', None, 'KeyError', None, [None, 'KeyError', 'KeyError', None], None)
+---- who called whom
+what went on with it => ('asks_who', 1, 'says_who')
+whether it is running => ((True, True), False, None)
+while it waits => (False, None, 2, {'n': 4, 'i': 1})
+what it changes there => 3
+---- one that goes through itself, all the way down
+a tree => 435
+too deep a one => ('RecursionError', 'maximum recursion depth exceeded', 'NoneType', 'NoneType')
+and after there is room again => 11175
+---- being told of what is run, beginning in the middle of it
+with settrace() => (66, [('traced_from_the_middle', 'line', 6, 'NoneType'), ('traced_from_the_middle', 'line', 2, 'NoneType'), ('count', 'call', 2, 'NoneType'), ('count', 'line', 1, 'NoneType'), ('count', 'line', 2, 'NoneType'), ('count', 'return', 2, '11'), ('traced_from_the_middle', 'line', 3, 'NoneType'), ('traced_from_the_middle', 'line', 6, 'NoneType'), ('traced_from_the_middle', 'line', 2, 'NoneType'), ('count', 'call', 2, 'NoneType'), ('count', 'line', 1, 'NoneType'), ('count', 'return', 1, 'None'), ('traced_from_the_middle', 'line', 7, 'NoneType'), ('traced_from_the_middle', 'return', 7, '66')])
+and with nothing again => 190

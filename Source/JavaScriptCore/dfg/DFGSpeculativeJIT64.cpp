@@ -6383,6 +6383,10 @@ void SpeculativeJIT::compile(Node* node)
         compilePyCheckPendingWork(node);
         break;
 
+    case PyValueOrNothing:
+        compilePyValueOrNothing(node);
+        break;
+
     case PyCheckInitializerResult:
         compilePyCheckInitializerResult(node);
         break;

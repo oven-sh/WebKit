@@ -346,6 +346,7 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(PySetItem, Common) \
     CLONE_STATUS(PyDelItem, Common) \
     CLONE_STATUS(PyGetTupleItem, Common) \
+    CLONE_STATUS(PyValueOrNothing, Common) \
     CLONE_STATUS(PyFloorDiv, Common) \
     CLONE_STATUS(PyMod, Common) \
     CLONE_STATUS(PyCheckDivisor, Common) \

@@ -92,6 +92,7 @@
 #include "ObjectPrototypeInlines.h"
 #include "Operations.h"
 #include "ParseInt.h"
+#include "PyInstance.h"
 #include "PyTuple.h"
 #include "PyType.h"
 #include "PythonOperations.h"
@@ -5988,6 +5989,8 @@ JSC_DEFINE_JIT_OPERATION(operationNewRawObject, char*, (VM* vmPointer, Structure
 
     if (structure->typeInfo().type() == JSType::ArrayType)
         OPERATION_RETURN(scope, std::bit_cast<char*>(JSArray::createWithButterfly(vm, nullptr, structure, butterfly)));
+    if (structure->typeInfo().type() == PyInstanceType)
+        OPERATION_RETURN(scope, std::bit_cast<char*>(PyInstance::createWithButterfly(vm, structure, butterfly)));
     OPERATION_RETURN(scope, std::bit_cast<char*>(JSFinalObject::createWithButterfly(vm, structure, butterfly)));
 }
 
@@ -6005,6 +6008,8 @@ JSC_DEFINE_JIT_OPERATION(operationNewObjectWithButterfly, JSCell*, (VM* vmPointe
     
     if (structure->typeInfo().type() == JSType::ArrayType)
         OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, structure, butterfly));
+    if (structure->typeInfo().type() == PyInstanceType)
+        OPERATION_RETURN(scope, PyInstance::createWithButterfly(vm, structure, butterfly));
     OPERATION_RETURN(scope, JSFinalObject::createWithButterfly(vm, structure, butterfly));
 }
 
@@ -6028,6 +6033,8 @@ JSC_DEFINE_JIT_OPERATION(operationNewObjectWithButterflyWithIndexingHeaderAndVec
     
     if (structure->typeInfo().type() == JSType::ArrayType)
         OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, structure, butterfly));
+    if (structure->typeInfo().type() == PyInstanceType)
+        OPERATION_RETURN(scope, PyInstance::createWithButterfly(vm, structure, butterfly));
     OPERATION_RETURN(scope, JSFinalObject::createWithButterfly(vm, structure, butterfly));
 }
 
