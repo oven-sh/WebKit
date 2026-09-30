@@ -31,6 +31,11 @@ static const char* pathOfOverriddenMethods()
 // Whether some class of the program that extends that one may have the method for itself. (Without the file: for all anybody knows.)
 bool Lowering::mayBeOverridden(ASCIILiteral nameOfClass, Node* read)
 {
+    return Graph::methodMayBeOverridden(nameOfClass, read);
+}
+
+bool Graph::methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read)
+{
     static const NeverDestroyed<std::optional<UncheckedKeyHashSet<String>>> all = [] () -> std::optional<UncheckedKeyHashSet<String>> {
         const char* path = pathOfOverriddenMethods();
         if (!path)

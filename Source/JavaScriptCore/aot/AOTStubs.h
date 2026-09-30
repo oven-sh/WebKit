@@ -196,8 +196,12 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(LessEq) \
     v(Greater) \
     v(GreaterEq) \
+    /* A0 = base, A1 = an integer, as it is (Rep::Int64). Result in A0. What it has no quick way with goes on into the next. */ \
+    v(GetByValAtIndex) \
     /* A0 = base, A1 = property. Result in A0. */ \
     v(GetByVal) \
+    /* As the next, but for A1, which is an integer as it is. Goes on into it. */ \
+    v(PutByValAtIndex) \
     /* A0 = base, A1 = property, A2 = value, A3 = whether the code is strict. */ \
     v(PutByVal) \
     /* Likewise, as op_put_by_val_direct has them: the base is an object. */ \

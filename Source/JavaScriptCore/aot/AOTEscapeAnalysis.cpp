@@ -248,6 +248,14 @@ private:
 
     void noteUsesBy(Node* user)
     {
+        // What goes by something that nothing ever is (inferTypes()) is never got to.
+        static const bool isOff = !getenv("BUN_AOT_NOTHING_FOR_NOTHING"); // TEMPORARY
+        if (user->kind != NodeKind::Phi && !isOff) {
+            for (auto& use : user->uses) {
+                if (use.node->wasTakenNeverToBeReached)
+                    return;
+            }
+        }
         for (auto& use : user->uses)
             m_users.add(use.node, Vector<User, 4> { }).iterator->value.append({ user, use.reg });
     }

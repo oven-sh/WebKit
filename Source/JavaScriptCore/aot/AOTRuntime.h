@@ -297,6 +297,10 @@ struct Slot {
     static constexpr uint32_t resolvesByDepth = 1u << 31; // op_resolve_scope: the rest of offset is how many scopes out it is.
 
     bool hasPointer() const { return offset & (pointerIsCell | pointerIsNotCell); }
+    // op_get_by_id: the place has seen more than one structure. No structure, and pointer is a SlotsOfSite.
+    static constexpr uint32_t flagsMask = isIntricate | isGetter | pointerIsNotCell | pointerIsCell;
+    static constexpr uint32_t flagsIfOfSeveral = isIntricate | pointerIsNotCell;
+    bool isOfSeveral() const { return !structureID && (offset & flagsMask) == flagsIfOfSeveral; }
 
     void clear()
     {
@@ -317,6 +321,31 @@ struct Slot {
     };
 };
 static_assert(sizeof(Slot) == 16);
+
+struct Data;
+
+// What a place that reads a property has once it has seen objects of more than one structure (Slot::isOfSeveral()): a slot for each of the last few. Each is a slot like any other: to the stub, once it
+// has found the one that is for the structure, to the collector, and to what watches on a slot's behalf.
+struct SlotsOfSite {
+    static constexpr unsigned numberOfSlots = 4;
+    // When it is none of them the megamorphic cache is asked, which is quicker than finding out and remembering. So that is only done now and then: at once to begin with...
+    static constexpr uint32_t timesToLearnAtOnce = 12;
+    // ...and after that once in so many.
+    static constexpr uint32_t missesBetweenLearning = 1024;
+    static_assert(hasOneBitSet(missesBetweenLearning));
+
+    static constexpr ptrdiff_t offsetOfName() { return OBJECT_OFFSETOF(SlotsOfSite, name); }
+    static constexpr ptrdiff_t offsetOfMisses() { return OBJECT_OFFSETOF(SlotsOfSite, misses); }
+    static constexpr ptrdiff_t offsetOfTimesLeftToLearnAtOnce() { return OBJECT_OFFSETOF(SlotsOfSite, timesLeftToLearnAtOnce); }
+    static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(SlotsOfSite, slots); }
+
+    UniquedStringImpl* name; // What is read.
+    uint32_t misses; // The stub counts.
+    uint32_t timesLeftToLearnAtOnce;
+    Data* owner;
+    uint32_t next; // Which makes way, when there is no room.
+    Slot slots[numberOfSlots];
+};
 
 struct Data;
 struct ImageEnvironment;
@@ -429,6 +458,7 @@ struct Instance {
     void setNotLinked(uint32_t index) { states[index] = 0; }
     // A slot has been given a transition: from one structure to another, which is to be kept for as long as the first is.
     void noteTransitionCached(Slot*);
+    SlotsOfSite* makeSlotsOfSite(Data*, UniquedStringImpl* name); // The Data's, for as long as that is there.
     // Where the Datas are: after the Instance, so that it takes half a word to say where one is. Zeroed.
     void* allocateForData(size_t);
     void freeOfData(void*, size_t);
@@ -633,6 +663,7 @@ struct Data {
 
     // Structures do not keep their IDs to themselves when they die.
     void finalizeUnconditionally(VM&);
+    void finalizeSlot(VM&, Slot&); // One of its own, or of one of its SlotsOfSite.
 
     static constexpr ptrdiff_t offsetOfConstants() { return OBJECT_OFFSETOF(Data, constants); }
     static constexpr ptrdiff_t offsetOfIdentifiers() { return OBJECT_OFFSETOF(Data, identifiers); }

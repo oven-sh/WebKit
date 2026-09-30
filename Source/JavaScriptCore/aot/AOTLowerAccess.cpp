@@ -834,7 +834,10 @@ void Lowering::lowerGetByVal(Node* node)
     }
 
     if (isCompact() && !emptyWillDo) {
-        setJSValue(node, callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode)));
+        if (propertyNode->rep() == Rep::Int64)
+            setJSValue(node, callBinaryStub(node, Stub::GetByValAtIndex, Int64, base, lowRaw(propertyNode)));
+        else
+            setJSValue(node, callBinaryStub(node, Stub::GetByVal, Int64, base, lowJSValue(propertyNode)));
         return;
     }
 
@@ -910,7 +913,8 @@ void Lowering::lowerPutByVal(Node* node)
     LValue value = lowJSValue(valueNode);
 
     auto throughStub = [&] {
-        callStub(Stub::PutByVal, Void, { { base, GPRInfo::argumentGPR0 }, { lowJSValue(propertyNode), GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
+        bool isInteger = propertyNode->rep() == Rep::Int64;
+        callStub(isInteger ? Stub::PutByValAtIndex : Stub::PutByVal, Void, { { base, GPRInfo::argumentGPR0 }, { isInteger ? lowRaw(propertyNode) : lowJSValue(propertyNode), GPRInfo::argumentGPR1 }, { value, GPRInfo::argumentGPR2 } },
             { { GPRInfo::argumentGPR3, bytecode.m_ecmaMode.isStrict() } });
     };
     if (isCompact()) {

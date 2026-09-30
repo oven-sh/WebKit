@@ -353,6 +353,16 @@ public:
     // a change to any other object is not. False: which they are cannot be told from the structure, so it is not to be cached.
     JS_EXPORT_PRIVATE static bool NODELETE noteDependenceOnPrototypes(StructureID, JSCell* upTo = nullptr);
 
+    // What AssemblyHelpers::loadMegamorphicProperty() finds, for whoever is in C++ already. Null: nothing is known.
+    const LoadEntry* findLoad(StructureID structureID, UniquedStringImpl* uid) const
+    {
+        for (auto* entry : { &m_loadCachePrimaryEntries[primaryHash(structureID, uid) & loadCachePrimaryMask], &m_loadCacheSecondaryEntries[secondaryHash(structureID, uid) & loadCacheSecondaryMask] }) {
+            if (entry->m_structureID == structureID && entry->m_uid.get() == uid && entry->m_epoch == m_epoch)
+                return entry;
+        }
+        return nullptr;
+    }
+
     // TEMPORARY-SLOT-STATS
     ASCIILiteral whyLoadIsNotFound(StructureID structureID, UniquedStringImpl* uid) const
     {

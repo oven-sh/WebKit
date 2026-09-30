@@ -580,6 +580,7 @@ public:
     // array[Symbol.iterator] === something, and nothing else is done with it: the read is not made (Node::isElided), and whoever compares sees to it (Lowering::lowerEquality()).
     void elideReadsOfIteratorMethodsOfArrays();
     static bool isReadOfIteratorMethodOfArray(const Node*);
+    static bool methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read); // Whether some class of the program that extends that one may have the method for itself.
     static bool isIteratorMethodOfAnyArray(const Node*); // Array.prototype.values, which is Array.prototype[Symbol.iterator].
     void findBuiltinsCalled(); // Node::directMethod. Once the types are known.
     bool hasTwoCopiesOfAll { false }; // Options::aotAssertsTypes(): not just of its loops.

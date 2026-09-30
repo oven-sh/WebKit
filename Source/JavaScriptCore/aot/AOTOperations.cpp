@@ -23,6 +23,7 @@
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
 #include "MathCommon.h"
+#include "MegamorphicCache.h"
 #include "PutByIdFlags.h"
 #include "StructureChain.h"
 #include "VMTrapsInlines.h"
@@ -259,7 +260,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (JSGlobalObject* g
         noteCustomGetter(globalObject, instance, asObject(base), ident, slot);
     if (slot.isUnset() && structureBefore && structureBefore->knownShape())
         caller(globalObject, callFrame).instance->lookAtObjectPrototype();
-    ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(globalObject, callFrame), base, structureBefore, ident, slot, cache);
+    ASCIILiteral whyNotCached = cacheGetById(globalObject, callerData(globalObject, callFrame), base, structureBefore, ident, slot, cache, true);
     noteSlowPath("get_by_id"_s, base, ident.impl(), whyNotCached.isEmpty() ? "cached"_s : whyNotCached);
     if (Options::aotReportSlowPaths()) [[unlikely]]
         noteShapeOfRead(base, slot);
@@ -746,8 +747,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlob
     uint16_t family = static_cast<uint16_t>(which >> 32);
     unsigned slot = which >> 48 & 0xff;
     bool undefinedWillDo = which >> 56 & 1;
-    JSValue value = JSValue::decode(encodedBase).get(globalObject, Identifier::fromUid(vm, StaticHeap::identifiersOfProgram()[static_cast<uint32_t>(which)]));
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    JSValue base = JSValue::decode(encodedBase);
+    UniquedStringImpl* uid = StaticHeap::identifiersOfProgram()[static_cast<uint32_t>(which)];
+    JSValue value;
+    MegamorphicCache* cache = vm.megamorphicCache();
+    if (auto* known = cache && base.isObject() ? cache->findLoad(asObject(base)->structureID(), uid) : nullptr) {
+        JSCell* holder = known->m_holder == JSCell::seenMultipleCalleeObjects() ? base.asCell() : known->m_holder;
+        value = holder ? asObject(holder)->getDirect(known->m_offset) : jsUndefined();
+    } else {
+        PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
+        value = getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(vm, uid), slot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
     if (value.isUndefined() && undefinedWillDo)
         OPERATION_RETURN(scope, JSValue::encode(value));
     if (SlotsOfBornObjects::says(family, slot, value) == SlotsOfBornObjects::Says::Refuses) {

@@ -182,12 +182,13 @@ struct Instance::Collections {
     // The slots that have, or have had, a transition. The collector goes over them again and again while it marks, and they are few.
     Vector<Slot*> transitions;
     Vector<Slot*> transitionsSinceLastCollection;
+    Vector<SlotsOfSite*> slotsOfSites;
     UncheckedKeyHashMap<String, Structure*> shapes; // By inline capacity and the addresses of the names. Null: there is no such structure.
     UncheckedKeyHashMap<uint32_t, Structure*> knownShapes; // By number: the ones that have been made.
     // Instance::adopt(): what an object of a Structure turns into when it is made one of a family. Null: it cannot be. (Both are kept.)
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> adoptions;
     // Those that were turned down for what their Structure says. (Not kept: if another Structure comes to be where one of these was, its objects are read the long way, is all.)
-    UncheckedKeyHashSet<std::pair<Structure*, uint16_t>> turnedDown;
+    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, ASCIILiteral> turnedDown; // And what for.
     UncheckedKeyHashMap<uint32_t, Structure*> emptyOfFamilies;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
@@ -1139,6 +1140,12 @@ void Data::destroy(Data* data)
     if (data->hasBeenFilledSinceLastCollection)
         removeFrom(instance.collections->filledSinceLastCollection, &Data::indexAmongFilled);
     delete data->watchpoints;
+    instance.collections->slotsOfSites.removeAllMatching([&](SlotsOfSite* several) {
+        if (several->owner != data)
+            return false;
+        fastFree(several);
+        return true;
+    });
     if (data->ownsConstants)
         fastFree(const_cast<void*>(data->constants));
     if (data->functions)
@@ -1339,6 +1346,16 @@ static ALWAYS_INLINE bool hasTransition(const Slot& slot)
     return slot.structureID && slot.newStructureID && (!slot.held || (slot.offset & Slot::saysWhatIsHeld)) && !slot.hasPointer();
 }
 
+SlotsOfSite* Instance::makeSlotsOfSite(Data* owner, UniquedStringImpl* name)
+{
+    auto* several = static_cast<SlotsOfSite*>(fastZeroedMalloc(sizeof(SlotsOfSite)));
+    several->name = name;
+    several->owner = owner;
+    several->timesLeftToLearnAtOnce = SlotsOfSite::timesToLearnAtOnce;
+    collections->slotsOfSites.append(several);
+    return several;
+}
+
 void Instance::noteTransitionCached(Slot* slot)
 {
     collections->transitionsSinceLastCollection.append(slot);
@@ -1455,7 +1472,7 @@ void Instance::dumpSlotStatistics(PrintStream& out)
                 out.println("SHAPECOUNT\t", readsForReason[i], "\treason ", i);
         }
         static constexpr ASCIILiteral paths[] = { "calls"_s, "hit: in the object itself"_s, "hit: out of line or inherited"_s, "hit: a getter"_s, "miss: no cell"_s, "miss: the slot is nobody's"_s, "miss: the slot is empty"_s, "miss: the slot has another structure"_s,
-            "table: in the object itself"_s, "table: out of line"_s, "table: not its own, so undefined"_s, "not settled by the table"_s, "megamorphic cache asked"_s, "the operation is called"_s, "miss: the slot has another structure, and has given up"_s, "table: the structure is of no known shape"_s, "megamorphic cache asked, by the name in the slot"_s, "a slot is given over to the name"_s, "the length of a typed array"_s, ""_s, "KEYED calls"_s, "KEYED an element of an array"_s, "KEYED an element of a typed array"_s, "KEYED a name: megamorphic cache asked"_s, "KEYED the operation is called"_s };
+            "table: in the object itself"_s, "table: out of line"_s, "table: not its own, so undefined"_s, "not settled by the table"_s, "megamorphic cache asked"_s, "the operation is called"_s, "miss: the slot has another structure, and has given up"_s, "table: the structure is of no known shape"_s, "megamorphic cache asked, by the name in the slot"_s, "a slot is given over to the name"_s, "the length of a typed array"_s, ""_s, "KEYED calls"_s, "KEYED an element of an array"_s, "KEYED an element of a typed array"_s, "KEYED a name: megamorphic cache asked"_s, "KEYED the operation is called"_s, "one of several: it is one of them"_s, "goes to find out and remember"_s };
         for (unsigned i = 0; i < std::size(paths); ++i) {
             if (pathsOfStubs[i])
                 out.println("STUBPATH\t", pathsOfStubs[i], "\t", paths[i]);
@@ -1605,11 +1622,11 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
     if (old->isDictionary() && old->isUncacheableDictionary())
         return no("it has been through too much (a dictionary)"_s);
     Instance& instance = ensure(old->globalObject());
-    if (instance.collections->turnedDown.contains({ old, family }))
-        return no("its like was turned down before"_s);
+    if (auto it = instance.collections->turnedDown.find({ old, family }); it != instance.collections->turnedDown.end())
+        return no(it->value);
     auto noneOfItsLike = [&](ASCIILiteral why) {
         if (!old->isDictionary() && instance.collections->turnedDown.size() < 4096)
-            instance.collections->turnedDown.add({ old, family });
+            instance.collections->turnedDown.add({ old, family }, why);
         return no(why);
     };
     // What the family has no slot for comes after the family's: in the object if all the family's are, and there is room; if not, outside.
@@ -1782,6 +1799,12 @@ void Instance::finalizeUnconditionally(bool onlyWhatIsNew)
     if (std::exchange(collections->hasAddsOfFields, false))
         zeroSpan(std::span { addsOfFields });
     zeroSpan(std::span { customGetters });
+    for (SlotsOfSite* several : collections->slotsOfSites) {
+        if (onlyWhatIsNew && !several->owner->hasBeenFilledSinceLastCollection)
+            continue;
+        for (Slot& slot : several->slots)
+            several->owner->finalizeSlot(*vm, slot);
+    }
     for (Data* data : onlyWhatIsNew ? collections->filledSinceLastCollection : collections->all)
         data->finalizeUnconditionally(*vm);
     for (Data* data : collections->filledSinceLastCollection)
@@ -1798,28 +1821,31 @@ void Instance::finalizeUnconditionally(bool onlyWhatIsNew)
     }
 }
 
+void Data::finalizeSlot(VM& vm, Slot& slot)
+{
+    if (!slot.structureID)
+        return;
+    bool dead = !vm.heap.isMarked(slot.structureID.decode());
+    if (!dead) {
+        if (slot.offset & Slot::pointerIsCell)
+            dead = !vm.heap.isMarked(static_cast<JSCell*>(slot.pointer));
+        else if (!slot.hasPointer() && slot.newStructureID && (!slot.held || (slot.offset & Slot::saysWhatIsHeld))) // A scope cache may have an untagged address here.
+            dead = !vm.heap.isMarked(slot.newStructureID.decode());
+    }
+    if (dead) {
+        slot.clear();
+        slotEpoch++;
+    }
+}
+
 void Data::finalizeUnconditionally(VM& vm)
 {
-    for (unsigned i = 0; i < numSlots; ++i) {
-        Slot& slot = slots[i];
-        if (!slot.structureID)
-            continue;
-        bool dead = !vm.heap.isMarked(slot.structureID.decode());
-        if (!dead) {
-            if (slot.offset & Slot::pointerIsCell)
-                dead = !vm.heap.isMarked(static_cast<JSCell*>(slot.pointer));
-            else if (!slot.hasPointer() && slot.newStructureID && (!slot.held || (slot.offset & Slot::saysWhatIsHeld))) // A scope cache may have an untagged address here.
-                dead = !vm.heap.isMarked(slot.newStructureID.decode());
-        }
-        if (dead) {
-            slot.clear();
-            slotEpoch++;
-        }
-    }
+    for (unsigned i = 0; i < numSlots; ++i)
+        finalizeSlot(vm, slots[i]);
 
     if (watchpoints) {
         watchpoints->removeIf([&](auto& entry) {
-            Slot& slot = slots[entry.key];
+            Slot& slot = *entry.key;
             if (!slot.structureID)
                 return true;
             for (const SlotWatchpoint& watchpoint : entry.value) {

@@ -247,7 +247,7 @@ private:
         inlinee->setCalleeHints(about->hints);
         inlinee->setVariableFacts(m_graph.variableFacts());
         inlinee->setLinkage(about->linkage, declaredNamesFor(callee));
-        inlinee->loopsAreNotSplit = !!intrinsicToCheckFor;
+        inlinee->loopsAreNotSplit = !!intrinsicToCheckFor || m_graph.loopsAreNotSplit;
         inlinee->isBuiltinThatIsPartOfCaller = !!intrinsicToCheckFor;
         if (!scopeOfClosure && !intrinsicToCheckFor && (inlinee->needsFunctionObject() || !inlinee->scopeIsEnvironmentOfModule()))
             return false;

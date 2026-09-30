@@ -22,13 +22,13 @@ SlotWatchpoint::SlotWatchpoint()
 {
 }
 
-void SlotWatchpoint::initialize(Data* owner, const ObjectPropertyCondition& key, unsigned slotIndex)
+void SlotWatchpoint::initialize(Data* owner, const ObjectPropertyCondition& key, Slot* slot)
 {
     RELEASE_ASSERT(key.watchingRequiresStructureTransitionWatchpoint());
     RELEASE_ASSERT(!key.watchingRequiresReplacementWatchpoint());
     m_owner = owner;
     m_key = key;
-    m_slotIndex = slotIndex;
+    m_slot = slot;
 }
 
 void SlotWatchpoint::install(VM&)
@@ -47,14 +47,8 @@ void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
 
     // The others stay until the slot is filled again or a collection comes by: this one is being walked over by its set.
     Data* data = m_owner;
-    data->slots[m_slotIndex].clear();
+    m_slot->clear();
     data->slotEpoch++;
-}
-
-static unsigned indexOf(Data* data, Slot* slot)
-{
-    ASSERT(slot >= data->slots && slot < data->slots + data->numSlots);
-    return slot - data->slots;
 }
 
 // Of an object whose properties were fixed (JSObject::fixProperties()): what it had then, it has, where it had it. If it cannot be
@@ -88,7 +82,6 @@ bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditi
         numberToWatch++;
     }
 
-    unsigned index = indexOf(data, slot);
     if (!numberToWatch) {
         stopWatching(data, slot);
         return true;
@@ -102,17 +95,30 @@ bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditi
         if (holdsForGood(condition))
             continue;
         auto& watchpoint = watchpoints[i++];
-        watchpoint.initialize(data, condition, index);
+        watchpoint.initialize(data, condition, slot);
         watchpoint.install(vm);
     }
-    data->watchpoints->set(index, WTF::move(watchpoints));
+    data->watchpoints->set(slot, WTF::move(watchpoints));
     return true;
 }
 
 void stopWatching(Data* data, Slot* slot)
 {
     if (data->watchpoints)
-        data->watchpoints->remove(indexOf(data, slot));
+        data->watchpoints->remove(slot);
+}
+
+void moveWatching(Data* data, Slot* from, Slot* to)
+{
+    if (!data->watchpoints)
+        return;
+    // (They stay where they are: what they watch has hold of them.)
+    auto watchpoints = data->watchpoints->take(from);
+    if (watchpoints.isEmpty())
+        return;
+    for (auto& watchpoint : watchpoints)
+        watchpoint.setSlot(to);
+    data->watchpoints->set(to, WTF::move(watchpoints));
 }
 
 } } // namespace JSC::AOT

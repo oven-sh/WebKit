@@ -322,6 +322,11 @@ private:
                 if (node->use(node->as<OpGetLength>().m_base)->type && isSubtype(node->use(node->as<OpGetLength>().m_base)->type, TArray | TString))
                     return true;
                 break;
+            case op_get_by_id:
+                // (Nothing is read: Lowering::lowerEquality(). Where a class may have one of its own it is asked, of what is not an array as the realm makes them, and that may run anything.)
+                if (Graph::isReadOfIteratorMethodOfArray(node) && !Graph::methodMayBeOverridden("Array"_s, node))
+                    return true;
+                break;
             case op_check_type:
             case op_check_traps:
             case op_stricteq:

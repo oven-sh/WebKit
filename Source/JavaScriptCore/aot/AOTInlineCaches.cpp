@@ -94,10 +94,51 @@ static void countFailure(Slot* cache)
 
 static ASCIILiteral tryCacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache);
 
-ASCIILiteral cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache)
+// Which slot is to have what has been found out about objects of that structure: the place's own, until there is a second structure.
+static Slot* slotToFill(VM& vm, Data* data, Slot* cache, Structure* structure, const Identifier& ident)
+{
+    if (!cache->isOfSeveral()) {
+        if (!cache->structureID || cache->structureID == structure->id())
+            return cache;
+        SlotsOfSite* several = data->instance->makeSlotsOfSite(data, ident.impl());
+        // What it had is as good as it was. (The collector looks at any time: it never sees a structure with a second word that is not its own.)
+        Slot& first = several->slots[0];
+        first.offset = cache->offset & ~Slot::attemptsMask;
+        first.pointer = cache->pointer;
+        moveWatching(data, cache, &first);
+        WTF::storeStoreFence();
+        first.structureID = cache->structureID;
+        cache->structureID = StructureID();
+        WTF::storeStoreFence();
+        cache->offset = Slot::flagsIfOfSeveral;
+        cache->pointer = several;
+        didFillSlot(vm, data);
+    }
+    auto* several = static_cast<SlotsOfSite*>(cache->pointer);
+    if (several->timesLeftToLearnAtOnce)
+        several->timesLeftToLearnAtOnce--;
+    for (Slot& slot : several->slots) {
+        if (slot.structureID == structure->id())
+            return &slot;
+    }
+    for (Slot& slot : several->slots) {
+        if (!slot.structureID && (slot.offset & Slot::attemptsMask) != Slot::attemptsMask)
+            return &slot;
+    }
+    Slot& leaving = several->slots[several->next++ % SlotsOfSite::numberOfSlots];
+    stopWatching(data, &leaving);
+    leaving.clear();
+    leaving.offset = 0;
+    data->slotEpoch++;
+    return &leaving;
+}
+
+ASCIILiteral cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache, bool mayBeOfSeveral)
 {
     if (SharedData::contains(cache))
         return "the function has no slots yet"_s;
+    if (mayBeOfSeveral && usesStubs && base.isCell())
+        cache = slotToFill(globalObject->vm(), data, cache, base.asCell()->structure(), ident);
     ASCIILiteral whyNot = tryCacheGetById(globalObject, data, base, structureBefore, ident, slot, cache);
     if (!whyNot.isEmpty())
         countFailure(cache);

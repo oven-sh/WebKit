@@ -798,6 +798,56 @@ static void countPath(CCallHelpers& jit, unsigned path)
 
 static void getFromMegamorphicCache(CCallHelpers&, GPRReg uid, CCallHelpers::JumpList& notFound);
 
+// What comes next is gone on into. (What the assembler puts between two stubs to line the second up is not for running: it traps.)
+static void goOnIntoNextStub(CCallHelpers& jit)
+{
+    while (jit.m_assembler.codeSize() % 16)
+        jit.nop();
+}
+
+// The integer in A1, as a value.
+static void boxIntegerInA1(CCallHelpers& jit)
+{
+    jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T9);
+    jit.signExtend32ToPtr(A1, T11);
+    Jump isInt32 = jit.branch64(CCallHelpers::Equal, A1, T11);
+    jit.convertInt64ToDouble(A1, FPRInfo::fpRegT0);
+    jit.moveDoubleTo64(FPRInfo::fpRegT0, A1);
+    jit.sub64(T9, A1);
+    Jump done = jit.jump();
+    isInt32.link(&jit);
+    jit.zeroExtend32ToWord(A1, A1);
+    jit.or64(T9, A1);
+    done.link(&jit);
+}
+
+static void generateGetByValAtIndex(CCallHelpers& jit)
+{
+    static_assert(static_cast<unsigned>(Stub::GetByValAtIndex) + 1 == static_cast<unsigned>(Stub::GetByVal));
+    // An element that is there, in storage that holds JSValues.
+    CCallHelpers::JumpList otherwise;
+    otherwise.append(jit.branchIfNotCell(A0));
+    jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T13);
+    jit.and32(TrustedImm32(IndexingShapeMask), T13);
+    Jump holdsValues = jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(ContiguousShape));
+    otherwise.append(jit.branch32(CCallHelpers::NotEqual, T13, TrustedImm32(Int32Shape)));
+    holdsValues.link(&jit);
+    jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T11);
+    jit.load32(Address(T11, Butterfly::offsetOfPublicLength()), T12);
+    // (One that is less than nought is more than any length.)
+    otherwise.append(jit.branch64(CCallHelpers::AboveOrEqual, A1, T12));
+    jit.load64(CCallHelpers::BaseIndex(T11, A1, CCallHelpers::TimesEight), T11);
+    otherwise.append(jit.branchTest64(CCallHelpers::Zero, T11));
+    countPath(jit, 20);
+    countPath(jit, 21);
+    jit.move(T11, A0);
+    jit.ret();
+
+    otherwise.link(&jit);
+    boxIntegerInA1(jit);
+    goOnIntoNextStub(jit);
+}
+
 static void generateGetByVal(CCallHelpers& jit)
 {
     constexpr FPRReg number = FPRInfo::fpRegT0;
@@ -945,6 +995,13 @@ static void generateGetByVal(CCallHelpers& jit)
     slow.link(&jit);
     countPath(jit, 24);
     callBinaryOperation(jit, Entry::operationAOTGetByVal);
+}
+
+static void generatePutByValAtIndex(CCallHelpers& jit)
+{
+    static_assert(static_cast<unsigned>(Stub::PutByValAtIndex) + 1 == static_cast<unsigned>(Stub::PutByVal));
+    boxIntegerInA1(jit);
+    goOnIntoNextStub(jit);
 }
 
 static void generatePutByVal(CCallHelpers& jit)
@@ -1394,12 +1451,31 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
 
     isOfAnotherStructure.link(&jit);
     waysOnOfGetById(operation).isOfAnotherStructure = jit.label();
+    CCallHelpers::JumpList findOutAndRemember;
     if (operation == Entry::operationAOTGetById) {
-        // A slot that says no more than where in the object itself has room for the name (Slot::name), once the long way round has found that out.
-        miss.append(jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32)));
-        jit.loadPtr(slotWord(A1, 1), A2);
-        miss.append(jit.branchTestPtr(CCallHelpers::Zero, A2));
-        miss.append(jit.branchIfNotObject(A0));
+        constexpr GPRReg several = T13;
+        constexpr GPRReg ownSlotOfSite = T14;
+        // The slot is for some other structure: this is the second that the place has seen.
+        findOutAndRemember.append(jit.branchTest32(CCallHelpers::NonZero, T11));
+        // It has none. Either it has nothing at all or the place has seen several (Slot::isOfSeveral()).
+        jit.urshift64(T11, TrustedImm32(32), T12);
+        jit.and32(TrustedImm32(Slot::flagsMask), T12);
+        miss.append(jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(Slot::flagsIfOfSeveral)));
+        jit.loadPtr(slotWord(A1, 1), several);
+        jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
+        static_assert(!OBJECT_OFFSETOF(Slot, structureID));
+        Jump isThatOne[SlotsOfSite::numberOfSlots];
+        for (unsigned i = 0; i < SlotsOfSite::numberOfSlots; ++i)
+            isThatOne[i] = jit.branch32(CCallHelpers::Equal, T12, Address(several, SlotsOfSite::offsetOfSlots() + i * sizeof(Slot)));
+
+        // None of them.
+        findOutAndRemember.append(jit.branchTest32(CCallHelpers::NonZero, Address(several, SlotsOfSite::offsetOfTimesLeftToLearnAtOnce())));
+        jit.load32(Address(several, SlotsOfSite::offsetOfMisses()), T12);
+        jit.add32(TrustedImm32(1), T12);
+        jit.store32(T12, Address(several, SlotsOfSite::offsetOfMisses()));
+        findOutAndRemember.append(jit.branchTest32(CCallHelpers::Zero, T12, TrustedImm32(SlotsOfSite::missesBetweenLearning - 1)));
+        findOutAndRemember.append(jit.branchIfNotObject(A0));
+        jit.loadPtr(Address(several, SlotsOfSite::offsetOfName()), A2);
         countPath(jit, 16);
         if (getenv("BUN_AOT_COUNTS_STUB_PATHS")) {
             // TEMPORARY: which structure, at which site.
@@ -1413,7 +1489,39 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
             jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(16), A2, CCallHelpers::linkRegister);
             jit.addPtr(TrustedImm32(48), CCallHelpers::stackPointerRegister);
         }
-        getFromMegamorphicCache(jit, A2, miss);
+        getFromMegamorphicCache(jit, A2, findOutAndRemember);
+
+        // One of them. From here on it is the slot, as far as what is done with a slot that is for the structure goes.
+        CCallHelpers::JumpList haveSlot;
+        for (unsigned i = 0; i < SlotsOfSite::numberOfSlots; ++i) {
+            isThatOne[i].link(&jit);
+            jit.move(A1, ownSlotOfSite);
+            jit.addPtr(TrustedImm32(SlotsOfSite::offsetOfSlots() + i * sizeof(Slot)), several, A1);
+            if (i + 1 < SlotsOfSite::numberOfSlots)
+                haveSlot.append(jit.jump());
+        }
+        haveSlot.link(&jit);
+        countPath(jit, 25);
+        jit.load64(slotWord(A1, 0), T11);
+        Jump isIntricateThere = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+        jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+        jit.load64(CCallHelpers::BaseIndex(A0, T11, CCallHelpers::TimesEight), A0);
+        jit.ret();
+        isIntricateThere.link(&jit);
+        jit.loadPtr(slotWord(A1, 1), T12);
+        jit.moveConditionallyTest64(CCallHelpers::NonZero, T12, T12, T12, A0, T12);
+        Jump isGetterThere = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isGetter) << 32));
+        locateCachedProperty(jit, T12, T11, T13);
+        jit.load64(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesEight), A0);
+        jit.ret();
+        isGetterThere.link(&jit);
+        locateCachedProperty(jit, T12, T11, T13);
+        jit.load64(CCallHelpers::BaseIndex(T13, T11, CCallHelpers::TimesEight), T12);
+        CCallHelpers::JumpList cannotCallGetter;
+        callGetter(jit, cannotCallGetter);
+        cannotCallGetter.link(&jit);
+        jit.move(ownSlotOfSite, A1);
+        findOutAndRemember.append(jit.jump());
     }
 
     miss.link(&jit);
@@ -1514,34 +1622,17 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         jit.loadPtr(Address(T10, FunctionInfo::offsetOfIdentifiers()), T11);
         jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A2);
         countPath(jit, 12);
-        {
-            // The slot is told the name, if it is the function's own. One that has something else there, and goes on being of no use, is given over to the name.
-            jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), T12);
-            jit.subPtr(A1, T12, T12);
-            Jump isNobodys = jit.branchPtr(CCallHelpers::Below, T12, CCallHelpers::TrustedImmPtr(SharedData::size));
-            jit.load64(slotWord(A1, 0), T11);
-            Jump hasRoom = jit.branchTest64(CCallHelpers::Zero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
-            jit.urshift64(T11, TrustedImm32(32), T12);
-            jit.and32(TrustedImm32(Slot::attemptsMask), T12);
-            Jump hasHadItsChances = jit.branch32(CCallHelpers::Equal, T12, TrustedImm32(Slot::attemptsMask));
-            jit.add64(CCallHelpers::TrustedImm64(static_cast<int64_t>(1u << Slot::attemptsShift) << 32), T11);
-            jit.store64(T11, slotWord(A1, 0));
-            Jump notYet = jit.jump();
-            hasHadItsChances.link(&jit);
-            // (All at once: whoever looks, the collector for one, finds no structure, and nothing that says the second word is a cell.)
-            jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::attemptsMask) << 32), T11);
-            jit.store64(T11, slotWord(A1, 0));
-            countPath(jit, 17);
-            hasRoom.link(&jit);
-            jit.storePtr(A2, slotWord(A1, 1));
-            notYet.link(&jit);
-            isNobodys.link(&jit);
-        }
         getFromMegamorphicCache(jit, A2, notFound);
         notFound.link(&jit);
     }
     countPath(jit, 13);
     missAtSite(jit, operation, 1, Returns::Value);
+    if (!findOutAndRemember.empty()) {
+        // Not by way of what looks in the megamorphic cache first (generateFrontEndGetById()): what is found there would keep the place from ever remembering anything.
+        findOutAndRemember.link(&jit);
+        countPath(jit, 26);
+        missAtSite(jit, Entry::RawGetById, 1, Returns::Value);
+    }
 }
 
 static void generatePutById(CCallHelpers& jit)
@@ -3378,7 +3469,7 @@ static constexpr unsigned firstThunkOfIntrinsics = firstThunkOfPrologue + bigges
 // takesOperandAnywhere(). These have all that is quick about them over again for each register...
 static constexpr Stub stubsThatTakeOperandAnywhere[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     // ... and these are got to by way of a move.
-    Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
+    Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
     Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringThatSays, Stub::GetLength, Stub::HelperAddField };
 // And so are these, which are got to by way of something that says which operation as it is.
 struct OperationThatTakesOperandAnywhere {
@@ -3405,7 +3496,7 @@ static constexpr unsigned numberOfRegistersForOperand = 30;
 static constexpr unsigned firstThunkOfOperands = firstThunkOfIntrinsics + numberOfStubIntrinsics;
 static constexpr unsigned firstThunkOfOperandsOfOperations = firstThunkOfOperands + std::size(stubsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
 // takesTwoOperandsAnywhere(): got to by way of two moves.
-static constexpr Stub stubsThatTakeTwoOperandsAnywhere[] = { Stub::StrictEqual, Stub::LooseEqual, Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::PutByValDirect, Stub::HelperAddField };
+static constexpr Stub stubsThatTakeTwoOperandsAnywhere[] = { Stub::StrictEqual, Stub::LooseEqual, Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::HelperAddField };
 static constexpr unsigned numberOfRegistersForPair = 16; // x0 to x8, x19 to x25
 // givesResultAnywhere(). All of Stub::OperationValueWithGlobalObject, of which there is one for each register.
 struct OperationThatGivesResultAnywhere {

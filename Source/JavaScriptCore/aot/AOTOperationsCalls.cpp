@@ -464,9 +464,18 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteRead, void, (JSCell* base, Slo
         site.structures[i] = site.structures[i - 1];
     site.structures[0] = id;
 
-    if (slot->structureID == base->structureID() && !(slot->offset & Slot::isIntricate) && slot->name) {
+    UniquedStringImpl* name = slot->name;
+    if (slot->isOfSeveral()) {
+        auto* several = static_cast<SlotsOfSite*>(slot->pointer);
+        name = several->name;
+        for (Slot& one : several->slots) {
+            if (one.structureID == base->structureID())
+                slot = &one;
+        }
+    }
+    if (slot->structureID == base->structureID() && !(slot->offset & Slot::isIntricate) && name) {
         unsigned attributes;
-        PropertyOffset offset = base->structure()->getConcurrently(slot->name, attributes);
+        PropertyOffset offset = base->structure()->getConcurrently(name, attributes);
         auto location = isValidOffset(offset) ? locationOfProperty(offset) : std::nullopt;
         if (!location || *location != (slot->offset & (Slot::offsetMask | Slot::isIntricate)) || base->structure()->isDictionary()) {
             dataLogLn("AOT: WRONG SLOT ", RawPointer(slot), ": structure ", RawPointer(base->structure()), " id ", id, " has the name at offset ", offset, ", the slot says ", RawHex(slot->offset), "; dictionary ", base->structure()->isDictionary(), "; type ", static_cast<unsigned>(base->type()));
@@ -481,7 +490,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteProbe, void, (JSCell* base, Sl
     site.all++;
     site.byStructure.add(base->structureID().bits(), 0).iterator->value++;
     unsigned attributes;
-    PropertyOffset offset = slot->name ? base->structure()->getConcurrently(slot->name, attributes) : invalidOffset;
+    UniquedStringImpl* name = slot->isOfSeveral() ? static_cast<SlotsOfSite*>(slot->pointer)->name : slot->name;
+    PropertyOffset offset = name ? base->structure()->getConcurrently(name, attributes) : invalidOffset;
     bool isOwnAndInline = isValidOffset(offset) && isInlineOffset(offset);
     site.ownAndInline += isOwnAndInline;
     s_probesAtDepth[isOwnAndInline][s_depthOfLastRead]++;

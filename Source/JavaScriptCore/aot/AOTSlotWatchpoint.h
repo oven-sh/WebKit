@@ -30,7 +30,8 @@ class SlotWatchpoint final : public Watchpoint {
 public:
     SlotWatchpoint();
 
-    void initialize(Data*, const ObjectPropertyCondition&, unsigned slotIndex);
+    void initialize(Data*, const ObjectPropertyCondition&, Slot*);
+    void setSlot(Slot* slot) { m_slot = slot; }
     void install(VM&);
     void fireInternal(VM&, const FireDetail&);
 
@@ -38,17 +39,17 @@ public:
 
 private:
     Data* m_owner;
-    unsigned m_slotIndex { 0 };
+    Slot* m_slot { nullptr }; // One of the owner's own, or of one of its SlotsOfSite.
     ObjectPropertyCondition m_key;
 };
 
-// By the index of the slot.
-using SlotWatchpointMap = UncheckedKeyHashMap<unsigned, FixedVector<SlotWatchpoint>, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
+using SlotWatchpointMap = UncheckedKeyHashMap<Slot*, FixedVector<SlotWatchpoint>>;
 
 // Has the conditions watched on behalf of the slot, in place of whatever was. False, and nothing is watched, if that cannot be
 // done, in which case the slot must not be filled.
 bool watchConditions(VM&, Data*, Slot*, const ObjectPropertyConditionSet&);
 void stopWatching(Data*, Slot*);
+void moveWatching(Data*, Slot* from, Slot* to); // What the one had is in the other now.
 
 } } // namespace JSC::AOT
 

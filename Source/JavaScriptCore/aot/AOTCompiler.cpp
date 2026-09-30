@@ -668,7 +668,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (program)
         inlineCalls(graph, *program);
     inferTypes(graph);
-    if (triesLoopsWhole && !loopsWillDoWhole(graph))
+    // (With no loop split there is no choice to make: LoopOptimizer::viewArrays() looks at each loop by itself.)
+    if (triesLoopsWhole && Options::aotSplitLoops() && Options::aotLoopsToSplit() && !loopsWillDoWhole(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, facts, variableFacts, program, false);
     inferRanges(graph);
     optimizeLoops(graph);
