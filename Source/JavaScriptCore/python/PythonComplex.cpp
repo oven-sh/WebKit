@@ -26,6 +26,7 @@
 #include "config.h"
 #include "PythonBuiltins.h"
 
+#include <errno.h>
 #include <wtf/dtoa.h>
 #include <wtf/text/StringBuilder.h>
 
@@ -220,6 +221,8 @@ static Complex powerOfComplex(Complex a, Complex b, Failure& failure)
             failure = Failure::Domain;
         return { };
     }
+    // What the C library makes of what it is given it says in errno, if it says it at all, and CPython goes by that. glibc says that there is no cosine of infinity, and Apple's says nothing.
+    errno = 0;
     double magnitude = std::hypot(a.real, a.imag);
     double length = std::pow(magnitude, b.real);
     double angle = std::atan2(a.imag, a.real);
@@ -229,7 +232,11 @@ static Complex powerOfComplex(Complex a, Complex b, Failure& failure)
         phase = multiplyAdd(b.imag, std::log(magnitude), phase);
     }
     Complex r { length * std::cos(phase), length * std::sin(phase) };
-    noteOverflow(r, failure);
+    // _Py_ADJUST_ERANGE2()
+    if (std::isinf(r.real) || std::isinf(r.imag))
+        failure = errno == EDOM ? Failure::Domain : Failure::Range;
+    else if (errno == EDOM)
+        failure = Failure::Domain;
     return r;
 }
 
@@ -250,6 +257,8 @@ JSValue powerOfNegativeFloat(JSGlobalObject* globalObject, double base, double e
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     Failure failure = Failure::None;
     Complex result = powerOfComplex({ base, 0 }, { exponent, 0 }, failure);
+    if (failure == Failure::Domain)
+        return raise(globalObject, scope, BuiltinType::ZeroDivisionError, "zero to a negative or complex power"_s);
     if (failure == Failure::Range)
         return raise(globalObject, scope, BuiltinType::OverflowError, "complex exponentiation"_s);
     return toJS(globalObject, result);

@@ -30,6 +30,8 @@
 #include "JSCInlines.h"
 #include "PyObjects.h"
 #include "PythonText.h"
+#include <errno.h>
+#include <string.h>
 #include <wtf/dtoa/double-conversion.h>
 
 namespace JSC { namespace Python {
@@ -718,7 +720,8 @@ static JSValue powerOfFloats(JSGlobalObject* globalObject, ThrowScope& scope, do
     case FloatPower::IsComplex:
         return powerOfNegativeFloat(globalObject, base, exponent);
     case FloatPower::IsTooLarge:
-        return raise(globalObject, scope, BuiltinType::OverflowError, PyTuple::create(globalObject, { jsNumber(34), jsNontrivialString(globalObject->vm(), "Result too large"_s) }));
+        // PyErr_SetFromErrno(), in the words that the system has for it
+        return raise(globalObject, scope, BuiltinType::OverflowError, PyTuple::create(globalObject, { jsNumber(ERANGE), jsString(globalObject->vm(), String::fromUTF8(strerror(ERANGE))) }));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
