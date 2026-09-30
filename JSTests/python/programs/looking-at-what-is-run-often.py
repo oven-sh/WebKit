@@ -96,6 +96,98 @@ show("from further down", summing_further, 30)
 show("one that has nothing yet", not_yet_bound, 30)
 show("one that has been deleted", deleted, 30)
 
+print("---- what a variable had, that nothing here looks at again")
+
+
+def overwritten(n):
+    x = n + 5
+    seen = peek()
+    x = n + 6
+    return seen, x
+
+
+def overwritten_in_a_loop(n):
+    x = n * 2
+    seen = []
+    for i in range(3):
+        seen.append(peek().get("x"))
+        x = i
+    return seen
+
+
+class Looks:
+    def __init__(self):
+        self.n = 0
+        self.seen = []
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        self.seen.append(sys._getframe(1).f_locals.get("x"))
+        self.n += 1
+        if self.n > 3:
+            raise StopIteration
+        return self.n
+
+
+def overwritten_first_thing_in_a_loop(n):
+    it = Looks()
+    x = n + 100
+    for i in it:
+        x = i * 10
+    return it.seen
+
+
+def never_looked_at(n):
+    x = n + 1
+    a = peek()
+    x = n + 2
+    b = peek()
+    x = n + 3
+    return a["x"], b["x"], peek()["x"]
+
+
+def overwritten_in_a_handler(n):
+    x = n
+    try:
+        x = n + 1
+        [].pop()
+    except IndexError:
+        x = n + 2
+        seen = peek()["x"]
+        x = n + 3
+    return seen, peek()["x"]
+
+
+def deleted_and_never_looked_at(n):
+    x = n
+    a = sorted(peek())
+    del x
+    b = sorted(peek())
+    x = n + 1
+    return a, b, sorted(peek())
+
+
+def in_a_traceback(n):
+    def fails():
+        x = n + 1
+        1 // 0
+        x = n + 2
+    try:
+        fails()
+    except ZeroDivisionError as e:
+        return e.__traceback__.tb_next.tb_frame.f_locals["x"]
+
+
+show("before it has something else", overwritten, 1)
+show("in a loop", overwritten_in_a_loop, 4)
+show("first thing in a loop", overwritten_first_thing_in_a_loop, 1)
+show("time and again", never_looked_at, 10)
+show("in a handler", overwritten_in_a_handler, 10)
+show("deleted", deleted_and_never_looked_at, 10)
+show("in a traceback", in_a_traceback, 10)
+
 print("---- changing them")
 
 

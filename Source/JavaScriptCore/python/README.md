@@ -494,6 +494,9 @@ makes for itself does. It is by the table that JavaScriptCore knows whether ther
 - What has been compiled and not yet installed kept from the collector whatever the function had in its variables when compiling was begun, for as long as it waited, which could be for good. It lets go of them when compiling is over, and refers weakly to what it
   will refer to weakly once it is installed: if any of that goes, so does it (`Plan::isKnownToBeLiveAfterGC()`).
 
+**What a variable had is kept until it has something else**, though nothing in the code looks at it again, since whatever the code calls in the meantime may. To the bytecode every instruction uses the registers that a frame object sees. To the graph that is
+a `Flush` of what the register had before each `SetLocal`, which is what JavaScriptCore does with the register that a debugger looks for the scope in. Without it the store went, and in SSA there was no `Phi` for what the bytecode said was live.
+
 **When it is compiled.** JavaScriptCore puts off compiling code again until three quarters of its `ValueProfile`s have seen something, up to five times, taking that for a sign of how much of the code has been run. It leaves out those of the arguments. Code in Python
 begins by giving its parameters what it was called with, and most of that is for what is out of the ordinary: too few, too many, some left to their defaults. In a small function that was enough for it to be put off all five times. What is found out
 there says what the parameters are, as the profiles of the arguments do, so it is left out with them: `CodeBlock::numberOfValueProfilesOfArgumentBinding()`.

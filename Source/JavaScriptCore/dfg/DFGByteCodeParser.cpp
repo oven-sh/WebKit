@@ -846,6 +846,10 @@ private:
                 flushDirect(operand, argumentPosition);
             else if (m_graph.needsScopeRegister() && reg == m_codeBlock->scopeRegister())
                 flush(operand);
+            else if (m_graph.isSeenFromOutside(operand)) {
+                // What it had until now may have been looked at, though nothing here does.
+                flushDirect(operand);
+            }
         }
 
         VariableAccessData* variableAccessData = newVariableAccessData(operand);

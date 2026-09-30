@@ -4,6 +4,14 @@ where it has got to => [(3, True, 'show'), (7, True, 'show'), [('asks_where', 's
 from further down => {'n': 30, 'total': 870, 'i': 29, 'name': 'x'}
 one that has nothing yet => (['i', 'n'], 1)
 one that has been deleted => ['i', 'n']
+---- what a variable had, that nothing here looks at again
+before it has something else => ({'n': 1, 'x': 6}, 7)
+in a loop => [8, 0, 1]
+first thing in a loop => [101, 10, 20, 30]
+time and again => (11, 12, 13)
+in a handler => (12, 13)
+deleted => (['n', 'x'], ['a', 'n'], ['a', 'b', 'n', 'x'])
+in a traceback => 11
 ---- changing them
 a variable => (1515, 100)
 to another kind => [2, 1.0, 'ss', 'ss']
