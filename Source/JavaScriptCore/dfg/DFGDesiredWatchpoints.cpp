@@ -118,6 +118,12 @@ void DesiredWatchpoints::addLazily(WatchpointSet& set)
     m_sets.addLazily(&set);
 }
 
+void DesiredWatchpoints::addLazily(Ref<WatchpointSet>&& set)
+{
+    m_sets.addLazily(set.ptr());
+    m_setsToKeep.append(WTF::move(set));
+}
+
 void DesiredWatchpoints::addLazily(InlineWatchpointSet& set)
 {
     m_inlineSets.addLazily(&set);

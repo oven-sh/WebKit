@@ -95,6 +95,8 @@ GetByStatus GetByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
     case op_get_by_val:
     case op_get_by_val_with_this:
     case op_get_by_id_with_this:
+    case op_py_get_attr:
+    case op_py_load_method:
         return GetByStatus(NoInformation, false);
 
     case op_enumerator_get_by_val:
@@ -328,10 +330,6 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
             if (access.usesPolyProto())
                 return GetByStatus(JSC::slowVersion(summary), propertyCache);
 
-            // It holds only for as long as something that a variant has no way to say holds. An inline cache can.
-            if (access.additionalSet())
-                return GetByStatus(JSC::slowVersion(summary), propertyCache);
-
             if (!access.requiresIdentifierNameMatch()) {
                 // FIXME: We could use this for indexed loads in the future. This is pretty solid profiling
                 // information, and probably better than ArrayProfile when it's available.
@@ -428,6 +426,7 @@ GetByStatus GetByStatus::computeForPropertyInlineCacheWithoutExitSiteFeedback(co
                     ASSERT((AccessCase::Miss == access.type() || access.isCustom()) == (access.offset() == invalidOffset));
                     GetByVariant variant(access.identifier(), StructureSet(structure), viaGlobalProxy, complexGetStatus.offset(),
                         complexGetStatus.conditionSet(), WTF::move(callLinkStatus), intrinsicFunction);
+                    variant.setAdditionalSet(access.additionalSet());
 
                     if (!result.appendVariant(variant))
                         return GetByStatus(JSC::slowVersion(summary), propertyCache);

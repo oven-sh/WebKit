@@ -449,8 +449,9 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationProcessShadowChickenLog, void, (VM*)
 
 inline decltype(auto) selectNewFunctionOperation(auto* executable)
 {
+    // Each of the others is for one of the structures that a function of JavaScript's can have. This one asks which: JSFunction::selectStructureForNewFuncExp().
     auto function = operationNewFunction;
-    if (!executable->isBuiltinFunction()) {
+    if (!executable->isBuiltinFunction() && !executable->isPython()) {
         if (executable->isArrowFunction())
             function = operationNewArrowFunction;
         else if (executable->isInStrictContext())
@@ -464,7 +465,7 @@ inline decltype(auto) selectNewFunctionOperation(auto* executable)
 inline decltype(auto) selectNewFunctionWithInvalidatedReallocationWatchpointOperation(auto* executable)
 {
     auto function = operationNewFunctionWithInvalidatedReallocationWatchpoint;
-    if (!executable->isBuiltinFunction()) {
+    if (!executable->isBuiltinFunction() && !executable->isPython()) {
         if (executable->isArrowFunction())
             function = operationNewArrowFunctionWithInvalidatedReallocationWatchpoint;
         else if (executable->isInStrictContext())

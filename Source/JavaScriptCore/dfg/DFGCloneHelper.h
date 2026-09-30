@@ -329,6 +329,30 @@ BasicBlock* CloneHelper::cloneBlock(BasicBlock* const block, const CustomizeSucc
     CLONE_STATUS(PutByValDirectResolved, Common) \
     CLONE_STATUS(PutByValDirect, Common) \
     CLONE_STATUS(PutByValWithThis, Common) \
+    CLONE_STATUS(PyBinaryOp, Common) \
+    CLONE_STATUS(PyUnaryOp, Common) \
+    CLONE_STATUS(PyCompareOp, Common) \
+    CLONE_STATUS(PyGetAttr, Common) \
+    CLONE_STATUS(PyGetItem, Common) \
+    CLONE_STATUS(PyIterNext, Common) \
+    CLONE_STATUS(PyLoadGlobal, Common) \
+    CLONE_STATUS(PyToBool, Common) \
+    CLONE_STATUS(PyLoadMethod, Common) \
+    CLONE_STATUS(PyGetIter, Common) \
+    CLONE_STATUS(PyUnpackSequence, Common) \
+    CLONE_STATUS(PyNewTuple, Common) \
+    CLONE_STATUS(PySetAttr, Common) \
+    CLONE_STATUS(PyDelAttr, Common) \
+    CLONE_STATUS(PySetItem, Common) \
+    CLONE_STATUS(PyDelItem, Common) \
+    CLONE_STATUS(PyGetTupleItem, Common) \
+    CLONE_STATUS(PyFloorDiv, Common) \
+    CLONE_STATUS(PyMod, Common) \
+    CLONE_STATUS(PyCheckDivisor, Common) \
+    CLONE_STATUS(PyEnter, Common) \
+    CLONE_STATUS(PyLeave, Common) \
+    CLONE_STATUS(PyCheckNoFrameObject, Common) \
+    CLONE_STATUS(PyCheckPendingWork, Common) \
     CLONE_STATUS(PutClosureVar, Common) \
     CLONE_STATUS(PutGlobalVariable, Common) \
     CLONE_STATUS(PutInternalField, Common) \

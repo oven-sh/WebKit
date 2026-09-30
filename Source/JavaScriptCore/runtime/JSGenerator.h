@@ -85,6 +85,8 @@ public:
     WriteBarrier<Unknown>& internalField(Field field) { return Base::internalField(static_cast<uint32_t>(field)); }
 
     static JSGenerator* create(VM&, Structure*);
+    // Of what op_new_generator makes, in code of that executable.
+    static Structure* selectStructureForNewGenerator(JSGlobalObject*, ScriptExecutable*);
     static JSGenerator* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 

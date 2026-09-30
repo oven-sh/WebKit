@@ -37,6 +37,7 @@
 #include "DOMJITCallDOMGetterSnippet.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
+#include "PythonOperators.h"
 #include "RegExpConstructor.h"
 #include "TypeLocation.h"
 
@@ -1465,6 +1466,56 @@ private:
         }
 
         case GetByValWithThis:
+            break;
+
+        case PyGetTupleItem:
+            fixEdge<KnownCellUse>(node->child1());
+            break;
+
+        case PyBinaryOp:
+            fixupPyBinaryOp(node);
+            break;
+
+        case PyGetItem:
+        case PySetItem:
+            fixupPyItemAccess(node);
+            break;
+
+        case PyUnaryOp:
+            fixupPyUnaryOp(node);
+            break;
+
+        case PyCompareOp:
+            fixupPyCompareOp(node);
+            break;
+
+        case PyToBool:
+            fixupPyToBool(node, false);
+            break;
+
+        case PyFloorDiv:
+        case PyMod:
+        case PyCheckDivisor:
+            break;
+
+        case PyGetAttr:
+            if (node->child1()->shouldSpeculateCell())
+                fixEdge<CellUse>(node->child1());
+            break;
+
+        case PyLoadMethod:
+            m_graph.m_tupleData.at(node->tupleOffset()).resultFlags = NodeResultJS;
+            m_graph.m_tupleData.at(node->tupleOffset() + 1).resultFlags = NodeResultJS;
+            break;
+
+        case PySetAttr:
+            // Nothing else has attributes that can be set. What is said of that is for the baseline JIT to say.
+            fixEdge<CellUse>(node->child1());
+            break;
+
+        case PyLoadGlobal:
+            fixEdge<KnownCellUse>(node->child1());
+            fixEdge<KnownCellUse>(node->child2());
             break;
 
         case GetByValWithThisMegamorphic:
@@ -3995,6 +4046,16 @@ private:
         case TypeOf:
         case PutByIdWithThis:
         case PutByValWithThis:
+        case PyIterNext:
+        case PyGetIter:
+        case PyUnpackSequence:
+        case PyNewTuple:
+        case PyDelAttr:
+        case PyDelItem:
+        case PyEnter:
+        case PyLeave:
+        case PyCheckNoFrameObject:
+        case PyCheckPendingWork:
         case CompareEqPtr:
         case GetGlobalThis:
         case ExtractValueFromWeakMapGet:
@@ -4274,6 +4335,290 @@ private:
         if (node->child1()->shouldSpeculateFunction()) {
             fixEdge<FunctionUse>(node->child1());
             node->clearFlags(NodeMustGenerate);
+            return;
+        }
+    }
+
+    // ---- Python's operators. Where it can be told what the operands are, they become what JavaScript's own become, or what TaggedAdd and its like do. What is left finds out when it runs.
+
+    // What something is expected to be, if it is anything. Every variable of Python's begins with nothing in it, and what goes through something has nothing left in the end, so that is among what is expected of a good deal.
+    // It is looked out for before anything is done with the value, and it is none of the kinds that are looked for here.
+    static SpeculatedType predictionIfBound(Node* node) { return node->prediction() & ~SpecEmpty; }
+    static bool isPredictedToBeInt32(Node* node) { return isInt32Speculation(predictionIfBound(node)); }
+    static bool isPredictedToBeBoolean(Node* node) { return isBooleanSpeculation(predictionIfBound(node)); }
+    static bool isPredictedToBeString(Node* node) { return isStringSpeculation(predictionIfBound(node)); }
+    static bool isPredictedToBeOther(Node* node) { return isOtherSpeculation(predictionIfBound(node)); }
+    static bool isPredictedToBeArray(Node* node) { return isArraySpeculation(predictionIfBound(node)); }
+    static bool isPredictedToBeNumber(Node* node)
+    {
+        SpeculatedType prediction = predictionIfBound(node);
+        return prediction && !(prediction & ~SpecBytecodeNumber);
+    }
+
+    void fixupPyBinaryOp(Node* node)
+    {
+        using Operator = Python::BinaryOperator;
+        // To a number, x += y is x = x + y.
+        auto operation = static_cast<Operator>(node->pythonOperator() & ~Python::inPlaceOperatorFlag);
+        bool areInt32s = isPredictedToBeInt32(node->child1().node()) && isPredictedToBeInt32(node->child2().node());
+        std::optional<int32_t> constant;
+        if (node->child2()->isInt32Constant())
+            constant = node->child2()->asInt32();
+        auto becomeOnInt32s = [&] (NodeType op) {
+            node->setOpAndDefaultFlags(op);
+            fixEdge<Int32Use>(node->child1());
+            fixEdge<Int32Use>(node->child2());
+        };
+        auto setRightOperand = [&] (int32_t value) {
+            node->child2() = m_insertionSet.insertConstantForUse(m_indexInBlock, node->origin, jsNumber(value), UntypedUse);
+        };
+
+        switch (operation) {
+        case Operator::Add:
+        case Operator::Sub:
+        case Operator::Mult:
+        case Operator::Div: {
+            bool isDivision = operation == Operator::Div;
+            if (m_graph.taggedArithMode(node, isDivision) == Graph::TaggedArithMode::Generic)
+                return;
+            if (isDivision) {
+                if (m_graph.hasExitSite(node, Overflow))
+                    return;
+                Node* divisor = node->child2().node();
+                if (!divisor->isNumberConstant() || !divisor->asNumber()) {
+                    observeUseKindOnNode<DoubleRepUse>(divisor);
+                    m_insertionSet.insertNode(m_indexInBlock, SpecNone, PyCheckDivisor, node->origin, Edge(divisor, DoubleRepUse));
+                }
+            }
+            node->setOpAndDefaultFlags(operation == Operator::Add ? TaggedAdd : operation == Operator::Sub ? TaggedSub : operation == Operator::Mult ? TaggedMul : TaggedDiv);
+            fixupNode(node);
+            return;
+        }
+
+        case Operator::Mod:
+        case Operator::FloorDiv:
+            if (!areInt32s || m_graph.hasExitSite(node, Overflow))
+                return;
+            if (constant && *constant > 0 && hasOneBitSet(*constant)) {
+                // Rounding down is what these do.
+                if (operation == Operator::Mod) {
+                    setRightOperand(*constant - 1);
+                    becomeOnInt32s(ArithBitAnd);
+                } else {
+                    setRightOperand(WTF::ctz(*constant));
+                    becomeOnInt32s(ArithBitRShift);
+                }
+                return;
+            }
+#if CPU(ARM64) || CPU(X86_64)
+            becomeOnInt32s(operation == Operator::Mod ? PyMod : PyFloorDiv);
+#endif
+            return;
+
+        case Operator::BitAnd:
+        case Operator::BitOr:
+        case Operator::BitXor:
+            if (areInt32s)
+                becomeOnInt32s(operation == Operator::BitAnd ? ArithBitAnd : operation == Operator::BitOr ? ArithBitOr : ArithBitXor);
+            return;
+
+        case Operator::LShift:
+            // Nothing that is shifted out is lost, so it is a multiplication that may not fit.
+            if (!areInt32s || !constant || *constant < 0 || *constant > 30 || m_graph.hasExitSite(node, Overflow))
+                return;
+            setRightOperand(1 << *constant);
+            becomeOnInt32s(ArithMul);
+            node->setArithMode(Arith::CheckOverflow);
+            node->setResult(NodeResultInt32);
+            node->clearFlags(NodeMustGenerate);
+            return;
+
+        case Operator::RShift:
+            if (!areInt32s || !constant || *constant < 0)
+                return;
+            // JavaScript goes by the low five bits of how far. By 31 there is nothing left but the sign.
+            if (*constant > 31)
+                setRightOperand(31);
+            becomeOnInt32s(ArithBitRShift);
+            return;
+
+        case Operator::MatMult:
+        case Operator::Pow:
+            return;
+        }
+    }
+
+    void fixupPyUnaryOp(Node* node)
+    {
+        using Operator = Python::UnaryOperator;
+        Node* operand = node->child1().node();
+        switch (static_cast<Operator>(node->pythonOperator())) {
+        case Operator::Not:
+            fixupPyToBool(node, true);
+            return;
+
+        case Operator::Invert:
+            if (!isPredictedToBeInt32(operand))
+                return;
+            node->setOpAndDefaultFlags(ArithBitNot);
+            fixEdge<Int32Use>(node->child1());
+            return;
+
+        case Operator::USub: {
+            Graph::TaggedKind kind = m_graph.taggedKind(operand);
+            if (kind == Graph::TaggedKind::Integer && !m_graph.hasExitSite(node, Overflow)) {
+                // There is no negative zero among the integers, so it is 0 - x.
+                node->child2() = node->child1();
+                node->child1() = m_insertionSet.insertConstantForUse(m_indexInBlock, node->origin, jsNumber(0), UntypedUse);
+                node->setOpAndDefaultFlags(TaggedSub);
+                fixupNode(node);
+                return;
+            }
+            if (kind == Graph::TaggedKind::Float && !m_graph.hasExitSite(node, BadType)) {
+                if (operand->op() != BoxTaggedFloat && !operand->isNumberConstant())
+                    m_insertionSet.insertNode(m_indexInBlock, SpecNone, CheckTaggedFloat, node->origin, Edge(operand, UntypedUse));
+                // The sign is turned whatever it is the sign of, which nothing that could be taken from does for a NaN.
+                fixEdge<DoubleRepUse>(node->child1());
+                Node* negated = m_insertionSet.insertNode(m_indexInBlock, SpecBytecodeDouble, ArithNegate, node->origin, node->child1());
+                negated->setResult(NodeResultDouble);
+                negated->clearFlags(NodeMustGenerate);
+                node->setOpAndDefaultFlags(BoxTaggedFloat);
+                node->child1() = Edge(negated, DoubleRepUse);
+            }
+            return;
+        }
+
+        case Operator::UAdd:
+            return;
+        }
+    }
+
+    void fixupPyCompareOp(Node* node)
+    {
+        using Operator = Python::ComparisonOperator;
+        NodeType op;
+        bool isNegated = false;
+        switch (static_cast<Operator>(node->pythonOperator())) {
+        case Operator::Eq:
+            op = CompareEq;
+            break;
+        case Operator::NotEq:
+            op = CompareEq;
+            isNegated = true;
+            break;
+        case Operator::Lt:
+            op = CompareLess;
+            break;
+        case Operator::LtE:
+            op = CompareLessEq;
+            break;
+        case Operator::Gt:
+            op = CompareGreater;
+            break;
+        case Operator::GtE:
+            op = CompareGreaterEq;
+            break;
+        default:
+            return;
+        }
+
+        Node* left = node->child1().node();
+        Node* right = node->child2().node();
+        if (isPredictedToBeInt32(left) && isPredictedToBeInt32(right)) {
+            fixEdge<Int32Use>(node->child1());
+            fixEdge<Int32Use>(node->child2());
+        } else if (isPredictedToBeNumber(left) && isPredictedToBeNumber(right)) {
+            fixEdge<DoubleRepUse>(node->child1());
+            fixEdge<DoubleRepUse>(node->child2());
+        } else if (op == CompareEq && isPredictedToBeString(left) && isPredictedToBeString(right)) {
+            // Which comes first is another matter: JavaScript goes by code units.
+            op = CompareStrictEq;
+            fixEdge<StringUse>(node->child1());
+            fixEdge<StringUse>(node->child2());
+        } else
+            return;
+
+        if (!isNegated) {
+            node->setOpAndDefaultFlags(op);
+            node->clearFlags(NodeMustGenerate);
+            return;
+        }
+        Node* isEqual = m_insertionSet.insertNode(m_indexInBlock, SpecBoolean, op, node->origin, node->child1(), node->child2());
+        isEqual->clearFlags(NodeMustGenerate);
+        node->setOpAndDefaultFlags(LogicalNot);
+        node->child1() = Edge(isEqual, KnownBooleanUse);
+        node->child2() = Edge();
+    }
+
+    // A list is an array, and what is at a place in one is got and set as JavaScript would. What JavaScript makes of a place that is not there is not what Python does, and neither is what it makes of one that is counted from
+    // the end. Both are left to the baseline JIT.
+    void fixupPyItemAccess(Node* node)
+    {
+        bool isGet = node->op() == PyGetItem;
+        Node* base = m_graph.varArgChild(node, 0).node();
+        Node* key = m_graph.varArgChild(node, 1).node();
+        Node* value = isGet ? nullptr : m_graph.varArgChild(node, 2).node();
+        auto isList = [&] {
+            // Not of a class derived from list, which may have something of its own to say.
+            if (!isPredictedToBeArray(base) || !isPredictedToBeInt32(key))
+                return false;
+            for (ExitKind kind : { OutOfBounds, BadType, BadIndexingType, BadCache, LoadFromHole, StoreToHole, NegativeIndex }) {
+                if (m_graph.hasExitSite(node, kind))
+                    return false;
+            }
+            ArrayMode mode = node->arrayMode().refine(m_graph, node, predictionIfBound(base), predictionIfBound(key), value ? predictionIfBound(value) : SpecNone);
+            if (!mode.isJSArray() || !mode.isInBounds())
+                return false;
+            // One that has had nothing but ints in it goes on that way only for as long as that is so. JavaScript would keep floats in it as they are, and then it could not be told which of them are whole.
+            return mode.type() == Array::Contiguous || (mode.type() == Array::Int32 && (isGet || isPredictedToBeInt32(value)));
+        };
+        if (isList()) {
+            insertCheck<ArrayUse>(base);
+            node->setOpAndDefaultFlags(isGet ? GetByVal : PutByVal);
+            fixupNode(node);
+            return;
+        }
+        // Nothing else can be given anything. What is said of that is for the baseline JIT to say.
+        if (!isGet)
+            fixEdge<CellUse>(m_graph.varArgChild(node, 0));
+    }
+
+    // bool(x), or `not x`.
+    void fixupPyToBool(Node* node, bool isNegated)
+    {
+        Node* operand = node->child1().node();
+        NodeType op = isNegated ? LogicalNot : ToBoolean;
+        if (isPredictedToBeBoolean(operand)) {
+            node->setOpAndDefaultFlags(op);
+            if (operand->result() == NodeResultBoolean)
+                fixEdge<KnownBooleanUse>(node->child1());
+            else
+                fixEdge<BooleanUse>(node->child1());
+            return;
+        }
+        if (isPredictedToBeInt32(operand)) {
+            node->setOpAndDefaultFlags(op);
+            fixEdge<Int32Use>(node->child1());
+            return;
+        }
+        if (isPredictedToBeNumber(operand)) {
+            // Whatever is not 0 is true, and NaN is not 0, whereas to JavaScript it is false.
+            fixEdge<DoubleRepUse>(node->child1());
+            Edge zero = m_insertionSet.insertConstantForUse(m_indexInBlock, node->origin, jsNumber(0), DoubleRepUse);
+            Node* isZero = m_insertionSet.insertNode(m_indexInBlock, SpecBoolean, CompareEq, node->origin, node->child1(), zero);
+            isZero->clearFlags(NodeMustGenerate);
+            node->setOpAndDefaultFlags(isNegated ? ToBoolean : LogicalNot);
+            node->child1() = Edge(isZero, KnownBooleanUse);
+            return;
+        }
+        if (isPredictedToBeString(operand)) {
+            node->setOpAndDefaultFlags(op);
+            fixEdge<StringUse>(node->child1());
+            return;
+        }
+        if (isPredictedToBeOther(operand)) {
+            insertCheck<OtherUse>(operand);
+            m_graph.convertToConstant(node, jsBoolean(isNegated));
             return;
         }
     }

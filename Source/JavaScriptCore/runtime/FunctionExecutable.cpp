@@ -105,6 +105,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitor.append(rareData->m_cachedPolyProtoStructureID);
         visitor.append(rareData->m_asString);
         visitor.append(rareData->m_pythonCodeObject);
+        visitor.append(rareData->m_pythonGlobalsSymbolTable);
         visitor.append(rareData->m_pythonGeneratorFunction);
         if (!rareData->m_pythonFunctionExpressions.isEmpty()) {
             Locker locker { thisObject->cellLock() };

@@ -361,7 +361,25 @@ void CodeBlock::finishCreation(VM& vm, CopyParsedBlockTag, CodeBlock& other)
     if (other.m_rareData) {
         createRareDataIfNecessary();
         m_rareData->m_exceptionHandlers = other.m_rareData->m_exceptionHandlers;
+        m_rareData->m_registersSeenFromOutside = other.m_rareData->m_registersSeenFromOutside;
+        m_rareData->m_offsetFromWhichRegistersAreSeen = other.m_rareData->m_offsetFromWhichRegistersAreSeen;
     }
+}
+
+VirtualRegister CodeBlock::machineRegisterSeenFromOutside(VirtualRegister virtualRegister) const
+{
+#if ENABLE(DFG_JIT)
+    if (JITCode::isOptimizingJIT(jitType())) {
+        auto registers = registersSeenFromOutside();
+        auto& machineRegisters = m_jitCode->dfgCommon()->m_machineRegistersSeenFromOutside;
+        for (size_t i = 0; i < registers.size(); ++i) {
+            if (registers[i] == virtualRegister)
+                return machineRegisters[i];
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+#endif
+    return virtualRegister;
 }
 
 CodeBlock::CodeBlock(VM& vm, Structure* structure, ScriptExecutable* ownerExecutable, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
@@ -428,6 +446,11 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
 
     if (m_unlinkedCode->wasCompiledWithTypeProfilerOpcodes() || m_unlinkedCode->wasCompiledWithControlFlowProfilerOpcodes())
         vm.functionHasExecutedCache()->removeUnexecutedRange(ownerExecutable->sourceID(), ownerExecutable->typeProfilingStartOffset(), ownerExecutable->typeProfilingEndOffset());
+
+    if (ownerExecutable->isPython()) {
+        createRareDataIfNecessary();
+        m_rareData->m_registersSeenFromOutside = Python::registersThatFrameObjectSees(uncheckedDowncast<FunctionExecutable>(ownerExecutable), m_rareData->m_offsetFromWhichRegistersAreSeen);
+    }
 
     ScriptExecutable* topLevelExecutable = ownerExecutable->topLevelExecutable();
     // We wait to initialize template objects until the end of finishCreation beecause it can

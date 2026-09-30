@@ -177,6 +177,7 @@ void JITCompiler::link(LinkBuffer& linkBuffer)
     // Link the code, populate data in CodeBlock data structures.
     m_jitCode->common.frameRegisterCount = m_graph.frameRegisterCount();
     m_jitCode->common.requiredRegisterCountForExit = m_graph.requiredRegisterCountForExit();
+    m_jitCode->common.m_machineRegistersSeenFromOutside = FixedVector<VirtualRegister>(m_graph.m_machineRegistersSeenFromOutside);
 
     if (!m_graph.m_plan.inlineCallFrames()->isEmpty())
         m_jitCode->common.inlineCallFrames = m_graph.m_plan.inlineCallFrames();

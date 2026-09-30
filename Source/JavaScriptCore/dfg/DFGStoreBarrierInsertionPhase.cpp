@@ -271,6 +271,10 @@ private:
                 break;
             }
 
+            case PySetItem:
+                considerBarrier(m_graph.varArgChild(m_node, 0), m_graph.varArgChild(m_node, 2));
+                break;
+
             case ArrayPush: {
                 switch (m_node->arrayMode().type()) {
                 case Array::Contiguous:
@@ -332,7 +336,8 @@ private:
             case PutByIdFlush:
             case PutByIdDirect:
             case PutStructure:
-            case PutByIdMegamorphic: {
+            case PutByIdMegamorphic:
+            case PySetAttr: {
                 considerBarrier(m_node->child1());
                 break;
             }

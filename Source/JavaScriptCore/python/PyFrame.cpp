@@ -87,6 +87,13 @@ void PyFrame::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
 DEFINE_VISIT_CHILDREN(PyFrame);
 
+// One of CodeBlock::registersSeenFromOutside(), of a frame that is on the stack. Code that has been compiled with more care keeps them where it sees fit. They are there whenever anything that it has called is running,
+// which is the only time that anything can be looking.
+static Register& registerOf(CallFrame* callFrame, VirtualRegister virtualRegister)
+{
+    return callFrame->uncheckedR(callFrame->codeBlock()->machineRegisterSeenFromOutside(virtualRegister));
+}
+
 static JSGenerator* generatorOf(CallFrame* callFrame)
 {
     return uncheckedDowncast<JSGenerator>(callFrame->uncheckedArgument(static_cast<int>(JSGenerator::Argument::Generator) - 1).asCell());
@@ -100,7 +107,7 @@ static int32_t generatorStateOf(JSGenerator* generator)
 PyFrame* PyFrame::forCallFrameIfExists(VM& vm, CallFrame* callFrame)
 {
     const FunctionInfo& info = *pythonInfoOfFrame(callFrame);
-    JSValue existing = info.isGeneratorBody ? generatorOf(callFrame)->getDirect(vm, vm.pythonNames().private_frame) : callFrame->uncheckedR(info.details->frameObjectRegister).jsValue();
+    JSValue existing = info.isGeneratorBody ? generatorOf(callFrame)->getDirect(vm, vm.pythonNames().private_frame) : registerOf(callFrame, info.details->frameObjectRegister).jsValue();
     return existing && existing.isCell() ? uncheckedDowncast<PyFrame>(existing.asCell()) : nullptr;
 }
 
@@ -114,7 +121,7 @@ PyFrame* PyFrame::forCallFrame(VM& vm, CallFrame* callFrame)
         return forGenerator(globalObject, generatorOf(callFrame));
     PyFrame* frame = create(vm, globalObject, uncheckedDowncast<JSFunction>(callFrame->jsCallee()));
     frame->m_callFrame = callFrame;
-    callFrame->uncheckedR(info.details->frameObjectRegister) = JSValue(frame);
+    registerOf(callFrame, info.details->frameObjectRegister) = JSValue(frame);
     return frame;
 }
 
@@ -197,7 +204,7 @@ JSScope* PyFrame::scope(VM& vm)
 {
     switch (state()) {
     case State::Running:
-        return callFrame(vm)->scope(details().scopeRegister.offset());
+        return registerOf(callFrame(vm), details().scopeRegister).Register::scope();
     case State::Suspended:
         if (auto* slot = savedRegister(vm, details().scopeRegister))
             return uncheckedDowncast<JSScope>(slot->get().asCell());
@@ -248,7 +255,7 @@ JSValue PyFrame::variable(VM& vm, unsigned index)
 {
     VirtualRegister location = details().frameVariables[index].location;
     if (location.isValid() && state() == State::Running)
-        return callFrame(vm)->uncheckedR(location).jsValue();
+        return registerOf(callFrame(vm), location).jsValue();
     JSCell* owner = nullptr;
     auto* slot = heapSlot(vm, index, owner);
     return slot ? slot->get() : JSValue();
@@ -258,7 +265,11 @@ void PyFrame::setVariable(VM& vm, unsigned index, JSValue value)
 {
     VirtualRegister location = details().frameVariables[index].location;
     if (location.isValid() && state() == State::Running) {
-        callFrame(vm)->uncheckedR(location) = value;
+        CallFrame* frame = callFrame(vm);
+        registerOf(frame, location) = value;
+        // Code that has been compiled with more care has what it had, and does not look again. It gives way to code that does when it is come back to, which takes what it finds here.
+        if (CodeBlock* codeBlock = frame->codeBlock(); JITCode::isOptimizingJIT(codeBlock->jitType()))
+            codeBlock->jettison(Profiler::JettisonDueToUnprofiledWatchpoint, CountReoptimization);
         return;
     }
     JSCell* owner = nullptr;
@@ -363,9 +374,9 @@ void PyFrame::leave(VM& vm, CallFrame* callFrame, BytecodeIndex bytecodeIndex)
     const CodeDetails& details = this->details();
     for (unsigned i = 0; i < m_variableCount; ++i) {
         if (VirtualRegister location = details.frameVariables[i].location; location.isValid())
-            variables()[i].set(vm, this, callFrame->uncheckedR(location).jsValue());
+            variables()[i].set(vm, this, registerOf(callFrame, location).jsValue());
     }
-    m_scope.set(vm, this, callFrame->scope(details.scopeRegister.offset()));
+    m_scope.set(vm, this, registerOf(callFrame, details.scopeRegister).Register::scope());
     if (functionInfo().usesNamespace)
         m_namespace.set(vm, this, namespaceArgument(vm, callFrame));
     // What resumed a generator is not what called it, and is forgotten each time that it stops.

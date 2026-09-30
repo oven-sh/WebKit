@@ -1,0 +1,111 @@
+a + b => 1485 3115055039 665 errors
+a - b => 1485 418568643 671 errors
+a * b => 1368 675052746 370 errors
+a / b => 1485 3001112085 782 errors
+a // b => 1485 567128473 782 errors
+a % b => 1485 2778895929 782 errors
+a << b => 1265 3643417981 1067 errors
+a >> b => 1485 2807174519 1221 errors
+a & b => 1485 269753287 1155 errors
+a | b => 1485 3271919465 1155 errors
+a ^ b => 1485 2531893793 1155 errors
+a == b => 1485 2827014146 0 errors
+a != b => 1485 646141444 0 errors
+a < b => 1485 220033828 611 errors
+a <= b => 1485 2936784080 665 errors
+a > b => 1485 1351424667 610 errors
+a >= b => 1485 2654526608 665 errors
+'yes' if a < b else 'no' => 1485 2694451010 611 errors
+'yes' if a == b else 'no' => 1485 4206499805 0 errors
+'yes' if a != b else 'no' => 1485 3480034771 0 errors
+a[b] => 1485 399956213 1405 errors
+-a => 55 265071870 16 errors
++a => 55 2348819490 18 errors
+~a => 55 3948677124 33 errors
+not a => 55 2093459976 0 errors
+'yes' if a else 'no' => 55 1075697361 0 errors
+'yes' if not a else 'no' => 55 2348508244 0 errors
+a + 1 => 55 2291806361 18 errors
+1 - a => 55 3165977459 18 errors
+a * 3 => 55 110072274 5 errors
+a * 0.5 => 55 200358588 18 errors
+a + 0.5 => 55 1368282297 18 errors
+a / 2 => 55 1866237471 18 errors
+a / 0 => 55 2469822688 55 errors
+2 / a => 55 1197877761 22 errors
+a // 7 => 55 4274364985 18 errors
+a // 8 => 55 3986212048 18 errors
+a // -1 => 55 1744420028 18 errors
+a // 0 => 55 150755051 55 errors
+a % 7 => 55 994843208 18 errors
+a % 8 => 55 2400983985 18 errors
+a % -7 => 55 3945765702 18 errors
+a % 1 => 55 2762052678 18 errors
+a % 0 => 55 548481340 55 errors
+a << 1 => 55 977608710 33 errors
+a << 3 => 55 4064379348 33 errors
+a << 30 => 55 2321576679 33 errors
+a << 31 => 55 2978141206 33 errors
+a >> 1 => 55 3613845359 33 errors
+a >> 31 => 55 3183053215 33 errors
+a >> 40 => 55 352973531 33 errors
+a & 7 => 55 2054661165 33 errors
+a | 1 => 55 4261461901 33 errors
+a ^ -1 => 55 36669460 33 errors
+a == 1 => 55 2007408839 0 errors
+a != 1 => 55 606285594 0 errors
+a < 3 => 55 470427312 16 errors
+a >= 0.5 => 55 3205368642 18 errors
+a == 'ab' => 55 2588747293 0 errors
+a[0] => 55 2040511549 45 errors
+a[1] => 55 2466599183 45 errors
+a[-1] => 55 1144351951 45 errors
+a[5] => 55 3398964101 54 errors
+different: 0
+---- giving something a place in a list
+a[b] = c => 1573 4202851788
+a[0] = c => 1573 497372277
+a[-1] = c => 1573 814253841
+a[1] = 5 => 1573 59006996
+a[1] = 2.0 => 1573 4190755321
+different: 0
+---- in a loop, where what a variable has changes as it goes
+sums ints => int 4200
+sums that get too big => int 2202009600
+sums and then a float => float 2100.5
+sums whole floats => float 3000.0
+sums a whole float at the end => float 2002.0
+sums bools => int 1000
+sums ints again => int 4200
+sums a NaN among them => float nan
+products ints => int (545, 1572740321)
+products that get too big => ValueError (117, 375064960)
+products and then a float => float 0.5
+products whole floats => float 1.0715086071862673e+301
+products a whole float at the end => float 2.0
+products bools => int 0
+products ints again => int (545, 1572740321)
+products a NaN among them => float nan
+counts ints => int 2100
+counts that get too big => int 2100
+counts and then a float => int 2101
+counts whole floats => int 2000
+counts a whole float at the end => int 2001
+counts bools => int 1000
+counts ints again => int 2100
+counts a NaN among them => int 2011
+largest ints => int 3
+largest that get too big => int 1048576
+largest and then a float => int 1
+largest whole floats => float 2.0
+largest a whole float at the end => float 2.0
+largest bools => bool True
+largest ints again => int 3
+largest a NaN among them => float 2.5
+---- taking apart what has only just been put together
+swap => (61600, 38609) (38609, 34673)
+rotate => (1, 2.0, 'three') (2.0, 'three', 1)
+in_order => (2999, -2999, 6000, [2998, -2998, 2999, -2999]) (3000, -3000, 6002, [2999, -2999, 3000, -3000])
+wrong_number => (2999, 'too many values to unpack (expected 2, got 3)') (3000, 'too many values to unpack (expected 2, got 3)')
+starred => (2999, [3000, 3001], [2999], [3000, 3001]) (3000, [3001, 3002], [3000], [3001, 3002])
+kept => ((2999, 3000), 2999, 3000, True) ((3000, 3001), 3000, 3001, True)

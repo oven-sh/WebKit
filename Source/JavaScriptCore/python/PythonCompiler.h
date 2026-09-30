@@ -92,8 +92,8 @@ TypedStatement readTypedStatement(JSGlobalObject*, LineSource&, const String& fi
 // _Py_GetConfig()->optimization_level, which is what `optimize=-1` means. More than 2 is 2.
 unsigned configuredOptimizationLevel(JSGlobalObject*);
 JSFunction* bindToGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
-// The outermost environment of everything in a module, which is what that gives the function.
-JSScope* environmentForGlobals(JSGlobalObject*, JSObject* namespaceObject);
+// The outermost environment of everything in a module, which is what that gives the function. The executable is what is to be run in it.
+JSScope* environmentForGlobals(JSGlobalObject*, FunctionExecutable*, JSObject* namespaceObject);
 // One within `next` that has the cells for variables, under the names. See FunctionInfo::variablesGivenAsCells. It is `next` if there are none.
 JSScope* environmentForCells(JSGlobalObject*, JSScope* next, const Vector<Identifier>& names, PyTuple* cells);
 // Another executable for the same source, of which something else is known, or that says it is from another file. It is compiled by itself, when it is first

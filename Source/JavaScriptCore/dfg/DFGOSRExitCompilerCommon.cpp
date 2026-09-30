@@ -32,6 +32,7 @@
 #include "DFGJITCode.h"
 #include "DFGOperations.h"
 #include "JIT.h"
+#include "JITThunks.h"
 #include "JSCJSValueInlines.h"
 #include "LLIntData.h"
 #include "LLIntThunks.h"
@@ -458,9 +459,22 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
     ASSERT(codeBlockForExit == codeBlockForExit->baselineVersion());
     ASSERT(JITCode::isBaselineCode(codeBlockForExit->jitType()));
 
+    // Graph::willCatchExceptionInMachineFrame(): where it goes is not to what catches the exception, but to where it was thrown from, for it to be thrown from there. What catches one begins with op_catch, which throws nothing.
+    bool throwsAgain = exit.isExceptionHandler() && codeBlockForExit->instructions().at(exit.m_codeOrigin.bytecodeIndex())->opcodeID() != op_catch;
+
     void* jumpTarget;
     bool exitToLLInt = Options::forceOSRExitToLLInt() || codeBlockForExit->jitType() == JITType::InterpreterThunk;
-    if (exitToLLInt) {
+    if (throwsAgain) {
+        // As when anything that the baseline JIT or the interpreter has called has thrown: the frame says where it has got to, and the rest is found out from that.
+        jit.store32(CCallHelpers::TrustedImm32(CallSiteIndex(exit.m_codeOrigin.bytecodeIndex()).bits()), AssemblyHelpers::highWordFor(CallFrameSlot::argumentCountIncludingThis));
+        // If it is caught in this frame, what catches it has back the registers that are kept from one call to the next as they are now. The interpreter finds what it keeps there for itself.
+        // Which of the two catches it goes by what the code has been made into, and not by where an exit that goes on from where it left off is sent.
+        if (codeBlockForExit->jitType() != JITType::InterpreterThunk) {
+            jit.move(CCallHelpers::TrustedImmPtr(codeBlockForExit->metadataTable()), GPRInfo::metadataTableRegister);
+            jit.move(CCallHelpers::TrustedImmPtr(codeBlockForExit->baselineJITData()), GPRInfo::jitDataRegister);
+        }
+        jumpTarget = vm.getCTIStub(CommonJITThunkID::HandleException).code().retagged<OSRExitPtrTag>().taggedPtr();
+    } else if (exitToLLInt) {
         auto bytecodeIndex = exit.m_codeOrigin.bytecodeIndex();
         const auto& currentInstruction = *codeBlockForExit->instructions().at(bytecodeIndex).ptr();
         CodePtr<JSEntryPtrTag> destination;
@@ -496,7 +510,7 @@ void adjustAndJumpToTarget(VM& vm, CCallHelpers& jit, const OSRExitBase& exit)
         jumpTarget = destination.retagged<OSRExitPtrTag>().taggedPtr();
     }
 
-    if (exit.isExceptionHandler()) {
+    if (exit.isExceptionHandler() && !throwsAgain) {
         ASSERT(!RegisterSet::vmCalleeSaveRegisters().contains(LLInt::Registers::pcGPR, IgnoreVectors));
         jit.copyCalleeSavesToEntryFrameCalleeSavesBuffer(vm.topEntryFrame, AssemblyHelpers::selectScratchGPR(LLInt::Registers::pcGPR));
 

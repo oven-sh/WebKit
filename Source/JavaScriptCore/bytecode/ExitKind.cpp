@@ -33,6 +33,7 @@ bool exitKindMayJettison(ExitKind kind)
     switch (kind) {
     case ExceptionCheck:
     case GenericUnwind:
+    case PythonFrameObjectExists:
         return false;
     default:
         return true;

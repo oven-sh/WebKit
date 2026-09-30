@@ -438,6 +438,7 @@ dfg/DFGSSALoweringPhase.cpp
 dfg/DFGSnippetParams.cpp
 dfg/DFGSpeculativeJIT.cpp @no-unify-when(bundle<=8) @cost:9
 dfg/DFGSpeculativeJIT64.cpp @no-unify-when(bundle<=8) @cost:4
+dfg/DFGSpeculativeJITPython.cpp
 dfg/DFGStackLayoutPhase.cpp
 dfg/DFGStaticExecutionCountEstimationPhase.cpp
 dfg/DFGStoreBarrierClusteringPhase.cpp

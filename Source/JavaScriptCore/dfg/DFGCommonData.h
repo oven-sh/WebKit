@@ -130,6 +130,8 @@ public:
     FixedVector<WriteBarrier<JSCell>> m_weakReferences;
     FixedVector<StructureID> m_weakStructureReferences;
     FixedVector<CatchEntrypointData> m_catchEntrypoints;
+    // Where each of CodeBlock::registersSeenFromOutside() is kept, in the same order.
+    FixedVector<VirtualRegister> m_machineRegistersSeenFromOutside;
     FixedVector<CodeBlockJettisoningWatchpoint> m_watchpoints;
     FixedVector<AdaptiveStructureWatchpoint> m_adaptiveStructureWatchpoints;
     FixedVector<AdaptiveInferredPropertyValueWatchpoint> m_adaptiveInferredPropertyValueWatchpoints;

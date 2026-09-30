@@ -1592,6 +1592,20 @@ void VM::dumpRegExpTrace()
 
 #endif
 
+WatchpointSet& VM::pythonIsNotWatched()
+{
+    ASSERT(!isPythonWatched());
+    if (!m_pythonIsNotWatched)
+        m_pythonIsNotWatched = WatchpointSet::create(IsWatched);
+    return *m_pythonIsNotWatched;
+}
+
+void VM::pythonIsNowWatched()
+{
+    if (auto set = std::exchange(m_pythonIsNotWatched, nullptr))
+        set->fireAll(*this, "Something is to be told of what code in Python does");
+}
+
 WatchpointSet* VM::ensureWatchpointSetForImpureProperty(UniquedStringImpl* propertyName)
 {
     auto result = m_impurePropertyWatchpointSets.add(propertyName, nullptr);

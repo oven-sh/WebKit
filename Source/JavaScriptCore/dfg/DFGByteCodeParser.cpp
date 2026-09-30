@@ -100,6 +100,8 @@
 #include "PropertyInlineCache.h"
 #include "PutByIdFlags.h"
 #include "PutByStatus.h"
+#include "PyTuple.h"
+#include "PythonOperations.h"
 #include "RegExpConstructor.h"
 #include "RegExpObjectInlines.h"
 #include "RegExpPrototype.h"
@@ -573,11 +575,26 @@ private:
         VirtualRegister destination, SpeculatedType, Node* base, CacheableIdentifier, unsigned identifierNumber, GetByStatus, AccessType, BytecodeIndex osrExitIndex);
     void handleGetPrivateNameById(
         VirtualRegister destination, SpeculatedType prediction, Node* base, CacheableIdentifier, unsigned identifierNumber, GetByStatus);
+    enum class PutByIdKind : uint8_t { Ordinary, Direct, PySetAttr };
     void emitPutById(
-        Node* base, CacheableIdentifier, Node* value,  const PutByStatus&, bool isDirect, ECMAMode);
+        Node* base, CacheableIdentifier, Node* value,  const PutByStatus&, PutByIdKind, ECMAMode);
     void handlePutById(
         Node* base, CacheableIdentifier, unsigned identifierNumber, Node* value, const PutByStatus&,
-        bool isDirect, BytecodeIndex osrExitIndex, ECMAMode);
+        PutByIdKind, BytecodeIndex osrExitIndex, ECMAMode);
+    // GetByVariant::additionalSet(), and PutByVariant's. False if any of them holds no longer. A status is not what keeps them: it lets go of the variants that turn out not to matter.
+    template<typename StatusType>
+    bool watchAdditionalSets(const StatusType& status)
+    {
+        for (auto& variant : status.variants()) {
+            if (WatchpointSet* set = variant.additionalSet(); set && !set->isStillValid())
+                return false;
+        }
+        for (auto& variant : status.variants()) {
+            if (WatchpointSet* set = variant.additionalSet())
+                m_graph.watchpoints().addLazily(Ref { *set });
+        }
+        return true;
+    }
 
     void handlePutPrivateNameById(
         Node* base, CacheableIdentifier, unsigned identifierNumber, Node* value, const PutByStatus&, PrivateFieldPutKind);
@@ -652,7 +669,11 @@ private:
     {
         ASSERT(!operand.isConstant());
         
-        return &m_graph.m_variableAccessData.alloc(operand);
+        VariableAccessData* variable = &m_graph.m_variableAccessData.alloc(operand);
+        // What looks at it from outside takes it for a value like any other.
+        if (m_graph.isSeenFromOutside(operand))
+            variable->mergeShouldNeverUnbox(true);
+        return variable;
     }
     
     // Get/Set the operands/result of a bytecode instruction.
@@ -964,7 +985,12 @@ private:
                 // Note: We don't need to handle tmps here because tmps are not required to be flushed to the stack.
                 const auto& livenessAtBytecode = fullLiveness.getLiveness(bytecodeIndex, m_graph.appropriateLivenessCalculationPoint(origin, isCallerOrigin));
                 for (unsigned local = codeBlock->numCalleeLocals(); local--;) {
-                    if (livenessAtBytecode[local])
+                    if (!livenessAtBytecode[local])
+                        continue;
+                    // Whatever is called may look at it, so it is to be where it can be found.
+                    if (!inlineCallFrame && m_graph.isSeenFromOutside(virtualRegisterForLocal(local)))
+                        addFlushDirect(inlineCallFrame, remapOperand(inlineCallFrame, virtualRegisterForLocal(local)));
+                    else
                         addPhantomLocalDirect(inlineCallFrame, remapOperand(inlineCallFrame, virtualRegisterForLocal(local)));
                 }
                 if (bytecodeIndex.checkpoint()) {
@@ -1346,6 +1372,12 @@ private:
     SpeculatedType getPrediction()
     {
         return getPrediction(m_currentIndex);
+    }
+
+    CacheableIdentifier pythonIdentifier(unsigned property)
+    {
+        UniquedStringImpl* uid = m_graph.identifiers()[m_inlineStackTop->m_identifierRemap[property]];
+        return CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid);
     }
 
     ArrayMode getArrayMode(Array::Action action)
@@ -7418,6 +7450,11 @@ void ByteCodeParser::handleGetById(
     else
         getById = getByStatus.makesCalls() ? GetByIdDirectFlush : GetByIdDirect;
     auto* data = m_graph.m_getByIdData.add(GetByIdData { identifier, getByStatus.preferredCacheType() });
+    auto emitGeneric = [&] {
+        if (type == AccessType::PyGetAttr)
+            return addToGraph(PyGetAttr, OpInfo(identifier), OpInfo(prediction), base);
+        return addToGraph(getById, OpInfo(data), OpInfo(prediction), base);
+    };
 
     if (getByStatus.isModuleNamespace()) {
         if (handleModuleNamespaceLoad(destination, prediction, base, getByStatus)) {
@@ -7453,12 +7490,12 @@ void ByteCodeParser::handleGetById(
                         m_graph.compilation()->noticeInlinedGetById();
                     return;
                 }
-                set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                set(destination, emitGeneric());
                 return;
             }
 
             if (!check(variant.conditionSet())) {
-                set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                set(destination, emitGeneric());
                 return;
             }
 
@@ -7477,9 +7514,9 @@ void ByteCodeParser::handleGetById(
     }
 
     ASSERT(type == AccessType::GetById || type == AccessType::GetByIdDirect ||  !getByStatus.makesCalls());
-    if (!getByStatus.isSimple() || !getByStatus.numVariants() || !Options::useAccessInlining()) {
+    if (!getByStatus.isSimple() || !getByStatus.numVariants() || !Options::useAccessInlining() || !watchAdditionalSets(getByStatus)) {
         set(destination,
-            addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+            emitGeneric());
         return;
     }
     
@@ -7492,7 +7529,7 @@ void ByteCodeParser::handleGetById(
             || !Options::usePolymorphicAccessInlining()
             || getByStatus.numVariants() > Options::maxPolymorphicAccessInliningListSize()) {
             set(destination,
-                addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                emitGeneric());
             return;
         }
 
@@ -7506,7 +7543,7 @@ void ByteCodeParser::handleGetById(
         for (const GetByVariant& variant : getByStatus.variants()) {
             if (variant.intrinsic() != NoIntrinsic) {
                 set(destination,
-                    addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                    emitGeneric());
                 return;
             }
 
@@ -7521,7 +7558,7 @@ void ByteCodeParser::handleGetById(
             GetByOffsetMethod method = planLoad(variant.conditionSet());
             if (!method) {
                 set(destination,
-                    addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                    emitGeneric());
                 return;
             }
             
@@ -7546,7 +7583,7 @@ void ByteCodeParser::handleGetById(
     
     Node* loadedValue = load(prediction, base, unwrapped, identifierNumber, variant);
     if (!loadedValue) {
-        set(destination, addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+        set(destination, emitGeneric());
         return;
     }
 
@@ -7576,7 +7613,7 @@ void ByteCodeParser::handleGetById(
         // to the intrinsic function--bail and emit a regular GetById
         if (!variant.callLinkStatus()) {
             set(destination,
-                addToGraph(getById, OpInfo(data), OpInfo(prediction), base));
+                emitGeneric());
             return;
         }
     }
@@ -7871,9 +7908,11 @@ void ByteCodeParser::handleCheckTraps()
 }
 
 void ByteCodeParser::emitPutById(
-    Node* base, CacheableIdentifier identifier, Node* value, const PutByStatus& putByStatus, bool isDirect, ECMAMode ecmaMode)
+    Node* base, CacheableIdentifier identifier, Node* value, const PutByStatus& putByStatus, PutByIdKind kind, ECMAMode ecmaMode)
 {
-    if (isDirect)
+    if (kind == PutByIdKind::PySetAttr)
+        addToGraph(PySetAttr, OpInfo(identifier), base, value);
+    else if (kind == PutByIdKind::Direct)
         addToGraph(PutByIdDirect, OpInfo(identifier), OpInfo(ecmaMode), base, value);
     else
         addToGraph((putByStatus.isMegamorphic() && canUseMegamorphicPutById(*m_vm, identifier.uid())) ? PutByIdMegamorphic : putByStatus.makesCalls() ? PutByIdFlush : PutById, OpInfo(identifier), OpInfo(ecmaMode), base, value);
@@ -7881,7 +7920,7 @@ void ByteCodeParser::emitPutById(
 
 void ByteCodeParser::handlePutById(
     Node* base, CacheableIdentifier identifier, unsigned identifierNumber, Node* value,
-    const PutByStatus& putByStatus, bool isDirect, BytecodeIndex osrExitIndex, ECMAMode ecmaMode)
+    const PutByStatus& putByStatus, PutByIdKind kind, BytecodeIndex osrExitIndex, ECMAMode ecmaMode)
 {
     Node* unwrapped = base;
     if (putByStatus.viaGlobalProxy())
@@ -7896,7 +7935,7 @@ void ByteCodeParser::handlePutById(
                 m_graph.compilation()->noticeInlinedPutById();
             addToGraph(FilterPutByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addPutByStatus(currentCodeOrigin(), putByStatus)), base);
             if (!check(variant.conditionSet())) {
-                emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+                emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
                 return;
             }
             auto* data = m_graph.m_callCustomAccessorData.add();
@@ -7911,14 +7950,14 @@ void ByteCodeParser::handlePutById(
     if (putByStatus.isProxyObject()) {
         if (handleProxyObjectStore(base, value, ecmaMode, putByStatus, osrExitIndex))
             return;
-        emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+        emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
         return;
     }
 
-    if (!putByStatus.isSimple() || !putByStatus.numVariants() || !Options::useAccessInlining()) {
+    if (!putByStatus.isSimple() || !putByStatus.numVariants() || !Options::useAccessInlining() || !watchAdditionalSets(putByStatus)) {
         if (!putByStatus.isSet())
             addToGraph(ForceOSRExit);
-        emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+        emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
         return;
     }
     
@@ -7926,16 +7965,16 @@ void ByteCodeParser::handlePutById(
         if (!m_graph.m_plan.isFTL() || putByStatus.makesCalls()
             || !Options::usePolymorphicAccessInlining()
             || putByStatus.numVariants() > Options::maxPolymorphicAccessInliningListSize()) {
-            emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+            emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
             return;
         }
         
-        if (!isDirect) {
+        if (kind != PutByIdKind::Direct) {
             for (unsigned variantIndex = putByStatus.numVariants(); variantIndex--;) {
                 if (putByStatus[variantIndex].kind() != PutByVariant::Transition)
                     continue;
                 if (!check(putByStatus[variantIndex].conditionSet())) {
-                    emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+                    emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
                     return;
                 }
             }
@@ -7978,7 +8017,7 @@ void ByteCodeParser::handlePutById(
 
         addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.oldStructure())), unwrapped);
         if (!check(variant.conditionSet())) {
-            emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+            emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
             return;
         }
 
@@ -8045,7 +8084,7 @@ void ByteCodeParser::handlePutById(
 
         Node* loadedValue = load(SpecCellOther, base, unwrapped, identifierNumber, variant);
         if (!loadedValue) {
-            emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+            emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
             return;
         }
         
@@ -8092,7 +8131,7 @@ void ByteCodeParser::handlePutById(
     }
 
     default: {
-        emitPutById(base, identifier, value, putByStatus, isDirect, ecmaMode);
+        emitPutById(base, identifier, value, putByStatus, kind, ecmaMode);
         return;
     } }
 }
@@ -8584,7 +8623,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
         case op_new_generator: {
             auto bytecode = currentInstruction->as<OpNewGenerator>();
             JSGlobalObject* globalObject = m_graph.globalObjectFor(currentNodeOrigin().semantic);
-            set(bytecode.m_dst, addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(globalObject->generatorStructure()))));
+            set(bytecode.m_dst, addToGraph(NewInternalFieldObject, OpInfo(m_graph.registerStructure(JSGenerator::selectStructureForNewGenerator(globalObject, m_inlineStackTop->m_codeBlock->ownerExecutable())))));
             NEXT_OPCODE(op_new_generator);
         }
 
@@ -9142,6 +9181,249 @@ void ByteCodeParser::parseBlock(unsigned limit)
             clearCaches();
 
             NEXT_OPCODE(op_instanceof);
+        }
+
+        // ---- Python's. See "The DFG" in python/README.md.
+
+        case op_py_binary_op: {
+            auto bytecode = currentInstruction->as<OpPyBinaryOp>();
+            SpeculatedType prediction = getPrediction();
+            Node* left = get(bytecode.m_lhs);
+            Node* right = get(bytecode.m_rhs);
+            set(bytecode.m_dst, addToGraph(PyBinaryOp, OpInfo(bytecode.m_operation), OpInfo(prediction), left, right));
+            NEXT_OPCODE(op_py_binary_op);
+        }
+
+        case op_py_unary_op: {
+            auto bytecode = currentInstruction->as<OpPyUnaryOp>();
+            SpeculatedType prediction = getPrediction();
+            set(bytecode.m_dst, addToGraph(PyUnaryOp, OpInfo(bytecode.m_operation), OpInfo(prediction), get(bytecode.m_operand)));
+            NEXT_OPCODE(op_py_unary_op);
+        }
+
+        case op_py_compare_op: {
+            auto bytecode = currentInstruction->as<OpPyCompareOp>();
+            SpeculatedType prediction = getPrediction();
+            Node* left = get(bytecode.m_lhs);
+            Node* right = get(bytecode.m_rhs);
+            set(bytecode.m_dst, addToGraph(PyCompareOp, OpInfo(bytecode.m_operation), OpInfo(prediction), left, right));
+            NEXT_OPCODE(op_py_compare_op);
+        }
+
+        case op_py_to_bool: {
+            auto bytecode = currentInstruction->as<OpPyToBool>();
+            set(bytecode.m_dst, addToGraph(PyToBool, get(bytecode.m_operand)));
+            NEXT_OPCODE(op_py_to_bool);
+        }
+
+        case op_py_get_attr: {
+            auto bytecode = currentInstruction->as<OpPyGetAttr>();
+            SpeculatedType prediction = getPrediction();
+            // It is remembered as a property is, so what is made of that is what is made of a property.
+            GetByStatus status = GetByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_inlineStackTop->m_baselineMap, m_icContextStack, currentCodeOrigin());
+            handleGetById(bytecode.m_dst, prediction, get(bytecode.m_base), pythonIdentifier(bytecode.m_property), m_inlineStackTop->m_identifierRemap[bytecode.m_property], status, AccessType::PyGetAttr, nextOpcodeIndex());
+            NEXT_OPCODE(op_py_get_attr);
+        }
+
+        case op_py_set_attr: {
+            auto bytecode = currentInstruction->as<OpPySetAttr>();
+            Node* base = get(bytecode.m_base);
+            Node* value = get(bytecode.m_value);
+            PutByStatus status = PutByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_inlineStackTop->m_baselineMap, m_icContextStack, currentCodeOrigin());
+            handlePutById(base, pythonIdentifier(bytecode.m_property), m_inlineStackTop->m_identifierRemap[bytecode.m_property], value, status, PutByIdKind::PySetAttr, nextOpcodeIndex(), ECMAMode::strict());
+            NEXT_OPCODE(op_py_set_attr);
+        }
+
+        case op_py_del_attr: {
+            auto bytecode = currentInstruction->as<OpPyDelAttr>();
+            addToGraph(PyDelAttr, OpInfo(pythonIdentifier(bytecode.m_property)), get(bytecode.m_base));
+            NEXT_OPCODE(op_py_del_attr);
+        }
+
+        case op_py_load_method: {
+            auto bytecode = currentInstruction->as<OpPyLoadMethod>();
+            SpeculatedType prediction = getPrediction();
+            Node* base = get(bytecode.m_base);
+            GetByStatus status = GetByStatus::computeFor(m_inlineStackTop->m_profiledBlock, m_inlineStackTop->m_baselineMap, m_icContextStack, currentCodeOrigin());
+            simplifyGetByStatus(base, status);
+            if (status.isSimple() && status.numVariants() == 1 && Options::useAccessInlining() && watchAdditionalSets(status)) {
+                addToGraph(FilterGetByStatus, OpInfo(m_graph.m_plan.recordedStatuses().addGetByStatus(currentCodeOrigin(), status)), base);
+                // What is remembered is what the object itself has, which is called as it is, or what a class has, which is a method: tryCachePyGetAttr().
+                bool isMethod = !status[0].conditionSet().isEmpty();
+                if (Node* function = load(prediction, base, base, m_inlineStackTop->m_identifierRemap[bytecode.m_property], status[0])) {
+                    set(bytecode.m_dst, function);
+                    set(bytecode.m_self, isMethod ? base : jsConstant(JSValue()));
+                    NEXT_OPCODE(op_py_load_method);
+                }
+            }
+            Node* tuple = addToGraph(PyLoadMethod, OpInfo(pythonIdentifier(bytecode.m_property)), OpInfo(prediction), base);
+            Node* function = addToGraph(ExtractFromTuple, OpInfo(0), tuple);
+            Node* self = addToGraph(ExtractFromTuple, OpInfo(1), tuple);
+            set(bytecode.m_dst, function);
+            set(bytecode.m_self, self);
+            NEXT_OPCODE(op_py_load_method);
+        }
+
+        case op_py_load_global: {
+            auto bytecode = currentInstruction->as<OpPyLoadGlobal>();
+            SpeculatedType prediction = getPrediction();
+            Node* globals = get(bytecode.m_globals);
+            Node* builtins = get(bytecode.m_builtins);
+
+            // What the interpreter and the baseline JIT remember is all that there is to it: it is there for as long as the objects have these structures.
+            StructureID globalsStructureID;
+            StructureID builtinsStructureID;
+            PropertyOffset offset;
+            {
+                ConcurrentJSLocker locker(m_inlineStackTop->m_profiledBlock->m_lock);
+                auto& metadata = bytecode.metadata(codeBlock);
+                globalsStructureID = metadata.m_globalsStructureID;
+                builtinsStructureID = metadata.m_builtinsStructureID;
+                offset = metadata.m_offset;
+            }
+            if (globalsStructureID && !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadCache)) {
+                addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(globalsStructureID.decode())), globals);
+                if (builtinsStructureID)
+                    addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(builtinsStructureID.decode())), builtins);
+                set(bytecode.m_dst, handleGetByOffset(prediction, builtinsStructureID ? builtins : globals, m_inlineStackTop->m_identifierRemap[bytecode.m_property], offset));
+                NEXT_OPCODE(op_py_load_global);
+            }
+
+            set(bytecode.m_dst, addToGraph(PyLoadGlobal, OpInfo(pythonIdentifier(bytecode.m_property)), OpInfo(prediction), globals, builtins));
+            NEXT_OPCODE(op_py_load_global);
+        }
+
+        case op_py_get_item: {
+            auto bytecode = currentInstruction->as<OpPyGetItem>();
+            SpeculatedType prediction = getPrediction();
+            Node* base = get(bytecode.m_base);
+            Node* key = get(bytecode.m_property);
+            ArrayMode arrayMode = getArrayMode(bytecode.metadata(codeBlock).m_arrayProfile, Array::Read);
+            addVarArgChild(base);
+            addVarArgChild(key);
+            addVarArgChild(nullptr); // Leave room for property storage.
+            set(bytecode.m_dst, addToGraph(Node::VarArg, PyGetItem, OpInfo(arrayMode.asWord()), OpInfo(prediction)));
+            NEXT_OPCODE(op_py_get_item);
+        }
+
+        case op_py_set_item: {
+            auto bytecode = currentInstruction->as<OpPySetItem>();
+            Node* base = get(bytecode.m_base);
+            Node* key = get(bytecode.m_property);
+            Node* value = get(bytecode.m_value);
+            ArrayMode arrayMode = getArrayMode(bytecode.metadata(codeBlock).m_arrayProfile, Array::Write);
+            addVarArgChild(base);
+            addVarArgChild(key);
+            addVarArgChild(value);
+            addVarArgChild(nullptr); // Leave room for property storage.
+            addVarArgChild(nullptr); // Leave room for length.
+            addToGraph(Node::VarArg, PySetItem, OpInfo(arrayMode.asWord()), OpInfo(ECMAMode::strict()));
+            NEXT_OPCODE(op_py_set_item);
+        }
+
+        case op_py_del_item: {
+            auto bytecode = currentInstruction->as<OpPyDelItem>();
+            Node* base = get(bytecode.m_base);
+            Node* key = get(bytecode.m_property);
+            addToGraph(PyDelItem, base, key);
+            NEXT_OPCODE(op_py_del_item);
+        }
+
+        case op_py_get_iter: {
+            auto bytecode = currentInstruction->as<OpPyGetIter>();
+            set(bytecode.m_dst, addToGraph(PyGetIter, get(bytecode.m_iterable)));
+            NEXT_OPCODE(op_py_get_iter);
+        }
+
+        case op_py_iter_next: {
+            auto bytecode = currentInstruction->as<OpPyIterNext>();
+            SpeculatedType prediction = getPrediction();
+            set(bytecode.m_dst, addToGraph(PyIterNext, OpInfo(), OpInfo(prediction), get(bytecode.m_iterator)));
+            NEXT_OPCODE(op_py_iter_next);
+        }
+
+        case op_py_unpack_sequence: {
+            auto bytecode = currentInstruction->as<OpPyUnpackSequence>();
+            Node* iterable = get(bytecode.m_iterable);
+            if (bytecode.m_starIndex == bytecode.m_argc) {
+                // a, b = b, a makes a tuple and takes it apart. If nothing else is made of it, it need not be made.
+                if (iterable->op() == PyNewTuple && iterable->numChildren() == bytecode.m_argc) {
+                    Vector<Node*, 8> items;
+                    for (unsigned i = 0; i < bytecode.m_argc; ++i)
+                        items.append(m_graph.varArgChild(iterable, i).node());
+                    for (unsigned i = 0; i < bytecode.m_argc; ++i)
+                        set(bytecode.m_argv - static_cast<int>(i), items[i]);
+                    NEXT_OPCODE(op_py_unpack_sequence);
+                }
+                if (auto* constant = iterable->dynamicCastConstant<PyTuple*>(); constant && constant->type() == PyTupleType && constant->length() == bytecode.m_argc) {
+                    for (unsigned i = 0; i < bytecode.m_argc; ++i)
+                        set(bytecode.m_argv - static_cast<int>(i), weakJSConstant(constant->at(i)));
+                    NEXT_OPCODE(op_py_unpack_sequence);
+                }
+            }
+            Node* tuple = addToGraph(PyUnpackSequence, OpInfo(bytecode.m_argc), OpInfo(bytecode.m_starIndex), iterable);
+            for (unsigned i = 0; i < bytecode.m_argc; ++i)
+                set(bytecode.m_argv - static_cast<int>(i), addToGraph(PyGetTupleItem, OpInfo(i), tuple));
+            NEXT_OPCODE(op_py_unpack_sequence);
+        }
+
+        case op_py_new_tuple: {
+            auto bytecode = currentInstruction->as<OpPyNewTuple>();
+            for (unsigned i = 0; i < bytecode.m_argc; ++i)
+                addVarArgChild(get(bytecode.m_argv - static_cast<int>(i)));
+            set(bytecode.m_dst, addToGraph(Node::VarArg, PyNewTuple, OpInfo(), OpInfo()));
+            NEXT_OPCODE(op_py_new_tuple);
+        }
+
+        case op_py_enter: {
+            addToGraph(PyEnter);
+            NEXT_OPCODE(op_py_enter);
+        }
+
+        case op_py_line: {
+            auto bytecode = currentInstruction->as<OpPyLine>();
+            // Nothing is being told of what is run, or this would not be what is running. What has been put off is seen to where CPython would: on the way into a function, and on the way round a loop.
+            if (static_cast<Python::LineKind>(bytecode.m_kind) == Python::LineKind::AfterBackwardJump)
+                addToGraph(PyCheckPendingWork);
+            else
+                addToGraph(Check); // So that there is something for a jump to come to.
+            NEXT_OPCODE(op_py_line);
+        }
+
+        case op_py_call: {
+            addToGraph(Check);
+            NEXT_OPCODE(op_py_call);
+        }
+
+        case op_py_branch: {
+            addToGraph(Check);
+            NEXT_OPCODE(op_py_branch);
+        }
+
+        case op_py_jump: {
+            addToGraph(Check);
+            NEXT_OPCODE(op_py_jump);
+        }
+
+        case op_py_leave: {
+            addToGraph(PyLeave);
+            NEXT_OPCODE(op_py_leave);
+        }
+
+        case op_py_ret: {
+            auto bytecode = currentInstruction->as<OpPyRet>();
+            ASSERT(!m_currentBlock->terminal());
+            RELEASE_ASSERT(!inlineCallFrame());
+            Node* value = get(bytecode.m_value);
+            // A frame object outlives the frame, and is told to take what it needs. That is for code that has everything where the frame object looks for it.
+            if (m_graph.isSeenFromOutside(bytecode.m_frame))
+                addToGraph(PyCheckNoFrameObject, OpInfo(m_graph.m_stackAccessData.add(bytecode.m_frame, FlushedJSValue)));
+            else
+                addToGraph(CheckIsConstant, OpInfo(m_graph.freeze(jsUndefined())), get(bytecode.m_frame));
+            addToGraph(PyLeave);
+            addToGraph(Return, value);
+            flushForTerminal();
+            LAST_OPCODE(op_py_ret);
         }
 
         case op_is_empty: {
@@ -9765,7 +10047,7 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 m_inlineStackTop->m_baselineMap, m_icContextStack,
                 currentCodeOrigin());
 
-            handlePutById(base, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), identifierNumber, value, putByStatus, direct, nextOpcodeIndex(), bytecode.m_flags.ecmaMode());
+            handlePutById(base, CacheableIdentifier::createFromIdentifierOwnedByCodeBlock(m_inlineStackTop->m_profiledBlock, uid), identifierNumber, value, putByStatus, direct ? PutByIdKind::Direct : PutByIdKind::Ordinary, nextOpcodeIndex(), bytecode.m_flags.ecmaMode());
             NEXT_OPCODE(op_put_by_id);
         }
 
@@ -11929,7 +12211,7 @@ void ByteCodeParser::handlePutByVal(Bytecode bytecode, BytecodeIndex osrExitInde
             } else
                 addToGraph(CheckIdent, OpInfo(uid), property);
 
-            handlePutById(base, identifier, identifierNumber, value, status, isDirect, osrExitIndex, bytecode.m_ecmaMode);
+            handlePutById(base, identifier, identifierNumber, value, status, isDirect ? PutByIdKind::Direct : PutByIdKind::Ordinary, osrExitIndex, bytecode.m_ecmaMode);
             return;
         }
 
@@ -11954,7 +12236,7 @@ void ByteCodeParser::handlePutByVal(Bytecode bytecode, BytecodeIndex osrExitInde
 
             if (uid) {
                 unsigned identifierNumber = m_graph.identifiers().ensure(uid);
-                handlePutById(base, CacheableIdentifier::createFromCell(propertyCell), identifierNumber, value, status, isDirect, osrExitIndex, bytecode.m_ecmaMode);
+                handlePutById(base, CacheableIdentifier::createFromCell(propertyCell), identifierNumber, value, status, isDirect ? PutByIdKind::Direct : PutByIdKind::Ordinary, osrExitIndex, bytecode.m_ecmaMode);
                 return;
             }
         }

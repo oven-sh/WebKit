@@ -41,6 +41,8 @@ void computeUsesForBytecodeIndex(Block* codeBlock, const JSInstruction* instruct
     OpcodeID opcodeID = instruction->opcodeID();
     if (opcodeID != op_enter && codeBlock->wasCompiledWithDebuggingOpcodes() && codeBlock->scopeRegister().isValid())
         functor(codeBlock->scopeRegister());
+    for (VirtualRegister virtualRegister : codeBlock->registersSeenFromOutsideAt(instruction))
+        functor(virtualRegister);
 
     computeUsesForBytecodeIndexImpl(instruction, checkpoint, functor);
 }

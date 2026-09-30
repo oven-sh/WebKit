@@ -31,6 +31,7 @@
 #include "ObjectPropertyConditionSet.h"
 #include "PropertyOffset.h"
 #include "StructureSet.h"
+#include "Watchpoint.h"
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
@@ -136,6 +137,10 @@ public:
     }
 
     bool attemptToMerge(const PutByVariant& other);
+
+    // It holds only for as long as this does, besides its conditions: AccessCase::additionalSet(). Whatever goes by the variant is to watch it.
+    WatchpointSet* additionalSet() const { return m_additionalSet.get(); }
+    void setAdditionalSet(WatchpointSet* set) { m_additionalSet = set; }
     
     DECLARE_VISIT_AGGREGATE;
     template<typename Visitor> void markIfCheap(Visitor&);
@@ -176,6 +181,7 @@ private:
     std::unique_ptr<CallLinkStatus> m_callLinkStatus;
     CodePtr<CustomAccessorPtrTag> m_customAccessorSetter;
     std::unique_ptr<DOMAttributeAnnotation> m_domAttribute;
+    RefPtr<WatchpointSet> m_additionalSet;
     CacheableIdentifier m_identifier;
 };
 

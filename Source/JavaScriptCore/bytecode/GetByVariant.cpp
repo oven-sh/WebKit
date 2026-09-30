@@ -68,6 +68,7 @@ GetByVariant& GetByVariant::operator=(const GetByVariant& other)
     m_offset = other.m_offset;
     m_intrinsicFunction = other.m_intrinsicFunction;
     m_customAccessorGetter = other.m_customAccessorGetter;
+    m_additionalSet = other.m_additionalSet;
     if (other.m_domAttribute)
         m_domAttribute = WTF::makeUnique<DOMAttributeAnnotation>(*other.m_domAttribute);
     else
@@ -132,6 +133,9 @@ bool GetByVariant::attemptToMerge(const GetByVariant& other)
         return false;
 
     if (m_customAccessorGetter != other.m_customAccessorGetter)
+        return false;
+
+    if (m_additionalSet != other.m_additionalSet)
         return false;
 
     if (m_domAttribute || other.m_domAttribute) {

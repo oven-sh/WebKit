@@ -909,6 +909,30 @@ FunctionExecutable* executableFromProgram(JSGlobalObject* globalObject, const So
     return generateAll(vm, executable->unlinkedExecutable(), SourceCode(*source.provider()), error) ? executable : nullptr;
 }
 
+static ScopeOffset addVariable(JSC::SymbolTable* symbolTable, const Identifier& name)
+{
+    ScopeOffset offset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
+    SymbolTableEntry entry { VarOffset(offset) };
+    // It is given something once in each environment. If there is only the one environment, what is compiled may take it to have what it has.
+    entry.prepareToWatch();
+    symbolTable->set(NoLockingNecessary, name.impl(), WTF::move(entry));
+    return offset;
+}
+
+static void initializeVariable(VM& vm, JSLexicalEnvironment* environment, const Identifier& name, ScopeOffset offset, JSValue value)
+{
+    InlineWatchpointSet* set;
+    {
+        JSC::SymbolTable* symbolTable = environment->symbolTable();
+        ConcurrentJSLocker locker(symbolTable->m_lock);
+        set = symbolTable->entryFor(locker, offset)->watchpointSet();
+    }
+    environment->variableAt(offset).set(vm, environment, value);
+    if (set)
+        VariableWriteFireDetail::touch(vm, set, environment, name);
+}
+
+// What is run in one of these is compiled for it, and is run in no other.
 JSScope* environmentForCells(JSGlobalObject* globalObject, JSScope* next, const Vector<Identifier>& names, PyTuple* cells)
 {
     VM& vm = globalObject->vm();
@@ -917,36 +941,38 @@ JSScope* environmentForCells(JSGlobalObject* globalObject, JSScope* next, const 
     JSC::SymbolTable* symbolTable = JSC::SymbolTable::create(vm);
     symbolTable->setScopeType(JSC::SymbolTable::ScopeType::LexicalScope);
     Vector<ScopeOffset, 8> offsets;
-    for (auto& name : names) {
-        offsets.append(symbolTable->takeNextScopeOffset(NoLockingNecessary));
-        symbolTable->set(NoLockingNecessary, name.impl(), SymbolTableEntry(VarOffset(offsets.last())));
-    }
+    for (auto& name : names)
+        offsets.append(addVariable(symbolTable, name));
     JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject->activationStructure(), next, symbolTable, jsUndefined());
     for (unsigned i = 0; i < names.size(); ++i)
-        environment->variableAt(offsets[i]).set(vm, environment, cells->at(i));
+        initializeVariable(vm, environment, names[i], offsets[i], cells->at(i));
     return environment;
 }
 
-JSScope* environmentForGlobals(JSGlobalObject* globalObject, JSObject* globals)
+JSScope* environmentForGlobals(JSGlobalObject* globalObject, FunctionExecutable* executable, JSObject* globals)
 {
     VM& vm = globalObject->vm();
     auto& names = vm.pythonNames();
     // The outermost environment of everything in the module.
-    JSC::SymbolTable* symbolTable = JSC::SymbolTable::create(vm);
-    symbolTable->setScopeType(JSC::SymbolTable::ScopeType::LexicalScope);
-    ScopeOffset globalsOffset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
-    symbolTable->set(NoLockingNecessary, names.globals.impl(), SymbolTableEntry(VarOffset(globalsOffset)));
-    ScopeOffset builtinsOffset = symbolTable->takeNextScopeOffset(NoLockingNecessary);
-    symbolTable->set(NoLockingNecessary, names.builtins.impl(), SymbolTableEntry(VarOffset(builtinsOffset)));
+    const ScopeOffset globalsOffset { 0 };
+    const ScopeOffset builtinsOffset { 1 };
+    JSC::SymbolTable* symbolTable = executable->pythonGlobalsSymbolTable();
+    if (!symbolTable) {
+        symbolTable = JSC::SymbolTable::create(vm);
+        symbolTable->setScopeType(JSC::SymbolTable::ScopeType::LexicalScope);
+        RELEASE_ASSERT(addVariable(symbolTable, names.globals) == globalsOffset);
+        RELEASE_ASSERT(addVariable(symbolTable, names.builtins) == builtinsOffset);
+        executable->setPythonGlobalsSymbolTable(vm, symbolTable);
+    }
     JSLexicalEnvironment* environment = JSLexicalEnvironment::create(vm, globalObject->activationStructure(), globalObject->globalScope(), symbolTable, jsUndefined());
-    environment->variableAt(globalsOffset).set(vm, environment, globals);
-    environment->variableAt(builtinsOffset).set(vm, environment, builtinsFor(globalObject, globals));
+    initializeVariable(vm, environment, names.globals, globalsOffset, globals);
+    initializeVariable(vm, environment, names.builtins, builtinsOffset, builtinsFor(globalObject, globals));
     return environment;
 }
 
 JSFunction* bindToGlobals(JSGlobalObject* globalObject, FunctionExecutable* executable, JSObject* globals)
 {
-    return JSFunction::create(globalObject->vm(), globalObject, executable, environmentForGlobals(globalObject, globals));
+    return JSFunction::create(globalObject->vm(), globalObject, executable, environmentForGlobals(globalObject, executable, globals));
 }
 
 JSFunction* compileModule(JSGlobalObject* globalObject, const SourceCode& source, JSObject* namespaceObject, ImplementationVisibility visibility)

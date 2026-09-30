@@ -93,6 +93,13 @@ Graph::Graph(VM& vm, Plan& plan)
     ASSERT(m_profiledBlock);
     
     m_hasDebuggerEnabled = m_profiledBlock->wasCompiledWithDebuggingOpcodes() || Options::forceDebuggerBytecodeGeneration();
+    m_hasExceptionHandlers = m_profiledBlock->ownerExecutable()->isPython();
+    m_handlerThatThrowsAgain.start = 0;
+    m_handlerThatThrowsAgain.end = 0;
+    m_handlerThatThrowsAgain.target = 0;
+    m_handlerThatThrowsAgain.setType(HandlerType::Catch);
+    if (WatchpointSet* set = m_plan.pythonIsNotWatched())
+        watchpoints().addLazily(*set);
     
     m_indexingCache = makeUniqueWithoutFastMallocCheck<FlowIndexing>(*this);
     m_abstractValuesCache = makeUniqueWithoutFastMallocCheck<FlowMap<AbstractValue>>(*this);
@@ -2086,10 +2093,18 @@ bool Graph::willCatchExceptionInMachineFrame(CodeOrigin codeOrigin, CodeOrigin& 
     if (!m_hasExceptionHandlers)
         return false;
 
+    CodeOrigin originOfThrow = codeOrigin;
     BytecodeIndex bytecodeIndexToCheck = codeOrigin.bytecodeIndex();
     while (1) {
         InlineCallFrame* inlineCallFrame = codeOrigin.inlineCallFrame();
         CodeBlock* codeBlock = baselineCodeBlockFor(inlineCallFrame);
+        // An exception in Python remembers each frame that it comes to, with its variables, whether or not anything there catches it. So the frame is made what the baseline JIT would have had, as it was when the
+        // exception was thrown, and it is thrown from there as if that had been what was running. What catches it is looked for then.
+        if (codeBlock->ownerExecutable()->isPython()) {
+            opCatchOriginOut = originOfThrow;
+            catchHandlerOut = &m_handlerThatThrowsAgain;
+            return true;
+        }
         if (HandlerInfo* handler = codeBlock->handlerForBytecodeIndex(bytecodeIndexToCheck)) {
             opCatchOriginOut = CodeOrigin(BytecodeIndex(handler->target), inlineCallFrame);
             catchHandlerOut = handler;

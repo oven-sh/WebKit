@@ -32,6 +32,7 @@
 #include "ObjectPropertyConditionSet.h"
 #include "PropertyOffset.h"
 #include "StructureSet.h"
+#include "Watchpoint.h"
 #include <wtf/Box.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -104,6 +105,10 @@ public:
 
     bool viaGlobalProxy() const { return m_viaGlobalProxy; }
 
+    // It holds only for as long as this does, besides its conditions: AccessCase::additionalSet(). Whatever goes by the variant is to watch it.
+    WatchpointSet* additionalSet() const { return m_additionalSet.get(); }
+    void setAdditionalSet(WatchpointSet* set) { m_additionalSet = set; }
+
 private:
     friend class GetByStatus;
 
@@ -117,6 +122,7 @@ private:
     JSFunction* m_intrinsicFunction;
     CodePtr<CustomAccessorPtrTag> m_customAccessorGetter;
     std::unique_ptr<DOMAttributeAnnotation> m_domAttribute;
+    RefPtr<WatchpointSet> m_additionalSet;
     CacheableIdentifier m_identifier;
 };
 

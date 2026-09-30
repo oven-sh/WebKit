@@ -2260,6 +2260,22 @@ void unpackSequence(JSGlobalObject* globalObject, JSValue iterable, unsigned cou
         target(before + 1 + i) = rest.at(starred + i);
 }
 
+PyTuple* unpackSequenceIntoTuple(JSGlobalObject* globalObject, JSValue iterable, unsigned count, int starIndex)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (starIndex < 0 && iterable.isCell() && iterable.asCell()->type() == PyTupleType && uncheckedDowncast<PyTuple>(iterable.asCell())->length() == count)
+        return uncheckedDowncast<PyTuple>(iterable.asCell());
+    // Made first: the targets are given what is theirs when all else has been done, and nothing is to be made while they are the only ones to have it.
+    PyTuple* result = PyTuple::create(globalObject, count);
+    Vector<Register, 16> targets(count);
+    unpackSequence(globalObject, iterable, count, starIndex, count ? &targets[count - 1] : nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    for (unsigned i = 0; i < count; ++i)
+        result->initializeAt(vm, i, targets[count - 1 - i].jsValue());
+    return result;
+}
+
 JSValue newTuple(JSGlobalObject* globalObject, Register* first, unsigned count)
 {
     VM& vm = globalObject->vm();

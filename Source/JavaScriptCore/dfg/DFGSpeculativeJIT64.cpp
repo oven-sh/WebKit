@@ -6321,6 +6321,75 @@ void SpeculativeJIT::compile(Node* node)
         compileIsTaggedInt(node);
         break;
 
+    case PyBinaryOp:
+    case PyCompareOp:
+        compilePyBinaryOp(node);
+        break;
+    case PyUnaryOp:
+        compilePyUnaryOp(node);
+        break;
+    case PyToBool:
+        compilePyToBool(node);
+        break;
+    case PyGetAttr:
+        compileGetById(node, AccessType::PyGetAttr);
+        break;
+    case PySetAttr:
+        compilePySetAttr(node);
+        break;
+    case PyDelAttr:
+        compilePyDelAttr(node);
+        break;
+    case PyLoadMethod:
+        compilePyLoadMethod(node);
+        break;
+    case PyLoadGlobal:
+        compilePyLoadGlobal(node);
+        break;
+    case PyGetItem:
+        compilePyGetItem(node);
+        break;
+    case PySetItem:
+        compilePySetItem(node);
+        break;
+    case PyDelItem:
+        compilePyDelItem(node);
+        break;
+    case PyGetIter:
+        compilePyGetIter(node);
+        break;
+    case PyIterNext:
+        compilePyIterNext(node);
+        break;
+    case PyUnpackSequence:
+        compilePyUnpackSequence(node);
+        break;
+    case PyGetTupleItem:
+        compilePyGetTupleItem(node);
+        break;
+    case PyNewTuple:
+        compilePyNewTuple(node);
+        break;
+    case PyEnter:
+        compilePyEnter(node);
+        break;
+    case PyLeave:
+        compilePyLeave(node);
+        break;
+    case PyCheckNoFrameObject:
+        compilePyCheckNoFrameObject(node);
+        break;
+    case PyCheckPendingWork:
+        compilePyCheckPendingWork(node);
+        break;
+    case PyFloorDiv:
+    case PyMod:
+        compilePyFloorDivOrMod(node);
+        break;
+    case PyCheckDivisor:
+        compilePyCheckDivisor(node);
+        break;
+
     case CheckNotWholeFloat:
         compileCheckNotWholeFloat(node);
         break;
@@ -7418,9 +7487,11 @@ void SpeculativeJIT::compileGetByValWithThis(Node* node)
 
 void SpeculativeJIT::compileGetById(Node* node, AccessType accessType)
 {
-    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect);
+    ASSERT(accessType == AccessType::GetById || accessType == AccessType::GetByIdDirect || accessType == AccessType::PyGetAttr);
     CacheType cacheType = CacheType::GetByIdSelf;
-    if (node->cacheableIdentifier() == vm().propertyNames->length)
+    if (accessType == AccessType::PyGetAttr) {
+        // How long something is, is nothing to Python.
+    } else if (node->cacheableIdentifier() == vm().propertyNames->length)
         cacheType = CacheType::ArrayLength;
     else if (accessType == AccessType::GetById)
         cacheType = node->cacheType();

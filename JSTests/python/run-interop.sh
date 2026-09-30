@@ -16,6 +16,8 @@ cd "$(dirname "$0")/interop" || exit 2
 [ $# -eq 0 ] && set -- *.expected
 
 eager="--thresholdForJITAfterWarmUp=1 --thresholdForJITSoon=1"
+# And the DFG, of nearly everything and with next to nothing known of it, so that it is left again and again.
+eagerDFG="$eager --thresholdForOptimizeAfterWarmUp=5 --thresholdForOptimizeAfterLongWarmUp=5 --thresholdForOptimizeSoon=5 --useConcurrentJIT=0"
 failures=0
 runs=0
 kept=${TMPDIR:-/tmp}/python-interop-that-failed
@@ -23,7 +25,7 @@ actual=$(mktemp) || exit 2
 trap 'rm -f "$actual"' EXIT
 for expected in "$@"; do
     test=${expected%.expected}
-    for options in "" "--useJIT=0" "$eager" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
+    for options in "" "--useJIT=0" "$eager" "$eagerDFG" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
         runs=$((runs + 1))
         case $test in
             *.mjs) module=-m ;;

@@ -107,6 +107,8 @@ public:
             if (!seen.add(name.impl()).isNewEntry)
                 return;
             RegisterID* local = isInEnvironment ? nullptr : m_locals.get(name.impl());
+            // allocateVariables()
+            RELEASE_ASSERT(!local || !local->virtualRegister().isLocal() || local->virtualRegister().toLocal() < g.m_codeBlock->numVars());
             m_details->frameVariables.append({ name, local ? local->virtualRegister() : VirtualRegister() });
         };
         for (auto& name : m_details->variableNames)
@@ -2410,7 +2412,6 @@ private:
     void emitLoadGlobals()
     {
         for (auto [target, name] : { std::pair { &m_globals, &m_names.globals }, std::pair { &m_builtins, &m_names.builtins } }) {
-            *target = g.addVar();
             Variable variable = g.variable(*name);
             Reg scope = g.emitResolveScope(nullptr, variable);
             g.emitGetFromScope(target->get(), scope.get(), variable, ThrowIfNotFound);
@@ -2509,7 +2510,27 @@ private:
         return false;
     }
 
-    // Registers for the local variables, and an environment for those that inner functions use.
+    // Registers for the globals, if anything is made of them, and for the local variables. It comes before anything else has a register. The variables are the first so many of the registers, and it is by that that it is
+    // known which they are: they all have something in them from when the code is entered, whereas the rest have whatever was left there until they are given something.
+    enum class HasLocalVariables : bool { No, Yes };
+    void allocateVariables(HasLocalVariables hasLocalVariables)
+    {
+        if (usesGlobals()) {
+            m_globals = g.addVar();
+            m_builtins = g.addVar();
+        }
+        if (hasLocalVariables == HasLocalVariables::No)
+            return;
+        HashSet<UniquedStringImpl*> parameters;
+        for (auto& name : m_info.parameterNames)
+            parameters.add(name.impl());
+        for (Symbol& symbol : m_block.symbols) {
+            if (symbol.scope == NameScope::Local && !parameters.contains(symbol.name->impl()))
+                m_locals.set(symbol.name->impl(), g.addVar());
+        }
+    }
+
+    // The local variables have nothing yet. And an environment for those that inner functions use.
     void emitDeclareVariables(bool parametersAreInEnvironment)
     {
         Vector<const Identifier*, 8> cells;
@@ -2527,9 +2548,7 @@ private:
             }
             if (symbol.scope != NameScope::Local || isParameter)
                 continue;
-            RegisterID* local = g.addVar();
-            m_locals.set(symbol.name->impl(), local);
-            g.moveEmptyValue(local);
+            g.moveEmptyValue(m_locals.get(symbol.name->impl()));
         }
         emitPushCells(cells);
     }
@@ -2542,6 +2561,9 @@ private:
         if (m_info.isGeneratorBody)
             return generateGeneratorBody(emitBody);
 
+        // What only makes a generator has none. They are the body's.
+        if (!m_info.isGenerator && !m_info.isCoroutine)
+            allocateVariables(HasLocalVariables::Yes);
         emitBindArguments(node);
         m_details->firstTraceableOffset = g.instructions().size();
 
@@ -2601,6 +2623,7 @@ private:
     {
         g.m_generatorRegister = &g.m_parameters[static_cast<unsigned>(JSGenerator::Argument::Generator)];
         g.m_needsGeneratorification = true;
+        allocateVariables(HasLocalVariables::Yes);
 
         // Where the registers that are live across a yield are kept.
         JSC::SymbolTable* frameSymbolTable = JSC::SymbolTable::create(m_vm);
@@ -4422,6 +4445,7 @@ private:
     void generateClassBody(ClassDef& node)
     {
         m_namespace = parameterRegister(0);
+        allocateVariables(HasLocalVariables::No);
         emitLoadGlobals();
         emitEnter();
 
@@ -4988,6 +5012,7 @@ private:
         }
         if (m_info.usesNamespace)
             m_namespace = parameterRegister(0);
+        allocateVariables(HasLocalVariables::No);
         emitLoadGlobals();
         emitEnter();
         emitModuleBody(module);

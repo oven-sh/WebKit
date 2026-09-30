@@ -110,6 +110,19 @@ void DesiredWeakReferences::visitChildren(Visitor& visitor)
         visitor.appendUnbarriered(structureID.decode());
 }
 
+bool DesiredWeakReferences::areAllMarked(VM& vm) const
+{
+    for (JSCell* target : m_cells) {
+        if (!vm.heap.isMarked(target))
+            return false;
+    }
+    for (StructureID structureID : m_structures) {
+        if (!vm.heap.isMarked(structureID.decode()))
+            return false;
+    }
+    return true;
+}
+
 template void DesiredWeakReferences::visitChildren(AbstractSlotVisitor&);
 template void DesiredWeakReferences::visitChildren(SlotVisitor&);
 

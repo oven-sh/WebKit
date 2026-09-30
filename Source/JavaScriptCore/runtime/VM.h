@@ -1518,6 +1518,8 @@ private:
     uint32_t m_pythonLimitUnlessWatched { 1000 };
     uint32_t m_pythonLimit { 1000 }; // sys.setrecursionlimit()
     unsigned m_pythonWatcherCount { 0 };
+    RefPtr<WatchpointSet> m_pythonIsNotWatched;
+    JS_EXPORT_PRIVATE void pythonIsNowWatched();
     // What Python code is to see to when it next looks at m_pythonLimitUnlessWatched. See Python::doPendingWork().
     bool m_hasPythonWork { false };
     std::atomic<bool> m_hasPythonSignal { false };
@@ -1574,9 +1576,13 @@ public:
     bool isPythonWatched() const { return m_pythonWatcherCount; }
     void addPythonWatcher()
     {
-        ++m_pythonWatcherCount;
+        if (!m_pythonWatcherCount++)
+            pythonIsNowWatched();
         updatePythonLimitUnlessWatched();
     }
+    // It holds for as long as nothing is being told. What the DFG and the FTL compile has nothing where something might be told of, and gives way to what has when this fires. There is another in its place from then on. It is to
+    // be asked for on the main thread, when nothing is being told, and whoever keeps it refers to it.
+    JS_EXPORT_PRIVATE WatchpointSet& pythonIsNotWatched();
     void removePythonWatcher()
     {
         --m_pythonWatcherCount;

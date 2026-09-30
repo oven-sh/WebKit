@@ -792,6 +792,28 @@ op :py_load_global,
         offset: unsigned,
     }
 
+# x[y] and x[y] = z. What kind of array x has been, if it has been one, is remembered as it is for get_by_val and put_by_val.
+op :py_get_item,
+    args: {
+        dst: VirtualRegister,
+        base: VirtualRegister,
+        property: VirtualRegister,
+        valueProfile: unsigned,
+    },
+    metadata: {
+        arrayProfile: ArrayProfile,
+    }
+
+op :py_set_item,
+    args: {
+        base: VirtualRegister,
+        property: VirtualRegister,
+        value: VirtualRegister,
+    },
+    metadata: {
+        arrayProfile: ArrayProfile,
+    }
+
 op :enumerator_get_by_val,
     args: {
         dst: VirtualRegister,
@@ -1391,21 +1413,6 @@ op :py_load_method,
         base: VirtualRegister,
         property: unsigned,
         valueProfile: unsigned,
-    }
-
-op :py_get_item,
-    args: {
-        dst: VirtualRegister,
-        base: VirtualRegister,
-        property: VirtualRegister,
-        valueProfile: unsigned,
-    }
-
-op :py_set_item,
-    args: {
-        base: VirtualRegister,
-        property: VirtualRegister,
-        value: VirtualRegister,
     }
 
 op :py_del_item,

@@ -2274,6 +2274,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCallWithTimeLimit);
 static JSC_DECLARE_HOST_FUNCTION(functionCancelTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionHasPendingTermination);
 static JSC_DECLARE_HOST_FUNCTION(functionEdenGC);
+static JSC_DECLARE_HOST_FUNCTION(functionCompleteAllJITPlans);
 static JSC_DECLARE_HOST_FUNCTION(functionGCSweepAsynchronously);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpSubspaceHashes);
 static JSC_DECLARE_HOST_FUNCTION(functionCallFrame);
@@ -2931,6 +2932,15 @@ JSC_DEFINE_HOST_FUNCTION(functionEdenGC, (JSGlobalObject* globalObject, CallFram
 {
     DollarVMAssertScope assertScope;
     VMInspector::edenGC(&globalObject->vm());
+    return JSValue::encode(jsUndefined());
+}
+
+// Waits for whatever is being compiled, and installs it. Until then the compiler keeps what it is looking at from the collector.
+// Usage: $vm.completeAllJITPlans()
+JSC_DEFINE_HOST_FUNCTION(functionCompleteAllJITPlans, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    globalObject->vm().heap.completeAllJITPlans();
     return JSValue::encode(jsUndefined());
 }
 
@@ -6070,6 +6080,7 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "gc"_s, functionGC, 0);
     addFunction(vm, alwaysAllow, "gcSweepAsynchronously"_s, functionGCSweepAsynchronously, 0);
     addFunction(vm, alwaysAllow, "edenGC"_s, functionEdenGC, 0);
+    addFunction(vm, alwaysAllow, "completeAllJITPlans"_s, functionCompleteAllJITPlans, 0);
     addFunction(vm, alwaysAllow, "dumpSubspaceHashes"_s, functionDumpSubspaceHashes, 0);
 
     addFunction(vm, allowIfNotFuzz, "callFrame"_s, functionCallFrame, 1);

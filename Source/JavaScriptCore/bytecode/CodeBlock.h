@@ -898,7 +898,24 @@ public:
         Vector<HandlerInfo> m_exceptionHandlers;
 
         DirectEvalCodeCache m_directEvalCodeCache;
+
+        FixedVector<VirtualRegister> m_registersSeenFromOutside;
+        unsigned m_offsetFromWhichRegistersAreSeen { 0 };
     };
+
+    // The registers that something other than the code itself can look at, and set, while whatever the code has called is running. Code in Python has them: its variables and what goes with them, which a frame object shows.
+    // They are what they were last set to for as long as the frame lasts, whether or not the code will look at them again. See "The DFG" in python/README.md.
+    std::span<const VirtualRegister> registersSeenFromOutside() const { return m_rareData ? m_rareData->m_registersSeenFromOutside.span() : std::span<const VirtualRegister>(); }
+    // Those that can be seen while an instruction is being run. Code begins by putting what it was called with where it belongs, and until it has done that there is nothing to be seen: some of them have yet to be given
+    // anything, and have in them whatever was left there.
+    std::span<const VirtualRegister> registersSeenFromOutsideAt(const JSInstruction* instruction)
+    {
+        if (!m_rareData || m_rareData->m_registersSeenFromOutside.isEmpty()) [[likely]]
+            return { };
+        return bytecodeOffset(instruction) >= m_rareData->m_offsetFromWhichRegistersAreSeen ? m_rareData->m_registersSeenFromOutside.span() : std::span<const VirtualRegister>();
+    }
+    // Where this code keeps one of them.
+    VirtualRegister machineRegisterSeenFromOutside(VirtualRegister) const;
 
     void clearExceptionHandlers()
     {

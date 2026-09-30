@@ -58,7 +58,6 @@ def serial_of(r):
 
 
 def check(step):
-    js.fullGC()
     for n, o in objects.items():
         if getweakrefcount(o) != len(held[n]):
             wrong.append((step, "count", n, getweakrefcount(o), len(held[n])))
@@ -111,9 +110,17 @@ def step(i):
         js.edenGC()
 
 
+# What has been let go of is gone once the collector finds that nothing has it, and this is about what there is then, not about how soon that is. Two things can put it off.
+# The collector takes whatever it finds on the stack for a reference, and a function that has only just begun has registers that it has given nothing yet, which have in them what the last function to be called from
+# the same place left there. So it is run from here, and not from a function that this calls.
+# And while a function is being compiled, on another thread, the compiler keeps what the function had in its variables when that was begun. So that is waited for.
 for i in range(6000):
     step(i)
     if i % 150 == 149:
+        getattr(js, "$vm").completeAllJITPlans()
+        js.fullGC()
         check(i)
+getattr(js, "$vm").completeAllJITPlans()
+js.fullGC()
 check("the end")
 print("objects", len(objects), "references", sum(len(v) for v in held.values()), "callbacks", len(called), "wrong", wrong[:5])

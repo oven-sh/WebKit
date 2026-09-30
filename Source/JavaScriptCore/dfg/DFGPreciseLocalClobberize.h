@@ -112,6 +112,9 @@ private:
                     m_read(virtualRegisterForArgumentIncludingThis(i));
             }
 
+            for (VirtualRegister virtualRegister : m_graph.m_profiledBlock->registersSeenFromOutside())
+                m_read(virtualRegister);
+
             // The stack header is read.
             for (unsigned i = 0; i < CallFrameSlot::thisArgument; ++i)
                 m_read(VirtualRegister(i));

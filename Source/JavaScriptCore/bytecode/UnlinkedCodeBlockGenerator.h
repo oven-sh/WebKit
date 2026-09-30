@@ -62,6 +62,8 @@ public:
     VirtualRegister thisRegister() const { return m_codeBlock->thisRegister(); }
     VirtualRegister scopeRegister() const { return m_codeBlock->scopeRegister(); }
     bool wasCompiledWithDebuggingOpcodes() const { return m_codeBlock->wasCompiledWithDebuggingOpcodes(); }
+    // It matters to what is compiled from the bytecode, and not to what is done to the bytecode.
+    std::span<const VirtualRegister> registersSeenFromOutsideAt(const JSInstruction*) const { return { }; }
     bool hasCheckpoints() const { return m_codeBlock->hasCheckpoints(); }
     bool hasTailCalls() const { return m_codeBlock->hasTailCalls(); }
 

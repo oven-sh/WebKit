@@ -399,10 +399,78 @@ check a structure and load or store at an offset, in the object or in some other
 - Not remembered: what has a `__get__()` of its own, a property, one of `__slots__`, a method that is got and not called, which has to be made, an attribute of a class, and anything of an object of JavaScript's.
 
 **What that took of JavaScriptCore is there for JavaScript too.** An `AccessCase` of any kind can now have a `WatchpointSet` besides its conditions, where only those that load could, and a `PutPropertySlot` can name one as a `PropertySlot` can. So `object.x = 1` in JavaScript, of
-something of Python's, is remembered like any other. What has no way to be told that it has fired does not remember: the interpreter's own caches, and what the DFG works out from a `PutByStatus`.
+something of Python's, is remembered like any other. What has no way to be told that it has fired does not remember, which is the interpreter's own caches. What the DFG works out from a `GetByStatus` or a `PutByStatus` has: see below.
 
 `programs/code-that-is-run-often.py` has every operator on every pair of some forty values that are near where one way of doing it gives way to another. `programs/attributes-that-are-remembered.py` does each thing many times over, changes something, and does it again.
 `interop/attributes-that-javascript-remembers.py` is the same for JavaScript, often enough for the FTL.
+
+### The DFG
+
+Python's opcodes have nodes of their own (`Py...` in `DFGNodeType.h`, compiled in `DFGSpeculativeJITPython.cpp`), and everything else in the code is JavaScript's and is compiled as JavaScript's is. What is hard about it is not speed. It is that a good deal can
+look at code in Python from outside while it runs, and the DFG is at liberty to keep things where it likes.
+
+**What can be seen from outside is where it can be found.** `CodeBlock::registersSeenFromOutside()` are the registers that a frame object reads and writes: the variables, and the few that say what the frame is in.
+
+- They are made use of by every instruction from `py_enter` on (`registersSeenFromOutsideAt()`, in `BytecodeUseDef.h`), so they are never taken to be finished with. Before that the code is putting what it was called with where it belongs, and to Python there is no
+  frame yet.
+- They are kept as values like any other, never as a bare number, are stored whenever they are given something, and are taken to be read by whatever reads the world.
+- Where the DFG has put each of them is written down (`CommonData::m_machineRegistersSeenFromOutside`), and `PyFrame` goes by that (`registerOf()`).
+- **They are variables to JavaScriptCore as well**, which is to say that they are the first so many of the registers, and are given something when the code is entered. `allocateVariables()` sees to it before anything else has a register. What comes after
+  them has in it whatever was left there, until it is given something.
+- **What is written from outside** (`frame.f_locals["x"] = 1`) is written where it would be read from, and what has been compiled is thrown away. It finds that out when it is come back to, and goes on in the baseline JIT with what it finds in the frame.
+
+**An exception is thrown from the baseline JIT's frame.** It remembers every frame that it comes to, with its variables, whether or not anything there catches it. So to `Graph::willCatchExceptionInMachineFrame()` every frame of Python's catches everything. What
+it goes to is an exit like any other, to the instruction that threw and not to a handler, and at the end of it the exception is thrown again as if the baseline JIT had been running all along (`adjustAndJumpToTarget()`). What catches it is looked for then. The
+unwinder does nothing of Python's for a frame that is still the DFG's.
+
+**Returning** looks whether there is a frame object, which outlives the frame and is told to take what it needs. If there is, that is for the baseline JIT (`PyCheckNoFrameObject`). It is no reason to think the worse of what was compiled, so it is not counted
+against it (`ExitKind::PythonFrameObjectExists`).
+
+**Nothing is being told of what is run, or this would not be what is running.** `py_line`, `py_call`, `py_branch` and `py_jump` come to nothing. That holds for as long as `VM::pythonIsNotWatched()` does, which fires when the first thing asks to be told, and
+there is another in its place when the last has done. While anything is being told, nothing of Python's is compiled by the DFG. What has been put off (a signal) is seen to on the way into a function and on the way round a loop.
+
+**Where it can be told what the operands are, an operator is what JavaScript's own would be** (`fixupPyBinaryOp()` and its like, in `DFGFixupPhase.cpp`), and everything that the DFG knows how to do with those is done.
+
+| | on | becomes |
+|---|---|---|
+| `+ - *`, `-x` | ints, floats, or one of each | `TaggedAdd` and its like, and so `ArithAdd` on Int32s that looks for what does not fit, or on doubles with `BoxTaggedFloat` |
+| `/` | numbers | the same, after `PyCheckDivisor` |
+| `// %` | ints | `PyFloorDiv`, `PyMod`, which round down. By a power of two, a shift and a mask, which do as well |
+| `& \| ^ ~`, `<< >>` by a constant | ints | `ArithBitAnd` and its like. `<<` is a multiplication that may not fit |
+| `< <= > >= == !=` | ints, or numbers | `CompareLess` and its like |
+| `== !=` | strings | `CompareStrictEq`. Which of two strings comes first is another matter, since JavaScript goes by code units |
+| `if x:`, `not x` | a bool, an int, a string, `None` | `ToBoolean`, `LogicalNot`. A float is compared with 0, since NaN is true |
+| `x[i]`, `x[i] = y` | a list and an int | `GetByVal`, `PutByVal` |
+| a global | | `CheckStructure` and `GetByOffset`, by what the interpreter remembers |
+
+- What does not fit, dividing by 0, a place that is not in the list or is counted from the end of it: all are left to the baseline JIT, and where that has happened the operator is left as it is the next time.
+- **That a variable may have nothing in it is not held against it.** Every variable begins that way, and what goes through something has nothing left in the end, so it is among what is expected of most things. It is left out of account in deciding
+  (`predictionIfBound()`): what has nothing in it is none of the kinds that are looked for.
+- **A list is not to become one that keeps floats as they are**, which is what JavaScript would make of a list of ints that is given a float, since it could not then be told which of them are whole. So that is not made a `PutByVal`.
+- `py_get_item` and `py_set_item` remember what kind of array they have been given, as `get_by_val` and `put_by_val` do, and their nodes have the same things in the same places, so that the one is made the other by saying so.
+- `a, b = b, a` makes no tuple.
+- What is left finds out what it has been given when it runs, in line, as the baseline JIT does.
+
+**What an inline cache remembers of an attribute is done without asking it.** It is remembered as a property is, so `py_get_attr` and `py_set_attr` are given to what `get_by_id` and `put_by_id` are given to (`handleGetById()`, `handlePutById()`), and
+`py_load_method` to the part of that which loads. What comes of it is a check of the structure, and a load or a store at an offset. What is in a class is a constant for as long as nothing else is put there, so `p.norm()` is a check and a call of a function that is known.
+That the class has nothing to say about it is something that an `AccessCase` could say and a `GetByVariant` or `PutByVariant` could not. Now they can (`additionalSet()`), whoever goes by one watches it (`watchAdditionalSets()`), and two that hold for as long as
+different things do are not made one. So what JavaScript reads and writes of an object of Python's is done so as well.
+
+**The globals of a module are known when its functions are compiled.** The environment that has them is made by whoever runs the code, and its `SymbolTable` belongs to what is run (`FunctionExecutable::pythonGlobalsSymbolTable()`), as that of a scope that code
+makes for itself does. It is by the table that JavaScriptCore knows whether there has been more than one. There is one for a module, so `.globals` is a constant, and what a global function is may be too. Code that `exec()` is given twice has two, and then it is not.
+
+**What that found.**
+
+- The operations that make a function when there is no room to do it in line are one for each structure that a function of JavaScript's can have, and were chosen without asking whose it is (`selectNewFunctionOperation()`). And the DFG made every generator one of
+  JavaScript's (`JSGenerator::selectStructureForNewGenerator()`). `interop/what-is-made-by-code-that-is-run-often.py`
+- Until an `ArrayBuffer` has been detached, the DFG takes it that a view is as long as it ever was. A `bytearray` that is made longer or shorter where it is says that one has been (`JSArrayBufferView::didChangeOwnedStorage()`).
+- What has been compiled and not yet installed kept from the collector whatever the function had in its variables when compiling was begun, for as long as it waited, which could be for good. It lets go of them when compiling is over, and refers weakly to what it
+  will refer to weakly once it is installed: if any of that goes, so does it (`Plan::isKnownToBeLiveAfterGC()`).
+
+`programs/what-was-expected-and-then-was-not.py` runs each operator with one kind of thing until it has been compiled for that, and then gives it every kind. `programs/looking-at-what-is-run-often.py` looks at, and changes, what has been compiled: its variables,
+what an exception remembers of it, a frame that is kept, being told of what is run beginning in the middle of it. The runners have a configuration in which the DFG compiles nearly everything, with next to nothing known of it.
+
+Not yet: the FTL. Code in Python is not inlined. An attribute that has been found in more than one way is asked of the inline cache.
 
 ### Exceptions, tracebacks and frames
 

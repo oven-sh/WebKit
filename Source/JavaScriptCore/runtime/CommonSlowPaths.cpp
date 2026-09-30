@@ -274,9 +274,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_new_generator)
 {
     BEGIN();
     auto bytecode = pc->as<OpNewGenerator>();
-    // One of Python's inherits from the class `generator`, and from %GeneratorPrototype% by way of that.
-    Structure* structure = codeBlock->ownerExecutable()->isPython() ? globalObject->pyRealm()->structureFor(BuiltinType::Generator) : globalObject->generatorStructure();
-    JSGenerator* result = JSGenerator::create(vm, structure);
+    JSGenerator* result = JSGenerator::create(vm, JSGenerator::selectStructureForNewGenerator(globalObject, codeBlock->ownerExecutable()));
     RETURN(result);
 }
 
@@ -1929,6 +1927,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_get_item)
 {
     BEGIN();
     auto bytecode = pc->as<OpPyGetItem>();
+    if (JSValue base = GET_C(bytecode.m_base).jsValue(); base.isCell())
+        bytecode.metadata(codeBlock).m_arrayProfile.observeStructureID(base.asCell()->structureID());
     JSValue result = Python::getItem(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_property).jsValue());
     RETURN_PROFILED(result);
 }
@@ -1937,6 +1937,8 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_set_item)
 {
     BEGIN();
     auto bytecode = pc->as<OpPySetItem>();
+    if (JSValue base = GET_C(bytecode.m_base).jsValue(); base.isCell())
+        bytecode.metadata(codeBlock).m_arrayProfile.observeStructureID(base.asCell()->structureID());
     Python::setItem(globalObject, GET_C(bytecode.m_base).jsValue(), GET_C(bytecode.m_property).jsValue(), GET_C(bytecode.m_value).jsValue());
     END();
 }

@@ -288,6 +288,10 @@ public:
     // What Python sees this as: function.__code__. It is made when it is first asked for, and there is one.
     JSObject* pythonCodeObject() const { return m_rareData ? m_rareData->m_pythonCodeObject.get() : nullptr; }
     void setPythonCodeObject(VM& vm, JSObject* code) { ensureRareData().m_pythonCodeObject.set(vm, this, code); }
+    // Code in Python that is in nothing else is run in an environment that has its globals, which whoever runs it makes, each time. They are all of one table, as the scopes are that code makes for itself. It is by
+    // the table that it is known whether there has been more than one of them, and so whether what is compiled may take it that there is only the one.
+    SymbolTable* pythonGlobalsSymbolTable() const { return m_rareData ? m_rareData->m_pythonGlobalsSymbolTable.get() : nullptr; }
+    void setPythonGlobalsSymbolTable(VM& vm, SymbolTable* symbolTable) { ensureRareData().m_pythonGlobalsSymbolTable.set(vm, this, symbolTable); }
     // In Python the code of a function is a constant of the code that the function is defined in, so it is the same however often that is
     // linked. As with ModuleProgramExecutable::functionExpression(), it is kept here and not in the CodeBlock, which comes and goes.
     FunctionExecutable* pythonFunctionExpression(VM&, unsigned index, unsigned numberOfFunctionExpressions, UnlinkedFunctionExecutable*);
@@ -339,6 +343,7 @@ public:
         std::unique_ptr<TemplateObjectMap> m_templateObjectMap;
         WriteBarrier<JSString> m_asString;
         WriteBarrier<JSObject> m_pythonCodeObject;
+        WriteBarrier<SymbolTable> m_pythonGlobalsSymbolTable;
         WriteBarrier<FunctionExecutable> m_pythonGeneratorFunction;
         FixedVector<WriteBarrier<FunctionExecutable>> m_pythonFunctionExpressions;
         std::unique_ptr<Python::CodeMonitor> m_pythonMonitor;

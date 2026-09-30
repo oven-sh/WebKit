@@ -92,6 +92,9 @@
 #include "ObjectPrototypeInlines.h"
 #include "Operations.h"
 #include "ParseInt.h"
+#include "PyTuple.h"
+#include "PythonOperations.h"
+#include "PythonOperators.h"
 #include "ReflectObject.h"
 #include "RegExpConstructor.h"
 #include "RegExpGlobalDataInlines.h"
@@ -2510,6 +2513,172 @@ JSC_DEFINE_JIT_OPERATION(operationToPropertyKey, EncodedJSValue, (JSGlobalObject
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(value).toPropertyKeyValue(globalObject)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyBinaryOp, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue left, EncodedJSValue right, uint32_t operation))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::binaryOperation(globalObject, static_cast<Python::BinaryOperator>(operation & ~Python::inPlaceOperatorFlag), operation & Python::inPlaceOperatorFlag, JSValue::decode(left), JSValue::decode(right))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyUnaryOp, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue operand, uint32_t operation))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::unaryOperation(globalObject, static_cast<Python::UnaryOperator>(operation), JSValue::decode(operand))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyCompareOp, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue left, EncodedJSValue right, uint32_t operation))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::compare(globalObject, static_cast<Python::ComparisonOperator>(operation), JSValue::decode(left), JSValue::decode(right))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyToBool, size_t, (JSGlobalObject* globalObject, EncodedJSValue value))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, static_cast<size_t>(Python::isTrue(globalObject, JSValue::decode(value))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyDelAttr, void, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Python::deleteAttribute(globalObject, JSValue::decode(base), CacheableIdentifier::createFromRawBits(rawCacheableIdentifier).uid());
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyLoadGlobal, EncodedJSValue, (JSGlobalObject* globalObject, JSObject* globals, JSObject* builtins, uintptr_t rawCacheableIdentifier))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Python::GlobalLocation location;
+    OPERATION_RETURN(scope, JSValue::encode(Python::loadGlobal(globalObject, globals, builtins, CacheableIdentifier::createFromRawBits(rawCacheableIdentifier).uid(), location)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyGetItem, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue base, EncodedJSValue key))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::getItem(globalObject, JSValue::decode(base), JSValue::decode(key))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPySetItem, void, (JSGlobalObject* globalObject, EncodedJSValue base, EncodedJSValue key, EncodedJSValue value))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Python::setItem(globalObject, JSValue::decode(base), JSValue::decode(key), JSValue::decode(value));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyDelItem, void, (JSGlobalObject* globalObject, EncodedJSValue base, EncodedJSValue key))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Python::deleteItem(globalObject, JSValue::decode(base), JSValue::decode(key));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyGetIter, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue iterable))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::getIterator(globalObject, JSValue::decode(iterable))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyIterNext, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue iterator))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::iteratorNext(globalObject, JSValue::decode(iterator))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyUnpackSequence, JSCell*, (JSGlobalObject* globalObject, EncodedJSValue iterable, uint32_t count, uint32_t starIndex))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, static_cast<JSCell*>(Python::unpackSequenceIntoTuple(globalObject, JSValue::decode(iterable), count, starIndex == count ? -1 : static_cast<int>(starIndex))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyNewTuple, JSCell*, (JSGlobalObject* globalObject, void* buffer, size_t size))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // There is none for a tuple of nothing.
+    ActiveScratchBufferScope activeScratchBufferScope(buffer ? ScratchBuffer::fromData(buffer) : nullptr, size);
+
+    OPERATION_RETURN(scope, static_cast<JSCell*>(PyTuple::create(globalObject, std::span<const JSValue>(static_cast<JSValue*>(buffer), size))));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyEnterSlow, size_t, (JSGlobalObject* globalObject))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (vm.pythonDepth() > vm.pythonRecursionLimit())
+        OPERATION_RETURN(scope, static_cast<size_t>(true));
+    if (vm.hasPythonWork())
+        Python::doPendingWork(globalObject);
+    else
+        vm.updatePythonLimitUnlessWatched();
+    OPERATION_RETURN(scope, static_cast<size_t>(false));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyDoPendingWork, void, (JSGlobalObject* globalObject))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (vm.hasPythonWork())
+        Python::doPendingWork(globalObject);
+    else
+        vm.updatePythonLimitUnlessWatched();
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationToPropertyKeyOrNumber, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue value))

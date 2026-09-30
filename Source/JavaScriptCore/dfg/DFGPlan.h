@@ -89,6 +89,7 @@ public:
 
     RefPtr<InlineCallFrameSet> inlineCallFrames() const { return m_inlineCallFrames; }
     DesiredWatchpoints& watchpoints() LIFETIME_BOUND { return m_watchpoints; }
+    WatchpointSet* pythonIsNotWatched() const { return m_pythonIsNotWatched.get(); }
     DesiredIdentifiers& identifiers() LIFETIME_BOUND { return m_identifiers; }
     DesiredWeakReferences& weakReferences() LIFETIME_BOUND { return m_weakReferences; }
     DesiredTransitions& transitions() LIFETIME_BOUND { return m_transitions; }
@@ -129,6 +130,7 @@ private:
 
     RefPtr<InlineCallFrameSet> m_inlineCallFrames;
     DesiredWatchpoints m_watchpoints;
+    RefPtr<WatchpointSet> m_pythonIsNotWatched; // VM::pythonIsNotWatched(), if the code is in Python.
     DesiredIdentifiers m_identifiers;
     DesiredWeakReferences m_weakReferences;
     DesiredTransitions m_transitions;

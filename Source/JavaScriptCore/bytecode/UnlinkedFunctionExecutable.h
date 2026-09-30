@@ -241,6 +241,7 @@ public:
         materializeDeferredMembersIfNeeded();
         return m_members.live().parentScopeTDZVariables;
     }
+    bool isPython() const { return !!pythonInfo(); }
     const Python::FunctionInfo* pythonInfo() const
     {
         materializeDeferredMembersIfNeeded();

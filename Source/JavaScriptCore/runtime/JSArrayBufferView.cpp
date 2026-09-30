@@ -268,6 +268,13 @@ void JSArrayBufferView::detachFromArrayBuffer()
     realm()->notifyArrayBufferDetaching();
 }
 
+void JSArrayBufferView::didChangeOwnedStorage(VM& vm)
+{
+    vm.didChangeOwnedTypedArrayStorage();
+    // Until an ArrayBuffer has been detached, what is compiled takes it that a view is as long as it ever was.
+    realm()->notifyArrayBufferDetaching();
+}
+
 bool JSArrayBufferView::reallocateOwnedStorage(VM& vm, size_t length, size_t byteLength, size_t capacity)
 {
     RELEASE_ASSERT(ownsStorage());
@@ -302,7 +309,7 @@ bool JSArrayBufferView::reallocateOwnedStorage(VM& vm, size_t length, size_t byt
         WTF::storeStoreFence();
         m_mode = newMode;
     }
-    vm.didChangeOwnedTypedArrayStorage();
+    didChangeOwnedStorage(vm);
     if (newMode == FastTypedArray) {
         // The vector is marked when the view is visited, which may have been already.
         vm.writeBarrier(this);
@@ -323,7 +330,7 @@ void JSArrayBufferView::setLengthWithinOwnedStorage(size_t length)
         Locker locker { cellLock() };
         m_length = length;
     }
-    vm().didChangeOwnedTypedArrayStorage();
+    didChangeOwnedStorage(vm());
 }
 
 void JSArrayBufferView::dropFrontOfOwnedStorage(size_t byteCount, size_t length)
@@ -336,7 +343,7 @@ void JSArrayBufferView::dropFrontOfOwnedStorage(size_t byteCount, size_t length)
         m_byteOffset += byteCount;
         m_length = length;
     }
-    vm().didChangeOwnedTypedArrayStorage();
+    didChangeOwnedStorage(vm());
 }
 
 ArrayBuffer* JSArrayBufferView::slowDownAndWasteMemory()

@@ -3845,6 +3845,58 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
         break;
     }
             
+    case PyToBool:
+        clobberWorld();
+        setNonCellTypeForNode(node, SpecBoolean);
+        break;
+
+    case PyLoadMethod:
+        clobberWorld();
+        forTupleNode(node, 0).makeHeapTop();
+        // Empty, if it is no method.
+        forTupleNode(node, 1).makeBytecodeTop();
+        clearForNode(node);
+        break;
+
+    case PyIterNext:
+        clobberWorld();
+        // Empty, when there is no more.
+        makeBytecodeTopForNode(node);
+        break;
+
+    case PyGetIter:
+    case PyUnpackSequence:
+        clobberWorld();
+        setTypeForNode(node, SpecObject);
+        break;
+
+    case PyNewTuple:
+        setTypeForNode(node, SpecObjectOther);
+        break;
+
+    case PyGetTupleItem:
+        makeHeapTopForNode(node);
+        break;
+
+    case PySetAttr:
+    case PyDelAttr:
+    case PySetItem:
+    case PyDelItem:
+    case PyEnter:
+    case PyCheckPendingWork:
+        clobberWorld();
+        break;
+
+    case PyLeave:
+    case PyCheckNoFrameObject:
+    case PyCheckDivisor:
+        break;
+
+    case PyFloorDiv:
+    case PyMod:
+        setNonCellTypeForNode(node, SpecInt32Only);
+        break;
+
     case NewArray:
         ASSERT(node->indexingMode() == node->indexingType()); // Copy on write arrays should only be created by NewArrayBuffer.
         setForNode(node,
@@ -4666,6 +4718,12 @@ bool AbstractInterpreter<AbstractStateType>::executeEffects(unsigned clobberLimi
 
     case GetPrivateName:
     case GetByValWithThis:
+    case PyBinaryOp:
+    case PyUnaryOp:
+    case PyCompareOp:
+    case PyGetAttr:
+    case PyGetItem:
+    case PyLoadGlobal:
     case GetByValWithThisMegamorphic:
     case GetByIdWithThis:
     case GetByIdWithThisMegamorphic:

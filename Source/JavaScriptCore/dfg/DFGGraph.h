@@ -392,7 +392,8 @@ public:
             return taggedInteger(operand->asJSValue()) ? TaggedKind::Integer : TaggedKind::Float;
         if (operand->op() == BoxTaggedFloat)
             return TaggedKind::Float;
-        SpeculatedType prediction = operand->prediction();
+        // A variable that may have nothing in it yet is expected to have something by the time that it is computed with. If it has not, it is not a number, which is looked for in any case.
+        SpeculatedType prediction = operand->prediction() & ~SpecEmpty;
         if (!prediction || (prediction & ~SpecBytecodeNumber))
             return TaggedKind::Unknown;
         if (isInt32Speculation(prediction))
@@ -408,13 +409,14 @@ public:
         Int32, // Both operands are integers, and it has not been seen to overflow.
         Double, // Both are numbers, and the result is a float.
     };
-    TaggedArithMode taggedArithMode(Node* node)
+    TaggedArithMode taggedArithMode(Node* node) { return taggedArithMode(node, node->op() == TaggedDiv); }
+    TaggedArithMode taggedArithMode(Node* node, bool isDivision)
     {
         TaggedKind left = taggedKind(node->child1().node());
         TaggedKind right = taggedKind(node->child2().node());
         if (left == TaggedKind::Unknown || right == TaggedKind::Unknown)
             return TaggedArithMode::Generic;
-        if (node->op() == TaggedDiv)
+        if (isDivision)
             return TaggedArithMode::Double;
         // A float comes of it if either operand is one.
         if (left == TaggedKind::Float || right == TaggedKind::Float)
@@ -1354,6 +1356,12 @@ public:
         return willCatchExceptionInMachineFrame(codeOrigin, ignored, ignored2);
     }
     bool willCatchExceptionInMachineFrame(CodeOrigin, CodeOrigin& opCatchOriginOut, HandlerInfo*& catchHandlerOut);
+
+    // CodeBlock::registersSeenFromOutside(). Code that has any is not inlined, so they are the machine frame's own.
+    bool isSeenFromOutside(Operand operand)
+    {
+        return !operand.isTmp() && m_profiledBlock->registersSeenFromOutside().size() && std::ranges::contains(m_profiledBlock->registersSeenFromOutside(), operand.virtualRegister());
+    }
     
     bool needsScopeRegister() const { return m_hasDebuggerEnabled; }
 
@@ -1533,6 +1541,10 @@ public:
     RefCountState m_refCountState;
     bool m_hasDebuggerEnabled;
     bool m_hasExceptionHandlers { false };
+    // What willCatchExceptionInMachineFrame() gives for code that leaves it to the baseline JIT to have thrown: see there.
+    HandlerInfo m_handlerThatThrowsAgain;
+    // Where each of CodeBlock::registersSeenFromOutside() is, once that has been settled.
+    Vector<VirtualRegister> m_machineRegistersSeenFromOutside;
     bool m_usesTaggedArithmetic { false }; // Here a float is a double at one time and a whole float at another.
     bool m_isInSSAConversion { false };
     bool m_isValidating { false };

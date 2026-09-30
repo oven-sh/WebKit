@@ -1,0 +1,41 @@
+---- the variables of what called
+in a loop => (435, 536870912.0, {'n': 30, 'total': 406, 'half': 268435456.0, 'seen': None, 'i': 28})
+where it has got to => [(3, True, 'show'), (7, True, 'show'), [('asks_where', 'seen.append(stack())'), ('stack', 'return [(entry.name, entry.line) for entry in traceback.extract_stack()[-2:]]')]]
+from further down => {'n': 30, 'total': 870, 'i': 29, 'name': 'x'}
+one that has nothing yet => (['i', 'n'], 1)
+one that has been deleted => ['i', 'n']
+---- changing them
+a variable => (1515, 100)
+to another kind => [2, 1.0, 'ss', 'ss']
+what goes round the loop => [0, 1, 2, -1, 4, 5]
+an argument => 2028
+one that there is not => (['i', 'made_up', 'n'], 5)
+---- what an exception remembers
+with nothing wrong => 13
+all the way down => ([('catches', 3, [('kept', 3.5), ('x', 0)]), ('fails', 3, [('depth', 3), ('local', 6), ('x', 0)]), ('fails', 3, [('depth', 2), ('local', 4), ('x', 0)]), ('fails', 3, [('depth', 1), ('local', 2), ('x', 0)]), ('fails', 4, [('depth', 0), ('local', 0), ('x', 0)])], 3.5)
+every other time round => (30, [('catches_in_a_loop', 5, [('caught', 27), ('i', 18), ('n', 20)]), ('fails', 3, [('depth', 1), ('local', 2), ('x', 0)]), ('fails', 4, [('depth', 0), ('local', 0), ('x', 0)])])
+out of something built in => ('pop from empty list', [('from_something_built_in', 2, [('n', 20)]), ('passes_it_on', 4, [('i', 19), ('n', 20), ('value', 28.5)])])
+raised again => [('raised_again', 3, [('marker', 7), ('n', 7)]), ('fails', 3, [('depth', 1), ('local', 2), ('x', 0)]), ('fails', 4, [('depth', 0), ('local', 0), ('x', 0)])]
+with something to be done on the way => ([18, 19], [('cleans_up', 6, [('i', 19), ('n', 20)]), ('fails', 4, [('depth', 0), ('local', 0), ('x', 0)])])
+---- a frame that is kept
+its own => ([('i', 19), ('n', 20), ('total', 1190)], 6, False, 'own_frame')
+that another took => ([('i', 19), ('n', 20), ('x', 20.25)], 8)
+only now and then => [('i', 9), ('n', 10), ('total', 45)] 10
+---- generators
+one that is waiting => (({'n': 12, 'total': 45, 'i': 9}, 4), 1010, [1021], None)
+from inside one => ([('i', 11), ('n', 12)], 'look_from_generator')
+one that fails => [('failing_generator', 2, [('n', 12)]), ('generator_that_fails', 3, [('i', 11), ('n', 12)])]
+---- too deep
+how far it gets => (117, 'maximum recursion depth exceeded')
+within it => 60
+and past it => True
+the traceback is 120 long, of ['<module>', 'deeper']
+and after there is room again => 300
+---- being told of what is run, beginning in the middle of it
+with settrace() => (325, [('traced_from_the_middle', 'line', 5, None), ('helper', 'call', 0, None), ('helper', 'line', 1, None), ('helper', 'return', 1, 24), ('traced_from_the_middle', 'line', 2, None), ('traced_from_the_middle', 'line', 3, None), ('traced_from_the_middle', 'line', 5, None), ('helper', 'call', 0, None), ('helper', 'line', 1, None), ('helper', 'return', 1, 25), ('traced_from_the_middle', 'line', 2, None), ('traced_from_the_middle', 'line', 6, None), ('traced_from_the_middle', 'return', 6, 325)])
+with setprofile() => (325, [('helper', 'call'), ('helper', 'return'), ('helper', 'call'), ('helper', 'return'), ('profiled_from_the_middle', 'return')])
+with sys.monitoring => (325, [('monitored_from_the_middle', 5), ('helper', 1), ('monitored_from_the_middle', 2), ('monitored_from_the_middle', 3), ('monitored_from_the_middle', 5), ('helper', 1), ('monitored_from_the_middle', 2), ('monitored_from_the_middle', 6)])
+and with nothing again => (435, 536870912.0, {'n': 30, 'total': 406, 'half': 268435456.0, 'seen': None, 'i': 28})
+---- a signal
+in a loop => (25, [('interrupted', 22)])
+whose handler raises => (True, "'from the handler'", 'handler_that_raises')

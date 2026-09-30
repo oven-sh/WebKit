@@ -110,6 +110,12 @@ bool doesGC(Graph& graph, Node* node)
     case CheckTaggedFloat:
     case BoxTaggedFloat:
     case IsTaggedInt:
+    case PyGetTupleItem:
+    case PyFloorDiv:
+    case PyMod:
+    case PyCheckDivisor:
+    case PyLeave:
+    case PyCheckNoFrameObject:
     case TaggedAdd:
     case TaggedSub:
     case TaggedMul:
@@ -345,6 +351,24 @@ bool doesGC(Graph& graph, Node* node)
     case GetByIdWithThis:
     case GetByIdWithThisMegamorphic:
     case GetByValWithThis:
+    case PyBinaryOp:
+    case PyUnaryOp:
+    case PyCompareOp:
+    case PyGetAttr:
+    case PyGetItem:
+    case PyIterNext:
+    case PyLoadGlobal:
+    case PyToBool:
+    case PyLoadMethod:
+    case PyGetIter:
+    case PyUnpackSequence:
+    case PyNewTuple:
+    case PySetAttr:
+    case PyDelAttr:
+    case PySetItem:
+    case PyDelItem:
+    case PyEnter:
+    case PyCheckPendingWork:
     case GetByValWithThisMegamorphic:
     case GetDynamicVar:
     case HasIndexedProperty:

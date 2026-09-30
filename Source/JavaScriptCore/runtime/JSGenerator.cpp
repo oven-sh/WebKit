@@ -28,10 +28,19 @@
 
 #include "JSCInlines.h"
 #include "JSInternalFieldObjectImplInlines.h"
+#include "PyRealm.h"
 
 namespace JSC {
 
 const ClassInfo JSGenerator::s_info = { "Generator"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSGenerator) };
+
+Structure* JSGenerator::selectStructureForNewGenerator(JSGlobalObject* globalObject, ScriptExecutable* executable)
+{
+    // One of Python's inherits from the class `generator`, and from %GeneratorPrototype% by way of that.
+    if (executable->isPython()) [[unlikely]]
+        return globalObject->pyRealm()->structureFor(BuiltinType::Generator);
+    return globalObject->generatorStructure();
+}
 
 JSGenerator* JSGenerator::create(VM& vm, Structure* structure)
 {

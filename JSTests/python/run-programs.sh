@@ -22,6 +22,8 @@ cd "$(dirname "$0")/programs" || exit 2
 [ $# -eq 0 ] && set -- *.py
 
 eager="--thresholdForJITAfterWarmUp=1 --thresholdForJITSoon=1"
+# And the DFG, of nearly everything and with next to nothing known of it, so that it is left again and again.
+eagerDFG="$eager --thresholdForOptimizeAfterWarmUp=5 --thresholdForOptimizeAfterLongWarmUp=5 --thresholdForOptimizeSoon=5 --useConcurrentJIT=0"
 failures=0
 runs=0
 kept=${TMPDIR:-/tmp}/python-programs-that-failed
@@ -43,7 +45,7 @@ failed() {
 }
 for program in "$@"; do
     [ -f "$(expected "$program")" ] || continue
-    for options in "" "--useJIT=0" "$eager" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
+    for options in "" "--useJIT=0" "$eager" "$eagerDFG" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
         runs=$((runs + 1))
         # shellcheck disable=SC2086
         "$jsc" $options "$program" > "$actual" 2>&1
@@ -53,7 +55,7 @@ done
 # And by way of its syntax tree. What runs it that way is on the stack beneath it, and is __main__, which shows in what says how deep the stack is, what is on it, or what __main__ is.
 for program in "$@"; do
     [ -f "$(expected "$program")" ] || continue
-    case $program in recursion-limit.py | recursion-limit-and-frames.py | start-up.py | uncaught-exceptions.py | warning-filters.py) continue ;; esac
+    case $program in looking-at-what-is-run-often.py | recursion-limit.py | recursion-limit-and-frames.py | start-up.py | uncaught-exceptions.py | warning-filters.py) continue ;; esac
     runs=$((runs + 1))
     "$jsc" ../through-a-syntax-tree.py -- "$program" > "$actual" 2>&1
     cmp -s "$actual" "$(expected "$program")" || failed "$program" "through a syntax tree"

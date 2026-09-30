@@ -864,12 +864,14 @@ public:
         if (m_codeBlock) {
             if (!m_isTermination) {
                 // An exception in Python remembers each frame that it comes to. It has been in the one that throws it again.
-                bool isPython = m_codeBlock->source().provider()->isPython();
+                // Not if it is in code that leaves this to the baseline JIT, which has it thrown again once the frame is as that would have had it: Graph::willCatchExceptionInMachineFrame().
+                bool isPython = m_codeBlock->source().provider()->isPython() && !JITCode::isOptimizingJIT(m_codeBlock->jitType());
                 if (isPython && !m_isInFrameThatRethrew) [[unlikely]]
                     Python::addTracebackEntry(m_codeBlock->globalObject(), m_thrownValue, m_callFrame, visitor->bytecodeIndex());
                 if (isPython && m_vm.isPythonWatched()) [[unlikely]]
                     tellPython(visitor, m_isInFrameThatRethrew ? Python::ExceptionProgress::WasRaisedAgain : Python::ExceptionProgress::CameToFrame);
-                m_isInFrameThatRethrew = false;
+                if (isPython || !m_codeBlock->source().provider()->isPython())
+                    m_isInFrameThatRethrew = false;
                 m_handler = { findExceptionHandler(visitor, m_codeBlock, RequiredHandler::AnyHandler), m_codeBlock };
                 if (m_handler.m_valid) {
                     if (isPython && m_vm.isPythonWatched()) [[unlikely]]

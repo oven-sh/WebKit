@@ -579,6 +579,8 @@ bool collectAsList(JSGlobalObject*, JSValue iterable, MarkedArgumentBuffer&, siz
 // PySequence_Fast(): the same, but that it is the iterator that is asked how many, and that what cannot be gone through at all is complained of in the words given.
 bool collectFast(JSGlobalObject*, JSValue iterable, MarkedArgumentBuffer&, ASCIILiteral complaint);
 void unpackSequence(JSGlobalObject*, JSValue iterable, unsigned count, int starIndex, Register* first);
+// The same, into a tuple, which is what was given if that will do. Null if it raised.
+PyTuple* unpackSequenceIntoTuple(JSGlobalObject*, JSValue iterable, unsigned count, int starIndex);
 JSValue newTuple(JSGlobalObject*, Register* first, unsigned count);
 
 // ---- What every object can be asked

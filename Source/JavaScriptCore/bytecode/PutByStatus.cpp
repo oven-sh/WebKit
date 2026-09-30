@@ -64,6 +64,7 @@ PutByStatus PutByStatus::computeFromLLInt(CodeBlock* profiledBlock, BytecodeInde
     case op_enumerator_put_by_val:
     case op_put_by_val:
     case op_put_by_val_direct:
+    case op_py_set_attr:
         return PutByStatus(NoInformation);
     case op_put_private_name:
         // We do no have a code retrieving LLInt information for `op_put_private_name`.
@@ -230,8 +231,8 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
             if (access.usesPolyProto())
                 return PutByStatus(JSC::slowVersion(summary), *propertyCache);
 
-            // It holds only for as long as something that a variant has no way to say holds. An inline cache can.
-            if (access.additionalSet())
+            // Only these have a way to say that they hold for as long as something else does.
+            if (access.additionalSet() && access.type() != AccessCase::Replace && access.type() != AccessCase::Transition)
                 return PutByStatus(JSC::slowVersion(summary), *propertyCache);
 
             switch (access.type()) {
@@ -241,6 +242,7 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
                 if (!isValidOffset(offset))
                     return PutByStatus(JSC::slowVersion(summary), *propertyCache);
                 auto variant = PutByVariant::replace(access.identifier(), structure, offset, viaGlobalProxy);
+                variant.setAdditionalSet(access.additionalSet());
                 if (!result.appendVariant(variant))
                     return PutByStatus(JSC::slowVersion(summary), *propertyCache);
                 break;
@@ -254,6 +256,7 @@ PutByStatus PutByStatus::computeForPropertyInlineCache(const ConcurrentJSLocker&
                 if (!conditionSet.structuresEnsureValidity())
                     return PutByStatus(JSC::slowVersion(summary), *propertyCache);
                 auto variant = PutByVariant::transition(access.identifier(), access.structure(), access.newStructure(), conditionSet, offset);
+                variant.setAdditionalSet(access.additionalSet());
                 if (!result.appendVariant(variant))
                     return PutByStatus(JSC::slowVersion(summary), *propertyCache);
                 break;

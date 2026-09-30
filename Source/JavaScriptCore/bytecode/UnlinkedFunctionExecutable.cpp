@@ -223,9 +223,10 @@ FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* t
         SourceProfiler::profile(SourceProfiler::Type::Function, source);
 
     FunctionExecutable* result = FunctionExecutable::create(vm, topLevelExecutable, source, this, intrinsic, isInsideOrdinaryFunction);
-    // FIXME: The DFG does not know Python's opcodes yet.
+    // Each time that code in Python is run there is a frame for it, that a frame object can be made for.
+    // FIXME: The FTL does not know Python's nodes yet.
     if (source.provider()->isPython()) {
-        result->setNeverOptimize(true);
+        result->setNeverFTLOptimize(true);
         result->setNeverInline(true);
     }
     if (m_singletonHasBeenInvalidated)

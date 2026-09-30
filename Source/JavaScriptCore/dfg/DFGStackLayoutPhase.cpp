@@ -89,7 +89,8 @@ public:
                 }
                     
                 case PutStack:
-                case GetStack: {
+                case GetStack:
+                case PyCheckNoFrameObject: {
                     StackAccessData* stack = node->stackAccessData();
                     if (stack->operand.isArgument())
                         break;
@@ -166,6 +167,9 @@ public:
             data->machineLocal = assign(usedOperands, allocation, data->operand);
         }
         
+        for (VirtualRegister virtualRegister : m_graph.m_profiledBlock->registersSeenFromOutside())
+            m_graph.m_machineRegistersSeenFromOutside.append(assign(usedOperands, allocation, virtualRegister));
+
         if (!m_graph.needsScopeRegister())
             codeBlock()->setScopeRegister(VirtualRegister());
         else

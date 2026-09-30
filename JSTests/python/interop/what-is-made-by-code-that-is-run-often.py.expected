@@ -1,0 +1,9 @@
+make_function => <class 'function'> True 1 True
+make_lambda => <class 'function'> True 1 True
+make_method => <class 'function'> True 1 True
+make_generator => <class 'generator'> True 1 True
+make_expression => <class 'generator'> True 1 True
+make_coroutine => <class 'coroutine'> True 1 True
+to JavaScript string function function function function
+to JavaScript string function function function function
+to JavaScript string function function function function

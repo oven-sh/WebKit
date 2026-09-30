@@ -62,6 +62,7 @@ enum ExitKind : uint8_t {
     GenericUnwind, // We exited because we arrived at this OSR exit from genericUnwind.
     BigInt32Overflow, // We exited because of an BigInt32 overflow.
     UnexpectedResizableArrayBufferView, // We exited because we made an incorrect assumption about what type of ArrayBufferView we would see.
+    PythonFrameObjectExists, // We exited because code in Python is returning and something has asked for its frame object, which is to be told. There is nothing left to run but the return.
 };
 
 bool NODELETE exitKindMayJettison(ExitKind);

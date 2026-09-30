@@ -441,6 +441,23 @@ JSC_DECLARE_JIT_OPERATION(operationThrowStackOverflowForVarargs, void, (JSGlobal
 JSC_DECLARE_JIT_OPERATION(operationSizeOfVarargs, UCPUStrictInt32, (JSGlobalObject*, EncodedJSValue arguments, uint32_t firstVarArgOffset));
 JSC_DECLARE_JIT_OPERATION(operationLoadVarargs, void, (JSGlobalObject*, int32_t firstElementDest, EncodedJSValue arguments, uint32_t offset, uint32_t length, uint32_t mandatoryMinimum));
 JSC_DECLARE_JIT_OPERATION(operationThrowDFG, void, (JSGlobalObject*, EncodedJSValue));
+
+JSC_DECLARE_JIT_OPERATION(operationPyBinaryOp, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue, uint32_t));
+JSC_DECLARE_JIT_OPERATION(operationPyUnaryOp, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t));
+JSC_DECLARE_JIT_OPERATION(operationPyCompareOp, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue, uint32_t));
+JSC_DECLARE_JIT_OPERATION(operationPyToBool, size_t, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPyDelAttr, void, (JSGlobalObject*, EncodedJSValue, uintptr_t));
+JSC_DECLARE_JIT_OPERATION(operationPyLoadGlobal, EncodedJSValue, (JSGlobalObject*, JSObject*, JSObject*, uintptr_t));
+JSC_DECLARE_JIT_OPERATION(operationPyGetItem, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPySetItem, void, (JSGlobalObject*, EncodedJSValue, EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPyDelItem, void, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPyGetIter, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPyIterNext, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPyUnpackSequence, JSCell*, (JSGlobalObject*, EncodedJSValue, uint32_t, uint32_t));
+JSC_DECLARE_JIT_OPERATION(operationPyNewTuple, JSCell*, (JSGlobalObject*, void*, size_t));
+// Whether it is one frame too deep.
+JSC_DECLARE_JIT_OPERATION(operationPyEnterSlow, size_t, (JSGlobalObject*));
+JSC_DECLARE_JIT_OPERATION(operationPyDoPendingWork, void, (JSGlobalObject*));
 JSC_DECLARE_JIT_OPERATION(operationThrowStaticError, void, (JSGlobalObject*, JSString*, uint32_t));
 
 JSC_DECLARE_JIT_OPERATION(operationHasOwnProperty, size_t, (JSGlobalObject*, JSObject*, EncodedJSValue));

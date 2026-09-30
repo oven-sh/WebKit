@@ -144,6 +144,8 @@ Plan::Plan(CodeBlock* passedCodeBlock, CodeBlock* profiledDFGCodeBlock,
 {
     RELEASE_ASSERT(m_codeBlock->alternative()->jitCode());
     m_inlineCallFrames->disableThreadingChecks();
+    if (m_codeBlock->ownerExecutable()->isPython())
+        m_pythonIsNotWatched = &m_vm->pythonIsNotWatched();
 }
 
 Plan::~Plan() = default;
@@ -185,6 +187,11 @@ void Plan::cancel()
 
 Plan::CompilationPath Plan::compileInThreadImpl()
 {
+    // They are for the phases that are run from here. What has been compiled can wait a good while to be made use of, and the collector would take it until then that they are wanted.
+    auto dropMustHandleValues = makeScopeExit([&] {
+        m_mustHandleValues.clear();
+    });
+
     {
         CompilerTimingScope timingScope("DFG"_s, "initialize"_s);
         m_recordedStatuses = makeUnique<RecordedStatuses>();
@@ -680,7 +687,9 @@ bool Plan::checkLivenessAndVisitChildren(AbstractSlotVisitor& visitor)
         }
     }
 
-    m_weakReferences.visitChildren(visitor);
+    // The compiler looks at them for as long as it is at work. After that this is as what it has compiled will be once it has been installed, which can be a good while yet: it does not keep them, and goes if any of them does.
+    if (stage() != JITPlanStage::Ready)
+        m_weakReferences.visitChildren(visitor);
     m_transitions.visitChildren(visitor);
     return true;
 }
@@ -709,6 +718,8 @@ bool Plan::isKnownToBeLiveAfterGC()
     if (!m_vm->heap.isMarked(m_codeBlock->alternative()))
         return false;
     if (!!m_profiledDFGCodeBlock && !m_vm->heap.isMarked(m_profiledDFGCodeBlock))
+        return false;
+    if (stage() == JITPlanStage::Ready && !m_weakReferences.areAllMarked(*m_vm))
         return false;
     return true;
 }

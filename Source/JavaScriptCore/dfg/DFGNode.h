@@ -1212,6 +1212,7 @@ public:
         switch (op()) {
         case PutStack:
         case GetStack:
+        case PyCheckNoFrameObject:
             return true;
         default:
             return false;
@@ -1268,10 +1269,41 @@ public:
         case PutPrivateNameById:
         case CallCustomAccessorGetter:
         case CallCustomAccessorSetter:
+        case PyGetAttr:
+        case PySetAttr:
+        case PyDelAttr:
+        case PyLoadMethod:
+        case PyLoadGlobal:
             return true;
         default:
             return false;
         }
+    }
+
+    // A Python::BinaryOperator with Python::inPlaceOperatorFlag or without, a Python::UnaryOperator or a Python::ComparisonOperator.
+    bool hasPythonOperator() { return op() == PyBinaryOp || op() == PyUnaryOp || op() == PyCompareOp; }
+    unsigned pythonOperator()
+    {
+        ASSERT(hasPythonOperator());
+        return m_opInfo.as<unsigned>();
+    }
+
+    unsigned tupleItemIndex()
+    {
+        ASSERT(op() == PyGetTupleItem);
+        return m_opInfo.as<unsigned>();
+    }
+
+    // How many targets, and which of them is starred, which is as many again if none is.
+    unsigned unpackedCount()
+    {
+        ASSERT(op() == PyUnpackSequence);
+        return m_opInfo.as<unsigned>();
+    }
+    unsigned unpackedStarIndex()
+    {
+        ASSERT(op() == PyUnpackSequence);
+        return m_opInfo2.as<unsigned>();
     }
 
     CacheableIdentifier cacheableIdentifier()
@@ -1296,6 +1328,11 @@ public:
         case PutByIdMegamorphic:
         case PutByIdWithThis:
         case PutPrivateNameById:
+        case PyGetAttr:
+        case PySetAttr:
+        case PyDelAttr:
+        case PyLoadMethod:
+        case PyLoadGlobal:
             return CacheableIdentifier::createFromRawBits(m_opInfo.as<uintptr_t>());
         case CallCustomAccessorGetter:
         case CallCustomAccessorSetter:
@@ -1823,6 +1860,7 @@ public:
         case StringIteratorNext:
         case StringIteratorNextWithUndefined:
         case MapIteratorNext:
+        case PyLoadMethod:
             return true;
         default:
             return false;
@@ -1866,6 +1904,7 @@ public:
         case StringIteratorNext:
         case StringIteratorNextWithUndefined:
         case MapIteratorNext:
+        case PyLoadMethod:
             return 2;
         default:
             break;
@@ -2135,6 +2174,14 @@ public:
         case TaggedSub:
         case TaggedMul:
         case TaggedDiv:
+        case PyBinaryOp:
+        case PyUnaryOp:
+        case PyCompareOp:
+        case PyGetAttr:
+        case PyLoadMethod:
+        case PyGetItem:
+        case PyIterNext:
+        case PyLoadGlobal:
         case GetById:
         case GetByIdFlush:
         case GetByIdMegamorphic:
@@ -2788,6 +2835,8 @@ public:
         case EnumeratorPutByVal:
         case GetByVal:
         case GetByValMegamorphic:
+        case PyGetItem:
+        case PySetItem:
         case MultiGetByVal:
         case MultiPutByVal:
         case EnumeratorNextUpdateIndexAndMode:

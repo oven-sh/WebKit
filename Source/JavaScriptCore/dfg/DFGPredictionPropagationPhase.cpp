@@ -1138,6 +1138,12 @@ private:
         case GetByIdDirect:
         case GetByIdDirectFlush:
         case GetByValWithThis:
+        case PyBinaryOp:
+        case PyUnaryOp:
+        case PyCompareOp:
+        case PyGetAttr:
+        case PyGetItem:
+        case PyLoadGlobal:
         case GetByValWithThisMegamorphic:
         case GetByOffset:
         case GetPrivateName:
@@ -1421,6 +1427,7 @@ private:
         case IsBigInt:
         case NumberIsInteger:
         case IsTaggedInt:
+        case PyToBool:
         case GlobalIsNaN:
         case NumberIsNaN:
         case GlobalIsFinite:
@@ -1699,6 +1706,39 @@ private:
             break;
         }
 
+        case PyLoadMethod: {
+            setTuplePredictions(m_currentNode->getHeapPrediction(), m_currentNode->child1()->prediction() | SpecEmpty);
+            break;
+        }
+
+        case PyIterNext: {
+            // It comes to an end, though it may not have been seen to yet.
+            setPrediction(m_currentNode->getHeapPrediction() | SpecEmpty);
+            break;
+        }
+
+        case PyGetIter:
+        case PyUnpackSequence: {
+            setPrediction(SpecObject);
+            break;
+        }
+
+        case PyNewTuple: {
+            setPrediction(SpecObjectOther);
+            break;
+        }
+
+        case PyFloorDiv:
+        case PyMod: {
+            setPrediction(SpecInt32Only);
+            break;
+        }
+
+        case PyGetTupleItem: {
+            // Nothing has been keeping count of what is taken out of them. So nothing is said, rather than that it could be anything: a variable that is given this is then expected to have what else it is given.
+            break;
+        }
+
         case StringIteratorNext: {
             setTuplePredictions(SpecString, SpecInt32Only);
             break;
@@ -1888,6 +1928,15 @@ private:
         // These get ignored because they don't return anything.
         case PutByValDirect:
         case PutByValWithThis:
+        case PySetAttr:
+        case PyDelAttr:
+        case PySetItem:
+        case PyDelItem:
+        case PyEnter:
+        case PyLeave:
+        case PyCheckNoFrameObject:
+        case PyCheckPendingWork:
+        case PyCheckDivisor:
         case PutByIdWithThis:
         case PutByVal:
         case MultiPutByVal:

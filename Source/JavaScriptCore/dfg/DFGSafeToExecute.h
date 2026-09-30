@@ -246,6 +246,10 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case CheckTaggedFloat:
     case BoxTaggedFloat:
     case IsTaggedInt:
+    case PyGetTupleItem:
+    case PyFloorDiv:
+    case PyMod:
+    case PyCheckDivisor:
     case TaggedAdd:
     case TaggedSub:
     case TaggedMul:
@@ -629,6 +633,26 @@ bool safeToExecute(AbstractStateType& state, Graph& graph, Node* node, bool igno
     case GetByIdWithThis:
     case GetByIdWithThisMegamorphic:
     case GetByValWithThis:
+    case PyBinaryOp:
+    case PyUnaryOp:
+    case PyCompareOp:
+    case PyGetAttr:
+    case PyGetItem:
+    case PyIterNext:
+    case PyLoadGlobal:
+    case PyToBool:
+    case PyLoadMethod:
+    case PyGetIter:
+    case PyUnpackSequence:
+    case PyNewTuple:
+    case PySetAttr:
+    case PyDelAttr:
+    case PySetItem:
+    case PyDelItem:
+    case PyEnter:
+    case PyLeave:
+    case PyCheckNoFrameObject:
+    case PyCheckPendingWork:
     case GetByValWithThisMegamorphic:
     case GetByIdFlush:
     case GetByIdDirect:

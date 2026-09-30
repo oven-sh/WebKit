@@ -246,6 +246,8 @@ public:
     ~DesiredWatchpoints();
     
     void addLazily(WatchpointSet&);
+    // One that belongs to nothing that the plan keeps. Whoever had it may have another in its place before the plan is done, and this is asked whether it still holds all the same.
+    void addLazily(Ref<WatchpointSet>&&);
     void addLazily(InlineWatchpointSet&);
     void addLazily(Graph&, SymbolTable*);
     void addLazily(Graph&, FunctionExecutable*);
@@ -305,6 +307,7 @@ public:
     
 private:
     GenericDesiredWatchpoints<WatchpointSet*> m_sets;
+    Vector<Ref<WatchpointSet>> m_setsToKeep;
     GenericDesiredWatchpoints<InlineWatchpointSet*> m_inlineSets;
     GenericDesiredWatchpoints<SymbolTable*, SymbolTableAdaptor> m_symbolTables;
     GenericDesiredWatchpoints<FunctionExecutable*, FunctionExecutableAdaptor> m_functionExecutables;

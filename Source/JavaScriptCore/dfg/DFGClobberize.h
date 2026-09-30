@@ -169,6 +169,8 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case PutByValMegamorphic:
         case GetByVal:
         case GetByValMegamorphic:
+        case PyGetItem:
+        case PySetItem:
         case MultiGetByVal:
         case MultiPutByVal:
         case StringAt:
@@ -642,6 +644,33 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         write(InternalState);
         return;
 
+    case PyLeave:
+        read(InternalState);
+        write(InternalState);
+        return;
+
+    case PyCheckNoFrameObject:
+        // Whatever was called may have put one there.
+        read(AbstractHeap(Stack, node->stackAccessData()->operand));
+        write(SideState);
+        return;
+
+    case PyNewTuple:
+        read(HeapObjectCount);
+        write(HeapObjectCount);
+        return;
+
+    case PyGetTupleItem:
+        // Nothing changes what is in a tuple.
+        def(PureValue(node, node->tupleItemIndex()));
+        return;
+
+    case PyFloorDiv:
+    case PyMod:
+    case PyCheckDivisor:
+        def(PureValue(node));
+        return;
+
     case InvalidationPoint:
         write(SideState);
         // A trap-check InvalidationPoint must stay where it is (see Node::isVMTrapsBreakpointSite()); every other
@@ -813,6 +842,23 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
     case GetByIdDirect:
     case GetByIdDirectFlush:
     case GetByValWithThis:
+    case PyBinaryOp:
+    case PyUnaryOp:
+    case PyCompareOp:
+    case PyGetAttr:
+    case PyGetItem:
+    case PyIterNext:
+    case PyLoadGlobal:
+    case PyToBool:
+    case PyLoadMethod:
+    case PyGetIter:
+    case PyUnpackSequence:
+    case PySetAttr:
+    case PyDelAttr:
+    case PySetItem:
+    case PyDelItem:
+    case PyEnter:
+    case PyCheckPendingWork:
     case GetByValWithThisMegamorphic:
     case PutById:
     case PutByIdMegamorphic:

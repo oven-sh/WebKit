@@ -101,6 +101,26 @@ void ensureCodeDetails(VM& vm, FunctionExecutable* executable)
     RELEASE_ASSERT(infoOf(executable).details);
 }
 
+FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable* executable, unsigned& fromOffset)
+{
+    const CodeDetails* details = infoOf(executable).details.get();
+    RELEASE_ASSERT(details);
+    fromOffset = details->enterOffset;
+    Vector<VirtualRegister, 16> registers;
+    auto add = [&] (VirtualRegister virtualRegister) {
+        if (virtualRegister.isValid() && !registers.contains(virtualRegister))
+            registers.append(virtualRegister);
+    };
+    for (auto& variable : details->frameVariables)
+        add(variable.location);
+    add(details->frameObjectRegister);
+    add(details->scopeRegister);
+    add(details->globalsRegister);
+    add(details->builtinsRegister);
+    add(details->namespaceRegister);
+    return FixedVector<VirtualRegister>(WTF::move(registers));
+}
+
 // What is known once it has been compiled, which it is now if it had not been.
 static const CodeDetails& detailsOf(VM& vm, FunctionExecutable* executable)
 {

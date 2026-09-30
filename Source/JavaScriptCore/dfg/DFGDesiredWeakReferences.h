@@ -57,6 +57,7 @@ public:
     void finalize();
 
     template<typename Visitor> void visitChildren(Visitor&);
+    bool areAllMarked(VM&) const;
 
 private:
     UncheckedKeyHashSet<JSCell*> m_cells;

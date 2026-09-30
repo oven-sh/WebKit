@@ -3167,6 +3167,13 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
         OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
     }
 
+    // What would be compiled has nothing where something might be told of.
+    if (codeBlock->ownerExecutable()->isPython() && vm.isPythonWatched()) [[unlikely]] {
+        CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("something is being told of what code in Python does"));
+        updateAllPredictionsAndOptimizeAfterWarmUp(codeBlock);
+        OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
+    }
+
     Debugger* debugger = codeBlock->globalObject()->debugger();
     if (debugger && (debugger->isStepping() || codeBlock->baselineAlternative()->hasDebuggerRequests())) [[unlikely]] {
         CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("debugger is stepping or has requests"));

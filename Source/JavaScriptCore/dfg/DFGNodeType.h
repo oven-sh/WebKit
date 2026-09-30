@@ -177,6 +177,41 @@ namespace JSC { namespace DFG {
     macro(CheckTaggedFloat, NodeMustGenerate) \
     /* Before a number is unboxed only to be put somewhere, from where it will be boxed again as a plain one. */\
     macro(CheckNotWholeFloat, NodeMustGenerate) \
+    /* Python's opcodes, as they are. See "The DFG" in python/README.md. Whatever is not said to be otherwise can run anything. */\
+    macro(PyBinaryOp, NodeResultJS | NodeMustGenerate) \
+    macro(PyUnaryOp, NodeResultJS | NodeMustGenerate) \
+    macro(PyCompareOp, NodeResultJS | NodeMustGenerate) \
+    macro(PyToBool, NodeResultBoolean | NodeMustGenerate) \
+    macro(PyGetAttr, NodeResultJS | NodeMustGenerate) \
+    macro(PySetAttr, NodeMustGenerate) \
+    macro(PyDelAttr, NodeMustGenerate) \
+    /* What is to be called, and what it is to be given first. */\
+    macro(PyLoadMethod, NodeMustGenerate) \
+    /* They have what GetByVal and PutByVal have, in the same places, and that is what fixup makes them if it is a list and a place in it. */\
+    macro(PyGetItem, NodeResultJS | NodeMustGenerate | NodeHasVarArgs) \
+    macro(PySetItem, NodeMustGenerate | NodeHasVarArgs) \
+    macro(PyDelItem, NodeMustGenerate) \
+    macro(PyGetIter, NodeResultJS | NodeMustGenerate) \
+    macro(PyIterNext, NodeResultJS | NodeMustGenerate) \
+    /* A tuple, and not of a class derived from tuple, of as many as there are targets. */\
+    macro(PyUnpackSequence, NodeResultJS | NodeMustGenerate) \
+    /* What is in such a tuple, at a place that it is known to have. It runs nothing. */\
+    macro(PyGetTupleItem, NodeResultJS) \
+    macro(PyNewTuple, NodeResultJS | NodeHasVarArgs) \
+    macro(PyLoadGlobal, NodeResultJS | NodeMustGenerate) \
+    /* One frame deeper, and what has been put off until now. */\
+    macro(PyEnter, NodeMustGenerate) \
+    /* One frame less deep. It runs nothing. */\
+    macro(PyLeave, NodeMustGenerate) \
+    /* Before returning: if there is a frame object, it is for the baseline JIT to tell it. */\
+    macro(PyCheckNoFrameObject, NodeMustGenerate) \
+    /* Going round a loop again: what has been put off until now. */\
+    macro(PyCheckPendingWork, NodeMustGenerate) \
+    /* What fixup makes of PyBinaryOp on Int32s. They round down, so that the remainder has the sign of what it is divided by. Dividing by 0, and what does not fit, are for the baseline JIT. */\
+    macro(PyFloorDiv, NodeResultInt32) \
+    macro(PyMod, NodeResultInt32) \
+    /* Dividing by 0 is an error, which is for the baseline JIT to raise. */\
+    macro(PyCheckDivisor, NodeMustGenerate) \
     macro(ArithDiv, NodeResultNumber | NodeMustGenerate) \
     macro(ArithMod, NodeResultNumber | NodeMustGenerate) \
     macro(ArithAbs, NodeResultNumber | NodeMustGenerate) \

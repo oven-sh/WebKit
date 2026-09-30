@@ -375,6 +375,7 @@ private:
     template<Requester> ArrayBuffer* possiblySharedBufferImpl();
 
     JS_EXPORT_PRIVATE ArrayBuffer* slowDownAndWasteMemory();
+    void didChangeOwnedStorage(VM&);
     static void finalize(JSCell*);
     void detachFromArrayBuffer();
     void refreshVector(void* newData);

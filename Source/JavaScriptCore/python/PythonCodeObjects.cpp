@@ -257,10 +257,11 @@ PYTHON_NATIVE(functionNew)
     if (!audit(globalObject, "function.__new__"_s, code))
         return { };
 
-    JSScope* environment = environmentForGlobals(globalObject, namespaceOf(globalObject, asDict(globals)));
+    FunctionExecutable* executable = executableTakingCells(globalObject, code);
+    JSScope* environment = environmentForGlobals(globalObject, executable, namespaceOf(globalObject, asDict(globals)));
     if (given)
         environment = environmentForCells(globalObject, environment, freeVariables, asTuple(closure));
-    JSFunction* function = JSFunction::create(vm, globalObject, executableTakingCells(globalObject, code), environment);
+    JSFunction* function = JSFunction::create(vm, globalObject, executable, environment);
     if (!isNone(name)) {
         setAttribute(globalObject, function, vm.pythonNames().dunder_name, name);
         RETURN_IF_EXCEPTION(scope, { });
@@ -677,10 +678,11 @@ PYTHON_NATIVE(builtinExecOrEval)
     FunctionExecutable* executable = executableOfCode(code);
     const FunctionInfo& info = infoOfExecutable(executable);
     bool isWhatCompileMakes = info.kind == CodeKind::Module || info.kind == CodeKind::Expression || info.kind == CodeKind::Interactive;
-    JSScope* environment = environmentForGlobals(globalObject, globals);
+    FunctionExecutable* executableToRun = isWhatCompileMakes ? executable : executableTakingCells(globalObject, code);
+    JSScope* environment = environmentForGlobals(globalObject, executableToRun, globals);
     if (hasClosure)
         environment = environmentForCells(globalObject, environment, sortedFreeVariables(info), asTuple(closure));
-    JSFunction* toRun = JSFunction::create(vm, globalObject, isWhatCompileMakes ? executable : executableTakingCells(globalObject, code), environment);
+    JSFunction* toRun = JSFunction::create(vm, globalObject, executableToRun, environment);
     JSValue result = info.usesNamespace ? call(globalObject, toRun, localsValue) : call(globalObject, toRun);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(isEval ? result : jsUndefined());

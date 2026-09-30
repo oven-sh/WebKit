@@ -51,6 +51,7 @@ PutByVariant& PutByVariant::operator=(const PutByVariant& other)
     else
         m_callLinkStatus = nullptr;
     m_customAccessorSetter = other.m_customAccessorSetter;
+    m_additionalSet = other.m_additionalSet;
     if (other.m_domAttribute)
         m_domAttribute = WTF::makeUnique<DOMAttributeAnnotation>(*other.m_domAttribute);
     else
@@ -190,6 +191,9 @@ bool PutByVariant::attemptToMerge(const PutByVariant& other)
         return false;
 
     if (m_viaGlobalProxy != other.m_viaGlobalProxy)
+        return false;
+
+    if (m_additionalSet != other.m_additionalSet)
         return false;
 
     switch (m_kind) {

@@ -33,6 +33,7 @@
 #include "CacheableIdentifierInlines.h"
 #include "CommonSlowPaths.h"
 #include "JITInlines.h"
+#include "JITThunks.h"
 #include "PyObjects.h"
 #include "PyTuple.h"
 #include "PythonOperators.h"
@@ -508,6 +509,7 @@ void JIT::emit_op_py_get_item(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(bytecode.m_base, baseGPR);
     emitGetVirtualRegister(bytecode.m_property, keyGPR);
     addSlowCase(branchIfNotCell(baseGPR));
+    emitArrayProfilingSiteWithCell(bytecode, baseGPR, scratchGPR);
     addSlowCase(branchIfNotPythonSmallInt(bytecode.m_property, keyGPR));
 
     JumpList slow;
@@ -553,6 +555,7 @@ void JIT::emit_op_py_set_item(const JSInstruction* currentInstruction)
     emitGetVirtualRegister(bytecode.m_base, baseGPR);
     emitGetVirtualRegister(bytecode.m_property, keyGPR);
     addSlowCase(branchIfNotCell(baseGPR));
+    emitArrayProfilingSiteWithCell(bytecode, baseGPR, scratchGPR);
     addSlowCase(branchIfNotPythonSmallInt(bytecode.m_property, keyGPR));
     addSlowCase(branchIfNotType(baseGPR, ArrayType));
     emitGetVirtualRegister(bytecode.m_value, valueGPR);
