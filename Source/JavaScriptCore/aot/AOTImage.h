@@ -45,6 +45,7 @@ struct ImageHeader {
     uint64_t size; // Of everything.
     uint64_t codeOffset;
     uint64_t codeSize;
+    uint64_t linkTimeConstantsUsed[4]; // A bit for each LinkTimeConstant that the code loads. It takes them to be there: Instance::linkTimeConstants.
     uint32_t tableOffset;
     uint32_t tableCapacity; // A power of two. Or nothing: see StaticHeap::keysOfImage().
     uint32_t recordsOffset;
@@ -149,6 +150,7 @@ struct CompiledCode {
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();
+void noteThatLinkTimeConstantIsUsed(unsigned); // By code that is being compiled for an image. Any thread.
 
 class ImageBuilder {
     WTF_MAKE_TZONE_ALLOCATED(ImageBuilder);
@@ -184,6 +186,7 @@ private:
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
     Vector<ReportableSitesOfFunction> reportableSites();
+    void shareWhatIsDoneTheSameWay(StubBlob&, Vector<uint32_t>& whereShared);
     Vector<ReportableSitesOfFunction> m_reportableSites;
     struct RegExpCode {
         String pattern;

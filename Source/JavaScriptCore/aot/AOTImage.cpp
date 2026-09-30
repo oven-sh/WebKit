@@ -282,6 +282,14 @@ bool Image::constructsAt(const ImageFunction& function, unsigned bytecodeOffset)
     return false;
 }
 
+static std::atomic<uint64_t> s_linkTimeConstantsUsed[4];
+static_assert(numberOfLinkTimeConstants <= 256);
+
+void noteThatLinkTimeConstantIsUsed(unsigned which)
+{
+    s_linkTimeConstantsUsed[which / 64].fetch_or(1ull << which % 64, std::memory_order_relaxed);
+}
+
 void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
 {
     // Where they pointed depends on where the code was when it was compiled, which is nothing to do with the code.
@@ -317,6 +325,372 @@ bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flag
     m_regExpsAsked.set(makeString(flags.toRaw(), '/', pattern), true);
     return true;
 }
+
+// ---- What many functions do the same way is done in one place
+//
+// Most of what a function is made of is getting ready to call a stub, and there are not many ways of doing that:
+//     mov x0, x19; add x1, x22, #0x80; bl GetById
+// is in the program thousands of times over. It becomes `bl there`, where there is
+//     mov x0, x19; add x1, x22, #0x80; b GetById
+// once, next to the stubs. What the stub returns to is what it would have returned to, so whatever goes by that (which function, where in its bytecode) is none the wiser. It costs
+// a jump that is always taken. Likewise for what a function does last: `ldp ...; mov sp, x29; ldp x29, x30, [sp], #16; ret` becomes `b there`.
+//
+// What comes before the call is done after the `bl` instead of before it. So it may not have anything to do with the link register, or with where it is.
+
+#if CPU(ARM64)
+
+namespace {
+
+struct RelativeToPC {
+    enum Kind : uint8_t { No, Imm26, Imm19, Imm14, Adr };
+    Kind kind { No };
+    int64_t delta { 0 }; // In bytes.
+};
+
+static int64_t signExtended(uint32_t bits, unsigned width)
+{
+    return static_cast<int64_t>(static_cast<uint64_t>(bits) << (64 - width)) >> (64 - width);
+}
+
+static RelativeToPC decodeRelativeToPC(uint32_t word)
+{
+    if ((word & 0x7c000000) == 0x14000000) // b, bl
+        return { RelativeToPC::Imm26, signExtended(word & 0x03ffffff, 26) * 4 };
+    if ((word & 0xff000000) == 0x54000000) // b.cond
+        return { RelativeToPC::Imm19, signExtended(word >> 5 & 0x7ffff, 19) * 4 };
+    if ((word & 0x7e000000) == 0x34000000) // cbz, cbnz
+        return { RelativeToPC::Imm19, signExtended(word >> 5 & 0x7ffff, 19) * 4 };
+    if ((word & 0x7e000000) == 0x36000000) // tbz, tbnz
+        return { RelativeToPC::Imm14, signExtended(word >> 5 & 0x3fff, 14) * 4 };
+    if ((word & 0x9f000000) == 0x10000000) // adr
+        return { RelativeToPC::Adr, signExtended((word >> 5 & 0x7ffff) << 2 | (word >> 29 & 3), 21) };
+    return { };
+}
+
+static uint32_t withDelta(uint32_t word, RelativeToPC::Kind kind, int64_t delta)
+{
+    auto fits = [&](unsigned width, int64_t value) { return value >= -(1ll << (width - 1)) && value < (1ll << (width - 1)); };
+    switch (kind) {
+    case RelativeToPC::Imm26:
+        RELEASE_ASSERT(fits(26, delta / 4));
+        return (word & ~0x03ffffffu) | (static_cast<uint32_t>(delta / 4) & 0x03ffffff);
+    case RelativeToPC::Imm19:
+        RELEASE_ASSERT(fits(19, delta / 4));
+        return (word & ~(0x7ffffu << 5)) | (static_cast<uint32_t>(delta / 4) & 0x7ffff) << 5;
+    case RelativeToPC::Imm14:
+        RELEASE_ASSERT(fits(14, delta / 4));
+        return (word & ~(0x3fffu << 5)) | (static_cast<uint32_t>(delta / 4) & 0x3fff) << 5;
+    case RelativeToPC::Adr:
+        RELEASE_ASSERT(fits(21, delta));
+        return (word & ~(0x7ffffu << 5 | 3u << 29)) | (static_cast<uint32_t>(delta >> 2) & 0x7ffff) << 5 | (static_cast<uint32_t>(delta) & 3) << 29;
+    case RelativeToPC::No:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return 0;
+}
+
+static constexpr uint32_t returnInstruction = 0xd65f03c0;
+
+// adrp, or a load of what is so far from here.
+static bool goesByWhereItIsSomeOtherWay(uint32_t word)
+{
+    return (word & 0x9f000000) == 0x90000000 || (word & 0x3b000000) == 0x18000000;
+}
+
+// It goes somewhere by a register (br, blr, ret and their like), or it is a trap.
+static bool leavesOrTraps(uint32_t word)
+{
+    return (word & 0xfe000000) == 0xd6000000 || (word & 0xff000000) == 0xd4000000;
+}
+
+// Any of the places where an instruction names a register says x30. (It may be no register that is named there. Then something is left where it was that need not have been.)
+static bool mayMentionLinkRegister(uint32_t word)
+{
+    return (word & 31) == 30 || (word >> 5 & 31) == 30 || (word >> 10 & 31) == 30 || (word >> 16 & 31) == 30;
+}
+
+static uint64_t mixed(uint64_t hash, uint64_t more)
+{
+    hash ^= more + 0x9e3779b97f4a7c15ull + (hash << 6) + (hash >> 2);
+    hash *= 0xff51afd7ed558ccdull;
+    return hash ^ hash >> 32;
+}
+
+} // anonymous namespace
+
+// What it appends to the stubs is as much part of them as the rest, for whoever asks what is at an address.
+void ImageBuilder::shareWhatIsDoneTheSameWay(StubBlob& stubs, Vector<uint32_t>& whereShared)
+{
+    // TEMPORARY: BUN_AOT_SHARES=0, for telling whether something is this one's doing.
+    if (const char* text = getenv("BUN_AOT_SHARES"); text && !strcmp(text, "0"))
+        return;
+    constexpr unsigned longest = 8;
+    constexpr unsigned copiesReckonedWith = 2;
+    // How many places have to want a sequence of so many instructions for it to be worth having: each is that many instructions the shorter, and the sequence takes one more than that, in
+    // every copy of the stubs.
+    auto fewestUsers = [](unsigned length) { return ((length + 1) * copiesReckonedWith + length - 1) / length + 2; };
+
+    struct Place {
+        uint32_t function;
+        uint32_t word; // The call, or the return.
+        uint32_t call; // Which of the function's stubCalls. None: it is a return.
+        uint8_t most; // As many instructions before it as could go along.
+        uint8_t taken { 0 };
+    };
+    constexpr uint32_t noCall = std::numeric_limits<uint32_t>::max();
+    Vector<Place> places;
+    Vector<BitVector> targetsOfFunction(m_functions.size());
+    BitVector isLeftAlone(m_functions.size());
+
+    auto wordsOf = [&](size_t function) { return std::span { reinterpret_cast<const uint32_t*>(m_functions[function].code.bytes.span().data()), m_functions[function].code.bytes.size() / sizeof(uint32_t) }; };
+    auto whatIsCalled = [&](const Place& place) -> uint64_t {
+        if (place.call == noCall)
+            return 1;
+        auto& call = m_functions[place.function].code.info.stubCalls[place.call];
+        return static_cast<uint64_t>(call.stub) << 24 | static_cast<uint64_t>(call.thunk) << 4 | (call.isTailCall ? 4 : 0) | 2;
+    };
+    auto hashOf = [&](const Place& place, unsigned length) {
+        auto words = wordsOf(place.function);
+        uint64_t hash = mixed(0x243f6a8885a308d3ull, whatIsCalled(place));
+        for (unsigned i = 1; i <= length; ++i)
+            hash = mixed(hash, words[place.word - i]);
+        hash |= 1; // (Zero is no key, and neither is what has every bit set.)
+        return hash == std::numeric_limits<uint64_t>::max() ? 3 : hash;
+    };
+
+    for (size_t index = 0; index < m_functions.size(); ++index) {
+        auto& code = m_functions[index].code;
+        auto& info = code.info;
+        if (code.bytes.size() % sizeof(uint32_t)) {
+            isLeftAlone.set(index);
+            continue;
+        }
+        auto words = wordsOf(index);
+        BitVector& isTarget = targetsOfFunction[index];
+        isTarget.ensureSize(words.size() + 1);
+        BitVector staysWhereItIs(words.size());
+        UncheckedKeyHashMap<uint32_t, uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> callAt;
+        for (unsigned i = 0; i < info.stubCalls.size(); ++i) {
+            staysWhereItIs.set(info.stubCalls[i].offset / sizeof(uint32_t));
+            callAt.add(info.stubCalls[i].offset / sizeof(uint32_t), i);
+        }
+        for (auto& reference : info.indexReferences) {
+            staysWhereItIs.set(reference.offset / sizeof(uint32_t));
+            staysWhereItIs.set(reference.offset / sizeof(uint32_t) + 1);
+        }
+        for (auto& [bytecodeOffset, codeOffset] : info.catchEntrypoints)
+            isTarget.set(codeOffset / sizeof(uint32_t));
+        bool canBeMadeSenseOf = true;
+        for (unsigned i = 0; i < words.size() && canBeMadeSenseOf; ++i) {
+            if (callAt.contains(i))
+                continue;
+            uint32_t word = words[i];
+            if (goesByWhereItIsSomeOtherWay(word)) {
+                canBeMadeSenseOf = false;
+                break;
+            }
+            auto relative = decodeRelativeToPC(word);
+            if (relative.kind == RelativeToPC::No) {
+                if (leavesOrTraps(word))
+                    staysWhereItIs.set(i);
+                continue;
+            }
+            staysWhereItIs.set(i);
+            int64_t target = static_cast<int64_t>(i) * 4 + relative.delta;
+            // (What is done with an address that is worked out from here is anybody's guess.)
+            if (relative.kind == RelativeToPC::Adr || target < 0 || target > static_cast<int64_t>(words.size() * 4) || target % 4)
+                canBeMadeSenseOf = false;
+            else
+                isTarget.set(target / 4);
+        }
+        if (!canBeMadeSenseOf) {
+            isLeftAlone.set(index);
+            continue;
+        }
+        auto howManyBefore = [&](unsigned at, bool linkRegisterIsChangedFirst) {
+            unsigned count = 0;
+            // (Nothing may jump to the call itself either: it would find what comes before it done again.)
+            while (count < longest && count < at && !isTarget.get(at - count)) {
+                unsigned candidate = at - count - 1;
+                if (staysWhereItIs.get(candidate) || (linkRegisterIsChangedFirst && mayMentionLinkRegister(words[candidate])))
+                    break;
+                ++count;
+            }
+            return count;
+        };
+        for (unsigned i = 0; i < words.size(); ++i) {
+            if (auto call = callAt.find(i); call != callAt.end()) {
+                // (What is called by way of its own address is not called from many places in the same way.)
+                if (info.stubCalls[call->value].function != StubCall::noFunction)
+                    continue;
+                if (unsigned most = howManyBefore(i, !info.stubCalls[call->value].isTailCall))
+                    places.append({ static_cast<uint32_t>(index), i, call->value, static_cast<uint8_t>(most) });
+            } else if (words[i] == returnInstruction) {
+                if (unsigned most = howManyBefore(i, false))
+                    places.append({ static_cast<uint32_t>(index), i, noCall, static_cast<uint8_t>(most) });
+            }
+        }
+    }
+
+    // Which are wanted often enough. Each place takes the longest that is; then those that too few took after all are given up, and whoever took one tries for less.
+    UncheckedKeyHashMap<uint64_t, uint32_t> wanted;
+    for (auto& place : places) {
+        for (unsigned length = 1; length <= place.most; ++length)
+            wanted.add(hashOf(place, length), 0).iterator->value++;
+    }
+    UncheckedKeyHashSet<uint64_t> givenUp;
+    UncheckedKeyHashMap<uint64_t, uint32_t> users;
+    for (unsigned round = 0; round < 4; ++round) {
+        users.clear();
+        for (auto& place : places) {
+            place.taken = 0;
+            for (unsigned length = place.most; length; --length) {
+                uint64_t hash = hashOf(place, length);
+                if (wanted.get(hash) < fewestUsers(length) || givenUp.contains(hash))
+                    continue;
+                place.taken = length;
+                users.add(hash, 0).iterator->value++;
+                break;
+            }
+        }
+        bool changed = false;
+        for (auto& place : places) {
+            if (!place.taken)
+                continue;
+            uint64_t hash = hashOf(place, place.taken);
+            if (users.get(hash) < fewestUsers(place.taken))
+                changed |= givenUp.add(hash).isNewEntry;
+        }
+        if (!changed)
+            break;
+    }
+
+    // There they go.
+    struct Shared {
+        uint32_t number;
+        uint32_t place; // The first that wanted it: what the rest are held against.
+    };
+    UncheckedKeyHashMap<uint64_t, Shared> shared;
+    while (stubs.bytes.size() % sizeof(uint32_t))
+        stubs.bytes.append(0);
+    size_t sizeBefore = stubs.bytes.size();
+    auto append = [&](uint32_t word) { stubs.bytes.append(std::span { reinterpret_cast<const uint8_t*>(&word), sizeof(word) }); };
+    uint64_t instructionsSaved = 0;
+    Vector<Vector<uint32_t, 0>> placesOfFunction(m_functions.size());
+    for (uint32_t which = 0; which < places.size(); ++which) {
+        auto& place = places[which];
+        if (!place.taken)
+            continue;
+        uint64_t hash = hashOf(place, place.taken);
+        if (givenUp.contains(hash) || users.get(hash) < fewestUsers(place.taken)) {
+            place.taken = 0;
+            continue;
+        }
+        auto words = wordsOf(place.function);
+        auto result = shared.add(hash, Shared { static_cast<uint32_t>(whereShared.size()), which });
+        if (result.isNewEntry) {
+            whereShared.append(safeCast<uint32_t>(stubs.bytes.size()));
+            for (unsigned i = place.taken; i; --i)
+                append(words[place.word - i]);
+            if (place.call == noCall)
+                append(returnInstruction);
+            else {
+                auto& call = m_functions[place.function].code.info.stubCalls[place.call];
+                size_t target = call.thunk ? stubs.thunkOffsets[call.thunk - 1] : stubs.offsets[static_cast<unsigned>(call.stub)];
+                append(0);
+                retargetStubCall(stubs.bytes.mutableSpan().data(), stubs.bytes.size() - sizeof(uint32_t), target, true);
+            }
+        } else {
+            // (Two that hash alike are as a rule alike.)
+            auto& first = places[result.iterator->value.place];
+            auto wordsOfFirst = wordsOf(first.function);
+            bool isTheSame = first.taken == place.taken && whatIsCalled(first) == whatIsCalled(place);
+            for (unsigned i = 1; i <= place.taken && isTheSame; ++i)
+                isTheSame = words[place.word - i] == wordsOfFirst[first.word - i];
+            if (!isTheSame) {
+                place.taken = 0;
+                continue;
+            }
+        }
+        instructionsSaved += place.taken;
+        placesOfFunction[place.function].append(which);
+    }
+
+    // And what is left of each function closes up.
+    for (size_t index = 0; index < m_functions.size(); ++index) {
+        if (placesOfFunction[index].isEmpty())
+            continue;
+        auto& code = m_functions[index].code;
+        auto& info = code.info;
+        Vector<uint32_t> words { wordsOf(index) };
+        BitVector isGone(words.size());
+        for (uint32_t which : placesOfFunction[index]) {
+            auto& place = places[which];
+            uint32_t number = shared.get(hashOf(place, place.taken)).number + 1;
+            if (place.call != noCall) {
+                for (unsigned i = 1; i <= place.taken; ++i)
+                    isGone.set(place.word - i);
+                info.stubCalls[place.call].shared = number;
+                continue;
+            }
+            // The first of them makes way for the jump.
+            for (unsigned i = 0; i < place.taken; ++i)
+                isGone.set(place.word - i);
+            words[place.word - place.taken] = 0;
+            StubCall jump { };
+            jump.offset = (place.word - place.taken) * sizeof(uint32_t);
+            jump.stub = static_cast<Stub>(0);
+            jump.isTailCall = true;
+            jump.shared = number;
+            info.stubCalls.append(jump);
+        }
+        // Where each ends up. What is gone: where what comes after it does.
+        Vector<uint32_t> whereNow(words.size() + 1);
+        uint32_t count = 0;
+        for (unsigned i = 0; i < words.size(); ++i) {
+            whereNow[i] = count;
+            count += !isGone.get(i);
+        }
+        whereNow[words.size()] = count;
+        UncheckedKeyHashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> isCall;
+        for (auto& call : info.stubCalls)
+            isCall.add(call.offset / sizeof(uint32_t));
+        Vector<uint8_t> bytes;
+        bytes.reserveInitialCapacity(count * sizeof(uint32_t));
+        for (unsigned i = 0; i < words.size(); ++i) {
+            if (isGone.get(i))
+                continue;
+            uint32_t word = words[i];
+            if (!isCall.contains(i)) {
+                if (auto relative = decodeRelativeToPC(word); relative.kind != RelativeToPC::No) {
+                    unsigned target = i + relative.delta / 4;
+                    word = withDelta(word, relative.kind, (static_cast<int64_t>(whereNow[target]) - static_cast<int64_t>(whereNow[i])) * 4);
+                }
+            }
+            bytes.append(std::span { reinterpret_cast<const uint8_t*>(&word), sizeof(word) });
+        }
+        auto moved = [&](uint32_t offset) { return whereNow[offset / sizeof(uint32_t)] * static_cast<uint32_t>(sizeof(uint32_t)); };
+        for (auto& call : info.stubCalls)
+            call.offset = moved(call.offset);
+        for (auto& reference : info.indexReferences)
+            reference.offset = moved(reference.offset);
+        for (auto& entrypoint : info.catchEntrypoints)
+            entrypoint.second = moved(entrypoint.second);
+        info.codeSize = bytes.size();
+        code.bytes = WTF::move(bytes);
+    }
+    if (Options::aotReportStats() || Options::aotVerbose())
+        dataLogLn("AOT: ", whereShared.size(), " sequences are shared, ", stubs.bytes.size() - sizeBefore, " bytes with every copy of the stubs; ", instructionsSaved * sizeof(uint32_t), " bytes less in the functions (", places.size(), " places looked at, ", isLeftAlone.bitCount(), " functions left alone)");
+}
+
+#else
+
+void ImageBuilder::shareWhatIsDoneTheSameWay(StubBlob&, Vector<uint32_t>&)
+{
+}
+
+#endif
 
 Vector<uint8_t> ImageBuilder::finish()
 {
@@ -677,7 +1051,10 @@ Vector<uint8_t> ImageBuilder::finish()
     }
 
     // Where everything goes. The stubs come first, and again whenever the last copy is about to be out of reach.
-    const StubBlob& stubs = stubBlob();
+    StubBlob stubs = stubBlob();
+    Vector<uint32_t> whereShared;
+    if (usesStubs)
+        shareWhatIsDoneTheSameWay(stubs, whereShared);
     Vector<size_t> stubsAt;
     Vector<std::pair<size_t, size_t>> placement; // Of each function: where it is, and where the stubs it calls are.
     // After each function's code, a veneer for each function that it calls directly and that is out of reach. Which those are
@@ -1023,6 +1400,8 @@ Vector<uint8_t> ImageBuilder::finish()
     header.callSitesOffset = place(callSites.size());
     header.endOfFunctions = safeCast<uint32_t>(endOfFunctions);
     header.sizeOfStubs = safeCast<uint32_t>(stubs.bytes.size());
+    for (unsigned i = 0; i < 4; ++i)
+        header.linkTimeConstantsUsed[i] = s_linkTimeConstantsUsed[i].load();
     header.numberOfCopiesOfStubs = stubsAt.size();
     for (unsigned i = 0; i < stubsAt.size(); ++i)
         header.copiesOfStubs[i] = safeCast<uint32_t>(stubsAt[i]);
@@ -1217,7 +1596,7 @@ Vector<uint8_t> ImageBuilder::finish()
         for (auto& reference : info.indexReferences)
             IndexReferences::fill(code + codeAt, reference, safeCast<uint32_t>(index));
         for (auto& call : info.stubCalls)
-            retargetStubCall(code, codeAt + call.offset, stubsForThis + (call.thunk ? stubs.thunkOffsets[call.thunk - 1] : stubs.offsets[static_cast<unsigned>(call.stub)]), call.isTailCall);
+            retargetStubCall(code, codeAt + call.offset, stubsForThis + (call.shared ? whereShared[call.shared - 1] : call.thunk ? stubs.thunkOffsets[call.thunk - 1] : stubs.offsets[static_cast<unsigned>(call.stub)]), call.isTailCall);
     }
 
     // With every function in its place: the calls from one to another.
@@ -1598,6 +1977,10 @@ auto Image::codeForRegExp(const String& pattern, OptionSet<Yarr::Flags> flags) -
         }
     }
     s_regExpsNotInImage++;
+    // TEMPORARY: BUN_AOT_LOG_REGEXPS=1 says which. They are left to the interpreter of regular expressions.
+    static const bool logs = !!getenv("BUN_AOT_LOG_REGEXPS");
+    if (logs) [[unlikely]]
+        dataLogLn("AOT: no code in the image for /", pattern, "/ flags ", rawFlags);
     return std::nullopt;
 }
 

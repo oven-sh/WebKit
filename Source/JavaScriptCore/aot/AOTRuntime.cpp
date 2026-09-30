@@ -311,6 +311,19 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         instance->sentinelOfArrayIteration = vm.fastArrayUnboxedSentinel();
         instance->structureIDOfStrings = idOf(vm.stringStructure.get());
     }
+    // What the code has of the realm that only the engine's own functions can name. There are a handful, so they are made now, and the code has nothing to ask.
+    if (Image* image = Image::withCode()) {
+        MonotonicTime before = MonotonicTime::now();
+        unsigned count = 0;
+        for (unsigned which = 0; which < numberOfLinkTimeConstants; ++which) {
+            if (!(image->header().linkTimeConstantsUsed[which / 64] >> which % 64 & 1))
+                continue;
+            instance->linkTimeConstants[which] = JSValue::encode(globalObject->linkTimeConstant(static_cast<LinkTimeConstant>(which)));
+            ++count;
+        }
+        if (Options::aotVerbose() || Options::aotReportStats()) [[unlikely]]
+            dataLogLn("AOT: ", count, " link-time constants made ready in ", (MonotonicTime::now() - before).microseconds(), " us");
+    }
     memcpySpan(std::span { instance->intrinsics }, globalObject->immutableIntrinsics());
     // (putDirect() does as it is told.)
     for (unsigned number = 1; number < globalObject->immutableIntrinsics().size(); ++number) {

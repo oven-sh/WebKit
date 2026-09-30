@@ -404,17 +404,17 @@ void Lowering::guardGetById(Node* guard)
 }
 
 // Goes on if the value is what the slot holds, and to `otherwise` if it is not, or if that is not plain.
-void Lowering::branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds holds, LBasicBlock otherwise)
+bool Lowering::branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds holds, LBasicBlock otherwise)
 {
     if (!holds.saysSomething())
-        return;
+        return false;
     unsigned kinds = holds.kindsButForThoseBorn();
     Type rest = valueNode->type & ~typeProvingMask(kinds);
     if (!rest)
-        return;
+        return false;
     bool restIsBornRight = holds.first && isSubtype(rest, TCell) && valueNode->isBornWithinIfCell(holds.first, holds.last);
     if (restIsBornRight && isSubtype(valueNode->type & TCell, rest))
-        return;
+        return false;
     LBasicBlock held = m_out.newBlock();
     LBasicBlock notSettled = m_out.newBlock();
     if (kinds)
@@ -432,6 +432,7 @@ void Lowering::branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds 
     } else
         m_out.jump(otherwise);
     m_out.appendTo(held);
+    return true;
 }
 
 void Lowering::guardField(Node* guard)

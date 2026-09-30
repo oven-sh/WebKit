@@ -998,8 +998,8 @@ private:
                 return TNone;
             // Everything is left as it is but for a scope, which strict code sees as undefined.
             if (bytecode.m_ecmaMode.isStrict())
-                return operand | (mayBe(operand, TObject) ? TUndefined : TNone);
-            return TAnyObject;
+                return operand | (mayBe(operand, TOtherObject) ? TUndefined : TNone);
+            return isSubtype(operand, TAnyObject & ~TOtherObject) ? operand : TAnyObject;
         }
         case op_iterator_close_check: {
             Type iterator = typeOf(node->as<OpIteratorCloseCheck>().m_iterator);

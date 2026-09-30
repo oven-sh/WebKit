@@ -483,8 +483,8 @@ void Lowering::lowerToThis(Node* node)
     auto bytecode = node->as<OpToThis>();
     Node* valueNode = node->use(bytecode.m_srcDst);
     bool isStrict = bytecode.m_ecmaMode.isStrict();
-    // Only a scope is ever replaced in strict code, and an object that is not a scope never is.
-    if (isStrict ? !mayBe(valueNode->type, TObject) : isSubtype(valueNode->type, TFunction | TArray)) {
+    // Only a scope is ever replaced in strict code, and an object that is not a scope never is. (A scope is none of the kinds of object that have a bit of their own.)
+    if (isStrict ? !mayBe(valueNode->type, TOtherObject) : isSubtype(valueNode->type, TAnyObject & ~TOtherObject)) {
         setResult(node, lowRaw(valueNode), valueNode->rep());
         return;
     }

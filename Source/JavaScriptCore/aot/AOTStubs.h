@@ -353,6 +353,7 @@ struct StubCall {
     // Where in the bytecode the function is while what is called runs (CallSiteIndex::bits()): what is going to be returned to is all that
     // says so. None: nobody is going to ask.
     uint32_t callSite { noCallSite };
+    uint32_t shared { 0 }; // One more than which of what the image has next to its stubs it goes to instead (ImageBuilder::shareWhatIsDoneTheSameWay()). Zero: none.
 };
 
 // A way into a stub that puts a number in T9 first. There are few enough numbers that a stub is given there, and enough places that

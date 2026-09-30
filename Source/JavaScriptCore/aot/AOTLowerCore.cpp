@@ -6,6 +6,7 @@
 #include "config.h"
 #include "AOTLowering.h"
 
+#include "AOTImage.h"
 #include "AOTCompiler.h"
 
 #if ENABLE(FTL_JIT)
@@ -1081,6 +1082,11 @@ void Lowering::lowerBlock(BasicBlock* block)
         m_out.unreachable();
         return;
     }
+    m_fieldsInHand.shrink(0);
+    if (block->predecessors.size() == 1 && !block->isCatchEntrypoint && block != m_graph.root) {
+        if (auto inHand = m_fieldsInHandAtEndOf.find(block->predecessors[0]); inHand != m_fieldsInHandAtEndOf.end())
+            m_fieldsInHand = inHand->value;
+    }
     m_out.setFrequency(block->isGeneric || block->isSeldomReached ? coldFrequency : 1);
     if (block->loweredAhead)
         viewArraysAheadOf(block);
@@ -1119,10 +1125,17 @@ void Lowering::lowerBlock(BasicBlock* block)
         if (node->isElided)
             continue;
         setOrigin(node);
+        m_nodeLeavesFieldsAlone = false;
         lowerNode(node);
         if (m_graph.failed())
             return;
+        if (!m_nodeLeavesFieldsAlone && !m_fieldsInHand.isEmpty() && !leavesFieldsAlone(node))
+            m_fieldsInHand.shrink(0);
     }
+    if (terminal && !leavesFieldsAlone(terminal))
+        m_fieldsInHand.shrink(0);
+    if (!m_fieldsInHand.isEmpty())
+        m_fieldsInHandAtEndOf.set(block, m_fieldsInHand);
     if (terminal && terminal->kind == NodeKind::Guard) {
         setOrigin(terminal);
         lowerGuard(block, terminal);
@@ -1168,17 +1181,11 @@ void Lowering::lowerNode(Node* node)
         RELEASE_ASSERT_NOT_REACHED();
         return;
     case NodeKind::LinkTimeConstant: {
-        // The Instance has what has been asked for before.
-        LBasicBlock isNotThere = newColdBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        LValue had = m_out.load64(m_instance, m_heaps.AOTInstance_linkTimeConstants[node->intrinsic]);
-        ValueFromBlock quick = m_out.anchor(had);
-        m_out.branch(m_out.notZero64(had), usually(continuation), rarely(isNotThere));
-        m_out.appendTo(isNotThere);
-        ValueFromBlock made = m_out.anchor(plainCall(Int64, Entry::operationAOTLinkTimeConstant, m_instance, m_out.constInt32(node->intrinsic)));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        setJSValue(node, m_out.phi(Int64, quick, made));
+        // The Instance has all that the code of the image uses (ImageHeader::linkTimeConstantsUsed).
+        noteThatLinkTimeConstantIsUsed(node->intrinsic);
+        LValue constant = m_out.load64(m_instance, m_heaps.AOTInstance_linkTimeConstants[node->intrinsic]);
+        static_cast<MemoryValue*>(constant)->setReadsMutability(B3::Mutability::Immutable);
+        setJSValue(node, constant);
         return;
     }
     case NodeKind::Guard:

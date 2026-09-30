@@ -117,6 +117,151 @@ LValue Lowering::asHeld(Node* valueNode, LValue value, TypeTable::Holds holds)
     return m_out.select(isInt32(value), boxDouble(m_out.intToDouble(unboxInt32(value))), value);
 }
 
+static Node* whatIsHandedOn(Node* node)
+{
+    while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz) || node->isBytecode(op_type_tag))
+        node = node->uses[0].node;
+    return node;
+}
+
+auto Lowering::fieldInHand(Node* base, const TypeTable::Field& field) const -> const FieldInHand*
+{
+    base = whatIsHandedOn(base);
+    for (auto& inHand : m_fieldsInHand) {
+        if (inHand.base == base && inHand.family == field.first && inHand.slot == field.slot)
+            return &inHand;
+    }
+    return nullptr;
+}
+
+void Lowering::noteFieldInHand(Node* base, const TypeTable::Field& field, LValue value, Rep rep, LValue asJSValue, bool isWritten)
+{
+    // TEMPORARY: for telling whether something is this one's doing.
+    if (isWithout(WithoutFieldsInHand))
+        return;
+    base = whatIsHandedOn(base);
+    // (Two values may be the one object. An object is of one family for life.)
+    m_fieldsInHand.removeAllMatching([&](auto& inHand) {
+        return inHand.family == field.first && inHand.slot == field.slot && (isWritten || inHand.base == base);
+    });
+    m_fieldsInHand.append({ base, field.first, field.slot, rep, value, asJSValue });
+}
+
+// Whatever the lowering makes of it, it neither writes to an object nor runs any of the program's code. This has to say no more than the lowerings deliver.
+bool Lowering::leavesFieldsAlone(Node* node)
+{
+    switch (node->kind) {
+    case NodeKind::Constant:
+    case NodeKind::ConstantCell:
+    case NodeKind::Intrinsic:
+    case NodeKind::LinkTimeConstant:
+    case NodeKind::Argument:
+    case NodeKind::Phi:
+    case NodeKind::Proj:
+    case NodeKind::GetStack:
+    case NodeKind::SetStack:
+    case NodeKind::Narrow:
+        return true;
+    case NodeKind::Guard:
+        return false;
+    case NodeKind::Bytecode:
+        break;
+    }
+    if (node->guard)
+        return false;
+    // (An object is asked what it is worth as a number or as a string, and the answer is the program's to give.)
+    auto nothingIsAnObject = [&] {
+        for (auto& use : node->uses) {
+            if (!use.node->type || mayBe(use.node->type, TAnyObject))
+                return false;
+        }
+        return true;
+    };
+    switch (node->opcode) {
+    case op_type_tag:
+    case op_check_type:
+    case op_check_tdz:
+    case op_to_this:
+    case op_typeof:
+    case op_not:
+    case op_stricteq:
+    case op_nstricteq:
+    case op_jstricteq:
+    case op_jnstricteq:
+    case op_jmp:
+    case op_jtrue:
+    case op_jfalse:
+    case op_jeq_null:
+    case op_jneq_null:
+    case op_jundefined_or_null:
+    case op_jnundefined_or_null:
+    case op_eq_null:
+    case op_neq_null:
+    case op_is_undefined_or_null:
+    case op_is_boolean:
+    case op_is_number:
+    case op_is_object:
+    case op_is_callable:
+    case op_is_cell_with_type:
+    case op_is_empty:
+    case op_loop_hint:
+    case op_get_scope:
+    case op_ret:
+        return true;
+    case op_add:
+    case op_sub:
+    case op_mul:
+    case op_div:
+    case op_mod:
+    case op_pow:
+    case op_negate:
+    case op_inc:
+    case op_dec:
+    case op_bitand:
+    case op_bitor:
+    case op_bitxor:
+    case op_bitnot:
+    case op_lshift:
+    case op_rshift:
+    case op_urshift:
+    case op_to_number:
+    case op_to_numeric:
+    case op_to_string:
+    case op_less:
+    case op_lesseq:
+    case op_greater:
+    case op_greatereq:
+    case op_jless:
+    case op_jlesseq:
+    case op_jgreater:
+    case op_jgreatereq:
+    case op_jnless:
+    case op_jnlesseq:
+    case op_jngreater:
+    case op_jngreatereq:
+    case op_eq:
+    case op_neq:
+    case op_jeq:
+    case op_jneq:
+        return nothingIsAnObject();
+    case op_get_length: {
+        Type base = node->use(node->as<OpGetLength>().m_base)->type;
+        return base && isSubtype(base, TArray | TString);
+    }
+    case op_get_from_scope:
+        switch (node->as<OpGetFromScope>().m_getPutInfo.resolveType()) {
+        case ClosureVar:
+        case ModuleVar:
+        case GlobalLexicalVar:
+            return true;
+        default:
+            return false;
+        }
+    default:
+        return false;
+    }
+}
+
 bool Lowering::isThisOfWhatAnybodyMayCall(Node* node)
 {
     return Graph::isThisOfWhatAnybodyMayCall(node);
@@ -252,6 +397,19 @@ void Lowering::lowerGetById(Node* node)
             // The property is in its slot, or the object has none.
             auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
             countShape(Instance::ReadHas);
+            if (!mayStandForSomethingElse) {
+                m_nodeLeavesFieldsAlone = true;
+                if (const FieldInHand* inHand = fieldInHand(baseNode, *field)) {
+                    if (inHand->asJSValue && node->rep() == Rep::JSValue)
+                        setJSValue(node, inHand->asJSValue);
+                    else {
+                        setResult(node, inHand->value, inHand->rep);
+                        if (inHand->asJSValue && node->rep() != Rep::JSValue)
+                            node->loweredAsJSValue = inHand->asJSValue;
+                    }
+                    return;
+                }
+            }
             LValue whatIsThere = m_out.load64(slotOfStruct(structOfBase, *field));
             bool undefinedWillDo = field->isOptional || !field->holds.saysSomething() || (field->holds.kinds & MaskUndefined);
             if (mayStandForSomethingElse) {
@@ -290,6 +448,7 @@ void Lowering::lowerGetById(Node* node)
                 m_out.appendTo(isThere);
             }
             setJSValue(node, whatIsThere);
+            noteFieldInHand(baseNode, *field, node->lowered, node->rep(), whatIsThere, false);
             return;
         }
         bool resultIsTyped = Options::aotTypesFields() && field->holds.saysSomething();
@@ -451,9 +610,18 @@ void Lowering::lowerPutById(Node* node)
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
             auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
             // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
-            branchUnlessHeld(valueNode, value, field->holds, otherwise);
+            bool mayNotBeHeld = branchUnlessHeld(valueNode, value, field->holds, otherwise);
             TypedPointer slotOfField = slotOfStruct(structOfBase, *field);
             LValue valueAsHeld = asHeld(valueNode, value, field->holds);
+            // (If it may not be what the slot holds, what is here is not on every way to what comes next.)
+            if (!mayStandForSomethingElse && !mayNotBeHeld) {
+                // (Giving an object a field it did not have may take a call. It is of the engine's own code, and it does nothing to any other field.)
+                m_nodeLeavesFieldsAlone = true;
+                if (valueNode->type && isSubtype(valueNode->type, TNumber))
+                    noteFieldInHand(baseNode, *field, lowDouble(valueNode), Rep::Double, valueAsHeld, true);
+                else
+                    noteFieldInHand(baseNode, *field, valueAsHeld, Rep::JSValue, valueAsHeld, true);
+            }
             // (What is no struct is seen as one with nothing in it, and nothing is ever put there.)
             if (field->isOptional || field->mayBeEmpty || mayStandForSomethingElse) {
                 RELEASE_ASSERT(!mayStandForSomethingElse || field->isInObject());

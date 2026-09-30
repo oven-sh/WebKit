@@ -173,7 +173,23 @@ private:
     LValue viewFoundFor(Node* valueNode, uint16_t family); // Null: none has been made of it.
     UncheckedKeyHashMap<Node*, LValue> m_views; // By op_type_tag.
     UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_layoutsBornAs; // What that gave, and in which block.
-    void branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds, LBasicBlock otherwise);
+    bool branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds, LBasicBlock otherwise); // False: it always is, and nothing goes there.
+    // What is in a field of a struct of a closed family, from its having been read or written, for as long as nothing happens that could change it. It goes for the rest of the block, and
+    // for the blocks that can only be got to from there.
+    struct FieldInHand {
+        Node* base;
+        uint16_t family;
+        uint16_t slot;
+        Rep rep;
+        LValue value;
+        LValue asJSValue; // Null: nobody has made that of it.
+    };
+    Vector<FieldInHand> m_fieldsInHand;
+    UncheckedKeyHashMap<BasicBlock*, Vector<FieldInHand>> m_fieldsInHandAtEndOf;
+    bool m_nodeLeavesFieldsAlone { false }; // Says the lowering of the node, which knows better than leavesFieldsAlone().
+    const FieldInHand* fieldInHand(Node* base, const TypeTable::Field&) const;
+    void noteFieldInHand(Node* base, const TypeTable::Field&, LValue value, Rep, LValue asJSValue, bool isWritten);
+    static bool leavesFieldsAlone(Node*);
     // What the node is, if it is a string that the program spells out, of characters that take a byte each.
     static std::optional<String> stringWrittenInProgram(Node*);
     // If the value is a string at all it is an atom: it is written in the program, or comes from a slot whose strings are (TypeTable::Holds::atoms).

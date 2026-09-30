@@ -137,7 +137,7 @@ protected:
 void generateHelper(CCallHelpers&, Stub);
 
 // TEMPORARY: BUN_AOT_WITHOUT=mask leaves these to the runtime, as they used to be.
-enum Without : unsigned { WithoutNewArray = 1, WithoutNewArrayBuffer = 2, WithoutNewActivation = 4, WithoutSpread = 8, WithoutRest = 16, WithoutRopes = 32, WithoutSpecies = 64, WithoutPutByValDirect = 128, WithoutIteratorOpen = 256, WithoutIteratorEnd = 512, WithoutAddsOfFields = 1024, WithoutTypeof = 2048 };
+enum Without : unsigned { WithoutNewArray = 1, WithoutNewArrayBuffer = 2, WithoutNewActivation = 4, WithoutSpread = 8, WithoutRest = 16, WithoutRopes = 32, WithoutSpecies = 64, WithoutPutByValDirect = 128, WithoutIteratorOpen = 256, WithoutIteratorEnd = 512, WithoutAddsOfFields = 1024, WithoutTypeof = 2048, WithoutFieldsInHand = 4096 };
 bool isWithout(Without);
 
 } } // namespace JSC::AOT
