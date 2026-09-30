@@ -2070,6 +2070,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PyStateObject.h
     python/PyTuple.h
     python/PyType.h
+    python/PyWeakReference.h
     python/PythonASDL.h
     python/PythonAST.h
     python/PythonASTModule.h
@@ -2085,6 +2086,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonFileOperations.h
     python/PythonFunctionInfo.h
     python/PythonHashlib.h
+    python/PythonIO.h
     python/PythonIOState.h
     python/PythonImport.h
     python/PythonImportState.h
@@ -2093,15 +2095,18 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     python/PythonNumbers.h
     python/PythonOperations.h
     python/PythonOperators.h
+    python/PythonPosix.h
     python/PythonPosixModule.h
     python/PythonPosixState.h
     python/PythonSequences.h
     python/PythonSignals.h
     python/PythonSignatures.h
+    python/PythonSocket.h
     python/PythonStrings.h
     python/PythonSyntaxError.h
     python/PythonText.h
     python/PythonThreadModule.h
+    python/PythonTime.h
     python/PythonToken.h
     python/PythonWarnings.h
 

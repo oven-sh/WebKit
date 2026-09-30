@@ -971,6 +971,9 @@ one can be had that `__init__()` has never been called on, the class says how on
 What such a struct keeps that the collector did not allocate, it says how much of: `NativeState::memoryOutsideTheHeap()`. A `zlib.compressobj()` is a few words to the collector and a quarter of a megabyte to the process. In CPython it is freed when the
 last reference to it goes. Here it is freed when the collector next runs, and how soon that is goes by how much the collector takes there to be, as it does for an `ArrayBuffer`.
 
+**A module that a host writes may be over one that is here**, as `_ssl` is over `_socket`: it is given a socket, and reads and writes what the socket has open, waiting for as long as the socket says. In CPython `_ssl.c` includes `socketmodule.h`. So
+`PythonSocket.h` is among the headers that a host can include, with what it includes in its turn, and so are `PyWeakReference.h`, `PythonIO.h` and `PythonTime.h`.
+
 Besides that there is what the front end itself is easier said in Python for: `lib/_framelocals.py`, which is frozen, is imported when a realm is made, and is in no traceback. It is a class that CPython writes in C, and
 is to be written in C++.
 
