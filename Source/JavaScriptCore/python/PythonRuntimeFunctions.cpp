@@ -950,11 +950,7 @@ PYTHON_RUNTIME_FUNCTION(loadExit)
     bool isAsync = argument(1).asBoolean();
     if (JSValue dispose = loadDisposeMethod(globalObject, argument(0), isAsync); dispose || scope.exception())
         return JSValue::encode(dispose);
-    JSValue exit = loadContextMethod(globalObject, argument(0), isAsync ? names.dunder_aexit : names.dunder_exit, isAsync ? "__aexit__"_s : "__exit__"_s, isAsync);
-    RETURN_IF_EXCEPTION(scope, { });
-    loadContextMethod(globalObject, argument(0), isAsync ? names.dunder_aenter : names.dunder_enter, isAsync ? "__aenter__"_s : "__enter__"_s, isAsync);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(exit);
+    RELEASE_AND_RETURN(scope, JSValue::encode(loadContextMethod(globalObject, argument(0), isAsync ? names.dunder_aexit : names.dunder_exit, isAsync ? "__aexit__"_s : "__exit__"_s, isAsync)));
 }
 
 PYTHON_RUNTIME_FUNCTION(callEnter)
@@ -963,10 +959,10 @@ PYTHON_RUNTIME_FUNCTION(callEnter)
     // There is nothing to entering what `using` can be used with: it is what it is from the start.
     if (typeOf(globalObject, argument(0))->hasFlag(PyType::IsJavaScript))
         return JSValue::encode(argument(1).asBoolean() ? awaitableFor(globalObject, argument(0)) : argument(0));
-    JSValue self;
-    JSValue method = lookupSpecial(globalObject, argument(0), argument(1).asBoolean() ? vm.pythonNames().dunder_aenter : vm.pythonNames().dunder_enter, self);
+    bool isAsync = argument(1).asBoolean();
+    JSValue method = loadContextMethod(globalObject, argument(0), isAsync ? vm.pythonNames().dunder_aenter : vm.pythonNames().dunder_enter, isAsync ? "__aenter__"_s : "__enter__"_s, isAsync);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(callMethod(globalObject, method, self)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, method)));
 }
 
 // callExit(__exit__, the exception or None): what it gives, which if true says that the exception has been dealt with.

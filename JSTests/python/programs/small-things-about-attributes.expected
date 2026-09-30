@@ -1,0 +1,54 @@
+---- __set__() and no __get__()
+    OnlySet Both.__get__ OnlyDelete
+    42 Both.__get__ 44 {'a': 42, 'b': 43, 'd': 44}
+    __delete__
+    set what can only be deleted => AttributeError __set__
+    delete what can only be set => AttributeError __delete__
+    42
+---- what a method is called
+    <bound method ? of instance>
+    <bound method name of instance>
+    <bound method qualname of instance>
+    <bound method ? of instance>
+    <bound method ? of instance>
+    <bound method len of instance> <bound method Instance of instance> <bound method Instance.__repr__ of instance>
+---- __dict__, found by way of an ordinary class
+    Meta1 has => mappingproxy
+    Meta1 by the descriptor => mappingproxy
+    Meta1 set => AttributeError attribute '__dict__' of 'type' objects is not writable
+    Meta1 set by the descriptor => AttributeError attribute '__dict__' of 'type' objects is not writable
+    Meta1 deleted => AttributeError attribute '__dict__' of 'type' objects is not writable
+    Meta2 has => mappingproxy
+    Meta2 by the descriptor => mappingproxy
+    Meta2 set => AttributeError attribute '__dict__' of 'type' objects is not writable
+    Meta2 set by the descriptor => AttributeError attribute '__dict__' of 'type' objects is not writable
+    Meta2 deleted => AttributeError attribute '__dict__' of 'type' objects is not writable
+    Module1 has => dict
+    Module1 by the descriptor => dict
+    Module1 set => AttributeError readonly attribute
+    Module1 set by the descriptor => AttributeError readonly attribute
+    Module1 deleted => AttributeError readonly attribute
+    Module2 has => dict
+    Module2 by the descriptor => dict
+    Module2 set => AttributeError readonly attribute
+    Module2 set by the descriptor => AttributeError readonly attribute
+    Module2 deleted => AttributeError readonly attribute
+    Base has => dict
+    Base by the descriptor => dict
+    Base set => None
+    Base set by the descriptor => None
+    Base deleted => None
+    of what has none => TypeError descriptor '__dict__' for 'Base' objects doesn't apply to a 'int' object
+---- with looks for each once
+    ['__exit__', '__enter__', 'entered', 'body', 'exited']
+    NoEnter => TypeError 'NoEnter' object does not support the context manager protocol (missed __enter__ method)
+    ['__exit__']
+    NoExit => TypeError 'NoExit' object does not support the context manager protocol (missed __exit__ method)
+    []
+    object => TypeError 'object' object does not support the context manager protocol (missed __exit__ method)
+    []
+---- the name of an attribute may be of a class derived from str
+    __reduce_ex__ => True
+    setattr, getattr, hasattr, delattr => (None, 1, True, 1, ['x'], None, False)
+    object's own => (None, 2, None)
+    what is no str => TypeError attribute name must be string, not 'bytes'

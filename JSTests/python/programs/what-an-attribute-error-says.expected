@@ -1,0 +1,187 @@
+b.x | 'B' object has no attribute 'x' | 'x' B
+getattr | 'B' object has no attribute 'x' | 'x' B
+object.__getattribute__ | 'B' object has no attribute 'x' | 'x' B
+type.__getattribute__ | type object 'B' has no attribute 'x' | None None
+B.x | type object 'B' has no attribute 'x' | 'x' type
+C.x | type object 'C' has no attribute 'x' | 'x' M
+slot | 'A' object has no attribute 's' | 's' A
+a.x | 'A' object has no attribute 'x' | 'x' A
+del b.x | 'B' object has no attribute 'x' | None None
+del a.s | s | None None
+a.x = 1 | 'A' object has no attribute 'x' and no __dict__ for setting new attributes | 'x' A
+object().x = 1 | 'object' object has no attribute 'x' and no __dict__ for setting new attributes | 'x' object
+del object().x | 'object' object has no attribute 'x' and no __dict__ for setting new attributes | 'x' object
+object.__setattr__ | 'A' object has no attribute 'x' and no __dict__ for setting new attributes | 'x' A
+object.__delattr__ | 'B' object has no attribute 'x' | None None
+module | module 'm' has no attribute 'x' | 'x' module
+module getattribute | module 'm' has no attribute 'x' | None None
+del module | 'module' object has no attribute 'x' | 'x' module
+int | 'int' object has no attribute 'x' | 'x' int
+int set | 'int' object has no attribute 'x' and no __dict__ for setting new attributes | 'x' int
+str | 'str' object has no attribute 'x' | 'x' str
+None | 'NoneType' object has no attribute 'x' | 'x' None
+function | 'function' object has no attribute 'x' | 'x' function
+builtin | 'builtin_function_or_method' object has no attribute 'x' | 'x' builtin_function_or_method
+method | 'method-wrapper' object has no attribute 'x' | 'x' method-wrapper
+super | 'super' object has no attribute 'x' | 'x' super
+own | mine | 'x' G
+list method | 'list' object has no attribute 'x' | 'x' list
+dict | 'dict' object has no attribute 'x' | 'x' dict
+type set TypeError cannot set 'x' attribute of immutable type 'int'
+type del | type object 'B' has no attribute 'x' | 'x' type
+int del TypeError cannot set 'real' attribute of immutable type 'int'
+property | property 'p' of 'P' object has no setter | None None
+property del | property 'p' of 'P' object has no deleter | None None
+property get | property 'p' of 'P' object has no getter | 'p' P
+operator.attrgetter | 'B' object has no attribute 'x' | 'x' B
+generator | 'generator' object has no attribute 'x' | 'x' generator
+frame | 'frame' object has no attribute 'x' | 'x' frame
+code | 'code' object has no attribute 'x' | 'x' code
+---- ImportError
+('test',) test name path nf
+() None None None None
+('a', 'b') None None None
+('c',) c n None
+('test',) test name path nf
+() None None None None
+('a', 'b') None None None
+('c',) c n None
+AttributeError {'args': ('m',), 'name': 'n', 'obj': 1, 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'} {'args': (), 'name': None, 'obj': None, 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'}
+NameError {'args': ('m',), 'name': 'n', 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'} {'args': (), 'name': None, 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'}
+StopIteration {'args': ('m',), 'name': '-', 'obj': '-', 'value': 'm', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'} {'args': (), 'name': '-', 'obj': '-', 'value': None, 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'}
+SystemExit {'args': ('m',), 'name': '-', 'obj': '-', 'value': '-', 'code': 'm', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'} {'args': (), 'name': '-', 'obj': '-', 'value': '-', 'code': 'm', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'}
+OSError {'args': ('m',), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': None, 'strerror': None, 'filename': None, 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'} {'args': ('m',), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': None, 'strerror': None, 'filename': None, 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'}
+SyntaxError {'args': ('m',), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': None, 'msg': 'm', 'lineno': None, 'reason': '-', 'start': '-'} {'args': (), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': None, 'msg': 'm', 'lineno': None, 'reason': '-', 'start': '-'}
+KeyError {'args': ('m',), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'} {'args': (), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': '-', 'start': '-'}
+UnicodeDecodeError __init__() TypeError function takes exactly 5 arguments (0 given)
+UnicodeDecodeError {'args': ('utf-8', b'a', 0, 1, 'r'), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': 'r', 'start': 0} {'args': (), 'name': '-', 'obj': '-', 'value': '-', 'code': '-', 'errno': '-', 'strerror': '-', 'filename': '-', 'msg': '-', 'lineno': '-', 'reason': 'r', 'start': 0}
+---- UnicodeError
+UnicodeEncodeError object 'deleted' str: 
+UnicodeEncodeError object None str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError object 5 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError object 'x' str: 'utf-8' codec can't encode character '\x78' in position 0: reason
+UnicodeEncodeError object b'x' str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError object -1 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError object 100 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError object 1180591620717411303424 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError encoding 'deleted' str: '<NULL>' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError encoding None str: 'None' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError encoding 5 str: '5' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError encoding 'x' str: 'x' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError encoding b'x' str: 'b'x'' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError encoding -1 str: '-1' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError encoding 100 str: '100' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError encoding 1180591620717411303424 str: '1180591620717411303424' codec can't encode character '\x61' in position 0: reason
+UnicodeEncodeError reason 'deleted' str: 'utf-8' codec can't encode character '\x61' in position 0: <NULL>
+UnicodeEncodeError reason None str: 'utf-8' codec can't encode character '\x61' in position 0: None
+UnicodeEncodeError reason 5 str: 'utf-8' codec can't encode character '\x61' in position 0: 5
+UnicodeEncodeError reason 'x' str: 'utf-8' codec can't encode character '\x61' in position 0: x
+UnicodeEncodeError reason b'x' str: 'utf-8' codec can't encode character '\x61' in position 0: b'x'
+UnicodeEncodeError reason -1 str: 'utf-8' codec can't encode character '\x61' in position 0: -1
+UnicodeEncodeError reason 100 str: 'utf-8' codec can't encode character '\x61' in position 0: 100
+UnicodeEncodeError reason 1180591620717411303424 str: 'utf-8' codec can't encode character '\x61' in position 0: 1180591620717411303424
+UnicodeEncodeError start 'deleted' cannot: TypeError can't delete numeric/char attribute
+UnicodeEncodeError start None cannot: TypeError an integer is required
+UnicodeEncodeError start 5 str: 'utf-8' codec can't encode characters in position 5-0: reason
+UnicodeEncodeError start 'x' cannot: TypeError an integer is required
+UnicodeEncodeError start b'x' cannot: TypeError an integer is required
+UnicodeEncodeError start -1 str: 'utf-8' codec can't encode characters in position -1-0: reason
+UnicodeEncodeError start 100 str: 'utf-8' codec can't encode characters in position 100-0: reason
+UnicodeEncodeError start 1180591620717411303424 cannot: OverflowError Python int too large to convert to C ssize_t
+UnicodeEncodeError end 'deleted' cannot: TypeError can't delete numeric/char attribute
+UnicodeEncodeError end None cannot: TypeError an integer is required
+UnicodeEncodeError end 5 str: 'utf-8' codec can't encode characters in position 0-4: reason
+UnicodeEncodeError end 'x' cannot: TypeError an integer is required
+UnicodeEncodeError end b'x' cannot: TypeError an integer is required
+UnicodeEncodeError end -1 str: 'utf-8' codec can't encode characters in position 0--2: reason
+UnicodeEncodeError end 100 str: 'utf-8' codec can't encode characters in position 0-99: reason
+UnicodeEncodeError end 1180591620717411303424 cannot: OverflowError Python int too large to convert to C ssize_t
+UnicodeDecodeError object 'deleted' str: 
+UnicodeDecodeError object None str raises TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError object 5 str raises TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError object 'x' str raises TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError object b'x' str: 'utf-8' codec can't decode byte 0x78 in position 0: reason
+UnicodeDecodeError object -1 str raises TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError object 100 str raises TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError object 1180591620717411303424 str raises TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError encoding 'deleted' str: '<NULL>' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError encoding None str: 'None' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError encoding 5 str: '5' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError encoding 'x' str: 'x' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError encoding b'x' str: 'b'x'' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError encoding -1 str: '-1' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError encoding 100 str: '100' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError encoding 1180591620717411303424 str: '1180591620717411303424' codec can't decode byte 0x61 in position 0: reason
+UnicodeDecodeError reason 'deleted' str: 'utf-8' codec can't decode byte 0x61 in position 0: <NULL>
+UnicodeDecodeError reason None str: 'utf-8' codec can't decode byte 0x61 in position 0: None
+UnicodeDecodeError reason 5 str: 'utf-8' codec can't decode byte 0x61 in position 0: 5
+UnicodeDecodeError reason 'x' str: 'utf-8' codec can't decode byte 0x61 in position 0: x
+UnicodeDecodeError reason b'x' str: 'utf-8' codec can't decode byte 0x61 in position 0: b'x'
+UnicodeDecodeError reason -1 str: 'utf-8' codec can't decode byte 0x61 in position 0: -1
+UnicodeDecodeError reason 100 str: 'utf-8' codec can't decode byte 0x61 in position 0: 100
+UnicodeDecodeError reason 1180591620717411303424 str: 'utf-8' codec can't decode byte 0x61 in position 0: 1180591620717411303424
+UnicodeDecodeError start 'deleted' cannot: TypeError can't delete numeric/char attribute
+UnicodeDecodeError start None cannot: TypeError an integer is required
+UnicodeDecodeError start 5 str: 'utf-8' codec can't decode bytes in position 5-0: reason
+UnicodeDecodeError start 'x' cannot: TypeError an integer is required
+UnicodeDecodeError start b'x' cannot: TypeError an integer is required
+UnicodeDecodeError start -1 str: 'utf-8' codec can't decode bytes in position -1-0: reason
+UnicodeDecodeError start 100 str: 'utf-8' codec can't decode bytes in position 100-0: reason
+UnicodeDecodeError start 1180591620717411303424 cannot: OverflowError Python int too large to convert to C ssize_t
+UnicodeDecodeError end 'deleted' cannot: TypeError can't delete numeric/char attribute
+UnicodeDecodeError end None cannot: TypeError an integer is required
+UnicodeDecodeError end 5 str: 'utf-8' codec can't decode bytes in position 0-4: reason
+UnicodeDecodeError end 'x' cannot: TypeError an integer is required
+UnicodeDecodeError end b'x' cannot: TypeError an integer is required
+UnicodeDecodeError end -1 str: 'utf-8' codec can't decode bytes in position 0--2: reason
+UnicodeDecodeError end 100 str: 'utf-8' codec can't decode bytes in position 0-99: reason
+UnicodeDecodeError end 1180591620717411303424 cannot: OverflowError Python int too large to convert to C ssize_t
+UnicodeTranslateError object 'deleted' str: 
+UnicodeTranslateError object None str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError object 5 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError object 'x' str: can't translate character '\x78' in position 0: reason
+UnicodeTranslateError object b'x' str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError object -1 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError object 100 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError object 1180591620717411303424 str raises TypeError UnicodeError 'object' attribute must be a string
+UnicodeTranslateError reason 'deleted' str: can't translate character '\x61' in position 0: <NULL>
+UnicodeTranslateError reason None str: can't translate character '\x61' in position 0: None
+UnicodeTranslateError reason 5 str: can't translate character '\x61' in position 0: 5
+UnicodeTranslateError reason 'x' str: can't translate character '\x61' in position 0: x
+UnicodeTranslateError reason b'x' str: can't translate character '\x61' in position 0: b'x'
+UnicodeTranslateError reason -1 str: can't translate character '\x61' in position 0: -1
+UnicodeTranslateError reason 100 str: can't translate character '\x61' in position 0: 100
+UnicodeTranslateError reason 1180591620717411303424 str: can't translate character '\x61' in position 0: 1180591620717411303424
+UnicodeTranslateError start 'deleted' cannot: TypeError can't delete numeric/char attribute
+UnicodeTranslateError start None cannot: TypeError an integer is required
+UnicodeTranslateError start 5 str: can't translate characters in position 5-0: reason
+UnicodeTranslateError start 'x' cannot: TypeError an integer is required
+UnicodeTranslateError start b'x' cannot: TypeError an integer is required
+UnicodeTranslateError start -1 str: can't translate characters in position -1-0: reason
+UnicodeTranslateError start 100 str: can't translate characters in position 100-0: reason
+UnicodeTranslateError start 1180591620717411303424 cannot: OverflowError Python int too large to convert to C ssize_t
+UnicodeTranslateError end 'deleted' cannot: TypeError can't delete numeric/char attribute
+UnicodeTranslateError end None cannot: TypeError an integer is required
+UnicodeTranslateError end 5 str: can't translate characters in position 0-4: reason
+UnicodeTranslateError end 'x' cannot: TypeError an integer is required
+UnicodeTranslateError end b'x' cannot: TypeError an integer is required
+UnicodeTranslateError end -1 str: can't translate characters in position 0--2: reason
+UnicodeTranslateError end 100 str: can't translate characters in position 0-99: reason
+UnicodeTranslateError end 1180591620717411303424 cannot: OverflowError Python int too large to convert to C ssize_t
+UnicodeEncodeError Evil encoding TypeError UnicodeError 'object' attribute is not set
+UnicodeEncodeError Evil reason TypeError UnicodeError 'object' attribute is not set
+UnicodeEncodeError EvilNone encoding TypeError UnicodeError 'object' attribute must be a string
+UnicodeEncodeError EvilNone reason TypeError UnicodeError 'object' attribute must be a string
+UnicodeDecodeError Evil encoding TypeError UnicodeError 'object' attribute is not set
+UnicodeDecodeError Evil reason TypeError UnicodeError 'object' attribute is not set
+UnicodeDecodeError EvilNone encoding TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeDecodeError EvilNone reason TypeError UnicodeError 'object' attribute must be a bytes
+UnicodeTranslateError Evil reason TypeError UnicodeError 'object' attribute is not set
+UnicodeTranslateError EvilNone reason TypeError UnicodeError 'object' attribute must be a string
+---- whoever raised it
+G().x mine 'x' G
+getattr mine 'x' G
+H().x mine 'x' H
+P().p mine 'p' P
+G().x() mine 'x' G
+hasattr then mine 'y' G

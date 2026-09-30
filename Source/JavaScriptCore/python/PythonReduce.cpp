@@ -109,9 +109,10 @@ static JSValue defaultState(JSGlobalObject* globalObject, JSValue object, bool r
     for (unsigned i = 0; i < slotCount; ++i) {
         JSValue name = listGet(globalObject, asList(slotNames), i);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!name.isString())
+        JSString* nameString = stringIn(name);
+        if (!nameString)
             return raiseTypeError(globalObject, scope, concatenate("attribute name must be string, not '"_s, typeName(globalObject, name), '\''));
-        auto identifier = asString(name)->toIdentifier(globalObject);
+        auto identifier = nameString->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         // One that has nothing in it is left out.
         JSValue value = getAttributeIfPresent(globalObject, object, identifier);
@@ -442,9 +443,10 @@ PYTHON_NATIVE(exceptionSetState)
         return true;
     });
     for (size_t i = 0; i < pairs.size(); i += 2) {
-        if (!pairs.at(i).isString())
+        JSString* nameString = stringIn(pairs.at(i));
+        if (!nameString)
             return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("attribute name must be string, not '"_s, typeName(globalObject, pairs.at(i)), '\'')));
-        auto name = asString(pairs.at(i))->toIdentifier(globalObject);
+        auto name = nameString->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
         setAttribute(globalObject, args[0], name, pairs.at(i + 1));
         RETURN_IF_EXCEPTION(scope, { });

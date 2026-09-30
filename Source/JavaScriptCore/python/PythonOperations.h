@@ -445,6 +445,7 @@ CallFrame* callerOf(CallFrame*);
 CallFrame* innermostPythonFrame(VM&);
 // What is in a cell, which is empty if nothing is.
 JSValue contentsOfCell(JSValue cell);
+void setAttributeErrorContext(JSGlobalObject*, JSValue, PropertyName);
 bool isCell(JSGlobalObject*, JSValue);
 // The cell that is a variable of an environment.
 JSValue cellOfVariable(JSGlobalObject*, JSLexicalEnvironment*, UniquedStringImpl* name);

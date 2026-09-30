@@ -439,6 +439,9 @@ struct Descriptor {
     DescriptorKind kind { DescriptorKind::Plain };
     bool isData { false }; // It has __set__ or __delete__, and so comes before what the instance itself has.
     JSValue getter; // __get__, if General.
+
+    // In getting an attribute it comes first only if it has something to say about getting. With __set__() and no __get__(), what the instance has is what is got.
+    bool comesBeforeInstanceInGetting() const { return isData && (kind != DescriptorKind::General || getter); }
 };
 
 Descriptor classifyDescriptor(JSGlobalObject* globalObject, JSValue value)
@@ -597,7 +600,7 @@ JSValue getTypeAttribute(JSGlobalObject* globalObject, PyType* type, PropertyNam
     Descriptor metaDescriptor;
     if (metaAttribute) {
         metaDescriptor = classifyDescriptor(globalObject, metaAttribute);
-        if (metaDescriptor.isData)
+        if (metaDescriptor.comesBeforeInstanceInGetting())
             RELEASE_AND_RETURN(scope, bind(globalObject, metaDescriptor, metaAttribute, type->object(), metatype));
     }
     bool isStatic = false;
@@ -678,7 +681,7 @@ JSValue getObjectAttribute(JSGlobalObject* globalObject, JSValue value, PyType* 
     Descriptor descriptor;
     if (attribute) {
         descriptor = classifyDescriptor(globalObject, attribute);
-        if (descriptor.isData)
+        if (descriptor.comesBeforeInstanceInGetting())
             RELEASE_AND_RETURN(scope, bind(globalObject, descriptor, attribute, value, type));
     }
     if (isJavaScriptObject(value, type)) {
@@ -876,7 +879,10 @@ JSValue getModuleAttribute(JSGlobalObject* globalObject, JSValue module, Propert
     RETURN_IF_EXCEPTION(scope, { });
     if (result)
         return result;
-    return raiseNoAttribute(globalObject, scope, module, name);
+    // It is whoever asked for the attribute that says which it was and of what, and nobody has but the program.
+    String message = messageForNoModuleAttribute(globalObject, asObject(module), StringView { name.uid() });
+    RETURN_IF_EXCEPTION(scope, { });
+    return raise(globalObject, scope, BuiltinType::AttributeError, message);
 }
 
 void putDirectOrRemove(JSGlobalObject* globalObject, JSObject* object, PropertyName name, JSValue value)
@@ -890,7 +896,37 @@ void putDirectOrRemove(JSGlobalObject* globalObject, JSObject* object, PropertyN
     JSObject::deleteProperty(object, globalObject, name, slot);
 }
 
+// _PyObject_SetAttributeErrorContext(): whatever raised it, an AttributeError that comes of getting an attribute says which and of what, if it does not say already.
+void setAttributeErrorContext(JSGlobalObject* globalObject, JSValue value, PropertyName name)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& names = vm.pythonNames();
+    Exception* raised = scope.exception();
+    if (!raised || !raised->value().isObject() || !isInstance(globalObject, raised->value(), globalObject->pyRealm()->typeAttributeError()))
+        return;
+    JSObject* exception = asObject(raised->value());
+    if (exception->getDirect(vm, names.field_name) || exception->getDirect(vm, names.field_object))
+        return;
+    exception->putDirect(vm, names.field_name, nameAsString(vm, name));
+    exception->putDirect(vm, names.field_object, value);
+}
+
+static JSValue getAttributeSayingNoMore(JSGlobalObject*, JSValue, PropertyName);
+
 JSValue getAttribute(JSGlobalObject* globalObject, JSValue value, PropertyName name)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue result = getAttributeSayingNoMore(globalObject, value, name);
+    if (scope.exception()) [[unlikely]] {
+        scope.release();
+        setAttributeErrorContext(globalObject, value, name);
+        return { };
+    }
+    return result;
+}
+
+static JSValue getAttributeSayingNoMore(JSGlobalObject* globalObject, JSValue value, PropertyName name)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -1228,7 +1264,7 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
         bool deleted = target->deleteAttribute(vm, globalObject, name);
         RETURN_IF_EXCEPTION(scope, void());
         if (!deleted)
-            raise(globalObject, scope, BuiltinType::AttributeError, concatenate("type object '"_s, target->nameString(globalObject), "' has no attribute '"_s, attribute, '\''));
+            raiseAttributeErrorAbout(globalObject, scope, concatenate("type object '"_s, target->nameString(globalObject), "' has no attribute '"_s, attribute, '\''), value, name);
         return;
     }
 
@@ -1248,8 +1284,12 @@ void genericSetAttribute(JSGlobalObject* globalObject, JSValue value, PropertyNa
             return;
         }
         if (!getStoredAttribute(vm, storage, name)) {
-            // Whatever it is: a module says no more of itself than anything else does.
-            raiseAttributeErrorAbout(globalObject, scope, concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\''), value, name);
+            // Whatever it is: a module says no more of itself than anything else does. Nor does it say which and of what, as CPython does not of what has its attributes where they are kept as a rule.
+            String message = concatenate('\'', type->nameString(globalObject), "' object has no attribute '"_s, attribute, '\'');
+            if (tryModule(globalObject, value))
+                raiseAttributeErrorAbout(globalObject, scope, message, value, name);
+            else
+                raise(globalObject, scope, BuiltinType::AttributeError, message);
             return;
         }
         if (!mayDeleteStoredAttribute(vm, storage, name)) [[unlikely]]

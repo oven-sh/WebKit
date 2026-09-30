@@ -293,6 +293,19 @@ String builtinRepr(JSGlobalObject* globalObject, JSValue value)
         String name = "?"_s;
         if (auto* function = dynamicDowncast<JSFunction>(method->function()))
             name = nameOfFunction(globalObject, function, true);
+        else {
+            // Whatever it is a method of, it goes by what that says it is called, if that is a str.
+            JSValue called = getAttributeIfPresent(globalObject, method->function(), vm.pythonNames().dunder_qualname);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!called) {
+                called = getAttributeIfPresent(globalObject, method->function(), vm.pythonNames().dunder_name);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+            if (JSString* string = called ? stringIn(called) : nullptr) {
+                name = string->value(globalObject);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+        }
         return concatenate("<bound method "_s, name, " of "_s, self, '>');
     }
     default:

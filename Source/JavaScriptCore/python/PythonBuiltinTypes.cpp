@@ -547,7 +547,10 @@ PYTHON_NATIVE(objectGetAttribute)
     }
     if (value)
         return JSValue::encode(value);
-    return JSValue::encode(raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\'')));
+    raise(globalObject, scope, BuiltinType::AttributeError, concatenate('\'', typeName(globalObject, args[0]), "' object has no attribute '"_s, name->string(), '\''));
+    scope.release();
+    setAttributeErrorContext(globalObject, args[0], *name);
+    return { };
 }
 
 PYTHON_NATIVE(typeGetAttribute)
@@ -925,6 +928,9 @@ JSValue getInstanceDict(JSGlobalObject* globalObject, JSValue self)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     PyType* type = typeOf(globalObject, self);
+    // subtype_dict(), of what is derived from something built in that has a __dict__ of its own kind. A metaclass may be derived from an ordinary class first and `type` second, and then this is what its classes find.
+    if (isClass(self))
+        RELEASE_AND_RETURN(scope, getTypeDict(globalObject, self));
     if (isJavaScriptObject(self, type))
         RELEASE_AND_RETURN(scope, propertiesOfJavaScriptObject(globalObject, asObject(self)));
     JSObject* storage = attributeStorage(globalObject, self, type);
@@ -967,6 +973,14 @@ void setInstanceDict(JSGlobalObject* globalObject, JSValue self, JSValue value)
     }
     if (isJavaScriptObject(self, typeOf(globalObject, self))) {
         raise(globalObject, scope, BuiltinType::AttributeError, concatenate("attribute '__dict__' of '"_s, typeName(globalObject, self), "' objects is not writable"_s));
+        return;
+    }
+    if (isClass(self)) {
+        raise(globalObject, scope, BuiltinType::AttributeError, "attribute '__dict__' of 'type' objects is not writable"_s);
+        return;
+    }
+    if (tryModule(globalObject, self)) {
+        raise(globalObject, scope, BuiltinType::AttributeError, "readonly attribute"_s);
         return;
     }
     JSValue current = getInstanceDict(globalObject, self);

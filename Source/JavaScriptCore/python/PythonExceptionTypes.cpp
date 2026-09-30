@@ -311,6 +311,9 @@ PYTHON_NATIVE(exceptionInitWithKeywords)
     unsigned most = which == KeywordException::Import ? 3 : which == KeywordException::Attribute ? 2 : 1;
     if (args.keywordCount() > most)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(which == KeywordException::Import ? "ImportError"_s : which == KeywordException::Attribute ? "AttributeError"_s : "NameError"_s, "() takes at most "_s, most, " keyword argument"_s, most == 1 ? ""_s : "s"_s, " ("_s, args.keywordCount(), " given)"_s)));
+    // What is not given is not there afterwards, whatever there was.
+    std::array<const Identifier*, 4> fields { &names.field_name, &names.field_path, &names.field_nameFrom, &names.field_object };
+    std::array<JSValue, 4> given;
     for (unsigned i = 0; i < args.keywordCount(); ++i) {
         String name = args.keywordName(i)->value(globalObject);
         const Identifier* field = nullptr;
@@ -324,10 +327,12 @@ PYTHON_NATIVE(exceptionInitWithKeywords)
             field = &names.field_object;
         if (!field)
             return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(which == KeywordException::Import ? "ImportError"_s : which == KeywordException::Attribute ? "AttributeError"_s : "NameError"_s, "() got an unexpected keyword argument '"_s, name, '\'')));
-        self->putDirect(vm, *field, args.keywordValue(i));
+        given[std::ranges::find(fields, field) - fields.begin()] = args.keywordValue(i);
     }
-    if (which == KeywordException::Import && args.size() == 2)
-        self->putDirect(vm, names.field_message, args[1]);
+    for (unsigned i = 0; i < fields.size(); ++i)
+        putDirectOrRemove(globalObject, self, *fields[i], given[i]);
+    if (which == KeywordException::Import)
+        putDirectOrRemove(globalObject, self, names.field_message, args.size() == 2 ? args[1] : JSValue());
     RETURN_NONE();
 }
 
@@ -748,6 +753,10 @@ PYTHON_NATIVE(unicodeErrorStr)
         prefix = concatenate('\'', encoding, "' codec "_s);
     }
     bool isDecode = kind == UnicodeError::Decode;
+    // Making strs of those may have done anything to it: check_unicode_error_attribute()
+    object = self->getDirect(vm, names.field_subject);
+    if (!object)
+        return JSValue::encode(raiseTypeError(globalObject, scope, "UnicodeError 'object' attribute is not set"_s));
     if (isDecode ? !typeOf(globalObject, object)->hasFlag(PyType::IsBytes) : !stringIn(object))
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("UnicodeError 'object' attribute must be a "_s, isDecode ? "bytes"_s : "string"_s)));
     int64_t size = length(globalObject, object);
