@@ -767,7 +767,9 @@ PYTHON_NATIVE(csvRegisterDialect)
 PYTHON_NATIVE(csvUnregisterDialect)
 {
     NATIVE_PROLOGUE();
-    JSValue removed = csvModuleState(globalObject).dialects->remove(globalObject, args.at(0));
+    // PyDict_Pop(): nothing is in a dict that has nothing in it, and the name is not so much as asked for its hash.
+    PyDict* dialects = csvModuleState(globalObject).dialects.get();
+    JSValue removed = dialects->size() ? dialects->remove(globalObject, args.at(0)) : JSValue();
     RETURN_IF_EXCEPTION(scope, { });
     if (!removed)
         return JSValue::encode(raiseCSVError(globalObject, scope, "unknown dialect"_s));

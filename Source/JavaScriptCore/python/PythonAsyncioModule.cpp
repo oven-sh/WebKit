@@ -1157,12 +1157,19 @@ void raiseNotRunningLoop(JSGlobalObject* globalObject, ThrowScope& scope, JSValu
     raise(globalObject, scope, BuiltinType::RuntimeError, concatenate("loop "_s, shown, " is not the running loop"_s));
 }
 
+// If none is running then nothing is the one that is, and None is not either.
+bool isRunningLoop(AsyncioState& state, JSValue loop)
+{
+    JSValue running = state.runningLoop.get();
+    return running && isIdentical(running, loop);
+}
+
 void enterTask(JSGlobalObject* globalObject, JSValue loop, JSValue task)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = asyncioState(globalObject);
-    if (!isIdentical(orNone(state.runningLoop.get()), loop))
+    if (!isRunningLoop(state, loop))
         RELEASE_AND_RETURN(scope, raiseNotRunningLoop(globalObject, scope, loop));
     if (JSValue running = state.runningTask.get()) {
         String entering = repr(globalObject, task);
@@ -1179,7 +1186,7 @@ void leaveTask(JSGlobalObject* globalObject, JSValue loop, JSValue task)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto& state = asyncioState(globalObject);
-    if (!isIdentical(orNone(state.runningLoop.get()), loop))
+    if (!isRunningLoop(state, loop))
         RELEASE_AND_RETURN(scope, raiseNotRunningLoop(globalObject, scope, loop));
     if (!isIdentical(orNone(state.runningTask.get()), task) || !state.runningTask) {
         String leaving = repr(globalObject, task);
@@ -1198,7 +1205,7 @@ JSValue swapCurrentTask(JSGlobalObject* globalObject, JSValue loop, JSValue task
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& state = asyncioState(globalObject);
-    if (!isIdentical(orNone(state.runningLoop.get()), loop)) {
+    if (!isRunningLoop(state, loop)) {
         scope.release();
         raiseNotRunningLoop(globalObject, scope, loop);
         return { };
@@ -2103,7 +2110,7 @@ PYTHON_NATIVE(asyncioCurrentTask)
     runningLoop(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     // There is the one thread.
-    if (!isIdentical(orNone(state.runningLoop.get()), loop))
+    if (!isRunningLoop(state, loop))
         RETURN_NONE();
     return JSValue::encode(orNone(state.runningTask.get()));
 }

@@ -11,7 +11,7 @@ import warnings
 ALL = sys.argv[1:] == ["all"]
 
 warnings.simplefilter("ignore")
-MODULES = ("_abc", "_ast", "_codecs", "_collections", "_contextvars", "_functools", "_imp", "_io", "_opcode", "_operator", "_posixsubprocess", "_random", "_signal", "_sre", "_stat", "_string", "_struct", "_thread", "_tokenize", "_typing", "_warnings", "_weakref", "array", "atexit", "binascii", "errno", "itertools", "marshal", "math", "posix", "select", "time", "unicodedata")
+MODULES = ("_abc", "_ast", "_asyncio", "_bisect", "_blake2", "_codecs", "_collections", "_contextvars", "_csv", "_functools", "_heapq", "_imp", "_io", "_md5", "_opcode", "_operator", "_posixsubprocess", "_random", "_sha1", "_sha2", "_sha3", "_signal", "_socket", "_sre", "_stat", "_string", "_struct", "_symtable", "_thread", "_tokenize", "_typing", "_warnings", "_weakref", "array", "atexit", "binascii", "cmath", "errno", "fcntl", "gc", "itertools", "marshal", "math", "posix", "resource", "select", "termios", "time", "unicodedata")
 
 # What would put an end to this, or keep it waiting, or change what it is running in or what is on the disk
 SKIP = {
@@ -27,6 +27,14 @@ SKIP = {
     "_codecs": {"register", "unregister", "register_error", "_unregister_error"},
     "_io": {"open", "open_code"},
     "_abc": {"_reset_registry", "_reset_caches"},
+    # What there is to be found is not the same from one collector to another.
+    "gc": {"get_objects", "get_referrers", "get_referents", "get_count", "get_stats", "collect"},
+    "resource": {"setrlimit", "prlimit"},
+    # What asks something else, which may be slow to answer, or says what the machine is called or what is plugged into it
+    "_socket": {"sethostname", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getaddrinfo", "getnameinfo", "gethostname", "if_nameindex", "if_nametoindex", "if_indextoname", "close", "dup", "setdefaulttimeout"},
+    # These are given the descriptors that this is written to.
+    "fcntl": {"fcntl", "ioctl", "flock", "lockf"},
+    "termios": {"tcsetattr", "tcsendbreak", "tcdrain", "tcflush", "tcflow", "tcsetwinsize", "tcgetattr", "tcgetwinsize"},
     # 2 ** 70 to the power of itself, or moved along by itself, is not to be waited for.
     "_operator": {"pow", "ipow", "__pow__", "__ipow__", "lshift", "ilshift", "__lshift__", "__ilshift__"},
 }
@@ -91,6 +99,7 @@ def kinds(namespace):
 
 def samples():
     "One or more of each class that there is a way of making one of"
+    import _blake2, _csv, _md5, _sha1, _sha2, _sha3, _socket, _symtable
     import _collections, _contextvars, _io, _random, _sre, _string, _struct, _thread, _tokenize, _weakref, array, itertools as it, posix, re, select, time, unicodedata, _ast, ast
     keep = C()
     var = _contextvars.ContextVar("v")
@@ -110,6 +119,8 @@ def samples():
         lambda: ast.parse("x = 1"), lambda: ast.parse("x = 1").body[0], lambda: _ast.Constant(1), lambda: _ast.Load(),
         lambda: var, lambda: _contextvars.Context(), lambda: _contextvars.copy_context(), lambda: var.set(1),
         lambda: _tokenize.TokenizerIter(iter(["x\n"]).__next__, extra_tokens=False), lambda: _string.formatter_parser("{a}"), lambda: _string.formatter_field_name_split("a.b")[1],
+        lambda: _md5.md5(b"a"), lambda: _sha1.sha1(b"a"), lambda: _sha2.sha224(b"a"), lambda: _sha2.sha512(b"a"), lambda: _sha3.sha3_256(b"a"), lambda: _sha3.shake_128(b"a"), lambda: _blake2.blake2b(b"a", key=b"k"), lambda: _blake2.blake2s(b"a"),
+        lambda: _csv.reader(["a,b"]), lambda: _csv.writer(_io.StringIO()), lambda: _csv.Dialect(), lambda: _symtable.symtable("x = 1", "f", "exec"), lambda: _socket.socket(),
     ]
     return made
 
@@ -142,7 +153,7 @@ for name in MODULES:
 
 
 # What CPython 3.14.7 itself crashes on, so that there is nothing to compare with: super.__new__(super).__get__(x) looks for the class of x among the bases of no class at all.
-CRASHES_CPYTHON = {("raw builtins.super", "__get__")}
+CRASHES_CPYTHON = {("raw builtins.super", "__get__"), ("raw _asyncio.Task", "get_context")}
 
 
 def exercise(label, make, initialized):
