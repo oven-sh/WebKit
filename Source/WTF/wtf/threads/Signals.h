@@ -150,6 +150,8 @@ void registerThreadForMachExceptionHandling(Thread&);
 
 #if USE(BUN_JSC_ADDITIONS) && OS(UNIX) && !OS(DARWIN) && HAVE(MACHINE_CONTEXT)
 class StackBounds;
+// Whether the stack pointer in the given registers is in the given stack.
+WTF_EXPORT_PRIVATE bool isOnStack(const PlatformRegisters&, const StackBounds&);
 // While the signal handler of WTF runs on the current thread: the registers of the code that it
 // interrupted, when the stack pointer of that code is in the given stack. Null otherwise.
 WTF_EXPORT_PRIVATE PlatformRegisters* registersInterruptedBySignalHandler(const StackBounds&);

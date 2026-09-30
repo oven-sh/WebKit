@@ -502,10 +502,15 @@ static void* stackPointerOf(const PlatformRegisters& registers)
 #endif
 }
 
+bool isOnStack(const PlatformRegisters& registers, const StackBounds& stack)
+{
+    return stack.contains(stackPointerOf(registers));
+}
+
 PlatformRegisters* registersInterruptedBySignalHandler(const StackBounds& stack)
 {
     PlatformRegisters* registers = interruptedRegisters;
-    if (registers && stack.contains(stackPointerOf(*registers)))
+    if (registers && isOnStack(*registers, stack))
         return registers;
     return nullptr;
 }
