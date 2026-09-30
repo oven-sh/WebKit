@@ -110,6 +110,8 @@
 #include "OperandsInlines.h"
 #include "PCToCodeOriginMap.h"
 #include "ProbeContext.h"
+#include "PyObjects.h"
+#include "PyTuple.h"
 #include "PropertyInlineCache.h"
 #include "RegExpObject.h"
 #include "ScratchRegisterAllocator.h"
@@ -1857,6 +1859,77 @@ private:
             break;
         case PyCheckInitializerResult:
             compilePyCheckInitializerResult();
+            break;
+        case PyBinaryOp:
+        case PyCompareOp:
+            compilePyBinaryOp();
+            break;
+        case PyUnaryOp:
+            compilePyUnaryOp();
+            break;
+        case PyToBool:
+            compilePyToBool();
+            break;
+        case PyGetAttr:
+            compilePyGetAttr();
+            break;
+        case PySetAttr:
+            compilePySetAttr();
+            break;
+        case PyDelAttr:
+            compilePyDelAttr();
+            break;
+        case PyLoadMethod:
+            compilePyLoadMethod();
+            break;
+        case PyGetItem:
+            compilePyGetItem();
+            break;
+        case PySetItem:
+            compilePySetItem();
+            break;
+        case PyDelItem:
+            compilePyDelItem();
+            break;
+        case PyGetIter:
+            compilePyGetIter();
+            break;
+        case PyIterNext:
+            compilePyIterNext();
+            break;
+        case PyUnpackSequence:
+            compilePyUnpackSequence();
+            break;
+        case PyGetTupleItem:
+            compilePyGetTupleItem();
+            break;
+        case PyNewTuple:
+            compilePyNewTuple();
+            break;
+        case PyLoadGlobal:
+            compilePyLoadGlobal();
+            break;
+        case PyEnter:
+            compilePyEnter();
+            break;
+        case PyLeave:
+            compilePyLeave();
+            break;
+        case PyCheckNoFrameObject:
+            compilePyCheckNoFrameObject();
+            break;
+        case PyValueOrNothing:
+            setJSValue(lowJSValue(m_node->child1()));
+            break;
+        case PyCheckPendingWork:
+            compilePyCheckPendingWork();
+            break;
+        case PyFloorDiv:
+        case PyMod:
+            compilePyFloorDivOrMod();
+            break;
+        case PyCheckDivisor:
+            speculate(ExitKind::Overflow, noValue(), nullptr, m_out.doubleEqual(lowDouble(m_node->child1()), m_out.doubleZero));
             break;
         case CreateRest:
             compileCreateRest();
@@ -14068,6 +14141,7 @@ IGNORE_CLANG_WARNINGS_END
         State* state = &m_ftlState;
         CodeOrigin nodeSemanticOrigin = node->origin.semantic;
         auto nodeOp = node->op();
+        bool isOnBehalfOfInstruction = node->isCallOnBehalfOfInstruction();
         patchpoint->setGenerator(
             [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
                 JIT_COMMENT(jit, "CallOrConstruct");
@@ -14082,6 +14156,7 @@ IGNORE_CLANG_WARNINGS_END
 
                 auto* callLinkInfo = state->addCallLinkInfo(nodeSemanticOrigin);
                 callLinkInfo->setUpCall(nodeOp == Construct ? CallLinkInfo::Construct : CallLinkInfo::Call);
+                callLinkInfo->setIsOnBehalfOfInstruction(isOnBehalfOfInstruction);
 
                 CallLinkInfo::emitFastPath(jit, callLinkInfo);
                 jit.addPtr(CCallHelpers::TrustedImm32(-params.proc().frameSize()), GPRInfo::callFrameRegister, CCallHelpers::stackPointerRegister);
@@ -20113,6 +20188,452 @@ IGNORE_CLANG_WARNINGS_END
         m_out.jump(continuation);
 
         m_out.appendTo(continuation, lastNext);
+    }
+
+    // Python's nodes. See "The FTL" in python/README.md.
+
+    LValue pythonGlobalObject() { return weakPointer(m_graph.globalObjectFor(m_origin.semantic)); }
+    LValue pythonIdentifier() { return m_out.constIntPtr(m_node->cacheableIdentifier().rawBits()); }
+
+    void compilePyBinaryOp()
+    {
+        setJSValue(vmCall(Int64, m_node->op() == PyBinaryOp ? operationPyBinaryOp : operationPyCompareOp, pythonGlobalObject(), lowJSValue(m_node->child1()), lowJSValue(m_node->child2()), m_out.constInt32(m_node->pythonOperator())));
+    }
+
+    void compilePyUnaryOp()
+    {
+        setJSValue(vmCall(Int64, operationPyUnaryOp, pythonGlobalObject(), lowJSValue(m_node->child1()), m_out.constInt32(m_node->pythonOperator())));
+    }
+
+    void compilePyToBool()
+    {
+        setBoolean(m_out.notZero64(vmCall(pointerType(), operationPyToBool, pythonGlobalObject(), lowJSValue(m_node->child1()))));
+    }
+
+    void compilePyGetAttr()
+    {
+        if (m_node->child1().useKind() == CellUse) {
+            setJSValue(getById(lowCell(m_node->child1()), AccessType::PyGetAttr));
+            return;
+        }
+
+        LValue value = lowJSValue(m_node->child1());
+
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock notCellCase = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        m_out.branch(isCell(value, provenType(m_node->child1())), unsure(cellCase), unsure(notCellCase));
+
+        LBasicBlock lastNext = m_out.appendTo(cellCase, notCellCase);
+        ValueFromBlock cellResult = m_out.anchor(getById(value, AccessType::PyGetAttr));
+        m_out.jump(continuation);
+
+        m_out.appendTo(notCellCase, continuation);
+        ValueFromBlock notCellResult = m_out.anchor(vmCall(Int64, operationPyGetAttr, pythonGlobalObject(), value, pythonIdentifier()));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, cellResult, notCellResult));
+    }
+
+    void compilePySetAttr()
+    {
+        cachedPutById(m_node, lowCell(m_node->child1()), lowJSValue(m_node->child2()), AccessType::PySetAttr);
+    }
+
+    void compilePyDelAttr()
+    {
+        vmCall(Void, operationPyDelAttr, pythonGlobalObject(), lowJSValue(m_node->child1()), pythonIdentifier());
+    }
+
+    void compilePyLoadMethod()
+    {
+        LValue pair = vmCall(toOperationType(pointerType()), operationPyLoadMethod, pythonGlobalObject(), lowJSValue(m_node->child1()), pythonIdentifier());
+        setTuple(0, m_out.extract(pair, 0));
+        setTuple(1, m_out.extract(pair, 1));
+    }
+
+    // An int, and not a float that happens to be whole. The upper half of one is its tag and nothing else.
+    LValue isPythonInt32(LValue value)
+    {
+        return m_out.equal(m_out.lShr(value, m_out.constInt32(32)), m_out.constInt64(static_cast<uint64_t>(JSValue::NumberTag) >> 32));
+    }
+
+    LValue hasPythonCellType(LValue cell, JSType type)
+    {
+        return m_out.equal(m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoType), m_out.constInt32(type));
+    }
+
+    // What is at a place in a list. The place is not less than 0. It goes on in a block of its own, which is what comes before `next`.
+    LValue loadPythonListItem(LValue list, LValue index, LBasicBlock slow, LBasicBlock next)
+    {
+        LBasicBlock isNotContiguous = m_out.newBlock();
+        LBasicBlock contiguousCase = m_out.newBlock();
+        LBasicBlock int32Case = m_out.newBlock();
+        LBasicBlock contiguousInBounds = m_out.newBlock();
+        LBasicBlock int32InBounds = m_out.newBlock();
+        LBasicBlock loaded = m_out.newBlock();
+        LBasicBlock done = m_out.newBlock();
+
+        LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(list, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
+        m_out.branch(m_out.equal(shape, m_out.constInt32(ContiguousShape)), unsure(contiguousCase), unsure(isNotContiguous));
+
+        LBasicBlock lastNext = m_out.appendTo(isNotContiguous, contiguousCase);
+        m_out.branch(m_out.equal(shape, m_out.constInt32(Int32Shape)), unsure(int32Case), rarely(slow));
+
+        m_out.appendTo(contiguousCase, contiguousInBounds);
+        LValue contiguousStorage = m_out.loadPtr(list, m_heaps.JSObject_butterfly);
+        m_out.branch(m_out.aboveOrEqual(index, m_out.load32NonNegative(contiguousStorage, m_heaps.Butterfly_publicLength)), rarely(slow), usually(contiguousInBounds));
+
+        m_out.appendTo(contiguousInBounds, int32Case);
+        ValueFromBlock contiguousResult = m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, contiguousStorage, m_out.zeroExtPtr(index))));
+        m_out.jump(loaded);
+
+        m_out.appendTo(int32Case, int32InBounds);
+        LValue int32Storage = m_out.loadPtr(list, m_heaps.JSObject_butterfly);
+        m_out.branch(m_out.aboveOrEqual(index, m_out.load32NonNegative(int32Storage, m_heaps.Butterfly_publicLength)), rarely(slow), usually(int32InBounds));
+
+        m_out.appendTo(int32InBounds, loaded);
+        ValueFromBlock int32Result = m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.indexedInt32Properties, int32Storage, m_out.zeroExtPtr(index))));
+        m_out.jump(loaded);
+
+        m_out.appendTo(loaded, done);
+        LValue result = m_out.phi(Int64, contiguousResult, int32Result);
+        m_out.branch(m_out.isZero64(result), rarely(slow), usually(done));
+
+        m_out.appendTo(done, next);
+        UNUSED_PARAM(lastNext);
+        return result;
+    }
+
+    // What fixup could not tell the kind of. It finds out, as the baseline JIT does.
+    void compilePyGetItem()
+    {
+        Edge& baseEdge = m_graph.varArgChild(m_node, 0);
+        Edge& keyEdge = m_graph.varArgChild(m_node, 1);
+        LValue base = lowJSValue(baseEdge);
+        LValue key = lowJSValue(keyEdge);
+
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock intCase = m_out.newBlock();
+        LBasicBlock listCase = m_out.newBlock();
+        LBasicBlock listFromTheEnd = m_out.newBlock();
+        LBasicBlock listHasStorage = m_out.newBlock();
+        LBasicBlock listLoad = m_out.newBlock();
+        LBasicBlock notListCase = m_out.newBlock();
+        LBasicBlock tupleCase = m_out.newBlock();
+        LBasicBlock tupleInBounds = m_out.newBlock();
+        LBasicBlock slow = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        m_out.branch(isCell(base, provenType(baseEdge)), usually(cellCase), rarely(slow));
+
+        LBasicBlock lastNext = m_out.appendTo(cellCase, intCase);
+        m_out.branch(isPythonInt32(key), usually(intCase), rarely(slow));
+
+        m_out.appendTo(intCase, listCase);
+        LValue index = unboxInt32(key);
+        m_out.branch(hasPythonCellType(base, ArrayType), unsure(listCase), unsure(notListCase));
+
+        // From the end, if it is negative.
+        m_out.appendTo(listCase, listFromTheEnd);
+        ValueFromBlock listIndexFromTheStart = m_out.anchor(index);
+        m_out.branch(m_out.greaterThanOrEqual(index, m_out.int32Zero), usually(listLoad), rarely(listFromTheEnd));
+
+        // An array with nothing in it may have nowhere to keep it, and then nothing is within it.
+        m_out.appendTo(listFromTheEnd, listHasStorage);
+        LValue storage = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+        m_out.branch(m_out.isNull(storage), rarely(slow), usually(listHasStorage));
+
+        m_out.appendTo(listHasStorage, listLoad);
+        ValueFromBlock listIndexFromTheEnd = m_out.anchor(m_out.add(index, m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength)));
+        m_out.jump(listLoad);
+
+        m_out.appendTo(listLoad, notListCase);
+        ValueFromBlock listResult = m_out.anchor(loadPythonListItem(base, m_out.phi(Int32, listIndexFromTheStart, listIndexFromTheEnd), slow, notListCase));
+        m_out.jump(continuation);
+
+        m_out.appendTo(notListCase, tupleCase);
+        m_out.branch(hasPythonCellType(base, PyTupleType), unsure(tupleCase), unsure(slow));
+
+        m_out.appendTo(tupleCase, tupleInBounds);
+        LValue length = m_out.load32(base, m_heaps.PyTuple_length);
+        LValue tupleIndex = m_out.select(m_out.greaterThanOrEqual(index, m_out.int32Zero), index, m_out.add(index, length));
+        m_out.branch(m_out.aboveOrEqual(tupleIndex, length), rarely(slow), usually(tupleInBounds));
+
+        m_out.appendTo(tupleInBounds, slow);
+        ValueFromBlock tupleResult = m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.PyTuple_values, base, m_out.zeroExtPtr(tupleIndex))));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slow, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operationPyGetItem, pythonGlobalObject(), base, key));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, listResult, tupleResult, slowResult));
+    }
+
+    void compilePySetItem()
+    {
+        LValue base = lowCell(m_graph.varArgChild(m_node, 0));
+        LValue key = lowJSValue(m_graph.varArgChild(m_node, 1));
+        LValue value = lowJSValue(m_graph.varArgChild(m_node, 2));
+
+        LBasicBlock intCase = m_out.newBlock();
+        LBasicBlock listCase = m_out.newBlock();
+        LBasicBlock isNotContiguous = m_out.newBlock();
+        LBasicBlock int32Case = m_out.newBlock();
+        LBasicBlock int32Store = m_out.newBlock();
+        LBasicBlock int32InBounds = m_out.newBlock();
+        LBasicBlock contiguousStore = m_out.newBlock();
+        LBasicBlock contiguousInBounds = m_out.newBlock();
+        LBasicBlock slow = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        m_out.branch(isPythonInt32(key), usually(intCase), rarely(slow));
+
+        LBasicBlock lastNext = m_out.appendTo(intCase, listCase);
+        LValue index = unboxInt32(key);
+        m_out.branch(hasPythonCellType(base, ArrayType), usually(listCase), rarely(slow));
+
+        // Not one that shares what is in it with the literal that it was made from. One that has had nothing but ints in it goes on that way only if this is one.
+        m_out.appendTo(listCase, isNotContiguous);
+        LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeAndWritabilityMask));
+        m_out.branch(m_out.equal(shape, m_out.constInt32(ContiguousShape)), unsure(contiguousStore), unsure(isNotContiguous));
+
+        m_out.appendTo(isNotContiguous, int32Case);
+        m_out.branch(m_out.equal(shape, m_out.constInt32(Int32Shape)), unsure(int32Case), rarely(slow));
+
+        m_out.appendTo(int32Case, int32Store);
+        m_out.branch(isPythonInt32(value), usually(int32Store), rarely(slow));
+
+        auto place = [&] (LValue storage, LBasicBlock inBounds) {
+            LValue length = m_out.load32NonNegative(storage, m_heaps.Butterfly_publicLength);
+            LValue fromTheStart = m_out.select(m_out.greaterThanOrEqual(index, m_out.int32Zero), index, m_out.add(index, length));
+            m_out.branch(m_out.aboveOrEqual(fromTheStart, length), rarely(slow), usually(inBounds));
+            return fromTheStart;
+        };
+
+        m_out.appendTo(int32Store, int32InBounds);
+        LValue int32Storage = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+        LValue int32Place = place(int32Storage, int32InBounds);
+
+        m_out.appendTo(int32InBounds, contiguousStore);
+        m_out.store64(value, m_out.baseIndex(m_heaps.indexedInt32Properties, int32Storage, m_out.zeroExtPtr(int32Place)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(contiguousStore, contiguousInBounds);
+        LValue contiguousStorage = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
+        LValue contiguousPlace = place(contiguousStorage, contiguousInBounds);
+
+        m_out.appendTo(contiguousInBounds, slow);
+        m_out.store64(value, m_out.baseIndex(m_heaps.indexedContiguousProperties, contiguousStorage, m_out.zeroExtPtr(contiguousPlace)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(slow, continuation);
+        vmCall(Void, operationPySetItem, pythonGlobalObject(), base, key, value);
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+    }
+
+    void compilePyDelItem()
+    {
+        vmCall(Void, operationPyDelItem, pythonGlobalObject(), lowJSValue(m_node->child1()), lowJSValue(m_node->child2()));
+    }
+
+    void compilePyGetIter()
+    {
+        setJSValue(vmCall(Int64, operationPyGetIter, pythonGlobalObject(), lowJSValue(m_node->child1())));
+    }
+
+    void compilePyIterNext()
+    {
+        using Kind = PyIterator::Kind;
+        LValue iterator = lowJSValue(m_node->child1());
+
+        LBasicBlock cellCase = m_out.newBlock();
+        LBasicBlock iteratorCase = m_out.newBlock();
+        LBasicBlock rangeCase = m_out.newBlock();
+        LBasicBlock rangeHasMore = m_out.newBlock();
+        LBasicBlock rangeFits = m_out.newBlock();
+        LBasicBlock sequenceCase = m_out.newBlock();
+        LBasicBlock hasSequence = m_out.newBlock();
+        LBasicBlock indexFits = m_out.newBlock();
+        LBasicBlock listCase = m_out.newBlock();
+        LBasicBlock notListCase = m_out.newBlock();
+        LBasicBlock tupleCase = m_out.newBlock();
+        LBasicBlock tupleInBounds = m_out.newBlock();
+        LBasicBlock gotItem = m_out.newBlock();
+        LBasicBlock slow = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        m_out.branch(isCell(iterator, provenType(m_node->child1())), usually(cellCase), rarely(slow));
+
+        LBasicBlock lastNext = m_out.appendTo(cellCase, iteratorCase);
+        m_out.branch(hasPythonCellType(iterator, PyIteratorType), usually(iteratorCase), rarely(slow));
+
+        m_out.appendTo(iteratorCase, rangeCase);
+        LValue kind = m_out.load8ZeroExt32(iterator, m_heaps.PyIterator_kind);
+        LValue index = m_out.load64(iterator, m_heaps.PyIterator_index);
+        m_out.branch(m_out.equal(kind, m_out.constInt32(static_cast<int32_t>(Kind::Range))), unsure(rangeCase), unsure(sequenceCase));
+
+        // `stop` is how many are left.
+        m_out.appendTo(rangeCase, rangeHasMore);
+        LValue left = m_out.load64(iterator, m_heaps.PyIterator_stop);
+        ValueFromBlock exhausted = m_out.anchor(m_out.constInt64(JSValue::encode(JSValue())));
+        m_out.branch(m_out.greaterThan(left, m_out.int64Zero), usually(rangeHasMore), rarely(continuation));
+
+        m_out.appendTo(rangeHasMore, rangeFits);
+        LValue index32 = m_out.castToInt32(index);
+        m_out.branch(m_out.equal(m_out.signExt32To64(index32), index), usually(rangeFits), rarely(slow));
+
+        m_out.appendTo(rangeFits, sequenceCase);
+        m_out.store64(m_out.sub(left, m_out.constInt64(1)), iterator, m_heaps.PyIterator_stop);
+        m_out.store64(m_out.add(index, m_out.load64(iterator, m_heaps.PyIterator_step)), iterator, m_heaps.PyIterator_index);
+        ValueFromBlock rangeResult = m_out.anchor(boxInt32(index32));
+        m_out.jump(continuation);
+
+        // When one of these runs out it lets go of what it was going through, which is for the slow path. It has done that already if there is nothing here.
+        m_out.appendTo(sequenceCase, hasSequence);
+        LValue sequence = m_out.load64(iterator, m_heaps.PyIterator_a);
+        m_out.branch(m_out.isZero64(sequence), rarely(slow), usually(hasSequence));
+
+        m_out.appendTo(hasSequence, indexFits);
+        m_out.branch(m_out.above(index, m_out.constInt64(std::numeric_limits<int32_t>::max())), rarely(slow), usually(indexFits));
+
+        m_out.appendTo(indexFits, listCase);
+        LValue place = m_out.castToInt32(index);
+        m_out.branch(m_out.equal(kind, m_out.constInt32(static_cast<int32_t>(Kind::List))), unsure(listCase), unsure(notListCase));
+
+        m_out.appendTo(listCase, notListCase);
+        ValueFromBlock listResult = m_out.anchor(loadPythonListItem(sequence, place, slow, notListCase));
+        m_out.jump(gotItem);
+
+        m_out.appendTo(notListCase, tupleCase);
+        m_out.branch(m_out.equal(kind, m_out.constInt32(static_cast<int32_t>(Kind::Tuple))), unsure(tupleCase), unsure(slow));
+
+        m_out.appendTo(tupleCase, tupleInBounds);
+        m_out.branch(m_out.aboveOrEqual(place, m_out.load32(sequence, m_heaps.PyTuple_length)), rarely(slow), usually(tupleInBounds));
+
+        m_out.appendTo(tupleInBounds, gotItem);
+        ValueFromBlock tupleResult = m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.PyTuple_values, sequence, m_out.zeroExtPtr(place))));
+        m_out.jump(gotItem);
+
+        m_out.appendTo(gotItem, slow);
+        ValueFromBlock itemResult = m_out.anchor(m_out.phi(Int64, listResult, tupleResult));
+        m_out.store64(m_out.add(index, m_out.constInt64(1)), iterator, m_heaps.PyIterator_index);
+        m_out.jump(continuation);
+
+        m_out.appendTo(slow, continuation);
+        ValueFromBlock slowResult = m_out.anchor(vmCall(Int64, operationPyIterNext, pythonGlobalObject(), iterator));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setJSValue(m_out.phi(Int64, exhausted, rangeResult, itemResult, slowResult));
+    }
+
+    void compilePyUnpackSequence()
+    {
+        setJSValue(vmCall(pointerType(), operationPyUnpackSequence, pythonGlobalObject(), lowJSValue(m_node->child1()), m_out.constInt32(m_node->unpackedCount()), m_out.constInt32(m_node->unpackedStarIndex())));
+    }
+
+    void compilePyGetTupleItem()
+    {
+        setJSValue(m_out.load64(lowCell(m_node->child1()), m_heaps.PyTuple_values[m_node->tupleItemIndex()]));
+    }
+
+    void compilePyNewTuple()
+    {
+        size_t scratchSize = sizeof(EncodedJSValue) * m_node->numChildren();
+        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
+        EncodedJSValue* buffer = scratchBuffer ? static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer()) : nullptr;
+        for (unsigned i = 0; i < m_node->numChildren(); ++i)
+            m_out.store64(lowJSValue(m_graph.varArgChild(m_node, i)), m_out.absolute(buffer + i));
+        setJSValue(vmCall(pointerType(), operationPyNewTuple, pythonGlobalObject(), m_out.constIntPtr(buffer), m_out.constIntPtr(m_node->numChildren())));
+    }
+
+    void compilePyLoadGlobal()
+    {
+        setJSValue(vmCall(Int64, operationPyLoadGlobal, pythonGlobalObject(), lowCell(m_node->child1()), lowCell(m_node->child2()), pythonIdentifier()));
+    }
+
+    void compilePyEnter()
+    {
+        LBasicBlock slow = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        LValue depth = m_out.add(m_out.load32(m_out.absolute(vm().addressOfPythonDepth())), m_out.int32One);
+        m_out.store32(depth, m_out.absolute(vm().addressOfPythonDepth()));
+        // It is 0 if there is something that has been put off until now.
+        m_out.branch(m_out.belowOrEqual(depth, m_out.load32(m_out.absolute(vm().addressOfPythonLimitUnlessWatched()))), usually(continuation), rarely(slow));
+
+        LBasicBlock lastNext = m_out.appendTo(slow, continuation);
+        LValue isTooDeep = m_out.notZero64(vmCall(pointerType(), operationPyEnterSlow, pythonGlobalObject()));
+        // A frame that is one too deep does not begin. How that is seen to is for what has the frame as it is looked for. It counts the frame for itself.
+        LBasicBlock tooDeep = m_out.newBlock();
+        m_out.branch(isTooDeep, rarely(tooDeep), usually(continuation));
+        m_out.appendTo(tooDeep, continuation);
+        m_out.store32(m_out.sub(m_out.load32(m_out.absolute(vm().addressOfPythonDepth())), m_out.int32One), m_out.absolute(vm().addressOfPythonDepth()));
+        speculate(ExoticObjectMode, noValue(), nullptr, m_out.booleanTrue);
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+    }
+
+    void compilePyLeave()
+    {
+        m_out.store32(m_out.sub(m_out.load32(m_out.absolute(vm().addressOfPythonDepth())), m_out.int32One), m_out.absolute(vm().addressOfPythonDepth()));
+    }
+
+    void compilePyCheckNoFrameObject()
+    {
+        speculate(PythonFrameObjectExists, noValue(), nullptr, m_out.notEqual(m_out.load64(addressFor(m_node->stackAccessData()->machineLocal)), m_out.constInt64(JSValue::encode(jsUndefined()))));
+    }
+
+    void compilePyCheckPendingWork()
+    {
+        LBasicBlock hasWork = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        m_out.branch(m_out.isZero32(m_out.load32(m_out.absolute(vm().addressOfPythonLimitUnlessWatched()))), rarely(hasWork), usually(continuation));
+
+        LBasicBlock lastNext = m_out.appendTo(hasWork, continuation);
+        vmCall(Void, operationPyDoPendingWork, pythonGlobalObject());
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+    }
+
+    void compilePyFloorDivOrMod()
+    {
+        LValue left = lowInt32(m_node->child1());
+        LValue right = lowInt32(m_node->child2());
+        // By 0 is an error. By -1 is what can be too big.
+        speculate(ExitKind::Overflow, noValue(), nullptr, m_out.belowOrEqual(m_out.add(right, m_out.int32One), m_out.int32One));
+        LValue quotient = m_out.div(left, right);
+        LValue remainder = m_out.sub(left, m_out.mul(quotient, right));
+        LValue unadjusted = m_node->op() == PyMod ? remainder : quotient;
+
+        // The machine rounds toward 0, and Python down. With branches, so that what comes next need not wait to be told which it was.
+        LBasicBlock isInexact = m_out.newBlock();
+        LBasicBlock isRoundedUp = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+
+        ValueFromBlock exactResult = m_out.anchor(unadjusted);
+        m_out.branch(m_out.isZero32(remainder), unsure(continuation), unsure(isInexact));
+
+        LBasicBlock lastNext = m_out.appendTo(isInexact, isRoundedUp);
+        ValueFromBlock sameSignResult = m_out.anchor(unadjusted);
+        m_out.branch(m_out.lessThan(m_out.bitXor(remainder, right), m_out.int32Zero), unsure(isRoundedUp), unsure(continuation));
+
+        m_out.appendTo(isRoundedUp, continuation);
+        ValueFromBlock adjustedResult = m_out.anchor(m_node->op() == PyMod ? m_out.add(remainder, right) : m_out.sub(quotient, m_out.int32One));
+        m_out.jump(continuation);
+
+        m_out.appendTo(continuation, lastNext);
+        setInt32(m_out.phi(Int32, exactResult, sameSignResult, adjustedResult));
     }
 
     void compilePyCheckInitializerResult()

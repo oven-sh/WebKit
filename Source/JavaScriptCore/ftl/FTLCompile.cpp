@@ -228,6 +228,13 @@ void compile(State& state, Safepoint::Result& safepointResult)
     if (graph.needsScopeRegister() && codeBlock->scopeRegister().isValid())
         codeBlock->setScopeRegister(codeBlock->scopeRegister() + localsOffset);
 
+    // CodeBlock::registersSeenFromOutside()
+    state.jitCode->common.m_machineRegistersSeenFromOutside = FixedVector<VirtualRegister>(graph.m_machineRegistersSeenFromOutside.size());
+    for (unsigned i = 0; i < graph.m_machineRegistersSeenFromOutside.size(); ++i) {
+        VirtualRegister machineRegister = graph.m_machineRegistersSeenFromOutside[i];
+        state.jitCode->common.m_machineRegistersSeenFromOutside[i] = machineRegister.isLocal() ? machineRegister + localsOffset : machineRegister;
+    }
+
     state.jitCode->setOSRExitLocalsOffset(localsOffset);
     for (OSRExitDescriptor& descriptor : state.jitCode->osrExitDescriptors) {
         for (ExitTimeObjectMaterialization* materialization : descriptor.m_materializations)

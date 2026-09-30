@@ -358,7 +358,7 @@ public:
     }
 
     std::tuple<CompileTimePropertyInlineCache, PropertyInlineCacheIndex> addPropertyInlineCache();
-    std::tuple<CompileTimeCallLinkInfo, LinkableConstant> addCallLinkInfo(CodeOrigin);
+    std::tuple<CompileTimeCallLinkInfo, LinkableConstant> addCallLinkInfo(CodeOrigin, bool isOnBehalfOfInstruction = false);
     LinkerIR::Constant addToConstantPool(LinkerIR::Type, void*);
 
 protected:

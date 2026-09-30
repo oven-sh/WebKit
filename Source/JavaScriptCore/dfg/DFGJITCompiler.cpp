@@ -588,16 +588,18 @@ std::tuple<CompileTimePropertyInlineCache, PropertyInlineCacheIndex> JITCompiler
     return std::tuple { propertyCache, PropertyInlineCacheIndex { index } };
 }
 
-std::tuple<CompileTimeCallLinkInfo, JITCompiler::LinkableConstant> JITCompiler::addCallLinkInfo(CodeOrigin codeOrigin)
+std::tuple<CompileTimeCallLinkInfo, JITCompiler::LinkableConstant> JITCompiler::addCallLinkInfo(CodeOrigin codeOrigin, bool isOnBehalfOfInstruction)
 {
     if (m_graph.m_plan.isUnlinked()) {
         void* unlinkedCallLinkInfoIndex = std::bit_cast<void*>(static_cast<uintptr_t>(m_unlinkedCallLinkInfos.size()));
         UnlinkedCallLinkInfo* callLinkInfo = &m_unlinkedCallLinkInfos.alloc();
         callLinkInfo->codeOrigin = codeOrigin;
+        callLinkInfo->isOnBehalfOfInstruction = isOnBehalfOfInstruction;
         LinkerIR::Constant callLinkInfoIndex = addToConstantPool(LinkerIR::Type::CallLinkInfo, unlinkedCallLinkInfoIndex);
         return std::tuple { callLinkInfo, LinkableConstant(callLinkInfoIndex) };
     }
     auto* callLinkInfo = jitCode()->common.m_callLinkInfos.add(codeOrigin, m_graph.m_codeBlock);
+    callLinkInfo->setIsOnBehalfOfInstruction(isOnBehalfOfInstruction);
     return std::tuple { callLinkInfo, LinkableConstant::nonCellPointer(*this, callLinkInfo) };
 }
 

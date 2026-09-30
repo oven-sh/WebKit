@@ -173,6 +173,31 @@ inline CapabilityLevel canCompile(DFG::Node* node)
     case CheckIdent:
     case CheckTraps:
     case PyCheckInitializerResult:
+    case PyBinaryOp:
+    case PyUnaryOp:
+    case PyCompareOp:
+    case PyToBool:
+    case PyGetAttr:
+    case PySetAttr:
+    case PyDelAttr:
+    case PyLoadMethod:
+    case PyGetItem:
+    case PySetItem:
+    case PyDelItem:
+    case PyGetIter:
+    case PyIterNext:
+    case PyUnpackSequence:
+    case PyGetTupleItem:
+    case PyNewTuple:
+    case PyLoadGlobal:
+    case PyEnter:
+    case PyLeave:
+    case PyCheckNoFrameObject:
+    case PyValueOrNothing:
+    case PyCheckPendingWork:
+    case PyFloorDiv:
+    case PyMod:
+    case PyCheckDivisor:
     case StringCharCodeAt:
     case StringCodePointAt:
     case StringFromCharCode:

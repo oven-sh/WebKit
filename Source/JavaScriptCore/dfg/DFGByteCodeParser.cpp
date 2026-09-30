@@ -6784,7 +6784,9 @@ bool ByteCodeParser::handleConstantFunction(
             for (int i = 1; i < argumentCountIncludingThis; ++i)
                 addVarArgChild(get(virtualRegisterForArgumentIncludingThis(i, registerOffset)));
             m_parameterSlots = std::max<size_t>(m_parameterSlots, Graph::parameterSlotsForArgCount(argumentCountIncludingThis + 1));
-            addToGraph(PyCheckInitializerResult, addToGraph(Node::VarArg, Call, OpInfo(), OpInfo(SpecOther)));
+            Node* call = addToGraph(Node::VarArg, Call, OpInfo(), OpInfo(SpecOther));
+            call->setIsCallOnBehalfOfInstruction();
+            addToGraph(PyCheckInitializerResult, call);
         }
         set(result, instance);
         return true;

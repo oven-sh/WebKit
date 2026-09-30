@@ -719,7 +719,7 @@ void SpeculativeJIT::emitCall(Node* node)
     CompileTimeCallLinkInfo callLinkInfo;
     LinkableConstant callLinkInfoConstant;
     if (!isDirect)
-        std::tie(callLinkInfo, callLinkInfoConstant) = addCallLinkInfo(m_currentNode->origin.semantic);
+        std::tie(callLinkInfo, callLinkInfoConstant) = addCallLinkInfo(m_currentNode->origin.semantic, node->isCallOnBehalfOfInstruction());
 
     // Gotta load the arguments somehow. Varargs is trickier.
     if (isVarargs || isForwardVarargs) {

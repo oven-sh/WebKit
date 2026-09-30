@@ -170,6 +170,10 @@ public:
     // See LazyCallLinkInfo. Nothing may ever change such a CallLinkInfo.
     bool isSharedByUnlinkedCallSites() const { return m_isSharedByUnlinkedCallSites; }
 
+    // DFG::Node::isCallOnBehalfOfInstruction()
+    bool isOnBehalfOfInstruction() const { return m_isOnBehalfOfInstruction; }
+    void setIsOnBehalfOfInstruction(bool value) { m_isOnBehalfOfInstruction = value; }
+
     void clearSeen()
     {
         RELEASE_ASSERT(!isSharedByUnlinkedCallSites());
@@ -304,6 +308,7 @@ protected:
     bool m_clearedByGC : 1 { false };
     bool m_clearedByVirtual : 1 { false };
     bool m_isSharedByUnlinkedCallSites : 1 { false };
+    bool m_isOnBehalfOfInstruction : 1 { false };
     unsigned m_callType : 4 { CallType::None }; // CallType
     unsigned m_type : 1; // Type
     unsigned m_mode : 3 { static_cast<unsigned>(Mode::Init) }; // Mode

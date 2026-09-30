@@ -129,6 +129,12 @@ namespace JSC::B3 {
     macro(NativeExecutable_asString, NativeExecutable::offsetOfAsString(), Mutability::Mutable) \
     macro(RegExp_flags, RegExp::offsetOfFlags(), Mutability::Mutable) \
     macro(RegExp_minimumSize, RegExp::offsetOfMinimumSize(), Mutability::Mutable) \
+    macro(PyIterator_a, PyIterator::offsetOfA(), Mutability::Mutable) \
+    macro(PyIterator_index, PyIterator::offsetOfIndex(), Mutability::Mutable) \
+    macro(PyIterator_kind, PyIterator::offsetOfKind(), Mutability::Mutable) \
+    macro(PyIterator_step, PyIterator::offsetOfStep(), Mutability::Mutable) \
+    macro(PyIterator_stop, PyIterator::offsetOfStop(), Mutability::Mutable) \
+    macro(PyTuple_length, PyTuple::offsetOfLength(), Mutability::Mutable) \
     macro(RegExpObject_regExpAndFlags, RegExpObject::offsetOfRegExpAndFlags(), Mutability::Mutable) \
     macro(RegExpObject_lastIndex, RegExpObject::offsetOfLastIndex(), Mutability::Mutable) \
     macro(ShadowChicken_Packet_callee, OBJECT_OFFSETOF(ShadowChicken::Packet, callee), Mutability::Mutable) \
@@ -218,6 +224,7 @@ namespace JSC::B3 {
     macro(indexedInt32Properties, 0, sizeof(EncodedJSValue)) \
     macro(indexedDoubleProperties, 0, sizeof(double)) \
     macro(indexedContiguousProperties, 0, sizeof(EncodedJSValue)) \
+    macro(PyTuple_values, PyTuple::offsetOfValues(), sizeof(EncodedJSValue)) \
     macro(scopedArgumentsTableArguments, 0, sizeof(int32_t)) \
     macro(singleCharacterStrings, 0, sizeof(JSString*)) \
     macro(structureTable, 0, sizeof(Structure*)) \

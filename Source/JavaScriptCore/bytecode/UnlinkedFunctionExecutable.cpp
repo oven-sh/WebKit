@@ -224,11 +224,8 @@ FunctionExecutable* UnlinkedFunctionExecutable::link(VM& vm, ScriptExecutable* t
 
     FunctionExecutable* result = FunctionExecutable::create(vm, topLevelExecutable, source, this, intrinsic, isInsideOrdinaryFunction);
     // Each time that code in Python is run there is a frame for it, that a frame object can be made for.
-    // FIXME: The FTL does not know Python's nodes yet.
-    if (source.provider()->isPython()) {
-        result->setNeverFTLOptimize(true);
+    if (source.provider()->isPython())
         result->setNeverInline(true);
-    }
     if (m_singletonHasBeenInvalidated)
         result->singleton().invalidate(vm, StringFireDetail("Singleton was previously invalidated"));
     if (overrideLineNumber)

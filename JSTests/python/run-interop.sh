@@ -18,6 +18,10 @@ cd "$(dirname "$0")/interop" || exit 2
 eager="--thresholdForJITAfterWarmUp=1 --thresholdForJITSoon=1"
 # And the DFG, of nearly everything and with next to nothing known of it, so that it is left again and again.
 eagerDFG="$eager --thresholdForOptimizeAfterWarmUp=5 --thresholdForOptimizeAfterLongWarmUp=5 --thresholdForOptimizeSoon=5 --useConcurrentJIT=0 --validateGraphAtEachPhase=1"
+# And the FTL. What has been run once is left alone: coming back from something counts for 15.
+eagerFTL="$eagerDFG --thresholdForFTLOptimizeAfterWarmUp=20 --thresholdForFTLOptimizeSoon=20"
+# And again with something known of what it compiles, which is when it leaves out the most.
+soonFTL="--thresholdForJITAfterWarmUp=10 --thresholdForJITSoon=10 --thresholdForOptimizeAfterWarmUp=100 --thresholdForOptimizeAfterLongWarmUp=100 --thresholdForOptimizeSoon=100 --thresholdForFTLOptimizeAfterWarmUp=1000 --thresholdForFTLOptimizeSoon=1000 --useConcurrentJIT=0 --validateGraphAtEachPhase=1"
 failures=0
 runs=0
 kept=${TMPDIR:-/tmp}/python-interop-that-failed
@@ -25,7 +29,7 @@ actual=$(mktemp) || exit 2
 trap 'rm -f "$actual"' EXIT
 for expected in "$@"; do
     test=${expected%.expected}
-    for options in "" "--useJIT=0" "$eager" "$eagerDFG" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
+    for options in "" "--useJIT=0" "$eager" "$eagerDFG" "$eagerFTL" "$soonFTL" "--useLOLJIT=1 $eager" "--collectContinuously=1"; do
         runs=$((runs + 1))
         case $test in
             *.mjs) module=-m ;;

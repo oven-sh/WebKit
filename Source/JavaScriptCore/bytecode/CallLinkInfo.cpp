@@ -510,6 +510,7 @@ void OptimizingCallLinkInfo::initializeFromDFGUnlinkedCallLinkInfo(VM&, const DF
     m_owner = owner;
     m_codeOrigin = unlinkedCallLinkInfo.codeOrigin;
     m_callType = unlinkedCallLinkInfo.callType;
+    m_isOnBehalfOfInstruction = unlinkedCallLinkInfo.isOnBehalfOfInstruction;
 }
 #endif
 

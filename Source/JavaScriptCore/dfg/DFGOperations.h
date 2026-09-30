@@ -446,6 +446,9 @@ JSC_DECLARE_JIT_OPERATION(operationPyBinaryOp, EncodedJSValue, (JSGlobalObject*,
 JSC_DECLARE_JIT_OPERATION(operationPyUnaryOp, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationPyCompareOp, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationPyToBool, size_t, (JSGlobalObject*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPyGetAttr, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uintptr_t));
+JSC_DECLARE_JIT_OPERATION(operationPySetAttr, void, (JSGlobalObject*, EncodedJSValue, uintptr_t, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationPyLoadMethod, UGPRPair, (JSGlobalObject*, EncodedJSValue, uintptr_t));
 JSC_DECLARE_JIT_OPERATION(operationPyDelAttr, void, (JSGlobalObject*, EncodedJSValue, uintptr_t));
 JSC_DECLARE_JIT_OPERATION(operationPyLoadGlobal, EncodedJSValue, (JSGlobalObject*, JSObject*, JSObject*, uintptr_t));
 JSC_DECLARE_JIT_OPERATION(operationPyGetItem, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, EncodedJSValue));

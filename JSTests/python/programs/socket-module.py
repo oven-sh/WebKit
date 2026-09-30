@@ -188,9 +188,12 @@ def interrupted(handler, f, after=0.1, least=None, most=60.0):
     old = signal.signal(signal.SIGALRM, handler)
     # What is to end the wait by raising is tried again until it does. A handler is run wherever the program has got to, and what it raises in a callback that comes of
     # collecting is shown and forgotten.
-    signal.setitimer(signal.ITIMER_REAL, after, after if handler is raiser else 0)
+    # It is from when the signal is asked for that it is so long in coming, so that is part of what is timed.
+    def ask_and_wait():
+        signal.setitimer(signal.ITIMER_REAL, after, after if handler is raiser else 0)
+        return f()
     try:
-        return timed(f, least=after if least is None else least, most=most)
+        return timed(ask_and_wait, least=after if least is None else least, most=most)
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, old)

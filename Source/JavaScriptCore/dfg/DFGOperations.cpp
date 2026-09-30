@@ -2557,6 +2557,39 @@ JSC_DEFINE_JIT_OPERATION(operationPyToBool, size_t, (JSGlobalObject* globalObjec
     OPERATION_RETURN(scope, static_cast<size_t>(Python::isTrue(globalObject, JSValue::decode(value))));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationPyGetAttr, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    OPERATION_RETURN(scope, JSValue::encode(Python::getAttribute(globalObject, JSValue::decode(base), CacheableIdentifier::createFromRawBits(rawCacheableIdentifier).uid())));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPySetAttr, void, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier, EncodedJSValue value))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    Python::setAttribute(globalObject, JSValue::decode(base), CacheableIdentifier::createFromRawBits(rawCacheableIdentifier).uid(), JSValue::decode(value));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationPyLoadMethod, UGPRPair, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
+{
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue self;
+    JSValue result = Python::loadMethod(globalObject, JSValue::decode(base), CacheableIdentifier::createFromRawBits(rawCacheableIdentifier).uid(), self);
+    OPERATION_RETURN(scope, makeUGPRPair(JSValue::encode(result), JSValue::encode(self)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationPyDelAttr, void, (JSGlobalObject* globalObject, EncodedJSValue base, uintptr_t rawCacheableIdentifier))
 {
     VM& vm = globalObject->vm();

@@ -91,6 +91,7 @@ ExitMode mayExitImpl(Graph& graph, Node* node, StateType& state)
     case Jump:
     case EntrySwitch:
     case Branch:
+    case CheckTierUpAtReturn:
     case Return:
     case Unreachable:
     case DoubleRep:

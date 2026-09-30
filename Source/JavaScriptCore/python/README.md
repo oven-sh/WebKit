@@ -387,7 +387,7 @@ subscripts, iteration, unpacking, globals, returning. One opcode serves a family
 the interpreter reads at compile time. Everything else is an existing opcode, or a call to a function of the runtime. Those are the
 properties of one object, which is a link time constant.
 
-In the interpreter `py_ret`, `py_load_global` and what looks at the one word (see "Being told of what is run") are done in place, and the rest call C++. Python code is not yet compiled by the DFG or FTL.
+In the interpreter `py_ret`, `py_load_global` and what looks at the one word (see "Being told of what is run") are done in place, and the rest call C++.
 
 ### The baseline JIT
 
@@ -507,7 +507,27 @@ so had nothing in it on the way back in; what is taken out of a tuple of results
 `programs/what-was-expected-and-then-was-not.py` runs each operator with one kind of thing until it has been compiled for that, and then gives it every kind. `programs/looking-at-what-is-run-often.py` looks at, and changes, what has been compiled: its variables,
 what an exception remembers of it, a frame that is kept, being told of what is run beginning in the middle of it. The runners have a configuration in which the DFG compiles nearly everything, with next to nothing known of it.
 
-Not yet: the FTL. Code in Python is not inlined. An attribute that has been found in more than one way is asked of the inline cache.
+Not yet: code in Python is not inlined. An attribute that has been found in more than one way is asked of the inline cache.
+
+### The FTL
+
+It has the graph that the DFG has, so what there is to it is what each of Python's nodes comes to in B3 (`compilePy...()` in `ftl/FTLLowerDFGToB3.cpp`), and what follows from the graph being in SSA.
+
+- **What the DFG does in line, it does in line**, test for test: going through a range, a list or a tuple, what is at a place in a list or a tuple, counting the frame. The fields have heaps of their own (`PyIterator_index`, `PyTuple_values` and so on in
+  `b3/B3AbstractHeapRepository.h`), so that B3 knows what a store to one can have changed.
+- **Attributes are asked of the inline caches that it has for JavaScript's properties**: `getById()` and `cachedPutById()`, with `AccessType::PyGetAttr` and `PySetAttr`. `PyLoadMethod` calls C++, since two things come of it and only its own handler knows that. By then it is only
+  what has been found in more than one way.
+- **Where a frame object looks.** `PutStackSinkingPhase` puts off storing a variable until something reads the stack, and whatever reads the world reads the registers that a frame object sees (`PreciseLocalClobberize`), so they are stored before each call and not otherwise.
+  Where they are is `localsOffset` further on than the graph says (`FTLCompile.cpp`).
+- **`%` and `//` put right which way they round with branches.** With `select` what comes next waits to be told which it was: 4.7ns and not 3.6 each time round a loop that goes by what is left over.
+- **A call that is part of what an instruction does is not the call that the instruction makes.** The FTL asks what the DFG's code found out about each call, by where in the bytecode it is. Where a class is called and the DFG has made the instance in line, the call that is there is to
+  `__init__`. Taken for what is known of the call to the class, that made two of what there was one of, and nothing was made in line any more. `Node::isCallOnBehalfOfInstruction()`, `CallLinkInfo::isOnBehalfOfInstruction()`.
+- `CheckTierUpAtReturn` comes after `PyLeave`, where nothing may leave for the baseline JIT. It never does.
+
+- **What is made and goes nowhere is not made**, an instance of a class of Python's like any object of JavaScript's. A variable is somewhere: it is where a frame object looks, so what it has is made before anything is called. It is only if nothing is called that it is not, and
+  then it is put together if the code is left for the baseline JIT. `CombinedLiveness` took what is live where a block ends in `Return` for what is live afterwards, which for JavaScript is nothing. `py_ret` looks at every variable, so nothing was ever left out.
+
+The runners have a configuration in which the FTL compiles nearly everything with next to nothing known of it, and one in which it compiles what has been run some tens of times, which is when it leaves out the most. `programs/what-need-not-be-made.py`
 
 ### Exceptions, tracebacks and frames
 

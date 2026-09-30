@@ -59,6 +59,8 @@
 #include "JSWrapperObject.h"
 #include "KeyAtomStringCache.h"
 #include "NumericStrings.h"
+#include "PyObjects.h"
+#include "PyTuple.h"
 #include "RegExpObject.h"
 #include "ScopedArguments.h"
 #include "ShadowChicken.h"

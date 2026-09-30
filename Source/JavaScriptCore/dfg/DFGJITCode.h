@@ -65,6 +65,7 @@ struct UnlinkedCallLinkInfo : JSC::UnlinkedCallLinkInfo {
 
     CodeOrigin codeOrigin;
     CallLinkInfo::CallType callType { CallLinkInfo::CallType::None };
+    bool isOnBehalfOfInstruction { false };
 };
 
 class LinkerIR {

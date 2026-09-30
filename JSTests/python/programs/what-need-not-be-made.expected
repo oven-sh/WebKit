@@ -1,0 +1,28 @@
+---- that goes nowhere
+attributes and no more => 7
+one in another => 3
+one that has itself => (True, 3)
+by two names => (True, True, 3, True, False)
+more than there is room for => 75
+in a loop => 800.0
+with __init__ => 7
+in a long loop => 80000000000.0
+---- that is looked for
+by what is called => (3, True, 'E', True)
+and changed => changed
+and something else put in its place => ('another', 'F')
+in a traceback => (3, True)
+in the traceback of what was called => (3, [3], 'E')
+---- that goes somewhere only now and then
+kept => (3372750, [(499, 998, 'E'), (999, 1998, 'E'), (1499, 2998, 'E')])
+with one attribute => [('x', 3), ('y', 1)]
+or another => [('x', 3), ('z', 2)]
+---- when something is not what it has always been
+something else to add => [(3.5, [('x', 3), ('y', 3.5)]), (1099511627779, [('x', 3), ('y', 1099511627779)]), (4, [('x', 3), ('y', 4)]), ('TypeError', "unsupported operand type(s) for +: 'int' and 'str'"), ('TypeError', "unsupported operand type(s) for +: 'int' and 'NoneType'"), (2147483648, [('x', 3), ('y', 2147483648)]), (3.5, [('x', 3), ('y', 3.5)]), (1099511627779, [('x', 3), ('y', 1099511627779)]), (4, [('x', 3), ('y', 4)]), ('TypeError', "unsupported operand type(s) for +: 'int' and 'str'"), ('TypeError', "unsupported operand type(s) for +: 'int' and 'NoneType'"), (2147483648, [('x', 3), ('y', 2147483648)])]
+to what goes nowhere => [(3.5, 3, 6, 0.5), (1099511627779, 3, 6, 1099511627776), (4, 3, 6, True), ('TypeError', "unsupported operand type(s) for +: 'int' and 'str'"), ('TypeError', "unsupported operand type(s) for +: 'int' and 'NoneType'"), (2147483648, 3, 6, 2147483645), (3.5, 3, 6, 0.5), (1099511627779, 3, 6, 1099511627776), (4, 3, 6, True), ('TypeError', "unsupported operand type(s) for +: 'int' and 'str'"), ('TypeError', "unsupported operand type(s) for +: 'int' and 'NoneType'"), (2147483648, 3, 6, 2147483645)]
+---- what else can be done to it
+as a dictionary => (4, [('x', 3), ('y', 4)], True)
+of another class => ("F([('x', 3)])", 'F')
+with an attribute taken away => (['y'], False, 'gone')
+with one that is not there => ('AttributeError', "'E' object has no attribute 'y'")
+by name => (3, 3)

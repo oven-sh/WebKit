@@ -1282,6 +1282,18 @@ public:
 
     // A Python::BinaryOperator with Python::inPlaceOperatorFlag or without, a Python::UnaryOperator or a Python::ComparisonOperator.
     bool hasPythonOperator() { return op() == PyBinaryOp || op() == PyUnaryOp || op() == PyCompareOp; }
+    // A call that is part of what the instruction does, and is not the call that the instruction makes. So what is found out about it says nothing of that one.
+    bool isCallOnBehalfOfInstruction()
+    {
+        return op() == Call && (m_flags & NodeMiscFlag1);
+    }
+
+    void setIsCallOnBehalfOfInstruction()
+    {
+        ASSERT(op() == Call);
+        m_flags |= NodeMiscFlag1;
+    }
+
     unsigned pythonOperator()
     {
         ASSERT(hasPythonOperator());

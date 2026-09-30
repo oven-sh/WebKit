@@ -2301,11 +2301,15 @@ void CodeBlock::getICStatusMap(const ConcurrentJSLocker&, ICStatusMap& result)
         if (JSC::JITCode::isOptimizingJIT(jitType())) {
 #if ENABLE(DFG_JIT)
             DFG::CommonData* dfgCommon = m_jitCode->dfgCommon();
-            for (auto* callLinkInfo : dfgCommon->m_callLinkInfos)
-                result.add(callLinkInfo->codeOrigin(), ICStatus()).iterator->value.callLinkInfo = callLinkInfo;
+            for (auto* callLinkInfo : dfgCommon->m_callLinkInfos) {
+                if (!callLinkInfo->isOnBehalfOfInstruction())
+                    result.add(callLinkInfo->codeOrigin(), ICStatus()).iterator->value.callLinkInfo = callLinkInfo;
+            }
             if (auto* jitData = dfgJITData()) {
-                for (auto& callLinkInfo : jitData->callLinkInfos())
-                    result.add(callLinkInfo.codeOrigin(), ICStatus()).iterator->value.callLinkInfo = &callLinkInfo;
+                for (auto& callLinkInfo : jitData->callLinkInfos()) {
+                    if (!callLinkInfo.isOnBehalfOfInstruction())
+                        result.add(callLinkInfo.codeOrigin(), ICStatus()).iterator->value.callLinkInfo = &callLinkInfo;
+                }
             }
             if (auto* statuses = dfgCommon->recordedStatuses.get()) {
                 for (auto& pair : statuses->calls)

@@ -87,7 +87,10 @@ CombinedLiveness::CombinedLiveness(Graph& graph)
         // Unreachable
         //
         // And things may definitely be live in bytecode at that point in the program.
-        if (!block->numSuccessors())
+        //
+        // What returns from code in Python looks at all its variables, for a frame object to have. That is before it returns, and
+        // here it is what is live afterwards that is wanted.
+        if (!block->numSuccessors() && block->last()->op() != Return)
             liveAtTail[block] = bytecodeLivenessAtTerminal(graph, block);
     }
     
