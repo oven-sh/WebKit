@@ -191,8 +191,9 @@ RefPtr<StringImpl> JSRopeString::tryResolveRopeIntoExtensibleBuffer(uint8_t* sta
             buffer = WTF::move(existing);
         else {
             // This is at least the second time round, so it is worth leaving room for the next. Until then there is none to spare, so
-            // that appending once costs no memory.
-            capacity = std::max<uint64_t>(length, std::min<uint64_t>(static_cast<uint64_t>(existing->capacity()) * 2, String::MaxLength));
+            // that appending once costs no memory. The room is in proportion to the string and not to the buffer that it was in: that
+            // one need not have been full, if something else was written after the string, and then each would be twice the last.
+            capacity = std::min<uint64_t>(static_cast<uint64_t>(length) * 2, String::MaxLength);
             if (!StringImpl::isValidLength<CharacterType>(capacity))
                 capacity = length;
         }

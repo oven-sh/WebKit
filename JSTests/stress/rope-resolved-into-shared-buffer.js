@@ -195,3 +195,23 @@ for (const unit of ["a", "é", "中", "😀"]) {
     }
     check({ string: s, units, start: "" }, "narrow to wide");
 }
+
+// A string that has been appended to already is appended to again, so that the second result has to have a buffer of its own. Then the same is done to that one, and so on.
+// Each buffer has room in proportion to the string that is put in it. If it were in proportion to the buffer before it, it would double each time, though the strings hardly grow.
+{
+    let s = "a".repeat(long) + "b";
+    resolve(s);
+    const rounds = 40;
+    for (let i = 0; i < rounds; ++i) {
+        // This goes after it, where it is kept.
+        resolve(s + "x");
+        // So this cannot.
+        s += "y";
+        resolve(s);
+    }
+    if (s !== "a".repeat(long) + "b" + "y".repeat(rounds))
+        throw new Error("appended to twice, over and over");
+    fullGC();
+    if (gcHeapSize() > 100 * long)
+        throw new Error("a string of " + s.length + " characters is kept, and the heap has " + gcHeapSize() + " bytes");
+}
