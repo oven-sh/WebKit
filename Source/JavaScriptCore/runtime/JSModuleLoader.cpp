@@ -349,7 +349,7 @@ JSArray* JSModuleLoader::dependencyKeysIfEvaluated(JSGlobalObject* globalObject,
 ModuleRegistryEntry* JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, SourceCode&& sourceCode)
 {
     ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
-    if (entry->status() == ModuleRegistryEntry::Status::New)
+    if (entry->isWaitingForFetch())
         entry->provideFetch(globalObject, WTF::move(sourceCode)); // can throw
     return entry;
 }
@@ -357,7 +357,7 @@ ModuleRegistryEntry* JSModuleLoader::provideFetch(JSGlobalObject* globalObject, 
 ModuleRegistryEntry* JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, JSSourceCode* jsSourceCode)
 {
     ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
-    if (entry->status() == ModuleRegistryEntry::Status::New)
+    if (entry->isWaitingForFetch())
         entry->provideFetch(globalObject, jsSourceCode); // can throw
     return entry;
 }

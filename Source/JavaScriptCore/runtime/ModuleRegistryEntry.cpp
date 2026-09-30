@@ -236,14 +236,22 @@ void ModuleRegistryEntry::provideFetch(JSGlobalObject* globalObject, JSSourceCod
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(m_status == Status::New);
+    ASSERT(isWaitingForFetch());
 
     ensureModulePromise(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
 
     scope.release();
-    m_status = Status::Fetching;
-    m_fetchPromise->fulfill(vm, jsSourceCode);
+    // A fetch that is under way was pipeFrom()'d into the promise, which took the guarded fulfill() for itself.
+    if (std::exchange(m_status, Status::Fetching) == Status::Fetching)
+        m_fetchPromise->fulfillPromise(vm, jsSourceCode);
+    else
+        m_fetchPromise->fulfill(vm, jsSourceCode);
+}
+
+bool ModuleRegistryEntry::isWaitingForFetch() const
+{
+    return m_status == Status::New || (m_status == Status::Fetching && m_fetchPromise && m_fetchPromise->status() == JSPromise::Status::Pending);
 }
 
 #if USE(BUN_JSC_ADDITIONS)
