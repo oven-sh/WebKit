@@ -271,7 +271,12 @@ private:
     static bool mayBeOverridden(ASCIILiteral nameOfClass, Node* read);
     // TEMPORARY: BUN_AOT_CALLBACKS_SPELLED_OUT=1, as it used to be.
     static bool callbacksAreCompact() { static const bool result = [] { const char* text = getenv("BUN_AOT_CALLBACKS_SPELLED_OUT"); return !text || strcmp(text, "1"); }(); return result; }
-    bool isCompact() const { return ((!m_block->isInLoop || (m_block->isOnlyInLoopOfBuiltin && callbacksAreCompact())) && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
+    // Whether what there is a stub for is done by the stub. It is. What is in a loop, or in a function that calls itself, used to be spelled out where it is, every case of it, on the
+    // grounds that it is run over and over: but that it is in a loop is all that was known, and of a big program that was 12MB of code (a tenth) for nothing that could be measured, in
+    // instructions or in time. Where the types are known there is nothing to spell out: what is done is done on the spot either way.
+    // TEMPORARY: BUN_AOT_SPELLS_OUT_LOOPS=1, as it used to be, until what that is for is gone.
+    static bool spellsOutLoops() { static const bool result = [] { const char* text = getenv("BUN_AOT_SPELLS_OUT_LOOPS"); return text && !strcmp(text, "1"); }(); return result; }
+    bool isCompact() const { return !spellsOutLoops() || ((!m_block->isInLoop || (m_block->isOnlyInLoopOfBuiltin && callbacksAreCompact())) && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     LValue differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written);
     // The characters of a string, and how many, if they are narrow and are to be had for the looking: it is all in one piece, or is a slice of one that is (which is left a slice).

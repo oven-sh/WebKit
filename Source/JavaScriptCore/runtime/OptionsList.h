@@ -157,7 +157,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Unsigned, aotThreads, 0, Normal, "How many threads compile an image. Zero: as many as there are processors."_s) \
     v(Unsigned, aotLimit, 0, Normal, "If not zero, the static compiler only compiles this many functions."_s) \
     v(Unsigned, aotDisableFastPaths, 0, Normal, "For debugging the static compiler. 1: get_by_id cache, 2: put_by_id replace, 4: put_by_id transition, 8: get_by_val, 16: put_by_val, 32: scope caches, 64: closure variable stores, 128: tail calls (made as calls), 256: get_by_id on the prototype chain, 512: put_by_id transitions that are not direct, 1024: the megamorphic cache, 2048: allocation without the runtime, 4096: the equality thunks., 8192: literals made all at once (they are given what they have bit by bit, as when the register lives in memory)"_s) \
-    v(Bool, aotSplitLoops, true, Normal, "The static compiler makes two copies of every loop: one that only does what is quick, and leaves for the other when it cannot."_s) \
+    v(Bool, aotSplitLoops, false, Normal, "The static compiler makes two copies of every loop: one that only does what is quick, and leaves for the other when it cannot."_s) \
     v(Bool, staticHeapGuardsShortFunctionExecutables, false, Normal, "For testing. Each FunctionExecutable in the short form is the last thing on a page, and there is nothing at the addresses of the page after it: whatever takes one for more than it is crashes."_s) \
     v(Bool, staticHeapMakesShortFunctionExecutables, true, Normal, "In a static heap that goes without bytecode, the FunctionExecutable of a function that there is nothing out of the ordinary to say about is in the short form."_s) \
     v(Bool, aotCallsBoundFunctionsWithStub, true, Normal, "Where there is no JIT to make a thunk for it, a bound function whose target is a function is called by a stub that makes the frame of the target, and not by way of C++."_s) \
@@ -183,7 +183,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, aotInlines, true, Normal, "A call of a function that is proven to be the callee is replaced by what the function does, if that is little or if it is the only call there is."_s) \
     v(Bool, aotInlinesBuiltins, true, Normal, "aotInlines, aotCompilesBuiltins, useImmutableIntrinsics: likewise a call of a method by the name of one of Array.prototype's that is passed a closure made on the spot, after a check that it is that one."_s) \
     v(Bool, aotCallsMethodsDirectly, true, Normal, "useImmutableIntrinsics: a call of a method by the name of one of String.prototype's, on what turns out to be a string, with what the method takes, goes straight to the operation that the other tiers have for it: nothing is looked up, and no frame is made."_s) \
-    v(Unsigned, aotInlinesUpTo, 60, Normal, "aotInlines: how many bytes of bytecode a function may have that is called from several places."_s) \
+    v(Unsigned, aotInlinesUpTo, 60, Normal, "aotInlines: how many bytes of bytecode a function may have that is called from several places, to become part of what calls it in a loop."_s) \
+    v(Unsigned, aotInlinesOutsideLoopsUpTo, 18, Normal, "aotInlines: and how many where it is not called in a loop. (About what a call comes to.)"_s) \
     v(Unsigned, aotInlinesOnlyCallUpTo, 1200, Normal, "aotInlines: how many if it is called from one place, and by nothing else."_s) \
     v(Unsigned, aotInlinesAtMost, 4000, Normal, "aotInlines: how many bytes of bytecode one function takes over in all."_s) \
     v(Bool, aotVerifiesFacts, false, Normal, "For testing the compiler: wherever a value is taken to be of some type without being looked at, it is looked at, and if it is not of that type the process ends."_s) \

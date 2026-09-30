@@ -107,9 +107,7 @@ public:
             return size <= Options::aotInlinesOnlyCallUpTo();
         // Every copy of it is that much more code, unless it is no longer than the call. That is worth it where it may be run over and over, which is all
         // that there is to go by. (In a big program: 5.4MB for what is between 30 and 60 bytes, and 0.07MB for what is up to 18.)
-        // TEMPORARY: to be an option.
-        static const unsigned outsideLoops = getenv("BUN_AOT_INLINES_OUTSIDE_LOOPS_UP_TO") ? atoi(getenv("BUN_AOT_INLINES_OUTSIDE_LOOPS_UP_TO")) : 18;
-        return size <= (isCalledInLoop ? Options::aotInlinesUpTo() : std::min(outsideLoops, Options::aotInlinesUpTo()));
+        return size <= (isCalledInLoop ? Options::aotInlinesUpTo() : std::min(Options::aotInlinesOutsideLoopsUpTo(), Options::aotInlinesUpTo()));
     }
 
     // Plain from its bytecode.
