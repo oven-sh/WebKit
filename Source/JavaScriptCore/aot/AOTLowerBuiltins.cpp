@@ -29,7 +29,7 @@ static const char* pathOfOverriddenMethods()
 }
 
 // Whether some class of the program that extends that one may have the method for itself. (Without the file: for all anybody knows.)
-static bool mayBeOverridden(ASCIILiteral nameOfClass, Node* read)
+bool Lowering::mayBeOverridden(ASCIILiteral nameOfClass, Node* read)
 {
     static const NeverDestroyed<std::optional<UncheckedKeyHashSet<String>>> all = [] () -> std::optional<UncheckedKeyHashSet<String>> {
         const char* path = pathOfOverriddenMethods();
@@ -48,9 +48,14 @@ static bool mayBeOverridden(ASCIILiteral nameOfClass, Node* read)
     if (!all.get() || !read || !read->isBytecode(op_get_by_id))
         return true;
     UniquedStringImpl* name = read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
-    if (name->isSymbol())
-        return true;
-    return all.get()->contains(makeString(nameOfClass, '.', StringView(name))) || all.get()->contains(makeString(nameOfClass, ".*"_s));
+    // (Symbol.iterator goes by @@iterator there.)
+    StringView text(name);
+    if (name->isSymbol()) {
+        if (!text.startsWith("Symbol."_s))
+            return true;
+        return all.get()->contains(makeString(nameOfClass, ".@@"_s, text.substring(7))) || all.get()->contains(makeString(nameOfClass, ".*"_s));
+    }
+    return all.get()->contains(makeString(nameOfClass, '.', text)) || all.get()->contains(makeString(nameOfClass, ".*"_s));
 }
 
 // Null: it is, for certain.
@@ -518,7 +523,7 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (count != 2 || !mustBeObject(1))
             return false;
         begin();
-        return finishBoolean(isYes(vmCall(node, Int64, Entry::operationHasOwnProperty, m_globalObject, arguments[1], arguments[2])));
+        return finishBoolean(isYes(vmCall(node, Int64, Entry::operationAOTHasOwnProperty, m_globalObject, arguments[1], arguments[2])));
     case Builtin::DateNow:
         begin();
         return finish(plainCall(Double, Entry::operationDateNow, m_globalObject), Rep::Double);

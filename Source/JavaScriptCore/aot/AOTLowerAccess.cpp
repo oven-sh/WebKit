@@ -269,8 +269,10 @@ bool Lowering::isThisOfWhatAnybodyMayCall(Node* node)
 
 void Lowering::assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family)
 {
-    // Only what is born gets to be of the type: it is taken at its word.
-    if (!isThisOfWhatAnybodyMayCall(valueNode))
+    // Only what is born gets to be of the type, going by the text of the program. Whoever gets here has not been able to prove it, so it is looked into: what code without types puts into
+    // an array that it was handed, say, is not in that text. TEMPORARY: BUN_AOT_TAKES_TYPES_AT_THEIR_WORD=1, as it used to be, for finding out what this costs.
+    static const bool takesTypesAtTheirWord = [] { const char* text = getenv("BUN_AOT_TAKES_TYPES_AT_THEIR_WORD"); return text && !strcmp(text, "1"); }();
+    if (takesTypesAtTheirWord && !isThisOfWhatAnybodyMayCall(valueNode))
         return;
     LBasicBlock isNot = newColdBlock();
     LBasicBlock is = m_out.newBlock();
@@ -576,14 +578,24 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     LValue word = m_out.load64(slotWord(slot, 0));
     m_out.branch(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), lowHalf(m_out, word)), usually(rightStructure), rarely(slowCase));
 
-    // Calling a getter is the stub's business.
     m_out.appendTo(rightStructure, hit);
-    m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter) << 32)), usually(hit), rarely(slowCase));
+    ValueFromBlock fastResult;
+    if (stub) {
+        // Whatever takes more than a load from the base itself is the stub's business: a getter, what is inherited, what is out of line.
+        m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter | Slot::isIntricate) << 32)), usually(hit), rarely(slowCase));
+        m_out.appendTo(hit, slowCase);
+        LValue location = m_out.bitAnd(m_out.lShr(word, m_out.constInt32(32)), m_out.constInt64(Slot::offsetMask));
+        fastResult = m_out.anchor(m_out.load64(TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(base, m_out.shl(location, m_out.constInt32(3))))));
+    } else {
+        m_out.branch(m_out.testIsZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isGetter) << 32)), usually(hit), rarely(slowCase));
 
-    // In the base, or in an object that every base of this structure inherits it from (see cacheGetById()).
-    m_out.appendTo(hit, slowCase);
-    LValue holder = m_out.loadPtr(slotWord(slot, 1));
-    ValueFromBlock fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(m_out.notNull(holder), holder, base), word)));
+        // In the base, or in an object that every base of this structure inherits it from (see cacheGetById()).
+        // (Unless there is more to it than a place in the base, what is there is the name: Slot::name.)
+        m_out.appendTo(hit, slowCase);
+        LValue holder = m_out.loadPtr(slotWord(slot, 1));
+        LValue isElsewhere = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIntricate) << 32)), m_out.notNull(holder));
+        fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isElsewhere, holder, base), word)));
+    }
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);

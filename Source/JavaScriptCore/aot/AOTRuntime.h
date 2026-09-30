@@ -145,7 +145,6 @@ namespace AOT {
     v(operationGetPrototypeOfObject) \
     v(operationObjectCreate) \
     v(operationObjectAssignUntyped) \
-    v(operationHasOwnProperty) \
     v(operationSameValue) \
     v(operationArrayShift) \
     v(operationArrayUnshift) \
@@ -302,6 +301,7 @@ struct Slot {
     uint32_t offset; // Where the property is (see locationOfProperty()), or whatever the kind of cache wants.
     union {
         void* pointer; // Global variable caches: the address of the variable. Prototype hits: the holder.
+        UniquedStringImpl* name; // op_get_by_id, unless isIntricate: what is read, if the stub has found that out. It looks in the megamorphic cache with it.
         struct {
             StructureID newStructureID; // Transitions.
             uint32_t held; // op_put_by_id, if not zero: PutPropertySlot::held(). Only that may be stored.
@@ -475,6 +475,9 @@ struct Instance {
     const uint32_t* granulesOfCode;
     const uint32_t* startsOfFunctionsAfterFirst;
     // (What code gets at comes first, where a load reaches it as it is. What is big, and is only looked at by the runtime, comes last.)
+    // %TypedArray%.prototype's getter of `length`, once a slot has been filled with it (tryCacheGetById()): the stubs do what it does themselves. The prototype keeps it.
+    JSCell* getterOfLengthOfTypedArrays { nullptr };
+    static constexpr ptrdiff_t offsetOfGetterOfLengthOfTypedArrays() { return OBJECT_OFFSETOF(Instance, getterOfLengthOfTypedArrays); }
     const void* constantsOfProgram; // EncodedJSValue[]: see NumbersOfConstants. Code that goes by it is not given to a realm that has none.
     uint32_t missesForEightSlots; // Options::aotMissesForEightSlots()
     uint32_t missesToSpare;
@@ -577,6 +580,8 @@ struct Instance {
     enum ShapeCount : unsigned { ReadHas, ReadLacks, ReadOther, ReadNotCell, WriteHas, WriteOther, LiteralWithLayout, LiteralWithout, ReadUntyped, WriteUntyped, ConstructedWithLayout, ConstructedWithout, AssertionMade, ServedWithoutAssertion, ExitTaken, AssertionRepeated, TakenOutAtBirth, ExitBaseIsNoCell, ExitBaseIsNoPlainObject, ExitBaseWasNeverBorn, ExitBaseWasNeverBornAndHasNoRoom, ExitBaseWasBornOtherwise, ExitSlotIsEmpty, ExitOther, Adopted, NumberOfShapeCounts };
     uint64_t shapeCounts[NumberOfShapeCounts] { };
     uint64_t readsForReason[1024] { };
+    uint64_t pathsOfStubs[32] { }; // TEMPORARY: BUN_AOT_COUNTS_STUB_PATHS
+    static constexpr ptrdiff_t offsetOfPathsOfStubs() { return OBJECT_OFFSETOF(Instance, pathsOfStubs); }
     static constexpr unsigned numberOfCountsOfSites = 8192; // TEMPORARY-SITE-COUNTS: kindOfSite()
     uint64_t countsOfSites[numberOfCountsOfSites] { };
     static constexpr ptrdiff_t offsetOfCountsOfSites() { return OBJECT_OFFSETOF(Instance, countsOfSites); }

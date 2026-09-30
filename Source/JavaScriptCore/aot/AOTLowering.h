@@ -267,6 +267,8 @@ private:
     // TEMPORARY: for saying what the code's bytes went to. What is made for the node from here on is put down to this way of lowering it (1 to 7).
     unsigned m_tagOfOrigin { 0 };
     void isLoweredThisWay(unsigned way) { m_out.setOrigin(std::bit_cast<DFG::Node*>(static_cast<uintptr_t>(m_tagOfOrigin | way << 14) << 4)); }
+    // Whether some class of the program that extends that one of the language's may have for itself what is read (BUN_AOT_OVERRIDDEN_METHODS).
+    static bool mayBeOverridden(ASCIILiteral nameOfClass, Node* read);
     // TEMPORARY: BUN_AOT_CALLBACKS_SPELLED_OUT=1, as it used to be.
     static bool callbacksAreCompact() { static const bool result = [] { const char* text = getenv("BUN_AOT_CALLBACKS_SPELLED_OUT"); return !text || strcmp(text, "1"); }(); return result; }
     bool isCompact() const { return ((!m_block->isInLoop || (m_block->isOnlyInLoopOfBuiltin && callbacksAreCompact())) && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }

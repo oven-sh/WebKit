@@ -696,6 +696,9 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     // from Array.prototype, whose own cannot be changed. Of any other array it is asked.
     if (Node* read = left->isElided ? left : right->isElided ? right : nullptr) {
         RELEASE_ASSERT(strict && Graph::isReadOfIteratorMethodOfArray(read));
+        // No class has one of its own, and Array.prototype's stays what it is. (What has been done to the one array is not reckoned with.)
+        if (!mayBeOverridden("Array"_s, read))
+            return m_out.booleanTrue;
         LValue array = lowJSValue(read->use(read->as<OpGetById>().m_base));
         LBasicBlock isSomeOtherArray = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();

@@ -350,6 +350,7 @@ function at(index)
 // is a function: so there is nothing to convert, nothing to check and no thisArg. In these, and only as that compiler has it, what is read where there is no element is empty
 // (Graph::readsElementsOrEmpty): so whether there is one need not be asked apart.
 
+@overriddenName="forEach"
 function forEachOfArray(callback)
 {
     "use strict";
@@ -363,6 +364,35 @@ function forEachOfArray(callback)
     }
 }
 
+@overriddenName="map"
+function mapOfArrayForEffect(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="filter"
+function filterOfArrayForEffect(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="map"
 function mapOfArray(callback)
 {
     "use strict";
@@ -378,6 +408,7 @@ function mapOfArray(callback)
     return result;
 }
 
+@overriddenName="filter"
 function filterOfArray(callback)
 {
     "use strict";
@@ -397,6 +428,7 @@ function filterOfArray(callback)
     return result;
 }
 
+@overriddenName="some"
 function someOfArray(callback)
 {
     "use strict";
@@ -412,6 +444,7 @@ function someOfArray(callback)
     return false;
 }
 
+@overriddenName="every"
 function everyOfArray(callback)
 {
     "use strict";
@@ -427,6 +460,7 @@ function everyOfArray(callback)
     return true;
 }
 
+@overriddenName="reduce"
 function reduceOfArray(callback, initialValue)
 {
     "use strict";

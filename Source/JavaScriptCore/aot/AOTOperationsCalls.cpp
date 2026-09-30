@@ -20,6 +20,7 @@
 #include "JSArrayIteratorInlines.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSAsyncGenerator.h"
+#include "JSBoundFunctionInlines.h"
 #include "JSMap.h"
 #include "JSMapIterator.h"
 #include "JSMicrotask.h"
@@ -389,6 +390,123 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
 }
 
 // For a stub that is about to fill a slot: didFillSlot(), but for the epoch.
+// TEMPORARY: BUN_AOT_COUNTS_STUB_PATHS. By the code, not the closure: () => mod[key] is one function however many there are of it.
+static UncheckedKeyHashMap<ExecutableBase*, uint64_t>& gettersCalled()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<ExecutableBase*, uint64_t>> map;
+    return map.get();
+}
+
+static UncheckedKeyHashMap<String, uint64_t>& boundGettersCalled()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<String, uint64_t>> map;
+    return map.get();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteGetter, void, (JSCell* getter))
+{
+    // (__toESM: get: __accessProp.bind(mod, key).)
+    if (auto* bound = dynamicDowncast<JSBoundFunction>(getter)) {
+        String key = "?"_s;
+        bound->forEachBoundArg([&](JSValue argument) {
+            if (argument.isString())
+                key = asString(argument)->tryGetValue();
+            return IterationStatus::Done;
+        });
+        boundGettersCalled().add(key, 0).iterator->value++;
+        return;
+    }
+    if (auto* function = dynamicDowncast<JSFunction>(getter))
+        gettersCalled().add(function->executable(), 0).iterator->value++;
+}
+
+// TEMPORARY. By site: how often each structure has come by, and whether the property was the object's own and in it.
+struct ProbesOfSite {
+    UncheckedKeyHashMap<uint32_t, uint64_t> byStructure;
+    uint64_t ownAndInline { 0 };
+    uint64_t all { 0 };
+};
+static UncheckedKeyHashMap<Slot*, ProbesOfSite>& probes()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<Slot*, ProbesOfSite>> map;
+    return map.get();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteProbe, void, (JSCell* base, Slot* slot))
+{
+    auto& site = probes().add(slot, ProbesOfSite { }).iterator->value;
+    site.all++;
+    site.byStructure.add(base->structureID().bits(), 0).iterator->value++;
+    unsigned attributes;
+    PropertyOffset offset = slot->name ? base->structure()->getConcurrently(slot->name, attributes) : invalidOffset;
+    site.ownAndInline += isValidOffset(offset) && isInlineOffset(offset);
+}
+
+static UncheckedKeyHashMap<ExecutableBase*, uint64_t>& nativesCalled()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<ExecutableBase*, uint64_t>> map;
+    return map.get();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteNative, void, (JSCell* callee))
+{
+    if (auto* function = dynamicDowncast<JSFunction>(callee))
+        nativesCalled().add(function->executable(), 0).iterator->value++;
+}
+
+static UncheckedKeyHashMap<FunctionExecutable*, uint64_t>& closuresMade()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<FunctionExecutable*, uint64_t>> map;
+    return map.get();
+}
+
+void noteClosureMade(FunctionExecutable* executable)
+{
+    closuresMade().add(executable, 0).iterator->value++;
+}
+
+void dumpGettersCalled(PrintStream& out)
+{
+    for (auto& [executable, count] : nativesCalled()) {
+        if (auto* native = dynamicDowncast<NativeExecutable>(executable))
+            out.println("NATIVE\t", count, "\t", native->name());
+    }
+    for (auto& [function, count] : closuresMade())
+        out.println("CLOSURE\t", count, "\t", function->name().string(), " @", function->firstLine(), ":", function->startColumn(), " params ", function->parameterCount(), " ", function->source().provider()->sourceURL());
+    {
+        // How many probes come from sites that have seen so many structures; and how many the two structures a site sees most would have accounted for.
+        constexpr unsigned most = 9;
+        uint64_t sites[most + 1] { }, all[most + 1] { }, byTopOne[most + 1] { }, byTopTwo[most + 1] { }, byTopFour[most + 1] { }, own[most + 1] { };
+        for (auto& [slot, site] : probes()) {
+            unsigned n = std::min<unsigned>(site.byStructure.size(), most);
+            Vector<uint64_t> counts;
+            for (auto& entry : site.byStructure)
+                counts.append(entry.value);
+            std::ranges::sort(counts, std::greater<uint64_t>());
+            sites[n]++;
+            all[n] += site.all;
+            own[n] += site.ownAndInline;
+            for (unsigned i = 0; i < counts.size() && i < 4; ++i) {
+                byTopFour[n] += counts[i];
+                if (i < 2)
+                    byTopTwo[n] += counts[i];
+                if (i < 1)
+                    byTopOne[n] += counts[i];
+            }
+        }
+        for (unsigned n = 1; n <= most; ++n)
+            out.println("PROBES\t", all[n], "\tsites that saw ", n, n == most ? " or more" : "", " structures: ", sites[n], " sites; own and inline ", own[n], "; the commonest structure ", byTopOne[n], ", two ", byTopTwo[n], ", four ", byTopFour[n]);
+    }
+    for (auto& [executable, count] : gettersCalled()) {
+        if (auto* function = dynamicDowncast<FunctionExecutable>(executable))
+            out.println("GETTER\t", count, "\t", function->name().string(), " @", function->sourceID(), ":", function->firstLine(), ":", function->startColumn(), " params ", function->parameterCount(), " ", function->source().provider()->sourceURL(), " ", function->source().view().left(150).utf8());
+        else
+            out.println("GETTER\t", count, "\t(native) ", uncheckedDowncast<NativeExecutable>(executable)->name());
+    }
+    for (auto& [key, count] : boundGettersCalled())
+        out.println("GETTER\t", count, "\tbound: ", key);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
 {
     if (!data->hasBeenFilledSinceLastCollection)

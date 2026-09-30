@@ -1445,6 +1445,13 @@ void Instance::dumpSlotStatistics(PrintStream& out)
             if (readsForReason[i])
                 out.println("SHAPECOUNT\t", readsForReason[i], "\treason ", i);
         }
+        static constexpr ASCIILiteral paths[] = { "calls"_s, "hit: in the object itself"_s, "hit: out of line or inherited"_s, "hit: a getter"_s, "miss: no cell"_s, "miss: the slot is nobody's"_s, "miss: the slot is empty"_s, "miss: the slot has another structure"_s,
+            "table: in the object itself"_s, "table: out of line"_s, "table: not its own, so undefined"_s, "not settled by the table"_s, "megamorphic cache asked"_s, "the operation is called"_s, "miss: the slot has another structure, and has given up"_s, "table: the structure is of no known shape"_s, "megamorphic cache asked, by the name in the slot"_s, "a slot is given over to the name"_s, "the length of a typed array"_s, ""_s, "KEYED calls"_s, "KEYED an element of an array"_s, "KEYED an element of a typed array"_s, "KEYED a name: megamorphic cache asked"_s, "KEYED the operation is called"_s };
+        for (unsigned i = 0; i < std::size(paths); ++i) {
+            if (pathsOfStubs[i])
+                out.println("STUBPATH\t", pathsOfStubs[i], "\t", paths[i]);
+        }
+        dumpGettersCalled(out);
     }
     // TEMPORARY-RESIDENCY: how much of what is only there once it is touched has been.
     {

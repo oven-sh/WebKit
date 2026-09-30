@@ -119,6 +119,10 @@ struct Slot;
     v(operationAOTLinkFunction) \
     v(operationAOTConstructByCalling) \
     v(operationAOTNoteFilled) \
+    v(operationAOTHasOwnProperty) \
+    v(operationAOTNoteGetter) \
+    v(operationAOTNoteProbe) \
+    v(operationAOTNoteNative) \
     v(operationAOTGiveData) \
     v(operationAOTCallDirectEval) \
 
@@ -253,6 +257,12 @@ JSC_DECLARE_JIT_OPERATION(operationAOTLoadVarargs, void, (JSGlobalObject*, Encod
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructByCalling, UGPRPair, (CallFrame*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, void* addressInFunction));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
+JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (JSGlobalObject*, JSObject*, EncodedJSValue));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteGetter, void, (JSCell*)); // TEMPORARY
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteProbe, void, (JSCell*, Slot*)); // TEMPORARY
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteNative, void, (JSCell*)); // TEMPORARY
+JS_EXPORT_PRIVATE void dumpGettersCalled(PrintStream&); // TEMPORARY
+void noteClosureMade(FunctionExecutable*); // TEMPORARY
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGiveData, void, (Instance*, uint32_t index));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (JSGlobalObject*, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));
 

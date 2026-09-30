@@ -509,9 +509,9 @@ private:
             return BuiltinCodeIndex::arrayPrototypeForEachOfArrayCode;
         // (An array that nobody wants is not made.)
         if (method == "map"_s)
-            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeMapOfArrayCode : BuiltinCodeIndex::arrayPrototypeForEachOfArrayCode;
+            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeMapOfArrayCode : BuiltinCodeIndex::arrayPrototypeMapOfArrayForEffectCode;
         if (method == "filter"_s)
-            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeFilterOfArrayCode : BuiltinCodeIndex::arrayPrototypeForEachOfArrayCode;
+            return resultIsWanted ? BuiltinCodeIndex::arrayPrototypeFilterOfArrayCode : BuiltinCodeIndex::arrayPrototypeFilterOfArrayForEffectCode;
         if (method == "some"_s)
             return BuiltinCodeIndex::arrayPrototypeSomeOfArrayCode;
         if (method == "every"_s)

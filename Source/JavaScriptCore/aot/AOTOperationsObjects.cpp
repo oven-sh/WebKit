@@ -658,10 +658,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (JSGlobalObject* gl
         result = JSAsyncGeneratorFunction::create(vm, globalObject, executable, environment);
         break;
     }
+    // TEMPORARY: BUN_AOT_COUNTS_CLOSURES.
+    static const bool counts = [] { const char* text = getenv("BUN_AOT_COUNTS_CLOSURES"); return text && !strcmp(text, "1"); }();
+    if (counts) [[unlikely]] {
+        noteClosureMade(executable);
+        OPERATION_RETURN(scope, result);
+    }
     // Optimized code may take the only closure of a function for a constant. Once there have been two, nobody has to be told.
     if (executable->singletonHasBeenInvalidated())
         fillAllocationCache(vm, callerData(globalObject, callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), 0, executable);
     OPERATION_RETURN(scope, result);
+}
+
+// (Not operationHasOwnProperty(): that goes by VM::hasOwnPropertyCache(), which is only there once the DFG has compiled something that looks in it.)
+JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (JSGlobalObject* globalObject, JSObject* object, EncodedJSValue encodedKey))
+{
+    AOT_OPERATION_BEGIN(globalObject);
+    auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    OPERATION_RETURN(scope, object->hasOwnProperty(globalObject, name));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetFunctionName, void, (JSGlobalObject* globalObject, JSObject* function, EncodedJSValue name))

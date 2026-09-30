@@ -17,6 +17,7 @@
 #include "MegamorphicCache.h"
 #include "ObjectPropertyConditionSet.h"
 #include "StaticHeap.h"
+#include "JSTypedArrayViewPrototype.h"
 
 namespace JSC { namespace AOT {
 
@@ -75,10 +76,11 @@ void makePrototypeChainWatchable(VM& vm, JSCell* base)
 // has to be told, for one thing), and the megamorphic cache is there for those. So it is only done so often.
 static bool mayReplace(Slot* cache, Structure* structure)
 {
+    // (Given over to the name: see generateGetById().)
+    if ((cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
+        return !!cache->structureID && cache->structureID == structure->id();
     if (!cache->structureID || cache->structureID == structure->id())
         return true;
-    if ((cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
-        return false;
     cache->offset += 1u << Slot::attemptsShift;
     return true;
 }
@@ -127,6 +129,9 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JS
         // Where the stub looks for the getter's code is filled in when a function is first called from code. This one may only ever
         // have been called from here.
         if (auto* function = dynamicDowncast<JSFunction>(slot.getterSetter()->getter())) {
+            // (By where it is: without the JIT a host function does not say which intrinsic it is.)
+            if (ident == vm.propertyNames->length && slot.slotBase()->inherits<JSTypedArrayViewPrototype>() && slot.slotBase()->globalObject() == globalObject)
+                data->instance->getterOfLengthOfTypedArrays = function;
             if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable()); executable && executable->isGeneratedForCall())
                 executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
         }
@@ -146,7 +151,8 @@ static ASCIILiteral tryCacheGetById(JSGlobalObject* globalObject, Data* data, JS
             return "sees too many structures"_s;
         if (cache->hasPointer())
             stopWatching(data, cache);
-        fill(vm, data, cache, structure, *location | getterFlag, nullptr);
+        // (Where there is no more to it than a place in the object, the second word is for the name: Slot::name.)
+        fill(vm, data, cache, structure, *location | getterFlag, (*location | getterFlag) & (Slot::isIntricate | Slot::isGetter) ? nullptr : ident.impl());
         return ""_s;
     }
 
