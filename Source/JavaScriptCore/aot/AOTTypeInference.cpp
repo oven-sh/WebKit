@@ -141,10 +141,13 @@ private:
         const KnownFunction* function = functionsOfProgram()->function(functionThatIs(type));
         if (!function || !function->facts)
             return false;
-        if (!function->facts->expose(why))
+        Vector<Type, ProgramFacts::mostParameters + 1> hadBeenPassed;
+        if (!function->facts->expose(why, [&](Type passed) { hadBeenPassed.append(passed); }))
             return false;
         if (!calleesGivenMore->contains(function))
             calleesGivenMore->append(function);
+        for (Type passed : hadBeenPassed)
+            expose(passed, ProgramFacts::OneOfSeveralInParameter);
         return true;
     }
 

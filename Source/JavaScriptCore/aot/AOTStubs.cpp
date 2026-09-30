@@ -1348,6 +1348,18 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     countPath(jit, 0);
     // (Whoever calls this is code that keeps the tags where they belong.)
     miss.append(jit.branchIfNotCell(A0));
+    if (operation == Entry::operationAOTGetById && getenv("BUN_AOT_COUNTS_STUB_PATHS")) {
+        // TEMPORARY: see operationAOTNoteRead().
+        jit.subPtr(TrustedImm32(32), CCallHelpers::stackPointerRegister);
+        jit.storePair64(A0, A1, CCallHelpers::stackPointerRegister, TrustedImm32(0));
+        jit.storePtr(CCallHelpers::linkRegister, Address(CCallHelpers::stackPointerRegister, 16));
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T9);
+        jit.loadPtr(Address(T9, static_cast<unsigned>(Entry::operationAOTNoteRead) * sizeof(void*)), T9);
+        jit.call(T9, OperationPtrTag);
+        jit.loadPair64(CCallHelpers::stackPointerRegister, TrustedImm32(0), A0, A1);
+        jit.loadPtr(Address(CCallHelpers::stackPointerRegister, 16), CCallHelpers::linkRegister);
+        jit.addPtr(TrustedImm32(32), CCallHelpers::stackPointerRegister);
+    }
     jit.load64(slotWord(A1, 0), T11);
     jit.load32(Address(A0, JSCell::structureIDOffset()), T12);
     Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);

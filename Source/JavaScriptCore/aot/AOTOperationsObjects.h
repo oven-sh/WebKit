@@ -123,6 +123,7 @@ struct Slot;
     v(operationAOTHasOwnProperty) \
     v(operationAOTNoteGetter) \
     v(operationAOTNoteProbe) \
+    v(operationAOTNoteRead) \
     v(operationAOTNoteNative) \
     v(operationAOTGiveData) \
     v(operationAOTCallDirectEval) \
@@ -261,6 +262,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance*, v
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data*));
 JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (JSGlobalObject*, JSObject*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteGetter, void, (JSCell*)); // TEMPORARY
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteRead, void, (JSCell*, Slot*)); // TEMPORARY
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteProbe, void, (JSCell*, Slot*)); // TEMPORARY
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteNative, void, (JSCell*)); // TEMPORARY
 JS_EXPORT_PRIVATE void dumpGettersCalled(PrintStream&); // TEMPORARY

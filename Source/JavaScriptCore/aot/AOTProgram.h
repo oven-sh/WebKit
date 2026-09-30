@@ -54,17 +54,21 @@ struct ProgramFacts {
         PutInVariableOfModule, PutInVariableGivenUpOn, PutWhoKnowsWhere, PutInVariableReadFromWhoKnowsWhere, ReadInAWayThatIsNotProven,
     };
     mutable std::atomic<uint32_t> whyExposed { 0 };
-    // Whether that is news.
-    bool expose(uint32_t why)
+    // Whether that is news. hadBeenPassed: told what each parameter had been passed. It is one of all the things that the parameter may be passed now, and the code of the function
+    // no longer knows what it is: so what could be told apart until now has got somewhere that is not reckoned with, too.
+    template<typename Functor>
+    bool expose(uint32_t why, const Functor& hadBeenPassed)
     {
         if (isExposed.exchange(true, std::memory_order_relaxed))
             return false;
         whyExposed.store(why, std::memory_order_relaxed);
         for (auto& type : parameterTypes)
-            type.join(TTop);
-        thisType.join(TTop);
+            hadBeenPassed(type.join(TTop));
+        hadBeenPassed(thisType.join(TTop));
         return true;
     }
+    // (Before anything has been passed to anything.)
+    bool expose(uint32_t why) { return expose(why, [](Type) { }); }
     // If closed: everything that it is called on. (parameterTypes[0] says whether it is reached at all.)
     AtomicType thisType;
     bool isReached() const { return !isClosed || isExposed.load(std::memory_order_relaxed) || parameterTypes[0].load(); }

@@ -432,6 +432,49 @@ static UncheckedKeyHashMap<Slot*, ProbesOfSite>& probes()
     return map.get();
 }
 
+// TEMPORARY. The structures that a site saw last, the latest first.
+static constexpr unsigned depthOfStacks = 8;
+struct LastSeenAtSite {
+    uint32_t structures[depthOfStacks] { };
+};
+static UncheckedKeyHashMap<Slot*, LastSeenAtSite>& lastSeen()
+{
+    static NeverDestroyed<UncheckedKeyHashMap<Slot*, LastSeenAtSite>> map;
+    return map.get();
+}
+static uint64_t s_readsAtDepth[depthOfStacks + 1]; // The last: further down than that, or never seen.
+static uint64_t s_probesAtDepth[2][depthOfStacks + 1]; // [whether it is the object's own and in it]
+static uint64_t s_readsWithNobodysSlot;
+static unsigned s_depthOfLastRead;
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteRead, void, (JSCell* base, Slot* slot))
+{
+    if (SharedData::contains(slot)) {
+        s_readsWithNobodysSlot++;
+        return;
+    }
+    auto& site = lastSeen().add(slot, LastSeenAtSite { }).iterator->value;
+    uint32_t id = base->structureID().bits();
+    unsigned depth = 0;
+    while (depth < depthOfStacks && site.structures[depth] != id)
+        depth++;
+    s_readsAtDepth[depth]++;
+    s_depthOfLastRead = depth;
+    for (unsigned i = std::min(depth, depthOfStacks - 1); i; --i)
+        site.structures[i] = site.structures[i - 1];
+    site.structures[0] = id;
+
+    if (slot->structureID == base->structureID() && !(slot->offset & Slot::isIntricate) && slot->name) {
+        unsigned attributes;
+        PropertyOffset offset = base->structure()->getConcurrently(slot->name, attributes);
+        auto location = isValidOffset(offset) ? locationOfProperty(offset) : std::nullopt;
+        if (!location || *location != (slot->offset & (Slot::offsetMask | Slot::isIntricate)) || base->structure()->isDictionary()) {
+            dataLogLn("AOT: WRONG SLOT ", RawPointer(slot), ": structure ", RawPointer(base->structure()), " id ", id, " has the name at offset ", offset, ", the slot says ", RawHex(slot->offset), "; dictionary ", base->structure()->isDictionary(), "; type ", static_cast<unsigned>(base->type()));
+            CRASH();
+        }
+    }
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteProbe, void, (JSCell* base, Slot* slot))
 {
     auto& site = probes().add(slot, ProbesOfSite { }).iterator->value;
@@ -439,7 +482,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteProbe, void, (JSCell* base, Sl
     site.byStructure.add(base->structureID().bits(), 0).iterator->value++;
     unsigned attributes;
     PropertyOffset offset = slot->name ? base->structure()->getConcurrently(slot->name, attributes) : invalidOffset;
-    site.ownAndInline += isValidOffset(offset) && isInlineOffset(offset);
+    bool isOwnAndInline = isValidOffset(offset) && isInlineOffset(offset);
+    site.ownAndInline += isOwnAndInline;
+    s_probesAtDepth[isOwnAndInline][s_depthOfLastRead]++;
 }
 
 static UncheckedKeyHashMap<ExecutableBase*, uint64_t>& nativesCalled()
@@ -496,6 +541,12 @@ void dumpGettersCalled(PrintStream& out)
         }
         for (unsigned n = 1; n <= most; ++n)
             out.println("PROBES\t", all[n], "\tsites that saw ", n, n == most ? " or more" : "", " structures: ", sites[n], " sites; own and inline ", own[n], "; the commonest structure ", byTopOne[n], ", two ", byTopTwo[n], ", four ", byTopFour[n]);
+    }
+    out.println("DEPTH\t", s_readsWithNobodysSlot, "\treads: the slot is nobody's");
+    for (unsigned depth = 0; depth <= depthOfStacks; ++depth) {
+        out.println("DEPTH\t", s_readsAtDepth[depth], "\treads: depth ", depth);
+        out.println("DEPTH\t", s_probesAtDepth[1][depth], "\tprobes, own and inline: depth ", depth);
+        out.println("DEPTH\t", s_probesAtDepth[0][depth], "\tprobes, otherwise: depth ", depth);
     }
     for (auto& [executable, count] : gettersCalled()) {
         if (auto* function = dynamicDowncast<FunctionExecutable>(executable))

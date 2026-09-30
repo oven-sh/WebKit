@@ -6628,6 +6628,45 @@ struct BytecodeLinkEncoder::Impl {
             unsigned rounds = 0;
             size_t inferences = 0;
             unsigned scopesNeverMade = 0;
+            // All that has been said, so far. (In an order, and of things, that are the same from one time the program is built to the next.)
+            auto digestOfFacts = [&] {
+                uint64_t digest = 0;
+                auto mix = [&](uint64_t value) {
+                    digest = (digest ^ value) * 0x9e3779b97f4a7c15ull;
+                    digest ^= digest >> 29;
+                };
+                auto mixType = [&](AOT::Type type) {
+                    mix(static_cast<uint64_t>(type));
+                    mix(static_cast<uint64_t>(type >> 64));
+                };
+                for (auto& summary : summaries) {
+                    if (summary.facts) {
+                        mix(summary.facts->isExposed.load());
+                        for (auto& type : summary.facts->parameterTypes)
+                            mixType(type.load());
+                        mixType(summary.facts->thisType.load());
+                        mixType(summary.facts->returnType.load());
+                        mix(summary.facts->parametersThatEscape.load());
+                    }
+                    for (auto* function : summary.functions)
+                        mixType(function->returnType.load());
+                }
+                uint64_t variables = 0;
+                if (variableFacts) {
+                    variableFacts->forEach([&](AOT::Variable, AOT::Type type) {
+                        uint64_t low = static_cast<uint64_t>(type) * 0x9e3779b97f4a7c15ull;
+                        uint64_t high = static_cast<uint64_t>(type >> 64) * 0xc2b2ae3d27d4eb4full;
+                        variables += (low ^ low >> 31) + (high ^ high >> 29);
+                    });
+                }
+                mix(variables);
+                mix(scopesNeverMade);
+                return digest;
+            };
+            unsigned timesAllWasLookedAtAgain = 0;
+            bool isLookingAtAllAgain = false;
+            uint64_t digestBefore = 0;
+            for (;;) {
             while (!worklist.isEmpty()) {
                 ++rounds;
                 inferences += worklist.size();
@@ -6675,8 +6714,39 @@ struct BytecodeLinkEncoder::Impl {
                             next.add(reader);
                     }
                 }
+                if (std::exchange(isLookingAtAllAgain, false) && Options::aotReportStats()) [[unlikely]] {
+                    // TEMPORARY: who had more to say, with nothing having been noticed that it goes by.
+                    unsigned late = 0;
+                    for (unsigned index = 0; index < summaries.size(); ++index) {
+                        auto& summary = summaries[index];
+                        if (summary.calleesGivenMore.isEmpty())
+                            continue;
+                        if (++late > 12)
+                            continue;
+                        auto* executable = jobs[index].executableForStatistics;
+                        StringPrintStream out;
+                        for (auto* callee : summary.calleesGivenMore)
+                            out.print(" #", callee->facts ? callee->facts->number : 0, callee->facts && callee->facts->isExposed.load() ? " (exposed: " : " (", callee->facts ? callee->facts->whyExposed.load() & 0xff : 0, ")");
+                        dataLogLn("AOT: LATE unit ", index, " `", executable ? executable->name().string() : "(top level)"_s, "` @", jobs[index].key.module, ":", jobs[index].key.start, " gave more to", out.toString());
+                    }
+                    dataLogLn("AOT: LATE ", late, " had more to give; ", next.size(), " to look at again");
+                }
                 worklist = copyToVector(next);
             }
+            // Nothing that is known to go by something that has grown is left. If that is all there is to know, looking at everything again adds nothing.
+            uint64_t digest = digestOfFacts();
+            if (timesAllWasLookedAtAgain && digest == digestBefore)
+                break;
+            if (Options::aotReportStats()) [[unlikely]]
+                dataLogLn("AOT: FACTS ", RawHex(digest), " after ", rounds, " rounds, ", inferences, " inferences, having looked at all of it again ", timesAllWasLookedAtAgain, " times");
+            digestBefore = digest;
+            ++timesAllWasLookedAtAgain;
+            isLookingAtAllAgain = true;
+            for (unsigned i = 0; i < summaries.size(); ++i)
+                worklist.append(i);
+            }
+            if (Options::aotReportStats()) [[unlikely]]
+                dataLogLn("AOT: FACTS ", RawHex(digestBefore), " is closed under every rule: looked at all of it again ", timesAllWasLookedAtAgain, " times");
             if (followsFunctions) {
                 unsigned withCode = 0;
                 unsigned closed = 0;
@@ -6766,6 +6836,9 @@ struct BytecodeLinkEncoder::Impl {
                     if (entry.value >= 100)
                         dataLogLn("  RETURNS ", entry.value, " ", RawHex(entry.key));
                 }
+                // TEMPORARY
+                if (getenv("BUN_AOT_STOPS_AFTER_FACTS"))
+                    _exit(0);
                 // What the closed ones are passed.
                 using namespace AOT;
                 auto nameOf = [](Type type) -> ASCIILiteral {

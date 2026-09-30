@@ -300,11 +300,17 @@ public:
     AtomicType() = default;
     AtomicType(const AtomicType& other) { store(other.load()); }
     AtomicType& operator=(const AtomicType& other) { store(other.load()); return *this; }
-    Type load() const { return static_cast<Type>(m_high.load(std::memory_order_relaxed)) << 64 | m_low.load(std::memory_order_relaxed); }
+    // What is read while somebody joins something to it is what was there, what is going to be, or the tags of the one with the numbers of the other. A tag without its number would read as
+    // "there is no telling which", which is more than either. So what of the numbers is not in the same word as the tags is there first: a number without its tag says nothing.
+    Type load() const
+    {
+        uint64_t low = m_low.load(std::memory_order_acquire);
+        return static_cast<Type>(m_high.load(std::memory_order_relaxed)) << 64 | low;
+    }
     void store(Type type)
     {
-        m_low.store(static_cast<uint64_t>(type), std::memory_order_relaxed);
         m_high.store(static_cast<uint64_t>(type >> 64), std::memory_order_relaxed);
+        m_low.store(static_cast<uint64_t>(type), std::memory_order_release);
     }
     // What it was before. One at a time, if there is anything to add: whoever makes one function into several has to know which they are.
     JS_EXPORT_PRIVATE Type join(Type);
