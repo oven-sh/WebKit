@@ -1173,6 +1173,7 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
     // arguments[1] = resolution (JSSourceCode*) or error
     // arguments[2] = ModuleLoadingContext*
     auto* context = uncheckedDowncast<ModuleLoadingContext>(arguments[2]);
+    auto* entry = context->entry();
     auto* intermediatePromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
@@ -1194,12 +1195,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
 #else
             combinedCell = ModuleLoaderPayload::create(vm, statePromise, context->deferred());
 #endif
-            loadPromise = context->loader()->loadModule(globalObject, context->entry(), request, combinedCell, scriptFetcher, innerLoadFlags);
+            loadPromise = context->loader()->loadModule(globalObject, entry, request, combinedCell, scriptFetcher, innerLoadFlags);
         } else {
             combinedCell = ModuleGraphLoadingState::create(vm, statePromise, scriptFetcher);
             if (context->evaluate())
                 innerLoadFlags.add(ModuleLoadFlag::Evaluate);
-            loadPromise = context->loader()->loadModule(globalObject, context->entry(), request, combinedCell, scriptFetcher, innerLoadFlags);
+            loadPromise = context->loader()->loadModule(globalObject, entry, request, combinedCell, scriptFetcher, innerLoadFlags);
             if (scope.exception()) {
                 intermediatePromise->rejectWithCaughtException(vm, scope);
                 return;
@@ -1233,12 +1234,12 @@ static void moduleLoadTopSettled(JSGlobalObject* globalObject, VM& vm, ThrowScop
             // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-module-script step 13.1
             // Don't keep the module registered unless it's an evaluation error.
             if (failure.isEvaluationError(specifier, type))
-                context->entry()->setEvaluationError(globalObject, error);
+                entry->setEvaluationError(globalObject, error);
         }
-        if (context->entry()->status() == ModuleRegistryEntry::Status::Fetching)
-            context->entry()->setFetchError(globalObject, errorValue);
-        if (context->entry()->fetchError())
-            context->loader()->removeFailedFetchEntry(context->entry());
+        if (entry->status() == ModuleRegistryEntry::Status::Fetching)
+            entry->setFetchError(globalObject, errorValue);
+        if (entry->fetchError())
+            context->loader()->removeFailedFetchEntry(entry);
         intermediatePromise->reject(vm, errorValue);
     }
 }
