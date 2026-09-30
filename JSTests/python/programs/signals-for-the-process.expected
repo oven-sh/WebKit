@@ -18,3 +18,9 @@ kept back, with a function to be called => (set(), 0, None, [], None, ['SIGUSR1'
 which is not called if it is waited for => (set(), 0, 'SIGUSR1', None, None, [])
 not kept back => (0, ['SIGUSR1'])
 it interrupts what is waiting => [(True, None, ['SIGUSR1'], 0)]
+---- sent by the process to itself, as the last thing in a try
+kill => ('SIGUSR1', 2)
+raise_signal => ('SIGUSR1', 2)
+pthread_kill => ('SIGUSR1', 2)
+killpg => ('SIGUSR1', 2)
+kill, of the group => ('SIGUSR1', 2)

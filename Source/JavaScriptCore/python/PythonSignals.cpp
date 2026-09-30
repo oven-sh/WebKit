@@ -798,6 +798,9 @@ PYTHON_NATIVE(signalPidfdSendSignal)
         return JSValue::encode(raiseTypeError(globalObject, scope, "siginfo must be None"_s));
     if (syscall(SYS_pidfd_send_signal, *descriptor, *signal, nullptr, flags) < 0)
         return JSValue::encode(raiseOSError(globalObject, scope, errno));
+    // It may be this process that it was sent to.
+    checkSignals(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
     RETURN_NONE();
 }
 

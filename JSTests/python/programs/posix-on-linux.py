@@ -225,6 +225,24 @@ d = os.pidfd_open(child)
 t("as it is made", lambda: (d > 2, os.get_inheritable(d), select.select([d], [], [], 0)[0]))
 t("a signal that does nothing", lambda: (signal.pidfd_send_signal(d, 0), signal.pidfd_send_signal(d, 0, None), signal.pidfd_send_signal(d, 0, None, 0)))
 t("wrongly", lambda: [attempt(signal.pidfd_send_signal, *a) for a in ((d, 0, 5), (d, 0, ()), (d, 999), (d, -1), (d, 0, None, 12345), (9999, 0), (-1, 0), ("a", 0), (d, "a"), (d, 0, None, "a"), (d,), (), (d, 0, None, 0, 0), (0, 0))] + [attempt(lambda: signal.pidfd_send_signal(pidfd=d, signalnum=0))])
+
+
+def raised_where_it_was_sent():
+    # What is called for it raises, and that is to be caught by what the sending is inside of.
+    def raises(number, frame):
+        raise KeyError(signal.Signals(number).name)
+    before, mine = signal.signal(signal.SIGUSR1, raises), os.pidfd_open(os.getpid())
+    try:
+        signal.pidfd_send_signal(mine, signal.SIGUSR1)
+        time.sleep(5)
+    except KeyError as e:
+        return str(e), e.__traceback__.tb_lineno - raised_where_it_was_sent.__code__.co_firstlineno
+    finally:
+        signal.signal(signal.SIGUSR1, before)
+        os.close(mine)
+
+
+t("sent to the process itself, as the last thing in a try", raised_where_it_was_sent)
 t("one that ends it", lambda: (signal.pidfd_send_signal(d, signal.SIGTERM), select.select([d], [], [], 10)[0] == [d], (lambda r: (r.si_pid == child, r.si_signo == signal.SIGCHLD, r.si_status == signal.SIGTERM, r.si_code == os.CLD_KILLED))(os.waitid(os.P_PIDFD, d, os.WEXITED)), attempt(signal.pidfd_send_signal, d, 0), os.close(d)))
 t("pidfd_open", lambda: [(lambda x: (os.close(x), "made")[1] if type(x) is int else x)(attempt(os.pidfd_open, *a, **k)) for a, k in (((os.getpid(),), {}), ((os.getpid(), 0), {}), ((os.getpid(), os.PIDFD_NONBLOCK), {}), ((), {"pid": os.getpid(), "flags": 0}), ((child,), {}), ((0,), {}), ((-1,), {}), ((2 ** 22 - 3,), {}), ((os.getpid(), 12345), {}),
                                                                                                                        ((os.getpid(), -1), {}), ((os.getpid(), 2 ** 32), {}), (("a",), {}), ((os.getpid(), "a"), {}), ((2 ** 31,), {}), ((None,), {}))])

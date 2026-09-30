@@ -507,6 +507,9 @@ PYTHON_NATIVE(posixKillpg)
         return { };
     if (::killpg(group, signal) == -1)
         return JSValue::encode(raisePosixError(globalObject, scope));
+    // This process may be one of them.
+    if (!checkSignals(globalObject))
+        return { };
     RETURN_NONE();
 }
 

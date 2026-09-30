@@ -83,3 +83,35 @@ t("kept back, with a function to be called", lambda: (signal.pthread_sigmask(BLO
 t("which is not called if it is waited for", lambda: (signal.pthread_sigmask(BLOCK, [U1]) and None, sent("USR1"), signal.sigwait([U1]).name, signal.pthread_sigmask(UNBLOCK, [U1]) and None, time.sleep(0.01), took()))
 t("not kept back", lambda: (sent("USR1"), until_called()))
 t("it interrupts what is waiting", lambda: [(os.posix_spawnp("sh", ["sh", "-c", "sleep 0.05; kill -USR1 %d" % me], os.environ) > 0, time.sleep(0.5), took(), os.wait()[1]) for _ in [0]])
+
+print("---- sent by the process to itself, as the last thing in a try")
+# What is called for it raises, and that is to be caught by what the sending is inside of. The signal has come by the time that it has been sent, so it is where it was sent that it is raised.
+
+
+class Came(Exception):
+    pass
+
+
+def raises(number, frame):
+    raise Came(signal.Signals(number).name)
+
+
+def where(send):
+    try:
+        send()
+        time.sleep(5)
+    except Came as e:
+        return str(e), e.__traceback__.tb_lineno - where.__code__.co_firstlineno
+    return "nothing came"
+
+
+signal.signal(U1, raises)
+t("kill", lambda: where(lambda: os.kill(me, U1)))
+t("raise_signal", lambda: where(lambda: signal.raise_signal(U1)))
+t("pthread_kill", lambda: where(lambda: signal.pthread_kill(__import__("_thread").get_ident(), U1)))
+# In a group of its own, so that no one else is sent it.
+os.setpgid(0, 0)
+t("killpg", lambda: where(lambda: os.killpg(os.getpgrp(), U1)))
+t("kill, of the group", lambda: where(lambda: os.kill(0, U1)))
+signal.signal(U1, signal.SIG_DFL)
+
