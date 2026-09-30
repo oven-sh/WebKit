@@ -303,6 +303,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_sha2"_s, createSHA2Module },
     { "_sha3"_s, createSHA3Module },
     { "_blake2"_s, createBlake2Module },
+    { "_lsprof"_s, createLsprofModule },
     { "itertools"_s, createItertoolsModule },
     { "marshal"_s, createMarshalModule },
     { "math"_s, createMathModule },

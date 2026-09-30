@@ -309,6 +309,12 @@ std::optional<int64_t> monotonicClock(JSGlobalObject* globalObject, ClockInfo* i
     return std::nullopt;
 }
 
+int64_t monotonicClockRaw()
+{
+    int64_t time;
+    return readMonotonicClock(time, nullptr) ? 0 : time;
+}
+
 int64_t deadlineAfter(int64_t timeout)
 {
     int64_t now;

@@ -86,5 +86,7 @@ struct ClockInfo {
 // _PyTime_TimeWithInfo() and _PyTime_MonotonicWithInfo(), which is _PyTime_PerfCounterWithInfo() too. Nothing if it raised.
 std::optional<int64_t> systemClock(JSGlobalObject*, ClockInfo* = nullptr);
 std::optional<int64_t> monotonicClock(JSGlobalObject*, ClockInfo* = nullptr);
+// PyTime_MonotonicRaw(), which is PyTime_PerfCounterRaw() too. It does not raise: it is 0 if there is no reading the clock.
+int64_t monotonicClockRaw();
 
 } } // namespace JSC::Python

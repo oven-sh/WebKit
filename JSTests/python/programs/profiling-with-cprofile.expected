@@ -1,0 +1,242 @@
+---- what there is
+['Profiler', 'profiler_entry', 'profiler_subentry'] Fast profiler built-in
+_lsprof Profiler ['object'] 0x5700 (timer=None, timeunit=0.0, subcalls=True, builtins=True) "Build a profiler object using the specified timer function.\n\nThe default timer is a fast built-in one based on real time.\nFor custom timer functions returning integers, 'timeunit' can\nbe a float specifying a scale (that is, how long each integer unit\nis, in seconds)." ['__doc__', '__init__', '__module__', '_ccall_callback', '_creturn_callback', '_pyreturn_callback', '_pystart_callback', '_pythrow_callback', 'clear', 'disable', 'enable', 'getstats']
+    _ccall_callback method_descriptor ($self, code, instruction_offset, callable, self_arg, /) None
+    _creturn_callback method_descriptor ($self, code, instruction_offset, callable, self_arg,
+                  /) None
+    _pyreturn_callback method_descriptor ($self, code, instruction_offset, retval, /) None
+    _pystart_callback method_descriptor ($self, code, instruction_offset, /) None
+    _pythrow_callback method_descriptor ($self, code, instruction_offset, exception, /) None
+    clear method_descriptor ($self, /) 'Clear all profiling information collected so far.'
+    disable method_descriptor ($self, /) 'Stop collecting profiling information.'
+    enable method_descriptor ($self, /, subcalls=True, builtins=True) 'Start collecting profiling information.\n\n  subcalls\n    
+    getstats method_descriptor ($self, /) 'list of profiler_entry objects.\n\ngetstats() -> list of pr
+_lsprof profiler_entry 6 6 ('code', 'callcount', 'reccallcount', 'totaltime', 'inlinetime', 'calls') None ['code object or built-in function name', 'how many times this was called', 'how many times called recursively', 'total time in this entry', 'inline time in this entry (not in subcalls)', 'details of the calls']
+_lsprof profiler_subentry 5 5 ('code', 'callcount', 'reccallcount', 'totaltime', 'inlinetime') None ['called code object or built-in function name', 'how many times this is called', 'how many times this is called recursively', 'total time spent in this call', 'inline time (not in further subcalls)']
+---- calls
+leaf
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('leaf', 1, 0, 1.0, 1.0, None)
+calls_twice
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('calls_twice', 1, 0, 5.0, 3.0, [('leaf', 2, 0, 2.0, 2.0)])
+    ('leaf', 2, 0, 2.0, 2.0, None)
+outer
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('calls_twice', 1, 0, 5.0, 3.0, [('leaf', 2, 0, 2.0, 2.0)])
+    ('leaf', 3, 0, 3.0, 3.0, None)
+    ('outer', 1, 0, 9.0, 3.0, [('calls_twice', 1, 0, 5.0, 3.0), ('leaf', 1, 0, 1.0, 1.0)])
+catches
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('catches', 1, 0, 5.0, 3.0, [('leaf', 1, 0, 1.0, 1.0), ('raises', 1, 0, 1.0, 1.0)])
+    ('leaf', 1, 0, 1.0, 1.0, None)
+    ('raises', 1, 0, 1.0, 1.0, None)
+passes_it_on
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('passes_it_on', 1, 0, 3.0, 2.0, [('raises', 1, 0, 1.0, 1.0)])
+    ('raises', 1, 0, 1.0, 1.0, None)
+goes_through
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('generates', 4, 0, 4.0, 4.0, None)
+    ('goes_through', 1, 0, 15.0, 8.0, [('generates', 4, 0, 4.0, 4.0), ('leaf', 3, 0, 3.0, 3.0)])
+    ('leaf', 3, 0, 3.0, 3.0, None)
+is_thrown_into
+    ('<built-in method builtins.next>', 1, 0, 3.0, 2.0, [('catching_generator', 1, 0, 1.0, 1.0)])
+    ("<method 'close' of 'generator' objects>", 1, 0, 3.0, 2.0, [('catching_generator', 1, 0, 1.0, 1.0)])
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ("<method 'throw' of 'generator' objects>", 1, 0, 3.0, 2.0, [('catching_generator', 1, 0, 1.0, 1.0)])
+    ('catching_generator', 3, 0, 3.0, 3.0, None)
+    ('is_thrown_into', 1, 0, 13.0, 4.0, [('<built-in method builtins.next>', 1, 0, 3.0, 2.0), ("<method 'close' of 'generator' objects>", 1, 0, 3.0, 2.0), ("<method 'throw' of 'generator' objects>", 1, 0, 3.0, 2.0)])
+is_closed_early
+    ('<built-in method builtins.next>', 1, 0, 3.0, 2.0, [('generates', 1, 0, 1.0, 1.0)])
+    ("<method 'close' of 'generator' objects>", 1, 0, 3.0, 2.0, [('generates', 1, 0, 1.0, 1.0)])
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('generates', 2, 0, 2.0, 2.0, None)
+    ('is_closed_early', 1, 0, 9.0, 3.0, [('<built-in method builtins.next>', 1, 0, 3.0, 2.0), ("<method 'close' of 'generator' objects>", 1, 0, 3.0, 2.0)])
+uses_a_class
+    ('<built-in method builtins.len>', 1, 0, 3.0, 2.0, [('__len__', 1, 0, 1.0, 1.0)])
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('__call__', 1, 0, 3.0, 2.0, [('leaf', 1, 0, 1.0, 1.0)])
+    ('__init__', 1, 0, 3.0, 2.0, [('leaf', 1, 0, 1.0, 1.0)])
+    ('__len__', 1, 0, 1.0, 1.0, None)
+    ('attribute', 1, 0, 3.0, 2.0, [('leaf', 1, 0, 1.0, 1.0)])
+    ('leaf', 7, 0, 7.0, 7.0, None)
+    ('method', 2, 0, 6.0, 4.0, [('leaf', 2, 0, 2.0, 2.0)])
+    ('of_the_class', 1, 0, 3.0, 2.0, [('leaf', 1, 0, 1.0, 1.0)])
+    ('static', 1, 0, 3.0, 2.0, [('leaf', 1, 0, 1.0, 1.0)])
+    ('uses_a_class', 1, 0, 33.0, 9.0, [('<built-in method builtins.len>', 1, 0, 3.0, 2.0), ('__call__', 1, 0, 3.0, 2.0), ('__init__', 1, 0, 3.0, 2.0), ('attribute', 1, 0, 3.0, 2.0), ('method', 2, 0, 6.0, 4.0), ('of_the_class', 1, 0, 3.0, 2.0), ('static', 1, 0, 3.0, 2.0)])
+uses_builtins
+    ('<built-in method builtins.isinstance>', 1, 0, 1.0, 1.0, None)
+    ('<built-in method builtins.len>', 1, 0, 1.0, 1.0, None)
+    ('<built-in method builtins.max>', 1, 0, 1.0, 1.0, None)
+    ('<built-in method builtins.sorted>', 1, 0, 5.0, 3.0, [('<lambda>', 2, 0, 2.0, 2.0)])
+    ('<built-in method fromkeys>', 1, 0, 1.0, 1.0, None)
+    ('<built-in method maketrans>', 1, 0, 1.0, 1.0, None)
+    ('<lambda>', 2, 0, 2.0, 2.0, None)
+    ("<method 'append' of 'list' objects>", 2, 0, 2.0, 2.0, None)
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ("<method 'get' of 'dict' objects>", 1, 0, 1.0, 1.0, None)
+    ("<method 'join' of 'str' objects>", 1, 0, 1.0, 1.0, None)
+    ("<method 'upper' of 'str' objects>", 1, 0, 1.0, 1.0, None)
+    ('uses_builtins', 1, 0, 27.0, 12.0, [('<built-in method builtins.isinstance>', 1, 0, 1.0, 1.0), ('<built-in method builtins.len>', 1, 0, 1.0, 1.0), ('<built-in method builtins.max>', 1, 0, 1.0, 1.0), ('<built-in method builtins.sorted>', 1, 0, 5.0, 3.0), ('<built-in method fromkeys>', 1, 0, 1.0, 1.0), ('<built-in method maketrans>', 1, 0, 1.0, 1.0), ("<method 'append' of 'list' objects>", 2, 0, 2.0, 2.0), ("<method 'get' of 'dict' objects>", 1, 0, 1.0, 1.0), ("<method 'join' of 'str' objects>", 1, 0, 1.0, 1.0), ("<method 'upper' of 'str' objects>", 1, 0, 1.0, 1.0)])
+a_builtin_raises
+    ('<built-in method builtins.len>', 1, 0, 1.0, 1.0, None)
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ("<method 'pop' of 'list' objects>", 1, 0, 1.0, 1.0, None)
+    ('a_builtin_raises', 1, 0, 5.0, 3.0, [('<built-in method builtins.len>', 1, 0, 1.0, 1.0), ("<method 'pop' of 'list' objects>", 1, 0, 1.0, 1.0)])
+runs_a_coroutine
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ("<method 'send' of 'coroutine' objects>", 1, 0, 7.0, 2.0, [('coroutine', 1, 0, 5.0, 2.0)])
+    ('awaited', 1, 0, 3.0, 2.0, [('leaf', 1, 0, 1.0, 1.0)])
+    ('coroutine', 1, 0, 5.0, 2.0, [('awaited', 1, 0, 3.0, 2.0)])
+    ('leaf', 1, 0, 1.0, 1.0, None)
+    ('runs_a_coroutine', 1, 0, 9.0, 2.0, [("<method 'send' of 'coroutine' objects>", 1, 0, 7.0, 2.0)])
+recursive
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('recursive', 5, 4, 9.0, 9.0, [('recursive', 4, 3, 7.0, 7.0)])
+one and other
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('one', 3, 2, 11.0, 6.0, [('other', 3, 2, 9.0, 5.0)])
+    ('other', 3, 2, 9.0, 5.0, [('one', 2, 1, 7.0, 4.0)])
+a lambda
+    ('<lambda>', 1, 0, 3.0, 2.0, [('leaf', 1, 0, 1.0, 1.0)])
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('leaf', 1, 0, 1.0, 1.0, None)
+without what calls what
+    ("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None)
+    ('calls_twice', 1, 0, 5.0, 3.0, None)
+    ('leaf', 3, 0, 3.0, 3.0, None)
+    ('outer', 1, 0, 9.0, 3.0, None)
+without what is not written in Python
+    ('<lambda>', 2, 0, 2.0, 2.0, None)
+    ('uses_builtins', 1, 0, 5.0, 3.0, [('<lambda>', 2, 0, 2.0, 2.0)])
+without either
+    ('<lambda>', 2, 0, 2.0, 2.0, None)
+    ('uses_builtins', 1, 0, 5.0, 3.0, None)
+---- begun and ended part of the way through
+[("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None), ('ends', 1, 0, 5.0, 3.0, [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0), ('leaf', 1, 0, 1.0, 1.0)]), ('leaf', 3, 0, 3.0, 3.0, None)]
+[("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None), ('leaf', 1, 0, 1.0, 1.0, None)] [("<method 'disable' of '_lsprof.Profiler' objects>", 2, 0, 2.0, 2.0, None), ('calls_twice', 1, 0, 5.0, 3.0, [('leaf', 2, 0, 2.0, 2.0)]), ('leaf', 5, 0, 5.0, 5.0, None), ('outer', 1, 0, 9.0, 3.0, [('calls_twice', 1, 0, 5.0, 3.0), ('leaf', 1, 0, 1.0, 1.0)])]
+cleared [] []
+cleared on the way [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None), ('leaf', 2, 0, 2.0, 2.0, None)]
+---- clocks
+ints, and a unit [("<method 'disable' of '_lsprof.Profiler' objects>", 0.5, 0.5), ('calls_twice', 2.5, 1.5), ('leaf', 1.5, 1.5), ('outer', 4.5, 1.5)] [] 0
+ints, and none [("<method 'disable' of '_lsprof.Profiler' objects>", 1.0, 1.0), ('calls_twice', 5.0, 3.0), ('leaf', 3.0, 3.0), ('outer', 9.0, 3.0)] [] 0
+floats [("<method 'disable' of '_lsprof.Profiler' objects>", 0.25, 0.25), ('calls_twice', 1.25, 0.75), ('leaf', 0.75, 0.75), ('outer', 2.25, 0.75)] [] 0
+floats, and a unit [("<method 'disable' of '_lsprof.Profiler' objects>", 0.0, 0.0), ('calls_twice', 0.0, 0.0), ('leaf', 0.0, 0.0), ('outer', 0.0, 0.0)] [('TypeError', 'expect int, got float', 'Exception ignored while calling _lsprof timer <__main__.Clock object', None)] 12
+great ints [("<method 'disable' of '_lsprof.Profiler' objects>", 1099511627776.0, 1099511627776.0), ('calls_twice', 5497558138880.0, 3298534883328.0), ('leaf', 3298534883328.0, 3298534883328.0), ('outer', 9895604649984.0, 3298534883328.0)] [] 0
+a unit less than nothing [("<method 'disable' of '_lsprof.Profiler' objects>", -1000000000.0, -1000000000.0), ('calls_twice', -5000000000.0, -3000000000.0), ('leaf', -3000000000.0, -3000000000.0), ('outer', -9000000000.0, -3000000000.0)] [] 0
+bools [("<method 'disable' of '_lsprof.Profiler' objects>", 0.0, 0.0), ('calls_twice', 0.0, 0.0), ('leaf', 0.0, 0.0), ('outer', 0.0, 0.0)] [] 0
+raises [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('ZeroDivisionError', 'division by zero', 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+a str [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('TypeError', 'expect int, got str', 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+a str, and no unit [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('TypeError', "'str' object cannot be interpreted as an integer or float", 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+None [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('TypeError', "'NoneType' object cannot be interpreted as an integer or float", 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+too great [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('OverflowError', 'timestamp out of range for C PyTime_t', 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+too great, and no unit [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('OverflowError', 'timestamp out of range for C PyTime_t', 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+not a number [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('ValueError', 'Invalid value NaN (not a number)', 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+not to be called [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('TypeError', "'int' object is not callable", 'Exception ignored while calling _lsprof timer 5', None)] 4
+None for a clock [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('TypeError', "'NoneType' object is not callable", 'Exception ignored while calling _lsprof timer None', None)] 4
+takes an argument [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0.0, 0.0), ('leaf', 1, 0.0, 0.0)] [('TypeError', "<lambda>() missing 1 required positional argument: 'x'", 'Exception ignored while calling _lsprof timer <function <lambda>', None)] 4
+its own [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 'float', True), ('calls_twice', 1, 'float', True), ('leaf', 3, 'float', True), ('outer', 1, 'float', True)]
+a clock that meddles ['cannot disable profiler in external timer', 'cannot clear profiler in external timer', 0] [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 0.0, 0.0, None), ('leaf', 1, 0, 0.0, 0.0, None)]
+---- what will not do
+timeunit a str => TypeError must be real number, not str
+five => TypeError Profiler() takes at most 4 arguments (5 given)
+something else => TypeError Profiler() got an unexpected keyword argument 'other'
+by name => Profiler
+will not say whether it is true => ZeroDivisionError division by zero
+enable(1, 2, 3) => TypeError enable() takes at most 2 arguments (3 given)
+enable(other=1) => TypeError enable() got an unexpected keyword argument 'other'
+disable(1) => TypeError Profiler.disable() takes no arguments (1 given)
+clear(1) => TypeError Profiler.clear() takes no arguments (1 given)
+getstats(1) => TypeError getstats() takes no arguments
+disable() when it is not enabled => None
+getstats() of nothing => []
+Profiler.x = 1 => TypeError cannot set 'x' attribute of immutable type '_lsprof.Profiler'
+an attribute => AttributeError '_lsprof.Profiler' object has no attribute 'x' and no __dict__ for setting new attributes
+_pystart_callback() => TypeError _pystart_callback expected 2 arguments, got 0
+_ccall_callback(1, 2, 3) => TypeError _ccall_callback expected 4 arguments, got 3
+made and not initialized => [[], None, None]
+initialized twice => [None, []]
+two at once => ValueError tool 2 is already in use
+the same one twice => ValueError tool 2 is already in use
+cProfile
+None None
+and then the other => [None, None]
+something else has its place => ValueError tool 2 is already in use
+told by hand [('<built-in method builtins.len>', 1, 0, 1.0, 1.0, None), ("<method 'append' of 'list' objects>", 1, 0, 1.0, 1.0, None), ('leaf', 1, 0, 5.0, 3.0, [('<built-in method builtins.len>', 1, 0, 1.0, 1.0), ("<method 'append' of 'list' objects>", 1, 0, 1.0, 1.0)])]
+---- cProfile and pstats
+True cProfile ['create_stats', 'dump_stats', 'print_stats', 'run', 'runcall', 'runctx', 'snapshot_stats']
+6
+             7 function calls in 0.012 seconds
+       Ordered by: standard name, standard name
+       ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+            1    0.002    0.002    0.011    0.011 profiling-with-cprofile.py:364(<lambda>)
+            3    0.003    0.001    0.003    0.001 profiling-with-cprofile.py:68(leaf)
+            1    0.003    0.003    0.005    0.005 profiling-with-cprofile.py:72(calls_twice)
+            1    0.003    0.003    0.009    0.009 profiling-with-cprofile.py:77(outer)
+            1    0.001    0.001    0.001    0.001 {method 'disable' of '_lsprof.Profiler' objects}
+       Ordered by: standard name, standard name
+    Function                                          was called by...
+                                                          ncalls  tottime  cumtime
+    profiling-with-cprofile.py:364(<lambda>)          <-
+    profiling-with-cprofile.py:68(leaf)               <-       2    0.002    0.002  profiling-with-cprofile.py:72(calls_twice)
+                                                               1    0.001    0.001  profiling-with-cprofile.py:77(outer)
+    profiling-with-cprofile.py:72(calls_twice)        <-       1    0.003    0.005  profiling-with-cprofile.py:77(outer)
+    profiling-with-cprofile.py:77(outer)              <-       1    0.003    0.009  profiling-with-cprofile.py:364(<lambda>)
+    {method 'disable' of '_lsprof.Profiler' objects}  <-
+       Ordered by: standard name, standard name
+    Function                                          called...
+                                                          ncalls  tottime  cumtime
+    profiling-with-cprofile.py:364(<lambda>)          ->       1    0.003    0.009  profiling-with-cprofile.py:77(outer)
+    profiling-with-cprofile.py:68(leaf)               ->
+    profiling-with-cprofile.py:72(calls_twice)        ->       2    0.002    0.002  profiling-with-cprofile.py:68(leaf)
+    profiling-with-cprofile.py:77(outer)              ->       1    0.001    0.001  profiling-with-cprofile.py:68(leaf)
+                                                               1    0.003    0.005  profiling-with-cprofile.py:72(calls_twice)
+    {method 'disable' of '_lsprof.Profiler' objects}  ->
+             7 function calls in 0.012 seconds
+       Ordered by: call count, standard name
+       List reduced from 5 to 1 due to restriction <'leaf'>
+       ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+            3    0.003    0.001    0.003    0.001 profiling-with-cprofile.py:68(leaf)
+             21 function calls (18 primitive calls) in 0.040 seconds
+       Ordered by: cumulative time, standard name
+       ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+            1    0.002    0.002    0.039    0.039 {built-in method builtins.exec}
+            1    0.003    0.003    0.037    0.037 <string>:1(<module>)
+            1    0.012    0.012    0.027    0.027 profiling-with-cprofile.py:179(uses_builtins)
+          4/1    0.007    0.002    0.007    0.007 profiling-with-cprofile.py:82(recursive)
+            1    0.003    0.003    0.005    0.005 {built-in method builtins.sorted}
+            2    0.002    0.001    0.002    0.001 profiling-with-cprofile.py:184(<lambda>)
+            2    0.002    0.001    0.002    0.001 {method 'append' of 'list' objects}
+            1    0.001    0.001    0.001    0.001 {built-in method builtins.isinstance}
+            1    0.001    0.001    0.001    0.001 {built-in method builtins.len}
+            1    0.001    0.001    0.001    0.001 {built-in method builtins.max}
+            1    0.001    0.001    0.001    0.001 {built-in method fromkeys}
+            1    0.001    0.001    0.001    0.001 {built-in method maketrans}
+            1    0.001    0.001    0.001    0.001 {method 'disable' of '_lsprof.Profiler' objects}
+            1    0.001    0.001    0.001    0.001 {method 'get' of 'dict' objects}
+            1    0.001    0.001    0.001    0.001 {method 'join' of 'str' objects}
+            1    0.001    0.001    0.001    0.001 {method 'upper' of 'str' objects}
+             10 function calls in 0.018 seconds
+       Ordered by: standard name, standard name
+       ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+            1    0.002    0.002    0.003    0.003 cProfile.py:120(__exit__)
+            4    0.004    0.001    0.004    0.001 profiling-with-cprofile.py:112(generates)
+            1    0.008    0.008    0.015    0.015 profiling-with-cprofile.py:117(goes_through)
+            3    0.003    0.001    0.003    0.001 profiling-with-cprofile.py:68(leaf)
+            1    0.001    0.001    0.001    0.001 {method 'disable' of '_lsprof.Profiler' objects}
+[("<method 'disable' of '_lsprof.Profiler' objects>", (1, 1, 0.001, 0.001), [('__exit__', (1, 1, 0.001, 0.001))]), ('__exit__', (1, 1, 0.002, 0.003), []), ('generates', (4, 4, 0.004, 0.004), [('goes_through', (4, 4, 0.004, 0.004))]), ('goes_through', (1, 1, 0.008, 0.015), []), ('leaf', (3, 3, 0.003, 0.003), [('goes_through', (3, 3, 0.003, 0.003))])]
+             16 function calls in 0.031 seconds
+       Ordered by: standard name, standard name
+       ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+            1    0.002    0.002    0.003    0.003 profiling-with-cprofile.py:143(__init__)
+            2    0.004    0.002    0.006    0.003 profiling-with-cprofile.py:146(method)
+            1    0.001    0.001    0.001    0.001 profiling-with-cprofile.py:149(__len__)
+            1    0.002    0.002    0.003    0.003 profiling-with-cprofile.py:152(__call__)
+            1    0.002    0.002    0.003    0.003 profiling-with-cprofile.py:155(attribute)
+            1    0.002    0.002    0.003    0.003 profiling-with-cprofile.py:159(static)
+            1    0.002    0.002    0.003    0.003 profiling-with-cprofile.py:163(of_the_class)
+            1    0.009    0.009    0.031    0.031 profiling-with-cprofile.py:168(uses_a_class)
+            7    0.007    0.001    0.007    0.001 profiling-with-cprofile.py:68(leaf)
+0.031 [('__call__', '1', 0.002, 0.003), ('__init__', '1', 0.002, 0.003), ('__len__', '1', 0.001, 0.001), ('attribute', '1', 0.002, 0.003), ('leaf', '7', 0.007, 0.007), ('method', '2', 0.004, 0.006), ('of_the_class', '1', 0.002, 0.003), ('static', '1', 0.002, 0.003), ('uses_a_class', '1', 0.009, 0.031)]
+mine [("<method 'disable' of '_lsprof.Profiler' objects>", 1, 0, 1.0, 1.0, None), ('leaf', 1, 0, 1.0, 1.0, None)]

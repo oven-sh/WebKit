@@ -1306,6 +1306,17 @@ what comes of it here, but for `LOG_MASK(-1)`, which one compiler makes an error
 
 What is sent to the log is not to be had back. `programs/the-syslog-module.py` goes by what the hooks of `sys.addaudithook()` are told, and by what `LOG_PERROR` has written to the standard error as well.
 
+### `_lsprof`, and so `cProfile`
+
+`PythonLsprofModule.cpp` is `Modules/_lsprof.c`. It is told of calls and returns by `sys.monitoring`, which it asks as a program would, so there is nothing for it in the engine.
+
+- **What an entry is found by** is where a code object is, or a `PyMethodDef`, which every `l.append` has in common. Here that is the `PyNativeFunction`, which is what a bound one is bound from.
+- **What it keeps is kept in a list**, the code objects and what entries are found by, since the collector goes through a `NativeState` while the program is running and is to be told of nothing that is in what grows. What is counted is beside it, in C++.
+- **`getstats()` gives them in the order in which they came.** CPython has them in a tree that goes by where things are in memory, and gives them in the order of the tree.
+- It goes by `m_self` and not by `__self__`, and what a static method has there is its class: `{built-in method maketrans}`.
+
+`programs/profiling-with-cprofile.py` gives it a clock that goes on by one each time that it is read. So how long everything is said to have taken is a matter of what the profiler was told of and in what order, and is compared to the last digit.
+
 ### `time`
 
 `PythonTimeModule.cpp` is `Modules/timemodule.c`, and `PythonTime.cpp` what it wants of `Python/pytime.c`: a time is a number of nanoseconds, and how a float or an int is made one, rounded which way, and what is said if

@@ -207,6 +207,7 @@ JSObject* createSHA1Module(JSGlobalObject*);
 JSObject* createSHA2Module(JSGlobalObject*);
 JSObject* createSHA3Module(JSGlobalObject*);
 JSObject* createBlake2Module(JSGlobalObject*);
+JSObject* createLsprofModule(JSGlobalObject*);
 JSObject* createHeapqModule(JSGlobalObject*);
 JSObject* createBisectModule(JSGlobalObject*);
 JSObject* createCMathModule(JSGlobalObject*);
