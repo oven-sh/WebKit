@@ -396,6 +396,39 @@ void Lowering::lowerGetById(Node* node)
         // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
         LValue base = lowJSValue(baseNode);
         noteShapeSite(Instance::ReadHas);
+        if (Options::aotTypesFields() && TypeTable::areStructs() && field->id) {
+            // The slots of the family are verified: it is for the object's Structure to say whether the field is in its slot. Whatever is known of the object.
+            isLoweredThisWay(2);
+            countShape(Instance::ReadHas);
+            bool undefinedWillDo = field->isOptional || !field->holds.saysSomething() || (field->holds.kinds & MaskUndefined);
+            Stub stub = static_cast<Stub>(static_cast<unsigned>(undefinedWillDo ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
+            auto throughStub = [&]() -> LValue {
+                return callStub(stub, Int64, { { base, GPRInfo::argumentGPR0 } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::WhatCallsDo, node);
+            };
+            if (!readsFieldsInPlace()) {
+                setJSValue(node, throughStub());
+                return;
+            }
+            LBasicBlock isThere = m_out.newBlock();
+            LBasicBlock otherwise = newColdBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            if (!isSubtype(baseNode->type, TCell)) {
+                LBasicBlock cellCase = m_out.newBlock();
+                m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
+                m_out.appendTo(cellCase);
+            }
+            LValue whichIsThere = m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(base), Structure::offsetOfFieldInSlot() + field->slot * sizeof(uint16_t)));
+            m_out.branch(m_out.equal(whichIsThere, m_out.constInt32(field->id)), usually(isThere), rarely(otherwise));
+            m_out.appendTo(isThere);
+            ValueFromBlock found = m_out.anchor(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue))));
+            m_out.jump(continuation);
+            m_out.appendTo(otherwise);
+            ValueFromBlock foundOut = m_out.anchor(throughStub());
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            setJSValue(node, m_out.phi(Int64, found, foundOut));
+            return;
+        }
         if (Options::aotTypesFields() && TypeTable::areStructs()) {
             // The property is in its slot, or the object has none.
             auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
@@ -615,7 +648,8 @@ void Lowering::lowerPutById(Node* node)
     LValue value = lowJSValue(valueNode);
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
-    if (auto field = (Options::aotShapes() & 4) && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
+    // (A field of a family whose slots are verified is stored to like any property: whoever does that is held to what the name holds, and remembers where it went.)
+    if (auto field = (Options::aotShapes() & 4) && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
         // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock has = m_out.newBlock();

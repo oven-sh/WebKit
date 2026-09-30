@@ -92,6 +92,7 @@ namespace AOT {
     v(operationAOTViewAs) \
     v(operationAOTNarrowAtomThatSaysTheSame) \
     v(operationAOTGetFieldTheLongWay) \
+    v(operationAOTReadField) \
     v(operationAOTGetLengthTheLongWay) \
     v(operationAOTSettleStruct) \
     v(operationAOTVerifyFact) \
@@ -180,6 +181,15 @@ namespace AOT {
     v(EnterStaticFunctionForCall) \
     v(EnterStaticFunctionForConstruct) \
     v(MegamorphicCache) \
+    /* SlotsOfBornObjects::familiesOfFieldsInSlot() */ \
+    v(FamiliesOfFieldsInSlot0) \
+    v(FamiliesOfFieldsInSlot1) \
+    v(FamiliesOfFieldsInSlot2) \
+    v(FamiliesOfFieldsInSlot3) \
+    v(FamiliesOfFieldsInSlot4) \
+    v(FamiliesOfFieldsInSlot5) \
+    v(FamiliesOfFieldsInSlot6) \
+    v(FamiliesOfFieldsInSlot7) \
     /* Host functions that compiled code knows when it sees them (CallIntrinsic). */ \
     v(HostMathSqrt) \
     v(HostMathAbs) \

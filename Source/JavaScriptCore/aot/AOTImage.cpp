@@ -671,12 +671,21 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& shape : shapes) {
         imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1), shape.family, shape.reserved, shape.inlineSlots, 0 });
         slotsOfShapes.appendVector(shape.slots);
+        if (shape.family && !shape.slots.isEmpty() && Options::aotTypesFields() && TypeTable::areStructs() && TypeTable::shared()->isUsable(shape.family) && TypeTable::shared()->isVerified(shape.family)) {
+            imageShapes.last().hasIds = 1;
+            for (uint32_t name : shape.names)
+                slotsOfShapes.append(TypeTable::shared()->idOfField(shape.family, selectors[name]));
+        }
         numberOfPropertiesOfShapes += shape.names.size();
     }
     Vector<uint32_t> indexOfHeldInSlots;
     Vector<SlotsOfBornObjects::Held> heldInSlots;
     Vector<uint32_t> indexOfNamed;
     Vector<SlotsOfBornObjects::Named> named;
+    Vector<SlotsOfBornObjects::Held> heldByNamed;
+    Vector<uint16_t> familyOfNamed;
+    Vector<uint32_t> fieldsOfSlot[Structure::numberOfSlotsWithFields]; // By id, from one: which of `named`.
+    Vector<uint16_t> familiesOfSlot[Structure::numberOfSlotsWithFields]; // Likewise: of which family.
     Vector<uint8_t> inlineSlotsOfFamilies;
     if (Options::aotTypesFields() && TypeTable::areStructs()) {
         RELEASE_ASSERT_WITH_MESSAGE(numbersOfIdentifiers, "Structs go by the numbers of the program's identifiers");
@@ -689,14 +698,35 @@ Vector<uint8_t> ImageBuilder::finish()
                 heldInSlots.append({ 0, 0, 0, 0 });
             size_t startOfNamed = named.size();
             for (auto& name : family.names) {
-                heldInSlots[start + name.slot] = { name.holds.kindsAsHeld(), name.holds.first, name.holds.last, 0 };
+                // (Of a verified family it goes by the name, and the slot says nothing.)
+                if (!family.isVerified)
+                    heldInSlots[start + name.slot] = { name.holds.kindsAsHeld(), name.holds.first, name.holds.last, 0 };
+                if (name.id) {
+                    // (In the order the ids were given out in. One whose name the program has no use for is nobody's.)
+                    RELEASE_ASSERT(fieldsOfSlot[name.slot].size() + 1 == name.id);
+                    fieldsOfSlot[name.slot].append(safeCast<uint32_t>(startOfNamed));
+                    familiesOfSlot[name.slot].append(safeCast<uint16_t>(number));
+                }
+            }
+            // In the order of their hashes: SlotsOfBornObjects::named().
+            Vector<const TypeTable::NameOfFamily*, 16> inOrder;
+            for (auto& name : family.names) {
                 // (A name that the program has no use for is not one that it can add a property by.)
-                if (auto it = numbersOfIdentifiers->find(name.name); it != numbersOfIdentifiers->end())
-                    named.append({ it->value, name.slot, name.mayBeAbsent });
+                if (numbersOfIdentifiers->contains(name.name))
+                    inOrder.append(&name);
+            }
+            std::ranges::stable_sort(inOrder, [](auto* a, auto* b) { return a->name->existingHash() < b->name->existingHash(); });
+            for (auto* name : inOrder) {
+                if (name->id)
+                    fieldsOfSlot[name->slot][name->id - 1] = safeCast<uint32_t>(named.size());
+                named.append({ numbersOfIdentifiers->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
+                heldByNamed.append({ name->holds.kindsAsHeld(), name->holds.first, name->holds.last, 0 });
+                familyOfNamed.append(safeCast<uint16_t>(number));
             }
             RELEASE_ASSERT(named.size() - startOfNamed < (1u << 12));
             indexOfNamed.append(static_cast<uint32_t>(startOfNamed) << 12 | (named.size() - startOfNamed));
-            inlineSlotsOfFamilies.append(safeCast<uint8_t>(family.inlineSlots));
+            RELEASE_ASSERT(family.inlineSlots < SlotsOfBornObjects::isVerifiedBit);
+            inlineSlotsOfFamilies.append(static_cast<uint8_t>(family.inlineSlots | (family.isVerified ? SlotsOfBornObjects::isVerifiedBit : 0)));
         }
     } else if (Options::aotTypesFields() && TypeTable::shared()) {
         for (uint32_t number = 0; number < shapes.size() && number <= TypeTable::shared()->numberOfLayouts(); ++number) {
@@ -1159,6 +1189,21 @@ Vector<uint8_t> ImageBuilder::finish()
     header.heldInSlotsOffset = place(heldInSlots.sizeInBytes());
     header.indexOfNamedOffset = indexOfNamed.isEmpty() ? 0 : place(indexOfNamed.sizeInBytes());
     header.namedOffset = place(named.sizeInBytes());
+    header.heldByNamedOffset = place(heldByNamed.sizeInBytes());
+    header.familyOfNamedOffset = place(familyOfNamed.sizeInBytes());
+    Vector<uint32_t> startOfFields;
+    Vector<uint32_t> fields;
+    for (auto& ofSlot : fieldsOfSlot) {
+        // (Ids are from one.)
+        startOfFields.append(safeCast<uint32_t>(fields.size()) - 1);
+        fields.appendVector(ofSlot);
+    }
+    Vector<uint16_t> familyOfField;
+    for (auto& ofSlot : familiesOfSlot)
+        familyOfField.appendVector(ofSlot);
+    header.familyOfFieldOffset = place(familyOfField.sizeInBytes());
+    header.startOfFieldsOffset = place(startOfFields.sizeInBytes());
+    header.fieldsOffset = place(fields.sizeInBytes());
     header.inlineSlotsOfFamiliesOffset = place(inlineSlotsOfFamilies.sizeInBytes());
     header.auditsTypes = Options::aotAuditsTypes();
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
@@ -1271,6 +1316,11 @@ Vector<uint8_t> ImageBuilder::finish()
     if (header.indexOfNamedOffset) {
         memcpy(base + header.indexOfNamedOffset, indexOfNamed.span().data(), indexOfNamed.sizeInBytes());
         memcpy(base + header.namedOffset, named.span().data(), named.sizeInBytes());
+        memcpy(base + header.heldByNamedOffset, heldByNamed.span().data(), heldByNamed.sizeInBytes());
+        memcpy(base + header.familyOfNamedOffset, familyOfNamed.span().data(), familyOfNamed.sizeInBytes());
+        memcpy(base + header.startOfFieldsOffset, startOfFields.span().data(), startOfFields.sizeInBytes());
+        memcpy(base + header.fieldsOffset, fields.span().data(), fields.sizeInBytes());
+        memcpy(base + header.familyOfFieldOffset, familyOfField.span().data(), familyOfField.sizeInBytes());
         memcpy(base + header.inlineSlotsOfFamiliesOffset, inlineSlotsOfFamilies.span().data(), inlineSlotsOfFamilies.sizeInBytes());
     }
     memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
@@ -1473,7 +1523,8 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     if (header.sizeOfIndexOfHeldInSlots)
         SlotsOfBornObjects::set({ image->at<uint32_t>(header.indexOfHeldInSlotsOffset), header.sizeOfIndexOfHeldInSlots }, image->at<SlotsOfBornObjects::Held>(header.heldInSlotsOffset));
     if (header.indexOfNamedOffset)
-        SlotsOfBornObjects::setNames(image->at<uint32_t>(header.indexOfNamedOffset), image->at<SlotsOfBornObjects::Named>(header.namedOffset), image->at<uint8_t>(header.inlineSlotsOfFamiliesOffset), Instance::adopt, header.auditsTypes);
+        SlotsOfBornObjects::setNames(image->at<uint32_t>(header.indexOfNamedOffset), image->at<SlotsOfBornObjects::Named>(header.namedOffset), image->at<SlotsOfBornObjects::Held>(header.heldByNamedOffset), image->at<uint16_t>(header.familyOfNamedOffset),
+            image->at<uint8_t>(header.inlineSlotsOfFamiliesOffset), image->at<uint32_t>(header.startOfFieldsOffset), image->at<uint32_t>(header.fieldsOffset), image->at<uint16_t>(header.familyOfFieldOffset), Instance::adopt, header.auditsTypes);
     return image;
 }
 

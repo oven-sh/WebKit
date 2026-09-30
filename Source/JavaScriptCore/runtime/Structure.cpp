@@ -372,6 +372,11 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
 
     ASSERT(!previous->typeInfo().structureIsImmortal());
     setPreviousID(vm, previous);
+#if USE(BUN_JSC_ADDITIONS)
+    // (Whoever knows that what this is made for leaves them as they were says so: addNewPropertyTransition().)
+    if (m_bornAs) [[unlikely]]
+        forgetFieldsInSlots();
+#endif
 
     // Do not fire watchpoint inside Structure constructor since watchpoint can involve further heap allocations.
     // We fire watchpoint separately in Structure::finishCreation.
@@ -429,9 +434,9 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     return result;
 }
 
-Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved, unsigned inlineSlots)
+Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved, unsigned inlineSlots, std::span<const unsigned> attributes)
 {
-    RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && names.size() == slots.size());
+    RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && names.size() == slots.size() && (attributes.empty() || attributes.size() == names.size()));
     inlineSlots = std::min<unsigned>(inlineSlots, empty->inlineCapacity());
     auto offsetOf = [&](unsigned slot) { return SlotsOfBornObjects::offsetOfSlot(slot, inlineSlots); };
     DeferGC deferGC(vm);
@@ -452,7 +457,7 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
             result->setIsQuickPropertyAccessAllowedForEnumeration(false);
         // A property is put where one has been taken out of, if there is such a place, and in the last of them.
         table->addDeletedOffset(offsetOf(slots[i]));
-        result->addPropertyWithoutTransition(vm, names[i], 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
+        result->addPropertyWithoutTransition(vm, names[i], attributes.empty() ? 0 : attributes[i], [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
             RELEASE_ASSERT(offset == offsetOf(slots[i]));
             if (newMaxOffset > result->maxOffset())
                 result->setMaxOffset(vm, newMaxOffset);
@@ -686,6 +691,9 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->setTransitionKind(TransitionKind::PropertyAddition);
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
     transition->setMaxOffset(vm, structure->maxOffset());
+#if USE(BUN_JSC_ADDITIONS)
+    memcpySpan(std::span { transition->m_fieldInSlot }, std::span { structure->m_fieldInSlot });
+#endif
 
     offset = transition->add(vm, propertyName, attributes);
     transition->setTransitionOffset(vm, offset);
@@ -1255,6 +1263,11 @@ uint32_t SlotsOfBornObjects::s_count;
 const SlotsOfBornObjects::Held* SlotsOfBornObjects::s_held;
 const uint32_t* SlotsOfBornObjects::s_indexOfNamed;
 const SlotsOfBornObjects::Named* SlotsOfBornObjects::s_named;
+const SlotsOfBornObjects::Held* SlotsOfBornObjects::s_heldByNamed;
+const uint16_t* SlotsOfBornObjects::s_familyOfNamed;
+const uint32_t* SlotsOfBornObjects::s_startOfFields;
+const uint32_t* SlotsOfBornObjects::s_fields;
+const uint16_t* SlotsOfBornObjects::s_familyOfField;
 const uint8_t* SlotsOfBornObjects::s_inlineSlots;
 SlotsOfBornObjects::Adopt SlotsOfBornObjects::s_adopt;
 bool SlotsOfBornObjects::s_audits;
@@ -1298,10 +1311,15 @@ void SlotsOfBornObjects::audit(ASCIILiteral what, uint16_t family, JSValue value
     dataLogLn("AUDIT\t", out.toCString());
 }
 
-void SlotsOfBornObjects::setNames(const uint32_t* index, const Named* named, const uint8_t* inlineSlots, Adopt adopt, bool audits)
+void SlotsOfBornObjects::setNames(const uint32_t* index, const Named* named, const Held* heldByNamed, const uint16_t* familyOfNamed, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* familyOfField, Adopt adopt, bool audits)
 {
+    s_familyOfField = familyOfField;
     RELEASE_ASSERT(s_count && !s_named);
     s_inlineSlots = inlineSlots;
+    s_heldByNamed = heldByNamed;
+    s_familyOfNamed = familyOfNamed;
+    s_startOfFields = startOfFields;
+    s_fields = fields;
     s_audits = audits;
     s_indexOfNamed = index;
     s_adopt = adopt;
@@ -1318,24 +1336,36 @@ const SlotsOfBornObjects::Named* SlotsOfBornObjects::named(uint16_t bornAs, Uniq
     UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
     if (!identifiers)
         return nullptr;
-    struct Found {
-        UniquedStringImpl* name;
-        const Named* named;
-        uint16_t bornAs;
-    };
-    static thread_local Found recent[1024];
-    Found& found = recent[((std::bit_cast<uintptr_t>(name) >> 4) ^ bornAs) & 1023];
-    if (found.name == name && found.bornAs == bornAs)
-        return found.named;
-    const Named* result = nullptr;
-    for (auto& entry : names) {
-        if (identifiers[entry.identifier] == name) {
-            result = &entry;
-            break;
+    // (Whoever knows where the property is has no need of this: Structure::fieldInSlot(), fieldWithId(). It is for when a Structure is given a property, or its like is adopted.)
+    // They are in the order of their hashes (ImageBuilder::finish()).
+    if (names.size() > 8) {
+        if (name->isSymbol())
+            return nullptr;
+        unsigned hash = name->existingHash();
+        size_t low = 0;
+        size_t high = names.size();
+        while (low < high) {
+            size_t middle = low + (high - low) / 2;
+            if (identifiers[names[middle].identifier]->existingHash() < hash)
+                low = middle + 1;
+            else
+                high = middle;
         }
+        names = names.subspan(low);
+        for (auto& entry : names) {
+            UniquedStringImpl* candidate = identifiers[entry.identifier];
+            if (candidate == name)
+                return &entry;
+            if (candidate->existingHash() != hash)
+                return nullptr;
+        }
+        return nullptr;
     }
-    found = { name, result, bornAs };
-    return result;
+    for (auto& entry : names) {
+        if (identifiers[entry.identifier] == name)
+            return &entry;
+    }
+    return nullptr;
 }
 
 void SlotsOfBornObjects::makeAtomIfString(JSValue value)
@@ -1367,6 +1397,54 @@ bool SlotsOfBornObjects::admits(const Held& held, JSValue value)
             return false;
     }
     return soundTypeMaskAdmits(kinds, value);
+}
+
+void Structure::setBornAs(uint16_t family)
+{
+    m_bornAs = family;
+    zeroSpan(std::span { m_fieldInSlot });
+    if (!SlotsOfBornObjects::isVerified(family))
+        return;
+    forEachProperty(vm(), [&](const PropertyTableEntry& entry) {
+        noteFieldAdded(entry.key(), entry.offset(), entry.attributes());
+        return true;
+    });
+}
+
+void Structure::setBornAs(uint16_t family, std::span<const uint16_t, numberOfSlotsWithFields> fieldInSlot)
+{
+    m_bornAs = family;
+    memcpySpan(std::span { m_fieldInSlot }, fieldInSlot);
+    for (unsigned slot = 0; slot < numberOfSlotsWithFields; ++slot)
+        RELEASE_ASSERT(!m_fieldInSlot[slot] || m_fieldInSlot[slot] == noTellingWhichField || slot < m_inlineCapacity);
+}
+
+void Structure::setIsNeverAdopted()
+{
+    RELEASE_ASSERT(!m_bornAs);
+    for (uint16_t& field : m_fieldInSlot)
+        field = noTellingWhichField;
+}
+
+void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, unsigned attributes)
+{
+    if (!SlotsOfBornObjects::isVerified(m_bornAs))
+        return;
+    auto* named = SlotsOfBornObjects::named(m_bornAs, name);
+    if (!named || named->slot >= numberOfSlotsWithFields)
+        return;
+    // (If it is anywhere else, that there is nothing in the slot does not mean that the object has no such property. And a slot that has had something else in it is not gone by again:
+    // whoever looked at the Structure the object had then may not have looked since.)
+    uint16_t& field = m_fieldInSlot[named->slot];
+    field = !field && !attributes && offset == static_cast<PropertyOffset>(named->slot) ? named->id : noTellingWhichField;
+}
+
+void Structure::forgetFieldsInSlots()
+{
+    if (!SlotsOfBornObjects::isVerified(m_bornAs))
+        return;
+    for (uint16_t& field : m_fieldInSlot)
+        field = noTellingWhichField;
 }
 
 void Structure::setKnownShape(VM& vm, uint16_t shape)

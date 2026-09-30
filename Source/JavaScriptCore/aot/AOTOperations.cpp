@@ -768,10 +768,79 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlob
     OPERATION_RETURN(scope, JSValue::encode(SlotsOfBornObjects::asHeld(family, slot, value)));
 }
 
+// The Structure of the base does not say that the field is in its slot.
+JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint32_t which))
+{
+    AOT_OPERATION_PROLOGUE(globalObject);
+    unsigned slot = which >> 16 & 0xff;
+    bool undefinedWillDo = which >> 24 & 1;
+    const SlotsOfBornObjects::Named& field = SlotsOfBornObjects::fieldWithId(slot, static_cast<uint16_t>(which));
+    uint16_t family = SlotsOfBornObjects::familyOf(field);
+    JSValue base = JSValue::decode(encodedBase);
+    ASCIILiteral why = "it is no object"_s;
+    if (base.isObject()) {
+        JSObject* object = asObject(base);
+        // What code that knows nothing of the types has made is made one of the family, if it can be.
+        if (object->structure()->isNeverAdopted())
+            why = "its like is never adopted"_s;
+        else if (!object->structure()->bornAs())
+            why = Instance::adopt(vm, object, family) ? "made one of the family"_s : SlotsOfBornObjects::s_whyNotAdopted;
+        else
+            why = object->structure()->bornAs() != family ? "it is of another type's family"_s : !object->structure()->fieldInSlot(slot) ? "it has no such property"_s : "the property is somewhere else, or there is no telling"_s;
+        Instance::noteView(why);
+        if (Options::aotReportSlowPaths()) [[unlikely]] { // TEMPORARY
+            UniquedStringImpl* name = StaticHeap::identifiersOfProgram()[field.identifier];
+            unsigned attributes = 0;
+            PropertyOffset offset = object->structure()->get(vm, name, attributes);
+            noteSlowPath(offset == invalidOffset ? "read_field (not its own)"_s : (attributes & PropertyAttribute::Accessor) ? "read_field (a getter)"_s : (attributes & PropertyAttribute::CustomAccessorOrValue) ? "read_field (custom)"_s : attributes ? "read_field (plain but for its attributes)"_s : "read_field (plain)"_s, base, name, why);
+        }
+        Structure* structure = object->structure();
+        if (structure->bornAs() == family) {
+            uint16_t there = structure->fieldInSlot(slot);
+            if (there == field.id) {
+                if (JSValue value = object->getDirect(static_cast<PropertyOffset>(slot)))
+                    OPERATION_RETURN(scope, JSValue::encode(value));
+            } else if (!there && undefinedWillDo)
+                OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+        }
+    } else
+        Instance::noteView(base.isUndefinedOrNull() ? "it is undefined or null"_s : "it is no object"_s);
+    UniquedStringImpl* uid = StaticHeap::identifiersOfProgram()[field.identifier];
+    JSValue value;
+    MegamorphicCache* cache = vm.megamorphicCache();
+    if (auto* known = cache && base.isObject() ? cache->findLoad(asObject(base)->structureID(), uid) : nullptr) {
+        JSCell* holder = known->m_holder == JSCell::seenMultipleCalleeObjects() ? base.asCell() : known->m_holder;
+        value = holder ? asObject(holder)->getDirect(known->m_offset) : jsUndefined();
+    } else {
+        PropertySlot propertySlot(base, PropertySlot::InternalMethodType::Get);
+        value = getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(vm, uid), propertySlot);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
+    if (value.isUndefined() && undefinedWillDo)
+        OPERATION_RETURN(scope, JSValue::encode(value));
+    // (What comes next takes it for what the field holds. So it is that, or this does not come back.)
+    if (SlotsOfBornObjects::says(field, value) == SlotsOfBornObjects::Says::Refuses) {
+        throwTypeError(globalObject, scope, "Type check failed: a property is not what the type of the object says it is"_s);
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
+    OPERATION_RETURN(scope, JSValue::encode(SlotsOfBornObjects::asHeld(field, value)));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTSettleStruct, void, (JSGlobalObject* globalObject, JSObject* object))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     uint16_t family = object->structure()->bornAs();
+    if (SlotsOfBornObjects::isVerified(family)) {
+        bool isRefused = false;
+        object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            if (auto* named = SlotsOfBornObjects::named(family, entry.key()))
+                isRefused = SlotsOfBornObjects::says(*named, object->getDirect(entry.offset())) == SlotsOfBornObjects::Says::Refuses;
+            return !isRefused;
+        });
+        if (isRefused)
+            throwTypeError(globalObject, scope, TypedFieldError);
+        OPERATION_RETURN(scope);
+    }
     for (unsigned slot = 0; slot < SlotsOfBornObjects::numberOfSlots(family); ++slot) {
         JSValue value = object->getDirect(SlotsOfBornObjects::offsetInFamily(family, slot));
         if (value && SlotsOfBornObjects::says(family, slot, value) == SlotsOfBornObjects::Says::Refuses) {

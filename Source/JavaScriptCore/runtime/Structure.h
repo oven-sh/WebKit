@@ -219,18 +219,35 @@ struct SlotsOfBornObjects {
     //   - a property of such a name that is added later goes in its slot;
     //   - what the slot does not hold is not stored, one that has to be there is not deleted, and none is made into anything but a plain property: whoever
     //     tries is told so, as with a property that cannot be written.
+    //
+    // Or the slots of the family are VERIFIED. Then names of it share slots (any two that no literal and no type has together), an object has room for what it has and no more, and
+    // nobody reads or writes a slot without asking the object's Structure which name is in it: Structure::fieldInSlot(). What that says is the id of the field. No other name with
+    // that slot has the same id, of any family, so it says what the object was born as too, and what is held.
     struct Named {
         uint32_t identifier; // StaticHeap::identifiersOfProgram()
-        uint16_t slot;
-        uint16_t mayBeAbsent;
+        uint8_t slot;
+        uint8_t mayBeAbsent;
+        uint16_t id; // Zero: the slots of the family are not verified.
     };
     // Makes an object that was born as nothing one of the family, where it is, if it has what it takes. (It may run out of room. It does not run code.)
     using Adopt = bool (*)(VM&, JSObject*, uint16_t family);
 
     JS_EXPORT_PRIVATE static void set(std::span<const uint32_t> index, const Held*);
     // inlineSlots: by family, how many of its slots are in the object. The rest are outside it, one after the other from the first place there is.
-    JS_EXPORT_PRIVATE static void setNames(const uint32_t* index, const Named*, const uint8_t* inlineSlots, Adopt, bool audits); // index: as for the slots, by family. After set().
-    static unsigned inlineSlots(uint16_t bornAs) { return s_inlineSlots[bornAs]; }
+    // heldByNamed, familyOfNamed: go with the second. inlineSlots: | isVerifiedBit. fields: for each slot that has ids, one after the other, which of the second has the id (from 1); startOfFields: where each slot's start, less one.
+    JS_EXPORT_PRIVATE static void setNames(const uint32_t* index, const Named*, const Held* heldByNamed, const uint16_t* familyOfNamed, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* familyOfField, Adopt, bool audits); // index: as for the slots, by family. After set().
+    static constexpr uint8_t isVerifiedBit = 0x80;
+    static unsigned inlineSlots(uint16_t bornAs) { return s_inlineSlots[bornAs] & ~isVerifiedBit; }
+    static bool isVerified(uint16_t bornAs) { return s_named && bornAs < s_count && (s_inlineSlots[bornAs] & isVerifiedBit); }
+    static const Named& fieldWithId(unsigned slot, uint16_t id) { return s_named[s_fields[s_startOfFields[slot] + id]]; }
+    // By id: which family the field is of. Null: there are no ids.
+    static const uint16_t* familiesOfFieldsInSlot(unsigned slot) { return s_familyOfField ? s_familyOfField + static_cast<int32_t>(s_startOfFields[slot]) : nullptr; }
+    static uint16_t familyOf(const Named& named) { return s_familyOfNamed[&named - s_named]; }
+    static const Held* heldBy(const Named& named)
+    {
+        const Held& held = s_heldByNamed[&named - s_named];
+        return held.kinds ? &held : nullptr;
+    }
     static PropertyOffset offsetOfSlot(unsigned slot, unsigned inlineSlots) { return slot < inlineSlots ? static_cast<PropertyOffset>(slot) : firstOutOfLineOffset + static_cast<PropertyOffset>(slot - inlineSlots); }
     static PropertyOffset offsetInFamily(uint16_t bornAs, unsigned slot) { return offsetOfSlot(slot, inlineSlots(bornAs)); }
     // Options::aotAuditsTypes() when the program was compiled: nothing is refused, and what would have been is logged.
@@ -254,21 +271,22 @@ struct SlotsOfBornObjects {
     }
     static unsigned numberOfSlots(uint16_t bornAs) { return bornAs < s_count ? s_index[bornAs] & 0xff : 0; }
     // Of structs: in a slot that says what it holds a number is encoded as a double, whatever its value, so that code that reads one has nothing to tell apart.
-    static JSValue asHeld(uint16_t bornAs, unsigned slot, JSValue value)
+    static JSValue asHeld(const Held* held, JSValue value)
     {
         if (value.isInt32())
-            return heldIn(bornAs, slot) ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value;
-        if (value.isCell()) {
-            if (const Held* held = heldIn(bornAs, slot); held && (held->kinds & stringsAreAtoms)) [[unlikely]]
-                makeAtomIfString(value);
-        }
+            return held ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value;
+        if (value.isCell() && held && (held->kinds & stringsAreAtoms)) [[unlikely]]
+            makeAtomIfString(value);
         return value;
     }
+    static JSValue asHeld(uint16_t bornAs, unsigned slot, JSValue value) { return asHeld(heldIn(bornAs, slot), value); }
+    static JSValue asHeld(const Named& named, JSValue value) { return asHeld(heldBy(named), value); }
     JS_EXPORT_PRIVATE static void makeAtomIfString(JSValue);
     JS_EXPORT_PRIVATE static bool admits(const Held&, JSValue);
-    static Says says(uint16_t bornAs, unsigned slot, JSValue value)
+    static Says says(uint16_t bornAs, unsigned slot, JSValue value) { return says(bornAs, heldIn(bornAs, slot), value); }
+    static Says says(const Named& named, JSValue value) { return says(familyOf(named), heldBy(named), value); }
+    static Says says(uint16_t bornAs, const Held* held, JSValue value)
     {
-        const Held* held = heldIn(bornAs, slot);
         if (!held)
             return Says::Nothing;
         bool isAdmitted = admits(*held, value);
@@ -289,6 +307,11 @@ private:
     JS_EXPORT_PRIVATE static const Held* s_held;
     JS_EXPORT_PRIVATE static const uint32_t* s_indexOfNamed;
     JS_EXPORT_PRIVATE static const Named* s_named;
+    JS_EXPORT_PRIVATE static const Held* s_heldByNamed;
+    JS_EXPORT_PRIVATE static const uint16_t* s_familyOfNamed;
+    JS_EXPORT_PRIVATE static const uint32_t* s_startOfFields;
+    JS_EXPORT_PRIVATE static const uint32_t* s_fields;
+    JS_EXPORT_PRIVATE static const uint16_t* s_familyOfField; // Goes with s_fields.
     JS_EXPORT_PRIVATE static const uint8_t* s_inlineSlots;
     static Adopt s_adopt;
     JS_EXPORT_PRIVATE static bool s_audits;
@@ -443,7 +466,13 @@ public:
     // Likewise, each in the slot that is said (all of them in the object itself). The slots up to the last that nothing is in stay so.
     // reserved: so many slots are spoken for, whether or not anything is in them.
     // inlineSlots: slots from that one on are outside the object (SlotsOfBornObjects::offsetOfSlot()).
-    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max());
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
+    // What whoever adds a property says of the Structure, and adding it does not.
+    void saysOfAccessorsAndReadOnlyPropertiesWhat(const Structure& other)
+    {
+        setHasAnyKindOfGetterSetterProperties(other.hasAnyKindOfGetterSetterProperties());
+        setHasReadOnlyOrGetterSetterPropertiesExcludingProto(other.hasReadOnlyOrGetterSetterPropertiesExcludingProto());
+    }
     PropertyOffset nextOffsetFor(PropertyTable*, UniquedStringImpl*);
     // The number that a program compiled ahead of time knows the layout by (AOT::KnownShape): what is where in an object of this
     // Structure was settled then. Zero: none. No Structure that another turns into has one.
@@ -462,7 +491,17 @@ public:
     //   - whoever puts something else there finds the property taken out of the slot first (JSObject::putDirectInternal()), and
     //   - nobody remembers how to store to such a slot without asking (the PutPropertySlot is left as it was: not for caching).
     uint16_t bornAs() const { return m_bornAs; }
-    void setBornAs(uint16_t layout) { m_bornAs = layout; }
+    JS_EXPORT_PRIVATE void setBornAs(uint16_t layout); // Of a Structure that has what it is going to have to begin with.
+    // SlotsOfBornObjects::Named::id of the property that is at that offset in the object. Zero: no name of the family that has that slot is a property of the object. noTellingWhichField:
+    // ask some other way. (Of what was born as nothing, and of a family whose slots are not verified: zero.)
+    static constexpr unsigned numberOfSlotsWithFields = 8;
+    static constexpr uint16_t noTellingWhichField = 0xffff;
+    uint16_t fieldInSlot(unsigned slot) const { return m_fieldInSlot[slot]; }
+    JS_EXPORT_PRIVATE void setBornAs(uint16_t family, std::span<const uint16_t, numberOfSlotsWithFields>); // For whoever knows what is in its slots.
+    // Of what was born as nothing: there is no making its like one of a family, whichever (AOT::Instance::adopt()).
+    bool isNeverAdopted() const { return !m_bornAs && m_fieldInSlot[0] == noTellingWhichField; }
+    JS_EXPORT_PRIVATE void setIsNeverAdopted();
+    static constexpr ptrdiff_t offsetOfFieldInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldInSlot); }
     // Of an uncacheable dictionary: the property, which is in the object itself, is out of it from now on. func: as for adding one, with where it is to be.
     template<typename Func> void movePropertyOutOfObjectWithoutTransition(VM&, PropertyName, const Func&);
     static constexpr ptrdiff_t offsetOfBornAs() { return OBJECT_OFFSETOF(Structure, m_bornAs); }
@@ -1205,6 +1244,13 @@ private:
     WriteBarrier<PropertyTable> m_propertyTableUnsafe;
 
     mutable InlineWatchpointSet m_transitionWatchpointSet;
+
+#if USE(BUN_JSC_ADDITIONS)
+    uint16_t m_fieldInSlot[numberOfSlotsWithFields] { }; // See fieldInSlot().
+    // It has been given the property, there. / Something else has been done to what it has, or to what it inherits from.
+    JS_EXPORT_PRIVATE void noteFieldAdded(UniquedStringImpl*, PropertyOffset, unsigned attributes);
+    JS_EXPORT_PRIVATE void forgetFieldsInSlots();
+#endif
 
     static_assert(firstOutOfLineOffset < 256);
 

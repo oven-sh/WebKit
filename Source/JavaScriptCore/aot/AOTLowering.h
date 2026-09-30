@@ -200,7 +200,7 @@ private:
     static bool isThisOfWhatAnybodyMayCall(Node*);
     LValue isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
     // Options::aotTypesFields(): what has just been made as that layout, with those in its slots (null: nothing), is left with nothing in a slot that the slot does not hold.
-    void settleWhatWasBorn(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values);
+    void settleWhatWasBorn(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::Holds, 8>* holdsIfKnown = nullptr);
     void guardField(Node* guard);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
@@ -278,6 +278,16 @@ private:
     // instructions or in time. Where the types are known there is nothing to spell out: what is done is done on the spot either way.
     // TEMPORARY: BUN_AOT_SPELLS_OUT_LOOPS=1, as it used to be, until what that is for is gone.
     static bool spellsOutLoops() { static const bool result = [] { const char* text = getenv("BUN_AOT_SPELLS_OUT_LOOPS"); return text && !strcmp(text, "1"); }(); return result; }
+    // A read of a field whose slot is verified: whether the object's Structure is asked on the spot. (Six instructions and a cold call, against a call.)
+    static unsigned fieldsInPlace() { static const unsigned result = [] { const char* text = getenv("BUN_AOT_FIELDS_IN_PLACE"); return text ? static_cast<unsigned>(atoi(text)) : 0u; }(); return result; } // TEMPORARY. (Not by itself: 1.1MB for the loops of a big program, 6MB for all of it, and no fewer instructions.)
+    bool readsFieldsInPlace() const
+    {
+        if (m_block->isGeneric || !fieldsInPlace())
+            return false;
+        if (m_block->isInLoop || m_graph.callsItself || fieldsInPlace() >= 3)
+            return true;
+        return fieldsInPlace() >= 2 && m_graph.facts() && m_graph.facts()->isUsedInLoop.load(std::memory_order_relaxed);
+    }
     bool isCompact() const { return !spellsOutLoops() || ((!m_block->isInLoop || (m_block->isOnlyInLoopOfBuiltin && callbacksAreCompact())) && !m_graph.callsItself && !(m_block->graph->hasTwoCopiesOfAll && Options::aotSpellsOutFirstCopies())) || m_block->isGeneric; }
     // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     LValue differenceFromWhatIsWritten(LValue characters, std::span<const Latin1Character> written);

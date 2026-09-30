@@ -1396,6 +1396,87 @@ static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
     jit.jump().linkTo(waysOn.miss, &jit);
 }
 
+// What is quick about it does not depend on which Structure the object has, or on who is asking: only on whether that Structure says what it is asked.
+// Where it goes on if the Structure says something else (which is in T11; the Structure in T13), and if there is no asking. With the base in A0.
+struct WaysOnOfReadSlot {
+    CCallHelpers::Label isNotThere;
+    CCallHelpers::Label miss;
+};
+static WaysOnOfReadSlot s_waysOnOfReadSlot[2][Structure::numberOfSlotsWithFields];
+
+// base: takesOperandAnywhere().
+static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWillDo, GPRReg base = A0)
+{
+    static_assert(Structure::numberOfSlotsWithFields == 8);
+    ASSERT(base != A1 && base != T11 && base != T12 && base != T13);
+    Jump isNotCell = jit.branchIfNotCell(base);
+    jit.load32(Address(base, JSCell::structureIDOffset()), T13);
+#if CPU(ARM64)
+    static_assert(!(structureIDBaseOfImages & ~(0xffffull << 32)));
+    jit.m_assembler.movk<64>(T13, static_cast<uint16_t>(structureIDBaseOfImages >> 32), 32);
+#else
+    jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T13);
+#endif
+    jit.load16(Address(T13, Structure::offsetOfFieldInSlot() + slot * sizeof(uint16_t)), T11);
+    Jump isNotThere = jit.branch32(CCallHelpers::NotEqual, T11, A1);
+    jit.load64(Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)), A0);
+    jit.ret();
+
+    auto& waysOn = s_waysOnOfReadSlot[undefinedWillDo][slot];
+    if (base != A0) {
+        isNotThere.link(&jit);
+        jit.move(base, A0);
+        jit.jump().linkTo(waysOn.isNotThere, &jit);
+        isNotCell.link(&jit);
+        jit.move(base, A0);
+        jit.jump().linkTo(waysOn.miss, &jit);
+        return;
+    }
+
+    isNotThere.link(&jit);
+    waysOn.isNotThere = jit.label();
+    CCallHelpers::JumpList miss;
+    if (undefinedWillDo) {
+        // Nothing of the object's family is in the slot: so if that is the family of the field, the object has no such property. (Nor does it inherit one: Instance::adopt().)
+        miss.append(jit.branchTest32(CCallHelpers::NonZero, T11));
+        jit.load16(Address(T13, Structure::offsetOfBornAs()), T11);
+        loadInstance(jit, T12);
+        jit.loadPtr(Address(T12, Instance::offsetOfRuntimeTable()), T12);
+        jit.loadPtr(Address(T12, (static_cast<unsigned>(Entry::FamiliesOfFieldsInSlot0) + slot) * sizeof(void*)), T12);
+        jit.load16(CCallHelpers::BaseIndex(T12, A1, CCallHelpers::TimesTwo), T12);
+        miss.append(jit.branch32(CCallHelpers::NotEqual, T11, T12));
+        jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), A0);
+        jit.ret();
+    }
+    miss.link(&jit);
+    isNotCell.link(&jit);
+    waysOn.miss = jit.label();
+    jit.or32(TrustedImm32(slot << 16 | undefinedWillDo << 24), A1);
+    callBinaryOperation(jit, Entry::operationAOTReadField);
+}
+
+static std::optional<std::pair<unsigned, bool>> slotReadBy(Stub stub)
+{
+    unsigned number = static_cast<unsigned>(stub);
+    if (number >= static_cast<unsigned>(Stub::ReadSlot0) && number < static_cast<unsigned>(Stub::ReadSlot0) + Structure::numberOfSlotsWithFields)
+        return std::pair { number - static_cast<unsigned>(Stub::ReadSlot0), false };
+    if (number >= static_cast<unsigned>(Stub::ReadSlotOrUndefined0) && number < static_cast<unsigned>(Stub::ReadSlotOrUndefined0) + Structure::numberOfSlotsWithFields)
+        return std::pair { number - static_cast<unsigned>(Stub::ReadSlotOrUndefined0), true };
+    return std::nullopt;
+}
+#define AOT_READ_SLOT(n) \
+static void generateReadSlot##n(CCallHelpers& jit) { generateReadSlot(jit, n, false); } \
+static void generateReadSlotOrUndefined##n(CCallHelpers& jit) { generateReadSlot(jit, n, true); }
+AOT_READ_SLOT(0)
+AOT_READ_SLOT(1)
+AOT_READ_SLOT(2)
+AOT_READ_SLOT(3)
+AOT_READ_SLOT(4)
+AOT_READ_SLOT(5)
+AOT_READ_SLOT(6)
+AOT_READ_SLOT(7)
+#undef AOT_READ_SLOT
+
 static void generateGetById(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetById); }
 static void generateGetByIdWellKnown(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetByIdWellKnown); }
 
@@ -3470,7 +3551,9 @@ static constexpr unsigned firstThunkOfIntrinsics = firstThunkOfPrologue + bigges
 static constexpr Stub stubsThatTakeOperandAnywhere[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     // ... and these are got to by way of a move.
     Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
-    Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringThatSays, Stub::GetLength, Stub::HelperAddField };
+    Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringThatSays, Stub::GetLength, Stub::HelperAddField,
+    Stub::ReadSlot0, Stub::ReadSlot1, Stub::ReadSlot2, Stub::ReadSlot3, Stub::ReadSlot4, Stub::ReadSlot5, Stub::ReadSlot6, Stub::ReadSlot7,
+    Stub::ReadSlotOrUndefined0, Stub::ReadSlotOrUndefined1, Stub::ReadSlotOrUndefined2, Stub::ReadSlotOrUndefined3, Stub::ReadSlotOrUndefined4, Stub::ReadSlotOrUndefined5, Stub::ReadSlotOrUndefined6, Stub::ReadSlotOrUndefined7 };
 // And so are these, which are got to by way of something that says which operation as it is.
 struct OperationThatTakesOperandAnywhere {
     Stub stub;
@@ -3582,6 +3665,8 @@ bool operandMayBeIn(Stub stub, GPRReg reg)
     case Stub::GetByIdWellKnown:
         return (number < 9 && reg != GPRInfo::argumentGPR1) || number > 15; // (The slot; T9 to T15.)
     default:
+        if (slotReadBy(stub))
+            return (number < 9 && reg != GPRInfo::argumentGPR1) || number > 15; // (The id; T9 to T15.)
         return true;
     }
 #else
@@ -3769,6 +3854,10 @@ const StubBlob& stubBlob()
                         generateGetByIdFrom(jit, Entry::operationAOTGetByIdWellKnown, reg);
                         break;
                     default:
+                        if (auto read = slotReadBy(stub)) {
+                            generateReadSlot(jit, read->first, read->second, reg);
+                            break;
+                        }
                         jit.move(reg, whereOperandIsTaken(stub));
                         jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
                         break;

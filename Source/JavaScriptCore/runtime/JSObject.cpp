@@ -2398,7 +2398,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
         }
 #if USE(BUN_JSC_ADDITIONS)
         if (uint16_t bornAs = structure->bornAs(); bornAs && SlotsOfBornObjects::areStructs()) [[unlikely]] {
-            if (auto* named = SlotsOfBornObjects::named(bornAs, propertyName.uid()); named && !named->mayBeAbsent) {
+            if (auto* named = SlotsOfBornObjects::named(bornAs, propertyName.uid()); named && !named->mayBeAbsent && !SlotsOfBornObjects::isVerified(bornAs)) {
                 if (!SlotsOfBornObjects::audits()) {
                     slot.setNonconfigurable();
                     return false;

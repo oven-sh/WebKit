@@ -290,6 +290,10 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attribute);
     auto newMaxOffset = std::max(newOffset, maxOffset());
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_bornAs) [[unlikely]]
+        noteFieldAdded(rep, newOffset, attributes);
+#endif
     
     func(locker, newOffset, newMaxOffset);
     
@@ -329,6 +333,10 @@ inline PropertyOffset Structure::remove(VM& vm, PropertyName propertyName, const
     setIsQuickPropertyAccessAllowedForEnumeration(false);
 
     table->addDeletedOffset(offset);
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_bornAs) [[unlikely]]
+        forgetFieldsInSlots();
+#endif
 
     PropertyOffset newMaxOffset = maxOffset();
 
@@ -364,6 +372,10 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
     PropertyOffset offset = table->updateAttributeIfExists(propertyName.uid(), attributes);
     if (offset == invalidOffset)
         return offset;
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_bornAs) [[unlikely]]
+        forgetFieldsInSlots();
+#endif
 
     if (attributes & PropertyAttribute::DontEnum) {
         setHasNonEnumerableProperties(true);
@@ -405,6 +417,7 @@ inline void Structure::movePropertyOutOfObjectWithoutTransition(VM& vm, Property
     PropertyOffset newOffset = table->nextOffset(m_inlineCapacity, false);
     RELEASE_ASSERT(JSC::isValidOffset(newOffset));
     table->moveToOffset(vm, propertyName.uid(), newOffset);
+    forgetFieldsInSlots();
     setIsQuickPropertyAccessAllowedForEnumeration(false);
     func(locker, newOffset, std::max(newOffset, maxOffset()));
     checkConsistency();
@@ -465,6 +478,10 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     ASSERT_UNUSED(offset, offset == newOffset);
     UNUSED_VARIABLE(attributes);
     auto newMaxOffset = std::max(newOffset, maxOffset());
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_bornAs) [[unlikely]]
+        noteFieldAdded(rep, newOffset, newAttributes);
+#endif
 
     func(locker, newOffset, newMaxOffset);
 

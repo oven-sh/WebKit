@@ -504,24 +504,42 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     uint32_t heldByField = 0;
 #if USE(BUN_JSC_ADDITIONS)
     if (uint16_t bornAs = this->structure()->bornAs(); bornAs && SlotsOfBornObjects::areStructs()) [[unlikely]] {
-        if (auto* named = SlotsOfBornObjects::named(bornAs, propertyName.uid())) {
+        // (Where the slots are verified it is looked into once it is known where the property is: isRefusedWhereItGoes.)
+        if (auto* named = SlotsOfBornObjects::isVerified(bornAs) ? nullptr : SlotsOfBornObjects::named(bornAs, propertyName.uid())) {
             if (mode == PutModeDefineOwnProperty && newAttributes) {
                 if (!SlotsOfBornObjects::audits())
                     return TypedFieldError;
                 SlotsOfBornObjects::audit("a field is made something other than a plain property"_s, bornAs, this);
             }
-            if (SlotsOfBornObjects::says(bornAs, named->slot, value) == SlotsOfBornObjects::Says::Refuses)
+            if (SlotsOfBornObjects::says(*named, value) == SlotsOfBornObjects::Says::Refuses)
                 return TypedFieldError;
             // (Nobody remembers how it went, so everybody who does not know the types gets here every time.)
             isFieldOfStruct = true;
-            value = SlotsOfBornObjects::asHeld(bornAs, named->slot, value);
-            if (auto* held = SlotsOfBornObjects::heldIn(bornAs, named->slot))
+            value = SlotsOfBornObjects::asHeld(*named, value);
+            if (auto* held = SlotsOfBornObjects::heldBy(*named))
                 heldByField = held->kinds | static_cast<uint32_t>(held->first) << 16;
         }
     } else if constexpr (mode == PutModeDefineOwnProperty) {
         if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && bornAs) [[unlikely]]
             takeOutOfTheSlotItWasBornIn(vm, propertyName);
     }
+    // Of a family whose slots are verified. The Structure that the object has, or is about to have, says which field is at the offset, if any is: what is stored there is what that holds.
+    // (What is not in its slot is looked at by whoever reads it. What is made an accessor is no longer said to be in its slot.)
+    auto isRefusedWhereItGoes = [&](Structure* itsStructure, PropertyOffset where) {
+        if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFields || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+            return false;
+        uint16_t id = itsStructure->fieldInSlot(where);
+        if (!id || id == Structure::noTellingWhichField) [[likely]]
+            return false;
+        auto& field = SlotsOfBornObjects::fieldWithId(where, id);
+        if (SlotsOfBornObjects::says(field, value) == SlotsOfBornObjects::Says::Refuses)
+            return true;
+        isFieldOfStruct = true;
+        value = SlotsOfBornObjects::asHeld(field, value);
+        if (auto* held = SlotsOfBornObjects::heldBy(field))
+            heldByField = held->kinds | static_cast<uint32_t>(held->first) << 16;
+        return false;
+    };
 #endif
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
@@ -605,6 +623,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         PropertyOffset offset;
         Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, newAttributes, offset);
         if (newStructure) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (isRefusedWhereItGoes(newStructure, offset)) [[unlikely]]
+                return TypedFieldError;
+#endif
             Butterfly* newButterfly = butterfly();
             if (structure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
                 ASSERT(newStructure != this->structure());
@@ -638,6 +660,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         bool slotSaysWhatItHolds = false;
 #if USE(BUN_JSC_ADDITIONS)
+        if (isRefusedWhereItGoes(structure, offset)) [[unlikely]]
+            return TypedFieldError;
         if (uint16_t bornAs = structure->bornAs(); bornAs && isInlineOffset(offset)) {
             auto says = SlotsOfBornObjects::says(bornAs, offset, value);
             if (says == SlotsOfBornObjects::Says::Refuses) [[unlikely]] {
@@ -681,6 +705,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // This allows adaptive watchpoints to observe if the new structure is the one we want.
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
     Structure* newStructure = Structure::addNewPropertyTransition(vm, structure, propertyName, newAttributes, offset, slot.context(), &deferredWatchpointFire, true);
+#if USE(BUN_JSC_ADDITIONS)
+    if (isRefusedWhereItGoes(newStructure, offset)) [[unlikely]]
+        return TypedFieldError;
+#endif
     
     validateOffset(offset);
     ASSERT(newStructure->isValidOffset(offset));

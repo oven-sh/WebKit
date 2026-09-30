@@ -37,6 +37,8 @@ struct ProgramFacts {
     enum WhyValueIsUsed : uint32_t { NotSaid, WhereItIsMade, CalleeButReadIsNotProven, CalleeButCallIsNotProven, Operand };
     std::atomic<uint32_t> whyValueIsUsed { 0 }; // WhyValueIsUsed | what uses it (an opcode, or 1000 + a kind of node) << 8
     std::atomic<uint32_t> directCalls { 0 };
+    // Called from inside a loop, or handed to something of the language's that calls what it is handed once for each of many things. That is all that is known of how often it runs.
+    std::atomic<bool> isUsedInLoop { false };
 
     // Once that is settled. Nobody gets to call it but the calls that are calls of this function and no other.
     bool isClosed { false };

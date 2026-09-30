@@ -87,12 +87,12 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
     return object;
 }
 
-void Lowering::settleWhatWasBorn(Node* node, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values)
+void Lowering::settleWhatWasBorn(Node* node, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::Holds, 8>* holdsIfKnown)
 {
     if (!Options::aotTypesFields() || !layout || !TypeTable::shared())
         return;
     // (Of structs, `layout` is the family.)
-    auto holds = TypeTable::areStructs() ? TypeTable::shared()->holdsOfSlotsOfFamily(layout) : TypeTable::shared()->holdsOfSlots(layout);
+    auto holds = holdsIfKnown ? *holdsIfKnown : TypeTable::areStructs() ? TypeTable::shared()->holdsOfSlotsOfFamily(layout) : TypeTable::shared()->holdsOfSlots(layout);
     LBasicBlock someIsNot = nullptr;
     for (unsigned slot = 0; slot < inSlots.size() && slot < holds.size(); ++slot) {
         if (!inSlots[slot] || !holds[slot].saysSomething())
@@ -170,6 +170,8 @@ bool Lowering::tryLowerAllocation(Node* node)
                 return true;
             }
             unsigned slot = allocateSlots(2);
+            Vector<TypeTable::Holds, 8> holdsOfSlots;
+            bool holdsAreKnown = false;
             bool hasSlotsOutside = shapeOfThis && shapeOfThis->hasSlotsOutside();
             noteShapeSite(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
             countShape(shapeOfThis && shapeOfThis->number ? Instance::LiteralWithLayout : Instance::LiteralWithout);
@@ -180,7 +182,9 @@ bool Lowering::tryLowerAllocation(Node* node)
                     Vector<Node*, 8> nodesInSlots;
                     inSlots.fill(m_out.int64Zero, shape->numberOfSlots());
                     nodesInSlots.fill(nullptr, shape->numberOfSlots());
-                    auto holds = shape->family ? TypeTable::shared()->holdsOfSlotsOfFamily(shape->family) : Vector<TypeTable::Holds, 8> { };
+                    auto holds = shape->family ? TypeTable::shared()->holdsOfSlotsOfFamily(shape->family, shape->names.span(), shape->slots.span()) : Vector<TypeTable::Holds, 8> { };
+                    holdsOfSlots = holds;
+                    holdsAreKnown = shape->family;
                     for (unsigned i = 0; i < count; ++i) {
                         inSlots[shape->slots[i]] = shape->family && Options::aotTypesFields() && shape->slots[i] < holds.size() ? asHeld(inSlotsOfLayout[i], values[i], holds[shape->slots[i]]) : values[i];
                         nodesInSlots[shape->slots[i]] = inSlotsOfLayout[i];
@@ -215,7 +219,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), results);
-            settleWhatWasBorn(node, object, layout, inSlotsOfLayout, values);
+            settleWhatWasBorn(node, object, layout, inSlotsOfLayout, values, holdsAreKnown ? &holdsOfSlots : nullptr);
             setJSValue(node, object);
             return true;
         }

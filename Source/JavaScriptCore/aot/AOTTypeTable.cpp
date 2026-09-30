@@ -87,8 +87,29 @@ void TypeTable::load(VM& vm)
         for (unsigned i = 0; i < words[1]; ++i)
             table->m_openFamiliesWithName.add(table->m_names[words[2 + i * wordsOfPropertyOfLayout]].impl(), Vector<uint32_t> { }).iterator->value.append(number);
     }
+    // The ids of the fields: one after the other among those that have the same slot, whichever family they are of.
+    {
+        uint32_t last[Structure::numberOfSlotsWithFields] { };
+        for (uint32_t number = 1; number < table->m_families.size(); ++number) {
+            if (!table->isUsable(number) || !table->isVerified(number))
+                continue;
+            auto words = table->m_words.span().subspan(table->m_families[number]);
+            for (unsigned i = 0; i < words[1]; ++i) {
+                auto name = words.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
+                unsigned slot = name[1] & 0xffff;
+                if (slot < Structure::numberOfSlotsWithFields && last[slot] + 1 < Structure::noTellingWhichField)
+                    table->m_idsOfFields.add({ number, table->m_names[name[0]].impl() }, static_cast<uint16_t>(++last[slot]));
+            }
+        }
+    }
     RELEASE_ASSERT(table->numberOfLayouts() < std::numeric_limits<uint16_t>::max());
     s_shared = table.release();
+}
+
+static TypeTable::Field withId(uint16_t id, TypeTable::Field field)
+{
+    field.id = id;
+    return field;
 }
 
 std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringImpl* name) const
@@ -106,7 +127,14 @@ std::optional<TypeTable::Field> TypeTable::fieldOf(uint32_t type, UniquedStringI
         if (m_hasStructs && !isUsable(field[2]))
             return std::nullopt;
         bool isInherited = m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; });
-        return Field { static_cast<uint16_t>(field[1]), !!(bits & 1), m_hasStructs ? static_cast<uint8_t>(inlineSlotsOf(field[2])) : uint8_t(255), !!(bits & 8), safeCast<uint16_t>(field[2]), safeCast<uint16_t>(field[3]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[4]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[5]), field[6], Holds::from(field[7], field[8]) };
+        uint16_t id = 0;
+        if (m_hasStructs && isVerified(field[2])) {
+            id = m_idsOfFields.get({ field[2], name });
+            // (An object that has no such property of its own has Object.prototype's, which is more than a slot with nothing in it says.)
+            if (!id || isInherited)
+                return std::nullopt;
+        }
+        return withId(id, Field { static_cast<uint16_t>(field[1]), !!(bits & 1), m_hasStructs ? static_cast<uint8_t>(inlineSlotsOf(field[2])) : uint8_t(255), !!(bits & 8), safeCast<uint16_t>(field[2]), safeCast<uint16_t>(field[3]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[4]), isInherited ? uint16_t(0) : safeCast<uint16_t>(field[5]), field[6], Holds::from(field[7], field[8]) });
     }
     return std::nullopt;
 }
@@ -124,9 +152,15 @@ std::optional<TypeTable::Field> TypeTable::fieldOfFamily(uint32_t number, Unique
         // (An object that has no such property of its own has Object.prototype's.)
         if (mayBeAbsent && m_namesOfObjectPrototype.containsIf([&](const Identifier& inherited) { return inherited.impl() == name; }))
             return std::nullopt;
+        uint16_t id = 0;
+        if (isVerified(number)) {
+            id = m_idsOfFields.get({ number, name });
+            if (!id)
+                return std::nullopt;
+        }
         // (Whatever the types say has to be there: what is known only for its family may be an object that is still being given what it is to have.)
-        return Field { static_cast<uint16_t>(entry[1]), mayBeAbsent, static_cast<uint8_t>(inlineSlotsOf(number)), true, safeCast<uint16_t>(number), safeCast<uint16_t>(number), 0, 0, 0,
-            Holds::from(entry[2], entry[3]) };
+        return withId(id, Field { static_cast<uint16_t>(entry[1]), mayBeAbsent, static_cast<uint8_t>(inlineSlotsOf(number)), true, safeCast<uint16_t>(number), safeCast<uint16_t>(number), 0, 0, 0,
+            Holds::from(entry[2], entry[3]) });
     }
     return std::nullopt;
 }
@@ -194,13 +228,22 @@ unsigned TypeTable::inlineSlotsWantedBy(std::span<UniquedStringImpl* const> name
     }
     unsigned result = 0;
     for (uint32_t family : *fewest) {
-        if (inlineSlotsOf(family) <= result)
+        if (!isVerified(family) && inlineSlotsOf(family) <= result)
             continue;
         bool hasAll = true;
         for (UniquedStringImpl* name : names)
             hasAll &= std::ranges::binary_search(m_openFamiliesWithName.find(name)->value, family);
-        if (hasAll)
-            result = inlineSlotsOf(family);
+        if (!hasAll)
+            continue;
+        unsigned wanted = inlineSlotsOf(family);
+        if (isVerified(family)) {
+            wanted = 0;
+            for (UniquedStringImpl* name : names) {
+                if (auto field = fieldOfFamily(family, name))
+                    wanted = std::max<unsigned>(wanted, field->slot + 1);
+            }
+        }
+        result = std::max(result, wanted);
     }
     return result;
 }
@@ -221,9 +264,28 @@ TypeTable::Family TypeTable::family(uint32_t number) const
     auto words = m_words.span().subspan(m_families[number]);
     result.capacity = words[0] & 0xffff;
     result.inlineSlots = words[0] >> 16 & 0xff;
+    result.isVerified = isVerified(number);
     for (unsigned i = 0; i < words[1]; ++i) {
         auto name = words.subspan(2 + i * wordsOfPropertyOfLayout, wordsOfPropertyOfLayout);
-        result.names.append({ m_names[name[0]].impl(), static_cast<uint16_t>(name[1]), !!(name[1] >> 16), Holds::from(name[2], name[3]) });
+        result.names.append({ m_names[name[0]].impl(), static_cast<uint16_t>(name[1]), !!(name[1] >> 16), Holds::from(name[2], name[3]), m_idsOfFields.get({ number, m_names[name[0]].impl() }) });
+    }
+    return result;
+}
+
+Vector<TypeTable::Holds, 8> TypeTable::holdsOfSlotsOfFamily(uint32_t number, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots) const
+{
+    if (!isUsable(number) || !isVerified(number))
+        return holdsOfSlotsOfFamily(number);
+    Vector<Holds, 8> result;
+    auto family = this->family(number);
+    for (unsigned i = 0; i < names.size() && i < slots.size(); ++i) {
+        for (auto& name : family.names) {
+            if (name.name != names[i] || name.slot != slots[i])
+                continue;
+            if (result.size() <= name.slot)
+                result.grow(name.slot + 1);
+            result[name.slot] = name.holds;
+        }
     }
     return result;
 }

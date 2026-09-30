@@ -82,6 +82,8 @@ public:
         uint16_t lastWithout;
         uint32_t type;
         Holds holds;
+        // Of a family whose slots are verified: SlotsOfBornObjects::Named::id. The slot is not looked in but by whoever has asked the object's Structure and been told this. Zero: of any other.
+        uint16_t id { 0 };
     };
     // Of a type that is a shape, if there are layouts that have it in a slot.
     std::optional<Field> fieldOf(uint32_t type, UniquedStringImpl* name) const;
@@ -113,23 +115,30 @@ public:
         uint16_t slot;
         bool mayBeAbsent;
         Holds holds;
+        uint16_t id; // See Field::id.
     };
     struct Family {
         unsigned capacity { 0 };
         unsigned inlineSlots { 0 };
+        bool isVerified { false };
         Vector<NameOfFamily, 8> names;
     };
     Family family(uint32_t number) const;
     bool isUsable(uint32_t family) const; // Its objects can be made.
     unsigned inlineSlotsOf(uint32_t family) const { return m_words[m_families[family]] >> 16 & 0xff; }
     bool isOpen(uint32_t family) const { return m_words[m_families[family]] >> 30 & 1; } // Code that knows nothing of the types may make objects of it.
+    bool isVerified(uint32_t family) const { return m_words[m_families[family]] >> 29 & 1; } // SlotsOfBornObjects::isVerified()
+    uint16_t idOfField(uint32_t family, UniquedStringImpl* name) const { return m_idsOfFields.get({ family, name }); } // Zero: it has none.
+    // What each slot of an object that has those properties in those slots holds. (Of a verified family it goes by the name.)
+    Vector<Holds, 8> holdsOfSlotsOfFamily(uint32_t family, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots) const;
     // Of a type that is a shape: whatever is of it was born into its family. So it is if the family is closed; and in one that is open, if nothing that came from elsewhere is seen to get to be of this type.
     bool isTakenAtItsWord(uint32_t type) const
     {
         auto words = record(type);
         if (!m_hasStructs || words.size() < 3 || words[0] != Shape || !isUsable(words[1] >> 16))
             return false;
-        return !isOpen(words[1] >> 16) || (words[1] & 2);
+        // (That an object is of a verified family says nothing of what is in its slots.)
+        return !isOpen(words[1] >> 16) || ((words[1] & 2) && !isVerified(words[1] >> 16));
     }
     // An object that is made with properties of these names, by whoever does not know what for, may yet be made one of a family: how many slots in the object that could take.
     unsigned inlineSlotsWantedBy(std::span<UniquedStringImpl* const> names) const;
@@ -194,6 +203,7 @@ private:
     Vector<uint32_t> m_layouts; // By number: where it is.
     Vector<uint32_t> m_families; // Likewise.
     UncheckedKeyHashMap<UniquedStringImpl*, Vector<uint32_t>> m_openFamiliesWithName; // In order.
+    UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint16_t> m_idsOfFields; // By family and name. What is not here has none: there are only so many, and only so many slots that a Structure speaks for.
     bool m_hasStructs { false };
     unsigned wordsBeforePropertiesOfLayout() const { return m_hasStructs ? 3 : 2; }
     Vector<uint32_t> m_types; // Likewise.

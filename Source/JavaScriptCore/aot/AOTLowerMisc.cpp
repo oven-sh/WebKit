@@ -720,8 +720,8 @@ bool Lowering::tryLowerMisc(Node* node)
     }
     case op_type_tag: {
         Node* value = node->uses[0].node;
-        // (An array: it is taken to be one.)
-        if (node->narrowedTo || value->isKnownToBeBornWithin(node->firstLayout, node->lastLayout)) {
+        // (An array: it is taken to be one. Of a family whose slots are verified: it is asked when something is read.)
+        if (node->narrowedTo || value->isKnownToBeBornWithin(node->firstLayout, node->lastLayout) || (TypeTable::areStructs() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->isVerified(node->firstLayout))) {
             noteShapeSite(Instance::ServedWithoutAssertion);
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());

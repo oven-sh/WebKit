@@ -64,6 +64,11 @@ struct ImageHeader {
     uint32_t heldInSlotsOffset;
     uint32_t indexOfNamedOffset; // SlotsOfBornObjects::setNames(). Zero: no structs.
     uint32_t namedOffset;
+    uint32_t heldByNamedOffset;
+    uint32_t familyOfNamedOffset;
+    uint32_t startOfFieldsOffset;
+    uint32_t fieldsOffset;
+    uint32_t familyOfFieldOffset;
     uint32_t inlineSlotsOfFamiliesOffset;
     uint32_t auditsTypes; // Options::aotAuditsTypes()
     // With numberOfIdentifiersOfProgram, a selector is the number of the identifier, and what it says is for StaticHeap to know.
@@ -124,7 +129,7 @@ struct ImageShape {
     uint16_t family; // KnownShape::family
     uint16_t reserved;
     uint16_t inlineSlots;
-    uint16_t unused;
+    uint16_t hasIds; // After the slots, as many again: SlotsOfBornObjects::Named::id of each property. Zero: it is no field.
 };
 
 // A name that properties are read by.

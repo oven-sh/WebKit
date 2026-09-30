@@ -1256,11 +1256,26 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
         uint32_t nothing = 0;
         facts->whyValueIsUsed.compare_exchange_strong(nothing, why | (user->kind == NodeKind::Bytecode ? static_cast<uint32_t>(user->opcode) : 1000 + static_cast<uint32_t>(user->kind)) << 8, std::memory_order_relaxed);
     };
-    auto note = [&](Node* user, const Use& use) {
+    auto callsWhatItIsHandedOverAndOver = [&](Node* user) {
+        Node* callee = user->isBytecode(op_call) ? user->use(user->as<OpCall>().m_callee) : user->isBytecode(op_call_ignore_result) ? user->use(user->as<OpCallIgnoreResult>().m_callee) : nullptr;
+        if (!callee || !callee->isBytecode(op_get_by_id))
+            return false;
+        static constexpr ASCIILiteral names[] = { "map"_s, "filter"_s, "forEach"_s, "some"_s, "every"_s, "find"_s, "findIndex"_s, "findLast"_s, "findLastIndex"_s, "reduce"_s, "reduceRight"_s, "flatMap"_s, "sort"_s, "toSorted"_s, "replace"_s, "replaceAll"_s };
+        const StringImpl& name = *m_codeBlock->identifier(callee->as<OpGetById>().m_property).impl();
+        for (ASCIILiteral candidate : names) {
+            if (WTF::equal(&name, candidate.span8()))
+                return true;
+        }
+        return false;
+    };
+    auto note = [&](BasicBlock* block, Node* user, const Use& use) {
         // Where it is made, it is on its way to the variable. Anywhere else it goes, it has got out before it got there.
         if (auto* executable = executableMadeBy(use.node)) {
-            if (auto* facts = factsOfExecutables.get(executable); facts && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value))
+            if (auto* facts = factsOfExecutables.get(executable); facts && !(user->isBytecode(op_put_to_scope) && use.reg == user->as<OpPutToScope>().m_value)) {
                 valueIsUsed(facts, ProgramFacts::WhereItIsMade, user);
+                if (callsWhatItIsHandedOverAndOver(user))
+                    facts->isUsedInLoop.store(true, std::memory_order_relaxed);
+            }
             return;
         }
         if (!use.node->isBytecode(op_get_from_scope))
@@ -1269,6 +1284,8 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
         const KnownFunction* known = knownFunctionReadBy(use.node, &readIsProven);
         if (!known || !known->facts)
             return;
+        if (block->isInLoop || callsWhatItIsHandedOverAndOver(user))
+            known->facts->isUsedInLoop.store(true, std::memory_order_relaxed);
         // (`f?.()` asks whether there is anything to call.)
         if (user->isBytecode(op_check_tdz) || user->isBytecode(op_jundefined_or_null) || user->isBytecode(op_jnundefined_or_null))
             return;
@@ -1289,11 +1306,11 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
     for (BasicBlock* block : m_rpo) {
         for (Node* node : block->nodes) {
             for (auto& use : node->uses)
-                note(node, use);
+                note(block, node, use);
         }
         for (Node* phi : block->phis) {
             for (auto& use : phi->uses)
-                note(phi, use);
+                note(block, phi, use);
         }
     }
 }

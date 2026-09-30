@@ -61,6 +61,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthTheLongWay, EncodedJSValue, (JSGl
 JSC_DECLARE_JIT_OPERATION(operationAOTAssertBornAs, void, (JSGlobalObject*, EncodedJSValue, uint32_t family)); // Lowering::assertBornAs()
 JSC_DECLARE_JIT_OPERATION(operationAOTViewAs, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t family)); // Lowering::viewAs()
 // which: the number of the name | family << 32 | slot << 48 | whether undefined will do << 56.
+JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint32_t which)); // Stub::ReadSlot0: id | slot << 16 | undefined will do << 24
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint64_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTSettleStruct, void, (JSGlobalObject*, JSObject*)); // Lowering::settleWhatWasBorn()
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject*, EncodedJSValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));

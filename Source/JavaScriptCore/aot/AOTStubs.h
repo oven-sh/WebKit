@@ -213,6 +213,24 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(GetGlobal) \
     /* A0 = base, A1 = site. Result in A0. */ \
     v(GetById) \
+    /* A0 = base, A1 = the id of a field whose slot is that one (SlotsOfBornObjects::Named::id). Result in A0: what the field holds, or it does not come back. */ \
+    v(ReadSlot0) \
+    v(ReadSlot1) \
+    v(ReadSlot2) \
+    v(ReadSlot3) \
+    v(ReadSlot4) \
+    v(ReadSlot5) \
+    v(ReadSlot6) \
+    v(ReadSlot7) \
+    /* Likewise, but undefined will do, of an object that has no such property. */ \
+    v(ReadSlotOrUndefined0) \
+    v(ReadSlotOrUndefined1) \
+    v(ReadSlotOrUndefined2) \
+    v(ReadSlotOrUndefined3) \
+    v(ReadSlotOrUndefined4) \
+    v(ReadSlotOrUndefined5) \
+    v(ReadSlotOrUndefined6) \
+    v(ReadSlotOrUndefined7) \
     /* A0 = base, A1 = value, A2 = site. */ \
     v(PutById) \
     /* A0 = base, A1 = the name, or the brand, A2 = site. GetPrivateName leaves the result in A0. */ \
