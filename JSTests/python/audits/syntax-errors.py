@@ -8,9 +8,13 @@ from syntax_errors_by_mutation import SOURCES as by_mutation
 _warnings.filters.insert(0, ("ignore", None, Warning, None, 0))
 
 
+# A module can await here, and so can what is typed at a prompt, whether or not that is asked for. So it is asked for, which is to compare like with like.
+PyCF_ALLOW_TOP_LEVEL_AWAIT = 0x2000
+
+
 def attempt(group, index, source, mode):
     try:
-        compile(source, "<test>", mode)
+        compile(source, "<test>", mode, 0 if mode == "eval" else PyCF_ALLOW_TOP_LEVEL_AWAIT)
         result = "compiles"
     except SyntaxError as e:
         result = (type(e).__name__, e.msg, e.lineno, e.offset, e.end_lineno, e.end_offset, e.text, len(e.args))

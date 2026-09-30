@@ -181,7 +181,8 @@ def run(code):
 
 def attempt(tree, mode, is_run):
     try:
-        result = compile(tree, "<test>", "exec", PyCF_ONLY_AST if mode == "tree" else 0)
+        # A module can await here whether or not that is asked for. So it is asked for, which is to compare like with like.
+        result = compile(tree, "<test>", "exec", PyCF_ONLY_AST if mode == "tree" else PyCF_ALLOW_TOP_LEVEL_AWAIT)
     except RecursionError:
         return "RecursionError"
     except BaseException as error:
@@ -190,6 +191,9 @@ def attempt(tree, mode, is_run):
         out = []
         dump(result, out)
         return "".join(out)
+    # exec() of what awaits runs it here, and in CPython makes a coroutine that nothing comes of.
+    if result.co_flags & 0x80:
+        return "code that awaits"
     return "code " + run(result) if is_run else "code"
 
 
