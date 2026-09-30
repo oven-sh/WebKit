@@ -205,7 +205,7 @@ public:
     WatchpointSet& instanceAccessIsAsFound() { return m_instanceAccessIsAsFound.get(); }
 
     // The structure that instances of a class with this layout and this class for a prototype have.
-    static Structure* createInstanceStructure(VM&, JSGlobalObject*, Layout, JSObject* prototype);
+    static Structure* createInstanceStructure(VM&, JSGlobalObject*, Layout, JSObject* prototype, unsigned additionalFlags = 0);
     // The same, for a class that is derived from `base`.
     static Structure* createInstanceStructure(VM&, JSGlobalObject*, PyType* base, JSObject* prototype);
 

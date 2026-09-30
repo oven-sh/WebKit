@@ -60,7 +60,8 @@ public:
     static PyTuple* createFromArguments(JSGlobalObject*, const ArgList&);
     // Of what was gathered, of which there are as many as a program makes them. Null, with MemoryError raised, if there was no room for them, there or here.
     static PyTuple* createFromArguments(JSGlobalObject*, MarkedArgumentBuffer&);
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, unsigned additionalFlags = 0);
+    static CallData getCallData(JSCell*);
 
     unsigned length() const { return m_length; }
     JSValue at(unsigned index) const

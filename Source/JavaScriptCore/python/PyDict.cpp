@@ -370,9 +370,9 @@ PyDict* PyDict::create(JSGlobalObject* globalObject)
     return create(globalObject->vm(), globalObject->pyRealm()->structureFor(BuiltinType::Dict));
 }
 
-Structure* PyDict::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+Structure* PyDict::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned additionalFlags)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyDictType, StructureFlags | pythonCellFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyDictType, StructureFlags | pythonCellFlags | additionalFlags), info());
 }
 
 template<typename Visitor>
@@ -612,9 +612,9 @@ PySet* PySet::create(JSGlobalObject* globalObject)
     return create(globalObject->vm(), globalObject->pyRealm()->structureFor(BuiltinType::Set));
 }
 
-Structure* PySet::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+Structure* PySet::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned additionalFlags)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PySetType, StructureFlags | pythonCellFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PySetType, StructureFlags | pythonCellFlags | additionalFlags), info());
 }
 
 } // namespace JSC

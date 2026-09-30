@@ -115,6 +115,7 @@ private:
 class PyComplex final : public JSNonFinalObject {
 public:
     PYTHON_CELL_BOILERPLATE(PyComplex, pyComplexSpace)
+    static CallData getCallData(JSCell*);
 
     static PyComplex* create(VM&, Structure*, double real, double imaginary);
     static PyComplex* create(JSGlobalObject*, double real, double imaginary);
@@ -274,6 +275,7 @@ private:
 class PyIterator final : public JSNonFinalObject {
 public:
     PYTHON_CELL_BOILERPLATE(PyIterator, pyIteratorSpace)
+    static CallData getCallData(JSCell*);
 
     enum class Kind : uint8_t {
         List, // a: the list. index
@@ -469,8 +471,10 @@ private:
 class PyDerivedList final : public JSArray {
 public:
     using Base = JSArray;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData;
     DECLARE_EXPORT_INFO;
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static CallData getCallData(JSCell*);
     PYTHON_DECLARE_EXOTIC_METHODS
     PYTHON_OVERLOADS_OPERATORS
 };
@@ -479,8 +483,10 @@ public:
 class PyDerivedBytes final : public JSUint8Array {
 public:
     using Base = JSUint8Array;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetCallData;
     DECLARE_EXPORT_INFO;
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static CallData getCallData(JSCell*);
     PYTHON_DECLARE_EXOTIC_METHODS
     PYTHON_OVERLOADS_OPERATORS
 };
@@ -496,7 +502,8 @@ public:
     using Base = ErrorInstance;
     DECLARE_EXPORT_INFO;
     static PyException* create(VM&, PyType*);
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, unsigned additionalFlags = 0);
+    static CallData getCallData(JSCell*);
     PYTHON_DECLARE_EXOTIC_METHODS
     PYTHON_OVERLOADS_OPERATORS
 
@@ -507,9 +514,10 @@ private:
 // An instance of a class derived from int, float or str. Those types' own instances are not cells, so it holds one.
 class PyBoxedValue final : public JSNonFinalObject {
 public:
-    static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetOwnPropertySlot | OverridesPut;
+    static constexpr unsigned StructureFlags = JSNonFinalObject::StructureFlags | OverridesGetOwnPropertySlot | OverridesPut | OverridesGetCallData;
     PYTHON_CELL_BOILERPLATE(PyBoxedValue, pyBoxedValueSpace)
     PYTHON_DECLARE_EXOTIC_METHODS
+    static CallData getCallData(JSCell*);
 
     static PyBoxedValue* create(VM&, Structure*, JSValue);
     JSValue value() const { return m_value.get(); }

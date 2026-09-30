@@ -2182,10 +2182,10 @@ static UGPRPair handleHostCall(CallFrame* calleeFrame, JSValue callee, CodeSpeci
 
         ASSERT(callData.type == CallData::Type::None);
         if (callerCodeBlock->source().provider()->isPython()) {
-            if (callee.isCell() && callee.asCell()->type() == ModuleNamespaceObjectType) {
+            if (callee.isObject()) {
                 SlowPathFrameTracer tracer(vm, calleeFrame);
                 calleeFrame->setCallee(asObject(callee));
-                vm.encodedHostCallReturnValue = Python::callDefaultExport(globalObject, calleeFrame);
+                vm.encodedHostCallReturnValue = Python::callWhatOnlyPythonCalls(globalObject, calleeFrame);
                 AssertNoGC assertNoGC;
                 auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
                 LLINT_CALL_RETURN(globalObject, callerSP, LLInt::getHostCallReturnValueEntrypoint().code().taggedPtr(), JSEntryPtrTag);

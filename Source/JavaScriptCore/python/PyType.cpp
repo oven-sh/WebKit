@@ -65,21 +65,21 @@ Structure* PyType::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue
     return Structure::create(vm, globalObject, prototype, TypeInfo(PyTypeType, StructureFlags | pythonCellFlags), info());
 }
 
-Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, Layout layout, JSObject* prototype)
+Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, Layout layout, JSObject* prototype, unsigned additionalFlags)
 {
     switch (layout) {
     case Layout::Object:
         return PyInstance::createStructure(vm, globalObject, prototype);
     case Layout::Tuple:
-        return PyTuple::createStructure(vm, globalObject, prototype);
+        return PyTuple::createStructure(vm, globalObject, prototype, additionalFlags);
     case Layout::Dict:
-        return PyDict::createStructure(vm, globalObject, prototype);
+        return PyDict::createStructure(vm, globalObject, prototype, additionalFlags);
     case Layout::Set:
-        return PySet::createStructure(vm, globalObject, prototype);
+        return PySet::createStructure(vm, globalObject, prototype, additionalFlags);
     case Layout::List:
         return PyDerivedList::createStructure(vm, globalObject, prototype);
     case Layout::Exception:
-        return PyException::createStructure(vm, globalObject, prototype);
+        return PyException::createStructure(vm, globalObject, prototype, additionalFlags);
     case Layout::Boxed:
         return PyBoxedValue::createStructure(vm, globalObject, prototype);
     case Layout::Type:
@@ -190,14 +190,17 @@ void PyType::finishBuiltin(VM& vm, JSGlobalObject* globalObject, PyType* metatyp
 
 Structure* PyType::createInstanceStructure(VM& vm, JSGlobalObject* globalObject, PyType* base, JSObject* prototype)
 {
-    if (Structure* structure = createInstanceStructure(vm, globalObject, base->layout(), prototype))
+    // The class is a program's, so it can have __call__(), now or later. A tuple or a dict of no such class never can, and nothing is to be asked of one to find that out.
+    if (Structure* structure = createInstanceStructure(vm, globalObject, base->layout(), prototype, OverridesGetCallData))
         return structure;
     // The same kind of cell as the base's instances, whatever that is.
     if (base->layout() != Layout::Native || !base->instanceStructure())
         return nullptr;
     if (base->instanceStructure()->typeInfo().type() == Uint8ArrayType)
         return PyDerivedBytes::createStructure(vm, globalObject, prototype);
-    return Structure::create(vm, globalObject, prototype, base->instanceStructure()->typeInfo(), base->instanceStructure()->classInfoForCells());
+    TypeInfo typeInfo = base->instanceStructure()->typeInfo();
+    static_assert(OverridesGetCallData <= std::numeric_limits<TypeInfo::InlineTypeFlags>::max());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(typeInfo.type(), typeInfo.inlineTypeFlags() | OverridesGetCallData, typeInfo.outOfLineTypeFlags()), base->instanceStructure()->classInfoForCells());
 }
 
 PyType* PyType::create(VM& vm, JSGlobalObject* globalObject, PyType* metatype, JSString* name, PyTuple* bases, PyType* base, PyTuple* mro)

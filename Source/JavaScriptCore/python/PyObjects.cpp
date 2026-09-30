@@ -94,6 +94,11 @@ JSC_DEFINE_HOST_FUNCTION(callInstance, (JSGlobalObject* globalObject, CallFrame*
     return JSValue::encode(Python::callInstance(globalObject, callFrame->jsCallee(), given.allFrom(0), given.keywordNames()));
 }
 
+bool Python::isCallOfInstance(const CallData& callData)
+{
+    return callData.type == CallData::Type::Native && callData.native.function == TaggedNativeFunction(JSC::callInstance);
+}
+
 static bool nothingIsOrdinary(VM&, PropertyName) { return false; }
 static bool indicesAreOrdinary(VM&, PropertyName name) { return !!parseIndex(name); }
 static bool indicesAndLengthAreOrdinary(VM& vm, PropertyName name) { return name == vm.propertyNames->length || parseIndex(name); }
@@ -110,9 +115,9 @@ PYTHON_DEFINE_EXOTIC_METHODS(PyDerivedBytes, indicesAreOrdinary)
 
 const ClassInfo PyException::s_info = { "Error"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(PyException) };
 
-Structure* PyException::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+Structure* PyException::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned additionalFlags)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(ErrorInstanceType, StructureFlags | pythonCellFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(ErrorInstanceType, StructureFlags | pythonCellFlags | additionalFlags), info());
 }
 
 PyException* PyException::create(VM& vm, PyType* type)
@@ -239,6 +244,18 @@ CallData PyNativeObject::getCallData(JSCell* cell)
 {
     return callDataOfInstance(cell);
 }
+
+// A class that a program derives from a built-in one can have __call__(), whatever kind of cell its instances are. The built-in class cannot, so it is only of the Structure of a derived class that this is asked:
+// see PyType::createInstanceStructure().
+CallData PyTuple::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyDict::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PySet::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyDerivedList::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyDerivedBytes::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyException::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyBoxedValue::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyComplex::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
+CallData PyIterator::getCallData(JSCell* cell) { return callDataOfInstance(cell); }
 
 // ---- PyNativeFunction
 
@@ -427,9 +444,9 @@ PyTuple* PyTuple::createFromArguments(JSGlobalObject* globalObject, MarkedArgume
     return tuple;
 }
 
-Structure* PyTuple::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
+Structure* PyTuple::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, unsigned additionalFlags)
 {
-    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTupleType, StructureFlags | pythonCellFlags), info());
+    return Structure::create(vm, globalObject, prototype, TypeInfo(PyTupleType, StructureFlags | pythonCellFlags | additionalFlags), info());
 }
 
 bool PyTuple::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)

@@ -1237,7 +1237,10 @@ bool isCallable(JSGlobalObject* globalObject, JSValue value)
         }
         return hasSomethingToCall;
     }
-    return value.isCallable();
+    if (value.isCallable())
+        return true;
+    // See callWhatOnlyPythonCalls().
+    return value.isObject() && typeOf(globalObject, value)->lookup(globalObject->vm(), globalObject->vm().pythonNames().dunder_call);
 }
 
 JSObject* createNotCallableError(JSGlobalObject* globalObject, JSValue callable)
@@ -1251,14 +1254,11 @@ static JSValue raiseNotCallable(JSGlobalObject* globalObject, ThrowScope& scope,
     return { };
 }
 
-JSC_DEFINE_HOST_FUNCTION(callDefaultExport, (JSGlobalObject* globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(callWhatOnlyPythonCalls, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    JSValue function = defaultExportToCall(globalObject, callFrame->jsCallee());
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!function)
-        return JSValue::encode(raiseNotCallable(globalObject, scope, callFrame->jsCallee()));
-    RELEASE_AND_RETURN(scope, JSValue::encode(call(globalObject, function, ArgList(callFrame))));
+    NativeArguments given(callFrame);
+    RELEASE_AND_RETURN(scope, JSValue::encode(callWithKeywords(globalObject, callFrame->jsCallee(), given.allFrom(0), given.keywordNames())));
 }
 
 // f(*values) can be given any number of them, and a call is not to fail, or to leave what is called nothing to run in, because they were put on the stack. Most of what can be called does not need them there: see
@@ -1278,13 +1278,8 @@ JSValue call(JSGlobalObject* globalObject, JSValue callable, const ArgList& argu
     if (areBetterKeptOffStack(vm, arguments)) [[unlikely]]
         RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, callable, arguments, nullptr));
     auto callData = JSC::getCallData(callable);
-    if (callData.type == CallData::Type::None) [[unlikely]] {
-        JSValue instead = defaultExportToCall(globalObject, callable);
-        RETURN_IF_EXCEPTION(scope, { });
-        if (!instead)
-            return raiseNotCallable(globalObject, scope, callable);
-        RELEASE_AND_RETURN(scope, call(globalObject, instead, arguments));
-    }
+    if (callData.type == CallData::Type::None) [[unlikely]]
+        RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, callable, arguments, nullptr));
     RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, jsUndefined(), arguments));
 }
 
@@ -1497,11 +1492,18 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto callData = JSC::getCallData(callable);
     if (callData.type == CallData::Type::None) [[unlikely]] {
+        // See callWhatOnlyPythonCalls().
         JSValue instead = defaultExportToCall(globalObject, callable);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!instead)
+        if (instead)
+            RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, instead, arguments, keywordNames, thisValue));
+        if (!callable.isObject() || callable.asCell()->type() == ModuleNamespaceObjectType)
             return raiseNotCallable(globalObject, scope, callable);
-        RELEASE_AND_RETURN(scope, callWithKeywords(globalObject, instead, arguments, keywordNames, thisValue));
+        if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+            raiseRecursionError(globalObject);
+            return { };
+        }
+        RELEASE_AND_RETURN(scope, callInstance(globalObject, asObject(callable), arguments, keywordNames));
     }
     unsigned keywordCount = keywordNames ? keywordNames->length() : 0;
 
@@ -1524,7 +1526,7 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     auto* boundMethod = cell->type() == PyBoundMethodType ? uncheckedDowncast<PyBoundMethod>(cell) : nullptr;
     if (boundMethod && boundMethod->function().inherits<PyNativeFunction>())
         boundMethod = nullptr;
-    if (boundMethod || cell->type() == PyTypeType || cell->type() == PyInstanceType) {
+    if (boundMethod || cell->type() == PyTypeType || isCallOfInstance(callData)) {
         if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
             raiseRecursionError(globalObject);
             return { };
@@ -1540,7 +1542,7 @@ JSValue callWithKeywords(JSGlobalObject* globalObject, JSValue callable, const A
     if (!keywordCount && !keepsOffStack) [[likely]]
         RELEASE_AND_RETURN(scope, JSC::call(globalObject, callable, callData, thisValue, arguments));
 
-    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyBoundMethodType || cell->type() == PyNativeObjectType || cell->inherits<PyWeakReference>() || cell->inherits<PyStateObject>();
+    bool understandsKeywords = cell->inherits<PyNativeFunction>() || cell->type() == PyBoundMethodType;
     if (understandsKeywords && keepsOffStack) [[unlikely]] {
         // See NativeArguments.
         JSCellButterfly* values = JSCellButterfly::tryCreateFromArgList(vm, arguments);

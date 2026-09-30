@@ -314,6 +314,11 @@ other's functions with no adapter.
 - A function written in C++ gets keywords as extra arguments, and their names for `this`.
 - Given keywords, a JavaScript function gets them as an object, as its last argument.
 
+**An instance can be called if its class has `__call__()`, whatever kind of cell it is.** To the engine that is `getCallData()`, which is asked only of a cell whose `Structure` says that it has something to say. A class that a
+program derives from `tuple`, `dict`, `int`, an exception or anything else can be given `__call__()` at any time, so the `Structure` of its instances says so: `PyType::createInstanceStructure()`. What is built in never can, so a
+tuple that is only a tuple is not asked, and costs JavaScript's `typeof` nothing. They all answer with the one function, `callInstance`, and that is how one is known where it matters (`isCallOfInstance()`), and not by a list of
+kinds. To JavaScript such an instance is a function, though not one that is derived from `Function`. `programs/instances-that-are-called.py` derives from every class that can be derived from.
+
 **`f(*values)` can be given any number of them.** What is given to a call goes on the stack, of which there is only so much, and a call is not to fail for that, nor to leave what it calls nothing to run in, nor to
 go less deep when it calls itself. Most of what can be called does not need them there, and `callWithKeywords()`, which is where every such call comes to, does not put them there:
 
@@ -1154,6 +1159,8 @@ would in JavaScript. `import js` is the global object, and a module is a module:
   object has of its own is as it is, as one in an instance's `__dict__` is. So `js.Math.floor` and `js.Array` are themselves.
 - **Calling a class makes an instance**, Python having no `new`. That is asked only where there was nothing left to do but throw
   (`callConstructorWithoutNew`), so no call that works pays for it. What can be both called and constructed with is called, and `.new()` constructs.
+- **What a class of Python's says that is derived from one of JavaScript's, Python goes by and JavaScript does not.** An instance of `class Counter(js.Map)` is a `Map`, made by `Map`, and a `Map` is not asked what `+` does with it or whether
+  it can be called. Python asks the class, so `counter + 1` and `counter()` are `__add__()` and `__call__()` there. Calling it is asked only where there was nothing left to do but raise: `callWhatOnlyPythonCalls()`.
 - JavaScript's methods are not attributes of a `list` or a `str`. `hasattr(x, "keys")` is how Python tells a mapping.
 - **A `list` is any `Array`, and JavaScript can make some that Python cannot.** A hole is `None`. An element that is not simply there to be read or written
   is read and written as JavaScript would in strict code: a getter is run, and an array that is frozen raises `TypeError` and stays as it was
@@ -1174,7 +1181,7 @@ so it is the same from either side, and nothing stands for it.
   specification says symbols, and no longer does. `vars(m)` is those, and not what is exported.
 - `from m import *` leaves out `default`, as `export * from` does.
 - **Calling it calls what it exports by default.** Python has no way of writing `import express from "express"`. What it writes is `import express`, and then `express()`. A namespace object cannot be called, so
-  there is nothing else that that can mean, and it is asked only where there was nothing left to do but raise (`callDefaultExport()`), as with a class that is called without `new`. To JavaScript it is still not a function.
+  there is nothing else that that can mean, and it is asked only where there was nothing left to do but raise (`callWhatOnlyPythonCalls()`), as with a class that is called without `new`. To JavaScript it is still not a function.
 
 `interop/a-module-is-a-module.mjs` looks at one from both sides.
 

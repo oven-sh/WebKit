@@ -187,7 +187,8 @@ public:
 
     static PyDict* create(VM&, Structure*);
     static PyDict* create(JSGlobalObject*);
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, unsigned additionalFlags = 0);
+    static CallData getCallData(JSCell*);
 
     // The dict that is backed by the object. There is one, which the object remembers.
     static PyDict* backedBy(JSGlobalObject*, JSObject*);
@@ -261,7 +262,8 @@ public:
 
     static PySet* create(VM&, Structure*);
     static PySet* create(JSGlobalObject*);
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, unsigned additionalFlags = 0);
+    static CallData getCallData(JSCell*);
 
     bool addWithHash(JSGlobalObject* globalObject, JSValue key, uint32_t hash) { return Base::addWithHash(globalObject, key, hash, JSValue(), nullptr, false); }
     bool add(JSGlobalObject* globalObject, JSValue key, bool* wasAdded = nullptr) { return Base::add(globalObject, key, JSValue(), wasAdded, false); }

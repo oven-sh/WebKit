@@ -90,8 +90,9 @@ String typeNameOfArgument(JSGlobalObject*, JSValue); // As _PyArg_BadArgument() 
 
 JSObject* createException(JSGlobalObject*, PyType*, const String& message);
 JSObject* createNotCallableError(JSGlobalObject*, JSValue callee);
-// What calling a module of JavaScript's comes to, from Python: calling what it exports by default. The module is the callee of the frame. It raises the above if there is no such thing to call.
-JSC_DECLARE_HOST_FUNCTION(callDefaultExport);
+// For an object that JavaScript cannot call, which is the callee of the frame, when it is Python that calls it. A module of JavaScript's is what it exports by default. Anything else is up to its class: what a constructor of
+// JavaScript's made is a Map or a Date, say, and is not asked whether it can be called, but its class may be a program's and have __call__(). It raises the above if there is nothing to call.
+JSC_DECLARE_HOST_FUNCTION(callWhatOnlyPythonCalls);
 // NameError: name 'x' is not defined
 JSValue raiseNameError(JSGlobalObject*, ThrowScope&, const String& name);
 // Makes what is being handled now the __context__ of an exception that is about to be raised.
@@ -303,6 +304,8 @@ JSValue call(JSGlobalObject*, JSValue callable, JSValue, JSValue, JSValue);
 JSValue callWithKeywords(JSGlobalObject*, JSValue callable, const ArgList&, KeywordNames* keywordNames, JSValue thisValue = jsUndefined());
 // instance(...), of an instance of a class that has __call__().
 JSValue callInstance(JSGlobalObject*, JSObject* instance, const ArgList&, KeywordNames*);
+// Whether that is what calling it comes to: it is an instance of a class that has __call__(), whatever kind of cell it is.
+bool isCallOfInstance(const CallData&);
 // callable(*arguments, **keywords). The values of the keywords are added to the arguments. `keywords` may be null.
 JSValue callWithKeywordDict(JSGlobalObject*, JSValue callable, MarkedArgumentBuffer& arguments, PyDict* keywords);
 // The value of each parameter of a function written in Python. False if it raised.

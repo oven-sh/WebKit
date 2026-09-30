@@ -693,8 +693,11 @@ bool isCalledByPython(VM& vm, CallFrame* callFrame)
     if (CodeBlock* codeBlock = caller->codeBlock())
         return codeBlock->source().provider()->isPython();
     JSCell* callee = caller->jsCallee();
-    // The last is callDefaultExport(): only Python calls a module.
-    return callee->inherits<PyNativeFunction>() || callee->type() == PyTypeType || callee->type() == PyBoundMethodType || callee->type() == PyInstanceType || callee->type() == ModuleNamespaceObjectType;
+    if (callee->inherits<PyNativeFunction>() || callee->type() == PyTypeType || callee->type() == PyBoundMethodType)
+        return true;
+    // An instance of a class that has __call__(), or what JavaScript could not have called: see callWhatOnlyPythonCalls().
+    auto callData = JSC::getCallData(callee);
+    return callData.type == CallData::Type::None || isCallOfInstance(callData);
 }
 
 // ---- Classes that JavaScript made
