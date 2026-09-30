@@ -356,9 +356,14 @@ static void callPreservingRegistersAndReturn(CCallHelpers& jit, Entry operation,
     jit.ret();
 }
 
-static void generateWriteBarrier(CCallHelpers& jit)
+// What a stub that takes its operand anywhere (takesOperandAnywhere()) does when there is no quick way is the same wherever the operand was: it is
+// in T9 by then. The one that takes it where the stub is said to take it comes first, and has this.
+static CCallHelpers::Label s_longWayOfWriteBarrier;
+static CCallHelpers::Label s_longWayOfToBoolean;
+
+static void generateWriteBarrier(CCallHelpers& jit, GPRReg owner)
 {
-    jit.load8(Address(A0, JSCell::cellStateOffset()), T9);
+    jit.load8(Address(owner, JSCell::cellStateOffset()), T9);
     loadInstance(jit, T10);
     jit.loadPtr(Address(T10, Instance::offsetOfVM()), T11);
     jit.load32(Address(T11, VM::offsetOfHeapBarrierThreshold()), T11);
@@ -366,13 +371,21 @@ static void generateWriteBarrier(CCallHelpers& jit)
     jit.ret();
 
     slow.link(&jit);
+    jit.move(owner, T9);
+    if (owner != A0) {
+        jit.jump().linkTo(s_longWayOfWriteBarrier, &jit);
+        return;
+    }
+    s_longWayOfWriteBarrier = jit.label();
     callPreservingRegistersAndReturn(jit, Entry::operationAOTWriteBarrier, false, [&] {
-        jit.move(A0, A1);
+        jit.move(T9, A1);
         jit.loadPtr(Address(T10, Instance::offsetOfVM()), A0);
     });
 }
+static void generateWriteBarrier(CCallHelpers& jit) { generateWriteBarrier(jit, A0); }
 
-static void generateToBoolean(CCallHelpers& jit)
+// (The answer is in A0 wherever the question was.)
+static void generateToBoolean(CCallHelpers& jit, GPRReg asked)
 {
     auto answer = [&](bool value) {
         jit.move(TrustedImm32(value), A0);
@@ -380,21 +393,21 @@ static void generateToBoolean(CCallHelpers& jit)
     };
 
     // false and true differ in the last bit.
-    jit.xor64(TrustedImm32(JSValue::ValueFalse), A0, T9);
+    jit.xor64(TrustedImm32(JSValue::ValueFalse), asked, T9);
     Jump notBoolean = jit.branchTest64(CCallHelpers::NonZero, T9, TrustedImm32(~1));
     jit.move(T9, A0);
     jit.ret();
 
     notBoolean.link(&jit);
     jit.move(CCallHelpers::TrustedImm64(JSValue::NumberTag), T10);
-    Jump notInt32 = jit.branch64(CCallHelpers::Below, A0, T10);
-    jit.test32(CCallHelpers::NonZero, A0, A0, A0);
+    Jump notInt32 = jit.branch64(CCallHelpers::Below, asked, T10);
+    jit.test32(CCallHelpers::NonZero, asked, asked, A0);
     jit.ret();
 
     notInt32.link(&jit);
-    Jump notNumber = jit.branchTest64(CCallHelpers::Zero, A0, T10);
+    Jump notNumber = jit.branchTest64(CCallHelpers::Zero, asked, T10);
     // A double: false if it is a zero or not a number, which its bits say, less the sign.
-    jit.add64(T10, A0, T9);
+    jit.add64(T10, asked, T9);
     jit.lshift64(T9, TrustedImm32(1), T9);
     Jump isZero = jit.branchTest64(CCallHelpers::Zero, T9);
     jit.move(CCallHelpers::TrustedImm64(static_cast<int64_t>(0xffe0000000000000ULL)), T10);
@@ -405,30 +418,37 @@ static void generateToBoolean(CCallHelpers& jit)
     answer(false);
 
     notNumber.link(&jit);
-    Jump isCell = jit.branchIfCell(A0);
+    Jump isCell = jit.branchIfCell(asked);
     answer(false); // undefined, null.
 
     isCell.link(&jit);
     CCallHelpers::JumpList slow;
-    jit.load8(Address(A0, JSCell::typeInfoTypeOffset()), T9);
+    jit.load8(Address(asked, JSCell::typeInfoTypeOffset()), T9);
     Jump notObject = jit.branch32(CCallHelpers::Below, T9, TrustedImm32(ObjectType));
-    slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(A0, JSCell::typeInfoFlagsOffset()), TrustedImm32(MasqueradesAsUndefined)));
+    slow.append(jit.branchTest8(CCallHelpers::NonZero, Address(asked, JSCell::typeInfoFlagsOffset()), TrustedImm32(MasqueradesAsUndefined)));
     answer(true);
 
     notObject.link(&jit);
     slow.append(jit.branch32(CCallHelpers::NotEqual, T9, TrustedImm32(StringType)));
-    jit.loadPtr(Address(A0, JSString::offsetOfValue()), T9);
+    jit.loadPtr(Address(asked, JSString::offsetOfValue()), T9);
     slow.append(jit.branchIfRopeStringImpl(T9));
     jit.load32(Address(T9, StringImpl::lengthMemoryOffset()), T9);
     jit.test32(CCallHelpers::NonZero, T9, T9, A0);
     jit.ret();
 
     slow.link(&jit);
+    jit.move(asked, T9);
+    if (asked != A0) {
+        jit.jump().linkTo(s_longWayOfToBoolean, &jit);
+        return;
+    }
+    s_longWayOfToBoolean = jit.label();
     callPreservingRegistersAndReturn(jit, Entry::operationAOTToBoolean, true, [&] {
-        jit.move(A0, A1);
+        jit.move(T9, A1);
         jit.loadPtr(Address(T10, Instance::offsetOfGlobalObject()), A0);
     });
 }
+static void generateToBoolean(CCallHelpers& jit) { generateToBoolean(jit, A0); }
 
 static void generateEqual(CCallHelpers& jit, Entry operation)
 {
@@ -1238,6 +1258,40 @@ static void getFromMegamorphicCache(CCallHelpers& jit, GPRReg uid, CCallHelpers:
 }
 
 static void generateGetByIdWith(CCallHelpers&, Entry);
+// Where the stub goes on when the property is not in the object itself at the place the slot says. With the base in A0, the slot in A1 and (the first two) the slot's first word in T11.
+struct WaysOnOfGetById {
+    CCallHelpers::Label isIntricate;
+    CCallHelpers::Label isOfAnotherStructure;
+    CCallHelpers::Label miss;
+};
+static WaysOnOfGetById s_waysOnOfGetById[2];
+static WaysOnOfGetById& waysOnOfGetById(Entry operation) { return s_waysOnOfGetById[operation == Entry::operationAOTGetByIdWellKnown]; }
+
+// takesOperandAnywhere(): what generateGetByIdWith() starts with, of a base that is somewhere else.
+static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
+{
+    ASSERT(base != A0 && base != A1 && base != T11 && base != T12);
+    Jump isNotCell = jit.branchIfNotCell(base);
+    jit.load64(slotWord(A1, 0), T11);
+    jit.load32(Address(base, JSCell::structureIDOffset()), T12);
+    Jump isOfAnotherStructure = jit.branch32(CCallHelpers::NotEqual, T11, T12);
+    Jump isIntricate = jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32));
+    jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::offsetBits), T11);
+    jit.load64(CCallHelpers::BaseIndex(base, T11, CCallHelpers::TimesEight), A0);
+    jit.ret();
+
+    auto& waysOn = waysOnOfGetById(operation);
+    isIntricate.link(&jit);
+    jit.move(base, A0);
+    jit.jump().linkTo(waysOn.isIntricate, &jit);
+    isOfAnotherStructure.link(&jit);
+    jit.move(base, A0);
+    jit.jump().linkTo(waysOn.isOfAnotherStructure, &jit);
+    isNotCell.link(&jit);
+    jit.move(base, A0);
+    jit.jump().linkTo(waysOn.miss, &jit);
+}
+
 static void generateGetById(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetById); }
 static void generateGetByIdWellKnown(CCallHelpers& jit) { generateGetByIdWith(jit, Entry::operationAOTGetByIdWellKnown); }
 
@@ -1263,6 +1317,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     jit.ret();
 
     isIntricate.link(&jit);
+    waysOnOfGetById(operation).isIntricate = jit.label();
     // Outside it, or in an object that every base of this structure inherits it from.
     jit.loadPtr(slotWord(A1, 1), T12);
     jit.moveConditionallyTest64(CCallHelpers::NonZero, T12, T12, T12, A0, T12);
@@ -1279,6 +1334,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     callGetter(jit, miss);
 
     isOfAnotherStructure.link(&jit);
+    waysOnOfGetById(operation).isOfAnotherStructure = jit.label();
     if (operation == Entry::operationAOTGetById) {
         // A slot that says no more than where in the object itself has room for the name (Slot::name), once the long way round has found that out.
         miss.append(jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(Slot::isIntricate) << 32)));
@@ -1302,6 +1358,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
     }
 
     miss.link(&jit);
+    waysOnOfGetById(operation).miss = jit.label();
     if (operation == Entry::operationAOTGetById) {
         loadIndexOfCaller(jit);
         // An object of a shape that the compiler knew of: where its properties are is in the program's dispatch table.
@@ -3086,7 +3143,111 @@ static constexpr unsigned biggestFrameWithThunk = 64 * unitOfFrameSize;
 static constexpr unsigned firstThunkOfCalls = std::size(stubsThatCallOperations) * numberOfEntries;
 static constexpr unsigned firstThunkOfPrologue = firstThunkOfCalls + std::size(stubsThatCallFunctions) * numberOfCountsWithThunk;
 static constexpr unsigned firstThunkOfIntrinsics = firstThunkOfPrologue + biggestFrameWithThunk / unitOfFrameSize;
-static constexpr unsigned numberOfThunks = firstThunkOfIntrinsics + numberOfStubIntrinsics;
+// takesOperandAnywhere(). These have all that is quick about them over again for each register...
+static constexpr Stub stubsThatTakeOperandAnywhere[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
+    // ... and these are got to by way of a move.
+    Stub::PutById, Stub::GetByVal, Stub::PutByVal, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope };
+// And so are these, which are got to by way of something that says which operation as it is.
+struct OperationThatTakesOperandAnywhere {
+    Stub stub;
+    Entry operation;
+};
+static constexpr OperationThatTakesOperandAnywhere operationsThatTakeOperandAnywhere[] = {
+    { Stub::ColdOperationVoid, Entry::operationAOTCheckType }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTCheckType },
+    { Stub::ColdOperationVoid, Entry::operationAOTAssertBornAs }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTAssertBornAs },
+    { Stub::ColdOperationValue, Entry::operationAOTGetElementOrEmpty }, { Stub::ColdOperationValueOfLeaf, Entry::operationAOTGetElementOrEmpty },
+    { Stub::ColdOperationValue, Entry::operationAOTGetByVal }, { Stub::ColdOperationValueOfLeaf, Entry::operationAOTGetByVal },
+    { Stub::OperationValueWithGlobalObject, Entry::operationAOTNewFunction },
+    { Stub::OperationValueWithGlobalObject, Entry::operationAOTToString },
+    { Stub::OperationValueWithGlobalObject, Entry::operationAOTToThis },
+    { Stub::OperationValueWithGlobalObject, Entry::operationAOTCreateLexicalEnvironment },
+    { Stub::OperationVoidWithGlobalObject, Entry::operationAOTThrow },
+    { Stub::OperationVoidWithGlobalObject, Entry::operationAOTThrowNotAFunction },
+    { Stub::PlainOperationWithGlobalObject, Entry::operationAOTToBoolean },
+};
+// x0 to x29. Not that it can be in all of those. But it can be in one that always has the same thing in it, if that is what is given: nought as a value is the tag of numbers.
+static constexpr unsigned numberOfRegistersForOperand = 30;
+static constexpr unsigned firstThunkOfOperands = firstThunkOfIntrinsics + numberOfStubIntrinsics;
+static constexpr unsigned firstThunkOfOperandsOfOperations = firstThunkOfOperands + std::size(stubsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
+static constexpr unsigned numberOfThunks = firstThunkOfOperandsOfOperations + std::size(operationsThatTakeOperandAnywhere) * numberOfRegistersForOperand;
+static_assert(numberOfThunks < std::numeric_limits<uint16_t>::max());
+
+static std::optional<unsigned> firstThunkForOperandOf(Stub stub, std::optional<uint32_t> valueOfT9)
+{
+    // (What counts which way the stubs go only counts in the stubs themselves.)
+    static const bool isOff = !usesStubs || getenv("BUN_AOT_COUNTS_STUB_PATHS") || getenv("BUN_AOT_OPERANDS_ARE_MOVED");
+    if (isOff)
+        return std::nullopt;
+    if (!valueOfT9) {
+        for (unsigned i = 0; i < std::size(stubsThatTakeOperandAnywhere); ++i) {
+            if (stubsThatTakeOperandAnywhere[i] == stub)
+                return firstThunkOfOperands + i * numberOfRegistersForOperand;
+        }
+        return std::nullopt;
+    }
+    for (unsigned i = 0; i < std::size(operationsThatTakeOperandAnywhere); ++i) {
+        if (operationsThatTakeOperandAnywhere[i].stub == stub && static_cast<unsigned>(operationsThatTakeOperandAnywhere[i].operation) * sizeof(void*) == *valueOfT9)
+            return firstThunkOfOperandsOfOperations + i * numberOfRegistersForOperand;
+    }
+    return std::nullopt;
+}
+
+bool takesOperandAnywhere(Stub stub, std::optional<uint32_t> valueOfT9)
+{
+    return !!firstThunkForOperandOf(stub, valueOfT9);
+}
+
+static bool callsOperation(Stub stub)
+{
+    for (Stub other : stubsThatCallOperations) {
+        if (other == stub)
+            return true;
+    }
+    return false;
+}
+
+GPRReg whereOperandIsTaken(Stub stub)
+{
+    // (All of those above are given the global object first, which they find for themselves.)
+    return callsOperation(stub) ? GPRInfo::argumentGPR1 : GPRInfo::argumentGPR0;
+}
+
+bool leavesAloneWhereOperandIsTaken(Stub stub)
+{
+    return stub == Stub::WriteBarrier;
+}
+
+bool operandMayBeIn(Stub stub, GPRReg reg)
+{
+#if CPU(ARM64)
+    unsigned number = static_cast<unsigned>(reg) - static_cast<unsigned>(ARM64Registers::x0);
+    if (number >= numberOfRegistersForOperand || number == 16 || number == 17) // (What the assembler keeps for itself.)
+        return false;
+    // A move is the first thing that happens.
+    if (callsOperation(stub))
+        return true;
+    switch (stub) {
+    case Stub::WriteBarrier:
+    case Stub::ToBoolean:
+        return number < 9 || number > 11; // T9 to T11
+    case Stub::GetById:
+    case Stub::GetByIdWellKnown:
+        return (number < 9 && reg != GPRInfo::argumentGPR1) || number > 15; // (The slot; T9 to T15.)
+    default:
+        return true;
+    }
+#else
+    UNUSED_PARAM(stub);
+    UNUSED_PARAM(reg);
+    return false;
+#endif
+}
+
+unsigned thunkForOperandIn(Stub stub, std::optional<uint32_t> valueOfT9, GPRReg reg)
+{
+    RELEASE_ASSERT(operandMayBeIn(stub, reg));
+    return *firstThunkForOperandOf(stub, valueOfT9) + static_cast<unsigned>(reg);
+}
 
 std::optional<unsigned> thunkFor(Stub stub, uint32_t valueOfT9)
 {
@@ -3174,6 +3335,46 @@ const StubBlob& stubBlob()
                 static_assert(stubsThatCallFunctions[0] == Stub::Call);
                 jit.jump().linkTo(thunkLabels[firstThunkOfCalls + argumentCountOf(intrinsic)], &jit);
             }
+#if CPU(ARM64)
+            static_assert(!static_cast<unsigned>(ARM64Registers::x0));
+            for (Stub stub : stubsThatTakeOperandAnywhere) {
+                for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
+                    GPRReg reg = static_cast<GPRReg>(number);
+                    if (!operandMayBeIn(stub, reg) || reg == whereOperandIsTaken(stub)) {
+                        thunkLabels.append(labels[static_cast<unsigned>(stub)]);
+                        continue;
+                    }
+                    jit.align();
+                    thunkLabels.append(jit.label());
+                    switch (stub) {
+                    case Stub::WriteBarrier:
+                        generateWriteBarrier(jit, reg);
+                        break;
+                    case Stub::ToBoolean:
+                        generateToBoolean(jit, reg);
+                        break;
+                    case Stub::GetById:
+                        generateGetByIdFrom(jit, Entry::operationAOTGetById, reg);
+                        break;
+                    case Stub::GetByIdWellKnown:
+                        generateGetByIdFrom(jit, Entry::operationAOTGetByIdWellKnown, reg);
+                        break;
+                    default:
+                        jit.move(reg, whereOperandIsTaken(stub));
+                        jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
+                        break;
+                    }
+                }
+            }
+            for (auto& [stub, operation] : operationsThatTakeOperandAnywhere) {
+                for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
+                    thunkLabels.append(jit.label());
+                    jit.move(static_cast<GPRReg>(number), whereOperandIsTaken(stub));
+                    jit.move(CCallHelpers::TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), GPRInfo::regT9);
+                    jit.jump().linkTo(labels[static_cast<unsigned>(stub)], &jit);
+                }
+            }
+#endif
             RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
         }
 
@@ -3224,6 +3425,16 @@ const StubBlob& stubBlob()
                 dataLogLn("AOT: stub Prologue", frameSize, " ", blob->thunkOffsets[thunk++]);
             for (unsigned i = 1; i <= numberOfStubIntrinsics; ++i)
                 dataLogLn("AOT: stub Intrinsic", i, " ", blob->thunkOffsets[thunk++]);
+            for (Stub stub : stubsThatTakeOperandAnywhere) {
+                for (unsigned number = 0; number < numberOfRegistersForOperand; ++number, ++thunk) {
+                    if (blob->thunkOffsets[thunk] != blob->offsets[static_cast<unsigned>(stub)])
+                        dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "OfX", number, " ", blob->thunkOffsets[thunk]);
+                }
+            }
+            for (auto& [stub, operation] : operationsThatTakeOperandAnywhere) {
+                for (unsigned number = 0; number < numberOfRegistersForOperand; ++number)
+                    dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "#", static_cast<unsigned>(operation), "OfX", number, " ", blob->thunkOffsets[thunk++]);
+            }
             dataLogLn("AOT: stub End ", size);
         }
     });
@@ -3243,6 +3454,19 @@ void StubCalls::call(CCallHelpers& jit, Stub stub, uint32_t valueOfT9, CallSite 
     m_pending.append({ jit.nearCall(), stub, false, site.bits });
     if (thunk)
         m_pending.last().thunk = safeCast<uint16_t>(*thunk + 1);
+}
+
+void StubCalls::callWithOperandIn(CCallHelpers& jit, Stub stub, std::optional<uint32_t> valueOfT9, GPRReg operand, CallSite site)
+{
+    if (operand == whereOperandIsTaken(stub)) {
+        if (valueOfT9)
+            call(jit, stub, *valueOfT9, site);
+        else
+            call(jit, stub, site);
+        return;
+    }
+    m_pending.append({ jit.nearCall(), stub, false, site.bits });
+    m_pending.last().thunk = safeCast<uint16_t>(thunkForOperandIn(stub, valueOfT9, operand) + 1);
 }
 
 void StubCalls::tailCall(CCallHelpers& jit, Stub stub)

@@ -14,6 +14,7 @@
 #include "AirCode.h"
 #include "B3PatchpointValue.h"
 #include "B3SlotBaseValue.h"
+#include "AirStackSlot.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
 #include "BytecodeStructs.h"
@@ -487,16 +488,58 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     // in, and kept, for calls that are hardly ever made.
     PatchpointValue* patchpoint = m_out.patchpoint(type);
     std::optional<std::pair<GPRReg, int32_t>> slotArgument;
+    // Likewise where something in the frame is: it takes an instruction to say, which is what it takes to copy it from wherever it would be kept.
+    Vector<std::pair<GPRReg, B3::Air::StackSlot*>, 2> slotsOfFrame;
+    // The first thing that the stub is given stays where it is, if the stub can be got into with it there (takesOperandAnywhere()).
+    std::optional<uint32_t> valueOfT9;
+    for (auto& immediate : immediates) {
+        if (immediate.reg == GPRInfo::regT9)
+            valueOfT9 = immediate.value;
+    }
+    bool operandStaysWhereItIs = !type.isTuple() && !arguments.isEmpty() && arguments[0].reg.isGPR() && takesOperandAnywhere(stub, valueOfT9) && arguments[0].reg.gpr() == whereOperandIsTaken(stub)
+        && arguments[0].value->opcode() != SlotBase;
+    RegisterSet writtenOnTheWay;
     for (auto& argument : arguments) {
         LValue value = argument.value;
         if (!slotArgument && value->opcode() == Add && value->child(0) == m_data && value->child(1)->hasIntPtr()) {
             slotArgument = { argument.reg.gpr(), static_cast<int32_t>(value->child(1)->asIntPtr()) };
+            writtenOnTheWay.add(argument.reg, IgnoreVectors);
+            continue;
+        }
+        if (value->opcode() == SlotBase) {
+            slotsOfFrame.append(std::pair<GPRReg, B3::Air::StackSlot*> { argument.reg.gpr(), value->as<B3::SlotBaseValue>()->slot() });
+            writtenOnTheWay.add(argument.reg, IgnoreVectors);
+            continue;
+        }
+        if (operandStaysWhereItIs && &argument == &arguments[0]) {
+            RELEASE_ASSERT(!patchpoint->numChildren());
+            patchpoint->append(ConstrainedValue(value, ValueRep::SomeRegister));
             continue;
         }
         patchpoint->append(ConstrainedValue(value, ValueRep::reg(argument.reg)));
     }
     if (slotArgument)
         patchpoint->append(ConstrainedValue(m_data, ValueRep::SomeRegister));
+    for (auto& immediate : immediates) {
+        if (immediate.reg != GPRInfo::regT9)
+            writtenOnTheWay.add(immediate.reg, IgnoreVectors);
+    }
+    // (What is worked out on the way is worked out before anything is looked at. It used to be that nothing was anywhere but in a register of its own.)
+    if (operandStaysWhereItIs || slotArgument)
+        patchpoint->clobberEarly(writtenOnTheWay);
+    patchpoint->clobberLate(writtenOnTheWay);
+    if (operandStaysWhereItIs) {
+        RegisterSet mayNotHoldIt;
+        for (unsigned i = 0; i < 16; ++i) {
+            GPRReg reg = static_cast<GPRReg>(static_cast<unsigned>(ARM64Registers::x0) + i);
+            if (!operandMayBeIn(stub, reg))
+                mayNotHoldIt.add(reg, IgnoreVectors);
+        }
+        patchpoint->clobberEarly(mayNotHoldIt);
+        patchpoint->clobberLate(mayNotHoldIt);
+        if (!leavesAloneWhereOperandIsTaken(stub))
+            patchpoint->clobberLate(RegisterSet { whereOperandIsTaken(stub) });
+    }
     patchpoint->clobberLate(RegisterSet { ARM64Registers::lr }); // hasNoFrame()
     switch (clobbers) {
     case StubClobbers::WhatCallsDo:
@@ -521,18 +564,20 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
         // Whoever asked for several results says where they are.
     } else if (type != Void)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
-    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, slotArgument, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    unsigned whichIsOperand = type == Void ? 0 : 1;
+    patchpoint->setGenerator([stubCalls = &m_graph.stubCalls, stub, immediates, slotArgument, slotsOfFrame, operandStaysWhereItIs, whichIsOperand, valueOfT9, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         if (slotArgument)
             jit.addPtr(CCallHelpers::TrustedImm32(slotArgument->second), params[params.size() - 1].gpr(), slotArgument->first);
-        std::optional<uint32_t> valueOfT9;
+        for (auto& [reg, slot] : slotsOfFrame)
+            jit.addPtr(CCallHelpers::TrustedImm32(slot->offsetFromFP()), GPRInfo::callFrameRegister, reg);
         for (auto& immediate : immediates) {
-            if (immediate.reg == GPRInfo::regT9)
-                valueOfT9 = immediate.value;
-            else
+            if (immediate.reg != GPRInfo::regT9)
                 jit.move(CCallHelpers::TrustedImm32(immediate.value), immediate.reg);
         }
-        if (valueOfT9)
+        if (operandStaysWhereItIs)
+            stubCalls->callWithOperandIn(jit, stub, valueOfT9, params[whichIsOperand].gpr(), site);
+        else if (valueOfT9)
             stubCalls->call(jit, stub, *valueOfT9, site);
         else
             stubCalls->call(jit, stub, site);
@@ -558,7 +603,14 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
         patchpoint->effects.exitsSideways = true;
         patchpoint->effects.controlDependent = true;
     }
-    if (first)
+    bool returnsValue = type != Void;
+    uint32_t valueOfT9 = static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*));
+    // (See callStub(). The way in puts it where it is taken, which is then not as it was.)
+    bool firstStaysWhereItIs = first && takesOperandAnywhere(returnsValue ? Stub::ColdOperationValue : Stub::ColdOperationVoid, valueOfT9) && takesOperandAnywhere(returnsValue ? Stub::ColdOperationValueOfLeaf : Stub::ColdOperationVoidOfLeaf, valueOfT9);
+    if (firstStaysWhereItIs) {
+        patchpoint->append(ConstrainedValue(first, ValueRep::SomeRegister));
+        patchpoint->clobberLate(RegisterSet { GPRInfo::argumentGPR1 });
+    } else if (first)
         patchpoint->append(ConstrainedValue(first, ValueRep::reg(GPRInfo::argumentGPR1)));
     if (second)
         patchpoint->append(ConstrainedValue(second, ValueRep::reg(GPRInfo::argumentGPR2)));
@@ -567,17 +619,19 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
     temporaries.add(GPRInfo::regT10, IgnoreVectors);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobber(temporaries);
-    bool returnsValue = type != Void;
     if (returnsValue)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { callSiteBitsOf(node) };
-    patchpoint->setGenerator([graph = &m_graph, function, site, returnsValue](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([graph = &m_graph, valueOfT9, site, returnsValue, firstStaysWhereItIs](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
         bool isLeaf = hasNoFrame(*graph, params.proc().code());
         if (isLeaf)
             jit.move(CCallHelpers::linkRegister, GPRInfo::regT10);
         Stub stub = returnsValue ? (isLeaf ? Stub::ColdOperationValueOfLeaf : Stub::ColdOperationValue) : (isLeaf ? Stub::ColdOperationVoidOfLeaf : Stub::ColdOperationVoid);
-        graph->stubCalls.call(jit, stub, static_cast<uint32_t>(static_cast<unsigned>(function) * sizeof(void*)), site);
+        if (firstStaysWhereItIs)
+            graph->stubCalls.callWithOperandIn(jit, stub, valueOfT9, params[returnsValue ? 1 : 0].gpr(), site);
+        else
+            graph->stubCalls.call(jit, stub, valueOfT9, site);
     });
     return patchpoint;
 }

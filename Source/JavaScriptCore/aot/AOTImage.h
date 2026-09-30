@@ -81,6 +81,7 @@ struct ImageHeader {
     // Not zero: it is in blocks of so many bytes, each packed by itself (setCodec()). What is there is then: how many blocks; how many bytes the last one unpacks to; where each
     // starts, and where the last ends, from the first; and the blocks.
     uint32_t sizeOfBlockOfTextOfQuotes;
+    uint32_t sizeOfBlockOfQuotes; // Likewise.
     uint32_t numberOfIdentifiersOfProgram; // Not zero: see NumbersOfIdentifiers.
     uint32_t numberOfConstantsOfProgram; // See NumbersOfConstants.
     uint32_t regExpsOffset; // ImageRegExp, in the order of their hashes.

@@ -468,7 +468,7 @@ bool Lowering::tryLowerAllocation(Node* node)
 void Lowering::throwTDZError(Node* node)
 {
     bool isThis = node->as<OpCheckTdz>().m_targetVirtualRegister == code().codeBlock()->thisRegister();
-    coldCall(node, Entry::operationAOTThrowTDZError, m_out.constInt32(isThis));
+    coldCall(node, isThis ? Entry::operationAOTThrowTDZErrorOfThis : Entry::operationAOTThrowTDZError);
     m_out.unreachable();
 }
 

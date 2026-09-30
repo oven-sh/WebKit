@@ -191,31 +191,103 @@ void setCodec(Compress compress, Decompress decompress)
     s_decompress = decompress;
 }
 
+// See ImageHeader::sizeOfBlockOfTextOfQuotes. Nothing, if there is nothing to pack with or it will not.
+static std::optional<Vector<uint8_t>> packInBlocks(std::span<const uint8_t> bytes, size_t sizeOfBlock)
+{
+    if (!s_compress || !s_decompress || bytes.size() < 4 * KB)
+        return std::nullopt;
+    size_t numberOfBlocks = (bytes.size() + sizeOfBlock - 1) / sizeOfBlock;
+    Vector<uint32_t> words;
+    words.append(safeCast<uint32_t>(numberOfBlocks));
+    words.append(safeCast<uint32_t>(bytes.size() - (numberOfBlocks - 1) * sizeOfBlock));
+    Vector<uint8_t> blocks;
+    Vector<uint8_t> packed(2 * sizeOfBlock);
+    for (size_t block = 0; block < numberOfBlocks; ++block) {
+        auto source = bytes.subspan(block * sizeOfBlock, std::min(sizeOfBlock, bytes.size() - block * sizeOfBlock));
+        size_t size = s_compress(source.data(), source.size(), packed.mutableSpan().data(), packed.size());
+        if (!size)
+            return std::nullopt;
+        words.append(safeCast<uint32_t>(blocks.size()));
+        blocks.append(packed.span().first(size));
+    }
+    words.append(safeCast<uint32_t>(blocks.size()));
+    Vector<uint8_t> result;
+    result.append(asBytes(words.span()));
+    result.appendVector(blocks);
+    return result;
+}
+
+// One byte after another of what packInBlocks() was given, from wherever. With no size of block: of what is there.
+class ReaderOfBlocks {
+public:
+    ReaderOfBlocks(const uint8_t* bytes, size_t sizeOfBlock, uint64_t start)
+        : m_bytes(bytes)
+        , m_sizeOfBlock(sizeOfBlock)
+        , m_at(start)
+    {
+    }
+
+    bool failed() const { return m_failed; }
+
+    // (Nothing but zeros once it has failed: which ends a number, and a list.)
+    uint8_t next()
+    {
+        if (!m_sizeOfBlock)
+            return m_bytes[m_at++];
+        size_t block = m_at / m_sizeOfBlock;
+        if (block != m_block && !unpack(block))
+            return 0;
+        size_t inBlock = m_at++ % m_sizeOfBlock;
+        RELEASE_ASSERT(inBlock < m_unpacked.size());
+        return m_unpacked[inBlock];
+    }
+
+    uint64_t varint()
+    {
+        uint64_t value = 0;
+        for (unsigned shift = 0; shift < 64; shift += 7) {
+            uint8_t byte = next();
+            value |= static_cast<uint64_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                break;
+        }
+        return value;
+    }
+
+private:
+    bool unpack(size_t block)
+    {
+        if (m_failed)
+            return false;
+        const uint32_t* words = reinterpret_cast<const uint32_t*>(m_bytes);
+        size_t numberOfBlocks = words[0];
+        const uint32_t* starts = words + 2;
+        const uint8_t* blocks = reinterpret_cast<const uint8_t*>(starts + numberOfBlocks + 1);
+        m_failed = true;
+        if (!s_decompress || block >= numberOfBlocks)
+            return false;
+        m_unpacked.resize(block + 1 == numberOfBlocks ? words[1] : m_sizeOfBlock);
+        if (!s_decompress(blocks + starts[block], starts[block + 1] - starts[block], m_unpacked.mutableSpan().data(), m_unpacked.size()))
+            return false;
+        m_failed = false;
+        m_block = block;
+        return true;
+    }
+
+    const uint8_t* m_bytes;
+    size_t m_sizeOfBlock;
+    uint64_t m_at;
+    size_t m_block { std::numeric_limits<size_t>::max() };
+    Vector<uint8_t> m_unpacked;
+    bool m_failed { false };
+};
+
 String Image::textOfQuote(uint64_t start, size_t length) const
 {
-    const uint8_t* text = this->at<uint8_t>(header().textOfQuotesOffset);
-    size_t sizeOfBlock = header().sizeOfBlockOfTextOfQuotes;
-    if (!sizeOfBlock)
-        return String::fromUTF8(std::span { reinterpret_cast<const char8_t*>(text) + start, length });
-    if (!s_decompress)
+    ReaderOfBlocks reader(this->at<uint8_t>(header().textOfQuotesOffset), header().sizeOfBlockOfTextOfQuotes, start);
+    Vector<uint8_t> bytes(length, [&](size_t) { return reader.next(); });
+    if (reader.failed())
         return { };
-    const uint32_t* words = reinterpret_cast<const uint32_t*>(text);
-    size_t numberOfBlocks = words[0];
-    size_t sizeOfLast = words[1];
-    const uint32_t* starts = words + 2;
-    const uint8_t* blocks = reinterpret_cast<const uint8_t*>(starts + numberOfBlocks + 1);
-    Vector<uint8_t> unpacked(sizeOfBlock);
-    Vector<uint8_t> bytes;
-    for (size_t block = start / sizeOfBlock; block * sizeOfBlock < start + length; ++block) {
-        RELEASE_ASSERT(block < numberOfBlocks);
-        size_t size = block + 1 == numberOfBlocks ? sizeOfLast : sizeOfBlock;
-        if (!s_decompress(blocks + starts[block], starts[block + 1] - starts[block], unpacked.mutableSpan().data(), size))
-            return { };
-        size_t first = block * sizeOfBlock;
-        size_t from = std::max<size_t>(start, first) - first;
-        size_t to = std::min<size_t>(start + length, first + size) - first;
-        bytes.append(unpacked.span().subspan(from, to - from));
-    }
     return String::fromUTF8(bytes.span());
 }
 
@@ -225,14 +297,16 @@ std::optional<std::pair<String, bool>> Image::quoteAt(const ImageFunction& funct
 {
     if (!function.quotes)
         return std::nullopt;
-    const uint8_t* at = this->at<uint8_t>(header().quotesOffset) + function.quotes;
+    ReaderOfBlocks reader(this->at<uint8_t>(header().quotesOffset), header().sizeOfBlockOfQuotes, function.quotes);
     uint64_t offset = 0;
     int64_t start = 0;
-    for (uint64_t count = readVarint(at); count--;) {
-        offset += readVarint(at);
-        uint64_t step = readVarint(at);
+    for (uint64_t count = reader.varint(); count--;) {
+        offset += reader.varint();
+        uint64_t step = reader.varint();
         start += static_cast<int64_t>(step >> 1) ^ -static_cast<int64_t>(step & 1);
-        uint64_t lengthAndKind = readVarint(at);
+        uint64_t lengthAndKind = reader.varint();
+        if (reader.failed())
+            return std::nullopt;
         if (offset < bytecodeOffset)
             continue;
         if (offset > bytecodeOffset)
@@ -306,17 +380,17 @@ bool Image::constructsAt(const ImageFunction& function, unsigned bytecodeOffset)
 {
     if (!function.quotes)
         return false;
-    const uint8_t* at = this->at<uint8_t>(header().quotesOffset) + function.quotes;
-    for (uint64_t count = readVarint(at); count--;) {
-        readVarint(at);
-        readVarint(at);
-        readVarint(at);
+    ReaderOfBlocks reader(this->at<uint8_t>(header().quotesOffset), header().sizeOfBlockOfQuotes, function.quotes);
+    for (uint64_t count = reader.varint(); count-- && !reader.failed();) {
+        reader.varint();
+        reader.varint();
+        reader.varint();
     }
     uint64_t offset = 0;
-    for (uint64_t count = readVarint(at); count--;) {
-        offset += readVarint(at);
+    for (uint64_t count = reader.varint(); count-- && !reader.failed();) {
+        offset += reader.varint();
         if (offset >= bytecodeOffset)
-            return offset == bytecodeOffset;
+            return offset == bytecodeOffset && !reader.failed();
     }
     return false;
 }
@@ -1043,33 +1117,23 @@ Vector<uint8_t> ImageBuilder::finish()
         if (Options::aotReportStats()) [[unlikely]]
             dataLogLn("AOT: ", numberOfQuotes, " places that an error message may quote: ", quotes.size(), " bytes, and ", textOfQuotes.size(), " of text in ", whereItIs.size(), " pieces");
     }
+    // Neither is looked at but to say what an error message says.
+    size_t sizeOfBlockOfEither = 64 * KB;
+    // (For a test whose program is too small to have more than one otherwise.)
+    if (const char* size = getenv("BUN_AOT_SIZE_OF_BLOCKS_OF_QUOTES"))
+        sizeOfBlockOfEither = std::max(64, atoi(size));
     uint32_t sizeOfBlockOfTextOfQuotes = 0;
-    if (s_compress && s_decompress && textOfQuotes.size() >= 4 * KB) {
-        constexpr size_t sizeOfBlock = 64 * KB;
-        size_t numberOfBlocks = (textOfQuotes.size() + sizeOfBlock - 1) / sizeOfBlock;
-        Vector<uint32_t> words;
-        words.append(safeCast<uint32_t>(numberOfBlocks));
-        words.append(safeCast<uint32_t>(textOfQuotes.size() - (numberOfBlocks - 1) * sizeOfBlock));
-        Vector<uint8_t> blocks;
-        Vector<uint8_t> packed(2 * sizeOfBlock);
-        bool ok = true;
-        for (size_t block = 0; block < numberOfBlocks && ok; ++block) {
-            auto source = textOfQuotes.span().subspan(block * sizeOfBlock, std::min(sizeOfBlock, textOfQuotes.size() - block * sizeOfBlock));
-            size_t size = s_compress(source.data(), source.size(), packed.mutableSpan().data(), packed.size());
-            ok = !!size;
-            words.append(safeCast<uint32_t>(blocks.size()));
-            blocks.append(packed.span().first(size));
-        }
-        words.append(safeCast<uint32_t>(blocks.size()));
-        if (ok) {
-            if (Options::aotReportStats()) [[unlikely]]
-                dataLogLn("AOT: the text of quotes is packed into ", words.sizeInBytes() + blocks.size(), " bytes");
-            textOfQuotes.clear();
-            textOfQuotes.append(asBytes(words.span()));
-            textOfQuotes.appendVector(blocks);
-            sizeOfBlockOfTextOfQuotes = sizeOfBlock;
-        }
+    if (auto packed = packInBlocks(textOfQuotes.span(), sizeOfBlockOfEither)) {
+        textOfQuotes = WTF::move(*packed);
+        sizeOfBlockOfTextOfQuotes = sizeOfBlockOfEither;
     }
+    uint32_t sizeOfBlockOfQuotes = 0;
+    if (auto packed = packInBlocks(quotes.span(), sizeOfBlockOfEither)) {
+        quotes = WTF::move(*packed);
+        sizeOfBlockOfQuotes = sizeOfBlockOfEither;
+    }
+    if (Options::aotReportStats()) [[unlikely]]
+        dataLogLn("AOT: packed, they are ", quotes.size(), " bytes and ", textOfQuotes.size());
 
     // Code that goes by the tables of a static heap is no use without one, and that says which function nearly every executable is.
     // So it is for whoever makes it to keep the keys of the rest (StaticHeap::keysOfImage()): the table comes after the image.
@@ -1107,6 +1171,7 @@ Vector<uint8_t> ImageBuilder::finish()
     header.quotesOffset = place(quotes.size());
     header.textOfQuotesOffset = place(textOfQuotes.size());
     header.sizeOfBlockOfTextOfQuotes = sizeOfBlockOfTextOfQuotes;
+    header.sizeOfBlockOfQuotes = sizeOfBlockOfQuotes;
     header.numberOfIdentifiersOfProgram = m_numberOfIdentifiersOfProgram;
     header.numberOfConstantsOfProgram = m_numberOfConstantsOfProgram;
     header.regExpsOffset = place(imageRegExps.sizeInBytes());

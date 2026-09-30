@@ -74,6 +74,7 @@ struct Slot;
     v(operationAOTGetPrototypeOf) \
     v(operationAOTInstanceof) \
     v(operationAOTThrowTDZError) \
+    v(operationAOTThrowTDZErrorOfThis) \
     v(operationAOTThrowStaticError) \
     v(operationAOTGetByIdWellKnown) \
     v(operationAOTPutByIdReallocating) \
@@ -198,7 +199,8 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTIsConstructor, size_t, (EncodedJS
 JSC_DECLARE_JIT_OPERATION(operationAOTStrcat, EncodedJSValue, (JSGlobalObject*, const EncodedJSValue* values, uint32_t count));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetPrototypeOf, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTInstanceof, size_t, (JSGlobalObject*, EncodedJSValue value, EncodedJSValue constructor));
-JSC_DECLARE_JIT_OPERATION(operationAOTThrowTDZError, void, (JSGlobalObject*, uint32_t isThis));
+JSC_DECLARE_JIT_OPERATION(operationAOTThrowTDZError, void, (JSGlobalObject*));
+JSC_DECLARE_JIT_OPERATION(operationAOTThrowTDZErrorOfThis, void, (JSGlobalObject*));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrowStaticError, void, (JSGlobalObject*, EncodedJSValue message, uint32_t errorType));
 
 // Properties.

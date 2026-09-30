@@ -359,6 +359,19 @@ struct StubCall {
 // give them, for it to be worth an instruction at each. None: there is no such way in, and the number is for the caller to put there.
 std::optional<unsigned> thunkFor(Stub, uint32_t valueOfT9);
 
+// A way into a stub for the first thing it is given being in some other register than the one the stub takes it in. Nearly everything that
+// is given to a stub is wanted afterwards as well, so it is in a register that calls leave alone, and would have to be copied: at every one
+// of hundreds of thousands of places.
+// Whether there are such ways in. (valueOfT9: of a stub that calls an operation, which. It is put there on the way, as by thunkFor().)
+bool takesOperandAnywhere(Stub, std::optional<uint32_t> valueOfT9);
+// Where the stub itself takes it.
+GPRReg whereOperandIsTaken(Stub);
+// Whether it may be there. What may not hold it is for whoever calls the stub to keep it out of.
+bool operandMayBeIn(Stub, GPRReg);
+// Whether the way in leaves whereOperandIsTaken() as it was.
+bool leavesAloneWhereOperandIsTaken(Stub);
+unsigned thunkForOperandIn(Stub, std::optional<uint32_t> valueOfT9, GPRReg);
+
 struct StubBlob {
     Vector<uint8_t> bytes;
     unsigned offsets[numberOfStubs];
@@ -456,6 +469,7 @@ class StubCalls {
 public:
     void call(CCallHelpers&, Stub, CallSite);
     void call(CCallHelpers&, Stub, uint32_t valueOfT9, CallSite);
+    void callWithOperandIn(CCallHelpers&, Stub, std::optional<uint32_t> valueOfT9, GPRReg, CallSite); // takesOperandAnywhere()
     void tailCall(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub, uint32_t valueOfT9);
     void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);

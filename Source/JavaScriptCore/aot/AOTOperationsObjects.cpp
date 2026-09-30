@@ -897,13 +897,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInstanceof, size_t, (JSGlobalObject* global
     OPERATION_RETURN(scope, JSObject::defaultHasInstance(globalObject, value, prototype));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTThrowTDZError, void, (JSGlobalObject* globalObject, uint32_t isThis))
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowTDZErrorOfThis, void, (JSGlobalObject* globalObject))
 {
     AOT_OPERATION_BEGIN(globalObject);
-    if (isThis) {
-        throwException(globalObject, scope, createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s));
-        OPERATION_RETURN(scope);
-    }
+    throwException(globalObject, scope, createReferenceError(globalObject, "'super()' must be called in derived constructor before accessing |this| or returning non-object."_s));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTThrowTDZError, void, (JSGlobalObject* globalObject))
+{
+    AOT_OPERATION_BEGIN(globalObject);
     // The name is what the source has at the call site that the caller left in its frame.
     if (auto quote = quoteSourceWithoutText(vm, callFrame)) {
         throwException(globalObject, scope, quote->text.isNull() ? createTDZError(globalObject) : createTDZError(globalObject, StringView { quote->text }));

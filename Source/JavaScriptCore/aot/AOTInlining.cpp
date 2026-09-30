@@ -98,13 +98,18 @@ public:
         m_graph.computeOrderOfBlocks();
     }
 
-    static bool isWorthIt(UnlinkedCodeBlock* callee, const ProgramFacts* facts)
+    // isCalledInLoop: or may be, for all that is known.
+    static bool isWorthIt(UnlinkedCodeBlock* callee, const ProgramFacts* facts, bool isCalledInLoop = true)
     {
         unsigned size = callee->instructionsSize();
         // There is going to be no other copy of it.
         if (facts && facts->isClosed && facts->directCalls.load(std::memory_order_relaxed) == 1)
             return size <= Options::aotInlinesOnlyCallUpTo();
-        return size <= Options::aotInlinesUpTo();
+        // Every copy of it is that much more code, unless it is no longer than the call. That is worth it where it may be run over and over, which is all
+        // that there is to go by. (In a big program: 5.4MB for what is between 30 and 60 bytes, and 0.07MB for what is up to 18.)
+        // TEMPORARY: to be an option.
+        static const unsigned outsideLoops = getenv("BUN_AOT_INLINES_OUTSIDE_LOOPS_UP_TO") ? atoi(getenv("BUN_AOT_INLINES_OUTSIDE_LOOPS_UP_TO")) : 18;
+        return size <= (isCalledInLoop ? Options::aotInlinesUpTo() : std::min(outsideLoops, Options::aotInlinesUpTo()));
     }
 
     // Plain from its bytecode.
@@ -226,7 +231,7 @@ private:
         // (A closure that is called where it is made is as good as called from one place.)
         if (intrinsicToCheckFor && (!about || !canBePartOfAnother(callee)))
             return notTaken(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
-        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isWorthIt(callee, about->facts)))
+        if (!about || !canBePartOfAnother(callee) || !(scopeOfClosure || intrinsicToCheckFor ? callee->instructionsSize() <= Options::aotInlinesOnlyCallUpTo() : isWorthIt(callee, about->facts, block->isInLoop)))
             return intrinsicToCheckFor ? notTaken("it is too big"_s) : false;
         if (m_sizeTakenOver + callee->instructionsSize() > Options::aotInlinesAtMost() || m_graph.inlineFrames.size() > PackedSite::mostInlineFrames)
             return intrinsicToCheckFor ? notTaken("the caller has taken over enough"_s) : false;
