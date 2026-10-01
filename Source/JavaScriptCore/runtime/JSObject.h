@@ -362,10 +362,10 @@ public:
 
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 #if USE(BUN_JSC_ADDITIONS)
-    // Before a property is made into something that is not a plain value: see Structure::bornAs().
-    JS_EXPORT_PRIVATE void takeOutOfTheSlotItWasBornIn(VM&, PropertyName);
-    // Of an object that has just been made, with whatever it was given: see SlotsOfBornObjects. How many were.
-    JS_EXPORT_PRIVATE unsigned takeOutWhatItsSlotsDoNotHold(VM&);
+    // Before a property is made into something that is not a plain value: see Structure::typedLayoutID().
+    JS_EXPORT_PRIVATE void evictTypedField(VM&, PropertyName);
+    // Of an object that has just been made, with whatever it was given: see TypedLayoutTable. How many were.
+    JS_EXPORT_PRIVATE unsigned evictMistypedFields(VM&);
 #endif
     JS_EXPORT_PRIVATE static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     bool deleteProperty(JSGlobalObject*, PropertyName);

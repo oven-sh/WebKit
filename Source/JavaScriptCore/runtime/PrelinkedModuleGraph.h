@@ -176,7 +176,7 @@ public:
         uint32_t flags;
         Kind kind() const { return static_cast<Kind>(flags & KindMask); }
         // From when it is initialized, it holds what its declaration gave it.
-        bool holdsWhatItWasDeclaredWith() const
+        bool keepsDeclaredValue() const
         {
             return !(flags & IsAssigned);
         }

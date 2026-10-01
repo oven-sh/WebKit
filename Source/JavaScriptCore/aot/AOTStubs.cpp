@@ -561,7 +561,7 @@ static void generateNarrowCharacters(CCallHelpers& jit)
 }
 
 // A0 === A1, where A1 is a string that the program spells out: in one piece, narrow, and an atom.
-static void generateIsStringThatSays(CCallHelpers& jit)
+static void generateIsStringEqualTo(CCallHelpers& jit)
 {
     CCallHelpers::JumpList isTrue;
     CCallHelpers::JumpList isFalse;
@@ -858,9 +858,9 @@ static void generateGetByValAtIndex(CCallHelpers& jit)
     otherwise.append(jit.branchIfNotCell(A0));
     jit.load8(Address(A0, JSCell::indexingTypeAndMiscOffset()), T13);
     jit.and32(TrustedImm32(IndexingShapeMask), T13);
-    Jump holdsValues = jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(ContiguousShape));
+    Jump contiguousCase = jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(ContiguousShape));
     otherwise.append(jit.branch32(CCallHelpers::NotEqual, T13, TrustedImm32(Int32Shape)));
-    holdsValues.link(&jit);
+    contiguousCase.link(&jit);
     jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T11);
     jit.load32(Address(T11, Butterfly::offsetOfPublicLength()), T12);
     // (One that is less than nought is more than any length.)
@@ -888,7 +888,7 @@ static void generateGetByVal(CCallHelpers& jit)
     Jump noButterfly = jit.branchTest32(CCallHelpers::Zero, T13);
     jit.loadPtr(Address(A0, JSObject::butterflyOffset()), T11);
     jit.zeroExtend32ToWord(A1, T12);
-    Jump holdsDoubles = jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(DoubleShape));
+    Jump doubleCase = jit.branch32(CCallHelpers::Equal, T13, TrustedImm32(DoubleShape));
     slow.append(jit.branch32(CCallHelpers::Above, T13, TrustedImm32(ContiguousShape)));
     static_assert(Int32Shape < DoubleShape && DoubleShape < ContiguousShape);
     slow.append(jit.branch32(CCallHelpers::Below, T13, TrustedImm32(Int32Shape)));
@@ -911,7 +911,7 @@ static void generateGetByVal(CCallHelpers& jit)
     };
 
     // A hole is not a number.
-    holdsDoubles.link(&jit);
+    doubleCase.link(&jit);
     slow.append(jit.branch32(CCallHelpers::AboveOrEqual, T12, Address(T11, Butterfly::offsetOfPublicLength())));
     jit.loadDouble(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), number);
     slow.append(jit.branchIfNaN(number));
@@ -1402,12 +1402,12 @@ struct WaysOnOfReadSlot {
     CCallHelpers::Label isNotThere;
     CCallHelpers::Label miss;
 };
-static WaysOnOfReadSlot s_waysOnOfReadSlot[2][Structure::numberOfSlotsWithFields];
+static WaysOnOfReadSlot s_waysOnOfReadSlot[2][Structure::numberOfSlotsWithFieldIDs];
 
 // base: takesOperandAnywhere().
 static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWillDo, GPRReg base = A0)
 {
-    static_assert(Structure::numberOfSlotsWithFields == 8);
+    static_assert(Structure::numberOfSlotsWithFieldIDs == 8);
     ASSERT(base != A1 && base != T11 && base != T12 && base != T13);
     Jump isNotCell = jit.branchIfNotCell(base);
     jit.load32(Address(base, JSCell::structureIDOffset()), T13);
@@ -1417,7 +1417,7 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWil
 #else
     jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T13);
 #endif
-    jit.load16(Address(T13, Structure::offsetOfFieldInSlot() + slot * sizeof(uint16_t)), T11);
+    jit.load16(Address(T13, Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t)), T11);
     Jump isNotThere = jit.branch32(CCallHelpers::NotEqual, T11, A1);
     jit.load64(Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)), A0);
     jit.ret();
@@ -1439,10 +1439,10 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWil
     if (undefinedWillDo) {
         // Nothing of the object's family is in the slot: so if that is the family of the field, the object has no such property. (Nor does it inherit one: Instance::adopt().)
         miss.append(jit.branchTest32(CCallHelpers::NonZero, T11));
-        jit.load16(Address(T13, Structure::offsetOfBornAs()), T11);
+        jit.load16(Address(T13, Structure::offsetOfTypedLayoutID()), T11);
         loadInstance(jit, T12);
         jit.loadPtr(Address(T12, Instance::offsetOfRuntimeTable()), T12);
-        jit.loadPtr(Address(T12, (static_cast<unsigned>(Entry::FamiliesOfFieldsInSlot0) + slot) * sizeof(void*)), T12);
+        jit.loadPtr(Address(T12, (static_cast<unsigned>(Entry::LayoutIDsOfFieldsInSlot0) + slot) * sizeof(void*)), T12);
         jit.load16(CCallHelpers::BaseIndex(T12, A1, CCallHelpers::TimesTwo), T12);
         miss.append(jit.branch32(CCallHelpers::NotEqual, T11, T12));
         jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), A0);
@@ -1458,9 +1458,9 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool undefinedWil
 static std::optional<std::pair<unsigned, bool>> slotReadBy(Stub stub)
 {
     unsigned number = static_cast<unsigned>(stub);
-    if (number >= static_cast<unsigned>(Stub::ReadSlot0) && number < static_cast<unsigned>(Stub::ReadSlot0) + Structure::numberOfSlotsWithFields)
+    if (number >= static_cast<unsigned>(Stub::ReadSlot0) && number < static_cast<unsigned>(Stub::ReadSlot0) + Structure::numberOfSlotsWithFieldIDs)
         return std::pair { number - static_cast<unsigned>(Stub::ReadSlot0), false };
-    if (number >= static_cast<unsigned>(Stub::ReadSlotOrUndefined0) && number < static_cast<unsigned>(Stub::ReadSlotOrUndefined0) + Structure::numberOfSlotsWithFields)
+    if (number >= static_cast<unsigned>(Stub::ReadSlotOrUndefined0) && number < static_cast<unsigned>(Stub::ReadSlotOrUndefined0) + Structure::numberOfSlotsWithFieldIDs)
         return std::pair { number - static_cast<unsigned>(Stub::ReadSlotOrUndefined0), true };
     return std::nullopt;
 }
@@ -1529,7 +1529,7 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
             jit.extractUnsignedBitfield64(T11, TrustedImm32(32), TrustedImm32(Slot::directLocationBits), T14);
             jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T12);
             constexpr ptrdiff_t wordsBeforeInlineStorage = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue);
-            jit.load16(CCallHelpers::BaseIndex(T12, T14, CCallHelpers::TimesTwo, Structure::offsetOfFieldInSlot() - wordsBeforeInlineStorage * sizeof(uint16_t)), T12);
+            jit.load16(CCallHelpers::BaseIndex(T12, T14, CCallHelpers::TimesTwo, Structure::offsetOfFieldIDInSlot() - wordsBeforeInlineStorage * sizeof(uint16_t)), T12);
             Jump isAnotherName = jit.branch32(CCallHelpers::NotEqual, T12, T13);
             jit.load64(CCallHelpers::BaseIndex(A0, T14, CCallHelpers::TimesEight), A0);
             jit.ret();
@@ -1680,7 +1680,7 @@ static void generatePutById(CCallHelpers& jit)
     miss.append(jit.branch32(CCallHelpers::NotEqual, T11, T12));
     jit.load64(slotWord(A2, 1), T13);
     jit.urshift64(T13, TrustedImm32(32), T14);
-    Jump saysWhatItHolds = jit.branchTest32(CCallHelpers::NonZero, T14);
+    Jump slotHasFieldType = jit.branchTest32(CCallHelpers::NonZero, T14);
     CCallHelpers::Label isHeld = jit.label();
     locateCachedProperty(jit, A0, T11, T12);
     jit.store64(A1, CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesEight));
@@ -1709,8 +1709,8 @@ static void generatePutById(CCallHelpers& jit)
     // A field of a struct (Slot::held). T14: the kinds it holds, and above them the family of the objects among those. What is plainly one of them is stored;
     // whatever takes more telling is for the runtime, which knows all of it.
     {
-        saysWhatItHolds.link(&jit);
-        auto ifHolds = [&](unsigned kind) {
+        slotHasFieldType.link(&jit);
+        auto ifAccepts = [&](unsigned kind) {
             miss.append(jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(kind)));
             jit.jump().linkTo(isHeld, &jit);
         };
@@ -1727,21 +1727,21 @@ static void generatePutById(CCallHelpers& jit)
 
         isNotNumber.link(&jit);
         Jump isNotUndefined = jit.branch64(CCallHelpers::NotEqual, A1, CCallHelpers::TrustedImm64(JSValue::ValueUndefined));
-        ifHolds(SoundTypeUndefined);
+        ifAccepts(SoundTypeUndefined);
         isNotUndefined.link(&jit);
         Jump isNotNull = jit.branch64(CCallHelpers::NotEqual, A1, CCallHelpers::TrustedImm64(JSValue::ValueNull));
-        ifHolds(SoundTypeNull);
+        ifAccepts(SoundTypeNull);
         isNotNull.link(&jit);
         jit.and64(TrustedImm32(~1), A1, T12);
         miss.append(jit.branch64(CCallHelpers::NotEqual, T12, CCallHelpers::TrustedImm64(JSValue::ValueFalse)));
-        ifHolds(SoundTypeBoolean);
+        ifAccepts(SoundTypeBoolean);
 
         isCell.link(&jit);
         jit.load8(Address(A1, JSCell::typeInfoTypeOffset()), T12);
         Jump isNotString = jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(StringType));
         {
             // (Where the strings are atoms, one that is not plainly an atom is for the runtime to make one of.)
-            Jump anyStringWillDo = jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(SlotsOfBornObjects::stringsAreAtoms));
+            Jump anyStringWillDo = jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(TypedLayoutTable::stringsAreAtoms));
             jit.load8(Address(A1, JSCell::typeInfoFlagsOffset()), T12);
             Jump isAtom = jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(TypeInfoPerCellBit));
             // (A long one need not be, and is left as it is.)
@@ -1752,14 +1752,14 @@ static void generatePutById(CCallHelpers& jit)
             isInPieces.link(&jit);
             jit.load32(Address(A1, JSRopeString::offsetOfLength()), T12);
             haveLength.link(&jit);
-            miss.append(jit.branch32(CCallHelpers::BelowOrEqual, T12, TrustedImm32(SlotsOfBornObjects::lengthOfShortString)));
+            miss.append(jit.branch32(CCallHelpers::BelowOrEqual, T12, TrustedImm32(TypedLayoutTable::maxLengthOfAtomizedString)));
             isAtom.link(&jit);
             anyStringWillDo.link(&jit);
         }
-        ifHolds(SoundTypeString);
+        ifAccepts(SoundTypeString);
         isNotString.link(&jit);
         Jump isNotArray = jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(ArrayType));
-        ifHolds(SoundTypeArray);
+        ifAccepts(SoundTypeArray);
         isNotArray.link(&jit);
         miss.append(jit.branch32(CCallHelpers::NotEqual, T12, TrustedImm32(FinalObjectType)));
         miss.append(jit.branchTest32(CCallHelpers::Zero, T14, TrustedImm32(SoundTypeOtherObject)));
@@ -1768,7 +1768,7 @@ static void generatePutById(CCallHelpers& jit)
         loadInstance(jit, T9);
         jit.load32(Address(A1, JSCell::structureIDOffset()), T10);
         jit.or64(CCallHelpers::TrustedImm64(structureIDBaseOfImages), T10);
-        jit.load16(Address(T10, Structure::offsetOfBornAs()), T10);
+        jit.load16(Address(T10, Structure::offsetOfTypedLayoutID()), T10);
         jit.branch32(CCallHelpers::Equal, T10, T12).linkTo(isHeld, &jit);
         miss.append(jit.jump());
     }
@@ -1779,7 +1779,7 @@ static void generatePutById(CCallHelpers& jit)
     loadIndexOfCaller(jit);
     loadInstanceAndDataOfSlot(jit, A2, T9, T10);
     countMissOfSlot(jit, T9, T10);
-    // (Not where a slot says what it holds: the table does not say which do. See SlotsOfBornObjects.)
+    // (Not where a slot says what it holds: the table does not say which do. See TypedLayoutTable.)
     if (!Options::aotTypesFields()) {
         notInTable.append(jit.branchIfNotCell(A0));
         findInDispatchTable(jit, A2, A3, notInTable, notInTable);
@@ -3239,11 +3239,11 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
         jit.load8(Address(A1, JSCell::indexingTypeAndMiscOffset()), A3);
         jit.and32(TrustedImm32(IndexingShapeMask | CopyOnWrite), A3);
         jit.move(argument(1), A2);
-        Jump holdsValues = jit.branch32(CCallHelpers::Equal, A3, TrustedImm32(ContiguousShape));
+        Jump contiguousCase = jit.branch32(CCallHelpers::Equal, A3, TrustedImm32(ContiguousShape));
         otherwise.append(jit.branch32(CCallHelpers::NotEqual, A3, TrustedImm32(Int32Shape)));
         otherwise.append(jit.branchIfNotInt32(A2));
         Jump isInt32 = jit.jump();
-        holdsValues.link(&jit);
+        contiguousCase.link(&jit);
         Jump notCell = jit.branchIfNotCell(A2);
         jit.load8(Address(A1, JSCell::cellStateOffset()), T11);
         loadInstance(jit, T12);
@@ -3266,9 +3266,9 @@ static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CC
         loadThisOfType(ArrayType);
         jit.load8(Address(A1, JSCell::indexingTypeAndMiscOffset()), A3);
         jit.and32(TrustedImm32(IndexingShapeMask | CopyOnWrite), A3);
-        Jump holdsValues = jit.branch32(CCallHelpers::Equal, A3, TrustedImm32(ContiguousShape));
+        Jump contiguousCase = jit.branch32(CCallHelpers::Equal, A3, TrustedImm32(ContiguousShape));
         otherwise.append(jit.branch32(CCallHelpers::NotEqual, A3, TrustedImm32(Int32Shape)));
-        holdsValues.link(&jit);
+        contiguousCase.link(&jit);
         checkCallee(Entry::HostArrayPop);
         jit.loadPtr(Address(A1, JSObject::butterflyOffset()), A4);
         jit.load32(Address(A4, Butterfly::offsetOfPublicLength()), A5);
@@ -3532,7 +3532,7 @@ static constexpr unsigned firstThunkOfIntrinsics = firstThunkOfPrologue + bigges
 static constexpr Stub stubsThatTakeOperandAnywhere[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     // ... and these are got to by way of a move.
     Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
-    Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringThatSays, Stub::GetLength, Stub::HelperAddField,
+    Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringEqualTo, Stub::GetLength, Stub::HelperAddField,
     Stub::ReadSlot0, Stub::ReadSlot1, Stub::ReadSlot2, Stub::ReadSlot3, Stub::ReadSlot4, Stub::ReadSlot5, Stub::ReadSlot6, Stub::ReadSlot7,
     Stub::ReadSlotOrUndefined0, Stub::ReadSlotOrUndefined1, Stub::ReadSlotOrUndefined2, Stub::ReadSlotOrUndefined3, Stub::ReadSlotOrUndefined4, Stub::ReadSlotOrUndefined5, Stub::ReadSlotOrUndefined6, Stub::ReadSlotOrUndefined7 };
 // And so are these, which are got to by way of something that says which operation as it is.
@@ -3542,7 +3542,7 @@ struct OperationThatTakesOperandAnywhere {
 };
 static constexpr OperationThatTakesOperandAnywhere operationsThatTakeOperandAnywhere[] = {
     { Stub::ColdOperationVoid, Entry::operationAOTCheckType }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTCheckType },
-    { Stub::ColdOperationVoid, Entry::operationAOTAssertBornAs }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTAssertBornAs },
+    { Stub::ColdOperationVoid, Entry::operationAOTCheckTypedLayout }, { Stub::ColdOperationVoidOfLeaf, Entry::operationAOTCheckTypedLayout },
     { Stub::ColdOperationValue, Entry::operationAOTGetElementOrEmpty }, { Stub::ColdOperationValueOfLeaf, Entry::operationAOTGetElementOrEmpty },
     { Stub::ColdOperationValue, Entry::operationAOTGetByVal }, { Stub::ColdOperationValueOfLeaf, Entry::operationAOTGetByVal },
     { Stub::OperationValueWithGlobalObject, Entry::operationAOTNewFunction },

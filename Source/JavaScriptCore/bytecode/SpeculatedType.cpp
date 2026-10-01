@@ -708,7 +708,7 @@ unsigned soundTypeTag(JSValue value)
     return SoundTypeBigInt;
 }
 
-bool soundTypeMaskAdmits(unsigned mask, JSValue value)
+bool soundTypeMaskAccepts(unsigned mask, JSValue value)
 {
     unsigned tag = soundTypeTag(value);
     if (!(tag & mask))

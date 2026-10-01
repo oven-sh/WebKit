@@ -90,7 +90,7 @@ Type typeOfValue(JSValue value)
         return TTop;
     if (value.isString()) {
         const StringImpl* impl = asString(value)->tryGetValueImpl();
-        return impl && impl->isAtom() ? TAtomString : asString(value)->length() <= SlotsOfBornObjects::lengthOfShortString ? TShortOtherString : TLongString;
+        return impl && impl->isAtom() ? TAtomString : asString(value)->length() <= TypedLayoutTable::maxLengthOfAtomizedString ? TShortOtherString : TLongString;
     }
     return typeOfCellOfType(value.asCell()->type());
 }
@@ -155,7 +155,7 @@ void dumpType(PrintStream& out, Type type)
     take(TOtherObject, "OtherObject"_s);
     take(TFinalObject, "FinalObject"_s);
     if (type & TFinalObjectTag) {
-        auto layouts = layoutsBornAs(type);
+        auto layouts = layoutRangeOf(type);
         out.print(bar, "FinalObject#", layouts.lowest);
         if (!layouts.isOne())
             out.print("..", layouts.highest);
@@ -1319,7 +1319,7 @@ void Graph::noteUsesOfProvenFunctions(const FactsOfExecutables& factsOfExecutabl
 
 void Graph::noteFieldsComparedWithStrings()
 {
-    if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy())
+    if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced())
         return;
     auto isStringOfProgram = [](Node* node) {
         if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
@@ -1347,7 +1347,7 @@ void Graph::noteFieldsComparedWithStrings()
             else if (node->opcode == op_check_tdz)
                 self(self, node->uses[0].node, depth + 1);
             else if (node->opcode == op_get_by_id) {
-                if (auto field = fieldOfStructGotAtBy(node))
+                if (auto field = typedFieldAccessedBy(node))
                     TypeTable::shared()->noteComparedWithString(*field);
             }
             return;
@@ -1540,9 +1540,9 @@ bool Graph::isThisOfWhatAnybodyMayCall(const Node* node)
     return !facts || !facts->isClosed;
 }
 
-std::optional<TypeTable::Field> Graph::fieldOfStructGotAtBy(const Node* node)
+std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
 {
-    if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::areStructsToGoBy() || node->guard)
+    if (!Options::aotTypesFields() || Options::aotAssertsTypes() || !TypeTable::typedFieldsAreEnforced() || node->guard)
         return std::nullopt;
     uint32_t tag = typeTagOf(node);
     unsigned identifier;
@@ -1560,22 +1560,22 @@ std::optional<TypeTable::Field> Graph::fieldOfStructGotAtBy(const Node* node)
         if (auto field = TypeTable::shared()->fieldOf(tag, name))
             return field;
     }
-    return fieldOfWhatIsBornAs(node->use(base), name);
+    return fieldOfTypedBase(node->use(base), name);
 }
 
-std::optional<TypeTable::Field> Graph::fieldOfWhatIsBornAs(const Node* base, UniquedStringImpl* name)
+std::optional<TypeTable::Field> Graph::fieldOfTypedBase(const Node* base, UniquedStringImpl* name)
 {
-    if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy() || !base->type || !isSubtype(base->type, TFinalObject))
+    if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced() || !base->type || !isSubtype(base->type, TFinalObject))
         return std::nullopt;
-    auto families = layoutsBornAs(base->type);
-    if (!families.lowest || families.lowest != families.highest)
+    auto layoutIDs = layoutRangeOf(base->type);
+    if (!layoutIDs.lowest || layoutIDs.lowest != layoutIDs.highest)
         return std::nullopt;
-    return TypeTable::shared()->fieldOfFamily(families.lowest, name);
+    return TypeTable::shared()->fieldOfLayout(layoutIDs.lowest, name);
 }
 
 uint32_t Graph::classNotedBy(const Node* node)
 {
-    if (!node->isBytecode(op_call_ignore_result) || !Options::aotTypesFields() || !TypeTable::areStructs())
+    if (!node->isBytecode(op_call_ignore_result) || !Options::aotTypesFields() || !TypeTable::hasTypedFields())
         return 0;
     CallOperands operands = operandsOfCall(node->instruction);
     if (operands.argc != 2 || linkTimeConstantOf(node->use(operands.callee)) != LinkTimeConstant::noteClass)
@@ -1607,7 +1607,7 @@ void Graph::noteClassesDefined()
 {
     ClassesOfProgram* classes = classesOfProgram();
     const FunctionsOfProgram* functions = functionsOfProgram();
-    if (!classes || !functions || !TypeTable::areStructsToGoBy())
+    if (!classes || !functions || !TypeTable::typedFieldsAreEnforced())
         return;
     for (BasicBlock* block : m_rpo) {
         for (Node* note : block->nodes) {
@@ -1617,13 +1617,13 @@ void Graph::noteClassesDefined()
             CallOperands operands = operandsOfCall(note->instruction);
             Node* constructor = note->use(operands.argument(0));
             Node* prototype = note->use(operands.argument(1));
-            uint16_t family = TypeTable::shared()->familyOfInstancesOf(classType);
+            uint16_t layoutID = TypeTable::shared()->layoutIDOfInstancesOf(classType);
             auto noteThisInCodeOf = [&](Node* value) -> uint32_t {
                 UnlinkedFunctionExecutable* made = functionMadeBy(value);
                 uint32_t number = made ? functions->numberOf(made) : 0;
                 if (const KnownFunction* function = functions->function(number)) {
-                    classes->noteThisIn(function->forCall, family);
-                    classes->noteThisIn(function->forConstruct, family);
+                    classes->noteThisIn(function->forCall, layoutID);
+                    classes->noteThisIn(function->forConstruct, layoutID);
                 }
                 return number;
             };
@@ -1658,7 +1658,7 @@ void Graph::noteClassesDefined()
 
 uint32_t Graph::closedMethodReadBy(const Node* node)
 {
-    if (!node->isBytecode(op_get_by_id) || !Options::aotTypesFields() || !TypeTable::areStructsToGoBy() || !classesOfProgram())
+    if (!node->isBytecode(op_get_by_id) || !Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced() || !classesOfProgram())
         return 0;
     uint32_t tag = typeTagOf(node);
     if (!tag)
@@ -1672,25 +1672,25 @@ Type Graph::typeOfThisOnEntry() const
 {
     // What gives an instance its fields is called by the constructor and by nothing else, on what has just been made.
     if (m_codeBlock->parseMode() == SourceParseMode::ClassFieldInitializerMode) {
-        if (uint16_t family = familyOfThis())
-            return typeOfObjectBornAs(family);
+        if (uint16_t layoutID = layoutIDOfThis())
+            return typeOfObjectWithLayout(layoutID);
     }
     return typeOfArgumentOnEntry(0);
 }
 
-uint16_t Graph::familyOfThis() const
+uint16_t Graph::layoutIDOfThis() const
 {
-    if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy() || !classesOfProgram())
+    if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced() || !classesOfProgram())
         return 0;
-    return classesOfProgram()->familyOfThisIn(m_codeBlock);
+    return classesOfProgram()->layoutIDOfThisIn(m_codeBlock);
 }
 
-uint16_t Graph::familyOfNewObject(const Node* node)
+uint16_t Graph::layoutIDOfNewObject(const Node* node)
 {
-    if (!Options::aotTypesFields() || !TypeTable::areStructs() || !(Options::aotShapes() & 1))
+    if (!Options::aotTypesFields() || !TypeTable::hasTypedFields() || !(Options::aotShapes() & 1))
         return 0;
     uint32_t tag = typeTagOf(node);
-    return tag ? TypeTable::shared()->familyOfWhatIsMade(tag) : 0;
+    return tag ? TypeTable::shared()->layoutIDOfAllocation(tag) : 0;
 }
 
 std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
@@ -1701,7 +1701,7 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
     std::optional<TypeTable::Layout> layout;
     if (uint32_t tag = typeTagOf(node); tag && (Options::aotShapes() & 1) && TypeTable::shared())
         layout = TypeTable::shared()->layoutOf(tag);
-    if ((!count && !layout && !familyOfNewObject(node)) || count > KnownShape::maxProperties)
+    if ((!count && !layout && !layoutIDOfNewObject(node)) || count > KnownShape::maxProperties)
         return std::nullopt;
     KnownShape shape;
     shape.inlineCapacity = KnownShape::inlineCapacityFor(count);
@@ -1728,36 +1728,36 @@ std::optional<KnownShape> Graph::shapeOfLiteral(const Node* node) const
             isAsWritten &= layout->properties[i].first == shape.names[i];
         if (isAsWritten) {
             shape.number = layout->number;
-            shape.family = layout->family;
-            shape.reserved = layout->family ? layout->capacity : 0;
+            shape.layoutID = layout->layoutID;
+            shape.reserved = layout->layoutID ? layout->capacity : 0;
             shape.inlineSlots = layout->inlineSlots;
             for (auto& property : layout->properties)
                 shape.slots.append(property.second);
             // (An object of a closed family has room for what it can ever be given, which need not be all that the family has names for.)
-            shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->family ? std::min<unsigned>(layout->inlineSlots, layout->capacity) : layout->capacity);
+            shape.inlineCapacity = KnownShape::inlineCapacityFor(layout->layoutID ? std::min<unsigned>(layout->inlineSlots, layout->capacity) : layout->capacity);
             return shape;
         }
     }
     // It is of the family all the same, if it is said to be of one: each property in the slot the family has for its name.
-    if (uint16_t number = familyOfNewObject(node)) {
-        auto family = TypeTable::shared()->family(number);
+    if (uint16_t number = layoutIDOfNewObject(node)) {
+        auto layout = TypeTable::shared()->typedLayout(number);
         BitVector taken;
         for (UniquedStringImpl* name : shape.names) {
-            auto* found = family.names.findIf([&](auto& entry) { return entry.name == name; }) != notFound ? &family.names[family.names.findIf([&](auto& entry) { return entry.name == name; })] : nullptr;
+            auto* found = layout.fields.findIf([&](auto& entry) { return entry.name == name; }) != notFound ? &layout.fields[layout.fields.findIf([&](auto& entry) { return entry.name == name; })] : nullptr;
             if (!found || taken.get(found->slot))
                 return std::nullopt;
             taken.set(found->slot);
             shape.slots.append(found->slot);
         }
-        shape.family = number;
-        shape.reserved = family.capacity;
-        shape.inlineSlots = family.inlineSlots;
-        shape.inlineCapacity = KnownShape::inlineCapacityFor(family.inlineSlots);
+        shape.layoutID = number;
+        shape.reserved = layout.capacity;
+        shape.inlineSlots = layout.inlineSlots;
+        shape.inlineCapacity = KnownShape::inlineCapacityFor(layout.inlineSlots);
         return shape;
     }
     // (Nobody says what it is for. It may turn out to be for something that wants more room than it takes to make it.)
-    if (Options::aotTypesFields() && TypeTable::areStructs()) {
-        if (unsigned wanted = TypeTable::shared()->inlineSlotsWantedBy(shape.names.span()); wanted > count)
+    if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
+        if (unsigned wanted = TypeTable::shared()->inlineSlotsNeededFor(shape.names.span()); wanted > count)
             shape.inlineCapacity = std::max(shape.inlineCapacity, KnownShape::inlineCapacityFor(wanted));
     }
     if (count < 2 && shape.inlineCapacity == KnownShape::inlineCapacityFor(count))
@@ -1889,7 +1889,7 @@ void Graph::setLinkage(const ModuleLinkage* linkage, const DeclaredNamesLink* de
     }
 }
 
-void Graph::adopt(std::unique_ptr<Graph>&& other, InlineFrame frame)
+void Graph::convertToTypedLayout(std::unique_ptr<Graph>&& other, InlineFrame frame)
 {
     RELEASE_ASSERT(isOutermost() && other->isOutermost() && other->m_adopted.isEmpty());
     if (inlineFrames.isEmpty())
@@ -2337,7 +2337,7 @@ private:
                 auto bytecode = instruction->as<OpCheckType>();
                 if (isFact(bytecode.m_mask))
                     break;
-                Type type = typeOf(bytecode.m_value) & typeAdmittedByMask(bytecode.m_mask);
+                Type type = typeOf(bytecode.m_value) & typeAcceptedByMask(bytecode.m_mask);
                 if (!bytecode.m_value.isConstant())
                     define(bytecode.m_value, type);
                 break;
@@ -2575,14 +2575,14 @@ private:
         unsigned next = offset + instruction->size();
         if (next >= end || m_instructions.at(next)->opcodeID() != op_type_tag)
             return false;
-        auto [family, base] = familyAssertedAt(next);
-        return family && base == instruction->as<OpCheckType>().m_value && m_graph.isTracked(base);
+        auto [layoutID, base] = layoutCheckedAt(next);
+        return layoutID && base == instruction->as<OpCheckType>().m_value && m_graph.isTracked(base);
     }
 
-    // TypeTable::hasStructs(): the family that the base of the access after the op_type_tag there is said to be of, and where the base is.
-    std::pair<uint16_t, VirtualRegister> familyAssertedAt(unsigned offset)
+    // TypeTable::tableHasTypedFields(): the family that the base of the access after the op_type_tag there is said to be of, and where the base is.
+    std::pair<uint16_t, VirtualRegister> layoutCheckedAt(unsigned offset)
     {
-        if (!Options::aotTypesFields() || !TypeTable::areStructs())
+        if (!Options::aotTypesFields() || !TypeTable::hasTypedFields())
             return { };
         unsigned next = offset + m_instructions.at(offset)->size();
         if (next >= m_instructions.size() || !goesByTypeWhereverItIs(next))
@@ -2591,13 +2591,13 @@ private:
         VirtualRegister base = access->opcodeID() == op_get_by_id ? access->as<OpGetById>().m_base : access->as<OpPutById>().m_base;
         if (base.isConstant())
             return { };
-        return { TypeTable::shared()->familyOf(m_graph.typeTagAt(next)), base };
+        return { TypeTable::shared()->layoutIDOf(m_graph.typeTagAt(next)), base };
     }
 
     // Likewise: where the base of the access after the op_type_tag there is, if it is said to be an array.
     VirtualRegister arrayAssertedAt(unsigned offset)
     {
-        if (!Options::aotTypesFields() || !TypeTable::areStructsToGoBy())
+        if (!Options::aotTypesFields() || !TypeTable::typedFieldsAreEnforced())
             return { };
         unsigned next = offset + m_instructions.at(offset)->size();
         if (next >= m_instructions.size())
@@ -3293,13 +3293,13 @@ private:
             if (opcode == op_type_tag) {
                 // Of structs, it says more than that: what the next instruction gets at is of the family, or this does not go on. From here on whoever has the
                 // value in hand has something that is known for what it was born as, so it is a definition, as a check is.
-                auto [family, baseRegister] = familyAssertedAt(offset);
+                auto [layoutID, baseRegister] = layoutCheckedAt(offset);
                 bool isArray = false;
-                if (!family) {
+                if (!layoutID) {
                     baseRegister = arrayAssertedAt(offset);
                     isArray = baseRegister.isValid();
                 }
-                if ((!family && !isArray) || !m_graph.isTracked(baseRegister))
+                if ((!layoutID && !isArray) || !m_graph.isTracked(baseRegister))
                     continue;
                 Node* base = get(block, baseRegister);
                 Node* node = m_graph.addNode(NodeKind::Bytecode);
@@ -3308,10 +3308,10 @@ private:
                 // (If it throws, it is on behalf of that instruction: what it says is what that would have said.)
                 node->bytecodeIndex = BytecodeIndex(offset + instruction->size());
                 node->uses.append({ baseRegister, base });
-                node->firstLayout = node->lastLayout = family;
+                node->firstLayout = node->lastLayout = layoutID;
                 // (What a function that anybody may call is called on is whatever they please.)
-                if (family)
-                    node->isTakenAtItsWord = TypeTable::shared()->isTakenAtItsWord(m_graph.typeTagAt(offset + instruction->size())) && !(TypeTable::shared()->isOpen(family) && Graph::isThisOfWhatAnybodyMayCall(base));
+                if (layoutID)
+                    node->isTrusted = TypeTable::shared()->isTrusted(m_graph.typeTagAt(offset + instruction->size())) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isThisOfWhatAnybodyMayCall(base));
                 if (isArray)
                     node->narrowedTo = TArray;
                 node->reg = baseRegister;
@@ -3402,7 +3402,7 @@ private:
             case op_create_this: {
                 // A register that lives in memory is written where the instruction is.
                 // (An instance of a class of structs has its fields where their names say, not one after the other: they are stored one by one, by stores that know where.)
-                if (m_graph.hasHomedRegisters() || block->isInLoop || m_graph.familyOfThis())
+                if (m_graph.hasHomedRegisters() || block->isInLoop || m_graph.layoutIDOfThis())
                     break;
                 m_planOfObject = NewObjectPlan::forCreateThis(m_instructions, offset);
                 if (m_planOfObject.stores.isEmpty() || m_planOfObject.stores.last().offset >= block->bytecodeEnd)
@@ -3501,7 +3501,7 @@ private:
                 // (One that has no such property gets past it too.)
                 narrow->firstLayout = guard->firstWithout ? std::min(guard->firstLayout, guard->firstWithout) : guard->firstLayout;
                 narrow->lastLayout = std::max(guard->lastLayout, guard->lastWithout);
-                narrow->narrowedTo = typeOfObjectBornWithin(narrow->firstLayout, narrow->lastLayout);
+                narrow->narrowedTo = typeOfObjectWithLayoutInRange(narrow->firstLayout, narrow->lastLayout);
                 append(block, narrow);
                 for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
                     if (block->valuesAtTail[index] == base && !m_graph.m_homed.get(index))
@@ -3620,10 +3620,10 @@ private:
                     guard->firstWithout = field->firstWithout;
                     guard->lastWithout = field->lastWithout;
                 }
-                if (Options::aotTypesFields() && field->holds.saysSomething()) {
-                    guard->heldKinds = safeCast<uint16_t>(field->holds.kinds);
-                    guard->heldFirst = field->holds.first;
-                    guard->heldLast = field->holds.last;
+                if (Options::aotTypesFields() && field->fieldType.isConstrained()) {
+                    guard->fieldTypeKinds = safeCast<uint16_t>(field->fieldType.kinds);
+                    guard->fieldTypeFirst = field->fieldType.first;
+                    guard->fieldTypeLast = field->fieldType.last;
                 }
             }
             append(block, guard);

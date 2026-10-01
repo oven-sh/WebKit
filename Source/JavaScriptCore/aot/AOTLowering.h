@@ -153,29 +153,29 @@ private:
     std::optional<TypeTable::Field> fieldAccessedBy(Node*, unsigned identifier);
     // Which layout the cell is of (Structure::knownShape()), and whether that is one of first to last.
     LValue layoutOf(LValue cell);
-    LValue layoutBornAs(LValue cell); // Structure::bornAs()
-    LValue layoutBornAsOrNone(Node*, LValue);
-    TypedPointer slotOfStruct(LValue object, const TypeTable::Field&);
-    LValue asHeld(Node* valueNode, LValue value, TypeTable::Holds); // The value as a slot of a struct has it: a number is encoded as a double.
+    LValue loadTypedLayoutID(LValue cell); // Structure::typedLayoutID()
+    LValue loadTypedLayoutIDOrZero(Node*, LValue);
+    TypedPointer addressOfField(LValue object, const TypeTable::Field&);
+    LValue toFieldRepresentation(Node* valueNode, LValue value, TypeTable::FieldType); // The value as a slot of a struct has it: a number is encoded as a double.
     Node* m_sameAs { nullptr }; // setResult(): the node is this one by another name.
-    void assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family); // Of a family that is closed. Goes on if it is of the family.
+    void checkTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID); // Of a family that is closed. Goes on if it is of the family.
     // Where the slots are that typed code reads and writes. Of a family that is open that may be a struct with nothing in it, which stands for whatever is not one of the
     // family and cannot be made one: so whoever finds nothing in a slot, and pointer is not the object, goes the long way.
-    struct StructToLookIn {
+    struct FieldStorage {
         LValue pointer;
         bool mayStandForSomethingElse;
     };
-    StructToLookIn structToLookIn(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t family);
-    LValue viewAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family);
-    LValue viewFoundFor(Node* valueNode, uint16_t family); // Null: none has been made of it.
-    UncheckedKeyHashMap<Node*, LValue> m_views; // By op_type_tag.
-    UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_layoutsBornAs; // What that gave, and in which block.
-    bool branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds, LBasicBlock otherwise); // False: it always is, and nothing goes there.
+    FieldStorage fieldStorageFor(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t layoutID);
+    LValue coerceToTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID);
+    LValue cachedCoercionFor(Node* valueNode, uint16_t layoutID); // Null: none has been made of it.
+    UncheckedKeyHashMap<Node*, LValue> m_coercions; // By op_type_tag.
+    UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_loadedLayoutIDs; // What that gave, and in which block.
+    bool branchUnlessAccepted(Node* valueNode, LValue value, TypeTable::FieldType, LBasicBlock otherwise); // False: it always is, and nothing goes there.
     // What is in a field of a struct of a closed family, from its having been read or written, for as long as nothing happens that could change it. It goes for the rest of the block, and
     // for the blocks that can only be got to from there.
     struct FieldInHand {
         Node* base;
-        uint16_t family;
+        uint16_t layoutID;
         uint16_t slot;
         uint16_t id; // TypeTable::Field::id: names of a family whose slots are verified have slots between them.
         Rep rep;
@@ -192,14 +192,14 @@ private:
     static std::optional<String> stringWrittenInProgram(Node*);
     // If the value is a string at all it is an atom: it is written in the program, or comes from a slot whose strings are (TypeTable::Holds::atoms).
     static bool isAtomIfString(Node*, unsigned depth = 0);
-    static bool isAtomIfShortString(Node*, unsigned depth = 0); // Or is a long one: SlotsOfBornObjects::lengthOfShortString.
+    static bool isAtomIfShortString(Node*, unsigned depth = 0); // Or is a long one: TypedLayoutTable::maxLengthOfAtomizedString.
     LValue areTheSameGivenThatStringsAreAtoms(Node* left, LValue, Node* right, LValue); // Neither is a number or a BigInt.
-    void makeAtomIfString(Node*, LValue);
+    void atomizeIfString(Node*, LValue);
     // `this`, in the code of a function that is not closed.
     static bool isThisOfWhatAnybodyMayCall(Node*);
-    LValue isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
+    LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
     // Options::aotTypesFields(): what has just been made as that layout, with those in its slots (null: nothing), is left with nothing in a slot that the slot does not hold.
-    void settleWhatWasBorn(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::Holds, 8>* holdsIfKnown = nullptr);
+    void validateNewObject(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown = nullptr);
     void guardField(Node* guard);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
@@ -286,7 +286,7 @@ private:
     NarrowCharacters narrowCharactersOf(LValue string, LBasicBlock otherwise, Vector<ValueFromBlock, 2>& lengthOtherwise);
     // Which of several strings that the program spells out a value is, if any: by how long it is, and then by what it says, a word at a time.
     struct StringCase {
-        const StringImpl* says;
+        const StringImpl* checkStore;
         LBasicBlock target;
         Node* constant; // If there is one.
     };
@@ -376,8 +376,8 @@ private:
     bool guardGetFromScope(Node*);
     bool guardCall(Node*);
     // Goes to passed if the value is of a type that is certain to get past the check, and to the other block if not.
-    void emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled);
-    void emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled);
+    void emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock undecided);
+    void emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock undecided);
 
     // AOTLowerObjects.cpp
     bool tryLowerObjects(Node*);

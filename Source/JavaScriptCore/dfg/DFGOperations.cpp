@@ -3214,9 +3214,9 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeTag, size_t, (EncodedJSValue
     return soundTypeTag(JSValue::decode(value));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeMaskAdmits, size_t, (EncodedJSValue value, uint32_t mask))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeMaskAccepts, size_t, (EncodedJSValue value, uint32_t mask))
 {
-    return soundTypeMaskAdmits(mask, JSValue::decode(value));
+    return soundTypeMaskAccepts(mask, JSValue::decode(value));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationIsConstructor, size_t, (JSGlobalObject* globalObject, EncodedJSValue value))

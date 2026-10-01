@@ -56,7 +56,7 @@ static constexpr Type TNull = Type(1) << 4;
 // A string that is an atom: in one piece, and the only one there is that says what it says. So two of them are the same string if they are the same StringImpl. What the program
 // spells out is one, and so is what is in a field whose type is a union of such. It goes wherever types go: through parameters, results, variables.
 static constexpr Type TAtomString = Type(1) << 5;
-// One that is not known for an atom: of at most SlotsOfBornObjects::lengthOfShortString characters, or of more. In a field whose strings are atoms there is none of the first kind. So what
+// One that is not known for an atom: of at most TypedLayoutTable::maxLengthOfAtomizedString characters, or of more. In a field whose strings are atoms there is none of the first kind. So what
 // is read from one is the same as a short atom if it has the same StringImpl, and not otherwise.
 static constexpr Type TShortOtherString = Type(1) << 37;
 static constexpr Type TLongString = Type(1) << 38;
@@ -158,9 +158,9 @@ constexpr NumbersOnRails numbersOnRails(Type type, unsigned firstBit, unsigned b
 }
 // Functions and layouts are numbered from 1.
 constexpr Type typeOfFunction(uint32_t number) { return TFunctionTag | numberOnRails(number, firstBitOfFunctionNumber, bitsOfFunctionNumber); }
-constexpr Type typeOfObjectBornAs(uint32_t layout) { return TFinalObjectTag | numberOnRails(layout, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
+constexpr Type typeOfObjectWithLayout(uint32_t layout) { return TFinalObjectTag | numberOnRails(layout, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
 // One of first to last. (And, as it may be, some others: what the two have in common, from the top bit down, is all that can be said.)
-constexpr Type typeOfObjectBornWithin(uint32_t first, uint32_t last)
+constexpr Type typeOfObjectWithLayoutInRange(uint32_t first, uint32_t last)
 {
     Type result = TFinalObjectTag;
     bool differ = false;
@@ -177,7 +177,7 @@ constexpr uint32_t functionThatIs(Type type)
     return (type & TFunctionTag) && numbers.isOne() ? numbers.lowest : 0;
 }
 // What the value was born as, if it is what a literal or a constructor makes. 0 among them: it may be of no layout at all.
-constexpr NumbersOnRails layoutsBornAs(Type type) { return numbersOnRails(type, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
+constexpr NumbersOnRails layoutRangeOf(Type type) { return numbersOnRails(type, firstBitOfLayoutNumber, bitsOfLayoutNumber); }
 
 inline bool isSubtype(Type type, Type of) { return !(type & ~of); }
 inline bool mayBe(Type type, Type what) { return type & what; }
@@ -255,7 +255,7 @@ enum SoundTypeMaskBits : unsigned {
 };
 
 // Everything that can get past a check.
-inline Type typeAdmittedByMask(unsigned mask)
+inline Type typeAcceptedByMask(unsigned mask)
 {
     Type result = TNone;
     if (mask & MaskUndefined)
@@ -284,7 +284,7 @@ inline Type typeAdmittedByMask(unsigned mask)
 // What is certain to get past it.
 inline Type typeProvingMask(unsigned mask)
 {
-    Type result = typeAdmittedByMask(mask);
+    Type result = typeAcceptedByMask(mask);
     if ((mask & (MaskFunction | MaskOtherObject)) != (MaskFunction | MaskOtherObject) || soundTypeMaskNamesTypedArray(mask))
         result &= ~TOtherObject;
     return result;

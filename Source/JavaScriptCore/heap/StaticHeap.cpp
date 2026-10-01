@@ -751,7 +751,7 @@ static const uint8_t* copyInCommon(std::span<const uint8_t> content, size_t alig
 }
 
 namespace {
-std::span<const ReportableSitesOfFunction> s_whatTheCompilerSaysOfFunctions;
+std::span<const ReportableSitesOfFunction> s_reportableSites;
 static thread_local bool s_realmIsKnownToBeThatOfProgram;
 std::span<UniquedStringImpl*> s_identifiersOfProgram; // See AOT::NumbersOfIdentifiers.
 std::span<EncodedJSValue> s_constantsOfProgram; // See AOT::NumbersOfConstants.
@@ -766,7 +766,7 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     info.identifiers = codeBlock->identifiers().span().data();
     // Of code that is not going to be here, nothing is left that has these as anything but so many words in a row. One copy will do
     // for all that have the same, with nothing before it or after it.
-    const Vector<uint32_t>* numbersOfConstants = s_constantsOfProgram.empty() ? nullptr : &s_whatTheCompilerSaysOfFunctions[function.index].numbersOfConstants;
+    const Vector<uint32_t>* numbersOfConstants = s_constantsOfProgram.empty() ? nullptr : &s_reportableSites[function.index].numbersOfConstants;
     if (numbersOfConstants && !numbersOfConstants->isEmpty()) {
         RELEASE_ASSERT(constantsWillDo && codeBlock->codeType() == FunctionCode && numbersOfConstants->size() == codeBlock->constantRegisters().size());
         for (unsigned i = 0; i < numbersOfConstants->size(); ++i) {
@@ -800,7 +800,7 @@ static void fillInfo(AOT::FunctionInfo& info, const AOT::ImageView::Function& fu
     }
     if (!s_identifiersOfProgram.empty()) {
         static_assert(sizeof(Identifier) == sizeof(UniquedStringImpl*));
-        auto& numbers = s_whatTheCompilerSaysOfFunctions[function.index].numbersOfIdentifiers;
+        auto& numbers = s_reportableSites[function.index].numbersOfIdentifiers;
         RELEASE_ASSERT(numbers.size() == codeBlock->numberOfIdentifiers());
         for (unsigned i = 0; i < numbers.size(); ++i) {
             UniquedStringImpl*& inTable = s_identifiersOfProgram[numbers[i]];
@@ -1350,9 +1350,9 @@ static void keepOneOfEachSymbolTable()
     }
 }
 
-Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> whatTheCompilerSaysOfFunctions, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
+Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> entryOffsetsOfModules, std::span<const uint8_t> imageOfCode, size_t whatIsKeptOfPayloadStartsAt, const PositionsToKeep* positionsToKeep, std::span<const ReportableSitesOfFunction> reportableSites, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules)
 {
-    s_whatTheCompilerSaysOfFunctions = whatTheCompilerSaysOfFunctions;
+    s_reportableSites = reportableSites;
     s_identifiersOfProgram = { };
     s_constantsOfProgram = { };
     auto forgetCells = makeScopeExit([] {
@@ -1451,7 +1451,7 @@ Vector<uint8_t> StaticHeap::build(VM& vm, std::span<const uint8_t> strings, std:
                     if (!Options::staticHeapKeepsFunctionCode()) {
                         s_arraysBeingBuilt = &arraysInCommon;
                         if (uint32_t count = imageView->numberOfIdentifiersOfProgram()) {
-                            RELEASE_ASSERT(whatTheCompilerSaysOfFunctions.size() == imageView->numberOfFunctions());
+                            RELEASE_ASSERT(reportableSites.size() == imageView->numberOfFunctions());
                             header.hasIdentifiersOfProgram = true;
                             if (uint32_t constants = imageView->numberOfConstantsOfProgram()) {
                                 s_constantsOfProgram = { static_cast<EncodedJSValue*>(Region::allocate(Region::Arena::Data, constants * sizeof(EncodedJSValue), sizeof(EncodedJSValue))), constants };

@@ -133,8 +133,8 @@ RuntimeTable::RuntimeTable(VM& vm)
     addCallLinkInfo(Entry::CallLinkInfoForConstruct, CallLinkInfo::Construct);
     addCallLinkInfo(Entry::CallLinkInfoForTailCall, CallLinkInfo::TailCall);
     set(Entry::StructureIDBase, std::bit_cast<void*>(structureIDBase()));
-    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFields; ++slot)
-        set(static_cast<Entry>(static_cast<unsigned>(Entry::FamiliesOfFieldsInSlot0) + slot), const_cast<uint16_t*>(SlotsOfBornObjects::familiesOfFieldsInSlot(slot)));
+    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFieldIDs; ++slot)
+        set(static_cast<Entry>(static_cast<unsigned>(Entry::LayoutIDsOfFieldsInSlot0) + slot), const_cast<uint16_t*>(TypedLayoutTable::layoutIDsOfFieldsInSlot(slot)));
     auto setHostFunction = [&](Entry entry, NativeFunction::Ptr function) {
         set(entry, TaggedNativeFunction(function).taggedPtr());
     };
@@ -190,14 +190,14 @@ struct Instance::Collections {
     // Instance::adopt(): what an object of a Structure turns into when it is made one of a family. Null: it cannot be. (Both are kept.)
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> adoptions;
     // What goes where, for those of them that are not null: from which offset to which slot, and which field of the family it is (null: none).
-    struct PlanOfAdoption {
+    struct LayoutConversionPlan {
         Vector<std::pair<PropertyOffset, uint16_t>> moves;
-        Vector<const SlotsOfBornObjects::Named*> fields;
+        Vector<const TypedLayoutTable::Field*> fields;
     };
-    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, PlanOfAdoption> plansOfAdoptions;
+    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, LayoutConversionPlan> conversionPlans;
     // Those that were turned down for what their Structure says. (Not kept: if another Structure comes to be where one of these was, its objects are read the long way, is all.)
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, ASCIILiteral> turnedDown; // And what for.
-    UncheckedKeyHashMap<uint32_t, Structure*> emptyOfFamilies;
+    UncheckedKeyHashMap<uint32_t, Structure*> emptyStructures;
     size_t environmentsSize { 0 }; // Rounded up to whole pages.
     size_t sizeFromInstance { 0 };
     size_t sizeOfInfos { 0 }; // If they are the Instance's own.
@@ -1294,7 +1294,7 @@ void Data::visit(Visitor& visitor)
 static ALWAYS_INLINE bool hasTransition(const Slot& slot)
 {
     // (A scope cache may have an untagged address there.)
-    return slot.structureID && slot.newStructureID && (!slot.held || (slot.offset & Slot::saysWhatIsHeld)) && !slot.hasPointer();
+    return slot.structureID && slot.newStructureID && (!slot.fieldType || (slot.offset & Slot::hasFieldType)) && !slot.hasPointer();
 }
 
 SlotsOfSite* Instance::makeSlotsOfSite(Data* owner, UniquedStringImpl* name)
@@ -1334,7 +1334,7 @@ void Instance::visit(Visitor& visitor, bool onlyWhatIsNew)
     }
     for (Structure* structure : collections->knownShapes.values())
         visitor.appendUnbarriered(structure);
-    for (Structure* structure : collections->emptyOfFamilies.values())
+    for (Structure* structure : collections->emptyStructures.values())
         visitor.appendUnbarriered(structure);
     for (auto& [from, to] : collections->adoptions) {
         visitor.appendUnbarriered(from.first);
@@ -1357,51 +1357,51 @@ Structure* Instance::structureOfKnownShape(uint32_t shape, std::span<UniquedStri
     Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), description.inlineCapacity);
     RELEASE_ASSERT(empty->inlineCapacity() == description.inlineCapacity);
     auto slots = slotsOfKnownShape(shape);
-    Structure* result = slots.empty() ? Structure::createWithProperties(*vm, empty, names) : Structure::createWithProperties(*vm, empty, names, slots, description.reserved, description.family ? description.inlineSlots : std::numeric_limits<unsigned>::max());
+    Structure* result = slots.empty() ? Structure::createWithProperties(*vm, empty, names) : Structure::createWithProperties(*vm, empty, names, slots, description.reserved, description.layoutID ? description.inlineSlots : std::numeric_limits<unsigned>::max());
     RELEASE_ASSERT(result);
     result->setKnownShape(*vm, safeCast<uint16_t>(shape));
     if (description.hasIds) {
-        uint16_t fieldInSlot[Structure::numberOfSlotsWithFields] { };
+        uint16_t fieldIDInSlot[Structure::numberOfSlotsWithFieldIDs] { };
         const uint16_t* ids = slots.data() + slots.size();
         for (unsigned i = 0; i < slots.size(); ++i) {
             if (ids[i])
-                fieldInSlot[slots[i]] = ids[i];
+                fieldIDInSlot[slots[i]] = ids[i];
         }
-        result->setBornAs(description.family, fieldInSlot);
-    } else if (SlotsOfBornObjects::areStructs())
-        result->setBornAs(description.family);
+        result->setTypedLayoutID(description.layoutID, fieldIDInSlot);
+    } else if (TypedLayoutTable::hasTypedFields())
+        result->setTypedLayoutID(description.layoutID);
     collections->knownShapes.add(shape, result);
     return result;
 }
 
-Structure* Instance::emptyStructureOfFamily(uint16_t family)
+Structure* Instance::emptyStructureForLayout(uint16_t layoutID)
 {
-    if (auto it = collections->emptyOfFamilies.find(family); it != collections->emptyOfFamilies.end())
+    if (auto it = collections->emptyStructures.find(layoutID); it != collections->emptyStructures.end())
         return it->value;
-    unsigned capacity = SlotsOfBornObjects::numberOfSlots(family);
+    unsigned capacity = TypedLayoutTable::numberOfSlots(layoutID);
     RELEASE_ASSERT(capacity);
     DeferGC deferGC(*vm);
-    unsigned inlineSlots = SlotsOfBornObjects::inlineSlots(family);
+    unsigned inlineSlots = TypedLayoutTable::inlineSlots(layoutID);
     Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), KnownShape::inlineCapacityFor(inlineSlots));
     RELEASE_ASSERT(empty->inlineCapacity() >= inlineSlots);
     Structure* result = Structure::createWithProperties(*vm, empty, { }, std::span<const uint16_t> { }, capacity, inlineSlots);
     RELEASE_ASSERT(result);
-    result->setBornAs(family);
-    collections->emptyOfFamilies.add(family, result);
+    result->setTypedLayoutID(layoutID);
+    collections->emptyStructures.add(layoutID, result);
     return result;
 }
 
-Structure* Instance::emptyStructureOfFamily(uint16_t family, JSObject* prototype)
+Structure* Instance::emptyStructureForLayout(uint16_t layoutID, JSObject* prototype)
 {
-    unsigned capacity = SlotsOfBornObjects::numberOfSlots(family);
+    unsigned capacity = TypedLayoutTable::numberOfSlots(layoutID);
     RELEASE_ASSERT(capacity);
     DeferGC deferGC(*vm);
-    unsigned inlineSlots = SlotsOfBornObjects::inlineSlots(family);
+    unsigned inlineSlots = TypedLayoutTable::inlineSlots(layoutID);
     Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, KnownShape::inlineCapacityFor(inlineSlots));
     RELEASE_ASSERT(empty->inlineCapacity() >= inlineSlots);
     Structure* result = Structure::createWithProperties(*vm, empty, { }, std::span<const uint16_t> { }, capacity, inlineSlots);
     RELEASE_ASSERT(result);
-    result->setBornAs(family);
+    result->setTypedLayoutID(layoutID);
     return result;
 }
 
@@ -1416,29 +1416,29 @@ JSObject* Instance::newObjectOf(VM& vm, Structure* structure)
     return JSFinalObject::createWithButterfly(vm, structure, butterfly);
 }
 
-bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
+bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
 {
     Structure* old = object->structure();
-    unsigned capacity = SlotsOfBornObjects::numberOfSlots(family);
+    unsigned capacity = TypedLayoutTable::numberOfSlots(layoutID);
     auto no = [](ASCIILiteral why) {
-        SlotsOfBornObjects::s_whyNotAdopted = why;
+        TypedLayoutTable::s_lastConversionFailure = why;
         return false;
     };
     if (object->type() != FinalObjectType)
         return no("it is no plain object"_s);
-    if (old->bornAs())
+    if (old->typedLayoutID())
         return no("it is of another type's family"_s);
     if (!capacity)
         return no("there is no such family"_s);
-    unsigned inlineSlots = SlotsOfBornObjects::inlineSlots(family);
-    // Of a family whose slots are verified an object has what there is room for where the family has it, and the rest wherever: whoever reads asks first (Structure::fieldInSlot()).
-    bool isVerified = SlotsOfBornObjects::isVerified(family);
-    if (isVerified) {
-        if (old->isNeverAdopted())
+    unsigned inlineSlots = TypedLayoutTable::inlineSlots(layoutID);
+    // Of a family whose slots are verified an object has what there is room for where the family has it, and the rest wherever: whoever reads asks first (Structure::fieldIDInSlot()).
+    bool usesFieldIDs = TypedLayoutTable::usesFieldIDs(layoutID);
+    if (usesFieldIDs) {
+        if (old->cannotConvertToTypedLayout())
             return no("its like is never adopted"_s);
         capacity = inlineSlots = std::min<unsigned>(inlineSlots, old->inlineCapacity());
         if (!capacity) {
-            old->setIsNeverAdopted();
+            old->setCannotConvertToTypedLayout();
             return no("it has no room"_s);
         }
     }
@@ -1456,22 +1456,22 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
     if (old->isDictionary() && old->isUncacheableDictionary())
         return no("it has been through too much (a dictionary)"_s);
     Instance& instance = ensure(old->globalObject());
-    if (auto it = instance.collections->turnedDown.find({ old, family }); it != instance.collections->turnedDown.end())
+    if (auto it = instance.collections->turnedDown.find({ old, layoutID }); it != instance.collections->turnedDown.end())
         return no(it->value);
     auto noneOfItsLike = [&](ASCIILiteral why) {
         if (!old->isDictionary() && instance.collections->turnedDown.size() < 4096)
-            instance.collections->turnedDown.add({ old, family }, why);
+            instance.collections->turnedDown.add({ old, layoutID }, why);
         return no(why);
     };
     // What the family has no slot for comes after the family's: in the object if all the family's are, and there is room; if not, outside.
     Vector<std::pair<PropertyOffset, uint16_t>, 16> moves; // From where to which slot, in the order the properties are in.
     Vector<UniquedStringImpl*, 16> names;
     Vector<uint16_t, 16> slots;
-    Vector<const SlotsOfBornObjects::Named*, 16> fields; // Null: the family has no such name.
+    Vector<const TypedLayoutTable::Field*, 16> fields; // Null: the family has no such name.
     Vector<unsigned, 16> attributes;
-    Vector<const SlotsOfBornObjects::Named*, 4> accessors; // Names of the family that are no fields of this.
+    Vector<const TypedLayoutTable::Field*, 4> accessors; // Names of the family that are no fields of this.
     // (The slots are numbered as for an object with room for just so many, so what is left of a bigger one goes unused.)
-    if (auto plan = instance.collections->plansOfAdoptions.find({ old, family }); plan != instance.collections->plansOfAdoptions.end()) {
+    if (auto plan = instance.collections->conversionPlans.find({ old, layoutID }); plan != instance.collections->conversionPlans.end()) {
         moves = plan->value.moves;
         fields = plan->value.fields;
     } else {
@@ -1480,21 +1480,21 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
         bool isPlain = true;
         bool hasTwoForOneSlot = false;
         old->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            auto* named = SlotsOfBornObjects::named(family, entry.key());
-            if (isVerified) {
+            auto* field = TypedLayoutTable::findField(layoutID, entry.key());
+            if (usesFieldIDs) {
                 if (entry.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue)) {
-                    if (named)
-                        accessors.append(named);
-                    named = nullptr;
+                    if (field)
+                        accessors.append(field);
+                    field = nullptr;
                 }
             } else
                 isPlain &= !entry.attributes();
             attributes.append(entry.attributes());
             // (Two names have one slot if no type has both. Whichever of them was given it, whoever reads the other would get that.)
-            hasTwoForOneSlot |= named && !isVerified && taken.get(named->slot);
-            unsigned slot = named && named->slot < capacity && !taken.get(named->slot) ? named->slot : next++;
+            hasTwoForOneSlot |= field && !usesFieldIDs && taken.get(field->slot);
+            unsigned slot = field && field->slot < capacity && !taken.get(field->slot) ? field->slot : next++;
             taken.set(slot);
-            fields.append(named);
+            fields.append(field);
             names.append(entry.key());
             slots.append(safeCast<uint16_t>(slot));
             moves.append({ entry.offset(), safeCast<uint16_t>(slot) });
@@ -1505,24 +1505,24 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
         if (hasTwoForOneSlot)
             return noneOfItsLike("it has two properties that no type has together"_s);
         // (Where the slots are verified, whoever reads what is not there finds that out.)
-        for (auto& named : SlotsOfBornObjects::namesOf(family)) {
-            if (!isVerified && !named.mayBeAbsent && !taken.get(named.slot))
+        for (auto& field : TypedLayoutTable::fieldsOf(layoutID)) {
+            if (!usesFieldIDs && !field.mayBeAbsent && !taken.get(field.slot))
                 return noneOfItsLike("it lacks a property that the type says it has"_s);
         }
         // What it has no property of its own for it must not have from anywhere else: code that finds nothing in the slot looks no further.
         if (JSValue prototype = old->storedPrototype(); prototype.isObject() && asObject(prototype) != old->globalObject()->objectPrototype()) {
             // (Which slots are taken does not say which names are.)
-            if (isVerified) {
+            if (usesFieldIDs) {
                 if (!old->isDictionary())
-                    old->setIsNeverAdopted();
+                    old->setCannotConvertToTypedLayout();
                 return no("of its prototype"_s);
             }
             UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
             for (JSObject* holder = asObject(prototype); holder && holder != old->globalObject()->objectPrototype();) {
                 if (holder->type() != FinalObjectType && holder->type() != ObjectType)
                     return no("of its prototype"_s);
-                for (auto& named : SlotsOfBornObjects::namesOf(family)) {
-                    if (!taken.get(named.slot) && isValidOffset(holder->structure()->get(vm, PropertyName(Identifier::fromUid(vm, identifiers[named.identifier])))))
+                for (auto& field : TypedLayoutTable::fieldsOf(layoutID)) {
+                    if (!taken.get(field.slot) && isValidOffset(holder->structure()->get(vm, PropertyName(Identifier::fromUid(vm, identifiers[field.identifier])))))
                         return no("it inherits a property that the type has"_s);
                 }
                 JSValue next = holder->structure()->storedPrototype(holder);
@@ -1535,54 +1535,54 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
     for (unsigned i = 0; i < moves.size(); ++i) {
         JSValue value = object->getDirect(moves[i].first);
         // (A name of the family holds what it holds wherever it is: whoever stores by it is held to that.)
-        if (fields[i] && SlotsOfBornObjects::says(*fields[i], value) == SlotsOfBornObjects::Says::Refuses)
+        if (fields[i] && TypedLayoutTable::checkStore(*fields[i], value) == TypedLayoutTable::StoreCheck::Rejected)
             return no("a property of it is not what the type says"_s);
-        values.append(fields[i] ? SlotsOfBornObjects::asHeld(*fields[i], value) : value);
+        values.append(fields[i] ? TypedLayoutTable::toFieldRepresentation(*fields[i], value) : value);
     }
     if (object->structure() != old)
-        return object->structure()->bornAs() == family; // It has itself in it.
-    Structure* adopted;
-    if (auto it = instance.collections->adoptions.find({ old, family }); it != instance.collections->adoptions.end())
-        adopted = it->value;
+        return object->structure()->typedLayoutID() == layoutID; // It has itself in it.
+    Structure* converted;
+    if (auto it = instance.collections->adoptions.find({ old, layoutID }); it != instance.collections->adoptions.end())
+        converted = it->value;
     else {
         DeferGC deferGC(vm);
         Structure* empty = old->storedPrototype().isObject()
             ? old->globalObject()->structureCache().emptyObjectStructureForPrototype(old->globalObject(), asObject(old->storedPrototype()), old->inlineCapacity())
             : Structure::create(vm, old->globalObject(), jsNull(), old->typeInfo(), old->classInfoForCells(), NonArray, old->inlineCapacity());
-        adopted = empty->inlineCapacity() == old->inlineCapacity() && empty->indexingType() == old->indexingType() ? Structure::createWithProperties(vm, empty, names.span(), slots.span(), capacity, inlineSlots, attributes.span()) : nullptr;
-        if (adopted)
-            adopted->saysOfAccessorsAndReadOnlyPropertiesWhat(*old);
-        if (adopted && isVerified) {
+        converted = empty->inlineCapacity() == old->inlineCapacity() && empty->indexingType() == old->indexingType() ? Structure::createWithProperties(vm, empty, names.span(), slots.span(), capacity, inlineSlots, attributes.span()) : nullptr;
+        if (converted)
+            converted->saysOfAccessorsAndReadOnlyPropertiesWhat(*old);
+        if (converted && usesFieldIDs) {
             // (As Structure::noteFieldAdded() would have it.)
-            uint16_t fieldInSlot[Structure::numberOfSlotsWithFields] { };
+            uint16_t fieldIDInSlot[Structure::numberOfSlotsWithFieldIDs] { };
             for (auto* field : accessors) {
-                if (field->slot < Structure::numberOfSlotsWithFields)
-                    fieldInSlot[field->slot] = Structure::noTellingWhichField;
+                if (field->slot < Structure::numberOfSlotsWithFieldIDs)
+                    fieldIDInSlot[field->slot] = Structure::ambiguousFieldID;
             }
             for (unsigned i = 0; i < fields.size(); ++i) {
-                if (auto* field = fields[i]; field && field->slot < Structure::numberOfSlotsWithFields)
-                    fieldInSlot[field->slot] = !fieldInSlot[field->slot] && field->slot < capacity && slots[i] == field->slot ? field->id : Structure::noTellingWhichField; // (From `capacity` on the numbers are of places outside the object.)
+                if (auto* field = fields[i]; field && field->slot < Structure::numberOfSlotsWithFieldIDs)
+                    fieldIDInSlot[field->slot] = !fieldIDInSlot[field->slot] && field->slot < capacity && slots[i] == field->slot ? field->id : Structure::ambiguousFieldID; // (From `capacity` on the numbers are of places outside the object.)
             }
-            adopted->setBornAs(family, fieldInSlot);
-        } else if (adopted)
-            adopted->setBornAs(family);
+            converted->setTypedLayoutID(layoutID, fieldIDInSlot);
+        } else if (converted)
+            converted->setTypedLayoutID(layoutID);
         // (A dictionary is one object's own.)
         if (!old->isDictionary()) {
-            instance.collections->adoptions.add({ old, family }, adopted);
-            if (adopted) {
-                Collections::PlanOfAdoption plan;
+            instance.collections->adoptions.add({ old, layoutID }, converted);
+            if (converted) {
+                Collections::LayoutConversionPlan plan;
                 plan.moves = moves;
                 plan.fields = fields;
-                instance.collections->plansOfAdoptions.add({ old, family }, WTF::move(plan));
+                instance.collections->conversionPlans.add({ old, layoutID }, WTF::move(plan));
             }
         }
     }
-    if (!adopted)
+    if (!converted)
         return no("it has elements, or no structure can be made for it"_s);
     {
         DeferGC deferGC(vm);
         unsigned oldOutside = old->outOfLineCapacity();
-        unsigned newOutside = adopted->outOfLineCapacity();
+        unsigned newOutside = converted->outOfLineCapacity();
         // (It has no elements. How much room there is outside is for the Structure to say, and the collector goes by that.)
         if (newOutside != oldOutside) {
             Butterfly* butterfly = nullptr;
@@ -1598,8 +1598,8 @@ bool Instance::adopt(VM& vm, JSObject* object, uint16_t family)
         for (unsigned offset = 0; offset < old->inlineCapacity(); ++offset)
             object->locationForOffset(offset)->clear();
         for (unsigned i = 0; i < moves.size(); ++i)
-            object->putDirectOffset(vm, SlotsOfBornObjects::offsetOfSlot(moves[i].second, inlineSlots), values[i]);
-        object->setStructure(vm, adopted);
+            object->putDirectOffset(vm, TypedLayoutTable::offsetOfSlot(moves[i].second, inlineSlots), values[i]);
+        object->setStructure(vm, converted);
         vm.writeBarrier(object);
     }
     return true;
@@ -1705,7 +1705,7 @@ void Data::finalizeSlot(VM& vm, Slot& slot)
     if (!dead) {
         if (slot.offset & Slot::pointerIsCell)
             dead = !vm.heap.isMarked(static_cast<JSCell*>(slot.pointer));
-        else if (!slot.hasPointer() && slot.newStructureID && (!slot.held || (slot.offset & Slot::saysWhatIsHeld))) // A scope cache may have an untagged address here.
+        else if (!slot.hasPointer() && slot.newStructureID && (!slot.fieldType || (slot.offset & Slot::hasFieldType))) // A scope cache may have an untagged address here.
             dead = !vm.heap.isMarked(slot.newStructureID.decode());
     }
     if (dead) {

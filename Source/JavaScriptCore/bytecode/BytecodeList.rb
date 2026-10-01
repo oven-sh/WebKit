@@ -1214,7 +1214,7 @@ op :put_internal_field,
 
 op :nop
 
-# Options::useTypeTags(). Says of the instruction that comes next what the source said of it (JSToken::m_typeTag). It does nothing.
+# Options::useTypeTags(). StoreCheck of the instruction that comes next what the source said of it (JSToken::m_typeTag). It does nothing.
 op :type_tag,
     args: {
         tag: unsigned,

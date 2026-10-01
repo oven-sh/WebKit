@@ -62,7 +62,7 @@ ASCIILiteral nameOf(Escape escape)
         return "passed in a tail call"_s;
     case Escape::Constructed:
         return "constructed with"_s;
-    case Escape::HeldByWhatEscapes:
+    case Escape::StoredInEscapingObject:
         return "scope of a closure or environment that escapes"_s;
     case Escape::ClosureLetsScopeOut:
         return "scope of a closure whose code may let its scope out"_s;
@@ -227,7 +227,7 @@ private:
     }
 
     struct Verdict {
-        enum Kind : uint8_t { Harmless, IsTheSame, Lent, Held, Escapes } kind { Harmless };
+        enum Kind : uint8_t { Harmless, IsTheSame, Lent, FieldType, Escapes } kind { Harmless };
         Escape why { Escape::Other };
     };
     static Verdict escapes(Escape why) { return { Verdict::Escapes, why }; }
@@ -266,10 +266,10 @@ private:
                 case Verdict::Lent:
                     result = Escape::IsOnlyLent;
                     continue;
-                case Verdict::Held: {
+                case Verdict::FieldType: {
                     Escape ofHolder = fateOf(user.node, false);
                     if (!stays(ofHolder)) {
-                        result = Escape::HeldByWhatEscapes;
+                        result = Escape::StoredInEscapingObject;
                         break;
                     }
                     if (ofHolder == Escape::IsOnlyLent)
@@ -439,14 +439,14 @@ private:
 
         // ---- What has it for its scope has it for as long as it is there itself.
         case op_create_lexical_environment:
-            return reg == user->as<OpCreateLexicalEnvironment>().m_scope ? Verdict { Verdict::Held } : escapes(Escape::Other);
+            return reg == user->as<OpCreateLexicalEnvironment>().m_scope ? Verdict { Verdict::FieldType } : escapes(Escape::Other);
         case op_new_func_exp:
         case op_new_func: {
             UnlinkedFunctionExecutable* executable = user->opcode == op_new_func ? user->graph->codeBlock()->functionDecl(user->as<OpNewFunc>().m_functionDecl) : user->graph->codeBlock()->functionExpr(user->as<OpNewFuncExp>().m_functionDecl);
             UnlinkedFunctionCodeBlock* code = executable->codeBlockIfThereIsOne(CodeSpecializationKind::CodeForCall);
             if (!code || !keepsItsScopeToItself(code))
                 return escapes(Escape::ClosureLetsScopeOut);
-            return { Verdict::Held };
+            return { Verdict::FieldType };
         }
         case op_new_generator_func:
         case op_new_generator_func_exp:
@@ -773,7 +773,7 @@ UsersOfNodes::UsersOfNodes(Graph& graph)
     }
 }
 
-std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t family) const
+std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t layoutID) const
 {
     OnlyRead result;
     result.handedOn.append(object);
@@ -800,7 +800,7 @@ std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std
             }
             case op_type_tag:
                 // (Likewise. Where the slots are verified it asks nothing.)
-                if (!user->firstLayout || !TypeTable::shared() || (user->firstLayout != family && !user->isTakenAtItsWord && !TypeTable::shared()->isVerified(user->firstLayout)))
+                if (!user->firstLayout || !TypeTable::shared() || (user->firstLayout != layoutID && !user->isTrusted && !TypeTable::shared()->usesFieldIDs(user->firstLayout)))
                     return std::nullopt;
                 result.handedOn.append(user);
                 break;
@@ -974,7 +974,7 @@ void doWithoutObjectsThatAreOnlyRead(Graph& graph)
                     continue;
                 if (!users)
                     users.emplace(graph);
-                auto onlyRead = users->isOnlyRead(node, names.span(), Graph::familyOfNewObject(node));
+                auto onlyRead = users->isOnlyRead(node, names.span(), Graph::layoutIDOfNewObject(node));
                 if (!onlyRead)
                     continue;
                 for (auto [read, index] : onlyRead->reads) {

@@ -408,34 +408,34 @@ void Lowering::guardGetById(Node* guard)
 }
 
 // Goes on if the value is what the slot holds, and to `otherwise` if it is not, or if that is not plain.
-bool Lowering::branchUnlessHeld(Node* valueNode, LValue value, TypeTable::Holds holds, LBasicBlock otherwise)
+bool Lowering::branchUnlessAccepted(Node* valueNode, LValue value, TypeTable::FieldType fieldType, LBasicBlock otherwise)
 {
-    if (!holds.saysSomething())
+    if (!fieldType.isConstrained())
         return false;
-    unsigned kinds = holds.kindsButForThoseBorn();
+    unsigned kinds = fieldType.kindsExcludingTypedObjects();
     Type rest = valueNode->type & ~typeProvingMask(kinds);
     if (!rest)
         return false;
-    bool restIsBornRight = holds.first && isSubtype(rest, TCell) && valueNode->isBornWithinIfCell(holds.first, holds.last);
-    if (restIsBornRight && isSubtype(valueNode->type & TCell, rest))
+    bool restHasLayoutInRange = fieldType.first && isSubtype(rest, TCell) && valueNode->hasLayoutInRangeIfCell(fieldType.first, fieldType.last);
+    if (restHasLayoutInRange && isSubtype(valueNode->type & TCell, rest))
         return false;
-    LBasicBlock held = m_out.newBlock();
-    LBasicBlock notSettled = m_out.newBlock();
+    LBasicBlock accepted = m_out.newBlock();
+    LBasicBlock undecided = m_out.newBlock();
     if (kinds)
-        emitTypeTests(valueNode, value, kinds, held, notSettled);
+        emitTypeTests(valueNode, value, kinds, accepted, undecided);
     else
-        m_out.jump(notSettled);
-    m_out.appendTo(notSettled);
-    if (holds.first && mayBe(valueNode->type, TFinalObject)) {
+        m_out.jump(undecided);
+    m_out.appendTo(undecided);
+    if (fieldType.first && mayBe(valueNode->type, TFinalObject)) {
         if (!isSubtype(valueNode->type, TCell)) {
             LBasicBlock cellCase = m_out.newBlock();
             m_out.branch(isCell(value), usually(cellCase), rarely(otherwise));
             m_out.appendTo(cellCase);
         }
-        m_out.branch(isOneOf(layoutBornAs(value), holds.first, holds.last), usually(held), rarely(otherwise));
+        m_out.branch(isOneOf(loadTypedLayoutID(value), fieldType.first, fieldType.last), usually(accepted), rarely(otherwise));
     } else
         m_out.jump(otherwise);
-    m_out.appendTo(held);
+    m_out.appendTo(accepted);
     return true;
 }
 
@@ -447,11 +447,11 @@ void Lowering::guardField(Node* guard)
     LBasicBlock has = nullptr;
     LBasicBlock done = nullptr;
     std::optional<ValueFromBlock> thereIsNone;
-    if (!baseNode->isKnownToBeBornWithin(guard->firstLayout, guard->lastLayout)) {
+    if (!baseNode->hasLayoutInRange(guard->firstLayout, guard->lastLayout)) {
         if (!isSubtype(baseNode->type, TCell))
             exitUnless(isCell(base));
-        if (!baseNode->isBornWithinIfCell(guard->firstLayout, guard->lastLayout)) {
-            LValue isOneThatHasIt = isOneOf(layoutBornAs(base), guard->firstLayout, guard->lastLayout);
+        if (!baseNode->hasLayoutInRangeIfCell(guard->firstLayout, guard->lastLayout)) {
+            LValue isOneThatHasIt = isOneOf(loadTypedLayoutID(base), guard->firstLayout, guard->lastLayout);
             if (!guard->firstWithout)
                 exitUnless(isOneThatHasIt);
             else {
@@ -470,7 +470,7 @@ void Lowering::guardField(Node* guard)
     }
     // No two names are ever the same place.
     TypedPointer slot = m_out.address(m_heaps.properties[isRead ? guard->as<OpGetById>().m_property : guard->as<OpPutById>().m_property], base, JSObject::offsetOfInlineStorage() + guard->slotOfField * sizeof(EncodedJSValue));
-    // It is where it was, or nothing is (Structure::bornAs()).
+    // It is where it was, or nothing is (Structure::typedLayoutID()).
     LValue whatIsThere = m_out.load64(slot);
     exitUnless(m_out.notZero64(whatIsThere));
     if (isRead) {
@@ -487,7 +487,7 @@ void Lowering::guardField(Node* guard)
     exitUnless(m_out.testIsZero32(m_out.load32(m_out.address(m_heaps.root, structureOf(base), Structure::bitFieldOffset())), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)));
     Node* valueNode = guard->use(guard->as<OpPutById>().m_value);
     LValue value = lowJSValue(valueNode);
-    branchUnlessHeld(valueNode, value, { guard->heldKinds, guard->heldFirst, guard->heldLast }, m_exit);
+    branchUnlessAccepted(valueNode, value, { guard->fieldTypeKinds, guard->fieldTypeFirst, guard->fieldTypeLast }, m_exit);
     m_out.store64(value, slot);
     if (mayBe(valueNode->type, TCell))
         storeBarrier(base);
@@ -655,18 +655,18 @@ void Lowering::guardGetByVal(Node* guard)
         exitUnless(m_out.belowOrEqual(m_out.sub(shape, m_out.constInt32(Int32Shape)), m_out.constInt32(ContiguousShape - Int32Shape)));
         LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
         exitUnless(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)));
-        LBasicBlock holdsDoubles = m_out.newBlock();
-        LBasicBlock holdsValues = m_out.newBlock();
+        LBasicBlock doubleCase = m_out.newBlock();
+        LBasicBlock contiguousCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
-        m_out.branch(m_out.equal(shape, m_out.constInt32(DoubleShape)), unsure(holdsDoubles), unsure(holdsValues));
+        m_out.branch(m_out.equal(shape, m_out.constInt32(DoubleShape)), unsure(doubleCase), unsure(contiguousCase));
 
-        m_out.appendTo(holdsDoubles, holdsValues);
+        m_out.appendTo(doubleCase, contiguousCase);
         LValue number = m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly, m_out.zeroExtPtr(index)));
         exitUnless(m_out.doubleEqual(number, number));
         ValueFromBlock doubleResult = m_out.anchor(number);
         m_out.jump(continuation);
 
-        m_out.appendTo(holdsValues, continuation);
+        m_out.appendTo(contiguousCase, continuation);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
         exitUnless(isNumber(element));
         ValueFromBlock valueResult = m_out.anchor(numberToDouble(element));
@@ -678,8 +678,8 @@ void Lowering::guardGetByVal(Node* guard)
     }
 
     LBasicBlock hasButterfly = m_out.newBlock();
-    LBasicBlock holdsValues = m_out.newBlock();
-    LBasicBlock holdsDoubles = m_out.newBlock();
+    LBasicBlock contiguousCase = m_out.newBlock();
+    LBasicBlock doubleCase = m_out.newBlock();
     LBasicBlock noButterfly = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 12> results;
@@ -687,21 +687,21 @@ void Lowering::guardGetByVal(Node* guard)
     LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(base, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
     m_out.branch(m_out.notZero32(shape), unsure(hasButterfly), unsure(noButterfly));
 
-    m_out.appendTo(hasButterfly, holdsValues);
+    m_out.appendTo(hasButterfly, contiguousCase);
     LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
     static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
     exitUnless(m_out.belowOrEqual(m_out.sub(shape, m_out.constInt32(Int32Shape)), m_out.constInt32(ContiguousShape - Int32Shape)));
     exitUnless(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)));
-    m_out.branch(m_out.equal(shape, m_out.constInt32(DoubleShape)), unsure(holdsDoubles), unsure(holdsValues));
+    m_out.branch(m_out.equal(shape, m_out.constInt32(DoubleShape)), unsure(doubleCase), unsure(contiguousCase));
 
-    m_out.appendTo(holdsValues, holdsDoubles);
+    m_out.appendTo(contiguousCase, doubleCase);
     LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
     exitUnless(m_out.notZero64(element));
     results.append(m_out.anchor(element));
     m_out.jump(continuation);
 
     // A hole is not a number.
-    m_out.appendTo(holdsDoubles, noButterfly);
+    m_out.appendTo(doubleCase, noButterfly);
     LValue number = m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly, m_out.zeroExtPtr(index)));
     exitUnless(m_out.doubleEqual(number, number));
     results.append(m_out.anchor(boxDouble(number)));
@@ -838,8 +838,8 @@ void Lowering::guardPutByVal(Node* guard)
     LValue wideIndex = m_out.zeroExtPtr(index);
 
     LBasicBlock hasButterfly = m_out.newBlock();
-    LBasicBlock holdsValues = m_out.newBlock();
-    LBasicBlock holdsDoubles = m_out.newBlock();
+    LBasicBlock contiguousCase = m_out.newBlock();
+    LBasicBlock doubleCase = m_out.newBlock();
     LBasicBlock noButterfly = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
 
@@ -848,7 +848,7 @@ void Lowering::guardPutByVal(Node* guard)
     m_out.branch(m_out.notZero32(indexingMode), unsure(hasButterfly), unsure(noButterfly));
 
     // An element for which there is room. What is between the old length and it are holes already.
-    m_out.appendTo(hasButterfly, holdsValues);
+    m_out.appendTo(hasButterfly, contiguousCase);
     LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
     exitUnless(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_vectorLength)));
     auto lengthen = [&] {
@@ -860,9 +860,9 @@ void Lowering::guardPutByVal(Node* guard)
         m_out.jump(inBounds);
         m_out.appendTo(inBounds);
     };
-    m_out.branch(m_out.equal(indexingMode, m_out.constInt32(ContiguousShape)), unsure(holdsValues), unsure(holdsDoubles));
+    m_out.branch(m_out.equal(indexingMode, m_out.constInt32(ContiguousShape)), unsure(contiguousCase), unsure(doubleCase));
 
-    m_out.appendTo(holdsValues, holdsDoubles);
+    m_out.appendTo(contiguousCase, doubleCase);
     {
         LValue value = lowJSValue(valueNode);
         lengthen();
@@ -872,12 +872,12 @@ void Lowering::guardPutByVal(Node* guard)
         m_out.jump(continuation);
     }
 
-    m_out.appendTo(holdsDoubles, noButterfly);
+    m_out.appendTo(doubleCase, noButterfly);
     if (valueMayBeNumber) {
-        LBasicBlock holdsInt32s = m_out.newBlock();
+        LBasicBlock int32Case = m_out.newBlock();
         LBasicBlock notInt32s = m_out.newBlock();
-        m_out.branch(m_out.equal(indexingMode, m_out.constInt32(Int32Shape)), unsure(holdsInt32s), unsure(notInt32s));
-        m_out.appendTo(holdsInt32s, notInt32s);
+        m_out.branch(m_out.equal(indexingMode, m_out.constInt32(Int32Shape)), unsure(int32Case), unsure(notInt32s));
+        m_out.appendTo(int32Case, notInt32s);
         {
             LValue boxed;
             if (valueNode->rep() == Rep::Int32)
@@ -1009,7 +1009,7 @@ void Lowering::guardCheckType(Node* guard)
         return;
 
     LValue jsValue = lowJSValue(value);
-    if (isSubtype(value->type & typeAdmittedByMask(mask), TNumber) && mayBe(value->type, TDouble)) {
+    if (isSubtype(value->type & typeAcceptedByMask(mask), TNumber) && mayBe(value->type, TDouble)) {
         // What comes of it is going to be held as a double. Taking the offset of a double's encoding away leaves the double's own
         // bits, all of which are below what it leaves of anything else.
         LBasicBlock isDouble = m_out.newBlock();
@@ -1308,24 +1308,24 @@ bool Lowering::guardCall(Node* guard)
         exitUnless(m_out.below(length, m_out.load32(butterfly, m_heaps.Butterfly_vectorLength)));
         LValue wideLength = m_out.zeroExtPtr(length);
 
-        LBasicBlock holdsValues = m_out.newBlock();
-        LBasicBlock holdsNumbers = m_out.newBlock();
-        LBasicBlock holdsInt32s = m_out.newBlock();
-        LBasicBlock holdsDoubles = m_out.newBlock();
+        LBasicBlock contiguousCase = m_out.newBlock();
+        LBasicBlock numberCase = m_out.newBlock();
+        LBasicBlock int32Case = m_out.newBlock();
+        LBasicBlock doubleCase = m_out.newBlock();
         LBasicBlock stored = m_out.newBlock();
-        m_out.branch(m_out.equal(indexingMode, m_out.constInt32(ContiguousShape)), unsure(holdsValues), unsure(holdsNumbers));
+        m_out.branch(m_out.equal(indexingMode, m_out.constInt32(ContiguousShape)), unsure(contiguousCase), unsure(numberCase));
 
-        m_out.appendTo(holdsValues, holdsNumbers);
+        m_out.appendTo(contiguousCase, numberCase);
         m_out.store64(lowJSValue(valueNode), m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, wideLength));
         m_out.jump(stored);
 
-        m_out.appendTo(holdsNumbers, holdsInt32s);
+        m_out.appendTo(numberCase, int32Case);
         if (!mayBe(valueNode->type, TNumber))
             m_out.jump(m_exit);
         else
-            m_out.branch(m_out.equal(indexingMode, m_out.constInt32(Int32Shape)), unsure(holdsInt32s), unsure(holdsDoubles));
+            m_out.branch(m_out.equal(indexingMode, m_out.constInt32(Int32Shape)), unsure(int32Case), unsure(doubleCase));
 
-        m_out.appendTo(holdsInt32s, holdsDoubles);
+        m_out.appendTo(int32Case, doubleCase);
         {
             LValue value = lowJSValue(valueNode);
             if (valueNode->rep() != Rep::Int32)
@@ -1334,7 +1334,7 @@ bool Lowering::guardCall(Node* guard)
             m_out.jump(stored);
         }
 
-        m_out.appendTo(holdsDoubles, stored);
+        m_out.appendTo(doubleCase, stored);
         {
             exitUnless(m_out.equal(indexingMode, m_out.constInt32(DoubleShape)));
             LValue number = argument(1);

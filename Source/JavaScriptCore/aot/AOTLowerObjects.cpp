@@ -87,29 +87,29 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
     return object;
 }
 
-void Lowering::settleWhatWasBorn(Node* node, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::Holds, 8>* holdsIfKnown)
+void Lowering::validateNewObject(Node* node, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown)
 {
     if (!Options::aotTypesFields() || !layout || !TypeTable::shared())
         return;
     // (Of structs, `layout` is the family.)
-    auto holds = holdsIfKnown ? *holdsIfKnown : TypeTable::areStructs() ? TypeTable::shared()->holdsOfSlotsOfFamily(layout) : TypeTable::shared()->holdsOfSlots(layout);
+    auto fieldType = fieldTypesIfKnown ? *fieldTypesIfKnown : TypeTable::hasTypedFields() ? TypeTable::shared()->fieldTypesBySlotOfLayout(layout) : TypeTable::shared()->fieldTypesBySlot(layout);
     LBasicBlock someIsNot = nullptr;
-    for (unsigned slot = 0; slot < inSlots.size() && slot < holds.size(); ++slot) {
-        if (!inSlots[slot] || !holds[slot].saysSomething())
+    for (unsigned slot = 0; slot < inSlots.size() && slot < fieldType.size(); ++slot) {
+        if (!inSlots[slot] || !fieldType[slot].isConstrained())
             continue;
         if (!someIsNot)
             someIsNot = newColdBlock();
-        branchUnlessHeld(inSlots[slot], values[slot], holds[slot], someIsNot);
+        branchUnlessAccepted(inSlots[slot], values[slot], fieldType[slot], someIsNot);
     }
     if (!someIsNot)
         return;
     LBasicBlock settled = m_out.newBlock();
     m_out.jump(settled);
     m_out.appendTo(someIsNot);
-    if (TypeTable::areStructs())
-        vmCall(node, Void, Entry::operationAOTSettleStruct, m_globalObject, object);
+    if (TypeTable::hasTypedFields())
+        vmCall(node, Void, Entry::operationAOTValidateTypedObject, m_globalObject, object);
     else
-        plainCall(Void, Entry::operationAOTSettleWhatWasBorn, m_instance, object);
+        plainCall(Void, Entry::operationAOTValidateNewObject, m_instance, object);
     m_out.jump(settled);
     m_out.appendTo(settled);
 }
@@ -143,9 +143,9 @@ bool Lowering::tryLowerAllocation(Node* node)
                 inSlotsOfLayout.append(node->use(NewObjectPlan::registerOf(i)));
             }
             auto shapeOfThis = m_graph.shapeOfLiteral(node);
-            if (uint16_t family = Graph::familyOfNewObject(node); family && (!shapeOfThis || !shapeOfThis->family)) {
+            if (uint16_t layoutID = Graph::layoutIDOfNewObject(node); layoutID && (!shapeOfThis || !shapeOfThis->layoutID)) {
                 // It is of a family, and has something that the family has no slot for: it starts with nothing, and is given one thing after another.
-                LValue object = vmCall(node, pointerType(), Entry::operationAOTNewObjectOfFamily, m_globalObject, m_out.constInt32(family), slotAddress(allocateSlots(2)));
+                LValue object = vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_globalObject, m_out.constInt32(layoutID), slotAddress(allocateSlots(2)));
                 auto& instructions = code().codeBlock()->instructions();
                 auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= count);
@@ -158,8 +158,8 @@ bool Lowering::tryLowerAllocation(Node* node)
                 return true;
             }
             unsigned slot = allocateSlots(2);
-            Vector<TypeTable::Holds, 8> holdsOfSlots;
-            bool holdsAreKnown = false;
+            Vector<TypeTable::FieldType, 8> fieldTypesBySlot;
+            bool fieldTypesAreKnown = false;
             bool hasSlotsOutside = shapeOfThis && shapeOfThis->hasSlotsOutside();
             if (auto shape = WTF::move(shapeOfThis)) {
                 // Each where the layout has it.
@@ -168,17 +168,17 @@ bool Lowering::tryLowerAllocation(Node* node)
                     Vector<Node*, 8> nodesInSlots;
                     inSlots.fill(m_out.int64Zero, shape->numberOfSlots());
                     nodesInSlots.fill(nullptr, shape->numberOfSlots());
-                    auto holds = shape->family ? TypeTable::shared()->holdsOfSlotsOfFamily(shape->family, shape->names.span(), shape->slots.span()) : Vector<TypeTable::Holds, 8> { };
-                    holdsOfSlots = holds;
-                    holdsAreKnown = shape->family;
+                    auto fieldType = shape->layoutID ? TypeTable::shared()->fieldTypesBySlotOfLayout(shape->layoutID, shape->names.span(), shape->slots.span()) : Vector<TypeTable::FieldType, 8> { };
+                    fieldTypesBySlot = fieldType;
+                    fieldTypesAreKnown = shape->layoutID;
                     for (unsigned i = 0; i < count; ++i) {
-                        inSlots[shape->slots[i]] = shape->family && Options::aotTypesFields() && shape->slots[i] < holds.size() ? asHeld(inSlotsOfLayout[i], values[i], holds[shape->slots[i]]) : values[i];
+                        inSlots[shape->slots[i]] = shape->layoutID && Options::aotTypesFields() && shape->slots[i] < fieldType.size() ? toFieldRepresentation(inSlotsOfLayout[i], values[i], fieldType[shape->slots[i]]) : values[i];
                         nodesInSlots[shape->slots[i]] = inSlotsOfLayout[i];
                     }
                     values = WTF::move(inSlots);
                     inSlotsOfLayout = WTF::move(nodesInSlots);
                 }
-                layout = TypeTable::areStructs() ? shape->family : shape->number;
+                layout = TypeTable::hasTypedFields() ? shape->layoutID : shape->number;
                 m_graph.noteShapeOfSite(slot, WTF::move(*shape));
             }
             {
@@ -205,12 +205,12 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), results);
-            settleWhatWasBorn(node, object, layout, inSlotsOfLayout, values, holdsAreKnown ? &holdsOfSlots : nullptr);
+            validateNewObject(node, object, layout, inSlotsOfLayout, values, fieldTypesAreKnown ? &fieldTypesBySlot : nullptr);
             setJSValue(node, object);
             return true;
         }
-        if (uint16_t family = Graph::familyOfNewObject(node)) {
-            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObjectOfFamily, m_globalObject, m_out.constInt32(family), slotAddress(allocateSlots(2))));
+        if (uint16_t layoutID = Graph::layoutIDOfNewObject(node)) {
+            setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_globalObject, m_out.constInt32(layoutID), slotAddress(allocateSlots(2))));
             return true;
         }
         setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewObject, m_globalObject, m_out.constInt32(node->as<OpNewObject>().m_inlineCapacity), slotAddress(allocateSlots(2))));
@@ -275,7 +275,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.jump(continuation);
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), fastResult, slowResult);
-            settleWhatWasBorn(node, object, layout, inSlotsOfLayout, values);
+            validateNewObject(node, object, layout, inSlotsOfLayout, values);
             setJSValue(node, object);
             return true;
         }

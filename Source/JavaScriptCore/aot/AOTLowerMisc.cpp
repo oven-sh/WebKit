@@ -194,9 +194,9 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
 void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vector<StringCase, 16>& all, LBasicBlock defaultBlock, bool isKnownToBeCell)
 {
     std::ranges::sort(all, [](const StringCase& a, const StringCase& b) {
-        if (a.says->length() != b.says->length())
-            return a.says->length() < b.says->length();
-        return memcmp(a.says->span8().data(), b.says->span8().data(), a.says->length()) < 0;
+        if (a.checkStore->length() != b.checkStore->length())
+            return a.checkStore->length() < b.checkStore->length();
+        return memcmp(a.checkStore->span8().data(), b.checkStore->span8().data(), a.checkStore->length()) < 0;
     });
     auto goesOnIf = [&](LValue condition, LBasicBlock otherwise) {
         LBasicBlock next = m_out.newBlock();
@@ -209,7 +209,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         goesOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
 
     // There is only one atom for any content, and what the program spells out is one.
-    if (all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.says->length() <= SlotsOfBornObjects::lengthOfShortString; })) {
+    if (all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.checkStore->length() <= TypedLayoutTable::maxLengthOfAtomizedString; })) {
         LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
         for (auto& one : all) {
             LBasicBlock next = m_out.newBlock();
@@ -233,12 +233,12 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
     m_out.appendTo(ifOfSuchALength);
     {
         LValue itsLength = m_out.phi(Int32, lengthsOtherwise);
-        unsigned longest = all.isEmpty() ? 0 : all.last().says->length();
+        unsigned longest = all.isEmpty() ? 0 : all.last().checkStore->length();
         goesOnIf(m_out.belowOrEqual(itsLength, m_out.constInt32(longest)), defaultBlock);
         if (longest < 64) {
             uint64_t lengths = 0;
             for (auto& one : all)
-                lengths |= 1ull << one.says->length();
+                lengths |= 1ull << one.checkStore->length();
             m_graph.wideIntegerConstants.add(static_cast<int64_t>(lengths));
             m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(lengths), itsLength), m_out.constInt64(1)), unsure(theLongWay), unsure(defaultBlock));
         } else
@@ -247,7 +247,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
 
     // What is written in the program is an atom: so if it says the same as any of them, there is an atom that says so.
     m_out.appendTo(theLongWay);
-    LValue atom = vmCall(place, pointerType(), Entry::operationAOTNarrowAtomThatSaysTheSame, m_globalObject, value);
+    LValue atom = vmCall(place, pointerType(), Entry::operationAOTFindEqualAtom, m_globalObject, value);
     goesOnIf(m_out.notNull(atom), defaultBlock);
     ValueFromBlock charactersOfAtom = m_out.anchor(m_out.loadPtr(atom, m_heaps.StringImpl_data));
     ValueFromBlock lengthOfAtom = m_out.anchor(m_out.load32(atom, m_heaps.StringImpl_length));
@@ -260,10 +260,10 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
     Vector<std::tuple<LBasicBlock, unsigned, unsigned>, 8> groups;
     for (unsigned first = 0; first < all.size();) {
         unsigned end = first;
-        while (end < all.size() && all[end].says->length() == all[first].says->length())
+        while (end < all.size() && all[end].checkStore->length() == all[first].checkStore->length())
             ++end;
         LBasicBlock ofThatLength = m_out.newBlock();
-        cases.append(FTL::SwitchCase(m_out.constInt32(all[first].says->length()), ofThatLength, FTL::Weight()));
+        cases.append(FTL::SwitchCase(m_out.constInt32(all[first].checkStore->length()), ofThatLength, FTL::Weight()));
         groups.append({ ofThatLength, first, end });
         first = end;
     }
@@ -272,7 +272,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         m_out.appendTo(ofThatLength);
         for (unsigned i = first; i < end; ++i) {
             LBasicBlock next = i + 1 < end ? m_out.newBlock() : defaultBlock;
-            m_out.branch(m_out.isZero64(differenceFromWhatIsWritten(characters, all[i].says->span8())), unsure(all[i].target), unsure(next));
+            m_out.branch(m_out.isZero64(differenceFromWhatIsWritten(characters, all[i].checkStore->span8())), unsure(all[i].target), unsure(next));
             if (i + 1 < end)
                 m_out.appendTo(next);
         }
@@ -379,9 +379,9 @@ void Lowering::lowerChainOfComparisons(BasicBlock* head, const ChainOfComparison
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> bitsSeen;
     for (auto& arm : chain.arms) {
         if (arm.constant->kind == NodeKind::ConstantCell) {
-            const StringImpl* says = asString(arm.constant->graph->codeBlock()->getConstant(arm.constant->reg))->tryGetValueImpl();
-            if (stringsSeen.add(says).isNewEntry)
-                strings.append({ says, wayFrom(arm.block, arm.target), arm.constant });
+            const StringImpl* checkStore = asString(arm.constant->graph->codeBlock()->getConstant(arm.constant->reg))->tryGetValueImpl();
+            if (stringsSeen.add(checkStore).isNewEntry)
+                strings.append({ checkStore, wayFrom(arm.block, arm.target), arm.constant });
             continue;
         }
         JSValue constant = arm.constant->constant;
@@ -564,12 +564,12 @@ void Lowering::lowerCatch(Node* node)
     setProj(node, bytecode.m_thrownValue, m_out.load64(m_out.address(m_heaps.root, exception, Exception::valueOffset())));
 }
 
-void Lowering::emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled)
+void Lowering::emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock undecided)
 {
-    emitTypeTests(nullptr, value->type, jsValue, mask, passed, notSettled);
+    emitTypeTests(nullptr, value->type, jsValue, mask, passed, undecided);
 }
 
-void Lowering::emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock notSettled)
+void Lowering::emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock undecided)
 {
     Type candidates = typeOfValue & typeProvingMask(mask);
     auto passIf = [&](LValue condition) {
@@ -587,10 +587,10 @@ void Lowering::emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, u
         passIf(m_out.equal(jsValue, m_out.constInt64(JSValue::ValueNull)));
     if (mayBe(candidates, TBoolean))
         passIf(isBoolean(jsValue));
-    if (mayBe(typeOfValue & typeAdmittedByMask(mask), TCell)) {
+    if (mayBe(typeOfValue & typeAcceptedByMask(mask), TCell)) {
         if (!isSubtype(typeOfValue, TCell)) {
             LBasicBlock cellCase = m_out.newBlock();
-            m_out.branch(isCell(jsValue), unsure(cellCase), rarely(notSettled));
+            m_out.branch(isCell(jsValue), unsure(cellCase), rarely(undecided));
             m_out.appendTo(cellCase);
         }
         LValue type = cellType(jsValue);
@@ -628,7 +628,7 @@ void Lowering::emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, u
         if (mayBe(candidates, TBigInt))
             passIf(isType(HeapBigIntType));
     }
-    m_out.jump(notSettled);
+    m_out.jump(undecided);
 }
 
 bool Lowering::tryLowerMisc(Node* node)
@@ -718,22 +718,22 @@ bool Lowering::tryLowerMisc(Node* node)
     case op_type_tag: {
         Node* value = node->uses[0].node;
         // (An array: it is taken to be one. Of a family whose slots are verified: it is asked when something is read.)
-        if (node->narrowedTo || value->isKnownToBeBornWithin(node->firstLayout, node->lastLayout) || (TypeTable::areStructs() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->isVerified(node->firstLayout))) {
+        if (node->narrowedTo || value->hasLayoutInRange(node->firstLayout, node->lastLayout) || (TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->usesFieldIDs(node->firstLayout))) {
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
             m_sameAs = nullptr;
             return true;
         }
         LValue jsValue = lowJSValue(value);
-        if (!node->isTakenAtItsWord) {
-            LValue view = viewFoundFor(value, node->firstLayout);
-            m_views.set(node, view ? view : viewAs(node, value, jsValue, node->firstLayout));
+        if (!node->isTrusted) {
+            LValue view = cachedCoercionFor(value, node->firstLayout);
+            m_coercions.set(node, view ? view : coerceToTypedLayout(node, value, jsValue, node->firstLayout));
             m_sameAs = value;
             setResult(node, lowRaw(value), value->rep());
             m_sameAs = nullptr;
             return true;
         }
-        assertBornAs(node, value, jsValue, node->firstLayout);
+        checkTypedLayout(node, value, jsValue, node->firstLayout);
         setJSValue(node, jsValue);
         return true;
     }
@@ -764,7 +764,7 @@ bool Lowering::tryLowerMisc(Node* node)
         coldCall(node, Entry::operationAOTCheckType, jsValue, m_out.constInt32(mask), ColdCall::ChangesNothing);
         // Where the tests leave nothing open, what gets here is not coming back: and then nothing has to be kept for when it does,
         // which is what would have everything that is in use in a register that has to be saved.
-        Type admitted = value->type & typeAdmittedByMask(mask);
+        Type admitted = value->type & typeAcceptedByMask(mask);
         Type candidates = value->type & typeProvingMask(mask);
         bool everyObjectPasses = isSubtype(TAnyObject & value->type, candidates) && mayBe(candidates, TAnyObject);
         if (isSubtype(admitted, everyObjectPasses ? TPrimitive | TAnyObject : TPrimitive) && isSubtype(admitted, candidates))

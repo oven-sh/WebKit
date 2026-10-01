@@ -333,7 +333,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_type)
     BEGIN();
     auto bytecode = pc->as<OpCheckType>();
     unsigned tag = soundTypeTag(GET_C(bytecode.m_value).jsValue());
-    if (soundTypeMaskAdmits(bytecode.m_mask, GET_C(bytecode.m_value).jsValue())) [[likely]]
+    if (soundTypeMaskAccepts(bytecode.m_mask, GET_C(bytecode.m_value).jsValue())) [[likely]]
         END();
     if (Options::reportSoundTypeViolations()) [[unlikely]] {
         // For finding out what a program would have to change: every place once, and on it goes as if types were erased.

@@ -88,13 +88,13 @@ namespace AOT {
     v(operationAOTPutToScope) \
     v(operationAOTThrow) \
     v(operationAOTCheckType) \
-    v(operationAOTAssertBornAs) \
-    v(operationAOTViewAs) \
-    v(operationAOTNarrowAtomThatSaysTheSame) \
+    v(operationAOTCheckTypedLayout) \
+    v(operationAOTCoerceToTypedLayout) \
+    v(operationAOTFindEqualAtom) \
     v(operationAOTGetFieldTheLongWay) \
     v(operationAOTReadField) \
     v(operationAOTGetLengthTheLongWay) \
-    v(operationAOTSettleStruct) \
+    v(operationAOTValidateTypedObject) \
     v(operationAOTVerifyFact) \
     v(operationAOTHandleTraps) \
     v(operationAOTWriteBarrier) \
@@ -181,15 +181,15 @@ namespace AOT {
     v(EnterStaticFunctionForCall) \
     v(EnterStaticFunctionForConstruct) \
     v(MegamorphicCache) \
-    /* SlotsOfBornObjects::familiesOfFieldsInSlot() */ \
-    v(FamiliesOfFieldsInSlot0) \
-    v(FamiliesOfFieldsInSlot1) \
-    v(FamiliesOfFieldsInSlot2) \
-    v(FamiliesOfFieldsInSlot3) \
-    v(FamiliesOfFieldsInSlot4) \
-    v(FamiliesOfFieldsInSlot5) \
-    v(FamiliesOfFieldsInSlot6) \
-    v(FamiliesOfFieldsInSlot7) \
+    /* TypedLayoutTable::layoutIDsOfFieldsInSlot() */ \
+    v(LayoutIDsOfFieldsInSlot0) \
+    v(LayoutIDsOfFieldsInSlot1) \
+    v(LayoutIDsOfFieldsInSlot2) \
+    v(LayoutIDsOfFieldsInSlot3) \
+    v(LayoutIDsOfFieldsInSlot4) \
+    v(LayoutIDsOfFieldsInSlot5) \
+    v(LayoutIDsOfFieldsInSlot6) \
+    v(LayoutIDsOfFieldsInSlot7) \
     /* Host functions that compiled code knows when it sees them (CallIntrinsic). */ \
     v(HostMathSqrt) \
     v(HostMathAbs) \
@@ -307,7 +307,7 @@ struct Slot {
     static constexpr uint32_t attemptsMask = maxAttempts << attemptsShift;
     static constexpr uint32_t isIntricate = 1u << 28; // op_get_by_id, op_put_by_id: there is more to it than a load or a store at that place in the base itself.
     static constexpr uint32_t isGetter = 1u << 29; // op_get_by_id: what is at that place is a GetterSetter, whose getter has the answer.
-    static constexpr uint32_t saysWhatIsHeld = 1u << 29; // op_put_by_id: what is above newStructureID is `held`, and not the rest of an address.
+    static constexpr uint32_t hasFieldType = 1u << 29; // op_put_by_id: what is above newStructureID is `held`, and not the rest of an address.
     static constexpr uint32_t pointerIsNotCell = 1u << 30; // pointer: something that is there for as long as the VM is.
     static constexpr uint32_t pointerIsCell = 1u << 31; // pointer: a cell. Neither: newStructureID, which may be none.
     static constexpr uint32_t resolvesByDepth = 1u << 31; // op_resolve_scope: the rest of offset is how many scopes out it is.
@@ -332,7 +332,7 @@ struct Slot {
         UniquedStringImpl* name; // op_get_by_id, unless isIntricate: what is read, if the stub has found that out. It looks in the megamorphic cache with it.
         struct {
             StructureID newStructureID; // Transitions.
-            uint32_t held; // op_put_by_id, if not zero: PutPropertySlot::held(). Only that may be stored.
+            uint32_t fieldType; // op_put_by_id, if not zero: PutPropertySlot::held(). Only that may be stored.
         };
     };
 };
@@ -412,9 +412,9 @@ static_assert(sizeof(FunctionInfo) == 32);
 // One for each realm that runs code from the static compiler.
 struct Instance {
     static Instance& ensure(JSGlobalObject*);
-    static bool adopt(VM&, JSObject*, uint16_t family); // SlotsOfBornObjects::Adopt
-    Structure* emptyStructureOfFamily(uint16_t family);
-    Structure* emptyStructureOfFamily(uint16_t family, JSObject* prototype); // A new one: whoever asks keeps it.
+    static bool convertToTypedLayout(VM&, JSObject*, uint16_t layoutID); // TypedLayoutTable::Adopt
+    Structure* emptyStructureForLayout(uint16_t layoutID);
+    Structure* emptyStructureForLayout(uint16_t layoutID, JSObject* prototype); // A new one: whoever asks keeps it.
     static JSObject* newObjectOf(VM&, Structure*); // With nothing in it, and room outside it if the Structure has slots there.
     static void destroy(Instance*);
 
@@ -539,7 +539,7 @@ struct Instance {
     JSObject* objectPrototype; // The realm's, which keeps it.
     // A bit for each field whose slot is verified (slot << 16 | id): a read of it has been answered by something other than a plain property or the lack of one. See Lowering::lowerGetById().
     uint8_t* fieldsNotJustRead;
-    static constexpr size_t sizeOfFieldsNotJustRead = (static_cast<size_t>(Structure::numberOfSlotsWithFields) << 16) / 8;
+    static constexpr size_t sizeOfFieldsNotJustRead = (static_cast<size_t>(Structure::numberOfSlotsWithFieldIDs) << 16) / 8;
     static constexpr ptrdiff_t offsetOfFieldsNotJustRead() { return OBJECT_OFFSETOF(Instance, fieldsNotJustRead); }
     void noteNotJustRead(unsigned slot, uint16_t id) { fieldsNotJustRead[(slot << 16 | id) >> 3] |= 1 << (id & 7); }
     // The realm's Function.prototype.call, and the Structure it makes bound functions with: Stub::Call.

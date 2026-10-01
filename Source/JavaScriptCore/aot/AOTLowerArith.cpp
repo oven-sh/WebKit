@@ -482,7 +482,7 @@ std::optional<String> Lowering::stringWrittenInProgram(Node* node)
     if (!constant || !constant.isString())
         return std::nullopt;
     String said = asString(constant)->tryGetValue();
-    if (said.isNull() || !said.is8Bit() || said.length() > SlotsOfBornObjects::lengthOfShortString)
+    if (said.isNull() || !said.is8Bit() || said.length() > TypedLayoutTable::maxLengthOfAtomizedString)
         return std::nullopt;
     return said;
 }
@@ -543,8 +543,8 @@ bool Lowering::isAtomIfShortString(Node* node, unsigned depth)
         if (node->opcode == op_check_tdz)
             return isAtomIfShortString(node->uses[0].node, depth + 1);
         if (node->opcode == op_get_by_id) {
-            auto field = Graph::fieldOfStructGotAtBy(node);
-            return field && field->holds.atoms;
+            auto field = Graph::typedFieldAccessedBy(node);
+            return field && field->fieldType.atoms;
         }
         return false;
     default:
@@ -580,7 +580,7 @@ LValue Lowering::areTheSameGivenThatStringsAreAtoms(Node* left, LValue a, Node* 
     return m_out.phi(Int32, results);
 }
 
-void Lowering::makeAtomIfString(Node* node, LValue value)
+void Lowering::atomizeIfString(Node* node, LValue value)
 {
     if (!mayBe(node->type, TString) || isAtomIfShortString(node))
         return;
@@ -679,27 +679,27 @@ Lowering::NarrowCharacters Lowering::narrowCharactersOf(LValue string, LBasicBlo
 }
 
 // value === theString, which says that.
-LValue Lowering::isStringThatSays(Node* comparison, Node* valueNode, LValue value, const String& said, LValue theString)
+LValue Lowering::isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String& said, LValue theString)
 {
     LBasicBlock continuation = m_out.newBlock();
     LBasicBlock slowCase = newColdBlock();
     Vector<ValueFromBlock, 6> results;
-    auto isSettledIf = [&](LValue condition, bool answer, bool isLikely = false) {
+    auto decideIf = [&](LValue condition, bool answer, bool isLikely = false) {
         LBasicBlock next = m_out.newBlock();
         results.append(m_out.anchor(answer ? m_out.booleanTrue : m_out.booleanFalse));
         m_out.branch(condition, isLikely ? usually(continuation) : unsure(continuation), unsure(next));
         m_out.appendTo(next);
     };
     // (What the program spells out in two places is one string: NumbersOfConstants.)
-    isSettledIf(m_out.equal(value, theString), true);
+    decideIf(m_out.equal(value, theString), true);
     if (!isSubtype(valueNode->type, TCell))
-        isSettledIf(isNotCell(value), false);
+        decideIf(isNotCell(value), false);
     if (!isSubtype(valueNode->type, TString | ~TCell))
-        isSettledIf(m_out.notEqual(cellType(value), m_out.constInt32(StringType)), false);
+        decideIf(m_out.notEqual(cellType(value), m_out.constInt32(StringType)), false);
     LBasicBlock notForTheLooking = m_out.newBlock();
     Vector<ValueFromBlock, 2> lengthsOtherwise;
     auto [characters, length] = narrowCharactersOf(value, notForTheLooking, lengthsOtherwise);
-    isSettledIf(m_out.notEqual(length, m_out.constInt32(said.length())), false, true);
+    decideIf(m_out.notEqual(length, m_out.constInt32(said.length())), false, true);
     results.append(m_out.anchor(m_out.isZero64(differenceFromWhatIsWritten(characters, said.span8()))));
     m_out.jump(continuation);
 
@@ -773,17 +773,17 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     }
     if (Options::aotComparesWithStringsInPlace() && !isCompact() && (strict || isSubtype(both, TString))) {
         if (auto said = stringWrittenInProgram(right))
-            return isStringThatSays(node, left, a, *said, b);
+            return isStringEqualTo(node, left, a, *said, b);
         if (auto said = stringWrittenInProgram(left))
-            return isStringThatSays(node, right, b, *said, a);
+            return isStringEqualTo(node, right, b, *said, a);
     }
 
     if (isCompact()) {
         if (strict || isSubtype(both, TString)) {
             if (stringWrittenInProgram(right) && isAtomIfString(right))
-                return callStub(Stub::IsStringThatSays, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { });
+                return callStub(Stub::IsStringEqualTo, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } }, { });
             if (stringWrittenInProgram(left) && isAtomIfString(left))
-                return callStub(Stub::IsStringThatSays, Int32, { { b, GPRInfo::argumentGPR0 }, { a, GPRInfo::argumentGPR1 } }, { });
+                return callStub(Stub::IsStringEqualTo, Int32, { { b, GPRInfo::argumentGPR0 }, { a, GPRInfo::argumentGPR1 } }, { });
         }
         return callStub(strict ? Stub::StrictEqual : Stub::LooseEqual, Int32, { { a, GPRInfo::argumentGPR0 }, { b, GPRInfo::argumentGPR1 } },
             { });

@@ -179,7 +179,7 @@ static bool loopsWillDoWhole(Graph& graph)
                 break;
             case op_get_by_id:
             case op_put_by_id:
-                if (!Graph::fieldOfStructGotAtBy(node))
+                if (!Graph::typedFieldAccessedBy(node))
                     return false;
                 break;
             case op_put_by_val:

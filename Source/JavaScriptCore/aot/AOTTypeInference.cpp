@@ -453,8 +453,8 @@ private:
             return std::nullopt;
         Node* callee = node->use(calleeRegister);
         if (argc == 1 && node->opcode == op_call && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::cloneObject) {
-            uint16_t family = Graph::familyOfNewObject(node);
-            return family ? typeOfObjectBornAs(family) : TFinalObject;
+            uint16_t layoutID = Graph::layoutIDOfNewObject(node);
+            return layoutID ? typeOfObjectWithLayout(layoutID) : TFinalObject;
         }
         if (argc == 2 && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::toLength) {
             Type argument = node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset() + 1))->type;
@@ -797,7 +797,7 @@ private:
         }
         case op_check_type: {
             auto bytecode = node->as<OpCheckType>();
-            return typeOf(bytecode.m_value) & typeAdmittedByMask(bytecode.m_mask);
+            return typeOf(bytecode.m_value) & typeAcceptedByMask(bytecode.m_mask);
         }
         case op_type_tag:
             if (Options::aotAuditsTypes()) [[unlikely]]
@@ -805,9 +805,9 @@ private:
             if (node->narrowedTo)
                 return node->uses[0].node->type & node->narrowedTo;
             // What is of a type of a family that is open may be any object that has what the type says, made by anybody. It is what it was.
-            if (!node->isTakenAtItsWord)
+            if (!node->isTrusted)
                 return node->uses[0].node->type;
-            return node->uses[0].node->type & typeOfObjectBornAs(node->firstLayout);
+            return node->uses[0].node->type & typeOfObjectWithLayout(node->firstLayout);
         case op_urshift:
             return TInt32; // The bits of the result: the op_unsigned that follows makes the number of them. A BigInt throws.
         case op_unsigned:
@@ -899,42 +899,42 @@ private:
             return TBoolean;
 
         case op_new_object:
-            if (uint16_t family = Graph::familyOfNewObject(node))
-                return typeOfObjectBornAs(family);
+            if (uint16_t layoutID = Graph::layoutIDOfNewObject(node))
+                return typeOfObjectWithLayout(layoutID);
             if (Options::aotTypesFields() && node->numberOfLiteralProperties) {
                 if (auto shape = m_graph.shapeOfLiteral(node); shape && shape->number) {
-                    if (TypeTable::areStructs())
-                        return shape->family ? typeOfObjectBornAs(shape->family) : TFinalObject;
-                    return typeOfObjectBornAs(shape->number);
+                    if (TypeTable::hasTypedFields())
+                        return shape->layoutID ? typeOfObjectWithLayout(shape->layoutID) : TFinalObject;
+                    return typeOfObjectWithLayout(shape->number);
                 }
             }
             return TFinalObject;
         case op_get_by_id:
             if (auto type = typeOfThingReturnedThatIsReadBy(node))
                 return *type;
-            if (TypeTable::areStructsToGoBy() && Options::aotTypesFields()) {
+            if (TypeTable::typedFieldsAreEnforced() && Options::aotTypesFields()) {
                 if (uint32_t method = Graph::closedMethodReadBy(node))
                     return typeOf(node->as<OpGetById>().m_base) ? typeOfFunction(method) : TNone;
                 // Of a struct: the slot holds that, and nothing else is looked at.
-                if (auto field = Graph::fieldOfStructGotAtBy(node); field && field->holds.saysSomething())
-                    return typeOf(node->as<OpGetById>().m_base) ? field->holds.type() | (field->isOptional ? TUndefined : TNone) : TNone;
+                if (auto field = Graph::typedFieldAccessedBy(node); field && field->fieldType.isConstrained())
+                    return typeOf(node->as<OpGetById>().m_base) ? field->fieldType.type() | (field->isOptional ? TUndefined : TNone) : TNone;
             }
             // What got past the guard is what the slot holds; or there is no such property.
-            if (Node* guard = node->guard; guard && guard->guardKind == GuardKind::Field && guard->heldKinds) {
+            if (Node* guard = node->guard; guard && guard->guardKind == GuardKind::Field && guard->fieldTypeKinds) {
                 if (!typeOf(node->as<OpGetById>().m_base))
                     return TNone;
-                return TypeTable::Holds { guard->heldKinds, guard->heldFirst, guard->heldLast }.type() | (guard->firstWithout ? TUndefined : TNone);
+                return TypeTable::FieldType { guard->fieldTypeKinds, guard->fieldTypeFirst, guard->fieldTypeLast }.type() | (guard->firstWithout ? TUndefined : TNone);
             }
             // However it is read, it is that or the code does not go on (Lowering::lowerGetById()).
             if (Options::aotTypesFields() && !Options::aotAssertsTypes() && !Options::aotAuditsTypes() && (Options::aotShapes() & 2) && !node->guard && TypeTable::shared()) {
                 if (uint32_t tag = Graph::typeTagOf(node)) {
-                    if (auto field = TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); field && field->holds.saysSomething()) {
+                    if (auto field = TypeTable::shared()->fieldOf(tag, node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); field && field->fieldType.isConstrained()) {
                         if (!typeOf(node->as<OpGetById>().m_base))
                             return TNone;
                         // (Of a struct: the slot holds that, and nothing else is looked at.)
-                        if (TypeTable::areStructs())
-                            return field->holds.type() | (field->isOptional ? TUndefined : TNone);
-                        return field->holds.kindsOnly().type();
+                        if (TypeTable::hasTypedFields())
+                            return field->fieldType.type() | (field->isOptional ? TUndefined : TNone);
+                        return field->fieldType.kindsOnly().type();
                     }
                 }
             }
@@ -946,8 +946,8 @@ private:
         case op_create_promise:
             return TPromise;
         case op_create_this:
-            if (uint16_t family = node->graph->familyOfThis())
-                return typeOfObjectBornAs(family);
+            if (uint16_t layoutID = node->graph->layoutIDOfThis())
+                return typeOfObjectWithLayout(layoutID);
             return TObject;
         case op_create_direct_arguments:
         case op_create_scoped_arguments:
@@ -978,8 +978,8 @@ private:
         }
         case op_super_construct:
         case op_super_construct_varargs:
-            if (uint16_t family = node->graph->familyOfThis())
-                return typeOfObjectBornAs(family);
+            if (uint16_t layoutID = node->graph->layoutIDOfThis())
+                return typeOfObjectWithLayout(layoutID);
             return TAnyObject;
         case op_construct_varargs:
             return TAnyObject;
@@ -1041,7 +1041,7 @@ private:
                         if (elements && isSubtype(elements, TNumber))
                             return TNumber;
                     }
-                    if (node->expectedMask && isSubtype(typeAdmittedByMask(node->expectedMask), TNumber | TOther) && (node->expectedMask & MaskNumber))
+                    if (node->expectedMask && isSubtype(typeAcceptedByMask(node->expectedMask), TNumber | TOther) && (node->expectedMask & MaskNumber))
                         return TNumber;
                 }
             }

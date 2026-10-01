@@ -38,9 +38,9 @@ using CustomAccessorValueFunc = FunctionPtr<CustomAccessorPtrTag, bool(JSGlobalO
 
 class PutPropertySlot {
 public:
-    // ExistingFieldOfStruct: as ExistingProperty, but only what the slot holds may be stored there (SlotsOfBornObjects). Whoever remembers where it is has to look at what it stores.
-    // NewFieldOfStruct: likewise, as NewProperty.
-    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingFieldOfStruct, NewFieldOfStruct };
+    // ExistingTypedField: as ExistingProperty, but only what the slot holds may be stored there (TypedLayoutTable). Whoever remembers where it is has to look at what it stores.
+    // NewTypedField: likewise, as NewProperty.
+    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingTypedField, NewTypedField };
     enum Context : uint8_t { UnknownContext, PutById, PutByIdEval };
 
     PutPropertySlot(JSValue thisValue, bool isStrictMode = false, Context context = UnknownContext, bool isInitialization = false)
@@ -56,23 +56,23 @@ public:
     {
     }
 
-    // held: SlotsOfBornObjects::Held::kinds | first << 16.
-    void setExistingFieldOfStruct(JSObject* base, PropertyOffset offset, uint32_t held)
+    // held: TypedLayoutTable::Held::kinds | first << 16.
+    void setExistingTypedField(JSObject* base, PropertyOffset offset, uint32_t fieldType)
     {
-        m_type = ExistingFieldOfStruct;
+        m_type = ExistingTypedField;
         m_base = base;
         m_offset = offset;
-        m_held = held;
+        m_fieldType = fieldType;
     }
-    void setNewFieldOfStruct(JSObject* base, PropertyOffset offset, uint32_t held)
+    void setNewTypedField(JSObject* base, PropertyOffset offset, uint32_t fieldType)
     {
-        m_type = NewFieldOfStruct;
+        m_type = NewTypedField;
         m_base = base;
         m_offset = offset;
-        m_held = held;
+        m_fieldType = fieldType;
     }
-    bool isCacheablePutOfFieldOfStruct() const { return isCacheable() && (m_type == ExistingFieldOfStruct || m_type == NewFieldOfStruct); }
-    uint32_t held() const { return m_held; }
+    bool isCacheablePutOfTypedField() const { return isCacheable() && (m_type == ExistingTypedField || m_type == NewTypedField); }
+    uint32_t fieldType() const { return m_fieldType; }
 
     void setExistingProperty(JSObject* base, PropertyOffset offset)
     {
@@ -161,7 +161,7 @@ private:
     SUPPRESS_FORWARD_DECL_MEMBER JSObject* m_base;
     JSValue m_thisValue;
     PropertyOffset m_offset;
-    uint32_t m_held { 0 };
+    uint32_t m_fieldType { 0 };
     bool m_isStrictMode : 1;
     bool m_isInitialization : 1;
     bool m_isTaintedByOpaqueObject : 1;

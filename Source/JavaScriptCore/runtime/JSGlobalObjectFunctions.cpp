@@ -1024,8 +1024,8 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
     }
 
     Structure* sourceStructure = source->structure();
-    // (What was born with a layout is of a type of the program's. The copy is whatever it is put to use as, which is for whoever knows that to say: Structure::bornAs().)
-    if (!into && !sourceStructure->bornAs() && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
+    // (What was born with a layout is of a type of the program's. The copy is whatever it is put to use as, which is for whoever knows that to say: Structure::typedLayoutID().)
+    if (!into && !sourceStructure->typedLayoutID() && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
             return cloned;
     }

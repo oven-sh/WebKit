@@ -156,7 +156,7 @@ public:
     PropertyOffset takeDeletedOffset();
     void addDeletedOffset(PropertyOffset);
     
-    // reusesOffsetsInObject: see Structure::bornAs().
+    // reusesOffsetsInObject: see Structure::typedLayoutID().
     PropertyOffset nextOffset(PropertyOffset inlineCapacity, bool reusesOffsetsInObject = true, bool reusesOffsetsOutside = true);
     bool takeDeletedOffset(PropertyOffset wanted); // False: that is not one of them.
 

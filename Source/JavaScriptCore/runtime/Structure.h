@@ -201,10 +201,10 @@ private:
 };
 
 #if USE(BUN_JSC_ADDITIONS)
-// What each slot of an object that was born with a layout holds (Structure::bornAs()), as the program's types have it. It is part of the program: there is one
+// What each slot of an object that was born with a layout holds (Structure::typedLayoutID()), as the program's types have it. It is part of the program: there is one
 // for the process, nothing ever writes to it, and there is none unless the program was compiled to go by it.
-struct SlotsOfBornObjects {
-    struct Held {
+struct TypedLayoutTable {
+    struct FieldType {
         uint16_t kinds; // The bits of a check (soundTypeTag()). Zero: anything.
         // If not zero: what the bit for other objects stands for is objects born as one of these, and no others.
         uint16_t first;
@@ -215,8 +215,8 @@ struct SlotsOfBornObjects {
     // So it is the same as a short atom if it has the same StringImpl, and not otherwise. (A long one is left as it is, in pieces if that is how it is: text that is added to over and over
     // is not gone through each time.)
     static constexpr unsigned stringsAreAtoms = 1u << 15;
-    static constexpr unsigned lengthOfShortString = 40;
-    enum class Says : uint8_t { Nothing, Admits, Refuses };
+    static constexpr unsigned maxLengthOfAtomizedString = 40;
+    enum class StoreCheck : uint8_t { Unconstrained, Allowed, Rejected };
     // With these the objects are structs: what one was born as is the number of a family, every name of the family has a slot that is its own in every object of
     // the family, whether or not the object has the property, and code reads and writes the slots without asking. So:
     //   - a property of such a name that is added later goes in its slot;
@@ -224,96 +224,96 @@ struct SlotsOfBornObjects {
     //     tries is told so, as with a property that cannot be written.
     //
     // Or the slots of the family are VERIFIED. Then names of it share slots (any two that no literal and no type has together), an object has room for what it has and no more, and
-    // nobody reads or writes a slot without asking the object's Structure which name is in it: Structure::fieldInSlot(). What that says is the id of the field. No other name with
+    // nobody reads or writes a slot without asking the object's Structure which name is in it: Structure::fieldIDInSlot(). What that says is the id of the field. No other name with
     // that slot has the same id, of any family, so it says what the object was born as too, and what is held.
-    struct Named {
+    struct Field {
         uint32_t identifier; // StaticHeap::identifiersOfProgram()
         uint8_t slot;
         uint8_t mayBeAbsent;
         uint16_t id; // Zero: the slots of the family are not verified.
     };
     // Makes an object that was born as nothing one of the family, where it is, if it has what it takes. (It may run out of room. It does not run code.)
-    using Adopt = bool (*)(VM&, JSObject*, uint16_t family);
+    using ConvertFunction = bool (*)(VM&, JSObject*, uint16_t layoutID);
 
-    JS_EXPORT_PRIVATE static void set(std::span<const uint32_t> index, const Held*);
+    JS_EXPORT_PRIVATE static void setSlotTypes(std::span<const uint32_t> index, const FieldType*);
     // inlineSlots: by family, how many of its slots are in the object. The rest are outside it, one after the other from the first place there is.
-    // heldByNamed, familyOfNamed: go with the second. inlineSlots: | isVerifiedBit. fields: for each slot that has ids, one after the other, which of the second has the id (from 1); startOfFields: where each slot's start, less one.
-    JS_EXPORT_PRIVATE static void setNames(const uint32_t* index, const Named*, const Held* heldByNamed, const uint16_t* familyOfNamed, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* familyOfField, Adopt, bool audits); // index: as for the slots, by family. After set().
-    static constexpr uint8_t isVerifiedBit = 0x80;
-    static unsigned inlineSlots(uint16_t bornAs) { return s_inlineSlots[bornAs] & ~isVerifiedBit; }
-    static bool isVerified(uint16_t bornAs) { return s_named && bornAs < s_count && (s_inlineSlots[bornAs] & isVerifiedBit); }
-    static const Named& fieldWithId(unsigned slot, uint16_t id) { return s_named[s_fields[s_startOfFields[slot] + id]]; }
+    // fieldTypes, fieldLayoutIDs: go with the second. inlineSlots: | usesFieldIDsBit. fields: for each slot that has ids, one after the other, which of the second has the id (from 1); startOfFields: where each slot's start, less one.
+    JS_EXPORT_PRIVATE static void setFields(const uint32_t* index, const Field*, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction, bool isAuditing); // index: as for the slots, by family. After set().
+    static constexpr uint8_t usesFieldIDsBit = 0x80;
+    static unsigned inlineSlots(uint16_t typedLayoutID) { return s_inlineSlots[typedLayoutID] & ~usesFieldIDsBit; }
+    static bool usesFieldIDs(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count && (s_inlineSlots[typedLayoutID] & usesFieldIDsBit); }
+    static const Field& fieldWithID(unsigned slot, uint16_t id) { return s_fields[s_fieldIndexByID[s_firstFieldIndexOfSlot[slot] + id]]; }
     // By id: which family the field is of. Null: there are no ids.
-    static const uint16_t* familiesOfFieldsInSlot(unsigned slot) { return s_familyOfField ? s_familyOfField + static_cast<int32_t>(s_startOfFields[slot]) : nullptr; }
-    static uint16_t familyOf(const Named& named) { return s_familyOfNamed[&named - s_named]; }
-    static const Held* heldBy(const Named& named)
+    static const uint16_t* layoutIDsOfFieldsInSlot(unsigned slot) { return s_layoutIDByFieldID ? s_layoutIDByFieldID + static_cast<int32_t>(s_firstFieldIndexOfSlot[slot]) : nullptr; }
+    static uint16_t layoutIDOf(const Field& field) { return s_layoutIDOfField[&field - s_fields]; }
+    static const FieldType* fieldTypeOf(const Field& field)
     {
-        const Held& held = s_heldByNamed[&named - s_named];
-        return held.kinds ? &held : nullptr;
+        const FieldType& fieldType = s_typeOfField[&field - s_fields];
+        return fieldType.kinds ? &fieldType : nullptr;
     }
     static PropertyOffset offsetOfSlot(unsigned slot, unsigned inlineSlots) { return slot < inlineSlots ? static_cast<PropertyOffset>(slot) : firstOutOfLineOffset + static_cast<PropertyOffset>(slot - inlineSlots); }
-    static PropertyOffset offsetInFamily(uint16_t bornAs, unsigned slot) { return offsetOfSlot(slot, inlineSlots(bornAs)); }
+    static PropertyOffset offsetInLayout(uint16_t typedLayoutID, unsigned slot) { return offsetOfSlot(slot, inlineSlots(typedLayoutID)); }
     // Options::aotAuditsTypes() when the program was compiled: nothing is refused, and what would have been is logged.
-    static bool audits() { return s_audits; }
-    JS_EXPORT_PRIVATE static void audit(ASCIILiteral what, uint16_t family, JSValue);
-    JS_EXPORT_PRIVATE static ASCIILiteral s_whyNotAdopted; // The last time.
-    static bool areStructs() { return s_named; }
-    JS_EXPORT_PRIVATE static const Named* named(uint16_t bornAs, UniquedStringImpl*);
-    static std::span<const Named> namesOf(uint16_t bornAs) { return s_named && bornAs < s_count ? std::span { s_named + (s_indexOfNamed[bornAs] >> 12), s_indexOfNamed[bornAs] & 0xfff } : std::span<const Named> { }; }
-    static bool areThere() { return s_count; }
+    static bool isAuditing() { return s_isAuditing; }
+    JS_EXPORT_PRIVATE static void reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue);
+    JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure; // The last time.
+    static bool hasTypedFields() { return s_fields; }
+    JS_EXPORT_PRIVATE static const Field* findField(uint16_t typedLayoutID, UniquedStringImpl*);
+    static std::span<const Field> fieldsOf(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count ? std::span { s_fields + (s_fieldRangeOfLayout[typedLayoutID] >> 12), s_fieldRangeOfLayout[typedLayoutID] & 0xfff } : std::span<const Field> { }; }
+    static bool hasLayouts() { return s_count; }
     // Of a slot in the object itself.
-    static const Held* heldIn(uint16_t bornAs, unsigned slot)
+    static const FieldType* fieldTypeInSlot(uint16_t typedLayoutID, unsigned slot)
     {
-        if (bornAs >= s_count)
+        if (typedLayoutID >= s_count)
             return nullptr;
-        uint32_t word = s_index[bornAs];
+        uint32_t word = s_index[typedLayoutID];
         if (slot >= (word & 0xff))
             return nullptr;
-        const Held& held = s_held[(word >> 8) + slot];
-        return held.kinds ? &held : nullptr;
+        const FieldType& fieldType = s_typeOfSlot[(word >> 8) + slot];
+        return fieldType.kinds ? &fieldType : nullptr;
     }
-    static unsigned numberOfSlots(uint16_t bornAs) { return bornAs < s_count ? s_index[bornAs] & 0xff : 0; }
+    static unsigned numberOfSlots(uint16_t typedLayoutID) { return typedLayoutID < s_count ? s_index[typedLayoutID] & 0xff : 0; }
     // Of structs: in a slot that says what it holds a number is encoded as a double, whatever its value, so that code that reads one has nothing to tell apart.
-    static JSValue asHeld(const Held* held, JSValue value)
+    static JSValue toFieldRepresentation(const FieldType* fieldType, JSValue value)
     {
         if (value.isInt32())
-            return held ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value;
-        if (value.isCell() && held && (held->kinds & stringsAreAtoms)) [[unlikely]]
-            makeAtomIfString(value);
+            return fieldType ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value;
+        if (value.isCell() && fieldType && (fieldType->kinds & stringsAreAtoms)) [[unlikely]]
+            atomizeIfString(value);
         return value;
     }
-    static JSValue asHeld(uint16_t bornAs, unsigned slot, JSValue value) { return asHeld(heldIn(bornAs, slot), value); }
-    static JSValue asHeld(const Named& named, JSValue value) { return asHeld(heldBy(named), value); }
-    JS_EXPORT_PRIVATE static void makeAtomIfString(JSValue);
-    JS_EXPORT_PRIVATE static bool admits(const Held&, JSValue);
-    static Says says(uint16_t bornAs, unsigned slot, JSValue value) { return says(bornAs, heldIn(bornAs, slot), value); }
-    static Says says(const Named& named, JSValue value) { return says(familyOf(named), heldBy(named), value); }
-    static Says says(uint16_t bornAs, const Held* held, JSValue value)
+    static JSValue toFieldRepresentation(uint16_t typedLayoutID, unsigned slot, JSValue value) { return toFieldRepresentation(fieldTypeInSlot(typedLayoutID, slot), value); }
+    static JSValue toFieldRepresentation(const Field& field, JSValue value) { return toFieldRepresentation(fieldTypeOf(field), value); }
+    JS_EXPORT_PRIVATE static void atomizeIfString(JSValue);
+    JS_EXPORT_PRIVATE static bool accepts(const FieldType&, JSValue);
+    static StoreCheck checkStore(uint16_t typedLayoutID, unsigned slot, JSValue value) { return checkStore(typedLayoutID, fieldTypeInSlot(typedLayoutID, slot), value); }
+    static StoreCheck checkStore(const Field& field, JSValue value) { return checkStore(layoutIDOf(field), fieldTypeOf(field), value); }
+    static StoreCheck checkStore(uint16_t typedLayoutID, const FieldType* fieldType, JSValue value)
     {
-        if (!held)
-            return Says::Nothing;
-        bool isAdmitted = admits(*held, value);
-        if (!isAdmitted && s_audits) [[unlikely]] {
-            audit("a slot is given what it does not hold"_s, bornAs, value);
-            return Says::Nothing;
+        if (!fieldType)
+            return StoreCheck::Unconstrained;
+        bool isAccepted = accepts(*fieldType, value);
+        if (!isAccepted && s_isAuditing) [[unlikely]] {
+            reportViolation("a slot is given what it does not hold"_s, typedLayoutID, value);
+            return StoreCheck::Unconstrained;
         }
-        return isAdmitted ? Says::Admits : Says::Refuses;
+        return isAccepted ? StoreCheck::Allowed : StoreCheck::Rejected;
     }
 
 private:
-    JS_EXPORT_PRIVATE static const uint32_t* s_index; // By layout: where its slots start among s_held << 8 | how many it has.
+    JS_EXPORT_PRIVATE static const uint32_t* s_index; // By layout: where its slots start among s_typeOfSlot << 8 | how many it has.
     JS_EXPORT_PRIVATE static uint32_t s_count;
-    JS_EXPORT_PRIVATE static const Held* s_held;
-    JS_EXPORT_PRIVATE static const uint32_t* s_indexOfNamed;
-    JS_EXPORT_PRIVATE static const Named* s_named;
-    JS_EXPORT_PRIVATE static const Held* s_heldByNamed;
-    JS_EXPORT_PRIVATE static const uint16_t* s_familyOfNamed;
-    JS_EXPORT_PRIVATE static const uint32_t* s_startOfFields;
-    JS_EXPORT_PRIVATE static const uint32_t* s_fields;
-    JS_EXPORT_PRIVATE static const uint16_t* s_familyOfField; // Goes with s_fields.
+    JS_EXPORT_PRIVATE static const FieldType* s_typeOfSlot;
+    JS_EXPORT_PRIVATE static const uint32_t* s_fieldRangeOfLayout;
+    JS_EXPORT_PRIVATE static const Field* s_fields;
+    JS_EXPORT_PRIVATE static const FieldType* s_typeOfField;
+    JS_EXPORT_PRIVATE static const uint16_t* s_layoutIDOfField;
+    JS_EXPORT_PRIVATE static const uint32_t* s_firstFieldIndexOfSlot;
+    JS_EXPORT_PRIVATE static const uint32_t* s_fieldIndexByID;
+    JS_EXPORT_PRIVATE static const uint16_t* s_layoutIDByFieldID; // Goes with s_fieldIndexByID.
     JS_EXPORT_PRIVATE static const uint8_t* s_inlineSlots;
-    static Adopt s_adopt;
-    JS_EXPORT_PRIVATE static bool s_audits;
+    static ConvertFunction s_convert;
+    JS_EXPORT_PRIVATE static bool s_isAuditing;
 };
 #endif
 
@@ -464,7 +464,7 @@ public:
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
     // Likewise, each in the slot that is said (all of them in the object itself). The slots up to the last that nothing is in stay so.
     // reserved: so many slots are spoken for, whether or not anything is in them.
-    // inlineSlots: slots from that one on are outside the object (SlotsOfBornObjects::offsetOfSlot()).
+    // inlineSlots: slots from that one on are outside the object (TypedLayoutTable::offsetOfSlot()).
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
     // What whoever adds a property says of the Structure, and adding it does not.
     void saysOfAccessorsAndReadOnlyPropertiesWhat(const Structure& other)
@@ -483,33 +483,33 @@ public:
     // life: every structure that an object goes on to has it. What it promises is that each property the object was born with is
     // still in the slot it was born in, or else that there is nothing in that slot:
     //   - a slot in the object itself that a property has been taken out of is never given to another (PropertyTable::nextOffset());
-    //   - a property that is made into an accessor is taken out and put back (JSObject::takeOutOfTheSlotItWasBornIn());
+    //   - a property that is made into an accessor is taken out and put back (JSObject::evictTypedField());
     //   - nothing is moved when a dictionary is flattened.
     // So code that has once seen what an object was born as can go by that for as long as it has the object.
-    // And, where the program was compiled with types for its fields (SlotsOfBornObjects), that what is in such a slot is what the slot is said to hold:
+    // And, where the program was compiled with types for its fields (TypedLayoutTable), that what is in such a slot is what the slot is said to hold:
     //   - whoever puts something else there finds the property taken out of the slot first (JSObject::putDirectInternal()), and
     //   - nobody remembers how to store to such a slot without asking (the PutPropertySlot is left as it was: not for caching).
-    uint16_t bornAs() const { return m_bornAs; }
-    JS_EXPORT_PRIVATE void setBornAs(uint16_t layout); // Of a Structure that has what it is going to have to begin with.
-    // SlotsOfBornObjects::Named::id of the property that is at that offset in the object. Zero: no name of the family that has that slot is a property of the object. noTellingWhichField:
+    uint16_t typedLayoutID() const { return m_typedLayoutID; }
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout); // Of a Structure that has what it is going to have to begin with.
+    // TypedLayoutTable::Named::id of the property that is at that offset in the object. Zero: no name of the family that has that slot is a property of the object. ambiguousFieldID:
     // ask some other way. (Of what was born as nothing, and of a family whose slots are not verified: zero.)
-    static constexpr unsigned numberOfSlotsWithFields = 8;
-    static constexpr uint16_t noTellingWhichField = 0xffff;
-    uint16_t fieldInSlot(unsigned slot) const { return m_fieldInSlot[slot]; }
+    static constexpr unsigned numberOfSlotsWithFieldIDs = 8;
+    static constexpr uint16_t ambiguousFieldID = 0xffff;
+    uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
     // Of a Structure with no layout class: VM::aotPropertyNameIDs. Property additions copy the table; every other transition starts from an empty one.
     void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
     {
-        ASSERT(!m_bornAs && !isDictionary() && slot < m_inlineCapacity);
-        m_fieldInSlot[slot] = id;
+        ASSERT(!m_typedLayoutID && !isDictionary() && slot < m_inlineCapacity);
+        m_fieldIDInSlot[slot] = id;
     }
-    JS_EXPORT_PRIVATE void setBornAs(uint16_t family, std::span<const uint16_t, numberOfSlotsWithFields>); // For whoever knows what is in its slots.
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs>); // For whoever knows what is in its slots.
     // Of what was born as nothing: there is no making its like one of a family, whichever (AOT::Instance::adopt()).
-    bool isNeverAdopted() const { return !m_bornAs && m_fieldInSlot[0] == noTellingWhichField; }
-    JS_EXPORT_PRIVATE void setIsNeverAdopted();
-    static constexpr ptrdiff_t offsetOfFieldInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldInSlot); }
+    bool cannotConvertToTypedLayout() const { return !m_typedLayoutID && m_fieldIDInSlot[0] == ambiguousFieldID; }
+    JS_EXPORT_PRIVATE void setCannotConvertToTypedLayout();
+    static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldIDInSlot); }
     // Of an uncacheable dictionary: the property, which is in the object itself, is out of it from now on. func: as for adding one, with where it is to be.
     template<typename Func> void movePropertyOutOfObjectWithoutTransition(VM&, PropertyName, const Func&);
-    static constexpr ptrdiff_t offsetOfBornAs() { return OBJECT_OFFSETOF(Structure, m_bornAs); }
+    static constexpr ptrdiff_t offsetOfTypedLayoutID() { return OBJECT_OFFSETOF(Structure, m_typedLayoutID); }
 
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
@@ -1225,7 +1225,7 @@ private:
     uint16_t m_maxOffset;
 #if USE(BUN_JSC_ADDITIONS)
     uint16_t m_knownShape { 0 }; // See knownShape(). (There was nothing here.)
-    uint16_t m_bornAs { 0 }; // See bornAs(). (Nor here.)
+    uint16_t m_typedLayoutID { 0 }; // See typedLayoutID(). (Nor here.)
 #endif
 
     uint32_t m_propertyHash;
@@ -1251,7 +1251,7 @@ private:
     mutable InlineWatchpointSet m_transitionWatchpointSet;
 
 #if USE(BUN_JSC_ADDITIONS)
-    uint16_t m_fieldInSlot[numberOfSlotsWithFields] { }; // See fieldInSlot().
+    uint16_t m_fieldIDInSlot[numberOfSlotsWithFieldIDs] { }; // See fieldIDInSlot().
     // It has been given the property, there. / Something else has been done to what it has, or to what it inherits from.
     JS_EXPORT_PRIVATE void noteFieldAdded(UniquedStringImpl*, PropertyOffset, unsigned attributes);
     JS_EXPORT_PRIVATE void forgetFieldsInSlots();

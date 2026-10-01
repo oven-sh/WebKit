@@ -41,8 +41,8 @@ struct Slot;
     v(operationAOTNewRegExpForReceiver) \
     v(operationAOTLinkTimeConstant) \
     v(operationAOTIteratorMethodOfArray) \
-    v(operationAOTSettleWhatWasBorn) \
-    v(operationAOTNewObjectOfFamily) \
+    v(operationAOTValidateNewObject) \
+    v(operationAOTNewTypedObject) \
     v(operationAOTCloneObject) \
     v(operationAOTNoteClass) \
     v(operationAOTMakeAtom) \
@@ -150,10 +150,10 @@ enum class InternalFieldObjectKind : uint32_t {
 
 // Allocation.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject*, uint32_t inlineCapacity, Slot*));
-JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfFamily, JSObject*, (JSGlobalObject*, uint32_t family, Slot*));
-JSC_DECLARE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject*, EncodedJSValue source, uint32_t family));
-JSC_DECLARE_JIT_OPERATION(operationAOTNoteClass, void, (JSGlobalObject*, EncodedJSValue constructor, EncodedJSValue prototype, uint32_t family));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue)); // Lowering::asHeld()
+JSC_DECLARE_JIT_OPERATION(operationAOTNewTypedObject, JSObject*, (JSGlobalObject*, uint32_t layoutID, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject*, EncodedJSValue source, uint32_t layoutID));
+JSC_DECLARE_JIT_OPERATION(operationAOTNoteClass, void, (JSGlobalObject*, EncodedJSValue constructor, EncodedJSValue prototype, uint32_t layoutID));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue)); // Lowering::toFieldRepresentation()
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (JSGlobalObject*, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObject*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (JSGlobalObject*, JSObject* callee, uint32_t inlineCapacity));
@@ -165,7 +165,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSpecies, JSObject*, (JSGlobalO
 JSC_DECLARE_JIT_OPERATION(operationAOTSpread, JSCell*, (JSGlobalObject*, EncodedJSValue iterable));
 JSCell* spread(JSGlobalObject*, JSValue iterable); // What op_spread makes.
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject*, JSCell* regExp));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTSettleWhatWasBorn, void, (Instance*, JSObject*)); // Lowering::settleWhatWasBorn()
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance*, JSObject*)); // Lowering::validateNewObject()
 JSC_DECLARE_JIT_OPERATION(operationAOTIteratorMethodOfArray, EncodedJSValue, (JSGlobalObject*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLinkTimeConstant, EncodedJSValue, (Instance*, uint32_t which)); // NodeKind::LinkTimeConstant
 JSC_DECLARE_JIT_OPERATION(operationAOTNewRegExpForReceiver, JSObject*, (JSGlobalObject*, JSCell* regExp, uint32_t forTest, Slot*));

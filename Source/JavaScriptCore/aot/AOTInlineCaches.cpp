@@ -105,7 +105,7 @@ static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
     auto result = table.ids.add(uid, 0);
     if (!result.isNewEntry)
         return result.iterator->value;
-    if (table.next >= Structure::noTellingWhichField) {
+    if (table.next >= Structure::ambiguousFieldID) {
         table.ids.remove(result.iterator);
         return 0;
     }
@@ -119,10 +119,10 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     if (!slot.isCacheableValue() || slot.slotBase() != base || slot.attributes())
         return 0;
     PropertyOffset offset = slot.cachedOffset();
-    if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFields)
+    if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
         return 0;
     // (A cell of the static heap that another VM reads has a Structure of the first VM's.)
-    if (structure->isDictionary() || structure->bornAs() || structure->isNeverAdopted() || &structure->vm() != &vm)
+    if (structure->isDictionary() || structure->typedLayoutID() || structure->cannotConvertToTypedLayout() || &structure->vm() != &vm)
         return 0;
     // As tryCacheGetById().
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
@@ -130,7 +130,7 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     uint16_t id = propertyNameID(vm, ident.impl());
     if (!id)
         return 0;
-    RELEASE_ASSERT(!structure->fieldInSlot(offset) || structure->fieldInSlot(offset) == id);
+    RELEASE_ASSERT(!structure->fieldIDInSlot(offset) || structure->fieldIDInSlot(offset) == id);
     structure->setPropertyNameIDInInlineSlot(offset, id);
     return id;
 }
@@ -338,7 +338,7 @@ static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* old
 void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
     // A struct has been given a field. The next of its kind to be given that one need not come here, wherever it is done (Instance::addsOfFields).
-    if (slot.type() == PutPropertySlot::NewFieldOfStruct && base.isCell() && slot.base() == base.asCell() && isInlineOffset(slot.cachedOffset())) {
+    if (slot.type() == PutPropertySlot::NewTypedField && base.isCell() && slot.base() == base.asCell() && isInlineOffset(slot.cachedOffset())) {
         Structure* newStructure = base.asCell()->structure();
         if (newStructure->previousID() == oldStructure && !newStructure->isDictionary() && !oldStructure->mayBePrototype() && oldStructure->outOfLineCapacity() == newStructure->outOfLineCapacity())
             globalObject->aotInstance()->noteAddOfField(oldStructure, slot.cachedOffset(), newStructure);
@@ -351,7 +351,7 @@ void cachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
 
 static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
 {
-    if (!base.isCell() || (!slot.isCacheablePut() && !slot.isCacheablePutOfFieldOfStruct()) || slot.base() != base.asCell())
+    if (!base.isCell() || (!slot.isCacheablePut() && !slot.isCacheablePutOfTypedField()) || slot.base() != base.asCell())
         return false;
     // Objects that others inherit from have more depending on them than a store lets on.
     if (!oldStructure->propertyAccessesAreCacheable() || oldStructure->isDictionary() || oldStructure->mayBePrototype())
@@ -371,11 +371,11 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         uint32_t attempts = cache->offset & Slot::attemptsMask;
         cache->structureID = StructureID();
         WTF::storeStoreFence();
-        uint32_t held = slot.type() == PutPropertySlot::ExistingFieldOfStruct || slot.type() == PutPropertySlot::NewFieldOfStruct ? slot.held() : 0;
-        cache->offset = *location | attempts | (structureAfterwards ? Slot::isIntricate : 0) | (held ? Slot::saysWhatIsHeld : 0);
+        uint32_t fieldType = slot.type() == PutPropertySlot::ExistingTypedField || slot.type() == PutPropertySlot::NewTypedField ? slot.fieldType() : 0;
+        cache->offset = *location | attempts | (structureAfterwards ? Slot::isIntricate : 0) | (fieldType ? Slot::hasFieldType : 0);
         cache->pointer = nullptr;
         cache->newStructureID = structureAfterwards ? structureAfterwards->id() : StructureID();
-        cache->held = held;
+        cache->fieldType = fieldType;
         WTF::storeStoreFence();
         cache->structureID = oldStructure->id();
         // For a transition the collector has to see it too, even if it has been by already.
@@ -384,7 +384,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         didFillSlot(vm, data);
     };
 
-    if (slot.type() == PutPropertySlot::ExistingProperty || slot.type() == PutPropertySlot::ExistingFieldOfStruct) {
+    if (slot.type() == PutPropertySlot::ExistingProperty || slot.type() == PutPropertySlot::ExistingTypedField) {
         if (newStructure != oldStructure)
             return false;
         // Code that has folded the property to a constant has to hear about writes that go around the runtime.

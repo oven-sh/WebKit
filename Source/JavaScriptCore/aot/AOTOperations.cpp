@@ -181,7 +181,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (JSGlobalObject* globalObjec
 
     PutPropertySlot slot(base, isStrict, putByIdContextOf(globalObject, callFrame));
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
-    if (isDirect && oldStructure->bornAs() && SlotsOfBornObjects::areStructs()) [[unlikely]] {
+    if (isDirect && oldStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
         // (A field that a class declares and gives nothing to start with is undefined until the constructor gets to it. There is nothing in its slot until then.)
         if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
             throwTypeError(globalObject, scope, TypedFieldError);
@@ -552,7 +552,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject* globalObj
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     unsigned tag = soundTypeTag(JSValue::decode(encodedValue));
-    if (soundTypeMaskAdmits(mask, JSValue::decode(encodedValue)))
+    if (soundTypeMaskAccepts(mask, JSValue::decode(encodedValue)))
         OPERATION_RETURN(scope);
     throwTypeError(globalObject, scope, makeString("Type check failed: expected "_s, toCString(SoundTypeMaskDump(mask)).span(), ", got "_s, toCString(SoundTypeMaskDump(tag)).span()));
     OPERATION_RETURN(scope);
@@ -565,47 +565,47 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthTheLongWay, EncodedJSValue, (JSGlo
 }
 
 // Comes back if the value is of the family by then.
-JSC_DEFINE_JIT_OPERATION(operationAOTAssertBornAs, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t family))
+JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t layoutID))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isUndefinedOrNull()) {
         // What getting at a property of it says.
-        if (!SlotsOfBornObjects::audits())
+        if (!TypedLayoutTable::isAuditing())
             value.toObject(globalObject);
         OPERATION_RETURN(scope);
     }
-    if (value.isObject() && (asObject(value)->structure()->bornAs() == family || Instance::adopt(vm, asObject(value), safeCast<uint16_t>(family))))
+    if (value.isObject() && (asObject(value)->structure()->typedLayoutID() == layoutID || Instance::convertToTypedLayout(vm, asObject(value), safeCast<uint16_t>(layoutID))))
         OPERATION_RETURN(scope);
     if (!value.isObject())
-        SlotsOfBornObjects::s_whyNotAdopted = "it is no object"_s;
-    if (SlotsOfBornObjects::audits()) {
-        SlotsOfBornObjects::audit(SlotsOfBornObjects::s_whyNotAdopted, safeCast<uint16_t>(family), value);
+        TypedLayoutTable::s_lastConversionFailure = "it is no object"_s;
+    if (TypedLayoutTable::isAuditing()) {
+        TypedLayoutTable::reportViolation(TypedLayoutTable::s_lastConversionFailure, safeCast<uint16_t>(layoutID), value);
         OPERATION_RETURN(scope);
     }
-    throwTypeError(globalObject, scope, makeString("Type check failed: this is not an object of the type it is used as, and cannot be made one: "_s, SlotsOfBornObjects::s_whyNotAdopted));
+    throwTypeError(globalObject, scope, makeString("Type check failed: this is not an object of the type it is used as, and cannot be made one: "_s, TypedLayoutTable::s_lastConversionFailure));
     OPERATION_RETURN(scope);
 }
 
 // What stands for whatever is of a type of a family and is not one of the family. Nobody writes to it.
-alignas(16) static const EncodedJSValue s_structWithNothingInIt[2 + 256] = { };
+alignas(16) static const EncodedJSValue s_emptyTypedObject[2 + 256] = { };
 
 // Where typed code is to look for what the value has: in the value, if it is of the family by now.
-JSC_DEFINE_JIT_OPERATION(operationAOTViewAs, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t family))
+JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedValue, uint32_t layoutID))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     JSValue value = JSValue::decode(encodedValue);
-    if (value.isObject() && (asObject(value)->structure()->bornAs() == family || Instance::adopt(vm, asObject(value), safeCast<uint16_t>(family))))
+    if (value.isObject() && (asObject(value)->structure()->typedLayoutID() == layoutID || Instance::convertToTypedLayout(vm, asObject(value), safeCast<uint16_t>(layoutID))))
         OPERATION_RETURN(scope, encodedValue);
-    if (SlotsOfBornObjects::audits() && !value.isUndefinedOrNull()) [[unlikely]]
-        SlotsOfBornObjects::audit(value.isObject() ? SlotsOfBornObjects::s_whyNotAdopted : "it is no object"_s, safeCast<uint16_t>(family), value);
-    OPERATION_RETURN(scope, static_cast<EncodedJSValue>(std::bit_cast<uintptr_t>(&s_structWithNothingInIt[0])));
+    if (TypedLayoutTable::isAuditing() && !value.isUndefinedOrNull()) [[unlikely]]
+        TypedLayoutTable::reportViolation(value.isObject() ? TypedLayoutTable::s_lastConversionFailure : "it is no object"_s, safeCast<uint16_t>(layoutID), value);
+    OPERATION_RETURN(scope, static_cast<EncodedJSValue>(std::bit_cast<uintptr_t>(&s_emptyTypedObject[0])));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlobalObject* globalObject, EncodedJSValue encodedBase, uint64_t which))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
-    uint16_t family = static_cast<uint16_t>(which >> 32);
+    uint16_t layoutID = static_cast<uint16_t>(which >> 32);
     unsigned slot = which >> 48 & 0xff;
     bool undefinedWillDo = which >> 56 & 1;
     JSValue base = JSValue::decode(encodedBase);
@@ -622,11 +622,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlob
     }
     if (value.isUndefined() && undefinedWillDo)
         OPERATION_RETURN(scope, JSValue::encode(value));
-    if (SlotsOfBornObjects::says(family, slot, value) == SlotsOfBornObjects::Says::Refuses) {
+    if (TypedLayoutTable::checkStore(layoutID, slot, value) == TypedLayoutTable::StoreCheck::Rejected) {
         throwTypeError(globalObject, scope, "Type check failed: a property is not what the type of the object says it is"_s);
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    OPERATION_RETURN(scope, JSValue::encode(SlotsOfBornObjects::asHeld(family, slot, value)));
+    OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(layoutID, slot, value)));
 }
 
 // The Structure of the base does not say that the field is in its slot.
@@ -635,17 +635,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
     AOT_OPERATION_PROLOGUE(globalObject);
     unsigned slot = which >> 16 & 0xff;
     bool undefinedWillDo = which >> 24 & 1;
-    const SlotsOfBornObjects::Named& field = SlotsOfBornObjects::fieldWithId(slot, static_cast<uint16_t>(which));
-    uint16_t family = SlotsOfBornObjects::familyOf(field);
+    const TypedLayoutTable::Field& field = TypedLayoutTable::fieldWithID(slot, static_cast<uint16_t>(which));
+    uint16_t layoutID = TypedLayoutTable::layoutIDOf(field);
     JSValue base = JSValue::decode(encodedBase);
     if (base.isObject()) {
         JSObject* object = asObject(base);
         // What code that knows nothing of the types has made is made one of the family, if it can be.
-        if (!object->structure()->isNeverAdopted() && !object->structure()->bornAs())
-            Instance::adopt(vm, object, family);
+        if (!object->structure()->cannotConvertToTypedLayout() && !object->structure()->typedLayoutID())
+            Instance::convertToTypedLayout(vm, object, layoutID);
         Structure* structure = object->structure();
-        if (structure->bornAs() == family) {
-            uint16_t there = structure->fieldInSlot(slot);
+        if (structure->typedLayoutID() == layoutID) {
+            uint16_t there = structure->fieldIDInSlot(slot);
             if (there == field.id) {
                 if (JSValue value = object->getDirect(static_cast<PropertyOffset>(slot)))
                     OPERATION_RETURN(scope, JSValue::encode(value));
@@ -670,31 +670,31 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*
     if (value.isUndefined() && undefinedWillDo)
         OPERATION_RETURN(scope, JSValue::encode(value));
     // (What comes next takes it for what the field holds. So it is that, or this does not come back.)
-    if (SlotsOfBornObjects::says(field, value) == SlotsOfBornObjects::Says::Refuses) {
+    if (TypedLayoutTable::checkStore(field, value) == TypedLayoutTable::StoreCheck::Rejected) {
         throwTypeError(globalObject, scope, "Type check failed: a property is not what the type of the object says it is"_s);
         OPERATION_RETURN(scope, encodedJSValue());
     }
-    OPERATION_RETURN(scope, JSValue::encode(SlotsOfBornObjects::asHeld(field, value)));
+    OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(field, value)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTSettleStruct, void, (JSGlobalObject* globalObject, JSObject* object))
+JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject* globalObject, JSObject* object))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
-    uint16_t family = object->structure()->bornAs();
-    if (SlotsOfBornObjects::isVerified(family)) {
-        bool isRefused = false;
+    uint16_t layoutID = object->structure()->typedLayoutID();
+    if (TypedLayoutTable::usesFieldIDs(layoutID)) {
+        bool isRejected = false;
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            if (auto* named = SlotsOfBornObjects::named(family, entry.key()))
-                isRefused = SlotsOfBornObjects::says(*named, object->getDirect(entry.offset())) == SlotsOfBornObjects::Says::Refuses;
-            return !isRefused;
+            if (auto* field = TypedLayoutTable::findField(layoutID, entry.key()))
+                isRejected = TypedLayoutTable::checkStore(*field, object->getDirect(entry.offset())) == TypedLayoutTable::StoreCheck::Rejected;
+            return !isRejected;
         });
-        if (isRefused)
+        if (isRejected)
             throwTypeError(globalObject, scope, TypedFieldError);
         OPERATION_RETURN(scope);
     }
-    for (unsigned slot = 0; slot < SlotsOfBornObjects::numberOfSlots(family); ++slot) {
-        JSValue value = object->getDirect(SlotsOfBornObjects::offsetInFamily(family, slot));
-        if (value && SlotsOfBornObjects::says(family, slot, value) == SlotsOfBornObjects::Says::Refuses) {
+    for (unsigned slot = 0; slot < TypedLayoutTable::numberOfSlots(layoutID); ++slot) {
+        JSValue value = object->getDirect(TypedLayoutTable::offsetInLayout(layoutID, slot));
+        if (value && TypedLayoutTable::checkStore(layoutID, slot, value) == TypedLayoutTable::StoreCheck::Rejected) {
             throwTypeError(globalObject, scope, TypedFieldError);
             OPERATION_RETURN(scope);
         }
@@ -710,7 +710,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
     Type actual = typeOfValue(JSValue::decode(encodedValue));
     // What it was born as.
     if (actual & TFinalObjectTag)
-        actual = (actual & ~TFinalObject) | typeOfObjectBornAs(JSValue::decode(encodedValue).asCell()->structure()->bornAs());
+        actual = (actual & ~TFinalObject) | typeOfObjectWithLayout(JSValue::decode(encodedValue).asCell()->structure()->typedLayoutID());
     // Which function it is, if it is one of the program's.
     if (actual & TFunctionTag) {
         if (auto* function = dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()); function && !function->isHostFunction()) {
@@ -754,13 +754,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
     if (auto* function = (actual & TFunctionTag) ? dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()) : nullptr; function && !function->isHostOrBuiltinFunction())
         dataLog(" (index ", function->jsExecutable()->aotIndexFor(CodeSpecializationKind::CodeForCall), ", entry ", RawHex(function->jsExecutable()->aotEntryFor(CodeSpecializationKind::CodeForCall)), ")");
     dataLog(" (bits ", RawHex(static_cast<uint64_t>(encodedValue)));
-    if (static_cast<uint64_t>(encodedValue) == std::bit_cast<uintptr_t>(&s_structWithNothingInIt[0]))
+    if (static_cast<uint64_t>(encodedValue) == std::bit_cast<uintptr_t>(&s_emptyTypedObject[0]))
         dataLog(": the struct with nothing in it");
     else if (JSValue value = JSValue::decode(encodedValue); value && value.isCell())
         dataLog(", a cell of type ", static_cast<unsigned>(value.asCell()->type()), value.isObject() ? " " : "", value.isObject() ? asObject(value)->classInfo()->className : ""_s);
     dataLog(")");
     dataLogLn();
-    if (JSValue value = JSValue::decode(encodedValue); value && value.isCell() && !value.asCell()->type() && static_cast<uint64_t>(encodedValue) != std::bit_cast<uintptr_t>(&s_structWithNothingInIt[0])) {
+    if (JSValue value = JSValue::decode(encodedValue); value && value.isCell() && !value.asCell()->type() && static_cast<uint64_t>(encodedValue) != std::bit_cast<uintptr_t>(&s_emptyTypedObject[0])) {
         // What is left of a cell, or what is not one yet.
         JSCell* cell = value.asCell();
         auto* words = std::bit_cast<const uint64_t*>(cell);
@@ -778,7 +778,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObjec
             dataLog("    its structure ", RawPointer(structure), ":");
             for (unsigned i = 0; i < 6; ++i)
                 dataLog(" ", RawHex(ofStructure[i]));
-            dataLogLn("; blob ", RawHex(structure->typeInfoBlob()), ", type ", static_cast<unsigned>(structure->typeInfo().type()), ", born as ", structure->bornAs(), ", inline capacity ", structure->inlineCapacity(), StaticHeap::contains(structure) ? " (static)" : "",
+            dataLogLn("; blob ", RawHex(structure->typeInfoBlob()), ", type ", static_cast<unsigned>(structure->typeInfo().type()), ", born as ", structure->typedLayoutID(), ", inline capacity ", structure->inlineCapacity(), StaticHeap::contains(structure) ? " (static)" : "",
                 !StaticHeap::contains(structure) ? (structure->markedBlock().handle().isLive(structure) ? ", live" : ", NOT LIVE") : "");
         }
         if (!cell->isPreciseAllocation() && !StaticHeap::contains(cell)) {
@@ -825,7 +825,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer)
     return exception;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTNarrowAtomThatSaysTheSame, StringImpl*, (JSGlobalObject* globalObject, JSString* string))
+JSC_DEFINE_JIT_OPERATION(operationAOTFindEqualAtom, StringImpl*, (JSGlobalObject* globalObject, JSString* string))
 {
     AOT_OPERATION_PROLOGUE(globalObject);
     auto atom = string->toExistingAtomString(globalObject);

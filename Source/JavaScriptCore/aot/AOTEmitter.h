@@ -118,7 +118,7 @@ protected:
     LValue keysOfObject(LValue object, LBasicBlock giveUp);
     LValue lowerCaseIfItIsAlready(LValue string, LBasicBlock giveUp);
     void setLengthOfArray(LValue array, LValue length, LBasicBlock giveUp); // Both are values. To no more than it is.
-    void addFieldOfStruct(LValue object, LValue valueAsHeld, LValue slot, LBasicBlock giveUp);
+    void addTypedField(LValue object, LValue storedValue, LValue slot, LBasicBlock giveUp);
     LValue isOriginalArray(LValue cell); // A boolean: see Instance::structureIDsOfOriginalArrays.
 
     B3::Procedure& m_proc;

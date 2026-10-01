@@ -204,13 +204,13 @@ void ClassesOfProgram::noteClosedMethod(uint32_t classType, UniquedStringImpl* n
         m_closedMethods.add(function);
 }
 
-void ClassesOfProgram::noteThisIn(UnlinkedCodeBlock* code, uint16_t family)
+void ClassesOfProgram::noteThisIn(UnlinkedCodeBlock* code, uint16_t layoutID)
 {
     if (!code)
         return;
     Locker locker { m_lock };
-    auto result = m_familyOfThis.add(code, family);
-    if (!result.isNewEntry && result.iterator->value != family)
+    auto result = m_layoutIDOfThis.add(code, layoutID);
+    if (!result.isNewEntry && result.iterator->value != layoutID)
         result.iterator->value = 0;
 }
 
@@ -326,7 +326,7 @@ void ModuleHints::prove()
 {
     for (auto& entry : m_variables) {
         Variable& variable = entry.value;
-        variable.function.isProven = variable.binding.holdsWhatItWasDeclaredWith && variable.numberOfFunctions == 1 && variable.isDescribed;
+        variable.function.isProven = variable.binding.keepsDeclaredValue && variable.numberOfFunctions == 1 && variable.isDescribed;
         variable.function.escapes = variable.binding.escapes;
         variable.function.isVisibleFromOutside = variable.binding.isVisibleFromOutside;
         // (It is strict code, which nobody can ask what it was called as. Function.prototype.caller can ask the other kind.)

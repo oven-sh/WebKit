@@ -149,7 +149,7 @@ enum class Escape : uint8_t {
     PassedInList,
     PassedInTailCall,
     Constructed,
-    HeldByWhatEscapes,
+    StoredInEscapingObject,
     ClosureLetsScopeOut,
     Iterated,
     Converted,
@@ -176,9 +176,9 @@ struct Use {
 // EXPERIMENT: Options::aotFacts(). See ~/code/tmp/aot/tsfacts/tofacts.ts.
 enum : unsigned { FactField = 1, FactDirect, FactBuiltin, FactBody, FactArray, FactElement, FactWrite };
 inline bool isFact(unsigned mask) { return mask >= 1u << 28; }
-inline Type typeHeldByFact(unsigned holds)
+inline Type typeHeldByFact(unsigned fieldType)
 {
-    switch (holds) {
+    switch (fieldType) {
     case 2:
         return TNumber;
     case 3:
@@ -226,26 +226,26 @@ struct Node {
     uint16_t firstWithout { 0 };
     uint16_t lastWithout { 0 };
     // GuardKind::Field, with Options::aotTypesFields(): what the slot holds (TypeTable::Holds). No kinds: anything.
-    uint16_t heldKinds { 0 };
-    uint16_t heldFirst { 0 };
-    uint16_t heldLast { 0 };
+    uint16_t fieldTypeKinds { 0 };
+    uint16_t fieldTypeFirst { 0 };
+    uint16_t fieldTypeLast { 0 };
     // Whether the value is certain to have been born as one of those: by its type, or because it is what got past a test for no more than those.
-    bool isKnownToBeBornWithin(uint16_t first, uint16_t last) const
+    bool hasLayoutInRange(uint16_t first, uint16_t last) const
     {
         for (const Node* node = this; node->kind == NodeKind::Narrow && node->narrowedTo; node = node->uses[0].node) {
             if (node->firstLayout >= first && node->lastLayout <= last)
                 return true;
         }
-        // (Of a family that is open it says no such thing: Lowering::structToLookIn().)
-        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::aotAuditsTypes() && isTakenAtItsWord)
+        // (Of a family that is open it says no such thing: Lowering::fieldStorageFor().)
+        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::aotAuditsTypes() && isTrusted)
             return true;
-        return type && isSubtype(type, TCell) && isBornWithinIfCell(first, last);
+        return type && isSubtype(type, TCell) && hasLayoutInRangeIfCell(first, last);
     }
     // Likewise, if it is a cell at all: it may be undefined, or null, or a number.
-    bool isBornWithinIfCell(uint16_t first, uint16_t last) const
+    bool hasLayoutInRangeIfCell(uint16_t first, uint16_t last) const
     {
         if (Type cells = type & TCell; cells && isSubtype(cells, TFinalObject)) {
-            auto layouts = layoutsBornAs(cells);
+            auto layouts = layoutRangeOf(cells);
             if (layouts.lowest >= first && layouts.highest <= last)
                 return true;
         }
@@ -253,10 +253,10 @@ struct Node {
         const Node* node = this;
         while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz))
             node = node->uses[0].node;
-        if (node->kind != NodeKind::Bytecode || !node->guard || node->guard->guardKind != GuardKind::Field || !node->guard->heldFirst)
+        if (node->kind != NodeKind::Bytecode || !node->guard || node->guard->guardKind != GuardKind::Field || !node->guard->fieldTypeFirst)
             return false;
         constexpr unsigned notCells = MaskUndefined | MaskNull | MaskBoolean | MaskNumber;
-        return !(node->guard->heldKinds & ~(notCells | MaskOtherObject)) && node->guard->heldFirst >= first && node->guard->heldLast <= last;
+        return !(node->guard->fieldTypeKinds & ~(notCells | MaskOtherObject)) && node->guard->fieldTypeFirst >= first && node->guard->fieldTypeLast <= last;
     }
     unsigned expectedMask { 0 }; // op_get_by_val: the mask of the op_check_type that what it gets goes to next, if it does.
     GuardKind guardKind { GuardKind::Whole };
@@ -272,7 +272,7 @@ struct Node {
     bool isElided { false }; // Nothing wants its value, and getting that does nothing else. It is not lowered.
     // An op_get_by_id of a closed method whose value nothing wants: all that is left of it is that it throws if there is no object to read from.
     bool isReadOnlyToBeCalled { false };
-    bool isTakenAtItsWord { false }; // op_type_tag of a family: what it is given is of the family (TypeTable::isTakenAtItsWord()). If not, it may be anything: Lowering::structToLookIn().
+    bool isTrusted { false }; // op_type_tag of a family: what it is given is of the family (TypeTable::isTrusted()). If not, it may be anything: Lowering::fieldStorageFor().
     // promoteEnvironments(). An op_create_lexical_environment that is no object: its variables are the function's own.
     bool isPromoted { false };
     // An op_get_from_scope or op_put_to_scope of a variable of such an environment: which, and where in it.
@@ -452,7 +452,7 @@ public:
     };
     Vector<InlineFrame> inlineFrames; // From 1. Of the outermost.
     // Everything that is left of the other but for what it knows.
-    void adopt(std::unique_ptr<Graph>&&, InlineFrame);
+    void convertToTypedLayout(std::unique_ptr<Graph>&&, InlineFrame);
     void computeOrderOfBlocks(); // m_rpo, after blocks have been added.
     const ModuleLinkage* linkage() const { return m_linkage; }
     // Of a closure that was made where its scope is at hand: that. It is what its op_get_scope gets (and is among that node's uses).
@@ -535,12 +535,12 @@ public:
     static CallOperands operandsOfCall(const JSInstruction*); // op_call or op_call_ignore_result
     // What the source says of the instruction that is there (op_type_tag), or of the one that the node is. None: 0.
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
-    // TypeTable::hasStructs(): the field that an op_get_by_id or op_put_by_id gets at without asking, if it does.
-    static std::optional<TypeTable::Field> fieldOfStructGotAtBy(const Node*);
+    // TypeTable::tableHasTypedFields(): the field that an op_get_by_id or op_put_by_id gets at without asking, if it does.
+    static std::optional<TypeTable::Field> typedFieldAccessedBy(const Node*);
     static bool isThisOfWhatAnybodyMayCall(const Node*);
     // Of structs: the field of that name of the family that the value is proven to have been born into, if it is proven to have been born into one.
-    static std::optional<TypeTable::Field> fieldOfWhatIsBornAs(const Node* base, UniquedStringImpl* name);
-    static uint16_t familyOfNewObject(const Node*); // TypeTable::hasStructs(): what an op_new_object makes is born as that. Zero: nothing.
+    static std::optional<TypeTable::Field> fieldOfTypedBase(const Node* base, UniquedStringImpl* name);
+    static uint16_t layoutIDOfNewObject(const Node*); // TypeTable::tableHasTypedFields(): what an op_new_object makes is born as that. Zero: nothing.
     // ---- Classes (ClassesOfProgram).
     // A call of @noteClass: the type that says what class it is (TypeTable::isClass()). Zero: it is no such call, or nothing is said.
     static uint32_t classNotedBy(const Node*);
@@ -548,7 +548,7 @@ public:
     // An op_get_by_id that reads a closed method: the number of the function. It gives that and nothing else. Zero: it is not one.
     static uint32_t closedMethodReadBy(const Node*);
     // What `this` is born as in this code, which is that of a constructor, a method or an initializer of a class. Zero: there is no telling.
-    uint16_t familyOfThis() const;
+    uint16_t layoutIDOfThis() const;
     Type typeOfThisOnEntry() const;
     static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }
     // The properties that an object literal starts out with: functor(index of the identifier, register the value is in).
@@ -775,7 +775,7 @@ public:
         Vector<Node*, 2> tests; // Whether it is null or undefined. It is not.
     };
     // family: what it was born as, if anything.
-    std::optional<OnlyRead> isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t family) const;
+    std::optional<OnlyRead> isOnlyRead(Node* object, std::span<UniquedStringImpl* const> names, uint16_t layoutID) const;
 
 private:
     UncheckedKeyHashMap<Node*, Vector<Node*, 2>> m_users;

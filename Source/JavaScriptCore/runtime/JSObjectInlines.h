@@ -500,47 +500,47 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
     ASSERT(!parseIndex(propertyName));
 
-    bool isFieldOfStruct = false;
-    uint32_t heldByField = 0;
+    bool isTypedField = false;
+    uint32_t packedFieldType = 0;
 #if USE(BUN_JSC_ADDITIONS)
-    if (uint16_t bornAs = this->structure()->bornAs(); bornAs && SlotsOfBornObjects::areStructs()) [[unlikely]] {
-        // (Where the slots are verified it is looked into once it is known where the property is: isRefusedWhereItGoes.)
-        if (auto* named = SlotsOfBornObjects::isVerified(bornAs) ? nullptr : SlotsOfBornObjects::named(bornAs, propertyName.uid())) {
+    if (uint16_t typedLayoutID = this->structure()->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
+        // (Where the slots are verified it is looked into once it is known where the property is: isRejectedAtOffset.)
+        if (auto* field = TypedLayoutTable::usesFieldIDs(typedLayoutID) ? nullptr : TypedLayoutTable::findField(typedLayoutID, propertyName.uid())) {
             if (mode == PutModeDefineOwnProperty && newAttributes) {
-                if (!SlotsOfBornObjects::audits())
+                if (!TypedLayoutTable::isAuditing())
                     return TypedFieldError;
-                SlotsOfBornObjects::audit("a field is made something other than a plain property"_s, bornAs, this);
+                TypedLayoutTable::reportViolation("a field is made something other than a plain property"_s, typedLayoutID, this);
             }
-            if (SlotsOfBornObjects::says(*named, value) == SlotsOfBornObjects::Says::Refuses)
+            if (TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected)
                 return TypedFieldError;
             // (Nobody remembers how it went, so everybody who does not know the types gets here every time.)
-            isFieldOfStruct = true;
-            value = SlotsOfBornObjects::asHeld(*named, value);
-            if (auto* held = SlotsOfBornObjects::heldBy(*named))
-                heldByField = held->kinds | static_cast<uint32_t>(held->first) << 16;
+            isTypedField = true;
+            value = TypedLayoutTable::toFieldRepresentation(*field, value);
+            if (auto* fieldType = TypedLayoutTable::fieldTypeOf(*field))
+                packedFieldType = fieldType->kinds | static_cast<uint32_t>(fieldType->first) << 16;
         }
     } else if constexpr (mode == PutModeDefineOwnProperty) {
-        if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && bornAs) [[unlikely]]
-            takeOutOfTheSlotItWasBornIn(vm, propertyName);
+        if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && typedLayoutID) [[unlikely]]
+            evictTypedField(vm, propertyName);
     }
     // Of a family whose slots are verified. The Structure that the object has, or is about to have, says which field is at the offset, if any is: what is stored there is what that holds.
     // (What is not in its slot is looked at by whoever reads it. What is made an accessor is no longer said to be in its slot.)
-    auto isRefusedWhereItGoes = [&](Structure* itsStructure, PropertyOffset where) {
-        if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFields || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+    auto isRejectedAtOffset = [&](Structure* itsStructure, PropertyOffset where) {
+        if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFieldIDs || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             return false;
         // (Without a layout class the table holds property name ids, which constrain nothing: VM::aotPropertyNameIDs.)
-        if (!itsStructure->bornAs()) [[likely]]
+        if (!itsStructure->typedLayoutID()) [[likely]]
             return false;
-        uint16_t id = itsStructure->fieldInSlot(where);
-        if (!id || id == Structure::noTellingWhichField) [[likely]]
+        uint16_t id = itsStructure->fieldIDInSlot(where);
+        if (!id || id == Structure::ambiguousFieldID) [[likely]]
             return false;
-        auto& field = SlotsOfBornObjects::fieldWithId(where, id);
-        if (SlotsOfBornObjects::says(field, value) == SlotsOfBornObjects::Says::Refuses)
+        auto& field = TypedLayoutTable::fieldWithID(where, id);
+        if (TypedLayoutTable::checkStore(field, value) == TypedLayoutTable::StoreCheck::Rejected)
             return true;
-        isFieldOfStruct = true;
-        value = SlotsOfBornObjects::asHeld(field, value);
-        if (auto* held = SlotsOfBornObjects::heldBy(field))
-            heldByField = held->kinds | static_cast<uint32_t>(held->first) << 16;
+        isTypedField = true;
+        value = TypedLayoutTable::toFieldRepresentation(field, value);
+        if (auto* fieldType = TypedLayoutTable::fieldTypeOf(field))
+            packedFieldType = fieldType->kinds | static_cast<uint32_t>(fieldType->first) << 16;
         return false;
     };
 #endif
@@ -576,15 +576,15 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     return ReadonlyPropertyChangeError;
             }
 
-            bool slotSaysWhatItHolds = false;
+            bool slotIsTyped = false;
 #if USE(BUN_JSC_ADDITIONS)
-            if (uint16_t bornAs = structure->bornAs(); bornAs && isInlineOffset(offset)) {
-                auto says = SlotsOfBornObjects::says(bornAs, offset, value);
-                if (says == SlotsOfBornObjects::Says::Refuses) [[unlikely]] {
-                    takeOutOfTheSlotItWasBornIn(vm, propertyName);
+            if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
+                auto checkStore = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+                if (checkStore == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                    evictTypedField(vm, propertyName);
                     return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
                 }
-                slotSaysWhatItHolds = says == SlotsOfBornObjects::Says::Admits;
+                slotIsTyped = checkStore == TypedLayoutTable::StoreCheck::Allowed;
             }
 #endif
             putDirectOffset(vm, offset, value);
@@ -597,12 +597,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
                 if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
-            } else if (isFieldOfStruct) {
-                if (heldByField)
-                    slot.setExistingFieldOfStruct(this, offset, heldByField);
+            } else if (isTypedField) {
+                if (packedFieldType)
+                    slot.setExistingTypedField(this, offset, packedFieldType);
                 else
                     slot.setExistingProperty(this, offset);
-            } else if (!slotSaysWhatItHolds) {
+            } else if (!slotIsTyped) {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
                 slot.setExistingProperty(this, offset);
             }
@@ -611,8 +611,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         validateOffset(offset);
         putDirectOffset(vm, offset, value);
-        if (heldByField)
-            slot.setNewFieldOfStruct(this, offset, heldByField);
+        if (packedFieldType)
+            slot.setNewTypedField(this, offset, packedFieldType);
         else
             slot.setNewProperty(this, offset);
         if (attributes & PropertyAttribute::ReadOnly)
@@ -627,7 +627,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, newAttributes, offset);
         if (newStructure) {
 #if USE(BUN_JSC_ADDITIONS)
-            if (isRefusedWhereItGoes(newStructure, offset)) [[unlikely]]
+            if (isRejectedAtOffset(newStructure, offset)) [[unlikely]]
                 return TypedFieldError;
 #endif
             Butterfly* newButterfly = butterfly();
@@ -645,8 +645,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             putDirectOffset(vm, offset, value);
             setStructure(vm, newStructure);
-            if (heldByField)
-                slot.setNewFieldOfStruct(this, offset, heldByField);
+            if (packedFieldType)
+                slot.setNewTypedField(this, offset, packedFieldType);
             else
                 slot.setNewProperty(this, offset);
             if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
@@ -661,17 +661,17 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (mode == PutModePut && (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor))
             return ReadonlyPropertyChangeError;
 
-        bool slotSaysWhatItHolds = false;
+        bool slotIsTyped = false;
 #if USE(BUN_JSC_ADDITIONS)
-        if (isRefusedWhereItGoes(structure, offset)) [[unlikely]]
+        if (isRejectedAtOffset(structure, offset)) [[unlikely]]
             return TypedFieldError;
-        if (uint16_t bornAs = structure->bornAs(); bornAs && isInlineOffset(offset)) {
-            auto says = SlotsOfBornObjects::says(bornAs, offset, value);
-            if (says == SlotsOfBornObjects::Says::Refuses) [[unlikely]] {
-                takeOutOfTheSlotItWasBornIn(vm, propertyName);
+        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
+            auto checkStore = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+            if (checkStore == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                evictTypedField(vm, propertyName);
                 return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
             }
-            slotSaysWhatItHolds = says == SlotsOfBornObjects::Says::Admits;
+            slotIsTyped = checkStore == TypedLayoutTable::StoreCheck::Allowed;
         }
 #endif
         structure->didReplaceProperty(offset);
@@ -686,12 +686,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
             if (isPrototypeThatMegamorphicCacheGoesBy()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
-        } else if (isFieldOfStruct) {
-            if (heldByField)
-                slot.setExistingFieldOfStruct(this, offset, heldByField);
+        } else if (isTypedField) {
+            if (packedFieldType)
+                slot.setExistingTypedField(this, offset, packedFieldType);
             else
                 slot.setExistingProperty(this, offset);
-        } else if (!slotSaysWhatItHolds) {
+        } else if (!slotIsTyped) {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
             slot.setExistingProperty(this, offset);
         }
@@ -709,7 +709,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
     Structure* newStructure = Structure::addNewPropertyTransition(vm, structure, propertyName, newAttributes, offset, slot.context(), &deferredWatchpointFire, true);
 #if USE(BUN_JSC_ADDITIONS)
-    if (isRefusedWhereItGoes(newStructure, offset)) [[unlikely]]
+    if (isRejectedAtOffset(newStructure, offset)) [[unlikely]]
         return TypedFieldError;
 #endif
     
@@ -728,8 +728,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
     putDirectOffset(vm, offset, value);
     setStructure(vm, newStructure);
-    if (heldByField)
-        slot.setNewFieldOfStruct(this, offset, heldByField);
+    if (packedFieldType)
+        slot.setNewTypedField(this, offset, packedFieldType);
     else
         slot.setNewProperty(this, offset);
     if (newAttributes & PropertyAttribute::ReadOnly)

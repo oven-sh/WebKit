@@ -69,7 +69,7 @@ std::optional<TypeTable::Field> Lowering::fieldAccessedBy(Node* node, unsigned i
     }
     if (node->guard)
         return std::nullopt;
-    return Graph::fieldOfWhatIsBornAs(node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base), name);
+    return Graph::fieldOfTypedBase(node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base), name);
 }
 
 LValue Lowering::layoutOf(LValue cell)
@@ -77,12 +77,12 @@ LValue Lowering::layoutOf(LValue cell)
     return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfKnownShape()));
 }
 
-LValue Lowering::layoutBornAs(LValue cell)
+LValue Lowering::loadTypedLayoutID(LValue cell)
 {
-    return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfBornAs()));
+    return m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(cell), Structure::offsetOfTypedLayoutID()));
 }
 
-TypedPointer Lowering::slotOfStruct(LValue object, const TypeTable::Field& field)
+TypedPointer Lowering::addressOfField(LValue object, const TypeTable::Field& field)
 {
     if (field.isInObject())
         return m_out.address(m_heaps.properties.atAnyNumber(), object, JSObject::offsetOfInlineStorage() + field.slot * sizeof(EncodedJSValue));
@@ -90,11 +90,11 @@ TypedPointer Lowering::slotOfStruct(LValue object, const TypeTable::Field& field
     return m_out.address(m_heaps.properties.atAnyNumber(), butterfly, offsetInButterfly(firstOutOfLineOffset + (field.slot - field.inlineSlots)) * static_cast<ptrdiff_t>(sizeof(EncodedJSValue)));
 }
 
-LValue Lowering::asHeld(Node* valueNode, LValue value, TypeTable::Holds holds)
+LValue Lowering::toFieldRepresentation(Node* valueNode, LValue value, TypeTable::FieldType fieldType)
 {
-    if (holds.atoms && TypeTable::areStructs())
-        makeAtomIfString(valueNode, value);
-    if (!holds.saysSomething() || !TypeTable::areStructs() || !mayBe(valueNode->type, TInt32))
+    if (fieldType.atoms && TypeTable::hasTypedFields())
+        atomizeIfString(valueNode, value);
+    if (!fieldType.isConstrained() || !TypeTable::hasTypedFields() || !mayBe(valueNode->type, TInt32))
         return value;
     if (isSubtype(valueNode->type, TNumber))
         return boxDouble(lowDouble(valueNode));
@@ -112,7 +112,7 @@ auto Lowering::fieldInHand(Node* base, const TypeTable::Field& field) const -> c
 {
     base = whatIsHandedOn(base);
     for (auto& inHand : m_fieldsInHand) {
-        if (inHand.base == base && inHand.family == field.first && inHand.slot == field.slot && inHand.id == field.id)
+        if (inHand.base == base && inHand.layoutID == field.first && inHand.slot == field.slot && inHand.id == field.id)
             return &inHand;
     }
     return nullptr;
@@ -123,7 +123,7 @@ void Lowering::noteFieldInHand(Node* base, const TypeTable::Field& field, LValue
     base = whatIsHandedOn(base);
     // (Two values may be the one object. An object is of one family for life.)
     m_fieldsInHand.removeAllMatching([&](auto& inHand) {
-        return inHand.family == field.first && inHand.slot == field.slot && (isWritten || inHand.base == base);
+        return inHand.layoutID == field.first && inHand.slot == field.slot && (isWritten || inHand.base == base);
     });
     m_fieldsInHand.append({ base, field.first, field.slot, field.id, rep, value, asJSValue });
 }
@@ -248,7 +248,7 @@ bool Lowering::isThisOfWhatAnybodyMayCall(Node* node)
     return Graph::isThisOfWhatAnybodyMayCall(node);
 }
 
-void Lowering::assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family)
+void Lowering::checkTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID)
 {
     // Only what is born gets to be of the type, going by the text of the program. Whoever gets here has not been able to prove it, so it is looked into: what code without types puts into
     // an array that it was handed, say, is not in that text.
@@ -259,18 +259,18 @@ void Lowering::assertBornAs(Node* onBehalfOf, Node* valueNode, LValue value, uin
         m_out.branch(isCell(value), usually(cellCase), rarely(isNot));
         m_out.appendTo(cellCase);
     }
-    m_out.branch(m_out.equal(layoutBornAs(value), m_out.constInt32(family)), usually(is), rarely(isNot));
+    m_out.branch(m_out.equal(loadTypedLayoutID(value), m_out.constInt32(layoutID)), usually(is), rarely(isNot));
     m_out.appendTo(isNot);
-    coldCall(onBehalfOf, Entry::operationAOTAssertBornAs, value, m_out.constInt32(family));
+    coldCall(onBehalfOf, Entry::operationAOTCheckTypedLayout, value, m_out.constInt32(layoutID));
     m_out.jump(is);
     m_out.appendTo(is);
 }
 
-LValue Lowering::viewFoundFor(Node* node, uint16_t family)
+LValue Lowering::cachedCoercionFor(Node* node, uint16_t layoutID)
 {
     for (;;) {
-        if (node->isBytecode(op_type_tag) && node->firstLayout == family) {
-            if (auto it = m_views.find(node); it != m_views.end())
+        if (node->isBytecode(op_type_tag) && node->firstLayout == layoutID) {
+            if (auto it = m_coercions.find(node); it != m_coercions.end())
                 return it->value;
         }
         if (node->kind != NodeKind::Narrow && !node->isBytecode(op_check_type) && !node->isBytecode(op_check_tdz) && !node->isBytecode(op_type_tag))
@@ -280,7 +280,7 @@ LValue Lowering::viewFoundFor(Node* node, uint16_t family)
 }
 
 // (What an object was born as is for life, so this is good for as long as the value is.)
-LValue Lowering::viewAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t family)
+LValue Lowering::coerceToTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID)
 {
     LBasicBlock isNot = newColdBlock();
     LBasicBlock done = m_out.newBlock();
@@ -290,51 +290,51 @@ LValue Lowering::viewAs(Node* onBehalfOf, Node* valueNode, LValue value, uint16_
         m_out.appendTo(cellCase);
     }
     ValueFromBlock itself = m_out.anchor(value);
-    m_out.branch(m_out.equal(layoutBornAs(value), m_out.constInt32(family)), usually(done), rarely(isNot));
+    m_out.branch(m_out.equal(loadTypedLayoutID(value), m_out.constInt32(layoutID)), usually(done), rarely(isNot));
     m_out.appendTo(isNot);
-    ValueFromBlock whatItIsSeenAs = m_out.anchor(coldCallForValue(onBehalfOf, Entry::operationAOTViewAs, value, m_out.constInt32(family)));
+    ValueFromBlock whatItIsSeenAs = m_out.anchor(coldCallForValue(onBehalfOf, Entry::operationAOTCoerceToTypedLayout, value, m_out.constInt32(layoutID)));
     m_out.jump(done);
     m_out.appendTo(done);
     return m_out.phi(Int64, itself, whatItIsSeenAs);
 }
 
-Lowering::StructToLookIn Lowering::structToLookIn(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t family)
+Lowering::FieldStorage Lowering::fieldStorageFor(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t layoutID)
 {
-    if (baseNode->isKnownToBeBornWithin(family, family))
+    if (baseNode->hasLayoutInRange(layoutID, layoutID))
         return { base, false };
     // (An access whose base is in a register that is not followed has no op_type_tag ahead of it, and says so itself.)
     uint32_t tag = Graph::typeTagOf(onBehalfOf);
-    if (!TypeTable::shared()->isOpen(family) || (tag && TypeTable::shared()->isTakenAtItsWord(tag) && TypeTable::shared()->familyOf(tag) == family && !isThisOfWhatAnybodyMayCall(baseNode))) {
-        assertBornAs(onBehalfOf, baseNode, base, family);
+    if (!TypeTable::shared()->isOpen(layoutID) || (tag && TypeTable::shared()->isTrusted(tag) && TypeTable::shared()->layoutIDOf(tag) == layoutID && !isThisOfWhatAnybodyMayCall(baseNode))) {
+        checkTypedLayout(onBehalfOf, baseNode, base, layoutID);
         return { base, false };
     }
-    if (LValue view = viewFoundFor(baseNode, family))
+    if (LValue view = cachedCoercionFor(baseNode, layoutID))
         return { view, true };
-    return { viewAs(onBehalfOf, baseNode, base, family), true };
+    return { coerceToTypedLayout(onBehalfOf, baseNode, base, layoutID), true };
 }
 
 // Zero for what is not a cell. It is for life, so once it has been asked of a value it need not be asked again: not after a call, and not after a store.
-LValue Lowering::layoutBornAsOrNone(Node* node, LValue value)
+LValue Lowering::loadTypedLayoutIDOrZero(Node* node, LValue value)
 {
     while (node->kind == NodeKind::Narrow || node->isBytecode(op_check_type) || node->isBytecode(op_check_tdz))
         node = node->uses[0].node;
-    if (auto it = m_layoutsBornAs.find(node); it != m_layoutsBornAs.end() && it->value.first == m_block)
+    if (auto it = m_loadedLayoutIDs.find(node); it != m_loadedLayoutIDs.end() && it->value.first == m_block)
         return it->value.second;
     LValue result;
     if (isSubtype(node->type, TCell))
-        result = layoutBornAs(value);
+        result = loadTypedLayoutID(value);
     else {
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
         ValueFromBlock none = m_out.anchor(m_out.int32Zero);
         m_out.branch(isCell(value), usually(cellCase), rarely(continuation));
         m_out.appendTo(cellCase);
-        ValueFromBlock ofCell = m_out.anchor(layoutBornAs(value));
+        ValueFromBlock ofCell = m_out.anchor(loadTypedLayoutID(value));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         result = m_out.phi(Int32, none, ofCell);
     }
-    m_layoutsBornAs.set(node, std::pair { m_block, result });
+    m_loadedLayoutIDs.set(node, std::pair { m_block, result });
     return result;
 }
 
@@ -372,9 +372,9 @@ void Lowering::lowerGetById(Node* node)
         // An object that a literal of the program made says how it is laid out, and the type says which layouts have the property, and
         // where. Whatever else the base may be, in spite of its type, is dealt with as if nothing had been said.
         LValue base = lowJSValue(baseNode);
-        if (Options::aotTypesFields() && TypeTable::areStructs() && field->id) {
+        if (Options::aotTypesFields() && TypeTable::hasTypedFields() && field->id) {
             // The slots of the family are verified: it is for the object's Structure to say whether the field is in its slot. Whatever is known of the object.
-            bool undefinedWillDo = field->isOptional || !field->holds.saysSomething() || (field->holds.kinds & MaskUndefined);
+            bool undefinedWillDo = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
             Stub stub = static_cast<Stub>(static_cast<unsigned>(undefinedWillDo ? Stub::ReadSlotOrUndefined0 : Stub::ReadSlot0) + field->slot);
             auto throughStub = [&]() -> LValue {
                 return callStub(stub, Int64, { { base, GPRInfo::argumentGPR0 } }, { { GPRInfo::argumentGPR1, field->id } }, StubClobbers::WhatCallsDo, node);
@@ -415,7 +415,7 @@ void Lowering::lowerGetById(Node* node)
                 m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
                 m_out.appendTo(cellCase);
             }
-            LValue whichIsThere = m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(base), Structure::offsetOfFieldInSlot() + field->slot * sizeof(uint16_t)));
+            LValue whichIsThere = m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(base), Structure::offsetOfFieldIDInSlot() + field->slot * sizeof(uint16_t)));
             m_out.branch(m_out.equal(whichIsThere, m_out.constInt32(field->id)), usually(isThere), rarely(otherwise));
             m_out.appendTo(isThere);
             ValueFromBlock found = m_out.anchor(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue))));
@@ -429,9 +429,9 @@ void Lowering::lowerGetById(Node* node)
             noteFieldInHand(baseNode, *field, value, Rep::JSValue, value, false);
             return;
         }
-        if (Options::aotTypesFields() && TypeTable::areStructs()) {
+        if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
             // The property is in its slot, or the object has none.
-            auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
+            auto [storageOfBase, mayStandForSomethingElse] = fieldStorageFor(node, baseNode, base, field->first);
             if (!mayStandForSomethingElse) {
                 m_nodeLeavesFieldsAlone = true;
                 if (const FieldInHand* inHand = fieldInHand(baseNode, *field)) {
@@ -445,8 +445,8 @@ void Lowering::lowerGetById(Node* node)
                     return;
                 }
             }
-            LValue whatIsThere = m_out.load64(slotOfStruct(structOfBase, *field));
-            bool undefinedWillDo = field->isOptional || !field->holds.saysSomething() || (field->holds.kinds & MaskUndefined);
+            LValue whatIsThere = m_out.load64(addressOfField(storageOfBase, *field));
+            bool undefinedWillDo = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
             if (mayStandForSomethingElse) {
                 RELEASE_ASSERT(field->isInObject());
                 LBasicBlock theLongWay = newColdBlock();
@@ -458,7 +458,7 @@ void Lowering::lowerGetById(Node* node)
                     m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(nothingIsThere));
                     m_out.appendTo(nothingIsThere);
                     results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
-                    m_out.branch(m_out.equal(structOfBase, base), usually(continuation), rarely(theLongWay));
+                    m_out.branch(m_out.equal(storageOfBase, base), usually(continuation), rarely(theLongWay));
                 } else
                     m_out.branch(m_out.notZero64(whatIsThere), usually(continuation), rarely(theLongWay));
                 m_out.appendTo(theLongWay);
@@ -478,7 +478,7 @@ void Lowering::lowerGetById(Node* node)
                 LBasicBlock isThere = m_out.newBlock();
                 m_out.branch(m_out.notZero64(whatIsThere), usually(isThere), rarely(isMissing));
                 m_out.appendTo(isMissing);
-                coldCall(node, Entry::operationAOTCheckType, m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt32(field->holds.kinds));
+                coldCall(node, Entry::operationAOTCheckType, m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt32(field->fieldType.kinds));
                 m_out.unreachable();
                 m_out.appendTo(isThere);
             }
@@ -486,19 +486,19 @@ void Lowering::lowerGetById(Node* node)
             noteFieldInHand(baseNode, *field, node->lowered, node->rep(), whatIsThere, false);
             return;
         }
-        bool resultIsTyped = Options::aotTypesFields() && field->holds.saysSomething();
+        bool resultIsTyped = Options::aotTypesFields() && field->fieldType.isConstrained();
         // (undefined has to be something the field is said to hold.)
-        bool testsForLack = field->firstWithout && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics() && (!resultIsTyped || (field->holds.kinds & MaskUndefined));
+        bool testsForLack = field->firstWithout && (Options::aotShapes() & 8) && Options::useImmutableIntrinsics() && (!resultIsTyped || (field->fieldType.kinds & MaskUndefined));
         LBasicBlock has = m_out.newBlock();
         LBasicBlock hasNot = m_out.newBlock();
         LBasicBlock mayLack = m_out.newBlock();
         LBasicBlock otherwise = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
-        if (baseNode->isKnownToBeBornWithin(field->first, field->last)) {
+        if (baseNode->hasLayoutInRange(field->first, field->last)) {
             m_out.jump(has);
         } else {
-            // What it was born as, whatever has become of it since: the property is where it was then, or nothing is (Structure::bornAs()).
-            LValue layout = layoutBornAsOrNone(baseNode, base);
+            // What it was born as, whatever has become of it since: the property is where it was then, or nothing is (Structure::typedLayoutID()).
+            LValue layout = loadTypedLayoutIDOrZero(baseNode, base);
             if (!testsForLack)
                 m_out.branch(isOneOf(layout, field->first, field->last), usually(has), rarely(otherwise));
             else {
@@ -531,10 +531,10 @@ void Lowering::lowerGetById(Node* node)
         if (resultIsTyped) {
             // What comes next takes it for what the field is said to hold.
             LBasicBlock isThat = m_out.newBlock();
-            LBasicBlock notSettled = m_out.newBlock();
-            emitTypeTests(nullptr, TTop, readTheLongWay, field->holds.kinds, isThat, notSettled);
-            m_out.appendTo(notSettled);
-            vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, readTheLongWay, m_out.constInt32(field->holds.kinds));
+            LBasicBlock undecided = m_out.newBlock();
+            emitTypeTests(nullptr, TTop, readTheLongWay, field->fieldType.kinds, isThat, undecided);
+            m_out.appendTo(undecided);
+            vmCall(node, Void, Entry::operationAOTCheckType, m_globalObject, readTheLongWay, m_out.constInt32(field->fieldType.kinds));
             m_out.jump(isThat);
             m_out.appendTo(isThat);
         }
@@ -635,22 +635,22 @@ void Lowering::lowerPutById(Node* node)
         // As for a read. A property of such a layout is one that can be written, like any that a literal makes.
         LBasicBlock cellCase = m_out.newBlock();
         LBasicBlock has = m_out.newBlock();
-        LBasicBlock otherwise = Options::aotTypesFields() && TypeTable::areStructs() ? newColdBlock() : m_out.newBlock();
+        LBasicBlock otherwise = Options::aotTypesFields() && TypeTable::hasTypedFields() ? newColdBlock() : m_out.newBlock();
         afterTypedStore = m_out.newBlock();
-        if (Options::aotTypesFields() && TypeTable::areStructs()) {
-            auto [structOfBase, mayStandForSomethingElse] = structToLookIn(node, baseNode, base, field->first);
+        if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
+            auto [storageOfBase, mayStandForSomethingElse] = fieldStorageFor(node, baseNode, base, field->first);
             // What the slot does not hold goes the long way, where it is made to be that or refused. So does what makes the object have a property it did not have.
-            bool mayNotBeHeld = branchUnlessHeld(valueNode, value, field->holds, otherwise);
-            TypedPointer slotOfField = slotOfStruct(structOfBase, *field);
-            LValue valueAsHeld = asHeld(valueNode, value, field->holds);
+            bool mayBeRejected = branchUnlessAccepted(valueNode, value, field->fieldType, otherwise);
+            TypedPointer slotOfField = addressOfField(storageOfBase, *field);
+            LValue storedValue = toFieldRepresentation(valueNode, value, field->fieldType);
             // (If it may not be what the slot holds, what is here is not on every way to what comes next.)
-            if (!mayStandForSomethingElse && !mayNotBeHeld) {
+            if (!mayStandForSomethingElse && !mayBeRejected) {
                 // (Giving an object a field it did not have may take a call. It is of the engine's own code, and it does nothing to any other field.)
                 m_nodeLeavesFieldsAlone = true;
                 if (valueNode->type && isSubtype(valueNode->type, TNumber))
-                    noteFieldInHand(baseNode, *field, lowDouble(valueNode), Rep::Double, valueAsHeld, true);
+                    noteFieldInHand(baseNode, *field, lowDouble(valueNode), Rep::Double, storedValue, true);
                 else
-                    noteFieldInHand(baseNode, *field, valueAsHeld, Rep::JSValue, valueAsHeld, true);
+                    noteFieldInHand(baseNode, *field, storedValue, Rep::JSValue, storedValue, true);
             }
             // (What is no struct is seen as one with nothing in it, and nothing is ever put there.)
             if (field->isOptional || field->mayBeEmpty || mayStandForSomethingElse) {
@@ -662,18 +662,18 @@ void Lowering::lowerPutById(Node* node)
                     // The object is given the field. What it is of afterwards is what the last of its kind to be given it was (Instance::addsOfFields).
                     m_out.appendTo(isEmpty);
                     if (mayStandForSomethingElse)
-                        orElse(m_out.equal(structOfBase, base), otherwise);
+                        orElse(m_out.equal(storageOfBase, base), otherwise);
                     if (isCompact())
-                        orElse(m_out.notNull(callHelper(Stub::HelperAddField, { base, valueAsHeld, m_out.constInt32(field->slot) })), otherwise);
+                        orElse(m_out.notNull(callHelper(Stub::HelperAddField, { base, storedValue, m_out.constInt32(field->slot) })), otherwise);
                     else
-                        addFieldOfStruct(base, valueAsHeld, m_out.constInt32(field->slot), otherwise);
+                        addTypedField(base, storedValue, m_out.constInt32(field->slot), otherwise);
                     // (Whatever the value is: the object refers to another Structure now.)
                     storeBarrier(base);
                     m_out.jump(afterTypedStore);
                 }
                 m_out.appendTo(isThere);
             }
-            m_out.store64(valueAsHeld, slotOfField);
+            m_out.store64(storedValue, slotOfField);
             if (mayBe(valueNode->type, TCell))
                 storeBarrier(base);
             m_out.jump(afterTypedStore);
@@ -692,7 +692,7 @@ void Lowering::lowerPutById(Node* node)
         m_out.appendTo(has, otherwise);
         // (What the slot does not hold is stored the long way, which takes the property out of the slot.)
         if (Options::aotTypesFields())
-            branchUnlessHeld(valueNode, value, field->holds.kindsOnly(), otherwise);
+            branchUnlessAccepted(valueNode, value, field->fieldType.kindsOnly(), otherwise);
         m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
         if (mayBe(valueNode->type, TCell))
             storeBarrier(base);
@@ -742,7 +742,7 @@ void Lowering::lowerPutById(Node* node)
 
     m_out.appendTo(hit, transition);
     LValue secondWord = m_out.load64(slotWord(slot, 1));
-    if (Options::aotTypesFields() && TypeTable::areStructs()) {
+    if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
         // (Slot::held: there is looking at the value to be done. The runtime does that.)
         LBasicBlock isPlain = m_out.newBlock();
         m_out.branch(m_out.isZero64(m_out.lShr(secondWord, m_out.constInt32(32))), usually(isPlain), rarely(slowCase));

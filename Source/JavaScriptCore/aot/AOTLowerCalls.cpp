@@ -251,13 +251,13 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     LValue callee = lowJSValue(calleeNode);
     // A class that the types say something of has been defined.
     if (uint32_t classType = Graph::classNotedBy(node)) {
-        if (uint16_t family = TypeTable::shared()->familyOfInstancesOf(classType))
-            vmCall(node, Void, Entry::operationAOTNoteClass, m_globalObject, arguments[0], arguments[1], m_out.constInt32(family));
+        if (uint16_t layoutID = TypeTable::shared()->layoutIDOfInstancesOf(classType))
+            vmCall(node, Void, Entry::operationAOTNoteClass, m_globalObject, arguments[0], arguments[1], m_out.constInt32(layoutID));
         return;
     }
     // { ...x }
     if (mode == CallMode::Call && argc == 1 && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::cloneObject) {
-        LValue copy = vmCall(node, pointerType(), Entry::operationAOTCloneObject, m_globalObject, arguments[0], m_out.constInt32(Graph::familyOfNewObject(node)));
+        LValue copy = vmCall(node, pointerType(), Entry::operationAOTCloneObject, m_globalObject, arguments[0], m_out.constInt32(Graph::layoutIDOfNewObject(node)));
         if (hasResult)
             setJSValue(node, copy);
         return;

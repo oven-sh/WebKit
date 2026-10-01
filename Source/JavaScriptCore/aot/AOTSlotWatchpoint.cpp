@@ -53,7 +53,7 @@ void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
 
 // Of an object whose properties were fixed (JSObject::fixProperties()): what it had then, it has, where it had it. If it cannot be
 // given more either, what it does not have it never will. There is nothing to watch for.
-static bool holdsForGood(const ObjectPropertyCondition& condition)
+static bool isPermanentlyValid(const ObjectPropertyCondition& condition)
 {
     Structure* structure = condition.object()->structure();
     if (!structure->heirsMayOverrideReadOnlyProperties())
@@ -75,7 +75,7 @@ bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditi
         return false;
     unsigned numberToWatch = 0;
     for (const ObjectPropertyCondition& condition : conditions) {
-        if (holdsForGood(condition))
+        if (isPermanentlyValid(condition))
             continue;
         if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
             return false;
@@ -92,7 +92,7 @@ bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditi
     FixedVector<SlotWatchpoint> watchpoints(numberToWatch);
     unsigned i = 0;
     for (const ObjectPropertyCondition& condition : conditions) {
-        if (holdsForGood(condition))
+        if (isPermanentlyValid(condition))
             continue;
         auto& watchpoint = watchpoints[i++];
         watchpoint.initialize(data, condition, slot);

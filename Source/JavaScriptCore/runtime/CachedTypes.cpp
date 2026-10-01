@@ -6143,7 +6143,7 @@ struct BytecodeLinkEncoder::Impl {
             SymbolTableEntry::Fast entry = symbolTable->get(Identifier::fromString(vm, string).impl());
             if (entry.isNull() || !entry.varOffset().isScope())
                 continue;
-            result.append({ entry.scopeOffset().offset(), bindings[i].holdsWhatItWasDeclaredWith(), !!(bindings[i].flags & Graph::Binding::Escapes), !!(bindings[i].flags & Graph::Binding::IsVisibleFromOutside) });
+            result.append({ entry.scopeOffset().offset(), bindings[i].keepsDeclaredValue(), !!(bindings[i].flags & Graph::Binding::Escapes), !!(bindings[i].flags & Graph::Binding::IsVisibleFromOutside) });
         }
         return result;
     }
@@ -6438,7 +6438,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (!AOT::noteUsesOfProvenFunctionsForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), factsOfExecutables, variableFacts))
                     unreadable++;
             });
-            AOT::TypeTable::settleWhichStringsAreAtoms();
+            AOT::TypeTable::finalizeAtomizedFields();
             RELEASE_ASSERT(!unreadable.load());
             if (followsFunctions) {
                 classesOfProgram.forEachClosedMethod([&](uint32_t number) {

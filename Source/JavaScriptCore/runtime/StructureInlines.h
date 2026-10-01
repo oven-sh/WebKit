@@ -233,13 +233,13 @@ inline void Structure::cacheSpecialProperty(JSGlobalObject* globalObject, VM& vm
 
 inline PropertyOffset Structure::nextOffsetFor(PropertyTable* table, UniquedStringImpl* name)
 {
-    if (m_bornAs) [[unlikely]] {
-        if (auto* named = SlotsOfBornObjects::named(m_bornAs, name); named && table->takeDeletedOffset(SlotsOfBornObjects::offsetInFamily(m_bornAs, named->slot)))
-            return SlotsOfBornObjects::offsetInFamily(m_bornAs, named->slot);
-        if (SlotsOfBornObjects::areStructs())
+    if (m_typedLayoutID) [[unlikely]] {
+        if (auto* field = TypedLayoutTable::findField(m_typedLayoutID, name); field && table->takeDeletedOffset(TypedLayoutTable::offsetInLayout(m_typedLayoutID, field->slot)))
+            return TypedLayoutTable::offsetInLayout(m_typedLayoutID, field->slot);
+        if (TypedLayoutTable::hasTypedFields())
             return table->nextOffset(m_inlineCapacity, false, false);
     }
-    return table->nextOffset(m_inlineCapacity, !m_bornAs);
+    return table->nextOffset(m_inlineCapacity, !m_typedLayoutID);
 }
 
 template<Structure::ShouldPin shouldPin, typename Func>
@@ -291,7 +291,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
     UNUSED_VARIABLE(attribute);
     auto newMaxOffset = std::max(newOffset, maxOffset());
 #if USE(BUN_JSC_ADDITIONS)
-    if (m_bornAs) [[unlikely]]
+    if (m_typedLayoutID) [[unlikely]]
         noteFieldAdded(rep, newOffset, attributes);
 #endif
     
@@ -334,7 +334,7 @@ inline PropertyOffset Structure::remove(VM& vm, PropertyName propertyName, const
 
     table->addDeletedOffset(offset);
 #if USE(BUN_JSC_ADDITIONS)
-    if (m_bornAs) [[unlikely]]
+    if (m_typedLayoutID) [[unlikely]]
         forgetFieldsInSlots();
 #endif
 
@@ -373,7 +373,7 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
     if (offset == invalidOffset)
         return offset;
 #if USE(BUN_JSC_ADDITIONS)
-    if (m_bornAs) [[unlikely]]
+    if (m_typedLayoutID) [[unlikely]]
         forgetFieldsInSlots();
 #endif
 
@@ -410,7 +410,7 @@ inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyNa
 template<typename Func>
 inline void Structure::movePropertyOutOfObjectWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
 {
-    RELEASE_ASSERT(isUncacheableDictionary() && isPinnedPropertyTable() && m_bornAs);
+    RELEASE_ASSERT(isUncacheableDictionary() && isPinnedPropertyTable() && m_typedLayoutID);
     PropertyTable* table = ensurePropertyTable(vm);
     GCSafeConcurrentJSLocker locker(m_lock, vm);
     checkConsistency();
@@ -479,7 +479,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
     UNUSED_VARIABLE(attributes);
     auto newMaxOffset = std::max(newOffset, maxOffset());
 #if USE(BUN_JSC_ADDITIONS)
-    if (m_bornAs) [[unlikely]]
+    if (m_typedLayoutID) [[unlikely]]
         noteFieldAdded(rep, newOffset, newAttributes);
 #endif
 

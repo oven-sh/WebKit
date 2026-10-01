@@ -605,7 +605,7 @@ LValue Emitter::keysOfObject(LValue object, LBasicBlock giveUp)
 
 // A struct that has nothing in that slot, which is in the object, is given the field: what it is of afterwards is what the last of its kind to be given it was
 // (Instance::addsOfFields). The value is one that the slot holds. It is for whoever asks to tell the collector, whatever the value is: the object refers to another Structure now.
-void Emitter::addFieldOfStruct(LValue object, LValue valueAsHeld, LValue slot, LBasicBlock giveUp)
+void Emitter::addTypedField(LValue object, LValue storedValue, LValue slot, LBasicBlock giveUp)
 {
     LValue structureID = m_out.load32(object, m_heaps.JSCell_structureID);
     static_assert(Instance::indexOfAddOfField(0x120, 3) == (((0x120u >> 4) ^ (3 * 0x9e5u)) & (Instance::numberOfAddsOfFields - 1)));
@@ -614,7 +614,7 @@ void Emitter::addFieldOfStruct(LValue object, LValue valueAsHeld, LValue slot, L
     LValue entry = m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(4)), m_out.constIntPtr(Instance::offsetOfAddsOfFields())));
     orElse(m_out.equal(m_out.load32(TypedPointer(m_heaps.AOTInstance_whatChanges, entry)), structureID), giveUp);
     orElse(m_out.equal(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, slot))), slot), giveUp);
-    m_out.store64(valueAsHeld, TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object, m_out.add(m_out.shl(m_out.zeroExtPtr(slot), m_out.constInt32(3)), m_out.constIntPtr(JSObject::offsetOfInlineStorage())))));
+    m_out.store64(storedValue, TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(object, m_out.add(m_out.shl(m_out.zeroExtPtr(slot), m_out.constInt32(3)), m_out.constIntPtr(JSObject::offsetOfInlineStorage())))));
     m_out.store32(m_out.load32(m_out.address(m_heaps.AOTInstance_whatChanges, entry, OBJECT_OFFSETOF(Instance::AddOfField, structureIDAfterwards))), object, m_heaps.JSCell_structureID);
 }
 
@@ -707,7 +707,7 @@ public:
             result = m_out.intPtrOne;
             break;
         case Stub::HelperAddField:
-            addFieldOfStruct(arguments[0], arguments[1], int32At(2), giveUp);
+            addTypedField(arguments[0], arguments[1], int32At(2), giveUp);
             result = m_out.intPtrOne;
             break;
         default:

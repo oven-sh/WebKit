@@ -688,7 +688,7 @@ public:
         bool isWide { false };
     } jsonStringifyHints;
     // 16-bit ids for property names, assigned on first use by AOT::cacheGetById(). A Structure without a layout class records the id of the plain data property in each of its
-    // first inline slots (Structure::fieldInSlot()), so that a monomorphic inline cache also hits on other Structures that have the same name at the same offset.
+    // first inline slots (Structure::fieldIDInSlot()), so that a monomorphic inline cache also hits on other Structures that have the same name at the same offset.
     // Per VM because objects cross realms. A name with an id is kept alive, so that its address is not reused by another name.
     struct {
         UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint16_t> ids;

@@ -65,53 +65,53 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObject, JSObject*, (JSGlobalObject* glob
 }
 
 // One that has nothing yet, of a family of structs: what it is given goes where the family has it.
-JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectOfFamily, JSObject*, (JSGlobalObject* globalObject, uint32_t family, Slot* cache))
+JSC_DEFINE_JIT_OPERATION(operationAOTNewTypedObject, JSObject*, (JSGlobalObject* globalObject, uint32_t layoutID, Slot* cache))
 {
     AOT_OPERATION_BEGIN(globalObject);
     if (StructureID structureID = cache[0].structureID)
         OPERATION_RETURN(scope, Instance::newObjectOf(vm, structureID.decode()));
-    Structure* structure = Instance::ensure(globalObject).emptyStructureOfFamily(safeCast<uint16_t>(family));
+    Structure* structure = Instance::ensure(globalObject).emptyStructureForLayout(safeCast<uint16_t>(layoutID));
     fillAllocationCache(vm, callerData(globalObject, callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator));
     OPERATION_RETURN(scope, Instance::newObjectOf(vm, structure));
 }
 
 // A class has been defined whose instances are structs of that family: they are born into it.
-JSC_DEFINE_JIT_OPERATION(operationAOTNoteClass, void, (JSGlobalObject* globalObject, EncodedJSValue encodedConstructor, EncodedJSValue encodedPrototype, uint32_t family))
+JSC_DEFINE_JIT_OPERATION(operationAOTNoteClass, void, (JSGlobalObject* globalObject, EncodedJSValue encodedConstructor, EncodedJSValue encodedPrototype, uint32_t layoutID))
 {
     AOT_OPERATION_BEGIN(globalObject);
     auto* constructor = dynamicDowncast<JSFunction>(JSValue::decode(encodedConstructor));
     JSObject* prototype = JSValue::decode(encodedPrototype).getObject();
     RELEASE_ASSERT(constructor && prototype && constructor->canUseAllocationProfiles());
-    FunctionRareData* rareData = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, SlotsOfBornObjects::inlineSlots(safeCast<uint16_t>(family)));
+    FunctionRareData* rareData = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, TypedLayoutTable::inlineSlots(safeCast<uint16_t>(layoutID)));
     OPERATION_RETURN_IF_EXCEPTION(scope);
     Structure* usual = rareData->objectAllocationStructure();
     RELEASE_ASSERT(!usual->hasPolyProto() && usual->storedPrototypeObject() == prototype);
-    rareData->objectAllocationProfile()->replaceStructure(vm, rareData, Instance::ensure(globalObject).emptyStructureOfFamily(safeCast<uint16_t>(family), prototype));
+    rareData->objectAllocationProfile()->replaceStructure(vm, rareData, Instance::ensure(globalObject).emptyStructureForLayout(safeCast<uint16_t>(layoutID), prototype));
     OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue value))
 {
-    SlotsOfBornObjects::makeAtomIfString(JSValue::decode(value));
+    TypedLayoutTable::atomizeIfString(JSValue::decode(value));
 }
 
 // { ...source }, which is to be of that family of structs, if of any. A copy of one of the family is one.
-JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue encodedSource, uint32_t family))
+JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (JSGlobalObject* globalObject, EncodedJSValue encodedSource, uint32_t layoutID))
 {
     AOT_OPERATION_BEGIN(globalObject);
     JSValue source = JSValue::decode(encodedSource);
-    if (!family)
+    if (!layoutID)
         OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source));
     if (source.isCell() && source.asCell()->type() == FinalObjectType) {
         Structure* structure = source.asCell()->structure();
-        if (structure->bornAs() == family && structure->canPerformFastPropertyEnumerationCommon()) {
+        if (structure->typedLayoutID() == layoutID && structure->canPerformFastPropertyEnumerationCommon()) {
             if (JSObject* copy = tryCreateObjectViaCloning(vm, globalObject, asObject(source)))
                 OPERATION_RETURN(scope, copy);
         }
         if (Options::aotVerbose()) [[unlikely]]
-            dataLogLn("AOT: a copy that is to be of family ", family, " is of what was born as ", structure->bornAs(), " and is made bit by bit");
+            dataLogLn("AOT: a copy that is to be of family ", layoutID, " is of what was born as ", structure->typedLayoutID(), " and is made bit by bit");
     }
-    OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, Instance::newObjectOf(vm, Instance::ensure(globalObject).emptyStructureOfFamily(safeCast<uint16_t>(family)))));
+    OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, Instance::newObjectOf(vm, Instance::ensure(globalObject).emptyStructureForLayout(safeCast<uint16_t>(layoutID)))));
 }
 
 // An object literal: op_new_object and the op_put_by_id that follow it. values: what goes in each of the first `count` slots of the object:
@@ -123,11 +123,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (JSGlobalObjec
     if (StructureID structureID = cache[0].structureID) {
         // All that was missing was room.
         Structure* structure = structureID.decode();
-        if (uint16_t family = structure->bornAs(); family && SlotsOfBornObjects::areStructs() && structure->outOfLineCapacity()) [[unlikely]] {
+        if (uint16_t layoutID = structure->typedLayoutID(); layoutID && TypedLayoutTable::hasTypedFields() && structure->outOfLineCapacity()) [[unlikely]] {
             JSObject* object = Instance::newObjectOf(vm, structure);
             for (unsigned i = 0; i < count; ++i) {
                 if (values[i])
-                    object->putDirectOffset(vm, SlotsOfBornObjects::offsetInFamily(family, i), JSValue::decode(values[i]));
+                    object->putDirectOffset(vm, TypedLayoutTable::offsetInLayout(layoutID, i), JSValue::decode(values[i]));
             }
             OPERATION_RETURN(scope, object);
         }
@@ -565,9 +565,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewRegExp, JSObject*, (JSGlobalObject* glob
 }
 
 // op_new_reg_exp_shared. cache->pointer: the object that does for the site, which the code looks for before it comes here.
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTSettleWhatWasBorn, void, (Instance* instance, JSObject* object))
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTValidateNewObject, void, (Instance* instance, JSObject* object))
 {
-    object->takeOutWhatItsSlotsDoNotHold(*instance->vm);
+    object->evictMistypedFields(*instance->vm);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTIteratorMethodOfArray, EncodedJSValue, (JSGlobalObject* globalObject, JSCell* array))

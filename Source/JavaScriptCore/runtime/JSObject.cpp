@@ -2397,13 +2397,13 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             return false;
         }
 #if USE(BUN_JSC_ADDITIONS)
-        if (uint16_t bornAs = structure->bornAs(); bornAs && SlotsOfBornObjects::areStructs()) [[unlikely]] {
-            if (auto* named = SlotsOfBornObjects::named(bornAs, propertyName.uid()); named && !named->mayBeAbsent && !SlotsOfBornObjects::isVerified(bornAs)) {
-                if (!SlotsOfBornObjects::audits()) {
+        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
+            if (auto* field = TypedLayoutTable::findField(typedLayoutID, propertyName.uid()); field && !field->mayBeAbsent && !TypedLayoutTable::usesFieldIDs(typedLayoutID)) {
+                if (!TypedLayoutTable::isAuditing()) {
                     slot.setNonconfigurable();
                     return false;
                 }
-                SlotsOfBornObjects::audit("a field that has to be there is deleted"_s, bornAs, thisObject);
+                TypedLayoutTable::reportViolation("a field that has to be there is deleted"_s, typedLayoutID, thisObject);
             }
         }
 #endif
@@ -2433,7 +2433,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-void JSObject::takeOutOfTheSlotItWasBornIn(VM& vm, PropertyName propertyName)
+void JSObject::evictTypedField(VM& vm, PropertyName propertyName)
 {
     Structure* structure = this->structure();
     unsigned attributes;
@@ -2470,18 +2470,18 @@ void JSObject::takeOutOfTheSlotItWasBornIn(VM& vm, PropertyName propertyName)
 #endif
 
 #if USE(BUN_JSC_ADDITIONS)
-unsigned JSObject::takeOutWhatItsSlotsDoNotHold(VM& vm)
+unsigned JSObject::evictMistypedFields(VM& vm)
 {
-    uint16_t bornAs = structure()->bornAs();
+    uint16_t typedLayoutID = structure()->typedLayoutID();
     Vector<UniquedStringImpl*, 4> names;
     structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
         if (isInlineOffset(entry.offset()) && !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue)
-            && SlotsOfBornObjects::says(bornAs, entry.offset(), getDirect(entry.offset())) == SlotsOfBornObjects::Says::Refuses)
+            && TypedLayoutTable::checkStore(typedLayoutID, entry.offset(), getDirect(entry.offset())) == TypedLayoutTable::StoreCheck::Rejected)
             names.append(entry.key());
         return true;
     });
     for (UniquedStringImpl* name : names)
-        takeOutOfTheSlotItWasBornIn(vm, name);
+        evictTypedField(vm, name);
     return names.size();
 }
 #endif
@@ -4366,7 +4366,7 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
     unsigned i = 0;
     Structure* structure = this->structure();
     // (What a slot of a born object holds is for putDirectInternal() to see to.)
-    if (!((structure->bornAs() && SlotsOfBornObjects::areThere()) || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
+    if (!((structure->typedLayoutID() && TypedLayoutTable::hasLayouts()) || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
         Vector<PropertyOffset, 16> offsets(size, [&](size_t index) -> std::optional<PropertyOffset> {
             PropertyName propertyName(properties[index]);
 
@@ -4438,11 +4438,11 @@ ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, Propert
         if (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
             return ReadonlyPropertyChangeError;
 
-        auto says = SlotsOfBornObjects::Says::Nothing;
-        if (uint16_t bornAs = structure->bornAs(); bornAs && isInlineOffset(offset))
-            says = SlotsOfBornObjects::says(bornAs, offset, value);
-        if (says == SlotsOfBornObjects::Says::Refuses) [[unlikely]] {
-            takeOutOfTheSlotItWasBornIn(vm, propertyName);
+        auto checkStore = TypedLayoutTable::StoreCheck::Unconstrained;
+        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset))
+            checkStore = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+        if (checkStore == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+            evictTypedField(vm, propertyName);
             return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
         }
         putDirectOffset(vm, offset, value);
@@ -4451,7 +4451,7 @@ ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, Propert
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
         // https://bugs.webkit.org/show_bug.cgi?id=214342
         ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-        if (says == SlotsOfBornObjects::Says::Nothing)
+        if (checkStore == TypedLayoutTable::StoreCheck::Unconstrained)
             slot.setExistingProperty(this, offset);
         return { };
     }

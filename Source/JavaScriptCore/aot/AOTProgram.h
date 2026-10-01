@@ -254,7 +254,7 @@ private:
 JS_EXPORT_PRIVATE void setFunctionsOfProgram(const FunctionsOfProgram*); // Not while anything is being compiled.
 const FunctionsOfProgram* functionsOfProgram();
 
-// With structs (TypeTable::hasStructs()): what the definitions of the program's classes come to. A class that the table of types says something of says so where it is defined
+// With structs (TypeTable::tableHasTypedFields()): what the definitions of the program's classes come to. A class that the table of types says something of says so where it is defined
 // (@noteClass), and there its constructor and its methods are in plain sight. Functions go by their numbers (FunctionsOfProgram).
 class ClassesOfProgram {
     WTF_MAKE_TZONE_ALLOCATED(ClassesOfProgram);
@@ -264,12 +264,12 @@ public:
 
     // While every piece of code has its say (Graph::noteClassesDefined()): any thread.
     JS_EXPORT_PRIVATE void noteClosedMethod(uint32_t classType, UniquedStringImpl* name, uint32_t function);
-    JS_EXPORT_PRIVATE void noteThisIn(UnlinkedCodeBlock*, uint16_t family);
+    JS_EXPORT_PRIVATE void noteThisIn(UnlinkedCodeBlock*, uint16_t layoutID);
 
     // After that: any thread.
     uint32_t closedMethod(uint32_t classType, UniquedStringImpl* name) const { return m_methods.get({ classType, name }); } // Zero: none.
     bool isClosedMethod(uint32_t function) const { return function && m_closedMethods.contains(function); }
-    uint16_t familyOfThisIn(UnlinkedCodeBlock* code) const { return m_familyOfThis.get(code); } // Zero: there is no telling.
+    uint16_t layoutIDOfThisIn(UnlinkedCodeBlock* code) const { return m_layoutIDOfThis.get(code); } // Zero: there is no telling.
     template<typename Functor> void forEachClosedMethod(const Functor& functor) const
     {
         for (uint32_t function : m_closedMethods)
@@ -281,7 +281,7 @@ private:
     Lock m_lock;
     UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint32_t> m_methods;
     UncheckedKeyHashSet<uint32_t> m_closedMethods;
-    UncheckedKeyHashMap<UnlinkedCodeBlock*, uint16_t> m_familyOfThis;
+    UncheckedKeyHashMap<UnlinkedCodeBlock*, uint16_t> m_layoutIDOfThis;
 };
 JS_EXPORT_PRIVATE void setClassesOfProgram(ClassesOfProgram*); // Not while anything is being compiled.
 ClassesOfProgram* classesOfProgram();
@@ -377,7 +377,7 @@ public:
     // PrelinkedModuleGraph::Binding, of the variable that is at scopeOffset in the environment of the module.
     struct Binding {
         unsigned scopeOffset { 0 };
-        bool holdsWhatItWasDeclaredWith { false };
+        bool keepsDeclaredValue { false };
         bool escapes { true };
         bool isVisibleFromOutside { true };
     };

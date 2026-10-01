@@ -153,7 +153,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     /* Called by a function that has found that it has nothing of the realm yet, and needs it. Every register is left as it was. */ \
     v(LinkFunction) \
     /* Calls to C++. T9 = Entry * 8, the arguments where C++ wants them. The Plain ones are for operations that do not throw and */ \
-    /* do not look at the stack. In the ones so named the first argument is the global object, or the VM, and the stub */ \
+    /* do not look at the stack. In the ones so field the first argument is the global object, or the VM, and the stub */ \
     /* supplies it. */ \
     v(OperationValue) \
     v(OperationVoid) \
@@ -180,7 +180,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(LooseEqual) \
     /* A0, A1 = the operands. The result, a JSValue, in A0. */ \
     v(Add) \
-    v(IsStringThatSays) \
+    v(IsStringEqualTo) \
     v(NarrowCharacters) \
     v(Mod) \
     v(Sub) \
@@ -213,7 +213,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     v(GetGlobal) \
     /* A0 = base, A1 = site. Result in A0. */ \
     v(GetById) \
-    /* A0 = base, A1 = the id of a field whose slot is that one (SlotsOfBornObjects::Named::id). Result in A0: what the field holds, or it does not come back. */ \
+    /* A0 = base, A1 = the id of a field whose slot is that one (TypedLayoutTable::Field::id). Result in A0: what the field fieldType, or it does not come back. */ \
     v(ReadSlot0) \
     v(ReadSlot1) \
     v(ReadSlot2) \
@@ -236,7 +236,7 @@ static constexpr unsigned shiftOfGranuleOfCode = 10;
     /* A0 = base, A1 = the name, or the brand, A2 = site. GetPrivateName leaves the result in A0. */ \
     v(GetPrivateName) \
     v(CheckPrivateBrand) \
-    /* A0 = base, A1 = the name, A2 = value, A3 = site, whose extra says whether this defines the field. */ \
+    /* A0 = base, A1 = the name, A2 = value, A3 = site, whose extra checkStore whether this defines the field. */ \
     v(PutPrivateName) \
     /* A0 = scope, A1 = site. Result in A0. */ \
     v(ResolveScope) \
@@ -338,11 +338,11 @@ struct KnownShape {
     // by that number. If not, the properties are one after the other, and it is given a number.
     uint32_t number { 0 };
     Vector<uint16_t, 8> slots;
-    // If the layouts are of structs (TypeTable::hasStructs()): the family, and how many slots every object of it has.
-    uint16_t family { 0 };
+    // If the layouts are of structs (TypeTable::tableHasTypedFields()): the family, and how many slots every object of it has.
+    uint16_t layoutID { 0 };
     uint16_t reserved { 0 };
     uint16_t inlineSlots { 0 }; // Slots from that one on are outside the object.
-    bool hasSlotsOutside() const { return family && reserved > inlineSlots; }
+    bool hasSlotsOutside() const { return layoutID && reserved > inlineSlots; }
     unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
 
     static constexpr unsigned maxProperties = 1000; // See ImageDispatchEntry.

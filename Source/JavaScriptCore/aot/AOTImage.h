@@ -58,19 +58,19 @@ struct ImageHeader {
     uint32_t shapesOffset; // ImageShape, by number.
     uint32_t numberOfShapes; // One more than the last.
     uint32_t slotsOfShapesOffset; // uint16_t: see ImageShape::slots.
-    // Options::aotTypesFields(): SlotsOfBornObjects. The index (uint32_t, by the number of the shape), and what it is an index of. No index: it is not gone by.
-    uint32_t indexOfHeldInSlotsOffset;
-    uint32_t sizeOfIndexOfHeldInSlots;
-    uint32_t heldInSlotsOffset;
-    uint32_t indexOfNamedOffset; // SlotsOfBornObjects::setNames(). Zero: no structs.
+    // Options::aotTypesFields(): TypedLayoutTable. The index (uint32_t, by the number of the shape), and what it is an index of. No index: it is not gone by.
+    uint32_t slotRangesOffset;
+    uint32_t numberOfSlotRanges;
+    uint32_t slotTypesOffset;
+    uint32_t fieldRangesOffset; // TypedLayoutTable::setNames(). Zero: no structs.
     uint32_t namedOffset;
-    uint32_t heldByNamedOffset;
-    uint32_t familyOfNamedOffset;
+    uint32_t fieldTypesOffset;
+    uint32_t fieldLayoutIDsOffset;
     uint32_t startOfFieldsOffset;
     uint32_t fieldsOffset;
-    uint32_t familyOfFieldOffset;
-    uint32_t largestFieldID; // Property name ids (VM::aotPropertyNameIDs) start above it: both kinds are stored in Structure::m_fieldInSlot.
-    uint32_t inlineSlotsOfFamiliesOffset;
+    uint32_t layoutIDsByFieldIDOffset;
+    uint32_t largestFieldID; // Property name ids (VM::aotPropertyNameIDs) start above it: both kinds are stored in Structure::m_fieldIDInSlot.
+    uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes; // Options::aotAuditsTypes()
     // With numberOfIdentifiersOfProgram, a selector is the number of the identifier, and what it says is for StaticHeap to know.
     uint32_t selectorsOffset; // ImageSelector, by number.
@@ -127,10 +127,10 @@ struct ImageShape {
     uint16_t numberOfProperties;
     uint16_t inlineCapacity;
     uint32_t slots; // Where, among ImageHeader::slotsOfShapesOffset, the slot of each property is, plus one. Zero: they are one after the other.
-    uint16_t family; // KnownShape::family
+    uint16_t layoutID; // KnownShape::family
     uint16_t reserved;
     uint16_t inlineSlots;
-    uint16_t hasIds; // After the slots, as many again: SlotsOfBornObjects::Named::id of each property. Zero: it is no field.
+    uint16_t hasIds; // After the slots, as many again: TypedLayoutTable::Named::id of each property. Zero: it is no field.
 };
 
 // A name that properties are read by.

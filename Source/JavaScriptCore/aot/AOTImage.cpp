@@ -475,7 +475,7 @@ Vector<uint8_t> ImageBuilder::finish()
         unsigned inlineCapacity { 0 };
         Vector<uint32_t, 8> names;
         Vector<uint16_t, 8> slots;
-        uint16_t family { 0 };
+        uint16_t layoutID { 0 };
         uint16_t reserved { 0 };
         uint16_t inlineSlots { 0 };
     };
@@ -515,7 +515,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 shape.names.append(selectorFor(name));
             if (known.number) {
                 shape.slots = known.slots;
-                shape.family = known.family;
+                shape.layoutID = known.layoutID;
                 shape.reserved = known.reserved;
                 shape.inlineSlots = known.inlineSlots;
                 constant = known.number;
@@ -527,12 +527,12 @@ Vector<uint8_t> ImageBuilder::finish()
             }
             Vector<uint32_t, 16> words { known.inlineCapacity };
             words.appendVector(shape.names);
-            if (known.family) {
+            if (known.layoutID) {
                 shape.slots = known.slots;
-                shape.family = known.family;
+                shape.layoutID = known.layoutID;
                 shape.reserved = known.reserved;
                 shape.inlineSlots = known.inlineSlots;
-                words.append(0xffff0000u | known.family);
+                words.append(0xffff0000u | known.layoutID);
                 for (uint16_t slot : known.slots)
                     words.append(slot);
             }
@@ -563,7 +563,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 if (!selectorIsRead.get(shape.names[i]))
                     continue;
                 unsigned at = shape.slots.isEmpty() ? i : shape.slots[i];
-                unsigned inObject = shape.family ? shape.inlineSlots : shape.inlineCapacity;
+                unsigned inObject = shape.layoutID ? shape.inlineSlots : shape.inlineCapacity;
                 int32_t location = at < inObject || !inObject
                     ? static_cast<int32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + at)
                     : -static_cast<int32_t>(at - inObject) - 2;
@@ -616,48 +616,48 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint16_t> slotsOfShapes;
     size_t numberOfPropertiesOfShapes = 0;
     for (auto& shape : shapes) {
-        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1), shape.family, shape.reserved, shape.inlineSlots, 0 });
+        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(slotsOfShapes.size() + 1), shape.layoutID, shape.reserved, shape.inlineSlots, 0 });
         slotsOfShapes.appendVector(shape.slots);
-        if (shape.family && !shape.slots.isEmpty() && Options::aotTypesFields() && TypeTable::areStructs() && TypeTable::shared()->isUsable(shape.family) && TypeTable::shared()->isVerified(shape.family)) {
+        if (shape.layoutID && !shape.slots.isEmpty() && Options::aotTypesFields() && TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(shape.layoutID) && TypeTable::shared()->usesFieldIDs(shape.layoutID)) {
             imageShapes.last().hasIds = 1;
             for (uint32_t name : shape.names)
-                slotsOfShapes.append(TypeTable::shared()->idOfField(shape.family, selectors[name]));
+                slotsOfShapes.append(TypeTable::shared()->idOfField(shape.layoutID, selectors[name]));
         }
         numberOfPropertiesOfShapes += shape.names.size();
     }
-    Vector<uint32_t> indexOfHeldInSlots;
-    Vector<SlotsOfBornObjects::Held> heldInSlots;
-    Vector<uint32_t> indexOfNamed;
-    Vector<SlotsOfBornObjects::Named> named;
-    Vector<SlotsOfBornObjects::Held> heldByNamed;
-    Vector<uint16_t> familyOfNamed;
-    Vector<uint32_t> fieldsOfSlot[Structure::numberOfSlotsWithFields]; // By id, from one: which of `named`.
-    Vector<uint16_t> familiesOfSlot[Structure::numberOfSlotsWithFields]; // Likewise: of which family.
-    Vector<uint8_t> inlineSlotsOfFamilies;
-    if (Options::aotTypesFields() && TypeTable::areStructs()) {
+    Vector<uint32_t> slotRanges;
+    Vector<TypedLayoutTable::FieldType> slotTypes;
+    Vector<uint32_t> fieldRanges;
+    Vector<TypedLayoutTable::Field> field;
+    Vector<TypedLayoutTable::FieldType> fieldTypes;
+    Vector<uint16_t> fieldLayoutIDs;
+    Vector<uint32_t> fieldsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // By id, from one: which of `named`.
+    Vector<uint16_t> layoutIDsOfSlot[Structure::numberOfSlotsWithFieldIDs]; // Likewise: of which family.
+    Vector<uint8_t> inlineSlotCounts;
+    if (Options::aotTypesFields() && TypeTable::hasTypedFields()) {
         RELEASE_ASSERT_WITH_MESSAGE(numbersOfIdentifiers, "Structs go by the numbers of the program's identifiers");
-        for (uint32_t number = 0; number <= TypeTable::shared()->numberOfFamilies(); ++number) {
-            auto family = TypeTable::shared()->family(number);
-            RELEASE_ASSERT(heldInSlots.size() < (1u << 24) && named.size() < (1u << 20));
-            indexOfHeldInSlots.append(static_cast<uint32_t>(heldInSlots.size()) << 8 | family.capacity);
-            size_t start = heldInSlots.size();
-            for (unsigned slot = 0; slot < family.capacity; ++slot)
-                heldInSlots.append({ 0, 0, 0, 0 });
-            size_t startOfNamed = named.size();
-            for (auto& name : family.names) {
+        for (uint32_t number = 0; number <= TypeTable::shared()->numberOfTypedLayouts(); ++number) {
+            auto layout = TypeTable::shared()->typedLayout(number);
+            RELEASE_ASSERT(slotTypes.size() < (1u << 24) && field.size() < (1u << 20));
+            slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | layout.capacity);
+            size_t start = slotTypes.size();
+            for (unsigned slot = 0; slot < layout.capacity; ++slot)
+                slotTypes.append({ 0, 0, 0, 0 });
+            size_t firstFieldOfLayout = field.size();
+            for (auto& name : layout.fields) {
                 // (Of a verified family it goes by the name, and the slot says nothing.)
-                if (!family.isVerified)
-                    heldInSlots[start + name.slot] = { name.holds.kindsAsHeld(), name.holds.first, name.holds.last, 0 };
+                if (!layout.usesFieldIDs)
+                    slotTypes[start + name.slot] = { name.fieldType.packedKinds(), name.fieldType.first, name.fieldType.last, 0 };
                 if (name.id) {
                     // (In the order the ids were given out in. One whose name the program has no use for is nobody's.)
                     RELEASE_ASSERT(fieldsOfSlot[name.slot].size() + 1 == name.id);
-                    fieldsOfSlot[name.slot].append(safeCast<uint32_t>(startOfNamed));
-                    familiesOfSlot[name.slot].append(safeCast<uint16_t>(number));
+                    fieldsOfSlot[name.slot].append(safeCast<uint32_t>(firstFieldOfLayout));
+                    layoutIDsOfSlot[name.slot].append(safeCast<uint16_t>(number));
                 }
             }
-            // In the order of their hashes: SlotsOfBornObjects::named().
-            Vector<const TypeTable::NameOfFamily*, 16> inOrder;
-            for (auto& name : family.names) {
+            // In the order of their hashes: TypedLayoutTable::named().
+            Vector<const TypeTable::LayoutField*, 16> inOrder;
+            for (auto& name : layout.fields) {
                 // (A name that the program has no use for is not one that it can add a property by.)
                 if (numbersOfIdentifiers->contains(name.name))
                     inOrder.append(&name);
@@ -665,23 +665,23 @@ Vector<uint8_t> ImageBuilder::finish()
             std::ranges::stable_sort(inOrder, [](auto* a, auto* b) { return a->name->existingHash() < b->name->existingHash(); });
             for (auto* name : inOrder) {
                 if (name->id)
-                    fieldsOfSlot[name->slot][name->id - 1] = safeCast<uint32_t>(named.size());
-                named.append({ numbersOfIdentifiers->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
-                heldByNamed.append({ name->holds.kindsAsHeld(), name->holds.first, name->holds.last, 0 });
-                familyOfNamed.append(safeCast<uint16_t>(number));
+                    fieldsOfSlot[name->slot][name->id - 1] = safeCast<uint32_t>(field.size());
+                field.append({ numbersOfIdentifiers->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
+                fieldTypes.append({ name->fieldType.packedKinds(), name->fieldType.first, name->fieldType.last, 0 });
+                fieldLayoutIDs.append(safeCast<uint16_t>(number));
             }
-            RELEASE_ASSERT(named.size() - startOfNamed < (1u << 12));
-            indexOfNamed.append(static_cast<uint32_t>(startOfNamed) << 12 | (named.size() - startOfNamed));
-            RELEASE_ASSERT(family.inlineSlots < SlotsOfBornObjects::isVerifiedBit);
-            inlineSlotsOfFamilies.append(static_cast<uint8_t>(family.inlineSlots | (family.isVerified ? SlotsOfBornObjects::isVerifiedBit : 0)));
+            RELEASE_ASSERT(field.size() - firstFieldOfLayout < (1u << 12));
+            fieldRanges.append(static_cast<uint32_t>(firstFieldOfLayout) << 12 | (field.size() - firstFieldOfLayout));
+            RELEASE_ASSERT(layout.inlineSlots < TypedLayoutTable::usesFieldIDsBit);
+            inlineSlotCounts.append(static_cast<uint8_t>(layout.inlineSlots | (layout.usesFieldIDs ? TypedLayoutTable::usesFieldIDsBit : 0)));
         }
     } else if (Options::aotTypesFields() && TypeTable::shared()) {
         for (uint32_t number = 0; number < shapes.size() && number <= TypeTable::shared()->numberOfLayouts(); ++number) {
-            auto holds = shapes[number].names.isEmpty() ? Vector<TypeTable::Holds, 8> { } : TypeTable::shared()->holdsOfSlots(number);
-            RELEASE_ASSERT(holds.size() < 256 && heldInSlots.size() < (1u << 24));
-            indexOfHeldInSlots.append(static_cast<uint32_t>(heldInSlots.size()) << 8 | holds.size());
-            for (auto& held : holds)
-                heldInSlots.append({ safeCast<uint16_t>(held.kinds), Options::aotAssertsTypes() ? held.first : uint16_t(0), Options::aotAssertsTypes() ? held.last : uint16_t(0), 0 });
+            auto fieldType = shapes[number].names.isEmpty() ? Vector<TypeTable::FieldType, 8> { } : TypeTable::shared()->fieldTypesBySlot(number);
+            RELEASE_ASSERT(fieldType.size() < 256 && slotTypes.size() < (1u << 24));
+            slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | fieldType.size());
+            for (auto& fieldType : fieldType)
+                slotTypes.append({ safeCast<uint16_t>(fieldType.kinds), Options::aotAssertsTypes() ? fieldType.first : uint16_t(0), Options::aotAssertsTypes() ? fieldType.last : uint16_t(0), 0 });
         }
     }
     Vector<ImageSelector> imageSelectors;
@@ -1104,13 +1104,13 @@ Vector<uint8_t> ImageBuilder::finish()
     header.shapesOffset = place(imageShapes.sizeInBytes());
     header.numberOfShapes = imageShapes.size();
     header.slotsOfShapesOffset = place(slotsOfShapes.sizeInBytes());
-    header.indexOfHeldInSlotsOffset = place(indexOfHeldInSlots.sizeInBytes());
-    header.sizeOfIndexOfHeldInSlots = indexOfHeldInSlots.size();
-    header.heldInSlotsOffset = place(heldInSlots.sizeInBytes());
-    header.indexOfNamedOffset = indexOfNamed.isEmpty() ? 0 : place(indexOfNamed.sizeInBytes());
-    header.namedOffset = place(named.sizeInBytes());
-    header.heldByNamedOffset = place(heldByNamed.sizeInBytes());
-    header.familyOfNamedOffset = place(familyOfNamed.sizeInBytes());
+    header.slotRangesOffset = place(slotRanges.sizeInBytes());
+    header.numberOfSlotRanges = slotRanges.size();
+    header.slotTypesOffset = place(slotTypes.sizeInBytes());
+    header.fieldRangesOffset = fieldRanges.isEmpty() ? 0 : place(fieldRanges.sizeInBytes());
+    header.namedOffset = place(field.sizeInBytes());
+    header.fieldTypesOffset = place(fieldTypes.sizeInBytes());
+    header.fieldLayoutIDsOffset = place(fieldLayoutIDs.sizeInBytes());
     Vector<uint32_t> startOfFields;
     Vector<uint32_t> fields;
     header.largestFieldID = 0;
@@ -1120,13 +1120,13 @@ Vector<uint8_t> ImageBuilder::finish()
         fields.appendVector(ofSlot);
         header.largestFieldID = std::max(header.largestFieldID, safeCast<uint32_t>(ofSlot.size()));
     }
-    Vector<uint16_t> familyOfField;
-    for (auto& ofSlot : familiesOfSlot)
-        familyOfField.appendVector(ofSlot);
-    header.familyOfFieldOffset = place(familyOfField.sizeInBytes());
+    Vector<uint16_t> layoutIDsByFieldID;
+    for (auto& ofSlot : layoutIDsOfSlot)
+        layoutIDsByFieldID.appendVector(ofSlot);
+    header.layoutIDsByFieldIDOffset = place(layoutIDsByFieldID.sizeInBytes());
     header.startOfFieldsOffset = place(startOfFields.sizeInBytes());
     header.fieldsOffset = place(fields.sizeInBytes());
-    header.inlineSlotsOfFamiliesOffset = place(inlineSlotsOfFamilies.sizeInBytes());
+    header.inlineSlotCountsOffset = place(inlineSlotCounts.sizeInBytes());
     header.auditsTypes = Options::aotAuditsTypes();
     header.selectorsOffset = place(imageSelectors.sizeInBytes());
     header.numberOfSelectors = selectors.size();
@@ -1213,17 +1213,17 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
     memcpy(base + header.shapesOffset, imageShapes.span().data(), imageShapes.sizeInBytes());
     memcpy(base + header.slotsOfShapesOffset, slotsOfShapes.span().data(), slotsOfShapes.sizeInBytes());
-    memcpy(base + header.indexOfHeldInSlotsOffset, indexOfHeldInSlots.span().data(), indexOfHeldInSlots.sizeInBytes());
-    memcpy(base + header.heldInSlotsOffset, heldInSlots.span().data(), heldInSlots.sizeInBytes());
-    if (header.indexOfNamedOffset) {
-        memcpy(base + header.indexOfNamedOffset, indexOfNamed.span().data(), indexOfNamed.sizeInBytes());
-        memcpy(base + header.namedOffset, named.span().data(), named.sizeInBytes());
-        memcpy(base + header.heldByNamedOffset, heldByNamed.span().data(), heldByNamed.sizeInBytes());
-        memcpy(base + header.familyOfNamedOffset, familyOfNamed.span().data(), familyOfNamed.sizeInBytes());
+    memcpy(base + header.slotRangesOffset, slotRanges.span().data(), slotRanges.sizeInBytes());
+    memcpy(base + header.slotTypesOffset, slotTypes.span().data(), slotTypes.sizeInBytes());
+    if (header.fieldRangesOffset) {
+        memcpy(base + header.fieldRangesOffset, fieldRanges.span().data(), fieldRanges.sizeInBytes());
+        memcpy(base + header.namedOffset, field.span().data(), field.sizeInBytes());
+        memcpy(base + header.fieldTypesOffset, fieldTypes.span().data(), fieldTypes.sizeInBytes());
+        memcpy(base + header.fieldLayoutIDsOffset, fieldLayoutIDs.span().data(), fieldLayoutIDs.sizeInBytes());
         memcpy(base + header.startOfFieldsOffset, startOfFields.span().data(), startOfFields.sizeInBytes());
         memcpy(base + header.fieldsOffset, fields.span().data(), fields.sizeInBytes());
-        memcpy(base + header.familyOfFieldOffset, familyOfField.span().data(), familyOfField.sizeInBytes());
-        memcpy(base + header.inlineSlotsOfFamiliesOffset, inlineSlotsOfFamilies.span().data(), inlineSlotsOfFamilies.sizeInBytes());
+        memcpy(base + header.layoutIDsByFieldIDOffset, layoutIDsByFieldID.span().data(), layoutIDsByFieldID.sizeInBytes());
+        memcpy(base + header.inlineSlotCountsOffset, inlineSlotCounts.span().data(), inlineSlotCounts.sizeInBytes());
     }
     memcpy(base + header.selectorsOffset, imageSelectors.span().data(), imageSelectors.sizeInBytes());
     memcpy(base + header.rowsOfSelectorsOffset, rowOfSelector.span().data(), rowOfSelector.sizeInBytes());
@@ -1422,11 +1422,11 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
         RELEASE_ASSERT(!header.codeSize || !other->header().codeSize);
     all.images.append(image);
     all.hasAny.store(true, std::memory_order_release);
-    if (header.sizeOfIndexOfHeldInSlots)
-        SlotsOfBornObjects::set({ image->at<uint32_t>(header.indexOfHeldInSlotsOffset), header.sizeOfIndexOfHeldInSlots }, image->at<SlotsOfBornObjects::Held>(header.heldInSlotsOffset));
-    if (header.indexOfNamedOffset)
-        SlotsOfBornObjects::setNames(image->at<uint32_t>(header.indexOfNamedOffset), image->at<SlotsOfBornObjects::Named>(header.namedOffset), image->at<SlotsOfBornObjects::Held>(header.heldByNamedOffset), image->at<uint16_t>(header.familyOfNamedOffset),
-            image->at<uint8_t>(header.inlineSlotsOfFamiliesOffset), image->at<uint32_t>(header.startOfFieldsOffset), image->at<uint32_t>(header.fieldsOffset), image->at<uint16_t>(header.familyOfFieldOffset), Instance::adopt, header.auditsTypes);
+    if (header.numberOfSlotRanges)
+        TypedLayoutTable::setSlotTypes({ image->at<uint32_t>(header.slotRangesOffset), header.numberOfSlotRanges }, image->at<TypedLayoutTable::FieldType>(header.slotTypesOffset));
+    if (header.fieldRangesOffset)
+        TypedLayoutTable::setFields(image->at<uint32_t>(header.fieldRangesOffset), image->at<TypedLayoutTable::Field>(header.namedOffset), image->at<TypedLayoutTable::FieldType>(header.fieldTypesOffset), image->at<uint16_t>(header.fieldLayoutIDsOffset),
+            image->at<uint8_t>(header.inlineSlotCountsOffset), image->at<uint32_t>(header.startOfFieldsOffset), image->at<uint32_t>(header.fieldsOffset), image->at<uint16_t>(header.layoutIDsByFieldIDOffset), Instance::convertToTypedLayout, header.auditsTypes);
     return image;
 }
 

@@ -217,7 +217,7 @@ private:
                     isLeanForm = true;
                 }
             }
-            isCertainlyTheIntrinsic = Options::aotTypesFields() && TypeTable::areStructsToGoBy() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
+            isCertainlyTheIntrinsic = Options::aotTypesFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
         } else {
             bool isProven = false;
             const KnownFunction* known = caller.knownCallee(call, &isProven);
@@ -490,7 +490,7 @@ private:
             m_graph.callSites.append(call->bytecodeIndex.offset());
 
         Graph::InlineFrame frame { caller.inlineFrame(), CallSiteIndex(call->bytecodeIndex).bits(), m_graph.indexOfKnownCallee(about->key), call->opcode == op_tail_call };
-        m_graph.adopt(WTF::move(inlinee), frame);
+        m_graph.convertToTypedLayout(WTF::move(inlinee), frame);
         return true;
     }
 

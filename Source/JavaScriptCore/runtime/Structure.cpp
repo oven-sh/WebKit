@@ -335,7 +335,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     , m_bitField(0)
     , m_structureVariant(variant)
 #if USE(BUN_JSC_ADDITIONS)
-    , m_bornAs(previous->m_bornAs)
+    , m_typedLayoutID(previous->m_typedLayoutID)
 #endif
     , m_propertyHash(previous->m_propertyHash)
     , m_seenProperties(previous->m_seenProperties)
@@ -374,7 +374,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setPreviousID(vm, previous);
 #if USE(BUN_JSC_ADDITIONS)
     // (Whoever knows that what this is made for leaves them as they were says so: addNewPropertyTransition().)
-    if (m_bornAs) [[unlikely]]
+    if (m_typedLayoutID) [[unlikely]]
         forgetFieldsInSlots();
 #endif
 
@@ -438,7 +438,7 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
 {
     RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto() && names.size() == slots.size() && (attributes.empty() || attributes.size() == names.size()));
     inlineSlots = std::min<unsigned>(inlineSlots, empty->inlineCapacity());
-    auto offsetOf = [&](unsigned slot) { return SlotsOfBornObjects::offsetOfSlot(slot, inlineSlots); };
+    auto offsetOf = [&](unsigned slot) { return TypedLayoutTable::offsetOfSlot(slot, inlineSlots); };
     DeferGC deferGC(vm);
     Structure* result = Structure::create(vm, empty->globalObject(), empty->storedPrototype(), empty->typeInfo(), empty->classInfoForCells(), empty->indexingType(), empty->inlineCapacity());
     PropertyTable* table = result->ensurePropertyTable(vm);
@@ -453,7 +453,7 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
         taken.set(slots[i]);
         // (for-in takes the property it comes to first to be the first in the object, and so on, unless it is told otherwise: as it is
         // when a property has been taken out. Of structs it is told by canAccessPropertiesQuicklyForEnumeration().)
-        if ((slots[i] != i || numberOfSlots > inlineSlots) && !SlotsOfBornObjects::areStructs())
+        if ((slots[i] != i || numberOfSlots > inlineSlots) && !TypedLayoutTable::hasTypedFields())
             result->setIsQuickPropertyAccessAllowedForEnumeration(false);
         // A property is put where one has been taken out of, if there is such a place, and in the last of them.
         table->addDeletedOffset(offsetOf(slots[i]));
@@ -569,7 +569,7 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
         switch (structure->transitionKind()) {
         case TransitionKind::PropertyAddition: {
             PropertyTableEntry entry(structure->m_transitionPropertyName.get(), structure->transitionOffset(), structure->transitionPropertyAttributes());
-            auto nextOffset = structure->bornAs() && (isInlineOffset(structure->transitionOffset()) || SlotsOfBornObjects::areStructs()) && table->takeDeletedOffset(structure->transitionOffset()) ? structure->transitionOffset() : table->nextOffset(structure->inlineCapacity(), !structure->bornAs(), !(structure->bornAs() && SlotsOfBornObjects::areStructs()));
+            auto nextOffset = structure->typedLayoutID() && (isInlineOffset(structure->transitionOffset()) || TypedLayoutTable::hasTypedFields()) && table->takeDeletedOffset(structure->transitionOffset()) ? structure->transitionOffset() : table->nextOffset(structure->inlineCapacity(), !structure->typedLayoutID(), !(structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()));
             ASSERT_UNUSED(nextOffset, nextOffset == structure->transitionOffset());
             auto [offset, attribute, result] = table->add(vm, entry);
             ASSERT_UNUSED(result, result);
@@ -692,7 +692,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
     transition->setMaxOffset(vm, structure->maxOffset());
 #if USE(BUN_JSC_ADDITIONS)
-    memcpySpan(std::span { transition->m_fieldInSlot }, std::span { structure->m_fieldInSlot });
+    memcpySpan(std::span { transition->m_fieldIDInSlot }, std::span { structure->m_fieldIDInSlot });
 #endif
 
     offset = transition->add(vm, propertyName, attributes);
@@ -1135,8 +1135,8 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     PropertyTable* table = nullptr;
     size_t beforeOutOfLineCapacity = this->outOfLineCapacity();
     size_t afterOutOfLineCapacity = beforeOutOfLineCapacity;
-    // (What an object was born with stays where it was born: see bornAs().)
-    bool movesProperties = isUncacheableDictionary() && !bornAs();
+    // (What an object was born with stays where it was born: see typedLayoutID().)
+    bool movesProperties = isUncacheableDictionary() && !typedLayoutID();
     if (movesProperties) {
         table = propertyTableOrNull();
         ASSERT(table);
@@ -1258,40 +1258,40 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-const uint32_t* SlotsOfBornObjects::s_index;
-uint32_t SlotsOfBornObjects::s_count;
-const SlotsOfBornObjects::Held* SlotsOfBornObjects::s_held;
-const uint32_t* SlotsOfBornObjects::s_indexOfNamed;
-const SlotsOfBornObjects::Named* SlotsOfBornObjects::s_named;
-const SlotsOfBornObjects::Held* SlotsOfBornObjects::s_heldByNamed;
-const uint16_t* SlotsOfBornObjects::s_familyOfNamed;
-const uint32_t* SlotsOfBornObjects::s_startOfFields;
-const uint32_t* SlotsOfBornObjects::s_fields;
-const uint16_t* SlotsOfBornObjects::s_familyOfField;
-const uint8_t* SlotsOfBornObjects::s_inlineSlots;
-SlotsOfBornObjects::Adopt SlotsOfBornObjects::s_adopt;
-bool SlotsOfBornObjects::s_audits;
-ASCIILiteral SlotsOfBornObjects::s_whyNotAdopted;
+const uint32_t* TypedLayoutTable::s_index;
+uint32_t TypedLayoutTable::s_count;
+const TypedLayoutTable::FieldType* TypedLayoutTable::s_typeOfSlot;
+const uint32_t* TypedLayoutTable::s_fieldRangeOfLayout;
+const TypedLayoutTable::Field* TypedLayoutTable::s_fields;
+const TypedLayoutTable::FieldType* TypedLayoutTable::s_typeOfField;
+const uint16_t* TypedLayoutTable::s_layoutIDOfField;
+const uint32_t* TypedLayoutTable::s_firstFieldIndexOfSlot;
+const uint32_t* TypedLayoutTable::s_fieldIndexByID;
+const uint16_t* TypedLayoutTable::s_layoutIDByFieldID;
+const uint8_t* TypedLayoutTable::s_inlineSlots;
+TypedLayoutTable::ConvertFunction TypedLayoutTable::s_convert;
+bool TypedLayoutTable::s_isAuditing;
+ASCIILiteral TypedLayoutTable::s_lastConversionFailure;
 
-void SlotsOfBornObjects::set(std::span<const uint32_t> index, const Held* held)
+void TypedLayoutTable::setSlotTypes(std::span<const uint32_t> index, const FieldType* fieldType)
 {
     RELEASE_ASSERT(!s_count);
     s_index = index.data();
-    s_held = held;
+    s_typeOfSlot = fieldType;
     WTF::storeStoreFence();
     s_count = index.size();
 }
 
-void SlotsOfBornObjects::audit(ASCIILiteral what, uint16_t family, JSValue value)
+void TypedLayoutTable::reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue value)
 {
     static Lock lock;
     static NeverDestroyed<UncheckedKeyHashMap<String, unsigned>> seen;
     StringPrintStream out;
-    out.print(what, "\tfamily ", family, "\t");
+    out.print(what, "\tfamily ", layoutID, "\t");
     if (value && value.isObject()) {
         JSObject* object = asObject(value);
         Structure* structure = object->structure();
-        out.print(structure->classInfoForCells()->className, " capacity ", structure->inlineCapacity(), " needs ", numberOfSlots(family), " born ", structure->bornAs(), structure->isDictionary() ? " dictionary" : "", " {");
+        out.print(structure->classInfoForCells()->className, " capacity ", structure->inlineCapacity(), " needs ", numberOfSlots(layoutID), " born ", structure->typedLayoutID(), structure->isDictionary() ? " dictionary" : "", " {");
         {
             unsigned count = 0;
             structure->forEachProperty(object->vm(), [&](const PropertyTableEntry& entry) {
@@ -1309,32 +1309,32 @@ void SlotsOfBornObjects::audit(ASCIILiteral what, uint16_t family, JSValue value
     dataLogLn("AUDIT\t", out.toCString());
 }
 
-void SlotsOfBornObjects::setNames(const uint32_t* index, const Named* named, const Held* heldByNamed, const uint16_t* familyOfNamed, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* familyOfField, Adopt adopt, bool audits)
+void TypedLayoutTable::setFields(const uint32_t* index, const Field* field, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* startOfFields, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction convertToTypedLayout, bool isAuditing)
 {
-    s_familyOfField = familyOfField;
-    RELEASE_ASSERT(s_count && !s_named);
+    s_layoutIDByFieldID = layoutIDsByFieldID;
+    RELEASE_ASSERT(s_count && !s_fields);
     s_inlineSlots = inlineSlots;
-    s_heldByNamed = heldByNamed;
-    s_familyOfNamed = familyOfNamed;
-    s_startOfFields = startOfFields;
-    s_fields = fields;
-    s_audits = audits;
-    s_indexOfNamed = index;
-    s_adopt = adopt;
+    s_typeOfField = fieldTypes;
+    s_layoutIDOfField = fieldLayoutIDs;
+    s_firstFieldIndexOfSlot = startOfFields;
+    s_fieldIndexByID = fields;
+    s_isAuditing = isAuditing;
+    s_fieldRangeOfLayout = index;
+    s_convert = convertToTypedLayout;
     WTF::storeStoreFence();
-    s_named = named;
+    s_fields = field;
 }
 
-const SlotsOfBornObjects::Named* SlotsOfBornObjects::named(uint16_t bornAs, UniquedStringImpl* name)
+const TypedLayoutTable::Field* TypedLayoutTable::findField(uint16_t typedLayoutID, UniquedStringImpl* name)
 {
-    auto names = namesOf(bornAs);
+    auto names = fieldsOf(typedLayoutID);
     if (names.empty())
         return nullptr;
     // (Every name of the program is an atom that every thread has.)
     UniquedStringImpl* const* identifiers = StaticHeap::identifiersOfProgram();
     if (!identifiers)
         return nullptr;
-    // (Whoever knows where the property is has no need of this: Structure::fieldInSlot(), fieldWithId(). It is for when a Structure is given a property, or its like is adopted.)
+    // (Whoever knows where the property is has no need of this: Structure::fieldIDInSlot(), fieldWithID(). It is for when a Structure is given a property, or its like is adopted.)
     // They are in the order of their hashes (ImageBuilder::finish()).
     if (names.size() > 8) {
         if (name->isSymbol())
@@ -1366,12 +1366,12 @@ const SlotsOfBornObjects::Named* SlotsOfBornObjects::named(uint16_t bornAs, Uniq
     return nullptr;
 }
 
-void SlotsOfBornObjects::makeAtomIfString(JSValue value)
+void TypedLayoutTable::atomizeIfString(JSValue value)
 {
     if (!value.isString())
         return;
     JSString* string = asString(value);
-    if (string->isDefinitelyAtom() || string->length() > lengthOfShortString)
+    if (string->isDefinitelyAtom() || string->length() > maxLengthOfAtomizedString)
         return;
     // (All it wants of the realm is somewhere to say that there is no memory left, which is the end of the process here.)
     JSGlobalObject* globalObject = string->vm().deprecatedVMEntryGlobalObject(nullptr);
@@ -1379,29 +1379,29 @@ void SlotsOfBornObjects::makeAtomIfString(JSValue value)
     string->toAtomString(globalObject);
 }
 
-bool SlotsOfBornObjects::admits(const Held& held, JSValue value)
+bool TypedLayoutTable::accepts(const FieldType& fieldType, JSValue value)
 {
-    unsigned kinds = held.kinds & ~stringsAreAtoms;
-    if (held.first) {
+    unsigned kinds = fieldType.kinds & ~stringsAreAtoms;
+    if (fieldType.first) {
         if (value.isCell()) {
-            uint16_t bornAs = value.asCell()->structure()->bornAs();
-            if (bornAs >= held.first && bornAs <= held.last)
+            uint16_t typedLayoutID = value.asCell()->structure()->typedLayoutID();
+            if (typedLayoutID >= fieldType.first && typedLayoutID <= fieldType.last)
                 return true;
-            if (!bornAs && s_named && value.isObject() && s_adopt(value.asCell()->vm(), asObject(value), held.first))
+            if (!typedLayoutID && s_fields && value.isObject() && s_convert(value.asCell()->vm(), asObject(value), fieldType.first))
                 return true;
         }
         kinds &= ~SoundTypeOtherObject;
         if (!kinds)
             return false;
     }
-    return soundTypeMaskAdmits(kinds, value);
+    return soundTypeMaskAccepts(kinds, value);
 }
 
-void Structure::setBornAs(uint16_t family)
+void Structure::setTypedLayoutID(uint16_t layoutID)
 {
-    m_bornAs = family;
-    zeroSpan(std::span { m_fieldInSlot });
-    if (!SlotsOfBornObjects::isVerified(family))
+    m_typedLayoutID = layoutID;
+    zeroSpan(std::span { m_fieldIDInSlot });
+    if (!TypedLayoutTable::usesFieldIDs(layoutID))
         return;
     forEachProperty(vm(), [&](const PropertyTableEntry& entry) {
         noteFieldAdded(entry.key(), entry.offset(), entry.attributes());
@@ -1409,40 +1409,40 @@ void Structure::setBornAs(uint16_t family)
     });
 }
 
-void Structure::setBornAs(uint16_t family, std::span<const uint16_t, numberOfSlotsWithFields> fieldInSlot)
+void Structure::setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs> fieldIDInSlot)
 {
-    m_bornAs = family;
-    memcpySpan(std::span { m_fieldInSlot }, fieldInSlot);
-    for (unsigned slot = 0; slot < numberOfSlotsWithFields; ++slot)
-        RELEASE_ASSERT(!m_fieldInSlot[slot] || m_fieldInSlot[slot] == noTellingWhichField || slot < m_inlineCapacity);
+    m_typedLayoutID = layoutID;
+    memcpySpan(std::span { m_fieldIDInSlot }, fieldIDInSlot);
+    for (unsigned slot = 0; slot < numberOfSlotsWithFieldIDs; ++slot)
+        RELEASE_ASSERT(!m_fieldIDInSlot[slot] || m_fieldIDInSlot[slot] == ambiguousFieldID || slot < m_inlineCapacity);
 }
 
-void Structure::setIsNeverAdopted()
+void Structure::setCannotConvertToTypedLayout()
 {
-    RELEASE_ASSERT(!m_bornAs);
-    for (uint16_t& field : m_fieldInSlot)
-        field = noTellingWhichField;
+    RELEASE_ASSERT(!m_typedLayoutID);
+    for (uint16_t& fieldID : m_fieldIDInSlot)
+        fieldID = ambiguousFieldID;
 }
 
 void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, unsigned attributes)
 {
-    if (!SlotsOfBornObjects::isVerified(m_bornAs))
+    if (!TypedLayoutTable::usesFieldIDs(m_typedLayoutID))
         return;
-    auto* named = SlotsOfBornObjects::named(m_bornAs, name);
-    if (!named || named->slot >= numberOfSlotsWithFields)
+    auto* field = TypedLayoutTable::findField(m_typedLayoutID, name);
+    if (!field || field->slot >= numberOfSlotsWithFieldIDs)
         return;
     // (If it is anywhere else, that there is nothing in the slot does not mean that the object has no such property. And a slot that has had something else in it is not gone by again:
     // whoever looked at the Structure the object had then may not have looked since.)
-    uint16_t& field = m_fieldInSlot[named->slot];
-    field = !field && !attributes && offset == static_cast<PropertyOffset>(named->slot) ? named->id : noTellingWhichField;
+    uint16_t& fieldID = m_fieldIDInSlot[field->slot];
+    fieldID = !fieldID && !attributes && offset == static_cast<PropertyOffset>(field->slot) ? field->id : ambiguousFieldID;
 }
 
 void Structure::forgetFieldsInSlots()
 {
-    if (!SlotsOfBornObjects::isVerified(m_bornAs))
+    if (!TypedLayoutTable::usesFieldIDs(m_typedLayoutID))
         return;
-    for (uint16_t& field : m_fieldInSlot)
-        field = noTellingWhichField;
+    for (uint16_t& fieldID : m_fieldIDInSlot)
+        fieldID = ambiguousFieldID;
 }
 
 void Structure::setKnownShape(VM& vm, uint16_t shape)
@@ -1452,9 +1452,9 @@ void Structure::setKnownShape(VM& vm, uint16_t shape)
     RELEASE_ASSERT(!m_knownShape);
     m_knownShape = shape;
     // (Property name ids are only for a Structure with no layout class.)
-    if (!m_bornAs)
-        zeroSpan(std::span { m_fieldInSlot });
-    m_bornAs = shape;
+    if (!m_typedLayoutID)
+        zeroSpan(std::span { m_fieldIDInSlot });
+    m_typedLayoutID = shape;
     if (!isWatchingReplacement())
         return;
     Vector<PropertyOffset, 8> offsets;
@@ -1989,7 +1989,7 @@ bool Structure::canAccessPropertiesQuicklyForEnumeration() const
     if (!isQuickPropertyAccessAllowedForEnumeration())
         return false;
     // (The properties of a struct are where their names say, not one after the other in the order they were added.)
-    if (bornAs() && SlotsOfBornObjects::areStructs())
+    if (typedLayoutID() && TypedLayoutTable::hasTypedFields())
         return false;
     if (hasAnyKindOfGetterSetterProperties())
         return false;

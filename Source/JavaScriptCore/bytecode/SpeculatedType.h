@@ -230,7 +230,7 @@ constexpr SpeculatedType speculationProvingSoundTypeMask(unsigned mask)
 // that are never exposed to user code.
 JS_EXPORT_PRIVATE unsigned soundTypeTag(JSValue);
 // The whole of what op_check_type asks.
-JS_EXPORT_PRIVATE bool soundTypeMaskAdmits(unsigned mask, JSValue);
+JS_EXPORT_PRIVATE bool soundTypeMaskAccepts(unsigned mask, JSValue);
 void dumpSoundTypeMask(PrintStream&, unsigned mask);
 MAKE_PRINT_ADAPTOR(SoundTypeMaskDump, unsigned, dumpSoundTypeMask);
 

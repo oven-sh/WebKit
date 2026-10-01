@@ -58,19 +58,19 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutToScope, void, (JSGlobalObject*, JSObje
 JSC_DECLARE_JIT_OPERATION(operationAOTThrow, void, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (JSGlobalObject*, EncodedJSValue, uint32_t mask));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthTheLongWay, EncodedJSValue, (JSGlobalObject*, EncodedJSValue));
-JSC_DECLARE_JIT_OPERATION(operationAOTAssertBornAs, void, (JSGlobalObject*, EncodedJSValue, uint32_t family)); // Lowering::assertBornAs()
-JSC_DECLARE_JIT_OPERATION(operationAOTViewAs, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t family)); // Lowering::viewAs()
+JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (JSGlobalObject*, EncodedJSValue, uint32_t layoutID)); // Lowering::checkTypedLayout()
+JSC_DECLARE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (JSGlobalObject*, EncodedJSValue, uint32_t layoutID)); // Lowering::coerceToTypedLayout()
 // which: the number of the name | family << 32 | slot << 48 | whether undefined will do << 56.
 JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint32_t which)); // Stub::ReadSlot0: id | slot << 16 | undefined will do << 24
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldTheLongWay, EncodedJSValue, (JSGlobalObject*, EncodedJSValue base, uint64_t which));
-JSC_DECLARE_JIT_OPERATION(operationAOTSettleStruct, void, (JSGlobalObject*, JSObject*)); // Lowering::settleWhatWasBorn()
+JSC_DECLARE_JIT_OPERATION(operationAOTValidateTypedObject, void, (JSGlobalObject*, JSObject*)); // Lowering::validateNewObject()
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyFact, size_t, (JSGlobalObject*, EncodedJSValue, uint64_t lowHalfOfType, uint64_t highHalfOfType, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
 JSC_DECLARE_JIT_OPERATION(operationAOTHandleTraps, void, (JSGlobalObject*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
-JSC_DECLARE_JIT_OPERATION(operationAOTNarrowAtomThatSaysTheSame, StringImpl*, (JSGlobalObject*, JSString*)); // Null: there is none.
+JSC_DECLARE_JIT_OPERATION(operationAOTFindEqualAtom, StringImpl*, (JSGlobalObject*, JSString*)); // Null: there is none.
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchString, int32_t, (JSGlobalObject*, EncodedJSValue, uint32_t tableIndex, uint32_t whose));
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (JSGlobalObject*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTFMod, double, (double, double));

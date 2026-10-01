@@ -4360,8 +4360,8 @@ private:
 
         unsigned mask = m_node->soundTypeMask();
         if (soundTypeMaskNamesTypedArray(mask)) {
-            LValue admits = m_out.callWithoutSideEffects(pointerType(), operationSoundTypeMaskAdmits, value, m_out.constInt32(mask));
-            speculate(BadType, jsValueValue(value), child.node(), m_out.isZero64(admits));
+            LValue accepts = m_out.callWithoutSideEffects(pointerType(), operationSoundTypeMaskAccepts, value, m_out.constInt32(mask));
+            speculate(BadType, jsValueValue(value), child.node(), m_out.isZero64(accepts));
             return;
         }
 

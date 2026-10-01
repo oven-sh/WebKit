@@ -352,11 +352,11 @@ private:
             return isSubtype(left | right, TAnyObject | TSymbol);
         };
         if (node->opcode == op_type_tag) {
-            loop.changesStructures |= !node->uses[0].node->isKnownToBeBornWithin(node->firstLayout, node->lastLayout);
+            loop.changesStructures |= !node->uses[0].node->hasLayoutInRange(node->firstLayout, node->lastLayout);
             return true;
         }
         // (What is not known to be a struct may be anything, with getters and setters: it is an access like any other.)
-        if (auto field = Graph::fieldOfStructGotAtBy(node); field && !field->id && node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base)->isKnownToBeBornWithin(field->first, field->last)) {
+        if (auto field = Graph::typedFieldAccessedBy(node); field && !field->id && node->use(node->opcode == op_get_by_id ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base)->hasLayoutInRange(field->first, field->last)) {
             bool isRead = node->opcode == op_get_by_id;
             if (isRead)
                 return true;

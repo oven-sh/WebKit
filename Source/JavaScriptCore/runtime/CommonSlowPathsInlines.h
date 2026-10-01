@@ -235,7 +235,7 @@ inline void opEnumeratorPutByVal(JSGlobalObject* globalObject, JSValue baseValue
             auto* baseCell = baseValue.asCell();
             auto* structure = baseCell->structure();
             // (What a slot of a born object holds is for JSObject::putDirectInternal() to see to.)
-            if (structure->id() == enumerator->cachedStructureID() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !(structure->bornAs() && SlotsOfBornObjects::areThere())) {
+            if (structure->id() == enumerator->cachedStructureID() && !structure->isWatchingReplacement() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto() && !(structure->typedLayoutID() && TypedLayoutTable::hasLayouts())) {
                 // We'll only match the structure ID if the base is an object.
                 ASSERT(index < enumerator->endStructurePropertyIndex());
                 scope.release();

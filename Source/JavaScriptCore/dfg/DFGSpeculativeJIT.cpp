@@ -10620,7 +10620,7 @@ void SpeculativeJIT::compileCheckSoundType(Node* node)
     unsigned mask = node->soundTypeMask();
     if (soundTypeMaskNamesTypedArray(mask)) {
         silentSpillAllRegisters(scratchGPR);
-        callOperationWithoutExceptionCheck(operationSoundTypeMaskAdmits, scratchGPR, valueGPR, TrustedImm32(mask));
+        callOperationWithoutExceptionCheck(operationSoundTypeMaskAccepts, scratchGPR, valueGPR, TrustedImm32(mask));
         silentFillAllRegisters();
         speculationCheck(BadType, JSValueSource(), nullptr, branchTest32(Zero, scratchGPR));
         noResult(node);

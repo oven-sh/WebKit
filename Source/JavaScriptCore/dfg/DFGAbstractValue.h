@@ -331,7 +331,7 @@ struct AbstractValue {
         if (isType(speculationProvingSoundTypeMask(mask)))
             return true;
         // SpecOther cannot tell undefined from null, but a constant can.
-        return m_value && !m_value.isCell() && soundTypeMaskAdmits(mask, m_value);
+        return m_value && !m_value.isCell() && soundTypeMaskAccepts(mask, m_value);
     }
 
     // Filters the value using the given structure set. If the admittedTypes argument is not passed, this
