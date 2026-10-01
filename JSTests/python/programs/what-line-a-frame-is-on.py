@@ -3,9 +3,15 @@ import contextlib
 import sys
 
 
+# What is to be told when something has gone is told whenever that is found out, which may be in the middle of this. It is no part of what is looked at here.
+def is_told_of_what_has_gone(frame):
+    return frame.f_code.co_filename.endswith(("weakref.py", "_weakrefset.py", "importlib._bootstrap>", "_bootstrap.py"))
+
+
 def part0():
     seen = []
     def trace(frame, event, arg):
+        if is_told_of_what_has_gone(frame): return None
         seen.append((frame.f_code.co_name, event, frame.f_lineno))
         return trace
 
@@ -41,6 +47,7 @@ part0()
 def part1():
     seen = []
     def trace(frame, event, arg):
+        if is_told_of_what_has_gone(frame): return None
         last = "none"
         for s, e, l in frame.f_code.co_lines():
             if s <= frame.f_lasti < e: last = l
@@ -110,6 +117,7 @@ part1()
 def part2():
     seen = []
     def trace(frame, event, arg):
+        if is_told_of_what_has_gone(frame): return None
         last = "none"
         for s, e, l in frame.f_code.co_lines():
             if s <= frame.f_lasti < e: last = l
@@ -163,6 +171,7 @@ part2()
 def part3():
     seen = []
     def trace(frame, event, arg):
+        if is_told_of_what_has_gone(frame): return None
         seen.append((frame.f_code.co_name, event, frame.f_lineno - frame.f_code.co_firstlineno))
         return trace
     def a():
