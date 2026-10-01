@@ -1,0 +1,310 @@
+===== keys
+ZoneInfo('East') -> ("zoneinfo.ZoneInfo(key='East')", 'East', True, datetime.timedelta(days=-1, seconds=68400))
+   no_cache -> "zoneinfo.ZoneInfo(key='East')"
+ZoneInfo('Here/Z1') -> ("zoneinfo.ZoneInfo(key='Here/Z1')", 'Here/Z1', True, datetime.timedelta(seconds=3600))
+   no_cache -> "zoneinfo.ZoneInfo(key='Here/Z1')"
+ZoneInfo('Here') -> "ZoneInfoNotFoundError: 'No time zone found with key Here' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key Here' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('Here/') -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here/'
+   no_cache -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here/'
+ZoneInfo('Nowhere') -> "ZoneInfoNotFoundError: 'No time zone found with key Nowhere' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key Nowhere' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('Here/Nowhere') -> "ZoneInfoNotFoundError: 'No time zone found with key Here/Nowhere' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key Here/Nowhere' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('') -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: '
+   no_cache -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: '
+ZoneInfo('.') -> 'ValueError: ZoneInfo keys must refer to subdirectories of TZPATH, got: .'
+   no_cache -> 'ValueError: ZoneInfo keys must refer to subdirectories of TZPATH, got: .'
+ZoneInfo('..') -> 'ValueError: ZoneInfo keys must refer to subdirectories of TZPATH, got: ..'
+   no_cache -> 'ValueError: ZoneInfo keys must refer to subdirectories of TZPATH, got: ..'
+ZoneInfo('../East') -> 'ValueError: ZoneInfo keys must refer to subdirectories of TZPATH, got: ../East'
+   no_cache -> 'ValueError: ZoneInfo keys must refer to subdirectories of TZPATH, got: ../East'
+ZoneInfo('Here/../East') -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here/../East'
+   no_cache -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here/../East'
+ZoneInfo('Here/./Z1') -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here/./Z1'
+   no_cache -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here/./Z1'
+ZoneInfo('Here//Z1') -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here//Z1'
+   no_cache -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: Here//Z1'
+ZoneInfo('/East') -> 'ValueError: ZoneInfo keys may not be absolute paths, got: /East'
+   no_cache -> 'ValueError: ZoneInfo keys may not be absolute paths, got: /East'
+ZoneInfo('<where>/East') -> 'ValueError: ZoneInfo keys may not be absolute paths, got: <where>/East'
+   no_cache -> 'ValueError: ZoneInfo keys may not be absolute paths, got: <where>/East'
+ZoneInfo('East/') -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: East/'
+   no_cache -> 'ValueError: ZoneInfo keys must be normalized relative paths, got: East/'
+ZoneInfo('East/x') -> "ZoneInfoNotFoundError: 'No time zone found with key East/x' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key East/x' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('Bad') -> 'ValueError: Invalid TZif file: magic not found'
+   no_cache -> 'ValueError: Invalid TZif file: magic not found'
+ZoneInfo('Empty') -> 'ValueError: Invalid TZif file: magic not found'
+   no_cache -> 'ValueError: Invalid TZif file: magic not found'
+ZoneInfo(' East') -> "ZoneInfoNotFoundError: 'No time zone found with key  East' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key  East' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('East ') -> "ZoneInfoNotFoundError: 'No time zone found with key East ' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key East ' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('East\x00') -> "ZoneInfoNotFoundError: 'No time zone found with key East\\x00' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key East\\x00' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('\x00') -> "ZoneInfoNotFoundError: 'No time zone found with key \\x00' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key \\x00' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('Ea\udc80st') -> "ZoneInfoNotFoundError: 'No time zone found with key Ea\\udc80st' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key Ea\\udc80st' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('Ea\ud800st') -> "ZoneInfoNotFoundError: 'No time zone found with key Ea\\ud800st' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key Ea\\ud800st' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('\u20ac') -> "ZoneInfoNotFoundError: 'No time zone found with key \u20ac' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key \u20ac' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('\U0001f600') -> "ZoneInfoNotFoundError: 'No time zone found with key \U0001f600' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key \U0001f600' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') -> "ZoneInfoNotFoundError: 'No time zone found with key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo('long') -> "ZoneInfoNotFoundError: 'No time zone found with key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' <- ModuleNotFoundError: No module named 'tzdata'"
+   no_cache -> "ZoneInfoNotFoundError: 'No time zone found with key aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' <- ModuleNotFoundError: No module named 'tzdata'"
+ZoneInfo(NoneType) -> 'TypeError: expected str, bytes or os.PathLike object, not NoneType'
+   no_cache -> 'TypeError: expected str, bytes or os.PathLike object, not NoneType'
+ZoneInfo(int) -> 'TypeError: expected str, bytes or os.PathLike object, not int'
+   no_cache -> 'TypeError: expected str, bytes or os.PathLike object, not int'
+ZoneInfo(float) -> 'TypeError: expected str, bytes or os.PathLike object, not float'
+   no_cache -> 'TypeError: expected str, bytes or os.PathLike object, not float'
+ZoneInfo(bytes) -> "TypeError: Can't mix strings and bytes in path components <- TypeError: startswith first arg must be bytes or a tuple of bytes, not str"
+   no_cache -> "TypeError: Can't mix strings and bytes in path components <- TypeError: startswith first arg must be bytes or a tuple of bytes, not str"
+ZoneInfo(list) -> "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"
+   no_cache -> 'TypeError: expected str, bytes or os.PathLike object, not list'
+ZoneInfo(tuple) -> "zoneinfo.ZoneInfo(key='East')"
+   no_cache -> 'TypeError: expected str, bytes or os.PathLike object, not tuple'
+ZoneInfo(S) -> "zoneinfo.ZoneInfo(key='East')"
+   no_cache -> "zoneinfo.ZoneInfo(key='East')"
+ZoneInfo(P) -> "TypeError: object of type 'P' has no len()"
+   no_cache -> "TypeError: object of type 'P' has no len()"
+ZoneInfo(bool) -> 'TypeError: expected str, bytes or os.PathLike object, not bool'
+   no_cache -> 'TypeError: expected str, bytes or os.PathLike object, not bool'
+none -> "TypeError: ZoneInfo() missing required argument 'key' (pos 1)"
+two -> 'TypeError: ZoneInfo() takes at most 1 argument (2 given)'
+keyword -> zoneinfo.ZoneInfo(key='East')
+unknown -> "TypeError: ZoneInfo() missing required argument 'key' (pos 1)"
+both -> 'TypeError: ZoneInfo() takes at most 1 argument (2 given)'
+no_cache: none -> "TypeError: no_cache() missing required argument 'key' (pos 1)"
+no_cache: keyword -> zoneinfo.ZoneInfo(key='East')
+no_cache: two -> 'TypeError: no_cache() takes at most 1 argument (2 given)'
+no_cache: unknown -> "TypeError: no_cache() missing required argument 'key' (pos 1)"
+from_file: none -> 'TypeError: from_file() takes at least 1 positional argument (0 given)'
+from_file: keyword -> 'TypeError: from_file() takes at least 1 positional argument (0 given)'
+from_file: three -> 'TypeError: from_file() takes at most 2 arguments (3 given)'
+from_file: key by position -> 'k'
+from_file: key by keyword -> 'k'
+clear_cache: positional -> 'TypeError: clear_cache() takes no positional arguments'
+clear_cache: unknown -> "TypeError: clear_cache() got an unexpected keyword argument 'keys'"
+__new__ of tzinfo -> 'TypeError: datetime.tzinfo.__new__(zoneinfo.ZoneInfo) is not safe, use zoneinfo.ZoneInfo.__new__()'
+__new__ of object -> 'TypeError: object.__new__(zoneinfo.ZoneInfo) is not safe, use zoneinfo.ZoneInfo.__new__()'
+__new__ with another class -> 'TypeError: zoneinfo.ZoneInfo.__new__(int): int is not a subtype of zoneinfo.ZoneInfo'
+__new__ with tzinfo -> 'TypeError: zoneinfo.ZoneInfo.__new__(datetime.tzinfo): datetime.tzinfo is not a subtype of zoneinfo.ZoneInfo'
+__init__ -> None
+===== the caches
+the same one -> (True, False, False, False, True)
+cleared -> (None, False)
+cleared, but for others -> (None, False, True)
+clear_cache(only_keys=list) -> (None, True)
+clear_cache(only_keys=tuple) -> (None, True)
+clear_cache(only_keys=str) -> (None, True)
+clear_cache(only_keys=list) -> (None, True)
+clear_cache(only_keys=list_iterator) -> (None, False)
+clear_cache(only_keys=dict) -> (None, False)
+clear_cache(only_keys=NoneType) -> (None, False)
+clear_cache(only_keys=int) -> "TypeError: 'int' object is not iterable"
+clear_cache(only_keys=list) -> "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"
+clear_cache(only_keys=list) -> (None, True)
+clear_cache(only_keys=list) -> (None, False)
+clear_cache(only_keys=generator) -> (None, False)
+clear_cache(only_keys=list) -> (None, True)
+which are kept -> [False, False, False, False, True, True, True, True, True, True, True, True]
+asked for again -> [True, False, False, True, True, True, True, True]
+how a key is looked for -> ([('eq', 'Here/Z1', 'Here/Z2'), ('eq', 'Here/Z1', 'Here/Z1')], 'str')
+a key that cannot be compared -> 'ZeroDivisionError: eq'
+   clear_cache -> 'ZeroDivisionError: eq'
+===== classes derived from it
+their caches -> ('WeakValueDictionary', False, False, False, True)
+made -> ('Z1', True, False, False, False, "Z1(key='East')", 'East', True)
+the other ways -> ('Z1', 'Z1', "Z1(key='k')")
+cleared -> (None, False, True)
+not kept -> True
+attributes -> (None, 1, {'x': 1})
+pickle -> [('Z1', True), ('Z1', True), ('Z1', True)]
+a cache that is an int -> "AttributeError: 'int' object has no attribute 'get'"
+a cache that is None -> "AttributeError: 'NoneType' object has no attribute 'get'"
+a cache that is a dict -> "spoiled.<locals>.Z(key='East')"
+a cache that is a dict with something else in it -> "RuntimeError: Unexpected instance of int in Z weak cache for key 'East'"
+a cache that is a dict with a ZoneInfo in it -> "RuntimeError: Unexpected instance of zoneinfo.ZoneInfo in Z weak cache for key 'East'"
+a cache that is get raises -> 'ZeroDivisionError: division by zero'
+a cache that is setdefault gives something else -> "RuntimeError: Unexpected instance of str in Z weak cache for key 'East'"
+a cache that is get takes two -> "TypeError: <lambda>() missing 1 required positional argument: 'd'"
+no cache at all -> "AttributeError: type object 'Z' has no attribute '_weak_cache'"
+__init_subclass__ with keywords -> True
+__init_subclass__ called -> "TypeError: cannot set '_weak_cache' attribute of immutable type 'zoneinfo.ZoneInfo'"
+===== pickling
+cached -> ('_unpickle', True, ('East', 1))
+   pickle -> [(True, True, 'East'), (True, True, 'East'), (True, True, 'East'), (True, True, 'East'), (True, True, 'East'), (True, True, 'East')]
+   pickled -> b'\x80\x02c__builtin__\ngetattr\nq\x00czoneinfo\nZoneInfo\nq\x01X\t\x00\x00\x00_unpickleq\x02\x86q\x03Rq\x04X\x04\x00\x00\x00Eastq\x05K\x01\x86q\x06Rq\x07.'
+   copy -> (True, True)
+   in a datetime -> True
+not cached -> ('_unpickle', True, ('East', 0))
+   pickle -> [(False, False, 'East'), (False, False, 'East'), (False, False, 'East'), (False, False, 'East'), (False, False, 'East'), (False, False, 'East')]
+   pickled -> b'\x80\x02c__builtin__\ngetattr\nq\x00czoneinfo\nZoneInfo\nq\x01X\t\x00\x00\x00_unpickleq\x02\x86q\x03Rq\x04X\x04\x00\x00\x00Eastq\x05K\x00\x86q\x06Rq\x07.'
+   copy -> (False, False)
+   in a datetime -> True
+from a file -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   pickle -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   pickled -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   copy -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   in a datetime -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+from a file, with a key -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   pickle -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   pickled -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   copy -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+   in a datetime -> 'PicklingError: Cannot pickle a ZoneInfo file from a file stream.'
+_unpickle('East', 1) -> ("zoneinfo.ZoneInfo(key='East')", True)
+_unpickle('East', 0) -> ("zoneinfo.ZoneInfo(key='East')", False)
+_unpickle('East', True) -> ("zoneinfo.ZoneInfo(key='East')", True)
+_unpickle('East', 256) -> ("zoneinfo.ZoneInfo(key='East')", False)
+_unpickle('East', 257) -> ("zoneinfo.ZoneInfo(key='East')", True)
+_unpickle('East', -1) -> ("zoneinfo.ZoneInfo(key='East')", True)
+_unpickle('East', 1180591620717411303424) -> ("zoneinfo.ZoneInfo(key='East')", False)
+_unpickle('East', None) -> "TypeError: 'NoneType' object cannot be interpreted as an integer"
+_unpickle('East', '1') -> "TypeError: 'str' object cannot be interpreted as an integer"
+_unpickle('East', 1.0) -> "TypeError: 'float' object cannot be interpreted as an integer"
+_unpickle('Nowhere', 1) -> "ZoneInfoNotFoundError: 'No time zone found with key Nowhere' <- ModuleNotFoundError: No module named 'tzdata'"
+_unpickle('Nowhere', 0) -> "ZoneInfoNotFoundError: 'No time zone found with key Nowhere' <- ModuleNotFoundError: No module named 'tzdata'"
+_unpickle(5, 1) -> 'TypeError: expected str, bytes or os.PathLike object, not int'
+_unpickle('East',) -> 'TypeError: _unpickle() takes exactly 2 positional arguments (1 given)'
+_unpickle() -> 'TypeError: _unpickle() takes exactly 2 positional arguments (0 given)'
+_unpickle('East', 1, 2) -> 'TypeError: _unpickle() takes at most 2 arguments (3 given)'
+_unpickle: keywords -> 'TypeError: _unpickle() takes exactly 2 positional arguments (0 given)'
+===== what it is asked about
+utcoffset(None) -> (None, None)
+dst(None) -> (None, None)
+tzname(None) -> (None, None)
+utcoffset(a datetime) -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=10800))
+dst(a datetime) -> (datetime.timedelta(seconds=3600), datetime.timedelta(0))
+tzname(a datetime) -> ('EDT', 'ZZZ')
+utcoffset(in winter) -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=10800))
+dst(in winter) -> (datetime.timedelta(0), datetime.timedelta(0))
+tzname(in winter) -> ('EST', 'ZZZ')
+utcoffset(aware) -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=10800))
+dst(aware) -> (datetime.timedelta(seconds=3600), datetime.timedelta(0))
+tzname(aware) -> ('EDT', 'ZZZ')
+utcoffset(its own) -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=10800))
+dst(its own) -> (datetime.timedelta(seconds=3600), datetime.timedelta(0))
+tzname(its own) -> ('EDT', 'ZZZ')
+utcoffset(a fold) -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=10800))
+dst(a fold) -> (datetime.timedelta(0), datetime.timedelta(0))
+tzname(a fold) -> ('EST', 'ZZZ')
+utcoffset(no fold) -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=10800))
+dst(no fold) -> (datetime.timedelta(seconds=3600), datetime.timedelta(0))
+tzname(no fold) -> ('EDT', 'ZZZ')
+utcoffset(skipped) -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=10800))
+dst(skipped) -> (datetime.timedelta(0), datetime.timedelta(0))
+tzname(skipped) -> ('EST', 'ZZZ')
+utcoffset(skipped, with a fold) -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=10800))
+dst(skipped, with a fold) -> (datetime.timedelta(seconds=3600), datetime.timedelta(0))
+tzname(skipped, with a fold) -> ('EDT', 'ZZZ')
+utcoffset(derived) -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=10800))
+dst(derived) -> (datetime.timedelta(seconds=3600), datetime.timedelta(0))
+tzname(derived) -> ('EDT', 'ZZZ')
+utcoffset(derived, with a fold) -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=10800))
+dst(derived, with a fold) -> (datetime.timedelta(0), datetime.timedelta(0))
+tzname(derived, with a fold) -> ('EST', 'ZZZ')
+utcoffset(a date) -> "AttributeError: 'datetime.date' object has no attribute 'hour'"
+dst(a date) -> "AttributeError: 'datetime.date' object has no attribute 'hour'"
+tzname(a date) -> "AttributeError: 'datetime.date' object has no attribute 'hour'"
+utcoffset(a time) -> "AttributeError: 'datetime.time' object has no attribute 'toordinal'"
+dst(a time) -> "AttributeError: 'datetime.time' object has no attribute 'toordinal'"
+tzname(a time) -> "AttributeError: 'datetime.time' object has no attribute 'toordinal'"
+utcoffset(an int) -> "AttributeError: 'int' object has no attribute 'toordinal'"
+dst(an int) -> "AttributeError: 'int' object has no attribute 'toordinal'"
+tzname(an int) -> "AttributeError: 'int' object has no attribute 'toordinal'"
+utcoffset(a str) -> "AttributeError: 'str' object has no attribute 'toordinal'"
+dst(a str) -> "AttributeError: 'str' object has no attribute 'toordinal'"
+tzname(a str) -> "AttributeError: 'str' object has no attribute 'toordinal'"
+utcoffset(the first) -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=10800))
+dst(the first) -> (datetime.timedelta(0), datetime.timedelta(0))
+tzname(the first) -> ('EST', 'ZZZ')
+utcoffset(the last) -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=10800))
+dst(the last) -> (datetime.timedelta(0), datetime.timedelta(0))
+tzname(the last) -> ('EST', 'ZZZ')
+utcoffset(toordinal gives a str) -> "TypeError: 'str' object cannot be interpreted as an integer"
+dst(toordinal gives a str) -> "TypeError: 'str' object cannot be interpreted as an integer"
+tzname(toordinal gives a str) -> "TypeError: 'str' object cannot be interpreted as an integer"
+utcoffset(hour is a str) -> "TypeError: 'str' object cannot be interpreted as an integer"
+dst(hour is a str) -> "TypeError: 'str' object cannot be interpreted as an integer"
+tzname(hour is a str) -> "TypeError: 'str' object cannot be interpreted as an integer"
+utcoffset(toordinal too large) -> 'OverflowError: Python int too large to convert to C long'
+dst(toordinal too large) -> 'OverflowError: Python int too large to convert to C long'
+tzname(toordinal too large) -> 'OverflowError: Python int too large to convert to C long'
+utcoffset(no minute) -> "AttributeError: 'X' object has no attribute 'minute'"
+dst(no minute) -> "AttributeError: 'X' object has no attribute 'minute'"
+tzname(no minute) -> "AttributeError: 'X' object has no attribute 'minute'"
+utcoffset: none -> 'TypeError: utcoffset() takes exactly 1 positional argument (0 given)'
+utcoffset: two -> 'TypeError: utcoffset() takes at most 1 argument (2 given)'
+utcoffset: keyword -> 'TypeError: utcoffset() takes exactly 1 positional argument (0 given)'
+utcoffset: of something else -> "TypeError: descriptor 'utcoffset' for 'zoneinfo.ZoneInfo' objects doesn't apply to a 'datetime.timezone' object"
+dst: none -> 'TypeError: dst() takes exactly 1 positional argument (0 given)'
+dst: two -> 'TypeError: dst() takes at most 1 argument (2 given)'
+dst: keyword -> 'TypeError: dst() takes exactly 1 positional argument (0 given)'
+dst: of something else -> "TypeError: descriptor 'dst' for 'zoneinfo.ZoneInfo' objects doesn't apply to a 'datetime.timezone' object"
+tzname: none -> 'TypeError: tzname() takes exactly 1 positional argument (0 given)'
+tzname: two -> 'TypeError: tzname() takes at most 1 argument (2 given)'
+tzname: keyword -> 'TypeError: tzname() takes exactly 1 positional argument (0 given)'
+tzname: of something else -> "TypeError: descriptor 'tzname' for 'zoneinfo.ZoneInfo' objects doesn't apply to a 'datetime.timezone' object"
+fromutc: none -> 'TypeError: ZoneInfo.fromutc() takes exactly one argument (0 given)'
+fromutc: two -> 'TypeError: ZoneInfo.fromutc() takes exactly one argument (2 given)'
+fromutc: keyword -> 'TypeError: ZoneInfo.fromutc() takes no keyword arguments'
+fromutc: of something else -> "TypeError: descriptor 'fromutc' for 'zoneinfo.ZoneInfo' objects doesn't apply to a 'datetime.timezone' object"
+the same timedelta each time -> (True, True, False, 'timedelta')
+in a time -> (None, None, None, None, '12:00:00', '12:00:00')
+fromutc(its own) -> ('2024-06-30T20:00:00-04:00', 0, 'datetime', True)
+fromutc(naive) -> 'ValueError: fromutc: dt.tzinfo is not self'
+fromutc(another's) -> 'ValueError: fromutc: dt.tzinfo is not self'
+fromutc(an equal one's) -> 'ValueError: fromutc: dt.tzinfo is not self'
+fromutc(a date) -> 'TypeError: fromutc: argument must be a datetime'
+fromutc(None) -> 'TypeError: fromutc: argument must be a datetime'
+fromutc(an int) -> 'TypeError: fromutc: argument must be a datetime'
+fromutc(repeated) -> ('2024-11-03T01:30:00-04:00', 0, 'datetime', True)
+fromutc(repeated, the second time) -> ('2024-11-03T01:30:00-05:00', 1, 'datetime', True)
+fromutc(derived) -> ('2024-06-30T20:00:00-04:00', 0, 'D', True)
+fromutc(derived, repeated the second time) -> ('2024-11-03T01:30:00-05:00', 1, 'D', True)
+fromutc(the first) -> 'OverflowError: date value out of range'
+fromutc(the last) -> ('9999-12-31T18:59:59.999999-05:00', 0, 'datetime', True)
+what is asked of a derived class -> ('replace', [('fold', 1)])
+   that adds in its own way -> ('added',)
+   and is in what is repeated -> 'TypeError: replace() takes at least 2 positional arguments (0 given)'
+with datetime -> ('2024-07-01T16:00:00+00:00', '2024-07-01T08:00:00-04:00', '2024-07-03T05:46:40-04:00', 1730611800.0, 1730615400.0, '2024-03-10T03:00:00-04:00', False, True, True, 'EDT -0400', "datetime.datetime(2024, 7, 1, 0, 0, tzinfo=zoneinfo.ZoneInfo(key='East'))", 'datetime')
+===== one of them, and the class
+from a file -> ('zoneinfo.ZoneInfo.from_file(<_io.BytesIO object at 0x>)', 'zoneinfo.ZoneInfo.from_file(<_io.BytesIO object at 0x>)', None)
+from a file whose repr raises -> 'ZeroDivisionError: division by zero'
+keys of other kinds -> [("zoneinfo.ZoneInfo(key='k')", 'k', 'k'), ('zoneinfo.ZoneInfo(key=5)', None, 5), ('zoneinfo.ZoneInfo(key=(1, 2))', None, (1, 2)), ("zoneinfo.ZoneInfo(key=b'k')", None, b'k'), ("zoneinfo.ZoneInfo(key='')", '', '')]
+str of a key that is no str -> 'TypeError: __str__ returned non-string (type int)'
+key -> ('East', 'member_descriptor')
+set key -> 'AttributeError: readonly attribute'
+delete key -> 'AttributeError: readonly attribute'
+another attribute -> "AttributeError: 'zoneinfo.ZoneInfo' object has no attribute 'x' and no __dict__ for setting new attributes"
+weak reference -> True
+compared -> (True, False, True, False)
+ordered -> "TypeError: '<' not supported between instances of 'zoneinfo.ZoneInfo' and 'zoneinfo.ZoneInfo'"
+bool, isinstance -> (True, True, True)
+the class -> (<class 'zoneinfo.ZoneInfo'>, 'ZoneInfo', 'ZoneInfo', 'zoneinfo', (<class 'zoneinfo.ZoneInfo'>, <class 'datetime.tzinfo'>, <class 'object'>), None, None, 208, 0, 32, '0x', ['__doc__', '__getattribute__', '__init_subclass__', '__module__', '__new__', '__reduce__', '__repr__', '__str__', '_unpickle', 'clear_cache', 'dst', 'from_file', 'fromutc', 'key', 'no_cache', 'tzname', 'utcoffset'])
+   __doc__ -> ('NoneType', 'The type of the None singleton.', None, None)
+   __getattribute__ -> ('wrapper_descriptor', 'Return getattr(self, name).', '($self, name, /)', 'ZoneInfo.__getattribute__')
+   __init_subclass__ -> ('classmethod_descriptor', 'Function to initialize subclasses.', None, 'ZoneInfo.__init_subclass__')
+   __module__ -> ('str', "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new string object from the given object. If encoding or\nerrors is specified, then the object must expose a data buffer\nthat will be decoded using the given encoding and error handler.\nOtherwise, returns the result of object.__str__() (if defined)\nor repr(object).\nencoding defaults to 'utf-8'.\nerrors defaults to 'strict'.", None, None)
+   __new__ -> ('builtin_function_or_method', 'Create and return a new object.  See help(type) for accurate signature.', '($type, *args, **kwargs)', 'ZoneInfo.__new__')
+   __reduce__ -> ('method_descriptor', 'Function for serialization with the pickle protocol.', '($self, /)', 'ZoneInfo.__reduce__')
+   __repr__ -> ('wrapper_descriptor', 'Return repr(self).', '($self, /)', 'ZoneInfo.__repr__')
+   __str__ -> ('wrapper_descriptor', 'Return str(self).', '($self, /)', 'ZoneInfo.__str__')
+   _unpickle -> ('classmethod_descriptor', 'Private method used in unpickling.', '($type, key, from_cache, /)', 'ZoneInfo._unpickle')
+   clear_cache -> ('classmethod_descriptor', 'Clear the ZoneInfo cache.', '($type, /, *, only_keys=None)', 'ZoneInfo.clear_cache')
+   dst -> ('method_descriptor', 'Retrieve a timedelta representing the amount of DST applied in a zone at the given datetime.', '($self, dt, /)', 'ZoneInfo.dst')
+   from_file -> ('classmethod_descriptor', 'Create a ZoneInfo file from a file object.', '($type, file_obj, /, key=None)', 'ZoneInfo.from_file')
+   fromutc -> ('method_descriptor', 'Given a datetime with local time in UTC, retrieve an adjusted datetime in local time.', '($self, object, /)', 'ZoneInfo.fromutc')
+   key -> ('member_descriptor', None, None, 'ZoneInfo.key')
+   no_cache -> ('classmethod_descriptor', 'Get a new instance of ZoneInfo, bypassing the cache.', '($type, /, key)', 'ZoneInfo.no_cache')
+   tzname -> ('method_descriptor', 'Retrieve a string containing the abbreviation for the time zone that applies in a zone at a given datetime.', '($self, dt, /)', 'ZoneInfo.tzname')
+   utcoffset -> ('method_descriptor', 'Retrieve a timedelta representing the UTC offset in a zone at the given datetime.', '($self, dt, /)', 'ZoneInfo.utcoffset')
+set on the class -> "TypeError: cannot set 'x' attribute of immutable type 'zoneinfo.ZoneInfo'"
+the module -> (['ZoneInfo', '__doc__', '__loader__', '__name__', '__package__', '__spec__'], 'C implementation of the zoneinfo module', '_zoneinfo', True)
+done

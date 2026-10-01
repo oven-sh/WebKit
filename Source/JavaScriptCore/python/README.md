@@ -1390,6 +1390,21 @@ The six programs `programs/datetime-*.py` are 23,000 lines of what CPython does:
 `fromisoformat()`; what a `tzinfo` can give and what is made of it; classes derived from each; each half hour of the days on which the clocks are changed in ten places, by the clock and by the timestamp; and what each class has in it,
 with what is said when each method is called wrongly.
 
+### `_zoneinfo`
+
+`Modules/_zoneinfo.c`, function for function (`PythonZoneInfoModule.cpp`). What is in a file of the time zone database is read by `zoneinfo._common`, which is written in Python, here as there. What this has is what is made of it, and which
+of it holds at a time.
+
+- **A `_ttinfo` is a number**, and its three objects are at that number in a tuple that no program comes by, which is made once when the file has been read. The rest, when the clocks change and to which, is nothing to the collector.
+- **The strong cache is eight places**, the latest first, in the state of the module.
+- `PyObject_CallMethod(object, name, "O", argument)` takes an argument that is a tuple for all of the arguments, so `ZoneInfo(("UTC",))` finds what `ZoneInfo("UTC")` left in the cache. So it does here.
+- CPython reads the fold and the year out of whatever `utcoffset()` is given as if that were a datetime. What has `toordinal()`, `hour`, `minute` and `second` and is none has no fold here, and is in the year 1.
+
+`programs/zoneinfo-from-files-made-here.py` makes its own files, so that it is all one what the system has: 130 rules for afterwards, right and wrong, with what holds at 650 times by the clock with each fold and by UTC; each half hour about
+each change; 25 lists of changes; files that will not do; and what `load_data()` could give. `programs/zoneinfo-keys-caches-and-pickling.py` is the rest.
+
+CPython's own `test_zoneinfo` wants `lzma` to unpack what it tries with. Given that, 235 of 245 pass, and the rest were `os.path.normpath()` refusing half of a surrogate pair, `gc.is_tracked()` of a class, and a child process.
+
 ### `collections.OrderedDict`
 
 `Objects/odictobject.c`, function for function (`PythonOrderedDict.cpp`). `collections` has one written in Python besides and does without, from 2 to 18 times slower.

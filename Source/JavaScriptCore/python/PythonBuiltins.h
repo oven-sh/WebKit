@@ -218,6 +218,7 @@ JSObject* createSuggestionsModule(JSGlobalObject*);
 JSObject* createJSONModule(JSGlobalObject*);
 JSObject* createPickleModule(JSGlobalObject*);
 JSObject* createDateTimeModule(JSGlobalObject*);
+JSObject* createZoneInfoModule(JSGlobalObject*);
 JSObject* createStatModule(JSGlobalObject*);
 JSObject* createStatisticsModule(JSGlobalObject*);
 JSObject* createSysconfigModule(JSGlobalObject*);

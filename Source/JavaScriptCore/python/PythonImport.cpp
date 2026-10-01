@@ -299,6 +299,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_json"_s, createJSONModule },
     { "_pickle"_s, createPickleModule },
     { "_datetime"_s, createDateTimeModule },
+    { "_zoneinfo"_s, createZoneInfoModule },
     { "_stat"_s, createStatModule },
     { "_statistics"_s, createStatisticsModule },
     { "_sysconfig"_s, createSysconfigModule },

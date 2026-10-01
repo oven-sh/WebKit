@@ -901,6 +901,7 @@ python/PythonTime.cpp
 python/PythonTimeModule.cpp
 python/PythonWarnings.cpp
 python/PythonWeakReferences.cpp
+python/PythonZoneInfoModule.cpp
 
 runtime/AbstractModuleRecord.cpp
 runtime/AggregateError.cpp

@@ -1,0 +1,324 @@
+True
+===== rules for afterwards
+rule 'UTC0' -> ([(0, 0, 'UTC')], (datetime.timedelta(0), datetime.timedelta(0), 'UTC'), datetime.timedelta(0), '78f64b99cc4e6eff68a314958425d7c6')
+rule 'EST5' -> ([(-18000, 0, 'EST')], (None, None, None), None, '7cc5532e48ebdd590ed6c67868220bcb')
+rule 'EST+5' -> ([(-18000, 0, 'EST')], (None, None, None), None, '7cc5532e48ebdd590ed6c67868220bcb')
+rule 'EST-5' -> ([(18000, 0, 'EST')], (None, None, None), None, 'ede5544a98a4b3663b809432b7df2fe8')
+rule 'EST5EDT,M3.2.0,M11.1.0' -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), None, 'ddd6f311b9b8429ff5bcdb2e1f88b1da')
+rule 'EST5EDT,M3.2.0/2,M11.1.0/2' -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), None, 'ddd6f311b9b8429ff5bcdb2e1f88b1da')
+rule 'EST5EDT4,M3.2.0,M11.1.0' -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), None, 'ddd6f311b9b8429ff5bcdb2e1f88b1da')
+rule 'GMT0BST,M3.5.0/1,M10.5.0' -> ([(0, 0, 'GMT'), (3600, 3600, 'BST')], (None, None, None), None, 'f34a177ed30b79e30f7328104f716133')
+rule 'GMT0BST-1,M3.5.0/1:00:00,M10.5.0/2:00:00' -> ([(0, 0, 'GMT'), (3600, 3600, 'BST')], (None, None, None), None, 'f34a177ed30b79e30f7328104f716133')
+rule 'AEST-10AEDT,M10.1.0,M4.1.0/3' -> ([(36000, 0, 'AEST'), (39600, 3600, 'AEDT')], (None, None, None), None, 'b071b22692c052ecdee4fba2a80772fb')
+rule 'IST-1GMT0,M10.5.0,M3.5.0/1' -> ([(0, -3600, 'GMT'), (3600, 0, 'IST')], (None, None, None), None, 'fc4f0bcbf85c05944224de7a10b6ee1c')
+rule '<+03>-3' -> ([(10800, 0, '+03')], (None, None, None), None, 'df058b0a7c8b199b2cefaa710ff2b375')
+rule '<-03>3' -> ([(-10800, 0, '-03')], (None, None, None), None, '4ecf27f499aa92340a0fceb84289b8d8')
+rule '<+0330>-3:30' -> ([(12600, 0, '+0330')], (None, None, None), None, '06ca8000a48214ab432bdc80bc61448c')
+rule '<-03>3<-02>,M3.5.0/-2,M10.5.0/-1' -> ([(-10800, 0, '-03'), (-7200, 3600, '-02')], (None, None, None), None, '9de65ba8bdf6baf9977af0b4cf280c9d')
+rule '<+1030>-10:30<+11>-11,M10.1.0,M4.1.0' -> ([(37800, 0, '+1030'), (39600, 1800, '+11')], (None, None, None), None, '9cdfa39f9e1d0e5a4be3ba063209ce14')
+rule 'AAA3BBB,J60,J300' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, '140e00d98fb8662247c745a2bd48eebb')
+rule 'AAA3BBB,59,299' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, 'bda38b9b212dda3fd921c029d5016f19')
+rule 'AAA3BBB,J1,J365' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, 'c8f75b9cd64a55cd01920248a3973152')
+rule 'AAA3BBB,0,365' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, '847bfcdf82ad857111d3436021d6473c')
+rule 'AAA3BBB,J60/0,J300/25' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, '5e947bf4570002c88efaeab6342377a2')
+rule 'AAA3BBB,0/0,J365/25' -> ([(-7200, 3600, 'BBB')], (None, None, None), None, 'e649a0d9a5d86f8f57e165c97e96e5e9')
+rule 'AAA3BBB,J1/0,J365/23:59:59' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, '0377d3a627bbd636a11dc6bcf61b1e0f')
+rule 'AAA3BBB,M1.1.0/0,M12.5.6/24' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, '9bba755496b53f41b7e0986c74b6171a')
+rule 'AAA3BBB,M2.5.0,M2.5.6' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, '7bc6bf69e225f85d8bc09bd239b7154b')
+rule 'AAA3BBB,M3.2.0/167,M11.1.0/-167' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, 'b72153881101e434df35417644d03350')
+rule 'AAA3BBB,M3.2.0/-1:30:15,M11.1.0/26:30:15' -> ([(-10800, 0, 'AAA'), (-7200, 3600, 'BBB')], (None, None, None), None, 'a3adde967198b6f4fd35e43e2d0a8cc1')
+rule 'AAA-24' -> 'ValueError: offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not datetime.timedelta(days=1)'
+rule 'AAA24' -> 'ValueError: offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not datetime.timedelta(days=-1)'
+rule 'AAA24:59:59' -> 'ValueError: offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not datetime.timedelta(days=-2, seconds=82801)'
+rule 'AAA-24:59:59' -> 'ValueError: offset must be a timedelta strictly between -timedelta(hours=24) and timedelta(hours=24), not datetime.timedelta(days=1, seconds=3599)'
+rule 'AAA0:30' -> ([(-1800, 0, 'AAA')], (None, None, None), None, '9b29d43ab99dc87d4b8259bdba86ee11')
+rule 'AAA0:00:30' -> ([(-30, 0, 'AAA')], (None, None, None), None, 'e936dca999b3b56a08c972d476016f39')
+rule 'AAA012' -> ([(-43200, 0, 'AAA')], (None, None, None), None, 'a408992e9a170f9c64ad98b05bf4878c')
+rule 'AAA3BBB2:30,M3.2.0,M11.1.0' -> ([(-10800, 0, 'AAA'), (-9000, 1800, 'BBB')], (None, None, None), None, 'cac9a2956a08c48c90651ecc271e4398')
+rule 'AAA3BBB4,M3.2.0,M11.1.0' -> ([(-10800, 0, 'AAA'), (-14400, -3600, 'BBB')], (None, None, None), None, '85ecf42c0b5d50868e5d4b827cf0a3b3')
+rule 'AAA3BBB3,M3.2.0,M11.1.0' -> ([(-10800, 0, 'AAA'), (-10800, 0, 'BBB')], (None, None, None), None, '6eaf50046e3ac1d7f5c4204770c05489')
+rule 'AAA3BBB-20,M3.2.0,M11.1.0' -> ([(-10800, 0, 'AAA'), (72000, 82800, 'BBB')], (None, None, None), None, 'ecdecb92a1dbd9fa58dfc957aaa3b8a3')
+rule 'ABCDEFGHIJ5' -> ([(-18000, 0, 'ABCDEFGHIJ')], (None, None, None), None, 'f20bff6abc1475886fc7e39c4b5790d4')
+rule 'AB5' -> ([(-18000, 0, 'AB')], (None, None, None), None, '857b0ffddf9108a6e923d49139aa7c66')
+rule 'A5' -> ([(-18000, 0, 'A')], (None, None, None), None, 'a29f7faefa87166be3654401bb9b34e2')
+rule '<A>5' -> ([(-18000, 0, 'A')], (None, None, None), None, 'a29f7faefa87166be3654401bb9b34e2')
+rule '<AB>5' -> ([(-18000, 0, 'AB')], (None, None, None), None, '857b0ffddf9108a6e923d49139aa7c66')
+rule '<a1+-Z>5' -> ([(-18000, 0, 'a1+-Z')], (None, None, None), None, 'a94c5118af05567d5a6abbf74039cc69')
+rule 'aaa5bbb,M3.2.0,M11.1.0' -> ([(-14400, 3600, 'bbb'), (-18000, 0, 'aaa')], (None, None, None), None, 'c85626725d0436c87e0a9b2ed891c42c')
+rule '' -> ([(0, 0, 'UTC')], (datetime.timedelta(0), datetime.timedelta(0), 'UTC'), datetime.timedelta(0), '78f64b99cc4e6eff68a314958425d7c6')
+rule ' ' -> "ValueError: Invalid STD format in b' '"
+rule '5' -> "ValueError: Invalid STD format in b'5'"
+rule 'EST' -> "ValueError: Invalid STD offset in b'EST'"
+rule 'EST5EDT' -> "ValueError: Invalid DST offset in b'EST5EDT'"
+rule 'EST5EDT,' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,'"
+rule 'EST5EDT,M3.2.0' -> "ValueError: Missing transition rules in TZ string: b'EST5EDT,M3.2.0'"
+rule 'EST5EDT,M3.2.0,' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.0,'"
+rule 'EST5EDT,M3.2.0,M11.1.0,' -> "ValueError: Extraneous characters at end of TZ string: b'EST5EDT,M3.2.0,M11.1.0,'"
+rule 'EST5EDT,M3.2.0,M11.1.0x' -> "ValueError: Extraneous characters at end of TZ string: b'EST5EDT,M3.2.0,M11.1.0x'"
+rule 'EST5EDT,M3.2.0,M11.1.0/' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.0,M11.1.0/'"
+rule 'EST5EDT,M3.2.0/x,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.0/x,M11.1.0'"
+rule 'EST5EDT,M13.2.0,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M13.2.0,M11.1.0'"
+rule 'EST5EDT,M0.2.0,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M0.2.0,M11.1.0'"
+rule 'EST5EDT,M3.6.0,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.6.0,M11.1.0'"
+rule 'EST5EDT,M3.0.0,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.0.0,M11.1.0'"
+rule 'EST5EDT,M3.2.7,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.7,M11.1.0'"
+rule 'EST5EDT,M3.2,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2,M11.1.0'"
+rule 'EST5EDT,M3,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3,M11.1.0'"
+rule 'EST5EDT,M,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M,M11.1.0'"
+rule 'EST5EDT,M3.2.0/168,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.0/168,M11.1.0'"
+rule 'EST5EDT,M3.2.0/-168,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.0/-168,M11.1.0'"
+rule 'EST5EDT,M3.2.0/1:60,M11.1.0' -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), None, 'ddd6f311b9b8429ff5bcdb2e1f88b1da')
+rule 'EST5EDT,M3.2.0/1:5,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.0/1:5,M11.1.0'"
+rule 'EST5EDT,M3.2.0/1:05:5,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.2.0/1:05:5,M11.1.0'"
+rule 'EST5EDT,M3.2.0/1:05:05:05,M11.1.0' -> "ValueError: Missing transition rules in TZ string: b'EST5EDT,M3.2.0/1:05:05:05,M11.1.0'"
+rule 'EST5EDT,J0,J300' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,J0,J300'"
+rule 'EST5EDT,J366,J300' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,J366,J300'"
+rule 'EST5EDT,366,300' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,366,300'"
+rule 'EST5EDT,J,J300' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,J,J300'"
+rule 'EST5EDT,-1,300' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,-1,300'"
+rule 'EST5EDT,1000,300' -> "ValueError: Missing transition rules in TZ string: b'EST5EDT,1000,300'"
+rule 'EST25' -> "ValueError: Invalid STD offset in b'EST25'"
+rule 'EST-25' -> "ValueError: Invalid STD offset in b'EST-25'"
+rule 'EST5:60' -> ([(-21600, 0, 'EST')], (None, None, None), None, '60232613bbaf076f89dbafdd4c99bdc1')
+rule 'EST5:5' -> "ValueError: Invalid STD offset in b'EST5:5'"
+rule 'EST5:' -> "ValueError: Invalid STD offset in b'EST5:'"
+rule 'EST5:00:' -> "ValueError: Invalid STD offset in b'EST5:00:'"
+rule 'EST+' -> "ValueError: Invalid STD offset in b'EST+'"
+rule 'EST++5' -> "ValueError: Invalid STD offset in b'EST++5'"
+rule 'EST5 ' -> "ValueError: Invalid DST format in b'EST5 '"
+rule ' EST5' -> "ValueError: Invalid STD format in b' EST5'"
+rule 'EST 5' -> "ValueError: Invalid STD offset in b'EST 5'"
+rule 'E1T5' -> "ValueError: Missing transition rules in TZ string: b'E1T5'"
+rule '<EST5' -> "ValueError: Invalid STD format in b'<EST5'"
+rule '<>5' -> "ValueError: Invalid STD format in b'<>5'"
+rule '<E T>5' -> "ValueError: Invalid STD format in b'<E T>5'"
+rule '<E_T>5' -> "ValueError: Invalid STD format in b'<E_T>5'"
+rule 'EST5<EDT,M3.2.0,M11.1.0' -> "ValueError: Invalid DST format in b'EST5<EDT,M3.2.0,M11.1.0'"
+rule 'EST5EDT+,M3.2.0,M11.1.0' -> "ValueError: Invalid DST offset in b'EST5EDT+,M3.2.0,M11.1.0'"
+rule 'EST5EDT25,M3.2.0,M11.1.0' -> "ValueError: Invalid DST offset in b'EST5EDT25,M3.2.0,M11.1.0'"
+rule 'EST5E,M3.2.0,M11.1.0' -> ([(-14400, 3600, 'E'), (-18000, 0, 'EST')], (None, None, None), None, '4b31053435d1abb3c0125fb8d3e7a00a')
+rule 'EST5,M3.2.0,M11.1.0' -> "ValueError: Invalid DST format in b'EST5,M3.2.0,M11.1.0'"
+rule 'EST5EDT;M3.2.0;M11.1.0' -> "ValueError: Invalid DST offset in b'EST5EDT;M3.2.0;M11.1.0'"
+rule 'EST5\x00EDT' -> ([(-18000, 0, 'EST')], (None, None, None), None, '7cc5532e48ebdd590ed6c67868220bcb')
+rule '\xe9ST5' -> "ValueError: Invalid STD format in b'\\xe9ST5'"
+rule 'EST5EDT,M03.2.0,M11.1.0' -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), None, 'ddd6f311b9b8429ff5bcdb2e1f88b1da')
+rule 'EST5EDT,M003.2.0,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M003.2.0,M11.1.0'"
+rule 'EST5EDT,M3.02.0,M11.1.0' -> "ValueError: Malformed transition rule in TZ string: b'EST5EDT,M3.02.0,M11.1.0'"
+rule 'EST1000' -> "ValueError: Invalid STD offset in b'EST1000'"
+===== each hour about a change, by the rule
+EST5EDT,M3.2.0,M11.1.0 2023-02-28 aa60c28df3bc52b41cc85f78ff88ceef 0 0
+EST5EDT,M3.2.0,M11.1.0 2023-03-08 0ef1487f7d3d7789b03362a05f717d0a 2 0
+EST5EDT,M3.2.0,M11.1.0 2023-03-25 fe4e0756d37ae08914b53de1f5e6bc1e 0 0
+EST5EDT,M3.2.0,M11.1.0 2023-03-30 21d4b41a4eeabc1dfec8e0af078cc615 0 0
+EST5EDT,M3.2.0,M11.1.0 2023-10-01 42873bb7baaca5a2ccf9b025d1069235 0 0
+EST5EDT,M3.2.0,M11.1.0 2023-10-26 e03ef0147e8b8b196929ca0add734b78 0 0
+EST5EDT,M3.2.0,M11.1.0 2023-11-01 3bf0ab7f9128f5ec47ce2544201d002b 2 2
+EST5EDT,M3.2.0,M11.1.0 2023-04-01 2f848af667081a5d3e5e69450578789c 0 0
+EST5EDT,M3.2.0,M11.1.0 2024-02-28 adbed15d67457741168c14a5a6555a1b 0 0
+EST5EDT,M3.2.0,M11.1.0 2024-03-08 8a9cebe45602f954092b9ab22313c1d3 2 0
+EST5EDT,M3.2.0,M11.1.0 2024-03-25 16623d6818d922d8af767ef5991e01eb 0 0
+EST5EDT,M3.2.0,M11.1.0 2024-03-30 b2fa843303cee436972057ea17381cf3 0 0
+EST5EDT,M3.2.0,M11.1.0 2024-10-01 4055b40f5dfa2dc5621a09e7b6891917 0 0
+EST5EDT,M3.2.0,M11.1.0 2024-10-26 bcd18950d7aa99d458b97c1ad9221d20 0 0
+EST5EDT,M3.2.0,M11.1.0 2024-11-01 e271caefec401d13e496d723d64690c6 2 2
+EST5EDT,M3.2.0,M11.1.0 2024-04-01 91601b130c2b9dfa55837dd576bc4d76 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2023-02-28 9be469f91e1ac80f724a5159488adc4a 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2023-03-08 e482dca316dfb052bf096bf27f475b5c 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2023-03-25 a70540d7633a2ed54bdffef8775164ec 2 0
+GMT0BST,M3.5.0/1,M10.5.0 2023-03-30 982e0e17f378eab46723117d10bd76f5 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2023-10-01 f12a6d625a96b443713dc34e1642e2de 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2023-10-26 4421d3da1503e6790a196bebc1a9bf86 2 2
+GMT0BST,M3.5.0/1,M10.5.0 2023-11-01 65c5c4ff244973d636ebabf76eeaf72b 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2023-04-01 159e64eb6a793bcbee9fe9937df261dd 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2024-02-28 d1f83247662f27d9ee84d491fb7289ee 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2024-03-08 a851fe65abeecf4b5cac9c7b03210ece 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2024-03-25 82551e1d9036830e46bedb57ecb2e1be 2 0
+GMT0BST,M3.5.0/1,M10.5.0 2024-03-30 6afd536753b78724fdcedd3ac2c61977 2 0
+GMT0BST,M3.5.0/1,M10.5.0 2024-10-01 4b978ec71087a94e296f4e26b762de0e 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2024-10-26 5c839145eb63429651cba0b3eb6b4e4f 2 2
+GMT0BST,M3.5.0/1,M10.5.0 2024-11-01 f40593a3d9c259a3a217b8eb4ab592b9 0 0
+GMT0BST,M3.5.0/1,M10.5.0 2024-04-01 40d9d78dd60e41da55e4f06b2ac17391 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-02-28 e57ab9f99d263967495f0108687be601 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-03-08 d5491d8865a0435d7bd82e28024eca6c 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-03-25 aaffc9c6eb5dde4b64f06cd9d3f971d7 0 2
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-03-30 5b0de16304e04aea8e4cf63da91234ea 2 2
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-10-01 a21415e1af57f6df8b191e0bbcbe972f 2 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-10-26 e365a4c05237524ae74f9a166279de1a 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-11-01 8dd8354ef6c4fd2afa5a35dcd9f67ec5 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2023-04-01 e53cb03155716096a7c1d750ca49410c 2 2
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-02-28 ad1ff23af1b76b98deafb10816002ab7 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-03-08 c2ea5bf63100d5bc35bbfdeff9800493 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-03-25 f021445fd31e0990cc700fca7f60a402 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-03-30 e68e754f66223f5921a4c80dfc1cc979 0 2
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-10-01 3f341740248ba99cb07923678df26579 2 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-10-26 083219c6a9b3e36a0e1909f88b3ab0ab 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-11-01 2176a8b9ead3e96e34bda529dee1cb7f 0 0
+AEST-10AEDT,M10.1.0,M4.1.0/3 2024-04-01 f992f5c9313e04b7207929e1fdcb7d3b 2 2
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-02-28 3f857cc3fecf3941a215de2c4fca7298 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-03-08 c16b22e430363789c33479f74baf35dd 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-03-25 4966717902dcfebcbbce77a49d8a33d6 2 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-03-30 74544e7ddb5120af7d43c2daa2431b55 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-10-01 8912eef9461e1fe17f1d157f7af8b8c4 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-10-26 c45f0c237a82391058cb351ed3c97a20 2 2
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-11-01 c423ac7d966768e462408bcb54b7d016 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2023-04-01 efd237f0df8a26ad60bab579a9dd8176 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-02-28 f945cdb5b6b5ec83b2ff6ee5c1a8824f 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-03-08 172b957c0495de19ae818b7116c196ae 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-03-25 91a2b844380d805456ee8e15a06598bc 2 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-03-30 bbc7e69b1c356b5df45e30da8c896324 2 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-10-01 24157198422d01445c97775b0d90e254 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-10-26 d71eca5c75663aa28d7ae2f416737cc9 2 2
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-11-01 9c31123036bb468a18e9d4a9f9bff592 0 0
+IST-1GMT0,M10.5.0,M3.5.0/1 2024-04-01 05ca838d4bc435781e7fdb71efc947d7 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-02-28 641e01edaed2e492c5445d39d781cab6 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-03-08 795f5183a87683e9f281658542c94cbc 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-03-25 4ca039234e38f20ea4e6bdd0deda2f88 0 1
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-03-30 07c6891f3fe4692dc2d440d2f33083e0 1 1
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-10-01 d89bab8c4a70a7e6bd09eaa500598b66 1 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-10-26 080ceb0ff2c6b681ada7cb3e56b7aeeb 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-11-01 1d1ca0cf0c1323058530ffbc182fd2cb 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2023-04-01 7a77fcb4b9311e9beddb28fca49a3f3f 1 1
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-02-28 5b5e99922649bd2b17466fbe5f393b36 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-03-08 92fb43f0afabed9d2e53158e7036c407 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-03-25 0f9826f8101589dfe1f3cd75cac3d8d9 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-03-30 e2535988c9b3a7c307de88e8f9af569a 0 1
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-10-01 0f3cac17a005461c9ffd0b6f04883abc 1 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-10-26 b592dce59f1db17b077ccf2015164982 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-11-01 e49788fe96110e8ea363e6cb4329d6b5 0 0
+<+1030>-10:30<+11>-11,M10.1.0,M4.1.0 2024-04-01 0021a350d0c52f420ed16de0ff61f1d2 1 1
+AAA3BBB,J60/0,J300/25 2023-02-28 c4365ad147fdd672d85136d56f49ae96 2 0
+AAA3BBB,J60/0,J300/25 2023-03-08 110782f33a7acdaf59c0d0d9486e63ff 0 0
+AAA3BBB,J60/0,J300/25 2023-03-25 a14016a7a7b794c6fa781bfb9458a40f 0 0
+AAA3BBB,J60/0,J300/25 2023-03-30 1d87d4fe65844747f1ce4893045d9f49 0 0
+AAA3BBB,J60/0,J300/25 2023-10-01 a731ce39d2a2a246f82a225feddd1597 0 0
+AAA3BBB,J60/0,J300/25 2023-10-26 6188c54a8ee2202f88c050cd1e2297df 2 2
+AAA3BBB,J60/0,J300/25 2023-11-01 abba26805f5bac51519d164294f30981 0 0
+AAA3BBB,J60/0,J300/25 2023-04-01 928f515dcb0e86e38633d08be8f6fc23 0 0
+AAA3BBB,J60/0,J300/25 2024-02-28 f6b65ab491e6dc2f881761b61c72550a 2 0
+AAA3BBB,J60/0,J300/25 2024-03-08 f08c9e1c33daa7bf935d52575f9584c2 0 0
+AAA3BBB,J60/0,J300/25 2024-03-25 fa3c5f56ad73cf882e012001215bd681 0 0
+AAA3BBB,J60/0,J300/25 2024-03-30 c6c466a050c6609c4ec981f959d7d2e6 0 0
+AAA3BBB,J60/0,J300/25 2024-10-01 c30b32228fbe0216e4cbee1de0d96518 0 0
+AAA3BBB,J60/0,J300/25 2024-10-26 4f06c9c3bd80fd67c8a5adcca5585824 2 2
+AAA3BBB,J60/0,J300/25 2024-11-01 32a350e488734feb61fa67e8e8e22de3 0 0
+AAA3BBB,J60/0,J300/25 2024-04-01 30ede2de5fe267c7a2565312a7f48bc0 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2023-02-28 0114e2366fc7921045abedf7eec449ff 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2023-03-08 d4d2f30a115160aaa9efc60024559a43 2 2
+AAA3BBB4,M3.2.0,M11.1.0 2023-03-25 e39ba91b5a0e27dccdb10dd292cf1f6f 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2023-03-30 177f8d8dddafbd9ae0e0dc68500b9338 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2023-10-01 f389b2d38ab9a2bc95162530a09e5d1a 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2023-10-26 ed75e72198fb4b4e8b2055084704cc25 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2023-11-01 d7d8842076ccc319b72e92ff5f656e99 2 0
+AAA3BBB4,M3.2.0,M11.1.0 2023-04-01 5fb7729897df676926a7c7086ee745c6 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2024-02-28 2445b7f905dbb9b6fa6a689064d963e5 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2024-03-08 43600204743e699240459d783daf6a85 2 2
+AAA3BBB4,M3.2.0,M11.1.0 2024-03-25 175d16266b4a01719063fd151e6c35d3 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2024-03-30 830cffba7ce5e511c5b657fa5d9fae36 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2024-10-01 736a5cf428de31cb6b561bde65d1ac21 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2024-10-26 7bd76a516f8c99ed3c0664cf56f0013c 0 0
+AAA3BBB4,M3.2.0,M11.1.0 2024-11-01 e9ecbdc4fe3f52b142b392c65f5007b4 2 0
+AAA3BBB4,M3.2.0,M11.1.0 2024-04-01 c08421537a5c6229cd04e74f3295f9c6 0 0
+===== changes that are listed
+one change -> ([(-14400, 0, 'AST'), (-18000, 0, 'LMT')], (None, None, None), 0, 2, 'e4d5a51b222bdb2148b19df571e895b2')
+   version 1 -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(0), 'AST')
+one change, and a rule -> ([(-14400, 0, 'AST'), (-18000, 0, 'LMT')], (None, None, None), 0, 2, 'e4d5a51b222bdb2148b19df571e895b2')
+   version 1 -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(0), 'AST')
+forward and back -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), 3, 8, '20f32cd4d104be0b57330bd389b200d8')
+   version 1 -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(0), 'EST')
+forward and back, and no rule -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), 2, 6, 'd3cc38d951e9463c9b0cb6c90cd222bc')
+   version 1 -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=3600), 'EDT')
+ends in daylight saving, and no rule -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), 0, 2, '70e8854633f620caf13ed39481775f7a')
+   version 1 -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=3600), 'EDT')
+all daylight saving -> ([(-14400, 3600, 'BBB'), (-18000, 3600, 'AAA')], (None, None, None), 2, 4, 'e729104486646310a962914f1f751036')
+   version 1 -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=3600), 'AAA')
+daylight saving first -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST')], (None, None, None), 0, 2, '3cc53403a639afb4c3f4ba240a606ee4')
+   version 1 -> (datetime.timedelta(days=-1, seconds=72000), datetime.timedelta(seconds=3600), 'EDT')
+double summer time -> ([(0, 0, 'GMT'), (3600, 3600, 'BST'), (7200, 3600, 'BDST')], (None, None, None), 4, 8, '5b68126af023f2d201c87d03913c29ef')
+   version 1 -> (datetime.timedelta(0), datetime.timedelta(0), 'GMT')
+a change of standard time -> ([(-14400, 3600, 'EDT'), (-18000, 0, 'EST'), (-18000, 3600, 'CDT'), (-21600, 0, 'CST')], (None, None, None), 4, 8, '944e0531eac9d5c3e656f1663481cadd')
+   version 1 -> (datetime.timedelta(days=-1, seconds=68400), datetime.timedelta(seconds=3600), 'CDT')
+daylight saving that is no different -> ([(3600, 0, 'AAA'), (3600, 3600, 'BBB')], (None, None, None), 0, 0, 'c95d0c449d565d1593a283df32517b5d')
+   version 1 -> (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'AAA')
+negative daylight saving -> ([(0, -3600, 'GMT'), (3600, 0, 'IST')], (None, None, None), 4, 6, '2a05430487ed8a3026a2c272e898b1ee')
+   version 1 -> (datetime.timedelta(0), datetime.timedelta(days=-1, seconds=82800), 'GMT')
+a type that is not used -> ([(0, 0, 'AAA'), (3600, 0, 'BBB')], (None, None, None), 0, 2, '80c94f3b724315805383525e73bfd3bf')
+   version 1 -> (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'BBB')
+the same name twice -> ([(0, 0, 'AAA'), (3600, 3600, 'AAA'), (7200, 0, 'AAA')], (None, None, None), 0, 4, '90c76ef78a879379a309aa829d02f768')
+   version 1 -> (datetime.timedelta(seconds=7200), datetime.timedelta(0), 'AAA')
+before 1970 -> ([(-3600, 0, 'CCC'), (0, 0, 'AAA'), (3600, 0, 'BBB')], (None, None, None), 4, 8, 'dc70fe2561787dc9620a422615e8bef8')
+   version 1 -> (datetime.timedelta(0), datetime.timedelta(0), 'AAA')
+far away -> "error: 'l' format requires -2147483648 <= number <= 2147483647"
+   version 1 -> None
+a large jump -> ([(-39600, 0, 'AAA'), (46800, 0, 'BBB')], (None, None, None), 48, 96, '54ea69ff66332422e5c706869637d217')
+   version 1 -> (datetime.timedelta(days=-1, seconds=46800), datetime.timedelta(0), 'AAA')
+odd offsets -> ([(-1, -12346, 'BBB'), (-17762, 0, 'LMT'), (12345, 0, 'AAA')], (None, None, None), 7, 23, '9b248700f184a7589eaedf966b3eb069')
+   version 1 -> (datetime.timedelta(days=-1, seconds=86399), datetime.timedelta(days=-1, seconds=74054), 'BBB')
+no changes, one type -> ([(3600, 0, 'AAA')], (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'AAA'), 0, 0, '4094bd2b64e426341606872869beaec2')
+   version 1 -> (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'AAA')
+no changes, one type, and the same rule -> ([(3600, 0, 'AAA')], (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'AAA'), 0, 0, '4094bd2b64e426341606872869beaec2')
+   version 1 -> (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'AAA')
+no changes, one type, and another rule -> ([(3600, 0, 'BBB')], (None, None, None), 0, 0, '3c905cc816a1120623a2cc4879074390')
+   version 1 -> (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'AAA')
+no changes, one type, and a rule with another offset -> ([(7200, 0, 'AAA')], (None, None, None), 0, 0, 'cefdc7dc91bf24f47b9d9bf4ec16e369')
+   version 1 -> (datetime.timedelta(seconds=3600), datetime.timedelta(0), 'AAA')
+no changes, two types -> ([(7200, 0, 'BBB')], (None, None, None), 0, 0, '361267ce9c3a9437907b513326f0eac7')
+   version 1 -> (datetime.timedelta(seconds=7200), datetime.timedelta(0), 'BBB')
+no changes, one type for daylight saving -> ([(3600, 3600, 'AAA')], (datetime.timedelta(seconds=3600), datetime.timedelta(seconds=3600), 'AAA'), 0, 0, 'f5037fb3b40e4155627a2b92a6e1ac45')
+   version 1 -> (datetime.timedelta(seconds=3600), datetime.timedelta(seconds=3600), 'AAA')
+changes at the same time -> ([(0, 0, 'AAA')], (None, None, None), 2, 0, '1f9672101bbcccedc852aab654b949d6')
+   version 1 -> (datetime.timedelta(0), datetime.timedelta(0), 'AAA')
+changes out of order -> ([(0, 0, 'AAA')], (None, None, None), 0, 0, '2f04e0a4d6784c6e16e3d5e58dd1d90e')
+   version 1 -> (datetime.timedelta(0), datetime.timedelta(0), 'AAA')
+===== files that will not do
+nothing -> 'ValueError: Invalid TZif file: magic not found'
+not one -> 'ValueError: Invalid TZif file: magic not found'
+the magic only -> "ValueError: invalid literal for int() with base 10: b''"
+cut short -> 'ValueError: Invalid TZif file: magic not found'
+cut in the second part -> 'error: unpack requires a buffer of 6 bytes'
+no rule at the end -> "AssertionError: b''"
+no newline at the end -> 'ValueError: Invalid TZif file: unexpected end of file'
+version 3 -> (datetime.timedelta(0), datetime.timedelta(0), 'AAA')
+version 9 -> (datetime.timedelta(0), datetime.timedelta(0), 'AAA')
+an index that is too large -> 'ValueError: Invalid transition index found while reading TZif: 5'
+no types -> 'ValueError: No time zone information found.'
+no types, and a rule -> (datetime.timedelta(0), datetime.timedelta(0), 'AAA')
+no types, and a change -> 'ValueError: Invalid transition index found while reading TZif: 0'
+a bad rule -> "ValueError: Invalid STD offset in b'nonsense'"
+a name that is not ASCII -> (datetime.timedelta(0), datetime.timedelta(0), '\xe9\xe9\xe9')
+from_file(None) -> "AttributeError: 'NoneType' object has no attribute 'read'"
+from_file(an int) -> "AttributeError: 'int' object has no attribute 'read'"
+from_file(bytes) -> "AttributeError: 'bytes' object has no attribute 'read'"
+from_file(a str) -> "AttributeError: 'str' object has no attribute 'read'"
+from_file(text) -> 'ValueError: Invalid TZif file: magic not found'
+from_file(closed) -> 'ValueError: I/O operation on closed file.'
+from_file(read raises) -> 'ZeroDivisionError: division by zero'
+from_file(read gives a str) -> 'ValueError: Invalid TZif file: magic not found'
+===== what load_data() can give
+None -> 'TypeError: Invalid data result type: None'
+a list -> "TypeError: Invalid data result type: [(), (), (0,), (0,), ('A',), None]"
+a tuple subclass -> "TypeError: Invalid data result type: ((), (), (0,), (0,), ('A',), None)"
+too short -> 'IndexError: tuple index out of range'
+empty -> 'IndexError: tuple index out of range'
+good -> (datetime.timedelta(0), datetime.timedelta(0), 'A')
+no types -> 'ValueError: No time zone information found.'
+offsets no ints -> "TypeError: 'str' object cannot be interpreted as an integer"
+offset too large -> 'OverflowError: Python int too large to convert to C long'
+offset more than a day -> (datetime.timedelta(days=11, seconds=49600), datetime.timedelta(0), 'A')
+offset far too much -> (datetime.timedelta(days=-17715, seconds=81024), datetime.timedelta(0), 'A')
+isdst too short -> 'IndexError: tuple index out of range'
+names too short -> 'IndexError: tuple index out of range'
+a name that is no str -> (datetime.timedelta(0), datetime.timedelta(0), 5)
+indices too short -> 'IndexError: tuple index out of range'
+an index of -2 -> 'ValueError: Invalid transition index found while reading TZif: -2'
+an index too large -> 'ValueError: Invalid transition index found while reading TZif: 1'
+an index that is a float -> 'TypeError: an integer is required'
+a time that is a float -> "TypeError: 'float' object cannot be interpreted as an integer"
+a time too large -> 'OverflowError: int too big to convert'
+True for an index -> (datetime.timedelta(seconds=1), datetime.timedelta(0), 'B')
+the rule a str -> 'TypeError: expected bytes, str found'
+the rule an int -> 'TypeError: expected bytes, int found'
+the rule empty -> (datetime.timedelta(0), datetime.timedelta(0), 'A')
+the rule a bytearray -> 'TypeError: expected bytes, bytearray found'
+isdst that cannot say -> 'ZeroDivisionError: division by zero'
+seven -> (datetime.timedelta(0), datetime.timedelta(0), 'A')
+done with the first part
