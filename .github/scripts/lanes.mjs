@@ -49,6 +49,14 @@ const LTO_WINDOWS = "/clang:-flto=thin /clang:-fno-split-lto-unit";
 
 const SANITIZERS = "address,undefined";
 
+// The -pic lane: the release build compiled as position-independent code, for a host that puts JavaScriptCore into a
+// shared object (a SwiftPM test bundle on Linux, a plugin, a language binding's extension module). The other lanes are
+// PIE code (CMAKE_POSITION_INDEPENDENT_CODE is off, so clang's default applies): a linker cannot relocate their
+// PC-relative references to exported symbols in a shared object, nor the local-exec TLS that libpas's thread-local
+// cache gets in the lanes without mimalloc. initial-exec keeps every thread-local access one GOT load, and where the
+// archive ends up in an executable, as in bun, the linker relaxes it to local-exec, so the flag costs nothing there.
+const PIC = "-fPIC -ftls-model=initial-exec";
+
 // Which ICU every platform but macOS (which uses the system's) builds and bundles: icu/source.json, and nowhere else.
 const icu = JSON.parse(readFileSync(join(root, "icu/source.json"), "utf8"));
 const ICU = { ICU_VERSION: icu.version, ICU_SHA256: icu.sha256 };
@@ -68,8 +76,10 @@ const variants = {
   "debug": { buildType: "Debug" },
   "asan": { buildType: "Release", sanitizers: SANITIZERS },
   "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
+  "pic": { buildType: "Release", mimalloc: true, pic: true },
 };
-const ALL = Object.keys(variants);
+// Every variant but pic, which only the Linux glibc lanes build.
+const ALL = Object.keys(variants).filter(variant => variant !== "pic");
 const NO_ASAN = ["release", "lto", "debug"];
 
 // Each platform:
@@ -93,7 +103,7 @@ const platforms = [
     // arm64 sysroot in the same container.
     dockerfile: "Dockerfile",
     packageOS: "linux",
-    lanes: { amd64: ALL, arm64: ALL },
+    lanes: { amd64: [...ALL, "pic"], arm64: [...ALL, "pic"] },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto"] },
       arm64: { on: "linux-arm64-gh", variants: ["lto"] },
@@ -104,6 +114,7 @@ const platforms = [
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
+      PIC_FLAGS: v.pic ? PIC : "",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
       MARCH_FLAG:

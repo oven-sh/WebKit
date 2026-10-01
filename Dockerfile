@@ -5,6 +5,8 @@ ARG RELEASE_FLAGS="-O3 -DNDEBUG=1"
 ARG LLVM_VERSION="23"
 # The -lto variants append -g1 (line tables only) after this, see $G below; every other variant keeps full -g.
 ARG DEFAULT_CFLAGS="-mno-omit-leaf-frame-pointer -g -fno-omit-frame-pointer -ffunction-sections -fdata-sections -faddrsig -fno-unwind-tables -fno-asynchronous-unwind-tables -DU_STATIC_IMPLEMENTATION=1 "
+# The -pic lane's code generation flags (PIC in lanes.mjs); empty for every other lane.
+ARG PIC_FLAGS=""
 ARG ENABLE_SANITIZERS=""
 ARG USE_MIMALLOC="OFF"
 ARG USE_EXTERNAL_MIMALLOC="OFF"
@@ -262,14 +264,16 @@ FROM base as lane-x86_64
 
 ARG MARCH_FLAG
 ARG DEFAULT_CFLAGS
+ARG PIC_FLAGS
 
-ENV CFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
-ENV CXXFLAGS="${DEFAULT_CFLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
+ENV CFLAGS="${DEFAULT_CFLAGS} ${PIC_FLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
+ENV CXXFLAGS="${DEFAULT_CFLAGS} ${PIC_FLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
 
 FROM base as lane-aarch64
 
 ARG MARCH_FLAG
 ARG DEFAULT_CFLAGS
+ARG PIC_FLAGS
 
 # `base` points clang at the container's own GCC, headers and libraries, which are x86_64. With a sysroot clang finds
 # the aarch64 ones there by itself, the way it does in an arm64 container, where those paths do not exist.
@@ -277,8 +281,8 @@ ENV LIBRARY_PATH=""
 ENV CPLUS_INCLUDE_PATH=""
 ENV C_INCLUDE_PATH=""
 ENV LDFLAGS="-fuse-ld=lld"
-ENV CFLAGS="--sysroot=${SYSROOT_AARCH64} ${DEFAULT_CFLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
-ENV CXXFLAGS="--sysroot=${SYSROOT_AARCH64} ${DEFAULT_CFLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
+ENV CFLAGS="--sysroot=${SYSROOT_AARCH64} ${DEFAULT_CFLAGS} ${PIC_FLAGS} ${MARCH_FLAG} $CFLAGS -stdlib=libstdc++"
+ENV CXXFLAGS="--sysroot=${SYSROOT_AARCH64} ${DEFAULT_CFLAGS} ${PIC_FLAGS} ${MARCH_FLAG} $CXXFLAGS -stdlib=libstdc++"
 
 # The lane: its settings, then ICU and WebKit built with them.
 FROM lane-${LINUX_ARCH} as lane
