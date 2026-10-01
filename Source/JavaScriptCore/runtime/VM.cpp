@@ -211,7 +211,7 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
-    if (!Options::useJIT())
+    if (!Options::useJIT() && !Options::useRegExpJIT())
         return false;
 
     auto canUseJITString = unsafeSpan(getenv("JavaScriptCoreUseJIT"));
@@ -574,6 +574,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // ENABLE(FTL_JIT)
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
+    } else if (Options::useRegExpJIT()) {
+        // The code of a regular expression calls thunks of its own, which are made when they are first asked for. (So this leaves
+        // out initialize(), which makes the thunks that compiled JavaScript uses.)
+        jitStubs = makeUnique<JITThunks>();
     }
 #endif // ENABLE(JIT)
 

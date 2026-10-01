@@ -351,6 +351,14 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     }
 }
 
+bool RegExp::interpretsAtFirst(std::optional<StringView> subject) const
+{
+    if (Options::useJIT() || !Options::useRegExpJIT())
+        return false;
+    // (A subject that is long enough pays for compiling by itself.)
+    return m_workInInterpreter + (subject ? subject->length() / 32 : 0) < workBeforeJIT;
+}
+
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
@@ -378,7 +386,11 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         return;
     }
 #endif
-    if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
+    bool isInterpretedAtFirst = interpretsAtFirst(sampleString);
+    bool wasInterpretedAtFirst = m_workInInterpreter == workBeforeJIT;
+    if (!isInterpretedAtFirst)
+        m_workInInterpreter = jitWasConsidered;
+    if (!isInterpretedAtFirst && !pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences
 #endif
@@ -387,17 +399,21 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         auto& jitCode = ensureRegExpJITCode();
         reinterpret_cast<decltype(&Yarr::jitCompile)>(g_compilerHooks.compileRegExp)(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::IncludeSubpatterns);
         if (!jitCode.failureReason()) {
+            dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
+            if (wasInterpretedAtFirst)
+                m_regExpBytecode = nullptr;
             return;
         }
     }
 #else
     UNUSED_PARAM(charSize);
     UNUSED_PARAM(sampleString);
+    constexpr bool isInterpretedAtFirst = false;
 #endif
 
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), isInterpretedAtFirst ? "Interpreting this regular expression at first: \"/" : "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
     m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
@@ -474,7 +490,11 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         return;
     }
 #endif
-    if (!pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
+    bool isInterpretedAtFirst = interpretsAtFirst(sampleString);
+    bool wasInterpretedAtFirst = m_workInInterpreter == workBeforeJIT;
+    if (!isInterpretedAtFirst)
+        m_workInInterpreter = jitWasConsidered;
+    if (!isInterpretedAtFirst && !pattern.containsUnsignedLengthPattern() && Options::useRegExpJIT()
 #if !ENABLE(YARR_JIT_BACKREFERENCES)
         && !pattern.m_containsBackreferences
 #endif
@@ -483,17 +503,21 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         auto& jitCode = ensureRegExpJITCode();
         reinterpret_cast<decltype(&Yarr::jitCompile)>(g_compilerHooks.compileRegExp)(pattern, m_patternString, charSize, sampleString, vm, jitCode, Yarr::ExecutionMode::MatchOnly);
         if (!jitCode.failureReason()) {
+            dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Compiled this regular expression: \"/", m_patternString, "/\"");
             m_state = JITCode;
             m_minimumSize = pattern.m_body->m_minimumSize;
+            if (wasInterpretedAtFirst)
+                m_regExpBytecode = nullptr;
             return;
         }
     }
 #else
     UNUSED_PARAM(charSize);
     UNUSED_PARAM(sampleString);
+    constexpr bool isInterpretedAtFirst = false;
 #endif
 
-    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), "Can't JIT this regular expression: \"/", m_patternString, "/\"");
+    dataLogLnIf(Options::dumpCompiledRegExpPatterns(), isInterpretedAtFirst ? "Interpreting this regular expression at first: \"/" : "Can't JIT this regular expression: \"/", m_patternString, "/\"");
 
     m_state = ByteCode;
     // m_regExpBytecode is shared with capture-observing operations (exec/match) and the Yarr

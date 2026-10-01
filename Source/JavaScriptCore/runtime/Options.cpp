@@ -897,9 +897,16 @@ void Options::notifyOptionsChanged()
 #if USE(BUN_JSC_ADDITIONS)
     if (!g_compilerHooks.areInstalled())
         Options::useJIT() = false;
+    // A program that was compiled ahead of time runs with the JIT off. But the build has not seen a pattern that is put together at
+    // run time, and the Yarr interpreter is about five times slower, so those are still compiled. That takes executable memory
+    // (VM::canUseAssembler()) and nothing else: to the rest of the engine, the JIT is off.
+    bool useRegExpJITWithoutJIT = Options::useAOT() && Options::useRegExpJIT() && g_compilerHooks.compileRegExp;
+#else
+    bool useRegExpJITWithoutJIT = false;
 #endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
+        Options::useRegExpJIT() = useRegExpJITWithoutJIT;
 #if OS(DARWIN)
         // If we don't know what the sandbox policy is on mach exception handler use is, we'll
         // take the default behavior of blocking its use if the JIT is disabled. JIT disablement

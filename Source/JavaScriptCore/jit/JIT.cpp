@@ -1124,15 +1124,20 @@ void JIT::exceptionCheck()
 }
 
 // See CompilerHooks.h. Nothing else is to name any of these.
+void installRegExpCompiler()
+{
+#if ENABLE(YARR_JIT)
+    g_compilerHooks.compileRegExp = reinterpret_cast<void*>(&Yarr::jitCompile);
+#endif
+}
+
 void installCompilers()
 {
+    installRegExpCompiler();
     g_compilerHooks.enqueueBaselinePlan = [](CodeBlock* codeBlock) {
         JITWorklist::ensureGlobalWorklist().enqueue(adoptRef(*new BaselineJITPlan(codeBlock)));
     };
     g_compilerHooks.compileBaselineNow = &JIT::compileSync;
-#if ENABLE(YARR_JIT)
-    g_compilerHooks.compileRegExp = reinterpret_cast<void*>(&Yarr::jitCompile);
-#endif
 #if ENABLE(WEBASSEMBLY_BBQJIT)
     g_compilerHooks.newBBQPlan = reinterpret_cast<void*>(&Wasm::BBQPlan::create);
 #endif

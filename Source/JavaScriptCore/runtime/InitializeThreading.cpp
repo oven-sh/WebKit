@@ -107,6 +107,8 @@ void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCusto
             VM::computeCanUseJIT();
             if (!g_jscConfig.vm.canUseJIT) {
                 Options::useJIT() = false;
+                if (!VM::canUseAssembler())
+                    Options::useRegExpJIT() = false;
                 Options::notifyOptionsChanged();
             } else {
 #if CPU(ARM64E) && ENABLE(JIT)
