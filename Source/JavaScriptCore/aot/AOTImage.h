@@ -25,100 +25,102 @@ class VM;
 
 namespace AOT {
 
-// The code of a whole program, compiled before the program is run: what a linker would call the text section, and the table to
-// find a function's code in it. Nothing in it is an address, so it is used where it is mapped, by every process that maps it.
+// The machine code of a whole program, compiled before the program runs: the equivalent of a text section plus a table for finding
+// each function's code. It contains no absolute addresses, so every process can use it wherever it is mapped.
 //
 //     ImageHeader | hash table of ImageKey | function records | padding to a page | code
 //
-// The image starts on a page boundary of the file it is in, so the code can be mapped from the file, executable.
+// The image starts on a page boundary of its file, so the code can be mapped executable directly from the file.
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL; // "BUNAOT01"
 static constexpr size_t imagePageSize = 16 * KB;
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
-static constexpr size_t imageStubsAlignment = 16; // And of whatever else is not a function.
+static constexpr size_t imageStubsAlignment = 16; // Also the alignment of everything else that is not a function.
 static constexpr unsigned mostCopiesOfStubsInImage = 8;
 static constexpr unsigned numberOfAdapters = 5;
 
 struct ImageHeader {
     uint64_t magic;
-    uint64_t stamp; // Of the engine the code was compiled by and for: it has that build's offsets and table indices in it.
-    uint64_t size; // Of everything.
+    uint64_t stamp; // Identifies the engine build. The code embeds that build's field offsets and table indices.
+    uint64_t size; // Total size.
     uint64_t codeOffset;
     uint64_t codeSize;
-    uint64_t linkTimeConstantsUsed[4]; // A bit for each LinkTimeConstant that the code loads. It takes them to be there: Instance::linkTimeConstants.
+    uint64_t linkTimeConstantsUsed[4]; // One bit per LinkTimeConstant the code loads. Each must be present in Instance::linkTimeConstants.
     uint32_t tableOffset;
-    uint32_t tableCapacity; // A power of two. Or nothing: see StaticHeap::keysOfImage().
+    uint32_t tableCapacity; // A power of two, or zero if the table is omitted (StaticHeap::keysOfImage()).
     uint32_t recordsOffset;
     uint32_t recordsSize;
     uint32_t numberOfFunctions;
-    uint32_t environmentsSize; // See Instance: how much there is below it.
-    uint32_t environmentsOffset; // ImageEnvironment, by which module of the graph of modules that the program was linked as.
+    uint32_t environmentsSize; // Size of the area below the Instance. See Instance::placeForEnvironment().
+    uint32_t environmentsOffset; // ImageEnvironment[], indexed by module index in the linked module graph.
     uint32_t numberOfEnvironments;
-    // Shapes and selectors are numbered from one.
-    uint32_t shapesOffset; // ImageShape, by number.
-    uint32_t numberOfShapes; // One more than the last.
-    uint32_t slotsOfShapesOffset; // uint16_t: see ImageShape::slots.
-    // Options::aotTypesFields(): TypedLayoutTable. The index (uint32_t, by the number of the shape), and what it is an index of. No index: it is not gone by.
+    // Shape and selector numbers start at one.
+    uint32_t shapesOffset; // ImageShape[], by shape number.
+    uint32_t numberOfShapes; // Highest shape number plus one.
+    uint32_t slotsOfShapesOffset; // uint16_t[]. See ImageShape::slots.
+    // Tables for TypedLayoutTable (Options::aotTypesFields()). See TypedLayoutTable::setSlotTypes() and setFields().
+    // numberOfSlotRanges is zero if typed layouts are not used.
     uint32_t slotRangesOffset;
     uint32_t numberOfSlotRanges;
     uint32_t slotTypesOffset;
-    uint32_t fieldRangesOffset; // TypedLayoutTable::setNames(). Zero: no structs.
+    uint32_t fieldRangesOffset; // Zero if there are no typed fields.
     uint32_t namedOffset;
     uint32_t fieldTypesOffset;
     uint32_t fieldLayoutIDsOffset;
     uint32_t startOfFieldsOffset;
     uint32_t fieldsOffset;
     uint32_t layoutIDsByFieldIDOffset;
-    uint32_t largestFieldID; // Property name ids (VM::aotPropertyNameIDs) start above it: both kinds are stored in Structure::m_fieldIDInSlot.
+    uint32_t largestFieldID; // Property name IDs (VM::aotPropertyNameIDs) start above this. Both kinds of ID are stored in Structure::m_fieldIDInSlot.
     uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes; // Options::aotAuditsTypes()
-    // With numberOfIdentifiersOfProgram, a selector is the number of the identifier, and what it says is for StaticHeap to know.
-    uint32_t selectorsOffset; // ImageSelector, by number.
-    uint32_t numberOfSelectors; // One more than the last.
-    uint32_t rowsOfSelectorsOffset; // uint32_t, by number: the entry of the dispatch table for a shape is at this plus the number of the shape.
+    // If numberOfIdentifiersOfProgram is nonzero, a selector number is an identifier number and StaticHeap holds the strings.
+    uint32_t selectorsOffset; // ImageSelector[], by selector number.
+    uint32_t numberOfSelectors; // Highest selector number plus one.
+    uint32_t rowsOfSelectorsOffset; // uint32_t[], by selector number. The dispatch table entry for a shape is at this value plus the shape number.
     uint32_t textOfSelectorsOffset;
-    uint32_t selectorsInOrderOffset; // uint32_t: by length, and then by what they say. The 8 bit ones first.
+    uint32_t selectorsInOrderOffset; // uint32_t[], sorted by length and then by content, with 8-bit selectors first.
     uint32_t numberOfSelectorsInOrder;
-    uint32_t hashOfIntrinsics; // ImmutableIntrinsics::hash(), if the code goes by their numbers. Zero: it does not.
-    uint32_t dispatchOffset; // uint32_t: ImageDispatchEntry.
-    uint32_t dispatchSize; // In entries.
-    uint32_t quotesOffset; // What ImageFunction::quotes is from. See Image::quoteAt().
+    uint32_t hashOfIntrinsics; // ImmutableIntrinsics::hash() if the code refers to intrinsics by index, else zero.
+    uint32_t dispatchOffset; // uint32_t[]. See ImageDispatchEntry.
+    uint32_t dispatchSize; // Number of entries.
+    uint32_t quotesOffset; // Base for ImageFunction::quotes. See Image::quoteAt().
     uint32_t textOfQuotesOffset; // UTF-8.
-    // Not zero: it is in blocks of so many bytes, each packed by itself (setCodec()). What is there is then: how many blocks; how many bytes the last one unpacks to; where each
-    // starts, and where the last ends, from the first; and the blocks.
+    // If nonzero, the data is compressed in independent blocks of this many bytes (setCodec()). The stored form is: the number of
+    // blocks; the uncompressed size of the last block; the start of each block and the end of the last, relative to the first; then
+    // the blocks.
     uint32_t sizeOfBlockOfTextOfQuotes;
-    uint32_t sizeOfBlockOfQuotes; // Likewise.
-    uint32_t numberOfIdentifiersOfProgram; // Not zero: see NumbersOfIdentifiers.
+    uint32_t sizeOfBlockOfQuotes; // As above.
+    uint32_t numberOfIdentifiersOfProgram; // If nonzero, see NumbersOfIdentifiers.
     uint32_t numberOfConstantsOfProgram; // See NumbersOfConstants.
-    uint32_t regExpsOffset; // ImageRegExp, in the order of their hashes.
+    uint32_t regExpsOffset; // ImageRegExp[], sorted by hash.
     uint32_t numberOfRegExps;
     uint32_t textOfRegExpsOffset;
-    // For telling what an address is in (classifyAddress()).
-    uint32_t numbersOfFunctionsOffset; // uint32_t, by index: what the function goes by in a type (typeOfFunction()). Only Options::aotVerifiesFacts() looks.
-    uint32_t startsOfFunctionsOffset; // uint32_t, by index, which is the order they are in: where each starts, in the code. And one more, which is beyond everything.
-    uint32_t granulesOfCodeOffset; // uint32_t: for each 1 << shiftOfGranuleOfCode bytes of the code, the last function to start no later than they do.
+    // For mapping a code address to a function (classifyAddress()).
+    uint32_t numbersOfFunctionsOffset; // uint32_t[], by function index: the function's number in a Type (typeOfFunction()). Only used by Options::aotVerifiesFacts().
+    uint32_t startsOfFunctionsOffset; // uint32_t[], by function index (which is code order): the code offset of each function, plus a final sentinel.
+    uint32_t granulesOfCodeOffset; // uint32_t[]: for each 1 << shiftOfGranuleOfCode bytes of code, the last function that starts at or before them.
     uint32_t callSitesOffset; // See callSiteAt().
-    uint32_t framesOffset; // ImageFrame, by ImageFunction::frame.
-    uint32_t endOfFunctions; // In the code.
+    uint32_t framesOffset; // ImageFrame[], indexed by ImageFunction::frame.
+    uint32_t endOfFunctions; // Code offset.
     uint32_t sizeOfStubs;
     uint32_t numberOfCopiesOfStubs;
-    uint32_t copiesOfStubs[mostCopiesOfStubsInImage]; // Where each is, in the code.
-    uint32_t returnsIntoAdapters[numberOfAdapters]; // From the start of the stubs: StubBlob::returnsIntoAdapters.
-    uint32_t stubOffsets[numberOfStubs]; // From the start of the code, which starts with a copy of the stubs.
+    uint32_t copiesOfStubs[mostCopiesOfStubsInImage]; // Code offset of each copy.
+    uint32_t returnsIntoAdapters[numberOfAdapters]; // Relative to the start of the stubs. See StubBlob::returnsIntoAdapters.
+    uint32_t stubOffsets[numberOfStubs]; // Relative to the start of the code, which begins with a copy of the stubs.
 };
 
-// The code for a regular expression, however the program comes by one that says that.
+// Compiled code for a regular expression, used for any RegExp with the same pattern and flags however it is created.
 struct ImageRegExp {
     static uint32_t hashOf(const String& pattern, OptionSet<Yarr::Flags> flags) { return pattern.hash() * 31 + significantFlags(flags).toRaw(); }
-    // The others make no difference to what the pattern matches at a given place, which is all that the code says.
+    // The other flags do not affect what the pattern matches at a given position, which is all the code computes.
     static OptionSet<Yarr::Flags> significantFlags(OptionSet<Yarr::Flags> flags) { return flags - OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::HasIndices }; }
 
     uint32_t hash;
-    uint32_t text; // Where the pattern is, in bytes, in the text of them.
+    uint32_t text; // Byte offset of the pattern in the RegExp text.
     uint32_t length : 31; // In characters.
     uint32_t is8Bit : 1;
     uint32_t flags;
-    // From the start of the code. It records where the subpatterns are (Yarr::ExecutionMode::IncludeSubpatterns).
+    // Code offsets. The code records subpattern positions (Yarr::ExecutionMode::IncludeSubpatterns).
     uint32_t codeFor8Bit;
     uint32_t codeFor16Bit;
 };
@@ -126,42 +128,42 @@ struct ImageRegExp {
 struct ImageShape {
     uint16_t numberOfProperties;
     uint16_t inlineCapacity;
-    uint32_t slots; // Where, among ImageHeader::slotsOfShapesOffset, the slot of each property is, plus one. Zero: they are one after the other.
-    uint16_t layoutID; // KnownShape::family
+    uint32_t slots; // Index into ImageHeader::slotsOfShapesOffset of the first property's slot, plus one. Zero if the slots are consecutive.
+    uint16_t layoutID; // KnownShape::layoutID
     uint16_t reserved;
     uint16_t inlineSlots;
-    uint16_t hasIds; // After the slots, as many again: TypedLayoutTable::Named::id of each property. Zero: it is no field.
+    uint16_t hasIds; // The slots are followed by the TypedLayoutTable::Field::id of each property (zero if it is not a field).
 };
 
-// A name that properties are read by.
+// A property name used by property reads.
 struct ImageSelector {
-    uint32_t text; // Where it is, in bytes, in the text of selectors.
+    uint32_t text; // Byte offset in the selector text.
     uint32_t length : 31; // In characters.
     uint32_t is8Bit : 1;
 };
 
-// One table for the whole program says where every property of every shape is. The rows, one for each selector, are laid over one
-// another wherever the shapes that have the one do not have the other, so an entry says whose it is. If it is somebody else's, an
-// object of that shape has no property of that name of its own.
+// One program-wide table gives the location of every property of every shape (row displacement dispatch). There is one row per
+// selector. Rows overlap wherever the shapes that have one selector lack the other, so each entry records which selector owns it.
+// If the entry belongs to a different selector, objects of that shape have no own property with that name.
 struct ImageDispatchEntry {
-    static constexpr unsigned locationBits = 12; // As AOT::locationOfProperty(): in words, from the object or, if negative, its butterfly.
+    static constexpr unsigned locationBits = 12; // As AOT::locationOfProperty(): in words, relative to the object or, if negative, to its butterfly.
     static uint32_t encode(uint32_t selector, int32_t location) { return selector << locationBits | (static_cast<uint32_t>(location) & ((1u << locationBits) - 1)); }
 };
 
-// Where a module's JSModuleEnvironment is, in every realm that runs the module's code from the image.
+// The location of a module's JSModuleEnvironment, the same in every realm that runs the module's code from the image.
 struct ImageEnvironment {
-    uint32_t distance; // Below the Instance. Zero: nowhere in particular.
+    uint32_t distance; // Distance below the Instance. Zero if it has no fixed location.
     uint32_t size;
 };
 
-// What a compilation makes.
+// The result of compiling one function.
 struct CompiledCode {
     Vector<uint8_t> bytes;
     CompiledFunctionInfo info;
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();
-void noteThatLinkTimeConstantIsUsed(unsigned); // By code that is being compiled for an image. Any thread.
+void noteThatLinkTimeConstantIsUsed(unsigned); // Called while compiling for an image. Any thread.
 
 class ImageBuilder {
     WTF_MAKE_TZONE_ALLOCATED(ImageBuilder);
@@ -169,22 +171,22 @@ class ImageBuilder {
 public:
     ImageBuilder() = default;
 
-    // Any thread. The code is laid out in the order of `rank`, not of the calls.
+    // Any thread. Code is laid out in `rank` order, regardless of call order.
     void add(ImageKey, uint64_t rank, CompiledCode&&);
     size_t numberOfFunctions() const { return m_functions.size(); }
-    void clear() { m_functions.clear(); } // Of functions.
+    void clear() { m_functions.clear(); } // Removes all functions.
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
-    // They are there until finish() is done. `number`: one more than the last.
+    // `numbers` must stay valid until finish() returns. `number` is the highest identifier number plus one.
     void setNumbersOfIdentifiersOfProgram(const NumbersOfIdentifiers* numbers, uint32_t number)
     {
         m_numbersOfIdentifiersOfProgram = numbers;
         m_numberOfIdentifiersOfProgram = number;
     }
     void setNumberOfConstantsOfProgram(uint32_t number) { m_numberOfConstantsOfProgram = number; }
-    // The thread that has the VM. False: there is not going to be code for it.
+    // VM thread only. Returns false if the pattern cannot be compiled.
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
-    Vector<ReportableSitesOfFunction> takeReportableSites() { return std::exchange(m_reportableSites, { }); } // After that. By the index of the function.
+    Vector<ReportableSitesOfFunction> takeReportableSites() { return std::exchange(m_reportableSites, { }); } // Call after finish(). Indexed by function index.
 
 private:
     struct Function {
@@ -201,54 +203,55 @@ private:
     struct RegExpCode {
         String pattern;
         OptionSet<Yarr::Flags> flags;
-        Yarr::YarrCodeForImage code[2]; // 8 bit, 16 bit.
+        Yarr::YarrCodeForImage code[2]; // 8-bit, 16-bit.
     };
     uint32_t m_numberOfIdentifiersOfProgram { 0 };
     const NumbersOfIdentifiers* m_numbersOfIdentifiersOfProgram { nullptr };
     uint32_t m_numberOfConstantsOfProgram { 0 };
     Vector<RegExpCode> m_regExps;
-    UncheckedKeyHashMap<String, bool> m_regExpsAsked; // By the flags and the pattern.
+    UncheckedKeyHashMap<String, bool> m_regExpsAsked; // Keyed by flags and pattern.
 };
 
-// An image that is ready to be run. There is one list of them for the process, and they stay.
+// A loaded image. Images are kept in a process-wide list and are never unloaded.
 class Image {
     WTF_MAKE_TZONE_ALLOCATED(Image);
     WTF_MAKE_NONCOPYABLE(Image);
 public:
-    // `data` is the image, readable, for as long as the process lives; `code` is where its code is mapped executable. Null if
-    // it is not an image, or not one for this engine.
+    // `data` is the image, which must stay readable for the life of the process. `code` is where its code is mapped executable.
+    // Returns null if `data` is not an image or was built by a different engine build.
     JS_EXPORT_PRIVATE static Image* registerImage(std::span<const uint8_t> data, const void* code);
-    // For a shell, and for where a file cannot be mapped executable: reads the file, copies its code to memory of the JIT's.
+    // For the jsc shell, and for platforms where a file cannot be mapped executable. Reads the file and copies its code into JIT
+    // memory.
     static Image* registerImageFromFile(const char* path);
 
     static bool hasAny();
-    static bool containsCode(const void*); // Any image's.
-    static Image* withCode(); // The one that has any.
+    static bool containsCode(const void*); // In any image.
+    static Image* withCode(); // The image that contains code.
     const void* code() const { return m_code; }
-    // Of the image that has any.
+    // These refer to the image that has module environments.
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
     JS_EXPORT_PRIVATE static uint32_t numberOfFunctionsOfImageWithEnvironments();
     JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t moduleOfGraph);
-    static const void* addressOfStub(Stub); // In any image. Null if there is none.
+    static const void* addressOfStub(Stub); // From any image. Null if none is loaded.
     static std::pair<Image*, const ImageFunction*> find(const ImageKey&);
 
     struct CodeForRegExp {
         const void* for8Bit;
         const void* for16Bit;
     };
-    JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>); // In any image.
+    JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>); // From any image.
 
-    static Image* withShapes(); // The image, if it has any.
-    static Image& of(const ImageFunction&); // The one it is in.
-    // What the source says where the function is at that offset in its bytecode: the text, and whether it is exactly that.
+    static Image* withShapes(); // The image that has shapes, if any.
+    static Image& of(const ImageFunction&); // The image that contains it.
+    // The source text at this bytecode offset, and whether it is exact.
     std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
     String textOfQuote(uint64_t start, size_t length) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
-    uint32_t selectorNamed(const StringImpl&) const; // Zero: none.
+    uint32_t selectorNamed(const StringImpl&) const; // Zero if there is none.
 
     const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + at<uint32_t>(header().startsOfFunctionsOffset)[function.index]; }
-    // (Up to where the next one starts: what is in between, if anything, is nobody's.)
+    // Includes any padding before the next function.
     size_t sizeOfCodeOf(const ImageFunction& function) const
     {
         const uint32_t* starts = at<uint32_t>(header().startsOfFunctionsOffset);
@@ -269,14 +272,14 @@ private:
     const void* m_code;
 };
 
-// An image that has just been made, for whoever needs to know where what is in it is going to be once it is mapped at `address`.
+// A newly built image, for callers that need the addresses its contents will have once it is mapped at `address`.
 class ImageView {
 public:
     struct Function {
         uint64_t entry; // An EntryWord.
         uint32_t index;
-        const Site* sites; // Where they are going to be.
-        const ImageFunction* function; // Likewise.
+        const Site* sites; // Address after mapping.
+        const ImageFunction* function; // Address after mapping.
         uint32_t numSlots;
         bool startsCold;
         bool hasSiteConstants;
@@ -284,10 +287,10 @@ public:
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
     JS_EXPORT_PRIVATE void* addressOfStub(Stub) const;
-    // The image goes without its table of keys, which is what follows it in `data`. Whoever this is for keeps what is wanted of it.
+    // The image omits its key table, which instead follows the image in `data`. The caller keeps whatever part of it is needed.
     bool keysAreOmitted() const { return !header().tableCapacity; }
-    JS_EXPORT_PRIVATE std::span<const ImageKey> keys() const; // The table: those with no record are empty places in it.
-    JS_EXPORT_PRIVATE uint32_t indexOfFunctionWith(const ImageKey&) const; // One of the table's own.
+    JS_EXPORT_PRIVATE std::span<const ImageKey> keys() const; // The hash table. Entries with no record are empty.
+    JS_EXPORT_PRIVATE uint32_t indexOfFunctionWith(const ImageKey&) const; // The key must be in the table.
     size_t numberOfFunctions() const { return header().numberOfFunctions; }
     uint32_t numberOfIdentifiersOfProgram() const { return header().numberOfIdentifiersOfProgram; }
     uint32_t numberOfConstantsOfProgram() const { return header().numberOfConstantsOfProgram; }
@@ -304,30 +307,31 @@ private:
     const uint8_t* m_address;
 };
 
-// The number an image knows the provider's module by; zero if it is in no image.
+// The module number images use for this provider, or zero if it is in no image.
 uint32_t moduleIDFor(SourceProvider&);
 std::optional<ImageKey> imageKeyFor(ScriptExecutable*, CodeSpecializationKind);
-JS_EXPORT_PRIVATE ImageKey imageKeyForTopLevelCode(uint32_t module); // A program, or the code of a module itself.
-unsigned hashOfCode(std::span<const uint8_t>); // For telling whether two compilations came out the same.
+JS_EXPORT_PRIVATE ImageKey imageKeyForTopLevelCode(uint32_t module); // For a program, or for a module's top-level code.
+unsigned hashOfCode(std::span<const uint8_t>); // For checking that two compilations produced the same code.
 
-// The code an image has for the function, if any has: asked before the function gets a CodeBlock, which is made for it
-// (CodeBlock::LinkMode::ForCodeFromImage), and then given it.
+// The code an image has for a function, if any. Looked up before the function's CodeBlock is created
+// (CodeBlock::LinkMode::ForCodeFromImage).
 struct ImageCode {
     Image* image { nullptr };
     const ImageFunction* function { nullptr };
     explicit operator bool() const { return !!function; }
 };
-// Fills in info.quotes, from info.quotableSites. `text` is what the function is in, and its own source starts at sourceOffset.
+// Fills in info.quotes from info.quotableSites. `text` is the source containing the function, whose own source starts at
+// sourceOffset.
 JS_EXPORT_PRIVATE void collectQuotes(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text, unsigned sourceOffset);
-// `text` is what the function is in, if that is known, and its own source starts at sourceOffset.
+// `text` is the source containing the function, if known. The function's own source starts at sourceOffset.
 JS_EXPORT_PRIVATE void collectConstructSites(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text = { }, unsigned sourceOffset = 0);
 ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);
-// Of the module that the scope is in, or is: whether code that takes its imports for what they were when it was compiled
-// (ImageFunction::usesStaticImports) may.
+// Whether the module containing `scope` is linked the way it was at compile time, so that code with
+// ImageFunction::usesStaticImports may run.
 bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 Ref<JITCode> codeOfFunctionFromImage(ImageCode, CodeSpecializationKind);
-bool canRunWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // There are FunctionMetadata.
+bool canRunWithoutUnlinkedCode(JSGlobalObject*, ImageCode); // True if FunctionMetadata is available.
 
 } } // namespace JSC::AOT
 
