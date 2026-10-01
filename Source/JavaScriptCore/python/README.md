@@ -1332,6 +1332,11 @@ out that it was to be.
 
 `Dialect()` takes its arguments apart by something that does not say what it is called, so what is wrong with them is said of "function", or of "this function". A signature says so with `?` for the name.
 
+### `_suggestions`
+
+One function, in `PythonSignatures.cpp` beside what it calls, which is what says "Did you mean" of a keyword argument. `traceback.py` asks it which keyword a name that is in the way may have been meant for, and tries that
+before what `difflib` thinks, so without it some of the answers are others. `programs/which-keyword-was-meant.py`.
+
 ### `_socket`
 
 `Modules/socketmodule.c`, which `socket` is written over, in four files and a header. `PythonSocketAddresses.cpp` has what raises, what waits, and addresses both ways, and `PythonSocketLinux.cpp` the kinds of address that there are only on Linux. `PythonSocketObject.cpp` is the class. `PythonSocketModule.cpp`

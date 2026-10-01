@@ -1871,6 +1871,8 @@
 ["_struct:pack_into", "builtin_function_or_method", null, "pack_into(format, buffer, offset, v1, v2, ...)\n\nPack the values v1, v2, ... according to the format string and write\nthe packed bytes into the writable buffer buf starting at offset.  Note\nthat the offset is a required argument.  A negative offset counts from\nthe end of the buffer.  See help(struct) for more on format strings."],
 ["_struct:unpack", "builtin_function_or_method", "($module, format, buffer, /)", "Return a tuple containing values unpacked according to the format string.\n\nThe buffer's size in bytes must be calcsize(format).\n\nSee help(struct) for more on format strings."],
 ["_struct:unpack_from", "builtin_function_or_method", "($module, format, /, buffer, offset=0)", "Return a tuple containing values unpacked according to the format string.\n\nThe buffer's size, minus offset, must be at least calcsize(format).\nA negative offset counts from the end of the buffer.\n\nSee help(struct) for more on format strings."],
+["_suggestions:", "module", null, null],
+["_suggestions:_generate_suggestions", "builtin_function_or_method", "($module, candidates, item, /)", "Returns the candidate in candidates that's closest to item"],
 ["_symtable:", "module", null, null],
 ["_symtable:symtable", "builtin_function_or_method", "($module, source, filename, startstr, /)", "Return symbol and scope dictionaries used internally by compiler."],
 ["_tee", "type", "(iterable, /)", "Iterator wrapped to make it copyable.", [48, 0, 0, 32, 21248]],

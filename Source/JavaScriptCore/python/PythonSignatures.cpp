@@ -522,4 +522,43 @@ String calculateSuggestion(const Vector<String>& candidates, const String& name)
     return suggestion;
 }
 
+// ---- _suggestions: Modules/_suggestions.c. It is how traceback.py, which is written in Python, comes by the above, to say which keyword may have been meant.
+
+PYTHON_NATIVE(suggestionsGenerateSuggestions)
+{
+    NATIVE_PROLOGUE();
+    if (!stringIn(args[1]))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("_generate_suggestions() argument 2 must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
+    if (!isExactly(globalObject, args[0], realm->typeList()))
+        return JSValue::encode(raiseTypeError(globalObject, scope, "candidates must be a list"_s));
+    JSArray* list = asList(args[0]);
+    Vector<String> candidates;
+    for (unsigned i = 0; i < list->length(); ++i) {
+        JSValue element = listGet(globalObject, list, i);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!stringIn(element))
+            return JSValue::encode(raiseTypeError(globalObject, scope, "all elements in 'candidates' must be strings"_s));
+    }
+    String name = textForC(globalObject, stringIn(args[1]), EndsAtNull::No);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (unsigned i = 0; i < list->length(); ++i) {
+        JSValue element = listGet(globalObject, list, i);
+        RETURN_IF_EXCEPTION(scope, { });
+        candidates.append(textForC(globalObject, stringIn(element), EndsAtNull::No));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    String suggestion = calculateSuggestion(candidates, name);
+    if (suggestion.isNull())
+        RETURN_NONE();
+    // It is the one that is in the list.
+    RELEASE_AND_RETURN(scope, JSValue::encode(listGet(globalObject, list, candidates.find(suggestion))));
+}
+
+JSObject* createSuggestionsModule(JSGlobalObject* globalObject)
+{
+    JSObject* module = newBuiltinModule(globalObject, "_suggestions"_s);
+    addFunction(globalObject, module, "_generate_suggestions"_s, suggestionsGenerateSuggestions);
+    return module;
+}
+
 } } // namespace JSC::Python

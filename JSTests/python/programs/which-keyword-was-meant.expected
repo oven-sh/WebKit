@@ -1,0 +1,67 @@
+'mat' -> None
+'of' -> if
+'fro' -> from
+'whille' -> while
+'retrun' -> return
+'imprt' -> import
+'clas' -> class
+'Class' -> class
+'TRUE' -> True
+'none' -> None
+'els' -> else
+'elf' -> elif
+'asynch' -> async
+'awiat' -> await
+'lamda' -> lambda
+'x' -> None
+'' -> None
+'zzzzzz' -> None
+'pas' -> as
+'brk' -> None
+'contine' -> continue
+'yeild' -> yield
+'nonlocl' -> nonlocal
+'globl' -> global
+'asert' -> assert
+'rais' -> raise
+'exept' -> except
+'finaly' -> finally
+'wth' -> with
+'i' -> if
+'n' -> in
+'iff' -> if
+'aaaaaaaaaaaaaaaaaaa -> None
+'déf' -> None
+'def' -> del
+soft -> ['match', 'case', 'type', None, '_']
+a tuple -> TypeError: candidates must be a list
+a list subclass -> TypeError: candidates must be a list
+no str in it -> TypeError: all elements in 'candidates' must be strings
+item no str -> TypeError: _generate_suggestions() argument 2 must be str, not int
+bytes -> TypeError: _generate_suggestions() argument 2 must be str, not bytes
+empty -> None
+too many -> None
+nearly too many -> ab0
+surrogate in the item -> UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+surrogate in a candidate -> UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+it is the one in the list -> (True, 'S')
+the first of two as near -> abd
+case -> abd
+no arguments -> TypeError: _generate_suggestions expected 2 arguments, got 0
+keyword -> TypeError: _suggestions._generate_suggestions() takes no keyword arguments
+($module, candidates, item, /) Returns the candidate in candidates that's closest to item _suggestions None
+'[\nx for x\nin range(3)\nof x\n]' -> SyntaxError: invalid syntax. Did you mean 'if'?
+'fro x import y' -> SyntaxError: invalid syntax. Did you mean 'from'?
+'whille True: pass' -> SyntaxError: invalid syntax. Did you mean 'while'?
+'a = 1\nfor x im range(3): pass' -> SyntaxError: invalid syntax. Did you mean 'in'?
+'clas A: pass' -> SyntaxError: invalid syntax. Did you mean 'class'?
+'if x:\n  pass\nelf y:\n  pass' -> SyntaxError: invalid syntax. Did you mean 'elif'?
+'asynch def f(): pass' -> SyntaxError: invalid syntax. Did you mean 'async'?
+'imprt os' -> SyntaxError: invalid syntax. Did you mean 'import'?
+'retrun 5' -> SyntaxError: invalid syntax
+'x = lamda: 1' -> SyntaxError: invalid syntax. Did you mean 'lambda'?
+'wth a: pass' -> SyntaxError: invalid syntax. Did you mean 'with'?
+'def f():\n  yeild 1' -> SyntaxError: invalid syntax. Did you mean 'yield'?
+'x = 1 iff y else 2' -> SyntaxError: invalid syntax. Did you mean 'if'?
+'raisee X' -> SyntaxError: invalid syntax. Did you mean 'raise'?
+'assrt x' -> SyntaxError: invalid syntax. Did you mean 'assert'?

@@ -213,6 +213,7 @@ JSObject* createHeapqModule(JSGlobalObject*);
 JSObject* createBisectModule(JSGlobalObject*);
 JSObject* createCMathModule(JSGlobalObject*);
 JSObject* createSymtableModule(JSGlobalObject*);
+JSObject* createSuggestionsModule(JSGlobalObject*);
 JSObject* createCSVModule(JSGlobalObject*);
 void updateSysFromConfiguration(JSGlobalObject*, JSObject* sysModule);
 // The part of that which is sys.flags: config_set_sys_flag()
