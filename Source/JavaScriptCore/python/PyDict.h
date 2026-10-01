@@ -260,6 +260,8 @@ private:
     JS_EXPORT_PRIVATE unsigned backingSize() const;
     // The property that a key stands for, if this dict is backed and the key is a string.
     bool isInBacking(JSGlobalObject*, JSValue key, Identifier&);
+    // Whether a key is one that is a property of the object, if there is an object, and under what name
+    static bool isKeptAsProperty(JSGlobalObject*, JSValue key, Identifier&);
     void willKeepOutsideBacking(JSGlobalObject*, JSValue key);
 
     WriteBarrier<JSObject> m_backing;

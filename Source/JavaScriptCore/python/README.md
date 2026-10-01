@@ -304,6 +304,9 @@ be deleted all the same. `programs/setting-and-deleting-the-dict-of-things.py`.
 is from. After `nonlocal __firstlineno__` the class has none, and the variable of the function has the number. And a class of a program's says how it is called as those written in C do, at the start of its docstring:
 `"Name(a, b)\n--\n\n"` is its `__text_signature__`. `programs/what-a-class-is-given-unasked.py`.
 
+**To its own body the cells of a class are nothing**: `__class__` there is a name like any other, that of a variable of a function that the class is in (`variableOfEnvironment()`). But it is its own `__classdict__` that a class puts its
+namespace in, and not that of a class that it is in. `programs/classes-and-functions-one-in-another.py` has classes and functions, with type parameters and without, one in another in every order to four deep.
+
 **`super()` with no arguments** is a call of whatever goes by the name of `super` at the time. In CPython it is `super` that finds the class and the first argument, in the frame of what called it. Here the compiler hands them to
 `implicitSuper()`, along with what is being called. If that is not `super` it is called as it was written, with nothing. If it is, this is `super_init_without_args()`, which has something to say about each thing that may be missing.
 `programs/the-cell-of-a-class.py`.

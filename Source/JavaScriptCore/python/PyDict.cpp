@@ -431,10 +431,8 @@ void PyDict::becomeBackedBy(JSGlobalObject* globalObject, JSObject* object)
     // Comparing strings with strings runs nothing, so the table stays as it is meanwhile.
     for (unsigned entry = 0; entry < Base::entryCount(); ++entry) {
         JSValue key = Base::keyAt(entry);
-        if (!key || !key.isString())
-            continue;
-        auto name = asString(key)->toIdentifier(globalObject);
-        if (Python::isIndexLike(name))
+        Identifier name;
+        if (!key || !isKeptAsProperty(globalObject, key, name))
             continue;
         object->putDirect(vm, name, Base::valueAt(entry));
         Base::removeEntry(vm, entry);
@@ -504,6 +502,11 @@ bool PyDict::isInBacking(JSGlobalObject* globalObject, JSValue key, Identifier& 
 {
     if (!m_backing) [[likely]]
         return false;
+    return isKeptAsProperty(globalObject, key, name);
+}
+
+bool PyDict::isKeptAsProperty(JSGlobalObject* globalObject, JSValue key, Identifier& name)
+{
     // An instance of a class derived from str is the same key as the string in it, unless the class says otherwise.
     if (!key.isString()) {
         JSString* string = stringIn(key);

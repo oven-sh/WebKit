@@ -951,9 +951,10 @@ private:
     }
 
     // With no value, it is left with nothing in it.
-    void emitStoreClosure(const Identifier& name, RegisterID* value, const Node& node)
+    void emitStoreClosure(const Identifier& name, RegisterID* value, const Node& node) { emitStoreClosure(variableOfEnvironment(name), name, value, node); }
+
+    void emitStoreClosure(const Variable& variable, const Identifier& name, RegisterID* value, const Node& node)
     {
-        Variable variable = variableOfEnvironment(name);
         Reg scope = g.emitResolveScope(nullptr, variable);
         if (m_info.variablesGivenAsCells.contains(name)) [[unlikely]] {
             Reg cell = g.newTemporary();
@@ -4631,8 +4632,9 @@ private:
         if (m_block.hasConditionalAnnotations)
             cells.append(&m_names.dunder_conditional_annotations);
         emitPushCells(cells);
+        // Its own, which has just been made, and not that of a class that this one is in.
         if (m_block.needsClassDict)
-            emitStoreClosure(m_names.dunder_classdict, m_namespace.get(), node);
+            emitStoreClosure(g.variable(m_names.dunder_classdict), m_names.dunder_classdict, m_namespace.get(), node);
         if (m_block.hasConditionalAnnotations) {
             Reg set = g.newTemporary();
             emitRuntimeCall(set.get(), "newSet"_s, { }, node);

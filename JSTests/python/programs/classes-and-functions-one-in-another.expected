@@ -1,0 +1,1362 @@
+c parameters -> ()
+c bound -> 0
+c alias -> (0, None)
+c class -> n0
+C parameters -> (T0,)
+C bound -> 0
+C alias -> (0, T0)
+C class -> n0
+f parameters -> ()
+f bound -> int
+f alias -> (<class 'int'>, None)
+F parameters -> (T0,)
+F bound -> int
+F alias -> (<class 'int'>, T0)
+cc parameters -> ()
+cc bound -> 1
+cc alias -> (1, None)
+cc class -> n0.n1
+cC parameters -> (T1,)
+cC bound -> 1
+cC alias -> (1, T1)
+cC class -> n0.n1
+cf parameters -> ()
+cf bound -> int
+cf alias -> (<class 'int'>, None)
+cf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cF parameters -> (T1,)
+cF bound -> int
+cF alias -> (<class 'int'>, T1)
+cF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Cc parameters -> (T0,)
+Cc bound -> 1
+Cc alias -> (1, T0)
+Cc class -> n0.n1
+CC parameters -> (T0, T1)
+CC bound -> 1
+CC alias -> (1, T0, T1)
+CC class -> n0.n1
+Cf parameters -> (T0,)
+Cf bound -> int
+Cf alias -> (<class 'int'>, T0)
+Cf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CF parameters -> (T0, T1)
+CF bound -> int
+CF alias -> (<class 'int'>, T0, T1)
+CF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fc parameters -> ()
+fc bound -> 1
+fc alias -> (1, None)
+fc class -> n0.<locals>.n1
+fC parameters -> (T1,)
+fC bound -> 1
+fC alias -> (1, T1)
+fC class -> n0.<locals>.n1
+ff parameters -> ()
+ff bound -> int
+ff alias -> (<class 'int'>, None)
+fF parameters -> (T1,)
+fF bound -> int
+fF alias -> (<class 'int'>, T1)
+Fc parameters -> (T0,)
+Fc bound -> 1
+Fc alias -> (1, T0)
+Fc class -> n0.<locals>.n1
+FC parameters -> (T0, T1)
+FC bound -> 1
+FC alias -> (1, T0, T1)
+FC class -> n0.<locals>.n1
+Ff parameters -> (T0,)
+Ff bound -> int
+Ff alias -> (<class 'int'>, T0)
+FF parameters -> (T0, T1)
+FF bound -> int
+FF alias -> (<class 'int'>, T0, T1)
+ccc parameters -> ()
+ccc bound -> 2
+ccc alias -> (2, None)
+ccc class -> n0.n1.n2
+ccC parameters -> (T2,)
+ccC bound -> 2
+ccC alias -> (2, T2)
+ccC class -> n0.n1.n2
+ccf parameters -> ()
+ccf bound -> int
+ccf alias -> (<class 'int'>, None)
+ccf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ccF parameters -> (T2,)
+ccF bound -> int
+ccF alias -> (<class 'int'>, T2)
+ccF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCc parameters -> (T1,)
+cCc bound -> 2
+cCc alias -> (2, T1)
+cCc class -> n0.n1.n2
+cCC parameters -> (T1, T2)
+cCC bound -> 2
+cCC alias -> (2, T1, T2)
+cCC class -> n0.n1.n2
+cCf parameters -> (T1,)
+cCf bound -> int
+cCf alias -> (<class 'int'>, T1)
+cCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCF parameters -> (T1, T2)
+cCF bound -> int
+cCF alias -> (<class 'int'>, T1, T2)
+cCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfc parameters -> ()
+cfc bound -> 2
+cfc alias -> (2, None)
+cfc class -> n0.n1.<locals>.n2
+cfC parameters -> (T2,)
+cfC bound -> 2
+cfC alias -> (2, T2)
+cfC class -> n0.n1.<locals>.n2
+cff parameters -> ()
+cff bound -> int
+cff alias -> (<class 'int'>, None)
+cff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfF parameters -> (T2,)
+cfF bound -> int
+cfF alias -> (<class 'int'>, T2)
+cfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFc parameters -> (T1,)
+cFc bound -> 2
+cFc alias -> (2, T1)
+cFc class -> n0.n1.<locals>.n2
+cFC parameters -> (T1, T2)
+cFC bound -> 2
+cFC alias -> (2, T1, T2)
+cFC class -> n0.n1.<locals>.n2
+cFf parameters -> (T1,)
+cFf bound -> int
+cFf alias -> (<class 'int'>, T1)
+cFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFF parameters -> (T1, T2)
+cFF bound -> int
+cFF alias -> (<class 'int'>, T1, T2)
+cFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Ccc parameters -> (T0,)
+Ccc bound -> 2
+Ccc alias -> (2, T0)
+Ccc class -> n0.n1.n2
+CcC parameters -> (T0, T2)
+CcC bound -> 2
+CcC alias -> (2, T0, T2)
+CcC class -> n0.n1.n2
+Ccf parameters -> (T0,)
+Ccf bound -> int
+Ccf alias -> (<class 'int'>, T0)
+Ccf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CcF parameters -> (T0, T2)
+CcF bound -> int
+CcF alias -> (<class 'int'>, T0, T2)
+CcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCc parameters -> (T0, T1)
+CCc bound -> 2
+CCc alias -> (2, T0, T1)
+CCc class -> n0.n1.n2
+CCC parameters -> (T0, T1, T2)
+CCC bound -> 2
+CCC alias -> (2, T0, T1, T2)
+CCC class -> n0.n1.n2
+CCf parameters -> (T0, T1)
+CCf bound -> int
+CCf alias -> (<class 'int'>, T0, T1)
+CCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCF parameters -> (T0, T1, T2)
+CCF bound -> int
+CCF alias -> (<class 'int'>, T0, T1, T2)
+CCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Cfc parameters -> (T0,)
+Cfc bound -> 2
+Cfc alias -> (2, T0)
+Cfc class -> n0.n1.<locals>.n2
+CfC parameters -> (T0, T2)
+CfC bound -> 2
+CfC alias -> (2, T0, T2)
+CfC class -> n0.n1.<locals>.n2
+Cff parameters -> (T0,)
+Cff bound -> int
+Cff alias -> (<class 'int'>, T0)
+Cff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CfF parameters -> (T0, T2)
+CfF bound -> int
+CfF alias -> (<class 'int'>, T0, T2)
+CfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFc parameters -> (T0, T1)
+CFc bound -> 2
+CFc alias -> (2, T0, T1)
+CFc class -> n0.n1.<locals>.n2
+CFC parameters -> (T0, T1, T2)
+CFC bound -> 2
+CFC alias -> (2, T0, T1, T2)
+CFC class -> n0.n1.<locals>.n2
+CFf parameters -> (T0, T1)
+CFf bound -> int
+CFf alias -> (<class 'int'>, T0, T1)
+CFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFF parameters -> (T0, T1, T2)
+CFF bound -> int
+CFF alias -> (<class 'int'>, T0, T1, T2)
+CFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcc parameters -> ()
+fcc bound -> 2
+fcc alias -> (2, None)
+fcc class -> n0.<locals>.n1.n2
+fcC parameters -> (T2,)
+fcC bound -> 2
+fcC alias -> (2, T2)
+fcC class -> n0.<locals>.n1.n2
+fcf parameters -> ()
+fcf bound -> int
+fcf alias -> (<class 'int'>, None)
+fcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcF parameters -> (T2,)
+fcF bound -> int
+fcF alias -> (<class 'int'>, T2)
+fcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCc parameters -> (T1,)
+fCc bound -> 2
+fCc alias -> (2, T1)
+fCc class -> n0.<locals>.n1.n2
+fCC parameters -> (T1, T2)
+fCC bound -> 2
+fCC alias -> (2, T1, T2)
+fCC class -> n0.<locals>.n1.n2
+fCf parameters -> (T1,)
+fCf bound -> int
+fCf alias -> (<class 'int'>, T1)
+fCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCF parameters -> (T1, T2)
+fCF bound -> int
+fCF alias -> (<class 'int'>, T1, T2)
+fCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ffc parameters -> ()
+ffc bound -> 2
+ffc alias -> (2, None)
+ffc class -> n0.<locals>.n1.<locals>.n2
+ffC parameters -> (T2,)
+ffC bound -> 2
+ffC alias -> (2, T2)
+ffC class -> n0.<locals>.n1.<locals>.n2
+fff parameters -> ()
+fff bound -> int
+fff alias -> (<class 'int'>, None)
+ffF parameters -> (T2,)
+ffF bound -> int
+ffF alias -> (<class 'int'>, T2)
+fFc parameters -> (T1,)
+fFc bound -> 2
+fFc alias -> (2, T1)
+fFc class -> n0.<locals>.n1.<locals>.n2
+fFC parameters -> (T1, T2)
+fFC bound -> 2
+fFC alias -> (2, T1, T2)
+fFC class -> n0.<locals>.n1.<locals>.n2
+fFf parameters -> (T1,)
+fFf bound -> int
+fFf alias -> (<class 'int'>, T1)
+fFF parameters -> (T1, T2)
+fFF bound -> int
+fFF alias -> (<class 'int'>, T1, T2)
+Fcc parameters -> (T0,)
+Fcc bound -> 2
+Fcc alias -> (2, T0)
+Fcc class -> n0.<locals>.n1.n2
+FcC parameters -> (T0, T2)
+FcC bound -> 2
+FcC alias -> (2, T0, T2)
+FcC class -> n0.<locals>.n1.n2
+Fcf parameters -> (T0,)
+Fcf bound -> int
+Fcf alias -> (<class 'int'>, T0)
+Fcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FcF parameters -> (T0, T2)
+FcF bound -> int
+FcF alias -> (<class 'int'>, T0, T2)
+FcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCc parameters -> (T0, T1)
+FCc bound -> 2
+FCc alias -> (2, T0, T1)
+FCc class -> n0.<locals>.n1.n2
+FCC parameters -> (T0, T1, T2)
+FCC bound -> 2
+FCC alias -> (2, T0, T1, T2)
+FCC class -> n0.<locals>.n1.n2
+FCf parameters -> (T0, T1)
+FCf bound -> int
+FCf alias -> (<class 'int'>, T0, T1)
+FCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCF parameters -> (T0, T1, T2)
+FCF bound -> int
+FCF alias -> (<class 'int'>, T0, T1, T2)
+FCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Ffc parameters -> (T0,)
+Ffc bound -> 2
+Ffc alias -> (2, T0)
+Ffc class -> n0.<locals>.n1.<locals>.n2
+FfC parameters -> (T0, T2)
+FfC bound -> 2
+FfC alias -> (2, T0, T2)
+FfC class -> n0.<locals>.n1.<locals>.n2
+Fff parameters -> (T0,)
+Fff bound -> int
+Fff alias -> (<class 'int'>, T0)
+FfF parameters -> (T0, T2)
+FfF bound -> int
+FfF alias -> (<class 'int'>, T0, T2)
+FFc parameters -> (T0, T1)
+FFc bound -> 2
+FFc alias -> (2, T0, T1)
+FFc class -> n0.<locals>.n1.<locals>.n2
+FFC parameters -> (T0, T1, T2)
+FFC bound -> 2
+FFC alias -> (2, T0, T1, T2)
+FFC class -> n0.<locals>.n1.<locals>.n2
+FFf parameters -> (T0, T1)
+FFf bound -> int
+FFf alias -> (<class 'int'>, T0, T1)
+FFF parameters -> (T0, T1, T2)
+FFF bound -> int
+FFF alias -> (<class 'int'>, T0, T1, T2)
+cccc parameters -> ()
+cccc bound -> 3
+cccc alias -> (3, None)
+cccc class -> n0.n1.n2.n3
+cccC parameters -> (T3,)
+cccC bound -> 3
+cccC alias -> (3, T3)
+cccC class -> n0.n1.n2.n3
+cccf parameters -> ()
+cccf bound -> int
+cccf alias -> (<class 'int'>, None)
+cccf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cccF parameters -> (T3,)
+cccF bound -> int
+cccF alias -> (<class 'int'>, T3)
+cccF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ccCc parameters -> (T2,)
+ccCc bound -> 3
+ccCc alias -> (3, T2)
+ccCc class -> n0.n1.n2.n3
+ccCC parameters -> (T2, T3)
+ccCC bound -> 3
+ccCC alias -> (3, T2, T3)
+ccCC class -> n0.n1.n2.n3
+ccCf parameters -> (T2,)
+ccCf bound -> int
+ccCf alias -> (<class 'int'>, T2)
+ccCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ccCF parameters -> (T2, T3)
+ccCF bound -> int
+ccCF alias -> (<class 'int'>, T2, T3)
+ccCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ccfc parameters -> ()
+ccfc bound -> 3
+ccfc alias -> (3, None)
+ccfc class -> n0.n1.n2.<locals>.n3
+ccfC parameters -> (T3,)
+ccfC bound -> 3
+ccfC alias -> (3, T3)
+ccfC class -> n0.n1.n2.<locals>.n3
+ccff parameters -> ()
+ccff bound -> int
+ccff alias -> (<class 'int'>, None)
+ccff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ccfF parameters -> (T3,)
+ccfF bound -> int
+ccfF alias -> (<class 'int'>, T3)
+ccfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ccFc parameters -> (T2,)
+ccFc bound -> 3
+ccFc alias -> (3, T2)
+ccFc class -> n0.n1.n2.<locals>.n3
+ccFC parameters -> (T2, T3)
+ccFC bound -> 3
+ccFC alias -> (3, T2, T3)
+ccFC class -> n0.n1.n2.<locals>.n3
+ccFf parameters -> (T2,)
+ccFf bound -> int
+ccFf alias -> (<class 'int'>, T2)
+ccFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ccFF parameters -> (T2, T3)
+ccFF bound -> int
+ccFF alias -> (<class 'int'>, T2, T3)
+ccFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCcc parameters -> (T1,)
+cCcc bound -> 3
+cCcc alias -> (3, T1)
+cCcc class -> n0.n1.n2.n3
+cCcC parameters -> (T1, T3)
+cCcC bound -> 3
+cCcC alias -> (3, T1, T3)
+cCcC class -> n0.n1.n2.n3
+cCcf parameters -> (T1,)
+cCcf bound -> int
+cCcf alias -> (<class 'int'>, T1)
+cCcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCcF parameters -> (T1, T3)
+cCcF bound -> int
+cCcF alias -> (<class 'int'>, T1, T3)
+cCcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCCc parameters -> (T1, T2)
+cCCc bound -> 3
+cCCc alias -> (3, T1, T2)
+cCCc class -> n0.n1.n2.n3
+cCCC parameters -> (T1, T2, T3)
+cCCC bound -> 3
+cCCC alias -> (3, T1, T2, T3)
+cCCC class -> n0.n1.n2.n3
+cCCf parameters -> (T1, T2)
+cCCf bound -> int
+cCCf alias -> (<class 'int'>, T1, T2)
+cCCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCCF parameters -> (T1, T2, T3)
+cCCF bound -> int
+cCCF alias -> (<class 'int'>, T1, T2, T3)
+cCCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCfc parameters -> (T1,)
+cCfc bound -> 3
+cCfc alias -> (3, T1)
+cCfc class -> n0.n1.n2.<locals>.n3
+cCfC parameters -> (T1, T3)
+cCfC bound -> 3
+cCfC alias -> (3, T1, T3)
+cCfC class -> n0.n1.n2.<locals>.n3
+cCff parameters -> (T1,)
+cCff bound -> int
+cCff alias -> (<class 'int'>, T1)
+cCff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCfF parameters -> (T1, T3)
+cCfF bound -> int
+cCfF alias -> (<class 'int'>, T1, T3)
+cCfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCFc parameters -> (T1, T2)
+cCFc bound -> 3
+cCFc alias -> (3, T1, T2)
+cCFc class -> n0.n1.n2.<locals>.n3
+cCFC parameters -> (T1, T2, T3)
+cCFC bound -> 3
+cCFC alias -> (3, T1, T2, T3)
+cCFC class -> n0.n1.n2.<locals>.n3
+cCFf parameters -> (T1, T2)
+cCFf bound -> int
+cCFf alias -> (<class 'int'>, T1, T2)
+cCFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cCFF parameters -> (T1, T2, T3)
+cCFF bound -> int
+cCFF alias -> (<class 'int'>, T1, T2, T3)
+cCFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfcc parameters -> ()
+cfcc bound -> 3
+cfcc alias -> (3, None)
+cfcc class -> n0.n1.<locals>.n2.n3
+cfcC parameters -> (T3,)
+cfcC bound -> 3
+cfcC alias -> (3, T3)
+cfcC class -> n0.n1.<locals>.n2.n3
+cfcf parameters -> ()
+cfcf bound -> int
+cfcf alias -> (<class 'int'>, None)
+cfcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfcF parameters -> (T3,)
+cfcF bound -> int
+cfcF alias -> (<class 'int'>, T3)
+cfcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfCc parameters -> (T2,)
+cfCc bound -> 3
+cfCc alias -> (3, T2)
+cfCc class -> n0.n1.<locals>.n2.n3
+cfCC parameters -> (T2, T3)
+cfCC bound -> 3
+cfCC alias -> (3, T2, T3)
+cfCC class -> n0.n1.<locals>.n2.n3
+cfCf parameters -> (T2,)
+cfCf bound -> int
+cfCf alias -> (<class 'int'>, T2)
+cfCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfCF parameters -> (T2, T3)
+cfCF bound -> int
+cfCF alias -> (<class 'int'>, T2, T3)
+cfCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cffc parameters -> ()
+cffc bound -> 3
+cffc alias -> (3, None)
+cffc class -> n0.n1.<locals>.n2.<locals>.n3
+cffC parameters -> (T3,)
+cffC bound -> 3
+cffC alias -> (3, T3)
+cffC class -> n0.n1.<locals>.n2.<locals>.n3
+cfff parameters -> ()
+cfff bound -> int
+cfff alias -> (<class 'int'>, None)
+cfff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cffF parameters -> (T3,)
+cffF bound -> int
+cffF alias -> (<class 'int'>, T3)
+cffF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfFc parameters -> (T2,)
+cfFc bound -> 3
+cfFc alias -> (3, T2)
+cfFc class -> n0.n1.<locals>.n2.<locals>.n3
+cfFC parameters -> (T2, T3)
+cfFC bound -> 3
+cfFC alias -> (3, T2, T3)
+cfFC class -> n0.n1.<locals>.n2.<locals>.n3
+cfFf parameters -> (T2,)
+cfFf bound -> int
+cfFf alias -> (<class 'int'>, T2)
+cfFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cfFF parameters -> (T2, T3)
+cfFF bound -> int
+cfFF alias -> (<class 'int'>, T2, T3)
+cfFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFcc parameters -> (T1,)
+cFcc bound -> 3
+cFcc alias -> (3, T1)
+cFcc class -> n0.n1.<locals>.n2.n3
+cFcC parameters -> (T1, T3)
+cFcC bound -> 3
+cFcC alias -> (3, T1, T3)
+cFcC class -> n0.n1.<locals>.n2.n3
+cFcf parameters -> (T1,)
+cFcf bound -> int
+cFcf alias -> (<class 'int'>, T1)
+cFcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFcF parameters -> (T1, T3)
+cFcF bound -> int
+cFcF alias -> (<class 'int'>, T1, T3)
+cFcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFCc parameters -> (T1, T2)
+cFCc bound -> 3
+cFCc alias -> (3, T1, T2)
+cFCc class -> n0.n1.<locals>.n2.n3
+cFCC parameters -> (T1, T2, T3)
+cFCC bound -> 3
+cFCC alias -> (3, T1, T2, T3)
+cFCC class -> n0.n1.<locals>.n2.n3
+cFCf parameters -> (T1, T2)
+cFCf bound -> int
+cFCf alias -> (<class 'int'>, T1, T2)
+cFCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFCF parameters -> (T1, T2, T3)
+cFCF bound -> int
+cFCF alias -> (<class 'int'>, T1, T2, T3)
+cFCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFfc parameters -> (T1,)
+cFfc bound -> 3
+cFfc alias -> (3, T1)
+cFfc class -> n0.n1.<locals>.n2.<locals>.n3
+cFfC parameters -> (T1, T3)
+cFfC bound -> 3
+cFfC alias -> (3, T1, T3)
+cFfC class -> n0.n1.<locals>.n2.<locals>.n3
+cFff parameters -> (T1,)
+cFff bound -> int
+cFff alias -> (<class 'int'>, T1)
+cFff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFfF parameters -> (T1, T3)
+cFfF bound -> int
+cFfF alias -> (<class 'int'>, T1, T3)
+cFfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFFc parameters -> (T1, T2)
+cFFc bound -> 3
+cFFc alias -> (3, T1, T2)
+cFFc class -> n0.n1.<locals>.n2.<locals>.n3
+cFFC parameters -> (T1, T2, T3)
+cFFC bound -> 3
+cFFC alias -> (3, T1, T2, T3)
+cFFC class -> n0.n1.<locals>.n2.<locals>.n3
+cFFf parameters -> (T1, T2)
+cFFf bound -> int
+cFFf alias -> (<class 'int'>, T1, T2)
+cFFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+cFFF parameters -> (T1, T2, T3)
+cFFF bound -> int
+cFFF alias -> (<class 'int'>, T1, T2, T3)
+cFFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Cccc parameters -> (T0,)
+Cccc bound -> 3
+Cccc alias -> (3, T0)
+Cccc class -> n0.n1.n2.n3
+CccC parameters -> (T0, T3)
+CccC bound -> 3
+CccC alias -> (3, T0, T3)
+CccC class -> n0.n1.n2.n3
+Cccf parameters -> (T0,)
+Cccf bound -> int
+Cccf alias -> (<class 'int'>, T0)
+Cccf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CccF parameters -> (T0, T3)
+CccF bound -> int
+CccF alias -> (<class 'int'>, T0, T3)
+CccF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CcCc parameters -> (T0, T2)
+CcCc bound -> 3
+CcCc alias -> (3, T0, T2)
+CcCc class -> n0.n1.n2.n3
+CcCC parameters -> (T0, T2, T3)
+CcCC bound -> 3
+CcCC alias -> (3, T0, T2, T3)
+CcCC class -> n0.n1.n2.n3
+CcCf parameters -> (T0, T2)
+CcCf bound -> int
+CcCf alias -> (<class 'int'>, T0, T2)
+CcCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CcCF parameters -> (T0, T2, T3)
+CcCF bound -> int
+CcCF alias -> (<class 'int'>, T0, T2, T3)
+CcCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Ccfc parameters -> (T0,)
+Ccfc bound -> 3
+Ccfc alias -> (3, T0)
+Ccfc class -> n0.n1.n2.<locals>.n3
+CcfC parameters -> (T0, T3)
+CcfC bound -> 3
+CcfC alias -> (3, T0, T3)
+CcfC class -> n0.n1.n2.<locals>.n3
+Ccff parameters -> (T0,)
+Ccff bound -> int
+Ccff alias -> (<class 'int'>, T0)
+Ccff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CcfF parameters -> (T0, T3)
+CcfF bound -> int
+CcfF alias -> (<class 'int'>, T0, T3)
+CcfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CcFc parameters -> (T0, T2)
+CcFc bound -> 3
+CcFc alias -> (3, T0, T2)
+CcFc class -> n0.n1.n2.<locals>.n3
+CcFC parameters -> (T0, T2, T3)
+CcFC bound -> 3
+CcFC alias -> (3, T0, T2, T3)
+CcFC class -> n0.n1.n2.<locals>.n3
+CcFf parameters -> (T0, T2)
+CcFf bound -> int
+CcFf alias -> (<class 'int'>, T0, T2)
+CcFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CcFF parameters -> (T0, T2, T3)
+CcFF bound -> int
+CcFF alias -> (<class 'int'>, T0, T2, T3)
+CcFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCcc parameters -> (T0, T1)
+CCcc bound -> 3
+CCcc alias -> (3, T0, T1)
+CCcc class -> n0.n1.n2.n3
+CCcC parameters -> (T0, T1, T3)
+CCcC bound -> 3
+CCcC alias -> (3, T0, T1, T3)
+CCcC class -> n0.n1.n2.n3
+CCcf parameters -> (T0, T1)
+CCcf bound -> int
+CCcf alias -> (<class 'int'>, T0, T1)
+CCcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCcF parameters -> (T0, T1, T3)
+CCcF bound -> int
+CCcF alias -> (<class 'int'>, T0, T1, T3)
+CCcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCCc parameters -> (T0, T1, T2)
+CCCc bound -> 3
+CCCc alias -> (3, T0, T1, T2)
+CCCc class -> n0.n1.n2.n3
+CCCC parameters -> (T0, T1, T2, T3)
+CCCC bound -> 3
+CCCC alias -> (3, T0, T1, T2, T3)
+CCCC class -> n0.n1.n2.n3
+CCCf parameters -> (T0, T1, T2)
+CCCf bound -> int
+CCCf alias -> (<class 'int'>, T0, T1, T2)
+CCCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCCF parameters -> (T0, T1, T2, T3)
+CCCF bound -> int
+CCCF alias -> (<class 'int'>, T0, T1, T2, T3)
+CCCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCfc parameters -> (T0, T1)
+CCfc bound -> 3
+CCfc alias -> (3, T0, T1)
+CCfc class -> n0.n1.n2.<locals>.n3
+CCfC parameters -> (T0, T1, T3)
+CCfC bound -> 3
+CCfC alias -> (3, T0, T1, T3)
+CCfC class -> n0.n1.n2.<locals>.n3
+CCff parameters -> (T0, T1)
+CCff bound -> int
+CCff alias -> (<class 'int'>, T0, T1)
+CCff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCfF parameters -> (T0, T1, T3)
+CCfF bound -> int
+CCfF alias -> (<class 'int'>, T0, T1, T3)
+CCfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCFc parameters -> (T0, T1, T2)
+CCFc bound -> 3
+CCFc alias -> (3, T0, T1, T2)
+CCFc class -> n0.n1.n2.<locals>.n3
+CCFC parameters -> (T0, T1, T2, T3)
+CCFC bound -> 3
+CCFC alias -> (3, T0, T1, T2, T3)
+CCFC class -> n0.n1.n2.<locals>.n3
+CCFf parameters -> (T0, T1, T2)
+CCFf bound -> int
+CCFf alias -> (<class 'int'>, T0, T1, T2)
+CCFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CCFF parameters -> (T0, T1, T2, T3)
+CCFF bound -> int
+CCFF alias -> (<class 'int'>, T0, T1, T2, T3)
+CCFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Cfcc parameters -> (T0,)
+Cfcc bound -> 3
+Cfcc alias -> (3, T0)
+Cfcc class -> n0.n1.<locals>.n2.n3
+CfcC parameters -> (T0, T3)
+CfcC bound -> 3
+CfcC alias -> (3, T0, T3)
+CfcC class -> n0.n1.<locals>.n2.n3
+Cfcf parameters -> (T0,)
+Cfcf bound -> int
+Cfcf alias -> (<class 'int'>, T0)
+Cfcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CfcF parameters -> (T0, T3)
+CfcF bound -> int
+CfcF alias -> (<class 'int'>, T0, T3)
+CfcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CfCc parameters -> (T0, T2)
+CfCc bound -> 3
+CfCc alias -> (3, T0, T2)
+CfCc class -> n0.n1.<locals>.n2.n3
+CfCC parameters -> (T0, T2, T3)
+CfCC bound -> 3
+CfCC alias -> (3, T0, T2, T3)
+CfCC class -> n0.n1.<locals>.n2.n3
+CfCf parameters -> (T0, T2)
+CfCf bound -> int
+CfCf alias -> (<class 'int'>, T0, T2)
+CfCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CfCF parameters -> (T0, T2, T3)
+CfCF bound -> int
+CfCF alias -> (<class 'int'>, T0, T2, T3)
+CfCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Cffc parameters -> (T0,)
+Cffc bound -> 3
+Cffc alias -> (3, T0)
+Cffc class -> n0.n1.<locals>.n2.<locals>.n3
+CffC parameters -> (T0, T3)
+CffC bound -> 3
+CffC alias -> (3, T0, T3)
+CffC class -> n0.n1.<locals>.n2.<locals>.n3
+Cfff parameters -> (T0,)
+Cfff bound -> int
+Cfff alias -> (<class 'int'>, T0)
+Cfff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CffF parameters -> (T0, T3)
+CffF bound -> int
+CffF alias -> (<class 'int'>, T0, T3)
+CffF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CfFc parameters -> (T0, T2)
+CfFc bound -> 3
+CfFc alias -> (3, T0, T2)
+CfFc class -> n0.n1.<locals>.n2.<locals>.n3
+CfFC parameters -> (T0, T2, T3)
+CfFC bound -> 3
+CfFC alias -> (3, T0, T2, T3)
+CfFC class -> n0.n1.<locals>.n2.<locals>.n3
+CfFf parameters -> (T0, T2)
+CfFf bound -> int
+CfFf alias -> (<class 'int'>, T0, T2)
+CfFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CfFF parameters -> (T0, T2, T3)
+CfFF bound -> int
+CfFF alias -> (<class 'int'>, T0, T2, T3)
+CfFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFcc parameters -> (T0, T1)
+CFcc bound -> 3
+CFcc alias -> (3, T0, T1)
+CFcc class -> n0.n1.<locals>.n2.n3
+CFcC parameters -> (T0, T1, T3)
+CFcC bound -> 3
+CFcC alias -> (3, T0, T1, T3)
+CFcC class -> n0.n1.<locals>.n2.n3
+CFcf parameters -> (T0, T1)
+CFcf bound -> int
+CFcf alias -> (<class 'int'>, T0, T1)
+CFcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFcF parameters -> (T0, T1, T3)
+CFcF bound -> int
+CFcF alias -> (<class 'int'>, T0, T1, T3)
+CFcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFCc parameters -> (T0, T1, T2)
+CFCc bound -> 3
+CFCc alias -> (3, T0, T1, T2)
+CFCc class -> n0.n1.<locals>.n2.n3
+CFCC parameters -> (T0, T1, T2, T3)
+CFCC bound -> 3
+CFCC alias -> (3, T0, T1, T2, T3)
+CFCC class -> n0.n1.<locals>.n2.n3
+CFCf parameters -> (T0, T1, T2)
+CFCf bound -> int
+CFCf alias -> (<class 'int'>, T0, T1, T2)
+CFCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFCF parameters -> (T0, T1, T2, T3)
+CFCF bound -> int
+CFCF alias -> (<class 'int'>, T0, T1, T2, T3)
+CFCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFfc parameters -> (T0, T1)
+CFfc bound -> 3
+CFfc alias -> (3, T0, T1)
+CFfc class -> n0.n1.<locals>.n2.<locals>.n3
+CFfC parameters -> (T0, T1, T3)
+CFfC bound -> 3
+CFfC alias -> (3, T0, T1, T3)
+CFfC class -> n0.n1.<locals>.n2.<locals>.n3
+CFff parameters -> (T0, T1)
+CFff bound -> int
+CFff alias -> (<class 'int'>, T0, T1)
+CFff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFfF parameters -> (T0, T1, T3)
+CFfF bound -> int
+CFfF alias -> (<class 'int'>, T0, T1, T3)
+CFfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFFc parameters -> (T0, T1, T2)
+CFFc bound -> 3
+CFFc alias -> (3, T0, T1, T2)
+CFFc class -> n0.n1.<locals>.n2.<locals>.n3
+CFFC parameters -> (T0, T1, T2, T3)
+CFFC bound -> 3
+CFFC alias -> (3, T0, T1, T2, T3)
+CFFC class -> n0.n1.<locals>.n2.<locals>.n3
+CFFf parameters -> (T0, T1, T2)
+CFFf bound -> int
+CFFf alias -> (<class 'int'>, T0, T1, T2)
+CFFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+CFFF parameters -> (T0, T1, T2, T3)
+CFFF bound -> int
+CFFF alias -> (<class 'int'>, T0, T1, T2, T3)
+CFFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fccc parameters -> ()
+fccc bound -> 3
+fccc alias -> (3, None)
+fccc class -> n0.<locals>.n1.n2.n3
+fccC parameters -> (T3,)
+fccC bound -> 3
+fccC alias -> (3, T3)
+fccC class -> n0.<locals>.n1.n2.n3
+fccf parameters -> ()
+fccf bound -> int
+fccf alias -> (<class 'int'>, None)
+fccf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fccF parameters -> (T3,)
+fccF bound -> int
+fccF alias -> (<class 'int'>, T3)
+fccF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcCc parameters -> (T2,)
+fcCc bound -> 3
+fcCc alias -> (3, T2)
+fcCc class -> n0.<locals>.n1.n2.n3
+fcCC parameters -> (T2, T3)
+fcCC bound -> 3
+fcCC alias -> (3, T2, T3)
+fcCC class -> n0.<locals>.n1.n2.n3
+fcCf parameters -> (T2,)
+fcCf bound -> int
+fcCf alias -> (<class 'int'>, T2)
+fcCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcCF parameters -> (T2, T3)
+fcCF bound -> int
+fcCF alias -> (<class 'int'>, T2, T3)
+fcCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcfc parameters -> ()
+fcfc bound -> 3
+fcfc alias -> (3, None)
+fcfc class -> n0.<locals>.n1.n2.<locals>.n3
+fcfC parameters -> (T3,)
+fcfC bound -> 3
+fcfC alias -> (3, T3)
+fcfC class -> n0.<locals>.n1.n2.<locals>.n3
+fcff parameters -> ()
+fcff bound -> int
+fcff alias -> (<class 'int'>, None)
+fcff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcfF parameters -> (T3,)
+fcfF bound -> int
+fcfF alias -> (<class 'int'>, T3)
+fcfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcFc parameters -> (T2,)
+fcFc bound -> 3
+fcFc alias -> (3, T2)
+fcFc class -> n0.<locals>.n1.n2.<locals>.n3
+fcFC parameters -> (T2, T3)
+fcFC bound -> 3
+fcFC alias -> (3, T2, T3)
+fcFC class -> n0.<locals>.n1.n2.<locals>.n3
+fcFf parameters -> (T2,)
+fcFf bound -> int
+fcFf alias -> (<class 'int'>, T2)
+fcFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fcFF parameters -> (T2, T3)
+fcFF bound -> int
+fcFF alias -> (<class 'int'>, T2, T3)
+fcFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCcc parameters -> (T1,)
+fCcc bound -> 3
+fCcc alias -> (3, T1)
+fCcc class -> n0.<locals>.n1.n2.n3
+fCcC parameters -> (T1, T3)
+fCcC bound -> 3
+fCcC alias -> (3, T1, T3)
+fCcC class -> n0.<locals>.n1.n2.n3
+fCcf parameters -> (T1,)
+fCcf bound -> int
+fCcf alias -> (<class 'int'>, T1)
+fCcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCcF parameters -> (T1, T3)
+fCcF bound -> int
+fCcF alias -> (<class 'int'>, T1, T3)
+fCcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCCc parameters -> (T1, T2)
+fCCc bound -> 3
+fCCc alias -> (3, T1, T2)
+fCCc class -> n0.<locals>.n1.n2.n3
+fCCC parameters -> (T1, T2, T3)
+fCCC bound -> 3
+fCCC alias -> (3, T1, T2, T3)
+fCCC class -> n0.<locals>.n1.n2.n3
+fCCf parameters -> (T1, T2)
+fCCf bound -> int
+fCCf alias -> (<class 'int'>, T1, T2)
+fCCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCCF parameters -> (T1, T2, T3)
+fCCF bound -> int
+fCCF alias -> (<class 'int'>, T1, T2, T3)
+fCCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCfc parameters -> (T1,)
+fCfc bound -> 3
+fCfc alias -> (3, T1)
+fCfc class -> n0.<locals>.n1.n2.<locals>.n3
+fCfC parameters -> (T1, T3)
+fCfC bound -> 3
+fCfC alias -> (3, T1, T3)
+fCfC class -> n0.<locals>.n1.n2.<locals>.n3
+fCff parameters -> (T1,)
+fCff bound -> int
+fCff alias -> (<class 'int'>, T1)
+fCff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCfF parameters -> (T1, T3)
+fCfF bound -> int
+fCfF alias -> (<class 'int'>, T1, T3)
+fCfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCFc parameters -> (T1, T2)
+fCFc bound -> 3
+fCFc alias -> (3, T1, T2)
+fCFc class -> n0.<locals>.n1.n2.<locals>.n3
+fCFC parameters -> (T1, T2, T3)
+fCFC bound -> 3
+fCFC alias -> (3, T1, T2, T3)
+fCFC class -> n0.<locals>.n1.n2.<locals>.n3
+fCFf parameters -> (T1, T2)
+fCFf bound -> int
+fCFf alias -> (<class 'int'>, T1, T2)
+fCFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fCFF parameters -> (T1, T2, T3)
+fCFF bound -> int
+fCFF alias -> (<class 'int'>, T1, T2, T3)
+fCFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ffcc parameters -> ()
+ffcc bound -> 3
+ffcc alias -> (3, None)
+ffcc class -> n0.<locals>.n1.<locals>.n2.n3
+ffcC parameters -> (T3,)
+ffcC bound -> 3
+ffcC alias -> (3, T3)
+ffcC class -> n0.<locals>.n1.<locals>.n2.n3
+ffcf parameters -> ()
+ffcf bound -> int
+ffcf alias -> (<class 'int'>, None)
+ffcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ffcF parameters -> (T3,)
+ffcF bound -> int
+ffcF alias -> (<class 'int'>, T3)
+ffcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ffCc parameters -> (T2,)
+ffCc bound -> 3
+ffCc alias -> (3, T2)
+ffCc class -> n0.<locals>.n1.<locals>.n2.n3
+ffCC parameters -> (T2, T3)
+ffCC bound -> 3
+ffCC alias -> (3, T2, T3)
+ffCC class -> n0.<locals>.n1.<locals>.n2.n3
+ffCf parameters -> (T2,)
+ffCf bound -> int
+ffCf alias -> (<class 'int'>, T2)
+ffCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+ffCF parameters -> (T2, T3)
+ffCF bound -> int
+ffCF alias -> (<class 'int'>, T2, T3)
+ffCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fffc parameters -> ()
+fffc bound -> 3
+fffc alias -> (3, None)
+fffc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+fffC parameters -> (T3,)
+fffC bound -> 3
+fffC alias -> (3, T3)
+fffC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+ffff parameters -> ()
+ffff bound -> int
+ffff alias -> (<class 'int'>, None)
+fffF parameters -> (T3,)
+fffF bound -> int
+fffF alias -> (<class 'int'>, T3)
+ffFc parameters -> (T2,)
+ffFc bound -> 3
+ffFc alias -> (3, T2)
+ffFc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+ffFC parameters -> (T2, T3)
+ffFC bound -> 3
+ffFC alias -> (3, T2, T3)
+ffFC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+ffFf parameters -> (T2,)
+ffFf bound -> int
+ffFf alias -> (<class 'int'>, T2)
+ffFF parameters -> (T2, T3)
+ffFF bound -> int
+ffFF alias -> (<class 'int'>, T2, T3)
+fFcc parameters -> (T1,)
+fFcc bound -> 3
+fFcc alias -> (3, T1)
+fFcc class -> n0.<locals>.n1.<locals>.n2.n3
+fFcC parameters -> (T1, T3)
+fFcC bound -> 3
+fFcC alias -> (3, T1, T3)
+fFcC class -> n0.<locals>.n1.<locals>.n2.n3
+fFcf parameters -> (T1,)
+fFcf bound -> int
+fFcf alias -> (<class 'int'>, T1)
+fFcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fFcF parameters -> (T1, T3)
+fFcF bound -> int
+fFcF alias -> (<class 'int'>, T1, T3)
+fFcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fFCc parameters -> (T1, T2)
+fFCc bound -> 3
+fFCc alias -> (3, T1, T2)
+fFCc class -> n0.<locals>.n1.<locals>.n2.n3
+fFCC parameters -> (T1, T2, T3)
+fFCC bound -> 3
+fFCC alias -> (3, T1, T2, T3)
+fFCC class -> n0.<locals>.n1.<locals>.n2.n3
+fFCf parameters -> (T1, T2)
+fFCf bound -> int
+fFCf alias -> (<class 'int'>, T1, T2)
+fFCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fFCF parameters -> (T1, T2, T3)
+fFCF bound -> int
+fFCF alias -> (<class 'int'>, T1, T2, T3)
+fFCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+fFfc parameters -> (T1,)
+fFfc bound -> 3
+fFfc alias -> (3, T1)
+fFfc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+fFfC parameters -> (T1, T3)
+fFfC bound -> 3
+fFfC alias -> (3, T1, T3)
+fFfC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+fFff parameters -> (T1,)
+fFff bound -> int
+fFff alias -> (<class 'int'>, T1)
+fFfF parameters -> (T1, T3)
+fFfF bound -> int
+fFfF alias -> (<class 'int'>, T1, T3)
+fFFc parameters -> (T1, T2)
+fFFc bound -> 3
+fFFc alias -> (3, T1, T2)
+fFFc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+fFFC parameters -> (T1, T2, T3)
+fFFC bound -> 3
+fFFC alias -> (3, T1, T2, T3)
+fFFC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+fFFf parameters -> (T1, T2)
+fFFf bound -> int
+fFFf alias -> (<class 'int'>, T1, T2)
+fFFF parameters -> (T1, T2, T3)
+fFFF bound -> int
+fFFF alias -> (<class 'int'>, T1, T2, T3)
+Fccc parameters -> (T0,)
+Fccc bound -> 3
+Fccc alias -> (3, T0)
+Fccc class -> n0.<locals>.n1.n2.n3
+FccC parameters -> (T0, T3)
+FccC bound -> 3
+FccC alias -> (3, T0, T3)
+FccC class -> n0.<locals>.n1.n2.n3
+Fccf parameters -> (T0,)
+Fccf bound -> int
+Fccf alias -> (<class 'int'>, T0)
+Fccf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FccF parameters -> (T0, T3)
+FccF bound -> int
+FccF alias -> (<class 'int'>, T0, T3)
+FccF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FcCc parameters -> (T0, T2)
+FcCc bound -> 3
+FcCc alias -> (3, T0, T2)
+FcCc class -> n0.<locals>.n1.n2.n3
+FcCC parameters -> (T0, T2, T3)
+FcCC bound -> 3
+FcCC alias -> (3, T0, T2, T3)
+FcCC class -> n0.<locals>.n1.n2.n3
+FcCf parameters -> (T0, T2)
+FcCf bound -> int
+FcCf alias -> (<class 'int'>, T0, T2)
+FcCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FcCF parameters -> (T0, T2, T3)
+FcCF bound -> int
+FcCF alias -> (<class 'int'>, T0, T2, T3)
+FcCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Fcfc parameters -> (T0,)
+Fcfc bound -> 3
+Fcfc alias -> (3, T0)
+Fcfc class -> n0.<locals>.n1.n2.<locals>.n3
+FcfC parameters -> (T0, T3)
+FcfC bound -> 3
+FcfC alias -> (3, T0, T3)
+FcfC class -> n0.<locals>.n1.n2.<locals>.n3
+Fcff parameters -> (T0,)
+Fcff bound -> int
+Fcff alias -> (<class 'int'>, T0)
+Fcff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FcfF parameters -> (T0, T3)
+FcfF bound -> int
+FcfF alias -> (<class 'int'>, T0, T3)
+FcfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FcFc parameters -> (T0, T2)
+FcFc bound -> 3
+FcFc alias -> (3, T0, T2)
+FcFc class -> n0.<locals>.n1.n2.<locals>.n3
+FcFC parameters -> (T0, T2, T3)
+FcFC bound -> 3
+FcFC alias -> (3, T0, T2, T3)
+FcFC class -> n0.<locals>.n1.n2.<locals>.n3
+FcFf parameters -> (T0, T2)
+FcFf bound -> int
+FcFf alias -> (<class 'int'>, T0, T2)
+FcFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FcFF parameters -> (T0, T2, T3)
+FcFF bound -> int
+FcFF alias -> (<class 'int'>, T0, T2, T3)
+FcFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCcc parameters -> (T0, T1)
+FCcc bound -> 3
+FCcc alias -> (3, T0, T1)
+FCcc class -> n0.<locals>.n1.n2.n3
+FCcC parameters -> (T0, T1, T3)
+FCcC bound -> 3
+FCcC alias -> (3, T0, T1, T3)
+FCcC class -> n0.<locals>.n1.n2.n3
+FCcf parameters -> (T0, T1)
+FCcf bound -> int
+FCcf alias -> (<class 'int'>, T0, T1)
+FCcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCcF parameters -> (T0, T1, T3)
+FCcF bound -> int
+FCcF alias -> (<class 'int'>, T0, T1, T3)
+FCcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCCc parameters -> (T0, T1, T2)
+FCCc bound -> 3
+FCCc alias -> (3, T0, T1, T2)
+FCCc class -> n0.<locals>.n1.n2.n3
+FCCC parameters -> (T0, T1, T2, T3)
+FCCC bound -> 3
+FCCC alias -> (3, T0, T1, T2, T3)
+FCCC class -> n0.<locals>.n1.n2.n3
+FCCf parameters -> (T0, T1, T2)
+FCCf bound -> int
+FCCf alias -> (<class 'int'>, T0, T1, T2)
+FCCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCCF parameters -> (T0, T1, T2, T3)
+FCCF bound -> int
+FCCF alias -> (<class 'int'>, T0, T1, T2, T3)
+FCCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCfc parameters -> (T0, T1)
+FCfc bound -> 3
+FCfc alias -> (3, T0, T1)
+FCfc class -> n0.<locals>.n1.n2.<locals>.n3
+FCfC parameters -> (T0, T1, T3)
+FCfC bound -> 3
+FCfC alias -> (3, T0, T1, T3)
+FCfC class -> n0.<locals>.n1.n2.<locals>.n3
+FCff parameters -> (T0, T1)
+FCff bound -> int
+FCff alias -> (<class 'int'>, T0, T1)
+FCff class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCfF parameters -> (T0, T1, T3)
+FCfF bound -> int
+FCfF alias -> (<class 'int'>, T0, T1, T3)
+FCfF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCFc parameters -> (T0, T1, T2)
+FCFc bound -> 3
+FCFc alias -> (3, T0, T1, T2)
+FCFc class -> n0.<locals>.n1.n2.<locals>.n3
+FCFC parameters -> (T0, T1, T2, T3)
+FCFC bound -> 3
+FCFC alias -> (3, T0, T1, T2, T3)
+FCFC class -> n0.<locals>.n1.n2.<locals>.n3
+FCFf parameters -> (T0, T1, T2)
+FCFf bound -> int
+FCFf alias -> (<class 'int'>, T0, T1, T2)
+FCFf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FCFF parameters -> (T0, T1, T2, T3)
+FCFF bound -> int
+FCFF alias -> (<class 'int'>, T0, T1, T2, T3)
+FCFF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Ffcc parameters -> (T0,)
+Ffcc bound -> 3
+Ffcc alias -> (3, T0)
+Ffcc class -> n0.<locals>.n1.<locals>.n2.n3
+FfcC parameters -> (T0, T3)
+FfcC bound -> 3
+FfcC alias -> (3, T0, T3)
+FfcC class -> n0.<locals>.n1.<locals>.n2.n3
+Ffcf parameters -> (T0,)
+Ffcf bound -> int
+Ffcf alias -> (<class 'int'>, T0)
+Ffcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FfcF parameters -> (T0, T3)
+FfcF bound -> int
+FfcF alias -> (<class 'int'>, T0, T3)
+FfcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FfCc parameters -> (T0, T2)
+FfCc bound -> 3
+FfCc alias -> (3, T0, T2)
+FfCc class -> n0.<locals>.n1.<locals>.n2.n3
+FfCC parameters -> (T0, T2, T3)
+FfCC bound -> 3
+FfCC alias -> (3, T0, T2, T3)
+FfCC class -> n0.<locals>.n1.<locals>.n2.n3
+FfCf parameters -> (T0, T2)
+FfCf bound -> int
+FfCf alias -> (<class 'int'>, T0, T2)
+FfCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FfCF parameters -> (T0, T2, T3)
+FfCF bound -> int
+FfCF alias -> (<class 'int'>, T0, T2, T3)
+FfCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+Fffc parameters -> (T0,)
+Fffc bound -> 3
+Fffc alias -> (3, T0)
+Fffc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+FffC parameters -> (T0, T3)
+FffC bound -> 3
+FffC alias -> (3, T0, T3)
+FffC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+Ffff parameters -> (T0,)
+Ffff bound -> int
+Ffff alias -> (<class 'int'>, T0)
+FffF parameters -> (T0, T3)
+FffF bound -> int
+FffF alias -> (<class 'int'>, T0, T3)
+FfFc parameters -> (T0, T2)
+FfFc bound -> 3
+FfFc alias -> (3, T0, T2)
+FfFc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+FfFC parameters -> (T0, T2, T3)
+FfFC bound -> 3
+FfFC alias -> (3, T0, T2, T3)
+FfFC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+FfFf parameters -> (T0, T2)
+FfFf bound -> int
+FfFf alias -> (<class 'int'>, T0, T2)
+FfFF parameters -> (T0, T2, T3)
+FfFF bound -> int
+FfFF alias -> (<class 'int'>, T0, T2, T3)
+FFcc parameters -> (T0, T1)
+FFcc bound -> 3
+FFcc alias -> (3, T0, T1)
+FFcc class -> n0.<locals>.n1.<locals>.n2.n3
+FFcC parameters -> (T0, T1, T3)
+FFcC bound -> 3
+FFcC alias -> (3, T0, T1, T3)
+FFcC class -> n0.<locals>.n1.<locals>.n2.n3
+FFcf parameters -> (T0, T1)
+FFcf bound -> int
+FFcf alias -> (<class 'int'>, T0, T1)
+FFcf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FFcF parameters -> (T0, T1, T3)
+FFcF bound -> int
+FFcF alias -> (<class 'int'>, T0, T1, T3)
+FFcF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FFCc parameters -> (T0, T1, T2)
+FFCc bound -> 3
+FFCc alias -> (3, T0, T1, T2)
+FFCc class -> n0.<locals>.n1.<locals>.n2.n3
+FFCC parameters -> (T0, T1, T2, T3)
+FFCC bound -> 3
+FFCC alias -> (3, T0, T1, T2, T3)
+FFCC class -> n0.<locals>.n1.<locals>.n2.n3
+FFCf parameters -> (T0, T1, T2)
+FFCf bound -> int
+FFCf alias -> (<class 'int'>, T0, T1, T2)
+FFCf class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FFCF parameters -> (T0, T1, T2, T3)
+FFCF bound -> int
+FFCF alias -> (<class 'int'>, T0, T1, T2, T3)
+FFCF class -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+FFfc parameters -> (T0, T1)
+FFfc bound -> 3
+FFfc alias -> (3, T0, T1)
+FFfc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+FFfC parameters -> (T0, T1, T3)
+FFfC bound -> 3
+FFfC alias -> (3, T0, T1, T3)
+FFfC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+FFff parameters -> (T0, T1)
+FFff bound -> int
+FFff alias -> (<class 'int'>, T0, T1)
+FFfF parameters -> (T0, T1, T3)
+FFfF bound -> int
+FFfF alias -> (<class 'int'>, T0, T1, T3)
+FFFc parameters -> (T0, T1, T2)
+FFFc bound -> 3
+FFFc alias -> (3, T0, T1, T2)
+FFFc class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+FFFC parameters -> (T0, T1, T2, T3)
+FFFC bound -> 3
+FFFC alias -> (3, T0, T1, T2, T3)
+FFFC class -> n0.<locals>.n1.<locals>.n2.<locals>.n3
+FFFf parameters -> (T0, T1, T2)
+FFFf bound -> int
+FFFf alias -> (<class 'int'>, T0, T1, T2)
+FFFF parameters -> (T0, T1, T2, T3)
+FFFF bound -> int
+FFFF alias -> (<class 'int'>, T0, T1, T2, T3)
+===== written out
+class, method, class, method with a parameter -> D
+all four with one -> (A1, B, C, D)
+each looks in its own -> ('outer', 'inner', 'inner', 'module')
+===== what __prepare__() gives
+of a metaclass, None -> TypeError: Meta.__prepare__() must return a mapping, not NoneType
+   of what is no class -> TypeError: <metaclass>.__prepare__() must return a mapping, not NoneType
+of a metaclass, an int -> TypeError: Meta.__prepare__() must return a mapping, not int
+   of what is no class -> TypeError: <metaclass>.__prepare__() must return a mapping, not int
+of a metaclass, a list -> TypeError: list indices must be integers or slices, not str
+   of what is no class -> TypeError: list indices must be integers or slices, not str
+of a metaclass, a str -> TypeError: string indices must be integers, not 'str'
+   of what is no class -> TypeError: string indices must be integers, not 'str'
+of a metaclass, a tuple -> TypeError: tuple indices must be integers or slices, not str
+   of what is no class -> TypeError: tuple indices must be integers or slices, not str
+of a metaclass, a set -> TypeError: Meta.__prepare__() must return a mapping, not set
+   of what is no class -> TypeError: <metaclass>.__prepare__() must return a mapping, not set
+of a metaclass, an object -> TypeError: Meta.__prepare__() must return a mapping, not object
+   of what is no class -> TypeError: <metaclass>.__prepare__() must return a mapping, not object
+of a metaclass, what can be subscripted -> ZeroDivisionError: division by zero
+   of what is no class -> ZeroDivisionError: division by zero
+of a metaclass, a dict -> X
+   of what is no class -> made
+of a metaclass, a mapping of its own -> X
+   of what is no class -> made
+===== a dict that is given to an instance
+plain -> ([1, 2], ['a', 'b'], 2, True)
+keys of a class derived from str -> ([1, 2], ['a', 'b'], 2, True)
+that has its own idea of what it is equal to -> (['none', 2], ['a', 'b'], 2, True)
+other keys -> (['none', 2], ['1', 'None', 'b'], 3, True)
+set afterwards -> (None, 1, None, 2, None, 3, True, True, 2, 3, False)
+done

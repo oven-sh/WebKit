@@ -656,6 +656,9 @@ JSValue buildClass(JSGlobalObject* globalObject, JSValue body, JSString* name, P
             arguments.append(bases);
             namespaceValue = callWithKeywordDict(globalObject, prepare, arguments, keywords);
             RETURN_IF_EXCEPTION(scope, { });
+            // PyMapping_Check(): whether it can be subscripted
+            if (!typeOf(globalObject, namespaceValue)->lookup(vm, names.dunder_getitem))
+                return raiseTypeError(globalObject, scope, concatenate(isClass(metaclass) ? asType(metaclass)->nameString(globalObject) : String("<metaclass>"_s), ".__prepare__() must return a mapping, not "_s, typeName(globalObject, namespaceValue)));
         }
     }
     if (!namespaceValue)
