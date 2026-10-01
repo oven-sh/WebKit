@@ -302,6 +302,7 @@ public:
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    static Structure* setArrayLengthReadOnlyTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
     static Structure* setBrandTransition(VM&, Structure*, Symbol* brand, DeferredStructureTransitionWatchpointFire* = nullptr);
@@ -310,6 +311,21 @@ public:
     JS_EXPORT_PRIVATE bool isSealed(VM&);
     JS_EXPORT_PRIVATE bool isFrozen(VM&);
     bool isStructureExtensible() const { return !didPreventExtensions(); }
+
+    // Attributes of the elements stored in the ArrayStorage vector of an object with this structure.
+    // Object.seal / Object.freeze keep the elements in the vector (the object is switched to
+    // SlowPutArrayStorage so no JIT stores to it inline) and record their attributes here instead of
+    // moving every element into the SparseArrayValueMap. Entries of the sparse map carry their own
+    // attributes.
+    unsigned vectorElementAttributes() const
+    {
+        unsigned attributes = 0;
+        if (vectorElementsAreNonConfigurable())
+            attributes |= PropertyAttribute::DontDelete;
+        if (vectorElementsAreReadOnly())
+            attributes |= PropertyAttribute::ReadOnly;
+        return attributes;
+    }
 
     JS_EXPORT_PRIVATE Structure* flattenDictionaryStructure(VM&, JSObject*);
 
@@ -836,6 +852,9 @@ public:
     DEFINE_BITFIELD(bool, hasNonEnumerableProperties, HasNonEnumerableProperties, 1, 6);
     DEFINE_BITFIELD(bool, hasSpecialProperties, HasSpecialProperties, 1, 7);
     DEFINE_BITFIELD(DefinitelyNonThenableState, definitelyNonThenableState, DefinitelyNonThenableState, 2, 8); // This flag can be flipped on the main thread at any timing.
+    DEFINE_BITFIELD(bool, vectorElementsAreNonConfigurable, VectorElementsAreNonConfigurable, 1, 10);
+    DEFINE_BITFIELD(bool, vectorElementsAreReadOnly, VectorElementsAreReadOnly, 1, 11);
+    DEFINE_BITFIELD(bool, arrayLengthIsReadOnly, ArrayLengthIsReadOnly, 1, 12);
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);
@@ -874,6 +893,9 @@ public:
             | s_hasUnderscoreProtoPropertyExcludingOriginalProtoBits
             | s_hasNonConfigurablePropertiesBits
             | s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits
+            | s_vectorElementsAreNonConfigurableBits
+            | s_vectorElementsAreReadOnlyBits
+            | s_arrayLengthIsReadOnlyBits
         ));
     }
 

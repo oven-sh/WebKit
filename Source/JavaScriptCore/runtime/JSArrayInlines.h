@@ -242,6 +242,15 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
 
     switch (indexingMode()) {
     case ArrayClass: {
+        // A non-extensible array and one with a read-only length stay blank (enterDictionaryIndexingMode):
+        // the generic put reports the error.
+        if (!isStructureExtensible() || !isLengthWritable()) [[unlikely]] {
+            methodTable()->putByIndex(this, globalObject, 0, value, true);
+            RETURN_IF_EXCEPTION(scope, void());
+            scope.release();
+            setLength(globalObject, 1, true);
+            return;
+        }
         createInitialUndecided(vm, 0);
         [[fallthrough]];
     }
@@ -349,6 +358,12 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
                 scope.release();
                 setLength(globalObject, oldLength + 1, true);
             }
+            return;
+        }
+        // A non-extensible array cannot gain an element and a read-only length cannot grow, whatever
+        // the vector capacity is.
+        if (!isStructureExtensible() || !isLengthWritable()) {
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
             return;
         }
         [[fallthrough]];
