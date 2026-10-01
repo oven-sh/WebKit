@@ -305,6 +305,27 @@ bool isGoneThroughAsDict(JSGlobalObject* globalObject, JSValue value)
     return typeOf(globalObject, value)->lookup(vm, vm.pythonNames().dunder_iter) == realm->typeDict()->lookup(vm, vm.pythonNames().dunder_iter);
 }
 
+// PyMapping_Keys()
+JSValue keysOfMapping(JSGlobalObject* globalObject, JSValue mapping)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (isExactly(globalObject, mapping, globalObject->pyRealm()->typeDict()))
+        RELEASE_AND_RETURN(scope, listFromIterable(globalObject, mapping));
+    JSValue method = getAttribute(globalObject, mapping, Identifier::fromString(vm, "keys"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    JSValue given = call(globalObject, method);
+    RETURN_IF_EXCEPTION(scope, { });
+    // method_output_as_list()
+    JSValue iterator = getIterator(globalObject, given);
+    if (scope.exception()) [[unlikely]] {
+        if (catchException(globalObject, BuiltinType::TypeError))
+            raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, mapping), ".keys() returned a non-iterable (type "_s, typeName(globalObject, given), ')'));
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, listFromIterable(globalObject, iterator));
+}
+
 // dict_update_arg(): from a mapping, or from what gives pairs.
 void updateDictFrom(JSGlobalObject* globalObject, PyDict* dict, JSValue source)
 {
@@ -312,9 +333,7 @@ void updateDictFrom(JSGlobalObject* globalObject, PyDict* dict, JSValue source)
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
         if (isGoneThroughAsDict(globalObject, source)) {
-            asDict(source)->forEach(globalObject, [&] (JSValue key, JSValue value) {
-                return dict->set(globalObject, key, value);
-            });
+            dict->mergeFrom(globalObject, *asDict(source));
             RETURN_IF_EXCEPTION(scope, void());
         } else {
             JSValue keysMethod = getAttributeIfPresent(globalObject, source, Identifier::fromString(vm, "keys"_s));
@@ -337,10 +356,15 @@ void updateDictFrom(JSGlobalObject* globalObject, PyDict* dict, JSValue source)
                 unsigned position = 0;
                 forEach(globalObject, source, [&] (JSValue pair) {
                     MarkedArgumentBuffer parts;
-                    collect(globalObject, pair, parts);
+                    // PySequence_Fast(): that it cannot be gone through is said in these words. What goes wrong in going through it is said as it was.
+                    JSValue iterator = getIterator(globalObject, pair);
+                    bool cannotBeGoneThrough = !!scope.exception();
+                    if (!cannotBeGoneThrough)
+                        collect(globalObject, iterator, parts);
                     if (scope.exception()) {
-                        if (catchException(globalObject, BuiltinType::TypeError)) {
-                            raiseTypeError(globalObject, scope, "object is not iterable"_s);
+                        if (isInstance(globalObject, scope.exception()->value(), globalObject->pyRealm()->type(BuiltinType::TypeError))) {
+                            if (cannotBeGoneThrough && catchException(globalObject, BuiltinType::TypeError))
+                                raiseTypeError(globalObject, scope, "object is not iterable"_s);
                             addNoteToRaised(globalObject, concatenate("Cannot convert dictionary update sequence element #"_s, position, " to a sequence"_s));
                         }
                         return false;
@@ -406,14 +430,7 @@ PYTHON_NATIVE(dictGet)
 PYTHON_NATIVE(dictSetDefault)
 {
     DICT_PROLOGUE("setdefault");
-    JSValue value = self->get(globalObject, args[1]);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (value)
-        return JSValue::encode(value);
-    value = args.size() > 2 ? args[2] : jsUndefined();
-    self->set(globalObject, args[1], value);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(value);
+    RELEASE_AND_RETURN(scope, JSValue::encode(self->getOrAdd(globalObject, args[1], args.size() > 2 ? args[2] : jsUndefined())));
 }
 
 PYTHON_NATIVE(dictPop)
@@ -466,6 +483,19 @@ PYTHON_NATIVE(dictFromKeys)
     JSValue result = call(globalObject, args[0]);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue value = args.size() > 2 ? args[2] : jsUndefined();
+    // Keys that come out of a dict or a set have their hashes with them.
+    if (isExactly(globalObject, result, realm->typeDict())) {
+        PyHashTable* table = nullptr;
+        if (isExactly(globalObject, args[1], realm->typeDict()) && !asDict(args[1])->backing())
+            table = asDict(args[1]);
+        else if (isExactly(globalObject, args[1], realm->typeSet()) || isExactly(globalObject, args[1], realm->typeFrozenSet()))
+            table = uncheckedDowncast<PySet>(args[1].asCell());
+        if (table) {
+            asDict(result)->addKeysOf(globalObject, *table, value);
+            RETURN_IF_EXCEPTION(scope, { });
+            return JSValue::encode(result);
+        }
+    }
     forEach(globalObject, args[1], [&] (JSValue key) {
         setItem(globalObject, result, key, value);
         return !scope.exception();

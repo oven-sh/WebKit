@@ -1,0 +1,78 @@
+hash of a tuple 1
+hash of a tuple twice 1
+hash of a frozenset that has been asked before 0
+dict.fromkeys(list) 5
+dict.fromkeys(dict) 0
+dict.fromkeys(dict, v) 0
+dict.fromkeys(set) 0
+dict.fromkeys(frozenset, v) 0
+dict.fromkeys(keys view) 5
+dict(dict) 0
+dict.copy() 0
+{**d} 0
+d | d 0
+d.update(d2) 0
+set(dict) 0
+frozenset(dict) 0
+set(set) 0
+set(frozenset) 0
+frozenset(set) 0
+set(keys view) 5
+set(list) 5
+{*s} 0
+{*d} 0
+s.copy() 0
+s.update(d) 0
+s.update(s) 0
+s | s 0
+s & s 0
+s - s 0
+s ^ s 0
+s.union(d) 0
+s.intersection(d) 5
+s.difference(d) 0
+s.symmetric_difference(d) 0
+s.difference_update(d) 5
+s.symmetric_difference_update(d) 0
+s.intersection_update(d) 5
+s.isdisjoint(d) 1
+s.issubset(d) 5
+s.issuperset(d) 5
+s == s 0
+s <= s 0
+d == d 0
+d.keys() & s 5
+d.keys() | s 0
+d.keys() - s 0
+d.keys() ^ s 0
+d.keys() == s 5
+d.keys() <= s 5
+d.keys().isdisjoint(s) 1
+d.items() & d.items() 10
+k in d 1
+d[k] 1
+d.get(k) 1
+d[k] = v 1
+d.setdefault(k) 1
+d.pop(k) 1
+d.pop(k) of an empty one 0
+d.popitem() 0
+del d[k] 1
+s.add(k) 1
+s.discard(k) 1
+s.remove(k) 1
+s.pop() 0
+k in s 1
+k in an empty set 1
+k in an empty dict 1
+Counter(list) 5
+Counter(dict) 0
+defaultdict[k] 2
+sorted(set) 0
+repr 0
+dict comprehension 5
+set comprehension 5
+display 2
+set display 2
+a list that has kept its hash 1
+py lru_cache 2

@@ -100,30 +100,46 @@ public:
         if (!m_info.isGeneratorBody)
             m_details->frameObjectRegister = g.m_pythonFrameObjectRegister->virtualRegister();
         m_details->scopeRegister = g.scopeRegister()->virtualRegister();
-        if (!isFunctionLike())
-            return;
-        HashSet<UniquedStringImpl*> seen;
+        HashMap<UniquedStringImpl*, unsigned> seen;
         auto add = [&] (const Identifier& name, bool isInEnvironment) {
-            if (!seen.add(name.impl()).isNewEntry)
+            if (!seen.add(name.impl(), m_details->frameVariables.size()).isNewEntry)
                 return;
             RegisterID* local = isInEnvironment ? nullptr : m_locals.get(name.impl());
             // allocateVariables()
             RELEASE_ASSERT(!local || !local->virtualRegister().isLocal() || local->virtualRegister().toLocal() < g.m_codeBlock->numVars());
-            m_details->frameVariables.append({ name, local ? local->virtualRegister() : VirtualRegister() });
+            // What is no function has its variables somewhere else, but for these.
+            m_details->frameVariables.append({ name, local ? local->virtualRegister() : VirtualRegister(), !isFunctionLike() });
         };
         for (auto& name : m_details->variableNames)
             add(name, m_block.scopeOf(name) == NameScope::Cell);
-        for (auto& name : m_details->cellVariables)
-            add(name, true);
-        Vector<Identifier> freeVariables = m_info.freeVariables;
-        std::ranges::sort(freeVariables, byCodePoint);
-        for (auto& name : freeVariables)
-            add(name, true);
+        if (isFunctionLike()) {
+            for (auto& name : m_details->cellVariables)
+                add(name, true);
+            Vector<Identifier> freeVariables = m_info.freeVariables;
+            std::ranges::sort(freeVariables, byCodePoint);
+            for (auto& name : freeVariables)
+                add(name, true);
+        }
+        for (auto& variable : m_details->comprehensionVariables)
+            variable.frameVariable = seen.get(variable.name.impl());
+
+        // What makes a generator of the code puts more instructions into it.
+        g.m_codeBlock->addOffsetKeptElsewhere(m_details->enterOffset);
+        if (m_details->firstTraceableOffset != std::numeric_limits<unsigned>::max())
+            g.m_codeBlock->addOffsetKeptElsewhere(m_details->firstTraceableOffset);
+        for (auto& variable : m_details->comprehensionVariables) {
+            g.m_codeBlock->addOffsetKeptElsewhere(variable.begin);
+            g.m_codeBlock->addOffsetKeptElsewhere(variable.end);
+        }
 
         if (m_info.isGeneratorBody) {
             // Whatever has the frame of a suspended generator can see its variables, whether or not the generator will look at them again.
             g.m_localsToSaveAtEveryYield.append(m_details->scopeRegister);
             for (auto& variable : m_details->frameVariables) {
+                if (variable.location.isValid())
+                    g.m_localsToSaveAtEveryYield.append(variable.location);
+            }
+            for (auto& variable : m_details->comprehensionVariables) {
                 if (variable.location.isValid())
                     g.m_localsToSaveAtEveryYield.append(variable.location);
             }
@@ -887,10 +903,18 @@ private:
 
     enum class Checked : bool { No, Yes };
 
+    // What a class has for what is defined in it to mean the class by is nothing to its own body, where __class__ is a name like any other: that of a variable of a function that the class is in.
+    Variable variableOfEnvironment(const Identifier& name)
+    {
+        if (m_info.kind == CodeKind::Class && m_comprehensionBlocks.isEmpty() && (name == m_names.dunder_class || name == m_names.dunder_classdict))
+            return Variable(name);
+        return g.variable(name);
+    }
+
     // If it is not checked, there may be nothing in what it is loaded into.
     RegisterID* emitLoadClosure(RegisterID* dst, const Identifier& name, const Node& node, Checked checked = Checked::Yes)
     {
-        Variable variable = g.variable(name);
+        Variable variable = variableOfEnvironment(name);
         Reg scope = g.emitResolveScope(nullptr, variable);
         Reg result = destination(dst);
         g.emitGetFromScope(result.get(), scope.get(), variable, ThrowIfNotFound);
@@ -927,7 +951,7 @@ private:
     // With no value, it is left with nothing in it.
     void emitStoreClosure(const Identifier& name, RegisterID* value, const Node& node)
     {
-        Variable variable = g.variable(name);
+        Variable variable = variableOfEnvironment(name);
         Reg scope = g.emitResolveScope(nullptr, variable);
         if (m_info.variablesGivenAsCells.contains(name)) [[unlikely]] {
             Reg cell = g.newTemporary();
@@ -1969,6 +1993,7 @@ private:
         if (told == Told::Yes)
             emitTellOfCall(function, argumentCount ? call.argumentRegister(0) : nullptr, argumentCount ? ToldArgument::First : ToldArgument::None);
         OpCall::emit(&g, dst, function, argumentCount + 1, call.stackOffset(), g.nextValueProfileIndex());
+        emitTellOfEndOfCall();
         return dst;
     }
 
@@ -1976,6 +2001,12 @@ private:
     {
         if (!m_isArtificial && !m_isNeverComeTo)
             OpPyCall::emit(&g, callee, argument ? argument : callee, static_cast<unsigned>(kind));
+    }
+
+    void emitTellOfEndOfCall()
+    {
+        if (!m_isArtificial && !m_isNeverComeTo)
+            OpPyCalled::emit(&g);
     }
 
     // super() with no arguments means super(__class__, self). In CPython it is `super` that finds those, in the frame of what called it. Here it is handed them, if `super` is what is called: implicitSuper().
@@ -2010,7 +2041,9 @@ private:
             emitLoadVariableOrMarker(self.get(), m_info.parameterNames[0], node);
             mark(node);
             emitTellOfCall(function.get(), nullptr, ToldArgument::None);
-            return emitRuntimeCall(dst, "implicitSuper"_s, { function.get(), constant(jsBoolean(hasCell)), classInCell.get(), self.get() }, node);
+            RegisterID* result = emitRuntimeCall(dst, "implicitSuper"_s, { function.get(), constant(jsBoolean(hasCell)), classInCell.get(), self.get() }, node);
+            emitTellOfEndOfCall();
+            return result;
         }
 
         auto* attribute = node.function->tryAs<Attribute>();
@@ -2244,6 +2277,23 @@ private:
             // What this has as a cell, what is in it finds as a cell.
             if (m_info.variablesGivenAsCells.contains(*symbol.name))
                 info->variablesGivenAsCells.append(*symbol.name);
+        }
+        // The rest of what a piece that is compiled by itself cannot find out.
+        if (block.canSeeClassScope) {
+            if (m_block.type != BlockType::Class)
+                info->namesSaidToBeGlobalInClass = m_info.namesSaidToBeGlobalInClass;
+            else {
+                for (Symbol& symbol : m_block.symbols) {
+                    if (symbol.flags & DefGlobal)
+                        info->namesSaidToBeGlobalInClass.append(*symbol.name);
+                }
+            }
+        }
+        if (block.mangledNames) {
+            info->manglesOnlySomeNames = true;
+            for (UniquedStringImpl* mangled : block.mangledNames->names)
+                info->namesMangled.append(Identifier::fromUid(m_vm, mangled));
+            std::ranges::sort(info->namesMangled, [] (auto& a, auto& b) { return codePointCompareLessThan(a.string(), b.string()); });
         }
         if (arguments) {
             auto add = [&] (Argument* argument) { info->parameterNames.append(mangle(*argument->name)); };
@@ -2512,11 +2562,14 @@ private:
             return;
         m_environments.append(makeUnique<VariableEnvironment>());
         VariableEnvironment& environment = *m_environments.last();
-        for (const Identifier* name : names) {
-            auto result = environment.add(*name);
+        auto add = [&] (const Identifier& name) {
+            auto result = environment.add(name);
             result.iterator->value.setIsLet();
             result.iterator->value.setIsCaptured();
-        }
+        };
+        for (const Identifier* name : names)
+            add(*name);
+        add(m_names.cells);
         g.pushLexicalScopeInternal(environment, BytecodeGenerator::TDZCheckOptimization::DoNotOptimize, BytecodeGenerator::NestedScopeType::IsNested, nullptr, BytecodeGenerator::TDZRequirement::UnderTDZ, BytecodeGenerator::ScopeType::LetConstScope, BytecodeGenerator::ScopeRegisterType::Block);
     }
 
@@ -2607,6 +2660,13 @@ private:
         // A frame object looks there as it does at the variables.
         if (m_namespaceIsLoaded)
             m_namespace = g.addVar();
+        // Those of the comprehensions that are part of this. A frame object sees them, so they are variables and not temporaries.
+        for (Block* comprehension : m_block.inlinedComprehensions) {
+            for (Symbol& symbol : comprehension->symbols) {
+                if (isOwnVariableOfComprehension(symbol) && !isInEnvironmentOfComprehension(symbol))
+                    m_comprehensionLocals.add({ comprehension, symbol.name->impl() }, g.addVar());
+            }
+        }
         if (hasLocalVariables == HasLocalVariables::No)
             return;
         HashSet<UniquedStringImpl*> parameters;
@@ -2616,6 +2676,16 @@ private:
             if (symbol.scope == NameScope::Local && !parameters.contains(symbol.name->impl()))
                 m_locals.set(symbol.name->impl(), g.addVar());
         }
+    }
+
+    static bool isOwnVariableOfComprehension(const Symbol& symbol)
+    {
+        return !(symbol.flags & DefParameter) && (symbol.flags & DefLocal) && !(symbol.flags & DefNonlocal) && !(symbol.flags & DefGlobal);
+    }
+
+    static bool isInEnvironmentOfComprehension(const Symbol& symbol)
+    {
+        return symbol.scope == NameScope::Cell || (symbol.flags & DefComprehensionCell);
     }
 
     // The local variables have nothing yet. And an environment for those that inner functions use.
@@ -2677,8 +2747,9 @@ private:
             else {
                 g.emitNewGenerator(generator.get());
                 g.emitPutInternalField(generator.get(), static_cast<unsigned>(JSGenerator::Field::Next), body.get());
-                g.emitPutInternalField(generator.get(), static_cast<unsigned>(JSGenerator::Field::This), none());
             }
+            // Python has no `this`. What is kept there is the function that made it, whose name it goes by.
+            g.emitPutInternalField(generator.get(), static_cast<unsigned>(JSGenerator::Field::This), &g.m_calleeRegister);
             g.emitReturn(generator.get());
             return;
         }
@@ -2947,22 +3018,28 @@ private:
 
         ComprehensionScope scope;
         Vector<const Identifier*, 8> cells;
+        unsigned firstVariable = m_details->comprehensionVariables.size();
         for (Symbol& symbol : block->symbols) {
-            if (symbol.flags & DefParameter)
+            if (!isOwnVariableOfComprehension(symbol))
                 continue;
-            bool isOwn = (symbol.flags & DefLocal) && !(symbol.flags & DefNonlocal) && !(symbol.flags & DefGlobal);
-            if (!isOwn)
-                continue;
-            if (symbol.scope == NameScope::Cell || (symbol.flags & DefComprehensionCell)) {
+            // codegen_push_inlined_comprehension_locals()
+            noteVariableName(*symbol.name);
+            if (isInEnvironmentOfComprehension(symbol)) {
                 cells.append(symbol.name);
                 scope.add(symbol.name->impl(), nullptr);
+                m_details->comprehensionVariables.append({ *symbol.name, VirtualRegister(), 0, 0 });
                 continue;
             }
-            Reg local = g.newTemporary();
+            Reg local = m_comprehensionLocals.get({ block, symbol.name->impl() });
+            RELEASE_ASSERT(local);
             g.moveEmptyValue(local.get());
             scope.add(symbol.name->impl(), local);
+            m_details->comprehensionVariables.append({ *symbol.name, local->virtualRegister(), 0, 0 });
         }
+        unsigned variablesEnd = m_details->comprehensionVariables.size();
         emitPushCells(cells);
+        for (unsigned i = firstVariable; i < variablesEnd; ++i)
+            m_details->comprehensionVariables[i].begin = g.instructions().size();
         m_comprehensionScopes.append(WTF::move(scope));
         m_comprehensionBlocks.append(block);
 
@@ -2977,6 +3054,8 @@ private:
 
         m_comprehensionScopes.removeLast();
         m_comprehensionBlocks.removeLast();
+        for (unsigned i = firstVariable; i < variablesEnd; ++i)
+            m_details->comprehensionVariables[i].end = g.instructions().size();
         emitPopCells(cells);
         return finish(dst, result.get());
     }
@@ -4137,8 +4216,8 @@ private:
     void emitRaise(Raise& node)
     {
         if (!node.exception) {
-            // The exception being handled, again.
-            if (!m_handledExceptions.isEmpty()) {
+            // The exception being handled, again. After `finally` that may be one that is on its way through, which is not known until then.
+            if (!m_handledExceptions.isEmpty() && !m_isAfterFinally) {
                 mark(node);
                 g.emitThrow(m_handledExceptions.last());
                 return;
@@ -4217,6 +4296,7 @@ private:
         m_handledExceptions.append(thrown);
         emitTryFinally([&] {
             JumpBlock handler(*this, CodeDetails::JumpBlock::Kind::Handler, previous.get(), thrown, exception, isComeTo);
+            SetForScope isAfterFinally(m_isAfterFinally, false);
             body();
         }, [&] {
             SetForScope isArtificial(m_isArtificial, true);
@@ -4247,6 +4327,7 @@ private:
                     NestedBlock block(*this, node);
                     JumpBlock finally(*this, CodeDetails::JumpBlock::Kind::Finally, completionType, completionValue, previous.get(), !alwaysLeavesBeforeFinally(node));
                     m_details->jumpBlocks.last().leaves = WTF::move(waysOut.leaves);
+                    SetForScope isAfterFinally(m_isAfterFinally, true);
                     emit(node.finalBody);
                 }, [&] {
                     SetForScope isArtificial(m_isArtificial, true);
@@ -5215,9 +5296,11 @@ private:
     HashSet<UniquedStringImpl*> m_alwaysBound;
     HashSet<UniquedStringImpl*> m_deletedNames;
     Vector<ComprehensionScope, 2> m_comprehensionScopes;
+    HashMap<std::pair<Block*, UniquedStringImpl*>, RegisterID*> m_comprehensionLocals;
     Vector<Block*, 2> m_comprehensionBlocks; // What each of those is the variables of.
     Vector<std::unique_ptr<VariableEnvironment>> m_environments;
     Vector<RegisterID*, 4> m_handledExceptions;
+    bool m_isAfterFinally { false }; // In what comes after `finally`, and in no handler that is in that.
     Reg m_globals;
     Reg m_builtins;
     Reg m_namespace;

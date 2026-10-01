@@ -135,7 +135,8 @@ JSValue newStructSequence(JSGlobalObject*, PyType*, const ArgList& values);
 JSObject* newSimpleNamespace(JSGlobalObject*);
 void initializeDictViews(JSGlobalObject*);
 void addIteratorProtocol(JSGlobalObject*, PyType*); // __length_hint__(), __reduce__() and __setstate__(), those of them that it has in CPython
-JSValue getBuiltin(JSGlobalObject*, ASCIILiteral name); // builtins.iter, or whatever a program has put there
+JSValue dirOf(JSGlobalObject*, JSValue); // dir(object)
+JSValue getBuiltin(JSGlobalObject*, ASCIILiteral name); // _PyEval_GetBuiltin(): what the code that is running would find by the name, if its globals had nothing by it. AttributeError if there is none.
 // list.sort(key=keyFunction, reverse=reverse). False if it raised.
 bool sortList(JSGlobalObject*, JSArray*, JSValue keyFunction, bool reverse);
 // PyList_Sort(), of what is not yet a list. False if it raised.
@@ -290,6 +291,7 @@ FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable*, u
 // The bytecode, which is generated again if it has been thrown away. It comes out the same.
 UnlinkedCodeBlock* unlinkedCodeBlockOf(VM&, FunctionExecutable*);
 unsigned offsetWhereSourceBegins(const CodeDetails&, UnlinkedCodeBlock*);
+JSValue nameObjectOfFunction(JSGlobalObject*, JSFunction*, bool qualified); // f.__name__ or f.__qualname__
 // function.__code__. There is one for each piece of code.
 JSObject* codeObjectFor(JSGlobalObject*, FunctionExecutable*);
 // One of the co_consts of the code that a function is compiled to. See PyCodeConstant.h.

@@ -30,6 +30,7 @@
 #include "PythonText.h"
 #include "PythonUnicodeType.h"
 #include "VM.h"
+#include <wtf/Scope.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/SetForScope.h>
@@ -75,6 +76,15 @@ public:
         m_lastLineIsEnded = kind == Module::Kind::Module;
         if (Module* module = parseModuleOnce(kind))
             return module;
+        bool saysWhereLastStatementIs = false;
+        auto sayWhereLastStatementIs = makeScopeExit([&] {
+            if (!m_error || !saysWhereLastStatementIs)
+                return;
+            m_error.hasLastStatement = true;
+            m_error.lastStatementLine = m_lastStatementLine;
+            m_error.lastStatementColumn = m_lastStatementColumn;
+            m_error.sourceIsGivenAnEnd = kind == Module::Kind::Module;
+        });
         // It did parse, and there is no more to be said.
         if (m_isBadSingleStatement || m_isAtEndOfInput)
             return nullptr;
@@ -86,10 +96,13 @@ public:
             m_error.lineGoesOnToTheEnd = m_tokens[m_furthest].kind == TokenKind::Error && m_scannerError.isFromTokenizer;
             return nullptr;
         }
+        saysWhereLastStatementIs = true;
         if (!m_error) {
             // reset_parser_state_for_error_pass()
             if (m_supply)
                 m_supply->stopReading();
+            m_lastStatementLine = 0;
+            m_lastStatementColumn = 0;
             m_index = 0;
             m_isSecondPass = true;
             m_callsInvalidRules = true;
@@ -3512,6 +3525,11 @@ private:
         }
         if (!statement)
             return false;
+        // _PyPegen_register_stmts(). Not a function: the second time through, the rule that is there to find what is wrong with one takes all of one that has nothing wrong with it, and what comes of that is no statement.
+        if (m_callsInvalidRules && !statement->is<FunctionDef>() && m_lastStatementLine <= statement->line) {
+            m_lastStatementLine = statement->line;
+            m_lastStatementColumn = statement->column;
+        }
         body.append(statement);
         return true;
     }
@@ -4572,6 +4590,8 @@ private:
     bool m_isSecondPass { false };
     // Whether what is in the grammar only to be recognized as a mistake is tried. In the second pass, but for a part of it here and there.
     bool m_callsInvalidRules { false };
+    unsigned m_lastStatementLine { 0 };
+    unsigned m_lastStatementColumn { 0 };
     bool m_failsInEitherPass { false };
     bool m_keepsWhatIsParsed { false };
     bool m_isBadSingleStatement { false };

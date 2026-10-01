@@ -1,0 +1,342 @@
+===== locals
+  module -> [['x'], ['x']]
+  module_locals -> [['x'], ['x']]
+  in_class -> [['x'], ['x']]
+  function -> [['l', 'x', 'y'], ['l', 'x', 'y']]
+  function_globals -> [['x'], ['x']]
+  in_lambda -> [['x'], ['x']]
+  evaluated -> [['x'], ['x']]
+  generator -> [['l', 'x', 'y'], ['l', 'x', 'y']]
+===== locals x
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== vars
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== dir
+  module -> [['x'], ['x']]
+  module_locals -> [['x'], ['x']]
+  in_class -> [['x'], ['x']]
+  function -> [['l', 'x', 'y'], ['l', 'x', 'y']]
+  function_globals -> [['x'], ['x']]
+  in_lambda -> [['x'], ['x']]
+  evaluated -> [['x'], ['x']]
+  generator -> [['l', 'x', 'y'], ['l', 'x', 'y']]
+===== eval
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== eval y
+  module -> [0, 0]
+  module_locals -> [0, 0]
+  in_class -> [0, 0]
+  function -> [0, 0]
+  function_globals -> [0, 0]
+  in_lambda -> [0, 0]
+  evaluated -> [0, 0]
+  generator -> [0, 0]
+===== eval both
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== exec
+  module -> 0
+  module_locals -> 0
+  in_class -> 0
+  function -> 0
+  function_globals -> 0
+  in_lambda -> 0
+  evaluated -> 0
+  generator -> 0
+===== exec x
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== f_locals
+  module -> [['x'], ['x']]
+  module_locals -> [['x'], ['x']]
+  in_class -> [['x'], ['x']]
+  function -> [['l', 'x', 'y'], ['l', 'x', 'y']]
+  function_globals -> [['x'], ['x']]
+  in_lambda -> [['x'], ['x']]
+  evaluated -> [['x'], ['x']]
+  generator -> [['l', 'x', 'y'], ['l', 'x', 'y']]
+===== f_locals x
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== f_locals type
+  module -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+  module_locals -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+  in_class -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+  function -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+  function_globals -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+  in_lambda -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+  evaluated -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+  generator -> ['FrameLocalsProxy', 'FrameLocalsProxy']
+===== locals type
+  module -> ['dict', 'dict']
+  module_locals -> ['dict', 'dict']
+  in_class -> ['dict', 'dict']
+  function -> ['dict', 'dict']
+  function_globals -> ['dict', 'dict']
+  in_lambda -> ['dict', 'dict']
+  evaluated -> ['dict', 'dict']
+  generator -> ['dict', 'dict']
+===== locals is
+  module -> [False, False]
+  module_locals -> [False, False]
+  in_class -> [False, False]
+  function -> [False, False]
+  function_globals -> [False, False]
+  in_lambda -> [False, False]
+  evaluated -> [False, False]
+  generator -> [False, False]
+===== afterwards
+  module -> False
+  module_locals -> False
+  in_class -> False
+  function -> False
+  function_globals -> False
+  in_lambda -> False
+  evaluated -> False
+  generator -> False
+===== afterwards locals
+  module -> True
+  module_locals -> True
+  in_class -> True
+  function -> True
+  function_globals -> True
+  in_lambda -> True
+  evaluated -> True
+  generator -> True
+===== set through f_locals
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [7, 7]
+  function_globals -> [7, 7]
+  in_lambda -> [7, 7]
+  evaluated -> [1, 2]
+  generator -> [7, 7]
+===== set y through f_locals
+  module -> [0, 0]
+  module_locals -> [0, 0]
+  in_class -> [0, 0]
+  function -> [7, 7]
+  function_globals -> [0, 0]
+  in_lambda -> [0, 0]
+  evaluated -> [0, 0]
+  generator -> [7, 7]
+===== set new through f_locals
+  module -> [True, True]
+  module_locals -> [True, True]
+  in_class -> [True, True]
+  function -> [True, True]
+  function_globals -> [True, True]
+  in_lambda -> [True, True]
+  evaluated -> [True, True]
+  generator -> [True, True]
+===== nested
+  module -> [[['w', 'x'], ['w', 'x']], [['w', 'x'], ['w', 'x']]]
+  module_locals -> [[['w', 'x'], ['w', 'x']], [['w', 'x'], ['w', 'x']]]
+  in_class -> [[['w', 'x'], ['w', 'x']], [['w', 'x'], ['w', 'x']]]
+  function -> [[['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y']], [['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y']]]
+  function_globals -> [[['w', 'x'], ['w', 'x']], [['w', 'x'], ['w', 'x']]]
+  in_lambda -> [[['w', 'x'], ['w', 'x']], [['w', 'x'], ['w', 'x']]]
+  evaluated -> [[['w', 'x'], ['w', 'x']], [['w', 'x'], ['w', 'x']]]
+  generator -> [[['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y']], [['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y']]]
+===== two
+  module -> [['w', 'x'], ['w', 'x'], ['w', 'x'], ['w', 'x']]
+  module_locals -> [['w', 'x'], ['w', 'x'], ['w', 'x'], ['w', 'x']]
+  in_class -> [['w', 'x'], ['w', 'x'], ['w', 'x'], ['w', 'x']]
+  function -> [['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y']]
+  function_globals -> [['w', 'x'], ['w', 'x'], ['w', 'x'], ['w', 'x']]
+  in_lambda -> [['w', 'x'], ['w', 'x'], ['w', 'x'], ['w', 'x']]
+  evaluated -> [['w', 'x'], ['w', 'x'], ['w', 'x'], ['w', 'x']]
+  generator -> [['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y'], ['l', 'w', 'x', 'y']]
+===== shadow
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== shadow after
+  module -> ([1, 2], 0, 0)
+  module_locals -> KeyError: 'y'
+  in_class -> ([1, 2], 0, 0)
+  function -> ([1, 2], 0, 0)
+  function_globals -> KeyError: 'y'
+  in_lambda -> KeyError: 'y'
+  evaluated -> ([1, 2], 0, 0)
+  generator -> ([1, 2], 0, 0)
+===== set
+  module -> {('x',)}
+  module_locals -> {('x',)}
+  in_class -> {('x',)}
+  function -> {('l', 'x', 'y')}
+  function_globals -> {('x',)}
+  in_lambda -> {('x',)}
+  evaluated -> {('x',)}
+  generator -> {('l', 'x', 'y')}
+===== dict
+  module -> {1: ['x'], 2: ['x']}
+  module_locals -> {1: ['x'], 2: ['x']}
+  in_class -> {1: ['x'], 2: ['x']}
+  function -> {1: ['l', 'x', 'y'], 2: ['l', 'x', 'y']}
+  function_globals -> {1: ['x'], 2: ['x']}
+  in_lambda -> {1: ['x'], 2: ['x']}
+  evaluated -> {1: ['x'], 2: ['x']}
+  generator -> {1: ['l', 'x', 'y'], 2: ['l', 'x', 'y']}
+===== genexp
+  module -> [['.0', 'x'], ['.0', 'x']]
+  module_locals -> [['.0', 'x'], ['.0', 'x']]
+  in_class -> [['.0', 'x'], ['.0', 'x']]
+  function -> [['.0', 'x'], ['.0', 'x']]
+  function_globals -> [['.0', 'x'], ['.0', 'x']]
+  in_lambda -> [['.0', 'x'], ['.0', 'x']]
+  evaluated -> [['.0', 'x'], ['.0', 'x']]
+  generator -> [['.0', 'x'], ['.0', 'x']]
+===== lambda inside
+  module -> [[], []]
+  module_locals -> [[], []]
+  in_class -> [[], []]
+  function -> [[], []]
+  function_globals -> [[], []]
+  in_lambda -> [[], []]
+  evaluated -> [[], []]
+  generator -> [[], []]
+===== lambda closes
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== closes and locals
+  module -> [(1, ['x']), (2, ['x'])]
+  module_locals -> [(1, ['x']), (2, ['x'])]
+  in_class -> [(1, ['x']), (2, ['x'])]
+  function -> [(1, ['l', 'x', 'y']), (2, ['l', 'x', 'y'])]
+  function_globals -> [(1, ['x']), (2, ['x'])]
+  in_lambda -> [(1, ['x']), (2, ['x'])]
+  evaluated -> [(1, ['x']), (2, ['x'])]
+  generator -> [(1, ['l', 'x', 'y']), (2, ['l', 'x', 'y'])]
+===== walrus
+  module -> ([['x'], ['x']], 2)
+  module_locals -> ([['x'], ['x']], 2)
+  in_class -> SyntaxError: assignment expression within a comprehension cannot be used in a class body (<string>, line 4)
+  function -> ([['l', 'q', 'x', 'y'], ['l', 'q', 'x', 'y']], 2)
+  function_globals -> ([['q', 'x'], ['q', 'x']], 2)
+  in_lambda -> ([['q', 'x'], ['q', 'x']], 2)
+  evaluated -> ([['x'], ['x']], 2)
+  generator -> ([['l', 'q', 'x', 'y'], ['l', 'q', 'x', 'y']], 2)
+===== before the first
+  module -> [['l', 'y']]
+  module_locals -> [[]]
+  in_class -> [['l', 'y']]
+  function -> [['l', 'y']]
+  function_globals -> [[]]
+  in_lambda -> [[]]
+  evaluated -> [['l', 'y']]
+  generator -> [['l', 'y']]
+===== condition
+  module -> [1, 2]
+  module_locals -> [1, 2]
+  in_class -> [1, 2]
+  function -> [1, 2]
+  function_globals -> [1, 2]
+  in_lambda -> [1, 2]
+  evaluated -> [1, 2]
+  generator -> [1, 2]
+===== globals
+  module -> [False, False]
+  module_locals -> [False, False]
+  in_class -> [False, False]
+  function -> [False, False]
+  function_globals -> [False, False]
+  in_lambda -> [False, False]
+  evaluated -> [False, False]
+  generator -> [False, False]
+===== when something is raised in one
+caught in the function -> (['e', 'y'], ['e', 'y'], 0)
+what it hid is back -> ('outer', 'outer')
+afterwards, from the traceback -> ['y']
+of a module -> (['y'], 'dict')
+from what it calls -> ([['x']], [])
+from further down -> ([[['w', 'x']]], [])
+===== one that awaits
+waiting ['x', 'y'] 1
+waiting ['x', 'y'] 2
+([6, 105], ['r', 'y'])
+[(1, ['x']), (2, ['x'])]
+===== what is told of each line
+  ('call', 0, [])
+  ('line', 1, [])
+  ('line', 3, ['a'])
+  ('line', 2, ['a'])
+  ('line', 3, ['a'])
+  ('line', 4, ['a', 'x'])
+  ('line', 2, ['a', 'x'])
+  ('line', 3, ['a', 'x'])
+  ('line', 4, ['a', 'x'])
+  ('line', 2, ['a', 'x'])
+  ('line', 3, ['a', 'x'])
+  ('line', 5, ['a', 'r'])
+  ('return', 5, ['a', 'r'])
+  ('call', -1, [])
+  ('line', 0, [])
+  ('line', 2, ['a'])
+  ('line', 1, ['a'])
+  ('line', 2, ['a'])
+  ('line', 3, ['x'])
+  ('line', 1, ['x'])
+  ('line', 2, ['x'])
+  ('line', 3, ['x'])
+  ('line', 1, ['x'])
+  ('line', 2, ['x'])
+  ('line', 4, ['a', 'r'])
+  ('return', 4, ['a', 'b', 'r'])
+===== code that is run often
+900030000
+199990000
+30000
+('kept', 'kept')
+((29999, 29999), ['n'])

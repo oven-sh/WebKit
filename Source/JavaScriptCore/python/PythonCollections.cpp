@@ -1087,14 +1087,7 @@ PYTHON_NATIVE(defaultDictMissing)
     JSValue value = call(globalObject, factory);
     RETURN_IF_EXCEPTION(scope, { });
     // PyDict_SetDefaultRef(): calling it may have put something there.
-    auto* dict = uncheckedDowncast<PyDict>(args[0].asCell());
-    JSValue existing = dict->get(globalObject, args[1]);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (existing)
-        return JSValue::encode(existing);
-    dict->set(globalObject, args[1], value);
-    RETURN_IF_EXCEPTION(scope, { });
-    return JSValue::encode(value);
+    RELEASE_AND_RETURN(scope, JSValue::encode(uncheckedDowncast<PyDict>(args[0].asCell())->getOrAdd(globalObject, args[1], value)));
 }
 
 // new_defdict(): the class is called, which only does for a class derived from this if it is called with the same things.
@@ -1217,17 +1210,30 @@ PYTHON_NATIVE(collectionsCountElements)
             RETURN_IF_EXCEPTION(scope, { });
             if (!key)
                 RETURN_NONE();
-            // It is asked for its hash on its own account, and not as something to look up.
-            hash(globalObject, key);
+            // It is asked for its hash on its own account, and not as something to look up, and is asked once.
+            int64_t fullHash = hash(globalObject, key);
             RETURN_IF_EXCEPTION(scope, { });
-            JSValue old = dict->get(globalObject, key);
-            RETURN_IF_EXCEPTION(scope, { });
+            bool isInOwnTable = !dict->backing();
+            uint32_t folded = PyHashTable::foldHash(fullHash);
+            JSValue old;
+            if (isInOwnTable) {
+                int entry = dict->ownTable().find(globalObject, key, folded);
+                RETURN_IF_EXCEPTION(scope, { });
+                if (entry >= 0)
+                    old = dict->ownTable().valueAt(entry);
+            } else {
+                old = dict->get(globalObject, key);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
             JSValue count = jsNumber(1);
             if (old) {
                 count = binaryOperation(globalObject, BinaryOperator::Add, false, old, jsNumber(1));
                 RETURN_IF_EXCEPTION(scope, { });
             }
-            dict->set(globalObject, key, count);
+            if (isInOwnTable && !dict->backing())
+                dict->ownTable().addWithHash(globalObject, key, folded, count);
+            else
+                dict->set(globalObject, key, count);
             RETURN_IF_EXCEPTION(scope, { });
         }
     }

@@ -72,11 +72,26 @@ WriteBarrierBase<Unknown>* variableOfCell(JSValue cell, JSCell*& owner)
     return &variableOfCell(cell);
 }
 
+// There is one for a variable, however often it is asked for and by whom. The environment keeps those that have been made of its variables, in a variable that it has for that.
+static JSValue cellOfVariable(JSGlobalObject* globalObject, JSLexicalEnvironment* environment, ScopeOffset offset)
+{
+    VM& vm = globalObject->vm();
+    SymbolTableEntry::Fast entry = environment->symbolTable()->get(vm.pythonNames().cells.impl());
+    RELEASE_ASSERT(!entry.isNull());
+    auto& kept = environment->variableAt(entry.scopeOffset());
+    if (!kept)
+        kept.set(vm, environment, PyTuple::create(globalObject, environment->symbolTable()->scopeSize()));
+    PyTuple* cells = asTuple(kept.get());
+    if (isNone(cells->at(offset.offset())))
+        cells->initializeAt(vm, offset.offset(), PyNativeObject::create(globalObject, BuiltinType::Cell, environment, intFromUInt64(globalObject, offset.offset())));
+    return cells->at(offset.offset());
+}
+
 JSValue cellOfVariable(JSGlobalObject* globalObject, JSLexicalEnvironment* environment, UniquedStringImpl* name)
 {
     SymbolTableEntry::Fast entry = environment->symbolTable()->get(name);
     RELEASE_ASSERT(!entry.isNull());
-    return PyNativeObject::create(globalObject, BuiltinType::Cell, environment, intFromUInt64(globalObject, entry.scopeOffset().offset()));
+    return cellOfVariable(globalObject, environment, entry.scopeOffset());
 }
 
 JSValue contentsOfCell(JSValue cell)
@@ -185,6 +200,9 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
     auto names = sortedFreeVariables(info);
     if (names.isEmpty())
         return jsUndefined();
+    // It is the one tuple.
+    if (JSValue made = function->getDirect(vm, vm.pythonNames().private_closure))
+        return made;
     PyTuple* cells = PyTuple::create(globalObject, names.size());
     for (unsigned i = 0; i < names.size(); ++i) {
         ScopeOffset offset;
@@ -194,8 +212,9 @@ static JSValue getFunctionClosure(JSGlobalObject* globalObject, JSValue self)
         if (info.variablesGivenAsCells.contains(names[i]))
             cells->initializeAt(vm, i, environment->variableAt(offset).get());
         else
-            cells->initializeAt(vm, i, PyNativeObject::create(globalObject, BuiltinType::Cell, environment, intFromUInt64(globalObject, offset.offset())));
+            cells->initializeAt(vm, i, cellOfVariable(globalObject, environment, offset));
     }
+    function->putDirect(vm, vm.pythonNames().private_closure, cells);
     return cells;
 }
 
@@ -216,8 +235,6 @@ static FunctionExecutable* executableTakingCells(JSGlobalObject* globalObject, J
     executable->setPythonCodeObject(globalObject->vm(), asObject(code));
     return executable;
 }
-
-JSObject* namespaceOf(JSGlobalObject*, PyDict* globals);
 
 // function(code, globals, name=None, argdefs=None, closure=None, kwdefaults=None)
 PYTHON_NATIVE(functionNew)
@@ -260,10 +277,12 @@ PYTHON_NATIVE(functionNew)
         return { };
 
     FunctionExecutable* executable = executableTakingCells(globalObject, code);
-    JSScope* environment = environmentForGlobals(globalObject, executable, namespaceOf(globalObject, asDict(globals)));
+    JSScope* environment = environmentForGlobals(globalObject, executable, asDict(globals)->ensureBacking(globalObject));
     if (given)
         environment = environmentForCells(globalObject, environment, freeVariables, asTuple(closure));
     JSFunction* function = JSFunction::create(vm, globalObject, executable, environment);
+    if (given)
+        function->putDirect(vm, names.private_closure, closure);
     if (!isNone(name)) {
         setAttribute(globalObject, function, vm.pythonNames().dunder_name, name);
         RETURN_IF_EXCEPTION(scope, { });
@@ -340,7 +359,7 @@ JSObject* builtinsOfScope(VM& vm, JSScope* scope)
 
 static JSValue getFunctionBuiltins(JSGlobalObject* globalObject, JSValue self)
 {
-    return PyDict::backedBy(globalObject, builtinsOfScope(globalObject->vm(), asFunction(self)->scope()));
+    return mappingOfNamespace(globalObject, builtinsOfScope(globalObject->vm(), asFunction(self)->scope()));
 }
 
 // ---- Frames
@@ -400,10 +419,13 @@ JSObject* globalsOfFrame(JSGlobalObject* globalObject, CallFrame* frame)
 JSValue localsOfFrame(JSGlobalObject* globalObject, PyFrame* frame)
 {
     VM& vm = globalObject->vm();
-    if (JSValue mapping = frame->namespaceMapping(vm))
-        return mapping;
-    if (!isFunctionKind(frame->functionInfo().kind))
-        return PyDict::backedBy(globalObject, frame->globals(vm));
+    // _PyFrame_GetLocals(): in a comprehension it is the variables of that, whatever it is in.
+    if (!frame->hasHiddenVariable(vm)) {
+        if (JSValue mapping = frame->namespaceMapping(vm))
+            return mapping;
+        if (!isFunctionKind(frame->functionInfo().kind))
+            return PyDict::backedBy(globalObject, frame->globals(vm));
+    }
 
     // A picture of the variables as they are now. Changing it changes nothing.
     PyDict* locals = PyDict::create(globalObject);
@@ -568,7 +590,7 @@ PYTHON_NATIVE(builtinCompile)
         return JSValue::encode(raiseValueError(globalObject, scope, flags & onlyAST ? "compile() mode must be 'exec', 'eval', 'single' or 'func_type'"_s : "compile() mode must be 'exec', 'eval' or 'single'"_s));
 
     unsigned futureFeatures = flags & (FutureFeaturesMask | AllowTopLevelAwait | DoNotImplyDedent | AllowIncompleteInput | TypeComments);
-    if (moduleKind == Module::Kind::Module || moduleKind == Module::Kind::Interactive)
+    if (moduleKind == Module::Kind::Module)
         futureFeatures |= AllowTopLevelAwait;
     if (inherits)
         futureFeatures |= futureFeaturesOfCaller(callFrame) & FutureFeaturesMask;
@@ -590,12 +612,12 @@ PYTHON_NATIVE(builtinCompile)
     return JSValue::encode(codeObjectFor(globalObject, executable));
 }
 
-// The object whose properties are the items of a dict that is to be the globals of some code.
-JSObject* namespaceOf(JSGlobalObject* globalObject, PyDict* globals)
+// The object whose properties are the items of a dict that exec() or eval() is given for the globals. _PyEval_EnsureBuiltins()
+static JSObject* namespaceOf(JSGlobalObject* globalObject, PyDict* globals)
 {
     JSObject* object = globals->ensureBacking(globalObject);
     if (!globals->getString(globalObject, "__builtins__"_s))
-        globals->setString(globalObject, "__builtins__"_s, PyDict::backedBy(globalObject, globalObject->pyRealm()->builtinsModule()));
+        globals->setString(globalObject, "__builtins__"_s, mappingOfNamespace(globalObject, currentBuiltins(globalObject)));
     return object;
 }
 
@@ -721,6 +743,9 @@ static JSValue getGeneratorName(JSGlobalObject* globalObject, JSValue self)
     // One that is written in JavaScript goes by the name of its function.
     if (!isWrittenInPython(asGenerator(self)))
         return jsString(vm, bodyOf(self)->jsExecutable()->ecmaName().string());
+    // It goes by the name of the function that made it, which may not be what the code is called.
+    if (auto* function = dynamicDowncast<JSFunction>(asGenerator(self)->internalField(static_cast<unsigned>(JSGenerator::Field::This)).get()))
+        return nameObjectOfFunction(globalObject, function, qualified);
     const FunctionInfo& info = infoOfExecutable(bodyOf(self)->jsExecutable());
     return jsString(vm, qualified ? info.qualifiedName : info.name.string());
 }

@@ -750,7 +750,8 @@ JSValue importName(JSGlobalObject* globalObject, JSObject* builtins, JSValue glo
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue import = getStoredAttribute(vm, builtins, identifier(vm, "__import__"_s));
+    JSValue import = findInNamespace(globalObject, builtins, identifier(vm, "__import__"_s));
+    RETURN_IF_EXCEPTION(scope, { });
     if (!import)
         return raise(globalObject, scope, BuiltinType::ImportError, "__import__ not found"_s);
     // If it is the one that there was to begin with, there is no need to call it.

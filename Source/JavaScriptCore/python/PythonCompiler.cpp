@@ -122,7 +122,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
         const Identifier* outerPrivateName = sourceKind == CodeKind::Class ? nullptr : privateName;
         Statement* statement = isTree ? readDefinition(vm, arena, text, start, end) : parseDefinition(vm, arena, text, start, end, info->line);
         if (statement)
-            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, info->freeVariables, outerPrivateName, info->futureFeatures, info->owner != OwnerKind::None && info->canSeeClassScope, info->isNested,
+            table = SymbolTable::buildFragment(vm, arena, statement, nullptr, *info, outerPrivateName, info->owner != OwnerKind::None && info->canSeeClassScope,
                 info->kind == CodeKind::Annotations || info->kind == CodeKind::Evaluator ? FragmentIs::WhatHasWhatIsCompiled : FragmentIs::WhatIsCompiled);
         root = statement;
         blockKey = statement;
@@ -133,7 +133,7 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM& vm, UnlinkedFunctionExe
     case CodeKind::Comprehension: {
         Expression* expression = isTree ? readExpression(vm, arena, text, start, end) : parseExpression(vm, arena, text, start, end, info->line);
         if (expression)
-            table = SymbolTable::buildFragment(vm, arena, nullptr, expression, info->freeVariables, privateName, info->futureFeatures, false, info->isNested);
+            table = SymbolTable::buildFragment(vm, arena, nullptr, expression, *info, privateName, false);
         root = expression;
         blockKey = expression;
         break;
@@ -378,8 +378,24 @@ static JSValue raiseSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope,
         setAttribute(globalObject, exception, Identifier::fromString(vm, "args"_s), PyTuple::create(globalObject, { jsString(vm, error.message) }));
         RETURN_IF_EXCEPTION(scope, { });
     }
+    if (error.hasLastStatement && foundIn == FoundIn::Parsing && exception.isObject())
+        asObject(exception)->putDirect(vm, vm.pythonNames().field_metadata, PyTuple::create(globalObject, { intFromUInt64(globalObject, error.lastStatementLine), intFromUInt64(globalObject, error.lastStatementColumn), jsString(vm, concatenate(givenSource.provider()->source(), error.sourceIsGivenAnEnd && !givenSource.provider()->source().endsWith('\n') ? "\n"_s : ""_s)) }));
     throwException(globalObject, scope, exception);
     return { };
+}
+
+void forgetSourceOfSyntaxError(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Exception* raised = scope.exception();
+    if (!raised || !raised->value().isObject())
+        return;
+    JSObject* exception = asObject(raised->value());
+    JSValue metadata = exception->getDirect(vm, vm.pythonNames().field_metadata);
+    if (!metadata || !isTuple(metadata) || asTuple(metadata)->length() != 3)
+        return;
+    exception->putDirect(vm, vm.pythonNames().field_metadata, PyTuple::create(globalObject, { asTuple(metadata)->at(0), asTuple(metadata)->at(1), jsUndefined() }));
 }
 
 // _PyErr_EmitSyntaxWarning(), for each. False if something has been raised, as it is if the program has asked for such warnings to be errors: SyntaxError then, which says more about where.
@@ -771,8 +787,8 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     unsigned optimizationLevel = givenOptimizationLevel ? *givenOptimizationLevel : configuredOptimizationLevel(globalObject);
     ASSERT(source.provider()->isPython());
 
-    // A module can await, and so can what is typed at a prompt. In CPython that has to be asked for. See "A module can await" in README.md.
-    if (kind == CodeKind::Module || kind == CodeKind::Interactive)
+    // A module can await, and so can what is typed at the prompt. In CPython that has to be asked for. See "A module can await" in README.md.
+    if (kind == CodeKind::Module || (inheritedFutureFeatures & IsTypedAtPrompt))
         inheritedFutureFeatures |= AllowTopLevelAwait;
     unsigned parsingFlags = inheritedFutureFeatures & (DoNotImplyDedent | AllowIncompleteInput | TypeComments);
     inheritedFutureFeatures &= ~parsingFlags;
@@ -862,19 +878,19 @@ FunctionExecutable* compileSource(JSGlobalObject* globalObject, const SourceCode
     return unlinked->link(vm, nullptr, source);
 }
 
-// Where a name that is not among the globals is looked for is settled when code is given its globals: it is what they have as __builtins__, a module
-// or a dict, and the module builtins if that is neither or they have none.
+// Where a name that is not among the globals is looked for is settled when code is given its globals: it is what they have as __builtins__, and if they have none, where what is running looks.
+// _PyDict_LoadBuiltinsFromGlobals()
 static JSObject* builtinsFor(JSGlobalObject* globalObject, JSObject* globals)
 {
     VM& vm = globalObject->vm();
     JSValue builtins = getStoredAttribute(vm, globals, Identifier::fromString(vm, "__builtins__"_s));
-    if (builtins) {
-        if (JSObject* module = tryModule(globalObject, builtins))
-            return module;
-        if (isDict(builtins))
-            return uncheckedDowncast<PyDict>(builtins.asCell())->ensureBacking(globalObject);
-    }
-    return globalObject->pyRealm()->builtinsModule();
+    if (!builtins)
+        return currentBuiltins(globalObject);
+    if (JSObject* module = tryModule(globalObject, builtins))
+        return module;
+    if (isDict(builtins))
+        return uncheckedDowncast<PyDict>(builtins.asCell())->ensureBacking(globalObject);
+    return namespaceStandingFor(globalObject, builtins);
 }
 
 static FunctionExecutable* executableFor(VM& vm, const SourceCode& source, Ref<FunctionInfo>&& info)

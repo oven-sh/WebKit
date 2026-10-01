@@ -2131,6 +2131,19 @@ PYTHON_NATIVE(intFromBytes)
     auto isBigEndian = isBigEndianOrder(globalObject, scope, order);
     RETURN_IF_EXCEPTION(scope, { });
 
+    // PyObject_Bytes()
+    if (source.isObject() && !isExactly(globalObject, source, BuiltinType::Bytes)) {
+        JSValue self;
+        JSValue method = lookupSpecial(globalObject, source, names.dunder_bytes, self);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (method) {
+            JSValue given = callMethod(globalObject, method, self);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!isBytes(given))
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("__bytes__ returned non-bytes (type "_s, typeName(globalObject, given), ')')));
+            source = given;
+        }
+    }
     ByteVector content;
     if (stringIn(source) || (!hasBuffer(globalObject, source) && !typeOf(globalObject, source)->lookup(vm, names.dunder_iter) && !typeOf(globalObject, source)->lookup(vm, names.dunder_getitem)))
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("cannot convert '"_s, typeName(globalObject, source), "' object to bytes"_s)));
@@ -2968,7 +2981,21 @@ PYTHON_NATIVE(memorySetItem)
         ByteVector source;
         PyMemoryView::Layout sourceLayout;
         std::optional<int64_t> sourceLength;
-        if (auto* other = dynamicDowncast<PyMemoryView>(value)) {
+        auto* other = dynamicDowncast<PyMemoryView>(value);
+        Buffer buffer;
+        if (!other) {
+            buffer = tryBufferOf(globalObject, value, FullReadOnlyBuffer);
+            RETURN_IF_EXCEPTION(scope, { });
+            if (!buffer)
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("a bytes-like object is required, not '"_s, typeName(globalObject, value), '\'')));
+            // What it has to show may be more than bytes, as an array's is, and a memoryview of it knows what.
+            other = dynamicDowncast<PyMemoryView>(buffer.storage());
+            if (!other && !isBytes(value) && !isByteArray(value)) {
+                other = memoryViewOf(globalObject, value, FullReadOnlyBuffer);
+                RETURN_IF_EXCEPTION(scope, { });
+            }
+        }
+        if (other) {
             if (other->isReleased())
                 return JSValue::encode(raiseValueError(globalObject, scope, "operation forbidden on released memoryview object"_s));
             source = bytesOfMemory(other);
@@ -2976,8 +3003,6 @@ PYTHON_NATIVE(memorySetItem)
             if (other->dimensions().size() == 1)
                 sourceLength = other->dimensions()[0].length;
         } else {
-            auto buffer = bufferOf(globalObject, value);
-            RETURN_IF_EXCEPTION(scope, { });
             source.append(*buffer);
             sourceLength = source.size();
         }

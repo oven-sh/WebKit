@@ -1,0 +1,62 @@
+== telling begins in the middle of a line
+[('lines', 7), ('lines', 8)]
+[('line', 7), ('line', 8)]
+== BRANCH was the two as one
+BRANCH 2
+both 2
+BRANCH and then LEFT 2
+== warn_explicit(module_globals=...)
+nothing, line 1 -> [('UserWarning', 'eggs', None)]
+nothing, line 2 -> [('UserWarning', 'eggs', None)]
+nothing, line 5 -> [('UserWarning', 'eggs', None)]
+loader None, line 1 -> [('UserWarning', 'eggs', None)]
+loader None, line 2 -> [('UserWarning', 'eggs', None)]
+loader None, line 5 -> [('UserWarning', 'eggs', None)]
+spec None, line 1 -> ValueError: Module globals is missing a __spec__.loader
+spec None, line 2 -> ValueError: Module globals is missing a __spec__.loader
+spec None, line 5 -> ValueError: Module globals is missing a __spec__.loader
+both None, line 1 -> ValueError: Module globals is missing a __spec__.loader
+both None, line 2 -> ValueError: Module globals is missing a __spec__.loader
+both None, line 5 -> ValueError: Module globals is missing a __spec__.loader
+spec.loader None, line 1 -> ValueError: Module globals is missing a __spec__.loader
+spec.loader None, line 2 -> ValueError: Module globals is missing a __spec__.loader
+spec.loader None, line 5 -> ValueError: Module globals is missing a __spec__.loader
+no spec, line 1 -> [('DeprecationWarning', 'Module globals is missing a __spec__.loader', None), ('UserWarning', 'eggs', None)]
+no spec, line 2 -> [('DeprecationWarning', 'Module globals is missing a __spec__.loader', None), ('UserWarning', 'eggs', None)]
+no spec, line 5 -> IndexError: list index out of range
+loader, spec None, line 1 -> [('DeprecationWarning', 'Module globals is missing a __spec__.loader', None), ('UserWarning', 'eggs', None)]
+loader, spec None, line 2 -> [('DeprecationWarning', 'Module globals is missing a __spec__.loader', None), ('UserWarning', 'eggs', None)]
+loader, spec None, line 5 -> IndexError: list index out of range
+loader, spec has none, line 1 -> [('DeprecationWarning', 'Module globals is missing a __spec__.loader', None), ('UserWarning', 'eggs', None)]
+loader, spec has none, line 2 -> [('DeprecationWarning', 'Module globals is missing a __spec__.loader', None), ('UserWarning', 'eggs', None)]
+loader, spec has none, line 5 -> IndexError: list index out of range
+they disagree, line 1 -> [('DeprecationWarning', 'Module globals; __loader__ != __spec__.loader', None), ('UserWarning', 'eggs', None)]
+they disagree, line 2 -> [('DeprecationWarning', 'Module globals; __loader__ != __spec__.loader', None), ('UserWarning', 'eggs', None)]
+they disagree, line 5 -> IndexError: list index out of range
+no loader, spec has none, line 1 -> AttributeError: Module globals is missing a __spec__.loader
+no loader, spec has none, line 2 -> AttributeError: Module globals is missing a __spec__.loader
+no loader, spec has none, line 5 -> AttributeError: Module globals is missing a __spec__.loader
+spec.loader alone, line 1 -> [('UserWarning', 'eggs', None)]
+spec.loader alone, line 2 -> [('UserWarning', 'eggs', None)]
+spec.loader alone, line 5 -> IndexError: list index out of range
+they agree, line 1 -> [('UserWarning', 'eggs', None)]
+they agree, line 2 -> [('UserWarning', 'eggs', None)]
+they agree, line 5 -> IndexError: list index out of range
+no name, line 1 -> [('UserWarning', 'eggs', None)]
+no name, line 2 -> [('UserWarning', 'eggs', None)]
+no name, line 5 -> [('UserWarning', 'eggs', None)]
+splitlines of its own, line 1 -> [('UserWarning', 'eggs', None)]
+splitlines of its own, line 2 -> [('UserWarning', 'eggs', None)]
+splitlines of its own, line 5 -> IndexError: list index out of range
+no str, line 1 -> TypeError: must be str, not int
+no str, line 2 -> TypeError: must be str, not int
+no str, line 5 -> TypeError: must be str, not int
+no get_source, line 1 -> [('UserWarning', 'eggs', None)]
+no get_source, line 2 -> [('UserWarning', 'eggs', None)]
+no get_source, line 5 -> [('UserWarning', 'eggs', None)]
+no dict -> TypeError: module_globals must be a dict, not 'int'
+== an order that cannot be
+A, B -> TypeError: Cannot create a consistent method resolution order (MRO) for bases A, B
+object, Generic -> TypeError: Cannot create a consistent method resolution order (MRO) for bases object, Generic
+object, OrderedDict -> TypeError: Cannot create a consistent method resolution order (MRO) for bases object, OrderedDict
+class statement -> TypeError: Cannot create a consistent method resolution order (MRO) for bases object, Generic

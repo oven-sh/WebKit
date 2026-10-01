@@ -200,7 +200,9 @@ static ALWAYS_INLINE void putDirectWithReify(VM& vm, JSGlobalObject* globalObjec
     if (result)
         *result = structure;
 
-    if (canPutDirectFast(vm, structure, propertyName, isJSFunction)) [[likely]] {
+    // What Python's compiler has put straight into an object is one of the object's own properties and no more: a global variable, which is a property of the module. It is not module.__setattr__(), which is
+    // what defining a property of something of Python's is to JavaScript.
+    if (canPutDirectFast(vm, structure, propertyName, isJSFunction || slot.context() == PutPropertySlot::PutByIdOfPython)) [[likely]] {
         bool success = baseObject->putDirect(vm, propertyName, value, 0, slot);
         ASSERT_UNUSED(success, success);
     } else {
@@ -351,6 +353,7 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_enter);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_line);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_leave);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_call);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_called);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_branch);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_jump);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_py_iter_next);

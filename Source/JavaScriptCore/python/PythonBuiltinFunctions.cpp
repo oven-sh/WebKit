@@ -246,21 +246,13 @@ PYTHON_NATIVE(builtinIsSubclass)
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(isSubclassOf(globalObject, args[0], args[1]))));
 }
 
-PYTHON_NATIVE(builtinDir)
+// PyObject_Dir(), of an object
+JSValue dirOf(JSGlobalObject* globalObject, JSValue object)
 {
-    NATIVE_PROLOGUE();
-    if (!args.size()) {
-        JSValue locals = localsOfFrame(globalObject, callerOf(callFrame));
-        MarkedArgumentBuffer keys;
-        collect(globalObject, locals, keys);
-        RETURN_IF_EXCEPTION(scope, { });
-        MarkedArgumentBuffer sortedKeys;
-        sortValues(globalObject, keys, sortedKeys);
-        RETURN_IF_EXCEPTION(scope, { });
-        RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, sortedKeys)));
-    }
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSValue self;
-    JSValue method = lookupSpecial(globalObject, args[0], names.dunder_dir, self);
+    JSValue method = lookupSpecial(globalObject, object, vm.pythonNames().dunder_dir, self);
     RETURN_IF_EXCEPTION(scope, { });
     JSValue found = callMethod(globalObject, method, self);
     RETURN_IF_EXCEPTION(scope, { });
@@ -270,7 +262,26 @@ PYTHON_NATIVE(builtinDir)
     MarkedArgumentBuffer sorted;
     sortValues(globalObject, values, sorted);
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, sorted)));
+    RELEASE_AND_RETURN(scope, newList(globalObject, sorted));
+}
+
+PYTHON_NATIVE(builtinDir)
+{
+    NATIVE_PROLOGUE();
+    if (!args.size()) {
+        // _dir_locals()
+        JSValue locals = localsOfFrame(globalObject, callerOf(callFrame));
+        JSValue list = keysOfMapping(globalObject, locals);
+        RETURN_IF_EXCEPTION(scope, { });
+        MarkedArgumentBuffer keys;
+        collect(globalObject, list, keys);
+        RETURN_IF_EXCEPTION(scope, { });
+        MarkedArgumentBuffer sortedKeys;
+        sortValues(globalObject, keys, sortedKeys);
+        RETURN_IF_EXCEPTION(scope, { });
+        RELEASE_AND_RETURN(scope, JSValue::encode(newList(globalObject, sortedKeys)));
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(dirOf(globalObject, args[0])));
 }
 
 PYTHON_NATIVE(builtinVars)

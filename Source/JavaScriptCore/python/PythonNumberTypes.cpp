@@ -205,8 +205,12 @@ PYTHON_NATIVE(numberRound)
     }
 
     if (number.kind == Number::Kind::Float) {
-        if (hasDigits)
-            return JSValue::encode(floatFromDouble(roundToDigits(number.real, std::clamp<int64_t>(digits, -400, 400))));
+        if (hasDigits) {
+            double rounded = roundToDigits(number.real, std::clamp<int64_t>(digits, -400, 400));
+            if (std::isinf(rounded) && std::isfinite(number.real))
+                return JSValue::encode(raise(globalObject, scope, BuiltinType::OverflowError, "rounded value too large to represent"_s));
+            return JSValue::encode(floatFromDouble(rounded));
+        }
         // To the nearest int, and to the even one of two that are as near.
         if (std::isfinite(number.real)) {
             double rounded = std::round(number.real);
@@ -529,6 +533,20 @@ PYTHON_NATIVE(floatNew)
     auto* type = asType(args[0]);
     JSValue value = args.at(1);
     double result = 0;
+    // PyNumber_Float(): what is of a class derived from float or from str is asked first, if the class has something of its own to say.
+    if (auto* boxed = value ? tryBoxedValue(value) : nullptr; boxed && (boxed->value().isString() || classify(value).kind == Number::Kind::Float)) {
+        JSValue method = typeOf(globalObject, value)->lookup(vm, names.dunder_float);
+        if (method && !dynamicDowncast<PyNativeFunction>(method)) {
+            JSValue given = callSpecial(globalObject, typeOf(globalObject, value), method, value);
+            RETURN_IF_EXCEPTION(scope, { });
+            Number number = classify(given);
+            if (number.kind != Number::Kind::Float)
+                return JSValue::encode(raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, value), ".__float__ returned non-float (type "_s, typeName(globalObject, given), ')')));
+            if (!warnIfOfStrictSubclass(globalObject, given, BuiltinType::Float, concatenate(typeName(globalObject, value), ".__float__ returned non-float"_s), "float"_s))
+                return { };
+            return JSValue::encode(boxIfDerived(globalObject, type, realm->typeFloat(), floatFromDouble(number.real)));
+        }
+    }
     if (value) {
         JSValue plain = unbox(value);
         if (plain.isString()) {
@@ -891,7 +909,8 @@ static JSValue floatVectorcall(JSGlobalObject* globalObject, const ArgList& argu
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (!arguments.size())
         return floatFromDouble(0);
-    if (arguments.size() != 1 || !classify(arguments.at(0)))
+    // What is of a class derived from one of them may have a __float__() of its own.
+    if (arguments.size() != 1 || tryBoxedValue(arguments.at(0)) || !classify(arguments.at(0)))
         return { };
     auto converted = toDouble(globalObject, arguments.at(0));
     RETURN_IF_EXCEPTION(scope, { });

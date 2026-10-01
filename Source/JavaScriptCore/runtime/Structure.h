@@ -259,7 +259,7 @@ public:
     inline bool shouldDoCacheableDictionaryTransitionForAdd(PutPropertySlot::Context context)
     {
         int maxTransitionLength;
-        if (context == PutPropertySlot::PutById)
+        if (context == PutPropertySlot::PutById || context == PutPropertySlot::PutByIdOfPython)
             maxTransitionLength = s_maxTransitionLengthForNonEvalPutById;
         else
             maxTransitionLength = s_maxTransitionLength;

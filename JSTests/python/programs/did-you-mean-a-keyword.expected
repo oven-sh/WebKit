@@ -1,0 +1,228 @@
+'fur x in y: pass' exec SyntaxError invalid syntax | (0, 0, 'fur x in y: pass\n')
+'fur x in y: pass' single SyntaxError invalid syntax | (0, 0, 'fur x in y: pass')
+'import os\nclas A:\n    pass\n' exec SyntaxError invalid syntax | (0, 0, 'import os\nclas A:\n    pass\n')
+'import os\nclas A:\n    pass\n' single SyntaxError multiple statements found while compiling a single statement | None
+'if x:\n    pass\nfor i in y:\n    a = 1\n    b = = 2\n' exec SyntaxError invalid syntax | (1, 0, 'if x:\n    pass\nfor i in y:\n    a = 1\n    b = = 2\n')
+'if x:\n    pass\nfor i in y:\n    a = 1\n    b = = 2\n' single SyntaxError invalid syntax | (1, 0, 'if x:\n    pass\nfor i in y:\n    a = 1\n    b = = 2\n')
+'def f():\n    if x:\n        pass\n    retrun 1\n' exec SyntaxError invalid syntax | (2, 4, 'def f():\n    if x:\n        pass\n    retrun 1\n')
+'def f():\n    if x:\n        pass\n    retrun 1\n' single SyntaxError invalid syntax | (2, 4, 'def f():\n    if x:\n        pass\n    retrun 1\n')
+'x = (1,\n' exec SyntaxError '(' was never closed | (0, 0, 'x = (1,\n')
+'x = (1,\n' single SyntaxError '(' was never closed | (0, 0, 'x = (1,\n')
+"x = 'abc\n" exec SyntaxError unterminated string literal (detected at line 1) | (0, 0, "x = 'abc\n")
+"x = 'abc\n" single SyntaxError unterminated string literal (detected at line 1) | (0, 0, "x = 'abc\n")
+'  x = 1\n' exec IndentationError unexpected indent | (0, 0, '  x = 1\n')
+'  x = 1\n' single IndentationError unexpected indent | (0, 0, '  x = 1\n')
+'if x:\npass\n' exec IndentationError expected an indented block after 'if' statement on line 1 | (0, 0, 'if x:\npass\n')
+'if x:\npass\n' single IndentationError expected an indented block after 'if' statement on line 1 | (0, 0, 'if x:\npass\n')
+'class A:\n    def f(self):\n        pass\n    def g(self):\n        whille x: pass\n' exec SyntaxError invalid syntax | (0, 0, 'class A:\n    def f(self):\n        pass\n    def g(self):\n        whille x: pass\n')
+'class A:\n    def f(self):\n        pass\n    def g(self):\n        whille x: pass\n' single SyntaxError invalid syntax | (0, 0, 'class A:\n    def f(self):\n        pass\n    def g(self):\n        whille x: pass\n')
+'@d\ndef f(): pass\nx y\n' exec SyntaxError invalid syntax | (0, 0, '@d\ndef f(): pass\nx y\n')
+'@d\ndef f(): pass\nx y\n' single SyntaxError invalid syntax | (0, 0, '@d\ndef f(): pass\nx y\n')
+'a = 1\nb = 2\nc d\n' exec SyntaxError invalid syntax | (0, 0, 'a = 1\nb = 2\nc d\n')
+'a = 1\nb = 2\nc d\n' single SyntaxError multiple statements found while compiling a single statement | None
+'if a:\n    pass\nelif b:\n    pass\nels:\n    pass\n' exec SyntaxError invalid syntax | (1, 0, 'if a:\n    pass\nelif b:\n    pass\nels:\n    pass\n')
+'if a:\n    pass\nelif b:\n    pass\nels:\n    pass\n' single SyntaxError invalid syntax | (1, 0, 'if a:\n    pass\nelif b:\n    pass\nels:\n    pass\n')
+'é = 1\nif é:\n  pass\n  ü ö\n' exec SyntaxError invalid syntax | (0, 0, 'é = 1\nif é:\n  pass\n  ü ö\n')
+'é = 1\nif é:\n  pass\n  ü ö\n' single SyntaxError multiple statements found while compiling a single statement | None
+'try:\n    pass\nexcpt E:\n    pass\n' exec SyntaxError expected 'except' or 'finally' block | (0, 0, 'try:\n    pass\nexcpt E:\n    pass\n')
+'try:\n    pass\nexcpt E:\n    pass\n' single SyntaxError expected 'except' or 'finally' block | (0, 0, 'try:\n    pass\nexcpt E:\n    pass\n')
+'x = 1 +\n' exec SyntaxError invalid syntax | (0, 0, 'x = 1 +\n')
+'x = 1 +\n' single SyntaxError invalid syntax | (0, 0, 'x = 1 +\n')
+'f(a b)\n' exec SyntaxError invalid syntax. Perhaps you forgot a comma? | (0, 0, 'f(a b)\n')
+'f(a b)\n' single SyntaxError invalid syntax. Perhaps you forgot a comma? | (0, 0, 'f(a b)\n')
+'def f(:\n    pass\n' exec SyntaxError invalid syntax | (0, 0, 'def f(:\n    pass\n')
+'def f(:\n    pass\n' single SyntaxError invalid syntax | (0, 0, 'def f(:\n    pass\n')
+'with a:\n    pass\nx = [1, 2\n' exec SyntaxError '[' was never closed | (0, 0, 'with a:\n    pass\nx = [1, 2\n')
+'with a:\n    pass\nx = [1, 2\n' single SyntaxError invalid syntax | (1, 0, 'with a:\n    pass\nx = [1, 2\n')
+'break x\n' exec SyntaxError invalid syntax | (0, 0, 'break x\n')
+'break x\n' single SyntaxError invalid syntax | (0, 0, 'break x\n')
+'return\n' exec SyntaxError 'return' outside function | None
+'return\n' single SyntaxError 'return' outside function | None
+'def f():\n    x = 1\n    nonlocal x\n' exec SyntaxError name 'x' is assigned to before nonlocal declaration | None
+'def f():\n    x = 1\n    nonlocal x\n' single SyntaxError name 'x' is assigned to before nonlocal declaration | None
+None
+5
+None
+member_descriptor True
+'if a:\n    pass\ndef f(): pass\nx y\n' invalid syntax | (1, 0)
+'def f(): pass\nif a:\n    pass\nx y\n' invalid syntax | (2, 0)
+'class C: pass\nx y\n' invalid syntax | (1, 0)
+'if a: pass\nclass C: pass\nx y\n' invalid syntax | (2, 0)
+'async def f(): pass\nx y\n' invalid syntax | (0, 0)
+'for i in a: pass\nx y\n' invalid syntax | (1, 0)
+'while a: pass\nx y\n' invalid syntax | (1, 0)
+'try: pass\nfinally: pass\nx y\n' invalid syntax | (1, 0)
+'with a: pass\nx y\n' invalid syntax | (1, 0)
+'match a:\n    case 1: pass\nx y\n' invalid syntax | (1, 0)
+'async def f():\n    async for i in a: pass\n    async with a: pass\n    x y\n' invalid syntax | (3, 4)
+'def f():\n    for i in a:\n        pass\n    def g():\n        while a:\n            pass\n        x y\n' invalid syntax | (5, 8)
+'if a:\n    if b:\n        pass\n    x y\n' invalid syntax | (2, 4)
+'\n\n\nif a: pass\n\n\nx y\n' invalid syntax | (4, 0)
+'if a: pass\nif b: pass\nx y' invalid syntax | (2, 0)
+'    if a: pass\n' unexpected indent | (0, 0)
+'if a: pass; x y\n' invalid syntax | (0, 0)
+'type X = int\nx y\n' invalid syntax | (0, 0)
+---- what is suggested
+'fur x in range(3):\n    print(x)\n'
+      File "<test>", line 1
+        fur x in range(3):
+        ^^^
+    SyntaxError: invalid syntax. Did you mean 'for'?
+'def f():\n    retrun 1\n'
+      File "<test>", line 2
+        retrun 1
+        ^^^^^^
+    SyntaxError: invalid syntax. Did you mean 'return'?
+'whille True:\n    pass\n'
+      File "<test>", line 1
+        whille True:
+        ^^^^^^
+    SyntaxError: invalid syntax. Did you mean 'while'?
+'import os\nclas A:\n    pass\n'
+      File "<test>", line 2
+        clas A:
+        ^^^^
+    SyntaxError: invalid syntax. Did you mean 'class'?
+'if x:\n    pass\nelfi y:\n    pass\n'
+      File "<test>", line 3
+        elfi y:
+        ^^^^
+    SyntaxError: invalid syntax. Did you mean 'elif'?
+'asynch def f(): pass\n'
+      File "<test>", line 1
+        asynch def f(): pass
+        ^^^^^^
+    SyntaxError: invalid syntax. Did you mean 'async'?
+'form os import path\n'
+      File "<test>", line 1
+        form os import path
+        ^^^^
+    SyntaxError: invalid syntax. Did you mean 'from'?
+'from os imprt path\n'
+      File "<test>", line 1
+        from os imprt path
+                ^^^^^
+    SyntaxError: invalid syntax. Did you mean 'import'?
+'x = 1 fi y else 2\n'
+      File "<test>", line 1
+        x = 1 fi y else 2
+              ^^
+    SyntaxError: invalid syntax. Did you mean 'if'?
+'x = 1 if y esle 2\n'
+      File "<test>", line 1
+        x = 1 if y esle 2
+            ^^^^^^
+    SyntaxError: expected 'else' after 'if' expression
+'with a sa b: pass\n'
+      File "<test>", line 1
+        with a sa b: pass
+               ^^
+    SyntaxError: invalid syntax. Did you mean 'is'?
+'for x ni y: pass\n'
+      File "<test>", line 1
+        for x ni y: pass
+              ^^
+    SyntaxError: invalid syntax. Did you mean 'in'?
+'x = a adn b\n'
+      File "<test>", line 1
+        x = a adn b
+              ^^^
+    SyntaxError: invalid syntax. Did you mean 'and'?
+'x = nto a\n'
+      File "<test>", line 1
+        x = nto a
+            ^^^
+    SyntaxError: invalid syntax. Did you mean 'not'?
+'lambd x: x\n'
+      File "<test>", line 1
+        lambd x: x
+        ^^^^^
+    SyntaxError: invalid syntax. Did you mean 'lambda'?
+'tyr:\n    pass\nfinally:\n    pass\n'
+      File "<test>", line 1
+        tyr:
+        ^^^
+    SyntaxError: invalid syntax. Did you mean 'try'?
+'try:\n    pass\nexcpet E:\n    pass\n'
+      File "<test>", line 3
+        excpet E:
+        ^^^^^^
+    SyntaxError: expected 'except' or 'finally' block
+'def f():\n    yeild 1\n'
+      File "<test>", line 2
+        yeild 1
+        ^^^^^
+    SyntaxError: invalid syntax. Did you mean 'yield'?
+'asert x\n'
+      File "<test>", line 1
+        asert x
+        ^^^^^
+    SyntaxError: invalid syntax. Did you mean 'assert'?
+'rasie E\n'
+      File "<test>", line 1
+        rasie E
+        ^^^^^
+    SyntaxError: invalid syntax. Did you mean 'raise'?
+'dle x\n'
+      File "<test>", line 1
+        dle x
+        ^^^
+    SyntaxError: invalid syntax. Did you mean 'del'?
+'pas\n' compiles
+'brek\n' compiles
+'x y\n'
+      File "<test>", line 1
+        x y
+          ^
+    SyntaxError: invalid syntax
+'foo bar baz\n'
+      File "<test>", line 1
+        foo bar baz
+            ^^^
+    SyntaxError: invalid syntax
+"prnt 'a'\n"
+      File "<test>", line 1
+        prnt 'a'
+        ^^^^
+    SyntaxError: invalid syntax. Did you mean 'not'?
+"print 'a'\n"
+      File "<test>", line 1
+        print 'a'
+        ^^^^^^^^^
+    SyntaxError: Missing parentheses in call to 'print'. Did you mean print(...)?
+'def f():\n    if x:\n        pass\n    for i in y:\n        whlie z: pass\n'
+      File "<test>", line 5
+        whlie z: pass
+        ^^^^^
+    SyntaxError: invalid syntax. Did you mean 'while'?
+'class A:\n    dfe f(self): pass\n'
+      File "<test>", line 2
+        dfe f(self): pass
+        ^^^
+    SyntaxError: invalid syntax. Did you mean 'def'?
+'a = 1\nb = 2\nfro i in x: pass\n'
+      File "<test>", line 3
+        fro i in x: pass
+        ^^^
+    SyntaxError: invalid syntax. Did you mean 'for'?
+'matc x:\n    case 1: pass\n'
+      File "<test>", line 1
+        matc x:
+             ^
+    SyntaxError: invalid syntax
+'x = [i fro i in y]\n'
+      File "<test>", line 1
+        x = [i fro i in y]
+               ^^^
+    SyntaxError: invalid syntax. Did you mean 'for'?
+'x = (yeild)\n' compiles
+'Fals = 1 2\n'
+      File "<test>", line 1
+        Fals = 1 2
+                 ^
+    SyntaxError: invalid syntax
+'x = Non e\n'
+      File "<test>", line 1
+        x = Non e
+                ^
+    SyntaxError: invalid syntax

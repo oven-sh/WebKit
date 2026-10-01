@@ -1908,6 +1908,13 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_call)
     END();
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_called)
+{
+    BEGIN();
+    Python::frameHasCalled(globalObject, callFrame, BytecodeIndex(codeBlock->bytecodeOffset(pc)));
+    END();
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_py_branch)
 {
     BEGIN();

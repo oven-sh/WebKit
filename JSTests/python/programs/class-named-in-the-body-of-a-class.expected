@@ -1,0 +1,22 @@
+assigned -> ('A', 413, 'X', 413)
+read -> ('Outer', 'X')
+read_only -> Outer
+said_global -> (42, False, 'X')
+deleted -> NameError: name '__class__' is not defined
+nested -> NameError: cannot access free variable '__class__' where it is not associated with a value in enclosing scope
+in_comprehension -> NameError: name '__class__' is not defined
+with_super -> ('Outer', 'AX')
+freevars -> ('__class__',)
+classdict -> (1, False)
+annotated -> ({'v': 'X'}, {'a': 'X'})
+said_nonlocal -> (42, False, 'X')
+at the top of a module -> NameError: name '__class__' is not defined
+at the top, with one there -> ('the module has one', 'X')
+in a function that is in no class -> NameError: name '__class__' is not defined
+in a function that has a variable of the name -> ('a variable of the function', 'X')
+== what is called super
+alias -> A
+alias, where __class__ is named -> A
+explicit -> A
+a class derived from super -> AC
+and where __class__ is not named -> RuntimeError: super(): __class__ cell not found

@@ -1,0 +1,7 @@
+ZeroDivisionError ('TypeError', "'async for' received an invalid object from __anext__: F", "ZeroDivisionError('z')", "ZeroDivisionError('z')", True)
+TypeError ('TypeError', "'async for' received an invalid object from __anext__: F", "TypeError('t')", "TypeError('t')", True)
+KeyboardInterrupt ('TypeError', "'async for' received an invalid object from __anext__: F", "KeyboardInterrupt('k')", "KeyboardInterrupt('k')", True)
+StopIteration ('TypeError', "'async for' received an invalid object from __anext__: F", "StopIteration('s')", "StopIteration('s')", True)
+int ('TypeError', "'async for' received an invalid object from __anext__: F", 'TypeError("__await__() returned non-iterator of type \'int\'")', 'TypeError("__await__() returned non-iterator of type \'int\'")', True)
+NoneType ('TypeError', "'async for' received an invalid object from __anext__: F", 'TypeError("__await__() returned non-iterator of type \'NoneType\'")', 'TypeError("__await__() returned non-iterator of type \'NoneType\'")', True)
+('TypeError', "'async for' received an invalid object from __anext__: int", 'TypeError("\'int\' object can\'t be awaited")', 'TypeError("\'int\' object can\'t be awaited")', True)

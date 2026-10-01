@@ -837,6 +837,11 @@ void JIT::emit_op_py_call(const JSInstruction* instruction)
     emit_op_py_line(instruction);
 }
 
+void JIT::emit_op_py_called(const JSInstruction* instruction)
+{
+    emit_op_py_line(instruction);
+}
+
 void JIT::emit_op_py_branch(const JSInstruction* instruction)
 {
     emit_op_py_line(instruction);

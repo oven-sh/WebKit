@@ -32,6 +32,7 @@
 #include "PyInstance.h"
 #include "PyNativeFunction.h"
 #include "PyObjects.h"
+#include "PythonCodecs.h"
 #include "PythonSequences.h"
 
 // Making classes, and asking what is an instance of what.
@@ -96,7 +97,7 @@ static PyTuple* linearize(JSGlobalObject* globalObject, PyTuple* bases)
                 if (positions[i] >= sequences[i].size() || named.contains(sequences[i][positions[i]]))
                     continue;
                 named.append(sequences[i][positions[i]]);
-                String name = sequences[i][positions[i]]->nameString(globalObject);
+                String name = sequences[i][positions[i]]->nameWithoutModule(globalObject);
                 if (!isFirst)
                     names.append(", "_s);
                 isFirst = false;
@@ -305,12 +306,23 @@ PyType* newException(JSGlobalObject* globalObject, ASCIILiteral module, ASCIILit
     return asType(type);
 }
 
-JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords)
+// What CPython keeps as UTF-8 that ends at a null: PyUnicode_AsUTF8AndSize(), and then a look at how long it is.
+void checkNameOfType(JSGlobalObject* globalObject, JSValue name)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto encoded = encodeUTF8(globalObject, name, { });
+    RETURN_IF_EXCEPTION(scope, void());
+    if (WTF::contains(encoded->span(), static_cast<uint8_t>(0)))
+        raiseValueError(globalObject, scope, "type name must not contain null characters"_s);
+}
+
+JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSValue givenName, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& names = vm.pythonNames();
     PyRealm* realm = globalObject->pyRealm();
+    JSString* name = stringIn(givenName);
 
     if (!bases->length())
         bases = PyTuple::create(globalObject, { realm->typeObject() });
@@ -320,6 +332,14 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
     RETURN_IF_EXCEPTION(scope, { });
 
     // What follows is type_new_impl() of CPython's Objects/typeobject.c and what that calls, in the same order, since the order is that of the __dict__.
+
+    // PyDict_Copy(): a dict of a class that goes through itself in a way of its own is asked what it has.
+    if (namespaceDict->size() && !isGoneThroughAsDict(globalObject, namespaceDict)) [[unlikely]] {
+        PyDict* copy = PyDict::create(globalObject);
+        updateDictFrom(globalObject, copy, namespaceDict);
+        RETURN_IF_EXCEPTION(scope, { });
+        namespaceDict = copy;
+    }
 
     // ---- __slots__: which attributes instances have room for, and whether they have a __dict__ and can be weakly referred to besides
     bool mayAddDict = !base->hasFlag(PyType::HasInstanceDict);
@@ -382,13 +402,17 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         }
     }
 
+    checkNameOfType(globalObject, name);
+    RETURN_IF_EXCEPTION(scope, { });
     PyType* type = PyType::create(vm, globalObject, metatype, name, bases, base, order);
     type->addToLayout(slots.size(), addsDict, addsWeakReferences);
+    if (givenName != JSValue(name))
+        type->putDirect(vm, names.private_name, givenName);
 
     // ---- What is in the namespace
     JSValue classCell;
     JSValue classDictCell;
-    type->putDirect(vm, names.private_qualname, name);
+    type->putDirect(vm, names.private_qualname, givenName);
     namespaceDict->forEach(globalObject, [&] (JSValue key, JSValue value) {
         if (!key.isString()) {
             // No attribute, since there is no naming it, but it is in the __dict__.
@@ -398,12 +422,17 @@ JSValue newType(JSGlobalObject* globalObject, PyType* metatype, JSString* name, 
         auto property = asString(key)->toIdentifier(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         if (property == names.dunder_qualname) {
-            if (!value.isString()) {
+            if (!stringIn(value)) {
                 raiseTypeError(globalObject, scope, concatenate("type __qualname__ must be a str, not "_s, typeName(globalObject, value)));
                 return false;
             }
             type->putDirect(vm, names.private_qualname, value);
             return true;
+        }
+        // type_new_set_doc(), which keeps it as UTF-8 too
+        if (property == names.dunder_doc && stringIn(value)) {
+            encodeUTF8(globalObject, value, { });
+            RETURN_IF_EXCEPTION(scope, false);
         }
         // What the class is to be put in, and no attributes of it.
         if (property == names.dunder_classcell) {

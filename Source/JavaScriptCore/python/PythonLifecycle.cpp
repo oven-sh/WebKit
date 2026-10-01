@@ -458,7 +458,11 @@ static void runInMainModule(JSGlobalObject* globalObject, std::span<const uint8_
         SourceCode source = makeSource(globalObject, bytes, origin, filename);
         RETURN_IF_EXCEPTION(scope, void());
         JSFunction* function = compileModule(globalObject, source, module);
-        RETURN_IF_EXCEPTION(scope, void());
+        if (scope.exception()) [[unlikely]] {
+            scope.release();
+            forgetSourceOfSyntaxError(globalObject);
+            return;
+        }
         scope.release();
         runModuleBody(globalObject, function);
     };

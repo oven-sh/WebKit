@@ -315,6 +315,12 @@ struct GlobalLocation {
 // LOAD_GLOBAL asks a dict of a derived class as it would any mapping. LOAD_NAME, which has asked the locals so, looks in the globals for itself.
 enum class GlobalsAre : bool { LookedIn, AskedAsAMapping };
 JSValue loadGlobal(JSGlobalObject*, JSObject* globals, JSObject* builtins, PropertyName, GlobalLocation&, GlobalsAre = GlobalsAre::AskedAsAMapping);
+// Code has its globals and its builtins as objects, whose properties are the variables: a module, or what a dict keeps its items in. Its builtins are whatever its globals have as __builtins__, which may be
+// neither. Then it is an object that has nothing, and stands for what is to be asked.
+JSObject* namespaceStandingFor(JSGlobalObject*, JSValue mapping);
+JSValue mappingOfNamespace(JSGlobalObject*, JSObject*); // What a program has for it: the dict, or what it stands for.
+JSValue findInNamespace(JSGlobalObject*, JSObject*, PropertyName); // Empty if it is not there, or if asking raised.
+JSObject* currentBuiltins(JSGlobalObject*); // PyEval_GetBuiltins(): those of the code that is running
 
 // ---- Calls
 
@@ -352,7 +358,8 @@ JSValue buildClass(JSGlobalObject*, JSValue body, JSString* name, PyTuple* bases
 // _PyType_CalculateMetaclass(): the most derived of the metaclasses of the bases and the one that was asked for. Null if it raised.
 PyType* calculateMetaclass(JSGlobalObject*, PyType* metatype, PyTuple* bases);
 // type.__new__(metatype, name, bases, namespace, **keywords)
-JSValue newType(JSGlobalObject*, PyType* metatype, JSString* name, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords);
+JSValue newType(JSGlobalObject*, PyType* metatype, JSValue name, PyTuple* bases, PyDict* namespaceDict, PyDict* keywords);
+void checkNameOfType(JSGlobalObject*, JSValue name);
 // PyErr_NewException("module.name", base, NULL): a class made as a class statement in that module would make it. Null if it raised.
 PyType* newException(JSGlobalObject*, ASCIILiteral module, ASCIILiteral name, PyType* base);
 // isinstance() and issubclass(), which a class can have its own idea of.
@@ -485,6 +492,7 @@ enum class ToldArgument : uint8_t { None, First, ListOfPositional };
 void frameIsCalling(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue callable, JSValue argument, ToldArgument);
 void frameIsBranching(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isTaken);
 void frameIsBranchingInLoop(JSGlobalObject*, CallFrame*, BytecodeIndex, bool isExhausted); // At op_py_iter_next.
+void frameHasCalled(JSGlobalObject*, CallFrame*, BytecodeIndex);
 void frameIsJumping(JSGlobalObject*, CallFrame*, BytecodeIndex);
 void frameIsReturning(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
 void frameIsYielding(JSGlobalObject*, CallFrame*, BytecodeIndex, JSValue);
@@ -567,6 +575,7 @@ int64_t length(JSGlobalObject*, JSValue);
 // __getitem__() or a keys() of its own is not asked.
 bool isGoneThroughAsDict(JSGlobalObject*, JSValue);
 void updateDictFrom(JSGlobalObject*, PyDict*, JSValue mappingOrPairs);
+JSValue keysOfMapping(JSGlobalObject*, JSValue); // PyMapping_Keys(): a list
 
 // ---- Iteration
 

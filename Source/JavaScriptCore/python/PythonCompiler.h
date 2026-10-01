@@ -62,6 +62,8 @@ UnlinkedFunctionCodeBlock* generateFunctionCodeBlock(VM&, UnlinkedFunctionExecut
 
 // A function of no arguments that runs the body of a module, whose global variables are the properties of `namespaceObject`. All
 // of the source is checked first. Null, with SyntaxError raised, if it is not Python.
+// What is read from a file a line at a time is not kept, and a SyntaxError that has been raised of it says where to look and not what was there.
+void forgetSourceOfSyntaxError(JSGlobalObject*);
 JS_EXPORT_PRIVATE JSFunction* compileModule(JSGlobalObject*, const SourceCode&, JSObject* namespaceObject, ImplementationVisibility = ImplementationVisibility::Public);
 
 // The two halves of that. The first makes the code, of a module, or of what eval() or a prompt is given. With `usesNamespace`, it takes

@@ -101,6 +101,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_check_traps:
     case op_py_enter:
     case op_py_line:
+    case op_py_called:
     case op_py_jump:
     case op_get_argument:
     case op_nop:
@@ -503,6 +504,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_check_traps:
     case op_py_enter:
     case op_py_line:
+    case op_py_called:
     case op_py_jump:
     case op_log_shadow_chicken_prologue:
     case op_log_shadow_chicken_tail:

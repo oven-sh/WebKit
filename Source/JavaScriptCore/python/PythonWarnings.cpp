@@ -30,6 +30,7 @@
 #include "PyFrame.h"
 #include "PyTuple.h"
 #include "PythonContextVars.h"
+#include "PythonIO.h"
 #include "PythonImport.h"
 #include "PythonSequences.h"
 #include "TopExceptionScope.h"
@@ -597,31 +598,14 @@ PYTHON_NATIVE(warningsWarn)
     RETURN_NONE();
 }
 
-// _bless_my_loader() of importlib._bootstrap_external: what loaded the module that these are the globals of. None if they do not say.
-// FIXME: It has a DeprecationWarning for globals whose __spec__ does not say what their __loader__ does, which comes with importlib.
+// _PyImport_BlessMyLoader(): what loaded the module that these are the globals of, as importlib makes it out. None if they do not say.
 static JSValue loaderOf(JSGlobalObject* globalObject, PyDict* globals)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue loader = globals->getString(globalObject, "__loader__"_s);
+    JSValue external = getAttribute(globalObject, importState(globalObject).importlib.get(), Identifier::fromString(vm, "_bootstrap_external"_s));
     RETURN_IF_EXCEPTION(scope, { });
-    bool hasLoader = loader && !isNone(loader);
-    JSValue spec = globals->getString(globalObject, "__spec__"_s);
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!hasLoader) {
-        if (!spec)
-            return jsUndefined();
-        if (isNone(spec))
-            return raiseValueError(globalObject, scope, "Module globals is missing a __spec__.loader"_s);
-    }
-    JSValue specLoader = spec ? getAttributeIfPresent(globalObject, spec, Identifier::fromString(vm, "loader"_s)) : JSValue();
-    RETURN_IF_EXCEPTION(scope, { });
-    if (!specLoader || isNone(specLoader)) {
-        if (!hasLoader)
-            return raise(globalObject, scope, specLoader ? BuiltinType::ValueError : BuiltinType::AttributeError, "Module globals is missing a __spec__.loader"_s);
-        return loader;
-    }
-    return hasLoader ? loader : specLoader;
+    RELEASE_AND_RETURN(scope, callMethodNamed(globalObject, external, Identifier::fromString(vm, "_bless_my_loader"_s), globals));
 }
 
 // get_source_line(). Empty if there is none, and if it raises.
@@ -644,12 +628,14 @@ static JSValue sourceLineFromLoader(JSGlobalObject* globalObject, PyDict* global
     RETURN_IF_EXCEPTION(scope, { });
     if (isNone(source))
         return { };
-    JSValue splitLines = getAttribute(globalObject, source, Identifier::fromString(vm, "splitlines"_s));
-    RETURN_IF_EXCEPTION(scope, { });
-    JSValue lines = call(globalObject, splitLines);
+    // PyUnicode_Splitlines(), which is str's whatever the class of it has by the name.
+    JSString* text = stringIn(source);
+    if (!text)
+        return raiseTypeError(globalObject, scope, concatenate("must be str, not "_s, typeName(globalObject, source)));
+    JSValue lines = callMethodNamed(globalObject, text, Identifier::fromString(vm, "splitlines"_s));
     RETURN_IF_EXCEPTION(scope, { });
     // PyList_GetItem(), which does not count from the end.
-    if (!isList(lines) || line < 1 || line > asList(lines)->length())
+    if (line < 1 || line > asList(lines)->length())
         return raise(globalObject, scope, BuiltinType::IndexError, "list index out of range"_s);
     RELEASE_AND_RETURN(scope, listGet(globalObject, asList(lines), static_cast<unsigned>(line - 1)));
 }

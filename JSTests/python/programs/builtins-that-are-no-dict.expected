@@ -1,0 +1,540 @@
+===== eval 'superglobal'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== eval "len('abc')"
+  dict -> 3
+  empty dict -> NameError: name 'len' is not defined
+  proxy -> 3
+  empty proxy -> NameError: name 'len' is not defined
+  asked -> 3
+  raises -> ValueError: asked for 'len'
+  sub -> TypeError: 'str' object is not callable
+  chainmap -> 3
+  module -> 3
+  module sub -> NameError: name 'len' is not defined
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== eval 'missing'
+  dict -> NameError: name 'missing' is not defined
+  empty dict -> NameError: name 'missing' is not defined
+  proxy -> NameError: name 'missing' is not defined
+  empty proxy -> NameError: name 'missing' is not defined
+  asked -> NameError: name 'missing' is not defined
+  raises -> ValueError: asked for 'missing'
+  sub -> made up missing
+  chainmap -> NameError: name 'missing' is not defined
+  module -> NameError: name 'missing' is not defined
+  module sub -> NameError: name 'missing' is not defined
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== eval '(lambda: superglobal)()'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== eval '[superglobal for i in (1,)]'
+  dict -> [1]
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> [1]
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> [1]
+  raises -> ValueError: asked for 'superglobal'
+  sub -> [1]
+  chainmap -> [1]
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> ['of a module']
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'x = superglobal'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'def f(): return superglobal\nx = f()'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'class A: pass\nx = A.__name__'
+  dict -> NameError: __build_class__ not found
+  empty dict -> NameError: __build_class__ not found
+  proxy -> NameError: __build_class__ not found
+  empty proxy -> NameError: __build_class__ not found
+  asked -> NameError: __build_class__ not found
+  raises -> ValueError: asked for '__build_class__'
+  sub -> TypeError: 'str' object is not callable
+  chainmap -> NameError: __build_class__ not found
+  module -> A
+  module sub -> NameError: __build_class__ not found
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'class A:\n    y = superglobal\nx = A.y'
+  dict -> NameError: __build_class__ not found
+  empty dict -> NameError: __build_class__ not found
+  proxy -> NameError: __build_class__ not found
+  empty proxy -> NameError: __build_class__ not found
+  asked -> NameError: __build_class__ not found
+  raises -> ValueError: asked for '__build_class__'
+  sub -> TypeError: 'str' object is not callable
+  chainmap -> NameError: __build_class__ not found
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> NameError: __build_class__ not found
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'import foo.bar\nx = foo'
+  dict -> ImportError: __import__ not found
+  empty dict -> ImportError: __import__ not found
+  proxy -> ImportError: __import__ not found
+  empty proxy -> ImportError: __import__ not found
+  asked -> ImportError: __import__ not found
+  raises -> ValueError: asked for '__import__'
+  sub -> TypeError: 'str' object is not callable
+  chainmap -> ImportError: __import__ not found
+  module -> ModuleNotFoundError: No module named 'foo'
+  module sub -> ImportError: __import__ not found
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'from foo import bar\nx = bar'
+  dict -> ImportError: __import__ not found
+  empty dict -> ImportError: __import__ not found
+  proxy -> ImportError: __import__ not found
+  empty proxy -> ImportError: __import__ not found
+  asked -> ImportError: __import__ not found
+  raises -> ValueError: asked for '__import__'
+  sub -> TypeError: 'str' object is not callable
+  chainmap -> ImportError: __import__ not found
+  module -> ModuleNotFoundError: No module named 'foo'
+  module sub -> ImportError: __import__ not found
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'def f():\n    import foo\n    return foo\nx = f()'
+  dict -> ImportError: __import__ not found
+  empty dict -> ImportError: __import__ not found
+  proxy -> ImportError: __import__ not found
+  empty proxy -> ImportError: __import__ not found
+  asked -> ImportError: __import__ not found
+  raises -> ValueError: asked for '__import__'
+  sub -> TypeError: 'str' object is not callable
+  chainmap -> ImportError: __import__ not found
+  module -> ModuleNotFoundError: No module named 'foo'
+  module sub -> ImportError: __import__ not found
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'global g\ng = 1\nx = g'
+  dict -> 1
+  empty dict -> 1
+  proxy -> 1
+  empty proxy -> 1
+  asked -> 1
+  raises -> 1
+  sub -> 1
+  chainmap -> 1
+  module -> 1
+  module sub -> 1
+  int -> 1
+  None -> 1
+  str -> 1
+  list -> 1
+  object -> 1
+===== exec "assert 0, 'said'"
+  dict -> AssertionError: said
+  empty dict -> AssertionError: said
+  proxy -> AssertionError: said
+  empty proxy -> AssertionError: said
+  asked -> AssertionError: said
+  raises -> AssertionError: said
+  sub -> AssertionError: said
+  chainmap -> AssertionError: said
+  module -> AssertionError: said
+  module sub -> AssertionError: said
+  int -> AssertionError: said
+  None -> AssertionError: said
+  str -> AssertionError: said
+  list -> AssertionError: said
+  object -> AssertionError: said
+===== exec 'x = __debug__'
+  dict -> True
+  empty dict -> True
+  proxy -> True
+  empty proxy -> True
+  asked -> True
+  raises -> True
+  sub -> True
+  chainmap -> True
+  module -> True
+  module sub -> True
+  int -> True
+  None -> True
+  str -> True
+  list -> True
+  object -> True
+===== exec 'x = __builtins__ is given'
+  dict -> True
+  empty dict -> True
+  proxy -> True
+  empty proxy -> True
+  asked -> True
+  raises -> True
+  sub -> True
+  chainmap -> True
+  module -> True
+  module sub -> True
+  int -> True
+  None -> True
+  str -> True
+  list -> True
+  object -> True
+===== exec 'def f(): pass\nx = f.__builtins__ is given'
+  dict -> True
+  empty dict -> True
+  proxy -> True
+  empty proxy -> True
+  asked -> True
+  raises -> True
+  sub -> True
+  chainmap -> True
+  module -> False
+  module sub -> False
+  int -> True
+  None -> True
+  str -> True
+  list -> True
+  object -> True
+===== exec 'x = frame(0).f_builtins is given'
+  dict -> True
+  empty dict -> True
+  proxy -> True
+  empty proxy -> True
+  asked -> True
+  raises -> True
+  sub -> True
+  chainmap -> True
+  module -> False
+  module sub -> False
+  int -> True
+  None -> True
+  str -> True
+  list -> True
+  object -> True
+===== exec 'def f(): return frame(0).f_builtins is given\nx = f()'
+  dict -> True
+  empty dict -> True
+  proxy -> True
+  empty proxy -> True
+  asked -> True
+  raises -> True
+  sub -> True
+  chainmap -> True
+  module -> False
+  module sub -> False
+  int -> True
+  None -> True
+  str -> True
+  list -> True
+  object -> True
+===== exec "x = run('superglobal', {})"
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec "d = {}\nrun('1', d)\nx = d['__builtins__'] is given"
+  dict -> True
+  empty dict -> True
+  proxy -> True
+  empty proxy -> True
+  asked -> True
+  raises -> True
+  sub -> True
+  chainmap -> True
+  module -> False
+  module sub -> False
+  int -> True
+  None -> True
+  str -> True
+  list -> True
+  object -> True
+===== exec 'x = it.__reduce__()[0]'
+  dict -> AttributeError: iter
+  empty dict -> AttributeError: iter
+  proxy -> AttributeError: iter
+  empty proxy -> AttributeError: iter
+  asked -> AttributeError: iter
+  raises -> ValueError: asked for 'iter'
+  sub -> made up iter
+  chainmap -> AttributeError: iter
+  module -> iter
+  module sub -> AttributeError: iter
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'x = method.__reduce__()[0]'
+  dict -> AttributeError: getattr
+  empty dict -> AttributeError: getattr
+  proxy -> AttributeError: getattr
+  empty proxy -> AttributeError: getattr
+  asked -> AttributeError: getattr
+  raises -> ValueError: asked for 'getattr'
+  sub -> made up getattr
+  chainmap -> AttributeError: getattr
+  module -> getattr
+  module sub -> AttributeError: getattr
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'x = rev.__reduce__()[0]'
+  dict -> AttributeError: reversed
+  empty dict -> AttributeError: reversed
+  proxy -> AttributeError: reversed
+  empty proxy -> AttributeError: reversed
+  asked -> AttributeError: reversed
+  raises -> ValueError: asked for 'reversed'
+  sub -> made up reversed
+  chainmap -> AttributeError: reversed
+  module -> reversed
+  module sub -> AttributeError: reversed
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec "try:\n    1/0\nexcept ZeroDivisionError:\n    x = 'caught'"
+  dict -> NameError: name 'ZeroDivisionError' is not defined
+  empty dict -> NameError: name 'ZeroDivisionError' is not defined
+  proxy -> NameError: name 'ZeroDivisionError' is not defined
+  empty proxy -> NameError: name 'ZeroDivisionError' is not defined
+  asked -> NameError: name 'ZeroDivisionError' is not defined
+  raises -> ValueError: asked for 'ZeroDivisionError'
+  sub -> TypeError: catching classes that do not inherit from BaseException is not allowed
+  chainmap -> NameError: name 'ZeroDivisionError' is not defined
+  module -> caught
+  module sub -> NameError: name 'ZeroDivisionError' is not defined
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec "x = f'{1!r}'"
+  dict -> 1
+  empty dict -> 1
+  proxy -> 1
+  empty proxy -> 1
+  asked -> 1
+  raises -> 1
+  sub -> 1
+  chainmap -> 1
+  module -> 1
+  module sub -> 1
+  int -> 1
+  None -> 1
+  str -> 1
+  list -> 1
+  object -> 1
+===== exec 'x = [*range_(2)]'
+  dict -> [0, 1]
+  empty dict -> [0, 1]
+  proxy -> [0, 1]
+  empty proxy -> [0, 1]
+  asked -> [0, 1]
+  raises -> [0, 1]
+  sub -> [0, 1]
+  chainmap -> [0, 1]
+  module -> [0, 1]
+  module sub -> [0, 1]
+  int -> [0, 1]
+  None -> [0, 1]
+  str -> [0, 1]
+  list -> [0, 1]
+  object -> [0, 1]
+===== exec 'del superglobal'
+  dict -> NameError: name 'superglobal' is not defined
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> NameError: name 'superglobal' is not defined
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> NameError: name 'superglobal' is not defined
+  raises -> NameError: name 'superglobal' is not defined
+  sub -> NameError: name 'superglobal' is not defined
+  chainmap -> NameError: name 'superglobal' is not defined
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> NameError: name 'superglobal' is not defined
+  int -> NameError: name 'superglobal' is not defined
+  None -> NameError: name 'superglobal' is not defined
+  str -> NameError: name 'superglobal' is not defined
+  list -> NameError: name 'superglobal' is not defined
+  object -> NameError: name 'superglobal' is not defined
+===== exec 'type T = superglobal\nx = T.__value__'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'def f[T: superglobal](): pass\nx = f.__type_params__[0].__bound__'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'async def f(): return superglobal\nc = f()\ntry:\n    c.send(None)\nexcept stop as e:\n    x = e.value'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== exec 'def g():\n    yield superglobal\nx = next_(g())'
+  dict -> 1
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> 1
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> 1
+  raises -> ValueError: asked for 'superglobal'
+  sub -> 1
+  chainmap -> 1
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> of a module
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+===== what is asked, and in what order
+['superglobal', 'len', 'superglobal']
+['__build_class__']
+import -> None
+['__import__'] p.q
+===== functions made of code and globals
+  dict -> (True, 1)
+  empty dict -> NameError: name 'superglobal' is not defined
+  proxy -> (True, 1)
+  empty proxy -> NameError: name 'superglobal' is not defined
+  asked -> (True, 1)
+  raises -> ValueError: asked for 'superglobal'
+  sub -> (True, 1)
+  chainmap -> (True, 1)
+  module -> NameError: name 'superglobal' is not defined
+  module sub -> (True, 'of a module')
+  int -> TypeError: 'int' object is not subscriptable
+  None -> TypeError: 'NoneType' object is not subscriptable
+  str -> TypeError: string indices must be integers, not 'str'
+  list -> TypeError: list indices must be integers or slices, not str
+  object -> TypeError: 'object' object is not subscriptable
+none given -> True
+===== it is settled when the function is made
+changed afterwards -> first
+what it has is changed -> third
+set -> AttributeError: readonly attribute
+===== hot code
+proxy -> 100000

@@ -1,0 +1,171 @@
+type('A') -> ("'A'", "'A'", 'str')
+type('\xc4') -> ("'\\xc4'", "'\\xc4'", 'str')
+type('\U0001f40d') -> ("'\\U0001f40d'", "'\\U0001f40d'", 'str')
+type('B.A') -> ("'B.A'", "'B.A'", 'str')
+type('42') -> ("'42'", "'42'", 'str')
+type('') -> ("''", "''", 'str')
+type('A\x00B') -> ValueError: type name must not contain null characters
+type('\x00') -> ValueError: type name must not contain null characters
+type('A\udcdcB') -> UnicodeEncodeError: 'utf-8' codec can't encode character '\udcdc' in position 1: surrogates not allowed
+type('\ud800') -> UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+type(b'A') -> TypeError: type.__new__() argument 1 must be str, not bytes
+type(1) -> TypeError: type.__new__() argument 1 must be str, not int
+type(None) -> TypeError: type.__new__() argument 1 must be str, not None
+type('a b') -> ("'a b'", "'a b'", 'str')
+type('sub') -> ("'sub'", "'sub'", 'S')
+__name__ = 'A' -> ("'A'", 'C', 'str')
+  afterwards -> 'A'
+__name__ = '\xc4' -> ("'\\xc4'", 'C', 'str')
+  afterwards -> '\xc4'
+__name__ = '\U0001f40d' -> ("'\\U0001f40d'", 'C', 'str')
+  afterwards -> '\U0001f40d'
+__name__ = 'B.A' -> ("'B.A'", 'C', 'str')
+  afterwards -> 'B.A'
+__name__ = '42' -> ("'42'", 'C', 'str')
+  afterwards -> '42'
+__name__ = '' -> ("''", 'C', 'str')
+  afterwards -> ''
+__name__ = 'A\x00B' -> ValueError: type name must not contain null characters
+  afterwards -> 'C'
+__name__ = '\x00' -> ValueError: type name must not contain null characters
+  afterwards -> 'C'
+__name__ = 'A\udcdcB' -> UnicodeEncodeError: 'utf-8' codec can't encode character '\udcdc' in position 1: surrogates not allowed
+  afterwards -> 'C'
+__name__ = '\ud800' -> UnicodeEncodeError: 'utf-8' codec can't encode character '\ud800' in position 0: surrogates not allowed
+  afterwards -> 'C'
+__name__ = b'A' -> TypeError: can only assign string to C.__name__, not 'bytes'
+  afterwards -> 'C'
+__name__ = 1 -> TypeError: can only assign string to C.__name__, not 'int'
+  afterwards -> 'C'
+__name__ = None -> TypeError: can only assign string to C.__name__, not 'NoneType'
+  afterwards -> 'C'
+__name__ = 'a b' -> ("'a b'", 'C', 'str')
+  afterwards -> 'a b'
+__name__ = 'sub' -> ("'sub'", 'C', 'S')
+  afterwards -> 'sub'
+__qualname__ = 'A' -> ("'A'", 'C')
+type(..., {'__qualname__': 'A'}) -> 'A'
+__qualname__ = '\xc4' -> ("'\\xc4'", 'C')
+type(..., {'__qualname__': '\xc4'}) -> '\xc4'
+__qualname__ = '\U0001f40d' -> ("'\\U0001f40d'", 'C')
+type(..., {'__qualname__': '\U0001f40d'}) -> '\U0001f40d'
+__qualname__ = 'B.A' -> ("'B.A'", 'C')
+type(..., {'__qualname__': 'B.A'}) -> 'B.A'
+__qualname__ = '42' -> ("'42'", 'C')
+type(..., {'__qualname__': '42'}) -> '42'
+__qualname__ = '' -> ("''", 'C')
+type(..., {'__qualname__': ''}) -> ''
+__qualname__ = 'A\x00B' -> ("'A\\x00B'", 'C')
+type(..., {'__qualname__': 'A\x00B'}) -> 'A\x00B'
+__qualname__ = '\x00' -> ("'\\x00'", 'C')
+type(..., {'__qualname__': '\x00'}) -> '\x00'
+__qualname__ = 'A\udcdcB' -> ("'A\\udcdcB'", 'C')
+type(..., {'__qualname__': 'A\udcdcB'}) -> 'A\udcdcB'
+__qualname__ = '\ud800' -> ("'\\ud800'", 'C')
+type(..., {'__qualname__': '\ud800'}) -> '\ud800'
+__qualname__ = b'A' -> TypeError: can only assign string to C.__qualname__, not 'bytes'
+type(..., {'__qualname__': b'A'}) -> TypeError: type __qualname__ must be a str, not bytes
+__qualname__ = 1 -> TypeError: can only assign string to C.__qualname__, not 'int'
+type(..., {'__qualname__': 1}) -> TypeError: type __qualname__ must be a str, not int
+__qualname__ = None -> TypeError: can only assign string to C.__qualname__, not 'NoneType'
+type(..., {'__qualname__': None}) -> TypeError: type __qualname__ must be a str, not NoneType
+__qualname__ = 'a b' -> ("'a b'", 'C')
+type(..., {'__qualname__': 'a b'}) -> 'a b'
+__qualname__ = 'sub' -> ("'sub'", 'C')
+type(..., {'__qualname__': 'sub'}) -> 'sub'
+type(..., {'__doc__': 'x'}) -> 'x'
+__doc__ = 'x' -> 'x'
+type(..., {'__doc__': '\xc4'}) -> '\xc4'
+__doc__ = '\xc4' -> '\xc4'
+type(..., {'__doc__': 'x\x00y'}) -> 'x\x00y'
+__doc__ = 'x\x00y' -> 'x\x00y'
+type(..., {'__doc__': 'x\udcdcy'}) -> UnicodeEncodeError: 'utf-8' codec can't encode character '\udcdc' in position 1: surrogates not allowed
+__doc__ = 'x\udcdcy' -> 'x\udcdcy'
+type(..., {'__doc__': b'x'}) -> b'x'
+__doc__ = b'x' -> b'x'
+type(..., {'__doc__': 42}) -> 42
+__doc__ = 42 -> 42
+type(..., {'__doc__': None}) -> None
+__doc__ = None -> None
+type(..., {'__doc__': 'd'}) -> 'd'
+__doc__ = 'd' -> 'd'
+del __name__ -> TypeError: cannot delete '__name__' attribute of immutable type 'C'
+del __qualname__ -> TypeError: cannot delete '__qualname__' attribute of immutable type 'C'
+del __doc__ -> TypeError: cannot delete '__doc__' attribute of immutable type 'C'
+del __doc__ twice -> TypeError: cannot delete '__doc__' attribute of immutable type 'C'
+del __module__ -> TypeError: cannot delete '__module__' attribute of immutable type 'C'
+int.__name__ = 'x' -> TypeError: cannot set '__name__' attribute of immutable type 'int'
+int.__module__ = 'x' -> TypeError: cannot set '__module__' attribute of immutable type 'int'
+int.__doc__ = 'x' -> TypeError: cannot set '__doc__' attribute of immutable type 'int'
+== __firstlineno__ goes when __module__ is set
+42 42
+testmodule False
+get -> AttributeError: type object 'A' has no attribute '__firstlineno__'
+43
+True
+False ['__module__', '__static_attributes__']
+5 False
+== the namespace
+[('b', 2), ('a', 1)]
+keys() -> [('a', 1)]
+__iter__() -> [('a', 'got a')]
+both -> [('k1', 'got k1')]
+__getitem__() alone -> [('a', 1)]
+a proxy -> TypeError: type.__new__() argument 3 must be dict, not mappingproxy
+keys that are no str -> ['a', (1, 2), 1]
+False
+['p', 'z', 'y']
+== dir() asks the locals for their keys
+list -> ['x', 'y', 'z']
+keys() gives 'int' -> TypeError: K.keys() returned a non-iterable (type int)
+keys() gives 'str' -> ['a', 'b']
+keys() gives 'tuple' -> ['a', 'c']
+keys() gives 'str_ascii_iterator' -> ['a', 'b', 'c']
+keys() gives 'dict' -> ['a', 'b']
+keys() gives 'list' -> [1, 2, 3]
+keys() gives 'list' -> TypeError: '<' not supported between instances of 'str' and 'int'
+keys() gives 'NoneType' -> TypeError: K.keys() returned a non-iterable (type NoneType)
+no keys() -> AttributeError: 'NoKeys' object has no attribute 'keys'
+dict subclass -> ['x', 'y', 'z']
+UserDict -> ['a', 'b']
+ChainMap -> ['a', 'b']
+in a class -> ['x', 'y']
+keys that do not compare -> TypeError: '<' not supported between instances of 'int' and 'str'
+locals -> M
+comprehension -> [['i'], ['i']]
+not a mapping -> TypeError: locals must be a mapping
+globals not a dict -> TypeError: globals must be a real dict; try eval(expr, {}, mapping)
+== iter(function, sentinel) that is used up by the function
+next -> StopIteration: 
+next again -> StopIteration: 
+StopIteration from the function -> StopIteration: 
+and then -> StopIteration: 
+something else -> ValueError: v
+and then -> ValueError: v
+comparing raises -> KeyError: 'compared'
+and then -> KeyError: 'compared'
+reduce -> ('iter', 2)
+done -> StopIteration: 
+reduce of what is done -> ('iter', ((),))
+== a key of the builtins that is no str
+str -> (True, ('',))
+list -> (True, ([],))
+getitem -> (True, ((),))
+bytes -> (True, ((),))
+bytearray -> (True, ((),))
+tuple -> (True, ((),))
+callable -> (True, ((),))
+alias -> (True, ((),))
+range -> (True, (range(0, 3),), None)
+set -> (True, ([1, 2],))
+dict -> (True, ([1],))
+dict items -> (True, ([(1, 2)],))
+reversed -> (True, ([],))
+len, found by what is equal to its name -> 3
+in a function -> 4
+eval -> 2
+gone -> NameError: name 'len' is not defined
+back -> 3
+a global -> found in the globals
+a global, at the top -> found in the globals
+a global, gone -> NameError: name 'made_up' is not defined

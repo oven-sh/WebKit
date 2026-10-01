@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "PythonSymbolTable.h"
+#include "PythonFunctionInfo.h"
 #include "PythonText.h"
 
 #include "VM.h"
@@ -129,15 +130,21 @@ public:
         return analyzeBlock(*m_table.m_top, nullptr, free, global, typeParameters, nullptr);
     }
 
-    bool buildFragment(Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, bool canSeeClassScope, bool isNested, FragmentIs fragmentIs)
+    bool buildFragment(Statement* statement, Expression* expression, const FunctionInfo& info, const Identifier* privateName, bool canSeeClassScope, FragmentIs fragmentIs)
     {
         m_fragmentIs = fragmentIs;
         // As if it were in a function whose only variables are those.
         if (!enterBlock(m_top, BlockType::Function, &m_table, { }))
             return false;
+        const Vector<Identifier>& freeVariables = info.freeVariables;
         Block& top = *m_current;
         top.canSeeClassScope = canSeeClassScope;
-        top.isNested = isNested;
+        top.isNested = info.isNested;
+        if (info.manglesOnlySomeNames) {
+            top.mangledNames = adoptRef(*new RefCountedNameSet);
+            for (auto& name : info.namesMangled)
+                top.mangledNames->names.add(name.impl());
+        }
         m_table.m_top = &top;
         m_private = privateName;
         m_fragmentTop = &top;
@@ -151,10 +158,16 @@ public:
         for (auto& name : freeVariables)
             top.add(name.impl()->is8Bit() ? m_arena.identifiers().makeIdentifier(m_vm, name.impl()->span8()) : m_arena.identifiers().makeIdentifier(m_vm, name.impl()->span16())).flags = DefLocal;
 
+        // The class that it can see into, as far as it matters here.
+        Block classBlock;
+        classBlock.type = BlockType::Class;
+        for (auto& name : info.namesSaidToBeGlobalInClass)
+            classBlock.add(name).flags = DefGlobal;
+
         NameSet free;
         NameSet global;
         NameSet typeParameters;
-        return analyzeBlock(top, nullptr, free, global, typeParameters, nullptr);
+        return analyzeBlock(top, nullptr, free, global, typeParameters, canSeeClassScope ? &classBlock : nullptr);
     }
 
 private:
@@ -1405,6 +1418,8 @@ private:
                 continue;
             block.children.removeAt(i);
             block.children.insertVector(i, child->children);
+            block.inlinedComprehensions.append(child);
+            block.inlinedComprehensions.appendVector(child->inlinedComprehensions);
         }
 
         if (block.isFunctionLike())
@@ -1468,12 +1483,12 @@ std::optional<unsigned> SymbolTable::futureFeaturesOf(VM& vm, Arena& arena, Modu
     return table.m_futureFeatures;
 }
 
-std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested, FragmentIs fragmentIs)
+std::unique_ptr<SymbolTable> SymbolTable::buildFragment(VM& vm, Arena& arena, Statement* statement, Expression* expression, const FunctionInfo& info, const Identifier* privateName, bool canSeeClassScope, FragmentIs fragmentIs)
 {
     std::unique_ptr<SymbolTable> table { new SymbolTable };
-    table->m_futureFeatures = futureFeatures;
+    table->m_futureFeatures = info.futureFeatures;
     SyntaxError error;
-    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, freeVariables, privateName, canSeeClassScope, isNested, fragmentIs))
+    if (!SymbolTableBuilder(vm, arena, *table, error).buildFragment(statement, expression, info, privateName, canSeeClassScope, fragmentIs))
         return nullptr;
     return table;
 }

@@ -114,6 +114,8 @@ FixedVector<VirtualRegister> registersThatFrameObjectSees(FunctionExecutable* ex
     };
     for (auto& variable : details->frameVariables)
         add(variable.location);
+    for (auto& variable : details->comprehensionVariables)
+        add(variable.location);
     add(details->frameObjectRegister);
     add(details->scopeRegister);
     add(details->globalsRegister);
@@ -572,6 +574,8 @@ enum Bit : uint32_t {
     CanSeeClassScope = 1 << 8,
     IsSyntaxTree = 1 << 9, // The source is a tree, written out: PythonSyntaxTreeSource.h.
     DefinesWhatIsSaidToBeGlobal = 1 << 10,
+    HasNamesSaidToBeGlobalInClass = 1 << 11,
+    ManglesOnlySomeNames = 1 << 12,
 };
 }
 
@@ -588,7 +592,8 @@ static ByteVector bytesOf(FunctionExecutable* executable)
     writer.number((info.isGenerator ? CodeBit::IsGenerator : 0) | (info.isCoroutine ? CodeBit::IsCoroutine : 0) | (info.hasVariadic ? CodeBit::HasVariadic : 0)
         | (info.hasKeywordVariadic ? CodeBit::HasKeywordVariadic : 0) | (info.usesNamespace ? CodeBit::UsesNamespace : 0) | (info.isNested ? CodeBit::IsNested : 0)
         | (info.isMethod ? CodeBit::IsMethod : 0) | (info.hasDocstring ? CodeBit::HasDocstring : 0) | (info.canSeeClassScope ? CodeBit::CanSeeClassScope : 0) | (info.definesWhatIsSaidToBeGlobal ? CodeBit::DefinesWhatIsSaidToBeGlobal : 0)
-        | (executable->source().provider()->isPythonSyntaxTree() ? CodeBit::IsSyntaxTree : 0));
+        | (executable->source().provider()->isPythonSyntaxTree() ? CodeBit::IsSyntaxTree : 0) | (info.namesSaidToBeGlobalInClass.isEmpty() ? 0 : CodeBit::HasNamesSaidToBeGlobalInClass)
+        | (info.manglesOnlySomeNames ? CodeBit::ManglesOnlySomeNames : 0));
     writer.number(info.typeParameterIndex);
     writer.number(info.futureFeatures);
     writer.byte(info.optimizationLevel);
@@ -597,6 +602,10 @@ static ByteVector bytesOf(FunctionExecutable* executable)
     writer.string(info.docstring);
     writer.string(info.privateName.string());
     writer.names(sortedFreeVariables(info));
+    if (!info.namesSaidToBeGlobalInClass.isEmpty())
+        writer.names(info.namesSaidToBeGlobalInClass);
+    if (info.manglesOnlySomeNames)
+        writer.names(info.namesMangled);
     writer.names(info.parameterNames);
     writer.number(info.positionalOnlyCount);
     writer.number(info.positionalCount);
@@ -733,6 +742,11 @@ static FunctionExecutable* executableFromBytes(JSGlobalObject* globalObject, std
     info->docstring = reader.string();
     info->privateName = reader.name(vm);
     info->freeVariables = reader.names(vm);
+    if (bits & CodeBit::HasNamesSaidToBeGlobalInClass)
+        info->namesSaidToBeGlobalInClass = reader.names(vm);
+    info->manglesOnlySomeNames = bits & CodeBit::ManglesOnlySomeNames;
+    if (info->manglesOnlySomeNames)
+        info->namesMangled = reader.names(vm);
     info->parameterNames = reader.names(vm);
     info->positionalOnlyCount = reader.number();
     info->positionalCount = reader.number();
@@ -1094,9 +1108,19 @@ void initializeCodeType(JSGlobalObject* globalObject)
         { "_varname_from_oparg"_s, codeVariableName },
     });
     addComparisons(globalObject, code, codeEq);
-    addMember(globalObject, code, "co_name"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).name.string()); });
-    addMember(globalObject, code, "co_qualname"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), infoOf(executableOf(self)).qualifiedName); });
-    addMember(globalObject, code, "co_filename"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), executableOf(self)->source().provider()->sourceURL()); });
+    // Each is the one str however often it is asked for.
+    static constexpr auto kept = [] (JSGlobalObject* globalObject, JSValue self, const Identifier& name, const String& text) -> JSValue {
+        VM& vm = globalObject->vm();
+        // _imp._fix_co_filename() changes what the source says that it is from.
+        if (JSValue made = asObject(self)->getDirect(vm, name); made && asString(made)->tryGetValue() == text)
+            return made;
+        JSString* made = jsString(vm, text);
+        asObject(self)->putDirect(vm, name, made);
+        return made;
+    };
+    addMember(globalObject, code, "co_name"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return kept(globalObject, self, globalObject->vm().pythonNames().private_name, infoOf(executableOf(self)).name.string()); });
+    addMember(globalObject, code, "co_qualname"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return kept(globalObject, self, globalObject->vm().pythonNames().private_qualname, infoOf(executableOf(self)).qualifiedName); });
+    addMember(globalObject, code, "co_filename"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return kept(globalObject, self, globalObject->vm().pythonNames().private_filename, executableOf(self)->source().provider()->sourceURL()); });
     addMember(globalObject, code, "co_firstlineno"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, firstLineOf(infoOf(executableOf(self)))); });
     addMember(globalObject, code, "co_flags"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromUInt64(globalObject, flagsOf(infoOf(executableOf(self)))); });
     addMember(globalObject, code, "co_argcount"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {

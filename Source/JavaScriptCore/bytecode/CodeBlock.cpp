@@ -3940,6 +3940,12 @@ size_t CodeBlock::predictedMachineCodeSize()
     return static_cast<size_t>(doubleResult);
 }
 
+PutPropertySlot::Context CodeBlock::putByIdContext(CodeOrigin codeOrigin) const
+{
+    InlineCallFrame* inlineCallFrame = codeOrigin.inlineCallFrame();
+    return inlineCallFrame ? inlineCallFrame->baselineCodeBlock->putByIdContext() : putByIdContext();
+}
+
 String CodeBlock::nameForRegister(VirtualRegister virtualRegister)
 {
     for (auto& constantRegister : m_constantRegisters) {

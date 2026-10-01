@@ -558,12 +558,6 @@ PYTHON_NATIVE(genericAliasSubclassCheck)
     return JSValue::encode(raiseTypeError(globalObject, scope, "issubclass() argument 2 cannot be a parameterized generic"_s));
 }
 
-static JSValue builtin(JSGlobalObject* globalObject, ASCIILiteral name)
-{
-    VM& vm = globalObject->vm();
-    return getStoredAttribute(vm, globalObject->pyRealm()->builtinsModule(), Identifier::fromString(vm, name));
-}
-
 PYTHON_NATIVE(genericAliasReduce)
 {
     NATIVE_PROLOGUE();
@@ -571,7 +565,9 @@ PYTHON_NATIVE(genericAliasReduce)
     if (isStarred(alias)) {
         JSValue iterator = getIterator(globalObject, newGenericAlias(globalObject, alias->field(AliasField::Origin), alias->field(AliasField::Arguments), false));
         RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(PyTuple::create(globalObject, { builtin(globalObject, "next"_s), PyTuple::create(globalObject, { iterator }) }));
+        JSValue next = getBuiltin(globalObject, "next"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(PyTuple::create(globalObject, { next, PyTuple::create(globalObject, { iterator }) }));
     }
     return JSValue::encode(PyTuple::create(globalObject, { typeOf(globalObject, alias)->object(), PyTuple::create(globalObject, { alias->field(AliasField::Origin), alias->field(AliasField::Arguments) }) }));
 }
@@ -579,7 +575,7 @@ PYTHON_NATIVE(genericAliasReduce)
 PYTHON_NATIVE(genericAliasDir)
 {
     NATIVE_PROLOGUE();
-    JSValue list = call(globalObject, builtin(globalObject, "dir"_s), asNativeObject(args[0])->field(AliasField::Origin));
+    JSValue list = dirOf(globalObject, asNativeObject(args[0])->field(AliasField::Origin));
     RETURN_IF_EXCEPTION(scope, { });
     for (const Identifier* own : { &names.dunder_class, &names.dunder_origin, &names.dunder_args, &names.dunder_unpacked, &names.dunder_parameters,
         &names.dunder_typing_unpacked_tuple_args, &names.dunder_mro_entries, &names.dunder_reduce_ex, &names.dunder_reduce }) {
@@ -622,9 +618,10 @@ PYTHON_NATIVE(genericAliasIteratorNext)
 PYTHON_NATIVE(genericAliasIteratorReduce)
 {
     NATIVE_PROLOGUE();
-    UNUSED_PARAM(scope);
+    JSValue iter = getBuiltin(globalObject, "iter"_s);
+    RETURN_IF_EXCEPTION(scope, { });
     JSValue object = asNativeObject(args[0])->field(0);
-    return JSValue::encode(PyTuple::create(globalObject, { builtin(globalObject, "iter"_s), PyTuple::create(globalObject, { object ? object : JSValue(PyTuple::create(globalObject, 0)) }) }));
+    return JSValue::encode(PyTuple::create(globalObject, { iter, PyTuple::create(globalObject, { object ? object : JSValue(PyTuple::create(globalObject, 0)) }) }));
 }
 
 // ---- typing.Union

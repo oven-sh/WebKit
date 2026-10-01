@@ -28,6 +28,7 @@
 
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include "PyObjects.h"
 #include "PyTuple.h"
 #include "PythonOperations.h"
 #include "TopExceptionScope.h"
@@ -220,7 +221,30 @@ bool PyHashTable::addWithHash(JSGlobalObject* globalObject, JSValue key, uint32_
             setValueAt(vm, entry, value);
         return true;
     }
+    RELEASE_AND_RETURN(scope, append(globalObject, key, hash, value));
+}
 
+JSValue PyHashTable::getOrAdd(JSGlobalObject* globalObject, JSValue key, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    int64_t fullHash = hashOfKey(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, { });
+    uint32_t hash = foldHash(fullHash);
+    int entry = find(globalObject, key, hash);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (entry != notFound)
+        return valueAt(entry);
+    append(globalObject, key, hash, value);
+    RETURN_IF_EXCEPTION(scope, { });
+    return value;
+}
+
+// Of a key that is not there.
+bool PyHashTable::append(JSGlobalObject* globalObject, JSValue key, uint32_t hash, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     if (!m_storage || m_used == m_storage->capacity() || m_filled >= m_storage->capacity()) {
         grow(vm, globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -256,12 +280,14 @@ void PyHashTable::removeEntry(VM&, unsigned entry)
     ++m_version;
     while (m_first < m_used && !storage->key(m_first))
         ++m_first;
-    while (m_used > m_first && !storage->key(m_used - 1))
+}
+
+unsigned PyHashTable::trimToLastEntry()
+{
+    ASSERT(m_size);
+    while (!m_storage->key(m_used - 1))
         --m_used;
-    if (m_first == m_used) {
-        m_first = 0;
-        m_used = 0;
-    }
+    return m_used - 1;
 }
 
 JSValue PyHashTable::remove(JSGlobalObject* globalObject, JSValue key)
@@ -417,7 +443,7 @@ void PyDict::becomeBackedBy(JSGlobalObject* globalObject, JSObject* object)
     object->putDirect(vm, vm.pythonNames().private_dict, this);
     // See Python::loadGlobal(). It is a property so that no such object has the structure of one that is not.
     if (Python::typeOf(globalObject, this) != globalObject->pyRealm()->typeDict())
-        object->putDirect(vm, vm.pythonNames().private_isDictOfDerivedClass, jsBoolean(true));
+        object->putDirect(vm, vm.pythonNames().private_isAskedAsMapping, jsBoolean(true));
 }
 
 void PyDict::detach(JSGlobalObject* globalObject)
@@ -429,7 +455,7 @@ void PyDict::detach(JSGlobalObject* globalObject)
     items->copyFrom(globalObject, *this);
     clear(globalObject);
     JSCell::deleteProperty(object, globalObject, vm.pythonNames().private_dict);
-    JSCell::deleteProperty(object, globalObject, vm.pythonNames().private_isDictOfDerivedClass);
+    JSCell::deleteProperty(object, globalObject, vm.pythonNames().private_isAskedAsMapping);
     m_backing.clear();
     copyFrom(globalObject, *items);
 }
@@ -479,18 +505,41 @@ bool PyDict::isInBacking(JSGlobalObject* globalObject, JSValue key, Identifier& 
     if (!m_backing) [[likely]]
         return false;
     // An instance of a class derived from str is the same key as the string in it, unless the class says otherwise.
-    if (!key.isString())
-        return false;
+    if (!key.isString()) {
+        JSString* string = stringIn(key);
+        if (!string)
+            return false;
+        VM& vm = globalObject->vm();
+        auto& names = vm.pythonNames();
+        PyType* type = Python::typeOf(globalObject, key);
+        PyType* str = globalObject->pyRealm()->typeStr();
+        if (type->lookup(vm, names.dunder_hash) != str->lookup(vm, names.dunder_hash) || type->lookup(vm, names.dunder_eq) != str->lookup(vm, names.dunder_eq))
+            return false;
+        key = string;
+    }
     name = asString(key)->toIdentifier(globalObject);
     // See Python::getStoredAttribute().
     return !Python::isIndexLike(name);
 }
 
+// A key of a class of a program's may say that it is equal to a name. So whoever looks for a name among the properties, and would remember that it is not there, has to ask the dict: Python::loadGlobal().
+void PyDict::willKeepOutsideBacking(JSGlobalObject* globalObject, JSValue key)
+{
+    if (!m_backing) [[likely]]
+        return;
+    VM& vm = globalObject->vm();
+    if (Python::typeOf(globalObject, key)->hasFlag(PyType::IsHeapType) && !m_backing->getDirect(vm, vm.pythonNames().private_isAskedAsMapping))
+        m_backing->putDirect(vm, vm.pythonNames().private_isAskedAsMapping, jsBoolean(true));
+}
+
 JSValue PyDict::get(JSGlobalObject* globalObject, JSValue key)
 {
     Identifier name;
-    if (isInBacking(globalObject, key, name)) [[unlikely]]
-        return Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
+    if (isInBacking(globalObject, key, name)) [[unlikely]] {
+        JSValue value = Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
+        if (value || !Base::size())
+            return value;
+    }
     int entry = Base::find(globalObject, key);
     return entry < 0 ? JSValue() : Base::valueAt(entry);
 }
@@ -498,18 +547,31 @@ JSValue PyDict::get(JSGlobalObject* globalObject, JSValue key)
 bool PyDict::contains(JSGlobalObject* globalObject, JSValue key)
 {
     Identifier name;
-    if (isInBacking(globalObject, key, name)) [[unlikely]]
-        return !!Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name);
+    if (isInBacking(globalObject, key, name)) [[unlikely]] {
+        if (Python::getStoredAttribute(globalObject->vm(), m_backing.get(), name))
+            return true;
+        if (!Base::size())
+            return false;
+    }
     return Base::find(globalObject, key) >= 0;
 }
 
 bool PyDict::add(JSGlobalObject* globalObject, JSValue key, JSValue value, bool* wasAdded, bool replace)
 {
     Identifier name;
-    if (!isInBacking(globalObject, key, name)) [[likely]]
+    if (!isInBacking(globalObject, key, name)) [[likely]] {
+        willKeepOutsideBacking(globalObject, key);
         return Base::add(globalObject, key, value, wasAdded, replace);
+    }
     VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     bool isPresent = !!Python::getStoredAttribute(vm, m_backing.get(), name);
+    if (!isPresent && Base::size()) [[unlikely]] {
+        bool isKeptOutside = Base::find(globalObject, key) >= 0;
+        RETURN_IF_EXCEPTION(scope, false);
+        if (isKeptOutside)
+            RELEASE_AND_RETURN(scope, Base::add(globalObject, key, value, wasAdded, replace));
+    }
     if (wasAdded)
         *wasAdded = !isPresent;
     if (isPresent && !replace)
@@ -517,6 +579,102 @@ bool PyDict::add(JSGlobalObject* globalObject, JSValue key, JSValue value, bool*
     if (!Python::tryPutStoredAttribute(vm, m_backing.get(), name, value)) [[unlikely]] {
         Python::raiseCannotSetAttribute(globalObject, m_backing.get(), name, false);
         return false;
+    }
+    return true;
+}
+
+JSValue PyDict::getOrAdd(JSGlobalObject* globalObject, JSValue key, JSValue value)
+{
+    Identifier name;
+    if (!isInBacking(globalObject, key, name)) [[likely]] {
+        willKeepOutsideBacking(globalObject, key);
+        return Base::getOrAdd(globalObject, key, value);
+    }
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSValue present = get(globalObject, key);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (present)
+        return present;
+    RELEASE_AND_RETURN(scope, add(globalObject, key, value) ? value : JSValue());
+}
+
+bool PyDict::mergeFrom(JSGlobalObject* globalObject, PyDict& other)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (&other == this)
+        return true;
+    if (other.m_backing) {
+        for (auto& name : other.backingNames(vm)) {
+            // It may have gone since, or become something else.
+            JSValue value = other.backingValue(vm, name.get());
+            if (!value)
+                continue;
+            add(globalObject, jsString(vm, String(name.get())), value);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
+    }
+    PyHashTable& table = other.ownTable();
+    unsigned version = table.version();
+    for (unsigned entry = table.firstEntry(); entry < table.entryCount(); ++entry) {
+        JSValue key = table.keyAt(entry);
+        if (!key)
+            continue;
+        Identifier name;
+        if (isInBacking(globalObject, key, name)) [[unlikely]]
+            add(globalObject, key, table.valueAt(entry));
+        else {
+            willKeepOutsideBacking(globalObject, key);
+            Base::addWithHash(globalObject, key, table.hashAt(entry), table.valueAt(entry));
+        }
+        RETURN_IF_EXCEPTION(scope, false);
+        // Comparing keys can run anything.
+        if (table.version() != version) [[unlikely]] {
+            Python::raise(globalObject, scope, BuiltinType::RuntimeError, "dict mutated during update"_s);
+            return false;
+        }
+    }
+    return true;
+}
+
+bool PyDict::hasAllThatIsIn(JSGlobalObject* globalObject, PyDict& other)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool same = true;
+    if (m_backing || other.m_backing) {
+        forEach(globalObject, [&] (JSValue key, JSValue value) {
+            JSValue ofOther = other.get(globalObject, key);
+            same = ofOther && Python::isEqual(globalObject, value, ofOther);
+            return same;
+        });
+        RETURN_IF_EXCEPTION(scope, false);
+        return same;
+    }
+    PyHashTable& table = ownTable();
+    PyHashTable& otherTable = other.ownTable();
+    for (unsigned entry = table.firstEntry(); same && entry < table.entryCount(); ++entry) {
+        JSValue key = table.keyAt(entry);
+        if (!key)
+            continue;
+        JSValue value = table.valueAt(entry);
+        int found = otherTable.find(globalObject, key, table.hashAt(entry));
+        RETURN_IF_EXCEPTION(scope, false);
+        same = found >= 0 && Python::isEqual(globalObject, value, otherTable.valueAt(found));
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    return same;
+}
+
+bool PyDict::addKeysOf(JSGlobalObject* globalObject, PyHashTable& table, JSValue value)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    ASSERT(!m_backing);
+    for (unsigned entry = table.firstEntry(); entry < table.entryCount(); ++entry) {
+        if (JSValue key = table.keyAt(entry)) {
+            Base::addWithHash(globalObject, key, table.hashAt(entry), value);
+            RETURN_IF_EXCEPTION(scope, false);
+        }
     }
     return true;
 }
@@ -529,7 +687,7 @@ JSValue PyDict::remove(JSGlobalObject* globalObject, JSValue key)
     VM& vm = globalObject->vm();
     JSValue value = Python::getStoredAttribute(vm, m_backing.get(), name);
     if (!value)
-        return { };
+        return Base::size() ? Base::remove(globalObject, key) : JSValue();
     if (!Python::mayDeleteStoredAttribute(vm, m_backing.get(), name)) [[unlikely]] {
         Python::raiseCannotSetAttribute(globalObject, m_backing.get(), name, true);
         return { };
@@ -541,10 +699,13 @@ JSValue PyDict::remove(JSGlobalObject* globalObject, JSValue key)
 bool PyDict::removeLast(JSGlobalObject* globalObject, JSValue& key, JSValue& value)
 {
     VM& vm = globalObject->vm();
-    if (unsigned count = Base::entryCount()) {
-        key = Base::keyAt(count - 1);
-        value = Base::valueAt(count - 1);
-        Base::removeEntry(vm, count - 1);
+    if (Base::size()) {
+        unsigned last = Base::trimToLastEntry();
+        key = Base::keyAt(last);
+        value = Base::valueAt(last);
+        Base::removeEntry(vm, last);
+        if (Base::size())
+            Base::trimToLastEntry();
         return true;
     }
     if (!m_backing)

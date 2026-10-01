@@ -97,12 +97,34 @@ JSArray* namesOfExports(JSGlobalObject* globalObject, JSModuleNamespaceObject* m
     return asList(newList(globalObject, strings));
 }
 
-// PyMapping_GetOptionalItem(), of the dict that an object is the properties of. Empty if it is not there, or if it raised.
+static bool isAskedAsMapping(VM& vm, JSObject* namespaceObject)
+{
+    return !!namespaceObject->getDirect(vm, vm.pythonNames().private_isAskedAsMapping);
+}
+
+JSObject* namespaceStandingFor(JSGlobalObject* globalObject, JSValue mapping)
+{
+    VM& vm = globalObject->vm();
+    JSObject* object = constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
+    object->putDirect(vm, vm.pythonNames().private_dict, mapping);
+    object->putDirect(vm, vm.pythonNames().private_isAskedAsMapping, jsBoolean(true));
+    return object;
+}
+
+JSValue mappingOfNamespace(JSGlobalObject* globalObject, JSObject* namespaceObject)
+{
+    VM& vm = globalObject->vm();
+    if (JSValue existing = namespaceObject->getDirect(vm, vm.pythonNames().private_dict))
+        return existing;
+    return PyDict::backedBy(globalObject, namespaceObject);
+}
+
+// PyMapping_GetOptionalItem()
 static JSValue getOptionalItem(JSGlobalObject* globalObject, JSObject* namespaceObject, PropertyName name)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = getItem(globalObject, PyDict::backedBy(globalObject, namespaceObject), jsString(vm, String(name.uid())));
+    JSValue value = getItem(globalObject, mappingOfNamespace(globalObject, namespaceObject), jsString(vm, String(name.uid())));
     if (scope.exception()) [[unlikely]] {
         catchException(globalObject, BuiltinType::KeyError);
         return { };
@@ -110,14 +132,42 @@ static JSValue getOptionalItem(JSGlobalObject* globalObject, JSObject* namespace
     return value;
 }
 
+JSValue findInNamespace(JSGlobalObject* globalObject, JSObject* namespaceObject, PropertyName name)
+{
+    VM& vm = globalObject->vm();
+    if (isAskedAsMapping(vm, namespaceObject)) [[unlikely]]
+        return getOptionalItem(globalObject, namespaceObject, name);
+    return getStoredAttribute(vm, namespaceObject, name);
+}
+
+JSObject* currentBuiltins(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    if (CallFrame* frame = innermostPythonFrame(vm)) {
+        if (JSObject* builtins = builtinsOfScope(vm, uncheckedDowncast<JSFunction>(frame->jsCallee())->scope()))
+            return builtins;
+    }
+    return globalObject->pyRealm()->builtinsModule();
+}
+
+JSValue getBuiltin(JSGlobalObject* globalObject, ASCIILiteral name)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue value = findInNamespace(globalObject, currentBuiltins(globalObject), Identifier::fromString(vm, name));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (!value)
+        return raise(globalObject, scope, BuiltinType::AttributeError, String(name));
+    return value;
+}
+
 JSValue loadGlobal(JSGlobalObject* globalObject, JSObject* globals, JSObject* builtins, PropertyName name, GlobalLocation& location, GlobalsAre globalsAre)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto isOfDerivedClass = [&] (JSObject* object) { return !!object->getDirect(vm, vm.pythonNames().private_isDictOfDerivedClass); };
     // _PyEval_LoadGlobalStackRef(): a dict of a class that a program has derived is asked as anything is asked for an item, so that its __getitem__() and __missing__() have their say. Nothing is remembered of that.
     // annotationlib depends on it: it runs what works out annotations again with globals that make something up for whatever is not there.
-    if (globalsAre == GlobalsAre::AskedAsAMapping && isOfDerivedClass(globals)) [[unlikely]] {
+    if (globalsAre == GlobalsAre::AskedAsAMapping && isAskedAsMapping(vm, globals)) [[unlikely]] {
         JSValue value = getOptionalItem(globalObject, globals, name);
         RETURN_IF_EXCEPTION(scope, { });
         if (!value) {
@@ -144,7 +194,14 @@ JSValue loadGlobal(JSGlobalObject* globalObject, JSObject* globals, JSObject* bu
             location = { globalsStructure, nullptr, offset };
         return value;
     }
-    if (isOfDerivedClass(builtins)) [[unlikely]] {
+    if (isAskedAsMapping(vm, globals)) [[unlikely]] {
+        // It may have a key that is no str and says that it is equal to one.
+        JSValue value = PyDict::backedBy(globalObject, globals)->get(globalObject, jsString(vm, String(name.uid())));
+        RETURN_IF_EXCEPTION(scope, { });
+        if (value)
+            return value;
+    }
+    if (isAskedAsMapping(vm, builtins)) [[unlikely]] {
         JSValue value = getOptionalItem(globalObject, builtins, name);
         RETURN_IF_EXCEPTION(scope, { });
         if (!value)

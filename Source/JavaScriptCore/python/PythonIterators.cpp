@@ -38,17 +38,6 @@ namespace JSC { namespace Python {
 
 using IteratorKind = PyIterator::Kind;
 
-// builtins.iter, or whatever a program has put there
-JSValue getBuiltin(JSGlobalObject* globalObject, ASCIILiteral name)
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue value = globalObject->pyRealm()->builtinsModule()->getDirect(vm, Identifier::fromString(vm, name));
-    if (!value)
-        return raise(globalObject, scope, BuiltinType::AttributeError, String(name));
-    return value;
-}
-
 // An iterator over a str counts in code units, and Python in characters.
 static int64_t charactersBefore(JSGlobalObject* globalObject, JSString* string, int64_t units)
 {
@@ -174,8 +163,40 @@ PYTHON_NATIVE(iteratorReduce)
         break;
     }
 
+    // Finding the function can run anything, and this may be gone through meanwhile. These have what is left before that, as in CPython, and the rest look afterwards.
+    JSValue left;
+    switch (iterator->kind()) {
+    case IteratorKind::Range: {
+        int64_t stop = static_cast<int64_t>(static_cast<uint64_t>(iterator->index()) + static_cast<uint64_t>(iterator->stop()) * static_cast<uint64_t>(iterator->step()));
+        left = PyRange::create(globalObject, index(), intFromInt64(globalObject, stop), intFromInt64(globalObject, iterator->step()));
+        break;
+    }
+    case IteratorKind::LongRange: {
+        auto* whole = uncheckedDowncast<PyRange>(a.asCell());
+        auto operate = [&] (BinaryOperator op, JSValue left, JSValue right) { return numberBinaryOperation(globalObject, op, left, right); };
+        JSValue start = operate(BinaryOperator::Add, whole->start(), operate(BinaryOperator::Mult, iterator->b(), whole->step()));
+        JSValue stop = operate(BinaryOperator::Add, whole->start(), operate(BinaryOperator::Mult, whole->length(), whole->step()));
+        RETURN_IF_EXCEPTION(scope, { });
+        left = PyRange::create(globalObject, start, stop, whole->step());
+        break;
+    }
+    case IteratorKind::DictKeys:
+    case IteratorKind::DictValues:
+    case IteratorKind::DictItems:
+    case IteratorKind::DictReverseKeys:
+    case IteratorKind::DictReverseValues:
+    case IteratorKind::DictReverseItems:
+    case IteratorKind::Set:
+        // A list, which this is left to go on through.
+        left = listFromIterable(globalObject, iterator->copy(globalObject));
+        RETURN_IF_EXCEPTION(scope, { });
+        break;
+    default:
+        break;
+    }
     JSValue function = getBuiltin(globalObject, iterator->kind() == IteratorKind::ListReverse ? "reversed"_s : "iter"_s);
     RETURN_IF_EXCEPTION(scope, { });
+    a = iterator->a();
     switch (iterator->kind()) {
     case IteratorKind::List:
     case IteratorKind::ListReverse:
@@ -193,32 +214,17 @@ PYTHON_NATIVE(iteratorReduce)
         return JSValue::encode(tuple({ function, tuple({ a }), intFromInt64(globalObject, charactersBefore(globalObject, asString(a), iterator->index())) }));
     case IteratorKind::Callable:
         return JSValue::encode(a ? tuple({ function, tuple({ a, iterator->b() }) }) : tuple({ function, tuple({ tuple({ }) }) }));
-    case IteratorKind::Range: {
-        // A range of what is left.
-        int64_t stop = static_cast<int64_t>(static_cast<uint64_t>(iterator->index()) + static_cast<uint64_t>(iterator->stop()) * static_cast<uint64_t>(iterator->step()));
-        auto* range = PyRange::create(globalObject, index(), intFromInt64(globalObject, stop), intFromInt64(globalObject, iterator->step()));
-        return JSValue::encode(tuple({ function, tuple({ range }), jsUndefined() }));
-    }
-    case IteratorKind::LongRange: {
-        auto* whole = uncheckedDowncast<PyRange>(a.asCell());
-        auto operate = [&] (BinaryOperator op, JSValue left, JSValue right) { return numberBinaryOperation(globalObject, op, left, right); };
-        JSValue start = operate(BinaryOperator::Add, whole->start(), operate(BinaryOperator::Mult, iterator->b(), whole->step()));
-        JSValue stop = operate(BinaryOperator::Add, whole->start(), operate(BinaryOperator::Mult, whole->length(), whole->step()));
-        RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(tuple({ function, tuple({ PyRange::create(globalObject, start, stop, whole->step()) }), jsUndefined() }));
-    }
+    case IteratorKind::Range:
+    case IteratorKind::LongRange:
+        return JSValue::encode(tuple({ function, tuple({ left }), jsUndefined() }));
     case IteratorKind::DictKeys:
     case IteratorKind::DictValues:
     case IteratorKind::DictItems:
     case IteratorKind::DictReverseKeys:
     case IteratorKind::DictReverseValues:
     case IteratorKind::DictReverseItems:
-    case IteratorKind::Set: {
-        // A list of what is left, which this is left to go on through.
-        JSValue rest = listFromIterable(globalObject, iterator->copy(globalObject));
-        RETURN_IF_EXCEPTION(scope, { });
-        return JSValue::encode(tuple({ function, tuple({ rest }) }));
-    }
+    case IteratorKind::Set:
+        return JSValue::encode(tuple({ function, tuple({ left }) }));
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

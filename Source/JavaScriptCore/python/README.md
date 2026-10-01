@@ -103,6 +103,7 @@ wanted as a number of JavaScript's, as an operand that the code generator gives 
 | `op_py_enter` | what a piece of code begins with, and a generator each time it is resumed: `PY_START`, `PY_RESUME`, `PY_THROW` |
 | `op_py_line` | the beginning of a line: `LINE`. Before a jump back, `JUMP` too |
 | `op_py_call` | before a call: `CALL` |
+| `op_py_called` | after it: `C_RETURN` |
 | `op_py_branch` | before a jump that depends on something, which it is given: `BRANCH_LEFT`, `BRANCH_RIGHT` |
 | `op_py_jump` | before a jump forward that depends on nothing: `JUMP` |
 | `op_py_leave`, `op_py_ret` | before a yield, and the return: `PY_YIELD`, `PY_RETURN` |
@@ -115,8 +116,10 @@ wanted as a number of JavaScript's, as an operand that the code generator gives 
   `VM::m_pythonLimitUnlessWatched` it takes the slow path, which raises `RecursionError`. That word is 0 while anything is to be told, so the one comparison finds that too.
 - **A line is told of if the frame was last on some other**, as in CPython. So there is an `op_py_line` wherever the line changes as the code is written out, and wherever it can be jumped to. The frame
   object has the line that it was last on.
-- **`C_RETURN` and `C_RAISE` have no place of their own.** The frame remembers the call that it was told to be making, and its end is told of at the next thing that is told of the frame, nothing being told of
-  it in between. If that is the unwinder, it came out of the call if the frame is at the call.
+- **There is a place after a call as well as before it.** The frame remembers the call that it was told to be making, if it is of what is not written in Python, and `C_RETURN` is told there, when it ends and not when
+  something else is next told of. If it is the unwinder that comes next, it came out of the call if the frame is between the two places, and that is `C_RAISE`. It is an instruction besides, which is what
+  `pdb.set_trace()` goes by: it asks to be told of the next instruction (`f_trace_opcodes`), and so stops on the line that it is written on and not the one after. And the frame is then known to be on the line of
+  the call, though nothing was being told when it came to that: what was called may be what asked to be told, and what comes after it on the same line begins no line. `programs/where-a-debugger-stops.py`.
 - **What is told by the unwinder is called with the exception set aside**, as the debugger's hooks are, and from the frame that it is told of. What it raises is what is being thrown from there on.
 - `INSTRUCTION` is told at each of these places. What the engine runs is its own business.
 - How many times an exception is caught and sent on by what nobody wrote is not what it is in CPython, which wraps every generator in a handler, for one.
@@ -193,6 +196,10 @@ out and hands to Python.
 
 A variable that an inner function uses is a variable of a `JSLexicalEnvironment`, and a cell is a view of one: the environment, and where in it. That is what
 `f.__closure__` is made of. `cell()` makes one that is a variable of nothing, and holds what is in it.
+
+**There is one cell for a variable**, whoever asks for it and however often, since a program can tell: what `type.__new__()` finds as `__classcell__` is what a method has in its `__closure__`, and `annotationlib` keeps
+cells to compare them. Every environment that has variables of Python's has one more, `.cells`, with nothing in it until a cell is asked for, and then a tuple of those that have been made (`cellOfVariable()`). So what
+keeps a cell is what it is a view of. `f.__closure__` is the one tuple too. `programs/a-cell-is-the-one-cell.py`.
 
 `function(code, globals, closure=cells)` is given cells that can be anyone's, and an environment cannot have a variable that is another's. So the function gets **another
 executable for the same source** (`cloneExecutable()`), of which it is known that its free variables are given as cells (`FunctionInfo::variablesGivenAsCells`). Its
@@ -332,12 +339,26 @@ What each name means is worked out as in `symtable.c`, once for all of the sourc
 - What a class says is `nonlocal` is looked for in the class first, but it is the variable that is given a value.
 - **A comprehension is part of what it is in, and what is named in it is what it would be if it were a function, as it once was**: `push_inlined_comprehension_state()`. So what the comprehension makes of a name comes before what
   the block that it is in makes of it (`m_comprehensionBlocks`). In a class it does not see what the class has. And the variable of one comprehension, which is a variable of the function from then on, is nothing to the next.
+- **The variables of a comprehension are variables of the frame while it is being run**, in place of whatever else the frame has by their names, so that `locals()`, `eval()`, `dir()` and `f_locals` see them from inside it:
+  `"{x}".format(**locals())`. They are variables of the engine's and not temporaries, since a frame object looks at them, and the code says from which offset to which each is one (`CodeDetails::comprehensionVariables`).
+  CPython has the comprehension use the variable of the function that has the name, and puts back what was in it afterwards, whichever way it is left. Here it goes by where the frame is, so nothing is done on the
+  way out. In what is no function these are all the variables that the frame has (`CO_FAST_HIDDEN`), and while one of them has something, `locals()` is a picture of them and not the namespace, as in CPython.
+  What makes a generator of some code puts instructions into it, and the offsets are put right along with the rest: `UnlinkedCodeBlockGenerator::addOffsetKeptElsewhere()`.
+  `programs/the-variable-of-a-comprehension-seen-from-inside.py`.
+- What can see into a class, an annotation or the value of a type alias or a bound, does not look there for what the class says is `global` (`FunctionInfo::namesSaidToBeGlobalInClass`).
+- Where the type parameters of a class are, and in a lambda or a generator expression in its bases, only the names of the parameters are mangled for the class (`FunctionInfo::namesMangled`).
+  `programs/worked-out-later-in-a-class.py`.
+- `__class__`, named in the body of a class, is a name like any other there: `variableOfEnvironment()`. It is what is defined in the class that means the class by it. `programs/class-named-in-the-body-of-a-class.py`.
 - The defaults, decorators and bases of a definition are part of what the definition is in. They are there to be gone over when what it defines is compiled, and whether they may `await` was settled before.
 
 `programs/names-with-a-class-in-between.py`.
 
 Code finds its globals and its builtins in two variables, `.globals` and `.builtins`, of the outermost environment of its scope chain. Which
-builtins is settled when it is given its globals, from their `__builtins__`, as in CPython.
+builtins is settled when it is given its globals, from their `__builtins__`, as in CPython, and if they have none they are those of the code that is running (`currentBuiltins()`).
+
+**To give a global a value is to put a property on the object**, `put_by_id` that is direct, with the engine's own caches in every tier. To JavaScript, defining a property of something of Python's is `setattr()`, which
+is right for a field of a class that JavaScript derived from one of Python's and wrong for this: a module can be of a class that has a `__setattr__()`, and a global can be called `__class__`. So the slot says whose
+code is doing it (`PutPropertySlot::PutByIdOfPython`, from `CodeBlock::putByIdContext()`). `programs/a-global-is-put-in-the-dict-of-the-module.py`.
 
 `py_load_global dst, globals, builtins, name` is what `globals` has, or failing that `builtins`, or `NameError`. It remembers, in its metadata,
 the structure that the one had, that of the other if that is where it was, and the offset. The interpreter and the baseline JIT check
@@ -349,6 +370,10 @@ already hot.
 not there. `dataclasses` does that to every class it is given. The object that such a dict keeps its items in has a property that says so, `loadGlobal()` looks for it, and nothing is remembered of what comes of asking. It being a
 property, no such object has the structure of one that is not, so what has been remembered about other globals is not taken to be about these. Which of CPython's instructions a name is loaded by matters here:
 `LOAD_GLOBAL` and `LOAD_FROM_DICT_OR_GLOBALS` ask, and `LOAD_NAME`, having asked the locals, looks in the globals for itself. Storing and deleting never ask.
+
+**The builtins can be anything at all**, a `MappingProxyType` or an `int`, and are asked for an item as anything is. Then `.builtins` is an object that has nothing and stands for what is to be asked
+(`namespaceStandingFor()`), with the same property. So has the object of a dict that has been given a key of a class of a program's, which may say that it is equal to a name. `import`, `class` and what pickles an
+iterator look for `__import__`, `__build_class__` and `iter` in the same way: `findInNamespace()`, `getBuiltin()`. `programs/builtins-that-are-no-dict.py`.
 
 ### Calls
 
@@ -830,6 +855,18 @@ method it found belongs to. So a class that a program derives is the same as its
 - **`IsDerivedFromBuiltin`**: what the operators do with a `dict` or a `list` without asking, they do only if that is exactly what it is. A class that a program derives is known by being a heap type. One that is written in
   C++, as `defaultdict` is, says so.
 
+### What is added to a dict comes after whatever has been there
+
+`PyHashTable` keeps its entries in the order in which they were added, as CPython's dict does, and what is going through them goes by where it has got to. What is taken out leaves a place with nothing in it, at the end as
+anywhere else, and what is added comes after that. Only `popitem()` gives up the places at the end, and what is taken from the beginning is done with there and then. So what is taken out and put back while a dict is being gone
+through is come to again, when there should have been no more, and that is `RuntimeError: dictionary keys changed during iteration`. When the places at the end were given up at once it was put back where it had been, and passed over.
+
+- Going backwards, if there are no longer as many places as there were at the start there is no telling where it had got to, and that is the end of it.
+- `update()`, `dict(d)` and `d | e` do not ask the keys of a dict for their hashes again (`PyDict::mergeFrom()`), and say so if it is changed meanwhile. `setdefault()` and `defaultdict` ask once and compare once (`getOrAdd()`).
+- A key of a class derived from `str` is the same key as the str in it, in a dict that is backed by an object too, unless the class has a `__hash__()` or an `__eq__()` of its own.
+
+`programs/dicts-that-are-meddled-with.py`.
+
 ### `__dict__` is the object
 
 The attributes of an instance and the globals of a module are properties, which is what lets them be cached inline. `obj.__dict__`,
@@ -1072,7 +1109,8 @@ are destroyed, or with threads.
 ### A module can await
 
 **`await`, `async for` and `async with` can be written at the top of a module**, and so can a comprehension that awaits. In CPython that is a `SyntaxError` unless `compile()` is given `PyCF_ALLOW_TOP_LEVEL_AWAIT`. Here what is compiled
-as a module, or as what is typed at a prompt, is always given it (`compileSource()`). An expression, which is what `eval()` compiles, still has to ask. A module that awaits nothing is compiled as it ever was.
+as a module, and what is typed at the prompt, is always given it (`compileSource()`). An expression, which is what `eval()` compiles, still has to ask, and so does `compile(..., "single")`: `pdb` finds out that what it was given
+awaits by that being refused, and then has the loop that it was stopped in run it. A module that awaits nothing is compiled as it ever was.
 
 **What awaits is a coroutine when it is called, and it is run to its end before whoever ran it goes on**: `runToItsEnd()`. That is the program, and it is `exec()`, which gives nothing back, so that in CPython nothing would ever come of it.
 `importlib` runs a module with `exec()`, so `import` returns when the module is done, whoever imports it: a module that awaits, one that does not, a function, or JavaScript. `eval()` of such code gives the coroutine to be awaited, as in CPython.
@@ -1269,6 +1307,11 @@ the same from one run of CPython to the next, nor here.
 
 **What a `SyntaxError` is made of depends on what found it.** The parser and the code generator make one of what is wrong and where. `symtable.c` and `future.c` make one of what is wrong, and then tell it where by setting its
 attributes, so its `args` is the message alone, and so is what `repr()` shows. `FoundIn::WhatNamesReferTo` in `PythonCompiler.cpp` is those two.
+
+**`invalid syntax. Did you mean 'for'?`** is `traceback.py`'s doing, which tries a keyword in place of each name that is like one and sees whether the source then parses. It looks from where the last statement was, which the parser
+tells it in `SyntaxError._metadata`, and gives up without a word if that is not there: `_PyPegen_set_syntax_error_metadata()`. That is where the last statement begins that has others in it and was all there, and the source, or `None` for
+what is read from a file. It is only kept count of the second time through. And not of a function: the rule that is there to find what is wrong with one takes all of one that has nothing wrong with it, and what comes of that is no
+statement. `programs/did-you-mean-a-keyword.py`.
 
 ### `_csv`
 

@@ -68,7 +68,8 @@ String fullyQualifiedTypeName(JSGlobalObject* globalObject, JSValue value)
 String qualifiedNameWithoutModule(JSGlobalObject* globalObject, PyType* type)
 {
     JSValue qualifiedName = type->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_qualname);
-    return qualifiedName && qualifiedName.isString() ? String(asString(qualifiedName)->value(globalObject).data) : type->nameWithoutModule(globalObject);
+    JSString* string = qualifiedName ? stringIn(qualifiedName) : nullptr;
+    return string ? String(string->value(globalObject).data) : type->nameWithoutModule(globalObject);
 }
 
 String qualifiedNameOfType(JSGlobalObject* globalObject, PyType* type)
@@ -444,6 +445,9 @@ JSValue builtinFormat(JSGlobalObject* globalObject, JSValue value, const String&
     if (!isString && !number)
         return { };
     if (specificationText.isEmpty()) {
+        // What is of a class derived from one of them is whatever str() makes of it, which the class may have something to say about: format_obj()
+        if (given != value)
+            RELEASE_AND_RETURN(scope, strObject(globalObject, given));
         // A str is what it is already, and it is that one that is given.
         if (isString)
             return value;

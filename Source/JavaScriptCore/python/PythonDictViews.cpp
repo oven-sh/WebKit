@@ -227,11 +227,24 @@ PYTHON_NATIVE(viewOperation)
         RELEASE_AND_RETURN(scope, JSValue::encode(intersect(globalObject, left, right)));
     if (op == BinaryOperator::BitXor && isView(globalObject, left, BuiltinType::DictItems) && isView(globalObject, right, BuiltinType::DictItems))
         RELEASE_AND_RETURN(scope, JSValue::encode(itemsInOnlyOne(globalObject, dictOfView(left), dictOfView(right))));
-    PySet* result = newSetFrom(globalObject, left);
+    // dictviews_to_set(): the keys of a dict have their hashes with them, if it is the dict that is asked.
+    PySet* result = newSetFrom(globalObject, isView(globalObject, left, BuiltinType::DictKeys) && isExactly(globalObject, dictOfView(left), realm->typeDict()) ? JSValue(dictOfView(left)) : left);
     RETURN_IF_EXCEPTION(scope, { });
-    PySet* other = isSet(right) ? uncheckedDowncast<PySet>(right.asCell()) : newSetFrom(globalObject, right);
+    switch (op) {
+    case BinaryOperator::BitOr:
+        setUpdate(globalObject, result, right);
+        break;
+    case BinaryOperator::Sub:
+        setDifferenceUpdate(globalObject, result, right);
+        break;
+    case BinaryOperator::BitXor:
+        setSymmetricDifferenceUpdate(globalObject, result, right);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
     RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(setOperation(globalObject, op, true, result, other)));
+    return JSValue::encode(result);
 }
 
 PYTHON_NATIVE(viewIsDisjoint)

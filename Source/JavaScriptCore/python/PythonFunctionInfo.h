@@ -101,8 +101,18 @@ struct CodeDetails {
     struct FrameVariable {
         Identifier name;
         VirtualRegister location; // Not valid if it is in an environment, because an inner function uses it or it is an outer function's.
+        bool isOnlyOfComprehensions { false }; // There is no such variable but while one of `comprehensionVariables` is.
     };
     Vector<FrameVariable> frameVariables; // In the order of co_varnames, co_cellvars and co_freevars.
+    // A comprehension is part of the code that it is in, with variables of its own. While it is being run they are variables of the frame, in place of whatever else it has by their names.
+    struct ComprehensionVariable {
+        Identifier name;
+        VirtualRegister location; // As above.
+        unsigned begin; // From this offset up to that one.
+        unsigned end;
+        unsigned frameVariable { 0 }; // Which of `frameVariables` it is.
+    };
+    Vector<ComprehensionVariable> comprehensionVariables; // What is inside comes after what it is in.
     VirtualRegister frameObjectRegister; // Where the frame object is, if there is one. Not valid for a generator, which keeps it itself.
     VirtualRegister scopeRegister;
     // Where what is found once, when the code begins, is kept: the globals, the builtins, and the mapping that names are looked up in if that is not an argument.
@@ -206,6 +216,11 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
     // made out of a code object and a closure, function(code, globals, closure=...), and for what is defined in one. An environment cannot have a variable that is
     // another's, and a cell can be anyone's.
     Vector<Identifier> variablesGivenAsCells;
+    // If it can see into a class: what the class says is `global`, which it then does not look in the class for.
+    Vector<Identifier> namesSaidToBeGlobalInClass;
+    // Where the type parameters of a class are, and in what is written there, only their names are mangled for the class.
+    bool manglesOnlySomeNames { false };
+    Vector<Identifier> namesMangled;
 
     // First those that can be given by position, then those that can only be given by keyword, then *args, then **kwargs. That is
     // the order of the parameters of the JavaScript function.
@@ -250,6 +265,9 @@ struct FunctionInfo : ThreadSafeRefCounted<FunctionInfo> {
         result->privateName = privateName;
         result->freeVariables = freeVariables;
         result->variablesGivenAsCells = variablesGivenAsCells;
+        result->namesSaidToBeGlobalInClass = namesSaidToBeGlobalInClass;
+        result->manglesOnlySomeNames = manglesOnlySomeNames;
+        result->namesMangled = namesMangled;
         result->parameterNames = parameterNames;
         result->positionalOnlyCount = positionalOnlyCount;
         result->positionalCount = positionalCount;

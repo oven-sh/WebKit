@@ -114,9 +114,13 @@ public:
     bool add(JSGlobalObject*, JSValue key, JSValue value, bool* wasAdded = nullptr, bool replace = true);
     // The same, of a key that comes from another table, which has its hash: hashAt(). It is not asked for it again.
     bool addWithHash(JSGlobalObject*, JSValue key, uint32_t hash, JSValue value, bool* wasAdded = nullptr, bool replace = true);
+    // What there is for the key, or `value` having been put there. The key is asked for its hash once, and compared with what is there once. Empty if it raised.
+    JSValue getOrAdd(JSGlobalObject*, JSValue key, JSValue value);
     // The value that was removed (or the key, of a set); empty if there was none or it raised.
     JSValue remove(JSGlobalObject*, JSValue key);
     void removeEntry(VM&, unsigned entry);
+    // The last that has not been removed, which is then the last: dict.popitem(). There is to be one.
+    unsigned trimToLastEntry();
     void clear(VM&);
     void copyFrom(VM&, JSGlobalObject*, PyHashTable&);
     // What is in the other, which is left with nothing.
@@ -127,7 +131,8 @@ public:
     // To go through the entries: from 0 up to entryCount(), skipping those whose key is empty. Adding to the table while doing so may
     // move them, which version() tells.
     unsigned entryCount() const { return m_used; }
-    // There is nothing before this one. It has not been removed, and nor has the last, unless there are none at all.
+    // There is nothing before this one, and it has not been removed unless there are none at all. The last may have been: what is added comes after whatever has been there, as in CPython, so that what is going
+    // through the entries comes to it.
     unsigned firstEntry() const { return m_first; }
     JSValue keyAt(unsigned entry) const { return m_storage->key(entry).get(); }
     uint32_t hashAt(unsigned entry) const { return m_storage->hash(entry); }
@@ -148,11 +153,12 @@ protected:
 
 private:
     bool grow(VM&, JSGlobalObject*);
+    bool append(JSGlobalObject*, JSValue key, uint32_t hash, JSValue value);
     // Whether it took a place in the index that nothing had had.
     bool insertIndex(PyHashStorage&, uint32_t hash, unsigned entry);
 
     WriteBarrier<PyHashStorage> m_storage;
-    // The entries are from m_first to m_used, of which some in between may have been removed. What is removed from either end is done with there and then, so that taking from an end does not go over what
+    // The entries are from m_first to m_used, of which some may have been removed. What is removed from the beginning is done with there and then, so that taking from an end does not go over what
     // was taken before.
     unsigned m_first { 0 };
     unsigned m_used { 0 };
@@ -207,6 +213,13 @@ public:
     bool contains(JSGlobalObject*, JSValue key);
     bool set(JSGlobalObject* globalObject, JSValue key, JSValue value) { return add(globalObject, key, value); }
     bool add(JSGlobalObject*, JSValue key, JSValue value, bool* wasAdded = nullptr, bool replace = true);
+    JSValue getOrAdd(JSGlobalObject*, JSValue key, JSValue value);
+    // dict_merge(), of a dict: its keys are not asked for their hashes again. False if it raised, as it does if the other is changed meanwhile.
+    bool mergeFrom(JSGlobalObject*, PyDict& other);
+    // dict_equal(), of two that have as many: whether the other has, for each key of this, what is equal to what this has. The keys are not asked for their hashes again.
+    bool hasAllThatIsIn(JSGlobalObject*, PyDict& other);
+    // dict_dict_fromkeys() and dict_set_fromkeys(): each key of a table, with the one value.
+    bool addKeysOf(JSGlobalObject*, PyHashTable&, JSValue value);
     JSValue remove(JSGlobalObject*, JSValue key);
     // The last item. False if there are none.
     bool removeLast(JSGlobalObject*, JSValue& key, JSValue& value);
@@ -241,6 +254,7 @@ private:
     JS_EXPORT_PRIVATE unsigned backingSize() const;
     // The property that a key stands for, if this dict is backed and the key is a string.
     bool isInBacking(JSGlobalObject*, JSValue key, Identifier&);
+    void willKeepOutsideBacking(JSGlobalObject*, JSValue key);
 
     WriteBarrier<JSObject> m_backing;
 };

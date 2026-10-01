@@ -299,7 +299,7 @@ static JSValue getFrameGlobals(JSGlobalObject* globalObject, JSValue self)
 
 static JSValue getFrameBuiltins(JSGlobalObject* globalObject, JSValue self)
 {
-    return PyDict::backedBy(globalObject, builtinsOfScope(globalObject->vm(), asFrame(self)->function()->scope()));
+    return mappingOfNamespace(globalObject, builtinsOfScope(globalObject->vm(), asFrame(self)->function()->scope()));
 }
 
 // The variables of a function are seen through a proxy, which reads and writes them where they are. Other code keeps its names in a mapping,
@@ -313,6 +313,8 @@ static JSValue getFrameLocals(JSGlobalObject* globalObject, JSValue self)
     case CodeKind::GeneratorExpression:
         return call(globalObject, globalObject->pyRealm()->frameLocalsProxyType(), frame);
     default:
+        if (frame->hasHiddenVariable(globalObject->vm()))
+            return call(globalObject, globalObject->pyRealm()->frameLocalsProxyType(), frame);
         return localsOfFrame(globalObject, frame);
     }
 }
@@ -503,6 +505,19 @@ PYTHON_NATIVE(frameGetVariable)
     return JSValue::encode(value ? value : args[2]);
 }
 
+// is_hidden(frame, index)
+PYTHON_NATIVE(frameIsHiddenVariable)
+{
+    NATIVE_PROLOGUE();
+    PyFrame* frame = frameArgument(globalObject, scope, args[0]);
+    if (!frame)
+        return { };
+    auto index = variableIndexArgument(globalObject, scope, frame, args[1]);
+    if (!index)
+        return { };
+    return JSValue::encode(jsBoolean(frame->isHiddenVariable(*index)));
+}
+
 // set_variable(frame, index, value)
 PYTHON_NATIVE(frameSetVariable)
 {
@@ -538,6 +553,7 @@ JSObject* createFrameModule(JSGlobalObject* globalObject)
     addFunction(globalObject, ns, "variable_names"_s, frameVariableNames, 0, "($module, frame, /)"_s);
     addFunction(globalObject, ns, "get_variable"_s, frameGetVariable, 0, "($module, frame, index, default, /)"_s);
     addFunction(globalObject, ns, "set_variable"_s, frameSetVariable, 0, "($module, frame, index, value, /)"_s);
+    addFunction(globalObject, ns, "is_hidden"_s, frameIsHiddenVariable, 0, "($module, frame, index, /)"_s);
     addFunction(globalObject, ns, "extra_locals"_s, frameExtraLocals, 0, "($module, frame, create, /)"_s);
     return module;
 }

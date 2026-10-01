@@ -411,8 +411,12 @@ public:
     {
         if (codeType() == EvalCode)
             return PutPropertySlot::PutByIdEval;
+        if (m_ownerExecutable->isPython())
+            return PutPropertySlot::PutByIdOfPython;
         return PutPropertySlot::PutById;
     }
+    // Of the code that something in this was compiled from, which may have been inlined.
+    PutPropertySlot::Context putByIdContext(CodeOrigin) const;
 
     const SourceCode& source() const LIFETIME_BOUND { return m_ownerExecutable->source(); }
     unsigned sourceOffset() const { return m_ownerExecutable->source().startOffset(); }

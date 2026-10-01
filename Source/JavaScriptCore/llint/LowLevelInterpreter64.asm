@@ -2728,6 +2728,7 @@ macro pyCheckpoint(opcodeName, opcodeStruct, slowPath)
 end
 
 pyCheckpoint(py_call, OpPyCall, _slow_path_py_call)
+pyCheckpoint(py_called, OpPyCalled, _slow_path_py_called)
 pyCheckpoint(py_branch, OpPyBranch, _slow_path_py_branch)
 pyCheckpoint(py_jump, OpPyJump, _slow_path_py_jump)
 

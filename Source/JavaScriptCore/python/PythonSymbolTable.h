@@ -45,6 +45,8 @@ namespace Python {
 
 using NameSet = HashSet<UniquedStringImpl*>;
 
+struct FunctionInfo;
+
 struct RefCountedNameSet : RefCounted<RefCountedNameSet> {
     NameSet names;
 };
@@ -131,6 +133,7 @@ struct Block {
     HashMap<UniquedStringImpl*, unsigned> index;
     Vector<const Identifier*> parameters;
     Vector<Block*> children;
+    Vector<Block*> inlinedComprehensions; // Those that have become part of it, and those that had become part of them.
     // For a class: each x for which something inside it, though not the body itself, has `self.x = ...`. It is __static_attributes__.
     Vector<const Identifier*> staticAttributes;
     // Whether there is an import statement in it, which goes by the globals of the code that it is in.
@@ -197,9 +200,9 @@ public:
     // What `from __future__ import x` at the top asks for. Nothing if it is something that there is none of. That is all of this that is done for a tree that is only to be looked at.
     static std::optional<unsigned> futureFeaturesOf(VM&, Arena&, Module&, SyntaxError&);
 
-    // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is which of its names
-    // are variables of functions among them, and the class that private names are mangled for, if any. One of the two is null.
-    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const Vector<Identifier>& freeVariables, const Identifier* privateName, unsigned futureFeatures, bool canSeeClassScope, bool isNested, FragmentIs = FragmentIs::WhatIsCompiled);
+    // Of one definition or expression out of the middle of a source. What has to be known of the blocks it was in is in the FunctionInfo: which of its names are variables of functions among them, what a class
+    // that it can see into says is global, and which names are mangled. One of the two is null.
+    static std::unique_ptr<SymbolTable> buildFragment(VM&, Arena&, Statement*, Expression*, const FunctionInfo&, const Identifier* privateName, bool canSeeClassScope, FragmentIs = FragmentIs::WhatIsCompiled);
 
     Block& top() { return *m_top; }
     unsigned futureFeatures() const { return m_futureFeatures; }

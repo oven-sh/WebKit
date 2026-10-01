@@ -1011,10 +1011,13 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
         int64_t backingCount = backingKeys ? backingKeys->length() : 0;
         PyHashTable& table = dict->ownTable();
         bool isReverse = this->isReverse();
-        // There is nothing in the table before its first, nor after its last.
-        if (isReverse)
-            m_index = std::min<int64_t>(m_index, backingCount + table.entryCount());
-        else if (m_index >= backingCount)
+        // There is nothing in the table before its first. If there is no longer as much as there was when going backwards was begun, there is no telling where it had got to, and that is the end of it.
+        if (isReverse) {
+            if (m_index > backingCount + table.entryCount()) {
+                finish();
+                return { };
+            }
+        } else if (m_index >= backingCount)
             m_index = std::max<int64_t>(m_index, backingCount + table.firstEntry());
         while (isReverse ? m_index > 0 : m_index < backingCount + table.entryCount()) {
             int64_t position = isReverse ? --m_index : m_index++;
@@ -1029,6 +1032,11 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
             }
             if (!value)
                 continue;
+            // There are as many as there were, and here is one more than that: something has been taken out and something put in.
+            if (!isReverse && m_step >= m_stop) {
+                finish();
+                return Python::raise(globalObject, scope, BuiltinType::RuntimeError, "dictionary keys changed during iteration"_s);
+            }
             ++m_step;
             if (m_kind == Kind::DictValues || m_kind == Kind::DictReverseValues)
                 return value;
@@ -1070,6 +1078,9 @@ JSValue PyIterator::next(JSGlobalObject* globalObject)
                 finish();
             return { };
         }
+        // What was called may have used this up.
+        if (!m_a)
+            return { };
         bool isSentinel = Python::isEqual(globalObject, value, m_b.get());
         RETURN_IF_EXCEPTION(scope, { });
         if (isSentinel) {

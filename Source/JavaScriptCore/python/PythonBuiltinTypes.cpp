@@ -31,6 +31,7 @@
 #include "GetterSetter.h"
 #include "JSGenerator.h"
 #include "JSModuleNamespaceObject.h"
+#include "PyFrame.h"
 #include "PythonGenerators.h"
 #include "PythonIO.h"
 #include "UnlinkedFunctionExecutable.h"
@@ -664,17 +665,8 @@ static bool mergeClassDict(JSGlobalObject* globalObject, PyDict* names, JSValue 
         bool isKnown = isGoneThroughAsDict(globalObject, classDict) || typeOf(globalObject, classDict) == globalObject->pyRealm()->typeMappingProxy();
         JSValue keys = classDict;
         if (!isKnown) {
-            JSValue method = getAttribute(globalObject, classDict, Identifier::fromString(vm, "keys"_s));
+            keys = keysOfMapping(globalObject, classDict);
             RETURN_IF_EXCEPTION(scope, false);
-            JSValue given = call(globalObject, method);
-            RETURN_IF_EXCEPTION(scope, false);
-            // method_output_as_list()
-            keys = getIterator(globalObject, given);
-            if (scope.exception()) {
-                if (catchException(globalObject, BuiltinType::TypeError))
-                    raiseTypeError(globalObject, scope, concatenate(typeName(globalObject, classDict), ".keys() returned a non-iterable (type "_s, typeName(globalObject, given), ')'));
-                return false;
-            }
         }
         MarkedArgumentBuffer each;
         collectAsList(globalObject, keys, each);
@@ -1025,12 +1017,12 @@ PYTHON_NATIVE(typeNew)
     auto* metatype = asType(args[0]);
     if (args.size() != 4)
         return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() takes exactly 3 arguments ("_s, args.size() - 1, " given)"_s)));
-    if (!args[1].isString())
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 1 must be str, not "_s, typeName(globalObject, args[1]))));
+    if (!stringIn(args[1]))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 1 must be str, not "_s, typeNameOfArgument(globalObject, args[1]))));
     if (!isTuple(args[2]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 2 must be tuple, not "_s, typeName(globalObject, args[2]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 2 must be tuple, not "_s, typeNameOfArgument(globalObject, args[2]))));
     if (!isDict(args[3]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 3 must be dict, not "_s, typeName(globalObject, args[3]))));
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("type.__new__() argument 3 must be dict, not "_s, typeNameOfArgument(globalObject, args[3]))));
 
     // The most derived metaclass among the bases' has the last word, and if it has a __new__() of its own, the whole of it: type_new_get_bases()
     auto* bases = uncheckedDowncast<PyTuple>(args[2].asCell());
@@ -1066,7 +1058,7 @@ PYTHON_NATIVE(typeNew)
         for (unsigned i = 0; i < args.keywordCount(); ++i)
             keywords->set(globalObject, args.keywordName(i), args.keywordValue(i));
     }
-    RELEASE_AND_RETURN(scope, JSValue::encode(newType(globalObject, metatype, asString(args[1]), bases, uncheckedDowncast<PyDict>(args[3].asCell()), keywords)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(newType(globalObject, metatype, args[1], bases, uncheckedDowncast<PyDict>(args[3].asCell()), keywords)));
 }
 
 PYTHON_NATIVE(typeInit)
@@ -1146,10 +1138,25 @@ static const FunctionInfo* infoOf(JSValue function)
     return f->isHostOrBuiltinFunction() ? nullptr : f->jsExecutable()->unlinkedExecutable()->pythonInfo();
 }
 
+// It is the one str however often it is asked for: functools.wraps() gives it to something else, and it is looked whether that has the same.
+JSValue nameObjectOfFunction(JSGlobalObject* globalObject, JSFunction* function, bool qualified)
+{
+    VM& vm = globalObject->vm();
+    const Identifier& kept = qualified ? vm.pythonNames().private_qualname : vm.pythonNames().private_name;
+    // What it is called is what JavaScript calls it, if that has been set.
+    if (JSValue set = function->getDirect(vm, qualified ? kept : vm.propertyNames->name); set && set.isString())
+        return set;
+    if (JSValue made = function->getDirect(vm, kept))
+        return made;
+    JSString* made = jsString(vm, nameOfFunction(globalObject, function, qualified));
+    function->putDirect(vm, kept, made);
+    return made;
+}
+
 template<bool qualified>
 static JSValue getFunctionName(JSGlobalObject* globalObject, JSValue self)
 {
-    return jsString(globalObject->vm(), nameOfFunction(globalObject, asFunction(self), qualified));
+    return nameObjectOfFunction(globalObject, asFunction(self), qualified);
 }
 
 template<bool qualified>
@@ -1165,6 +1172,8 @@ static void setFunctionName(JSGlobalObject* globalObject, JSValue self, JSValue 
         asFunction(self)->putDirect(vm, vm.pythonNames().private_qualname, value);
         return;
     }
+    JSCell::deleteProperty(asFunction(self), globalObject, vm.pythonNames().private_name);
+    RETURN_IF_EXCEPTION(scope, void());
     scope.release();
     PropertyDescriptor descriptor(value, PropertyAttribute::ReadOnly | PropertyAttribute::DontEnum);
     asFunction(self)->methodTable()->defineOwnProperty(asFunction(self), globalObject, vm.propertyNames->name, descriptor, true);
@@ -1219,7 +1228,12 @@ static JSValue getFunctionDoc(JSGlobalObject* globalObject, JSValue self)
     if (JSValue value = asFunction(self)->getDirect(vm, vm.pythonNames().private_doc))
         return value;
     const FunctionInfo* info = infoOf(self);
-    return info && !info->docstring.isNull() ? JSValue(jsString(vm, info->docstring)) : jsUndefined();
+    if (!info || info->docstring.isNull())
+        return jsUndefined();
+    // The one str however often it is asked for, as its names are.
+    JSString* made = jsString(vm, info->docstring);
+    asFunction(self)->putDirect(vm, vm.pythonNames().private_doc, made);
+    return made;
 }
 
 static void setFunctionDoc(JSGlobalObject* globalObject, JSValue self, JSValue value)
@@ -1397,8 +1411,8 @@ PYTHON_NATIVE(nativeCallableReduce)
     JSString* name = jsString(vm, function->name(vm));
     if (function->kind() == PyNativeFunction::Kind::Function)
         return JSValue::encode(name);
-    JSValue getattr = getStoredAttribute(vm, realm->builtinsModule(), Identifier::fromString(vm, "getattr"_s));
-    UNUSED_PARAM(scope);
+    JSValue getattr = getBuiltin(globalObject, "getattr"_s);
+    RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(PyTuple::create(globalObject, { getattr, PyTuple::create(globalObject, { bound ? bound : JSValue(function->owner()), name }) }));
 }
 
@@ -1591,7 +1605,7 @@ PYTHON_NATIVE(staticMethodCall)
 
 // ---- super
 
-// super(type, object_or_type). With no arguments, the compiler has filled them in.
+// super(type, object_or_type). With no arguments it is for the frame that called it: super_init_without_args(). Where it is `super` that is called, and by that name, the compiler has seen to it: implicitSuper().
 PYTHON_NATIVE(superInit)
 {
     NATIVE_PROLOGUE();
@@ -1600,12 +1614,35 @@ PYTHON_NATIVE(superInit)
     if (args.size() > 3)
         return JSValue::encode(raiseTypeError(globalObject, scope, typeOf(globalObject, args[0]) == realm->typeSuper() ? concatenate("super() expected at most 2 arguments, got "_s, args.size() - 1) : concatenate("super() takes at most 2 arguments ("_s, args.size() - 1, " given)"_s)));
     auto* object = asNativeObject(args[0]);
-    if (args.size() == 1)
-        return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, "super(): no arguments"_s));
-    if (!isClass(args[1]))
-        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("super() argument 1 must be a type, not "_s, typeName(globalObject, args[1]))));
-    PyType* type = asType(args[1]);
-    JSValue instance = args.size() > 2 && !isNone(args[2]) ? args[2] : JSValue();
+    JSValue givenType = args.at(1);
+    JSValue givenInstance = args.at(2);
+    if (args.size() == 1) {
+        auto fail = [&] (String&& message) { return JSValue::encode(raise(globalObject, scope, BuiltinType::RuntimeError, WTF::move(message))); };
+        CallFrame* caller = callerOf(callFrame);
+        if (!caller)
+            return fail("super(): no current frame"_s);
+        PyFrame* frame = PyFrame::forCallFrame(vm, caller);
+        const FunctionInfo& info = frame->functionInfo();
+        if (info.usesNamespace || !info.positionalCount)
+            return fail("super(): no arguments"_s);
+        givenInstance = frame->variable(vm, 0);
+        if (!givenInstance)
+            return fail("super(): arg[0] deleted"_s);
+        if (!info.freeVariables.contains(names.dunder_class))
+            return fail("super(): __class__ cell not found"_s);
+        for (unsigned i = 0; i < frame->variableCount(); ++i) {
+            if (frame->variableName(i) == names.dunder_class)
+                givenType = frame->variable(vm, i);
+        }
+        if (!givenType)
+            return fail("super(): empty __class__ cell"_s);
+        if (!isClass(givenType))
+            return fail(concatenate("super(): __class__ is not a type ("_s, typeName(globalObject, givenType), ')'));
+    }
+    if (!isClass(givenType))
+        return JSValue::encode(raiseTypeError(globalObject, scope, concatenate("super() argument 1 must be a type, not "_s, typeName(globalObject, givenType))));
+    PyType* type = asType(givenType);
+    JSValue instance = givenInstance && !isNone(givenInstance) ? givenInstance : JSValue();
     PyType* start = nullptr;
     if (instance) {
         start = superCheck(globalObject, type, instance);
@@ -1849,8 +1886,13 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         raiseTypeError(globalObject, scope, concatenate("cannot "_s, !type->isImmutable() ? "delete"_s : "set"_s, " '"_s, name, "' attribute of immutable type '"_s, type->nameString(globalObject), '\''));
         return false;
     };
-    addGetSet(globalObject, type, "__name__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return asType(self)->name(); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
-        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    addGetSet(globalObject, type, "__name__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+        // It is what it was given as, which may be of a class derived from str.
+        JSValue given = asType(self)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_name);
+        return given ? given : JSValue(asType(self)->name());
+    }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
         PyType* type = asType(self);
         if (!checkSetSpecial(globalObject, scope, type, value, "__name__"_s))
             return;
@@ -1859,21 +1901,24 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
             raiseTypeError(globalObject, scope, concatenate("can only assign string to "_s, type->nameString(globalObject), ".__name__, not '"_s, typeName(globalObject, value), '\''));
             return;
         }
-        auto text = name->value(globalObject);
+        checkNameOfType(globalObject, name);
         RETURN_IF_EXCEPTION(scope, void());
-        if (text->contains(static_cast<char16_t>(0))) {
-            raiseValueError(globalObject, scope, "type name must not contain null characters"_s);
-            return;
-        }
-        type->setName(globalObject->vm(), name);
+        type->setName(vm, name);
+        if (value != JSValue(name))
+            type->putDirect(vm, vm.pythonNames().private_name, value);
+        else
+            JSCell::deleteProperty(type, globalObject, vm.pythonNames().private_name);
     });
-    addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return jsString(globalObject->vm(), qualifiedNameWithoutModule(globalObject, asType(self))); }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
+    addGetSet(globalObject, type, "__qualname__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
+        JSValue given = asType(self)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().private_qualname);
+        return given ? given : JSValue(jsString(globalObject->vm(), qualifiedNameWithoutModule(globalObject, asType(self))));
+    }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
         PyType* type = asType(self);
         if (!checkSetSpecial(globalObject, scope, type, value, "__qualname__"_s))
             return;
-        if (!value.isString()) {
+        if (!stringIn(value)) {
             raiseTypeError(globalObject, scope, concatenate("can only assign string to "_s, type->nameString(globalObject), ".__qualname__, not '"_s, typeName(globalObject, value), '\''));
             return;
         }
@@ -1903,6 +1948,9 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         if (!checkSetSpecial(globalObject, scope, asType(self), value, "__module__"_s))
             return;
+        // The line that it begins on is a line of the module that it was in.
+        asType(self)->deleteAttribute(globalObject->vm(), globalObject, Identifier::fromString(globalObject->vm(), "__firstlineno__"_s));
+        RETURN_IF_EXCEPTION(scope, void());
         asType(self)->putDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_module, value);
     });
     addGetSet(globalObject, type, "__abstractmethods__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {

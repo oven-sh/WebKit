@@ -131,6 +131,9 @@ void UnlinkedCodeBlockGenerator::applyModification(BytecodeRewriter& rewriter)
     for (size_t i = 0; i < m_opProfileControlFlowBytecodeOffsets.size(); ++i)
         m_opProfileControlFlowBytecodeOffsets[i] = rewriter.adjustAbsoluteOffset(m_opProfileControlFlowBytecodeOffsets[i]);
 
+    for (unsigned* offset : m_offsetsKeptElsewhere)
+        *offset = rewriter.adjustAbsoluteOffset(*offset);
+
     if (!m_typeProfilerInfoMap.isEmpty()) {
         UncheckedKeyHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> adjustedTypeProfilerInfoMap;
         for (auto& entry : m_typeProfilerInfoMap)

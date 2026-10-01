@@ -187,6 +187,8 @@ public:
     size_t metadataSizeInBytes() { return m_codeBlock->metadataSizeInBytes(); }
 
     void applyModification(BytecodeRewriter&);
+    // It is to go on being the offset of the instruction that it is the offset of.
+    void addOffsetKeptElsewhere(unsigned& offset) { m_offsetsKeptElsewhere.append(&offset); }
 
     [[nodiscard]] bool finalize(std::unique_ptr<JSInstructionStream>);
 
@@ -212,6 +214,7 @@ private:
     Vector<UnlinkedStringJumpTable> m_unlinkedStringSwitchJumpTables;
     UncheckedKeyHashMap<unsigned, UnlinkedCodeBlock::RareData::TypeProfilerExpressionRange> m_typeProfilerInfoMap;
     Vector<JSInstructionStream::Offset> m_opProfileControlFlowBytecodeOffsets;
+    Vector<unsigned*> m_offsetsKeptElsewhere;
     Vector<BitVector> m_bitVectors;
     Vector<IdentifierSet> m_constantIdentifierSets;
     unsigned m_numBinaryArithProfiles { 0 };

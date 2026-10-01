@@ -2,17 +2,17 @@
 #
 # It follows Objects/frameobject.c of CPython, function for function.
 
-from _frame import frame as _frame_type, variable_names, get_variable, set_variable, extra_locals
+from _frame import frame as _frame_type, variable_names, get_variable, set_variable, is_hidden, extra_locals
 
 _unbound = object()
 _being_shown = []
 
 
-# Which variable of the frame a key is the name of, or -1. To be read it has to be bound.
+# Which variable of the frame a key is the name of, or -1. To be read it has to be bound. To be written it has to be one that the frame has all along.
 def _index(frame, key, read):
     hash(key)
     for i, name in enumerate(variable_names(frame)):
-        if name == key and (not read or get_variable(frame, i, _unbound) is not _unbound):
+        if name == key and (get_variable(frame, i, _unbound) is not _unbound if read else not is_hidden(frame, i)):
             return i
     return -1
 

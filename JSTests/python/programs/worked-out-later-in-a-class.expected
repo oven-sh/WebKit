@@ -1,0 +1,116 @@
+===== global
+alias -> global
+lambda in an alias -> nonlocal
+comprehension in an alias -> ['nonlocal']
+generator in an alias -> ['nonlocal']
+bound -> global
+default -> global
+annotations of a generic method -> {'a': 'global', 'return': 'global'}
+annotations of a method -> {'a': 'global'}
+in a method -> nonlocal
+bound of a class inside -> global
+annotations of a class inside -> {'y': 'nonlocal'}
+bound of a generic alias -> global
+value of a generic alias -> global
+annotations of the class -> {'attr': 'global'}
+in the body -> global
+comprehension in the body -> ['nonlocal']
+lambda in the body -> nonlocal
+the module's -> global
+===== global assigned
+alias -> global from class
+lambda in an alias -> nonlocal
+comprehension in an alias -> ['nonlocal']
+generator in an alias -> ['nonlocal']
+bound -> global from class
+default -> global from class
+annotations of a generic method -> {'a': 'global from class', 'return': 'global from class'}
+annotations of a method -> {'a': 'global from class'}
+in a method -> nonlocal
+bound of a class inside -> global from class
+annotations of a class inside -> {'y': 'nonlocal'}
+bound of a generic alias -> global from class
+value of a generic alias -> global from class
+annotations of the class -> {'attr': 'global from class'}
+in the body -> global from class
+comprehension in the body -> ['nonlocal']
+lambda in the body -> nonlocal
+the module's -> global from class
+===== nonlocal
+alias -> set on the class afterwards
+lambda in an alias -> nonlocal
+comprehension in an alias -> ['nonlocal']
+generator in an alias -> ['nonlocal']
+bound -> set on the class afterwards
+default -> set on the class afterwards
+annotations of a generic method -> {'a': 'set on the class afterwards', 'return': 'set on the class afterwards'}
+annotations of a method -> {'a': 'set on the class afterwards'}
+in a method -> nonlocal
+bound of a class inside -> set on the class afterwards
+annotations of a class inside -> {'y': 'nonlocal'}
+bound of a generic alias -> set on the class afterwards
+value of a generic alias -> set on the class afterwards
+annotations of the class -> {'attr': 'set on the class afterwards'}
+in the body -> nonlocal
+comprehension in the body -> ['nonlocal']
+lambda in the body -> nonlocal
+the module's -> global
+===== bound
+alias -> set on the class afterwards
+lambda in an alias -> nonlocal
+comprehension in an alias -> ['nonlocal']
+generator in an alias -> ['nonlocal']
+bound -> set on the class afterwards
+default -> set on the class afterwards
+annotations of a generic method -> {'a': 'set on the class afterwards', 'return': 'set on the class afterwards'}
+annotations of a method -> {'a': 'set on the class afterwards'}
+in a method -> nonlocal
+bound of a class inside -> set on the class afterwards
+annotations of a class inside -> {'y': 'nonlocal'}
+bound of a generic alias -> set on the class afterwards
+value of a generic alias -> set on the class afterwards
+annotations of the class -> {'attr': 'set on the class afterwards'}
+in the body -> in the class
+comprehension in the body -> ['nonlocal']
+lambda in the body -> nonlocal
+the module's -> global
+===== nothing said
+alias -> set on the class afterwards
+lambda in an alias -> nonlocal
+comprehension in an alias -> ['nonlocal']
+generator in an alias -> ['nonlocal']
+bound -> set on the class afterwards
+default -> set on the class afterwards
+annotations of a generic method -> {'a': 'set on the class afterwards', 'return': 'set on the class afterwards'}
+annotations of a method -> {'a': 'set on the class afterwards'}
+in a method -> nonlocal
+bound of a class inside -> set on the class afterwards
+annotations of a class inside -> {'y': 'nonlocal'}
+bound of a generic alias -> set on the class afterwards
+value of a generic alias -> set on the class afterwards
+annotations of the class -> {'attr': 'set on the class afterwards'}
+in the body -> nonlocal
+comprehension in the body -> ['nonlocal']
+lambda in the body -> nonlocal
+the module's -> global
+===== names that are mangled
+names of the parameters -> ['__T']
+bound -> __X
+default -> __X
+lambda in a base -> __X
+lambda in a lambda -> __X
+comprehension -> ['__X']
+generator -> ['__X']
+lambda that names the parameter -> __T
+comprehension that names the parameter -> ['__T']
+a parameter of a lambda -> ('__X', ('__a',))
+dict comprehension -> [('__X', '__X')]
+in the body -> mangled for Y
+lambda in the body -> mangled for Y
+the parameter in the body -> __T
+alias in the body -> mangled for Y
+generic alias in the body -> (['__U'], 'mangled for Y', ['__U', 'mangled for Y', '__T'])
+generic method -> (['__V'], 'mangled for Y', {'a': 'mangled for Y', 'return': '__V'}, ['mangled for Y', '__T', '__V'])
+annotations -> {'ann': 'mangled for Y'}
+co_names of a lambda in a base -> ('__X',)
+in a function -> ('__Z', '__Z', '__T', ('__Z',), ('_W__T',))

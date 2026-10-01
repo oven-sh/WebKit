@@ -233,10 +233,46 @@ const Identifier& PyFrame::variableName(unsigned index) const
     return details().frameVariables[index].name;
 }
 
-WriteBarrierBase<Unknown>* PyFrame::heapSlot(VM& vm, unsigned index, JSCell*& owner)
+bool PyFrame::isHiddenVariable(unsigned index) const
+{
+    return details().frameVariables[index].isOnlyOfComprehensions;
+}
+
+bool PyFrame::hasHiddenVariable(VM& vm)
+{
+    for (unsigned i = 0; i < m_variableCount; ++i) {
+        if (isHiddenVariable(i) && variable(vm, i))
+            return true;
+    }
+    return false;
+}
+
+// Where the variable is: that of the innermost comprehension that has one by the name and is being run, if any is. False if there is no such variable for the time being.
+bool PyFrame::locate(VM& vm, unsigned index, VirtualRegister& location)
+{
+    const CodeDetails& details = this->details();
+    const auto& variable = details.frameVariables[index];
+    location = variable.location;
+    if (details.comprehensionVariables.isEmpty()) [[likely]]
+        return true;
+    // What an exception has left has left its comprehensions, and so has what has returned.
+    State state = this->state();
+    if (state == State::Running || state == State::Suspended) {
+        unsigned offset = bytecodeIndex(vm)->offset();
+        for (auto& candidate : details.comprehensionVariables | std::views::reverse) {
+            if (candidate.frameVariable == index && candidate.begin <= offset && offset < candidate.end) {
+                location = candidate.location;
+                return true;
+            }
+        }
+    }
+    return !variable.isOnlyOfComprehensions;
+}
+
+WriteBarrierBase<Unknown>* PyFrame::heapSlot(VM& vm, unsigned index, VirtualRegister location, JSCell*& owner)
 {
     const auto& variable = details().frameVariables[index];
-    if (!variable.location.isValid()) {
+    if (!location.isValid()) {
         ScopeOffset offset;
         JSLexicalEnvironment* environment = findVariable(scope(vm), variable.name.impl(), offset);
         if (!environment)
@@ -254,7 +290,7 @@ WriteBarrierBase<Unknown>* PyFrame::heapSlot(VM& vm, unsigned index, JSCell*& ow
         return nullptr;
     case State::Suspended:
         owner = m_generator->internalField(static_cast<unsigned>(JSGenerator::Field::Frame)).get().asCell();
-        return savedRegister(vm, variable.location);
+        return savedRegister(vm, location);
     case State::Over:
         owner = this;
         return &variables()[index];
@@ -264,17 +300,21 @@ WriteBarrierBase<Unknown>* PyFrame::heapSlot(VM& vm, unsigned index, JSCell*& ow
 
 JSValue PyFrame::variable(VM& vm, unsigned index)
 {
-    VirtualRegister location = details().frameVariables[index].location;
+    VirtualRegister location;
+    if (!locate(vm, index, location))
+        return { };
     if (location.isValid() && state() == State::Running)
         return registerOf(callFrame(vm), location).jsValue();
     JSCell* owner = nullptr;
-    auto* slot = heapSlot(vm, index, owner);
+    auto* slot = heapSlot(vm, index, location, owner);
     return slot ? slot->get() : JSValue();
 }
 
 void PyFrame::setVariable(VM& vm, unsigned index, JSValue value)
 {
-    VirtualRegister location = details().frameVariables[index].location;
+    VirtualRegister location;
+    if (!locate(vm, index, location))
+        return;
     if (location.isValid() && state() == State::Running) {
         CallFrame* frame = callFrame(vm);
         registerOf(frame, location) = value;
@@ -284,7 +324,7 @@ void PyFrame::setVariable(VM& vm, unsigned index, JSValue value)
         return;
     }
     JSCell* owner = nullptr;
-    if (auto* slot = heapSlot(vm, index, owner))
+    if (auto* slot = heapSlot(vm, index, location, owner))
         slot->set(vm, owner, value);
 }
 

@@ -33,7 +33,7 @@ False
     'x = await f()' exec 8192 coroutine 128
     'x = 1' exec 0 not a coroutine 0
     'x = 1' exec 8192 not a coroutine 0
-    'await f()' single 0 coroutine 128
+    'await f()' single 0 SyntaxError: 'await' outside function
     'await f()' single 8192 coroutine 128
     'await f()' eval 0 SyntaxError: 'await' outside function
     'await f()' eval 8192 coroutine 128
@@ -78,8 +78,9 @@ coroutine <module> <module> False None 12
     exec() gives nothing => None
     exec() in exec() => 28
     of a syntax tree => 16
+    single => SyntaxError 'await' outside function (<test>, line 1)
 18
-    single => None
+    single, having asked => None
 coroutine False None 20
     a function made of what awaits nothing => (None, 11)
     of an expression => 12

@@ -62,8 +62,8 @@ namespace Python {
 
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \
-    v(weakReferences) v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(frame) v(defaults) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
-    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc) v(line) v(fieldNames) v(hiddenFields) v(defaultFactory) v(isDictOfDerivedClass) v(hasHooks) v(finalizer) v(origin) v(groupMessage) v(groupExceptions) v(groupExceptionsRepr) v(taskContext) v(task)
+    v(weakReferences) v(dict) v(foreignDict) v(slots) v(class) v(capacity) v(descriptor) v(code) v(closure) v(yieldFrom) v(promise) v(settlement) v(isRunningAsync) v(isClosedAsync) v(frame) v(defaults) v(filename) v(alignedDefaults) v(kwdefaults) v(name) v(qualname) v(doc) v(module) v(annotations) v(annotate) v(typeParams) \
+    v(args) v(traceback) v(cause) v(context) v(suppressContext) v(notes) v(propertyName) v(isGettersDoc) v(line) v(fieldNames) v(hiddenFields) v(defaultFactory) v(isAskedAsMapping) v(hasHooks) v(finalizer) v(origin) v(groupMessage) v(groupExceptions) v(groupExceptionsRepr) v(taskContext) v(task)
 
 // The same, for what the built-in exceptions have besides: what it is called here, and the attribute that Python sees it as.
 #define FOR_EACH_PYTHON_EXCEPTION_FIELD(v) \
@@ -96,6 +96,8 @@ struct CommonNames {
     // the module, and the one where a name that is not among them is looked for, which is nearly always the module builtins.
     const Identifier globals; // ".globals"
     const Identifier builtins; // ".builtins"
+    // A variable of every environment that has variables of Python's: the cells that have been made of them. See Python::cellOfVariable().
+    const Identifier cells; // ".cells"
 
     // The private name that what is in a slot of an instance is a property under: one of __slots__. In CPython a slot is so many bytes into the instance, and
     // this goes by the same, so that two classes that are laid out alike have their slots in the same places, and an instance of one that is made an

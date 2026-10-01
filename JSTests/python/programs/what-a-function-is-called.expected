@@ -1,0 +1,21 @@
+True True True True
+g f True
+g h True
+True True True
+True True
+True True True
+h True True
+C.m True True
+C.s True True
+C.s True True
+C.c True True
+<lambda> True True
+gen True True
+co True True
+C True True
+h True True
+True True
+renamed renamed
+name qualname <generator object qualname
+func_name func_qualname renamed <genexpr> <genexpr>
+other renamedCoroutine

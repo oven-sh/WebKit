@@ -1432,7 +1432,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectStrictGaveUp, void, (EncodedJSVal
     
     JSValue baseValue = JSValue::decode(encodedBase);
     CacheableIdentifier identifier = propertyCache->identifier();
-    PutPropertySlot slot(baseValue, true, callFrame->codeBlock()->putByIdContext());
+    PutPropertySlot slot(baseValue, true, callFrame->codeBlock()->putByIdContext(propertyCache->codeOrigin));
     CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(baseValue), identifier, JSValue::decode(encodedValue), slot);
 
     LOG_IC((ICEvent::OperationPutByIdDirectStrictGaveUp, baseValue.classInfoOrNull(), slot.base() == baseValue));
@@ -1453,7 +1453,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectSloppyGaveUp, void, (EncodedJSVal
     
     JSValue baseValue = JSValue::decode(encodedBase);
     CacheableIdentifier identifier = propertyCache->identifier();
-    PutPropertySlot slot(baseValue, false, callFrame->codeBlock()->putByIdContext());
+    PutPropertySlot slot(baseValue, false, callFrame->codeBlock()->putByIdContext(propertyCache->codeOrigin));
     CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(baseValue), identifier, JSValue::decode(encodedValue), slot);
 
     LOG_IC((ICEvent::OperationPutByIdDirectSloppyGaveUp, baseValue.classInfoOrNull(), slot.base() == baseValue));
@@ -1542,7 +1542,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectStrictOptimize, void, (EncodedJSV
     JSValue value = JSValue::decode(encodedValue);
     JSObject* baseObject = asObject(JSValue::decode(encodedBase));
     CodeBlock* codeBlock = callFrame->codeBlock();
-    PutPropertySlot slot(baseObject, true, codeBlock->putByIdContext());
+    PutPropertySlot slot(baseObject, true, codeBlock->putByIdContext(propertyCache->codeOrigin));
     Structure* structure = nullptr;
     CommonSlowPaths::putDirectWithReify(vm, globalObject, baseObject, identifier, value, slot, &structure);
 
@@ -1574,7 +1574,7 @@ JSC_DEFINE_JIT_OPERATION(operationPutByIdDirectSloppyOptimize, void, (EncodedJSV
     JSValue value = JSValue::decode(encodedValue);
     JSObject* baseObject = asObject(JSValue::decode(encodedBase));
     CodeBlock* codeBlock = callFrame->codeBlock();
-    PutPropertySlot slot(baseObject, false, codeBlock->putByIdContext());
+    PutPropertySlot slot(baseObject, false, codeBlock->putByIdContext(propertyCache->codeOrigin));
     Structure* structure = nullptr;
     CommonSlowPaths::putDirectWithReify(vm, globalObject, baseObject, identifier, value, slot, &structure);
 

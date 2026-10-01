@@ -966,11 +966,7 @@ JSValue builtinCompare(JSGlobalObject* globalObject, ComparisonOperator op, JSVa
         auto* b = uncheckedDowncast<PyDict>(right.asCell());
         bool same = a->size() == b->size();
         if (same) {
-            a->forEach(globalObject, [&] (JSValue key, JSValue value) {
-                JSValue other = b->get(globalObject, key);
-                same = other && isEqual(globalObject, value, other);
-                return same;
-            });
+            same = a->hasAllThatIsIn(globalObject, *b);
             RETURN_IF_EXCEPTION(scope, { });
         }
         return jsBoolean(same == (op == ComparisonOperator::Eq));
@@ -1297,7 +1293,13 @@ static int64_t hashOfValues(JSGlobalObject* globalObject, unsigned count, bool m
 
 static int64_t hashOfTuple(JSGlobalObject* globalObject, PyTuple* tuple)
 {
-    return hashOfValues(globalObject, tuple->length(), true, [&] (unsigned i) { return tuple->at(i); });
+    if (tuple->hashOnceWorkedOut() != -1)
+        return tuple->hashOnceWorkedOut();
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    int64_t hash = hashOfValues(globalObject, tuple->length(), true, [&] (unsigned i) { return tuple->at(i); });
+    RETURN_IF_EXCEPTION(scope, -1);
+    tuple->setHashOnceWorkedOut(hash);
+    return hash;
 }
 
 static int64_t hashOfSlice(JSGlobalObject* globalObject, PySlice* slice)

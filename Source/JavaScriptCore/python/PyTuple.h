@@ -77,6 +77,10 @@ public:
 
     std::span<WriteBarrier<Unknown>> span() { return { values(), m_length }; }
 
+    // -1 until it has been worked out. What is in it is not asked again.
+    int64_t hashOnceWorkedOut() const { return m_hash; }
+    void setHashOnceWorkedOut(int64_t hash) { m_hash = hash; }
+
     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(PyTuple, m_length); }
     static constexpr ptrdiff_t offsetOfValues() { return sizeof(PyTuple); }
 
@@ -97,6 +101,7 @@ private:
     const WriteBarrier<Unknown>* values() const { return std::bit_cast<const WriteBarrier<Unknown>*>(this + 1); }
 
     unsigned m_length;
+    int64_t m_hash { -1 };
 };
 
 inline bool isTuple(JSValue value) { return value.isCell() && (value.asCell()->type() == PyTupleType || value.asCell()->type() == PyDerivedTupleType); }

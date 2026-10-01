@@ -415,6 +415,11 @@ PYTHON_RUNTIME_FUNCTION(dictUpdate)
 {
     PROLOGUE();
     auto* dict = uncheckedDowncast<PyDict>(argument(0).asCell());
+    if (isGoneThroughAsDict(globalObject, argument(1))) {
+        dict->mergeFrom(globalObject, *asDict(argument(1)));
+        RETURN_IF_EXCEPTION(scope, { });
+        return JSValue::encode(jsUndefined());
+    }
     bool isMapping = forEachItem(globalObject, argument(1), [&] (JSValue key, JSValue value) {
         dict->set(globalObject, key, value);
     });
@@ -1166,7 +1171,8 @@ PYTHON_RUNTIME_FUNCTION(runtimePrepareReraiseStar)
 PYTHON_RUNTIME_FUNCTION(loadBuildClass)
 {
     PROLOGUE();
-    JSValue function = getStoredAttribute(vm, asObject(argument(0)), Identifier::fromString(vm, "__build_class__"_s));
+    JSValue function = findInNamespace(globalObject, asObject(argument(0)), Identifier::fromString(vm, "__build_class__"_s));
+    RETURN_IF_EXCEPTION(scope, { });
     if (!function)
         return JSValue::encode(raise(globalObject, scope, BuiltinType::NameError, "__build_class__ not found"_s));
     return JSValue::encode(function);

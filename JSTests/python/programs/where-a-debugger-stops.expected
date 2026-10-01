@@ -1,0 +1,325 @@
+===== 1
+> <session 1>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) p x
+1
+(Pdb) n
+> <session 1>(5)f()
+-> y = 2
+(Pdb) p x
+1
+(Pdb) n
+> <session 1>(6)f()
+-> return x + y
+(Pdb) p y
+2
+(Pdb) c
+===== 2
+> <session 2>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) p x
+1
+(Pdb) n
+--Return--
+> <session 2>(4)f()->None
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) c
+===== 3
+> <session 3>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) p i
+0
+(Pdb) c
+> <session 3>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) p i
+1
+(Pdb) n
+> <session 3>(3)f()
+-> for i in range(2):
+(Pdb) n
+> <session 3>(5)f()
+-> return i
+(Pdb) c
+===== 4
+> <session 4>(3)g()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) w 2
+  <session 4>(6)f()
+-> a = g()
+> <session 4>(3)g()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) n
+> <session 4>(4)g()
+-> return 5
+(Pdb) n
+--Return--
+> <session 4>(4)g()->5
+-> return 5
+(Pdb) n
+> <session 4>(7)f()
+-> return a
+(Pdb) p a
+5
+(Pdb) c
+===== 5
+> <session 5>(3)stop()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) u
+> <session 5>(6)f()
+-> stop()
+(Pdb) p a
+1
+(Pdb) d
+> <session 5>(3)stop()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) r
+--Return--
+> <session 5>(3)stop()->None
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) n
+> <session 5>(7)f()
+-> b = 2
+(Pdb) n
+--Return--
+> <session 5>(7)f()->None
+-> b = 2
+(Pdb) p b
+2
+(Pdb) c
+===== 6
+> <session 6>(4)f()
+-> r = (1, p.set_trace(), 3)
+(Pdb) l 1, 6
+  1  	
+  2  	def f():
+  3  	    p = pdb.Pdb(nosigint=True, readrc=False)
+  4  ->	    r = (1, p.set_trace(), 3)
+  5  	    return r
+  6  	import pdb
+(Pdb) n
+> <session 6>(5)f()
+-> return r
+(Pdb) p r
+(1, None, 3)
+(Pdb) c
+===== 7
+> <session 7>(3)f()
+-> return [pdb.Pdb(nosigint=True, readrc=False).set_trace() or x for x in (7,)]
+(Pdb) p x
+7
+(Pdb) p [x, x]
+[7, 7]
+(Pdb) c
+===== 8
+> <session 8>(4)gen()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) n
+> <session 8>(5)gen()
+-> yield 2
+(Pdb) n
+===== 9
+> <session 9>(3)<module>()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) p x
+1
+(Pdb) n
+> <session 9>(4)<module>()
+-> y = 2
+(Pdb) n
+--Return--
+> <session 9>(4)<module>()->None
+-> y = 2
+(Pdb) c
+===== 10
+> <session 10>(4)f()
+-> breakpoint()
+(Pdb) p x
+1
+(Pdb) s
+> <session 10>(5)f()
+-> y = 2
+(Pdb) p x
+1
+(Pdb) c
+===== 11
+> <session 11>(5)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) n
+> <session 11>(6)f()
+-> b = h(3)
+(Pdb) s
+--Call--
+> <session 11>(2)h()
+-> def h(a):
+(Pdb) a
+a = 3
+(Pdb) r
+--Return--
+> <session 11>(3)h()->6
+-> return a * 2
+(Pdb) n
+> <session 11>(7)f()
+-> return b
+(Pdb) p b
+6
+(Pdb) c
+===== 12
+> <session 12>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) n
+> <session 12>(5)f()
+-> 1 / 0
+(Pdb) n
+ZeroDivisionError: division by zero
+> <session 12>(5)f()
+-> 1 / 0
+(Pdb) n
+> <session 12>(6)f()
+-> except ZeroDivisionError:
+(Pdb) n
+> <session 12>(7)f()
+-> z = 1
+(Pdb) p z
+*** NameError: name 'z' is not defined
+(Pdb) c
+===== 13
+> <session 13>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) j 6
+*** Jump failed: can only jump from a 'line' trace event
+(Pdb) n
+> <session 13>(5)f()
+-> x = 2
+(Pdb) j 6
+> <session 13>(6)f()
+-> x = 3
+(Pdb) n
+> <session 13>(7)f()
+-> return x
+(Pdb) p x
+3
+(Pdb) c
+===== 14
+> <session 14>(4)__repr__()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) w 2
+  <session 14>(7)f()
+-> return repr(A())
+> <session 14>(4)__repr__()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) n
+> <session 14>(5)__repr__()
+-> return "A()"
+(Pdb) n
+--Return--
+> <session 14>(5)__repr__()->'A()'
+-> return "A()"
+(Pdb) c
+===== 15
+> <session 15>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace()
+(Pdb) n
+> <session 15>(3)f()
+-> with open(__import__("os").devnull) as d:
+(Pdb) n
+> <session 15>(5)f()
+-> return 1
+(Pdb) c
+===== 16
+> <session 16>(4)f()
+-> import pdb; pdb.Pdb(nosigint=True, readrc=False).set_trace(); x = 2
+(Pdb) p x
+1
+(Pdb) n
+> <session 16>(5)f()
+-> return x
+(Pdb) p x
+2
+(Pdb) c
+===== 17
+> <session 17>(3)f()
+-> x = len([1]) + (pdb.Pdb(nosigint=True, readrc=False).set_trace() or 1) + len([2, 3])
+(Pdb) n
+> <session 17>(4)f()
+-> return x
+(Pdb) p x
+4
+(Pdb) c
+===== await, at the prompt of a debugger that a coroutine stopped in
+===== 18
+> <session 18>(6)main()
+-> await pdb.Pdb(nosigint=True, readrc=False).set_trace_async()
+(Pdb) p x
+1
+(Pdb) y = await get()
+> <session 18>(6)main()
+-> await pdb.Pdb(nosigint=True, readrc=False).set_trace_async()
+(Pdb) p y
+42
+(Pdb) await asyncio.sleep(0)
+> <session 18>(6)main()
+-> await pdb.Pdb(nosigint=True, readrc=False).set_trace_async()
+(Pdb) x = await get()
+> <session 18>(6)main()
+-> await pdb.Pdb(nosigint=True, readrc=False).set_trace_async()
+(Pdb) p x
+42
+(Pdb) c
+42
+===== the end of a call of what is not written in Python is told of when it ends
+  ('call', 0, None)
+  ('c_call', 1, 'len')
+  ('c_return', 1, 'len')
+  ('c_call', 2, 'len')
+  ('c_return', 2, 'len')
+  ('c_call', 4, 'max')
+  ('c_return', 4, 'max')
+  ('c_call', 9, 'abs')
+  ('c_return', 9, 'abs')
+  ('c_call', 11, 'min')
+  ('c_return', 11, 'min')
+  ('c_call', 12, 'len')
+  ('c_return', 12, 'len')
+  ('c_call', 12, 'sorted')
+  ('c_return', 12, 'sorted')
+  ('return', 12, None)
+  ('PY_START', None)
+  ('LINE', 1)
+  ('CALL', 'len')
+  ('C_RETURN', 'len')
+  ('LINE', 2)
+  ('CALL', 'len')
+  ('C_RETURN', 'len')
+  ('LINE', 3)
+  ('CALL', 'other')
+  ('LINE', 4)
+  ('CALL', 'max')
+  ('C_RETURN', 'max')
+  ('LINE', 2)
+  ('LINE', 5)
+  ('LINE', 6)
+  ('CALL', 'int')
+  ('C_RAISE', 'int')
+  ('RAISE', None)
+  ('EXCEPTION_HANDLED', None)
+  ('LINE', 7)
+  ('LINE', 8)
+  ('LINE', 9)
+  ('CALL', 'abs')
+  ('C_RETURN', 'abs')
+  ('LINE', 10)
+  ('CALL', 'range')
+  ('C_RETURN', 'range')
+  ('LINE', 11)
+  ('CALL', 'min')
+  ('C_RETURN', 'min')
+  ('LINE', 10)
+  ('LINE', 12)
+  ('CALL', 'len')
+  ('C_RETURN', 'len')
+  ('CALL', 'sorted')
+  ('C_RETURN', 'sorted')
+  ('PY_RETURN', None)
+===== the line that the first instruction after a call is on
+[2, 3, 4, 5, 6, 4, 7]

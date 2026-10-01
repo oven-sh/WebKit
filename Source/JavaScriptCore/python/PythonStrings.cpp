@@ -385,9 +385,10 @@ double roundToDigits(double value, int digits)
     if (value < 0)
         builder.append('-');
     if (!keep) {
-        // Whether it is more than half way to the first place.
-        double unit = std::pow(10.0, -digits);
-        return std::abs(value) > unit / 2 ? std::copysign(unit, value) : std::copysign(0.0, value);
+        // Whether it is more than half way to the first place, going by what it is and not by what it is written as: 5e307 is a little more than that. Just half way is to the even one, which is 0.
+        Digits exact = significantDigits(value, 100);
+        bool isMoreThanHalf = exact.digits[0] > '5' || (exact.digits[0] == '5' && exact.digits.size() > 1);
+        return isMoreThanHalf ? std::copysign(std::pow(10.0, -digits), value) : std::copysign(0.0, value);
     }
     Digits rounded = significantDigits(value, keep);
     for (int i = 0; i < rounded.point; ++i)
@@ -985,6 +986,12 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         }
         if (i >= length)
             return raiseValueError(globalObject, scope, "incomplete format"_s);
+        // Only with nothing between them. After anything else it is a letter like another, and not one that means anything.
+        if (format[i] == '%') {
+            ++i;
+            result.append('%');
+            continue;
+        }
 
         JSValue argument;
         if (format[i] == '(') {
@@ -1076,10 +1083,6 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
         if (i >= length)
             return raiseValueError(globalObject, scope, "incomplete format"_s);
         char16_t conversion = format[i++];
-        if (conversion == '%') {
-            result.append('%');
-            continue;
-        }
         if (!argument) {
             argument = takeArgument();
             RETURN_IF_EXCEPTION(scope, { });
@@ -1197,7 +1200,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
                     }
                 }
                 if (!number.isInt())
-                    return raiseTypeError(globalObject, scope, concatenate("%c requires an int or a unicode character, not "_s, typeName(globalObject, given)));
+                    return raiseTypeError(globalObject, scope, concatenate("%c requires an int or a unicode character, not "_s, fullyQualifiedTypeName(globalObject, given)));
                 if (number.kind != Number::Kind::Small || number.small < 0 || number.small > 0x10FFFF) {
                     raise(globalObject, scope, BuiltinType::OverflowError, "%c arg not in range(0x110000)"_s);
                     return { };
@@ -1303,7 +1306,7 @@ static String percentFormat(JSGlobalObject* globalObject, const String& format, 
             break;
         }
         default:
-            return raiseValueError(globalObject, scope, concatenate("unsupported format character '"_s, conversion, "' (0x"_s, hex(static_cast<unsigned>(conversion), Lowercase), ") at index "_s, i - 1));
+            return raiseValueError(globalObject, scope, concatenate("unsupported format character '"_s, isForBytes || (conversion >= 31 && conversion <= 126) ? conversion : static_cast<char16_t>('?'), "' (0x"_s, hex(static_cast<unsigned>(conversion), Lowercase), ") at index "_s, i - 1));
         }
         RETURN_IF_EXCEPTION(scope, { });
         result.append(piece);

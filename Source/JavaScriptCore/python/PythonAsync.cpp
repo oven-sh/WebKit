@@ -604,8 +604,9 @@ JSValue getAsyncNext(JSGlobalObject* globalObject, JSValue iterator)
     RETURN_IF_EXCEPTION(scope, { });
     JSValue awaitable = getAwaitable(globalObject, next, 0);
     if (scope.exception()) {
-        JSValue cause = scope.exception()->value();
-        if (catchException(globalObject, BuiltinType::TypeError)) {
+        // Whatever it was: _PyErr_FormatFromCause()
+        if (Exception* raised = takeRaisedException(vm)) {
+            JSValue cause = raised->value();
             JSObject* error = createException(globalObject, globalObject->pyRealm()->typeTypeError(), concatenate("'async for' received an invalid object from __anext__: "_s, typeName(globalObject, next)));
             error->putDirect(vm, vm.pythonNames().private_cause, cause);
             error->putDirect(vm, vm.pythonNames().private_context, cause);

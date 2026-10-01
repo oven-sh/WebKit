@@ -80,6 +80,12 @@ struct SyntaxError {
     char openBracket { 0 };
     unsigned openBracketLine { 0 };
     unsigned openBracketColumn { 0 };
+    // _PyPegen_set_syntax_error_metadata(): where the last statement begins that has others in it and was all there, if the source was gone through a second time to see what is wrong with it. traceback.py looks from
+    // there on for a name that may have been meant for a keyword.
+    bool hasLastStatement { false };
+    unsigned lastStatementLine { 0 };
+    unsigned lastStatementColumn { 0 };
+    bool sourceIsGivenAnEnd { false }; // A module whose last line nothing ends is given the end of a line, and that is what is kept.
 };
 
 } } // namespace JSC::Python

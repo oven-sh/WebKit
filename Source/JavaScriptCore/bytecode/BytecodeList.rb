@@ -1493,6 +1493,9 @@ op :py_call,
         argumentKind: unsigned,
     }
 
+# What comes after a call that py_call came before.
+op :py_called
+
 # What comes before a jump that depends on `condition`, which is true or false. The jump is the next instruction, and is made if the condition is `jumpsIfTrue`.
 op :py_branch,
     args: {

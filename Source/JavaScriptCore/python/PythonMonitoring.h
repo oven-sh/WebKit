@@ -31,7 +31,7 @@
 
 // Telling a program of what is run: sys.monitoring (PEP 669), and sys.settrace() and sys.setprofile(), which are made out of it as they are in CPython.
 //
-// There is one version of the code, which has in it a place for each thing that can be told of: op_py_enter, op_py_line, op_py_call, op_py_branch, op_py_jump, op_py_leave and
+// There is one version of the code, which has in it a place for each thing that can be told of: op_py_enter, op_py_line, op_py_call, op_py_called, op_py_branch, op_py_jump, op_py_leave and
 // op_py_ret. Each does nothing but look at VM::m_pythonLimitUnlessWatched, which is 0 while there is anything to tell anyone. What is raised is told of by the unwinder.
 
 namespace JSC { namespace Python {
@@ -97,6 +97,9 @@ struct MonitoringState {
     // Which tools are told of each event, wherever it happens.
     std::array<uint8_t, numberOfUngroupedMonitoringEvents> tools { };
     WriteBarrier<Unknown> callbacks[numberOfMonitoringTools][numberOfMonitoringEvents];
+    // Which tools were given what they have for BRANCH_LEFT, and for BRANCH_RIGHT, as what to tell of BRANCH, which was the two as one.
+    uint8_t toolsToldOfBranchLeftAsBranch { 0 };
+    uint8_t toolsToldOfBranchRightAsBranch { 0 };
     WriteBarrier<Unknown> toolNames[numberOfMonitoringTools];
     std::array<uint32_t, numberOfMonitoringTools> toolVersions { };
     uint32_t restartVersion { 1 };

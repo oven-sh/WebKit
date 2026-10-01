@@ -1,0 +1,16 @@
+True True True False
+True True False
+False True True
+(10, 2) 10 10
+attributes -> AttributeError: 'cell' object has no attribute 'x' and no __dict__ for setting new attributes
+kept
+True True True
+True True 2
+True
+True 1 1
+True
+True True (5, 2)
+True True (10, 2)
+(True, 1)
+True
+['cell_contents'] None

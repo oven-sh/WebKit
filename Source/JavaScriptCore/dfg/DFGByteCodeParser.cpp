@@ -9438,6 +9438,11 @@ void ByteCodeParser::parseBlock(unsigned limit)
             NEXT_OPCODE(op_py_call);
         }
 
+        case op_py_called: {
+            addToGraph(Check);
+            NEXT_OPCODE(op_py_called);
+        }
+
         case op_py_branch: {
             addToGraph(Check);
             NEXT_OPCODE(op_py_branch);

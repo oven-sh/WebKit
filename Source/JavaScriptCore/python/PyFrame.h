@@ -93,6 +93,9 @@ public:
     const Identifier& variableName(unsigned index) const;
     JSValue variable(VM&, unsigned index);
     void setVariable(VM&, unsigned index, JSValue);
+    // CO_FAST_HIDDEN: the variable of a comprehension in what is no function. All that such a frame has are these.
+    bool isHiddenVariable(unsigned index) const;
+    bool hasHiddenVariable(VM&); // _PyFrame_HasHiddenLocals(): one that has something
     // For the body of a class, and what exec() runs: the mapping that its names are looked up in. Empty for anything else.
     JSValue namespaceMapping(VM&);
     JSObject* globals(VM&);
@@ -129,8 +132,7 @@ public:
         m_offsetOverride = line >= 0 ? offset : -1;
     }
     int offsetOverride() const { return m_offsetOverride; }
-    // A call that has been told of, of what is not written in Python, and where it was made. When it is over that is told of too, which is done at the next thing that is told of the
-    // frame, nothing being told of it in between.
+    // A call that has been told of, of what is not written in Python, and where it was told of. When it is over that is told of too.
     JSValue pendingCallable() const { return m_pendingCallable.get(); }
     JSValue pendingArgument() const { return m_pendingArgument.get(); }
     unsigned pendingCallOffset() const { return m_pendingCallOffset; }
@@ -178,7 +180,8 @@ private:
     // The innermost environment.
     JSScope* scope(VM&);
     // Where a variable is now. Null if that is nowhere, as for a local variable of a generator that has not started.
-    WriteBarrierBase<Unknown>* heapSlot(VM&, unsigned index, JSCell*& owner);
+    bool locate(VM&, unsigned index, VirtualRegister&);
+    WriteBarrierBase<Unknown>* heapSlot(VM&, unsigned index, VirtualRegister, JSCell*& owner);
 
     WriteBarrier<JSFunction> m_function; // For a generator, the one that is called to resume it.
     WriteBarrier<JSGenerator> m_generator; // Until it is over.
