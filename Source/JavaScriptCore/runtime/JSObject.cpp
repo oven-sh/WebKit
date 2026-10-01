@@ -4438,10 +4438,10 @@ ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, Propert
         if (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
             return ReadonlyPropertyChangeError;
 
-        auto checkStore = TypedLayoutTable::StoreCheck::Unconstrained;
+        auto storeCheck = TypedLayoutTable::StoreCheck::Unconstrained;
         if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset))
-            checkStore = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
-        if (checkStore == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+            storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+        if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
             evictTypedField(vm, propertyName);
             return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
         }
@@ -4451,7 +4451,7 @@ ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, Propert
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
         // https://bugs.webkit.org/show_bug.cgi?id=214342
         ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-        if (checkStore == TypedLayoutTable::StoreCheck::Unconstrained)
+        if (storeCheck == TypedLayoutTable::StoreCheck::Unconstrained)
             slot.setExistingProperty(this, offset);
         return { };
     }

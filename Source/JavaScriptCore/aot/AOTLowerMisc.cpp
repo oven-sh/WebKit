@@ -92,8 +92,8 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
             m_returnBlock = m_out.newBlock();
         if (m_graph.numberOfRegisterReturnValues) {
             Node* object = node->use(node->as<OpRet>().m_value);
-            for (unsigned i = 0; i < m_thingsReturned.size(); ++i)
-                m_thingsReturned[i].append(m_out.anchor(lowAs(object->use(NewObjectPlan::registerOf(i)), m_returnValueReps[i])));
+            for (unsigned i = 0; i < m_registerReturnValues.size(); ++i)
+                m_registerReturnValues[i].append(m_out.anchor(lowAs(object->use(NewObjectPlan::registerOf(i)), m_returnValueReps[i])));
         } else
             m_returnValues.append(m_out.anchor(lowAs(node->use(node->as<OpRet>().m_value), m_howValuesArePassed.result)));
         m_out.jump(m_returnBlock);
@@ -194,9 +194,9 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
 void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vector<StringCase, 16>& all, LBasicBlock defaultBlock, bool isKnownToBeCell)
 {
     std::ranges::sort(all, [](const StringCase& a, const StringCase& b) {
-        if (a.checkStore->length() != b.checkStore->length())
-            return a.checkStore->length() < b.checkStore->length();
-        return memcmp(a.checkStore->span8().data(), b.checkStore->span8().data(), a.checkStore->length()) < 0;
+        if (a.string->length() != b.string->length())
+            return a.string->length() < b.string->length();
+        return memcmp(a.string->span8().data(), b.string->span8().data(), a.string->length()) < 0;
     });
     auto goesOnIf = [&](LValue condition, LBasicBlock otherwise) {
         LBasicBlock next = m_out.newBlock();
@@ -209,7 +209,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         goesOnIf(m_out.equal(cellType(value), m_out.constInt32(StringType)), defaultBlock);
 
     // There is only one atom for any content, and what the program spells out is one.
-    if (all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.checkStore->length() <= TypedLayoutTable::maxLengthOfAtomizedString; })) {
+    if (all.size() <= 8 && isAtomIfShortString(scrutinee) && std::ranges::all_of(all, [](const StringCase& one) { return one.constant && one.string->length() <= TypedLayoutTable::maxLengthOfAtomizedString; })) {
         LValue impl = m_out.loadPtr(value, m_heaps.JSRopeString_fiber0);
         for (auto& one : all) {
             LBasicBlock next = m_out.newBlock();
@@ -233,12 +233,12 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
     m_out.appendTo(ifOfSuchALength);
     {
         LValue itsLength = m_out.phi(Int32, lengthsOtherwise);
-        unsigned longest = all.isEmpty() ? 0 : all.last().checkStore->length();
+        unsigned longest = all.isEmpty() ? 0 : all.last().string->length();
         goesOnIf(m_out.belowOrEqual(itsLength, m_out.constInt32(longest)), defaultBlock);
         if (longest < 64) {
             uint64_t lengths = 0;
             for (auto& one : all)
-                lengths |= 1ull << one.checkStore->length();
+                lengths |= 1ull << one.string->length();
             m_graph.wideIntegerConstants.add(static_cast<int64_t>(lengths));
             m_out.branch(m_out.testNonZero64(m_out.lShr(m_out.constInt64(lengths), itsLength), m_out.constInt64(1)), unsure(slowCase), unsure(defaultBlock));
         } else
@@ -260,10 +260,10 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
     Vector<std::tuple<LBasicBlock, unsigned, unsigned>, 8> groups;
     for (unsigned first = 0; first < all.size();) {
         unsigned end = first;
-        while (end < all.size() && all[end].checkStore->length() == all[first].checkStore->length())
+        while (end < all.size() && all[end].string->length() == all[first].string->length())
             ++end;
         LBasicBlock ofThatLength = m_out.newBlock();
-        cases.append(FTL::SwitchCase(m_out.constInt32(all[first].checkStore->length()), ofThatLength, FTL::Weight()));
+        cases.append(FTL::SwitchCase(m_out.constInt32(all[first].string->length()), ofThatLength, FTL::Weight()));
         groups.append({ ofThatLength, first, end });
         first = end;
     }
@@ -272,7 +272,7 @@ void Lowering::dispatchOnString(Node* place, Node* scrutinee, LValue value, Vect
         m_out.appendTo(ofThatLength);
         for (unsigned i = first; i < end; ++i) {
             LBasicBlock next = i + 1 < end ? m_out.newBlock() : defaultBlock;
-            m_out.branch(m_out.isZero64(compareWithLiteral(characters, all[i].checkStore->span8())), unsure(all[i].target), unsure(next));
+            m_out.branch(m_out.isZero64(compareWithLiteral(characters, all[i].string->span8())), unsure(all[i].target), unsure(next));
             if (i + 1 < end)
                 m_out.appendTo(next);
         }
@@ -379,9 +379,9 @@ void Lowering::lowerChainOfComparisons(BasicBlock* head, const ChainOfComparison
     UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> bitsSeen;
     for (auto& arm : chain.arms) {
         if (arm.constant->kind == NodeKind::ConstantCell) {
-            const StringImpl* checkStore = asString(arm.constant->graph->codeBlock()->getConstant(arm.constant->reg))->tryGetValueImpl();
-            if (stringsSeen.add(checkStore).isNewEntry)
-                strings.append({ checkStore, wayFrom(arm.block, arm.target), arm.constant });
+            const StringImpl* string = asString(arm.constant->graph->codeBlock()->getConstant(arm.constant->reg))->tryGetValueImpl();
+            if (stringsSeen.add(string).isNewEntry)
+                strings.append({ string, wayFrom(arm.block, arm.target), arm.constant });
             continue;
         }
         JSValue constant = arm.constant->constant;

@@ -1551,7 +1551,7 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
             : Structure::create(vm, old->globalObject(), jsNull(), old->typeInfo(), old->classInfoForCells(), NonArray, old->inlineCapacity());
         converted = empty->inlineCapacity() == old->inlineCapacity() && empty->indexingType() == old->indexingType() ? Structure::createWithProperties(vm, empty, names.span(), slots.span(), capacity, inlineSlots, attributes.span()) : nullptr;
         if (converted)
-            converted->accessorAndReadOnlySummary(*old);
+            converted->copyAccessorAndReadOnlyFlagsFrom(*old);
         if (converted && usesFieldIDs) {
             // (As Structure::noteFieldAdded() would have it.)
             uint16_t fieldIDInSlot[Structure::numberOfSlotsWithFieldIDs] { };

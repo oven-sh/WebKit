@@ -475,7 +475,7 @@ public:
     // inlineSlots: slots at or beyond this index are out of line (TypedLayoutTable::offsetOfSlot()).
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
     // Copies the flags that the caller of an add-property transition normally updates.
-    void accessorAndReadOnlySummary(const Structure& other)
+    void copyAccessorAndReadOnlyFlagsFrom(const Structure& other)
     {
         setHasAnyKindOfGetterSetterProperties(other.hasAnyKindOfGetterSetterProperties());
         setHasReadOnlyOrGetterSetterPropertiesExcludingProto(other.hasReadOnlyOrGetterSetterPropertiesExcludingProto());

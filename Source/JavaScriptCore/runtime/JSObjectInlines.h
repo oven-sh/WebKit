@@ -579,12 +579,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             bool slotIsTyped = false;
 #if USE(BUN_JSC_ADDITIONS)
             if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
-                auto checkStore = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
-                if (checkStore == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                auto storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+                if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
                     evictTypedField(vm, propertyName);
                     return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
                 }
-                slotIsTyped = checkStore == TypedLayoutTable::StoreCheck::Allowed;
+                slotIsTyped = storeCheck == TypedLayoutTable::StoreCheck::Allowed;
             }
 #endif
             putDirectOffset(vm, offset, value);
@@ -666,12 +666,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (isRejectedAtOffset(structure, offset)) [[unlikely]]
             return TypedFieldError;
         if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
-            auto checkStore = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
-            if (checkStore == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+            auto storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+            if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
                 evictTypedField(vm, propertyName);
                 return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
             }
-            slotIsTyped = checkStore == TypedLayoutTable::StoreCheck::Allowed;
+            slotIsTyped = storeCheck == TypedLayoutTable::StoreCheck::Allowed;
         }
 #endif
         structure->didReplaceProperty(offset);

@@ -24,9 +24,9 @@
 
 namespace JSC { namespace AOT {
 
-// AOT IR -> B3. Implemented in AOTLowerCore.cpp (structure, values, calls into C++), AOTLowerArith.cpp, AOTLowerAccess.cpp
-// (properties and scopes), AOTLowerObjects.cpp (allocation, conversions, the rarer kinds of property access),
-// AOTLowerIteration.cpp (for-of and for-in), AOTLowerCalls.cpp and AOTLowerVarargs.cpp (every call that is not a plain one).
+// Lowers the AOT IR to B3. Implemented in AOTLowerCore.cpp (control flow, values, calls into C++), AOTLowerArith.cpp,
+// AOTLowerAccess.cpp (properties and scopes), AOTLowerObjects.cpp (allocation, conversions, less common property accesses),
+// AOTLowerIteration.cpp (for-of and for-in), AOTLowerCalls.cpp and AOTLowerVarargs.cpp (all calls other than plain ones).
 
 class Lowering : public Emitter {
     WTF_MAKE_NONCOPYABLE(Lowering);
@@ -35,9 +35,7 @@ public:
 
     bool run();
 
-    // Index of the B3 entrypoint of each catch block, in the order of Graph::catchEntrypoints; the first is 1.
-
-    // Of a block that is there for what seldom happens, next to one that is not (see estimateFrequencies()).
+    // Relative frequency of a block for a rare case, compared with its common sibling (see estimateFrequencies()).
     static constexpr double coldFrequency = 1.0 / 1024;
 
 private:
@@ -60,7 +58,7 @@ private:
     bool tryLowerMisc(Node*);
 
     LBasicBlock blockFor(Node* branch, int relativeOffset);
-    // Node::isPromoted
+    // See Node::isPromoted.
     B3::Variable* variableOfEnvironment(Node* environment, unsigned offset);
     LValue ancestorScope(Node* scope, unsigned hops);
     UncheckedKeyHashMap<Node*, Vector<B3::Variable*>> m_variablesOfEnvironments;
@@ -68,7 +66,7 @@ private:
     struct ArrayView {
         LValue butterfly { nullptr };
         LValue length { nullptr }; // Int64.
-        LValue limit { nullptr }; // Int64: below this, an element is a JSValue where the elements are. Nothing, if that is not how the array keeps them.
+        LValue limit { nullptr }; // Int64. Indices below this hold a JSValue in the butterfly. Null if the array does not store its elements that way.
     };
     const ArrayView* viewOf(Node* access, Node* base);
     void viewArraysAheadOf(BasicBlock*);
@@ -80,13 +78,14 @@ private:
     LValue lowRaw(Node*);
     LValue lowJSValue(Node*);
     LValue lowInt32(Node*);
-    LValue lowInt64(Node*); // Of a node that is an integer of either size.
+    LValue lowInt64(Node*); // The node must be an integer of either width.
     LValue lowDouble(Node*);
     LValue lowBoolean(Node*);
     LValue lowCell(Node* node) { return lowJSValue(node); }
     LValue lowAs(Node* node, Rep rep)
     {
-        // What is passed or returned is of a type that everything passed or returned there is of. If not, something is wrong with the facts.
+        // The representation of a parameter or result is derived from the union of everything passed or returned there, so the
+        // node's type must be compatible with it. If not, the interprocedural summary is wrong.
         Rep from = node->rep();
         bool canBe = rep == Rep::JSValue || from == Rep::JSValue || from == rep || (from != Rep::Boolean && rep != Rep::Boolean);
         if (!canBe) [[unlikely]] {
@@ -95,7 +94,7 @@ private:
             dataLogLn(" held as ", static_cast<unsigned>(from), " wanted as ", static_cast<unsigned>(rep), " at bc#", m_node ? m_node->bytecodeIndex.offset() : 0, " ", m_node ? opcodeNames[m_node->opcode] : "", " in ", m_graph.nameForLog());
             RELEASE_ASSERT_NOT_REACHED();
         }
-        // (What is taken never to be reached is of no type, and held as anything is.)
+        // A node that is considered unreachable has the empty type and is represented as a JSValue.
         return rep == Rep::JSValue ? lowJSValue(node) : convert(lowRaw(node), from, node->type, rep);
     }
     LValue lowJSValueOfParameterOnEntry(unsigned index)
@@ -111,23 +110,25 @@ private:
             return registerOnEntry(argumentGPR(index));
         }
     }
-    // ImageEnvironment::distance. In two steps, of which the first is the same for everything nearby, and is kept from being merged
-    // with the second: what is left of that fits in a load or a store, which the distance from the Instance does not.
+    // The address at ImageEnvironment::distance below the Instance. Computed in two steps. The first is shared by all nearby
+    // environments and is made opaque so that B3 does not fold it into the second. The remainder then fits in the immediate offset
+    // of a load or store, which the full distance does not.
     LValue environmentAt(uint32_t distance)
     {
         constexpr uint32_t window = 16 * KB;
         uint32_t start = roundUpToMultipleOf<window>(distance);
         return m_out.add(m_out.opaque(m_out.sub(m_instance, m_out.constIntPtr(start))), m_out.constIntPtr(start - distance));
     }
-    // The object the function was called as.
+    // The function object this function was called as.
     LValue callee()
     {
         RELEASE_ASSERT(m_calleeSlot);
         return m_out.load64(m_out.address(m_heaps.variables.atAnyIndex(), m_calleeSlot));
     }
-    LValue lowConstantRegister(VirtualRegister reg) { return lowConstantRegister(code(), reg); } // For an operand that BytecodeUseDef does not count among the uses.
+    LValue lowConstantRegister(VirtualRegister reg) { return lowConstantRegister(code(), reg); } // For an operand that BytecodeUseDef does not report as a use.
     LValue lowConstantRegister(Graph&, VirtualRegister);
-    // The graph of the code that what is being lowered is of (Node::graph). What comes of lowering goes to m_graph.
+    // The graph that the node being lowered came from (Node::graph), which differs from m_graph for inlined code. Output always
+    // goes to m_graph.
     Graph& code() { return m_code ? *m_code : m_graph; }
     LValue convert(LValue, Rep from, Type fromType, Rep to);
     void setJSValue(Node*, LValue);
@@ -136,73 +137,76 @@ private:
     void setDouble(Node*, LValue);
     void setBoolean(Node*, LValue);
     void setResult(Node*, LValue, Rep);
-    // For an instruction that defines several registers: the value of one of them.
+    // For an instruction that defines several registers: sets the value of one of them.
     void setProj(Node*, VirtualRegister, LValue, Rep = Rep::JSValue);
 
     LValue doubleToInt32(LValue); // ToInt32.
     LValue toBoolean(Node*);
 
-    TypedPointer addressFor(VirtualRegister); // Where a register that lives in memory does (Graph::livesInFrame()).
+    TypedPointer addressFor(VirtualRegister); // The address of a register that lives in the frame (Graph::livesInFrame()).
     LValue wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool mayChange);
     void lowerEntry();
-    // Of a function with Signature::List.
-    LValue numberOfArgumentsPassed(); // Not counting `this`.
-    LValue argumentsPassed(); // Where the first is.
+    // For a function with Signature::List.
+    LValue numberOfArgumentsPassed(); // Excluding `this`.
+    LValue argumentsPassed(); // Address of the first.
     LValue argumentPassedOrUndefined(unsigned index);
-    // What the type that the source gives the base of the access says of the property (TypeTable).
+    // What the static type of the access's base says about the property (TypeTable).
     std::optional<TypeTable::Field> fieldAccessedBy(Node*, unsigned identifier);
-    // Which layout the cell is of (Structure::knownShape()), and whether that is one of first to last.
+    // The cell's layout number (Structure::knownShape()). Use isOneOf() to test it against a range.
     LValue layoutOf(LValue cell);
     LValue loadTypedLayoutID(LValue cell); // Structure::typedLayoutID()
     LValue loadTypedLayoutIDOrZero(Node*, LValue);
     TypedPointer addressOfField(LValue object, const TypeTable::Field&);
-    LValue toFieldRepresentation(Node* valueNode, LValue value, TypeTable::FieldType); // The value as a slot of a struct has it: a number is encoded as a double.
-    Node* m_sameAs { nullptr }; // setResult(): the node is this one by another name.
-    void checkTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID); // Of a family that is closed. Goes on if it is of the family.
-    // Where the slots are that typed code reads and writes. Of a family that is open that may be a struct with nothing in it, which stands for whatever is not one of the
-    // family and cannot be made one: so whoever finds nothing in a slot, and pointer is not the object, goes the long way.
+    LValue toFieldRepresentation(Node* valueNode, LValue value, TypeTable::FieldType); // The value as stored in a typed field: numbers are encoded as doubles.
+    Node* m_sameAs { nullptr }; // For setResult(): the node is an alias of this one.
+    void checkTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID); // For a closed layout. Execution continues only if the value has the layout.
+    // The object whose slots typed code reads and writes. For an open layout this may be an empty placeholder object, standing in
+    // for a value that does not have the layout and cannot be converted to it. An access that finds an empty slot when `pointer` is
+    // not the original object must take the slow path.
     struct FieldStorage {
         LValue pointer;
         bool mayStandForSomethingElse;
     };
     FieldStorage fieldStorageFor(Node* onBehalfOf, Node* baseNode, LValue base, uint16_t layoutID);
     LValue coerceToTypedLayout(Node* onBehalfOf, Node* valueNode, LValue value, uint16_t layoutID);
-    LValue cachedCoercionFor(Node* valueNode, uint16_t layoutID); // Null: none has been made of it.
-    UncheckedKeyHashMap<Node*, LValue> m_coercions; // By op_type_tag.
-    UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_loadedLayoutIDs; // What that gave, and in which block.
-    bool branchUnlessAccepted(Node* valueNode, LValue value, TypeTable::FieldType, LBasicBlock otherwise); // False: it always is, and nothing goes there.
-    // What is in a field of a struct of a closed family, from its having been read or written, for as long as nothing happens that could change it. It goes for the rest of the block, and
-    // for the blocks that can only be got to from there.
+    LValue cachedCoercionFor(Node* valueNode, uint16_t layoutID); // Null if the value has not been coerced yet.
+    UncheckedKeyHashMap<Node*, LValue> m_coercions; // Keyed by op_type_tag node.
+    UncheckedKeyHashMap<Node*, std::pair<BasicBlock*, LValue>> m_loadedLayoutIDs; // The loaded layout ID, and the block it was loaded in.
+    bool branchUnlessAccepted(Node* valueNode, LValue value, TypeTable::FieldType, LBasicBlock otherwise); // Returns false if the value is always accepted, in which case nothing branches to `otherwise`.
+    // The known value of a field of an object with a closed layout, from a previous read or write. Valid until something executes
+    // that could change it. It carries through the rest of the block and into blocks that are only reachable from it.
     struct AvailableField {
         Node* base;
         uint16_t layoutID;
         uint16_t slot;
-        uint16_t id; // TypeTable::Field::id: names of a family whose slots are verified have slots between them.
+        uint16_t id; // TypeTable::Field::id. With field IDs, several fields may share a slot.
         Rep rep;
         LValue value;
-        LValue asJSValue; // Null: nobody has made that of it.
+        LValue asJSValue; // Null until boxed.
     };
     Vector<AvailableField> m_availableFields;
     UncheckedKeyHashMap<BasicBlock*, Vector<AvailableField>> m_availableFieldsAtEndOf;
-    bool m_nodePreservesFields { false }; // Says the lowering of the node, which knows better than preservesFields().
+    bool m_nodePreservesFields { false }; // Set while lowering a node, to override preservesFields().
     const AvailableField* availableField(Node* base, const TypeTable::Field&) const;
     void recordAvailableField(Node* base, const TypeTable::Field&, LValue value, Rep, LValue asJSValue, bool isWritten);
     static bool preservesFields(Node*);
-    // What the node is, if it is a string that the program spells out, of characters that take a byte each.
+    // The node's value, if it is an 8-bit string literal.
     static std::optional<String> stringWrittenInProgram(Node*);
-    // If the value is a string at all it is an atom: it is written in the program, or comes from a slot whose strings are (TypeTable::Holds::atoms).
+    // If the value is a string, it is an atom: either a literal, or read from a field with atomized strings
+    // (TypeTable::FieldType::atoms).
     static bool isAtomIfString(Node*, unsigned depth = 0);
-    static bool isAtomIfShortString(Node*, unsigned depth = 0); // Or is a long one: TypedLayoutTable::maxLengthOfAtomizedString.
-    LValue areEqualAssumingAtomStrings(Node* left, LValue, Node* right, LValue); // Neither is a number or a BigInt.
+    static bool isAtomIfShortString(Node*, unsigned depth = 0); // Or longer than TypedLayoutTable::maxLengthOfAtomizedString.
+    LValue areEqualAssumingAtomStrings(Node* left, LValue, Node* right, LValue); // Neither operand is a number or a BigInt.
     void atomizeIfString(Node*, LValue);
-    // `this`, in the code of a function that is not closed.
+    // `this` in a function that may escape.
     static bool isThisOfEscapingFunction(Node*);
     LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue value, const String&, LValue theString);
-    // Options::aotTypesFields(): what has just been made as that layout, with those in its slots (null: nothing), is left with nothing in a slot that the slot does not hold.
+    // With Options::aotTypesFields(): checks a newly allocated object with this layout and these initial slot values (null for
+    // empty), and leaves no slot holding a value that its field type rejects.
     void validateNewObject(Node*, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown = nullptr);
     void guardField(Node* guard);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
-    // Instance::states, of the function that is being compiled: whether it has a Data of its own by now, and where that is if so.
+    // This function's entry in Instance::states: whether it has its own Data yet, and the Data's address if so.
     struct OwnData {
         LValue hasAny;
         LValue data;
@@ -211,10 +215,11 @@ private:
     TypedPointer slotWord(unsigned slot, unsigned word); // Word 0: structureID and offset. Word 1: pointer.
     LValue slotAddress(unsigned slot);
     unsigned allocateSlot() { return m_graph.numICSlots++; }
-    // What a frame says where it is with, while what the node does is being done somewhere else.
+    // The call site bits that the frame reports while the node's operation runs elsewhere.
     uint32_t callSiteBitsOf(Node*);
-    uint32_t siteOf(Node*); // The same, of a place that has been said to be one, or is not going to be asked about.
-    // For an operation that goes by a number in the bytecode: see functionOfBytecodeOfCaller().
+    uint32_t siteOf(Node*); // The same, for a location that is already registered as a call site or will never be queried.
+    // For an operation that takes an index into bytecode tables: identifies whose bytecode the index refers to. See
+    // functionOfBytecodeOfCaller().
     uint32_t whoseBytecode(Node* node) { return node->graph->isOutermost() ? 0 : m_graph.inlineFrames[node->graph->inlineFrame()].knownCallee + 1; }
     unsigned allocateSlots(unsigned count)
     {
@@ -222,20 +227,22 @@ private:
         m_graph.numICSlots += count;
         return first;
     }
-    // Words in the frame that operations read lists of values from and write additional results to. Nothing is kept there.
+    // Scratch words in the frame, used to pass lists of values to operations and to receive additional results. Nothing is kept
+    // there across operations.
     TypedPointer scratchWord(unsigned index);
     LValue scratchAddress() { return m_scratch; }
-    LValue storeToScratch(Node*, VirtualRegister first, unsigned count); // The registers first, first - 1, ... in that order.
+    LValue storeToScratch(Node*, VirtualRegister first, unsigned count); // Stores the registers first, first - 1, ... in that order.
     LValue isSentinelCell(LValue cell) { return isCellOfType(cell, SentinelType); }
-    template<typename Functor> LValue isCellAnd(Node*, LValue jsValue, const Functor&); // False for what is not a cell.
+    template<typename Functor> LValue isCellAnd(Node*, LValue jsValue, const Functor&); // False for a non-cell.
 
     // Calls into C++.
-    // For an operation declared with JSC_DECLARE_JIT_OPERATION: hands back the result, having checked for an exception.
+    // For an operation declared with JSC_DECLARE_JIT_OPERATION. Checks for an exception and returns the result.
     template<typename... Args> LValue vmCall(Node*, LType, Entry, Args...);
-    // For one declared NOEXCEPT.
+    // For an operation declared NOEXCEPT.
     template<typename... Args> LValue plainCall(LType, Entry, Args...);
     void storeBarrier(LValue owner);
-    // Of what is being lowered: whether anything but what comes right after it uses it. (Nearly everything is a call. So what is wanted for longer than that is kept where calls leave it alone.)
+    // Whether the value being lowered is used by anything other than the next node. Nearly every node is a call, so a value that
+    // lives longer belongs in a callee-saved register.
     bool isLiveAfterNextNode(Node*) const;
 
     // Calls to stubs (AOTStubs.h).
@@ -248,52 +255,51 @@ private:
         uint32_t value;
     };
     enum class StubClobbers : uint8_t { CallerSavedRegisters, Temporaries, Nothing };
-    // place: where the function is to be said to be meanwhile, if not at what is being lowered.
+    // place: the node whose location the function reports during the call, if not the one being lowered.
     B3::PatchpointValue* callStub(Stub, LType, const Vector<StubArgument, 8>&, const Vector<StubImmediate, 2>&, StubClobbers = StubClobbers::CallerSavedRegisters, Node* place = nullptr);
-    LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // No node: it does not throw.
-    // What one of the helpers makes of those (generateHelper()). Null: it gave up.
+    LValue callOperationThroughStub(Node*, LType, Entry, const Vector<LValue, 8>& arguments); // A null node means the operation does not throw.
+    // Calls a helper (generateHelper()). Returns null if the helper bailed out.
     LValue callHelper(Stub, const Vector<LValue, 4>& arguments);
-    // The same, or what `slow` gives if it gave up.
+    // The same, falling back to `slow` if the helper bailed out.
     template<typename Slow> LValue withHelper(Stub, const Vector<LValue, 4>& arguments, const Slow&);
-    // Of an operation that takes the global object and these and gives nothing back, from where the code hardly ever gets. It is no reason for the function to have a
-    // frame, or to keep anything anywhere but where it is.
-    // (ChangesNothing: it looks, or it throws. What has been loaded is as good afterwards.)
+    // Calls an operation that takes the global object and these arguments and returns nothing, from a rarely executed path. The
+    // call does not force the function to have a frame or to move values out of their registers.
+    // ChangesNothing: the operation only reads state or throws, so previously loaded values stay valid.
     enum class ColdCall : uint8_t { MayDoAnything, ChangesNothing };
     void coldCall(Node*, Entry, LValue first = nullptr, LValue second = nullptr, ColdCall = ColdCall::MayDoAnything);
     LValue coldCallForValue(Node*, Entry, LValue first, LValue second = nullptr, ColdCall = ColdCall::MayDoAnything);
     B3::PatchpointValue* emitColdCall(Node*, LType, Entry, LValue first, LValue second, ColdCall);
-    // Code that is run over and over is worth its size. The rest, which is nearly all of it, is not: it calls a stub for what
-    // it would otherwise do itself.
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
-    // Whether some class of the program that extends that one of the language's may have for itself what is read (BUN_AOT_OVERRIDDEN_METHODS).
+    // Whether a program class that extends this built-in class may override the property being read (BUN_AOT_OVERRIDDEN_METHODS).
     static bool mayBeOverridden(ASCIILiteral nameOfClass, Node* read);
-    // Whether an operation that has a stub calls it, instead of having its fast path inline. Inline fast paths are faster where code is hot (25-40% on small kernels) and
-    // bigger everywhere (a tenth of the code of a big program whose time is not spent in loops), and all that is known ahead of time is whether code is in a loop.
+    // Whether an operation that has a stub calls it instead of emitting its fast path inline. Inline fast paths are faster in hot
+    // code (25-40% on small kernels) but larger everywhere (about 10% of the code of a large program that spends little time in
+    // loops). The only hotness information available ahead of time is whether code is in a loop.
     bool isCompact() const
     {
         if (!Options::useAOTInlineFastPathsInLoops() || m_block->isGeneric)
             return true;
         return (!m_block->isInLoop || m_block->isOnlyInLoopOfBuiltin) && !m_graph.callsItself;
     }
-    // An op_resolve_scope that is only there for the op_get_from_scope that follows it: the two are one call.
     LValue compareWithLiteral(LValue characters, std::span<const Latin1Character> written);
-    // The characters of a string, and how many, if they are narrow and are to be had for the looking: it is all in one piece, or is a slice of one that is (which is left a slice).
-    // If not, how long it is all the same, at `otherwise`.
+    // The characters and length of a string, if it is 8-bit and its characters are directly accessible: either resolved, or a
+    // substring of a resolved string (which stays a substring). Otherwise branches to `otherwise`, still providing the length.
     struct NarrowCharacters {
         LValue characters;
         LValue length;
     };
     NarrowCharacters narrowCharactersOf(LValue string, LBasicBlock otherwise, Vector<ValueFromBlock, 2>& lengthOtherwise);
-    // Which of several strings that the program spells out a value is, if any: by how long it is, and then by what it says, a word at a time.
+    // Determines which of several string literals a value equals, if any: first by length, then by content, a word at a time.
     struct StringCase {
-        const StringImpl* checkStore;
+        const StringImpl* string;
         LBasicBlock target;
-        Node* constant; // If there is one.
+        Node* constant; // May be null.
     };
     void dispatchOnString(Node* place, Node* scrutinee, LValue value, Vector<StringCase, 16>&, LBasicBlock defaultBlock, bool isKnownToBeCell = false);
-    // Several blocks that do nothing but compare one value with one constant after another (===), each going on to the next if it is not that:
+    // A run of blocks that only compare one value against a series of constants with ===, each falling through to the next on a
+    // mismatch:
     //     if (x === "a") ... else if (x === "b") ... else if (x === 3) ...        x === "a" || x === "b" || x === "c"
-    // Which it is is settled in the first of them, in one go, and the rest are not got to.
+    // The first block dispatches on the value once, and the remaining blocks become unreachable.
     struct ArmOfChain {
         BasicBlock* block;
         Node* constant;
@@ -309,19 +315,20 @@ private:
     UncheckedKeyHashSet<BasicBlock*> m_blocksInsideChains;
     void findChainsOfComparisons();
     void lowerChainOfComparisons(BasicBlock*, const ChainOfComparisons&);
+    // An op_resolve_scope whose only use is the op_get_from_scope that follows it. The two are lowered as one call.
     bool isFusedWithGetFromScope(Node*);
     LValue scopeToResolveFrom(Node* resolve);
-    // A slot that a stub can be told about.
-    // What the code says for one of the function's identifiers. See AOT::NumbersOfIdentifiers.
+    // The number that compiled code uses for one of the function's identifiers. See AOT::NumbersOfIdentifiers.
     unsigned numberOf(Graph& graph, unsigned identifier)
     {
         auto* numbers = numbersOfIdentifiersOfProgram();
         return numbers ? numbers->get(graph.codeBlock()->identifier(identifier).impl()) : identifier;
     }
-    unsigned numberOf(unsigned identifier) { return numberOf(code(), identifier); } // Of what is being lowered.
+    unsigned numberOf(unsigned identifier) { return numberOf(code(), identifier); } // For the code being lowered.
     unsigned numberOf(const Node* whose, unsigned identifier) { return numberOf(*whose->graph, identifier); }
+    // Allocates a slot together with its Site, so that it can be passed to a stub.
     unsigned allocateSite(Node*, unsigned identifier, unsigned extra = 0);
-    // The one site of an instruction that is in both copies of a loop: what the generic copy finds out, the fast one goes by.
+    // The single site shared by both copies of an instruction in a split loop. What the generic copy caches, the fast copy uses.
     unsigned sharedSite(Node*, unsigned identifier, unsigned extra = 0);
 
     // AOTLowerArith.cpp
@@ -329,7 +336,7 @@ private:
     void lowerBinaryArith(Node*, VirtualRegister lhs, VirtualRegister rhs);
     void lowerBitOp(Node*, VirtualRegister lhs, VirtualRegister rhs);
     void lowerUnaryArith(Node*, VirtualRegister operand);
-    LValue lowerCompare(Node*, OpcodeID canonical, VirtualRegister lhs, VirtualRegister rhs); // A boolean.
+    LValue lowerCompare(Node*, OpcodeID canonical, VirtualRegister lhs, VirtualRegister rhs); // Returns a boolean.
     LValue lowerEquality(Node*, bool strict, VirtualRegister lhs, VirtualRegister rhs);
     LValue toInt32ForBitOp(Node* operand);
 
@@ -367,15 +374,15 @@ private:
     void guardPutById(Node*);
     void guardGetByVal(Node*);
     void guardPutByVal(Node*);
-    // Where the element is, having seen to it that there is one.
+    // The element's address, after a bounds check.
     TypedPointer elementOfTypedArray(Node* guard, Node* base, Node* property, JSType);
     void guardGetLength(Node*);
     void guardCheckType(Node*);
-    // False: there is nothing to it, or nothing to be done about it.
+    // These return false if no guard is needed or none is possible.
     bool guardResolveScope(Node*);
     bool guardGetFromScope(Node*);
     bool guardCall(Node*);
-    // Goes to passed if the value is of a type that is certain to get past the check, and to the other block if not.
+    // Branches to `passed` if the value's type is guaranteed to pass the check, and to `undecided` otherwise.
     void emitTypeTests(Node* value, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock undecided);
     void emitTypeTests(std::nullptr_t, Type typeOfValue, LValue jsValue, unsigned mask, LBasicBlock passed, LBasicBlock undecided);
 
@@ -384,8 +391,8 @@ private:
     bool tryLowerAllocation(Node*);
     bool tryLowerConversion(Node*);
     bool tryLowerPropertyVariant(Node*);
-    // An object of the structure that the cache at `slot` (fillAllocationCache()) is for, with those values for its first properties.
-    // Goes to `otherwise` if there is nothing in the cache, or no room where it says to allocate.
+    // Allocates an object with the Structure cached in `slot` (fillAllocationCache()) and these initial property values. Branches
+    // to `otherwise` if the cache is empty or the allocator has no free cell.
     LValue allocateObjectWithProperties(unsigned slot, const Vector<LValue, 8>& values, LBasicBlock otherwise);
     void lowerGetLength(Node*);
     void lowerToThis(Node*);
@@ -403,18 +410,18 @@ private:
     LValue inlineWatchpointSetIsStillValid(LValue set);
 
     // AOTLowerCalls.cpp
-    using Arguments = Vector<LValue, 8>; // The first is `this`; for a construction, new.target.
+    using Arguments = Vector<LValue, 8>; // The first is `this`, or new.target for a construct.
     enum class CallMode : uint8_t { Call, Construct, TailCall };
     bool tryLowerCall(Node*);
     Arguments lowerArguments(Node*, unsigned argc, unsigned argv);
-    // Of whatever the callee turns out to be. A tail call ends the block, and there is no result.
+    // Calls an arbitrary callee. A tail call terminates the block and has no result.
     LValue emitCall(Node*, LValue callee, const Arguments&, CallMode = CallMode::Call, StubIntrinsic = StubIntrinsic::None);
     void lowerCall(Node*, VirtualRegister callee, unsigned argc, unsigned argv, CallMode, bool hasResult);
     bool lowerCallToKnownFunction(Node*, VirtualRegister callee, unsigned argv, const Arguments&, CallMode, bool hasResult);
     void lowerCallVarargs(Node*, VirtualRegister callee, VirtualRegister thisValue, VirtualRegister arguments, int firstVarArg, CallMode);
     void lowerCallWithItems(Node*, Node* calleeNode, LValue callee, LValue thisValue, Node* list, CallMode);
     void lowerCallDirectEval(Node*);
-    LValue storeArgumentsToScratch(const Arguments&); // But for the first. Where they are.
+    LValue storeArgumentsToScratch(const Arguments&); // Stores all but the first. Returns their address.
     void finishCall(B3::PatchpointValue*, CallMode, Rep result = Rep::JSValue);
     LBasicBlock leaveIfFunction(Node* calleeNode, LValue callee);
 
@@ -422,36 +429,36 @@ private:
     LValue isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiver);
     void lowerReadOfBuiltin(Node*, Node* baseNode);
     bool lowerCallOfBuiltin(Node*, Node* calleeNode, unsigned argc, unsigned argv, const Arguments&, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results);
-    UncheckedKeyHashMap<Node*, LValue> m_receiverChecks; // By the read of what is called: what isSuchAReceiver() gave.
+    UncheckedKeyHashMap<Node*, LValue> m_receiverChecks; // Result of isSuchAReceiver(), keyed by the read of the callee.
 
     Graph& m_graph;
 
-    HowValuesArePassed m_howValuesArePassed; // This function.
-    LValue m_dataOnEntry { nullptr }; // Of a function that starts cold: m_data, but for in a loop.
-    B3::Variable* m_dataInLoops { nullptr }; // And there, if it has any: what was found at the top of the loop, the last time round.
+    HowValuesArePassed m_howValuesArePassed; // For this function.
+    LValue m_dataOnEntry { nullptr }; // For a cold-start function: the value of m_data outside loops.
+    B3::Variable* m_dataInLoops { nullptr }; // For a cold-start function with loops: the Data found at the top of the current loop iteration.
     LValue m_callFrame { nullptr };
     LValue m_data { nullptr };
     LValue m_dataOrNothing { nullptr };
-    LValue m_constants { nullptr }; // Of a function that starts cold: FunctionInfo::constants.
+    LValue m_constants { nullptr }; // For a cold-start function: FunctionInfo::constants.
     LValue m_calleeSlot { nullptr };
-    LValue m_listSlot { nullptr }; // Signature::List: how many arguments were passed, and where they are.
+    LValue m_listSlot { nullptr }; // Signature::List: the argument count and address.
     LValue m_homes { nullptr };
     LValue m_scratch { nullptr };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;
-    // Graph::numberOfRegisterReturnValues: each, from wherever it is returned; and how it goes.
-    Vector<Vector<ValueFromBlock, 4>, 8> m_thingsReturned;
+    // With Graph::numberOfRegisterReturnValues: each return value from every return site, and its representation.
+    Vector<Vector<ValueFromBlock, 4>, 8> m_registerReturnValues;
     Vector<Rep, 8> m_returnValueReps;
-    LBasicBlock m_exit { nullptr }; // While a guard is lowered: the way to the generic copy.
-    Vector<std::pair<BasicBlock*, LBasicBlock>, 2> m_edges; // While a branch is lowered: the ways to successors that have phis.
+    LBasicBlock m_exit { nullptr }; // While lowering a guard: the exit to the generic copy.
+    Vector<std::pair<BasicBlock*, LBasicBlock>, 2> m_edges; // While lowering a branch: edge blocks for successors that have phis.
     LBasicBlock m_afterSlotChecks { nullptr };
     LValue m_slotEpoch { nullptr };
     unsigned m_slotOfSlotChecks { 0 };
-    UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sharedSites; // By bytecode offset and identifier.
+    UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sharedSites; // Keyed by bytecode offset and identifier.
     BasicBlock* m_block { nullptr };
-    unsigned m_nodeIndex { 0 }; // Of the node being lowered, in m_block.
-    Node* m_node { nullptr }; // It, if it has a place in the bytecode.
-    Graph* m_code { nullptr }; // code()
+    unsigned m_nodeIndex { 0 }; // Index in m_block of the node being lowered.
+    Node* m_node { nullptr }; // The node being lowered, if it has a bytecode location.
+    Graph* m_code { nullptr }; // See code().
 };
 
 template<typename... Args>
@@ -463,19 +470,19 @@ LValue Lowering::vmCall(Node* node, LType type, Entry function, Args... args)
 template<typename Slow>
 LValue Lowering::withHelper(Stub stub, const Vector<LValue, 4>& arguments, const Slow& slow)
 {
-    // Code that is not worth its size calls the operation, which has the helper ahead of it (FOR_EACH_AOT_OPERATION_BEHIND_HELPER).
+    // Compact code calls the operation directly, which has the helper in front of it (FOR_EACH_AOT_OPERATION_BEHIND_HELPER).
     if (isCompact())
         return slow();
-    LValue quick = callHelper(stub, arguments);
+    LValue helperResult = callHelper(stub, arguments);
     LBasicBlock otherwise = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    ValueFromBlock made = m_out.anchor(quick);
-    m_out.branch(m_out.notNull(quick), usually(continuation), rarely(otherwise));
+    ValueFromBlock fastResult = m_out.anchor(helperResult);
+    m_out.branch(m_out.notNull(helperResult), usually(continuation), rarely(otherwise));
     m_out.appendTo(otherwise);
-    ValueFromBlock madeTheLongWay = m_out.anchor(slow());
+    ValueFromBlock slowResult = m_out.anchor(slow());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
-    return m_out.phi(B3::pointerType(), made, madeTheLongWay);
+    return m_out.phi(B3::pointerType(), fastResult, slowResult);
 }
 
 template<typename Functor>

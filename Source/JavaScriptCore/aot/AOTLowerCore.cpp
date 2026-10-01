@@ -248,7 +248,7 @@ bool Lowering::run()
     m_howValuesArePassed = m_graph.howValuesArePassed();
     if (unsigned count = m_graph.numberOfRegisterReturnValues) {
         m_returnValueReps = returnValueReps(m_graph.facts(), count);
-        m_thingsReturned.grow(count);
+        m_registerReturnValues.grow(count);
     }
     m_callFrame = m_out.framePointer();
     m_instance = registerOnEntry(instanceGPR);
@@ -347,9 +347,9 @@ bool Lowering::run()
         if (m_graph.numberOfRegisterReturnValues) {
             // (The phis first: what leaves is the last thing in the block.)
             Vector<LValue, 8> things;
-            for (unsigned i = 0; i < m_thingsReturned.size(); ++i) {
+            for (unsigned i = 0; i < m_registerReturnValues.size(); ++i) {
                 Rep how = m_returnValueReps[i];
-                things.append(m_out.phi(how == Rep::JSValue ? Int64 : how == Rep::Double ? Double : Int32, m_thingsReturned[i]));
+                things.append(m_out.phi(how == Rep::JSValue ? Int64 : how == Rep::Double ? Double : Int32, m_registerReturnValues[i]));
             }
             PatchpointValue* patchpoint = m_out.patchpoint(Void);
             for (unsigned i = 0; i < things.size(); ++i)
