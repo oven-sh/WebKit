@@ -838,7 +838,7 @@ std::optional<UsersOfNodes::OnlyRead> UsersOfNodes::isOnlyRead(Node* object, std
 static std::optional<MultiValueReturnTable::Names> namesOfLiteral(Node* node)
 {
     auto& instructions = node->graph->codeBlock()->instructions();
-    auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+    auto& stores = node->graph->storesOfLiteral(node->bytecodeIndex.offset());
     RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
     MultiValueReturnTable::Names names;
     for (unsigned i = 0; i < node->numberOfLiteralProperties; ++i) {
@@ -961,7 +961,7 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
                 if (!node->isBytecode(op_new_object) || !node->numberOfLiteralProperties || node->isElided)
                     continue;
                 auto& instructions = node->graph->codeBlock()->instructions();
-                auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+                auto& stores = node->graph->storesOfLiteral(node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= node->numberOfLiteralProperties);
                 Vector<UniquedStringImpl*, 8> names;
                 bool hasOneTwice = false;

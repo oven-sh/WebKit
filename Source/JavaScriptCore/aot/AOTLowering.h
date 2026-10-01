@@ -442,7 +442,7 @@ private:
     LValue m_constants { nullptr }; // For a cold-start function: FunctionInfo::constants.
     LValue m_calleeSlot { nullptr };
     LValue m_listSlot { nullptr }; // Signature::List: the argument count and address.
-    LValue m_homes { nullptr };
+    LValue m_frameRegisterStorage { nullptr };
     LValue m_scratch { nullptr };
     LBasicBlock m_returnBlock { nullptr };
     Vector<ValueFromBlock, 4> m_returnValues;

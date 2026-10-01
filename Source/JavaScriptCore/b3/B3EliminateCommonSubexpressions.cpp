@@ -84,40 +84,67 @@ public:
 
     void add(MemoryValue* memory)
     {
-        Matches& matches = m_map.add(memory->lastChild(), Matches()).iterator->value;
+        Matches& matches = m_map.add(keyFor(memory->lastChild(), memory->offset()), Matches()).iterator->value;
         if (matches.contains(memory))
             return;
         matches.append(memory);
+
+        // If memory reads is immutable, clobbering never changes the result.
+        if (memory->readsMutability() == Mutability::Immutable)
+            return;
+        Clobberable entry { memory, keyFor(memory->lastChild(), memory->offset()), memory->range() };
+        if (entry.range.distance() == 1)
+            m_narrow.add(entry.range.begin(), Vector<Clobberable, 1>()).iterator->value.append(entry);
+        else
+            m_wide.append(entry);
     }
 
-    template<typename Functor>
-    void removeIf(const Functor& functor)
+    // Bun: removes the values that a write to this range invalidates. It used to look at every value in the map, which is quadratic in
+    // the size of a block: in a long block most values are loads from heaps that the block's stores do not touch. A write to one
+    // abstract heap now looks at the values of that heap. A wider write still looks at them all, and removes most of what it looks at.
+    void clobber(HeapRange writes)
     {
-        m_map.removeIf(
-            [&] (UncheckedKeyHashMap<Value*, Matches>::KeyValuePairType& entry) -> bool {
-                entry.value.removeAllMatching(
-                    [&] (Value* value) -> bool {
-                        if (MemoryValue* memory = value->as<MemoryValue>())
-                            return functor(memory);
-                        return true;
-                    });
-                return entry.value.isEmpty();
+        auto remove = [&](const Clobberable& entry) {
+            auto iter = m_map.find(entry.key);
+            if (iter == m_map.end())
+                return;
+            iter->value.removeFirst(entry.value);
+            if (iter->value.isEmpty())
+                m_map.remove(iter);
+        };
+        if (writes.distance() == 1) {
+            for (auto& entry : m_narrow.take(writes.begin()))
+                remove(entry);
+        } else {
+            m_narrow.removeIf([&](auto& bucket) {
+                if (!HeapRange(bucket.key, bucket.key + 1).overlaps(writes))
+                    return false;
+                for (auto& entry : bucket.value)
+                    remove(entry);
+                return true;
             });
+        }
+        m_wide.removeAllMatching([&](const Clobberable& entry) {
+            if (!entry.range.overlaps(writes))
+                return false;
+            remove(entry);
+            return true;
+        });
     }
 
-    Matches* find(Value* ptr)
+    Matches* find(Value* ptr, int64_t offset)
     {
-        auto iter = m_map.find(ptr);
+        auto iter = m_map.find(keyFor(ptr, offset));
         if (iter == m_map.end())
             return nullptr;
         return &iter->value;
     }
 
     template<typename Functor>
-    MemoryValue* find(Value* ptr, const Functor& functor)
+    MemoryValue* find(Value* ptr, int64_t offset, const Functor& functor)
     {
         dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Looking for ", pointerDump(ptr), " in ", *this);
-        if (Matches* matches = find(ptr)) {
+        if (Matches* matches = find(ptr, offset)) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Matches: ", pointerListDump(*matches));
             for (Value* candidateValue : *matches) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Having candidate: ", pointerDump(candidateValue));
@@ -135,16 +162,30 @@ public:
         out.print("{"_s);
         CommaPrinter comma;
         for (auto& entry : m_map)
-            out.print(comma, pointerDump(entry.key), "=>"_s, pointerListDump(entry.value));
+            out.print(comma, pointerDump(entry.key.first), "+"_s, entry.key.second, "=>"_s, pointerListDump(entry.value));
         out.print("}"_s);
     }
     
 private:
+    // Bun: by the offset as well as the pointer. Whoever looks for a value only accepts one with the same offset, and code compiled ahead
+    // of time has thousands of accesses to the same pointer in a block (the frame, the Instance): going through them all is quadratic.
+    using Key = std::pair<Value*, int64_t>;
+    static Key keyFor(Value* pointer, int64_t offset) { return { pointer, offset }; }
+
     // This uses Matches for two reasons:
     // - It cannot be a MemoryValue* because the key is imprecise. Many MemoryValues could have the
     //   same key while being unaliased.
     // - It can't be a MemoryMatches array because the MemoryValue*'s could be turned into Identity's.
-    UncheckedKeyHashMap<Value*, Matches> m_map;
+    UncheckedKeyHashMap<Key, Matches> m_map;
+
+    // What clobber() goes by. As the value was when it was added: it may have been turned into an Identity since.
+    struct Clobberable {
+        Value* value;
+        Key key;
+        HeapRange range;
+    };
+    UncheckedKeyHashMap<uint64_t, Vector<Clobberable, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_narrow; // Of one abstract heap, by that heap.
+    Vector<Clobberable> m_wide;
 };
 
 using WasmStructFieldKey = std::tuple<Value*, uint64_t>;
@@ -610,13 +651,7 @@ private:
     {
         data.writes.add(writes);
 
-        data.memoryValuesAtTail.removeIf(
-            [&](MemoryValue* memory) {
-                // If memory reads is immutable, clobbering never changes the result.
-                if (memory->readsMutability() == Mutability::Immutable)
-                    return false;
-                return memory->range().overlaps(writes);
-            });
+        data.memoryValuesAtTail.clobber(writes);
 
         data.wasmStructValuesAtTail.removeIf(
             [&](WasmStructFieldValue* value) {
@@ -891,7 +926,7 @@ private:
         while (BasicBlock* block = worklist.pop()) {
             ImpureBlockData& data = m_impureBlockData[block];
 
-            MemoryValue* match = data.memoryStoresAtHead.find(ptr, filter);
+            MemoryValue* match = data.memoryStoresAtHead.find(ptr, m_value->as<MemoryValue>()->offset(), filter);
             if (match && match != m_value)
                 continue;
 
@@ -989,7 +1024,7 @@ private:
             return { };
         }
         
-        if (MemoryValue* match = m_data.memoryValuesAtTail.find(ptr, filter)) {
+        if (MemoryValue* match = m_data.memoryValuesAtTail.find(ptr, m_value->as<MemoryValue>()->offset(), filter)) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found ", *match, " locally.");
             return { match };
         }
@@ -1009,7 +1044,7 @@ private:
 
             ImpureBlockData& data = m_impureBlockData[block];
 
-            MemoryValue* match = data.memoryValuesAtTail.find(ptr, filter);
+            MemoryValue* match = data.memoryValuesAtTail.find(ptr, m_value->as<MemoryValue>()->offset(), filter);
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Consdering match: ", pointerDump(match));
             if (match && match != m_value) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found match: ", *match);

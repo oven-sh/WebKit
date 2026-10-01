@@ -147,7 +147,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 // It is of a family, and has something that the family has no slot for: it starts with nothing, and is given one thing after another.
                 LValue object = vmCall(node, pointerType(), Entry::operationAOTNewTypedObject, m_globalObject, m_out.constInt32(layoutID), slotAddress(allocateSlots(2)));
                 auto& instructions = code().codeBlock()->instructions();
-                auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+                auto& stores = code().storesOfLiteral(node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= count);
                 for (unsigned i = 0; i < count; ++i) {
                     auto store = instructions.at(stores[i])->as<OpPutById>();
@@ -183,7 +183,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             }
             {
                 auto& instructions = code().codeBlock()->instructions();
-                auto stores = Graph::storesOfLiteral(instructions, node->bytecodeIndex.offset());
+                auto& stores = code().storesOfLiteral(node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= count);
                 Vector<uint32_t, 16> words { AllocationPlan::encode(node->as<OpNewObject>().m_inlineCapacity, count) };
                 for (unsigned i = 0; i < count; ++i)
@@ -285,9 +285,13 @@ bool Lowering::tryLowerAllocation(Node* node)
     case op_new_array: {
         auto bytecode = node->as<OpNewArray>();
         bool areInt32 = !!bytecode.m_argc;
-        for (unsigned i = 0; i < bytecode.m_argc; ++i)
-            areInt32 &= isSubtype(node->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)))->type, TInt32);
-        LValue values = bytecode.m_argc ? storeToScratch(node, bytecode.m_argv, bytecode.m_argc) : m_out.intPtrZero;
+        bool areInFrame = Graph::readsOperandsFromFrame(node);
+        for (unsigned i = 0; i < bytecode.m_argc; ++i) {
+            VirtualRegister reg(bytecode.m_argv.offset() - static_cast<int>(i));
+            Type type = areInFrame ? m_graph.frameRegisterTypes[m_graph.registerIndex(reg)] : node->use(reg)->type;
+            areInt32 &= type && isSubtype(type, TInt32);
+        }
+        LValue values = areInFrame ? addressFor(bytecode.m_argv).value() : bytecode.m_argc ? storeToScratch(node, bytecode.m_argv, bytecode.m_argc) : m_out.intPtrZero;
         setJSValue(node, withHelper(areInt32 ? Stub::HelperNewArrayOfInt32 : Stub::HelperNewArray, { values, m_out.constInt32(bytecode.m_argc) }, [&] {
             return vmCall(node, pointerType(), Entry::operationAOTNewArray, m_globalObject, values, m_out.constInt32(bytecode.m_argc), m_out.constInt32(areInt32 ? ArrayWithInt32 : ArrayWithContiguous));
         }));

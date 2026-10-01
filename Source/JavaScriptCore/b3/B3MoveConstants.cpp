@@ -72,6 +72,7 @@ private:
         Dominators& dominators = m_proc.dominators();
         UncheckedKeyHashMap<ValueKey, Value*> valueForConstant;
         IndexMap<BasicBlock*, Vector<Value*>> materializations(m_proc.size());
+        UncheckedKeyHashMap<Value*, BasicBlock*> materializationBlocks; // Value::owner is cleared once the constant has been inserted.
 
         // We determine where things get materialized based on where they are used.
         for (BasicBlock* block : m_proc) {
@@ -111,6 +112,7 @@ private:
                     value->owner = block;
             }
             materializations[value->owner].append(value);
+            materializationBlocks.add(value, value->owner);
         }
 
         // Get rid of Value's that are fast constants but aren't canonical. Also remove the canonical
@@ -219,16 +221,18 @@ private:
                         int64_t addendConst = addend->asInt();
                         if (Air::Arg::isValidImmForm(addendConst))
                             break;
-                        Value* bestAddend = findBestConstant(
-                            [&] (Value* candidateAddend) -> bool {
-                                if (candidateAddend->type() != addend->type())
-                                    return false;
-                                if (!candidateAddend->hasInt())
-                                    return false;
-                                return candidateAddend == addend
-                                    || candidateAddend->asInt() == -addendConst;
-                            });
-                        if (!bestAddend || bestAddend == addend)
+                        // Bun: only the constant's negation can take its place, so look that up. findBestConstant() would go through
+                        // every constant of every dominator, which is quadratic in a function with many constants.
+                        Value* bestAddend = valueForConstant.get(ValueKey(addend->kind(), addend->type(), static_cast<int64_t>(-static_cast<uint64_t>(addendConst))));
+                        if (!bestAddend || bestAddend == addend || bestAddend->asInt() != -addendConst)
+                            break;
+                        // As findBestConstant() does, prefer the one that is materialized in the outermost dominator. If that is the same
+                        // block, every user of either has to settle on the same one.
+                        BasicBlock* blockOfBest = materializationBlocks.get(bestAddend);
+                        BasicBlock* blockOfAddend = materializationBlocks.get(addend);
+                        if (!dominators.dominates(blockOfBest, block))
+                            break;
+                        if (blockOfBest == blockOfAddend ? addendConst > 0 : dominators.dominates(blockOfAddend, blockOfBest))
                             break;
                         materialize(value->child(0));
                         materialize(bestAddend);

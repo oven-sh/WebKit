@@ -297,41 +297,62 @@ NewObjectPlan NewObjectPlan::forCreateThis(const JSInstructionStream& instructio
     return plan;
 }
 
-Vector<unsigned, 16> Graph::storesOfLiteral(const JSInstructionStream& instructions, unsigned offsetOfNewObject)
+const Vector<unsigned, 4>& Graph::storesOfLiteral(unsigned offsetOfNewObject)
 {
-    Vector<unsigned, 16> stores;
-    auto newObject = instructions.at(offsetOfNewObject);
-    VirtualRegister object = newObject->as<OpNewObject>().m_dst;
-    constexpr unsigned maximumCount = 2048; // Their values are all kept until the last.
-    // Nothing gets in here from elsewhere: what a jump goes to is either after a jump or the top of a loop or a handler, and this
-    // stops at all of them.
-    for (unsigned offset = offsetOfNewObject + newObject->size(); offset < instructions.size() && stores.size() < maximumCount; offset += instructions.at(offset)->size()) {
-        auto instruction = instructions.at(offset);
+    if (!m_hasFoundStoresOfLiterals)
+        findStoresOfLiterals();
+    auto it = m_storesOfLiterals.find(offsetOfNewObject);
+    RELEASE_ASSERT(it != m_storesOfLiterals.end());
+    return it->value;
+}
+
+// One pass over the function for all of its literals. Looking ahead from each op_new_object instead is quadratic: in [{...}, {...}, ...]
+// nothing mentions an element again until the op_new_array at the end.
+void Graph::findStoresOfLiterals()
+{
+    m_hasFoundStoresOfLiterals = true;
+    constexpr unsigned maximumCount = 2048; // The values stored are all kept live until the last store.
+    // By register: the offset of the op_new_object whose object is still being initialized there.
+    UncheckedKeyHashMap<int, unsigned, DefaultHash<int>, WTF::UnsignedWithZeroKeyHashTraits<int>> open;
+    for (const auto& instruction : m_codeBlock->instructions()) {
         OpcodeID opcode = instruction->opcodeID();
+        VirtualRegister initialized;
         if (opcode == op_put_by_id) {
             auto bytecode = instruction->as<OpPutById>();
-            if (bytecode.m_base == object) {
-                if (bytecode.m_value == object || !bytecode.m_flags.isDirect())
-                    break;
-                stores.append(offset);
-                continue;
+            if (auto it = open.find(bytecode.m_base.offset()); it != open.end()) {
+                if (bytecode.m_value == bytecode.m_base || !bytecode.m_flags.isDirect())
+                    open.remove(it);
+                else {
+                    auto& stores = m_storesOfLiterals.find(it->value)->value;
+                    stores.append(instruction.offset());
+                    if (stores.size() == maximumCount)
+                        open.remove(it);
+                    else
+                        initialized = bytecode.m_base;
+                }
             }
         }
-        if (isBranch(opcode) || isTerminal(opcode) || isThrow(opcode) || opcode == op_loop_hint || opcode == op_catch)
-            break;
-        bool knowsOfObject = false;
-        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
-            computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
-                knowsOfObject |= reg == object;
-            });
-            computeDefsForBytecodeIndexImpl(0, instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
-                knowsOfObject |= reg == object;
-            });
+        // Control cannot enter between the stores from elsewhere: a jump target follows a jump, or is a loop header or a handler.
+        if (isBranch(opcode) || isTerminal(opcode) || isThrow(opcode) || opcode == op_loop_hint || opcode == op_catch) {
+            open.clear();
+            continue;
         }
-        if (knowsOfObject)
-            break;
+        if (!open.isEmpty()) {
+            // Anything else that reads or writes the register may observe the object.
+            auto close = [&](VirtualRegister reg) {
+                if (reg != initialized)
+                    open.remove(reg.offset());
+            };
+            for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
+                computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, close);
+                computeDefsForBytecodeIndexImpl(0, instruction.ptr(), checkpoint, close);
+            }
+        }
+        if (opcode == op_new_object) {
+            m_storesOfLiterals.add(instruction.offset(), Vector<unsigned, 4>());
+            open.set(instruction->as<OpNewObject>().m_dst.offset(), instruction.offset());
+        }
     }
-    return stores;
 }
 
 Node* Graph::intrinsic(unsigned number)
@@ -2601,7 +2622,7 @@ private:
             for (const auto& instruction : m_instructions) {
                 unsigned offset = instruction.offset();
                 if (instruction->opcodeID() == op_new_object) {
-                    for (unsigned store : Graph::storesOfLiteral(m_instructions, offset))
+                    for (unsigned store : m_graph.storesOfLiteral(offset))
                         partOfWhatIsMade.set(store);
                 } else if (instruction->opcodeID() == op_create_this) {
                     for (auto& store : NewObjectPlan::forCreateThis(m_instructions, offset).stores)
@@ -2637,7 +2658,7 @@ private:
                 if (partOfLiteral.get(offset))
                     continue;
                 if (instruction->opcodeID() == op_new_object) {
-                    for (unsigned store : Graph::storesOfLiteral(m_instructions, offset))
+                    for (unsigned store : m_graph.storesOfLiteral(offset))
                         partOfLiteral.set(store);
                 }
                 if (instruction->opcodeID() == op_get_by_id) {
@@ -3070,10 +3091,24 @@ private:
 
     void chooseFrameRegisters()
     {
-        m_graph.m_homed.ensureSize(m_graph.numRegisters());
+        m_graph.m_registersLiveIntoHandlers.ensureSize(m_graph.numRegisters());
         for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
-            m_graph.m_homed.merge(entrypoint->liveIn);
-        m_graph.homedTypes.fill(TNone, m_graph.numRegisters());
+            m_graph.m_registersLiveIntoHandlers.merge(entrypoint->liveIn);
+        m_graph.m_arrayOperandRegisters.ensureSize(m_graph.numRegisters());
+        for (const auto& instruction : m_instructions) {
+            if (!Graph::readsOperandsFromFrame(instruction.ptr()))
+                continue;
+            auto bytecode = instruction->as<OpNewArray>();
+            for (unsigned i = 0; i < bytecode.m_argc; ++i)
+                m_graph.m_arrayOperandRegisters.set(m_graph.registerIndex(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i))));
+        }
+        m_graph.m_frameRegisters = m_graph.m_registersLiveIntoHandlers;
+        m_graph.m_frameRegisters.merge(m_graph.m_arrayOperandRegisters);
+        m_graph.m_frameRegisterIndices.fill(0, m_graph.numRegisters());
+        unsigned numberOfFrameRegisters = 0;
+        for (unsigned index : m_graph.m_frameRegisters)
+            m_graph.m_frameRegisterIndices[index] = numberOfFrameRegisters++;
+        m_graph.frameRegisterTypes.fill(TNone, m_graph.numRegisters());
 
         // It is for the sake of a handler that they do, which has nothing to go by but what is in memory. The number of a register is
         // put to one use after another: what is in it is only anybody's business where a handler that reads it is still to come.
@@ -3204,7 +3239,7 @@ private:
         }
         if (m_graph.livesInFrame(reg)) {
             unsigned index = m_graph.registerIndex(reg);
-            if (m_needsEveryStore || block->readByHandlersOfBlock.get(index) || block->readByHandlersAfterBlock.get(index)) {
+            if (m_needsEveryStore || m_graph.m_arrayOperandRegisters.get(index) || block->readByHandlersOfBlock.get(index) || block->readByHandlersAfterBlock.get(index)) {
                 Node* node = m_graph.addNode(NodeKind::SetStack);
                 node->reg = reg;
                 node->uses.append({ VirtualRegister(), value });
@@ -3289,7 +3324,7 @@ private:
                 node->reg = baseRegister;
                 append(block, node);
                 for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
-                    if (block->valuesAtTail[index] == base && !m_graph.m_homed.get(index))
+                    if (block->valuesAtTail[index] == base && !m_graph.m_frameRegisters.get(index))
                         block->valuesAtTail[index] = node;
                 }
                 continue;
@@ -3333,10 +3368,10 @@ private:
             switch (opcode) {
             case op_new_object: {
                 VirtualRegister reg = instruction->as<OpNewObject>().m_dst;
-                // A register that lives in memory is written where the instruction is.
-                if (!m_graph.isTracked(reg) || m_graph.livesInFrame(reg))
+                // A register that a handler reads from memory is written where the instruction is.
+                if (!m_graph.isTracked(reg) || m_graph.isLiveIntoHandler(reg))
                     break;
-                auto stores = Graph::storesOfLiteral(m_instructions, offset);
+                auto stores = m_graph.storesOfLiteral(offset);
                 while (!stores.isEmpty() && stores.last() >= block->bytecodeEnd)
                     stores.removeLast();
                 if (stores.isEmpty())
@@ -3455,7 +3490,7 @@ private:
                 narrow->narrowedTo = typeOfObjectWithLayoutInRange(narrow->firstLayout, narrow->lastLayout);
                 append(block, narrow);
                 for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
-                    if (block->valuesAtTail[index] == base && !m_graph.m_homed.get(index))
+                    if (block->valuesAtTail[index] == base && !m_graph.m_frameRegisters.get(index))
                         block->valuesAtTail[index] = narrow;
                 }
             }
@@ -3464,9 +3499,11 @@ private:
             node->opcode = opcode;
             node->instruction = instruction;
             node->bytecodeIndex = BytecodeIndex(offset);
-            forEachUse(instruction, [&](VirtualRegister reg) {
-                node->uses.append({ reg, get(block, reg) });
-            });
+            if (!Graph::readsOperandsFromFrame(instruction)) {
+                forEachUse(instruction, [&](VirtualRegister reg) {
+                    node->uses.append({ reg, get(block, reg) });
+                });
+            }
             if (opcode == op_call || opcode == op_call_ignore_result || opcode == op_tail_call) {
                 VirtualRegister thisRegister = Graph::operandsOfCall(instruction).argument(0);
                 for (auto& use : node->uses) {
@@ -3524,7 +3561,7 @@ private:
             if (block->isReentry) {
                 for (unsigned index : block->liveIn) {
                     Node* value = block->valuesAtTail[index];
-                    if (m_graph.m_homed.get(index) || !value)
+                    if (m_graph.m_frameRegisters.get(index) || !value)
                         continue;
                     Node* narrow = m_graph.addNode(NodeKind::Narrow);
                     narrow->reg = m_graph.registerForIndex(index);
@@ -3713,7 +3750,7 @@ private:
     BitVector m_loopHeaders;
     struct LiteralBeingMade {
         Node* node; // The op_new_object, which is going to be put where the last of its stores is.
-        Vector<unsigned, 16> stores;
+        Vector<unsigned, 4> stores;
         unsigned next;
     };
     Vector<LiteralBeingMade, 2> m_literalsBeingMade; // One inside the other.

@@ -479,23 +479,24 @@ public:
     }
 
     // A register that is live into an exception handler lives in the frame for the whole function, because the unwinder transfers
-    // control to a handler with nothing in machine registers.
-    bool livesInFrame(VirtualRegister reg) const { return m_homed.get(registerIndex(reg)); }
-    bool hasFrameRegisters() const { return !m_homed.isEmpty(); }
-    // Frame registers are contiguous in the frame. Returns the register's index among them.
-    unsigned homeOf(VirtualRegister reg) const
+    // control to a handler with nothing in machine registers. So do the operands of a large op_new_array.
+    bool livesInFrame(VirtualRegister reg) const { return m_frameRegisters.get(registerIndex(reg)); }
+    bool isLiveIntoHandler(VirtualRegister reg) const { return m_registersLiveIntoHandlers.get(registerIndex(reg)); }
+    bool isArrayOperandRegister(VirtualRegister reg) const { return m_arrayOperandRegisters.get(registerIndex(reg)); }
+    bool hasFrameRegisters() const { return !m_frameRegisters.isEmpty(); }
+    // Frame registers are contiguous in the frame, in the order of their numbers. Returns the register's index among them.
+    unsigned frameRegisterIndex(VirtualRegister reg) const
     {
         ASSERT(livesInFrame(reg));
-        unsigned result = 0;
-        for (unsigned index : m_homed) {
-            if (index == registerIndex(reg))
-                return result;
-            ++result;
-        }
-        RELEASE_ASSERT_NOT_REACHED();
-        return 0;
+        return m_frameRegisterIndices[registerIndex(reg)];
     }
-    unsigned numberOfFrameRegisters() const { return m_homed.bitCount(); }
+    // An op_new_array with more operands than this reads them from the frame, as it does in the interpreter: each is stored there when it
+    // is computed. As values they would all be live until the instruction. Nearly all would be spilled and reloaded, and Air's stack
+    // allocator is quadratic in the number of spill slots that are live at once.
+    static constexpr unsigned maximumArrayOperandsInRegisters = 32;
+    static bool readsOperandsFromFrame(const JSInstruction* instruction) { return instruction->opcodeID() == op_new_array && instruction->as<OpNewArray>().m_argc > maximumArrayOperandsInRegisters; }
+    static bool readsOperandsFromFrame(const Node* node) { return node->isBytecode(op_new_array) && readsOperandsFromFrame(node->instruction); }
+    unsigned numberOfFrameRegisters() const { return m_frameRegisters.bitCount(); }
     Convention convention() const { return m_convention; }
     HowValuesArePassed howValuesArePassed() const { return AOT::howValuesArePassed(m_summary, m_convention); }
 
@@ -539,7 +540,7 @@ public:
     // For an object literal: the offsets of the op_put_by_id instructions that initialize the object of an op_new_object, as far as
     // they are certain to execute consecutively. The code between them that computes the stored values cannot observe the object,
     // so the object can be allocated fully initialized at the last store.
-    static Vector<unsigned, 16> storesOfLiteral(const JSInstructionStream&, unsigned offsetOfNewObject);
+    const Vector<unsigned, 4>& storesOfLiteral(unsigned offsetOfNewObject);
     // For an op_get_by_val or op_put_by_val, or its guard: the typed array type the base is known to have, if its elements are
     // numbers.
     static std::optional<JSType> typedArrayAccessed(const Node*);
@@ -547,7 +548,8 @@ public:
     // Array.prototype.push.
     std::pair<Node*, Node*> arrayAndElementStored(const Node*) const;
     // An array allocated by this function. What the function stores in it is a good prediction of its contents.
-    static bool isArrayMadeHere(const Node* node) { return node->isBytecode(op_new_array) || node->isBytecode(op_new_array_with_size); }
+    // Its elements are the node's uses and whatever the function stores in it afterwards.
+    static bool isArrayMadeHere(const Node* node) { return (node->isBytecode(op_new_array) && !readsOperandsFromFrame(node)) || node->isBytecode(op_new_array_with_size); }
     // The function that the call or construct probably targets, if that can be determined.
     const KnownFunction* knownCallee(const Node*, bool* isExact = nullptr) const;
     const KnownFunction* knownCalleeIgnoringSummaries(const Node*, bool* isExact) const;
@@ -695,8 +697,11 @@ public:
     bool startsCold { false }; // CompiledFunctionInfo::startsCold
     bool m_needsFunctionObject { true };
     bool m_scopeIsEnvironmentOfModule { false };
-    BitVector m_homed;
-    Vector<Type> homedTypes; // Indexed by registerIndex(): the union of everything stored to each frame register.
+    BitVector m_frameRegisters;
+    BitVector m_registersLiveIntoHandlers;
+    BitVector m_arrayOperandRegisters; // See readsOperandsFromFrame().
+    Vector<unsigned> m_frameRegisterIndices;
+    Vector<Type> frameRegisterTypes; // Indexed by registerIndex(): the union of everything stored to each frame register.
     unsigned numICSlots { 0 };
     Vector<Site> sites; // For slots that have one. The rest are blank or past the end.
     // See the fields of the same names in CompiledFunctionInfo.
@@ -738,6 +743,9 @@ private:
     Node* m_emptyConstant { nullptr };
     UncheckedKeyHashMap<EncodedJSValue, Node*, EncodedJSValueHash, EncodedJSValueHashTraits> m_constants;
     UncheckedKeyHashMap<unsigned, Node*, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_intrinsics;
+    void findStoresOfLiterals();
+    UncheckedKeyHashMap<unsigned, Vector<unsigned, 4>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_storesOfLiterals; // By the offset of the op_new_object.
+    bool m_hasFoundStoresOfLiterals { false };
     ASCIILiteral m_failureReason;
     OpcodeID m_failureOpcode { op_nop };
     Graph* m_outermost { this };

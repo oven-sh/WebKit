@@ -177,7 +177,11 @@ private:
                 noteThatItIsPartOf(user->type, use.node->type, FunctionSummary::MergedInPhi);
             return;
         case NodeKind::SetStack:
-            noteThatItIsPartOf(m_graph.homedTypes[m_graph.registerIndex(user->reg)], user->uses[0].node->type, FunctionSummary::MergedInFrameRegister);
+            noteThatItIsPartOf(m_graph.frameRegisterTypes[m_graph.registerIndex(user->reg)], user->uses[0].node->type, FunctionSummary::MergedInFrameRegister);
+            // An op_new_array may read it from there (Graph::readsOperandsFromFrame()). The node does not list it as an operand, so this is
+            // where it escapes, as the operand of a smaller op_new_array does.
+            if (m_graph.isArrayOperandRegister(user->reg))
+                markEscaping(user->uses[0].node->type, usedBy(user));
             return;
         // (It looks. What it stands in front of is a user in its own right.)
         case NodeKind::Guard:
@@ -635,9 +639,9 @@ private:
             return type;
         }
         case NodeKind::GetStack:
-            return m_graph.homedTypes[m_graph.registerIndex(node->reg)];
+            return m_graph.frameRegisterTypes[m_graph.registerIndex(node->reg)];
         case NodeKind::SetStack: {
-            Type& homed = m_graph.homedTypes[m_graph.registerIndex(node->reg)];
+            Type& homed = m_graph.frameRegisterTypes[m_graph.registerIndex(node->reg)];
             homed |= node->uses[0].node->type;
             return homed; // So that a change is seen as a change.
         }

@@ -187,7 +187,7 @@ static unsigned scratchWordsFor(Node* node)
     case op_create_this:
         return node->numberOfLiteralProperties;
     case op_new_array:
-        return node->as<OpNewArray>().m_argc;
+        return Graph::readsOperandsFromFrame(node) ? 0 : node->as<OpNewArray>().m_argc;
     case op_new_array_with_spread:
         return node->as<OpNewArrayWithSpread>().m_argc;
     // The items of a list that is not made: at most two words each (Lowering::lowerCallWithItems()).
@@ -274,7 +274,7 @@ bool Lowering::run()
     if (m_graph.convention().signature == Signature::List)
         m_listSlot = m_out.lockedStackSlot(2 * sizeof(EncodedJSValue));
     if (unsigned homes = m_graph.numberOfFrameRegisters())
-        m_homes = m_out.lockedStackSlot(homes * sizeof(EncodedJSValue));
+        m_frameRegisterStorage = m_out.lockedStackSlot(homes * sizeof(EncodedJSValue));
     if (m_dataOrNothing) {
         // A function that goes round and round wants caches of its own from the start. The first time, they are made now.
         LBasicBlock hasNone = m_out.newBlock();
@@ -377,7 +377,7 @@ void Lowering::unsupported(Node* node)
 
 TypedPointer Lowering::addressFor(VirtualRegister reg)
 {
-    return m_out.address(m_homes, m_heaps.variables[m_graph.homeOf(reg)]);
+    return m_out.address(m_frameRegisterStorage, m_heaps.variables[m_graph.frameRegisterIndex(reg)]);
 }
 
 // The word at base + addend + the function's index * scale. No base: the Instance.
