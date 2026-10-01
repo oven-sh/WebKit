@@ -182,6 +182,9 @@ Buffer bufferOrNothing(JSGlobalObject*, JSValue);
 // The same, raising TypeError if it has none: a bytes-like object is required, not 'str'.
 Buffer bufferOf(JSGlobalObject*, JSValue);
 
+// memoryview(object): PyMemoryView_FromObjectAndFlags(). Null if it raised.
+PyMemoryView* memoryViewOf(JSGlobalObject*, JSValue, int flags);
+
 // The `itemsize` of a Py_buffer, which is as it is whether or not the format was asked for
 unsigned itemSizeOfBuffer(const Buffer&);
 // __buffer__() and __release_buffer__(), for a class whose instances have bytes to show: see NativeState::exportedBytes().

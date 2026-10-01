@@ -1,0 +1,218 @@
+===== making one
+no arguments -> "TypeError: Unpickler() missing required argument 'file' (pos 1)"
+not a file -> "TypeError: file must have 'read' and 'readline' attributes"
+only read -> "TypeError: file must have 'read' and 'readline' attributes"
+only readline -> "TypeError: file must have 'read' and 'readline' attributes"
+getting read raises -> 'ZeroDivisionError: division by zero'
+positional options -> 'TypeError: Unpickler() takes exactly 1 positional argument (2 given)'
+unknown keyword -> "TypeError: Unpickler() got an unexpected keyword argument 'zzz'"
+Unpickler 'encoding 5' -> "TypeError: Unpickler() argument 'encoding' must be str, not int"
+   loads -> "TypeError: loads() argument 'encoding' must be str, not int"
+   load -> "TypeError: load() argument 'encoding' must be str, not int"
+Unpickler 'encoding None' -> "TypeError: Unpickler() argument 'encoding' must be str, not None"
+   loads -> "TypeError: loads() argument 'encoding' must be str, not None"
+   load -> "TypeError: load() argument 'encoding' must be str, not None"
+Unpickler "encoding b'x'" -> "TypeError: Unpickler() argument 'encoding' must be str, not bytes"
+   loads -> "TypeError: loads() argument 'encoding' must be str, not bytes"
+   load -> "TypeError: load() argument 'encoding' must be str, not bytes"
+Unpickler "encoding 'a\\x00b'" -> 'ValueError: embedded null character'
+   loads -> 'ValueError: embedded null character'
+   load -> 'ValueError: embedded null character'
+Unpickler "encoding '\\ud800'" -> "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+   loads -> "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+   load -> "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+Unpickler 'errors 5' -> "TypeError: Unpickler() argument 'errors' must be str, not int"
+   loads -> "TypeError: loads() argument 'errors' must be str, not int"
+   load -> "TypeError: load() argument 'errors' must be str, not int"
+Unpickler 'errors None' -> "TypeError: Unpickler() argument 'errors' must be str, not None"
+   loads -> "TypeError: loads() argument 'errors' must be str, not None"
+   load -> "TypeError: load() argument 'errors' must be str, not None"
+Unpickler "errors 'a\\x00b'" -> 'ValueError: embedded null character'
+   loads -> 'ValueError: embedded null character'
+   load -> 'ValueError: embedded null character'
+Unpickler 'buffers 5' -> "TypeError: 'int' object is not iterable"
+   loads -> "TypeError: 'int' object is not iterable"
+   load -> "TypeError: 'int' object is not iterable"
+Unpickler 'buffers None' -> 'NoneType'
+   loads -> None
+   load -> None
+Unpickler 'buffers ()' -> 'NoneType'
+   loads -> None
+   load -> None
+Unpickler 'buffers <list_iterator objec' -> 'NoneType'
+   loads -> None
+   load -> None
+Unpickler 'fix_imports []' -> 'NoneType'
+   loads -> None
+   load -> None
+Unpickler "encoding 'nonesuch'" -> 'NoneType'
+   loads -> None
+   load -> None
+Unpickler "errors 'nonesuch'" -> 'NoneType'
+   loads -> None
+   load -> None
+loads: a str -> "TypeError: a bytes-like object is required, not 'str'"
+loads: an int -> "TypeError: a bytes-like object is required, not 'int'"
+loads: None -> "TypeError: a bytes-like object is required, not 'NoneType'"
+loads: nothing -> 'TypeError: loads() takes exactly 1 positional argument (0 given)'
+loads: by keyword -> 'TypeError: loads() takes exactly 1 positional argument (0 given)'
+loads: bytearray -> 5
+loads: memoryview -> 5
+loads: a slice -> 5
+loads: array -> 5
+loads: not contiguous -> 'BufferError: memoryview: underlying buffer is not C-contiguous'
+loads: PickleBuffer -> 5
+load: nothing -> "TypeError: load() missing required argument 'file' (pos 1)"
+load: not a file -> "TypeError: file must have 'read' and 'readline' attributes"
+load: by keyword -> None
+__init__ not called -> 'UnpicklingError: Unpickler.__init__() was not called by NoInit.__init__()'
+__new__ alone -> 'UnpicklingError: Unpickler.__init__() was not called by _pickle.Unpickler.__init__()'
+__init__ twice -> (1, None, 2)
+===== attributes
+another attribute -> "AttributeError: '_pickle.Unpickler' object has no attribute 'zzz'"
+get another -> "AttributeError: '_pickle.Unpickler' object has no attribute 'zzz'"
+persistent_load -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+persistent_load: no argument -> 'TypeError: persistent_load() takes exactly 1 positional argument (0 given)'
+set persistent_load -> True
+delete persistent_load -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+find_class -> <built-in function len>
+find_class: one -> 'TypeError: find_class() takes exactly 2 positional arguments (1 given)'
+find_class: ints -> 'TypeError: module name must be a string'
+find_class: name an int -> "TypeError: attribute name must be string, not 'int'"
+find_class: dotted -> "AttributeError: module 'collections' has no attribute 'OrderedDict.fromkeys'"
+find_class: python 2 -> <class 'str'>
+find_class: python 2, not fixed -> "ModuleNotFoundError: No module named '__builtin__'"
+find_class: keyword -> 'TypeError: find_class() takes exactly 2 positional arguments (0 given)'
+load: an argument -> 'TypeError: load() takes no arguments'
+audit -> (<built-in function len>, [('pickle.find_class', ('builtins', 'len'))])
+===== the memo
+copy -> ('a', 'UnpicklerMemoProxy', {0: [], 2: 'a', 5: None}, (<class 'dict'>, ({0: [], 2: 'a', 5: None},)), False)
+clear -> ([], None, {})
+hash -> "TypeError: unhashable type: '_pickle.UnpicklerMemoProxy'"
+len -> "TypeError: object of type '_pickle.UnpicklerMemoProxy' has no len()"
+delete -> 'TypeError: attribute deletion is not supported'
+set to a list -> "TypeError: 'memo' attribute must be an UnpicklerMemoProxy object or dict, not list"
+set: keys no ints -> 'TypeError: memo key must be integers'
+set: negative -> 'ValueError: memo key must be positive integers.'
+set: too large -> 'OverflowError: Python int too large to convert to C ssize_t'
+set: True -> None
+set to a dict -> (None, {})
+set to a dict, and read -> 'UnpicklingError: Memo value not found at index 0'
+set to a proxy -> (True, {0: []})
+kept from one load to the next -> ([], [])
+MEMOIZE goes on counting -> (1, 2, {0: 1, 1: 2})
+===== in use
+load inside load -> 'RuntimeError: Unpickler object is already used'
+__init__ inside load -> 'RuntimeError: Unpickler object is already used'
+memo inside load -> {}
+  first -> "UnpicklingError: invalid load key, 'Z'."
+after it failed -> 'UnpicklingError: unpickling stack underflow'
+===== what it reads from
+small plain -> (True, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('read', 8, 8), ('read', 40, 40)], 51)
+small readinto -> (True, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('read', 8, 8), ('read', 40, 40)], 51)
+small peek -> (True, [('peek', 131072, 51), ('read', 51, 51)], 51)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 8, 8), ('peek', 131072, 3), ('read', 40, 40)], 51)
+small readinto+peek -> (True, [('peek', 131072, 51), ('read', 51, 51)], 51)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 8, 8), ('peek', 131072, 3), ('read', 40, 40)], 51)
+old plain -> (True, (40, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('readline', None, 2), ('read', 1, 1), ('readline', None, 2)], [('readline', None, 3), ('read', 1, 1), ('read', 1, 1), ('readline', None, 2), ('read', 1, 1), ('read', 1, 1)]), 91)
+old readinto -> (True, (40, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('readline', None, 2), ('read', 1, 1), ('readline', None, 2)], [('readline', None, 3), ('read', 1, 1), ('read', 1, 1), ('readline', None, 2), ('read', 1, 1), ('read', 1, 1)]), 91)
+old peek -> (True, [('peek', 131072, 91), ('read', 91, 91)], 91)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('readline', None, 2), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 3, 3), ('readline', None, 2), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 4), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 6), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 33), ('peek', 131072, 3), ('read', 3, 3), ('readline', None, 2), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 3, 3), ('readline', None, 3), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 2), ('peek', 131072, 2), ('read', 2, 2)], 91)
+old readinto+peek -> (True, [('peek', 131072, 91), ('read', 91, 91)], 91)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('readline', None, 2), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 3, 3), ('readline', None, 2), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 4), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 6), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 33), ('peek', 131072, 3), ('read', 3, 3), ('readline', None, 2), ('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 3, 3), ('readline', None, 3), ('peek', 131072, 3), ('read', 2, 2), ('readline', None, 2), ('peek', 131072, 2), ('read', 2, 2)], 91)
+big plain -> (True, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('read', 8, 8), ('read', 313, 313), ('read', 1, 1), ('read', 8, 8), ('read', 70000, 70000), ('read', 1, 1), ('read', 1, 1), ('read', 4, 4), ('read', 70000, 70000), ('read', 1, 1), ('read', 1, 1), ('read', 4, 4), ('read', 70000, 70000), ('read', 1, 1), ('read', 1, 1), ('read', 1, 1)], 210348)
+big readinto -> (True, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('read', 8, 8), ('read', 313, 313), ('read', 1, 1), ('read', 8, 8), ('readinto', 70000, 70000), ('read', 1, 1), ('read', 1, 1), ('read', 4, 4), ('readinto', 70000, 70000), ('read', 1, 1), ('read', 1, 1), ('read', 4, 4), ('read', 70000, 70000), ('read', 1, 1), ('read', 1, 1), ('read', 1, 1)], 210348)
+big peek -> (True, [('peek', 131072, 131072), ('read', 131072, 131072), ('read', 9267, 9267), ('peek', 131072, 70009), ('read', 70009, 70009)], 210348)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 8, 8), ('peek', 131072, 3), ('read', 313, 313), ('peek', 131072, 3), ('read', 1, 1), ('peek', 131072, 3), ('read', 8, 8), ('read', 70000, 70000), ('peek', 131072, 3), ('read', 2, 2), ('peek', 131072, 3), ('read', 4, 4), ('read', 70000, 70000), ('peek', 131072, 3), ('read', 2, 2), ('peek', 131072, 3), ('read', 4, 4), ('peek', 131072, 3), ('read', 70000, 70000), ('peek', 131072, 3), ('read', 3, 3)], 210348)
+big readinto+peek -> (True, [('peek', 131072, 131072), ('read', 131072, 131072), ('readinto', 9267, 9267), ('peek', 131072, 70009), ('read', 70009, 70009)], 210348)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 8, 8), ('peek', 131072, 3), ('read', 313, 313), ('peek', 131072, 3), ('read', 1, 1), ('peek', 131072, 3), ('read', 8, 8), ('readinto', 70000, 70000), ('peek', 131072, 3), ('read', 2, 2), ('peek', 131072, 3), ('read', 4, 4), ('readinto', 70000, 70000), ('peek', 131072, 3), ('read', 2, 2), ('peek', 131072, 3), ('read', 4, 4), ('peek', 131072, 3), ('read', 70000, 70000), ('peek', 131072, 3), ('read', 3, 3)], 210348)
+two plain -> (True, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('read', 8, 8), ('read', 40, 40)], 51)
+two readinto -> (True, [('read', 1, 1), ('read', 1, 1), ('read', 1, 1), ('read', 8, 8), ('read', 40, 40)], 51)
+two peek -> (True, [('peek', 131072, 142), ('read', 51, 51)], 51)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 8, 8), ('peek', 131072, 3), ('read', 40, 40)], 51)
+two readinto+peek -> (True, [('peek', 131072, 142), ('read', 51, 51)], 51)
+   peek gives little -> (True, [('peek', 131072, 3), ('read', 3, 3), ('peek', 131072, 3), ('read', 8, 8), ('peek', 131072, 3), ('read', 40, 40)], 51)
+two, one after the other -> ({'a': [1, 2.5, 'three'], 'b': (None, True)}, 51, {'a': [1, 2.5, 'three', 1000000000000000000000000000000], 'b': (None, True)}, 142)
+buffered -> ({'a': [1, 2.5, 'three'], 'b': (None, True)}, 51, {'a': [1, 2.5, 'three', 1000000000000000000000000000000], 'b': (None, True)}, 142)
+read gives a str -> "TypeError: a bytes-like object is required, not 'str'"
+read gives None -> "TypeError: a bytes-like object is required, not 'NoneType'"
+read gives too much -> None
+read gives nothing -> 'EOFError: Ran out of input'
+read raises -> 'ZeroDivisionError: division by zero'
+read gives a bytearray -> None
+peek raises NotImplementedError -> None
+peek raises -> 'ZeroDivisionError: division by zero'
+peek gives a str -> "TypeError: a bytes-like object is required, not 'str'"
+peek gives nothing -> None
+readinto gives 5 -> (b'abcde', ('memoryview', 5, False, 'B'))
+readinto gives 4 -> 'UnpicklingError: pickle data was truncated'
+readinto gives 6 -> (b'abcde', ('memoryview', 5, False, 'B'))
+readinto gives -1 -> 'ValueError: readinto() returned negative size'
+readinto gives None -> 'TypeError: an integer is required'
+readinto gives a str -> 'TypeError: an integer is required'
+readinto gives True -> 'UnpicklingError: pickle data was truncated'
+readinto gives 2**70 -> 'OverflowError: Python int too large to convert to C ssize_t'
+no readinto, and read gives bytes -> b'abcde'
+no readinto, and read gives too few -> 'UnpicklingError: pickle data was truncated'
+no readinto, and read gives too many -> b'abcde'
+no readinto, and read gives a bytearray -> "ValueError: read() returned non-bytes object (<class 'bytearray'>)"
+no readinto, and read gives a str -> "ValueError: read() returned non-bytes object (<class 'str'>)"
+no readinto, and read gives None -> "ValueError: read() returned non-bytes object (<class 'NoneType'>)"
+===== strings of Python 2
+STRING [] -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 1: ordinal not in range(128)"
+BINSTRING [] -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 1: ordinal not in range(128)"
+SHORT_BINSTRING [] -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 1: ordinal not in range(128)"
+ascii [] -> 'a'
+STRING [('encoding', 'latin-1')] -> 'a\xe9'
+BINSTRING [('encoding', 'latin-1')] -> 'a\xe9'
+SHORT_BINSTRING [('encoding', 'latin-1')] -> 'a\xe9'
+ascii [('encoding', 'latin-1')] -> 'a'
+STRING [('encoding', 'bytes')] -> b'a\xe9'
+BINSTRING [('encoding', 'bytes')] -> b'a\xe9'
+SHORT_BINSTRING [('encoding', 'bytes')] -> b'a\xe9'
+ascii [('encoding', 'bytes')] -> b'a'
+STRING [('encoding', 'utf-8')] -> "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x in position 1: unexpected end of data"
+BINSTRING [('encoding', 'utf-8')] -> "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x in position 1: unexpected end of data"
+SHORT_BINSTRING [('encoding', 'utf-8')] -> "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x in position 1: unexpected end of data"
+ascii [('encoding', 'utf-8')] -> 'a'
+STRING [('encoding', 'ascii'), ('errors', 'replace')] -> 'a\ufffd'
+BINSTRING [('encoding', 'ascii'), ('errors', 'replace')] -> 'a\ufffd'
+SHORT_BINSTRING [('encoding', 'ascii'), ('errors', 'replace')] -> 'a\ufffd'
+ascii [('encoding', 'ascii'), ('errors', 'replace')] -> 'a'
+STRING [('encoding', 'ascii'), ('errors', 'ignore')] -> 'a'
+BINSTRING [('encoding', 'ascii'), ('errors', 'ignore')] -> 'a'
+SHORT_BINSTRING [('encoding', 'ascii'), ('errors', 'ignore')] -> 'a'
+ascii [('encoding', 'ascii'), ('errors', 'ignore')] -> 'a'
+STRING [('encoding', 'BYTES')] -> 'LookupError: unknown encoding: BYTES'
+BINSTRING [('encoding', 'BYTES')] -> 'LookupError: unknown encoding: BYTES'
+SHORT_BINSTRING [('encoding', 'BYTES')] -> 'LookupError: unknown encoding: BYTES'
+ascii [('encoding', 'BYTES')] -> 'LookupError: unknown encoding: BYTES'
+STRING [('encoding', 'nonesuch')] -> 'LookupError: unknown encoding: nonesuch'
+BINSTRING [('encoding', 'nonesuch')] -> 'LookupError: unknown encoding: nonesuch'
+SHORT_BINSTRING [('encoding', 'nonesuch')] -> 'LookupError: unknown encoding: nonesuch'
+ascii [('encoding', 'nonesuch')] -> 'LookupError: unknown encoding: nonesuch'
+STRING [('errors', 'nonesuch')] -> "LookupError: unknown error handler name 'nonesuch'"
+BINSTRING [('errors', 'nonesuch')] -> "LookupError: unknown error handler name 'nonesuch'"
+SHORT_BINSTRING [('errors', 'nonesuch')] -> "LookupError: unknown error handler name 'nonesuch'"
+ascii [('errors', 'nonesuch')] -> 'a'
+===== persistent_load
+PERSID -> ('loaded', 'abc')
+PERSID not ASCII -> 'UnpicklingError: persistent IDs in protocol 0 must be ASCII strings'
+BINPERSID -> ('loaded', (1, 2))
+set on the instance -> ('set', 1)
+raises -> 'ZeroDivisionError: division by zero'
+not callable -> "TypeError: 'int' object is not callable"
+===== find_class
+GLOBAL -> ('found', 'a', 'b', 'str')
+STACK_GLOBAL -> ('found', 'a', 'b', 'str')
+INST -> "TypeError: 'tuple' object is not callable"
+GLOBAL utf-8 -> ('found', '\xe9', '\u20ac', 'str')
+forbidden -> 'UnpicklingError: forbidden os.system'
+EXT1 -> (<class 'collections.OrderedDict'>, b'\x80\x02\x82\xf0.', b'ccollections\nOrderedDict\nq\x00.', <class 'collections.OrderedDict'>)
+EXT1, removed -> 'ValueError: unregistered extension code 240'
+EXT1, no pair -> "ValueError: _inverted_registry[241] isn't a 2-tuple of strings"
+EXT1, no strs -> "ValueError: _inverted_registry[241] isn't a 2-tuple of strings"
+a code of 0 -> 'RuntimeError: extension code 0 is out of range'
+a code that is a str -> "TypeError: 'str' object cannot be interpreted as an integer"
+EXT4 -> b'\x80\x02\x84p\x11\x01\x00.'
+EXT2 -> b'\x80\x02\x83,\x01.'

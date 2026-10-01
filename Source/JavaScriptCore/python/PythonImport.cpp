@@ -297,6 +297,7 @@ static constexpr BuiltinModule s_builtinModules[] = {
     { "_symtable"_s, createSymtableModule },
     { "_suggestions"_s, createSuggestionsModule },
     { "_json"_s, createJSONModule },
+    { "_pickle"_s, createPickleModule },
     { "_stat"_s, createStatModule },
     { "_statistics"_s, createStatisticsModule },
     { "_sysconfig"_s, createSysconfigModule },

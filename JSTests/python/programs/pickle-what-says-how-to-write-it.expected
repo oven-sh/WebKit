@@ -1,0 +1,456 @@
+===== what __reduce__ gives
+None 0 -> 'PicklingError: __reduce__ must return a string or tuple, not NoneType | when serializing R object'
+None 1 -> 'PicklingError: __reduce__ must return a string or tuple, not NoneType | when serializing R object'
+None 2 -> 'PicklingError: __reduce__ must return a string or tuple, not NoneType | when serializing R object'
+None 3 -> 'PicklingError: __reduce__ must return a string or tuple, not NoneType | when serializing R object'
+None 4 -> 'PicklingError: __reduce__ must return a string or tuple, not NoneType | when serializing R object'
+None 5 -> 'PicklingError: __reduce__ must return a string or tuple, not NoneType | when serializing R object'
+int 0 -> 'PicklingError: __reduce__ must return a string or tuple, not int | when serializing R object'
+int 1 -> 'PicklingError: __reduce__ must return a string or tuple, not int | when serializing R object'
+int 2 -> 'PicklingError: __reduce__ must return a string or tuple, not int | when serializing R object'
+int 3 -> 'PicklingError: __reduce__ must return a string or tuple, not int | when serializing R object'
+int 4 -> 'PicklingError: __reduce__ must return a string or tuple, not int | when serializing R object'
+int 5 -> 'PicklingError: __reduce__ must return a string or tuple, not int | when serializing R object'
+list 0 -> 'PicklingError: __reduce__ must return a string or tuple, not list | when serializing R object'
+list 1 -> 'PicklingError: __reduce__ must return a string or tuple, not list | when serializing R object'
+list 2 -> 'PicklingError: __reduce__ must return a string or tuple, not list | when serializing R object'
+list 3 -> 'PicklingError: __reduce__ must return a string or tuple, not list | when serializing R object'
+list 4 -> 'PicklingError: __reduce__ must return a string or tuple, not list | when serializing R object'
+list 5 -> 'PicklingError: __reduce__ must return a string or tuple, not list | when serializing R object'
+empty 0 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+empty 1 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+empty 2 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+empty 3 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+empty 4 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+empty 5 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+one 0 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+one 1 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+one 2 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+one 3 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+one 4 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+one 5 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+seven 0 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+seven 1 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+seven 2 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+seven 3 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+seven 4 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+seven 5 -> 'PicklingError: tuple returned by __reduce__ must contain 2 through 6 elements | when serializing R object'
+not callable 0 -> 'PicklingError: first item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+not callable 1 -> 'PicklingError: first item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+not callable 2 -> 'PicklingError: first item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+not callable 3 -> 'PicklingError: first item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+not callable 4 -> 'PicklingError: first item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+not callable 5 -> 'PicklingError: first item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+args no tuple 0 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list | when serializing R object'
+args no tuple 1 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list | when serializing R object'
+args no tuple 2 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list | when serializing R object'
+args no tuple 3 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list | when serializing R object'
+args no tuple 4 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list | when serializing R object'
+args no tuple 5 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not list | when serializing R object'
+args None 0 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not NoneType | when serializing R object'
+args None 1 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not NoneType | when serializing R object'
+args None 2 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not NoneType | when serializing R object'
+args None 3 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not NoneType | when serializing R object'
+args None 4 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not NoneType | when serializing R object'
+args None 5 -> 'PicklingError: second item of the tuple returned by __reduce__ must be a tuple, not NoneType | when serializing R object'
+state 0 -> b'c__main__\nident\np0\n(tRp1\n(dp2\nVa\np3\nI1\nsb.'
+state 1 -> b'c__main__\nident\nq\x00)Rq\x01}q\x02X\x01\x00\x00\x00aq\x03K\x01sb.'
+state 2 -> b'\x80\x02c__main__\nident\nq\x00)Rq\x01}q\x02X\x01\x00\x00\x00aq\x03K\x01sb.'
+state 3 -> b'\x80\x03c__main__\nident\nq\x00)Rq\x01}q\x02X\x01\x00\x00\x00aq\x03K\x01sb.'
+state 4 -> b'\x80\x04\x95#\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94}\x94\x8c\x01a\x94K\x01sb.'
+state 5 -> b'\x80\x05\x95#\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94}\x94\x8c\x01a\x94K\x01sb.'
+state None 0 -> b'c__main__\nident\np0\n(tRp1\n.'
+state None 1 -> b'c__main__\nident\nq\x00)Rq\x01.'
+state None 2 -> b'\x80\x02c__main__\nident\nq\x00)Rq\x01.'
+state None 3 -> b'\x80\x03c__main__\nident\nq\x00)Rq\x01.'
+state None 4 -> b'\x80\x04\x95\x19\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94.'
+state None 5 -> b'\x80\x05\x95\x19\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94.'
+listitems no iterator 0 -> 'PicklingError: fourth item of the tuple returned by __reduce__ must be an iterator, not list | when serializing R object'
+listitems no iterator 1 -> 'PicklingError: fourth item of the tuple returned by __reduce__ must be an iterator, not list | when serializing R object'
+listitems no iterator 2 -> 'PicklingError: fourth item of the tuple returned by __reduce__ must be an iterator, not list | when serializing R object'
+listitems no iterator 3 -> 'PicklingError: fourth item of the tuple returned by __reduce__ must be an iterator, not list | when serializing R object'
+listitems no iterator 4 -> 'PicklingError: fourth item of the tuple returned by __reduce__ must be an iterator, not list | when serializing R object'
+listitems no iterator 5 -> 'PicklingError: fourth item of the tuple returned by __reduce__ must be an iterator, not list | when serializing R object'
+listitems 0 -> b'c__builtin__\nlist\np0\n(tRp1\nI1\naI2\naI3\na.'
+listitems 1 -> b'c__builtin__\nlist\nq\x00)Rq\x01.'
+listitems 2 -> b'\x80\x02c__builtin__\nlist\nq\x00)Rq\x01.'
+listitems 3 -> b'\x80\x03cbuiltins\nlist\nq\x00)Rq\x01.'
+listitems 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+listitems 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+one listitem 0 -> b'c__builtin__\nlist\np0\n(tRp1\nI1\na.'
+one listitem 1 -> b'c__builtin__\nlist\nq\x00)Rq\x01.'
+one listitem 2 -> b'\x80\x02c__builtin__\nlist\nq\x00)Rq\x01.'
+one listitem 3 -> b'\x80\x03cbuiltins\nlist\nq\x00)Rq\x01.'
+one listitem 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+one listitem 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+no listitems 0 -> b'c__builtin__\nlist\np0\n(tRp1\n.'
+no listitems 1 -> b'c__builtin__\nlist\nq\x00)Rq\x01.'
+no listitems 2 -> b'\x80\x02c__builtin__\nlist\nq\x00)Rq\x01.'
+no listitems 3 -> b'\x80\x03cbuiltins\nlist\nq\x00)Rq\x01.'
+no listitems 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+no listitems 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+dictitems no iterator 0 -> 'PicklingError: fifth item of the tuple returned by __reduce__ must be an iterator, not dict | when serializing R object'
+dictitems no iterator 1 -> 'PicklingError: fifth item of the tuple returned by __reduce__ must be an iterator, not dict | when serializing R object'
+dictitems no iterator 2 -> 'PicklingError: fifth item of the tuple returned by __reduce__ must be an iterator, not dict | when serializing R object'
+dictitems no iterator 3 -> 'PicklingError: fifth item of the tuple returned by __reduce__ must be an iterator, not dict | when serializing R object'
+dictitems no iterator 4 -> 'PicklingError: fifth item of the tuple returned by __reduce__ must be an iterator, not dict | when serializing R object'
+dictitems no iterator 5 -> 'PicklingError: fifth item of the tuple returned by __reduce__ must be an iterator, not dict | when serializing R object'
+dictitems 0 -> b'c__builtin__\ndict\np0\n(tRp1\nI1\nI2\nsI3\nI4\ns.'
+dictitems 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+dictitems 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+dictitems 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+one dictitem 0 -> b'c__builtin__\ndict\np0\n(tRp1\nI1\nI2\ns.'
+one dictitem 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+one dictitem 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+one dictitem 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+one dictitem 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+one dictitem 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+dictitems no pairs 0 -> 'TypeError: dict items iterator must return 2-tuples | when serializing R object'
+dictitems no pairs 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems no pairs 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems no pairs 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+dictitems no pairs 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+dictitems no pairs 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+dictitems of three 0 -> 'TypeError: dict items iterator must return 2-tuples | when serializing R object'
+dictitems of three 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems of three 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems of three 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+dictitems of three 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+dictitems of three 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+second dictitem no pair 0 -> 'TypeError: dict items iterator must return 2-tuples | when serializing R object'
+second dictitem no pair 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+second dictitem no pair 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+second dictitem no pair 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+second dictitem no pair 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+second dictitem no pair 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+dictitems of lists 0 -> 'TypeError: dict items iterator must return 2-tuples | when serializing R object'
+dictitems of lists 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems of lists 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+dictitems of lists 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+dictitems of lists 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+dictitems of lists 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+setter not callable 0 -> 'PicklingError: sixth item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+setter not callable 1 -> 'PicklingError: sixth item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+setter not callable 2 -> 'PicklingError: sixth item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+setter not callable 3 -> 'PicklingError: sixth item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+setter not callable 4 -> 'PicklingError: sixth item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+setter not callable 5 -> 'PicklingError: sixth item of the tuple returned by __reduce__ must be callable, not int | when serializing R object'
+setter 0 -> b'c__main__\nident\np0\n(tRp1\ng0\ng1\n(dp2\nVs\np3\nI1\ns\x86R0.'
+setter 1 -> b'c__main__\nident\nq\x00)Rq\x01h\x00h\x01}q\x02X\x01\x00\x00\x00sq\x03K\x01s\x86R0.'
+setter 2 -> b'\x80\x02c__main__\nident\nq\x00)Rq\x01h\x00h\x01}q\x02X\x01\x00\x00\x00sq\x03K\x01s\x86R0.'
+setter 3 -> b'\x80\x03c__main__\nident\nq\x00)Rq\x01h\x00h\x01}q\x02X\x01\x00\x00\x00sq\x03K\x01s\x86R0.'
+setter 4 -> b'\x80\x04\x95)\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94h\x02h\x03}\x94\x8c\x01s\x94K\x01s\x86R0.'
+setter 5 -> b'\x80\x05\x95)\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94h\x02h\x03}\x94\x8c\x01s\x94K\x01s\x86R0.'
+setter and no state 0 -> b'c__main__\nident\np0\n(tRp1\n.'
+setter and no state 1 -> b'c__main__\nident\nq\x00)Rq\x01.'
+setter and no state 2 -> b'\x80\x02c__main__\nident\nq\x00)Rq\x01.'
+setter and no state 3 -> b'\x80\x03c__main__\nident\nq\x00)Rq\x01.'
+setter and no state 4 -> b'\x80\x04\x95\x19\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94.'
+setter and no state 5 -> b'\x80\x05\x95\x19\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94.'
+a str 0 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str 1 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str 2 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str 3 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str 4 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str 5 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str that is not there 0 -> "PicklingError: Can't pickle R(): it's not found as __main__.nowhere <- AttributeError: module '__main__' has no attribute 'nowhere'"
+a str that is not there 1 -> "PicklingError: Can't pickle R(): it's not found as __main__.nowhere <- AttributeError: module '__main__' has no attribute 'nowhere'"
+a str that is not there 2 -> "PicklingError: Can't pickle R(): it's not found as __main__.nowhere <- AttributeError: module '__main__' has no attribute 'nowhere'"
+a str that is not there 3 -> "PicklingError: Can't pickle R(): it's not found as __main__.nowhere <- AttributeError: module '__main__' has no attribute 'nowhere'"
+a str that is not there 4 -> "PicklingError: Can't pickle R(): it's not found as __main__.nowhere <- AttributeError: module '__main__' has no attribute 'nowhere'"
+a str that is not there 5 -> "PicklingError: Can't pickle R(): it's not found as __main__.nowhere <- AttributeError: module '__main__' has no attribute 'nowhere'"
+a dotted str 0 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.R.__init__"
+a dotted str 1 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.R.__init__"
+a dotted str 2 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.R.__init__"
+a dotted str 3 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.R.__init__"
+a dotted str 4 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.R.__init__"
+a dotted str 5 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.R.__init__"
+an empty str 0 -> "PicklingError: Can't pickle R(): it's not found as __main__. <- AttributeError: module '__main__' has no attribute ''"
+an empty str 1 -> "PicklingError: Can't pickle R(): it's not found as __main__. <- AttributeError: module '__main__' has no attribute ''"
+an empty str 2 -> "PicklingError: Can't pickle R(): it's not found as __main__. <- AttributeError: module '__main__' has no attribute ''"
+an empty str 3 -> "PicklingError: Can't pickle R(): it's not found as __main__. <- AttributeError: module '__main__' has no attribute ''"
+an empty str 4 -> "PicklingError: Can't pickle R(): it's not found as __main__. <- AttributeError: module '__main__' has no attribute ''"
+an empty str 5 -> "PicklingError: Can't pickle R(): it's not found as __main__. <- AttributeError: module '__main__' has no attribute ''"
+a str subclass 0 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str subclass 1 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str subclass 2 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str subclass 3 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str subclass 4 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+a str subclass 5 -> "PicklingError: Can't pickle R(): it's not the same object as __main__.ident"
+bytes 0 -> 'PicklingError: __reduce__ must return a string or tuple, not bytes | when serializing R object'
+bytes 1 -> 'PicklingError: __reduce__ must return a string or tuple, not bytes | when serializing R object'
+bytes 2 -> 'PicklingError: __reduce__ must return a string or tuple, not bytes | when serializing R object'
+bytes 3 -> 'PicklingError: __reduce__ must return a string or tuple, not bytes | when serializing R object'
+bytes 4 -> 'PicklingError: __reduce__ must return a string or tuple, not bytes | when serializing R object'
+bytes 5 -> 'PicklingError: __reduce__ must return a string or tuple, not bytes | when serializing R object'
+unpicklable callable 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R reconstructor | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable callable 1 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R reconstructor | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable callable 2 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R reconstructor | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable callable 3 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R reconstructor | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable callable 4 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R reconstructor | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable callable 5 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R reconstructor | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable argument 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing R reconstructor arguments | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable argument 1 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing R reconstructor arguments | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable argument 2 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing R reconstructor arguments | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable argument 3 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing R reconstructor arguments | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable argument 4 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing R reconstructor arguments | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable argument 5 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing R reconstructor arguments | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable state 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable state 1 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable state 2 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable state 3 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable state 4 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable state 5 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable listitem 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R item 1 | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable listitem 1 -> b'c__builtin__\nlist\nq\x00)Rq\x01.'
+unpicklable listitem 2 -> b'\x80\x02c__builtin__\nlist\nq\x00)Rq\x01.'
+unpicklable listitem 3 -> b'\x80\x03cbuiltins\nlist\nq\x00)Rq\x01.'
+unpicklable listitem 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+unpicklable listitem 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+unpicklable dictitem 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R item 'k' | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable dictitem 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+unpicklable dictitem 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+unpicklable dictitem 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+unpicklable dictitem 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+unpicklable dictitem 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+unpicklable key 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable key 1 -> b'c__builtin__\ndict\nq\x00)Rq\x01.'
+unpicklable key 2 -> b'\x80\x02c__builtin__\ndict\nq\x00)Rq\x01.'
+unpicklable key 3 -> b'\x80\x03cbuiltins\ndict\nq\x00)Rq\x01.'
+unpicklable key 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+unpicklable key 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04dict\x94\x93\x94)R\x94.'
+unpicklable setter 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state setter | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable setter 1 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state setter | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable setter 2 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state setter | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable setter 3 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state setter | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable setter 4 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state setter | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+unpicklable setter 5 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing R state setter | when serializing R object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+iterator that raises 0 -> 'ZeroDivisionError: division by zero | when serializing R object'
+iterator that raises 1 -> b'c__builtin__\nlist\nq\x00)Rq\x01.'
+iterator that raises 2 -> b'\x80\x02c__builtin__\nlist\nq\x00)Rq\x01.'
+iterator that raises 3 -> b'\x80\x03cbuiltins\nlist\nq\x00)Rq\x01.'
+iterator that raises 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+iterator that raises 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08builtins\x94\x8c\x04list\x94\x93\x94)R\x94.'
+tuple subclass 0 -> b'c__main__\nident\np0\n(tRp1\n.'
+tuple subclass 1 -> b'c__main__\nident\nq\x00)Rq\x01.'
+tuple subclass 2 -> b'\x80\x02c__main__\nident\nq\x00)Rq\x01.'
+tuple subclass 3 -> b'\x80\x03c__main__\nident\nq\x00)Rq\x01.'
+tuple subclass 4 -> b'\x80\x04\x95\x19\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94.'
+tuple subclass 5 -> b'\x80\x05\x95\x19\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x05ident\x94\x93\x94)R\x94.'
+===== __newobj__ and __newobj_ex__
+newobj 0 -> b'ccopy_reg\n__newobj__\np0\n(c__main__\nRC\np1\ntp2\nRp3\n.'
+newobj 1 -> b'ccopy_reg\n__newobj__\nq\x00(c__main__\nRC\nq\x01tq\x02Rq\x03.'
+newobj 2 -> b'\x80\x02c__main__\nRC\nq\x00)\x81q\x01.'
+newobj 3 -> b'\x80\x03c__main__\nRC\nq\x00)\x81q\x01.'
+newobj 4 -> b'\x80\x04\x95\x16\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94)\x81\x94.'
+newobj 5 -> b'\x80\x05\x95\x16\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94)\x81\x94.'
+newobj, no arguments 0 -> b'ccopy_reg\n__newobj__\np0\n(tRp1\n.'
+newobj, no arguments 1 -> b'ccopy_reg\n__newobj__\nq\x00)Rq\x01.'
+newobj, no arguments 2 -> 'PicklingError: __newobj__ expected at least 1 argument, got 0 | when serializing RC object'
+newobj, no arguments 3 -> 'PicklingError: __newobj__ expected at least 1 argument, got 0 | when serializing RC object'
+newobj, no arguments 4 -> 'PicklingError: __newobj__ expected at least 1 argument, got 0 | when serializing RC object'
+newobj, no arguments 5 -> 'PicklingError: __newobj__ expected at least 1 argument, got 0 | when serializing RC object'
+newobj, no class 0 -> b'ccopy_reg\n__newobj__\np0\n(I5\ntp1\nRp2\n.'
+newobj, no class 1 -> b'ccopy_reg\n__newobj__\nq\x00(K\x05tq\x01Rq\x02.'
+newobj, no class 2 -> 'PicklingError: first argument to __newobj__() must be a class, not int | when serializing RC object'
+newobj, no class 3 -> 'PicklingError: first argument to __newobj__() must be a class, not int | when serializing RC object'
+newobj, no class 4 -> 'PicklingError: first argument to __newobj__() must be a class, not int | when serializing RC object'
+newobj, no class 5 -> 'PicklingError: first argument to __newobj__() must be a class, not int | when serializing RC object'
+newobj, another class 0 -> b'ccopy_reg\n__newobj__\np0\n(c__main__\nC\np1\ntp2\nRp3\n.'
+newobj, another class 1 -> b'ccopy_reg\n__newobj__\nq\x00(c__main__\nC\nq\x01tq\x02Rq\x03.'
+newobj, another class 2 -> "PicklingError: first argument to __newobj__() must be <class '__main__.RC'>, not <class '__main__.C'> | when serializing RC object"
+newobj, another class 3 -> "PicklingError: first argument to __newobj__() must be <class '__main__.RC'>, not <class '__main__.C'> | when serializing RC object"
+newobj, another class 4 -> "PicklingError: first argument to __newobj__() must be <class '__main__.RC'>, not <class '__main__.C'> | when serializing RC object"
+newobj, another class 5 -> "PicklingError: first argument to __newobj__() must be <class '__main__.RC'>, not <class '__main__.C'> | when serializing RC object"
+newobj, arguments 0 -> b'ccopy_reg\n__newobj__\np0\n(c__main__\nRC\np1\nI1\nI2\ntp2\nRp3\n.'
+newobj, arguments 1 -> b'ccopy_reg\n__newobj__\nq\x00(c__main__\nRC\nq\x01K\x01K\x02tq\x02Rq\x03.'
+newobj, arguments 2 -> b'\x80\x02c__main__\nRC\nq\x00K\x01K\x02\x86q\x01\x81q\x02.'
+newobj, arguments 3 -> b'\x80\x03c__main__\nRC\nq\x00K\x01K\x02\x86q\x01\x81q\x02.'
+newobj, arguments 4 -> b'\x80\x04\x95\x1b\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94K\x01K\x02\x86\x94\x81\x94.'
+newobj, arguments 5 -> b'\x80\x05\x95\x1b\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94K\x01K\x02\x86\x94\x81\x94.'
+newobj, unpicklable argument 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 1 | when serializing RC reconstructor arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj, unpicklable argument 1 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 1 | when serializing RC reconstructor arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj, unpicklable argument 2 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj, unpicklable argument 3 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj, unpicklable argument 4 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj, unpicklable argument 5 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(c__main__\nRC\np1\n(t(dp2\ntp3\nRp4\n.'
+newobj_ex 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(c__main__\nRC\nq\x01)}q\x02tq\x03Rq\x04.'
+newobj_ex 2 -> b'\x80\x02cfunctools\npartial\nq\x00c__builtin__\ngetattr\nq\x01c__builtin__\nobject\nq\x02X\x07\x00\x00\x00__new__q\x03\x86q\x04Rq\x05\x85q\x06Rq\x07(h\x05c__main__\nRC\nq\x08\x85q\t}q\nNtq\x0bb)Rq\x0c.'
+newobj_ex 3 -> b'\x80\x03cfunctools\npartial\nq\x00cbuiltins\ngetattr\nq\x01cbuiltins\nobject\nq\x02X\x07\x00\x00\x00__new__q\x03\x86q\x04Rq\x05\x85q\x06Rq\x07(h\x05c__main__\nRC\nq\x08\x85q\t}q\nNtq\x0bb)Rq\x0c.'
+newobj_ex 4 -> b'\x80\x04\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94)}\x94\x92\x94.'
+newobj_ex 5 -> b'\x80\x05\x95\x18\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94)}\x94\x92\x94.'
+newobj_ex, two 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(c__main__\nRC\np1\n(ttp2\nRp3\n.'
+newobj_ex, two 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(c__main__\nRC\nq\x01)tq\x02Rq\x03.'
+newobj_ex, two 2 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 2 | when serializing RC object'
+newobj_ex, two 3 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 2 | when serializing RC object'
+newobj_ex, two 4 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 2 | when serializing RC object'
+newobj_ex, two 5 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 2 | when serializing RC object'
+newobj_ex, four 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(c__main__\nRC\np1\n(t(dp2\nI1\ntp3\nRp4\n.'
+newobj_ex, four 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(c__main__\nRC\nq\x01)}q\x02K\x01tq\x03Rq\x04.'
+newobj_ex, four 2 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 4 | when serializing RC object'
+newobj_ex, four 3 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 4 | when serializing RC object'
+newobj_ex, four 4 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 4 | when serializing RC object'
+newobj_ex, four 5 -> 'PicklingError: __newobj_ex__ expected 3 arguments, got 4 | when serializing RC object'
+newobj_ex, no class 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(I5\n(t(dp1\ntp2\nRp3\n.'
+newobj_ex, no class 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(K\x05)}q\x01tq\x02Rq\x03.'
+newobj_ex, no class 2 -> 'PicklingError: first argument to __newobj_ex__() must be a class, not int | when serializing RC object'
+newobj_ex, no class 3 -> 'PicklingError: first argument to __newobj_ex__() must be a class, not int | when serializing RC object'
+newobj_ex, no class 4 -> 'PicklingError: first argument to __newobj_ex__() must be a class, not int | when serializing RC object'
+newobj_ex, no class 5 -> 'PicklingError: first argument to __newobj_ex__() must be a class, not int | when serializing RC object'
+newobj_ex, no tuple 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(c__main__\nRC\np1\n(lp2\n(dp3\ntp4\nRp5\n.'
+newobj_ex, no tuple 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(c__main__\nRC\nq\x01]q\x02}q\x03tq\x04Rq\x05.'
+newobj_ex, no tuple 2 -> 'PicklingError: second argument to __newobj_ex__() must be a tuple, not list | when serializing RC object'
+newobj_ex, no tuple 3 -> 'PicklingError: second argument to __newobj_ex__() must be a tuple, not list | when serializing RC object'
+newobj_ex, no tuple 4 -> 'PicklingError: second argument to __newobj_ex__() must be a tuple, not list | when serializing RC object'
+newobj_ex, no tuple 5 -> 'PicklingError: second argument to __newobj_ex__() must be a tuple, not list | when serializing RC object'
+newobj_ex, no dict 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(c__main__\nRC\np1\n(t(lp2\ntp3\nRp4\n.'
+newobj_ex, no dict 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(c__main__\nRC\nq\x01)]q\x02tq\x03Rq\x04.'
+newobj_ex, no dict 2 -> 'PicklingError: third argument to __newobj_ex__() must be a dict, not list | when serializing RC object'
+newobj_ex, no dict 3 -> 'PicklingError: third argument to __newobj_ex__() must be a dict, not list | when serializing RC object'
+newobj_ex, no dict 4 -> 'PicklingError: third argument to __newobj_ex__() must be a dict, not list | when serializing RC object'
+newobj_ex, no dict 5 -> 'PicklingError: third argument to __newobj_ex__() must be a dict, not list | when serializing RC object'
+newobj_ex, arguments 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(c__main__\nRC\np1\n(I1\ntp2\n(dp3\nVk\np4\nI2\nstp5\nRp6\n.'
+newobj_ex, arguments 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(c__main__\nRC\nq\x01(K\x01tq\x02}q\x03X\x01\x00\x00\x00kq\x04K\x02stq\x05Rq\x06.'
+newobj_ex, arguments 2 -> b'\x80\x02cfunctools\npartial\nq\x00c__builtin__\ngetattr\nq\x01c__builtin__\nobject\nq\x02X\x07\x00\x00\x00__new__q\x03\x86q\x04Rq\x05\x85q\x06Rq\x07(h\x05c__main__\nRC\nq\x08K\x01\x86q\t}q\nX\x01\x00\x00\x00kq\x0bK\x02sNtq\x0cb)Rq\r.'
+newobj_ex, arguments 3 -> b'\x80\x03cfunctools\npartial\nq\x00cbuiltins\ngetattr\nq\x01cbuiltins\nobject\nq\x02X\x07\x00\x00\x00__new__q\x03\x86q\x04Rq\x05\x85q\x06Rq\x07(h\x05c__main__\nRC\nq\x08K\x01\x86q\t}q\nX\x01\x00\x00\x00kq\x0bK\x02sNtq\x0cb)Rq\r.'
+newobj_ex, arguments 4 -> b'\x80\x04\x95"\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94K\x01\x85\x94}\x94\x8c\x01k\x94K\x02s\x92\x94.'
+newobj_ex, arguments 5 -> b'\x80\x05\x95"\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94K\x01\x85\x94}\x94\x8c\x01k\x94K\x02s\x92\x94.'
+newobj_ex, another class 0 -> b'ccopy_reg\n__newobj_ex__\np0\n(c__main__\nC\np1\n(t(dp2\ntp3\nRp4\n.'
+newobj_ex, another class 1 -> b'ccopy_reg\n__newobj_ex__\nq\x00(c__main__\nC\nq\x01)}q\x02tq\x03Rq\x04.'
+newobj_ex, another class 2 -> b'\x80\x02cfunctools\npartial\nq\x00c__builtin__\ngetattr\nq\x01c__builtin__\nobject\nq\x02X\x07\x00\x00\x00__new__q\x03\x86q\x04Rq\x05\x85q\x06Rq\x07(h\x05c__main__\nC\nq\x08\x85q\t}q\nNtq\x0bb)Rq\x0c.'
+newobj_ex, another class 3 -> b'\x80\x03cfunctools\npartial\nq\x00cbuiltins\ngetattr\nq\x01cbuiltins\nobject\nq\x02X\x07\x00\x00\x00__new__q\x03\x86q\x04Rq\x05\x85q\x06Rq\x07(h\x05c__main__\nC\nq\x08\x85q\t}q\nNtq\x0bb)Rq\x0c.'
+newobj_ex, another class 4 -> b'\x80\x04\x95\x17\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x01C\x94\x93\x94)}\x94\x92\x94.'
+newobj_ex, another class 5 -> b'\x80\x05\x95\x17\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x01C\x94\x93\x94)}\x94\x92\x94.'
+newobj_ex, unpicklable 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing tuple item 1 | when serializing RC reconstructor arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable 1 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing tuple item 1 | when serializing RC reconstructor arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable 2 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 1 | when serializing tuple item 1 | when serializing functools.partial state | when serializing functools.partial object | when serializing RC reconstructor | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable 3 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 1 | when serializing tuple item 1 | when serializing functools.partial state | when serializing functools.partial object | when serializing RC reconstructor | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable 4 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable 5 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing tuple item 0 | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable keyword 0 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing dict item 'k' | when serializing tuple item 2 | when serializing RC reconstructor arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable keyword 1 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing dict item 'k' | when serializing tuple item 2 | when serializing RC reconstructor arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable keyword 2 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing dict item 'k' | when serializing tuple item 2 | when serializing functools.partial state | when serializing functools.partial object | when serializing RC reconstructor | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable keyword 3 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing dict item 'k' | when serializing tuple item 2 | when serializing functools.partial state | when serializing functools.partial object | when serializing RC reconstructor | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable keyword 4 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing dict item 'k' | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+newobj_ex, unpicklable keyword 5 -> "PicklingError: Can't pickle <function <lambda> at 0x>: it's not found as __main__.<lambda> | when serializing dict item 'k' | when serializing RC __new__ arguments | when serializing RC object <- AttributeError: module '__main__' has no attribute '<lambda>'"
+something else called __newobj__ 0 -> "PicklingError: Can't pickle <__main__.F object at 0x>: it's not the same object as __main__.ident | when serializing RC reconstructor | when serializing RC object"
+something else called __newobj__ 1 -> "PicklingError: Can't pickle <__main__.F object at 0x>: it's not the same object as __main__.ident | when serializing RC reconstructor | when serializing RC object"
+something else called __newobj__ 2 -> b'\x80\x02c__main__\nRC\nq\x00)\x81q\x01.'
+something else called __newobj__ 3 -> b'\x80\x03c__main__\nRC\nq\x00)\x81q\x01.'
+something else called __newobj__ 4 -> b'\x80\x04\x95\x16\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94)\x81\x94.'
+something else called __newobj__ 5 -> b'\x80\x05\x95\x16\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x02RC\x94\x93\x94)\x81\x94.'
+===== which is asked
+__reduce_ex__ first 0 -> (b'I0\ntp1\nRp2\n.', ('reduce_ex', 0))
+__reduce_ex__ first 1 -> (b'q\x00(K\x01tq\x01Rq\x02.', ('reduce_ex', 1))
+__reduce_ex__ first 2 -> (b'\nq\x00K\x02\x85q\x01Rq\x02.', ('reduce_ex', 2))
+__reduce_ex__ first 3 -> (b'\nq\x00K\x03\x85q\x01Rq\x02.', ('reduce_ex', 3))
+__reduce_ex__ first 4 -> (b'nt\x94\x93\x94K\x04\x85\x94R\x94.', ('reduce_ex', 4))
+__reduce_ex__ first 5 -> (b'nt\x94\x93\x94K\x05\x85\x94R\x94.', ('reduce_ex', 5))
+__reduce_ex__ is None 0 -> "TypeError: 'NoneType' object is not callable"
+__reduce_ex__ is None 1 -> "TypeError: 'NoneType' object is not callable"
+__reduce_ex__ is None 2 -> "TypeError: 'NoneType' object is not callable"
+__reduce_ex__ is None 3 -> "TypeError: 'NoneType' object is not callable"
+__reduce_ex__ is None 4 -> "TypeError: 'NoneType' object is not callable"
+__reduce_ex__ is None 5 -> "TypeError: 'NoneType' object is not callable"
+it raises 0 -> 'ZeroDivisionError: in reduce | when serializing list item 0'
+it raises 1 -> 'ZeroDivisionError: in reduce | when serializing list item 0'
+it raises 2 -> 'ZeroDivisionError: in reduce | when serializing list item 0'
+it raises 3 -> 'ZeroDivisionError: in reduce | when serializing list item 0'
+it raises 4 -> 'ZeroDivisionError: in reduce | when serializing list item 0'
+it raises 5 -> 'ZeroDivisionError: in reduce | when serializing list item 0'
+neither can be got 0 -> "PicklingError: Can't pickle GetAttr object"
+neither can be got 1 -> "PicklingError: Can't pickle GetAttr object"
+neither can be got 2 -> "PicklingError: Can't pickle GetAttr object"
+neither can be got 3 -> "PicklingError: Can't pickle GetAttr object"
+neither can be got 4 -> "PicklingError: Can't pickle GetAttr object"
+neither can be got 5 -> "PicklingError: Can't pickle GetAttr object"
+getting it raises 0 -> 'ZeroDivisionError: __reduce_ex__'
+getting it raises 1 -> 'ZeroDivisionError: __reduce_ex__'
+getting it raises 2 -> 'ZeroDivisionError: __reduce_ex__'
+getting it raises 3 -> 'ZeroDivisionError: __reduce_ex__'
+getting it raises 4 -> 'ZeroDivisionError: __reduce_ex__'
+getting it raises 5 -> 'ZeroDivisionError: __reduce_ex__'
+===== dispatch tables
+its own -> b'\x80\x02c__main__\nident\nq\x00X\x03\x00\x00\x00ownq\x01\x85q\x02Rq\x03.'
+not in it -> b'\x80\x02c__builtin__\ncomplex\nq\x00G\x00\x00\x00\x00\x00\x00\x00\x00G?\xf0\x00\x00\x00\x00\x00\x00\x86q\x01\x81q\x02.'
+copyreg's is not looked in then -> False
+a ChainMap -> b'\x80\x02]q\x00(c__main__\nident\nq\x01X\x05\x00\x00\x00chainq\x02\x85q\x03Rq\x04c__builtin__\ncomplex\nq\x05G\x00\x00\x00\x00\x00\x00\x00\x00G?\xf0\x00\x00\x00\x00\x00\x00\x86q\x06Rq\x07e.'
+not a mapping -> "TypeError: 'int' object is not subscriptable"
+a mapping that raises -> 'ZeroDivisionError: getitem'
+a mapping that has nothing -> b'\x02c__main__\nX\nq\x00)\x81q\x01.'
+None in it -> "TypeError: 'NoneType' object is not callable"
+for a class -> b'\x80\x02c__main__\nX\nq\x00.'
+for a function -> b'\x80\x02c__main__\nident\nq\x00.'
+for a list -> b'\x80\x02]q\x00K\x01a.'
+of a class derived from Pickler -> b'\x80\x02c__main__\nident\nq\x00X\x0c\x00\x00\x00of the classq\x01\x85q\x02Rq\x03.'
+copyreg -> b'\x80\x02c__main__\nident\nq\x00X\x07\x00\x00\x00copyregq\x01\x85q\x02Rq\x03.'
+===== reducer_override
+an instance -> (b'\x80\x02c__builtin__\nlen\nq\x00X\n\x00\x00\x00overriddenq\x01\x85q\x02Rq\x03.', ['X', 'builtin_function_or_method'])
+a function -> (b'\x80\x02c__builtin__\nlen\nq\x00X\n\x00\x00\x00a functionq\x01\x85q\x02Rq\x03.', ['function', 'builtin_function_or_method'])
+a class -> "PicklingError: Can't pickle <class '__main__.X'>: it's not the same object as __main__.ident"
+what it leaves -> (b'\x80\x02c__main__\nC\nq\x00.', ['type'])
+built in -> (b'\x80\x02]q\x00(K\x01X\x01\x00\x00\x00aq\x01K\x02\x85q\x02}q\x03K\x03K\x04sc__builtin__\nset\nq\x04]q\x05K\x05a\x85q\x06Rq\x07c_codecs\nencode\nq\x08X\x01\x00\x00\x006q\tX\x06\x00\x00\x00latin1q\n\x86q\x0bRq\x0cNG?\xf8\x00\x00\x00\x00\x00\x00e.', ['type', 'builtin_function_or_method'])
+gives an int -> 'PicklingError: __reduce__ must return a string or tuple, not int | when serializing complex object'
+raises -> 'ZeroDivisionError: override'
+another function -> (b'\x80\x02c__main__\nattempt\nq\x00.', ['function'])
+an instance that it leaves -> (b'\x80\x02c__main__\nC\nq\x00)\x81q\x01.', ['C', 'type'])
+set on an instance of a class derived from it -> b'\x80\x02c__builtin__\nlen\nq\x00X\x03\x00\x00\x00setq\x01\x85q\x02Rq\x03.'
+===== persistent_id
+a str 0 -> b'Pan X\n.'
+a str 1 -> b'X\x04\x00\x00\x00an Xq\x00Q.'
+a str 2 -> b'\x80\x02X\x04\x00\x00\x00an Xq\x00Q.'
+a str 3 -> b'\x80\x03X\x04\x00\x00\x00an Xq\x00Q.'
+a str 4 -> b'\x80\x04\x95\t\x00\x00\x00\x00\x00\x00\x00\x8c\x04an X\x94Q.'
+a str 5 -> b'\x80\x05\x95\t\x00\x00\x00\x00\x00\x00\x00\x8c\x04an X\x94Q.'
+a tuple 0 -> b"P('a', 'tuple')\n."
+a tuple 1 -> b'(X\x01\x00\x00\x00aq\x00X\x05\x00\x00\x00tupleq\x01tq\x02Q.'
+a tuple 2 -> b'\x80\x02X\x01\x00\x00\x00aq\x00X\x05\x00\x00\x00tupleq\x01\x86q\x02Q.'
+a tuple 3 -> b'\x80\x03X\x01\x00\x00\x00aq\x00X\x05\x00\x00\x00tupleq\x01\x86q\x02Q.'
+a tuple 4 -> b'\x80\x04\x95\x10\x00\x00\x00\x00\x00\x00\x00\x8c\x01a\x94\x8c\x05tuple\x94\x86\x94Q.'
+a tuple 5 -> b'\x80\x05\x95\x10\x00\x00\x00\x00\x00\x00\x00\x8c\x01a\x94\x8c\x05tuple\x94\x86\x94Q.'
+not ASCII 0 -> 'PicklingError: persistent IDs in protocol 0 must be ASCII strings'
+not ASCII 1 -> b'X\x02\x00\x00\x00\xc3\xa9q\x00Q.'
+not ASCII 2 -> b'\x80\x02X\x02\x00\x00\x00\xc3\xa9q\x00Q.'
+not ASCII 3 -> b'\x80\x03X\x02\x00\x00\x00\xc3\xa9q\x00Q.'
+not ASCII 4 -> b'\x80\x04\x95\x07\x00\x00\x00\x00\x00\x00\x00\x8c\x02\xc3\xa9\x94Q.'
+not ASCII 5 -> b'\x80\x05\x95\x07\x00\x00\x00\x00\x00\x00\x00\x8c\x02\xc3\xa9\x94Q.'
+raises 0 -> 'ZeroDivisionError: pid'
+raises 1 -> 'ZeroDivisionError: pid'
+raises 2 -> 'ZeroDivisionError: pid'
+raises 3 -> 'ZeroDivisionError: pid'
+raises 4 -> 'ZeroDivisionError: pid'
+raises 5 -> 'ZeroDivisionError: pid'
+0 0 -> b'P0\n.'
+0 1 -> b'K\x00Q.'
+0 2 -> b'\x80\x02K\x00Q.'
+0 3 -> b'\x80\x03K\x00Q.'
+0 4 -> b'\x80\x04\x95\x04\x00\x00\x00\x00\x00\x00\x00K\x00Q.'
+0 5 -> b'\x80\x05\x95\x04\x00\x00\x00\x00\x00\x00\x00K\x00Q.'
+what is itself persistent 0 -> b'PX()\n.'
+what is itself persistent 1 -> b'ccopy_reg\n_reconstructor\nq\x00(c__main__\nX\nq\x01c__builtin__\nobject\nq\x02Ntq\x03Rq\x04Q.'
+what is itself persistent 2 -> b'\x80\x02c__main__\nX\nq\x00)\x81q\x01Q.'
+what is itself persistent 3 -> b'\x80\x03c__main__\nX\nq\x00)\x81q\x01Q.'
+what is itself persistent 4 -> b'\x80\x04\x95\x16\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x01X\x94\x93\x94)\x81\x94Q.'
+what is itself persistent 5 -> b'\x80\x05\x95\x16\x00\x00\x00\x00\x00\x00\x00\x8c\x08__main__\x94\x8c\x01X\x94\x93\x94)\x81\x94Q.'
+inside 0 -> b'(lp0\nPan X\na(dp1\nI1\nPan X\nsa(Pan X\ntp2\na.'
+inside 1 -> b']q\x00(X\x04\x00\x00\x00an Xq\x01Q}q\x02K\x01h\x01Qs(h\x01Qtq\x03e.'
+inside 2 -> b'\x80\x02]q\x00(X\x04\x00\x00\x00an Xq\x01Q}q\x02K\x01h\x01Qsh\x01Q\x85q\x03e.'
+inside 3 -> b'\x80\x03]q\x00(X\x04\x00\x00\x00an Xq\x01Q}q\x02K\x01h\x01Qsh\x01Q\x85q\x03e.'
+inside 4 -> b'\x80\x04\x95\x1a\x00\x00\x00\x00\x00\x00\x00]\x94(\x8c\x04an X\x94Q}\x94K\x01h\x01Qsh\x01Q\x85\x94e.'
+inside 5 -> b'\x80\x05\x95\x1a\x00\x00\x00\x00\x00\x00\x00]\x94(\x8c\x04an X\x94Q}\x94K\x01h\x01Qsh\x01Q\x85\x94e.'
+nothing 0 -> b'(lp0\nI1\na.'
+nothing 1 -> b']q\x00K\x01a.'
+nothing 2 -> b'\x80\x02]q\x00K\x01a.'
+nothing 3 -> b'\x80\x03]q\x00K\x01a.'
+nothing 4 -> b'\x80\x04\x95\x06\x00\x00\x00\x00\x00\x00\x00]\x94K\x01a.'
+nothing 5 -> b'\x80\x05\x95\x06\x00\x00\x00\x00\x00\x00\x00]\x94K\x01a.'
+set on the instance 0 -> b'(lp0\nPid\na.'
+set on the instance 1 -> b']q\x00X\x02\x00\x00\x00idq\x01Qa.'
+set on the instance 2 -> b'\x80\x02]q\x00X\x02\x00\x00\x00idq\x01Qa.'
+set on the instance 3 -> b'\x80\x03]q\x00X\x02\x00\x00\x00idq\x01Qa.'
+set on the instance 4 -> b'\x80\x04\x95\n\x00\x00\x00\x00\x00\x00\x00]\x94\x8c\x02id\x94Qa.'
+set on the instance 5 -> b'\x80\x05\x95\n\x00\x00\x00\x00\x00\x00\x00]\x94\x8c\x02id\x94Qa.'
+set to what is not callable -> "TypeError: 'int' object is not callable"

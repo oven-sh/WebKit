@@ -223,7 +223,8 @@ JSValue loadGlobal(JSGlobalObject* globalObject, JSObject* globals, JSObject* bu
 
 void registerModule(JSGlobalObject* globalObject, const String& name, JSValue module)
 {
-    modulesOf(globalObject)->setString(globalObject, name, module);
+    VM& vm = globalObject->vm();
+    modulesOf(globalObject)->set(globalObject, internedString(vm, Identifier::fromString(vm, name)), module);
 }
 
 JSValue sysAttribute(JSGlobalObject* globalObject, ASCIILiteral name)

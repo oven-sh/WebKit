@@ -1349,6 +1349,25 @@ out that it was to be.
 
 `programs/json-strings-written-and-read.py`, `json-read-by-the-scanner.py`, `json-written-by-the-encoder.py` and `json-as-programs-use-it.py` are 1,500 lines of what CPython does with each.
 
+### `_pickle`
+
+`Modules/_pickle.c`, function for function, and `Objects/picklebufobject.c`: `PythonPickle.h` says which file has what. `pickle` is written in Python besides and does without, from 25 to 80 times slower. With it, it takes
+what it takes in CPython, give or take.
+
+- **What is written is CPython's, byte for byte**, in all six protocols. That rests on there being one str for a name: see *`__dict__` is the object*.
+- **The memo of a Pickler goes by which object a thing is**, so it is a table of cells, which do not move. A list beside it is what keeps them.
+- **The stack of an Unpickler lasts no longer than `load()`**, and is a `MarkedArgumentBuffer` of what does the loading.
+- **Its memo is a row of places**, as in CPython, since the numbers come one after another. It is a tuple that no program comes by, with nothing at all in the places that are not taken, and gets another to grow. What goes by a
+  number far beyond the rest, further than the row would reach at twice its length, is in a dict. No Pickler writes such a thing. CPython makes the row long enough, so that six bytes can ask for thirty gigabytes.
+- **What is read from is copied**, all of it for `loads()` and what each `read()` or `peek()` gave for a file. So it stays where it is whatever is run meanwhile, and a byte is read without asking where the bytes now are.
+- Room is not made for a `bytes` before it is seen whether so many are there to be had, where that can be seen.
+- **A `PickleBuffer` has no bytes of its own**, and shows those of what it was given as that shows them, whatever its shape: `NativeState::showsBytesOf()`. It is for a class whose `bf_getbuffer` asks another object.
+- `unpickler.memo = {0: x}` leaves the memo with nothing in it, as in CPython, which puts them in the one that it is about to free.
+
+The six programs `programs/pickle-*.py`: each kind of thing in each protocol, and back, with what `pickle.py` makes of both; `Pickler` and `Unpickler` as objects; what `__reduce__()` can give, dispatch tables, `reducer_override()` and
+persistent ids; 380 pickles written by hand, from bytes and from a file; files that have and have not `peek()` and `readinto()`, and what is asked of them; a pickle in each protocol cut short at every byte, and with each byte
+changed eleven ways, which is 19,000.
+
 ### `_stat`, `_statistics`, `_sysconfig` and `_types`
 
 Each is what a module of the library takes in place of what it has written in Python, if it is there. `_stat` (`PythonStatModule.cpp`) has the system's numbers, where `stat.py` has the usual ones. `_statistics` is one

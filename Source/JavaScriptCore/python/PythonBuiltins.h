@@ -215,6 +215,7 @@ JSObject* createCMathModule(JSGlobalObject*);
 JSObject* createSymtableModule(JSGlobalObject*);
 JSObject* createSuggestionsModule(JSGlobalObject*);
 JSObject* createJSONModule(JSGlobalObject*);
+JSObject* createPickleModule(JSGlobalObject*);
 JSObject* createStatModule(JSGlobalObject*);
 JSObject* createStatisticsModule(JSGlobalObject*);
 JSObject* createSysconfigModule(JSGlobalObject*);

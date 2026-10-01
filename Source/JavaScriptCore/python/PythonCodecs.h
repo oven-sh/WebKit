@@ -127,6 +127,12 @@ public:
         RELEASE_ASSERT(m_size);
         --m_size;
     }
+    // To no more than so many, of which there are to be at least that many.
+    void shrink(size_t size)
+    {
+        RELEASE_ASSERT(size <= m_size);
+        m_size = size;
+    }
     void reverse() { std::ranges::reverse(mutableSpan()); }
 
 private:

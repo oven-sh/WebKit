@@ -1,0 +1,122 @@
+<class '_pickle.Pickler'> Pickler Pickler _pickle (<class '_pickle.Pickler'>, <class 'object'>) ['__delattr__', '__doc__', '__getattribute__', '__init__', '__module__', '__new__', '__setattr__', '__sizeof__', 'bin', 'clear_memo', 'dispatch_table', 'dump', 'fast', 'memo', 'persistent_id'] True (file, protocol=None, fix_imports=True, buffer_callback=None) 152 0 False
+<class '_pickle.Unpickler'> Unpickler Unpickler _pickle (<class '_pickle.Unpickler'>, <class 'object'>) ['__delattr__', '__doc__', '__getattribute__', '__init__', '__module__', '__new__', '__setattr__', '__sizeof__', 'find_class', 'load', 'memo', 'persistent_load'] True (file, *, fix_imports=True, encoding='ASCII', errors='strict',
+          buffers=()) 296 0 False
+<class 'pickle.PickleBuffer'> PickleBuffer PickleBuffer pickle (<class 'pickle.PickleBuffer'>, <class 'object'>) ['__buffer__', '__doc__', '__new__', '__release_buffer__', 'raw', 'release'] False None 104 0 True
+<class '_pickle.PicklerMemoProxy'> PicklerMemoProxy PicklerMemoProxy _pickle (<class '_pickle.PicklerMemoProxy'>, <class 'object'>) ['__doc__', '__hash__', '__module__', '__reduce__', 'clear', 'copy'] True None 24 0 False
+<class '_pickle.UnpicklerMemoProxy'> UnpicklerMemoProxy UnpicklerMemoProxy _pickle (<class '_pickle.UnpicklerMemoProxy'>, <class 'object'>) ['__doc__', '__hash__', '__module__', '__reduce__', 'clear', 'copy'] True None 24 0 False
+<class '_pickle.PickleError'> PickleError PickleError _pickle (<class '_pickle.PickleError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) ['__doc__', '__module__', '__weakref__'] True None 72 16 True
+<class '_pickle.PicklingError'> PicklingError PicklingError _pickle (<class '_pickle.PicklingError'>, <class '_pickle.PickleError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) ['__doc__', '__module__'] True None 72 16 True
+<class '_pickle.UnpicklingError'> UnpicklingError UnpicklingError _pickle (<class '_pickle.UnpicklingError'>, <class '_pickle.PickleError'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>) ['__doc__', '__module__'] True None 72 16 True
+===== making one
+no arguments -> "TypeError: Pickler() missing required argument 'file' (pos 1)"
+no write -> "TypeError: file must have a 'write' attribute"
+write that raises -> 'ZeroDivisionError: division by zero'
+protocol None -> (1, 0)
+dumps, protocol None -> b'\x80\x05K\x01.'
+protocol 0 -> (0, 0)
+dumps, protocol 0 -> b'I1\n.'
+protocol 1 -> (1, 0)
+dumps, protocol 1 -> b'K\x01.'
+protocol 5 -> (1, 0)
+dumps, protocol 5 -> b'\x80\x05K\x01.'
+protocol 6 -> 'ValueError: pickle protocol must be <= 5'
+dumps, protocol 6 -> 'ValueError: pickle protocol must be <= 5'
+protocol -1 -> (1, 0)
+dumps, protocol -1 -> b'\x80\x05K\x01.'
+protocol -100 -> (1, 0)
+dumps, protocol -100 -> b'\x80\x05K\x01.'
+protocol 1180591620717411303424 -> 'OverflowError: Python int too large to convert to C long'
+dumps, protocol 1180591620717411303424 -> 'OverflowError: Python int too large to convert to C long'
+protocol -1180591620717411303424 -> 'OverflowError: Python int too large to convert to C long'
+dumps, protocol -1180591620717411303424 -> 'OverflowError: Python int too large to convert to C long'
+protocol '2' -> "TypeError: 'str' object cannot be interpreted as an integer"
+dumps, protocol '2' -> "TypeError: 'str' object cannot be interpreted as an integer"
+protocol 2.0 -> "TypeError: 'float' object cannot be interpreted as an integer"
+dumps, protocol 2.0 -> "TypeError: 'float' object cannot be interpreted as an integer"
+protocol True -> (1, 0)
+dumps, protocol True -> b'K\x01.'
+protocol [] -> "TypeError: 'list' object cannot be interpreted as an integer"
+dumps, protocol [] -> "TypeError: 'list' object cannot be interpreted as an integer"
+protocol 255 -> 'ValueError: pickle protocol must be <= 5'
+dumps, protocol 255 -> 'ValueError: pickle protocol must be <= 5'
+protocol 256 -> 'ValueError: pickle protocol must be <= 5'
+dumps, protocol 256 -> 'ValueError: pickle protocol must be <= 5'
+keywords -> 1
+unknown keyword -> "TypeError: Pickler() got an unexpected keyword argument 'zzz'"
+too many -> 'TypeError: Pickler() takes at most 4 arguments (5 given)'
+buffer_callback and protocol 4 -> 'ValueError: buffer_callback needs protocol >= 5'
+buffer_callback and no protocol -> 1
+dumps: buffer_callback and protocol 4 -> 'ValueError: buffer_callback needs protocol >= 5'
+dumps: positional fix_imports -> 'TypeError: dumps() takes at most 2 positional arguments (3 given)'
+dumps: nothing -> "TypeError: dumps() missing required argument 'obj' (pos 1)"
+dump: no file -> "TypeError: dump() missing required argument 'file' (pos 2)"
+dump: not a file -> "TypeError: file must have a 'write' attribute"
+dump -> (None, b'\x80\x02]q\x00K\x01a.')
+dump, by keyword -> (None, b'(lp0\nI1\na.')
+__init__ not called -> 'PicklingError: Pickler.__init__() was not called by NoInit.__init__()'
+__init__ not called: clear_memo -> None
+__init__ not called: attributes -> (0, 0)
+__init__ not called: dispatch_table -> "AttributeError: 'NoInit' object has no attribute 'dispatch_table'"
+__new__ alone -> 'PicklingError: Pickler.__init__() was not called by _pickle.Pickler.__init__()'
+__init__ twice -> (b'\x80\x02]q\x00K\x01a.', b'(lp0\nI1\na.', False)
+===== attributes
+bin, fast -> (1, 0)
+set fast -> 5
+set fast to True -> 1
+set fast to a str -> "TypeError: 'str' object cannot be interpreted as an integer"
+set fast to a float -> "TypeError: 'float' object cannot be interpreted as an integer"
+set fast too large -> (None, 0)
+delete fast -> "TypeError: can't delete numeric/char attribute"
+set bin -> 0
+dispatch_table, unset -> "AttributeError: '_pickle.Pickler' object has no attribute 'dispatch_table'"
+delete dispatch_table, unset -> 'AttributeError: dispatch_table'
+set dispatch_table -> {1: 2}
+delete dispatch_table -> False
+another attribute -> "AttributeError: '_pickle.Pickler' object has no attribute 'zzz'"
+get another attribute -> "AttributeError: '_pickle.Pickler' object has no attribute 'zzz'"
+persistent_id -> None
+persistent_id: no argument -> 'TypeError: Pickler.persistent_id() takes exactly one argument (0 given)'
+set persistent_id -> True
+delete persistent_id -> (None, None, None)
+delete persistent_id, unset -> None
+hash, eq -> (True, True)
+a name that is no str -> "TypeError: attribute name must be string, not 'int'"
+setattr with a name that is no str -> "TypeError: attribute name must be string, not 'int'"
+subclass has a __dict__ -> 1
+===== the memo
+copy -> ('PicklerMemoProxy', [(0, [[1], [1], 'abc']), (1, [1]), (2, 'abc')], True, False)
+clear -> {}
+clear_memo -> {}
+__reduce__ -> (<class 'dict'>, ({},))
+hash -> "TypeError: unhashable type: '_pickle.PicklerMemoProxy'"
+len -> "TypeError: object of type '_pickle.PicklerMemoProxy' has no len()"
+getitem -> "TypeError: '_pickle.PicklerMemoProxy' object is not subscriptable"
+delete -> 'TypeError: attribute deletion is not supported'
+set to a list -> "TypeError: 'memo' attribute must be a PicklerMemoProxy object or dict, not list"
+set to None -> "TypeError: 'memo' attribute must be a PicklerMemoProxy object or dict, not NoneType"
+set: values that are no tuples -> "TypeError: 'memo' values must be 2-item tuples"
+set: tuples of three -> "TypeError: 'memo' values must be 2-item tuples"
+set: no int -> 'TypeError: an integer is required'
+set: too large -> 'OverflowError: Python int too large to convert to C ssize_t'
+set to a dict -> (b'\x80\x02]q\x01(h\x07h\x07e.', [1, 7])
+set to a proxy -> (b'\x80\x02]q\x02h\x00a.', 2, 3)
+twice with one Pickler -> (b'\x80\x02]q\x00K\x01a.', b'\x80\x02h\x00.')
+more than 256 in the memo, 0 -> (5680, b'296\nag297\nag298\nag299\nag300\na.', True)
+more than 256 in the memo, 1 -> (2720, b'\x01\x00\x00j(\x01\x00\x00j)\x01\x00\x00j*\x01\x00\x00j+\x01\x00\x00j,\x01\x00\x00e.', True)
+more than 256 in the memo, 2 -> (2722, b'\x01\x00\x00j(\x01\x00\x00j)\x01\x00\x00j*\x01\x00\x00j+\x01\x00\x00j,\x01\x00\x00e.', True)
+more than 256 in the memo, 3 -> (2722, b'\x01\x00\x00j(\x01\x00\x00j)\x01\x00\x00j*\x01\x00\x00j+\x01\x00\x00j,\x01\x00\x00e.', True)
+more than 256 in the memo, 4 -> (2295, b'\x01\x00\x00j(\x01\x00\x00j)\x01\x00\x00j*\x01\x00\x00j+\x01\x00\x00j,\x01\x00\x00e.', True)
+more than 256 in the memo, 5 -> (2295, b'\x01\x00\x00j(\x01\x00\x00j)\x01\x00\x00j*\x01\x00\x00j+\x01\x00\x00j,\x01\x00\x00e.', True)
+===== in use
+dump inside dump -> 'RuntimeError: Pickler object is already used'
+__init__ inside dump -> 'RuntimeError: Pickler object is already used'
+clear_memo inside dump -> None
+  first -> "PicklingError: Can't pickle local object <function <lambda>.<locals>.<lambda>.<locals>.<lambda>.<locals>.<lambda> at 0x>"
+after it failed -> ([None], None)
+===== fast
+nothing is remembered -> b'\x80\x02](]K\x01a]K\x01aX\x01\x00\x00\x00aX\x01\x00\x00\x00aK\x01K\x02\x86}K\x01]K\x01ase.'
+protocol 4 -> b'\x80\x04\x95\x15\x00\x00\x00\x00\x00\x00\x00](]K\x01a]K\x01a(K\x01\x91\x8f(K\x02\x90e.'
+a list in itself -> "fast mode: can't pickle cyclic objects including object type list"
+a dict in itself -> "fast mode: can't pickle cyclic objects including object type dict"
+deep -> 125
+deep, and then again -> (None, None, None)

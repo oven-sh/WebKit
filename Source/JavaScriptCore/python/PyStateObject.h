@@ -69,6 +69,9 @@ public:
     virtual std::optional<ExportedBytes> exportedBytes() const { return std::nullopt; }
     // It is about to be asked for them, and may raise: what bf_getbuffer does before it fills anything in.
     virtual void willExportBytes(JSGlobalObject*) const { }
+    // For a class whose instances have none of their own, and show those of something else as that shows them: one whose bf_getbuffer asks another object. Nothing if it is no such class. It is empty if there is no
+    // longer anything to show, which willExportBytes() raises for.
+    virtual std::optional<JSValue> showsBytesOf() const { return std::nullopt; }
 
     // What PySequence_GetItem() gives, for a class that has the flag HasSequenceItemOfItsOwn. Empty if it raised.
     virtual JSValue sequenceItem(JSGlobalObject*, int64_t) const { return { }; }
@@ -122,6 +125,7 @@ public:
     State* tryState() const { return m_state->kind() == State::staticKind() ? static_cast<State*>(m_state.get()) : nullptr; }
     std::optional<Python::NativeState::ExportedBytes> exportedBytes() const { return m_state->exportedBytes(); }
     void willExportBytes(JSGlobalObject* globalObject) const { m_state->willExportBytes(globalObject); }
+    std::optional<JSValue> showsBytesOf() const { return m_state->showsBytesOf(); }
     JSValue sequenceItem(JSGlobalObject* globalObject, int64_t index) const { return m_state->sequenceItem(globalObject, index); }
 
 private:

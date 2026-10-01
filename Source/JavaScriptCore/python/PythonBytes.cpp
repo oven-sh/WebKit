@@ -168,7 +168,26 @@ std::optional<std::span<const uint8_t>> builtinBufferOf(JSValue value)
         return memory->isCContiguous() ? memory->span() : std::nullopt;
     if (auto exported = exportedBytesOf(cell))
         return std::span<const uint8_t>(exported->storage->span());
+    if (auto* object = dynamicDowncast<PyStateObject>(cell)) {
+        if (auto other = object->showsBytesOf())
+            return builtinBufferOf(*other);
+    }
     return std::nullopt;
+}
+
+// What is to be asked in place of something that shows the bytes of something else, or the thing itself. Empty if it raised.
+static JSValue whatShowsTheBytesOf(JSGlobalObject* globalObject, JSValue value)
+{
+    auto* object = dynamicDowncast<PyStateObject>(value);
+    if (!object) [[likely]]
+        return value;
+    auto other = object->showsBytesOf();
+    if (!other)
+        return value;
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    object->willExportBytes(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return *other;
 }
 
 static JSC_DECLARE_HOST_FUNCTION(builtinGetBuffer);
@@ -191,10 +210,11 @@ static JSValue bufferMethodOfProgram(JSGlobalObject* globalObject, JSValue value
 
 bool hasBuffer(JSGlobalObject* globalObject, JSValue value)
 {
+    if (auto* object = dynamicDowncast<PyStateObject>(value); object && object->showsBytesOf())
+        return true;
     return builtinBufferOf(value) || dynamicDowncast<PyMemoryView>(value) || bufferMethodOfProgram(globalObject, value, globalObject->vm().pythonNames().dunder_buffer);
 }
 
-static PyMemoryView* memoryViewOf(JSGlobalObject*, JSValue, int flags);
 static ByteVector bytesOfMemory(PyMemoryView*, char order = 'C');
 
 Buffer tryBufferOf(JSGlobalObject* globalObject, JSValue value, int flags)
@@ -203,6 +223,8 @@ Buffer tryBufferOf(JSGlobalObject* globalObject, JSValue value, int flags)
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     Buffer buffer;
+    value = whatShowsTheBytesOf(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, { });
     if (bufferMethodOfProgram(globalObject, value, vm.pythonNames().dunder_buffer)) [[unlikely]] {
         PyMemoryView* view = memoryViewOf(globalObject, value, flags);
         RETURN_IF_EXCEPTION(scope, { });
@@ -2599,10 +2621,12 @@ static void setStridesFromLengths(Dimensions& dimensions, unsigned itemSize)
 }
 
 // memoryview(object): PyMemoryView_FromObjectAndFlags() of CPython's Objects/memoryobject.c. Null if it raised.
-static PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, int flags)
+PyMemoryView* memoryViewOf(JSGlobalObject* globalObject, JSValue object, int flags)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    object = whatShowsTheBytesOf(globalObject, object);
+    RETURN_IF_EXCEPTION(scope, nullptr);
     if (JSValue method = bufferMethodOfProgram(globalObject, object, vm.pythonNames().dunder_buffer)) {
         JSValue given = callSpecial(globalObject, typeOf(globalObject, object), method, object, jsNumber(flags));
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -2681,7 +2705,8 @@ PYTHON_NATIVE(builtinGetBuffer)
     auto flags = bufferFlagsFrom(globalObject, args[1]);
     RETURN_IF_EXCEPTION(scope, { });
     // Not what a class derived from it may have put in the way.
-    JSValue self = args[0];
+    JSValue self = whatShowsTheBytesOf(globalObject, args[0]);
+    RETURN_IF_EXCEPTION(scope, { });
     if (auto* memory = dynamicDowncast<PyMemoryView>(self)) {
         // memory_getbuf(): what is asked for says how much whoever asks is ready to be told, and what cannot be told in that much cannot be had.
         if (memory->isReleased())

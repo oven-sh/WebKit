@@ -1,0 +1,760 @@
+nothing -> 'EOFError: Ran out of input'
+   from a file -> 'EOFError: Ran out of input'
+stop -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+none -> None
+   from a file -> None
+none, and more -> None
+   from a file -> None
+no stop -> 'EOFError: Ran out of input'
+   from a file -> 'EOFError: Ran out of input'
+two left -> None
+   from a file -> None
+unknown -> "UnpicklingError: invalid load key, '\\x00'."
+   from a file -> "UnpicklingError: invalid load key, '\\x00'."
+unknown letter -> "UnpicklingError: invalid load key, 'Z'."
+   from a file -> "UnpicklingError: invalid load key, 'Z'."
+unknown quote -> "UnpicklingError: invalid load key, '\\x27'."
+   from a file -> "UnpicklingError: invalid load key, '\\x27'."
+unknown backslash -> "UnpicklingError: invalid load key, '\\x5c'."
+   from a file -> "UnpicklingError: invalid load key, '\\x5c'."
+unknown high -> "UnpicklingError: invalid load key, '\\xff'."
+   from a file -> "UnpicklingError: invalid load key, '\\xff'."
+unknown space -> "UnpicklingError: invalid load key, ' '."
+   from a file -> "UnpicklingError: invalid load key, ' '."
+unknown tilde -> "UnpicklingError: invalid load key, '~'."
+   from a file -> "UnpicklingError: invalid load key, '~'."
+unknown del -> "UnpicklingError: invalid load key, '\\x7f'."
+   from a file -> "UnpicklingError: invalid load key, '\\x7f'."
+INT -> 5
+   from a file -> 5
+INT negative -> -5
+   from a file -> -5
+INT 00 -> False
+   from a file -> False
+INT 01 -> True
+   from a file -> True
+INT 02 -> 2
+   from a file -> 2
+INT 0 -> 0
+   from a file -> 0
+INT 1 -> 1
+   from a file -> 1
+INT +1 -> True
+   from a file -> True
+INT -0 -> False
+   from a file -> False
+INT space -> True
+   from a file -> True
+INT large -> 123456789012345678901234567890
+   from a file -> 123456789012345678901234567890
+INT empty -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+INT junk -> 'ValueError: could not convert string to int'
+   from a file -> 'ValueError: could not convert string to int'
+INT trailing -> 'ValueError: could not convert string to int'
+   from a file -> 'ValueError: could not convert string to int'
+INT underscore -> 10
+   from a file -> 10
+INT float -> 'ValueError: could not convert string to int'
+   from a file -> 'ValueError: could not convert string to int'
+INT no newline -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+INT hex -> 'ValueError: could not convert string to int'
+   from a file -> 'ValueError: could not convert string to int'
+INT trailing space -> 5
+   from a file -> 5
+INT L -> 'ValueError: could not convert string to int'
+   from a file -> 'ValueError: could not convert string to int'
+INT zero byte -> 5
+   from a file -> 5
+INT 2**31 -> 2147483648
+   from a file -> 2147483648
+INT -2**31 -> -2147483648
+   from a file -> -2147483648
+INT 2**63 -> 9223372036854775808
+   from a file -> 9223372036854775808
+LONG -> 5
+   from a file -> 5
+LONG no L -> 5
+   from a file -> 5
+LONG negative -> -5
+   from a file -> -5
+LONG large -> 123456789012345678901234567890
+   from a file -> 123456789012345678901234567890
+LONG empty -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+LONG only L -> "ValueError: invalid literal for int() with base 10: ''"
+   from a file -> "ValueError: invalid literal for int() with base 10: ''"
+LONG junk -> "ValueError: invalid literal for int() with base 10: 'x'"
+   from a file -> "ValueError: invalid literal for int() with base 10: 'x'"
+LONG junk no L -> "ValueError: invalid literal for int() with base 10: '5x\\n'"
+   from a file -> "ValueError: invalid literal for int() with base 10: '5x\\n'"
+LONG two Ls -> "ValueError: invalid literal for int() with base 10: '5L'"
+   from a file -> "ValueError: invalid literal for int() with base 10: '5L'"
+LONG space -> 5
+   from a file -> 5
+LONG underscore -> 10
+   from a file -> 10
+BININT -> 67305985
+   from a file -> 67305985
+BININT negative -> -1
+   from a file -> -1
+BININT short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BININT1 -> 255
+   from a file -> 255
+BININT1 short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BININT2 -> 65535
+   from a file -> 65535
+LONG1 -> 5
+   from a file -> 5
+LONG1 none -> 0
+   from a file -> 0
+LONG1 negative -> -1
+   from a file -> -1
+LONG1 two -> 255
+   from a file -> 255
+LONG1 -256 -> -256
+   from a file -> -256
+LONG1 nine -> 18446744073709551615
+   from a file -> 18446744073709551615
+LONG1 nine negative -> -18446744073709551616
+   from a file -> -18446744073709551616
+LONG1 redundant -> 5
+   from a file -> 5
+LONG1 redundant negative -> -1
+   from a file -> -1
+LONG1 short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+LONG4 -> 513
+   from a file -> 513
+LONG4 none -> 0
+   from a file -> 0
+LONG4 negative count -> 'UnpicklingError: LONG pickle has negative byte count'
+   from a file -> 'UnpicklingError: LONG pickle has negative byte count'
+LONG4 short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+LONG1 -2**63 -> -9223372036854775808
+   from a file -> -9223372036854775808
+LONG1 2**31 -> 2147483648
+   from a file -> 2147483648
+LONG1 -2**31 -> -2147483648
+   from a file -> -2147483648
+FLOAT -> 1.5
+   from a file -> 1.5
+FLOAT int -> 5.0
+   from a file -> 5.0
+FLOAT exp -> 100000.0
+   from a file -> 100000.0
+FLOAT inf -> inf
+   from a file -> inf
+FLOAT -inf -> -inf
+   from a file -> -inf
+FLOAT nan -> nan
+   from a file -> nan
+FLOAT Infinity -> inf
+   from a file -> inf
+FLOAT infx -> 'ValueError: could not convert string to float'
+   from a file -> 'ValueError: could not convert string to float'
+FLOAT infinit -> 'ValueError: could not convert string to float'
+   from a file -> 'ValueError: could not convert string to float'
+FLOAT empty -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+FLOAT junk -> "ValueError: could not convert string to float: 'x\n'"
+   from a file -> "ValueError: could not convert string to float: 'x\n'"
+FLOAT trailing -> 'ValueError: could not convert string to float'
+   from a file -> 'ValueError: could not convert string to float'
+FLOAT space -> "ValueError: could not convert string to float: ' 1.5\n'"
+   from a file -> "ValueError: could not convert string to float: ' 1.5\n'"
+FLOAT trailing space -> 'ValueError: could not convert string to float'
+   from a file -> 'ValueError: could not convert string to float'
+FLOAT underscore -> 'ValueError: could not convert string to float'
+   from a file -> 'ValueError: could not convert string to float'
+FLOAT too large -> "OverflowError: value too large to convert to float: '1e999\n'"
+   from a file -> "OverflowError: value too large to convert to float: '1e999\n'"
+FLOAT too small -> 0.0
+   from a file -> 0.0
+FLOAT dot -> "ValueError: could not convert string to float: '.\n'"
+   from a file -> "ValueError: could not convert string to float: '.\n'"
+FLOAT .5 -> 0.5
+   from a file -> 0.5
+FLOAT 5. -> 5.0
+   from a file -> 5.0
+FLOAT e -> 'ValueError: could not convert string to float'
+   from a file -> 'ValueError: could not convert string to float'
+FLOAT + -> 1.5
+   from a file -> 1.5
+FLOAT hex -> 'ValueError: could not convert string to float'
+   from a file -> 'ValueError: could not convert string to float'
+FLOAT zero byte -> 1.5
+   from a file -> 1.5
+FLOAT -0 -> -0.0
+   from a file -> -0.0
+FLOAT sign only -> "ValueError: could not convert string to float: '-\n'"
+   from a file -> "ValueError: could not convert string to float: '-\n'"
+BINFLOAT -> 1.5
+   from a file -> 1.5
+BINFLOAT nan -> nan
+   from a file -> nan
+BINFLOAT short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BINFLOAT whole -> 2.0
+   from a file -> 2.0
+STRING -> 'abc'
+   from a file -> 'abc'
+STRING double -> 'abc'
+   from a file -> 'abc'
+STRING escapes -> "a\nA'"
+   from a file -> "a\nA'"
+STRING unquoted -> 'UnpicklingError: the STRING opcode argument must be quoted'
+   from a file -> 'UnpicklingError: the STRING opcode argument must be quoted'
+STRING one quote -> 'UnpicklingError: the STRING opcode argument must be quoted'
+   from a file -> 'UnpicklingError: the STRING opcode argument must be quoted'
+STRING mismatched -> 'UnpicklingError: the STRING opcode argument must be quoted'
+   from a file -> 'UnpicklingError: the STRING opcode argument must be quoted'
+STRING empty -> ''
+   from a file -> ''
+STRING nothing -> 'UnpicklingError: the STRING opcode argument must be quoted'
+   from a file -> 'UnpicklingError: the STRING opcode argument must be quoted'
+STRING high -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+   from a file -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+STRING raw high -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+   from a file -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+STRING bad escape -> 'ValueError: invalid \\x escape at position 0'
+   from a file -> 'ValueError: invalid \\x escape at position 0'
+STRING trailing backslash -> 'ValueError: Trailing \\ in string'
+   from a file -> 'ValueError: Trailing \\ in string'
+STRING space after -> 'UnpicklingError: the STRING opcode argument must be quoted'
+   from a file -> 'UnpicklingError: the STRING opcode argument must be quoted'
+STRING no newline -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BINSTRING -> 'abc'
+   from a file -> 'abc'
+BINSTRING negative -> 'UnpicklingError: BINSTRING pickle has negative byte count'
+   from a file -> 'UnpicklingError: BINSTRING pickle has negative byte count'
+BINSTRING short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BINSTRING high -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+   from a file -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+SHORT_BINSTRING -> 'abc'
+   from a file -> 'abc'
+SHORT_BINSTRING none -> ''
+   from a file -> ''
+SHORT_BINSTRING short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+UNICODE -> 'abc'
+   from a file -> 'abc'
+UNICODE escapes -> 'a\u20ac\U0001f600\\n'
+   from a file -> 'a\u20ac\U0001f600\\n'
+UNICODE latin -> '\xe9'
+   from a file -> '\xe9'
+UNICODE empty -> ''
+   from a file -> ''
+UNICODE bad -> "UnicodeDecodeError: 'rawunicodeescape' codec can't decode bytes in position 0-3: truncated \\uXXXX escape"
+   from a file -> "UnicodeDecodeError: 'rawunicodeescape' codec can't decode bytes in position 0-3: truncated \\uXXXX escape"
+UNICODE bad U -> "UnicodeDecodeError: 'rawunicodeescape' codec can't decode bytes in position 0-9: \\Uxxxxxxxx out of range"
+   from a file -> "UnicodeDecodeError: 'rawunicodeescape' codec can't decode bytes in position 0-9: \\Uxxxxxxxx out of range"
+UNICODE no newline -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+UNICODE surrogate -> '\ud800'
+   from a file -> '\ud800'
+BINUNICODE -> 'abc'
+   from a file -> 'abc'
+BINUNICODE utf8 -> '\u20ac'
+   from a file -> '\u20ac'
+BINUNICODE bad -> "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x in position 0: unexpected end of data"
+   from a file -> "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x in position 0: unexpected end of data"
+BINUNICODE surrogate -> '\ud800'
+   from a file -> '\ud800'
+BINUNICODE astral -> '\U0001f600'
+   from a file -> '\U0001f600'
+BINUNICODE short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BINUNICODE none -> ''
+   from a file -> ''
+BINUNICODE huge -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+SHORT_BINUNICODE -> 'abc'
+   from a file -> 'abc'
+SHORT_BINUNICODE short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BINUNICODE8 -> 'abc'
+   from a file -> 'abc'
+BINUNICODE8 huge -> 'UnpicklingError: read would overflow (invalid bytecode)'
+   from a file -> 'UnpicklingError: read would overflow (invalid bytecode)'
+BINUNICODE8 negative -> "OverflowError: BINUNICODE exceeds system's maximum size of 9223372036854775807 bytes"
+   from a file -> "OverflowError: BINUNICODE exceeds system's maximum size of 9223372036854775807 bytes"
+BINBYTES -> b'abc'
+   from a file -> b'abc'
+BINBYTES short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BINBYTES none -> b''
+   from a file -> b''
+SHORT_BINBYTES -> b'abc'
+   from a file -> b'abc'
+SHORT_BINBYTES short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BINBYTES8 -> b'abc'
+   from a file -> b'abc'
+BINBYTES8 negative -> "OverflowError: BINBYTES exceeds system's maximum size of 9223372036854775807 bytes"
+   from a file -> "OverflowError: BINBYTES exceeds system's maximum size of 9223372036854775807 bytes"
+BINBYTES8 short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+BYTEARRAY8 -> bytearray(b'abc')
+   from a file -> bytearray(b'abc')
+BYTEARRAY8 none -> bytearray(b'')
+   from a file -> bytearray(b'')
+BYTEARRAY8 negative -> "OverflowError: BYTEARRAY8 exceeds system's maximum size of 9223372036854775807 bytes"
+   from a file -> "OverflowError: BYTEARRAY8 exceeds system's maximum size of 9223372036854775807 bytes"
+BYTEARRAY8 short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+NEWTRUE -> True
+   from a file -> True
+NEWFALSE -> False
+   from a file -> False
+EMPTY_TUPLE -> ()
+   from a file -> ()
+TUPLE1 -> (None,)
+   from a file -> (None,)
+TUPLE1 nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+TUPLE2 -> (None, None)
+   from a file -> (None, None)
+TUPLE2 one -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+TUPLE3 -> (None, None, None)
+   from a file -> (None, None, None)
+TUPLE3 two -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+TUPLE -> (None, None, None, None)
+   from a file -> (None, None, None, None)
+TUPLE none -> ()
+   from a file -> ()
+TUPLE no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+TUPLE1 at a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+TUPLE2 across a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+EMPTY_LIST -> []
+   from a file -> []
+LIST -> [None, None]
+   from a file -> [None, None]
+LIST no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+EMPTY_DICT -> {}
+   from a file -> {}
+DICT -> {1: 2, 3: 4}
+   from a file -> {1: 2, 3: 4}
+DICT odd -> 'UnpicklingError: odd number of items for DICT'
+   from a file -> 'UnpicklingError: odd number of items for DICT'
+DICT none -> {}
+   from a file -> {}
+DICT no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+DICT unhashable -> "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"
+   from a file -> "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"
+EMPTY_SET -> set()
+   from a file -> set()
+FROZENSET -> frozenset({1, 2})
+   from a file -> frozenset({1, 2})
+FROZENSET none -> frozenset()
+   from a file -> frozenset()
+FROZENSET no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+FROZENSET unhashable -> "TypeError: cannot use 'list' as a set element (unhashable type: 'list')"
+   from a file -> "TypeError: cannot use 'list' as a set element (unhashable type: 'list')"
+APPEND -> [1]
+   from a file -> [1]
+APPEND nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+APPEND to nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+APPEND to an int -> "AttributeError: 'int' object has no attribute 'append'"
+   from a file -> "AttributeError: 'int' object has no attribute 'append'"
+APPEND at a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+APPEND across a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+APPENDS -> [1, 2]
+   from a file -> [1, 2]
+APPENDS none -> []
+   from a file -> []
+APPENDS no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+APPENDS to nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+APPENDS to an int -> "AttributeError: 'int' object has no attribute 'append'"
+   from a file -> "AttributeError: 'int' object has no attribute 'append'"
+APPENDS to a tuple -> "AttributeError: 'tuple' object has no attribute 'append'"
+   from a file -> "AttributeError: 'tuple' object has no attribute 'append'"
+SETITEM -> {1: 2}
+   from a file -> {1: 2}
+SETITEM one -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+SETITEM nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+SETITEM to nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+SETITEM to an int -> "TypeError: 'int' object does not support item assignment"
+   from a file -> "TypeError: 'int' object does not support item assignment"
+SETITEM unhashable -> "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"
+   from a file -> "TypeError: cannot use 'list' as a dict key (unhashable type: 'list')"
+SETITEM on a list -> 'IndexError: list assignment index out of range'
+   from a file -> 'IndexError: list assignment index out of range'
+SETITEMS -> {1: 2, 3: 4}
+   from a file -> {1: 2, 3: 4}
+SETITEMS odd -> 'UnpicklingError: odd number of items for SETITEMS'
+   from a file -> 'UnpicklingError: odd number of items for SETITEMS'
+SETITEMS none -> {}
+   from a file -> {}
+SETITEMS no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+SETITEMS to nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+ADDITEMS -> {1, 2}
+   from a file -> {1, 2}
+ADDITEMS none -> set()
+   from a file -> set()
+ADDITEMS no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+ADDITEMS to nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+ADDITEMS to a list -> "AttributeError: 'list' object has no attribute 'add'"
+   from a file -> "AttributeError: 'list' object has no attribute 'add'"
+ADDITEMS unhashable -> "TypeError: cannot use 'list' as a set element (unhashable type: 'list')"
+   from a file -> "TypeError: cannot use 'list' as a set element (unhashable type: 'list')"
+ADDITEMS to a frozenset -> "AttributeError: 'frozenset' object has no attribute 'add'"
+   from a file -> "AttributeError: 'frozenset' object has no attribute 'add'"
+POP -> None
+   from a file -> None
+POP nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+POP a mark -> None
+   from a file -> None
+POP below a mark -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+POP_MARK -> None
+   from a file -> None
+POP_MARK no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+DUP -> (None, None)
+   from a file -> (None, None)
+DUP nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+DUP at a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+MARK left -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+MARK and stop -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+marks -> ((((1,),),),)
+   from a file -> ((((1,),),),)
+stop at a mark -> None
+   from a file -> None
+PUT GET -> ([], [])
+   from a file -> ([], [])
+GET nothing -> 'UnpicklingError: Memo value not found at index 0'
+   from a file -> 'UnpicklingError: Memo value not found at index 0'
+GET junk -> "ValueError: invalid literal for int() with base 10: 'x\\n'"
+   from a file -> "ValueError: invalid literal for int() with base 10: 'x\\n'"
+GET empty -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+GET negative -> 'UnpicklingError: Memo value not found at index -1'
+   from a file -> 'UnpicklingError: Memo value not found at index -1'
+GET huge -> 'OverflowError: Python int too large to convert to C ssize_t'
+   from a file -> 'OverflowError: Python int too large to convert to C ssize_t'
+GET large -> 'UnpicklingError: Memo value not found at index 1000000'
+   from a file -> 'UnpicklingError: Memo value not found at index 1000000'
+PUT nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+PUT negative -> 'ValueError: negative PUT argument'
+   from a file -> 'ValueError: negative PUT argument'
+PUT junk -> "ValueError: invalid literal for int() with base 10: 'x\\n'"
+   from a file -> "ValueError: invalid literal for int() with base 10: 'x\\n'"
+PUT huge -> 'OverflowError: Python int too large to convert to C ssize_t'
+   from a file -> 'OverflowError: Python int too large to convert to C ssize_t'
+PUT at a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+PUT 100 -> ([], [])
+   from a file -> ([], [])
+PUT space -> ([], [])
+   from a file -> ([], [])
+BINPUT BINGET -> ([], [])
+   from a file -> ([], [])
+BINGET nothing -> 'UnpicklingError: Memo value not found at index 5'
+   from a file -> 'UnpicklingError: Memo value not found at index 5'
+BINPUT nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+BINPUT 255 -> ([], [])
+   from a file -> ([], [])
+LONG_BINPUT -> ([], [])
+   from a file -> ([], [])
+LONG_BINGET nothing -> 'UnpicklingError: Memo value not found at index 256'
+   from a file -> 'UnpicklingError: Memo value not found at index 256'
+LONG_BINGET huge -> 'UnpicklingError: Memo value not found at index 4294967295'
+   from a file -> 'UnpicklingError: Memo value not found at index 4294967295'
+MEMOIZE -> ([], [])
+   from a file -> ([], [])
+MEMOIZE nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+MEMOIZE twice -> (None, [], None)
+   from a file -> (None, [], None)
+MEMOIZE after BINPUT -> None
+   from a file -> None
+put twice -> None
+   from a file -> None
+MEMOIZE at a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+memoized None -> (None, None)
+   from a file -> (None, None)
+GLOBAL -> <class '__main__.C'>
+   from a file -> <class '__main__.C'>
+GLOBAL builtin -> <built-in function len>
+   from a file -> <built-in function len>
+GLOBAL no module -> "ModuleNotFoundError: No module named 'nowhere_at_all'"
+   from a file -> "ModuleNotFoundError: No module named 'nowhere_at_all'"
+GLOBAL no name -> "AttributeError: module '__main__' has no attribute 'nowhere'"
+   from a file -> "AttributeError: module '__main__' has no attribute 'nowhere'"
+GLOBAL empty module -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+GLOBAL empty name -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+GLOBAL one line -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+GLOBAL short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+GLOBAL dotted, old -> "AttributeError: module '__main__' has no attribute 'C.__repr__'"
+   from a file -> "AttributeError: module '__main__' has no attribute 'C.__repr__'"
+GLOBAL dotted, 4 -> <function C.__repr__ at 0x>
+   from a file -> <function C.__repr__ at 0x>
+GLOBAL not utf-8 -> "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x in position 0: unexpected end of data"
+   from a file -> "UnicodeDecodeError: 'utf-8' codec can't decode byte 0x in position 0: unexpected end of data"
+GLOBAL python 2 -> <class 'range'>
+   from a file -> <class 'range'>
+GLOBAL python 2 module -> <built-in function dumps>
+   from a file -> <built-in function dumps>
+GLOBAL python 2, protocol 3 -> "ModuleNotFoundError: No module named '__builtin__'"
+   from a file -> "ModuleNotFoundError: No module named '__builtin__'"
+GLOBAL exceptions -> <class 'Exception'>
+   from a file -> <class 'Exception'>
+STACK_GLOBAL -> <class '__main__.C'>
+   from a file -> <class '__main__.C'>
+STACK_GLOBAL dotted -> <function C.__repr__ at 0x>
+   from a file -> <function C.__repr__ at 0x>
+STACK_GLOBAL dotted, no proto -> "AttributeError: module '__main__' has no attribute 'C.__repr__'"
+   from a file -> "AttributeError: module '__main__' has no attribute 'C.__repr__'"
+STACK_GLOBAL one -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+STACK_GLOBAL none -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+STACK_GLOBAL ints -> 'UnpicklingError: STACK_GLOBAL requires str'
+   from a file -> 'UnpicklingError: STACK_GLOBAL requires str'
+STACK_GLOBAL bytes -> 'UnpicklingError: STACK_GLOBAL requires str'
+   from a file -> 'UnpicklingError: STACK_GLOBAL requires str'
+STACK_GLOBAL bad path -> "AttributeError: Can't resolve path 'C.nowhere.x' on module '__main__' <- AttributeError: type object 'C' has no attribute 'nowhere'"
+   from a file -> "AttributeError: Can't resolve path 'C.nowhere.x' on module '__main__' <- AttributeError: type object 'C' has no attribute 'nowhere'"
+STACK_GLOBAL locals -> "AttributeError: Can't resolve path 'C.<locals>' on module '__main__' <- AttributeError: type object 'C' has no attribute '<locals>'"
+   from a file -> "AttributeError: Can't resolve path 'C.<locals>' on module '__main__' <- AttributeError: type object 'C' has no attribute '<locals>'"
+STACK_GLOBAL empty -> "AttributeError: module '__main__' has no attribute ''"
+   from a file -> "AttributeError: module '__main__' has no attribute ''"
+STACK_GLOBAL dots -> "AttributeError: Can't resolve path '..' on module '__main__' <- AttributeError: module '__main__' has no attribute ''"
+   from a file -> "AttributeError: Can't resolve path '..' on module '__main__' <- AttributeError: module '__main__' has no attribute ''"
+REDUCE -> 0
+   from a file -> 0
+REDUCE no tuple -> 'TypeError: argument list must be a tuple'
+   from a file -> 'TypeError: argument list must be a tuple'
+REDUCE not callable -> "TypeError: 'int' object is not callable"
+   from a file -> "TypeError: 'int' object is not callable"
+REDUCE one -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+REDUCE none -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+REDUCE raises -> 'TypeError: len() takes exactly one argument (0 given)'
+   from a file -> 'TypeError: len() takes exactly one argument (0 given)'
+REDUCE None args -> 'TypeError: argument list must be a tuple'
+   from a file -> 'TypeError: argument list must be a tuple'
+NEWOBJ -> C([])
+   from a file -> C([])
+NEWOBJ args -> 5
+   from a file -> 5
+NEWOBJ no class -> 'UnpicklingError: NEWOBJ class argument must be a type, not int'
+   from a file -> 'UnpicklingError: NEWOBJ class argument must be a type, not int'
+NEWOBJ no tuple -> 'UnpicklingError: NEWOBJ args argument must be a tuple, not list'
+   from a file -> 'UnpicklingError: NEWOBJ args argument must be a tuple, not list'
+NEWOBJ one -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+NEWOBJ none -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+NEWOBJ a function -> 'UnpicklingError: NEWOBJ class argument must be a type, not builtin_function_or_method'
+   from a file -> 'UnpicklingError: NEWOBJ class argument must be a type, not builtin_function_or_method'
+NEWOBJ wrong args -> 'TypeError: C() takes no arguments'
+   from a file -> 'TypeError: C() takes no arguments'
+NEWOBJ_EX -> C([])
+   from a file -> C([])
+NEWOBJ_EX keywords -> 2
+   from a file -> 2
+NEWOBJ_EX no dict -> 'UnpicklingError: NEWOBJ_EX kwargs argument must be a dict, not list'
+   from a file -> 'UnpicklingError: NEWOBJ_EX kwargs argument must be a dict, not list'
+NEWOBJ_EX no tuple -> 'UnpicklingError: NEWOBJ_EX args argument must be a tuple, not list'
+   from a file -> 'UnpicklingError: NEWOBJ_EX args argument must be a tuple, not list'
+NEWOBJ_EX no class -> 'UnpicklingError: NEWOBJ_EX class argument must be a type, not int'
+   from a file -> 'UnpicklingError: NEWOBJ_EX class argument must be a type, not int'
+NEWOBJ_EX two -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+OBJ -> C([])
+   from a file -> C([])
+OBJ args -> WithArgs(1, 2)
+   from a file -> WithArgs(1, 2)
+OBJ no args, __init__ not called -> WithArgs'no __init__'
+   from a file -> WithArgs'no __init__'
+OBJ initargs -> InitArgs()
+   from a file -> InitArgs()
+OBJ nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+OBJ no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+OBJ not a class -> "TypeError: 'int' object is not callable"
+   from a file -> "TypeError: 'int' object is not callable"
+OBJ a function -> 0
+   from a file -> 0
+OBJ a function, no args -> 'TypeError: len() takes exactly one argument (0 given)'
+   from a file -> 'TypeError: len() takes exactly one argument (0 given)'
+INST -> C([])
+   from a file -> C([])
+INST args -> WithArgs(1, 2)
+   from a file -> WithArgs(1, 2)
+INST no mark -> 'UnpicklingError: could not find MARK'
+   from a file -> 'UnpicklingError: could not find MARK'
+INST short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+INST not ascii -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+   from a file -> "UnicodeDecodeError: 'ascii' codec can't decode byte 0x in position 0: ordinal not in range(128)"
+INST empty -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+INST no such -> "AttributeError: module '__main__' has no attribute 'nowhere'"
+   from a file -> "AttributeError: module '__main__' has no attribute 'nowhere'"
+BUILD dict -> C([('a', 1)])
+   from a file -> C([('a', 1)])
+BUILD None -> C([])
+   from a file -> C([])
+BUILD int -> 'UnpicklingError: state is not a dictionary'
+   from a file -> 'UnpicklingError: state is not a dictionary'
+BUILD setstate -> SetState(5)
+   from a file -> SetState(5)
+BUILD slots -> Slotted(1)
+   from a file -> Slotted(1)
+BUILD both -> C([('a', 1), ('b', 2)])
+   from a file -> C([('a', 1), ('b', 2)])
+BUILD slots no dict -> 'UnpicklingError: slot state is not a dictionary'
+   from a file -> 'UnpicklingError: slot state is not a dictionary'
+BUILD state in a pair no dict -> 'UnpicklingError: state is not a dictionary'
+   from a file -> 'UnpicklingError: state is not a dictionary'
+BUILD one -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+BUILD none -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+BUILD no __dict__ -> "AttributeError: 'int' object has no attribute '__dict__'"
+   from a file -> "AttributeError: 'int' object has no attribute '__dict__'"
+BUILD int keys -> C([(1, 2)])
+   from a file -> C([(1, 2)])
+BUILD slot int keys -> "TypeError: attribute name must be string, not 'int'"
+   from a file -> "TypeError: attribute name must be string, not 'int'"
+BUILD no such slot -> "AttributeError: 'Slotted' object has no attribute 'y' and no __dict__ for setting new attributes"
+   from a file -> "AttributeError: 'Slotted' object has no attribute 'y' and no __dict__ for setting new attributes"
+BUILD a triple -> 'UnpicklingError: state is not a dictionary'
+   from a file -> 'UnpicklingError: state is not a dictionary'
+BUILD at a mark -> 'UnpicklingError: unexpected MARK found'
+   from a file -> 'UnpicklingError: unexpected MARK found'
+APPENDS append -> Appender([1, 2])
+   from a file -> Appender([1, 2])
+APPENDS extend -> Appender([('extend', [1, 2])])
+   from a file -> Appender([('extend', [1, 2])])
+APPEND append -> Appender([1])
+   from a file -> Appender([1])
+ADDITEMS add -> Adder([1, 2])
+   from a file -> Adder([1, 2])
+SETITEMS setitem -> Setter([(1, 2), (3, 4)])
+   from a file -> Setter([(1, 2), (3, 4)])
+PROTO -> None
+   from a file -> None
+PROTO 0 -> None
+   from a file -> None
+PROTO 5 -> None
+   from a file -> None
+PROTO 6 -> 'ValueError: unsupported pickle protocol: 6'
+   from a file -> 'ValueError: unsupported pickle protocol: 6'
+PROTO 255 -> 'ValueError: unsupported pickle protocol: 255'
+   from a file -> 'ValueError: unsupported pickle protocol: 255'
+PROTO short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+PROTO twice -> None
+   from a file -> None
+PROTO later -> None
+   from a file -> None
+FRAME -> None
+   from a file -> None
+FRAME short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+FRAME too short -> None
+   from a file -> None
+FRAME none -> None
+   from a file -> None
+FRAME negative -> "OverflowError: FRAME length exceeds system's maximum of 9223372036854775807 bytes"
+   from a file -> "OverflowError: FRAME length exceeds system's maximum of 9223372036854775807 bytes"
+FRAME huge -> 'UnpicklingError: read would overflow (invalid bytecode)'
+   from a file -> 'UnpicklingError: read would overflow (invalid bytecode)'
+FRAME header short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+FRAME straddled -> 1
+   from a file -> 1
+FRAME straddled by an argument -> 'UnpicklingError: pickle exhausted before end of frame'
+   from a file -> 'UnpicklingError: pickle exhausted before end of frame'
+FRAME straddled by a line -> 'UnpicklingError: pickle exhausted before end of frame'
+   from a file -> 'UnpicklingError: pickle exhausted before end of frame'
+FRAME in a frame -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+FRAME after a frame -> None
+   from a file -> None
+FRAME header at the end of a frame -> None
+   from a file -> None
+FRAME bytes straddle -> 'UnpicklingError: pickle exhausted before end of frame'
+   from a file -> 'UnpicklingError: pickle exhausted before end of frame'
+FRAME bytes after -> b'abc'
+   from a file -> b'abc'
+FRAME str straddles -> 'UnpicklingError: pickle exhausted before end of frame'
+   from a file -> 'UnpicklingError: pickle exhausted before end of frame'
+PERSID -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+   from a file -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+BINPERSID -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+   from a file -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+BINPERSID nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+PERSID empty -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+   from a file -> 'UnpicklingError: A load persistent id instruction was encountered, but no persistent_load function was specified.'
+PERSID short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+EXT1 -> 'ValueError: unregistered extension code 1'
+   from a file -> 'ValueError: unregistered extension code 1'
+EXT1 0 -> 'UnpicklingError: EXT specifies code <= 0'
+   from a file -> 'UnpicklingError: EXT specifies code <= 0'
+EXT2 -> 'ValueError: unregistered extension code 1'
+   from a file -> 'ValueError: unregistered extension code 1'
+EXT4 -> 'ValueError: unregistered extension code 1'
+   from a file -> 'ValueError: unregistered extension code 1'
+EXT4 negative -> 'UnpicklingError: EXT specifies code <= 0'
+   from a file -> 'UnpicklingError: EXT specifies code <= 0'
+EXT1 short -> 'UnpicklingError: pickle data was truncated'
+   from a file -> 'UnpicklingError: pickle data was truncated'
+NEXT_BUFFER -> 'UnpicklingError: pickle stream refers to out-of-band data but no *buffers* argument was given'
+   from a file -> 'UnpicklingError: pickle stream refers to out-of-band data but no *buffers* argument was given'
+READONLY_BUFFER nothing -> 'UnpicklingError: unpickling stack underflow'
+   from a file -> 'UnpicklingError: unpickling stack underflow'
+READONLY_BUFFER of an int -> "TypeError: memoryview: a bytes-like object is required, not 'int'"
+   from a file -> "TypeError: memoryview: a bytes-like object is required, not 'int'"
+READONLY_BUFFER of bytes -> b'a'
+   from a file -> b'a'
+READONLY_BUFFER of a bytearray -> <memory at 0x>
+   from a file -> <memory at 0x>

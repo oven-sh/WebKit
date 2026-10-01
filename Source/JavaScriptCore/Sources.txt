@@ -868,6 +868,7 @@ python/PythonTraceback.cpp
 python/PythonTypeParameters.cpp
 python/PythonUnicodeData.cpp
 python/PythonUnicodeType.cpp
+python/PythonUnpickler.cpp
 python/PythonUserDatabaseModules.cpp
 python/PythonSyntaxTreeSource.cpp
 python/PythonSyntaxWarnings.cpp
@@ -877,6 +878,9 @@ python/PythonPosixDescriptors.cpp
 python/PythonPosixDirectories.cpp
 python/PythonPosixIdentity.cpp
 python/PythonPosixLinux.cpp
+python/PythonPickleBuffer.cpp
+python/PythonPickleModule.cpp
+python/PythonPickler.cpp
 python/PythonPosixModule.cpp
 python/PythonPosixPaths.cpp
 python/PythonPosixProcesses.cpp

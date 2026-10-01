@@ -1960,9 +1960,10 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
             if (JSValue own = asType(self)->isImmutable() ? JSValue() : asType(self)->getDirect(globalObject->vm(), globalObject->vm().pythonNames().dunder_module))
                 return own;
             String module = asType(self)->moduleOfBuiltin();
-            return JSValue(module.isNull() ? jsNontrivialString(globalObject->vm(), "builtins"_s) : jsString(globalObject->vm(), module));
+            // type_module(): the one str that there is for the name.
+            return JSValue(internedString(globalObject->vm(), Identifier::fromString(globalObject->vm(), module.isNull() ? String("builtins"_s) : module)));
         }
-        return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_module, jsNontrivialString(globalObject->vm(), "builtins"_s));
+        return getOwnOr(globalObject, self, globalObject->vm().pythonNames().dunder_module, internedString(globalObject->vm(), Identifier::fromString(globalObject->vm(), "builtins"_s)));
     }, [] (JSGlobalObject* globalObject, JSValue self, JSValue value) {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
         if (!checkSetSpecial(globalObject, scope, asType(self), value, "__module__"_s))
