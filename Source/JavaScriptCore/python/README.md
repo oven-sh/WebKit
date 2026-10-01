@@ -300,6 +300,10 @@ same for `__classdict__`, which is where annotations look for names.
 **The `__dict__` of an instance is for what is built in to say, if the class is derived from such a thing** (`subtype_setdict()`): `class E(Base, Exception)` finds the `__dict__` of `Base` first, and that of an exception cannot
 be deleted all the same. `programs/setting-and-deleting-the-dict-of-things.py`.
 
+**What a class is given without anybody writing it is given as if it had been written**: `__module__`, `__qualname__`, `__firstlineno__`, `__doc__`, `__static_attributes__` and the two cells. So it goes where the body says that the name
+is from. After `nonlocal __firstlineno__` the class has none, and the variable of the function has the number. And a class of a program's says how it is called as those written in C do, at the start of its docstring:
+`"Name(a, b)\n--\n\n"` is its `__text_signature__`. `programs/what-a-class-is-given-unasked.py`.
+
 **`super()` with no arguments** is a call of whatever goes by the name of `super` at the time. In CPython it is `super` that finds the class and the first argument, in the frame of what called it. Here the compiler hands them to
 `implicitSuper()`, along with what is being called. If that is not `super` it is called as it was written, with nothing. If it is, this is `super_init_without_args()`, which has something to say about each thing that may be missing.
 `programs/the-cell-of-a-class.py`.

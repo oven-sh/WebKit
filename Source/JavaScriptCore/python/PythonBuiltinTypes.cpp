@@ -1949,9 +1949,28 @@ void initializeObjectAndType(JSGlobalObject* globalObject)
     addMember(globalObject, type, "__weakrefoffset__"_s, [] (JSGlobalObject*, JSValue self) -> JSValue { return jsNumber(asType(self)->weakReferenceOffset()); });
     addMember(globalObject, type, "__flags__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue { return intFromInt64(globalObject, asType(self)->flagsForPython()); });
     addGetSet(globalObject, type, "__text_signature__"_s, [] (JSGlobalObject* globalObject, JSValue self) -> JSValue {
-        // Only a built-in class says how it is called in this way.
-        auto* description = asType(self)->hasFlag(PyType::IsHeapType) ? nullptr : findTypeDescription(asType(self)->nameWithoutModule(globalObject));
-        return description && !description->signature.isNull() ? JSValue(jsString(globalObject->vm(), String(description->signature))) : jsUndefined();
+        VM& vm = globalObject->vm();
+        if (!asType(self)->hasFlag(PyType::IsHeapType)) {
+            auto* description = findTypeDescription(asType(self)->nameWithoutModule(globalObject));
+            return description && !description->signature.isNull() ? JSValue(jsString(vm, String(description->signature))) : jsUndefined();
+        }
+        // _PyType_GetTextSignatureFromInternalDoc(): a class of a program's says it as those written in C do, at the start of its docstring. "Name(a, b)\n--\n\n"
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue doc = asType(self)->lookupOwn(vm, vm.pythonNames().dunder_doc);
+        JSString* docString = doc ? stringIn(doc) : nullptr;
+        if (!docString)
+            return jsUndefined();
+        String text = docString->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        // find_signature()
+        String name = asType(self)->nameWithoutModule(globalObject);
+        if (!text.startsWith(name) || text.length() <= name.length() || text[name.length()] != '(')
+            return jsUndefined();
+        // skip_signature(): it ends before there is an empty line.
+        size_t end = text.find(")\n--\n\n"_s, name.length());
+        if (size_t emptyLine = text.find("\n\n"_s, name.length()); end == notFound || emptyLine < end)
+            return jsUndefined();
+        return jsString(vm, text.substring(name.length(), end + 1 - name.length()));
     });
     addGetSet(globalObject, type, "__module__"_s, [] (JSGlobalObject* globalObject, JSValue self) {
         // A built-in class does not look in itself for it. `type` has there the very thing that is asking.

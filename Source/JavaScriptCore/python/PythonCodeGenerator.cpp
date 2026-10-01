@@ -4644,9 +4644,22 @@ private:
         else
             g.emitLoad(environment.get(), jsUndefined());
 
+        // What a class is given without anybody writing it is given as if it had been written, so it goes where the body says that the name is from: `nonlocal __firstlineno__`.
         auto store = [&] (const Identifier& name, RegisterID* value) {
-            noteName(name);
-            OpPySetItem::emit(&g, m_namespace.get(), stringConstant(name), value);
+            Location location = locateAndNote(name);
+            switch (location.where) {
+            case Where::Closure:
+            case Where::NamespaceOrClosure:
+                emitStoreClosure(name, value, node);
+                return;
+            case Where::Global:
+                g.emitDirectPutById(m_globals.get(), name, value);
+                return;
+            case Where::Register:
+            case Where::Namespace:
+                OpPySetItem::emit(&g, m_namespace.get(), stringConstant(name), value);
+                return;
+            }
         };
         {
             // What comes first is where the class says that it begins, which is at the first of its decorators. That may be no part of what this is compiled from, and what is from nowhere is there.
