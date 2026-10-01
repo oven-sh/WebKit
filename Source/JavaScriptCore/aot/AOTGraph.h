@@ -569,6 +569,7 @@ public:
     // Lowering::lowerEquality() handles the comparison.
     void elideReadsOfIteratorMethodsOfArrays();
     static bool isReadOfIteratorMethodOfArray(const Node*);
+    static bool knowsWhichMethodsAreOverridden();
     static bool methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read); // Whether a program class that extends this built-in class may override the method.
     static bool isIteratorMethodOfAnyArray(const Node*); // Array.prototype.values, which is also Array.prototype[Symbol.iterator].
     void findBuiltinsCalled(); // Sets Node::builtinCalled. Requires types.

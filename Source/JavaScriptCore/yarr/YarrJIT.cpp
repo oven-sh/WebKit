@@ -9626,6 +9626,7 @@ public:
             return;
         }
 
+#if CPU(ARM64)
         if (m_forImage) {
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
             for (auto& call : m_callsToOwnTryReadUnicodeCharSlowPath)
@@ -9635,11 +9636,9 @@ public:
             auto& bytes = m_forImage->bytes;
             // Branch compaction leaves nops at the end.
             size_t sizeOfCode = linkBuffer.size();
-#if CPU(ARM64)
             constexpr uint32_t nop = 0xd503201f;
             while (sizeOfCode > sizeof(uint32_t) && *reinterpret_cast<const uint32_t*>(start + sizeOfCode - sizeof(uint32_t)) == nop)
                 sizeOfCode -= sizeof(uint32_t);
-#endif
             bytes.append(std::span { start, sizeOfCode });
             auto offsetOf = [&](auto label) {
                 return static_cast<uint32_t>(static_cast<const uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr()) - start);
@@ -9672,6 +9671,7 @@ public:
                 codeBlock.setFallBackWithFailureReason(JITFailureReason::GeneratedCodeSizeTooLarge);
             return;
         }
+#endif
 
         if (m_executionMode == ExecutionMode::MatchOnly) {
             if (m_charSize == CharSize::Char8) {

@@ -7031,7 +7031,8 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
 
 void installImageCompiler()
 {
-#if ENABLE(FTL_JIT)
+    // The back end is only written for ARM64 so far.
+#if ENABLE(FTL_JIT) && CPU(ARM64)
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
 #endif
 }

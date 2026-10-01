@@ -6,7 +6,8 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-#if ENABLE(FTL_JIT)
+// The back end is only written for ARM64 so far.
+#if ENABLE(FTL_JIT) && CPU(ARM64)
 
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
@@ -842,4 +843,4 @@ bool Lowering::tryLowerMisc(Node* node)
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(FTL_JIT) && CPU(ARM64)

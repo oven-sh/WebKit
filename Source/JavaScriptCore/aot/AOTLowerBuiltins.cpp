@@ -6,7 +6,8 @@
 #include "config.h"
 #include "AOTLowering.h"
 
-#if ENABLE(FTL_JIT)
+// The back end is only written for ARM64 so far.
+#if ENABLE(FTL_JIT) && CPU(ARM64)
 
 #include "B3ValueInlines.h"
 #include "BytecodeStructs.h"
@@ -21,47 +22,10 @@ namespace JSC { namespace AOT {
 
 using namespace B3;
 
-// BUN_AOT_OVERRIDDEN_METHODS: the path of a file that lists the methods that the program's subclasses of built-in classes override,
-// one per line, for example `Map.set`.
-static const char* pathOfOverriddenMethods()
-{
-    static const char* path = getenv("BUN_AOT_OVERRIDDEN_METHODS");
-    return path;
-}
-
 // Whether a subclass of that class in the program may override the method. (Without the file, assume that it may.)
 bool Lowering::mayBeOverridden(ASCIILiteral nameOfClass, Node* read)
 {
     return Graph::methodMayBeOverridden(nameOfClass, read);
-}
-
-bool Graph::methodMayBeOverridden(ASCIILiteral nameOfClass, Node* read)
-{
-    static const NeverDestroyed<std::optional<UncheckedKeyHashSet<String>>> all = [] () -> std::optional<UncheckedKeyHashSet<String>> {
-        const char* path = pathOfOverriddenMethods();
-        if (!path)
-            return std::nullopt;
-        auto contents = FileSystem::readEntireFile(String::fromUTF8(path));
-        if (!contents) {
-            dataLogLn("AOT: ", path, " cannot be read");
-            return std::nullopt;
-        }
-        UncheckedKeyHashSet<String> result;
-        for (auto line : String::fromUTF8(contents->span()).split('\n'))
-            result.add(line);
-        return result;
-    }();
-    if (!all.get() || !read || !read->isBytecode(op_get_by_id))
-        return true;
-    UniquedStringImpl* name = read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
-    // (The file spells Symbol.iterator as @@iterator.)
-    StringView text(name);
-    if (name->isSymbol()) {
-        if (!text.startsWith("Symbol."_s))
-            return true;
-        return all.get()->contains(makeString(nameOfClass, ".@@"_s, text.substring(7))) || all.get()->contains(makeString(nameOfClass, ".*"_s));
-    }
-    return all.get()->contains(makeString(nameOfClass, '.', text)) || all.get()->contains(makeString(nameOfClass, ".*"_s));
 }
 
 // Returns the condition under which the base is such a receiver. Null means that it always is.
@@ -84,7 +48,7 @@ LValue Lowering::isReceiverOfKind(Node* read, Node* baseNode, LValue base, Recei
         return isCellAnd(baseNode, base, [&](LValue cell) { return isCellOfType(cell, StringType); });
     case Receiver::Array:
         // (The type annotation is trusted, as it is when builtins written in JavaScript are inlined.)
-        if (read && isSubtype(baseNode->type, TArray) && Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(read)) && (!pathOfOverriddenMethods() || !mayBeOverridden("Array"_s, read)))
+        if (read && isSubtype(baseNode->type, TArray) && Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(read)) && (!Graph::knowsWhichMethodsAreOverridden() || !mayBeOverridden("Array"_s, read)))
             return nullptr;
         return isCellAnd(baseNode, base, [&](LValue cell) { return isOriginalArray(cell); });
     case Receiver::Map:
@@ -841,4 +805,4 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
 
 } } // namespace JSC::AOT
 
-#endif // ENABLE(FTL_JIT)
+#endif // ENABLE(FTL_JIT) && CPU(ARM64)

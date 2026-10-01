@@ -46,6 +46,9 @@ static ScopeChain unknownScopeChain()
 // Estimates the relative execution frequency of each block. The register allocator uses it to decide what to spill and which moves
 // to coalesce. Without a profile, it has to be derived from the shape of the code. The lowering has already marked the blocks that
 // it created for rare cases.
+// The back end is only written for ARM64 so far.
+#if CPU(ARM64)
+
 static void estimateFrequencies(B3::Procedure& proc)
 {
     proc.resetReachability();
@@ -391,7 +394,6 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
 
 
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly(), linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
-#if CPU(ARM64)
     // Branch compaction leaves nops at the end, after the breakpoint emitted above. The breakpoint stays only if it follows a call: the
     // call's return address identifies the frame, so it must not be the start of the next function.
     {
@@ -407,11 +409,12 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         while (info.codeSize > atLeast && *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(start) + info.codeSize - sizeof(uint32_t)) == breakpoint)
             info.codeSize -= sizeof(uint32_t);
     }
-#endif
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     result.info = WTF::move(info);
     return true;
 }
+
+#endif // CPU(ARM64)
 
 bool recordUsesOfKnownFunctionsForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* summary, VariableSummaries* variableSummaries)
 {
@@ -449,12 +452,24 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
 
 bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, const CodeOfProgram* program)
 {
+#if CPU(ARM64)
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
     bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program);
     if (!ok && Options::verboseAOTCompilation()) [[unlikely]]
         dataLogLn("AOT: declined: ", reason, " ", reasonOpcode != op_nop ? opcodeNames[reasonOpcode] : ""_s);
     return ok;
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(unlinkedCodeBlock);
+    UNUSED_PARAM(result);
+    UNUSED_PARAM(hints);
+    UNUSED_PARAM(linkage);
+    UNUSED_PARAM(summary);
+    UNUSED_PARAM(variableSummaries);
+    UNUSED_PARAM(program);
+    return false;
+#endif
 }
 
 } } // namespace JSC::AOT

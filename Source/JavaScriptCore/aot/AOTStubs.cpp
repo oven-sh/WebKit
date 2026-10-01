@@ -39,7 +39,12 @@ using TrustedImm32 = CCallHelpers::TrustedImm32;
 
 // State used while generating the stubs: the offsets of the stubs generated so far, and the calls between stubs, which are linked
 // at the end.
-static CCallHelpers::Label s_labels[numberOfStubs];
+// (A Label has a constructor, so one at file scope would be constructed whenever a process starts. These are made on first use.)
+static CCallHelpers::Label* labelsOfStubs()
+{
+    static NeverDestroyed<std::array<CCallHelpers::Label, numberOfStubs>> labels;
+    return labels->data();
+}
 static Vector<std::pair<CCallHelpers::Call, Stub>>* s_callsBetweenStubs;
 static Vector<CCallHelpers::Label>* s_returnsIntoAdapters;
 // Places where the address of a location in the stubs must be materialized in a register.
@@ -49,8 +54,8 @@ struct AddressOfLabel {
     CCallHelpers::Label target;
 };
 static Vector<AddressOfLabel>* s_addressesOfLabels;
-static CCallHelpers::Label s_callVarargsReturnAddress;
-static CCallHelpers::Label s_returnFromCallWithList;
+static CCallHelpers::Label& callVarargsReturnAddress() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
+static CCallHelpers::Label& returnFromCallWithList() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
 
 static void callStubFromStub(CCallHelpers& jit, Stub stub)
 {
@@ -216,15 +221,22 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
 enum class Returns : uint8_t { Value, Void, Double };
 
 // AssemblyHelpers::prepareCallOperation(), for the engine's own operations: in a build with assertions they check that it was done.
+static void prepareCallOperationWithVM(CCallHelpers& jit, GPRReg vm)
+{
+#if ASSERT_ENABLED
+    jit.storePtr(GPRInfo::callFrameRegister, Address(vm, VM::offsetOfTopCallFrame()));
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(vm);
+#endif
+}
+
 static void prepareCallOperation(CCallHelpers& jit, GPRReg scratch)
 {
 #if ASSERT_ENABLED
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), scratch);
-    jit.storePtr(GPRInfo::callFrameRegister, Address(scratch, VM::offsetOfTopCallFrame()));
-#else
-    UNUSED_PARAM(jit);
-    UNUSED_PARAM(scratch);
 #endif
+    prepareCallOperationWithVM(jit, scratch);
 }
 
 // The target is in `function` and its arguments are in place. The stub sets up its own frame for the duration of the call, like
@@ -379,8 +391,8 @@ static void callPreservingRegistersAndReturn(CCallHelpers& jit, Entry operation,
 
 // The slow path of a stub with acceptsOperandInAnyRegister() is shared by all its entry points: by then the operand is in T9. The
 // entry point for the default register is generated first and contains the slow path.
-static CCallHelpers::Label s_longWayOfWriteBarrier;
-static CCallHelpers::Label s_longWayOfToBoolean;
+static CCallHelpers::Label& longWayOfWriteBarrier() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
+static CCallHelpers::Label& longWayOfToBoolean() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
 
 static void generateWriteBarrier(CCallHelpers& jit, GPRReg owner)
 {
@@ -394,10 +406,10 @@ static void generateWriteBarrier(CCallHelpers& jit, GPRReg owner)
     slow.link(&jit);
     jit.move(owner, T9);
     if (owner != A0) {
-        jit.jump().linkTo(s_longWayOfWriteBarrier, &jit);
+        jit.jump().linkTo(longWayOfWriteBarrier(), &jit);
         return;
     }
-    s_longWayOfWriteBarrier = jit.label();
+    longWayOfWriteBarrier() = jit.label();
     callPreservingRegistersAndReturn(jit, Entry::operationAOTWriteBarrier, false, [&] {
         jit.move(T9, A1);
         jit.loadPtr(Address(T10, Instance::offsetOfVM()), A0);
@@ -460,10 +472,10 @@ static void generateToBoolean(CCallHelpers& jit, GPRReg asked)
     slow.link(&jit);
     jit.move(asked, T9);
     if (asked != A0) {
-        jit.jump().linkTo(s_longWayOfToBoolean, &jit);
+        jit.jump().linkTo(longWayOfToBoolean(), &jit);
         return;
     }
-    s_longWayOfToBoolean = jit.label();
+    longWayOfToBoolean() = jit.label();
     callPreservingRegistersAndReturn(jit, Entry::operationAOTToBoolean, true, [&] {
         jit.move(T9, A1);
         jit.loadPtr(Address(T10, Instance::offsetOfGlobalObject()), A0);
@@ -1366,7 +1378,7 @@ static void callGetter(CCallHelpers& jit, CCallHelpers::JumpList& cannot)
     jit.move(A0, thisGPR);
     jit.move(T12, calleeGPR);
     jit.move(TrustedImm32(0), countGPR);
-    jit.jump().linkTo(s_labels[static_cast<unsigned>(Stub::Call)], &jit);
+    jit.jump().linkTo(labelsOfStubs()[static_cast<unsigned>(Stub::Call)], &jit);
 }
 
 // A0 = the base, an object. uid: the property name (an atom, or a symbol's uid). On a hit in the VM's megamorphic cache, returns
@@ -1400,8 +1412,11 @@ struct WaysOnOfGetById {
     CCallHelpers::Label isNotByName;
     CCallHelpers::Label miss;
 };
-static WaysOnOfGetById s_waysOnOfGetById[2];
-static WaysOnOfGetById& waysOnOfGetById(Entry operation) { return s_waysOnOfGetById[operation == Entry::operationAOTGetByIdWellKnown]; }
+static WaysOnOfGetById& waysOnOfGetById(Entry operation)
+{
+    static NeverDestroyed<std::array<WaysOnOfGetById, 2>> waysOn;
+    return waysOn.get()[operation == Entry::operationAOTGetByIdWellKnown];
+}
 
 // A direct slot with a property name ID: whether the base's Structure has that name at that inline offset. (Objects of a union have
 // the discriminant in the same place, and a Structure each.) For a base that does not have the Structure in the slot. A site that
@@ -1472,7 +1487,11 @@ struct WaysOnOfReadSlot {
     CCallHelpers::Label isNotThere;
     CCallHelpers::Label miss;
 };
-static WaysOnOfReadSlot s_waysOnOfReadSlot[2][Structure::numberOfSlotsWithFieldIDs];
+static WaysOnOfReadSlot& waysOnOfReadSlot(bool allowsUndefined, unsigned slot)
+{
+    static NeverDestroyed<std::array<std::array<WaysOnOfReadSlot, Structure::numberOfSlotsWithFieldIDs>, 2>> waysOn;
+    return waysOn.get()[allowsUndefined][slot];
+}
 
 // base: see acceptsOperandInAnyRegister().
 static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool allowsUndefined, GPRReg base = A0)
@@ -1492,7 +1511,7 @@ static void generateReadSlot(CCallHelpers& jit, unsigned slot, bool allowsUndefi
     jit.load64(Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)), A0);
     jit.ret();
 
-    auto& waysOn = s_waysOnOfReadSlot[allowsUndefined][slot];
+    auto& waysOn = waysOnOfReadSlot(allowsUndefined, slot);
     if (base != A0) {
         isNotThere.link(&jit);
         jit.move(base, A0);
@@ -2195,7 +2214,8 @@ static void unwind(CCallHelpers& jit, GPRReg vm, GPRReg lookUp)
     constexpr GPRReg keptVM = GPRInfo::regCS0;
     RELEASE_ASSERT(noOverlap(vm, lookUp, A0, GPRInfo::regT1));
     jit.emitFunctionPrologue();
-    prepareCallOperation(jit, GPRInfo::regT1);
+    // (Not every stub that ends up here was entered with an Instance.)
+    prepareCallOperationWithVM(jit, vm);
     jit.move(vm, GPRInfo::regT1);
     jit.copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(GPRInfo::regT1);
     // This frees them for use here: the handler restores them from there.
@@ -2670,7 +2690,7 @@ static void callTheWayTheEngineDoes(CCallHelpers& jit, CodeSpecializationKind ki
     jit.ret();
 }
 
-static CCallHelpers::Label s_startOfCallOfAnyCount;
+static CCallHelpers::Label& startOfCallOfAnyCount() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
 
 // Function.prototype.call.bind(f) ("uncurryThis"), which lets a program write f(object, ...) for object.f(...) regardless of what
 // object.f has become. Calls f with the first argument as `this` and the rest as arguments. Without this it would be a call to a
@@ -2695,16 +2715,16 @@ static void callWhatCallIsBoundTo(CCallHelpers& jit)
     for (unsigned i = 0; i + 1 < numberOfArgumentGPRs; ++i)
         jit.move(argumentGPR(i + 1), argumentGPR(i));
     jit.sub32(TrustedImm32(1), countGPR);
-    jit.jump().linkTo(s_startOfCallOfAnyCount, &jit);
+    jit.jump().linkTo(startOfCallOfAnyCount(), &jit);
     nothingIsPassed.link(&jit);
     jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), thisGPR);
-    jit.jump().linkTo(s_startOfCallOfAnyCount, &jit);
+    jit.jump().linkTo(startOfCallOfAnyCount(), &jit);
     isNot.link(&jit);
 }
 
 static void generateReturnFromCallWithList(CCallHelpers& jit)
 {
-    s_returnFromCallWithList = jit.label();
+    returnFromCallWithList() = jit.label();
     jit.emitFunctionEpilogue();
     jit.ret();
 }
@@ -2713,7 +2733,7 @@ static void generateReturnFromCallWithList(CCallHelpers& jit)
 static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::optional<unsigned> count)
 {
     if (kind == CodeSpecializationKind::CodeForCall && !count)
-        s_startOfCallOfAnyCount = jit.label();
+        startOfCallOfAnyCount() = jit.label();
     CCallHelpers::JumpList slowCase;
     findCodeOfCallee(jit, kind, slowCase);
     Jump takesList = jit.branchTest64(CCallHelpers::NonZero, T12, CCallHelpers::TrustedImm64(1LL << EntryWord::bitOfIsList));
@@ -2748,7 +2768,7 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
     // The list is put in a frame of this stub's, which lasts as long as the callee does. If this is a tail call by a function that was
     // itself called that way, the frame that held its list has nothing left to do but return. It is given up first, or a loop
     // of tail calls would run out of stack.
-    s_addressesOfLabels->append({ jit.label(), T11, s_returnFromCallWithList });
+    s_addressesOfLabels->append({ jit.label(), T11, returnFromCallWithList() });
     jit.m_assembler.adr(T11, 0);
     Jump doesNotReturnIntoSuchAFrame = jit.branchPtr(CCallHelpers::NotEqual, ARM64Registers::lr, T11);
     jit.emitFunctionEpilogue();
@@ -2759,7 +2779,7 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
     jit.addPtr(TrustedImm32(slotOfFrameBeingMade(CallFrameSlot::thisArgument, sizeof(Register)).offset), CCallHelpers::stackPointerRegister, argumentGPR(1));
     jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), T12);
 #if CPU(ARM64)
-    s_addressesOfLabels->append({ jit.label(), ARM64Registers::lr, s_returnFromCallWithList });
+    s_addressesOfLabels->append({ jit.label(), ARM64Registers::lr, returnFromCallWithList() });
     jit.m_assembler.adr(ARM64Registers::lr, 0);
     jit.farJump(T12, JSEntryPtrTag);
 #else
@@ -2847,7 +2867,7 @@ static void callListInTailPosition(CCallHelpers& jit)
     static_assert(length == argumentGPR(0) && to == argumentGPR(1));
     jit.move(argumentGPR(1), from);
     jit.loadPtr(Address(GPRInfo::callFrameRegister), frame);
-    s_addressesOfLabels->append({ jit.label(), T11, s_returnFromCallWithList });
+    s_addressesOfLabels->append({ jit.label(), T11, returnFromCallWithList() });
     jit.m_assembler.adr(T11, 0);
     CCallHelpers::Label again = jit.label();
     jit.loadPtr(Address(frame, sizeof(void*)), T12);
@@ -2870,7 +2890,7 @@ static void callListInTailPosition(CCallHelpers& jit)
     none.link(&jit);
     jit.move(frame, GPRInfo::callFrameRegister);
     jit.move(to, CCallHelpers::stackPointerRegister);
-    jit.jump().linkTo(s_callVarargsReturnAddress, &jit);
+    jit.jump().linkTo(callVarargsReturnAddress(), &jit);
 }
 
 // See Stub::CallVarargs.
@@ -2933,8 +2953,8 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
         if (kind == CodeSpecializationKind::CodeForCall) {
             // This frame holds the argument list, like the frame that Stub::Call creates, and is identified by the same return
             // address.
-            s_callVarargsReturnAddress = jit.label();
-            s_addressesOfLabels->append({ jit.label(), ARM64Registers::lr, s_returnFromCallWithList });
+            callVarargsReturnAddress() = jit.label();
+            s_addressesOfLabels->append({ jit.label(), ARM64Registers::lr, returnFromCallWithList() });
             jit.m_assembler.adr(ARM64Registers::lr, 0);
             s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::CallList });
         } else
@@ -3957,7 +3977,7 @@ const StubBlob& stubBlob()
         blob.construct();
         CCallHelpers jit;
 #if CPU(ARM64)
-        CCallHelpers::Label* labels = s_labels;
+        CCallHelpers::Label* labels = labelsOfStubs();
         Vector<std::pair<CCallHelpers::Call, Stub>> callsBetweenStubs;
         s_callsBetweenStubs = &callsBetweenStubs;
         Vector<CCallHelpers::Label> returnsIntoAdapters;
@@ -3977,7 +3997,9 @@ const StubBlob& stubBlob()
 #undef AOT_GENERATE_STUB
 
         Vector<CCallHelpers::Label> thunkLabels;
-        if constexpr (usesStubs) {
+#if CPU(ARM64)
+        static_assert(usesStubs);
+        {
             for (Stub stub : operationCallStubs) {
                 for (unsigned entry = 0; entry < numberOfEntries; ++entry) {
                     thunkLabels.append(jit.label());
@@ -4012,7 +4034,6 @@ const StubBlob& stubBlob()
                 static_assert(functionCallStubs[0] == Stub::Call);
                 jit.jump().linkTo(thunkLabels[firstThunkOfCalls + argumentCountOf(intrinsic)], &jit);
             }
-#if CPU(ARM64)
             static_assert(!static_cast<unsigned>(ARM64Registers::x0));
             for (Stub stub : stubsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
@@ -4089,9 +4110,9 @@ const StubBlob& stubBlob()
                     }
                 }
             }
-#endif
             RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
         }
+#endif
 
         // Linked in ordinary memory: the stubs only ever run from the copies in an image.
         jit.padBeforePatch();
@@ -4171,6 +4192,9 @@ const StubBlob& stubBlob()
     });
     return blob.get();
 }
+
+// The back end is only written for ARM64 so far.
+#if CPU(ARM64)
 
 void StubCalls::call(CCallHelpers& jit, Stub stub, CallSite site)
 {
@@ -4271,6 +4295,8 @@ void StubCalls::jumpToFunction(CCallHelpers& jit, uint32_t knownCallee)
 {
     m_pending.append({ jit.nearTailCall(), Stub::Call, true, StubCall::noCallSite, knownCallee });
 }
+
+#endif // CPU(ARM64)
 
 void IndexReferences::load(CCallHelpers& jit, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale)
 {
