@@ -391,30 +391,6 @@ public:
         return transitionCountEstimate() > maxTransitionLength;
     }
 
-    // Most structures of a program that sets itself up are ones that no object has: they are the steps by which some one object came
-    // by its properties (a namespace, a registry, what a module exports), and nothing else is ever going to take them. So an object
-    // that has taken a number of steps in a row that nothing had taken before it is taken to be one of those, and becomes a dictionary.
-    // If that was wrong (it was the first of many that are made the same way), the next one gets as far as where this one left, by
-    // steps that are there already: then it is known, and from there on there are structures for all of them, as ever.
-    // For an object that is about to be given a property that nothing with this structure has been given.
-    inline bool goesItsOwnWay()
-    {
-        unsigned limit = Options::additionsBeforeLoneObjectIsDictionary();
-        // (One that has been flattened is not flattened again, and stays slow.)
-        if (!limit || isOnSharedPath() || hasBeenFlattenedBefore() || hasBeenDictionary() || isCopyOnWrite(indexingMode()))
-            return false;
-        if (wasLeftByLoneObject())
-            return false;
-        unsigned steps = 0;
-        for (Structure* structure = this; structure; structure = structure->previousID()) {
-            if (structure->transitionKind() != TransitionKind::PropertyAddition || structure->hasBeenFollowed())
-                return false;
-            if (++steps >= limit)
-                return true;
-        }
-        return false;
-    }
-
     inline bool shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()
     {
         return transitionCountEstimate() > s_maxTransitionLengthForRemove || transitionCountHasOverflowed();
@@ -434,7 +410,7 @@ public:
     Structure* trySingleTransition() { return m_transitionTable.trySingleTransition(); }
 
     JS_EXPORT_PRIVATE static Structure* addPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&);
-    JS_EXPORT_PRIVATE static Structure* addNewPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&, PutPropertySlot::Context = PutPropertySlot::UnknownContext, DeferredStructureTransitionWatchpointFire* = nullptr, bool isForOneObject = false);
+    JS_EXPORT_PRIVATE static Structure* addNewPropertyTransition(VM&, Structure*, PropertyName, unsigned attributes, PropertyOffset&, PutPropertySlot::Context = PutPropertySlot::UnknownContext, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* addPropertyTransitionToExistingStructureConcurrently(Structure*, UniquedStringImpl* uid, unsigned attributes, PropertyOffset&);
     static Structure* addPropertyTransitionToExistingStructure(Structure*, PropertyName, unsigned attributes, PropertyOffset&);
     static Structure* removeNewPropertyTransition(VM&, Structure*, PropertyName, PropertyOffset&, DeferredStructureTransitionWatchpointFire* = nullptr);
@@ -1046,10 +1022,6 @@ public:
     DEFINE_BITFIELD(bool, hasNonEnumerableProperties, HasNonEnumerableProperties, 1, 6);
     DEFINE_BITFIELD(bool, hasSpecialProperties, HasSpecialProperties, 1, 7);
     DEFINE_BITFIELD(DefinitelyNonThenableState, definitelyNonThenableState, DefinitelyNonThenableState, 2, 8); // This flag can be flipped on the main thread at any timing.
-    // See goesItsOwnWay().
-    DEFINE_BITFIELD(bool, hasBeenFollowed, HasBeenFollowed, 1, 10); // An object got here by a transition that was there already.
-    DEFINE_BITFIELD(bool, wasLeftByLoneObject, WasLeftByLoneObject, 1, 11);
-    DEFINE_BITFIELD(bool, isOnSharedPath, IsOnSharedPath, 1, 12);
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);

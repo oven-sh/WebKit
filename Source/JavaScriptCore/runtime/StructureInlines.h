@@ -615,10 +615,7 @@ ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructureImpl
 ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructure(Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset)
 {
     ASSERT(!isCompilationThread());
-    Structure* existing = addPropertyTransitionToExistingStructureImpl(structure, propertyName.uid(), attributes, offset);
-    if (existing && !existing->hasBeenFollowed())
-        existing->setHasBeenFollowed(true);
-    return existing;
+    return addPropertyTransitionToExistingStructureImpl(structure, propertyName.uid(), attributes, offset);
 }
 
 ALWAYS_INLINE Structure* Structure::addPropertyTransitionToExistingStructureConcurrently(Structure* structure, UniquedStringImpl* uid, unsigned attributes, PropertyOffset& offset)

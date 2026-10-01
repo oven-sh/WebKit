@@ -456,10 +456,6 @@ private:
 void noteDeclaredNames(UnlinkedCodeBlock*, RefPtr<DeclaredNamesLink>&&);
 void recordFunctionAssignments(UnlinkedCodeBlock*, Vector<FunctionAssignment>&&);
 Vector<FunctionAssignment> functionAssignmentsIn(UnlinkedCodeBlock*); // Any thread.
-
-// EXPERIMENT: Options::aotFacts(). All are noted before any is asked for.
-void noteBodyOfFact(uint32_t body, const KnownFunction&);
-const KnownFunction* bodyOfFact(uint32_t body);
 const DeclaredNamesLink* declaredNamesFor(UnlinkedCodeBlock*); // Any thread. Valid until forgetDeclaredNames().
 void forgetDeclaredNames();
 

@@ -6262,29 +6262,6 @@ struct BytecodeLinkEncoder::Impl {
             hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, bindingsOfModule(index).span(), describe);
             hints[index]->recordFunctionAssignmentsIn(codeBlock, describe);
         }
-        if (Options::aotFacts() & 4) {
-            unsigned bodies = 0;
-            for (auto& function : functionsToCompile) {
-                if (!function.forCall)
-                    continue;
-                for (const auto& instruction : function.forCall->instructions()) {
-                    if (instruction->opcodeID() != op_check_type || instruction->as<OpCheckType>().m_mask >> 28 != AOT::FactBody)
-                        continue;
-                    AOT::KnownFunction known;
-                    known.executable = function.executable;
-                    if (describe(function.executable, known)) {
-                        known.isExact = true;
-                        known.isDeclaration = true;
-                        known.needsNoFunctionObject = true;
-                        known.returnType.store(AOT::TTop);
-                        AOT::noteBodyOfFact(instruction->as<OpCheckType>().m_mask & 0xfffffff, known);
-                        ++bodies;
-                    }
-                    break;
-                }
-            }
-            dataLogLn("FACTS: ", bodies, " bodies say which they are");
-        }
         // (What is inside a function that has code both for a call and for `new` is there twice, and is the same both times.)
         std::set<std::tuple<uint32_t, uint32_t, uint32_t>> keys;
         for (auto& function : functionsToCompile) {

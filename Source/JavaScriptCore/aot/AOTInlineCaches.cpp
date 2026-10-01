@@ -452,8 +452,7 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
         }
 
         Structure* structure = object->structure();
-        // An object that was taken to be going its own way (Structure::goesItsOwnWay()) has been given what it was going to be given, by
-        // the look of it: somebody wants to know what is in it. From now on it is an object like any other.
+        // Like the JIT's inline caches (tryCacheGetBy()): flatten a cacheable dictionary the first time an access tries to cache it.
         if (structure->isDictionary() && !structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore()) [[unlikely]] {
             structure->flattenDictionaryStructure(vm, object);
             structure = object->structure();

@@ -620,13 +620,6 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
         return node->graph->knownCallee(node, isExact);
     bool proven = false;
     const KnownFunction* known = knownCalleeIgnoringSummaries(node, &proven);
-    // Only where nothing better is known: what is known of a closed function is known from the calls that are proven the other way.
-    if ((!known || !proven) && node->hasFact(FactDirect, 4)) {
-        if (const KnownFunction* body = bodyOfFact(node->fact & 0xfffffff)) {
-            known = body;
-            proven = true;
-        }
-    }
     if ((!known || !proven) && functionsOfProgram() && (node->opcode == op_call || node->opcode == op_call_ignore_result || node->opcode == op_tail_call)) {
         VirtualRegister calleeRegister = node->opcode == op_tail_call ? node->as<OpTailCall>().m_callee : operandsOfCall(node->instruction).callee;
         if (const KnownFunction* method = functionsOfProgram()->function(closedMethodReadBy(node->use(calleeRegister))); method && method->forCall) {
@@ -662,38 +655,6 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
     if (isExact)
         *isExact = proven;
     return known;
-}
-
-unsigned Graph::iteratedFactOf(const Node* node)
-{
-    if (!(Options::aotFacts() & 16))
-        return 0;
-    VirtualRegister iterable;
-    switch (node->opcode) {
-    case op_iterator_open:
-        iterable = node->as<OpIteratorOpen>().m_iterable;
-        break;
-    case op_iterator_next:
-        iterable = node->as<OpIteratorNext>().m_iterable;
-        break;
-    case op_iterator_close_check:
-        iterable = node->as<OpIteratorCloseCheck>().m_iterable;
-        break;
-    default:
-        return 0;
-    }
-    for (auto& use : node->uses) {
-        if (use.reg != iterable)
-            continue;
-        const Node* value = use.node;
-        while (value->isBytecode(op_check_type))
-            value = value->use(value->as<OpCheckType>().m_value);
-        return value->iteratedFact;
-    }
-    // The half of an op_iterator_close_check that is the branch: it has the other half for its iterator, and nothing else.
-    if (node->opcode == op_iterator_close_check && node->uses.size() == 1 && node->uses[0].node->isBytecode(op_iterator_close_check))
-        return iteratedFactOf(node->uses[0].node);
-    return 0;
 }
 
 const KnownFunction* Graph::knownCalleeIgnoringSummaries(const Node* node, bool* isExact) const
@@ -833,7 +794,7 @@ bool Graph::passesNoFunctionObject(const Node* node)
         return true;
     }
     if (!node->use(calleeRegister)->isBytecode(op_get_from_scope))
-        return node->hasFact(FactDirect, 4);
+        return false;
     // The function goes by where the environment of its module is, so that had better be known here too. (This says that the code
     // rests on it: what is called does not look.)
     return !!distanceOfEnvironmentAccessed(node->use(calleeRegister));
@@ -971,7 +932,7 @@ void Graph::elideReadsOfCalleesNotPassed()
     Vector<Node*, 16> reads;
     auto note = [&](Node* user, const Use& use) {
         bool isMethod = closedMethodReadBy(use.node);
-        if (!use.node->isBytecode(op_get_from_scope) && !((Options::aotFacts() & 4) && use.node->isBytecode(op_get_by_id)) && !isMethod)
+        if (!use.node->isBytecode(op_get_from_scope) && !isMethod)
             return;
         bool wantsValue = true;
         if (user->isBytecode(op_check_tdz))
@@ -2258,9 +2219,8 @@ private:
         case op_put_by_val:
         case op_get_length:
         case op_check_traps:
-            return true;
         case op_check_type:
-            return !isFact(instruction->as<OpCheckType>().m_mask);
+            return true;
         default:
             return false;
         }
@@ -2335,8 +2295,6 @@ private:
             }
             case op_check_type: {
                 auto bytecode = instruction->as<OpCheckType>();
-                if (isFact(bytecode.m_mask))
-                    break;
                 Type type = typeOf(bytecode.m_value) & typeAcceptedByMask(bytecode.m_mask);
                 if (!bytecode.m_value.isConstant())
                     define(bytecode.m_value, type);
@@ -2444,10 +2402,6 @@ private:
             }
             case op_ret:
                 return valueOf(instruction->as<OpRet>().m_value);
-            case op_check_type:
-                if (isFact(instruction->as<OpCheckType>().m_mask))
-                    continue;
-                break;
             default:
                 break;
             }
@@ -2570,7 +2524,7 @@ private:
     bool isCheckSubsumedByAssertion(unsigned offset, unsigned end)
     {
         const JSInstruction* instruction = m_instructions.at(offset).ptr();
-        if (instruction->opcodeID() != op_check_type || isFact(instruction->as<OpCheckType>().m_mask) || !(instruction->as<OpCheckType>().m_mask & MaskOtherObject) || Options::aotAuditsTypes())
+        if (instruction->opcodeID() != op_check_type || !(instruction->as<OpCheckType>().m_mask & MaskOtherObject) || Options::aotAuditsTypes())
             return false;
         unsigned next = offset + instruction->size();
         if (next >= end || m_instructions.at(next)->opcodeID() != op_type_tag)
@@ -3324,27 +3278,6 @@ private:
             // What comes next lets less by.
             if (isCheckSubsumedByAssertion(offset, block->bytecodeEnd))
                 continue;
-            if (opcode == op_check_type && isFact(instruction->as<OpCheckType>().m_mask)) {
-                // It is taken out here, and nothing further on knows of it but by what it leaves on the node.
-                auto bytecode = instruction->as<OpCheckType>();
-                unsigned kind = bytecode.m_mask >> 28;
-                if (kind == FactBody || bytecode.m_value.isConstant())
-                    continue;
-                Node* value = get(block, bytecode.m_value);
-                while (value->isBytecode(op_check_type))
-                    value = value->use(value->as<OpCheckType>().m_value);
-                if (kind == FactArray)
-                    value->iteratedFact = (bytecode.m_mask & 15) + 1;
-                else if ((kind == FactField && value->isBytecode(op_get_by_id)) || (kind == FactElement && value->isBytecode(op_get_by_val)))
-                    value->fact = bytecode.m_mask;
-                else if ((kind == FactDirect || kind == FactBuiltin) && value->isBytecode(op_call)) {
-                    value->fact = bytecode.m_mask;
-                    Node* callee = value->use(value->as<OpCall>().m_callee);
-                    if (kind == FactBuiltin && callee->isBytecode(op_get_by_id) && !callee->fact)
-                        callee->fact = bytecode.m_mask;
-                }
-                continue;
-            }
             if (opcode == op_put_by_id && !m_literalsBeingMade.isEmpty() && m_literalsBeingMade.last().stores[m_literalsBeingMade.last().next] == offset) {
                 auto& literal = m_literalsBeingMade.last();
                 literal.node->uses.append({ NewObjectPlan::registerOf(literal.next), get(block, instruction->as<OpPutById>().m_value) });
@@ -3531,7 +3464,7 @@ private:
                 unsigned next = offset + instruction->size();
                 if (next < m_instructions.size() && m_instructions.at(next)->opcodeID() == op_check_type) {
                     auto check = m_instructions.at(next)->as<OpCheckType>();
-                    if (check.m_value == instruction->as<OpGetByVal>().m_dst && !isFact(check.m_mask))
+                    if (check.m_value == instruction->as<OpGetByVal>().m_dst)
                         node->expectedMask = check.m_mask;
                 }
             }

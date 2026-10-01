@@ -173,31 +173,6 @@ struct Use {
     Node* node { nullptr };
 };
 
-// EXPERIMENT: Options::aotFacts(). See ~/code/tmp/aot/tsfacts/tofacts.ts.
-enum : unsigned { FactField = 1, FactDirect, FactBuiltin, FactBody, FactArray, FactElement, FactWrite };
-inline bool isFact(unsigned mask) { return mask >= 1u << 28; }
-inline Type typeHeldByFact(unsigned fieldType)
-{
-    switch (fieldType) {
-    case 2:
-        return TNumber;
-    case 3:
-        return TBoolean;
-    case 4:
-        return TString;
-    case 5:
-        return TFinalObject;
-    case 6:
-        return TArray;
-    case 7:
-        return TFunction;
-    case 8:
-        return TObject | TTypedArray;
-    default:
-        return TTop;
-    }
-}
-
 struct Node {
     // Whose code it is of: the function that is being compiled, or one that has been made part of it (inlineCalls()).
     Graph* graph { nullptr };
@@ -284,9 +259,6 @@ struct Node {
     // Of an op_resolve_scope: that is not what it gives, only where it starts looking, which is this many scopes out from where it says to. (Those are not there. What it looks for is in none of them.)
     unsigned environmentsPassedOver { 0 };
     Escape escape { Escape::NotAnalyzed }; // If it makes something (kindOfAllocation()).
-    uint32_t fact { 0 }; // EXPERIMENT: Options::aotFacts().
-    uint8_t iteratedFact { 0 }; // Likewise: it is an array. What an element holds, plus one.
-    bool hasFact(unsigned kind, unsigned bitOfOption) const { return fact >> 28 == kind && (Options::aotFacts() & bitOfOption); }
     Node* site { nullptr }; // GuardKind::Structure, SlotsAgree: guards of property accesses.
     Node* otherSite { nullptr };
     // op_new_object: how many of Graph::storesOfLiteral() are part of it. Their values are the uses at NewObjectPlan::registerOf().
@@ -565,8 +537,6 @@ public:
     // The function that the call or construction is probably of, if there is any telling.
     const KnownFunction* knownCallee(const Node*, bool* isExact = nullptr) const;
     const KnownFunction* knownCalleeIgnoringSummaries(const Node*, bool* isExact) const;
-    // What is iterated by an op_iterator_open, op_iterator_next or op_iterator_close_check is an array: Node::iteratedFact. Or 0.
-    static unsigned iteratedFactOf(const Node*);
     bool calleeIsExact(const Node*) const; // See KnownFunction::isExact.
     // Before there is a graph to tell which scope a read is from: unless the code has a variable of its own of that name, there.
     const KnownFunction* probablyFunctionInVariableOfModule(unsigned identifier, unsigned scopeOffset) const;

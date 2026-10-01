@@ -707,7 +707,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     // We want the structure transition watchpoint to fire after this object has switched structure.
     // This allows adaptive watchpoints to observe if the new structure is the one we want.
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
-    Structure* newStructure = Structure::addNewPropertyTransition(vm, structure, propertyName, newAttributes, offset, slot.context(), &deferredWatchpointFire, true);
+    Structure* newStructure = Structure::addNewPropertyTransition(vm, structure, propertyName, newAttributes, offset, slot.context(), &deferredWatchpointFire);
 #if USE(BUN_JSC_ADDITIONS)
     if (isRejectedAtOffset(newStructure, offset)) [[unlikely]]
         return TypedFieldError;

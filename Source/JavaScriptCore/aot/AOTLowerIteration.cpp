@@ -78,11 +78,6 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
         iterableRegister = bytecode.m_iterable;
     }
     LValue iterable = lowJSValue(node->use(iterableRegister));
-    if (Graph::iteratedFactOf(node)) {
-        setProj(node, iteratorRegister, iterable);
-        setProj(node, nextRegister, m_out.constInt64(JSValue::encode(jsNumber(0))));
-        return;
-    }
     LValue symbolIterator = lowJSValue(node->use(symbolIteratorRegister));
 
     if (usesStubs && !isAsync) {
@@ -150,24 +145,6 @@ void Lowering::lowerIteratorNext(Node* node)
     LValue next = lowJSValue(nextNode);
     LValue iterator = lowJSValue(iteratorNode);
     LValue iterable = lowJSValue(node->use(bytecode.m_iterable));
-
-    if (Graph::iteratedFactOf(node)) {
-        LBasicBlock inBounds = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        LValue index = unboxInt32(next);
-        LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
-        LValue isInBounds = m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength));
-        ValueFromBlock noValue = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
-        m_out.branch(isInBounds, usually(inBounds), rarely(continuation));
-        m_out.appendTo(inBounds, continuation);
-        ValueFromBlock element = m_out.anchor(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index))));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        setProj(node, bytecode.m_done, boxBoolean(m_out.logicalNot(isInBounds)));
-        setProj(node, bytecode.m_value, m_out.phi(Int64, noValue, element));
-        setProj(node, bytecode.m_next, boxInt32(m_out.add(index, m_out.int32One)));
-        return;
-    }
 
     if constexpr (usesStubs) {
         // Every loop over an array would have a copy of how that is done, and every loop has to be ready for anything else: of which every loop would have a copy as well.
@@ -376,8 +353,6 @@ void Lowering::lowerIteratorCloseCheck(Node* node)
 LValue Lowering::iteratorCloseCheckCondition(Node* node)
 {
     Node* iteratorNode = node->use(node->as<OpIteratorCloseCheck>().m_iterator);
-    if (Graph::iteratedFactOf(node))
-        return m_out.booleanTrue;
     if (!mayBe(iteratorNode->type, TCellOther))
         return m_out.booleanFalse;
     return isCellAnd(iteratorNode, lowJSValue(iteratorNode), [&](LValue cell) { return isSentinelCell(cell); });

@@ -650,14 +650,8 @@ private:
         case NodeKind::Proj:
             // (What makes several things is itself none of them.)
             return computeProj(node);
-        case NodeKind::Bytecode: {
-            Type type = computeBytecode(node);
-            if (node->hasFact(FactField, 2))
-                type &= typeHeldByFact(node->fact >> 24 & 15);
-            else if (node->hasFact(FactElement, 2))
-                type &= typeHeldByFact(node->fact & 15) | TUndefined;
-            return type;
-        }
+        case NodeKind::Bytecode:
+            return computeBytecode(node);
         }
         RELEASE_ASSERT_NOT_REACHED();
         return TAll;
@@ -666,16 +660,6 @@ private:
     Type computeProj(Node* node)
     {
         Node* parent = node->uses[0].node;
-        if (unsigned fact = Graph::iteratedFactOf(parent)) {
-            if (parent->opcode == op_iterator_open)
-                return node->reg == parent->as<OpIteratorOpen>().m_iterator ? TArray : TInt32;
-            auto bytecode = parent->as<OpIteratorNext>();
-            if (node->reg == bytecode.m_done)
-                return TBoolean;
-            if (node->reg == bytecode.m_next)
-                return TInt32;
-            return (Options::aotFacts() & 2) ? typeHeldByFact(fact - 1) : TTop;
-        }
         switch (parent->opcode) {
         case op_instanceof:
             if (node->reg == parent->as<OpInstanceof>().m_dst)
