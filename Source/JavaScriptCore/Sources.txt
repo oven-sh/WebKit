@@ -783,6 +783,12 @@ python/PythonCommandLine.cpp
 python/PythonCompiler.cpp
 python/PythonComplex.cpp
 python/PythonContainerTypes.cpp
+python/PythonDateTime.cpp
+python/PythonDateTimeDate.cpp
+python/PythonDateTimeDateTime.cpp
+python/PythonDateTimeDelta.cpp
+python/PythonDateTimeTime.cpp
+python/PythonDateTimeZone.cpp
 python/PythonDictViews.cpp
 python/PythonExceptionTypes.cpp
 python/PythonFunctoolsModule.cpp

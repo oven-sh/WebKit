@@ -30,6 +30,7 @@
 #include "JSCInlines.h"
 #include "PyRealm.h"
 #include "PythonOperations.h"
+#include "PythonText.h"
 #include <numeric>
 
 #if OS(DARWIN)
@@ -185,6 +186,65 @@ std::optional<time_t> objectToTimeT(JSGlobalObject* globalObject, JSValue value,
         return std::nullopt;
     }
     return static_cast<time_t>(*seconds);
+}
+
+void objectToTimeval(JSGlobalObject* globalObject, JSValue value, time_t& seconds, long& microseconds, TimeRounding rounding)
+{
+    // pytime_object_to_denominator()
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    constexpr double denominator = 1e6;
+    microseconds = 0;
+    if (isInstance(globalObject, value, globalObject->pyRealm()->typeFloat())) {
+        auto given = toDouble(globalObject, value);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (std::isnan(*given)) {
+            raiseValueError(globalObject, scope, "Invalid value NaN (not a number)"_s);
+            return;
+        }
+        // pytime_double_to_denominator()
+        double whole;
+        double fraction = roundTime(std::modf(*given, &whole) * denominator, rounding);
+        if (fraction >= denominator) {
+            fraction -= denominator;
+            whole += 1.0;
+        } else if (fraction < 0) {
+            fraction += denominator;
+            whole -= 1.0;
+        }
+        constexpr double least = static_cast<double>(std::numeric_limits<time_t>::min());
+        if (!(least <= whole && whole < -least)) {
+            raiseTimeTOverflow(globalObject, scope);
+            return;
+        }
+        seconds = static_cast<time_t>(whole);
+        microseconds = static_cast<long>(fraction);
+        return;
+    }
+    // _PyLong_AsTime_t()
+    JSValue integer = toInt(globalObject, value);
+    if (scope.exception()) [[unlikely]] {
+        if (catchException(globalObject, BuiltinType::TypeError)) {
+            String type = fullyQualifiedTypeName(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, void());
+            raiseTypeError(globalObject, scope, concatenate("argument must be int or float, not "_s, type));
+        }
+        return;
+    }
+    auto whole = tryInt64(integer);
+    if (!whole) {
+        raiseTimeTOverflow(globalObject, scope);
+        return;
+    }
+    seconds = static_cast<time_t>(*whole);
+}
+
+void breakDownTime(JSGlobalObject* globalObject, time_t when, BrokenDownAs how, struct tm& result)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    errno = 0;
+    if (how == BrokenDownAs::Local ? localtime_r(&when, &result) : gmtime_r(&when, &result))
+        return;
+    raiseOSError(globalObject, scope, errno ? errno : EINVAL);
 }
 
 std::optional<int64_t> timeFromTimespec(JSGlobalObject* globalObject, const struct timespec& given)

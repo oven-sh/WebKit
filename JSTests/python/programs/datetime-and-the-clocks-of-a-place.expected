@@ -1,0 +1,613 @@
+===== America/New_York
+946684800 d9e7eb78021d213664d18bc2795552b3 []
+1699142400 afdadb9c8e4fbed501f5026e8ef92e80 [('2023-11-05T01:00:00', 1), ('2023-11-05T01:30:00', 1)]
+1709946000 e7c21ef60fc24d5dff2db15fced1334b []
+1711803600 0882caf0c0137ebe78bbe25ace135d0d []
+1729947600 2381e1d6ca7ab9fd4302f3888f6be7df []
+1696039200 c5e74251394146f1365a2de07c46cef5 []
+1712368800 9c127b81471e8f62ffefed312fe718f5 []
+0 6474b65d925a5f1358e194724545f8cc []
+-86400 574f924b42c458d6bf38ba1072920092 []
+946080000 09ab9b42ffbe7bf7a178b54dd3a7611b []
+1000000000 2c4790f3b51fd603ce242edca62d9663 []
+2023-11-05 7b5e86043968bab55cfbd21e25271873 [1699158600.0, 1699158600.0, 1699160400.0, 1699164000.0, 1699162200.0, 1699165800.0]
+2024-03-10 896091e736b3e86e6718bd4ec7fd945d [1710048600.0, 1710048600.0, 1710050400.0, 1710050400.0, 1710052200.0, 1710052200.0]
+2024-03-31 6b7855d7a51a4e22c788d1ecbca56c1a [1711859400.0, 1711859400.0, 1711861200.0, 1711861200.0, 1711863000.0, 1711863000.0]
+2024-10-27 140f6204cff6d1894289784590494bb3 [1730003400.0, 1730003400.0, 1730005200.0, 1730005200.0, 1730007000.0, 1730007000.0]
+2023-10-01 700a0fd1b7b18db3aac8bcea27a676c0 [1696134600.0, 1696134600.0, 1696136400.0, 1696136400.0, 1696138200.0, 1696138200.0]
+2024-04-07 ce33b35d193757e115b15152c562111e [1712464200.0, 1712464200.0, 1712466000.0, 1712466000.0, 1712467800.0, 1712467800.0]
+2000-01-01 bae5bfc0267ece0a227f7008ce9facaa [946704600.0, 946704600.0, 946706400.0, 946706400.0, 946708200.0, 946708200.0]
+1970-01-01 b0535bce8f6b462a438fda00716fdff9 [19800.0, 19800.0, 21600.0, 21600.0, 23400.0, 23400.0]
+2037-06-15 89918ffc0d83c01e7f92fa49511c4d31 [2128653000.0, 2128653000.0, 2128654800.0, 2128654800.0, 2128656600.0, 2128656600.0]
+===== Europe/London
+946684800 5ad0ba12b50864ebac9d2f6cda344a0a []
+1699142400 972c978ab5b595bbca69850b54bf5b47 []
+1709946000 0486350d03e8e2f7bdd131d0770003c4 []
+1711803600 8d55a253fa597a63b6284c7034950cc2 []
+1729947600 ce886f5cc20cc945a6cda5f1b941187a [('2024-10-27T01:00:00', 1), ('2024-10-27T01:30:00', 1)]
+1696039200 1775487bd8172e5695cab072251049c3 []
+1712368800 6c69b310ff286c888ae23bd72dcc7a50 []
+0 316a0655f9ad275a58adcfbf085d2b9f []
+-86400 7f94ad434e6c7002dcd9a666b424286e []
+946080000 3f262cbefcd15b35d3c529d69560aa2b []
+1000000000 43dc8ff2a657deb21a446d397e4f6f2b []
+2023-11-05 d5b0d310b7b15d5c8f43f512fa030721 [1699144200.0, 1699144200.0, 1699146000.0, 1699146000.0, 1699147800.0, 1699147800.0]
+2024-03-10 6f59faa0ba56732186e62ae65949a3a4 [1710030600.0, 1710030600.0, 1710032400.0, 1710032400.0, 1710034200.0, 1710034200.0]
+2024-03-31 cd3574944d55e04cfb3e3cd95e59f376 [1711845000.0, 1711845000.0, 1711846800.0, 1711843200.0, 1711848600.0, 1711845000.0]
+2024-10-27 519830c9b1ba56d9071e9bc5d5f873f8 [1729985400.0, 1729985400.0, 1729987200.0, 1729990800.0, 1729989000.0, 1729992600.0]
+2023-10-01 b5413de933c2f537f55beff6c1b7d086 [1696116600.0, 1696116600.0, 1696118400.0, 1696118400.0, 1696120200.0, 1696120200.0]
+2024-04-07 7e0845bbf117c3ec4a2aa79212ad494a [1712446200.0, 1712446200.0, 1712448000.0, 1712448000.0, 1712449800.0, 1712449800.0]
+2000-01-01 f5bee75c1462b2aed879baecb00d634d [946686600.0, 946686600.0, 946688400.0, 946688400.0, 946690200.0, 946690200.0]
+1970-01-01 459dc9467d1d5812c401fd6d0491d001 [-1800.0, -1800.0, 0.0, 0.0, 1800.0, 1800.0]
+2037-06-15 f0a7e088dcd75df719db9413f91885a9 [2128635000.0, 2128635000.0, 2128636800.0, 2128636800.0, 2128638600.0, 2128638600.0]
+===== Australia/Lord_Howe
+946684800 5a2dafeef93e406a47c26ad3cf2b4581 []
+1699142400 de2058012ba41c9a94caa60ef65f2961 []
+1709946000 b88a7e8db2f726ce7fad7442da9de6a9 []
+1711803600 1a6775da828b429eac7e9a1fc72e348d []
+1729947600 92764c2e5d1f77f41764079f8648fee0 []
+1696039200 6b0c0f9c860ac52eef0fd10998b56353 []
+1712368800 e5260110191bc8378cadcb01d0061eac [('2024-04-07T01:30:00', 1)]
+0 b87991eec5f842a975787c975668be55 []
+-86400 307ff6f920e6fa9b76bdfd804b3a8950 []
+946080000 178cfe5157240a9fe47f16e0d4edaec5 []
+1000000000 93b0414bb47ee70f3b4ccd431839698e []
+2023-11-05 a3ba994caf41c91229ef6d4d7a66cddf [1699104600.0, 1699104600.0, 1699106400.0, 1699106400.0, 1699108200.0, 1699108200.0]
+2024-03-10 0e3e19f80cd98fbd387499eac2db0ded [1709991000.0, 1709991000.0, 1709992800.0, 1709992800.0, 1709994600.0, 1709994600.0]
+2024-03-31 1cc7fed14b54cbc8d82a382800b311d9 [1711805400.0, 1711805400.0, 1711807200.0, 1711807200.0, 1711809000.0, 1711809000.0]
+2024-10-27 288a32bab7d5fd9e703016fea478964e [1729949400.0, 1729949400.0, 1729951200.0, 1729951200.0, 1729953000.0, 1729953000.0]
+2023-10-01 c4437fcfb9ac58c9d36d2c767df0de69 [1696082400.0, 1696082400.0, 1696084200.0, 1696084200.0, 1696086000.0, 1696086000.0]
+2024-04-07 d34f2a27b8464f39ff482e4d57827958 [1712410200.0, 1712410200.0, 1712412000.0, 1712412000.0, 1712413800.0, 1712415600.0]
+2000-01-01 dd9f423b50a561057ea013f36cde31c8 [946647000.0, 946647000.0, 946648800.0, 946648800.0, 946650600.0, 946650600.0]
+1970-01-01 9be159a30ee390d72baba0bfba70ff9c [-34200.0, -34200.0, -32400.0, -32400.0, -30600.0, -30600.0]
+2037-06-15 1ea6a4965fa90202b6c63efa6e9cb1a7 [2128600800.0, 2128600800.0, 2128602600.0, 2128602600.0, 2128604400.0, 2128604400.0]
+===== Asia/Kolkata
+946684800 9d0e6ce73df2acaaf865733177637af2 []
+1699142400 3f0165670c9269fda56e932c2d75b587 []
+1709946000 998f25ac1664be94df1d99cc7cfbdda6 []
+1711803600 80f61235b97f557f2fb3db75fd8543b1 []
+1729947600 2eba00b277fe75fc7d10faddf0054d79 []
+1696039200 284cba1f2c8b80a154d72b0801c3cd1d []
+1712368800 39d3243986e9dbd34440e3887b7d72cf []
+0 5bb830720e09e147af4b0335b2b255a7 []
+-86400 a1f44698eb41ddc4625a831e5085d763 []
+946080000 b4f337cd6cf9d37644ebce92a9f03c33 []
+1000000000 df9953d8992618e9ee6ad7f834f237e1 []
+2023-11-05 8f649cf482f9f6baac4acc6beaca125a [1699124400.0, 1699124400.0, 1699126200.0, 1699126200.0, 1699128000.0, 1699128000.0]
+2024-03-10 f91053345ef48c6e9c883e56633ffd68 [1710010800.0, 1710010800.0, 1710012600.0, 1710012600.0, 1710014400.0, 1710014400.0]
+2024-03-31 2342eab72b664d0c0865249113601fb4 [1711825200.0, 1711825200.0, 1711827000.0, 1711827000.0, 1711828800.0, 1711828800.0]
+2024-10-27 326937bfa98abc8f3e0c71613e1ed1ce [1729969200.0, 1729969200.0, 1729971000.0, 1729971000.0, 1729972800.0, 1729972800.0]
+2023-10-01 7e600c03273faaf3dba9b13da0e7f9af [1696100400.0, 1696100400.0, 1696102200.0, 1696102200.0, 1696104000.0, 1696104000.0]
+2024-04-07 98422167c78ea88892bc8b86f2b313da [1712430000.0, 1712430000.0, 1712431800.0, 1712431800.0, 1712433600.0, 1712433600.0]
+2000-01-01 3c7b71adc7027da3d6534a0b90a85428 [946666800.0, 946666800.0, 946668600.0, 946668600.0, 946670400.0, 946670400.0]
+1970-01-01 26dd90445bfed6ac033f9d472ea5abc8 [-18000.0, -18000.0, -16200.0, -16200.0, -14400.0, -14400.0]
+2037-06-15 13b5cacfc03ea0c52035bb2c4daffbe9 [2128618800.0, 2128618800.0, 2128620600.0, 2128620600.0, 2128622400.0, 2128622400.0]
+===== UTC
+946684800 b865f3813eed8d88be21b5167b87f84a []
+1699142400 ca87dc5a8efa0e6b48c55e6c408411e3 []
+1709946000 c887d17ccc82edc5956e188ffbad7778 []
+1711803600 4cb2da61229775f054572512bfa15aa6 []
+1729947600 1fb0a49e0fea750070f4d167140cd200 []
+1696039200 47aa8ee75e079bb7d5aeeb22ece27a92 []
+1712368800 a2aaf42d95aef59275bb91917b6fb074 []
+0 76110ff30a2ca1454283778434306ecb []
+-86400 e41f57d636f152364ac3097600edd846 []
+946080000 5d7ba18f5079d662c718510e740562e0 []
+1000000000 1247019334abbf92d815ffeb64dcb2a7 []
+2023-11-05 aee2e4084952a75b8deee15358656b57 [1699144200.0, 1699144200.0, 1699146000.0, 1699146000.0, 1699147800.0, 1699147800.0]
+2024-03-10 214cd84c5d5c7640e8229f3fa8d49269 [1710030600.0, 1710030600.0, 1710032400.0, 1710032400.0, 1710034200.0, 1710034200.0]
+2024-03-31 41f98b82e63d654952198337f28b2903 [1711845000.0, 1711845000.0, 1711846800.0, 1711846800.0, 1711848600.0, 1711848600.0]
+2024-10-27 4fc2cde8b639487a4d81422fe3ff1769 [1729989000.0, 1729989000.0, 1729990800.0, 1729990800.0, 1729992600.0, 1729992600.0]
+2023-10-01 457895594f09f7c07edb7ffa41689a4d [1696120200.0, 1696120200.0, 1696122000.0, 1696122000.0, 1696123800.0, 1696123800.0]
+2024-04-07 440686d674695aee2e27a1f6e8f9f38f [1712449800.0, 1712449800.0, 1712451600.0, 1712451600.0, 1712453400.0, 1712453400.0]
+2000-01-01 8970dd76323ab8a744d32e7b887c827c [946686600.0, 946686600.0, 946688400.0, 946688400.0, 946690200.0, 946690200.0]
+1970-01-01 174fec5e8a2f9a49fe51ad6a3f6713b0 [1800.0, 1800.0, 3600.0, 3600.0, 5400.0, 5400.0]
+2037-06-15 3cd7c9a498272df1a6486bfeacc5d0bc [2128638600.0, 2128638600.0, 2128640400.0, 2128640400.0, 2128642200.0, 2128642200.0]
+===== Pacific/Kiritimati
+946684800 59a5639f6c77f015e1022de8b2e8ce22 []
+1699142400 6ab918bb36809c2c3d80d5febd7e999c []
+1709946000 9b29483464a7e16fda90e84b6e429920 []
+1711803600 82e328d80289ab47fdbfc57d3c934f14 []
+1729947600 67d3b39f8c1f7a7cdd67e5e39c563f4d []
+1696039200 c7a29111b9c5771d55d245b62f5a0e90 []
+1712368800 32b5cad126f4be87865802b20a79df4d []
+0 130e7c416e65f9a23b7ad1cda4a7ec1a []
+-86400 c5c8e3af49fe25e318f2a98684168331 []
+946080000 9b97e9c677f41eac9891803218e1f65a []
+1000000000 df2d73d69ff44cbfe9e6863e660d2ed6 []
+2023-11-05 9388f7ab867582b3d4cbda0896dc6611 [1699093800.0, 1699093800.0, 1699095600.0, 1699095600.0, 1699097400.0, 1699097400.0]
+2024-03-10 58049307beafb8aaf7e3f1b2e9bdf7fb [1709980200.0, 1709980200.0, 1709982000.0, 1709982000.0, 1709983800.0, 1709983800.0]
+2024-03-31 5b8d656ced57231fd0baaaa10f99c6b5 [1711794600.0, 1711794600.0, 1711796400.0, 1711796400.0, 1711798200.0, 1711798200.0]
+2024-10-27 533747689fedf496d1241b83bda9a84c [1729938600.0, 1729938600.0, 1729940400.0, 1729940400.0, 1729942200.0, 1729942200.0]
+2023-10-01 825dbb58b339c570f856cc4d359fbaf4 [1696069800.0, 1696069800.0, 1696071600.0, 1696071600.0, 1696073400.0, 1696073400.0]
+2024-04-07 2c3f3b9a7abcff4346806d0d0fefcaee [1712399400.0, 1712399400.0, 1712401200.0, 1712401200.0, 1712403000.0, 1712403000.0]
+2000-01-01 925adf587e9265a63eb47c8e5cc38c32 [946636200.0, 946636200.0, 946638000.0, 946638000.0, 946639800.0, 946639800.0]
+1970-01-01 342b6cc4b8c7d54b02dc1da348238a51 [40200.0, 40200.0, 42000.0, 42000.0, 43800.0, 43800.0]
+2037-06-15 7ae81b0a7313eb69af9f542433f86518 [2128588200.0, 2128588200.0, 2128590000.0, 2128590000.0, 2128591800.0, 2128591800.0]
+===== America/St_Johns
+946684800 116c05f9ec2b9a74b828261d1bf69661 []
+1699142400 73df6a2957b0a5ed5a979ad19a2b211e [('2023-11-05T01:00:00', 1), ('2023-11-05T01:30:00', 1)]
+1709946000 0efa71c0066223359b3f08c611d1c0dd []
+1711803600 2ef5f33929974dae783c092be165b546 []
+1729947600 bb0b692b8ba7c678b3a51d3af86fc8fc []
+1696039200 9e446135e761b60fcc1b718fa67ea0f7 []
+1712368800 7f69b5cb43746cbc930aea479e60d941 []
+0 2fe0566ba2dee6ac5f4f47bb3395083d []
+-86400 f6f9ffaa1b9d30543b3fe247e0960822 []
+946080000 05958e91fb234f5590be97faa5179880 []
+1000000000 dabf86224319219fdcbda9eeabb2d9dc []
+2023-11-05 accc514a21363128e951e5f67e28534b [1699153200.0, 1699153200.0, 1699155000.0, 1699158600.0, 1699156800.0, 1699160400.0]
+2024-03-10 894c60a0c69776e648e1a44a22bcddac [1710043200.0, 1710043200.0, 1710045000.0, 1710045000.0, 1710046800.0, 1710046800.0]
+2024-03-31 290335083b08060efd31521a6a95514d [1711854000.0, 1711854000.0, 1711855800.0, 1711855800.0, 1711857600.0, 1711857600.0]
+2024-10-27 223faa073669f2220f66dc91005eee11 [1729998000.0, 1729998000.0, 1729999800.0, 1729999800.0, 1730001600.0, 1730001600.0]
+2023-10-01 c93284b8286ed0cac4c8852f79a0639b [1696129200.0, 1696129200.0, 1696131000.0, 1696131000.0, 1696132800.0, 1696132800.0]
+2024-04-07 867391ee32e2d3db4406fcc1e4ed7277 [1712458800.0, 1712458800.0, 1712460600.0, 1712460600.0, 1712462400.0, 1712462400.0]
+2000-01-01 3350fe2714eb863c17ececae23bd1584 [946699200.0, 946699200.0, 946701000.0, 946701000.0, 946702800.0, 946702800.0]
+1970-01-01 42e02102d84b5c825acdf29eccca94a5 [14400.0, 14400.0, 16200.0, 16200.0, 18000.0, 18000.0]
+2037-06-15 c2443192ec8b05180623035f1c1a54bb [2128647600.0, 2128647600.0, 2128649400.0, 2128649400.0, 2128651200.0, 2128651200.0]
+===== EST5EDT
+946684800 d9e7eb78021d213664d18bc2795552b3 []
+1699142400 afdadb9c8e4fbed501f5026e8ef92e80 [('2023-11-05T01:00:00', 1), ('2023-11-05T01:30:00', 1)]
+1709946000 e7c21ef60fc24d5dff2db15fced1334b []
+1711803600 0882caf0c0137ebe78bbe25ace135d0d []
+1729947600 2381e1d6ca7ab9fd4302f3888f6be7df []
+1696039200 c5e74251394146f1365a2de07c46cef5 []
+1712368800 9c127b81471e8f62ffefed312fe718f5 []
+0 6474b65d925a5f1358e194724545f8cc []
+-86400 574f924b42c458d6bf38ba1072920092 []
+946080000 09ab9b42ffbe7bf7a178b54dd3a7611b []
+1000000000 2c4790f3b51fd603ce242edca62d9663 []
+2023-11-05 7b5e86043968bab55cfbd21e25271873 [1699158600.0, 1699158600.0, 1699160400.0, 1699164000.0, 1699162200.0, 1699165800.0]
+2024-03-10 896091e736b3e86e6718bd4ec7fd945d [1710048600.0, 1710048600.0, 1710050400.0, 1710050400.0, 1710052200.0, 1710052200.0]
+2024-03-31 6b7855d7a51a4e22c788d1ecbca56c1a [1711859400.0, 1711859400.0, 1711861200.0, 1711861200.0, 1711863000.0, 1711863000.0]
+2024-10-27 140f6204cff6d1894289784590494bb3 [1730003400.0, 1730003400.0, 1730005200.0, 1730005200.0, 1730007000.0, 1730007000.0]
+2023-10-01 700a0fd1b7b18db3aac8bcea27a676c0 [1696134600.0, 1696134600.0, 1696136400.0, 1696136400.0, 1696138200.0, 1696138200.0]
+2024-04-07 ce33b35d193757e115b15152c562111e [1712464200.0, 1712464200.0, 1712466000.0, 1712466000.0, 1712467800.0, 1712467800.0]
+2000-01-01 bae5bfc0267ece0a227f7008ce9facaa [946704600.0, 946704600.0, 946706400.0, 946706400.0, 946708200.0, 946708200.0]
+1970-01-01 b0535bce8f6b462a438fda00716fdff9 [19800.0, 19800.0, 21600.0, 21600.0, 23400.0, 23400.0]
+2037-06-15 89918ffc0d83c01e7f92fa49511c4d31 [2128653000.0, 2128653000.0, 2128654800.0, 2128654800.0, 2128656600.0, 2128656600.0]
+===== XXX-3:30
+946684800 2f222e49cb7e5ebc5f635202e149a33e []
+1699142400 07418a14e560df39a72cc264d0bcbc43 []
+1709946000 710315837152022b10587c5d151868d9 []
+1711803600 b100452d0b5ccd3b76c3bdb6393ebade []
+1729947600 9225ef2349a22ba7e9985afc0cd86a66 []
+1696039200 b886bda1ab835655199161e48526cab5 []
+1712368800 1601ee18bca4095564f961027ba7447f []
+0 df705766d01d8b579bb21b47bf20c784 []
+-86400 8332ec49639efc986f395240ed65d7f9 []
+946080000 b4df70c65d7ab85f583f8b1276748fe1 []
+1000000000 665ca98b990855b957498e14ddabb38c []
+2023-11-05 af297b8e007b1822ca66dbba85c1c436 [1699131600.0, 1699131600.0, 1699133400.0, 1699133400.0, 1699135200.0, 1699135200.0]
+2024-03-10 d8a55a3fbb2d32ef9a0c3d367c6db1db [1710018000.0, 1710018000.0, 1710019800.0, 1710019800.0, 1710021600.0, 1710021600.0]
+2024-03-31 c284c6242f2887d74e97794ab2c2837b [1711832400.0, 1711832400.0, 1711834200.0, 1711834200.0, 1711836000.0, 1711836000.0]
+2024-10-27 27080609e749adca5ef3608989632c1c [1729976400.0, 1729976400.0, 1729978200.0, 1729978200.0, 1729980000.0, 1729980000.0]
+2023-10-01 f3e1cfb19fe8cea88f80e6849d94c74e [1696107600.0, 1696107600.0, 1696109400.0, 1696109400.0, 1696111200.0, 1696111200.0]
+2024-04-07 d434a8e3381bf79bddf7954ccf8ea198 [1712437200.0, 1712437200.0, 1712439000.0, 1712439000.0, 1712440800.0, 1712440800.0]
+2000-01-01 c856f694bf2c307c4ba0dccb33702b11 [946674000.0, 946674000.0, 946675800.0, 946675800.0, 946677600.0, 946677600.0]
+1970-01-01 2c3126ef0a3c4cadd4553f4107761a2b [-10800.0, -10800.0, -9000.0, -9000.0, -7200.0, -7200.0]
+2037-06-15 7de3fa320e974abbe5c1ddcf6d0fa591 [2128626000.0, 2128626000.0, 2128627800.0, 2128627800.0, 2128629600.0, 2128629600.0]
+===== Africa/Casablanca
+946684800 647812bc2db4c0e1659225b5acead50b []
+1699142400 11779b6bfdd1ff2ce7e20e7d1ae82abe []
+1709946000 e48b34def03d0bd8a887c4d842f0115e [('2024-03-10T02:00:00', 1), ('2024-03-10T02:30:00', 1)]
+1711803600 e03fa6a34ecd2197ac8382c329cb3eb3 []
+1729947600 6ad23610e56eccce99b84ccacadf7650 []
+1696039200 0008cb6df13b72142ec5ff9f9b5a9f68 []
+1712368800 7a7e014cf9f23cae9f314ebdcc2cefef []
+0 f6e728fb1555810985317c3ded26b0d3 []
+-86400 7c05f185082be0ec3c376a91d818ebd3 []
+946080000 6be74731d8cac92323290cc73cc60457 []
+1000000000 0d37def6b9fc088676a238d977d6677b []
+2023-11-05 2f48ad804c2caa482ecbef636eecac1a [1699140600.0, 1699140600.0, 1699142400.0, 1699142400.0, 1699144200.0, 1699144200.0]
+2024-03-10 74c6cd75c37d9afa5ea0c8bc62f25dfc [1710027000.0, 1710027000.0, 1710028800.0, 1710028800.0, 1710030600.0, 1710030600.0]
+2024-03-31 69f5742ce423e47c84092ed9dc71c4d5 [1711845000.0, 1711845000.0, 1711846800.0, 1711846800.0, 1711848600.0, 1711848600.0]
+2024-10-27 e3ce2867896d1a01ee24f2258aca3ad2 [1729985400.0, 1729985400.0, 1729987200.0, 1729987200.0, 1729989000.0, 1729989000.0]
+2023-10-01 212cf074f5ef0cb7546bb41fbe68c253 [1696116600.0, 1696116600.0, 1696118400.0, 1696118400.0, 1696120200.0, 1696120200.0]
+2024-04-07 3e284aa4d3a391865a411716a8f5aa91 [1712449800.0, 1712449800.0, 1712451600.0, 1712451600.0, 1712453400.0, 1712453400.0]
+2000-01-01 b8443342985aea6b05702f7c32cc2371 [946686600.0, 946686600.0, 946688400.0, 946688400.0, 946690200.0, 946690200.0]
+1970-01-01 8336dd46acfbb8a807f68e4001bf0dbf [1800.0, 1800.0, 3600.0, 3600.0, 5400.0, 5400.0]
+2037-06-15 97e1557e382a07938a61f278cd832292 [2128638600.0, 2128638600.0, 2128640400.0, 2128640400.0, 2128642200.0, 2128642200.0]
+===== fromtimestamp
+fromtimestamp(0) -> datetime.datetime(1969, 12, 31, 19, 0)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0)
+fromtimestamp(1) -> datetime.datetime(1969, 12, 31, 19, 0, 1)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 1, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 1, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 1)
+fromtimestamp(-1) -> datetime.datetime(1969, 12, 31, 18, 59, 59)
+   in UTC -> datetime.datetime(1969, 12, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 0, 59, 59, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1969, 12, 31, 23, 59, 59)
+fromtimestamp(0.5) -> datetime.datetime(1969, 12, 31, 19, 0, 0, 500000)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 0, 500000, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 0, 500000, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 0, 500000)
+fromtimestamp(-0.5) -> datetime.datetime(1969, 12, 31, 18, 59, 59, 500000)
+   in UTC -> datetime.datetime(1969, 12, 31, 23, 59, 59, 500000, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 0, 59, 59, 500000, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1969, 12, 31, 23, 59, 59, 500000)
+fromtimestamp(1.5) -> datetime.datetime(1969, 12, 31, 19, 0, 1, 500000)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 1, 500000, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 1, 500000, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 1, 500000)
+fromtimestamp(1e-06) -> datetime.datetime(1969, 12, 31, 19, 0, 0, 1)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 0, 1, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 0, 1, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 0, 1)
+fromtimestamp(5e-07) -> datetime.datetime(1969, 12, 31, 19, 0)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0)
+fromtimestamp(1.5e-06) -> datetime.datetime(1969, 12, 31, 19, 0, 0, 2)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 0, 2, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 0, 2, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 0, 2)
+fromtimestamp(2.5e-06) -> datetime.datetime(1969, 12, 31, 19, 0, 0, 2)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 0, 2, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 0, 2, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 0, 2)
+fromtimestamp(-5e-07) -> datetime.datetime(1969, 12, 31, 19, 0)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0)
+fromtimestamp(-1.5e-06) -> datetime.datetime(1969, 12, 31, 18, 59, 59, 999998)
+   in UTC -> datetime.datetime(1969, 12, 31, 23, 59, 59, 999998, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 0, 59, 59, 999998, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1969, 12, 31, 23, 59, 59, 999998)
+fromtimestamp(0.9999995) -> datetime.datetime(1969, 12, 31, 19, 0, 1)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 1, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 1, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 1)
+fromtimestamp(0.9999994) -> datetime.datetime(1969, 12, 31, 19, 0, 0, 999999)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 0, 999999, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 0, 999999, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 0, 999999)
+fromtimestamp(1.9999995) -> datetime.datetime(1969, 12, 31, 19, 0, 1, 999999)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 1, 999999, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 1, 999999, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 1, 999999)
+fromtimestamp(-0.9999995) -> datetime.datetime(1969, 12, 31, 18, 59, 59)
+   in UTC -> datetime.datetime(1969, 12, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 0, 59, 59, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1969, 12, 31, 23, 59, 59)
+fromtimestamp(1e-07) -> datetime.datetime(1969, 12, 31, 19, 0)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0)
+fromtimestamp(1000000000.0) -> datetime.datetime(2001, 9, 8, 21, 46, 40)
+   in UTC -> datetime.datetime(2001, 9, 9, 1, 46, 40, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2001, 9, 9, 2, 46, 40, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2001, 9, 9, 1, 46, 40)
+fromtimestamp(1000000000.1) -> datetime.datetime(2001, 9, 8, 21, 46, 40, 100000)
+   in UTC -> datetime.datetime(2001, 9, 9, 1, 46, 40, 100000, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2001, 9, 9, 2, 46, 40, 100000, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2001, 9, 9, 1, 46, 40, 100000)
+fromtimestamp(1234567890.123456) -> datetime.datetime(2009, 2, 13, 18, 31, 30, 123456)
+   in UTC -> datetime.datetime(2009, 2, 13, 23, 31, 30, 123456, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2009, 2, 14, 0, 31, 30, 123456, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2009, 2, 13, 23, 31, 30, 123456)
+fromtimestamp(1234567890.1234565) -> datetime.datetime(2009, 2, 13, 18, 31, 30, 123456)
+   in UTC -> datetime.datetime(2009, 2, 13, 23, 31, 30, 123456, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2009, 2, 14, 0, 31, 30, 123456, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2009, 2, 13, 23, 31, 30, 123456)
+fromtimestamp(1234567890.1234574) -> datetime.datetime(2009, 2, 13, 18, 31, 30, 123457)
+   in UTC -> datetime.datetime(2009, 2, 13, 23, 31, 30, 123457, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2009, 2, 14, 0, 31, 30, 123457, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2009, 2, 13, 23, 31, 30, 123457)
+fromtimestamp(2147483648) -> datetime.datetime(2038, 1, 18, 22, 14, 8)
+   in UTC -> datetime.datetime(2038, 1, 19, 3, 14, 8, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2038, 1, 19, 4, 14, 8, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2038, 1, 19, 3, 14, 8)
+fromtimestamp(2147483647.5) -> datetime.datetime(2038, 1, 18, 22, 14, 7, 500000)
+   in UTC -> datetime.datetime(2038, 1, 19, 3, 14, 7, 500000, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2038, 1, 19, 4, 14, 7, 500000, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2038, 1, 19, 3, 14, 7, 500000)
+fromtimestamp(4294967296) -> datetime.datetime(2106, 2, 7, 1, 28, 16)
+   in UTC -> datetime.datetime(2106, 2, 7, 6, 28, 16, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(2106, 2, 7, 7, 28, 16, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(2106, 2, 7, 6, 28, 16)
+fromtimestamp(253402318799) -> datetime.datetime(9999, 12, 31, 23, 59, 59)
+   in UTC -> 'ValueError: year must be in 1..9999, not 10000'
+   an hour on -> 'ValueError: year must be in 1..9999, not 10000'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 10000'
+fromtimestamp(253402318799.9) -> datetime.datetime(9999, 12, 31, 23, 59, 59, 899994)
+   in UTC -> 'ValueError: year must be in 1..9999, not 10000'
+   an hour on -> 'ValueError: year must be in 1..9999, not 10000'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 10000'
+fromtimestamp(253402318800.0) -> 'ValueError: year must be in 1..9999, not 10000'
+   in UTC -> 'ValueError: year must be in 1..9999, not 10000'
+   an hour on -> 'ValueError: year must be in 1..9999, not 10000'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 10000'
+fromtimestamp(253402318800) -> 'ValueError: year must be in 1..9999, not 10000'
+   in UTC -> 'ValueError: year must be in 1..9999, not 10000'
+   an hour on -> 'ValueError: year must be in 1..9999, not 10000'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 10000'
+fromtimestamp(253402300799) -> datetime.datetime(9999, 12, 31, 18, 59, 59)
+   in UTC -> datetime.datetime(9999, 12, 31, 23, 59, 59, tzinfo=datetime.timezone.utc)
+   an hour on -> 'OverflowError: date value out of range'
+   utcfromtimestamp -> datetime.datetime(9999, 12, 31, 23, 59, 59)
+fromtimestamp(253402300800) -> datetime.datetime(9999, 12, 31, 19, 0)
+   in UTC -> 'ValueError: year must be in 1..9999, not 10000'
+   an hour on -> 'ValueError: year must be in 1..9999, not 10000'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 10000'
+fromtimestamp(-62135579038) -> 'ValueError: year must be in 1..9999, not 0'
+   in UTC -> datetime.datetime(1, 1, 1, 4, 56, 2, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1, 1, 1, 5, 56, 2, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1, 1, 1, 4, 56, 2)
+fromtimestamp(-62135579039) -> 'ValueError: year must be in 1..9999, not 0'
+   in UTC -> datetime.datetime(1, 1, 1, 4, 56, 1, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1, 1, 1, 5, 56, 1, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1, 1, 1, 4, 56, 1)
+fromtimestamp(-62135596800) -> 'ValueError: year must be in 1..9999, not 0'
+   in UTC -> datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1, 1, 1, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1, 1, 1, 0, 0)
+fromtimestamp(-62135596801) -> 'ValueError: year must be in 1..9999, not 0'
+   in UTC -> 'ValueError: year must be in 1..9999, not 0'
+   an hour on -> 'ValueError: year must be in 1..9999, not 0'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 0'
+fromtimestamp(-62135510400) -> 'ValueError: year must be in 1..9999, not 0'
+   in UTC -> datetime.datetime(1, 1, 2, 0, 0, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1, 1, 2, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1, 1, 2, 0, 0)
+fromtimestamp(100000000000.0) -> datetime.datetime(5138, 11, 16, 4, 46, 40)
+   in UTC -> datetime.datetime(5138, 11, 16, 9, 46, 40, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(5138, 11, 16, 10, 46, 40, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(5138, 11, 16, 9, 46, 40)
+fromtimestamp(1000000000000.0) -> 'ValueError: year must be in 1..9999, not 33658'
+   in UTC -> 'ValueError: year must be in 1..9999, not 33658'
+   an hour on -> 'ValueError: year must be in 1..9999, not 33658'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 33658'
+fromtimestamp(10000000000000.0) -> 'ValueError: year must be in 1..9999, not 318857'
+   in UTC -> 'ValueError: year must be in 1..9999, not 318857'
+   an hour on -> 'ValueError: year must be in 1..9999, not 318857'
+   utcfromtimestamp -> 'ValueError: year must be in 1..9999, not 318857'
+fromtimestamp(1e+17) -> 'OSError: [Errno 22] Invalid argument'
+   in UTC -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   an hour on -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   utcfromtimestamp -> 'OSError: [Errno 84] Value too large to be stored in data type'
+fromtimestamp(1e+18) -> 'OSError: [Errno 22] Invalid argument'
+   in UTC -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   an hour on -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   utcfromtimestamp -> 'OSError: [Errno 84] Value too large to be stored in data type'
+fromtimestamp(1e+19) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(1e+20) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(-1e+19) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(1e+300) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(4611686018427387904) -> 'OSError: [Errno 22] Invalid argument'
+   in UTC -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   an hour on -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   utcfromtimestamp -> 'OSError: [Errno 84] Value too large to be stored in data type'
+fromtimestamp(9223372036854775807) -> 'OSError: [Errno 22] Invalid argument'
+   in UTC -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   an hour on -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   utcfromtimestamp -> 'OSError: [Errno 84] Value too large to be stored in data type'
+fromtimestamp(9223372036854775808) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(-9223372036854775808) -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   in UTC -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   an hour on -> 'OSError: [Errno 84] Value too large to be stored in data type'
+   utcfromtimestamp -> 'OSError: [Errno 84] Value too large to be stored in data type'
+fromtimestamp(-9223372036854775809) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(18446744073709551616) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(1000000000000000000000000000000) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(inf) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(-inf) -> 'OverflowError: timestamp out of range for platform time_t'
+   in UTC -> 'OverflowError: timestamp out of range for platform time_t'
+   an hour on -> 'OverflowError: timestamp out of range for platform time_t'
+   utcfromtimestamp -> 'OverflowError: timestamp out of range for platform time_t'
+fromtimestamp(nan) -> 'ValueError: Invalid value NaN (not a number)'
+   in UTC -> 'ValueError: Invalid value NaN (not a number)'
+   an hour on -> 'ValueError: Invalid value NaN (not a number)'
+   utcfromtimestamp -> 'ValueError: Invalid value NaN (not a number)'
+fromtimestamp(True) -> datetime.datetime(1969, 12, 31, 19, 0, 1)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 1, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 1, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 1)
+fromtimestamp(False) -> datetime.datetime(1969, 12, 31, 19, 0)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0)
+fromtimestamp(None) -> 'TypeError: argument must be int or float, not NoneType'
+   in UTC -> 'TypeError: argument must be int or float, not NoneType'
+   an hour on -> 'TypeError: argument must be int or float, not NoneType'
+   utcfromtimestamp -> 'TypeError: argument must be int or float, not NoneType'
+fromtimestamp('1') -> 'TypeError: argument must be int or float, not str'
+   in UTC -> 'TypeError: argument must be int or float, not str'
+   an hour on -> 'TypeError: argument must be int or float, not str'
+   utcfromtimestamp -> 'TypeError: argument must be int or float, not str'
+fromtimestamp(b'1') -> 'TypeError: argument must be int or float, not bytes'
+   in UTC -> 'TypeError: argument must be int or float, not bytes'
+   an hour on -> 'TypeError: argument must be int or float, not bytes'
+   utcfromtimestamp -> 'TypeError: argument must be int or float, not bytes'
+fromtimestamp([]) -> 'TypeError: argument must be int or float, not list'
+   in UTC -> 'TypeError: argument must be int or float, not list'
+   an hour on -> 'TypeError: argument must be int or float, not list'
+   utcfromtimestamp -> 'TypeError: argument must be int or float, not list'
+fromtimestamp(1j) -> 'TypeError: argument must be int or float, not complex'
+   in UTC -> 'TypeError: argument must be int or float, not complex'
+   an hour on -> 'TypeError: argument must be int or float, not complex'
+   utcfromtimestamp -> 'TypeError: argument must be int or float, not complex'
+fromtimestamp(5) -> datetime.datetime(1969, 12, 31, 19, 0, 5)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 5, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 5, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 5)
+fromtimestamp(1.5) -> datetime.datetime(1969, 12, 31, 19, 0, 1, 500000)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 1, 500000, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 1, 500000, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 1, 500000)
+fromtimestamp(Index()) -> datetime.datetime(1969, 12, 31, 19, 0, 3)
+   in UTC -> datetime.datetime(1970, 1, 1, 0, 0, 3, tzinfo=datetime.timezone.utc)
+   an hour on -> datetime.datetime(1970, 1, 1, 1, 0, 3, tzinfo=datetime.timezone(datetime.timedelta(seconds=3600)))
+   utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0, 3)
+fromtimestamp: none -> "TypeError: fromtimestamp() missing required argument 'timestamp' (pos 1)"
+fromtimestamp: three -> 'TypeError: fromtimestamp() takes at most 2 arguments (3 given)'
+fromtimestamp: keywords -> datetime.datetime(1970, 1, 1, 0, 0, tzinfo=datetime.timezone.utc)
+fromtimestamp: unknown -> "TypeError: fromtimestamp() got an unexpected keyword argument 'tzinfo'"
+fromtimestamp: a bad zone -> "TypeError: tzinfo argument must be None or of a tzinfo subclass, not type 'int'"
+fromtimestamp: a bad zone and a bad time -> "TypeError: tzinfo argument must be None or of a tzinfo subclass, not type 'int'"
+fromtimestamp: tz None -> datetime.datetime(1969, 12, 31, 19, 0)
+===== what is deprecated
+utcnow -> 'datetime'
+   [('DeprecationWarning', 'datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).', 'datetime-and-the-clocks-of-a-place.py', True)]
+   as an error -> 'DeprecationWarning: datetime.datetime.utcnow() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.now(datetime.UTC).'
+utcfromtimestamp -> datetime.datetime(1970, 1, 1, 0, 0)
+   [('DeprecationWarning', 'datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).', 'datetime-and-the-clocks-of-a-place.py', True)]
+   as an error -> 'DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).'
+utcfromtimestamp: keyword -> 'TypeError: utcfromtimestamp() takes no keyword arguments'
+   []
+   as an error -> 'TypeError: utcfromtimestamp() takes no keyword arguments'
+utcnow: an argument -> 'TypeError: datetime.utcnow() takes no arguments (1 given)'
+   []
+   as an error -> 'TypeError: datetime.utcnow() takes no arguments (1 given)'
+===== now
+now -> (True, None, True, True, True, None, True)
+now: a bad zone -> "TypeError: tzinfo argument must be None or of a tzinfo subclass, not type 'int'"
+now: two -> 'TypeError: now() takes at most 1 argument (2 given)'
+now: unknown -> "TypeError: now() got an unexpected keyword argument 'tzinfo'"
+goes on -> True
+===== timestamp
+timestamp of datetime.datetime(1970, 1, 1, 0, 0) -> 18000.0
+   astimezone() -> ('1970-01-01T00:00:00-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('1970-01-01T05:00:00+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('1970-01-01T19:00:00+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1969-12-31T15:00:00-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(1970, 1, 1, 0, 0, tzinfo=datetime.timezone.utc) -> 0.0
+   astimezone() -> ('1969-12-31T19:00:00-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('1970-01-01T00:00:00+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('1970-01-01T14:00:00+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1969-12-31T10:00:00-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(1969, 12, 31, 19, 0) -> 0.0
+   astimezone() -> ('1969-12-31T19:00:00-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('1970-01-01T00:00:00+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('1970-01-01T14:00:00+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1969-12-31T10:00:00-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(2000, 1, 1, 0, 0, 0, 1) -> 946702800.000001
+   astimezone() -> ('2000-01-01T00:00:00.000001-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('2000-01-01T05:00:00.000001+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('2000-01-01T19:00:00.000001+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1999-12-31T15:00:00.000001-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(2000, 1, 1, 0, 0, 0, 999999) -> 946702800.999999
+   astimezone() -> ('2000-01-01T00:00:00.999999-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('2000-01-01T05:00:00.999999+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('2000-01-01T19:00:00.999999+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1999-12-31T15:00:00.999999-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(1, 1, 1, 0, 0) -> 'ValueError: year must be in 1..9999, not 0'
+   astimezone() -> 'ValueError: year must be in 1..9999, not 0'
+   astimezone(utc) -> 'ValueError: year must be in 1..9999, not 0'
+   astimezone(+14) -> 'ValueError: year must be in 1..9999, not 0'
+   astimezone(-14) -> 'ValueError: year must be in 1..9999, not 0'
+timestamp of datetime.datetime(1, 1, 2, 0, 0) -> -62135492638.0
+   astimezone() -> ('0001-01-02T00:00:00-04:56:02', 0, 'LMT', datetime.timedelta(days=-1, seconds=68638))
+   astimezone(utc) -> ('0001-01-02T04:56:02+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('0001-01-02T18:56:02+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('0001-01-01T14:56:02-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone.utc) -> -62135596800.0
+   astimezone() -> 'OverflowError: date value out of range'
+   astimezone(utc) -> ('0001-01-01T00:00:00+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('0001-01-01T14:00:00+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> 'OverflowError: date value out of range'
+timestamp of datetime.datetime(9999, 12, 31, 23, 59, 59, 999999) -> 253402318800.0
+   astimezone() -> 'ValueError: year must be in 1..9999, not 10000'
+   astimezone(utc) -> 'ValueError: year must be in 1..9999, not 10000'
+   astimezone(+14) -> 'ValueError: year must be in 1..9999, not 10000'
+   astimezone(-14) -> 'ValueError: year must be in 1..9999, not 10000'
+timestamp of datetime.datetime(9999, 12, 31, 23, 59, 59, 999999, tzinfo=datetime.timezone.utc) -> 253402300800.0
+   astimezone() -> ('9999-12-31T18:59:59.999999-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('9999-12-31T23:59:59.999999+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> 'OverflowError: date value out of range'
+   astimezone(-14) -> ('9999-12-31T09:59:59.999999-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(9999, 12, 31, 0, 0) -> 253402232400.0
+   astimezone() -> 'ValueError: year must be in 1..9999, not 10000'
+   astimezone(utc) -> 'ValueError: year must be in 1..9999, not 10000'
+   astimezone(+14) -> 'ValueError: year must be in 1..9999, not 10000'
+   astimezone(-14) -> 'ValueError: year must be in 1..9999, not 10000'
+timestamp of datetime.datetime(1900, 1, 1, 0, 0) -> -2208970800.0
+   astimezone() -> ('1900-01-01T00:00:00-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('1900-01-01T05:00:00+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('1900-01-01T19:00:00+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1899-12-31T15:00:00-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(1883, 11, 18, 12, 0) -> -2717651038.0
+   astimezone() -> ('1883-11-18T12:00:00-04:56:02', 0, 'LMT', datetime.timedelta(days=-1, seconds=68638))
+   astimezone(utc) -> ('1883-11-18T16:56:02+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('1883-11-19T06:56:02+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1883-11-18T02:56:02-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(2038, 1, 19, 3, 14, 8) -> 2147501648.0
+   astimezone() -> ('2038-01-19T03:14:08-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('2038-01-19T08:14:08+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('2038-01-19T22:14:08+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('2038-01-18T18:14:08-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+timestamp of datetime.datetime(1, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(seconds=82800))) -> -62135679600.0
+   astimezone() -> 'OverflowError: date value out of range'
+   astimezone(utc) -> 'OverflowError: date value out of range'
+   astimezone(+14) -> 'OverflowError: date value out of range'
+   astimezone(-14) -> 'OverflowError: date value out of range'
+timestamp of datetime.datetime(9999, 12, 31, 23, 0, tzinfo=datetime.timezone(datetime.timedelta(days=-1, seconds=3600))) -> 253402380000.0
+   astimezone() -> 'OverflowError: date value out of range'
+   astimezone(utc) -> 'OverflowError: date value out of range'
+   astimezone(+14) -> 'OverflowError: date value out of range'
+   astimezone(-14) -> 'OverflowError: date value out of range'
+timestamp of datetime.datetime(2000, 1, 1, 0, 0, tzinfo=datetime.timezone(datetime.timedelta(microseconds=1))) -> 946684799.999999
+   astimezone() -> ('1999-12-31T18:59:59.999999-05:00', 0, 'EST', datetime.timedelta(days=-1, seconds=68400))
+   astimezone(utc) -> ('1999-12-31T23:59:59.999999+00:00', 0, 'UTC', datetime.timedelta(0))
+   astimezone(+14) -> ('2000-01-01T13:59:59.999999+14:00', 0, 'UTC+14:00', datetime.timedelta(seconds=50400))
+   astimezone(-14) -> ('1999-12-31T09:59:59.999999-14:00', 0, 'UTC-14:00', datetime.timedelta(days=-1, seconds=36000))
+===== astimezone
+a bad zone -> "TypeError: tzinfo argument must be None or of a tzinfo subclass, not type 'int'"
+two -> 'TypeError: astimezone() takes at most 1 argument (2 given)'
+keyword -> ('2000-01-01T05:00:00+00:00', 0, 'UTC', datetime.timedelta(0))
+unknown -> "TypeError: astimezone() got an unexpected keyword argument 'tzinfo'"
+None -> ('2000-06-01T00:00:00-04:00', 0, 'EDT', datetime.timedelta(days=-1, seconds=72000))
+to its own -> True
+to one that is equal -> False
+the zone it gives -> ('timezone', "datetime.timezone(datetime.timedelta(days=-1, seconds=72000), 'EDT')")
+in winter -> "datetime.timezone(datetime.timedelta(days=-1, seconds=68400), 'EST')"
+keeps the microsecond -> 4
+the fold goes -> 0
+what fromutc() is given -> ('fromutc', '2000-01-01T11:00:00+00:00', True, 'datetime')
+   of a naive one -> ('fromutc', '2000-01-01T17:00:00+00:00', True, 'datetime')
+   raises -> 'ZeroDivisionError: division by zero'
+from one that says nothing -> ('2000-01-01T17:00:00+00:00', 0, 'UTC', datetime.timedelta(0))
+   to itself -> 12
+now, with it -> (True, 'datetime')
+fromtimestamp, with it -> ('fromutc', '1970-01-01T00:00:00+00:00', True, 'datetime')
+===== timetuple
+dst() gives None -> -1
+dst() gives datetime.timedelta(0) -> 0
+dst() gives datetime.timedelta(seconds=3600) -> 1
+dst() gives datetime.timedelta(microseconds=1) -> 1
+dst() gives datetime.timedelta(days=-1, seconds=82800) -> 1
+naive -> (-1, None, None, 0)
+   before the first -> 'OverflowError: date value out of range'
+   after the last -> 'OverflowError: date value out of range'
+utctimetuple at the ends -> None
+done

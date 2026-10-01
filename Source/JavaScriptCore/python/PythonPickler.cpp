@@ -38,6 +38,7 @@
 #include "PythonSequences.h"
 #include "PythonStructMember.h"
 #include "PythonText.h"
+#include "TopExceptionScope.h"
 #include <wtf/Scope.h>
 
 // Pickler, dump() and dumps(): the first half of Modules/_pickle.c. See PythonPickle.h.

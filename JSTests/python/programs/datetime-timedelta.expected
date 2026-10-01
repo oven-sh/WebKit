@@ -1,0 +1,1500 @@
+True
+===== making one
+days=0 -> (0, 0, 0)
+days=1 -> (1, 0, 0)
+days=-1 -> (-1, 0, 0)
+days=2 -> (2, 0, 0)
+days=7 -> (7, 0, 0)
+days=59 -> (59, 0, 0)
+days=60 -> (60, 0, 0)
+days=61 -> (61, 0, 0)
+days=999 -> (999, 0, 0)
+days=1000 -> (1000, 0, 0)
+days=1001 -> (1001, 0, 0)
+days=3599 -> (3599, 0, 0)
+days=3600 -> (3600, 0, 0)
+days=86399 -> (86399, 0, 0)
+days=86400 -> (86400, 0, 0)
+days=86401 -> (86401, 0, 0)
+days=999999 -> (999999, 0, 0)
+days=1000000 -> (1000000, 0, 0)
+days=1000000000 -> 'OverflowError: days=1000000000; must have magnitude <= 999999999'
+days=-1000000000 -> 'OverflowError: days=-1000000000; must have magnitude <= 999999999'
+days=1000000000000 -> 'OverflowError: Python int too large to convert to C int'
+days=2147483648 -> 'OverflowError: Python int too large to convert to C int'
+days=9223372036854775808 -> 'OverflowError: Python int too large to convert to C int'
+days=18446744073709551616 -> 'OverflowError: Python int too large to convert to C int'
+days=1000000000000000000000000000000 -> 'OverflowError: Python int too large to convert to C int'
+days=True -> (1, 0, 0)
+days=False -> (0, 0, 0)
+days=0.0 -> (0, 0, 0)
+days=-0.0 -> (0, 0, 0)
+days=0.5 -> (0, 43200, 0)
+days=1.5 -> (1, 43200, 0)
+days=-0.5 -> (-1, 43200, 0)
+days=2.5 -> (2, 43200, 0)
+days=1e-07 -> (0, 0, 8640)
+days=5e-07 -> (0, 0, 43200)
+days=1.5e-06 -> (0, 0, 129600)
+days=2.5e-06 -> (0, 0, 216000)
+days=0.1 -> (0, 8640, 0)
+days=0.3333333333333333 -> (0, 28800, 0)
+days=1000000000.0 -> 'OverflowError: days=1000000000; must have magnitude <= 999999999'
+days=1000000000000000.0 -> 'OverflowError: Python int too large to convert to C int'
+days=1e+16 -> 'OverflowError: Python int too large to convert to C int'
+days=1e+30 -> 'OverflowError: Python int too large to convert to C int'
+days=1e+300 -> 'OverflowError: Python int too large to convert to C int'
+days=inf -> 'OverflowError: cannot convert float infinity to integer'
+days=-inf -> 'OverflowError: cannot convert float infinity to integer'
+days=nan -> 'ValueError: cannot convert float NaN to integer'
+days=5 -> (5, 0, 0)
+days=5 -> "TypeError: unsupported operand type(s) for +: 'int' and 'str'"
+days=1.5 -> (1, 43200, 0)
+days=None -> 'TypeError: unsupported type for timedelta days component: NoneType'
+days='1' -> 'TypeError: unsupported type for timedelta days component: str'
+days=b'1' -> 'TypeError: unsupported type for timedelta days component: bytes'
+days=[] -> 'TypeError: unsupported type for timedelta days component: list'
+days=1j -> 'TypeError: unsupported type for timedelta days component: complex'
+days=Fraction(1, 2) -> 'TypeError: unsupported type for timedelta days component: Fraction'
+days=Index() -> 'TypeError: unsupported type for timedelta days component: Index'
+seconds=0 -> (0, 0, 0)
+seconds=1 -> (0, 1, 0)
+seconds=-1 -> (-1, 86399, 0)
+seconds=2 -> (0, 2, 0)
+seconds=7 -> (0, 7, 0)
+seconds=59 -> (0, 59, 0)
+seconds=60 -> (0, 60, 0)
+seconds=61 -> (0, 61, 0)
+seconds=999 -> (0, 999, 0)
+seconds=1000 -> (0, 1000, 0)
+seconds=1001 -> (0, 1001, 0)
+seconds=3599 -> (0, 3599, 0)
+seconds=3600 -> (0, 3600, 0)
+seconds=86399 -> (0, 86399, 0)
+seconds=86400 -> (1, 0, 0)
+seconds=86401 -> (1, 1, 0)
+seconds=999999 -> (11, 49599, 0)
+seconds=1000000 -> (11, 49600, 0)
+seconds=1000000000 -> (11574, 6400, 0)
+seconds=-1000000000 -> (-11575, 80000, 0)
+seconds=1000000000000 -> (11574074, 6400, 0)
+seconds=2147483648 -> (24855, 11648, 0)
+seconds=9223372036854775808 -> 'OverflowError: Python int too large to convert to C int'
+seconds=18446744073709551616 -> 'OverflowError: Python int too large to convert to C int'
+seconds=1000000000000000000000000000000 -> 'OverflowError: Python int too large to convert to C int'
+seconds=True -> (0, 1, 0)
+seconds=False -> (0, 0, 0)
+seconds=0.0 -> (0, 0, 0)
+seconds=-0.0 -> (0, 0, 0)
+seconds=0.5 -> (0, 0, 500000)
+seconds=1.5 -> (0, 1, 500000)
+seconds=-0.5 -> (-1, 86399, 500000)
+seconds=2.5 -> (0, 2, 500000)
+seconds=1e-07 -> (0, 0, 0)
+seconds=5e-07 -> (0, 0, 0)
+seconds=1.5e-06 -> (0, 0, 2)
+seconds=2.5e-06 -> (0, 0, 2)
+seconds=0.1 -> (0, 0, 100000)
+seconds=0.3333333333333333 -> (0, 0, 333333)
+seconds=1000000000.0 -> (11574, 6400, 0)
+seconds=1000000000000000.0 -> 'OverflowError: Python int too large to convert to C int'
+seconds=1e+16 -> 'OverflowError: Python int too large to convert to C int'
+seconds=1e+30 -> 'OverflowError: Python int too large to convert to C int'
+seconds=1e+300 -> 'OverflowError: Python int too large to convert to C int'
+seconds=inf -> 'OverflowError: cannot convert float infinity to integer'
+seconds=-inf -> 'OverflowError: cannot convert float infinity to integer'
+seconds=nan -> 'ValueError: cannot convert float NaN to integer'
+seconds=5 -> (0, 5, 0)
+seconds=5 -> "TypeError: unsupported operand type(s) for +: 'int' and 'str'"
+seconds=1.5 -> (0, 1, 500000)
+seconds=None -> 'TypeError: unsupported type for timedelta seconds component: NoneType'
+seconds='1' -> 'TypeError: unsupported type for timedelta seconds component: str'
+seconds=b'1' -> 'TypeError: unsupported type for timedelta seconds component: bytes'
+seconds=[] -> 'TypeError: unsupported type for timedelta seconds component: list'
+seconds=1j -> 'TypeError: unsupported type for timedelta seconds component: complex'
+seconds=Fraction(1, 2) -> 'TypeError: unsupported type for timedelta seconds component: Fraction'
+seconds=Index() -> 'TypeError: unsupported type for timedelta seconds component: Index'
+microseconds=0 -> (0, 0, 0)
+microseconds=1 -> (0, 0, 1)
+microseconds=-1 -> (-1, 86399, 999999)
+microseconds=2 -> (0, 0, 2)
+microseconds=7 -> (0, 0, 7)
+microseconds=59 -> (0, 0, 59)
+microseconds=60 -> (0, 0, 60)
+microseconds=61 -> (0, 0, 61)
+microseconds=999 -> (0, 0, 999)
+microseconds=1000 -> (0, 0, 1000)
+microseconds=1001 -> (0, 0, 1001)
+microseconds=3599 -> (0, 0, 3599)
+microseconds=3600 -> (0, 0, 3600)
+microseconds=86399 -> (0, 0, 86399)
+microseconds=86400 -> (0, 0, 86400)
+microseconds=86401 -> (0, 0, 86401)
+microseconds=999999 -> (0, 0, 999999)
+microseconds=1000000 -> (0, 1, 0)
+microseconds=1000000000 -> (0, 1000, 0)
+microseconds=-1000000000 -> (-1, 85400, 0)
+microseconds=1000000000000 -> (11, 49600, 0)
+microseconds=2147483648 -> (0, 2147, 483648)
+microseconds=9223372036854775808 -> (106751991, 14454, 775808)
+microseconds=18446744073709551616 -> (213503982, 28909, 551616)
+microseconds=1000000000000000000000000000000 -> 'OverflowError: Python int too large to convert to C int'
+microseconds=True -> (0, 0, 1)
+microseconds=False -> (0, 0, 0)
+microseconds=0.0 -> (0, 0, 0)
+microseconds=-0.0 -> (0, 0, 0)
+microseconds=0.5 -> (0, 0, 0)
+microseconds=1.5 -> (0, 0, 2)
+microseconds=-0.5 -> (0, 0, 0)
+microseconds=2.5 -> (0, 0, 2)
+microseconds=1e-07 -> (0, 0, 0)
+microseconds=5e-07 -> (0, 0, 0)
+microseconds=1.5e-06 -> (0, 0, 0)
+microseconds=2.5e-06 -> (0, 0, 0)
+microseconds=0.1 -> (0, 0, 0)
+microseconds=0.3333333333333333 -> (0, 0, 0)
+microseconds=1000000000.0 -> (0, 1000, 0)
+microseconds=1000000000000000.0 -> (11574, 6400, 0)
+microseconds=1e+16 -> (115740, 64000, 0)
+microseconds=1e+30 -> 'OverflowError: Python int too large to convert to C int'
+microseconds=1e+300 -> 'OverflowError: Python int too large to convert to C int'
+microseconds=inf -> 'OverflowError: cannot convert float infinity to integer'
+microseconds=-inf -> 'OverflowError: cannot convert float infinity to integer'
+microseconds=nan -> 'ValueError: cannot convert float NaN to integer'
+microseconds=5 -> (0, 0, 5)
+microseconds=5 -> "TypeError: unsupported operand type(s) for +: 'int' and 'str'"
+microseconds=1.5 -> (0, 0, 2)
+microseconds=None -> 'TypeError: unsupported type for timedelta microseconds component: NoneType'
+microseconds='1' -> 'TypeError: unsupported type for timedelta microseconds component: str'
+microseconds=b'1' -> 'TypeError: unsupported type for timedelta microseconds component: bytes'
+microseconds=[] -> 'TypeError: unsupported type for timedelta microseconds component: list'
+microseconds=1j -> 'TypeError: unsupported type for timedelta microseconds component: complex'
+microseconds=Fraction(1, 2) -> 'TypeError: unsupported type for timedelta microseconds component: Fraction'
+microseconds=Index() -> 'TypeError: unsupported type for timedelta microseconds component: Index'
+milliseconds=0 -> (0, 0, 0)
+milliseconds=1 -> (0, 0, 1000)
+milliseconds=-1 -> (-1, 86399, 999000)
+milliseconds=2 -> (0, 0, 2000)
+milliseconds=7 -> (0, 0, 7000)
+milliseconds=59 -> (0, 0, 59000)
+milliseconds=60 -> (0, 0, 60000)
+milliseconds=61 -> (0, 0, 61000)
+milliseconds=999 -> (0, 0, 999000)
+milliseconds=1000 -> (0, 1, 0)
+milliseconds=1001 -> (0, 1, 1000)
+milliseconds=3599 -> (0, 3, 599000)
+milliseconds=3600 -> (0, 3, 600000)
+milliseconds=86399 -> (0, 86, 399000)
+milliseconds=86400 -> (0, 86, 400000)
+milliseconds=86401 -> (0, 86, 401000)
+milliseconds=999999 -> (0, 999, 999000)
+milliseconds=1000000 -> (0, 1000, 0)
+milliseconds=1000000000 -> (11, 49600, 0)
+milliseconds=-1000000000 -> (-12, 36800, 0)
+milliseconds=1000000000000 -> (11574, 6400, 0)
+milliseconds=2147483648 -> (24, 73883, 648000)
+milliseconds=9223372036854775808 -> 'OverflowError: Python int too large to convert to C int'
+milliseconds=18446744073709551616 -> 'OverflowError: Python int too large to convert to C int'
+milliseconds=1000000000000000000000000000000 -> 'OverflowError: Python int too large to convert to C int'
+milliseconds=True -> (0, 0, 1000)
+milliseconds=False -> (0, 0, 0)
+milliseconds=0.0 -> (0, 0, 0)
+milliseconds=-0.0 -> (0, 0, 0)
+milliseconds=0.5 -> (0, 0, 500)
+milliseconds=1.5 -> (0, 0, 1500)
+milliseconds=-0.5 -> (-1, 86399, 999500)
+milliseconds=2.5 -> (0, 0, 2500)
+milliseconds=1e-07 -> (0, 0, 0)
+milliseconds=5e-07 -> (0, 0, 0)
+milliseconds=1.5e-06 -> (0, 0, 0)
+milliseconds=2.5e-06 -> (0, 0, 0)
+milliseconds=0.1 -> (0, 0, 100)
+milliseconds=0.3333333333333333 -> (0, 0, 333)
+milliseconds=1000000000.0 -> (11, 49600, 0)
+milliseconds=1000000000000000.0 -> (11574074, 6400, 0)
+milliseconds=1e+16 -> (115740740, 64000, 0)
+milliseconds=1e+30 -> 'OverflowError: Python int too large to convert to C int'
+milliseconds=1e+300 -> 'OverflowError: Python int too large to convert to C int'
+milliseconds=inf -> 'OverflowError: cannot convert float infinity to integer'
+milliseconds=-inf -> 'OverflowError: cannot convert float infinity to integer'
+milliseconds=nan -> 'ValueError: cannot convert float NaN to integer'
+milliseconds=5 -> (0, 0, 5000)
+milliseconds=5 -> "TypeError: unsupported operand type(s) for +: 'int' and 'str'"
+milliseconds=1.5 -> (0, 0, 1500)
+milliseconds=None -> 'TypeError: unsupported type for timedelta milliseconds component: NoneType'
+milliseconds='1' -> 'TypeError: unsupported type for timedelta milliseconds component: str'
+milliseconds=b'1' -> 'TypeError: unsupported type for timedelta milliseconds component: bytes'
+milliseconds=[] -> 'TypeError: unsupported type for timedelta milliseconds component: list'
+milliseconds=1j -> 'TypeError: unsupported type for timedelta milliseconds component: complex'
+milliseconds=Fraction(1, 2) -> 'TypeError: unsupported type for timedelta milliseconds component: Fraction'
+milliseconds=Index() -> 'TypeError: unsupported type for timedelta milliseconds component: Index'
+minutes=0 -> (0, 0, 0)
+minutes=1 -> (0, 60, 0)
+minutes=-1 -> (-1, 86340, 0)
+minutes=2 -> (0, 120, 0)
+minutes=7 -> (0, 420, 0)
+minutes=59 -> (0, 3540, 0)
+minutes=60 -> (0, 3600, 0)
+minutes=61 -> (0, 3660, 0)
+minutes=999 -> (0, 59940, 0)
+minutes=1000 -> (0, 60000, 0)
+minutes=1001 -> (0, 60060, 0)
+minutes=3599 -> (2, 43140, 0)
+minutes=3600 -> (2, 43200, 0)
+minutes=86399 -> (59, 86340, 0)
+minutes=86400 -> (60, 0, 0)
+minutes=86401 -> (60, 60, 0)
+minutes=999999 -> (694, 38340, 0)
+minutes=1000000 -> (694, 38400, 0)
+minutes=1000000000 -> (694444, 38400, 0)
+minutes=-1000000000 -> (-694445, 48000, 0)
+minutes=1000000000000 -> (694444444, 38400, 0)
+minutes=2147483648 -> (1491308, 7680, 0)
+minutes=9223372036854775808 -> 'OverflowError: Python int too large to convert to C int'
+minutes=18446744073709551616 -> 'OverflowError: Python int too large to convert to C int'
+minutes=1000000000000000000000000000000 -> 'OverflowError: Python int too large to convert to C int'
+minutes=True -> (0, 60, 0)
+minutes=False -> (0, 0, 0)
+minutes=0.0 -> (0, 0, 0)
+minutes=-0.0 -> (0, 0, 0)
+minutes=0.5 -> (0, 30, 0)
+minutes=1.5 -> (0, 90, 0)
+minutes=-0.5 -> (-1, 86370, 0)
+minutes=2.5 -> (0, 150, 0)
+minutes=1e-07 -> (0, 0, 6)
+minutes=5e-07 -> (0, 0, 30)
+minutes=1.5e-06 -> (0, 0, 90)
+minutes=2.5e-06 -> (0, 0, 150)
+minutes=0.1 -> (0, 6, 0)
+minutes=0.3333333333333333 -> (0, 20, 0)
+minutes=1000000000.0 -> (694444, 38400, 0)
+minutes=1000000000000000.0 -> 'OverflowError: Python int too large to convert to C int'
+minutes=1e+16 -> 'OverflowError: Python int too large to convert to C int'
+minutes=1e+30 -> 'OverflowError: Python int too large to convert to C int'
+minutes=1e+300 -> 'OverflowError: Python int too large to convert to C int'
+minutes=inf -> 'OverflowError: cannot convert float infinity to integer'
+minutes=-inf -> 'OverflowError: cannot convert float infinity to integer'
+minutes=nan -> 'ValueError: cannot convert float NaN to integer'
+minutes=5 -> (0, 300, 0)
+minutes=5 -> "TypeError: unsupported operand type(s) for +: 'int' and 'str'"
+minutes=1.5 -> (0, 90, 0)
+minutes=None -> 'TypeError: unsupported type for timedelta minutes component: NoneType'
+minutes='1' -> 'TypeError: unsupported type for timedelta minutes component: str'
+minutes=b'1' -> 'TypeError: unsupported type for timedelta minutes component: bytes'
+minutes=[] -> 'TypeError: unsupported type for timedelta minutes component: list'
+minutes=1j -> 'TypeError: unsupported type for timedelta minutes component: complex'
+minutes=Fraction(1, 2) -> 'TypeError: unsupported type for timedelta minutes component: Fraction'
+minutes=Index() -> 'TypeError: unsupported type for timedelta minutes component: Index'
+hours=0 -> (0, 0, 0)
+hours=1 -> (0, 3600, 0)
+hours=-1 -> (-1, 82800, 0)
+hours=2 -> (0, 7200, 0)
+hours=7 -> (0, 25200, 0)
+hours=59 -> (2, 39600, 0)
+hours=60 -> (2, 43200, 0)
+hours=61 -> (2, 46800, 0)
+hours=999 -> (41, 54000, 0)
+hours=1000 -> (41, 57600, 0)
+hours=1001 -> (41, 61200, 0)
+hours=3599 -> (149, 82800, 0)
+hours=3600 -> (150, 0, 0)
+hours=86399 -> (3599, 82800, 0)
+hours=86400 -> (3600, 0, 0)
+hours=86401 -> (3600, 3600, 0)
+hours=999999 -> (41666, 54000, 0)
+hours=1000000 -> (41666, 57600, 0)
+hours=1000000000 -> (41666666, 57600, 0)
+hours=-1000000000 -> (-41666667, 28800, 0)
+hours=1000000000000 -> 'OverflowError: Python int too large to convert to C int'
+hours=2147483648 -> (89478485, 28800, 0)
+hours=9223372036854775808 -> 'OverflowError: Python int too large to convert to C int'
+hours=18446744073709551616 -> 'OverflowError: Python int too large to convert to C int'
+hours=1000000000000000000000000000000 -> 'OverflowError: Python int too large to convert to C int'
+hours=True -> (0, 3600, 0)
+hours=False -> (0, 0, 0)
+hours=0.0 -> (0, 0, 0)
+hours=-0.0 -> (0, 0, 0)
+hours=0.5 -> (0, 1800, 0)
+hours=1.5 -> (0, 5400, 0)
+hours=-0.5 -> (-1, 84600, 0)
+hours=2.5 -> (0, 9000, 0)
+hours=1e-07 -> (0, 0, 360)
+hours=5e-07 -> (0, 0, 1800)
+hours=1.5e-06 -> (0, 0, 5400)
+hours=2.5e-06 -> (0, 0, 9000)
+hours=0.1 -> (0, 360, 0)
+hours=0.3333333333333333 -> (0, 1200, 0)
+hours=1000000000.0 -> (41666666, 57600, 0)
+hours=1000000000000000.0 -> 'OverflowError: Python int too large to convert to C int'
+hours=1e+16 -> 'OverflowError: Python int too large to convert to C int'
+hours=1e+30 -> 'OverflowError: Python int too large to convert to C int'
+hours=1e+300 -> 'OverflowError: Python int too large to convert to C int'
+hours=inf -> 'OverflowError: cannot convert float infinity to integer'
+hours=-inf -> 'OverflowError: cannot convert float infinity to integer'
+hours=nan -> 'ValueError: cannot convert float NaN to integer'
+hours=5 -> (0, 18000, 0)
+hours=5 -> "TypeError: unsupported operand type(s) for +: 'int' and 'str'"
+hours=1.5 -> (0, 5400, 0)
+hours=None -> 'TypeError: unsupported type for timedelta hours component: NoneType'
+hours='1' -> 'TypeError: unsupported type for timedelta hours component: str'
+hours=b'1' -> 'TypeError: unsupported type for timedelta hours component: bytes'
+hours=[] -> 'TypeError: unsupported type for timedelta hours component: list'
+hours=1j -> 'TypeError: unsupported type for timedelta hours component: complex'
+hours=Fraction(1, 2) -> 'TypeError: unsupported type for timedelta hours component: Fraction'
+hours=Index() -> 'TypeError: unsupported type for timedelta hours component: Index'
+weeks=0 -> (0, 0, 0)
+weeks=1 -> (7, 0, 0)
+weeks=-1 -> (-7, 0, 0)
+weeks=2 -> (14, 0, 0)
+weeks=7 -> (49, 0, 0)
+weeks=59 -> (413, 0, 0)
+weeks=60 -> (420, 0, 0)
+weeks=61 -> (427, 0, 0)
+weeks=999 -> (6993, 0, 0)
+weeks=1000 -> (7000, 0, 0)
+weeks=1001 -> (7007, 0, 0)
+weeks=3599 -> (25193, 0, 0)
+weeks=3600 -> (25200, 0, 0)
+weeks=86399 -> (604793, 0, 0)
+weeks=86400 -> (604800, 0, 0)
+weeks=86401 -> (604807, 0, 0)
+weeks=999999 -> (6999993, 0, 0)
+weeks=1000000 -> (7000000, 0, 0)
+weeks=1000000000 -> 'OverflowError: Python int too large to convert to C int'
+weeks=-1000000000 -> 'OverflowError: Python int too large to convert to C int'
+weeks=1000000000000 -> 'OverflowError: Python int too large to convert to C int'
+weeks=2147483648 -> 'OverflowError: Python int too large to convert to C int'
+weeks=9223372036854775808 -> 'OverflowError: Python int too large to convert to C int'
+weeks=18446744073709551616 -> 'OverflowError: Python int too large to convert to C int'
+weeks=1000000000000000000000000000000 -> 'OverflowError: Python int too large to convert to C int'
+weeks=True -> (7, 0, 0)
+weeks=False -> (0, 0, 0)
+weeks=0.0 -> (0, 0, 0)
+weeks=-0.0 -> (0, 0, 0)
+weeks=0.5 -> (3, 43200, 0)
+weeks=1.5 -> (10, 43200, 0)
+weeks=-0.5 -> (-4, 43200, 0)
+weeks=2.5 -> (17, 43200, 0)
+weeks=1e-07 -> (0, 0, 60480)
+weeks=5e-07 -> (0, 0, 302400)
+weeks=1.5e-06 -> (0, 0, 907200)
+weeks=2.5e-06 -> (0, 1, 512000)
+weeks=0.1 -> (0, 60480, 0)
+weeks=0.3333333333333333 -> (2, 28800, 0)
+weeks=1000000000.0 -> 'OverflowError: Python int too large to convert to C int'
+weeks=1000000000000000.0 -> 'OverflowError: Python int too large to convert to C int'
+weeks=1e+16 -> 'OverflowError: Python int too large to convert to C int'
+weeks=1e+30 -> 'OverflowError: Python int too large to convert to C int'
+weeks=1e+300 -> 'OverflowError: Python int too large to convert to C int'
+weeks=inf -> 'OverflowError: cannot convert float infinity to integer'
+weeks=-inf -> 'OverflowError: cannot convert float infinity to integer'
+weeks=nan -> 'ValueError: cannot convert float NaN to integer'
+weeks=5 -> (35, 0, 0)
+weeks=5 -> "TypeError: unsupported operand type(s) for +: 'int' and 'str'"
+weeks=1.5 -> (10, 43200, 0)
+weeks=None -> 'TypeError: unsupported type for timedelta weeks component: NoneType'
+weeks='1' -> 'TypeError: unsupported type for timedelta weeks component: str'
+weeks=b'1' -> 'TypeError: unsupported type for timedelta weeks component: bytes'
+weeks=[] -> 'TypeError: unsupported type for timedelta weeks component: list'
+weeks=1j -> 'TypeError: unsupported type for timedelta weeks component: complex'
+weeks=Fraction(1, 2) -> 'TypeError: unsupported type for timedelta weeks component: Fraction'
+weeks=Index() -> 'TypeError: unsupported type for timedelta weeks component: Index'
+none -> datetime.timedelta(0)
+positional -> datetime.timedelta(days=50, seconds=21902, microseconds=4003)
+too many -> 'TypeError: __new__() takes at most 7 arguments (8 given)'
+unknown keyword -> "TypeError: __new__() got an unexpected keyword argument 'years'"
+twice -> "TypeError: argument for __new__() given by name ('days') and position (1)"
+keyword that is near -> "TypeError: __new__() got an unexpected keyword argument 'day'. Did you mean 'days'?"
+the same one for nothing -> (True, True, False, False, True)
+halves (0.5, 0.5) -> datetime.timedelta(microseconds=1)
+   and seconds -> datetime.timedelta(microseconds=1)
+halves (1.5, 0.5) -> datetime.timedelta(microseconds=2)
+   and seconds -> datetime.timedelta(microseconds=2)
+halves (0.25, 0.25) -> datetime.timedelta(0)
+   and seconds -> datetime.timedelta(0)
+halves (2.5, 0) -> datetime.timedelta(microseconds=2)
+   and seconds -> datetime.timedelta(microseconds=2)
+halves (3.5, 0) -> datetime.timedelta(microseconds=4)
+   and seconds -> datetime.timedelta(microseconds=4)
+halves (-0.5, 0) -> datetime.timedelta(0)
+   and seconds -> datetime.timedelta(0)
+halves (-1.5, 0) -> datetime.timedelta(days=-1, seconds=86399, microseconds=999998)
+   and seconds -> datetime.timedelta(days=-1, seconds=86399, microseconds=999998)
+halves (0.5, 1) -> datetime.timedelta(microseconds=2)
+   and seconds -> datetime.timedelta(microseconds=2)
+halves (0.5, 2) -> datetime.timedelta(microseconds=2)
+   and seconds -> datetime.timedelta(microseconds=2)
+halves (1e-06, 1e-06) -> datetime.timedelta(0)
+   and seconds -> datetime.timedelta(0)
+halves (0.4, 0.1) -> datetime.timedelta(0)
+   and seconds -> datetime.timedelta(0)
+halves (0.3, 0.2) -> datetime.timedelta(0)
+   and seconds -> datetime.timedelta(0)
+halves (0.7, 0.8) -> datetime.timedelta(microseconds=2)
+   and seconds -> datetime.timedelta(microseconds=2)
+together [('days', 1.5), ('hours', 1.5), ('microseconds', 1.5), ('milliseconds', 1.5), ('minutes', 1.5), ('seconds', 1.5), ('weeks', 1.5)] -> 'datetime.timedelta(days=12, seconds=5491, microseconds=501502)'
+together [('days', 0.1), ('hours', 0.1), ('microseconds', 0.1), ('milliseconds', 0.1), ('minutes', 0.1), ('seconds', 0.1), ('weeks', 0.1)] -> 'datetime.timedelta(seconds=69486, microseconds=100100)'
+together [('days', -0.1), ('hours', 0.1), ('minutes', -0.1), ('seconds', 0.1)] -> 'datetime.timedelta(days=-1, seconds=78114, microseconds=100000)'
+together [('days', 999999999), ('hours', 23), ('microseconds', 999999), ('minutes', 59), ('seconds', 59)] -> 'datetime.timedelta(days=999999999, seconds=86399, microseconds=999999)'
+together [('days', 999999999), ('hours', 24)] -> 'OverflowError: days=1000000000; must have magnitude <= 999999999'
+together [('days', -999999999)] -> 'datetime.timedelta(days=-999999999)'
+together [('days', -999999999), ('microseconds', -1)] -> 'OverflowError: days=-1000000000; must have magnitude <= 999999999'
+together [('days', 5), ('weeks', 142857142)] -> 'datetime.timedelta(days=999999999)'
+together [('days', 6), ('weeks', 142857142)] -> 'OverflowError: days=1000000000; must have magnitude <= 999999999'
+together [('days', 1000000000)] -> 'OverflowError: days=1000000000; must have magnitude <= 999999999'
+together [('days', -1000000000)] -> 'OverflowError: days=-1000000000; must have magnitude <= 999999999'
+together [('seconds', 86399999999999)] -> 'datetime.timedelta(days=999999999, seconds=86399)'
+together [('seconds', 86400000000000)] -> 'OverflowError: days=1000000000; must have magnitude <= 999999999'
+together [('microseconds', 86399999999999999999)] -> 'datetime.timedelta(days=999999999, seconds=86399, microseconds=999999)'
+together [('microseconds', 86400000000000000000)] -> 'OverflowError: days=1000000000; must have magnitude <= 999999999'
+together [('microseconds', -86399999913600000000)] -> 'datetime.timedelta(days=-999999999)'
+together [('microseconds', -86399999913600000001)] -> 'OverflowError: days=-1000000000; must have magnitude <= 999999999'
+===== shown
+datetime.timedelta(0) -> ('0:00:00', 0, 0, 0, 0.0, False, '0:00:00', '0:00:00', 'timedelta')
+   signs -> (datetime.timedelta(0), datetime.timedelta(0), datetime.timedelta(0), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (0, 0, 0)), (<class 'datetime.timedelta'>, (0, 0, 0)), (<class 'datetime.timedelta'>, (0, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x00K\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, True)
+   hash -> (True, True)
+datetime.timedelta(days=1) -> ('1 day, 0:00:00', 1, 0, 0, 86400.0, True, '1 day, 0:00:00', '1 day, 0:00:00', 'timedelta')
+   signs -> (datetime.timedelta(days=-1), datetime.timedelta(days=1), datetime.timedelta(days=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (1, 0, 0)), (<class 'datetime.timedelta'>, (1, 0, 0)), (<class 'datetime.timedelta'>, (1, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x01K\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=-1) -> ('-1 day, 0:00:00', -1, 0, 0, -86400.0, True, '-1 day, 0:00:00', '-1 day, 0:00:00', 'timedelta')
+   signs -> (datetime.timedelta(days=1), datetime.timedelta(days=-1), datetime.timedelta(days=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (-1, 0, 0)), (<class 'datetime.timedelta'>, (-1, 0, 0)), (<class 'datetime.timedelta'>, (-1, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\xff\xff\xff\xffK\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=2) -> ('2 days, 0:00:00', 2, 0, 0, 172800.0, True, '2 days, 0:00:00', '2 days, 0:00:00', 'timedelta')
+   signs -> (datetime.timedelta(days=-2), datetime.timedelta(days=2), datetime.timedelta(days=2), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (2, 0, 0)), (<class 'datetime.timedelta'>, (2, 0, 0)), (<class 'datetime.timedelta'>, (2, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x02K\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=-2) -> ('-2 days, 0:00:00', -2, 0, 0, -172800.0, True, '-2 days, 0:00:00', '-2 days, 0:00:00', 'timedelta')
+   signs -> (datetime.timedelta(days=2), datetime.timedelta(days=-2), datetime.timedelta(days=2), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (-2, 0, 0)), (<class 'datetime.timedelta'>, (-2, 0, 0)), (<class 'datetime.timedelta'>, (-2, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\xfe\xff\xff\xffK\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(seconds=1) -> ('0:00:01', 0, 1, 0, 1.0, True, '0:00:01', '0:00:01', 'timedelta')
+   signs -> (datetime.timedelta(days=-1, seconds=86399), datetime.timedelta(seconds=1), datetime.timedelta(seconds=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (0, 1, 0)), (<class 'datetime.timedelta'>, (0, 1, 0)), (<class 'datetime.timedelta'>, (0, 1, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x00K\x01K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(microseconds=1) -> ('0:00:00.000001', 0, 0, 1, 1e-06, True, '0:00:00.000001', '0:00:00.000001', 'timedelta')
+   signs -> (datetime.timedelta(days=-1, seconds=86399, microseconds=999999), datetime.timedelta(microseconds=1), datetime.timedelta(microseconds=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (0, 0, 1)), (<class 'datetime.timedelta'>, (0, 0, 1)), (<class 'datetime.timedelta'>, (0, 0, 1)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x00K\x00K\x01\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=-1, seconds=86399) -> ('-1 day, 23:59:59', -1, 86399, 0, -1.0, True, '-1 day, 23:59:59', '-1 day, 23:59:59', 'timedelta')
+   signs -> (datetime.timedelta(seconds=1), datetime.timedelta(days=-1, seconds=86399), datetime.timedelta(seconds=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (-1, 86399, 0)), (<class 'datetime.timedelta'>, (-1, 86399, 0)), (<class 'datetime.timedelta'>, (-1, 86399, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\xff\xff\xff\xffJ\x7fQ\x01\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=-1, seconds=86399, microseconds=999999) -> ('-1 day, 23:59:59.999999', -1, 86399, 999999, -1e-06, True, '-1 day, 23:59:59.999999', '-1 day, 23:59:59.999999', 'timedelta')
+   signs -> (datetime.timedelta(microseconds=1), datetime.timedelta(days=-1, seconds=86399, microseconds=999999), datetime.timedelta(microseconds=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (-1, 86399, 999999)), (<class 'datetime.timedelta'>, (-1, 86399, 999999)), (<class 'datetime.timedelta'>, (-1, 86399, 999999)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\xff\xff\xff\xffJ\x7fQ\x01\x00J?B\x0f\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=1, seconds=1, microseconds=1) -> ('1 day, 0:00:01.000001', 1, 1, 1, 86401.000001, True, '1 day, 0:00:01.000001', '1 day, 0:00:01.000001', 'timedelta')
+   signs -> (datetime.timedelta(days=-2, seconds=86398, microseconds=999999), datetime.timedelta(days=1, seconds=1, microseconds=1), datetime.timedelta(days=1, seconds=1, microseconds=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (1, 1, 1)), (<class 'datetime.timedelta'>, (1, 1, 1)), (<class 'datetime.timedelta'>, (1, 1, 1)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x01K\x01K\x01\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=-1, seconds=1, microseconds=1) -> ('-1 day, 0:00:01.000001', -1, 1, 1, -86398.999999, True, '-1 day, 0:00:01.000001', '-1 day, 0:00:01.000001', 'timedelta')
+   signs -> (datetime.timedelta(seconds=86398, microseconds=999999), datetime.timedelta(days=-1, seconds=1, microseconds=1), datetime.timedelta(seconds=86398, microseconds=999999), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (-1, 1, 1)), (<class 'datetime.timedelta'>, (-1, 1, 1)), (<class 'datetime.timedelta'>, (-1, 1, 1)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\xff\xff\xff\xffK\x01K\x01\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=100, seconds=3661, microseconds=5) -> ('100 days, 1:01:01.000005', 100, 3661, 5, 8643661.000005, True, '100 days, 1:01:01.000005', '100 days, 1:01:01.000005', 'timedelta')
+   signs -> (datetime.timedelta(days=-101, seconds=82738, microseconds=999995), datetime.timedelta(days=100, seconds=3661, microseconds=5), datetime.timedelta(days=100, seconds=3661, microseconds=5), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (100, 3661, 5)), (<class 'datetime.timedelta'>, (100, 3661, 5)), (<class 'datetime.timedelta'>, (100, 3661, 5)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00KdMM\x0eK\x05\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(seconds=86399, microseconds=999999) -> ('23:59:59.999999', 0, 86399, 999999, 86399.999999, True, '23:59:59.999999', '23:59:59.999999', 'timedelta')
+   signs -> (datetime.timedelta(days=-1, microseconds=1), datetime.timedelta(seconds=86399, microseconds=999999), datetime.timedelta(seconds=86399, microseconds=999999), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (0, 86399, 999999)), (<class 'datetime.timedelta'>, (0, 86399, 999999)), (<class 'datetime.timedelta'>, (0, 86399, 999999)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x00J\x7fQ\x01\x00J?B\x0f\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=-999999999) -> ('-999999999 days, 0:00:00', -999999999, 0, 0, -86399999913600.0, True, '-999999999 days, 0:00:00', '-999999999 days, 0:00:00', 'timedelta')
+   signs -> (datetime.timedelta(days=999999999), datetime.timedelta(days=-999999999), datetime.timedelta(days=999999999), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (-999999999, 0, 0)), (<class 'datetime.timedelta'>, (-999999999, 0, 0)), (<class 'datetime.timedelta'>, (-999999999, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\x016e\xc4K\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) -> ('999999999 days, 23:59:59.999999', 999999999, 86399, 999999, 86400000000000.0, True, '999999999 days, 23:59:59.999999', '999999999 days, 23:59:59.999999', 'timedelta')
+   signs -> 'OverflowError: days=-1000000000; must have magnitude <= 999999999'
+   reduce -> ((<class 'datetime.timedelta'>, (999999999, 86399, 999999)), (<class 'datetime.timedelta'>, (999999999, 86399, 999999)), (<class 'datetime.timedelta'>, (999999999, 86399, 999999)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\xff\xc9\x9a;J\x7fQ\x01\x00J?B\x0f\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(microseconds=1) -> ('0:00:00.000001', 0, 0, 1, 1e-06, True, '0:00:00.000001', '0:00:00.000001', 'timedelta')
+   signs -> (datetime.timedelta(days=-1, seconds=86399, microseconds=999999), datetime.timedelta(microseconds=1), datetime.timedelta(microseconds=1), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (0, 0, 1)), (<class 'datetime.timedelta'>, (0, 0, 1)), (<class 'datetime.timedelta'>, (0, 0, 1)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x00K\x00K\x01\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=999999999) -> ('999999999 days, 0:00:00', 999999999, 0, 0, 86399999913600.0, True, '999999999 days, 0:00:00', '999999999 days, 0:00:00', 'timedelta')
+   signs -> (datetime.timedelta(days=-999999999), datetime.timedelta(days=999999999), datetime.timedelta(days=999999999), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (999999999, 0, 0)), (<class 'datetime.timedelta'>, (999999999, 0, 0)), (<class 'datetime.timedelta'>, (999999999, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00J\xff\xc9\x9a;K\x00K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(days=1, seconds=3600) -> ('1 day, 1:00:00', 1, 3600, 0, 90000.0, True, '1 day, 1:00:00', '1 day, 1:00:00', 'timedelta')
+   signs -> (datetime.timedelta(days=-2, seconds=82800), datetime.timedelta(days=1, seconds=3600), datetime.timedelta(days=1, seconds=3600), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (1, 3600, 0)), (<class 'datetime.timedelta'>, (1, 3600, 0)), (<class 'datetime.timedelta'>, (1, 3600, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x01M\x10\x0eK\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(seconds=3660) -> ('1:01:00', 0, 3660, 0, 3660.0, True, '1:01:00', '1:01:00', 'timedelta')
+   signs -> (datetime.timedelta(days=-1, seconds=82740), datetime.timedelta(seconds=3660), datetime.timedelta(seconds=3660), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (0, 3660, 0)), (<class 'datetime.timedelta'>, (0, 3660, 0)), (<class 'datetime.timedelta'>, (0, 3660, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x00ML\x0eK\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+datetime.timedelta(seconds=60) -> ('0:01:00', 0, 60, 0, 60.0, True, '0:01:00', '0:01:00', 'timedelta')
+   signs -> (datetime.timedelta(days=-1, seconds=86340), datetime.timedelta(seconds=60), datetime.timedelta(seconds=60), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class 'datetime.timedelta'>, (0, 60, 0)), (<class 'datetime.timedelta'>, (0, 60, 0)), (<class 'datetime.timedelta'>, (0, 60, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> b'\x80\x02cdatetime\ntimedelta\nq\x00K\x00K<K\x00\x87q\x01Rq\x02.'
+   copy -> (True, True, False)
+   hash -> (True, True)
+T(days=1, seconds=2, microseconds=3) -> ('1 day, 0:00:02.000003', 1, 2, 3, 86402.000003, True, '1 day, 0:00:02.000003', '1 day, 0:00:02.000003', 'T')
+   signs -> (datetime.timedelta(days=-2, seconds=86397, microseconds=999997), datetime.timedelta(days=1, seconds=2, microseconds=3), datetime.timedelta(days=1, seconds=2, microseconds=3), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class '__main__.T'>, (1, 2, 3)), (<class '__main__.T'>, (1, 2, 3)), (<class '__main__.T'>, (1, 2, 3)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> None
+   copy -> (True, True, False)
+   hash -> (True, True)
+T(0) -> ('0:00:00', 0, 0, 0, 0.0, False, '0:00:00', '0:00:00', 'T')
+   signs -> (datetime.timedelta(0), datetime.timedelta(0), datetime.timedelta(0), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class '__main__.T'>, (0, 0, 0)), (<class '__main__.T'>, (0, 0, 0)), (<class '__main__.T'>, (0, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> None
+   copy -> (True, True, False)
+   hash -> (True, True)
+TN(days=5) -> ('5 days, 0:00:00', 5, 0, 0, 432000.0, True, '5 days, 0:00:00', '5 days, 0:00:00', 'TN')
+   signs -> (datetime.timedelta(days=-5), datetime.timedelta(days=5), datetime.timedelta(days=5), 'timedelta', 'timedelta', 'timedelta')
+   reduce -> ((<class '__main__.TN'>, (5, 0, 0)), (<class '__main__.TN'>, (5, 0, 0)), (<class '__main__.TN'>, (5, 0, 0)))
+   pickle -> [(True, True), (True, True), (True, True), (True, True), (True, True), (True, True)]
+   pickled -> None
+   copy -> (True, True, False)
+   hash -> (True, True)
+===== arithmetic
+datetime.timedelta(0) + 76 32657759c8a55d4a7a1d58c861cc041e
+datetime.timedelta(days=1) + 76 1b7904f87edceaf4b8e68c65e2d2c036
+datetime.timedelta(days=-1) + 76 3155e9d1ef3984f5fde8b7cdb085f5c0
+datetime.timedelta(seconds=1) + 76 ca4f9d8d4b49295b707b9a833aa11476
+datetime.timedelta(microseconds=1) + 76 49ee374d8deefd6bc3b08344cde0a16a
+datetime.timedelta(microseconds=3) + 76 7e0c28e253165fb6d78bc3e4e474ee0a
+datetime.timedelta(microseconds=5) + 76 6be886f2b87de89690881a6200f1343a
+datetime.timedelta(days=7, seconds=8, microseconds=9) + 76 886d85c53c0486101097f2b94ea58683
+datetime.timedelta(days=-7, seconds=8, microseconds=9) + 76 1030d054d8dceec8a65400358de20cb0
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) + 76 385e4690e00d3b4cb3a1b2e9c8e75a8b
+datetime.timedelta(days=-999999999) + 76 02c597dff4dca80381a4f8126c1af15a
+T(days=1, seconds=2, microseconds=3) + 76 0de6a8ad117f43fbc982af79acfe5334
+datetime.timedelta(0) - 76 b4876f7a4fb4cd46c16e2c5041315368
+datetime.timedelta(days=1) - 76 096218b85c1b165c46f9ce832622360a
+datetime.timedelta(days=-1) - 76 98b43da5db1c8e8a70a605758b0701d2
+datetime.timedelta(seconds=1) - 76 00c9ac50fce1d0bc19a4b421eb5d1080
+datetime.timedelta(microseconds=1) - 76 1d92884ed01d5665c050628117b63d14
+datetime.timedelta(microseconds=3) - 76 f262e2de7c34634edb61eaa41faa0e03
+datetime.timedelta(microseconds=5) - 76 8f4a635dcd06a8bd68605319785d82e8
+datetime.timedelta(days=7, seconds=8, microseconds=9) - 76 2842c5dd047b2c2fe46221a94256850e
+datetime.timedelta(days=-7, seconds=8, microseconds=9) - 76 bdcf841f0f7c15898cab3fb17193d48e
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) - 76 ffc0e59df7b9ecff9a6ffc5e13ee7571
+datetime.timedelta(days=-999999999) - 76 67efa3b6488a373dadaacedf401c076a
+T(days=1, seconds=2, microseconds=3) - 76 7bdc83c297b188650d6d788045524530
+datetime.timedelta(0) * 76 d03cc0eb56fe0cb8932f3e96ccba3447
+datetime.timedelta(days=1) * 76 7110278c12b0dc80c0cca17fc2de616e
+datetime.timedelta(days=-1) * 76 935fe8ec98ba058f700d95af40961ca5
+datetime.timedelta(seconds=1) * 76 e3ebe7696a2f5139fe0120275fba7fa6
+datetime.timedelta(microseconds=1) * 76 895bcbcae0110d726405645bc25ca53e
+datetime.timedelta(microseconds=3) * 76 4214d4f667cf4cb5236cc359cee28bd0
+datetime.timedelta(microseconds=5) * 76 91e997a079f0fbda39241d8fbf1b7154
+datetime.timedelta(days=7, seconds=8, microseconds=9) * 76 22e6fdeafdf5df6038faef4cd8f42f94
+datetime.timedelta(days=-7, seconds=8, microseconds=9) * 76 fc2fd040bc87211b6ff306405fc899d0
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) * 76 613cf0b259ca82355e221e441257cd58
+datetime.timedelta(days=-999999999) * 76 713a6517373930871faa5071812c4681
+T(days=1, seconds=2, microseconds=3) * 76 b354ebef2995bbf1bfa4f133b44ff065
+datetime.timedelta(0) / 76 731586d9c8b9a18f4e4a3f2077223c21
+datetime.timedelta(days=1) / 76 8c6da23504c3ec37c977759c07e7e8b1
+datetime.timedelta(days=-1) / 76 96a0c379a66cf5aba42878a1c82529e4
+datetime.timedelta(seconds=1) / 76 7b9d53eedee09f4badc8169de39093e6
+datetime.timedelta(microseconds=1) / 76 adff075785123f67fe2d43550ef4d010
+datetime.timedelta(microseconds=3) / 76 cc65be5a0bc43ae071d2240efd9f8231
+datetime.timedelta(microseconds=5) / 76 89e87239797c3b920011f3e8497ca285
+datetime.timedelta(days=7, seconds=8, microseconds=9) / 76 f4fad9c60572259a68b56e6e05f42286
+datetime.timedelta(days=-7, seconds=8, microseconds=9) / 76 d987331f95a03784902d16c0d8eaced5
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) / 76 6337efb3377c4e26038133d7d1ae266c
+datetime.timedelta(days=-999999999) / 76 61da2cbc40011700871f3cc308d751a2
+T(days=1, seconds=2, microseconds=3) / 76 369f5efa10544045cdb4451dc2e34a6d
+datetime.timedelta(0) // 76 f475cbb5912b34d6da9b7a0a60344996
+datetime.timedelta(days=1) // 76 3b6ad350c76de5b844d2108e03b70cb9
+datetime.timedelta(days=-1) // 76 b5de9b10a1837e2199f7ca8113f001db
+datetime.timedelta(seconds=1) // 76 c311d2cfc516bb1a92aa416beb47bb50
+datetime.timedelta(microseconds=1) // 76 550d4dae0c0ea98f2c6b577a1a2ab4e1
+datetime.timedelta(microseconds=3) // 76 4a4e79bb2bbe1ae43934ff2cf46e9c1b
+datetime.timedelta(microseconds=5) // 76 98a48de96b2db887f200d8a80456af20
+datetime.timedelta(days=7, seconds=8, microseconds=9) // 76 ca5112465b6cb708b804c9b88d4df363
+datetime.timedelta(days=-7, seconds=8, microseconds=9) // 76 3317d4c11639fe41a62afe4654b0f2dd
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) // 76 83f08e02c530ac5fef1427d43a24914f
+datetime.timedelta(days=-999999999) // 76 47647683b8df09c3f0f2f76f0c3d85a3
+T(days=1, seconds=2, microseconds=3) // 76 29da0aadf1ad26c50589d49997cb972d
+datetime.timedelta(0) % 76 7ae0f73dc441d70cce59c09e81b8d8b1
+datetime.timedelta(days=1) % 76 cd37f9f59d3262d56dd9dffc7ce8f6d2
+datetime.timedelta(days=-1) % 76 df1d175331d163b2761a6286d1cf1ea5
+datetime.timedelta(seconds=1) % 76 aa4bb26d78985b51dc7501192a713d5c
+datetime.timedelta(microseconds=1) % 76 b1a329aa638f026b2ed397767d344c57
+datetime.timedelta(microseconds=3) % 76 badb91f80f72448a18d2add767dee3f8
+datetime.timedelta(microseconds=5) % 76 fe2701a153bb1cb0de5a9751ff49ee0e
+datetime.timedelta(days=7, seconds=8, microseconds=9) % 76 b1c83fb46538e2c83d815d88a4143137
+datetime.timedelta(days=-7, seconds=8, microseconds=9) % 76 9be57ddb50a7fd6d0565dc98a810e31c
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) % 76 657cd1a846a785096fc3b28ccb06523d
+datetime.timedelta(days=-999999999) % 76 35c435fa4058249feae201279fd793e2
+T(days=1, seconds=2, microseconds=3) % 76 b834107eb429b9fed3894f82ef0d5798
+datetime.timedelta(0) divmod 76 42eeaaa3dba85210bc8e18371b192511
+datetime.timedelta(days=1) divmod 76 f01a8f1051812bc83d122c5f83d1326e
+datetime.timedelta(days=-1) divmod 76 274d1973ed1b0e879ff8c06ebf6286bc
+datetime.timedelta(seconds=1) divmod 76 96294d0c1e4be230abcbefa81574c1d5
+datetime.timedelta(microseconds=1) divmod 76 7171aac23e0eb14fdeae34d703c4a8f6
+datetime.timedelta(microseconds=3) divmod 76 acdd767a953134dfbd88eb175bcbd006
+datetime.timedelta(microseconds=5) divmod 76 bce64848643927e53662988b0a401d33
+datetime.timedelta(days=7, seconds=8, microseconds=9) divmod 76 8154da3d44ce943c84b1596b5d7bf929
+datetime.timedelta(days=-7, seconds=8, microseconds=9) divmod 76 a86318d8e8e2424bac3a894002a3414c
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) divmod 76 8c555d079915cddf62c3ba26525a00c9
+datetime.timedelta(days=-999999999) divmod 76 2f31e225dea1551ce8986c544aba9aaf
+T(days=1, seconds=2, microseconds=3) divmod 76 831c0e959440d77e2ffa142d8a5811d3
+datetime.timedelta(0) ** 76 ab337c2c3907f374636df4d97f250953
+datetime.timedelta(days=1) ** 76 e65786a74f6f330c2520cb6f8cee4ff9
+datetime.timedelta(days=-1) ** 76 a3f424279d966ba7c34e5e6c98b1f195
+datetime.timedelta(seconds=1) ** 76 d9b9a065630d3dfd5549f6833a9b9e4f
+datetime.timedelta(microseconds=1) ** 76 9532ae170c82a79a13587af3e71ebb18
+datetime.timedelta(microseconds=3) ** 76 5a057dd781b32f981ba64e40ab0f13ae
+datetime.timedelta(microseconds=5) ** 76 499770283fe4b0ad0aca108a0c841649
+datetime.timedelta(days=7, seconds=8, microseconds=9) ** 76 1f5c706d8c18384708c2a829d3586964
+datetime.timedelta(days=-7, seconds=8, microseconds=9) ** 76 963a5a35138593d9751cad7083290d8f
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) ** 76 0f4e4b046b46b5ce5c08ad783d6acc12
+datetime.timedelta(days=-999999999) ** 76 0eed64f2472897f0dc6da8077f9e03b9
+T(days=1, seconds=2, microseconds=3) ** 76 b00fc2f487ad708d206e2aca1807f451
+datetime.timedelta(0) @ 76 eda698411e7bfdcd63949d357dc7f5d2
+datetime.timedelta(days=1) @ 76 62f01ffb63f32f85de6fbfd8f2b01d13
+datetime.timedelta(days=-1) @ 76 25d5c73c9a33bd8be98d52f0ab39d709
+datetime.timedelta(seconds=1) @ 76 4c8def736951958b315f145e14145513
+datetime.timedelta(microseconds=1) @ 76 02f6376691f1a4c59f2b1cb9f82661d3
+datetime.timedelta(microseconds=3) @ 76 2a1ca4ae67443fd9ab2aae32ffe50234
+datetime.timedelta(microseconds=5) @ 76 5966f37317279f61ea6d8273771166cb
+datetime.timedelta(days=7, seconds=8, microseconds=9) @ 76 fae4bb6431b32ad17171d739083ffd8b
+datetime.timedelta(days=-7, seconds=8, microseconds=9) @ 76 d87ec932c0737380627ff845d270b9fb
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) @ 76 1a2d76c62de29791144833bfd26e172f
+datetime.timedelta(days=-999999999) @ 76 9d061dbfe87b75982e6b3cc8b6825f6c
+T(days=1, seconds=2, microseconds=3) @ 76 54945f69a449fa6aba1524b8c92a8284
+datetime.timedelta(0) << 76 6a0d293b9669ea6255076c14cf25d764
+datetime.timedelta(days=1) << 76 de07926634cafc9a010236dc9c1717a8
+datetime.timedelta(days=-1) << 76 ec6415f539fc22d17be6fbd5c9bb798e
+datetime.timedelta(seconds=1) << 76 b95576d34771a7dbc889cd7bacfca08a
+datetime.timedelta(microseconds=1) << 76 49be80533fcd4d96919c879bcf222ad8
+datetime.timedelta(microseconds=3) << 76 443b6464541b5e7f101b4eda9b78cd74
+datetime.timedelta(microseconds=5) << 76 b512f3690c142343cbbb6343c8e44bb7
+datetime.timedelta(days=7, seconds=8, microseconds=9) << 76 24499e2752c0dd021acda11e23dd4e49
+datetime.timedelta(days=-7, seconds=8, microseconds=9) << 76 9b2153dd767a01e452f145b9ab5bdfed
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) << 76 6d6724ed1ed4515c00e5666e4e9f94e2
+datetime.timedelta(days=-999999999) << 76 d206fd4204de33897ff4f93d3e62cb9e
+T(days=1, seconds=2, microseconds=3) << 76 03ff3548c8c58f9be13bd2c3b141cef3
+datetime.timedelta(0) & 76 46130da9aa3187f63bafa9c8572eb494
+datetime.timedelta(days=1) & 76 87abe00417a3a1586d9e9df2f06494ff
+datetime.timedelta(days=-1) & 76 2f7764819fb1fc1fc7372a03afdb4733
+datetime.timedelta(seconds=1) & 76 c9c73b2054231e3b13d3bc40c485077e
+datetime.timedelta(microseconds=1) & 76 158c9d6d05fff9a02fff6dddec1cd04e
+datetime.timedelta(microseconds=3) & 76 35ed4be846895471186516764f72f79c
+datetime.timedelta(microseconds=5) & 76 5270c5b0cfb8726ad1f5ea87b2036851
+datetime.timedelta(days=7, seconds=8, microseconds=9) & 76 f2a6015dba486af7ec72a81f85ccbc25
+datetime.timedelta(days=-7, seconds=8, microseconds=9) & 76 2f0cbb100a3b9494fd01c0d34d6bcea9
+datetime.timedelta(days=999999999, seconds=86399, microseconds=999999) & 76 ad0cc3416eccf10a3614a1bab5b2abd0
+datetime.timedelta(days=-999999999) & 76 9afbb9606698dbfe5cb101cfae251f07
+T(days=1, seconds=2, microseconds=3) & 76 07a4ff01cbea8fb3114a86dbd11c09d3
+===== the methods themselves
+td(0, 7).__add__(datetime.timedelta(seconds=3)) -> datetime.timedelta(seconds=10)
+td(0, 7).__add__(2) -> NotImplemented
+td(0, 7).__add__(0.5) -> NotImplemented
+td(0, 7).__add__(None) -> NotImplemented
+td(0, 7).__add__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__add__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__radd__(datetime.timedelta(seconds=3)) -> datetime.timedelta(seconds=10)
+td(0, 7).__radd__(2) -> NotImplemented
+td(0, 7).__radd__(0.5) -> NotImplemented
+td(0, 7).__radd__(None) -> NotImplemented
+td(0, 7).__radd__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__radd__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__sub__(datetime.timedelta(seconds=3)) -> datetime.timedelta(seconds=4)
+td(0, 7).__sub__(2) -> NotImplemented
+td(0, 7).__sub__(0.5) -> NotImplemented
+td(0, 7).__sub__(None) -> NotImplemented
+td(0, 7).__sub__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__sub__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__rsub__(datetime.timedelta(seconds=3)) -> datetime.timedelta(days=-1, seconds=86396)
+td(0, 7).__rsub__(2) -> NotImplemented
+td(0, 7).__rsub__(0.5) -> NotImplemented
+td(0, 7).__rsub__(None) -> NotImplemented
+td(0, 7).__rsub__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__rsub__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__mul__(datetime.timedelta(seconds=3)) -> NotImplemented
+td(0, 7).__mul__(2) -> datetime.timedelta(seconds=14)
+td(0, 7).__mul__(0.5) -> datetime.timedelta(seconds=3, microseconds=500000)
+td(0, 7).__mul__(None) -> NotImplemented
+td(0, 7).__mul__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__mul__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__rmul__(datetime.timedelta(seconds=3)) -> NotImplemented
+td(0, 7).__rmul__(2) -> datetime.timedelta(seconds=14)
+td(0, 7).__rmul__(0.5) -> datetime.timedelta(seconds=3, microseconds=500000)
+td(0, 7).__rmul__(None) -> NotImplemented
+td(0, 7).__rmul__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__rmul__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__truediv__(datetime.timedelta(seconds=3)) -> 2.3333333333333335
+td(0, 7).__truediv__(2) -> datetime.timedelta(seconds=3, microseconds=500000)
+td(0, 7).__truediv__(0.5) -> datetime.timedelta(seconds=14)
+td(0, 7).__truediv__(None) -> NotImplemented
+td(0, 7).__truediv__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__truediv__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__rtruediv__(datetime.timedelta(seconds=3)) -> 0.42857142857142855
+td(0, 7).__rtruediv__(2) -> NotImplemented
+td(0, 7).__rtruediv__(0.5) -> NotImplemented
+td(0, 7).__rtruediv__(None) -> NotImplemented
+td(0, 7).__rtruediv__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__rtruediv__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__floordiv__(datetime.timedelta(seconds=3)) -> 2
+td(0, 7).__floordiv__(2) -> datetime.timedelta(seconds=3, microseconds=500000)
+td(0, 7).__floordiv__(0.5) -> NotImplemented
+td(0, 7).__floordiv__(None) -> NotImplemented
+td(0, 7).__floordiv__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__floordiv__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__rfloordiv__(datetime.timedelta(seconds=3)) -> 0
+td(0, 7).__rfloordiv__(2) -> NotImplemented
+td(0, 7).__rfloordiv__(0.5) -> NotImplemented
+td(0, 7).__rfloordiv__(None) -> NotImplemented
+td(0, 7).__rfloordiv__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__rfloordiv__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__mod__(datetime.timedelta(seconds=3)) -> datetime.timedelta(seconds=1)
+td(0, 7).__mod__(2) -> NotImplemented
+td(0, 7).__mod__(0.5) -> NotImplemented
+td(0, 7).__mod__(None) -> NotImplemented
+td(0, 7).__mod__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__mod__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__rmod__(datetime.timedelta(seconds=3)) -> datetime.timedelta(seconds=3)
+td(0, 7).__rmod__(2) -> NotImplemented
+td(0, 7).__rmod__(0.5) -> NotImplemented
+td(0, 7).__rmod__(None) -> NotImplemented
+td(0, 7).__rmod__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__rmod__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__divmod__(datetime.timedelta(seconds=3)) -> (2, datetime.timedelta(seconds=1))
+td(0, 7).__divmod__(2) -> NotImplemented
+td(0, 7).__divmod__(0.5) -> NotImplemented
+td(0, 7).__divmod__(None) -> NotImplemented
+td(0, 7).__divmod__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__divmod__' requires a 'datetime.timedelta' object but received a 'int'"
+td(0, 7).__rdivmod__(datetime.timedelta(seconds=3)) -> (0, datetime.timedelta(seconds=3))
+td(0, 7).__rdivmod__(2) -> NotImplemented
+td(0, 7).__rdivmod__(0.5) -> NotImplemented
+td(0, 7).__rdivmod__(None) -> NotImplemented
+td(0, 7).__rdivmod__('a') -> NotImplemented
+   no argument -> 'TypeError: expected 1 argument, got 0'
+   of the class, on an int -> "TypeError: descriptor '__rdivmod__' requires a 'datetime.timedelta' object but received a 'int'"
+===== as_integer_ratio
+ratio (1, 2) -> datetime.timedelta(seconds=5)
+   divided -> datetime.timedelta(seconds=20)
+ratio [1, 2] -> "TypeError: unexpected return type from as_integer_ratio(): expected tuple, not 'list'"
+   divided -> "TypeError: unexpected return type from as_integer_ratio(): expected tuple, not 'list'"
+ratio (1,) -> 'ValueError: as_integer_ratio() must return a 2-tuple'
+   divided -> 'ValueError: as_integer_ratio() must return a 2-tuple'
+ratio (1, 2, 3) -> 'ValueError: as_integer_ratio() must return a 2-tuple'
+   divided -> 'ValueError: as_integer_ratio() must return a 2-tuple'
+ratio None -> "TypeError: unexpected return type from as_integer_ratio(): expected tuple, not 'NoneType'"
+   divided -> "TypeError: unexpected return type from as_integer_ratio(): expected tuple, not 'NoneType'"
+ratio ('a', 'b') -> 'TypeError: non-integer arguments in division'
+   divided -> 'TypeError: non-integer arguments in division'
+ratio (1.5, 2) -> 'TypeError: non-integer arguments in division'
+   divided -> 'TypeError: non-integer arguments in division'
+ratio (1, 0) -> 'ZeroDivisionError: division by zero'
+   divided -> datetime.timedelta(0)
+ratio (1, 2) -> datetime.timedelta(seconds=5)
+   divided -> datetime.timedelta(seconds=20)
+ratio (1, 2) -> 'TypeError: non-integer arguments in division'
+   divided -> 'TypeError: non-integer arguments in division'
+ratio (True, True) -> datetime.timedelta(seconds=10)
+   divided -> datetime.timedelta(seconds=10)
+ratio (1000000000000000000000000000000, 100000000000000000000000000000) -> datetime.timedelta(seconds=100)
+   divided -> datetime.timedelta(seconds=1)
+===== nearest
+-12 us -> [-12, -6, -4, -3, -2, -2, 12, 6, 4, 3, 2]
+   times -> [-6, -3, -18, -30, 6, 18, -1, -4]
+-11 us -> [-11, -6, -4, -3, -2, -1, 11, 6, 4, 3, 1]
+   times -> [-6, -3, -16, -28, 6, 16, -1, -3]
+-10 us -> [-10, -5, -3, -2, -2, -1, 10, 5, 3, 2, 1]
+   times -> [-5, -2, -15, -25, 5, 15, -1, -3]
+-9 us -> [-9, -4, -3, -2, -2, -1, 9, 4, 3, 2, 1]
+   times -> [-4, -2, -14, -22, 4, 14, -1, -3]
+-8 us -> [-8, -4, -3, -2, -2, -1, 8, 4, 3, 2, 1]
+   times -> [-4, -2, -12, -20, 4, 12, -1, -2]
+-7 us -> [-7, -4, -2, -2, -1, -1, 7, 4, 2, 2, 1]
+   times -> [-4, -2, -10, -18, 4, 10, -1, -2]
+-6 us -> [-6, -3, -2, -2, -1, -1, 6, 3, 2, 2, 1]
+   times -> [-3, -2, -9, -15, 3, 9, -1, -2]
+-5 us -> [-5, -2, -2, -1, -1, -1, 5, 2, 2, 1, 1]
+   times -> [-2, -1, -8, -12, 2, 8, -1, -1]
+-4 us -> [-4, -2, -1, -1, -1, 0, 4, 2, 1, 1, 0]
+   times -> [-2, -1, -6, -10, 2, 6, 0, -1]
+-3 us -> [-3, -2, -1, -1, -1, 0, 3, 2, 1, 1, 0]
+   times -> [-2, -1, -4, -8, 2, 4, 0, -1]
+-2 us -> [-2, -1, -1, 0, 0, 0, 2, 1, 1, 0, 0]
+   times -> [-1, 0, -3, -5, 1, 3, 0, -1]
+-1 us -> [-1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]
+   times -> [0, 0, -2, -2, 0, 2, 0, 0]
+0 us -> [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+   times -> [0, 0, 0, 0, 0, 0, 0, 0]
+1 us -> [1, 0, 0, 0, 0, 0, -1, 0, 0, 0, 0]
+   times -> [0, 0, 2, 2, 0, -2, 0, 0]
+2 us -> [2, 1, 1, 0, 0, 0, -2, -1, -1, 0, 0]
+   times -> [1, 0, 3, 5, -1, -3, 0, 1]
+3 us -> [3, 2, 1, 1, 1, 0, -3, -2, -1, -1, 0]
+   times -> [2, 1, 4, 8, -2, -4, 0, 1]
+4 us -> [4, 2, 1, 1, 1, 0, -4, -2, -1, -1, 0]
+   times -> [2, 1, 6, 10, -2, -6, 0, 1]
+5 us -> [5, 2, 2, 1, 1, 1, -5, -2, -2, -1, -1]
+   times -> [2, 1, 8, 12, -2, -8, 1, 1]
+6 us -> [6, 3, 2, 2, 1, 1, -6, -3, -2, -2, -1]
+   times -> [3, 2, 9, 15, -3, -9, 1, 2]
+7 us -> [7, 4, 2, 2, 1, 1, -7, -4, -2, -2, -1]
+   times -> [4, 2, 10, 18, -4, -10, 1, 2]
+8 us -> [8, 4, 3, 2, 2, 1, -8, -4, -3, -2, -1]
+   times -> [4, 2, 12, 20, -4, -12, 1, 2]
+9 us -> [9, 4, 3, 2, 2, 1, -9, -4, -3, -2, -1]
+   times -> [4, 2, 14, 22, -4, -14, 1, 3]
+10 us -> [10, 5, 3, 2, 2, 1, -10, -5, -3, -2, -1]
+   times -> [5, 2, 15, 25, -5, -15, 1, 3]
+11 us -> [11, 6, 4, 3, 2, 1, -11, -6, -4, -3, -1]
+   times -> [6, 3, 16, 28, -6, -16, 1, 3]
+12 us -> [12, 6, 4, 3, 2, 2, -12, -6, -4, -3, -2]
+   times -> [6, 3, 18, 30, -6, -18, 1, 4]
+===== compared
+datetime.timedelta(0) == -> [True, False, False, False, False, False, False, False]
+   0 -> False
+   the other way -> False
+   1 -> False
+   the other way -> False
+   None -> False
+   the other way -> False
+   'a' -> False
+   the other way -> False
+   86400.0 -> False
+   the other way -> False
+   datetime.date(1, 1, 1) -> False
+   the other way -> False
+   (1, 0, 0) -> False
+   the other way -> False
+datetime.timedelta(days=1) == -> [False, True, False, False, False, True, False, False]
+   0 -> False
+   the other way -> False
+   1 -> False
+   the other way -> False
+   None -> False
+   the other way -> False
+   'a' -> False
+   the other way -> False
+   86400.0 -> False
+   the other way -> False
+   datetime.date(1, 1, 1) -> False
+   the other way -> False
+   (1, 0, 0) -> False
+   the other way -> False
+datetime.timedelta(seconds=1) == -> [False, False, True, False, False, False, False, False]
+   0 -> False
+   the other way -> False
+   1 -> False
+   the other way -> False
+   None -> False
+   the other way -> False
+   'a' -> False
+   the other way -> False
+   86400.0 -> False
+   the other way -> False
+   datetime.date(1, 1, 1) -> False
+   the other way -> False
+   (1, 0, 0) -> False
+   the other way -> False
+datetime.timedelta(microseconds=1) == -> [False, False, False, True, False, False, False, False]
+   0 -> False
+   the other way -> False
+   1 -> False
+   the other way -> False
+   None -> False
+   the other way -> False
+   'a' -> False
+   the other way -> False
+   86400.0 -> False
+   the other way -> False
+   datetime.date(1, 1, 1) -> False
+   the other way -> False
+   (1, 0, 0) -> False
+   the other way -> False
+datetime.timedelta(days=-1) == -> [False, False, False, False, True, False, False, False]
+   0 -> False
+   the other way -> False
+   1 -> False
+   the other way -> False
+   None -> False
+   the other way -> False
+   'a' -> False
+   the other way -> False
+   86400.0 -> False
+   the other way -> False
+   datetime.date(1, 1, 1) -> False
+   the other way -> False
+   (1, 0, 0) -> False
+   the other way -> False
+T(days=1) == -> [False, True, False, False, False, True, False, False]
+   0 -> False
+   the other way -> False
+   1 -> False
+   the other way -> False
+   None -> False
+   the other way -> False
+   'a' -> False
+   the other way -> False
+   86400.0 -> False
+   the other way -> False
+   datetime.date(1, 1, 1) -> False
+   the other way -> False
+   (1, 0, 0) -> False
+   the other way -> False
+datetime.timedelta(0) != -> [False, True, True, True, True, True, True, True]
+   0 -> True
+   the other way -> True
+   1 -> True
+   the other way -> True
+   None -> True
+   the other way -> True
+   'a' -> True
+   the other way -> True
+   86400.0 -> True
+   the other way -> True
+   datetime.date(1, 1, 1) -> True
+   the other way -> True
+   (1, 0, 0) -> True
+   the other way -> True
+datetime.timedelta(days=1) != -> [True, False, True, True, True, False, True, True]
+   0 -> True
+   the other way -> True
+   1 -> True
+   the other way -> True
+   None -> True
+   the other way -> True
+   'a' -> True
+   the other way -> True
+   86400.0 -> True
+   the other way -> True
+   datetime.date(1, 1, 1) -> True
+   the other way -> True
+   (1, 0, 0) -> True
+   the other way -> True
+datetime.timedelta(seconds=1) != -> [True, True, False, True, True, True, True, True]
+   0 -> True
+   the other way -> True
+   1 -> True
+   the other way -> True
+   None -> True
+   the other way -> True
+   'a' -> True
+   the other way -> True
+   86400.0 -> True
+   the other way -> True
+   datetime.date(1, 1, 1) -> True
+   the other way -> True
+   (1, 0, 0) -> True
+   the other way -> True
+datetime.timedelta(microseconds=1) != -> [True, True, True, False, True, True, True, True]
+   0 -> True
+   the other way -> True
+   1 -> True
+   the other way -> True
+   None -> True
+   the other way -> True
+   'a' -> True
+   the other way -> True
+   86400.0 -> True
+   the other way -> True
+   datetime.date(1, 1, 1) -> True
+   the other way -> True
+   (1, 0, 0) -> True
+   the other way -> True
+datetime.timedelta(days=-1) != -> [True, True, True, True, False, True, True, True]
+   0 -> True
+   the other way -> True
+   1 -> True
+   the other way -> True
+   None -> True
+   the other way -> True
+   'a' -> True
+   the other way -> True
+   86400.0 -> True
+   the other way -> True
+   datetime.date(1, 1, 1) -> True
+   the other way -> True
+   (1, 0, 0) -> True
+   the other way -> True
+T(days=1) != -> [True, False, True, True, True, False, True, True]
+   0 -> True
+   the other way -> True
+   1 -> True
+   the other way -> True
+   None -> True
+   the other way -> True
+   'a' -> True
+   the other way -> True
+   86400.0 -> True
+   the other way -> True
+   datetime.date(1, 1, 1) -> True
+   the other way -> True
+   (1, 0, 0) -> True
+   the other way -> True
+datetime.timedelta(0) < -> [False, True, True, True, False, True, True, False]
+   0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=1) < -> [False, False, False, False, False, False, True, False]
+   0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(seconds=1) < -> [False, True, False, False, False, True, True, False]
+   0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(microseconds=1) < -> [False, True, True, False, False, True, True, False]
+   0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=-1) < -> [True, True, True, True, False, True, True, False]
+   0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<' not supported between instances of 'tuple' and 'datetime.timedelta'"
+T(days=1) < -> [False, False, False, False, False, False, True, False]
+   0 -> "TypeError: '<' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'T'"
+   1 -> "TypeError: '<' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '<' not supported between instances of 'int' and 'T'"
+   None -> "TypeError: '<' not supported between instances of 'T' and 'NoneType'"
+   the other way -> "TypeError: '<' not supported between instances of 'NoneType' and 'T'"
+   'a' -> "TypeError: '<' not supported between instances of 'T' and 'str'"
+   the other way -> "TypeError: '<' not supported between instances of 'str' and 'T'"
+   86400.0 -> "TypeError: '<' not supported between instances of 'T' and 'float'"
+   the other way -> "TypeError: '<' not supported between instances of 'float' and 'T'"
+   datetime.date(1, 1, 1) -> "TypeError: '<' not supported between instances of 'T' and 'datetime.date'"
+   the other way -> "TypeError: '<' not supported between instances of 'datetime.date' and 'T'"
+   (1, 0, 0) -> "TypeError: '<' not supported between instances of 'T' and 'tuple'"
+   the other way -> "TypeError: '<' not supported between instances of 'tuple' and 'T'"
+datetime.timedelta(0) <= -> [True, True, True, True, False, True, True, False]
+   0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=1) <= -> [False, True, False, False, False, True, True, False]
+   0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(seconds=1) <= -> [False, True, True, False, False, True, True, False]
+   0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(microseconds=1) <= -> [False, True, True, True, False, True, True, False]
+   0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=-1) <= -> [True, True, True, True, True, True, True, False]
+   0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '<=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '<=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '<=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '<=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+T(days=1) <= -> [False, True, False, False, False, True, True, False]
+   0 -> "TypeError: '<=' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'T'"
+   1 -> "TypeError: '<=' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '<=' not supported between instances of 'int' and 'T'"
+   None -> "TypeError: '<=' not supported between instances of 'T' and 'NoneType'"
+   the other way -> "TypeError: '<=' not supported between instances of 'NoneType' and 'T'"
+   'a' -> "TypeError: '<=' not supported between instances of 'T' and 'str'"
+   the other way -> "TypeError: '<=' not supported between instances of 'str' and 'T'"
+   86400.0 -> "TypeError: '<=' not supported between instances of 'T' and 'float'"
+   the other way -> "TypeError: '<=' not supported between instances of 'float' and 'T'"
+   datetime.date(1, 1, 1) -> "TypeError: '<=' not supported between instances of 'T' and 'datetime.date'"
+   the other way -> "TypeError: '<=' not supported between instances of 'datetime.date' and 'T'"
+   (1, 0, 0) -> "TypeError: '<=' not supported between instances of 'T' and 'tuple'"
+   the other way -> "TypeError: '<=' not supported between instances of 'tuple' and 'T'"
+datetime.timedelta(0) > -> [False, False, False, False, True, False, False, True]
+   0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=1) > -> [True, False, True, True, True, False, False, True]
+   0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(seconds=1) > -> [True, False, False, True, True, False, False, True]
+   0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(microseconds=1) > -> [True, False, False, False, True, False, False, True]
+   0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=-1) > -> [False, False, False, False, False, False, False, True]
+   0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>' not supported between instances of 'tuple' and 'datetime.timedelta'"
+T(days=1) > -> [True, False, True, True, True, False, False, True]
+   0 -> "TypeError: '>' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'T'"
+   1 -> "TypeError: '>' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '>' not supported between instances of 'int' and 'T'"
+   None -> "TypeError: '>' not supported between instances of 'T' and 'NoneType'"
+   the other way -> "TypeError: '>' not supported between instances of 'NoneType' and 'T'"
+   'a' -> "TypeError: '>' not supported between instances of 'T' and 'str'"
+   the other way -> "TypeError: '>' not supported between instances of 'str' and 'T'"
+   86400.0 -> "TypeError: '>' not supported between instances of 'T' and 'float'"
+   the other way -> "TypeError: '>' not supported between instances of 'float' and 'T'"
+   datetime.date(1, 1, 1) -> "TypeError: '>' not supported between instances of 'T' and 'datetime.date'"
+   the other way -> "TypeError: '>' not supported between instances of 'datetime.date' and 'T'"
+   (1, 0, 0) -> "TypeError: '>' not supported between instances of 'T' and 'tuple'"
+   the other way -> "TypeError: '>' not supported between instances of 'tuple' and 'T'"
+datetime.timedelta(0) >= -> [True, False, False, False, True, False, False, True]
+   0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=1) >= -> [True, True, True, True, True, True, False, True]
+   0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(seconds=1) >= -> [True, False, True, True, True, False, False, True]
+   0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(microseconds=1) >= -> [True, False, False, True, True, False, False, True]
+   0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+datetime.timedelta(days=-1) >= -> [False, False, False, False, True, False, False, True]
+   0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   1 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'datetime.timedelta'"
+   None -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'datetime.timedelta'"
+   'a' -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'datetime.timedelta'"
+   86400.0 -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'float'"
+   the other way -> "TypeError: '>=' not supported between instances of 'float' and 'datetime.timedelta'"
+   datetime.date(1, 1, 1) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'datetime.date'"
+   the other way -> "TypeError: '>=' not supported between instances of 'datetime.date' and 'datetime.timedelta'"
+   (1, 0, 0) -> "TypeError: '>=' not supported between instances of 'datetime.timedelta' and 'tuple'"
+   the other way -> "TypeError: '>=' not supported between instances of 'tuple' and 'datetime.timedelta'"
+T(days=1) >= -> [True, True, True, True, True, True, False, True]
+   0 -> "TypeError: '>=' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'T'"
+   1 -> "TypeError: '>=' not supported between instances of 'T' and 'int'"
+   the other way -> "TypeError: '>=' not supported between instances of 'int' and 'T'"
+   None -> "TypeError: '>=' not supported between instances of 'T' and 'NoneType'"
+   the other way -> "TypeError: '>=' not supported between instances of 'NoneType' and 'T'"
+   'a' -> "TypeError: '>=' not supported between instances of 'T' and 'str'"
+   the other way -> "TypeError: '>=' not supported between instances of 'str' and 'T'"
+   86400.0 -> "TypeError: '>=' not supported between instances of 'T' and 'float'"
+   the other way -> "TypeError: '>=' not supported between instances of 'float' and 'T'"
+   datetime.date(1, 1, 1) -> "TypeError: '>=' not supported between instances of 'T' and 'datetime.date'"
+   the other way -> "TypeError: '>=' not supported between instances of 'datetime.date' and 'T'"
+   (1, 0, 0) -> "TypeError: '>=' not supported between instances of 'T' and 'tuple'"
+   the other way -> "TypeError: '>=' not supported between instances of 'tuple' and 'T'"
+sorted -> [datetime.timedelta(days=-1), datetime.timedelta(0), datetime.timedelta(microseconds=1), T(seconds=3), datetime.timedelta(seconds=5), datetime.timedelta(days=1)]
+in a set -> 2
+sum -> datetime.timedelta(days=3)
+sum from 0 -> "TypeError: unsupported operand type(s) for +: 'int' and 'datetime.timedelta'"
+===== attributes
+set days -> 'AttributeError: readonly attribute'
+delete days -> 'AttributeError: readonly attribute'
+descriptor days -> ('member_descriptor', 'Number of days.', 1, 'days', True)
+   of something else -> "TypeError: descriptor 'days' for 'datetime.timedelta' objects doesn't apply to a 'int' object"
+set seconds -> 'AttributeError: readonly attribute'
+delete seconds -> 'AttributeError: readonly attribute'
+descriptor seconds -> ('member_descriptor', 'Number of seconds (>= 0 and less than 1 day).', 2, 'seconds', True)
+   of something else -> "TypeError: descriptor 'seconds' for 'datetime.timedelta' objects doesn't apply to a 'int' object"
+set microseconds -> 'AttributeError: readonly attribute'
+delete microseconds -> 'AttributeError: readonly attribute'
+descriptor microseconds -> ('member_descriptor', 'Number of microseconds (>= 0 and less than 1 second).', 3, 'microseconds', True)
+   of something else -> "TypeError: descriptor 'microseconds' for 'datetime.timedelta' objects doesn't apply to a 'int' object"
+another -> "AttributeError: 'datetime.timedelta' object has no attribute 'x' and no __dict__ for setting new attributes"
+of a derived class -> (None, 1, {'x': 1})
+min, max, resolution -> (datetime.timedelta(days=-999999999), datetime.timedelta(days=999999999, seconds=86399, microseconds=999999), datetime.timedelta(microseconds=1), datetime.timedelta(days=-999999999), 'timedelta')
+set on the class -> "TypeError: cannot set 'x' attribute of immutable type 'datetime.timedelta'"
+weak reference -> "TypeError: cannot create weak reference to 'datetime.timedelta' object"
+__new__ of object -> 'TypeError: object.__new__(datetime.timedelta) is not safe, use datetime.timedelta.__new__()'
+__new__ with another class -> 'TypeError: datetime.timedelta.__new__(int): int is not a subtype of datetime.timedelta'
+__new__ with no class -> 'TypeError: datetime.timedelta.__new__(): not enough arguments'
+__new__ with a derived class -> 'T'
+__init__ -> None
+sizeof -> True
+   int -> "TypeError: int() argument must be a string, a bytes-like object or a real number, not 'datetime.timedelta'"
+   float -> "TypeError: float() argument must be a string or a real number, not 'datetime.timedelta'"
+   index -> "TypeError: 'datetime.timedelta' object cannot be interpreted as an integer"
+   complex -> 'TypeError: complex() argument must be a string or a number, not datetime.timedelta'
+   round -> "TypeError: type datetime.timedelta doesn't define __round__ method"
+   len -> "TypeError: object of type 'datetime.timedelta' has no len()"
+   iter -> "TypeError: 'datetime.timedelta' object is not iterable"
+int, float, index -> [None, None, None, None, None, None, None]
+TN keeps -> ('x', False, False, False)
+done

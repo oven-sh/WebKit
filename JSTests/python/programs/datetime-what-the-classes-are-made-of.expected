@@ -1,0 +1,1070 @@
+['MAXYEAR', 'MINYEAR', 'UTC', '__doc__', '__loader__', '__name__', '__package__', '__spec__', 'date', 'datetime', 'datetime_CAPI', 'time', 'timedelta', 'timezone', 'tzinfo'] _datetime Fast implementation of the datetime module. built-in BuiltinImporter False
+['MAXYEAR', 'MINYEAR', 'UTC', 'date', 'datetime', 'datetime_CAPI', 'time', 'timedelta', 'timezone', 'tzinfo'] ('date', 'datetime', 'time', 'timedelta', 'timezone', 'tzinfo', 'MINYEAR', 'MAXYEAR', 'UTC') 1 9999
+the capsule -> ('PyCapsule', '<capsule object "datetime.datetime_CAPI"', True)
+===== <class 'datetime.timedelta'>
+timedelta timedelta datetime (<class 'datetime.timedelta'>, <class 'object'>) (<class 'object'>,) <class 'object'> <class 'type'> 40 0 0 0 0x1502 None
+'Difference between two datetime values.\n\ntimedelta(days=0, seconds=0, microseconds=0, milliseconds=0, minutes=0, hours=0, weeks=0)\n\nAll arguments are optional and default to 0.\nArguments may be integers or floats, and may be positive or negative.'
+signature -> "ValueError: no signature found for builtin type <class 'datetime.timedelta'>"
+   __abs__ wrapper_descriptor 'abs(self)' ($self, /) __abs__ timedelta.__abs__ timedelta
+      signature -> '(self, /)'
+   __add__ wrapper_descriptor 'Return self+value.' ($self, value, /) __add__ timedelta.__add__ timedelta
+      signature -> '(self, value, /)'
+   __bool__ wrapper_descriptor 'True if self else False' ($self, /) __bool__ timedelta.__bool__ timedelta
+      signature -> '(self, /)'
+   __divmod__ wrapper_descriptor 'Return divmod(self, value).' ($self, value, /) __divmod__ timedelta.__divmod__ timedelta
+      signature -> '(self, value, /)'
+   __doc__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __eq__ wrapper_descriptor 'Return self==value.' ($self, value, /) __eq__ timedelta.__eq__ timedelta
+      signature -> '(self, value, /)'
+   __floordiv__ wrapper_descriptor 'Return self//value.' ($self, value, /) __floordiv__ timedelta.__floordiv__ timedelta
+      signature -> '(self, value, /)'
+   __ge__ wrapper_descriptor 'Return self>=value.' ($self, value, /) __ge__ timedelta.__ge__ timedelta
+      signature -> '(self, value, /)'
+   __gt__ wrapper_descriptor 'Return self>value.' ($self, value, /) __gt__ timedelta.__gt__ timedelta
+      signature -> '(self, value, /)'
+   __hash__ wrapper_descriptor 'Return hash(self).' ($self, /) __hash__ timedelta.__hash__ timedelta
+      signature -> '(self, /)'
+   __le__ wrapper_descriptor 'Return self<=value.' ($self, value, /) __le__ timedelta.__le__ timedelta
+      signature -> '(self, value, /)'
+   __lt__ wrapper_descriptor 'Return self<value.' ($self, value, /) __lt__ timedelta.__lt__ timedelta
+      signature -> '(self, value, /)'
+   __mod__ wrapper_descriptor 'Return self%value.' ($self, value, /) __mod__ timedelta.__mod__ timedelta
+      signature -> '(self, value, /)'
+   __mul__ wrapper_descriptor 'Return self*value.' ($self, value, /) __mul__ timedelta.__mul__ timedelta
+      signature -> '(self, value, /)'
+   __ne__ wrapper_descriptor 'Return self!=value.' ($self, value, /) __ne__ timedelta.__ne__ timedelta
+      signature -> '(self, value, /)'
+   __neg__ wrapper_descriptor '-self' ($self, /) __neg__ timedelta.__neg__ timedelta
+      signature -> '(self, /)'
+   __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' ($type, *args, **kwargs) __new__ timedelta.__new__ None
+      signature -> '(*args, **kwargs)'
+   __pos__ wrapper_descriptor '+self' ($self, /) __pos__ timedelta.__pos__ timedelta
+      signature -> '(self, /)'
+   __radd__ wrapper_descriptor 'Return value+self.' ($self, value, /) __radd__ timedelta.__radd__ timedelta
+      signature -> '(self, value, /)'
+   __rdivmod__ wrapper_descriptor 'Return divmod(value, self).' ($self, value, /) __rdivmod__ timedelta.__rdivmod__ timedelta
+      signature -> '(self, value, /)'
+   __reduce__ method_descriptor '__reduce__() -> (cls, state)' ($self, /) __reduce__ timedelta.__reduce__ timedelta
+      signature -> '(self, /)'
+   __repr__ wrapper_descriptor 'Return repr(self).' ($self, /) __repr__ timedelta.__repr__ timedelta
+      signature -> '(self, /)'
+   __rfloordiv__ wrapper_descriptor 'Return value//self.' ($self, value, /) __rfloordiv__ timedelta.__rfloordiv__ timedelta
+      signature -> '(self, value, /)'
+   __rmod__ wrapper_descriptor 'Return value%self.' ($self, value, /) __rmod__ timedelta.__rmod__ timedelta
+      signature -> '(self, value, /)'
+   __rmul__ wrapper_descriptor 'Return value*self.' ($self, value, /) __rmul__ timedelta.__rmul__ timedelta
+      signature -> '(self, value, /)'
+   __rsub__ wrapper_descriptor 'Return value-self.' ($self, value, /) __rsub__ timedelta.__rsub__ timedelta
+      signature -> '(self, value, /)'
+   __rtruediv__ wrapper_descriptor 'Return value/self.' ($self, value, /) __rtruediv__ timedelta.__rtruediv__ timedelta
+      signature -> '(self, value, /)'
+   __str__ wrapper_descriptor 'Return str(self).' ($self, /) __str__ timedelta.__str__ timedelta
+      signature -> '(self, /)'
+   __sub__ wrapper_descriptor 'Return self-value.' ($self, value, /) __sub__ timedelta.__sub__ timedelta
+      signature -> '(self, value, /)'
+   __truediv__ wrapper_descriptor 'Return self/value.' ($self, value, /) __truediv__ timedelta.__truediv__ timedelta
+      signature -> '(self, value, /)'
+   days member_descriptor 'Number of days.' none days timedelta.days timedelta
+   max timedelta 'Difference between two datetime values.\n\ntimedelta(days=0, seconds=0, microseconds=0, m none none none None
+   microseconds member_descriptor 'Number of microseconds (>= 0 and less than 1 second).' none microseconds timedelta.microseconds timedelta
+   min timedelta 'Difference between two datetime values.\n\ntimedelta(days=0, seconds=0, microseconds=0, m none none none None
+   resolution timedelta 'Difference between two datetime values.\n\ntimedelta(days=0, seconds=0, microseconds=0, m none none none None
+   seconds member_descriptor 'Number of seconds (>= 0 and less than 1 day).' none seconds timedelta.seconds timedelta
+   total_seconds method_descriptor 'Total seconds in the duration.' ($self, /) total_seconds timedelta.total_seconds timedelta
+      signature -> '(self, /)'
+['__abs__', '__add__', '__bool__', '__divmod__', '__floordiv__', '__mod__', '__mul__', '__neg__', '__pos__', '__radd__', '__rdivmod__', '__rfloordiv__', '__rmod__', '__rmul__', '__rsub__', '__rtruediv__', '__sub__', '__truediv__', 'days', 'max', 'microseconds', 'min', 'resolution', 'seconds', 'total_seconds']
+predicates -> [('days', False, True, False, True, False, False), ('max', False, False, False, False, False, False), ('microseconds', False, True, False, True, False, False), ('min', False, False, False, False, False, False), ('resolution', False, False, False, False, False, False), ('seconds', False, True, False, True, False, False), ('total_seconds', True, False, False, False, False, True)]
+===== <class 'datetime.date'>
+date date datetime (<class 'datetime.date'>, <class 'object'>) (<class 'object'>,) <class 'object'> <class 'type'> 32 0 0 0 0x1502 None
+'date(year, month, day) --> date object'
+signature -> "ValueError: no signature found for builtin type <class 'datetime.date'>"
+   __add__ wrapper_descriptor 'Return self+value.' ($self, value, /) __add__ date.__add__ date
+      signature -> '(self, value, /)'
+   __doc__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __eq__ wrapper_descriptor 'Return self==value.' ($self, value, /) __eq__ date.__eq__ date
+      signature -> '(self, value, /)'
+   __format__ method_descriptor 'Formats self with strftime.' None __format__ date.__format__ date
+      signature -> "ValueError: no signature found for builtin <method '__format__' of 'datetime.date' objects>"
+   __ge__ wrapper_descriptor 'Return self>=value.' ($self, value, /) __ge__ date.__ge__ date
+      signature -> '(self, value, /)'
+   __gt__ wrapper_descriptor 'Return self>value.' ($self, value, /) __gt__ date.__gt__ date
+      signature -> '(self, value, /)'
+   __hash__ wrapper_descriptor 'Return hash(self).' ($self, /) __hash__ date.__hash__ date
+      signature -> '(self, /)'
+   __le__ wrapper_descriptor 'Return self<=value.' ($self, value, /) __le__ date.__le__ date
+      signature -> '(self, value, /)'
+   __lt__ wrapper_descriptor 'Return self<value.' ($self, value, /) __lt__ date.__lt__ date
+      signature -> '(self, value, /)'
+   __ne__ wrapper_descriptor 'Return self!=value.' ($self, value, /) __ne__ date.__ne__ date
+      signature -> '(self, value, /)'
+   __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' ($type, *args, **kwargs) __new__ date.__new__ None
+      signature -> '(*args, **kwargs)'
+   __radd__ wrapper_descriptor 'Return value+self.' ($self, value, /) __radd__ date.__radd__ date
+      signature -> '(self, value, /)'
+   __reduce__ method_descriptor '__reduce__() -> (cls, state)' ($self, /) __reduce__ date.__reduce__ date
+      signature -> '(self, /)'
+   __replace__ method_descriptor 'The same as replace().' ($self, /, **changes) __replace__ date.__replace__ date
+      signature -> '(self, /, **changes)'
+   __repr__ wrapper_descriptor 'Return repr(self).' ($self, /) __repr__ date.__repr__ date
+      signature -> '(self, /)'
+   __rsub__ wrapper_descriptor 'Return value-self.' ($self, value, /) __rsub__ date.__rsub__ date
+      signature -> '(self, value, /)'
+   __str__ wrapper_descriptor 'Return str(self).' ($self, /) __str__ date.__str__ date
+      signature -> '(self, /)'
+   __sub__ wrapper_descriptor 'Return self-value.' ($self, value, /) __sub__ date.__sub__ date
+      signature -> '(self, value, /)'
+   ctime method_descriptor 'Return ctime() style string.' ($self, /) ctime date.ctime date
+      signature -> '(self, /)'
+   day getset_descriptor None none day date.day date
+   fromisocalendar classmethod_descriptor 'int, int, int -> Construct a date from the ISO year, week number and weekday.\n\nThis is  None fromisocalendar date.fromisocalendar date
+      signature -> 'ValueError: no signature found for builtin <built-in method fromisocalendar of type object at 0x>'
+   fromisoformat classmethod_descriptor 'str -> Construct a date from a string in ISO 8601 format.' ($type, object, /) fromisoformat date.fromisoformat date
+      signature -> '(object, /)'
+   fromordinal classmethod_descriptor 'int -> date corresponding to a proleptic Gregorian ordinal.' None fromordinal date.fromordinal date
+      signature -> 'ValueError: no signature found for builtin <built-in method fromordinal of type object at 0x>'
+   fromtimestamp classmethod_descriptor 'Create a date from a POSIX timestamp.\n\nThe timestamp is a number, e.g. created via time ($type, timestamp, /) fromtimestamp date.fromtimestamp date
+      signature -> '(timestamp, /)'
+   isocalendar method_descriptor 'Return a named tuple containing ISO year, week number, and weekday.' ($self, /) isocalendar date.isocalendar date
+      signature -> '(self, /)'
+   isoformat method_descriptor 'Return string in ISO 8601 format, YYYY-MM-DD.' ($self, /) isoformat date.isoformat date
+      signature -> '(self, /)'
+   isoweekday method_descriptor 'Return the day of the week represented by the date.\nMonday == 1 ... Sunday == 7' ($self, /) isoweekday date.isoweekday date
+      signature -> '(self, /)'
+   max date 'date(year, month, day) --> date object' none none none None
+   min date 'date(year, month, day) --> date object' none none none None
+   month getset_descriptor None none month date.month date
+   replace method_descriptor 'Return date with new specified fields.' ($self, /, year=unchanged, month=unchanged, day=unchanged) replace date.replace date
+      signature -> "ValueError: <method 'replace' of 'datetime.date' objects> builtin has invalid signature"
+   resolution timedelta 'Difference between two datetime values.\n\ntimedelta(days=0, seconds=0, microseconds=0, m none none none None
+   strftime method_descriptor 'format -> strftime() style string.' None strftime date.strftime date
+      signature -> "ValueError: no signature found for builtin <method 'strftime' of 'datetime.date' objects>"
+   strptime classmethod_descriptor 'string, format -> new date parsed from a string (like time.strptime()).' None strptime date.strptime date
+      signature -> 'ValueError: no signature found for builtin <built-in method strptime of type object at 0x>'
+   timetuple method_descriptor 'Return time tuple, compatible with time.localtime().' ($self, /) timetuple date.timetuple date
+      signature -> '(self, /)'
+   today classmethod_descriptor 'Current date or datetime:  same as self.__class__.fromtimestamp(time.time()).' ($type, /) today date.today date
+      signature -> '()'
+   toordinal method_descriptor 'Return proleptic Gregorian ordinal.  January 1 of year 1 is day 1.' ($self, /) toordinal date.toordinal date
+      signature -> '(self, /)'
+   weekday method_descriptor 'Return the day of the week represented by the date.\nMonday == 0 ... Sunday == 6' ($self, /) weekday date.weekday date
+      signature -> '(self, /)'
+   year getset_descriptor None none year date.year date
+['__add__', '__radd__', '__replace__', '__rsub__', '__sub__', 'ctime', 'day', 'fromisocalendar', 'fromisoformat', 'fromordinal', 'fromtimestamp', 'isocalendar', 'isoformat', 'isoweekday', 'max', 'min', 'month', 'replace', 'resolution', 'strftime', 'strptime', 'timetuple', 'today', 'toordinal', 'weekday', 'year']
+predicates -> [('ctime', True, False, False, False, False, True), ('day', False, True, True, False, False, False), ('fromisocalendar', True, False, False, False, False, True), ('fromisoformat', True, False, False, False, False, True), ('fromordinal', True, False, False, False, False, True), ('fromtimestamp', True, False, False, False, False, True), ('isocalendar', True, False, False, False, False, True), ('isoformat', True, False, False, False, False, True), ('isoweekday', True, False, False, False, False, True), ('max', False, False, False, False, False, False), ('min', False, False, False, False, False, False), ('month', False, True, True, False, False, False), ('replace', True, False, False, False, False, True), ('resolution', False, False, False, False, False, False), ('strftime', True, False, False, False, False, True), ('strptime', True, False, False, False, False, True), ('timetuple', True, False, False, False, False, True), ('today', True, False, False, False, False, True), ('toordinal', True, False, False, False, False, True), ('weekday', True, False, False, False, False, True), ('year', False, True, True, False, False, False)]
+===== <class 'datetime.datetime'>
+datetime datetime datetime (<class 'datetime.datetime'>, <class 'datetime.date'>, <class 'object'>) (<class 'datetime.date'>,) <class 'datetime.date'> <class 'type'> 48 0 0 0 0x1502 None
+'datetime(year, month, day[, hour[, minute[, second[, microsecond[,tzinfo]]]]])\n\nThe year, month and day arguments are required. tzinfo may be None, or an\ninstance of a tzinfo subclass. The remaining arguments may be ints.\n'
+signature -> "ValueError: no signature found for builtin type <class 'datetime.datetime'>"
+   __add__ wrapper_descriptor 'Return self+value.' ($self, value, /) __add__ datetime.__add__ datetime
+      signature -> '(self, value, /)'
+   __doc__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __eq__ wrapper_descriptor 'Return self==value.' ($self, value, /) __eq__ datetime.__eq__ datetime
+      signature -> '(self, value, /)'
+   __ge__ wrapper_descriptor 'Return self>=value.' ($self, value, /) __ge__ datetime.__ge__ datetime
+      signature -> '(self, value, /)'
+   __gt__ wrapper_descriptor 'Return self>value.' ($self, value, /) __gt__ datetime.__gt__ datetime
+      signature -> '(self, value, /)'
+   __hash__ wrapper_descriptor 'Return hash(self).' ($self, /) __hash__ datetime.__hash__ datetime
+      signature -> '(self, /)'
+   __le__ wrapper_descriptor 'Return self<=value.' ($self, value, /) __le__ datetime.__le__ datetime
+      signature -> '(self, value, /)'
+   __lt__ wrapper_descriptor 'Return self<value.' ($self, value, /) __lt__ datetime.__lt__ datetime
+      signature -> '(self, value, /)'
+   __ne__ wrapper_descriptor 'Return self!=value.' ($self, value, /) __ne__ datetime.__ne__ datetime
+      signature -> '(self, value, /)'
+   __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' ($type, *args, **kwargs) __new__ datetime.__new__ None
+      signature -> '(*args, **kwargs)'
+   __radd__ wrapper_descriptor 'Return value+self.' ($self, value, /) __radd__ datetime.__radd__ datetime
+      signature -> '(self, value, /)'
+   __reduce__ method_descriptor '__reduce__() -> (cls, state)' ($self, /) __reduce__ datetime.__reduce__ datetime
+      signature -> '(self, /)'
+   __reduce_ex__ method_descriptor '__reduce_ex__(proto) -> (cls, state)' None __reduce_ex__ datetime.__reduce_ex__ datetime
+      signature -> "ValueError: no signature found for builtin <method '__reduce_ex__' of 'datetime.datetime' objects>"
+   __replace__ method_descriptor 'The same as replace().' ($self, /, **changes) __replace__ datetime.__replace__ datetime
+      signature -> '(self, /, **changes)'
+   __repr__ wrapper_descriptor 'Return repr(self).' ($self, /) __repr__ datetime.__repr__ datetime
+      signature -> '(self, /)'
+   __rsub__ wrapper_descriptor 'Return value-self.' ($self, value, /) __rsub__ datetime.__rsub__ datetime
+      signature -> '(self, value, /)'
+   __str__ wrapper_descriptor 'Return str(self).' ($self, /) __str__ datetime.__str__ datetime
+      signature -> '(self, /)'
+   __sub__ wrapper_descriptor 'Return self-value.' ($self, value, /) __sub__ datetime.__sub__ datetime
+      signature -> '(self, value, /)'
+   astimezone method_descriptor 'tz -> convert to local time in new timezone tz\n' None astimezone datetime.astimezone datetime
+      signature -> "ValueError: no signature found for builtin <method 'astimezone' of 'datetime.datetime' objects>"
+   combine classmethod_descriptor 'date, time -> datetime with same date and time fields' None combine datetime.combine datetime
+      signature -> 'ValueError: no signature found for builtin <built-in method combine of type object at 0x>'
+   ctime method_descriptor 'Return ctime() style string.' ($self, /) ctime datetime.ctime datetime
+      signature -> '(self, /)'
+   date method_descriptor 'Return date object with same year, month and day.' ($self, /) date datetime.date datetime
+      signature -> '(self, /)'
+   dst method_descriptor 'Return self.tzinfo.dst(self).' ($self, /) dst datetime.dst datetime
+      signature -> '(self, /)'
+   fold getset_descriptor None none fold datetime.fold datetime
+   fromisoformat classmethod_descriptor 'string -> datetime from a string in most ISO 8601 formats' ($type, object, /) fromisoformat datetime.fromisoformat datetime
+      signature -> '(object, /)'
+   fromtimestamp classmethod_descriptor "timestamp[, tz] -> tz's local time from POSIX timestamp." None fromtimestamp datetime.fromtimestamp datetime
+      signature -> 'ValueError: no signature found for builtin <built-in method fromtimestamp of type object at 0x>'
+   hour getset_descriptor None none hour datetime.hour datetime
+   isoformat method_descriptor "[sep] -> string in ISO 8601 format, YYYY-MM-DDT[HH[:MM[:SS[.mmm[uuu]]]]][+HH:MM].\nsep is None isoformat datetime.isoformat datetime
+      signature -> "ValueError: no signature found for builtin <method 'isoformat' of 'datetime.datetime' objects>"
+   max datetime 'datetime(year, month, day[, hour[, minute[, second[, microsecond[,tzinfo]]]]])\n\nThe yea none none none None
+   microsecond getset_descriptor None none microsecond datetime.microsecond datetime
+   min datetime 'datetime(year, month, day[, hour[, minute[, second[, microsecond[,tzinfo]]]]])\n\nThe yea none none none None
+   minute getset_descriptor None none minute datetime.minute datetime
+   now classmethod_descriptor 'Returns new datetime object representing current time local to tz.\n\n  tz\n    Timezone  ($type, /, tz=None) now datetime.now datetime
+      signature -> '(tz=None)'
+   replace method_descriptor 'Return datetime with new specified fields.' ($self, /, year=unchanged, month=unchanged, day=unchanged,
+        hour=unchanged, minute=unchanged, second=unchanged,
+        microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged) replace datetime.replace datetime
+      signature -> "ValueError: <method 'replace' of 'datetime.datetime' objects> builtin has invalid signature"
+   resolution timedelta 'Difference between two datetime values.\n\ntimedelta(days=0, seconds=0, microseconds=0, m none none none None
+   second getset_descriptor None none second datetime.second datetime
+   strptime classmethod_descriptor 'string, format -> new datetime parsed from a string (like time.strptime()).' None strptime datetime.strptime datetime
+      signature -> 'ValueError: no signature found for builtin <built-in method strptime of type object at 0x>'
+   time method_descriptor 'Return time object with same time but with tzinfo=None.' ($self, /) time datetime.time datetime
+      signature -> '(self, /)'
+   timestamp method_descriptor 'Return POSIX timestamp as float.' ($self, /) timestamp datetime.timestamp datetime
+      signature -> '(self, /)'
+   timetuple method_descriptor 'Return time tuple, compatible with time.localtime().' ($self, /) timetuple datetime.timetuple datetime
+      signature -> '(self, /)'
+   timetz method_descriptor 'Return time object with same time and tzinfo.' ($self, /) timetz datetime.timetz datetime
+      signature -> '(self, /)'
+   tzinfo getset_descriptor None none tzinfo datetime.tzinfo datetime
+   tzname method_descriptor 'Return self.tzinfo.tzname(self).' ($self, /) tzname datetime.tzname datetime
+      signature -> '(self, /)'
+   utcfromtimestamp classmethod_descriptor 'Construct a naive UTC datetime from a POSIX timestamp.' None utcfromtimestamp datetime.utcfromtimestamp datetime
+      signature -> 'ValueError: no signature found for builtin <built-in method utcfromtimestamp of type object at 0x>'
+   utcnow classmethod_descriptor 'Return a new datetime representing UTC day and time.' ($type, /) utcnow datetime.utcnow datetime
+      signature -> '()'
+   utcoffset method_descriptor 'Return self.tzinfo.utcoffset(self).' ($self, /) utcoffset datetime.utcoffset datetime
+      signature -> '(self, /)'
+   utctimetuple method_descriptor 'Return UTC time tuple, compatible with time.localtime().' ($self, /) utctimetuple datetime.utctimetuple datetime
+      signature -> '(self, /)'
+['__add__', '__radd__', '__replace__', '__rsub__', '__sub__', 'astimezone', 'combine', 'ctime', 'date', 'day', 'dst', 'fold', 'fromisocalendar', 'fromisoformat', 'fromordinal', 'fromtimestamp', 'hour', 'isocalendar', 'isoformat', 'isoweekday', 'max', 'microsecond', 'min', 'minute', 'month', 'now', 'replace', 'resolution', 'second', 'strftime', 'strptime', 'time', 'timestamp', 'timetuple', 'timetz', 'today', 'toordinal', 'tzinfo', 'tzname', 'utcfromtimestamp', 'utcnow', 'utcoffset', 'utctimetuple', 'weekday', 'year']
+predicates -> [('astimezone', True, False, False, False, False, True), ('combine', True, False, False, False, False, True), ('ctime', True, False, False, False, False, True), ('date', True, False, False, False, False, True), ('dst', True, False, False, False, False, True), ('fold', False, True, True, False, False, False), ('fromisoformat', True, False, False, False, False, True), ('fromtimestamp', True, False, False, False, False, True), ('hour', False, True, True, False, False, False), ('isoformat', True, False, False, False, False, True), ('max', False, False, False, False, False, False), ('microsecond', False, True, True, False, False, False), ('min', False, False, False, False, False, False), ('minute', False, True, True, False, False, False), ('now', True, False, False, False, False, True), ('replace', True, False, False, False, False, True), ('resolution', False, False, False, False, False, False), ('second', False, True, True, False, False, False), ('strptime', True, False, False, False, False, True), ('time', True, False, False, False, False, True), ('timestamp', True, False, False, False, False, True), ('timetuple', True, False, False, False, False, True), ('timetz', True, False, False, False, False, True), ('tzinfo', False, True, True, False, False, False), ('tzname', True, False, False, False, False, True), ('utcfromtimestamp', True, False, False, False, False, True), ('utcnow', True, False, False, False, False, True), ('utcoffset', True, False, False, False, False, True), ('utctimetuple', True, False, False, False, False, True)]
+===== <class 'datetime.time'>
+time time datetime (<class 'datetime.time'>, <class 'object'>) (<class 'object'>,) <class 'object'> <class 'type'> 40 0 0 0 0x1502 None
+'time([hour[, minute[, second[, microsecond[, tzinfo]]]]]) --> a time object\n\nAll arguments are optional. tzinfo may be None, or an instance of\na tzinfo subclass. The remaining arguments may be ints.\n'
+signature -> "ValueError: no signature found for builtin type <class 'datetime.time'>"
+   __doc__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __eq__ wrapper_descriptor 'Return self==value.' ($self, value, /) __eq__ time.__eq__ time
+      signature -> '(self, value, /)'
+   __format__ method_descriptor 'Formats self with strftime.' None __format__ time.__format__ time
+      signature -> "ValueError: no signature found for builtin <method '__format__' of 'datetime.time' objects>"
+   __ge__ wrapper_descriptor 'Return self>=value.' ($self, value, /) __ge__ time.__ge__ time
+      signature -> '(self, value, /)'
+   __gt__ wrapper_descriptor 'Return self>value.' ($self, value, /) __gt__ time.__gt__ time
+      signature -> '(self, value, /)'
+   __hash__ wrapper_descriptor 'Return hash(self).' ($self, /) __hash__ time.__hash__ time
+      signature -> '(self, /)'
+   __le__ wrapper_descriptor 'Return self<=value.' ($self, value, /) __le__ time.__le__ time
+      signature -> '(self, value, /)'
+   __lt__ wrapper_descriptor 'Return self<value.' ($self, value, /) __lt__ time.__lt__ time
+      signature -> '(self, value, /)'
+   __ne__ wrapper_descriptor 'Return self!=value.' ($self, value, /) __ne__ time.__ne__ time
+      signature -> '(self, value, /)'
+   __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' ($type, *args, **kwargs) __new__ time.__new__ None
+      signature -> '(*args, **kwargs)'
+   __reduce__ method_descriptor '__reduce__() -> (cls, state)' ($self, /) __reduce__ time.__reduce__ time
+      signature -> '(self, /)'
+   __reduce_ex__ method_descriptor '__reduce_ex__(proto) -> (cls, state)' None __reduce_ex__ time.__reduce_ex__ time
+      signature -> "ValueError: no signature found for builtin <method '__reduce_ex__' of 'datetime.time' objects>"
+   __replace__ method_descriptor 'The same as replace().' ($self, /, **changes) __replace__ time.__replace__ time
+      signature -> '(self, /, **changes)'
+   __repr__ wrapper_descriptor 'Return repr(self).' ($self, /) __repr__ time.__repr__ time
+      signature -> '(self, /)'
+   __str__ wrapper_descriptor 'Return str(self).' ($self, /) __str__ time.__str__ time
+      signature -> '(self, /)'
+   dst method_descriptor 'Return self.tzinfo.dst(self).' ($self, /) dst time.dst time
+      signature -> '(self, /)'
+   fold getset_descriptor None none fold time.fold time
+   fromisoformat classmethod_descriptor 'string -> time from a string in ISO 8601 format' ($type, object, /) fromisoformat time.fromisoformat time
+      signature -> '(object, /)'
+   hour getset_descriptor None none hour time.hour time
+   isoformat method_descriptor "Return string in ISO 8601 format, [HH[:MM[:SS[.mmm[uuu]]]]][+HH:MM].\n\nThe optional argu None isoformat time.isoformat time
+      signature -> "ValueError: no signature found for builtin <method 'isoformat' of 'datetime.time' objects>"
+   max time 'time([hour[, minute[, second[, microsecond[, tzinfo]]]]]) --> a time object\n\nAll argume none none none None
+   microsecond getset_descriptor None none microsecond time.microsecond time
+   min time 'time([hour[, minute[, second[, microsecond[, tzinfo]]]]]) --> a time object\n\nAll argume none none none None
+   minute getset_descriptor None none minute time.minute time
+   replace method_descriptor 'Return time with new specified fields.' ($self, /, hour=unchanged, minute=unchanged, second=unchanged,
+        microsecond=unchanged, tzinfo=unchanged, *, fold=unchanged) replace time.replace time
+      signature -> "ValueError: <method 'replace' of 'datetime.time' objects> builtin has invalid signature"
+   resolution timedelta 'Difference between two datetime values.\n\ntimedelta(days=0, seconds=0, microseconds=0, m none none none None
+   second getset_descriptor None none second time.second time
+   strftime method_descriptor 'format -> strftime() style string.' None strftime time.strftime time
+      signature -> "ValueError: no signature found for builtin <method 'strftime' of 'datetime.time' objects>"
+   strptime classmethod_descriptor 'string, format -> new time parsed from a string (like time.strptime()).' None strptime time.strptime time
+      signature -> 'ValueError: no signature found for builtin <built-in method strptime of type object at 0x>'
+   tzinfo getset_descriptor None none tzinfo time.tzinfo time
+   tzname method_descriptor 'Return self.tzinfo.tzname(self).' ($self, /) tzname time.tzname time
+      signature -> '(self, /)'
+   utcoffset method_descriptor 'Return self.tzinfo.utcoffset(self).' ($self, /) utcoffset time.utcoffset time
+      signature -> '(self, /)'
+['__replace__', 'dst', 'fold', 'fromisoformat', 'hour', 'isoformat', 'max', 'microsecond', 'min', 'minute', 'replace', 'resolution', 'second', 'strftime', 'strptime', 'tzinfo', 'tzname', 'utcoffset']
+predicates -> [('dst', True, False, False, False, False, True), ('fold', False, True, True, False, False, False), ('fromisoformat', True, False, False, False, False, True), ('hour', False, True, True, False, False, False), ('isoformat', True, False, False, False, False, True), ('max', False, False, False, False, False, False), ('microsecond', False, True, True, False, False, False), ('min', False, False, False, False, False, False), ('minute', False, True, True, False, False, False), ('replace', True, False, False, False, False, True), ('resolution', False, False, False, False, False, False), ('second', False, True, True, False, False, False), ('strftime', True, False, False, False, False, True), ('strptime', True, False, False, False, False, True), ('tzinfo', False, True, True, False, False, False), ('tzname', True, False, False, False, False, True), ('utcoffset', True, False, False, False, False, True)]
+===== <class 'datetime.tzinfo'>
+tzinfo tzinfo datetime (<class 'datetime.tzinfo'>, <class 'object'>) (<class 'object'>,) <class 'object'> <class 'type'> 16 0 0 0 0x1502 None
+'Abstract base class for time zone info objects.'
+signature -> "ValueError: no signature found for builtin type <class 'datetime.tzinfo'>"
+   __doc__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' ($type, *args, **kwargs) __new__ tzinfo.__new__ None
+      signature -> '(*args, **kwargs)'
+   __reduce__ method_descriptor '-> (cls, state)' ($self, /) __reduce__ tzinfo.__reduce__ tzinfo
+      signature -> '(self, /)'
+   dst method_descriptor 'datetime -> DST offset as timedelta positive east of UTC.' ($self, object, /) dst tzinfo.dst tzinfo
+      signature -> '(self, object, /)'
+   fromutc method_descriptor 'datetime in UTC -> datetime in local time.' ($self, object, /) fromutc tzinfo.fromutc tzinfo
+      signature -> '(self, object, /)'
+   tzname method_descriptor 'datetime -> string name of time zone.' ($self, object, /) tzname tzinfo.tzname tzinfo
+      signature -> '(self, object, /)'
+   utcoffset method_descriptor 'datetime -> timedelta showing offset from UTC, negative values indicating West of UTC' ($self, object, /) utcoffset tzinfo.utcoffset tzinfo
+      signature -> '(self, object, /)'
+['dst', 'fromutc', 'tzname', 'utcoffset']
+predicates -> [('dst', True, False, False, False, False, True), ('fromutc', True, False, False, False, False, True), ('tzname', True, False, False, False, False, True), ('utcoffset', True, False, False, False, False, True)]
+===== <class 'datetime.timezone'>
+timezone timezone datetime (<class 'datetime.timezone'>, <class 'datetime.tzinfo'>, <class 'object'>) (<class 'datetime.tzinfo'>,) <class 'datetime.tzinfo'> <class 'type'> 32 0 0 0 0x1102 None
+'Fixed offset from UTC implementation of tzinfo.'
+signature -> "ValueError: no signature found for builtin type <class 'datetime.timezone'>"
+   __doc__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __eq__ wrapper_descriptor 'Return self==value.' ($self, value, /) __eq__ timezone.__eq__ timezone
+      signature -> '(self, value, /)'
+   __ge__ wrapper_descriptor 'Return self>=value.' ($self, value, /) __ge__ timezone.__ge__ timezone
+      signature -> '(self, value, /)'
+   __getinitargs__ method_descriptor 'pickle support' ($self, /) __getinitargs__ timezone.__getinitargs__ timezone
+      signature -> '(self, /)'
+   __gt__ wrapper_descriptor 'Return self>value.' ($self, value, /) __gt__ timezone.__gt__ timezone
+      signature -> '(self, value, /)'
+   __hash__ wrapper_descriptor 'Return hash(self).' ($self, /) __hash__ timezone.__hash__ timezone
+      signature -> '(self, /)'
+   __le__ wrapper_descriptor 'Return self<=value.' ($self, value, /) __le__ timezone.__le__ timezone
+      signature -> '(self, value, /)'
+   __lt__ wrapper_descriptor 'Return self<value.' ($self, value, /) __lt__ timezone.__lt__ timezone
+      signature -> '(self, value, /)'
+   __ne__ wrapper_descriptor 'Return self!=value.' ($self, value, /) __ne__ timezone.__ne__ timezone
+      signature -> '(self, value, /)'
+   __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' ($type, *args, **kwargs) __new__ timezone.__new__ None
+      signature -> '(*args, **kwargs)'
+   __repr__ wrapper_descriptor 'Return repr(self).' ($self, /) __repr__ timezone.__repr__ timezone
+      signature -> '(self, /)'
+   __str__ wrapper_descriptor 'Return str(self).' ($self, /) __str__ timezone.__str__ timezone
+      signature -> '(self, /)'
+   dst method_descriptor 'Return None.' ($self, object, /) dst timezone.dst timezone
+      signature -> '(self, object, /)'
+   fromutc method_descriptor 'datetime in UTC -> datetime in local time.' ($self, object, /) fromutc timezone.fromutc timezone
+      signature -> '(self, object, /)'
+   max timezone 'Fixed offset from UTC implementation of tzinfo.' none none none None
+   min timezone 'Fixed offset from UTC implementation of tzinfo.' none none none None
+   tzname method_descriptor "If name is specified when timezone is created, returns the name.  Otherwise returns offse ($self, object, /) tzname timezone.tzname timezone
+      signature -> '(self, object, /)'
+   utc timezone 'Fixed offset from UTC implementation of tzinfo.' none none none None
+   utcoffset method_descriptor 'Return fixed offset.' ($self, object, /) utcoffset timezone.utcoffset timezone
+      signature -> '(self, object, /)'
+['__getinitargs__', 'dst', 'fromutc', 'max', 'min', 'tzname', 'utc', 'utcoffset']
+predicates -> [('dst', True, False, False, False, False, True), ('fromutc', True, False, False, False, False, True), ('max', False, False, False, False, False, False), ('min', False, False, False, False, False, False), ('tzname', True, False, False, False, False, True), ('utc', False, False, False, False, False, False), ('utcoffset', True, False, False, False, False, True)]
+===== <class 'datetime.IsoCalendarDate'>
+IsoCalendarDate IsoCalendarDate datetime (<class 'datetime.IsoCalendarDate'>, <class 'tuple'>, <class 'object'>) (<class 'tuple'>,) <class 'tuple'> <class 'type'> 40 8 0 0 0x4405320 None
+'The result of date.isocalendar() or datetime.isocalendar()\n\nThis object may be accessed either as a tuple of\n  ((year, week, weekday)\nor via the object attributes as named in the above tuple.'
+signature -> '(iterable=(), /)'
+   __doc__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __module__ str "str(object='') -> str\nstr(bytes_or_buffer[, encoding[, errors]]) -> str\n\nCreate a new  none none none None
+   __new__ builtin_function_or_method 'Create and return a new object.  See help(type) for accurate signature.' ($type, *args, **kwargs) __new__ IsoCalendarDate.__new__ None
+      signature -> '(*args, **kwargs)'
+   __reduce__ method_descriptor '__reduce__() -> (cls, state)' ($self, /) __reduce__ IsoCalendarDate.__reduce__ IsoCalendarDate
+      signature -> '(self, /)'
+   __repr__ wrapper_descriptor 'Return repr(self).' ($self, /) __repr__ IsoCalendarDate.__repr__ IsoCalendarDate
+      signature -> '(self, /)'
+   week getset_descriptor None none week IsoCalendarDate.week IsoCalendarDate
+   weekday getset_descriptor None none weekday IsoCalendarDate.weekday IsoCalendarDate
+   year getset_descriptor None none year IsoCalendarDate.year IsoCalendarDate
+['__add__', '__class_getitem__', '__contains__', '__getitem__', '__getnewargs__', '__iter__', '__len__', '__module__', '__mul__', '__rmul__', 'count', 'index', 'week', 'weekday', 'year']
+predicates -> [('week', False, True, True, False, False, False), ('weekday', False, True, True, False, False, False), ('year', False, True, True, False, False, False)]
+===== called wrongly
+timedelta.__abs__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timedelta.__abs__(zzz=1) -> 'TypeError: wrapper __abs__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__abs__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__abs__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__abs__', 'timedelta.__abs__', True, "<method-wrapper '__abs__'")
+timedelta.__add__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__add__(zzz=1) -> 'TypeError: wrapper __add__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__add__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__add__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__add__', 'timedelta.__add__', True, "<method-wrapper '__add__'")
+timedelta.__bool__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timedelta.__bool__(zzz=1) -> 'TypeError: wrapper __bool__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__bool__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__bool__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__bool__', 'timedelta.__bool__', True, "<method-wrapper '__bool__'")
+timedelta.__divmod__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__divmod__(zzz=1) -> 'TypeError: wrapper __divmod__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__divmod__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__divmod__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__divmod__', 'timedelta.__divmod__', True, "<method-wrapper '__divmod__'")
+timedelta.__eq__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__eq__(zzz=1) -> 'TypeError: wrapper __eq__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__eq__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__eq__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__eq__', 'timedelta.__eq__', True, "<method-wrapper '__eq__'")
+timedelta.__floordiv__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__floordiv__(zzz=1) -> 'TypeError: wrapper __floordiv__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__floordiv__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__floordiv__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__floordiv__', 'timedelta.__floordiv__', True, "<method-wrapper '__floordiv__'")
+timedelta.__format__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timedelta.__format__() takes exactly one argument (11 given)'
+timedelta.__format__(zzz=1) -> 'TypeError: timedelta.__format__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method object.__format__() needs an argument'
+   bound -> ('builtin_function_or_method', '__format__', 'timedelta.__format__', True, '<built-in method __format__')
+timedelta.__hash__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timedelta.__hash__(zzz=1) -> 'TypeError: wrapper __hash__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__hash__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__hash__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__hash__', 'timedelta.__hash__', True, "<method-wrapper '__hash__'")
+timedelta.__mod__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__mod__(zzz=1) -> 'TypeError: wrapper __mod__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__mod__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__mod__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__mod__', 'timedelta.__mod__', True, "<method-wrapper '__mod__'")
+timedelta.__mul__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__mul__(zzz=1) -> 'TypeError: wrapper __mul__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__mul__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__mul__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__mul__', 'timedelta.__mul__', True, "<method-wrapper '__mul__'")
+timedelta.__neg__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timedelta.__neg__(zzz=1) -> 'TypeError: wrapper __neg__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__neg__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__neg__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__neg__', 'timedelta.__neg__', True, "<method-wrapper '__neg__'")
+timedelta.__pos__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timedelta.__pos__(zzz=1) -> 'TypeError: wrapper __pos__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__pos__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__pos__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__pos__', 'timedelta.__pos__', True, "<method-wrapper '__pos__'")
+timedelta.__radd__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__radd__(zzz=1) -> 'TypeError: wrapper __radd__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__radd__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__radd__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__radd__', 'timedelta.__radd__', True, "<method-wrapper '__radd__'")
+timedelta.__rdivmod__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__rdivmod__(zzz=1) -> 'TypeError: wrapper __rdivmod__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rdivmod__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rdivmod__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__rdivmod__', 'timedelta.__rdivmod__', True, "<method-wrapper '__rdivmod__'")
+timedelta.__reduce__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timedelta.__reduce__() takes no arguments (11 given)'
+timedelta.__reduce__(zzz=1) -> 'TypeError: timedelta.__reduce__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method timedelta.__reduce__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce__' for 'datetime.timedelta' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce__', 'timedelta.__reduce__', True, '<built-in method __reduce__')
+timedelta.__reduce_ex__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timedelta.__reduce_ex__() takes exactly one argument (11 given)'
+timedelta.__reduce_ex__(zzz=1) -> 'TypeError: timedelta.__reduce_ex__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method object.__reduce_ex__() needs an argument'
+   bound -> ('builtin_function_or_method', '__reduce_ex__', 'timedelta.__reduce_ex__', True, '<built-in method __reduce_ex__')
+timedelta.__repr__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timedelta.__repr__(zzz=1) -> 'TypeError: wrapper __repr__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__repr__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__repr__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__repr__', 'timedelta.__repr__', True, "<method-wrapper '__repr__'")
+timedelta.__rfloordiv__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__rfloordiv__(zzz=1) -> 'TypeError: wrapper __rfloordiv__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rfloordiv__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rfloordiv__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__rfloordiv__', 'timedelta.__rfloordiv__', True, "<method-wrapper '__rfloordiv__'")
+timedelta.__rmod__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__rmod__(zzz=1) -> 'TypeError: wrapper __rmod__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rmod__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rmod__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__rmod__', 'timedelta.__rmod__', True, "<method-wrapper '__rmod__'")
+timedelta.__rmul__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__rmul__(zzz=1) -> 'TypeError: wrapper __rmul__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rmul__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rmul__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__rmul__', 'timedelta.__rmul__', True, "<method-wrapper '__rmul__'")
+timedelta.__rsub__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__rsub__(zzz=1) -> 'TypeError: wrapper __rsub__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rsub__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rsub__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__rsub__', 'timedelta.__rsub__', True, "<method-wrapper '__rsub__'")
+timedelta.__rtruediv__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__rtruediv__(zzz=1) -> 'TypeError: wrapper __rtruediv__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rtruediv__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rtruediv__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__rtruediv__', 'timedelta.__rtruediv__', True, "<method-wrapper '__rtruediv__'")
+timedelta.__str__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timedelta.__str__(zzz=1) -> 'TypeError: wrapper __str__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__str__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__str__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__str__', 'timedelta.__str__', True, "<method-wrapper '__str__'")
+timedelta.__sub__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__sub__(zzz=1) -> 'TypeError: wrapper __sub__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__sub__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__sub__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__sub__', 'timedelta.__sub__', True, "<method-wrapper '__sub__'")
+timedelta.__truediv__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timedelta.__truediv__(zzz=1) -> 'TypeError: wrapper __truediv__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__truediv__' of 'datetime.timedelta' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__truediv__' requires a 'datetime.timedelta' object but received a 'int'"
+   bound -> ('method-wrapper', '__truediv__', 'timedelta.__truediv__', True, "<method-wrapper '__truediv__'")
+timedelta.total_seconds(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timedelta.total_seconds() takes no arguments (11 given)'
+timedelta.total_seconds(zzz=1) -> 'TypeError: timedelta.total_seconds() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method timedelta.total_seconds() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'total_seconds' for 'datetime.timedelta' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'total_seconds', 'timedelta.total_seconds', True, '<built-in method total_seconds')
+date.__add__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+date.__add__(zzz=1) -> 'TypeError: wrapper __add__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__add__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__add__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__add__', 'date.__add__', True, "<method-wrapper '__add__'")
+date.__eq__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+date.__eq__(zzz=1) -> 'TypeError: wrapper __eq__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__eq__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__eq__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__eq__', 'date.__eq__', True, "<method-wrapper '__eq__'")
+date.__format__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: __format__() takes exactly 1 argument (11 given)'
+date.__format__(zzz=1) -> 'TypeError: __format__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.__format__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__format__' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__format__', 'date.__format__', True, '<built-in method __format__')
+date.__hash__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+date.__hash__(zzz=1) -> 'TypeError: wrapper __hash__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__hash__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__hash__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__hash__', 'date.__hash__', True, "<method-wrapper '__hash__'")
+date.__radd__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+date.__radd__(zzz=1) -> 'TypeError: wrapper __radd__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__radd__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__radd__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__radd__', 'date.__radd__', True, "<method-wrapper '__radd__'")
+date.__reduce__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.__reduce__() takes no arguments (11 given)'
+date.__reduce__(zzz=1) -> 'TypeError: date.__reduce__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.__reduce__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce__' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce__', 'date.__reduce__', True, '<built-in method __reduce__')
+date.__reduce_ex__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.__reduce_ex__() takes exactly one argument (11 given)'
+date.__reduce_ex__(zzz=1) -> 'TypeError: date.__reduce_ex__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method object.__reduce_ex__() needs an argument'
+   bound -> ('builtin_function_or_method', '__reduce_ex__', 'date.__reduce_ex__', True, '<built-in method __reduce_ex__')
+date.__replace__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: replace() takes at most 3 arguments (11 given)'
+date.__replace__(zzz=1) -> "TypeError: replace() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method date.__replace__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__replace__' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__replace__', 'date.__replace__', True, '<built-in method __replace__')
+date.__repr__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+date.__repr__(zzz=1) -> 'TypeError: wrapper __repr__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__repr__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__repr__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__repr__', 'date.__repr__', True, "<method-wrapper '__repr__'")
+date.__rsub__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+date.__rsub__(zzz=1) -> 'TypeError: wrapper __rsub__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rsub__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rsub__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__rsub__', 'date.__rsub__', True, "<method-wrapper '__rsub__'")
+date.__str__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+date.__str__(zzz=1) -> 'TypeError: wrapper __str__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__str__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__str__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__str__', 'date.__str__', True, "<method-wrapper '__str__'")
+date.__sub__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+date.__sub__(zzz=1) -> 'TypeError: wrapper __sub__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__sub__' of 'datetime.date' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__sub__' requires a 'datetime.date' object but received a 'int'"
+   bound -> ('method-wrapper', '__sub__', 'date.__sub__', True, "<method-wrapper '__sub__'")
+date.ctime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.ctime() takes no arguments (11 given)'
+date.ctime(zzz=1) -> 'TypeError: date.ctime() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.ctime() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'ctime' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'ctime', 'date.ctime', True, '<built-in method ctime')
+date.fromisocalendar(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: fromisocalendar() takes at most 3 arguments (11 given)'
+date.fromisocalendar(zzz=1) -> "TypeError: fromisocalendar() missing required argument 'year' (pos 1)"
+   unbound, of nothing -> "TypeError: fromisocalendar() missing required argument 'year' (pos 1)"
+   unbound, of an int -> "TypeError: fromisocalendar() missing required argument 'week' (pos 2)"
+   bound -> ('builtin_function_or_method', 'fromisocalendar', 'date.fromisocalendar', True, '<built-in method fromisocalendar')
+date.fromisoformat(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.fromisoformat() takes exactly one argument (11 given)'
+date.fromisoformat(zzz=1) -> 'TypeError: date.fromisoformat() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: date.fromisoformat() takes exactly one argument (0 given)'
+   unbound, of an int -> 'TypeError: fromisoformat: argument must be str'
+   bound -> ('builtin_function_or_method', 'fromisoformat', 'date.fromisoformat', True, '<built-in method fromisoformat')
+date.fromordinal(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: fromordinal() takes exactly 1 argument (11 given)'
+date.fromordinal(zzz=1) -> 'TypeError: fromordinal() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: fromordinal() takes exactly 1 argument (0 given)'
+   unbound, of an int -> datetime.date(1, 1, 5)
+   bound -> ('builtin_function_or_method', 'fromordinal', 'date.fromordinal', True, '<built-in method fromordinal')
+date.fromtimestamp(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.fromtimestamp() takes exactly one argument (11 given)'
+date.fromtimestamp(zzz=1) -> 'TypeError: date.fromtimestamp() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: date.fromtimestamp() takes exactly one argument (0 given)'
+   unbound, of an int -> datetime.date(1969, 12, 31)
+   bound -> ('builtin_function_or_method', 'fromtimestamp', 'date.fromtimestamp', True, '<built-in method fromtimestamp')
+date.isocalendar(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.isocalendar() takes no arguments (11 given)'
+date.isocalendar(zzz=1) -> 'TypeError: date.isocalendar() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.isocalendar() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'isocalendar' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'isocalendar', 'date.isocalendar', True, '<built-in method isocalendar')
+date.isoformat(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.isoformat() takes no arguments (11 given)'
+date.isoformat(zzz=1) -> 'TypeError: date.isoformat() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.isoformat() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'isoformat' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'isoformat', 'date.isoformat', True, '<built-in method isoformat')
+date.isoweekday(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.isoweekday() takes no arguments (11 given)'
+date.isoweekday(zzz=1) -> 'TypeError: date.isoweekday() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.isoweekday() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'isoweekday' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'isoweekday', 'date.isoweekday', True, '<built-in method isoweekday')
+date.replace(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: replace() takes at most 3 arguments (11 given)'
+date.replace(zzz=1) -> "TypeError: replace() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method date.replace() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'replace' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'replace', 'date.replace', True, '<built-in method replace')
+date.strftime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: strftime() takes at most 1 argument (11 given)'
+date.strftime(zzz=1) -> "TypeError: strftime() missing required argument 'format' (pos 1)"
+   unbound, of nothing -> 'TypeError: unbound method date.strftime() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'strftime' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'strftime', 'date.strftime', True, '<built-in method strftime')
+date.strptime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: strptime() takes exactly 2 arguments (11 given)'
+date.strptime(zzz=1) -> 'TypeError: strptime() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: strptime() takes exactly 2 arguments (0 given)'
+   unbound, of an int -> 'TypeError: strptime() takes exactly 2 arguments (1 given)'
+   bound -> ('builtin_function_or_method', 'strptime', 'date.strptime', True, '<built-in method strptime')
+date.timetuple(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.timetuple() takes no arguments (11 given)'
+date.timetuple(zzz=1) -> 'TypeError: date.timetuple() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.timetuple() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'timetuple' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'timetuple', 'date.timetuple', True, '<built-in method timetuple')
+date.today(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.today() takes no arguments (11 given)'
+date.today(zzz=1) -> 'TypeError: date.today() takes no keyword arguments'
+   unbound, of nothing -> 'date'
+   unbound, of an int -> 'TypeError: date.today() takes no arguments (1 given)'
+   bound -> ('builtin_function_or_method', 'today', 'date.today', True, '<built-in method today')
+date.toordinal(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.toordinal() takes no arguments (11 given)'
+date.toordinal(zzz=1) -> 'TypeError: date.toordinal() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.toordinal() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'toordinal' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'toordinal', 'date.toordinal', True, '<built-in method toordinal')
+date.weekday(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: date.weekday() takes no arguments (11 given)'
+date.weekday(zzz=1) -> 'TypeError: date.weekday() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.weekday() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'weekday' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'weekday', 'date.weekday', True, '<built-in method weekday')
+datetime.__add__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+datetime.__add__(zzz=1) -> 'TypeError: wrapper __add__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__add__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__add__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__add__', 'datetime.__add__', True, "<method-wrapper '__add__'")
+datetime.__eq__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+datetime.__eq__(zzz=1) -> 'TypeError: wrapper __eq__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__eq__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__eq__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__eq__', 'datetime.__eq__', True, "<method-wrapper '__eq__'")
+datetime.__format__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: __format__() takes exactly 1 argument (11 given)'
+datetime.__format__(zzz=1) -> 'TypeError: __format__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.__format__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__format__' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__format__', 'datetime.__format__', True, '<built-in method __format__')
+datetime.__hash__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+datetime.__hash__(zzz=1) -> 'TypeError: wrapper __hash__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__hash__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__hash__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__hash__', 'datetime.__hash__', True, "<method-wrapper '__hash__'")
+datetime.__radd__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+datetime.__radd__(zzz=1) -> 'TypeError: wrapper __radd__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__radd__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__radd__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__radd__', 'datetime.__radd__', True, "<method-wrapper '__radd__'")
+datetime.__reduce__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.__reduce__() takes no arguments (11 given)'
+datetime.__reduce__(zzz=1) -> 'TypeError: datetime.__reduce__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.__reduce__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce__' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce__', 'datetime.__reduce__', True, '<built-in method __reduce__')
+datetime.__reduce_ex__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: __reduce_ex__() takes exactly 1 argument (11 given)'
+datetime.__reduce_ex__(zzz=1) -> 'TypeError: __reduce_ex__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.__reduce_ex__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce_ex__' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce_ex__', 'datetime.__reduce_ex__', True, '<built-in method __reduce_ex__')
+datetime.__replace__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: replace() takes at most 9 arguments (11 given)'
+datetime.__replace__(zzz=1) -> "TypeError: replace() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method datetime.__replace__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__replace__' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__replace__', 'datetime.__replace__', True, '<built-in method __replace__')
+datetime.__repr__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+datetime.__repr__(zzz=1) -> 'TypeError: wrapper __repr__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__repr__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__repr__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__repr__', 'datetime.__repr__', True, "<method-wrapper '__repr__'")
+datetime.__rsub__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+datetime.__rsub__(zzz=1) -> 'TypeError: wrapper __rsub__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__rsub__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__rsub__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__rsub__', 'datetime.__rsub__', True, "<method-wrapper '__rsub__'")
+datetime.__str__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+datetime.__str__(zzz=1) -> 'TypeError: wrapper __str__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__str__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__str__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__str__', 'datetime.__str__', True, "<method-wrapper '__str__'")
+datetime.__sub__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+datetime.__sub__(zzz=1) -> 'TypeError: wrapper __sub__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__sub__' of 'datetime.datetime' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__sub__' requires a 'datetime.datetime' object but received a 'int'"
+   bound -> ('method-wrapper', '__sub__', 'datetime.__sub__', True, "<method-wrapper '__sub__'")
+datetime.astimezone(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: astimezone() takes at most 1 argument (11 given)'
+datetime.astimezone(zzz=1) -> "TypeError: astimezone() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method datetime.astimezone() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'astimezone' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'astimezone', 'datetime.astimezone', True, '<built-in method astimezone')
+datetime.combine(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: combine() takes at most 3 arguments (11 given)'
+datetime.combine(zzz=1) -> "TypeError: combine() missing required argument 'date' (pos 1)"
+   unbound, of nothing -> "TypeError: combine() missing required argument 'date' (pos 1)"
+   unbound, of an int -> 'TypeError: combine() argument 1 must be datetime.date, not int'
+   bound -> ('builtin_function_or_method', 'combine', 'datetime.combine', True, '<built-in method combine')
+datetime.ctime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.ctime() takes no arguments (11 given)'
+datetime.ctime(zzz=1) -> 'TypeError: datetime.ctime() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.ctime() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'ctime' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'ctime', 'datetime.ctime', True, '<built-in method ctime')
+datetime.date(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.date() takes no arguments (11 given)'
+datetime.date(zzz=1) -> 'TypeError: datetime.date() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.date() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'date' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'date', 'datetime.date', True, '<built-in method date')
+datetime.dst(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.dst() takes no arguments (11 given)'
+datetime.dst(zzz=1) -> 'TypeError: datetime.dst() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.dst() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'dst' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'dst', 'datetime.dst', True, '<built-in method dst')
+datetime.fromisocalendar(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: fromisocalendar() takes at most 3 arguments (11 given)'
+datetime.fromisocalendar(zzz=1) -> "TypeError: fromisocalendar() missing required argument 'year' (pos 1)"
+   unbound, of nothing -> "TypeError: fromisocalendar() missing required argument 'year' (pos 1)"
+   unbound, of an int -> "TypeError: fromisocalendar() missing required argument 'week' (pos 2)"
+   bound -> ('builtin_function_or_method', 'fromisocalendar', 'datetime.fromisocalendar', True, '<built-in method fromisocalendar')
+datetime.fromisoformat(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.fromisoformat() takes exactly one argument (11 given)'
+datetime.fromisoformat(zzz=1) -> 'TypeError: datetime.fromisoformat() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: datetime.fromisoformat() takes exactly one argument (0 given)'
+   unbound, of an int -> 'TypeError: fromisoformat: argument must be str'
+   bound -> ('builtin_function_or_method', 'fromisoformat', 'datetime.fromisoformat', True, '<built-in method fromisoformat')
+datetime.fromordinal(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: fromordinal() takes exactly 1 argument (11 given)'
+datetime.fromordinal(zzz=1) -> 'TypeError: fromordinal() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: fromordinal() takes exactly 1 argument (0 given)'
+   unbound, of an int -> datetime.datetime(1, 1, 5, 0, 0)
+   bound -> ('builtin_function_or_method', 'fromordinal', 'datetime.fromordinal', True, '<built-in method fromordinal')
+datetime.fromtimestamp(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: fromtimestamp() takes at most 2 arguments (11 given)'
+datetime.fromtimestamp(zzz=1) -> "TypeError: fromtimestamp() missing required argument 'timestamp' (pos 1)"
+   unbound, of nothing -> "TypeError: fromtimestamp() missing required argument 'timestamp' (pos 1)"
+   unbound, of an int -> datetime.datetime(1969, 12, 31, 16, 0, 5)
+   bound -> ('builtin_function_or_method', 'fromtimestamp', 'datetime.fromtimestamp', True, '<built-in method fromtimestamp')
+datetime.isocalendar(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.isocalendar() takes no arguments (11 given)'
+datetime.isocalendar(zzz=1) -> 'TypeError: datetime.isocalendar() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.isocalendar() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'isocalendar' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'isocalendar', 'datetime.isocalendar', True, '<built-in method isocalendar')
+datetime.isoformat(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: isoformat() takes at most 2 arguments (11 given)'
+datetime.isoformat(zzz=1) -> "TypeError: isoformat() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method datetime.isoformat() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'isoformat' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'isoformat', 'datetime.isoformat', True, '<built-in method isoformat')
+datetime.isoweekday(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.isoweekday() takes no arguments (11 given)'
+datetime.isoweekday(zzz=1) -> 'TypeError: datetime.isoweekday() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.isoweekday() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'isoweekday' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'isoweekday', 'datetime.isoweekday', True, '<built-in method isoweekday')
+datetime.now(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: now() takes at most 1 argument (11 given)'
+datetime.now(zzz=1) -> "TypeError: now() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'datetime'
+   unbound, of an int -> "TypeError: tzinfo argument must be None or of a tzinfo subclass, not type 'int'"
+   bound -> ('builtin_function_or_method', 'now', 'datetime.now', True, '<built-in method now')
+datetime.replace(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: replace() takes at most 9 arguments (11 given)'
+datetime.replace(zzz=1) -> "TypeError: replace() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method datetime.replace() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'replace' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'replace', 'datetime.replace', True, '<built-in method replace')
+datetime.strftime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: strftime() takes at most 1 argument (11 given)'
+datetime.strftime(zzz=1) -> "TypeError: strftime() missing required argument 'format' (pos 1)"
+   unbound, of nothing -> 'TypeError: unbound method date.strftime() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'strftime' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'strftime', 'datetime.strftime', True, '<built-in method strftime')
+datetime.strptime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: strptime() takes exactly 2 arguments (11 given)'
+datetime.strptime(zzz=1) -> 'TypeError: strptime() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: strptime() takes exactly 2 arguments (0 given)'
+   unbound, of an int -> 'TypeError: strptime() takes exactly 2 arguments (1 given)'
+   bound -> ('builtin_function_or_method', 'strptime', 'datetime.strptime', True, '<built-in method strptime')
+datetime.time(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.time() takes no arguments (11 given)'
+datetime.time(zzz=1) -> 'TypeError: datetime.time() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.time() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'time' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'time', 'datetime.time', True, '<built-in method time')
+datetime.timestamp(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.timestamp() takes no arguments (11 given)'
+datetime.timestamp(zzz=1) -> 'TypeError: datetime.timestamp() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.timestamp() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'timestamp' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'timestamp', 'datetime.timestamp', True, '<built-in method timestamp')
+datetime.timetuple(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.timetuple() takes no arguments (11 given)'
+datetime.timetuple(zzz=1) -> 'TypeError: datetime.timetuple() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.timetuple() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'timetuple' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'timetuple', 'datetime.timetuple', True, '<built-in method timetuple')
+datetime.timetz(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.timetz() takes no arguments (11 given)'
+datetime.timetz(zzz=1) -> 'TypeError: datetime.timetz() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.timetz() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'timetz' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'timetz', 'datetime.timetz', True, '<built-in method timetz')
+datetime.today(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.today() takes no arguments (11 given)'
+datetime.today(zzz=1) -> 'TypeError: datetime.today() takes no keyword arguments'
+   unbound, of nothing -> 'datetime'
+   unbound, of an int -> 'TypeError: datetime.today() takes no arguments (1 given)'
+   bound -> ('builtin_function_or_method', 'today', 'datetime.today', True, '<built-in method today')
+datetime.toordinal(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.toordinal() takes no arguments (11 given)'
+datetime.toordinal(zzz=1) -> 'TypeError: datetime.toordinal() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.toordinal() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'toordinal' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'toordinal', 'datetime.toordinal', True, '<built-in method toordinal')
+datetime.tzname(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.tzname() takes no arguments (11 given)'
+datetime.tzname(zzz=1) -> 'TypeError: datetime.tzname() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.tzname() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'tzname' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'tzname', 'datetime.tzname', True, '<built-in method tzname')
+datetime.utcfromtimestamp(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: utcfromtimestamp() takes exactly 1 argument (11 given)'
+datetime.utcfromtimestamp(zzz=1) -> 'TypeError: utcfromtimestamp() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: utcfromtimestamp() takes exactly 1 argument (0 given)'
+   unbound, of an int -> datetime.datetime(1970, 1, 1, 0, 0, 5)
+   bound -> ('builtin_function_or_method', 'utcfromtimestamp', 'datetime.utcfromtimestamp', True, '<built-in method utcfromtimestamp')
+datetime.utcnow(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.utcnow() takes no arguments (11 given)'
+datetime.utcnow(zzz=1) -> 'TypeError: datetime.utcnow() takes no keyword arguments'
+   unbound, of nothing -> 'datetime'
+   unbound, of an int -> 'TypeError: datetime.utcnow() takes no arguments (1 given)'
+   bound -> ('builtin_function_or_method', 'utcnow', 'datetime.utcnow', True, '<built-in method utcnow')
+datetime.utcoffset(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.utcoffset() takes no arguments (11 given)'
+datetime.utcoffset(zzz=1) -> 'TypeError: datetime.utcoffset() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.utcoffset() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'utcoffset' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'utcoffset', 'datetime.utcoffset', True, '<built-in method utcoffset')
+datetime.utctimetuple(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.utctimetuple() takes no arguments (11 given)'
+datetime.utctimetuple(zzz=1) -> 'TypeError: datetime.utctimetuple() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method datetime.utctimetuple() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'utctimetuple' for 'datetime.datetime' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'utctimetuple', 'datetime.utctimetuple', True, '<built-in method utctimetuple')
+datetime.weekday(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: datetime.weekday() takes no arguments (11 given)'
+datetime.weekday(zzz=1) -> 'TypeError: datetime.weekday() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method date.weekday() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'weekday' for 'datetime.date' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'weekday', 'datetime.weekday', True, '<built-in method weekday')
+time.__eq__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+time.__eq__(zzz=1) -> 'TypeError: wrapper __eq__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__eq__' of 'datetime.time' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__eq__' requires a 'datetime.time' object but received a 'int'"
+   bound -> ('method-wrapper', '__eq__', 'time.__eq__', True, "<method-wrapper '__eq__'")
+time.__format__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: __format__() takes exactly 1 argument (11 given)'
+time.__format__(zzz=1) -> 'TypeError: __format__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method time.__format__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__format__' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__format__', 'time.__format__', True, '<built-in method __format__')
+time.__hash__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+time.__hash__(zzz=1) -> 'TypeError: wrapper __hash__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__hash__' of 'datetime.time' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__hash__' requires a 'datetime.time' object but received a 'int'"
+   bound -> ('method-wrapper', '__hash__', 'time.__hash__', True, "<method-wrapper '__hash__'")
+time.__reduce__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: time.__reduce__() takes no arguments (11 given)'
+time.__reduce__(zzz=1) -> 'TypeError: time.__reduce__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method time.__reduce__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce__' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce__', 'time.__reduce__', True, '<built-in method __reduce__')
+time.__reduce_ex__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: __reduce_ex__() takes exactly 1 argument (11 given)'
+time.__reduce_ex__(zzz=1) -> 'TypeError: __reduce_ex__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method time.__reduce_ex__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce_ex__' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce_ex__', 'time.__reduce_ex__', True, '<built-in method __reduce_ex__')
+time.__replace__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: replace() takes at most 6 arguments (11 given)'
+time.__replace__(zzz=1) -> "TypeError: replace() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method time.__replace__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__replace__' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__replace__', 'time.__replace__', True, '<built-in method __replace__')
+time.__repr__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+time.__repr__(zzz=1) -> 'TypeError: wrapper __repr__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__repr__' of 'datetime.time' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__repr__' requires a 'datetime.time' object but received a 'int'"
+   bound -> ('method-wrapper', '__repr__', 'time.__repr__', True, "<method-wrapper '__repr__'")
+time.__str__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+time.__str__(zzz=1) -> 'TypeError: wrapper __str__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__str__' of 'datetime.time' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__str__' requires a 'datetime.time' object but received a 'int'"
+   bound -> ('method-wrapper', '__str__', 'time.__str__', True, "<method-wrapper '__str__'")
+time.dst(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: time.dst() takes no arguments (11 given)'
+time.dst(zzz=1) -> 'TypeError: time.dst() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method time.dst() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'dst' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'dst', 'time.dst', True, '<built-in method dst')
+time.fromisoformat(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: time.fromisoformat() takes exactly one argument (11 given)'
+time.fromisoformat(zzz=1) -> 'TypeError: time.fromisoformat() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: time.fromisoformat() takes exactly one argument (0 given)'
+   unbound, of an int -> 'TypeError: fromisoformat: argument must be str'
+   bound -> ('builtin_function_or_method', 'fromisoformat', 'time.fromisoformat', True, '<built-in method fromisoformat')
+time.isoformat(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: isoformat() takes at most 1 argument (11 given)'
+time.isoformat(zzz=1) -> "TypeError: isoformat() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method time.isoformat() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'isoformat' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'isoformat', 'time.isoformat', True, '<built-in method isoformat')
+time.replace(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: replace() takes at most 6 arguments (11 given)'
+time.replace(zzz=1) -> "TypeError: replace() got an unexpected keyword argument 'zzz'"
+   unbound, of nothing -> 'TypeError: unbound method time.replace() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'replace' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'replace', 'time.replace', True, '<built-in method replace')
+time.strftime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: strftime() takes at most 1 argument (11 given)'
+time.strftime(zzz=1) -> "TypeError: strftime() missing required argument 'format' (pos 1)"
+   unbound, of nothing -> 'TypeError: unbound method time.strftime() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'strftime' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'strftime', 'time.strftime', True, '<built-in method strftime')
+time.strptime(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: strptime() takes exactly 2 arguments (11 given)'
+time.strptime(zzz=1) -> 'TypeError: strptime() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: strptime() takes exactly 2 arguments (0 given)'
+   unbound, of an int -> 'TypeError: strptime() takes exactly 2 arguments (1 given)'
+   bound -> ('builtin_function_or_method', 'strptime', 'time.strptime', True, '<built-in method strptime')
+time.tzname(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: time.tzname() takes no arguments (11 given)'
+time.tzname(zzz=1) -> 'TypeError: time.tzname() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method time.tzname() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'tzname' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'tzname', 'time.tzname', True, '<built-in method tzname')
+time.utcoffset(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: time.utcoffset() takes no arguments (11 given)'
+time.utcoffset(zzz=1) -> 'TypeError: time.utcoffset() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method time.utcoffset() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'utcoffset' for 'datetime.time' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'utcoffset', 'time.utcoffset', True, '<built-in method utcoffset')
+tzinfo.__eq__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+tzinfo.__eq__(zzz=1) -> 'TypeError: wrapper __eq__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__eq__' of 'object' object needs an argument"
+   bound -> ('method-wrapper', '__eq__', 'object.__eq__', True, "<method-wrapper '__eq__'")
+tzinfo.__format__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: tzinfo.__format__() takes exactly one argument (11 given)'
+tzinfo.__format__(zzz=1) -> 'TypeError: tzinfo.__format__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method object.__format__() needs an argument'
+   bound -> ('builtin_function_or_method', '__format__', 'tzinfo.__format__', True, '<built-in method __format__')
+tzinfo.__hash__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+tzinfo.__hash__(zzz=1) -> 'TypeError: wrapper __hash__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__hash__' of 'object' object needs an argument"
+   bound -> ('method-wrapper', '__hash__', 'object.__hash__', True, "<method-wrapper '__hash__'")
+tzinfo.__reduce__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: tzinfo.__reduce__() takes no arguments (11 given)'
+tzinfo.__reduce__(zzz=1) -> 'TypeError: tzinfo.__reduce__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method tzinfo.__reduce__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce__' for 'datetime.tzinfo' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce__', 'tzinfo.__reduce__', True, '<built-in method __reduce__')
+tzinfo.__reduce_ex__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: tzinfo.__reduce_ex__() takes exactly one argument (11 given)'
+tzinfo.__reduce_ex__(zzz=1) -> 'TypeError: tzinfo.__reduce_ex__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method object.__reduce_ex__() needs an argument'
+   bound -> ('builtin_function_or_method', '__reduce_ex__', 'tzinfo.__reduce_ex__', True, '<built-in method __reduce_ex__')
+tzinfo.__repr__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+tzinfo.__repr__(zzz=1) -> 'TypeError: wrapper __repr__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__repr__' of 'object' object needs an argument"
+   bound -> ('method-wrapper', '__repr__', 'object.__repr__', True, "<method-wrapper '__repr__'")
+tzinfo.__str__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+tzinfo.__str__(zzz=1) -> 'TypeError: wrapper __str__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__str__' of 'object' object needs an argument"
+   bound -> ('method-wrapper', '__str__', 'object.__str__', True, "<method-wrapper '__str__'")
+tzinfo.dst(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: tzinfo.dst() takes exactly one argument (11 given)'
+tzinfo.dst(zzz=1) -> 'TypeError: tzinfo.dst() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method tzinfo.dst() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'dst' for 'datetime.tzinfo' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'dst', 'tzinfo.dst', True, '<built-in method dst')
+tzinfo.fromutc(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: tzinfo.fromutc() takes exactly one argument (11 given)'
+tzinfo.fromutc(zzz=1) -> 'TypeError: tzinfo.fromutc() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method tzinfo.fromutc() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'fromutc' for 'datetime.tzinfo' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'fromutc', 'tzinfo.fromutc', True, '<built-in method fromutc')
+tzinfo.tzname(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: tzinfo.tzname() takes exactly one argument (11 given)'
+tzinfo.tzname(zzz=1) -> 'TypeError: tzinfo.tzname() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method tzinfo.tzname() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'tzname' for 'datetime.tzinfo' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'tzname', 'tzinfo.tzname', True, '<built-in method tzname')
+tzinfo.utcoffset(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: tzinfo.utcoffset() takes exactly one argument (11 given)'
+tzinfo.utcoffset(zzz=1) -> 'TypeError: tzinfo.utcoffset() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method tzinfo.utcoffset() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'utcoffset' for 'datetime.tzinfo' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'utcoffset', 'tzinfo.utcoffset', True, '<built-in method utcoffset')
+timezone.__eq__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 1 argument, got 11'
+timezone.__eq__(zzz=1) -> 'TypeError: wrapper __eq__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__eq__' of 'datetime.timezone' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__eq__' requires a 'datetime.timezone' object but received a 'int'"
+   bound -> ('method-wrapper', '__eq__', 'timezone.__eq__', True, "<method-wrapper '__eq__'")
+timezone.__format__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.__format__() takes exactly one argument (11 given)'
+timezone.__format__(zzz=1) -> 'TypeError: timezone.__format__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method object.__format__() needs an argument'
+   bound -> ('builtin_function_or_method', '__format__', 'timezone.__format__', True, '<built-in method __format__')
+timezone.__getinitargs__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.__getinitargs__() takes no arguments (11 given)'
+timezone.__getinitargs__(zzz=1) -> 'TypeError: timezone.__getinitargs__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method timezone.__getinitargs__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__getinitargs__' for 'datetime.timezone' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__getinitargs__', 'timezone.__getinitargs__', True, '<built-in method __getinitargs__')
+timezone.__hash__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timezone.__hash__(zzz=1) -> 'TypeError: wrapper __hash__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__hash__' of 'datetime.timezone' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__hash__' requires a 'datetime.timezone' object but received a 'int'"
+   bound -> ('method-wrapper', '__hash__', 'timezone.__hash__', True, "<method-wrapper '__hash__'")
+timezone.__reduce__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.__reduce__() takes no arguments (11 given)'
+timezone.__reduce__(zzz=1) -> 'TypeError: timezone.__reduce__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method tzinfo.__reduce__() needs an argument'
+   unbound, of an int -> "TypeError: descriptor '__reduce__' for 'datetime.tzinfo' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', '__reduce__', 'timezone.__reduce__', True, '<built-in method __reduce__')
+timezone.__reduce_ex__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.__reduce_ex__() takes exactly one argument (11 given)'
+timezone.__reduce_ex__(zzz=1) -> 'TypeError: timezone.__reduce_ex__() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method object.__reduce_ex__() needs an argument'
+   bound -> ('builtin_function_or_method', '__reduce_ex__', 'timezone.__reduce_ex__', True, '<built-in method __reduce_ex__')
+timezone.__repr__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timezone.__repr__(zzz=1) -> 'TypeError: wrapper __repr__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__repr__' of 'datetime.timezone' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__repr__' requires a 'datetime.timezone' object but received a 'int'"
+   bound -> ('method-wrapper', '__repr__', 'timezone.__repr__', True, "<method-wrapper '__repr__'")
+timezone.__str__(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: expected 0 arguments, got 11'
+timezone.__str__(zzz=1) -> 'TypeError: wrapper __str__() takes no keyword arguments'
+   unbound, of nothing -> "TypeError: descriptor '__str__' of 'datetime.timezone' object needs an argument"
+   unbound, of an int -> "TypeError: descriptor '__str__' requires a 'datetime.timezone' object but received a 'int'"
+   bound -> ('method-wrapper', '__str__', 'timezone.__str__', True, "<method-wrapper '__str__'")
+timezone.dst(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.dst() takes exactly one argument (11 given)'
+timezone.dst(zzz=1) -> 'TypeError: timezone.dst() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method timezone.dst() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'dst' for 'datetime.timezone' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'dst', 'timezone.dst', True, '<built-in method dst')
+timezone.fromutc(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.fromutc() takes exactly one argument (11 given)'
+timezone.fromutc(zzz=1) -> 'TypeError: timezone.fromutc() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method timezone.fromutc() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'fromutc' for 'datetime.timezone' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'fromutc', 'timezone.fromutc', True, '<built-in method fromutc')
+timezone.tzname(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.tzname() takes exactly one argument (11 given)'
+timezone.tzname(zzz=1) -> 'TypeError: timezone.tzname() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method timezone.tzname() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'tzname' for 'datetime.timezone' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'tzname', 'timezone.tzname', True, '<built-in method tzname')
+timezone.utcoffset(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11) -> 'TypeError: timezone.utcoffset() takes exactly one argument (11 given)'
+timezone.utcoffset(zzz=1) -> 'TypeError: timezone.utcoffset() takes no keyword arguments'
+   unbound, of nothing -> 'TypeError: unbound method timezone.utcoffset() needs an argument'
+   unbound, of an int -> "TypeError: descriptor 'utcoffset' for 'datetime.timezone' objects doesn't apply to a 'int' object"
+   bound -> ('builtin_function_or_method', 'utcoffset', 'timezone.utcoffset', True, '<built-in method utcoffset')
+===== isinstance
+timedelta [True, False, False, False, False, False] [False, False]
+date [False, True, False, False, False, False] [True, False]
+datetime [False, True, True, False, False, False] [True, False]
+time [False, False, False, True, False, False] [False, False]
+tzinfo [False, False, False, False, True, False] [False, True]
+timezone [False, False, False, False, True, True] [False, True]
+class X['date', 'tzinfo'] -> (<class '__main__.X'>, <class 'datetime.date'>, <class 'datetime.tzinfo'>, <class 'object'>)
+class X['date', 'time'] -> 'TypeError: multiple bases have instance lay-out conflict'
+class X['datetime', 'date'] -> (<class '__main__.X'>, <class 'datetime.datetime'>, <class 'datetime.date'>, <class 'object'>)
+class X['date', 'datetime'] -> 'TypeError: Cannot create a consistent method resolution order (MRO) for bases date, datetime'
+class X['timedelta', 'int'] -> 'TypeError: multiple bases have instance lay-out conflict'
+class X['tzinfo', 'dict'] -> (<class '__main__.X'>, <class 'datetime.tzinfo'>, <class 'dict'>, <class 'object'>)
+class X['date', 'object'] -> (<class '__main__.X'>, <class 'datetime.date'>, <class 'object'>)
+class X['tzinfo', 'Exception'] -> (<class '__main__.X'>, <class 'datetime.tzinfo'>, <class 'Exception'>, <class 'BaseException'>, <class 'object'>)
+class X['timezone'] -> "TypeError: type 'datetime.timezone' is not an acceptable base type"
+class X['date', 'tuple'] -> 'TypeError: multiple bases have instance lay-out conflict'
+slots on timedelta -> (0, 0, 16)
+   no slots -> (True, True)
+   __class__ -> 'TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses'
+   __class__ among derived ones -> (None, 'B')
+slots on date -> (0, 0, 16)
+   no slots -> (True, True)
+   __class__ -> 'TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses'
+   __class__ among derived ones -> (None, 'B')
+slots on datetime -> (0, 0, 16)
+   no slots -> (True, True)
+   __class__ -> 'TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses'
+   __class__ among derived ones -> (None, 'B')
+slots on time -> (0, 0, 16)
+   no slots -> (True, True)
+   __class__ -> 'TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses'
+   __class__ among derived ones -> (None, 'B')
+slots on tzinfo -> (0, 0, 16)
+   no slots -> (True, True)
+   __class__ -> 'TypeError: __class__ assignment only supported for mutable types or ModuleType subclasses'
+   __class__ among derived ones -> (None, 'B')
+done

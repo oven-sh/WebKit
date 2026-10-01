@@ -56,9 +56,9 @@ namespace Python {
 
 // Attributes that what is written in C++ gets, sets and calls by name: what CPython has as _Py_ID(name).
 #define FOR_EACH_PYTHON_ATTRIBUTE_NAME(v) \
-    v(_blksize) v(_dealloc_warn) v(_finalizing) v(_isatty_open_only) v(buffer) v(close) v(closed) v(decode) v(detach) v(encode) v(encoding) v(errors) v(extend) v(fileno) v(flush) v(getstate) \
-    v(isatty) v(mode) v(name) v(newlines) v(peek) v(raw) v(read) v(read1) v(readable) v(readall) v(readinto) v(readinto1) v(readline) v(reset) v(seek) v(seekable) v(setstate) v(tell) v(truncate) \
-    v(writable) v(write)
+    v(_blksize) v(_dealloc_warn) v(_finalizing) v(_isatty_open_only) v(as_integer_ratio) v(buffer) v(close) v(closed) v(decode) v(detach) v(dst) v(encode) v(encoding) v(errors) v(extend) v(fileno) \
+    v(flush) v(fromtimestamp) v(fromutc) v(getstate) v(isatty) v(isoformat) v(mode) v(name) v(newlines) v(peek) v(raw) v(read) v(read1) v(readable) v(readall) v(readinto) v(readinto1) v(readline) \
+    v(replace) v(reset) v(seek) v(seekable) v(setstate) v(strftime) v(tell) v(timetuple) v(truncate) v(tzname) v(utcoffset) v(writable) v(write)
 
 // Properties that Python cannot name, which hold what CPython keeps in the fields of a C struct.
 #define FOR_EACH_PYTHON_PRIVATE_NAME(v) \

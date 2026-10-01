@@ -64,6 +64,11 @@ double timeAsSeconds(int64_t);
 std::optional<int64_t> timeFromNanosecondsObject(JSGlobalObject*, JSValue);
 // _PyTime_ObjectToTime_t(): a whole number of seconds, from an int or a float. Nothing if it raised.
 std::optional<time_t> objectToTimeT(JSGlobalObject*, JSValue, TimeRounding);
+// _PyTime_ObjectToTimeval(): the same, and how many microseconds besides. It may raise.
+void objectToTimeval(JSGlobalObject*, JSValue, time_t& seconds, long& microseconds, TimeRounding);
+// _PyTime_localtime() and _PyTime_gmtime(). It may raise.
+enum class BrokenDownAs : bool { UTC, Local };
+void breakDownTime(JSGlobalObject*, time_t, BrokenDownAs, struct tm&);
 // _PyTime_FromTimespec() and _PyTime_AsTimespec(). Nothing, or false, if it raised.
 std::optional<int64_t> timeFromTimespec(JSGlobalObject*, const struct timespec&);
 bool timeAsTimespec(JSGlobalObject*, int64_t, struct timespec&);

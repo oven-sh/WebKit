@@ -138,17 +138,6 @@ JSValue toStructTime(JSGlobalObject* globalObject, const struct tm& time)
     RELEASE_AND_RETURN(scope, newStructSequence(globalObject, timeState(globalObject).structTime.get(), values));
 }
 
-// _PyTime_localtime() and _PyTime_gmtime(). False if it raised.
-bool breakDown(JSGlobalObject* globalObject, time_t when, bool isLocal, struct tm& result)
-{
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    errno = 0;
-    if (isLocal ? localtime_r(&when, &result) : gmtime_r(&when, &result))
-        return true;
-    raiseOSError(globalObject, scope, errno ? errno : EINVAL);
-    return false;
-}
-
 // parse_time_t_args(), of what is left of the arguments once there are known to be no more than one. Nothing if it raised.
 std::optional<time_t> toWhen(JSGlobalObject* globalObject, JSValue value)
 {
@@ -264,8 +253,11 @@ JSValue asctime(JSGlobalObject* globalObject, const struct tm& tm)
 bool toCheckedTime(JSGlobalObject* globalObject, JSValue given, BrokenDownTime& result, ASCIILiteral function)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    if (!given)
-        RELEASE_AND_RETURN(scope, breakDown(globalObject, ::time(nullptr), true, result.tm));
+    if (!given) {
+        breakDownTime(globalObject, ::time(nullptr), BrokenDownAs::Local, result.tm);
+        RETURN_IF_EXCEPTION(scope, false);
+        return true;
+    }
     toBrokenDownTime(globalObject, given, result, function);
     RETURN_IF_EXCEPTION(scope, false);
     RELEASE_AND_RETURN(scope, checkBrokenDownTime(globalObject, result.tm));
@@ -457,7 +449,7 @@ PYTHON_NATIVE(timeBreakDown)
     auto when = toWhen(globalObject, args.at(0));
     RETURN_IF_EXCEPTION(scope, { });
     struct tm tm;
-    breakDown(globalObject, *when, isLocal, tm);
+    breakDownTime(globalObject, *when, isLocal ? BrokenDownAs::Local : BrokenDownAs::UTC, tm);
     RETURN_IF_EXCEPTION(scope, { });
     RELEASE_AND_RETURN(scope, JSValue::encode(toStructTime(globalObject, tm)));
 }
@@ -483,7 +475,7 @@ PYTHON_NATIVE(timeCtime)
     auto when = toWhen(globalObject, args.at(0));
     RETURN_IF_EXCEPTION(scope, { });
     struct tm tm;
-    breakDown(globalObject, *when, true, tm);
+    breakDownTime(globalObject, *when, BrokenDownAs::Local, tm);
     RETURN_IF_EXCEPTION(scope, { });
     return JSValue::encode(asctime(globalObject, tm));
 }

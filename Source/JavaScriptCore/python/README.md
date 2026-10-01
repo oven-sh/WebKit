@@ -1372,6 +1372,24 @@ The six programs `programs/pickle-*.py`: each kind of thing in each protocol, an
 persistent ids; 380 pickles written by hand, from bytes and from a file; files that have and have not `peek()` and `readinto()`, and what is asked of them; a pickle in each protocol cut short at every byte, and with each byte
 changed eleven ways, which is 19,000.
 
+### `_datetime`
+
+`Modules/_datetimemodule.c`, function for function: `PythonDateTime.h` says which file has what. `datetime` is written in Python besides, as `_pydatetime`, and does without, from 4 to 70 times slower. With it, it takes what it takes in
+CPython, give or take: 80 ns to add a timedelta to a datetime, which took 5,000.
+
+- **A date is kept as the bytes that CPython keeps it as**, two of year and one each of month and day, and a datetime as six more. They are what is compared, hashed and pickled, so that all three come out the same.
+- **A datetime is a date**, and has the same struct, which says which it is. So a method of `date` finds what it looks for in either.
+- **Whether something is a timedelta goes by what it has**, and not by looking through its class: an instance of a class, or of one derived from it, has what the `__new__()` of the class gave it.
+- **A timedelta is turned into an int of microseconds to be multiplied or divided**, as in CPython, and by the same operators, so that a class derived from int has its say. There are more microseconds in a hundred million days than
+  a word has room for. Short of that it is worked out in a word.
+- **What a class derived from datetime makes when it is called is looked at before it is taken for a datetime.** `astimezone()`, `utctimetuple()` and `tzinfo.fromutc()` call it, and CPython goes down if it made something else.
+- `hash(date.isocalendar())` is the hash of the tuple that it is equal to. In CPython 3.14 it is 0.
+- Local time is the system's: `localtime_r()`, as for `time`.
+
+The six programs `programs/datetime-*.py` are 23,000 lines of what CPython does: every kind of argument to each class; each operator between a timedelta and forty other things, both ways round; every day of 22 years; 5,000 strings for
+`fromisoformat()`; what a `tzinfo` can give and what is made of it; classes derived from each; each half hour of the days on which the clocks are changed in ten places, by the clock and by the timestamp; and what each class has in it,
+with what is said when each method is called wrongly.
+
 ### `_stat`, `_statistics`, `_sysconfig` and `_types`
 
 Each is what a module of the library takes in place of what it has written in Python, if it is there. `_stat` (`PythonStatModule.cpp`) has the system's numbers, where `stat.py` has the usual ones. `_statistics` is one
