@@ -628,8 +628,7 @@ public:
         case op_get_parent_scope:
             return true;
         case op_resolve_scope:
-            // (A name that is resolved at run time is in none of the environments that this code creates, so the search starts
-            // further out.)
+            // (The search for a name that is resolved at run time starts further out: see keepEnvironmentsSearchedFor().)
             return user->as<OpResolveScope>().m_resolveType != Dynamic;
         case op_get_from_scope:
             return use.reg == user->as<OpGetFromScope>().m_scope && (user->graph->distanceOfEnvironmentAccessed(user) || offsetAccessedBy(user));
@@ -640,6 +639,29 @@ public:
         default:
             return false;
         }
+    }
+
+    // A name that is resolved at run time is looked for in each scope, from the inside out. One of the environments that this code
+    // creates may have it: not everything that could be resolved statically is (the functions nested in an embedder's builtin
+    // come without the names that are declared around them). That environment has to be there to be found.
+    bool keepEnvironmentsSearchedFor(Node* resolve)
+    {
+        if (!resolve->isBytecode(op_resolve_scope) || whereIs(resolve).base != resolve || resolve->graph->distanceOfEnvironmentResolvedTo(resolve))
+            return false;
+        auto bytecode = resolve->as<OpResolveScope>();
+        UniquedStringImpl* name = resolve->graph->codeBlock()->identifier(bytecode.m_var).impl();
+        bool changed = false;
+        for (Where where = whereIs(resolve->use(bytecode.m_scope)); where.isLocalEnvironment(); where = out(where, 1, 0)) {
+            Node* environment = where.base;
+            if (!m_candidates.contains(environment))
+                continue;
+            JSValue table = environment->graph->codeBlock()->getConstant(environment->as<OpCreateLexicalEnvironment>().m_symbolTable);
+            if (uncheckedDowncast<SymbolTable>(table.asCell())->contains(name)) {
+                m_candidates.remove(environment);
+                changed = true;
+            }
+        }
+        return changed;
     }
 
     template<typename Functor> void forEachUser(const Functor& functor)
@@ -677,6 +699,7 @@ public:
                     m_candidates.remove(where.base);
                     changed = true;
                 }
+                changed |= keepEnvironmentsSearchedFor(user);
             });
         }
         if (m_candidates.isEmpty())
