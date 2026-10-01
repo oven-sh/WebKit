@@ -526,8 +526,8 @@ public:
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
     JS_EXPORT_PRIVATE static bool NODELETE isExtensible(JSObject*, JSGlobalObject*);
-    bool isSealed(VM& vm) { return structure()->isSealed(vm); }
-    bool isFrozen(VM& vm) { return structure()->isFrozen(vm); }
+    JS_EXPORT_PRIVATE bool isSealed(VM&);
+    JS_EXPORT_PRIVATE bool isFrozen(VM&);
 
     JS_EXPORT_PRIVATE bool NODELETE anyObjectInChainMayInterceptIndexedAccesses() const;
     bool NODELETE needsSlowPutIndexing() const;
@@ -540,7 +540,7 @@ public:
     //   as calling the virtual [[IsExtensible]] trap.
     // - When you're guaranteed that object->methodTable()->isExtensible isn't
     //   overridden.
-    ALWAYS_INLINE bool isStructureExtensible() { return structure()->isStructureExtensible(); }
+    ALWAYS_INLINE bool isStructureExtensible() const { return structure()->isStructureExtensible(); }
     // You should call this when performing [[IsExtensible]] trap in a place
     // that is described in the specification. This performs the fully virtual
     // [[IsExtensible]] trap.
@@ -653,6 +653,7 @@ public:
 
     bool mayBePrototype() const;
     void didBecomePrototype(VM&);
+    bool hasIndexedElementsInArrayStorage() const;
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
 

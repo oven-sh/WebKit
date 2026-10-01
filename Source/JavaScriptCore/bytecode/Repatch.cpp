@@ -876,6 +876,9 @@ static InlineCacheAction tryCacheArrayGetByVal(JSGlobalObject* globalObject, Cod
                 accessType = AccessCase::IndexedContiguousLoad;
                 break;
             case ArrayStorageShape:
+            case SlowPutArrayStorageShape:
+                // The IC reads the vector, which a SlowPutArrayStorage object (frozen, sealed,
+                // non-extensible, or having a bad time) shares with ArrayStorage.
                 accessType = AccessCase::IndexedArrayStorageLoad;
                 break;
             case NoIndexingShape: {
@@ -2052,6 +2055,7 @@ static InlineCacheAction tryCacheArrayInByVal(JSGlobalObject* globalObject, Code
                 accessType = AccessCase::IndexedContiguousInHit;
                 break;
             case ArrayStorageShape:
+            case SlowPutArrayStorageShape:
                 accessType = AccessCase::IndexedArrayStorageInHit;
                 break;
             case NoIndexingShape: {

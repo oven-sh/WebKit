@@ -7564,18 +7564,47 @@ IGNORE_CLANG_WARNINGS_END
                 return;
             }
 
+            auto slowPathFunction = m_node->ecmaMode().isStrict()
+                ? (m_node->op() == PutByValDirect ? operationPutByValDirectBeyondArrayBoundsStrict : operationPutByValBeyondArrayBoundsStrict)
+                : (m_node->op() == PutByValDirect ? operationPutByValDirectBeyondArrayBoundsSloppy : operationPutByValBeyondArrayBoundsSloppy);
+
+            // A frozen object keeps its elements in the vector with the SlowPutArrayStorage shape
+            // (JSObject::enterDictionaryIndexingMode); they are read-only.
+            auto vectorElementsAreReadOnly = [&] () -> LValue {
+                LValue structureFlags = m_out.load32(loadStructure(base), m_heaps.Structure_bitField);
+                return m_out.testNonZero32(structureFlags, m_out.constInt32(Structure::s_vectorElementsAreReadOnlyBits));
+            };
+
             if (arrayMode.isInBounds()) {
                 speculate(StoreToHole, noValue(), nullptr, m_out.isZero64(m_out.load64(elementPointer)));
+                if (!arrayMode.isSlowPut()) {
+                    m_out.store64(value, elementPointer);
+                    return;
+                }
+
+                LBasicBlock slowCase = m_out.newBlock();
+                LBasicBlock doStoreCase = m_out.newBlock();
+                LBasicBlock continuation = m_out.newBlock();
+
+                m_out.branch(vectorElementsAreReadOnly(), rarely(slowCase), usually(doStoreCase));
+
+                LBasicBlock lastNext = m_out.appendTo(slowCase, doStoreCase);
+                vmCall(
+                    Void, slowPathFunction,
+                    weakPointer(globalObject), base, index, value);
+                m_out.jump(continuation);
+
+                m_out.appendTo(doStoreCase, continuation);
                 m_out.store64(value, elementPointer);
+                m_out.jump(continuation);
+
+                m_out.appendTo(continuation, lastNext);
                 return;
             }
 
             LValue isOutOfBounds = m_out.aboveOrEqual(
                 index, m_out.load32NonNegative(storage, m_heaps.ArrayStorage_vectorLength));
 
-            auto slowPathFunction = m_node->ecmaMode().isStrict()
-                ? (m_node->op() == PutByValDirect ? operationPutByValDirectBeyondArrayBoundsStrict : operationPutByValBeyondArrayBoundsStrict)
-                : (m_node->op() == PutByValDirect ? operationPutByValDirectBeyondArrayBoundsSloppy : operationPutByValBeyondArrayBoundsSloppy);
             if (!arrayMode.isOutOfBounds()) {
                 speculate(OutOfBounds, noValue(), nullptr, isOutOfBounds);
                 isOutOfBounds = m_out.booleanFalse;
@@ -7598,8 +7627,12 @@ IGNORE_CLANG_WARNINGS_END
 
 
             if (arrayMode.isSlowPut()) {
-                m_out.appendTo(inBoundCase, doStoreCase);
-                m_out.branch(m_out.isZero64(m_out.load64(elementPointer)), rarely(slowCase), usually(doStoreCase));
+                LBasicBlock notHoleCase = m_out.newBlock();
+                m_out.appendTo(inBoundCase, notHoleCase);
+                m_out.branch(m_out.isZero64(m_out.load64(elementPointer)), rarely(slowCase), usually(notHoleCase));
+
+                m_out.appendTo(notHoleCase, doStoreCase);
+                m_out.branch(vectorElementsAreReadOnly(), rarely(slowCase), usually(doStoreCase));
             } else {
                 m_out.appendTo(inBoundCase, holeCase);
                 m_out.branch(m_out.isZero64(m_out.load64(elementPointer)), rarely(holeCase), usually(doStoreCase));

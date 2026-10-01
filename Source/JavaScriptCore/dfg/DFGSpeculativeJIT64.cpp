@@ -7923,6 +7923,13 @@ void SpeculativeJIT::compilePutByVal(Node* node)
             notHoleValue.link(this);
         }
 
+        if (arrayMode.isSlowPut()) {
+            // A frozen object keeps its elements in the vector with the SlowPutArrayStorage shape
+            // (JSObject::enterDictionaryIndexingMode); they are read-only.
+            emitLoadStructure(vm(), baseReg, temporaryReg);
+            slowCases.append(branchTest32(NonZero, Address(temporaryReg, Structure::bitFieldOffset()), TrustedImm32(Structure::s_vectorElementsAreReadOnlyBits)));
+        }
+
         // Store the value to the array.
         storeValue(valueGPR, BaseIndex(storageReg, propertyReg, TimesEight, ArrayStorage::vectorOffset()));
 

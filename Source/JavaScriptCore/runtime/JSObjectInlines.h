@@ -1500,6 +1500,8 @@ inline bool JSObject::trySetIndexQuickly(VM& vm, unsigned i, JSValue v, ArrayPro
     case ArrayWithSlowPutArrayStorage:
         if (i >= butterfly->arrayStorage()->vectorLength() || !butterfly->arrayStorage()->m_vector[i])
             return false;
+        if (structure()->vectorElementsAreReadOnly())
+            return false;
         setIndexQuicklyForArrayStorageIndexingType(vm, i, v);
         return true;
     default:
@@ -1586,8 +1588,13 @@ inline bool JSObject::putDirectIndex(JSGlobalObject* globalObject, unsigned prop
         case ALL_WRITABLE_INT32_INDEXING_TYPES:
         case ALL_WRITABLE_DOUBLE_INDEXING_TYPES:
         case ALL_WRITABLE_CONTIGUOUS_INDEXING_TYPES:
-        case ALL_ARRAY_STORAGE_INDEXING_TYPES:
+        case NonArrayWithArrayStorage:
+        case ArrayWithArrayStorage:
             return propertyName < butterfly()->vectorLength();
+        case NonArrayWithSlowPutArrayStorage:
+        case ArrayWithSlowPutArrayStorage:
+            // The elements of a non-extensible object carry attributes (Structure::vectorElementAttributes).
+            return propertyName < butterfly()->vectorLength() && isStructureExtensible();
         default:
             if (isCopyOnWrite(indexingMode()))
                 return false;
