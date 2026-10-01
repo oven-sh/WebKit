@@ -234,6 +234,8 @@ JSValue nameLike(JSGlobalObject* globalObject, const PathArgument& path, std::sp
 {
     if (path.hasNarrow && path.isBytes(globalObject))
         return newBytes(globalObject, byteCast<uint8_t>(characters));
+    if (path.options & PathArgument::MakesWide)
+        return decodeBytesToObject(globalObject, byteCast<uint8_t>(characters), "utf-8"_s, "surrogatepass"_s);
     return decodeFileSystemBytes(globalObject, characters);
 }
 
@@ -284,7 +286,7 @@ bool PathArgument::convert(JSGlobalObject* globalObject, JSValue given)
     std::optional<ByteVector> encoded;
     std::span<const uint8_t> content;
     if (isText) {
-        encoded = encodeString(globalObject, stringIn(value), "utf-8"_s, "surrogateescape"_s);
+        encoded = encodeString(globalObject, stringIn(value), "utf-8"_s, options & MakesWide ? "surrogatepass"_s : "surrogateescape"_s);
         RETURN_IF_EXCEPTION(scope, false);
         content = encoded->span();
     } else

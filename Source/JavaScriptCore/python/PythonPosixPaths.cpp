@@ -789,7 +789,7 @@ Vector<char> normalizePath(std::span<const char> path)
 PYTHON_NATIVE(posixPathNormpath)
 {
     NATIVE_PROLOGUE();
-    CONVERT_PATH(path, args.at(0), "_path_normpath"_s, "path"_s, PathArgument::NonStrict);
+    CONVERT_PATH(path, args.at(0), "_path_normpath"_s, "path"_s, PathArgument::NonStrict | PathArgument::MakesWide);
     Vector<char> normalized = normalizePath(path.bytes.span());
     if (normalized.isEmpty())
         normalized.append('.');
@@ -799,7 +799,7 @@ PYTHON_NATIVE(posixPathNormpath)
 PYTHON_NATIVE(posixPathSplitrootEx)
 {
     NATIVE_PROLOGUE();
-    CONVERT_PATH(path, args.at(0), "_path_splitroot_ex"_s, "path"_s, PathArgument::NonStrict);
+    CONVERT_PATH(path, args.at(0), "_path_splitroot_ex"_s, "path"_s, PathArgument::NonStrict | PathArgument::MakesWide);
     auto characters = path.bytes.span();
     size_t root = rootSizeOf(characters);
     JSValue drive = nameLike(globalObject, path, { });

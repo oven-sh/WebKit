@@ -60,6 +60,7 @@ struct PathArgument {
         Nullable = 1, // It can be None.
         AllowsDescriptor = 2,
         NonStrict = 4, // It can have a zero in it.
+        MakesWide = 8, // It is only taken apart, and nothing is asked of the system. So a str need not be fit to be the name of a file: it can have half of a surrogate pair in it.
     };
 
     PathArgument(ASCIILiteral functionName, ASCIILiteral argumentName, unsigned options = 0)

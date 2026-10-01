@@ -1,0 +1,211 @@
+normpath('') -> '.'
+   splitroot -> ('', '', '')
+   of bytes -> (b'.', (b'', b'', b''))
+normpath('.') -> '.'
+   splitroot -> ('', '', '.')
+   of bytes -> (b'.', (b'', b'', b'.'))
+normpath('..') -> '..'
+   splitroot -> ('', '', '..')
+   of bytes -> (b'..', (b'', b'', b'..'))
+normpath('/') -> '/'
+   splitroot -> ('', '/', '')
+   of bytes -> (b'/', (b'', b'/', b''))
+normpath('//') -> '//'
+   splitroot -> ('', '//', '')
+   of bytes -> (b'//', (b'', b'//', b''))
+normpath('///') -> '/'
+   splitroot -> ('', '/', '//')
+   of bytes -> (b'/', (b'', b'/', b'//'))
+normpath('////') -> '/'
+   splitroot -> ('', '/', '///')
+   of bytes -> (b'/', (b'', b'/', b'///'))
+normpath('a') -> 'a'
+   splitroot -> ('', '', 'a')
+   of bytes -> (b'a', (b'', b'', b'a'))
+normpath('a/') -> 'a'
+   splitroot -> ('', '', 'a/')
+   of bytes -> (b'a', (b'', b'', b'a/'))
+normpath('a//') -> 'a'
+   splitroot -> ('', '', 'a//')
+   of bytes -> (b'a', (b'', b'', b'a//'))
+normpath('/a') -> '/a'
+   splitroot -> ('', '/', 'a')
+   of bytes -> (b'/a', (b'', b'/', b'a'))
+normpath('//a') -> '//a'
+   splitroot -> ('', '//', 'a')
+   of bytes -> (b'//a', (b'', b'//', b'a'))
+normpath('///a') -> '/a'
+   splitroot -> ('', '/', '//a')
+   of bytes -> (b'/a', (b'', b'/', b'//a'))
+normpath('a/b') -> 'a/b'
+   splitroot -> ('', '', 'a/b')
+   of bytes -> (b'a/b', (b'', b'', b'a/b'))
+normpath('a//b') -> 'a/b'
+   splitroot -> ('', '', 'a//b')
+   of bytes -> (b'a/b', (b'', b'', b'a//b'))
+normpath('a/./b') -> 'a/b'
+   splitroot -> ('', '', 'a/./b')
+   of bytes -> (b'a/b', (b'', b'', b'a/./b'))
+normpath('a/../b') -> 'b'
+   splitroot -> ('', '', 'a/../b')
+   of bytes -> (b'b', (b'', b'', b'a/../b'))
+normpath('a/b/..') -> 'a'
+   splitroot -> ('', '', 'a/b/..')
+   of bytes -> (b'a', (b'', b'', b'a/b/..'))
+normpath('a/b/../..') -> '.'
+   splitroot -> ('', '', 'a/b/../..')
+   of bytes -> (b'.', (b'', b'', b'a/b/../..'))
+normpath('a/b/../../..') -> '..'
+   splitroot -> ('', '', 'a/b/../../..')
+   of bytes -> (b'..', (b'', b'', b'a/b/../../..'))
+normpath('../a') -> '../a'
+   splitroot -> ('', '', '../a')
+   of bytes -> (b'../a', (b'', b'', b'../a'))
+normpath('../../a') -> '../../a'
+   splitroot -> ('', '', '../../a')
+   of bytes -> (b'../../a', (b'', b'', b'../../a'))
+normpath('/..') -> '/'
+   splitroot -> ('', '/', '..')
+   of bytes -> (b'/', (b'', b'/', b'..'))
+normpath('/../a') -> '/a'
+   splitroot -> ('', '/', '../a')
+   of bytes -> (b'/a', (b'', b'/', b'../a'))
+normpath('//..') -> '//'
+   splitroot -> ('', '//', '..')
+   of bytes -> (b'//', (b'', b'//', b'..'))
+normpath('//../a') -> '//a'
+   splitroot -> ('', '//', '../a')
+   of bytes -> (b'//a', (b'', b'//', b'../a'))
+normpath('/./a') -> '/a'
+   splitroot -> ('', '/', './a')
+   of bytes -> (b'/a', (b'', b'/', b'./a'))
+normpath('./a') -> 'a'
+   splitroot -> ('', '', './a')
+   of bytes -> (b'a', (b'', b'', b'./a'))
+normpath('./') -> '.'
+   splitroot -> ('', '', './')
+   of bytes -> (b'.', (b'', b'', b'./'))
+normpath('./.') -> '.'
+   splitroot -> ('', '', './.')
+   of bytes -> (b'.', (b'', b'', b'./.'))
+normpath('a/.') -> 'a'
+   splitroot -> ('', '', 'a/.')
+   of bytes -> (b'a', (b'', b'', b'a/.'))
+normpath('a/..') -> '.'
+   splitroot -> ('', '', 'a/..')
+   of bytes -> (b'.', (b'', b'', b'a/..'))
+normpath('...') -> '...'
+   splitroot -> ('', '', '...')
+   of bytes -> (b'...', (b'', b'', b'...'))
+normpath('a/.../b') -> 'a/.../b'
+   splitroot -> ('', '', 'a/.../b')
+   of bytes -> (b'a/.../b', (b'', b'', b'a/.../b'))
+normpath('.a') -> '.a'
+   splitroot -> ('', '', '.a')
+   of bytes -> (b'.a', (b'', b'', b'.a'))
+normpath('a.') -> 'a.'
+   splitroot -> ('', '', 'a.')
+   of bytes -> (b'a.', (b'', b'', b'a.'))
+normpath('..a') -> '..a'
+   splitroot -> ('', '', '..a')
+   of bytes -> (b'..a', (b'', b'', b'..a'))
+normpath('a..') -> 'a..'
+   splitroot -> ('', '', 'a..')
+   of bytes -> (b'a..', (b'', b'', b'a..'))
+normpath(' ') -> ' '
+   splitroot -> ('', '', ' ')
+   of bytes -> (b' ', (b'', b'', b' '))
+normpath(' / ') -> ' / '
+   splitroot -> ('', '', ' / ')
+   of bytes -> (b' / ', (b'', b'', b' / '))
+normpath('a b/c d') -> 'a b/c d'
+   splitroot -> ('', '', 'a b/c d')
+   of bytes -> (b'a b/c d', (b'', b'', b'a b/c d'))
+normpath('caf\xe9') -> 'caf\xe9'
+   splitroot -> ('', '', 'caf\xe9')
+   of bytes -> (b'caf\xc3\xa9', (b'', b'', b'caf\xc3\xa9'))
+normpath('\u20ac/\u20ac') -> '\u20ac/\u20ac'
+   splitroot -> ('', '', '\u20ac/\u20ac')
+   of bytes -> (b'\xe2\x82\xac/\xe2\x82\xac', (b'', b'', b'\xe2\x82\xac/\xe2\x82\xac'))
+normpath('\U0001f600/..') -> '.'
+   splitroot -> ('', '', '\U0001f600/..')
+   of bytes -> (b'.', (b'', b'', b'\xf0\x9f\x98\x80/..'))
+normpath('a\ud800b') -> 'a\ud800b'
+   splitroot -> ('', '', 'a\ud800b')
+normpath('\ud800') -> '\ud800'
+   splitroot -> ('', '', '\ud800')
+normpath('\ud800/..') -> '.'
+   splitroot -> ('', '', '\ud800/..')
+normpath('\ud800/\udc00') -> '\ud800/\udc00'
+   splitroot -> ('', '', '\ud800/\udc00')
+normpath('\udc80') -> '\udc80'
+   splitroot -> ('', '', '\udc80')
+   of bytes -> (b'\x80', (b'', b'', b'\x80'))
+normpath('a/\udcff/..') -> 'a'
+   splitroot -> ('', '', 'a/\udcff/..')
+   of bytes -> (b'a', (b'', b'', b'a/\xff/..'))
+normpath('a\x00b') -> 'a\x00b'
+   splitroot -> ('', '', 'a\x00b')
+   of bytes -> (b'a\x00b', (b'', b'', b'a\x00b'))
+normpath('\x00') -> '\x00'
+   splitroot -> ('', '', '\x00')
+   of bytes -> (b'\x00', (b'', b'', b'\x00'))
+normpath('a/\x00/..') -> 'a'
+   splitroot -> ('', '', 'a/\x00/..')
+   of bytes -> (b'a', (b'', b'', b'a/\x00/..'))
+normpath('\x00/..') -> '.'
+   splitroot -> ('', '', '\x00/..')
+   of bytes -> (b'.', (b'', b'', b'\x00/..'))
+normpath('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa') -> (5000, 'aaaaaaaaaa')
+   splitroot -> [0, 0, 5000]
+   of bytes -> 5000
+normpath('a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a') -> (999, 'a/a/a/a/a/')
+   splitroot -> [0, 0, 999]
+   of bytes -> 999
+normpath('../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../') -> (899, '../../../.')
+   splitroot -> [0, 0, 900]
+   of bytes -> 899
+normpath('a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../a/../') -> (1, '.')
+   splitroot -> [0, 0, 1500]
+   of bytes -> 1
+normpath('////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////') -> (1, '/')
+   splitroot -> [0, 1, 4999]
+   of bytes -> 1
+normpath(b'\xff') -> (b'\xff', (b'', b'', b'\xff'))
+normpath(b'\xff/..') -> (b'.', (b'', b'', b'\xff/..'))
+normpath(b'a/\xe9/./b') -> (b'a/\xe9/b', (b'', b'', b'a/\xe9/./b'))
+normpath(b'\xed\xa0\x80') -> (b'\xed\xa0\x80', (b'', b'', b'\xed\xa0\x80'))
+normpath(b'\x80\x80//\x80') -> (b'\x80\x80/\x80', (b'', b'', b'\x80\x80//\x80'))
+normpath(NoneType) -> 'TypeError: _path_normpath: path should be string, bytes or os.PathLike, not NoneType'
+   splitroot -> 'TypeError: _path_splitroot_ex: path should be string, bytes or os.PathLike, not NoneType'
+normpath(int) -> 'TypeError: _path_normpath: path should be string, bytes or os.PathLike, not int'
+   splitroot -> 'TypeError: _path_splitroot_ex: path should be string, bytes or os.PathLike, not int'
+normpath(float) -> 'TypeError: _path_normpath: path should be string, bytes or os.PathLike, not float'
+   splitroot -> 'TypeError: _path_splitroot_ex: path should be string, bytes or os.PathLike, not float'
+normpath(list) -> 'TypeError: _path_normpath: path should be string, bytes or os.PathLike, not list'
+   splitroot -> 'TypeError: _path_splitroot_ex: path should be string, bytes or os.PathLike, not list'
+normpath(bytearray) -> 'TypeError: _path_normpath: path should be string, bytes or os.PathLike, not bytearray'
+   splitroot -> 'TypeError: _path_splitroot_ex: path should be string, bytes or os.PathLike, not bytearray'
+normpath(memoryview) -> 'TypeError: _path_normpath: path should be string, bytes or os.PathLike, not memoryview'
+   splitroot -> 'TypeError: _path_splitroot_ex: path should be string, bytes or os.PathLike, not memoryview'
+normpath(P) -> 'b'
+   splitroot -> ('', '', 'a/../b')
+normpath(P) -> b'b'
+   splitroot -> (b'', b'', b'a/../b')
+normpath(P) -> 'TypeError: expected P.__fspath__() to return str or bytes, not int'
+   splitroot -> 'TypeError: expected P.__fspath__() to return str or bytes, not int'
+normpath(P) -> '\ud800'
+   splitroot -> ('', '', '\ud800/.')
+normpath(PurePosixPath) -> 'b'
+   splitroot -> ('', '', 'a/../b')
+normpath(S) -> 'a/b'
+   splitroot -> ('', '', 'a/./b')
+normpath(B) -> b'a/b'
+   splitroot -> (b'', b'', b'a/./b')
+none -> "TypeError: _path_normpath() missing required argument 'path' (pos 1)"
+two -> 'TypeError: _path_normpath() takes at most 1 argument (2 given)'
+what is made of them -> ('\ud800/a', '\ud800', '\ud800', ('\ud800', 'a'), ('\ud800', '.x'), False, '\ud800', 'a')
+what does ask the system -> (False, False, False, False)
+stat -> "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+open -> "UnicodeEncodeError: 'utf-8' codec can't encode character '\\ud800' in position 0: surrogates not allowed"
+done
