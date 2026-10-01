@@ -116,9 +116,12 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
     };
 
     Ref generator = *m_deferredGenerator;
+    // A deferred generator runs after makeModule() returned, without the JSSourceCode, so it is never one that takes
+    // that cell's payload. createDeferred() cannot make one.
+    ASSERT(!generator->takesPayload());
     MarkedArgumentBuffer exportValues;
     Vector<Identifier, 4> exportNames;
-    JSObject* lazyExportsSource = generator->generate(globalObject, moduleKey(), exportNames, exportValues);
+    JSObject* lazyExportsSource = generator->generate(globalObject, moduleKey(), exportNames, exportValues, { });
     if (Exception* exception = scope.exception()) [[unlikely]] {
         failed(exception);
         return;
