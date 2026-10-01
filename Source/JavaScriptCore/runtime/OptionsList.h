@@ -140,7 +140,8 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, forceICFailure, false, Normal, nullptr) \
     v(Bool, forceUnlinkedDFG, false, Normal, nullptr) \
     \
-    v(Bool, useAOT, false, Normal, "Run ahead-of-time compiled code from a registered AOT image. If false, images are ignored. In the jsc shell this also compiles the first script or module ahead of time before running it, which is how the AOT compiler is tested."_s) \
+    v(Bool, useAOT, false, Normal, "Use ahead-of-time compiled code: the embedder maps the static heap and registers the AOT image, and functions run the code the image has for them. If false, both are ignored."_s) \
+    v(Bool, compileMainScriptAheadOfTime, false, Normal, "jsc shell only, for testing the AOT compiler. Compiles the first script or module ahead of time, in-process, and registers the image before running it. Implies useAOT."_s) \
     v(Bool, verboseAOTCompilation, false, Normal, "Log which functions the AOT compiler compiles and why it rejects a function."_s) \
     v(Bool, dumpAOTGraph, false, Normal, "Dump the AOT compiler's IR."_s) \
     v(Bool, dumpAOTB3Graph, false, Normal, "Dump the B3 procedure the AOT compiler generates."_s) \

@@ -1,4 +1,4 @@
-//@ runDefault("--useAOT=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 // The prototypes of plain functions all start out with the same structure, and some go on to have more in them.
 function Other() { }
 Other.prototype.method = function () { return 1; };

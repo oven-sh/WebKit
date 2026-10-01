@@ -1,4 +1,4 @@
-//@ runDefault("--useAOT=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 // Reading past the end of an array or in a hole is undefined only for as long as nothing it inherits from has such a property.
 function at(a, i) { return a[i]; }
 noInline(at);

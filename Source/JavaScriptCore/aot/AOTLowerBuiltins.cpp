@@ -82,7 +82,7 @@ LValue Lowering::isSuchAReceiver(Node* read, Node* baseNode, LValue base, Receiv
         return isCellAnd(baseNode, base, [&](LValue cell) { return isCellOfType(cell, StringType); });
     case Receiver::Array:
         // (The types are taken at their word, as they are by whoever inlines what is written in JavaScript.)
-        if (isSubtype(baseNode->type, TArray) && Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(read)) && (!pathOfOverriddenMethods() || !mayBeOverridden("Array"_s, read)))
+        if (read && isSubtype(baseNode->type, TArray) && Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(read)) && (!pathOfOverriddenMethods() || !mayBeOverridden("Array"_s, read)))
             return nullptr;
         return isCellAnd(baseNode, base, [&](LValue cell) { return isOriginalArray(cell); });
     case Receiver::Map:
@@ -148,6 +148,11 @@ bool Lowering::lowerCallOfBuiltin(Node* node, Node* calleeNode, unsigned argc, u
         if (check == m_receiverChecks.end())
             return false;
         also(check->value);
+    } else if (Receiver required = requiredReceiver(node->builtinCalled); required != Receiver::None) {
+        // The callee's identity is known, but that says nothing about `this`: Array.prototype.shift.call("abc").
+        if (!mayBe(typeAt(0), typeOf(required)) || (required == Receiver::Number && !isSubtype(typeAt(0), TNumber)))
+            return false;
+        also(isSuchAReceiver(nullptr, nodeAt(0), arguments[0], required));
     }
     // Each is false if it cannot be.
     auto mustBe = [&](unsigned i, Type type, auto&& test) {

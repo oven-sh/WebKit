@@ -494,6 +494,15 @@ bool StackVisitor::Frame::isBuiltinFunction() const
     return m_codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
 }
 
+JSGlobalObject* StackVisitor::Frame::lexicalGlobalObject(VM& vm) const
+{
+#if ENABLE(FTL_JIT)
+    if (m_aotFunction)
+        return m_aotFunction.instance->globalObject;
+#endif
+    return m_callFrame->lexicalGlobalObject(vm);
+}
+
 StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
 {
     if (isNativeCalleeFrame()) {

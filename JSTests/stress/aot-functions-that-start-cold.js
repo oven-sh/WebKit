@@ -1,4 +1,4 @@
-//@ runDefault("--useAOT=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 // A function from an image has nothing of its own in memory until it has been run a few times. This is about what can happen to it
 // before that, and while that changes. (It takes an image: this is one of the tests that are run from one.)
 function check(actual, expected, what) {

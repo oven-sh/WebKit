@@ -1,4 +1,4 @@
-//@ runDefault("--useAOT=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 // What op_get_by_val and a megamorphic op_get_by_id find without asking the runtime, and what they had better still ask it about.
 function at(o, k) { return o[k]; }
 function atInTry(o, k) { try { return o[k]; } catch (e) { return "caught " + e.message; } }

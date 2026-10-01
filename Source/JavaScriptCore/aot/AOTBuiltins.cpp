@@ -298,6 +298,19 @@ unsigned intrinsicFoundOn(Receiver receiver, const StringImpl& name)
 
 static constexpr Receiver receiversThereAre[] = { Receiver::String, Receiver::Array, Receiver::Map, Receiver::Set, Receiver::WeakMap, Receiver::WeakSet, Receiver::RegExp, Receiver::Date, Receiver::Number };
 
+Receiver requiredReceiver(unsigned intrinsic)
+{
+    const Tables* all = tables();
+    if (!all)
+        return Receiver::None;
+    unsigned holder = ImmutableIntrinsics::shared()->at(intrinsic).holder;
+    for (Receiver receiver : receiversThereAre) {
+        if (all->prototypesOfReceivers[static_cast<unsigned>(receiver)] == holder)
+            return receiver;
+    }
+    return Receiver::None;
+}
+
 Receiver receiverOfType(Type type)
 {
     if (!type)

@@ -26,7 +26,6 @@
 #include "config.h"
 #include "CallFrame.h"
 
-#include "AOTRuntime.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
 #include "ExecutableAllocator.h"
@@ -246,13 +245,13 @@ JSGlobalObject* CallFrame::globalObjectOfClosestCodeBlock(VM& vm, CallFrame* cal
     StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
         // Note that this is OK for InlineCache Callee.
         if (visitor->isNativeCalleeFrame()) {
-            globalObject = visitor->callFrame()->lexicalGlobalObject(vm);
+            globalObject = visitor->lexicalGlobalObject(vm);
             return IterationStatus::Done;
         }
         if (visitor->hasCode()) {
             if (auto* function = dynamicDowncast<FunctionExecutable>(visitor->ownerExecutable()); function && function->isBuiltinFunction())
                 return IterationStatus::Continue;
-            globalObject = visitor->callFrame()->lexicalGlobalObject(vm);
+            globalObject = visitor->lexicalGlobalObject(vm);
             return IterationStatus::Done;
         }
         ASSERT(visitor->codeType() == StackVisitor::Frame::CodeType::Native);
@@ -376,24 +375,16 @@ void CallFrame::convertToZombieFrame(VM& vm, CodeBlock* codeBlockToKeepAliveUnti
     ASSERT(!isEmptyTopLevelCallFrameForDebugger());
     ASSERT(codeBlockToKeepAliveUntilFrameIsUnwound->inherits<CodeBlock>());
 
+    // The realm of the nearest caller that is not a native callee.
     JSGlobalObject* globalObject = nullptr;
-#if ENABLE(FTL_JIT)
-    // A frame of AOT code has no callee or CodeBlock slot, so the loop below must not look at one.
-    if (AOT::FunctionRef caller = AOT::callerFunction(this))
-        globalObject = caller.instance->globalObject;
-#endif
-    if (!globalObject) {
-        EntryFrame* entryFrame = vm.topEntryFrame;
-        CallFrame* throwOriginFrame = this;
-        do {
-            throwOriginFrame = throwOriginFrame->callerFrame(entryFrame);
-        } while (throwOriginFrame && throwOriginFrame->callee().isNativeCallee());
-
-        if (throwOriginFrame)
-            globalObject = throwOriginFrame->lexicalGlobalObject(vm);
-        else
-            globalObject = vm.entryScope->globalObject();
-    }
+    StackVisitor::visit(this, vm, [&](StackVisitor& visitor) {
+        if (visitor->callFrame() == this || visitor->isNativeCalleeFrame())
+            return IterationStatus::Continue;
+        globalObject = visitor->lexicalGlobalObject(vm);
+        return IterationStatus::Done;
+    });
+    if (!globalObject)
+        globalObject = vm.entryScope->globalObject();
     JSObject* zombieFrameCallee = globalObject->zombieFrameCallee();
 
     setCodeBlock(codeBlockToKeepAliveUntilFrameIsUnwound);

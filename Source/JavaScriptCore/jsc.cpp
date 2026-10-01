@@ -1654,7 +1654,7 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     SourceCode moduleSource = jscSource(stringFromUTF(buffer), SourceOrigin { moduleURL }, WTF::move(moduleKey), TextPosition(), SourceProviderSourceType::Module);
 #if ENABLE(FTL_JIT)
     // Only the first module fetched (the entry point) gets an image. The modules it imports are interpreted.
-    if (Options::useAOT())
+    if (Options::compileMainScriptAheadOfTime())
         aotCompileAndRegisterImage(vm, moduleSource, true);
 #endif
     auto sourceCode = JSSourceCode::create(vm, WTF::move(moduleSource));
@@ -4431,7 +4431,7 @@ static void runWithOptions(GlobalObject* globalObject, CommandLine& options, boo
             SourceCode source = jscSource(scriptBuffer, sourceOrigin, fileName);
 #if ENABLE(FTL_JIT)
             // Only the first script gets an image. Later scripts, and code from load(), eval and Function, are interpreted.
-            if (Options::useAOT())
+            if (Options::compileMainScriptAheadOfTime())
                 aotCompileAndRegisterImage(vm, source, false);
 #endif
             JSValue returnValue = evaluate(globalObject, source, JSValue(), evaluationException);

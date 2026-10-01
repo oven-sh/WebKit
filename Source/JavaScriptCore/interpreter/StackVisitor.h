@@ -94,6 +94,9 @@ public:
             return m_codeBlock;
         }
         bool hasCode() const { return m_codeBlock || m_aotFunction; } // !!codeBlock()
+        // The realm the frame's code runs in. Unlike callFrame()->lexicalGlobalObject(), this is valid for every kind of frame: a frame of
+        // AOT code has no callee slot to find the realm through.
+        JS_EXPORT_PRIVATE JSGlobalObject* lexicalGlobalObject(VM&) const;
         // Set: it is a frame of code from the static compiler. There is nothing in such a frame for anybody but the code: all there is to
         // know about it is what is asked here.
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }

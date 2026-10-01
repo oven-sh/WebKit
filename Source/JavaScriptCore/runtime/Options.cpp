@@ -809,8 +809,11 @@ void Options::notifyOptionsChanged()
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
 
-    // Code in an image goes with the bytecode it was compiled from.
-    if (Options::aotImagePath()) {
+    if (Options::compileMainScriptAheadOfTime())
+        Options::useAOT() = true;
+
+    // AOT code only matches the bytecode it was compiled from, so the run must generate bytecode the same way.
+    if (Options::aotImagePath() || Options::compileMainScriptAheadOfTime()) {
         Options::resolveAllScopeSlotsStatically() = true;
         Options::evaluateObjectLiteralValuesFirst() = true;
         Options::definePlainInstanceFieldsInConstructor() = true;

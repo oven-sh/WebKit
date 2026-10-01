@@ -1,4 +1,4 @@
-//@ requireOptions("--useAOT=1")
+//@ requireOptions("--compileMainScriptAheadOfTime=1")
 // A cache does not keep the structure it is for alive. When the structure dies the cache has to be emptied, whatever the ages of the
 // code and of the structure: the identifier of a dead structure becomes that of a new one.
 

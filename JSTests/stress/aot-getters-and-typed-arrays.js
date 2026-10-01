@@ -1,4 +1,4 @@
-//@ requireOptions("--useAOT=1")
+//@ requireOptions("--compileMainScriptAheadOfTime=1")
 // Getters and typed arrays, which code from the static compiler deals with in its stubs. What is expected is what the interpreter says.
 
 function check(actual, expected) {

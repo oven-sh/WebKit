@@ -27,7 +27,6 @@
 #include "LLIntSlowPaths.h"
 #include "CompilerHooks.h"
 
-#include "AOTRuntime.h"
 #include "AbortReason.h"
 #include "ArrayConstructor.h"
 #include "BaselineJITPlan.h"
@@ -2990,19 +2989,8 @@ extern "C" UGPRPair SYSV_ABI llint_slow_path_array_sort_comparator_return(CallFr
 
 extern "C" UGPRPair SYSV_ABI llint_throw_stack_overflow_error(VM* vm, ProtoCallFrame* protoFrame)
 {
-    CallFrame* callFrame = vm->topCallFrame;
     auto scope = DECLARE_THROW_SCOPE(*vm);
-    JSGlobalObject* globalObject = nullptr;
-#if ENABLE(FTL_JIT)
-    // If C++ was called from AOT code, the top frame has no callee slot.
-    if (callFrame && AOT::topCallFrameIsAOTFrame(callFrame))
-        globalObject = AOT::instanceForFrame(callFrame)->globalObject;
-    else
-#endif
-    if (callFrame)
-        globalObject = callFrame->lexicalGlobalObject(*vm);
-    else
-        globalObject = protoFrame->callee()->realm();
+    JSGlobalObject* globalObject = vm->topCallFrame ? vm->topFrameGlobalObject() : protoFrame->callee()->realm();
     throwStackOverflowError(globalObject, scope);
     return encodeResult(nullptr, nullptr);
 }

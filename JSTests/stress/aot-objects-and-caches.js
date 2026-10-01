@@ -1,4 +1,4 @@
-//@ requireOptions("--useAOT=1")
+//@ requireOptions("--compileMainScriptAheadOfTime=1")
 // Allocation, conversions and the caches behind property access, in code from the static compiler.
 
 function shouldBe(actual, expected) {

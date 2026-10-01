@@ -1,4 +1,4 @@
-//@ requireOptions("--useAOT=1")
+//@ requireOptions("--compileMainScriptAheadOfTime=1")
 // Private fields, methods and brands, which code from the static compiler has caches for. What is expected is what the interpreter says.
 
 function check(actual, expected) {

@@ -1,4 +1,4 @@
-//@ runDefault("--useAOT=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 // Objects made by literals whose properties are all plain from the code, and everything that can become of them afterwards.
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))

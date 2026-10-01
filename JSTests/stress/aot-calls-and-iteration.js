@@ -1,4 +1,4 @@
-//@ requireOptions("--useAOT=1")
+//@ requireOptions("--compileMainScriptAheadOfTime=1")
 // Calls that are not plain ones, for-of and for-in, in code from the static compiler.
 
 function shouldBe(actual, expected) {

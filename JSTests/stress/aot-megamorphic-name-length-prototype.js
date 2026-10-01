@@ -1,4 +1,4 @@
-//@ runDefault("--useAOT=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 // Names that functions, arrays and strings have a say of their own about, at sites that see many structures.
 function name(o) { return o.name; }
 function length(o) { return o.length; }

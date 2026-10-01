@@ -1,6 +1,6 @@
-//@ runDefault("--useImmutableIntrinsics=1", "--useAOT=1", "--aotUseLiveScopes=1")
-//@ runDefault("--useImmutableIntrinsics=1", "--useAOT=1", "--aotUseLiveScopes=1", "--useDFGJIT=0")
-//@ runDefault("--useImmutableIntrinsics=1", "--useAOT=1")
+//@ runDefault("--useImmutableIntrinsics=1", "--compileMainScriptAheadOfTime=1", "--aotUseLiveScopes=1")
+//@ runDefault("--useImmutableIntrinsics=1", "--compileMainScriptAheadOfTime=1", "--aotUseLiveScopes=1", "--useDFGJIT=0")
+//@ runDefault("--useImmutableIntrinsics=1", "--compileMainScriptAheadOfTime=1")
 // Code that is compiled ahead of time takes the built-in objects for what they are. This is about when it may, and when it may not.
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))

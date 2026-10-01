@@ -3872,7 +3872,7 @@ static bool incumbentRealmIs(VM& vm, JSGlobalObject* target)
         if (visitor->hasCode()) {
             if (auto* functionExecutable = dynamicDowncast<FunctionExecutable>(visitor->ownerExecutable()); functionExecutable && functionExecutable->isBuiltinFunction())
                 return IterationStatus::Continue;
-            if (visitor->callFrame()->lexicalGlobalObject(vm) == target) {
+            if (visitor->lexicalGlobalObject(vm) == target) {
                 result = true;
                 return IterationStatus::Done;
             }

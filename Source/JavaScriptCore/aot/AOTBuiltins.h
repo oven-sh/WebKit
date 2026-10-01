@@ -94,6 +94,9 @@ JSType cellTypeOf(Receiver); // Not of a Number.
 unsigned intrinsicFoundOn(Receiver, const StringImpl& name);
 // What something of that type is, if that settles it. Otherwise, going by the name of a method that is called on it, what it is likely to be.
 Receiver receiverOfType(Type);
+// The kind of receiver a built-in method operates on: the class whose prototype holds it. None for a function that ignores `this`, such as
+// Math.floor.
+Receiver requiredReceiver(unsigned intrinsic);
 Receiver receiverLikelyToHave(Type, const StringImpl& name);
 
 } } // namespace JSC::AOT
