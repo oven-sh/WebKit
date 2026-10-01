@@ -1150,8 +1150,7 @@ public:
     MicrotaskQueue& defaultMicrotaskQueue();
 
     DrainMicrotaskDelayScope drainMicrotaskDelayScope() { return DrainMicrotaskDelayScope { *this }; }
-    // Depth of LockedObjectInternalMutationScope: while non-zero, the engine's own lazy materialization may write to a locked object.
-    unsigned lockedObjectInternalMutationDepth { 0 };
+    unsigned allowLockedPropertiesMutationCount { 0 };
 
     JS_EXPORT_PRIVATE void drainMicrotasks();
 #if USE(BUN_JSC_ADDITIONS)
@@ -1560,14 +1559,15 @@ extern "C" void SYSV_ABI sanitizeStackForVMImpl(VM*);
 JS_EXPORT_PRIVATE void sanitizeStackForVM(VM&);
 JS_EXPORT_PRIVATE void sanitizeStackForVMInCallSlowPath(VM&);
 
-// The only way to write a property onto a locked object (Structure::isLocked). Used by the engine where it materializes a
-// property the object logically already has (static tables, function name/length/prototype, error info, arguments specials).
-// Keep it around the write alone: nothing inside it may run user JavaScript.
-class LockedObjectInternalMutationScope {
-    WTF_MAKE_NONCOPYABLE(LockedObjectInternalMutationScope);
+// While one of these is alive, properties can be put directly on an object whose Structure says didLockProperties(). It is for the
+// places where the engine materializes a property the object logically already has: a static property table entry, a function's
+// name, length or prototype, an error's stack, an arguments object's callee. Keep it around the write alone: nothing inside it
+// may run JavaScript.
+class AllowLockedPropertiesMutation {
+    WTF_MAKE_NONCOPYABLE(AllowLockedPropertiesMutation);
 public:
-    explicit LockedObjectInternalMutationScope(VM& vm) : m_vm(vm) { ++m_vm.lockedObjectInternalMutationDepth; }
-    ~LockedObjectInternalMutationScope() { --m_vm.lockedObjectInternalMutationDepth; }
+    explicit AllowLockedPropertiesMutation(VM& vm) : m_vm(vm) { ++m_vm.allowLockedPropertiesMutationCount; }
+    ~AllowLockedPropertiesMutation() { --m_vm.allowLockedPropertiesMutationCount; }
 private:
     VM& m_vm;
 };

@@ -67,7 +67,7 @@ enum class TransitionKind : uint8_t {
     SetBrand = 17,
 
     // The object becomes non-extensible and its own properties and prototype can no longer change. Property attributes do not change.
-    Lock = 18,
+    LockProperties = 18,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -127,7 +127,7 @@ inline bool preventsExtensions(TransitionKind transition)
     case TransitionKind::PreventExtensions:
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
-    case TransitionKind::Lock:
+    case TransitionKind::LockProperties:
         return true;
     default:
         return false;

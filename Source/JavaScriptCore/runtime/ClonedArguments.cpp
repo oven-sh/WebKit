@@ -243,8 +243,8 @@ void ClonedArguments::getOwnSpecialPropertyNames(JSObject* object, JSGlobalObjec
 
 bool ClonedArguments::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName ident, JSValue value, PutPropertySlot& slot)
 {
-    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked() && !isThisValueAltered(slot, uncheckedDowncast<JSObject>(cell))) [[unlikely]]
-        return JSObject::lockedPutRefusal(globalObject, slot.isStrictMode());
+    if (cell->structure()->didLockProperties() && !isThisValueAltered(slot, asObject(cell))) [[unlikely]]
+        return JSObject::put(cell, globalObject, ident, value, slot);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(cell);
     VM& vm = globalObject->vm();
     
@@ -260,8 +260,8 @@ bool ClonedArguments::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNa
 
 bool ClonedArguments::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName ident, DeletePropertySlot& slot)
 {
-    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked()) [[unlikely]]
-        return JSObject::lockedDeleteRefusal(uncheckedDowncast<JSObject>(cell), globalObject, ident);
+    if (cell->structure()->didLockProperties()) [[unlikely]]
+        return JSObject::deleteProperty(cell, globalObject, ident, slot);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(cell);
     VM& vm = globalObject->vm();
     
@@ -274,8 +274,8 @@ bool ClonedArguments::deleteProperty(JSCell* cell, JSGlobalObject* globalObject,
 
 bool ClonedArguments::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName ident, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
-    if (object->structure()->isLocked()) [[unlikely]]
-        return JSObject::defineOwnPropertyOnLockedObject(object, globalObject, ident, descriptor, shouldThrow);
+    if (object->structure()->didLockProperties()) [[unlikely]]
+        return JSObject::defineOwnProperty(object, globalObject, ident, descriptor, shouldThrow);
     ClonedArguments* thisObject = uncheckedDowncast<ClonedArguments>(object);
     VM& vm = globalObject->vm();
     
@@ -296,7 +296,7 @@ void ClonedArguments::materializeSpecials(JSGlobalObject* globalObject)
     
     {
         // These properties are part of an arguments object from the start; a locked one still gets them. No JavaScript runs here.
-        LockedObjectInternalMutationScope allowLazyMaterialization(vm);
+        AllowLockedPropertiesMutation allowMutation(vm);
         if (isStrictMode || executable->usesNonSimpleParameterList())
             putDirectAccessor(globalObject, vm.propertyNames->callee, this->realm()->throwTypeErrorArgumentsCalleeGetterSetter(), PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::Accessor);
         else

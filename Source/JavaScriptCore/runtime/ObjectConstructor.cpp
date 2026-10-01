@@ -1155,7 +1155,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->isLocked()) {
+    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->didLockProperties()) {
         object->seal(vm);
         return object;
     }
@@ -1188,7 +1188,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->isLocked()) {
+    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->didLockProperties()) {
         object->freeze(vm);
         return object;
     }

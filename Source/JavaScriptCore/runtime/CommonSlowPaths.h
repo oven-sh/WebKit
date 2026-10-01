@@ -183,8 +183,8 @@ static ALWAYS_INLINE void putDirectWithReify(VM& vm, JSGlobalObject* globalObjec
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     // Class fields, object-literal members and the other direct-define bytecodes: on a locked object the definition fails, as CreateDataPropertyOrThrow does.
-    if (baseObject->structure()->isLocked()) [[unlikely]] {
-        throwTypeError(globalObject, scope, LockedObjectDefineError);
+    if (baseObject->structure()->didLockProperties()) [[unlikely]] {
+        throwTypeError(globalObject, scope, LockedObjectPropertyDefineError);
         return;
     }
     bool isJSFunction = baseObject->inherits<JSFunction>();
@@ -223,8 +223,8 @@ static ALWAYS_INLINE void putDirectAccessorWithReify(VM& vm, JSGlobalObject* glo
     // Please also note that static "prototype" accessor in a `class` literal is a syntax error.
 
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (baseObject->structure()->isLocked()) [[unlikely]] {
-        throwTypeError(globalObject, scope, LockedObjectDefineError);
+    if (baseObject->structure()->didLockProperties()) [[unlikely]] {
+        throwTypeError(globalObject, scope, LockedObjectPropertyDefineError);
         return;
     }
     bool isJSFunction = baseObject->inherits<JSFunction>();

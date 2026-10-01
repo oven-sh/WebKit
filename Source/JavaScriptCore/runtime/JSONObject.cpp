@@ -2119,7 +2119,7 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
                     unsigned attributes;
                     PropertyOffset offset = object->getDirectOffset(vm, prop, attributes);
                     // The reviver has been handed this holder and may have locked it: only the checked path may write then.
-                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !object->structure()->isLocked()) [[likely]] {
+                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !object->structure()->didLockProperties()) [[likely]] {
                         object->putDirectOffset(vm, offset, filteredValue);
                         object->structure()->didReplaceProperty(offset);
                     } else {

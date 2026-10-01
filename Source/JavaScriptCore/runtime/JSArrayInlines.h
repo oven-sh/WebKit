@@ -236,7 +236,7 @@ ALWAYS_INLINE void JSArray::pushInline(JSGlobalObject* globalObject, JSValue val
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (structure()->isLocked()) [[unlikely]] {
+    if (structure()->didLockProperties()) [[unlikely]] {
         throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
         return;
     }

@@ -45,7 +45,7 @@ class PublicFieldStamper extends ReturnsArgument {
         new MethodStamper({});
         new PublicFieldStamper({});
     }
-    let locked = $vm.lockObject({ a: 1 });
+    let locked = $vm.lockProperties({ a: 1 });
     for (let i = 0; i < 50; i++) {
         shouldThrow(() => new FieldStamper(locked), TypeError);
         shouldThrow(() => new MethodStamper(locked), TypeError);
@@ -63,7 +63,7 @@ class PublicFieldStamper extends ReturnsArgument {
     new MethodStamper(object);
     for (let i = 0; i < 2000; i++)
         FieldStamper.set(object, i);
-    $vm.lockObject(object);
+    $vm.lockProperties(object);
     shouldBe(FieldStamper.has(object), true);
     shouldBe(FieldStamper.get(object), 1999);
     for (let i = 0; i < 2000; i++)
@@ -80,7 +80,7 @@ class PublicFieldStamper extends ReturnsArgument {
         #count = 0;
         increment() { return ++this.#count; }
     }
-    let counter = $vm.lockObject(new Counter());
+    let counter = $vm.lockProperties(new Counter());
     shouldBe(counter.increment(), 1);
     shouldBe(counter.increment(), 2);
     shouldThrow(() => { "use strict"; counter.extra = 1; }, TypeError);

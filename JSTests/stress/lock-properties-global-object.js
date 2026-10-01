@@ -34,8 +34,8 @@ for (let i = 0; i < 20000; i++) {
 }
 let ownKeysBefore = Reflect.ownKeys(globalThis).length;
 
-$vm.lockObject(globalThis);
-shouldBe($vm.isLockedObject(globalThis), true);
+$vm.lockProperties(globalThis);
+shouldBe($vm.didLockProperties(globalThis), true);
 shouldBe(Object.isExtensible(globalThis), false);
 
 // Properties.

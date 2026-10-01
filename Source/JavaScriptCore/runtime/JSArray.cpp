@@ -212,8 +212,9 @@ bool JSArray::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
 
     JSArray* array = uncheckedDowncast<JSArray>(object);
 
-    if (array->structure()->isLocked()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, defineOwnPropertyOnLockedObject(array, globalObject, propertyName, descriptor, throwException));
+    // A locked array takes JSObject's implementation, which has the checks.
+    if (array->structure()->didLockProperties()) [[unlikely]]
+        RELEASE_AND_RETURN(scope, JSObject::defineOwnProperty(array, globalObject, propertyName, descriptor, throwException));
 
     // 2. If P is "length", then
     // https://tc39.es/ecma262/#sec-arraysetlength
@@ -307,7 +308,7 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
-    if (thisObject->structure()->isLocked() && !isThisValueAltered(slot, thisObject)) [[unlikely]]
+    if (thisObject->structure()->didLockProperties() && !isThisValueAltered(slot, thisObject)) [[unlikely]]
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
     thisObject->ensureWritable(vm);
 
@@ -337,8 +338,8 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
 
 bool JSArray::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
-    if (uncheckedDowncast<JSObject>(cell)->structure()->isLocked()) [[unlikely]]
-        return JSObject::lockedDeleteRefusal(uncheckedDowncast<JSObject>(cell), globalObject, propertyName);
+    if (cell->structure()->didLockProperties()) [[unlikely]]
+        return JSObject::deleteProperty(cell, globalObject, propertyName, slot);
     VM& vm = globalObject->vm();
     JSArray* thisObject = uncheckedDowncast<JSArray>(cell);
 
@@ -1253,7 +1254,7 @@ bool JSArray::setLength(JSGlobalObject* globalObject, unsigned newLength, bool t
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (structure()->isLocked()) [[unlikely]]
+    if (structure()->didLockProperties()) [[unlikely]]
         return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
 
     Butterfly* butterfly = this->butterfly();
@@ -1335,7 +1336,7 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (structure()->isLocked()) [[unlikely]]
+    if (structure()->didLockProperties()) [[unlikely]]
         return throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
 
     ensureWritable(vm);
@@ -1696,7 +1697,7 @@ bool JSArray::shiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsign
     RELEASE_ASSERT(count > 0);
 
     // A locked array takes ArrayPrototype's generic path, whose puts and deletes are refused.
-    if (structure()->isLocked()) [[unlikely]]
+    if (structure()->didLockProperties()) [[unlikely]]
         return false;
 
     ensureWritable(vm);
@@ -1875,7 +1876,7 @@ bool JSArray::unshiftCountWithAnyIndexingType(JSGlobalObject* globalObject, unsi
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // A locked array takes ArrayPrototype's generic path, whose puts and deletes are refused.
-    if (structure()->isLocked()) [[unlikely]]
+    if (structure()->didLockProperties()) [[unlikely]]
         return false;
 
     ensureWritable(vm);

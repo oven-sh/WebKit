@@ -353,7 +353,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setTransitionKind(TransitionKind::Unknown);
     setMayBePrototype(previous->mayBePrototype());
     setDidPreventExtensions(previous->didPreventExtensions());
-    setIsLocked(previous->isLocked());
+    setDidLockProperties(previous->didLockProperties());
     setDidTransition(true);
     setStaticPropertiesReified(previous->staticPropertiesReified());
     setHasBeenDictionary(previous->hasBeenDictionary());
@@ -726,7 +726,7 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
 Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JSValue prototype, DeferredStructureTransitionWatchpointFire& deferred)
 {
     // A locked structure has no user-visible successors: an embedder that calls this transition directly on a locked object gets the same structure back.
-    if (structure->isLocked() && !vm.lockedObjectInternalMutationDepth) [[unlikely]]
+    if (structure->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]]
         return structure;
     ASSERT(isValidPrototype(prototype));
 
@@ -811,7 +811,7 @@ Structure* Structure::attributeChangeTransitionToExistingStructureConcurrently(S
 Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, DeferredStructureTransitionWatchpointFire* deferred)
 {
     // A locked structure has no user-visible successors: an embedder that calls this transition directly on a locked object gets the same structure back.
-    if (structure->isLocked() && !vm.lockedObjectInternalMutationDepth) [[unlikely]]
+    if (structure->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]]
         return structure;
     if (structure->isUncacheableDictionary()) {
         structure->attributeChangeWithoutTransition(vm, propertyName, attributes, [](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset) { });
@@ -900,20 +900,20 @@ Structure* Structure::toUncacheableDictionaryTransition(VM& vm, Structure* struc
 Structure* Structure::sealTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
     // A locked structure has no user-visible successors: an embedder that calls this transition directly on a locked object gets the same structure back.
-    if (structure->isLocked() && !vm.lockedObjectInternalMutationDepth) [[unlikely]]
+    if (structure->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]]
         return structure;
     return nonPropertyTransition(vm, structure, TransitionKind::Seal, deferred);
 }
 
-Structure* Structure::lockTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
+Structure* Structure::lockPropertiesTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
-    return nonPropertyTransition(vm, structure, TransitionKind::Lock, deferred);
+    return nonPropertyTransition(vm, structure, TransitionKind::LockProperties, deferred);
 }
 
 Structure* Structure::freezeTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
     // A locked structure has no user-visible successors: an embedder that calls this transition directly on a locked object gets the same structure back.
-    if (structure->isLocked() && !vm.lockedObjectInternalMutationDepth) [[unlikely]]
+    if (structure->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]]
         return structure;
     return nonPropertyTransition(vm, structure, TransitionKind::Freeze, deferred);
 }
@@ -921,7 +921,7 @@ Structure* Structure::freezeTransition(VM& vm, Structure* structure, DeferredStr
 Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
     // A locked structure has no user-visible successors: an embedder that calls this transition directly on a locked object gets the same structure back.
-    if (structure->isLocked() && !vm.lockedObjectInternalMutationDepth) [[unlikely]]
+    if (structure->didLockProperties() && !vm.allowLockedPropertiesMutationCount) [[unlikely]]
         return structure;
     return nonPropertyTransition(vm, structure, TransitionKind::PreventExtensions, deferred);
 }
@@ -976,8 +976,8 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (transitionKind == TransitionKind::BecomePrototype)
         transition->setMayBePrototype(true);
 
-    if (transitionKind == TransitionKind::Lock)
-        transition->setIsLocked(true);
+    if (transitionKind == TransitionKind::LockProperties)
+        transition->setDidLockProperties(true);
     
     if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind)) {
         // We pin the property table on transitions that do wholesale editing of the property
@@ -1834,8 +1834,8 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
     case TransitionKind::SetBrand:
         kindName = "SetBrand";
         break;
-    case TransitionKind::Lock:
-        kindName = "Lock";
+    case TransitionKind::LockProperties:
+        kindName = "LockProperties";
         break;
     }
 

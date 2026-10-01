@@ -1032,7 +1032,7 @@ static InlineCacheAction tryCachePutBy(JSGlobalObject* globalObject, CodeBlock* 
     VM& vm = globalObject->vm();
     AccessGenerationResult result;
     Identifier ident = Identifier::fromUid(vm, propertyName.uid());
-    if (oldStructure->isLocked() || (baseValue.isCell() && baseValue.asCell()->structure()->isLocked()))
+    if (oldStructure->didLockProperties() || (baseValue.isCell() && baseValue.asCell()->structure()->didLockProperties()))
         return GiveUpOnCache;
     {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, globalObject->vm());
@@ -1374,7 +1374,7 @@ static InlineCacheAction tryCacheArrayPutByVal(JSGlobalObject* globalObject, Cod
     if (!baseValue.isCell() || forceICFailure(globalObject))
         return GiveUpOnCache;
 
-    if (baseValue.asCell()->structure()->isLocked())
+    if (baseValue.asCell()->structure()->didLockProperties())
         return GiveUpOnCache;
 
     if (!index.isInt32())
@@ -1515,7 +1515,7 @@ static InlineCacheAction tryCacheDeleteBy(JSGlobalObject* globalObject, CodeBloc
     VM& vm = globalObject->vm();
     AccessGenerationResult result;
 
-    if (oldStructure->isLocked())
+    if (oldStructure->didLockProperties())
         return GiveUpOnCache;
 
     {

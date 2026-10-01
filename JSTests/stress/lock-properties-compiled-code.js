@@ -77,7 +77,7 @@ function warm(includeTargets) {
 
 warm(true); // every site is hot and has stored into each target through whatever fast path its tier offers
 for (let target of Object.values(targets))
-    $vm.lockObject(target);
+    $vm.lockProperties(target);
 warm(false);
 
 for (let [name, target] of Object.entries(targets)) {
@@ -99,7 +99,7 @@ for (let [name, target] of Object.entries(targets)) {
     shouldBe(Reflect.ownKeys(target).length, keys, name + ": own keys");
     shouldBe("fresh" in target, false, name + ": no property was added");
     let copy = defineByLiteralSpread(target);
-    shouldBe($vm.isLockedObject(copy), false, name + ": a spread copy is not locked");
+    shouldBe($vm.didLockProperties(copy), false, name + ": a spread copy is not locked");
     shouldBe(copy.x, "copy", name);
 }
 

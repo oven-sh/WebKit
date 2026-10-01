@@ -1,4 +1,4 @@
-// $vm.lockObject(object) locks an object: it becomes non-extensible, and a put with it as the receiver, a define or delete that
+// $vm.lockProperties(object) locks an object: it becomes non-extensible, and a put with it as the receiver, a define or delete that
 // would change one of its own properties, and a change of its prototype all fail. Property attributes do not change.
 
 function shouldBe(actual, expected, message) {
@@ -32,19 +32,19 @@ function make() {
 // Locking returns the object, reports locked, and is idempotent.
 {
     let object = make();
-    shouldBe($vm.isLockedObject(object), false);
-    shouldBe($vm.lockObject(object), object);
-    shouldBe($vm.isLockedObject(object), true);
-    shouldBe($vm.lockObject(object), object);
-    shouldBe($vm.isLockedObject(1), false);
-    shouldThrow(() => $vm.lockObject(1), TypeError);
+    shouldBe($vm.didLockProperties(object), false);
+    shouldBe($vm.lockProperties(object), object);
+    shouldBe($vm.didLockProperties(object), true);
+    shouldBe($vm.lockProperties(object), object);
+    shouldBe($vm.didLockProperties(1), false);
+    shouldThrow(() => $vm.lockProperties(1), TypeError);
 }
 
 // Attributes are untouched; the object is non-extensible; it is not thereby sealed or frozen.
 {
     let object = make();
     let before = snapshot(object).replace("extensible:true", "extensible:false");
-    $vm.lockObject(object);
+    $vm.lockProperties(object);
     shouldBe(snapshot(object), before);
     shouldBe(Object.getOwnPropertyDescriptor(object, "a").writable, true);
     shouldBe(Object.getOwnPropertyDescriptor(object, "a").configurable, true);
@@ -56,7 +56,7 @@ function make() {
 
 // [[Set]] with the locked object as receiver.
 {
-    let object = $vm.lockObject(make());
+    let object = $vm.lockProperties(make());
     let before = snapshot(object);
     (function () { object.a = 9; object.fresh = 9; object[symbol] = 9; object[0] = 9; object.g = 9; })(); // sloppy: ignored
     shouldBe(snapshot(object), before);
@@ -75,7 +75,7 @@ function make() {
 
 // [[DefineOwnProperty]]: a definition that changes nothing succeeds, every other one fails.
 {
-    let object = $vm.lockObject(make());
+    let object = $vm.lockProperties(make());
     let before = snapshot(object);
     let getter = Object.getOwnPropertyDescriptor(object, "g").get;
     shouldBe(Reflect.defineProperty(object, "a", {}), true);
@@ -106,7 +106,7 @@ function make() {
 
 // [[Delete]]: an existing property stays; a property the object does not have deletes to true.
 {
-    let object = $vm.lockObject(make());
+    let object = $vm.lockProperties(make());
     let before = snapshot(object);
     shouldBe(delete object.a, false);
     shouldBe(Reflect.deleteProperty(object, "a"), false);
@@ -121,7 +121,7 @@ function make() {
 
 // [[SetPrototypeOf]]: only the prototype it already has.
 {
-    let object = $vm.lockObject(make());
+    let object = $vm.lockProperties(make());
     shouldBe(Reflect.setPrototypeOf(object, Object.prototype), true);
     shouldBe(Object.setPrototypeOf(object, Object.prototype), object);
     shouldBe(Reflect.setPrototypeOf(object, null), false);
@@ -132,7 +132,7 @@ function make() {
     shouldThrow(() => { "use strict"; object.__proto__ = {}; }, TypeError);
     shouldBe(Object.getPrototypeOf(object), Object.prototype);
 
-    let nullProto = $vm.lockObject(Object.create(null));
+    let nullProto = $vm.lockProperties(Object.create(null));
     shouldBe(Reflect.setPrototypeOf(nullProto, null), true);
     shouldBe(Reflect.setPrototypeOf(nullProto, Object.prototype), false);
 }
@@ -140,7 +140,7 @@ function make() {
 // [[PreventExtensions]] has nothing left to do. Object.seal() and Object.freeze() would change attributes, so they fail,
 // unless there is nothing for them to change.
 {
-    let object = $vm.lockObject(make());
+    let object = $vm.lockProperties(make());
     let before = snapshot(object);
     shouldBe(Reflect.preventExtensions(object), true);
     shouldBe(Object.preventExtensions(object), object);
@@ -148,18 +148,18 @@ function make() {
     shouldThrow(() => Object.freeze(object), TypeError);
     shouldBe(snapshot(object), before);
 
-    let empty = $vm.lockObject({});
+    let empty = $vm.lockProperties({});
     shouldBe(Object.freeze(empty), empty);
     shouldBe(Object.isFrozen(empty), true);
 
-    let alreadyFrozen = $vm.lockObject(Object.freeze({ a: 1 }));
+    let alreadyFrozen = $vm.lockProperties(Object.freeze({ a: 1 }));
     shouldBe(Object.freeze(alreadyFrozen), alreadyFrozen);
     shouldBe(Object.seal(alreadyFrozen), alreadyFrozen);
 }
 
 // Bulk writers.
 {
-    let object = $vm.lockObject(make());
+    let object = $vm.lockProperties(make());
     let before = snapshot(object);
     shouldThrow(() => Object.assign(object, { a: 2, z: 3 }), TypeError);
     shouldThrow(() => Object.assign(object, { z: 3 }), TypeError);
@@ -167,13 +167,13 @@ function make() {
 
     // A copy is not locked.
     let copy = { ...object };
-    shouldBe($vm.isLockedObject(copy), false);
+    shouldBe($vm.didLockProperties(copy), false);
     copy.a = 7;
     copy.fresh = 8;
     shouldBe(copy.a, 7);
     shouldBe(copy.fresh, 8);
     let assigned = Object.assign({}, object);
-    shouldBe($vm.isLockedObject(assigned), false);
+    shouldBe($vm.didLockProperties(assigned), false);
     assigned.a = 7;
     shouldBe(assigned.a, 7);
 }
@@ -182,7 +182,7 @@ function make() {
 {
     let result = JSON.parse('{"a":1,"b":2}', function (key, value) {
         if (key === "a")
-            $vm.lockObject(this);
+            $vm.lockProperties(this);
         return typeof value === "number" ? value * 10 : value;
     });
     shouldBe(result.a, 1);
@@ -191,7 +191,7 @@ function make() {
 
 // Reads are unaffected.
 {
-    let object = $vm.lockObject(make());
+    let object = $vm.lockProperties(make());
     shouldBe(object.a, 1);
     shouldBe(object[symbol], 3);
     shouldBe("a" in object, true);
@@ -205,43 +205,43 @@ function make() {
 
 // Internal slots are not properties: they are not affected.
 {
-    let map = $vm.lockObject(new Map());
+    let map = $vm.lockProperties(new Map());
     map.set("k", 1);
     shouldBe(map.get("k"), 1);
     shouldBe(map.size, 1);
     shouldThrow(() => { "use strict"; map.extra = 1; }, TypeError);
 
-    let set = $vm.lockObject(new Set());
+    let set = $vm.lockProperties(new Set());
     set.add(1);
     shouldBe(set.has(1), true);
 
-    let date = $vm.lockObject(new Date(0));
+    let date = $vm.lockProperties(new Date(0));
     date.setTime(5);
     shouldBe(date.getTime(), 5);
 
-    let weakMap = $vm.lockObject(new WeakMap());
+    let weakMap = $vm.lockProperties(new WeakMap());
     let key = {};
     weakMap.set(key, 1);
     shouldBe(weakMap.get(key), 1);
 
-    let promise = $vm.lockObject(Promise.resolve(1));
+    let promise = $vm.lockProperties(Promise.resolve(1));
     let seen;
     promise.then(value => { seen = value; });
     drainMicrotasks();
     shouldBe(seen, 1);
 }
 
-// Classes that cannot be locked: nothing changes and lockObject() throws.
+// Classes that cannot be locked: nothing changes and $vm.lockProperties() throws.
 {
     let proxy = new Proxy({}, {});
-    shouldThrow(() => $vm.lockObject(proxy), TypeError);
-    shouldBe($vm.isLockedObject(proxy), false);
+    shouldThrow(() => $vm.lockProperties(proxy), TypeError);
+    shouldBe($vm.didLockProperties(proxy), false);
     let typedArray = new Uint8Array(4);
-    shouldThrow(() => $vm.lockObject(typedArray), TypeError);
+    shouldThrow(() => $vm.lockProperties(typedArray), TypeError);
     typedArray[0] = 7;
     shouldBe(typedArray[0], 7);
     let mapped = (function (a) { return arguments; })(1);
-    shouldThrow(() => $vm.lockObject(mapped), TypeError);
+    shouldThrow(() => $vm.lockProperties(mapped), TypeError);
     mapped[0] = 2;
     shouldBe(mapped[0], 2);
 }

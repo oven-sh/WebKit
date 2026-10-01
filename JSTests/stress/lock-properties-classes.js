@@ -68,7 +68,7 @@ function snapshot(object) {
                     mutate(make());
                 } catch { }
             }
-            let array = $vm.lockObject(make());
+            let array = $vm.lockProperties(make());
             let before = snapshot(array);
             for (let i = 0; i < 40; i++) {
                 try {
@@ -79,7 +79,7 @@ function snapshot(object) {
         }
     }
 
-    let array = $vm.lockObject([1, 2, 3]);
+    let array = $vm.lockProperties([1, 2, 3]);
     shouldThrow(() => array.push(4), TypeError);
     shouldThrow(() => array.pop(), TypeError);
     shouldThrow(() => { "use strict"; array[0] = 9; }, TypeError);
@@ -91,7 +91,7 @@ function snapshot(object) {
     shouldBe(Reflect.deleteProperty(array, 0), false);
     shouldBe(array.map(x => x * 2).join(), "2,4,6");
     shouldBe([...array].join(), "1,2,3");
-    shouldBe($vm.isLockedObject(array.slice()), false);
+    shouldBe($vm.didLockProperties(array.slice()), false);
 }
 
 // Functions: name, length and prototype are materialized lazily and still appear on a locked function.
@@ -102,7 +102,7 @@ function snapshot(object) {
     let native = Math.max;
     class Klass { static s() { } }
     for (let fn of [declared, arrow, bound, native, Klass])
-        $vm.lockObject(fn);
+        $vm.lockProperties(fn);
 
     shouldBe(declared.name, "declared");
     shouldBe(declared.length, 2);
@@ -136,7 +136,7 @@ function snapshot(object) {
 
 // Errors: line, column, sourceURL and stack are materialized lazily and still appear on a locked error.
 {
-    let error = $vm.lockObject(new RangeError("message"));
+    let error = $vm.lockProperties(new RangeError("message"));
     shouldBe(typeof error.stack, "string");
     shouldBe(typeof error.line, "number");
     shouldBe(error.message, "message");
@@ -153,7 +153,7 @@ function snapshot(object) {
 // RegExp objects: lastIndex becomes non-writable (compiled code tests the object's own flag), so matching that has to update
 // it fails as it does for a frozen RegExp; matching that does not need to update it works.
 {
-    let plain = $vm.lockObject(/b/);
+    let plain = $vm.lockProperties(/b/);
     shouldBe(plain.test("abc"), true);
     shouldBe("abc".replace(plain, "X"), "aXc");
     shouldBe(Object.getOwnPropertyDescriptor(plain, "lastIndex").writable, false);
@@ -162,14 +162,14 @@ function snapshot(object) {
     shouldThrow(() => plain.compile("c"), TypeError);
     shouldBe(plain.source, "b");
 
-    let global = $vm.lockObject(/b/g);
+    let global = $vm.lockProperties(/b/g);
     shouldThrow(() => global.exec("abcb"), TypeError);
     shouldBe(global.lastIndex, 0);
 }
 
 // String objects.
 {
-    let string = $vm.lockObject(new String("ab"));
+    let string = $vm.lockProperties(new String("ab"));
     shouldBe(string.length, 2);
     shouldBe(string[1], "b");
     shouldThrow(() => { "use strict"; string.extra = 1; }, TypeError);
@@ -184,7 +184,7 @@ function snapshot(object) {
 // Unmapped (strict-mode) arguments objects: callee, Symbol.iterator and length still appear.
 {
     let args = (function () { "use strict"; return arguments; })(1, 2, 3);
-    $vm.lockObject(args);
+    $vm.lockProperties(args);
     shouldBe(args.length, 3);
     shouldBe([...args].join(), "1,2,3");
     shouldBe(typeof args[Symbol.iterator], "function");
@@ -199,7 +199,7 @@ function snapshot(object) {
 // Built-in prototypes and constructors: static properties are reified lazily and still appear after the lock.
 {
     for (let object of [Array.prototype, Array, Math, JSON, Promise.prototype, Promise, RegExp.prototype, Map.prototype, Object])
-        $vm.lockObject(object);
+        $vm.lockProperties(object);
     shouldBe([3, 1, 2].toSorted().join(), "1,2,3");
     shouldBe(typeof Array.prototype.findLast, "function");
     shouldBe(Math.hypot(3, 4), 5);

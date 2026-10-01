@@ -2211,8 +2211,8 @@ static JSC_DECLARE_HOST_FUNCTION(functionGetPID);
 static JSC_DECLARE_HOST_FUNCTION(functionVMTaintedState);
 static JSC_DECLARE_HOST_FUNCTION(functionHaveABadTime);
 static JSC_DECLARE_HOST_FUNCTION(functionIsHavingABadTime);
-static JSC_DECLARE_HOST_FUNCTION(functionLockObject);
-static JSC_DECLARE_HOST_FUNCTION(functionIsLockedObject);
+static JSC_DECLARE_HOST_FUNCTION(functionLockProperties);
+static JSC_DECLARE_HOST_FUNCTION(functionDidLockProperties);
 static JSC_DECLARE_HOST_FUNCTION(functionCallWithStackSize);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateGlobalObject);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateProxy);
@@ -3255,27 +3255,27 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHavingABadTime, (JSGlobalObject* globalObject
     return JSValue::encode(jsBoolean(target->isHavingABadTime()));
 }
 
-// Locks an object (JSObject::lockProperties) and returns it. Throws a TypeError for an object of a class that cannot be locked.
-// Usage: $vm.lockObject(object)
-JSC_DEFINE_HOST_FUNCTION(functionLockObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
+// Calls JSObject::lockProperties() and returns the object. Throws a TypeError for an object of a class that cannot be locked.
+// Usage: $vm.lockProperties(object)
+JSC_DEFINE_HOST_FUNCTION(functionLockProperties, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* object = callFrame->argument(0).getObject();
     if (!object)
-        return throwVMTypeError(globalObject, scope, "lockObject expects an object"_s);
+        return throwVMTypeError(globalObject, scope, "lockProperties expects an object"_s);
     if (!object->lockProperties(vm))
-        return throwVMTypeError(globalObject, scope, "lockObject: an object of this class cannot be locked"_s);
+        return throwVMTypeError(globalObject, scope, "lockProperties: an object of this class cannot be locked"_s);
     return JSValue::encode(object);
 }
 
-// Usage: $vm.isLockedObject(value)
-JSC_DEFINE_HOST_FUNCTION(functionIsLockedObject, (JSGlobalObject*, CallFrame* callFrame))
+// Usage: $vm.didLockProperties(value)
+JSC_DEFINE_HOST_FUNCTION(functionDidLockProperties, (JSGlobalObject*, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     JSObject* object = callFrame->argument(0).getObject();
-    return JSValue::encode(jsBoolean(object && object->isLockedObject()));
+    return JSValue::encode(jsBoolean(object && object->didLockProperties()));
 }
 
 // Calls the specified test function after adjusting the stack to have the specified
@@ -5951,8 +5951,8 @@ void JSDollarVM::finishCreation(VM& vm)
 
     addFunction(vm, alwaysAllow, "haveABadTime"_s, functionHaveABadTime, 1);
     addFunction(vm, alwaysAllow, "isHavingABadTime"_s, functionIsHavingABadTime, 1);
-    addFunction(vm, alwaysAllow, "lockObject"_s, functionLockObject, 1);
-    addFunction(vm, alwaysAllow, "isLockedObject"_s, functionIsLockedObject, 1);
+    addFunction(vm, alwaysAllow, "lockProperties"_s, functionLockProperties, 1);
+    addFunction(vm, alwaysAllow, "didLockProperties"_s, functionDidLockProperties, 1);
 
     addFunction(vm, allowIfNotFuzz, "callWithStackSize"_s, functionCallWithStackSize, 2);
 
