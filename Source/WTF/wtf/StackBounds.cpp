@@ -37,8 +37,10 @@
 #endif
 
 #if OS(LINUX)
+#include <errno.h>
 #include <string.h>
 #include <sys/auxv.h>
+#include <sys/mman.h>
 #include <sys/resource.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -157,19 +159,25 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 static void* endOfInitialStackMapping(size_t pageSize, size_t maxSize)
 {
     auto stackPointer = reinterpret_cast<uintptr_t>(currentStackPointer());
-    uintptr_t lastString = 0;
-    auto consider = [&](uintptr_t string) {
-        if (string > stackPointer && string - stackPointer < maxSize)
-            lastString = std::max(lastString, string);
+    auto isInReach = [&](uintptr_t string) {
+        return string > stackPointer && string - stackPointer < maxSize;
     };
-    consider(getauxval(AT_EXECFN));
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    for (char** variable = environ; variable && *variable; ++variable)
-        consider(reinterpret_cast<uintptr_t>(*variable));
-    if (!lastString)
+    uintptr_t lastString = getauxval(AT_EXECFN);
+    if (!isInReach(lastString))
         return nullptr;
-    return reinterpret_cast<void*>(roundUpToMultipleOf(pageSize, lastString + strlen(reinterpret_cast<const char*>(lastString)) + 1));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    for (char** variable = environ; variable && *variable; ++variable) {
+        if (isInReach(reinterpret_cast<uintptr_t>(*variable)))
+            lastString = std::max(lastString, reinterpret_cast<uintptr_t>(*variable));
+    }
+    uintptr_t end = roundUpToMultipleOf(pageSize, lastString + strlen(reinterpret_cast<const char*>(lastString)) + 1);
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    // Being in reach says little once the limit has been raised. Two stacks have unmapped memory between them, and
+    // msync(), which has nothing to do for anonymous memory, fails with ENOMEM if it meets any.
+    uintptr_t start = roundDownToMultipleOf(pageSize, stackPointer);
+    if (msync(reinterpret_cast<void*>(start), end - start, MS_ASYNC) && errno == ENOMEM)
+        return nullptr;
+    return reinterpret_cast<void*>(end);
 }
 #endif
 
