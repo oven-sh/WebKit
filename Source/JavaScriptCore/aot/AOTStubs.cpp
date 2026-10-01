@@ -4145,49 +4145,63 @@ const StubBlob& stubBlob()
             size -= sizeof(uint32_t);
 #endif
         blob->bytes.append(std::span { start, size });
-        if (Options::verboseAOTCompilation()) [[unlikely]] {
+        if (Options::verboseAOTCompilation() || Options::aotMapFilePath()) [[unlikely]] {
             static constexpr ASCIILiteral names[] = {
 #define AOT_STUB_NAME(name) #name ""_s,
                 FOR_EACH_AOT_STUB(AOT_STUB_NAME)
 #undef AOT_STUB_NAME
             };
+            static constexpr ASCIILiteral namesOfEntries[] = {
+#define AOT_ENTRY_NAME(name) #name ""_s,
+                FOR_EACH_AOT_OPERATION(AOT_ENTRY_NAME)
+                FOR_EACH_AOT_THUNK(AOT_ENTRY_NAME)
+                FOR_EACH_AOT_POINTER(AOT_ENTRY_NAME)
+#undef AOT_ENTRY_NAME
+            };
+            auto nameOf = [&](Stub stub) { return names[static_cast<unsigned>(stub)]; };
+            auto nameOfEntry = [&](Entry entry) { return namesOfEntries[static_cast<unsigned>(entry)]; };
+            auto note = [&](unsigned offset, auto... parts) { blob->names.append({ makeString(parts...), offset }); };
             for (unsigned i = 0; i < numberOfStubs; ++i)
-                dataLogLn("AOT: stub ", names[i], " ", blob->offsets[i]);
+                note(blob->offsets[i], names[i]);
             // In the order in which they were generated above.
             unsigned thunk = 0;
             for (Stub stub : operationCallStubs) {
-                dataLogLn("AOT: stub ThunksOf", names[static_cast<unsigned>(stub)], " ", blob->thunkOffsets[thunk]);
-                thunk += numberOfEntries;
+                for (unsigned entry = 0; entry < numberOfEntries; ++entry)
+                    note(blob->thunkOffsets[thunk++], nameOf(stub), " to "_s, namesOfEntries[entry]);
             }
             for (Stub stub : functionCallStubs) {
                 for (unsigned count = 0; count < numberOfCountsWithThunk; ++count)
-                    dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], count, " ", blob->thunkOffsets[thunk++]);
+                    note(blob->thunkOffsets[thunk++], nameOf(stub), count);
             }
             for (unsigned frameSize = unitOfFrameSize; frameSize <= biggestFrameWithThunk; frameSize += unitOfFrameSize)
-                dataLogLn("AOT: stub Prologue", frameSize, " ", blob->thunkOffsets[thunk++]);
+                note(blob->thunkOffsets[thunk++], "Prologue"_s, frameSize);
             for (unsigned i = 1; i <= numberOfStubIntrinsics; ++i)
-                dataLogLn("AOT: stub Intrinsic", i, " ", blob->thunkOffsets[thunk++]);
+                note(blob->thunkOffsets[thunk++], "Intrinsic"_s, i);
             for (Stub stub : stubsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number, ++thunk) {
                     if (blob->thunkOffsets[thunk] != blob->offsets[static_cast<unsigned>(stub)])
-                        dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "OfX", number, " ", blob->thunkOffsets[thunk]);
+                        note(blob->thunkOffsets[thunk], nameOf(stub), " of x"_s, number);
                 }
             }
             for (auto& [stub, operation] : operationsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number)
-                    dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "#", static_cast<unsigned>(operation), "OfX", number, " ", blob->thunkOffsets[thunk++]);
+                    note(blob->thunkOffsets[thunk++], nameOf(stub), " to "_s, nameOfEntry(operation), " of x"_s, number);
             }
             for (Stub stub : stubsWithTwoAnyRegisterOperands) {
                 for (unsigned i = 0; i < numberOfRegistersForPair * numberOfRegistersForPair; ++i)
-                    dataLogLn("AOT: stub ", names[static_cast<unsigned>(stub)], "OfPair", i, " ", blob->thunkOffsets[thunk++]);
+                    note(blob->thunkOffsets[thunk++], nameOf(stub), " of pair "_s, i);
             }
             for (auto& [operation, acceptsOperandInAnyRegister] : operationsWithAnyRegisterResult) {
                 for (unsigned i = 0; i < numberOfRegistersForResult * numberOfRegistersForOperand; ++i, ++thunk) {
                     if (acceptsOperandInAnyRegister || !(i % numberOfRegistersForOperand))
-                        dataLogLn("AOT: stub OperationValueWithGlobalObject#", static_cast<unsigned>(operation), "ToX", 19 + i / numberOfRegistersForOperand, "OfX", i % numberOfRegistersForOperand, " ", blob->thunkOffsets[thunk]);
+                        note(blob->thunkOffsets[thunk], "OperationValueWithGlobalObject to "_s, nameOfEntry(operation), " of x"_s, i % numberOfRegistersForOperand, " into x"_s, 19 + i / numberOfRegistersForOperand);
                 }
             }
-            dataLogLn("AOT: stub End ", size);
+            note(size, "End"_s);
+            if (Options::verboseAOTCompilation()) {
+                for (auto& [name, offset] : blob->names)
+                    dataLogLn("AOT: stub ", offset, " ", name);
+            }
         }
     });
     return blob.get();

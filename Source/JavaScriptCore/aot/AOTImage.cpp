@@ -411,13 +411,13 @@ void noteThatLinkTimeConstantIsUsed(unsigned which)
     s_linkTimeConstantsUsed[which / 64].fetch_or(1ull << which % 64, std::memory_order_relaxed);
 }
 
-void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code)
+void ImageBuilder::add(ImageKey key, uint64_t rank, CompiledCode&& code, String&& nameForMap)
 {
     // Clear the branch targets, which depend on the address the code was compiled at, so that the output is deterministic.
     for (auto& call : code.info.stubCalls)
         memset(code.bytes.mutableSpan().data() + call.offset, 0, sizeof(uint32_t));
     Locker locker { m_lock };
-    m_functions.append(Function { key, rank, WTF::move(code) });
+    m_functions.append(Function { key, rank, WTF::move(code), WTF::move(nameForMap) });
 }
 
 bool ImageBuilder::addRegExp(VM& vm, const String& pattern, OptionSet<Yarr::Flags> flags)
@@ -887,14 +887,25 @@ Vector<uint8_t> ImageBuilder::finish()
     for (auto& [at, stubsForIt] : placement)
         startsOfFunctions.append(safeCast<uint32_t>(at));
     startsOfFunctions.append(std::numeric_limits<uint32_t>::max());
+    // Fields are separated by tabs, and the first says what the line is. Offsets are in the code, unless it says otherwise.
+    std::unique_ptr<FilePrintStream> map;
     if (Options::aotMapFilePath()) [[unlikely]] {
-        // One line per function: its index, the offset and size of its code, and its key.
-        auto out = FilePrintStream::open(byteCast<char>(Options::aotMapFilePath()), "w");
-        RELEASE_ASSERT(out);
+        map = FilePrintStream::open(byteCast<char>(Options::aotMapFilePath()), "w");
+        RELEASE_ASSERT(map);
+        auto& out = map;
+        // F: a function's index, the offset and size of its code, its key (module, start, kind), and its name.
         for (unsigned index = 0; index < m_functions.size(); ++index) {
             auto& function = m_functions[index];
-            out->println("F\t", index, "\t", startsOfFunctions[index], "\t", function.code.bytes.size(), "\t", function.key.module, "\t", function.key.start, "\t", function.key.kind);
+            out->println("F\t", index, "\t", startsOfFunctions[index], "\t", function.code.bytes.size(), "\t", function.key.module, "\t", function.key.start, "\t", function.key.kind, "\t", function.nameForMap);
         }
+        // C: the offset of a copy of the stubs.
+        // T: an offset in the stubs, and the name of what starts there. The last is the end.
+        // R: the offset of the code of regular expressions, which goes on to the end.
+        for (size_t at : stubsAt)
+            out->println("C\t", at);
+        for (auto& [name, offset] : stubs.names)
+            out->println("T\t", offset, "\t", name);
+        out->println("R\t", endOfFunctions);
         // For attributing the time spent in a stub to the property that was accessed.
         // D: the offset of the first inline cache slot in a function's Data, and the size of a slot.
         // I: the number of an identifier, and its text.
@@ -1245,6 +1256,9 @@ Vector<uint8_t> ImageBuilder::finish()
     header.codeOffset = WTF::roundUpToMultipleOf<imagePageSize>(endOfTables);
     header.codeSize = codeSize;
     header.size = WTF::roundUpToMultipleOf<imagePageSize>(header.codeOffset + codeSize);
+    // B: the address of the code in an executable, which has its image at a fixed address, and its size.
+    if (map) [[unlikely]]
+        map->println("B\t", bmalloc::StaticRegion::startOf(bmalloc::StaticRegion::Arena::Image) + header.codeOffset, "\t", codeSize);
     header.numberOfFunctions = m_functions.size();
     for (unsigned i = 0; i < numberOfStubs; ++i)
         header.stubOffsets[i] = stubs.offsets[i];

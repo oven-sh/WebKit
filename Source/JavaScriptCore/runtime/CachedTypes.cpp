@@ -5730,7 +5730,7 @@ public:
         m_sourceLength = source.length();
         m_embedderStamp = embedderStamp;
         m_executable.encode(encoder, &executable);
-        m_lineStarts.encode(encoder, source.provider()->lineStartsForBytecode());
+        m_lineStarts.encode(encoder, encoder.vm().bytecodeGenerationOptions.keepLineStartsOfEverySource ? source.provider()->lineStarts() : source.provider()->lineStartsForBytecode());
     }
 
     UnlinkedFunctionExecutable* decode(Decoder& decoder, SourceProvider& provider, unsigned embedderStamp) const
@@ -6783,7 +6783,10 @@ struct BytecodeLinkEncoder::Impl {
                     }
                     if (auto* numbers = AOT::numbersOfConstantsOfProgramFor(jobs[index].codeBlock))
                         code.info.numbersOfConstants = *numbers;
-                    builder.add(jobs[index].key, jobs[index].rank, WTF::move(code));
+                    String nameForMap;
+                    if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
+                        nameForMap = executable->ecmaName().string();
+                    builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
                 }
                 else {
                     Locker locker { declinedLock };

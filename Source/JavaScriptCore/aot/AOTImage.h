@@ -173,7 +173,7 @@ public:
     ImageBuilder() = default;
 
     // Any thread. Code is laid out in `rank` order, regardless of call order.
-    void add(ImageKey, uint64_t rank, CompiledCode&&);
+    void add(ImageKey, uint64_t rank, CompiledCode&&, String&& nameForMap = { });
     size_t numberOfFunctions() const { return m_functions.size(); }
     void clear() { m_functions.clear(); } // Removes all functions.
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
@@ -195,6 +195,7 @@ private:
         ImageKey key;
         uint64_t rank;
         CompiledCode code;
+        String nameForMap;
     };
     Lock m_lock;
     Vector<Function> m_functions;

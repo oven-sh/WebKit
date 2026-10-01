@@ -440,6 +440,7 @@ struct StubBlob {
     unsigned offsets[numberOfStubs];
     Vector<unsigned> thunkOffsets; // Indexed by thunkFor().
     Vector<unsigned> returnsIntoAdapters; // Return addresses of the calls that adapters make. See ImageAddressInfo::Adapter.
+    Vector<std::pair<String, unsigned>> names; // What is at which offset, the last being the end. Only for a log or a map.
 };
 const StubBlob& stubBlob();
 
