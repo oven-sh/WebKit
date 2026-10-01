@@ -123,8 +123,7 @@ private:
     enum Flags {
         Normal                             = 0,
         SparseMode                         = 1 << 0,
-        LengthIsReadOnly                   = 1 << 1,
-        HasAnyKindOfGetterSetterProperties = 1 << 2,
+        HasAnyKindOfGetterSetterProperties = 1 << 1,
     };
 
     SparseArrayValueMap(VM&);
@@ -161,16 +160,6 @@ public:
     void setSparseMode()
     {
         m_flags = static_cast<Flags>(m_flags | SparseMode);
-    }
-
-    bool lengthIsReadOnly()
-    {
-        return m_flags & LengthIsReadOnly;
-    }
-
-    void setLengthIsReadOnly()
-    {
-        m_flags = static_cast<Flags>(m_flags | LengthIsReadOnly);
     }
 
     bool hasAnyKindOfGetterSetterProperties()

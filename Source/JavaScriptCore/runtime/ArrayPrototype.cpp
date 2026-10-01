@@ -655,6 +655,10 @@ JSC_DEFINE_HOST_FUNCTION(arrayProtoFuncReverse, (JSGlobalObject* globalObject, C
             break;
         if (storage.hasHoles() && holesMustForwardToPrototype(thisObject))
             break;
+        // The elements of a non-extensible object carry attributes (Structure::vectorElementAttributes)
+        // and its holes cannot be filled: the generic algorithm below reports the errors.
+        if (!thisObject->isStructureExtensible())
+            break;
         auto data = storage.vector().data();
         std::reverse(data, data + length);
         vm.writeBarrier(thisObject);

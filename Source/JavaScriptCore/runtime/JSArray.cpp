@@ -197,11 +197,13 @@ void JSArray::setLengthWritable(JSGlobalObject* globalObject, bool writable)
     if (!isLengthWritable() || writable)
         return;
 
-    enterDictionaryIndexingMode(globalObject->vm());
-
-    SparseArrayValueMap* map = arrayStorage()->m_sparseMap.get();
-    ASSERT(map);
-    map->setLengthIsReadOnly();
+    VM& vm = globalObject->vm();
+    // The elements stay in the vector: the SlowPutArrayStorage shape keeps every write in C++, where
+    // Structure::arrayLengthIsReadOnly() is consulted.
+    enterDictionaryIndexingMode(vm);
+    Structure* oldStructure = structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    setStructure(vm, Structure::setArrayLengthReadOnlyTransition(vm, oldStructure, &deferred));
 }
 
 // https://tc39.es/ecma262/#sec-array-exotic-objects-defineownproperty-p-desc
@@ -481,15 +483,12 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     unsigned length = storage->length();
-    
-    // If the length is read only then we enter sparse mode, so should enter the following 'if'.
-    ASSERT(isLengthWritable() || storage->m_sparseMap);
+
+    // Fail if the length is not writable.
+    if (!isLengthWritable())
+        return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
 
     if (SparseArrayValueMap* map = storage->m_sparseMap.get()) {
-        // Fail if the length is not writable.
-        if (map->lengthIsReadOnly())
-            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
-
         if (newLength < length) {
             // Copy any keys we might be interested in into a vector.
             Vector<unsigned, 0, UnsafeVectorOverflow> keys;
@@ -527,8 +526,18 @@ bool JSArray::setLengthWithArrayStorage(JSGlobalObject* globalObject, unsigned n
     }
 
     if (newLength < length) {
-        // Delete properties from the vector.
         unsigned usedVectorLength = std::min(length, storage->vectorLength());
+        // The elements of a sealed or frozen object cannot be deleted: stop at the highest one, as
+        // the sparse map loop above does for its entries.
+        if (structure()->vectorElementsAreNonConfigurable()) {
+            for (unsigned i = usedVectorLength; i-- > newLength;) {
+                if (storage->m_vector[i]) {
+                    storage->setLength(i + 1);
+                    return typeError(globalObject, scope, throwException, UnableToDeletePropertyError);
+                }
+            }
+        }
+        // Delete properties from the vector.
         for (unsigned i = newLength; i < usedVectorLength; ++i) {
             WriteBarrier<Unknown>& valueSlot = storage->m_vector[i];
             bool hadValue = !!valueSlot;
@@ -1383,14 +1392,14 @@ JSValue JSArray::pop(JSGlobalObject* globalObject)
         }
 
         unsigned index = length - 1;
-        if (index < storage->vectorLength()) {
+        // A sealed or frozen element cannot be deleted, and a read-only length cannot shrink: the
+        // generic path below reports the error.
+        if (index < storage->vectorLength() && !structure()->vectorElementsAreNonConfigurable() && isLengthWritable()) {
             WriteBarrier<Unknown>& valueSlot = storage->m_vector[index];
             if (valueSlot) {
                 --storage->m_numValuesInVector;
                 JSValue element = valueSlot.get();
                 valueSlot.clear();
-            
-                RELEASE_ASSERT(isLengthWritable());
                 storage->setLength(index);
                 return element;
             }

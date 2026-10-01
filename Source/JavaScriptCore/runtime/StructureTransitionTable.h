@@ -65,6 +65,9 @@ enum class TransitionKind : uint8_t {
 
     // Support for transitions related with private brand
     SetBrand = 17,
+
+    // JSArray "length" became non-writable (Object.defineProperty(array, "length", { writable: false })).
+    SetArrayLengthReadOnly = 18,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;

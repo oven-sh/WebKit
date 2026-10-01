@@ -640,7 +640,10 @@ bool JSObject::getOwnPropertySlotByIndex(JSObject* thisObject, JSGlobalObject* g
         if (i < storage->vectorLength()) {
             JSValue value = storage->m_vector[i].get();
             if (value) {
-                slot.setValue(thisObject, static_cast<unsigned>(PropertyAttribute::None), value);
+                // Only a SlowPutArrayStorage object can be non-extensible (see enterDictionaryIndexingMode),
+                // so only its elements carry attributes.
+                unsigned attributes = hasSlowPutArrayStorage(thisObject->indexingType()) ? thisObject->structure()->vectorElementAttributes() : static_cast<unsigned>(PropertyAttribute::None);
+                slot.setValue(thisObject, attributes, value);
                 return true;
             }
         } else if (SparseArrayValueMap* map = storage->m_sparseMap.get()) {
@@ -1131,23 +1134,24 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
         auto scope = DECLARE_THROW_SCOPE(vm);
         
         // Update length & m_numValuesInVector as necessary.
-        if (propertyName >= length) {
+        if (propertyName >= length || !valueSlot) {
             bool putResult = false;
             bool result = thisObject->attemptToInterceptPutByIndexOnHole(globalObject, propertyName, value, shouldThrow, putResult);
             RETURN_IF_EXCEPTION(scope, false);
             if (result)
                 return putResult;
-            length = propertyName + 1;
-            storage->setLength(length);
+            // A non-extensible object cannot gain an element, and a JSArray whose length is read-only
+            // cannot grow.
+            if (!thisObject->isStructureExtensible())
+                return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
+            if (propertyName >= length) {
+                if (thisObject->structure()->arrayLengthIsReadOnly())
+                    return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
+                storage->setLength(propertyName + 1);
+            }
             ++storage->m_numValuesInVector;
-        } else if (!valueSlot) {
-            bool putResult = false;
-            bool result = thisObject->attemptToInterceptPutByIndexOnHole(globalObject, propertyName, value, shouldThrow, putResult);
-            RETURN_IF_EXCEPTION(scope, false);
-            if (result)
-                return putResult;
-            ++storage->m_numValuesInVector;
-        }
+        } else if (thisObject->structure()->vectorElementsAreReadOnly())
+            return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
         
         valueSlot.set(vm, thisObject, value);
         return true;
@@ -1172,13 +1176,15 @@ ArrayStorage* JSObject::enterDictionaryIndexingModeWhenArrayStorageAlreadyExists
 
     map->setSparseMode();
 
+    // Elements in the vector carry the attributes the structure records for them (Object.seal /
+    // Object.freeze keep the elements in the vector); the entries keep those attributes in the map.
+    unsigned attributes = structure()->vectorElementAttributes();
     unsigned usedVectorLength = std::min(storage->length(), storage->vectorLength());
     for (unsigned i = 0; i < usedVectorLength; ++i) {
         JSValue value = storage->m_vector[i].get();
-        // This will always be a new entry in the map, so no need to check we can write,
-        // and attributes are default so no need to set them.
+        // This will always be a new entry in the map, so no need to check we can write.
         if (value)
-            map->add(this, i).iterator->forceSet(vm, map, value, 0);
+            map->add(this, i).iterator->forceSet(vm, map, value, attributes);
     }
 
     DeferGC deferGC(vm);
@@ -1192,6 +1198,13 @@ ArrayStorage* JSObject::enterDictionaryIndexingModeWhenArrayStorageAlreadyExists
     return newButterfly->arrayStorage();
 }
 
+// Called right before the structure becomes non-extensible (Object.preventExtensions / seal /
+// freeze) or a JSArray "length" becomes read-only. The elements stay in the ArrayStorage vector and
+// the shape becomes SlowPutArrayStorage: LLInt and baseline never store into a SlowPutArrayStorage
+// vector inline and DFG / FTL check the structure before they do, so every write reaches the C++
+// paths that consult isStructureExtensible(), Structure::vectorElementAttributes() and
+// Structure::arrayLengthIsReadOnly(). Elements move into the SparseArrayValueMap only when a single
+// index later needs attributes of its own (ensureArrayStorageExistsAndEnterDictionaryIndexingMode).
 void JSObject::enterDictionaryIndexingMode(VM& vm)
 {
     switch (indexingType()) {
@@ -1206,22 +1219,28 @@ void JSObject::enterDictionaryIndexingMode(VM& vm)
             return;
         [[fallthrough]];
     case ArrayClass:
+        // ensureArrayStorage() returns null if the object doesn't support traditional indexed
+        // properties. At the time of writing, this just affects typed arrays.
+        if (!ensureArrayStorageSlow(vm))
+            return;
+        if (hasSlowPutArrayStorage(indexingType()))
+            return;
+        [[fallthrough]];
     case ALL_UNDECIDED_INDEXING_TYPES:
     case ALL_INT32_INDEXING_TYPES:
     case ALL_DOUBLE_INDEXING_TYPES:
     case ALL_CONTIGUOUS_INDEXING_TYPES:
-        // NOTE: this is horribly inefficient, as it will perform two conversions. We could optimize
-        // this case if we ever cared. Note that ensureArrayStorage() can return null if the object
-        // doesn't support traditional indexed properties. At the time of writing, this just affects
-        // typed arrays.
-        if (ArrayStorage* storage = ensureArrayStorageSlow(vm))
-            enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, storage);
+    case NonArrayWithArrayStorage:
+    case ArrayWithArrayStorage:
+        switchToSlowPutArrayStorage(vm);
         break;
-    case ALL_ARRAY_STORAGE_INDEXING_TYPES:
-        enterDictionaryIndexingModeWhenArrayStorageAlreadyExists(vm, this->butterfly()->arrayStorage());
+
+    case NonArrayWithSlowPutArrayStorage:
+    case ArrayWithSlowPutArrayStorage:
         break;
-        
+
     default:
+        RELEASE_ASSERT_NOT_REACHED();
         break;
     }
 }
@@ -2470,6 +2489,8 @@ bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject,
         if (i < storage->vectorLength()) {
             WriteBarrier<Unknown>& valueSlot = storage->m_vector[i];
             if (valueSlot) {
+                if (hasSlowPutArrayStorage(thisObject->indexingType()) && thisObject->structure()->vectorElementsAreNonConfigurable())
+                    return false;
                 valueSlot.clear();
                 --storage->m_numValuesInVector;
             }
@@ -2874,11 +2895,32 @@ JSString* JSObject::toString(JSGlobalObject* globalObject) const
     RELEASE_AND_RETURN(scope, primitive.toString(globalObject));
 }
 
+bool JSObject::isSealed(VM& vm)
+{
+    if (!structure()->isSealed(vm))
+        return false;
+    // Structure::isSealed only covers the named properties. The elements in the ArrayStorage vector
+    // are described by the structure bits; sparse map entries were sealed at the same time.
+    if (hasIndexedProperties(indexingType()) && !structure()->vectorElementsAreNonConfigurable())
+        return false;
+    return true;
+}
+
+bool JSObject::isFrozen(VM& vm)
+{
+    if (!structure()->isFrozen(vm))
+        return false;
+    if (hasIndexedProperties(indexingType()) && !structure()->vectorElementsAreReadOnly())
+        return false;
+    // JSArray "length" is not in the PropertyTable.
+    if (inherits<JSArray>() && !structure()->arrayLengthIsReadOnly())
+        return false;
+    return true;
+}
+
 void JSObject::seal(VM& vm)
 {
-    // Structure::isSealed only consults the named-property table, so it cannot
-    // short-circuit when indexed properties are present.
-    if (!hasIndexedProperties(indexingType()) && isSealed(vm))
+    if (isSealed(vm))
         return;
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
@@ -2886,8 +2928,6 @@ void JSObject::seal(VM& vm)
         if (SparseArrayValueMap* map = butterfly()->arrayStorage()->m_sparseMap.get())
             map->seal();
     }
-    if (isSealed(vm))
-        return;
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
@@ -2897,29 +2937,24 @@ void JSObject::seal(VM& vm)
 
 void JSObject::freeze(VM& vm)
 {
-    bool isArray = isJSArray(this);
-    if (!isArray && !hasIndexedProperties(indexingType()) && isFrozen(vm))
+    if (isFrozen(vm))
         return;
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
     if (hasAnyArrayStorage(indexingType())) {
-        if (SparseArrayValueMap* map = butterfly()->arrayStorage()->m_sparseMap.get()) {
+        ArrayStorage* storage = butterfly()->arrayStorage();
+        SparseArrayValueMap* map = storage->m_sparseMap.get();
+        if (map)
             map->freeze();
-            // defineOwnIndexedProperty would have called this for each ReadOnly
-            // index; the prototype-chain indexed-put fast paths consult the
-            // MayHaveIndexedAccessors bit it sets.
-            if (!map->isEmpty())
-                notifyPresenceOfIndexedAccessors(vm);
-            // JSArray "length" is not in the PropertyTable; freeze it here so
-            // that JSArray::isLengthWritable reports false like the generic
-            // SetIntegrityLevel loop would.
-            if (isArray)
-                map->setLengthIsReadOnly();
-        }
+        // defineOwnIndexedProperty calls this for each ReadOnly index it defines: the indexed put
+        // paths of objects that inherit from this one consult the MayHaveIndexedAccessors bit it sets.
+        if (storage->m_numValuesInVector || (map && !map->isEmpty()))
+            notifyPresenceOfIndexedAccessors(vm);
     }
-    if (isFrozen(vm))
-        return;
     {
+        // The DFG folds reads of a frozen element from the compiler thread once it sees the frozen
+        // structure; the element stores must be visible before the structure store is.
+        WTF::storeStoreFence();
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::freezeTransition(vm, oldStructure, &deferred));
@@ -3094,7 +3129,7 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
         ASSERT(emptyAttributesDescriptor.attributes() == static_cast<unsigned>(PropertyAttribute::None));
 
 #if ASSERT_ENABLED
-        if (canGetIndexQuickly(index) && canDoFastPutDirectIndex(this)) {
+        if (isStructureExtensible() && canGetIndexQuickly(index) && canDoFastPutDirectIndex(this)) {
             DeferTermination deferScope(vm);
             PropertyDescriptor currentDescriptor;
             bool found = getOwnPropertyDescriptor(globalObject, Identifier::from(vm, index), currentDescriptor);
@@ -3103,8 +3138,11 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
                 ASSERT(currentDescriptor.attributes() == emptyAttributesDescriptor.attributes());
         }
 #endif
-        // Fast case: we're putting a regular property to a regular array
-        if (descriptor.value()
+        // Fast case: we're putting a regular property to a regular array. The elements of a
+        // non-extensible object carry the attributes its structure records for them, so they take
+        // the sparse map path below, which validates the descriptor against them.
+        if (isStructureExtensible()
+            && descriptor.value()
             && (!descriptor.attributes() || (canGetIndexQuickly(index) && !descriptor.attributesOverridingCurrent(emptyAttributesDescriptor)))
             && canDoFastPutDirectIndex(this)) {
             ASSERT(!descriptor.isAccessorDescriptor());
@@ -3246,12 +3284,18 @@ bool JSObject::attemptToInterceptPutByIndexOnHoleForPrototype(JSGlobalObject* gl
         // (b) that property is declared as ReadOnly or Accessor.
         
         ArrayStorage* storage = current->arrayStorageOrNull();
-        if (storage && storage->m_sparseMap) {
-            SparseArrayValueMap::iterator iter = storage->m_sparseMap->find(i);
-            if (iter != storage->m_sparseMap->notFound() && (iter->attributes() & (PropertyAttribute::Accessor | PropertyAttribute::ReadOnly))) {
-                scope.release();
-                putResult = SparseArrayValueMap::entryFor(iter).put(globalObject, thisValue, storage->m_sparseMap.get(), value, shouldThrow);
+        if (storage) {
+            if (i < storage->vectorLength() && storage->m_vector[i] && current->structure()->vectorElementsAreReadOnly()) {
+                putResult = typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
                 return true;
+            }
+            if (storage->m_sparseMap) {
+                SparseArrayValueMap::iterator iter = storage->m_sparseMap->find(i);
+                if (iter != storage->m_sparseMap->notFound() && (iter->attributes() & (PropertyAttribute::Accessor | PropertyAttribute::ReadOnly))) {
+                    scope.release();
+                    putResult = SparseArrayValueMap::entryFor(iter).put(globalObject, thisValue, storage->m_sparseMap.get(), value, shouldThrow);
+                    return true;
+                }
             }
         }
 
@@ -3372,12 +3416,17 @@ bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* glob
     
     // First, handle cases where we don't currently have a sparse map.
     if (!map) [[likely]] {
-        // If the array is not extensible, we should have entered dictionary mode, and created the sparse map.
-        ASSERT(isStructureExtensible());
+        // A non-extensible object cannot gain an element (its elements stay in the vector, see
+        // enterDictionaryIndexingMode).
+        if (!isStructureExtensible()) [[unlikely]]
+            return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
     
         // Update m_length if necessary.
-        if (i >= storage->length())
+        if (i >= storage->length()) {
+            if (structure()->arrayLengthIsReadOnly()) [[unlikely]]
+                return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
             storage->setLength(i + 1);
+        }
 
         // Check that it is sensible to still be using a vector, and then try to grow the vector.
         if (!indexIsSufficientlyBeyondLengthForSparseMap(i, storage->vectorLength())
@@ -3398,7 +3447,7 @@ bool JSObject::putByIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* glob
     unsigned length = storage->length();
     if (i >= length) {
         // Prohibit growing the array if length is not writable.
-        if (map->lengthIsReadOnly() || !isStructureExtensible())
+        if (structure()->arrayLengthIsReadOnly() || !isStructureExtensible())
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
         length = i + 1;
         storage->setLength(length);
@@ -3518,15 +3567,21 @@ bool JSObject::putDirectIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* 
 
     // First, handle cases where we don't currently have a sparse map.
     if (!map) [[likely]] {
-        // If the array is not extensible, we should have entered dictionary mode, and created the spare map.
-        ASSERT(isStructureExtensible());
-    
+        // A non-extensible object cannot gain an element (its elements stay in the vector, see
+        // enterDictionaryIndexingMode), unless the caller asked for putDirect semantics.
+        if (!isStructureExtensible() && mode != PutDirectIndexLikePutDirect) [[unlikely]]
+            return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, NonExtensibleObjectPropertyDefineError);
+
         // Update m_length if necessary.
-        if (i >= storage->length())
+        if (i >= storage->length()) {
+            if (structure()->arrayLengthIsReadOnly() && mode != PutDirectIndexLikePutDirect) [[unlikely]]
+                return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, ReadonlyPropertyWriteError);
             storage->setLength(i + 1);
+        }
 
         // Check that it is sensible to still be using a vector, and then try to grow the vector.
         if (!attributes
+            && isStructureExtensible()
             && (isDenseEnoughForVector(i, storage->m_numValuesInVector))
             && !indexIsSufficientlyBeyondLengthForSparseMap(i, storage->vectorLength()))  [[likely]] {
             if (increaseVectorLength(vm, i + 1)) {
@@ -3547,7 +3602,7 @@ bool JSObject::putDirectIndexBeyondVectorLengthWithArrayStorage(JSGlobalObject* 
     if (i >= length) {
         if (mode != PutDirectIndexLikePutDirect) {
             // Prohibit growing the array if length is not writable.
-            if (map->lengthIsReadOnly())
+            if (structure()->arrayLengthIsReadOnly())
                 return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, ReadonlyPropertyWriteError);
             if (!isStructureExtensible())
                 return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, NonExtensibleObjectPropertyDefineError);
@@ -3664,10 +3719,32 @@ bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObje
         return true;
     }
 
-    case ALL_ARRAY_STORAGE_INDEXING_TYPES:
+    case ALL_ARRAY_STORAGE_INDEXING_TYPES: {
         if (attributes)
             return putDirectIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, attributes, mode, ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm));
-        return putDirectIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, attributes, mode, arrayStorage());
+        ArrayStorage* storage = arrayStorage();
+        if (i < storage->vectorLength()) {
+            // Only a non-extensible object gets here with an index inside its vector: its elements
+            // stay in the vector with the attributes the structure records for them.
+            ASSERT(!isStructureExtensible());
+            auto scope = DECLARE_THROW_SCOPE(vm);
+            WriteBarrier<Unknown>& valueSlot = storage->m_vector[i];
+            if (valueSlot) {
+                if (structure()->vectorElementsAreReadOnly())
+                    return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, ReadonlyPropertyWriteError);
+                valueSlot.set(vm, this, value);
+                return true;
+            }
+            if (mode != PutDirectIndexLikePutDirect)
+                return typeError(globalObject, scope, mode == PutDirectIndexShouldThrow, NonExtensibleObjectPropertyDefineError);
+            valueSlot.set(vm, this, value);
+            ++storage->m_numValuesInVector;
+            if (i >= storage->length())
+                storage->setLength(i + 1);
+            return true;
+        }
+        return putDirectIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, attributes, mode, storage);
+    }
         
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -4294,7 +4371,9 @@ bool JSObject::needsSlowPutIndexing() const
 
 TransitionKind JSObject::suggestedArrayStorageTransition() const
 {
-    if (needsSlowPutIndexing())
+    // A non-extensible object never has the plain ArrayStorage shape: its vector can only be written
+    // from C++ (see enterDictionaryIndexingMode).
+    if (needsSlowPutIndexing() || !isStructureExtensible())
         return TransitionKind::AllocateSlowPutArrayStorage;
     
     return TransitionKind::AllocateArrayStorage;
