@@ -2138,7 +2138,8 @@ private:
     uint32_t m_module;
     uint64_t m_rank { 0 };
     AOT::ImageBuilder m_builder;
-    UncheckedKeyHashSet<std::pair<uint32_t, uint32_t>> m_keys;
+    using KeyTraits = PairHashTraits<WTF::UnsignedWithZeroKeyHashTraits<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    UncheckedKeyHashSet<std::pair<uint32_t, uint32_t>, DefaultHash<std::pair<uint32_t, uint32_t>>, KeyTraits> m_keys;
 };
 
 } // anonymous namespace

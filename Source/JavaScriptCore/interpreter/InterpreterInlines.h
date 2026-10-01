@@ -183,32 +183,37 @@ inline UnwindFunctorBase::UnwindFunctorBase(VM& vm)
 {
 }
 
-inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
+inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(CallFrame* callFrame, const RegisterAtOffsetList* currentCalleeSaves) const
 {
 #if ENABLE(ASSEMBLER)
+    if (!currentCalleeSaves)
+        return;
+
     auto dontCopyRegisters = RegisterSet::stackRegisters();
+    CPURegister* frame = reinterpret_cast<CPURegister*>(callFrame->registers());
+
+    unsigned registerCount = currentCalleeSaves->registerCount();
     VMEntryRecord* record = m_vmEntryRecord;
-    auto copy = [&](CallFrame* callFrame, const RegisterAtOffsetList* currentCalleeSaves) {
-        if (!currentCalleeSaves)
-            return;
-        CPURegister* frame = reinterpret_cast<CPURegister*>(callFrame->registers());
-        unsigned registerCount = currentCalleeSaves->registerCount();
-        for (unsigned i = 0; i < registerCount; i++) {
-            RegisterAtOffset currentEntry = currentCalleeSaves->at(i);
-            if (dontCopyRegisters.contains(currentEntry.reg(), IgnoreVectors))
-                continue;
-            int8_t bufferSlot = m_vmCalleeSaveBufferSlotsByRegIndex[currentEntry.reg().index()];
-            RELEASE_ASSERT(bufferSlot >= 0);
-            record->calleeSaveRegistersBuffer[bufferSlot] = *(frame + currentEntry.offsetAsIndex());
-        }
-    };
-    copy(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
+    for (unsigned i = 0; i < registerCount; i++) {
+        RegisterAtOffset currentEntry = currentCalleeSaves->at(i);
+        if (dontCopyRegisters.contains(currentEntry.reg(), IgnoreVectors))
+            continue;
+        int8_t bufferSlot = m_vmCalleeSaveBufferSlotsByRegIndex[currentEntry.reg().index()];
+        RELEASE_ASSERT(bufferSlot >= 0);
+        record->calleeSaveRegistersBuffer[bufferSlot] = *(frame + currentEntry.offsetAsIndex());
+    }
+#else
+    UNUSED_PARAM(callFrame);
+    UNUSED_PARAM(currentCalleeSaves);
+#endif
+}
+
+inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
+{
+    copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
 #if ENABLE(FTL_JIT)
     if (CallFrame* adapter = visitor->aotAdapterFrame())
-        copy(adapter, &AOT::adapterSavedRegisters());
-#endif
-#else
-    UNUSED_PARAM(visitor);
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
 #endif
 }
 

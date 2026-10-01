@@ -165,6 +165,32 @@ public:
 #endif
 };
 
+// For an operation called from ahead-of-time compiled code. Its stubs have no equivalent of prepareCallOperation(), which only
+// stores anything in a build with assertions.
+class AOTOperationPrologueCallFrameTracer {
+public:
+    ALWAYS_INLINE AOTOperationPrologueCallFrameTracer(VM& vm, CallFrame* callFrame)
+#if ASSERT_ENABLED
+        : m_vm(vm)
+#endif
+    {
+        ASSERT(callFrame);
+        ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(vm.topEntryFrame));
+        assertStackPointerIsAligned();
+        vm.topCallFrame = callFrame;
+    }
+
+#if ASSERT_ENABLED
+    ~AOTOperationPrologueCallFrameTracer()
+    {
+        // As for JITOperationPrologueCallFrameTracer.
+        m_vm.topCallFrame = std::bit_cast<CallFrame*>(static_cast<uintptr_t>(0x0badbeef0badbeefULL));
+    }
+
+    VM& m_vm;
+#endif
+};
+
 class ICSlowPathCallFrameTracer {
 public:
     inline ICSlowPathCallFrameTracer(VM&, CallFrame*, PropertyInlineCache*);

@@ -202,6 +202,10 @@ public:
     static void visit(CallFrame* startFrame, VM& vm, const Functor& functor, bool skipFirstFrame = false)
     {
         StackVisitor visitor(startFrame, vm, skipFirstFrame);
+        if constexpr (requires { functor.didSkipAOTAdapterAtTop(startFrame); }) {
+            if (visitor.m_aotAdapterSkippedAtTop) [[unlikely]]
+                functor.didSkipAOTAdapterAtTop(visitor.m_aotAdapterSkippedAtTop);
+        }
         if (action == TerminateIfTopEntryFrameIsEmpty && visitor.topEntryFrameIsEmpty())
             return;
         while (visitor->callFrame()) {
@@ -238,6 +242,7 @@ private:
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
     AOT::Instance* m_aotInstance { nullptr }; // Of the frames of code from the static compiler that are being gone through, once it has been looked up.
+    CallFrame* m_aotAdapterSkippedAtTop { nullptr }; // See the constructor. Whoever unwinds has its saved registers to restore.
     bool m_topEntryFrameIsEmpty { false };
 };
 

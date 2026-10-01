@@ -3984,7 +3984,9 @@ JSC_DEFINE_JIT_OPERATION(operationStringLocaleCompare, UCPUStrictInt32, (JSGloba
             OPERATION_RETURN(scope, toUCPUStrictInt32(*result));
     }
 
+    // Made now, if this is the first use of it. (Code from the DFG gets here after String.prototype.localeCompare has run. Code that was compiled ahead of time need not.)
     auto* collator = globalObject->defaultCollator();
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
 
     OPERATION_RETURN(scope, toUCPUStrictInt32(collator->compareStrings(globalObject, string, that)));
 }

@@ -214,12 +214,26 @@ static void countMissOfSlot(CCallHelpers& jit, GPRReg instance, GPRReg data)
 
 enum class Returns : uint8_t { Value, Void, Double };
 
+// AssemblyHelpers::prepareCallOperation(), for the engine's own operations: in a build with assertions they check that it was done.
+static void prepareCallOperation(CCallHelpers& jit, GPRReg scratch)
+{
+#if ASSERT_ENABLED
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), scratch);
+    jit.storePtr(GPRInfo::callFrameRegister, Address(scratch, VM::offsetOfTopCallFrame()));
+#else
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(scratch);
+#endif
+}
+
 // The target is in `function` and its arguments are in place. The stub sets up its own frame for the duration of the call, like
 // every stub that calls something that may walk the stack. Its return address identifies the calling function's current location
 // (see frameAt()).
 static void callAndCheckException(CCallHelpers& jit, GPRReg function, Returns returns, GPRReg result = GPRInfo::returnValueGPR)
 {
     jit.emitFunctionPrologue();
+    ASSERT(function != T12);
+    prepareCallOperation(jit, T12);
     jit.call(function, OperationPtrTag);
     jit.emitFunctionEpilogue();
     Jump exception;
@@ -276,6 +290,7 @@ static void generateColdOperation(CCallHelpers& jit, bool ofLeaf, bool returnsVa
     jit.loadPtr(Address(T11, Instance::offsetOfGlobalObject()), A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
     jit.loadPtr(CCallHelpers::BaseIndex(T11, T9, CCallHelpers::TimesOne), T11);
+    prepareCallOperation(jit, T12);
     jit.call(T11, OperationPtrTag);
     jit.move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
     if (returnsValue)
@@ -2085,6 +2100,7 @@ static void unwind(CCallHelpers& jit, GPRReg vm, GPRReg lookUp)
     constexpr GPRReg keptVM = GPRInfo::regCS0;
     RELEASE_ASSERT(noOverlap(vm, lookUp, A0, GPRInfo::regT1));
     jit.emitFunctionPrologue();
+    prepareCallOperation(jit, GPRInfo::regT1);
     jit.move(vm, GPRInfo::regT1);
     jit.copyCalleeSavesToVMEntryFrameCalleeSavesBuffer(GPRInfo::regT1);
     // This frees them for use here: the handler restores them from there.
@@ -2298,9 +2314,19 @@ static void findTargetAndCall(CCallHelpers& jit)
     jit.emitFunctionPrologue();
     // As in emitCallSlowPath(): the operation's frame reuses the space of the previous callee at this depth.
     jit.subPtr(TrustedImm32(stackBytesClearedForCallSlowPath), CCallHelpers::stackPointerRegister);
-    static_assert(stackBytesClearedForCallSlowPath <= 256, "Or this wants to be a loop");
-    for (size_t offset = 0; offset < stackBytesClearedForCallSlowPath; offset += 2 * sizeof(Register))
-        jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, CCallHelpers::stackPointerRegister, TrustedImm32(offset));
+    if constexpr (stackBytesClearedForCallSlowPath <= 256) {
+        for (size_t offset = 0; offset < stackBytesClearedForCallSlowPath; offset += 2 * sizeof(Register))
+            jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, CCallHelpers::stackPointerRegister, TrustedImm32(offset));
+    } else {
+        // A build with assertions or ASan.
+        static_assert(info != A0 && info != T9);
+        jit.move(CCallHelpers::stackPointerRegister, A0);
+        jit.addPtr(TrustedImm32(stackBytesClearedForCallSlowPath), A0, T9);
+        CCallHelpers::Label loop = jit.label();
+        jit.storePair64(ARM64Registers::zr, ARM64Registers::zr, A0, TrustedImm32(0));
+        jit.addPtr(TrustedImm32(2 * sizeof(Register)), A0);
+        jit.branchPtr(CCallHelpers::Below, A0, T9).linkTo(loop, &jit);
+    }
     jit.addPtr(TrustedImm32(stackBytesClearedForCallSlowPath), CCallHelpers::stackPointerRegister);
     jit.subPtr(TrustedImm32(16), CCallHelpers::stackPointerRegister);
     jit.storePtr(info, Address(CCallHelpers::stackPointerRegister));
@@ -3706,6 +3732,8 @@ bool operandMayBeIn(Stub stub, GPRReg reg)
     unsigned number = static_cast<unsigned>(reg) - static_cast<unsigned>(ARM64Registers::x0);
     if (number >= numberOfRegistersForOperand || number == 16 || number == 17) // The assembler's scratch registers.
         return false;
+    if (number == 18) // The platform's register.
+        return false;
     // The entry point starts with a move.
     if (callsOperation(stub))
         return true;
@@ -3916,6 +3944,10 @@ const StubBlob& stubBlob()
             }
             for (auto& [stub, operation] : operationsWithAnyRegisterOperand) {
                 for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
+                    if (!operandMayBeIn(stub, static_cast<GPRReg>(number))) {
+                        thunkLabels.append(labels[static_cast<unsigned>(stub)]);
+                        continue;
+                    }
                     thunkLabels.append(jit.label());
                     jit.move(static_cast<GPRReg>(number), defaultOperandRegister(stub));
                     jit.move(CCallHelpers::TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), GPRInfo::regT9);
@@ -3940,7 +3972,7 @@ const StubBlob& stubBlob()
             for (auto& [operation, acceptsOperandInAnyRegister] : operationsWithAnyRegisterResult) {
                 for (unsigned i = 0; i < numberOfRegistersForResult; ++i) {
                     for (unsigned number = 0; number < numberOfRegistersForOperand; ++number) {
-                        if (!acceptsOperandInAnyRegister && number) {
+                        if ((!acceptsOperandInAnyRegister && number) || !operandMayBeIn(Stub::OperationValueWithGlobalObject, static_cast<GPRReg>(number))) {
                             thunkLabels.append(thunkLabels.last());
                             continue;
                         }

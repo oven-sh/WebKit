@@ -475,8 +475,9 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
     // 21. For each element d of varDeclarations, do
     // While the symbol table's entries are still in the bytecode cache nothing watches them, and where the variables are is known
     // without their names.
-    // (Likewise with a table that was made when the program was built. That may not so much as have the names: StaticHeap keeps those that something can ask for.)
-    bool isTableOfStaticHeap = StaticHeap::contains(symbolTable);
+    // (Likewise with a table that was made when the program was built. That may not so much as have the names: StaticHeap keeps those that something can ask for.
+    // With compiler threads about, the environment's table is a clone of it in the ordinary heap, with the same layout: SymbolTable::isSharedAcrossRealms().)
+    bool isTableOfStaticHeap = StaticHeap::contains(unlinkedCodeBlock);
     bool initializeVarsByOffset = symbolTable->hasCachedEntriesPending() || isTableOfStaticHeap;
     if (initializeVarsByOffset) {
         for (unsigned i = 0; i < unlinkedCodeBlock->numberOfVarScopeOffsets(); ++i)

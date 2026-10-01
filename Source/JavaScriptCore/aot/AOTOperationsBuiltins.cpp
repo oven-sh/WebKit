@@ -26,7 +26,7 @@ namespace JSC { namespace AOT {
 #define AOT_OPERATION_PROLOGUE(globalObject) \
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 

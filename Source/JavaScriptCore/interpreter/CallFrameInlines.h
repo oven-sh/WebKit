@@ -51,7 +51,7 @@ ALWAYS_INLINE VM& CallFrame::deprecatedVM() const
 inline JSValue CallFrame::guaranteedJSValueCallee() const
 {
     ASSERT(!callee().isNativeCallee());
-    return jsCallee();
+    return this[static_cast<int>(CallFrameSlot::callee)].jsValue();
 }
 
 inline JSObject* CallFrame::jsCallee() const

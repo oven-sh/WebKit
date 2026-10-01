@@ -85,6 +85,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ProgramExecutable;
     class ModuleProgramExecutable;
     class Register;
+    class RegisterAtOffsetList;
     class JSAsyncFunctionGenerator;
     class JSGenerator;
     class JSObject;
@@ -229,6 +230,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         inline UnwindFunctorBase(VM&);
 
         void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&) const;
+        void copyCalleeSavesToEntryFrameCalleeSavesBuffer(CallFrame*, const RegisterAtOffsetList*) const;
         void notifyDebuggerOfUnwinding(JSGlobalObject*, CallFrame*) const;
 
         VM& m_vm;

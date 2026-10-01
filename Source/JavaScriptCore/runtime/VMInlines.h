@@ -98,6 +98,11 @@ inline CallFrame* VM::topJSCallFrame() const
         return frame;
     EntryFrame* entryFrame = topEntryFrame;
     do {
+#if ENABLE(FTL_JIT)
+        // Likewise of its caller.
+        if (AOT::classifyAddress(removeCodePtrTag(frame->rawReturnPC())).kind != AOT::ImageAddressInfo::NotInImage) [[unlikely]]
+            return nullptr;
+#endif
         frame = frame->callerFrame(entryFrame);
         ASSERT(!frame || !frame->isZombieFrame());
     } while (frame && frame->isNativeCalleeFrame());

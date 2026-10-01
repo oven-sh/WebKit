@@ -26,6 +26,7 @@
 #include "config.h"
 #include "CallFrame.h"
 
+#include "AOTFunction.h"
 #include "CodeBlock.h"
 #include "DebuggerCallFrame.h"
 #include "ExecutableAllocator.h"
@@ -432,6 +433,10 @@ bool isFromJSCode(void* returnAddress)
     UNUSED_PARAM(returnAddress);
 #if ENABLE(JIT)
     if (isJITPC(returnAddress))
+        return true;
+#endif
+#if ENABLE(FTL_JIT)
+    if (AOT::classifyAddress(returnAddress).kind != AOT::ImageAddressInfo::NotInImage)
         return true;
 #endif
 #if ENABLE(C_LOOP)

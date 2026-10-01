@@ -33,7 +33,7 @@ namespace JSC { namespace AOT {
 #define AOT_OPERATION_PROLOGUE(globalObject) \
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     countOperationFor(globalObject, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
@@ -807,7 +807,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM* vmPointer
 {
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
     vm.writeBarrierSlowPath(cell);
 }
 
@@ -816,7 +816,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer)
 {
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     RELEASE_ASSERT(!!scope.exception());
     Exception* exception = scope.exception();

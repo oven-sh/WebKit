@@ -890,6 +890,14 @@ public:
     }
 #endif
 
+#if ENABLE(FTL_JIT)
+    // See StackVisitor::StackVisitor().
+    void didSkipAOTAdapterAtTop(CallFrame* adapter) const
+    {
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
+    }
+#endif
+
     IterationStatus operator()(StackVisitor& visitor) const
     {
         visitor.unwindToMachineCodeBlockFrame();

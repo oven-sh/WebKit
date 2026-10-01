@@ -44,7 +44,7 @@ ALWAYS_INLINE void countOperationFor(JSGlobalObject* globalObject, CallFrame* ca
 #define AOT_OPERATION_BEGIN(globalObject) \
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     countOperationFor(globalObject, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
@@ -53,7 +53,7 @@ ALWAYS_INLINE void countOperationFor(JSGlobalObject* globalObject, CallFrame* ca
 #define AOT_OPERATION_BEGIN_FOR_NOBODY(globalObject) \
     VM& vm = (globalObject)->vm(); \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
-    JITOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 

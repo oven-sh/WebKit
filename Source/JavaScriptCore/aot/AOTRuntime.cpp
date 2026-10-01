@@ -1134,7 +1134,9 @@ CodeBlock* Data::ensureCodeBlock()
     // Whoever asks may well be dealing with an exception, and this is no place to find out that the VM has been told to stop.
     DeferTerminationForAWhile deferTermination(vm);
     SuspendExceptionScope suspendExceptions(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     FunctionCodeBlock* result = FunctionCodeBlock::create(vm, uncheckedDowncast<FunctionExecutable>(executable), uncheckedDowncast<UnlinkedFunctionCodeBlock>(unlinkedCodeBlock), instance->globalObject, CodeBlock::LinkMode::ForCodeFromImage);
+    scope.releaseAssertNoException();
     RELEASE_ASSERT(result);
     result->adoptAOTCode(*code, this);
     codeBlock = result;

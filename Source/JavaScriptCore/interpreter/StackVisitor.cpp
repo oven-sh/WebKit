@@ -108,8 +108,11 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
             if (AOT::hasCode()) {
                 void* returnPC = AOT::returnAddressForFrame(topFrame, __builtin_frame_address(0));
                 if (returnPC && AOT::classifyAddress(returnPC).kind != AOT::ImageAddressInfo::NotInImage) {
-                    CallFrame* adapter = nullptr;
-                    topFrame = skipFramesOfStubs(topFrame, m_frame.m_entryFrame, returnPC, adapter);
+                    // A function that ran out of stack in its prologue has given up its frame by now (Stub::ThrowStackOverflowAtPrologue). If it was
+                    // called from outside AOT code, what is on top is the adapter's frame, with the registers it saved. If it was
+                    // called from outside the VM, there is no frame of JavaScript code since then.
+                    topFrame = skipFramesOfStubs(topFrame, m_frame.m_entryFrame, returnPC, m_aotAdapterSkippedAtTop);
+                    m_topEntryFrameIsEmpty = m_frame.m_entryFrame != vm.topEntryFrame;
                     m_previousReturnPC = returnPC;
                     isTheEnginesOwn = AOT::classifyAddress(removeCodePtrTag(returnPC)).kind == AOT::ImageAddressInfo::NotInImage;
                     if (startFrame == vm.topCallFrame)
